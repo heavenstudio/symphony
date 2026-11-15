@@ -335,7 +335,7 @@ pub(crate) fn BoardPage(route: Memo<String>, scope: String) -> Element {
             }
         });
     }
-    // A task or agents view's failed fetch is a page notice, as the board's is: an alert in the
+    // A task view's failed fetch is a page notice, as the board's is: an alert in the
     // page's flow would shrink the page when a reconnect clears it, clamping a reader at its end.
     // A view with nothing yet to show says it in its own trouble block instead, once.
     let error = use_memo(move || {
@@ -356,7 +356,7 @@ pub(crate) fn BoardPage(route: Memo<String>, scope: String) -> Element {
     let (device, drawn) = (data.read().freshness.shown(), data.read().drawn(&route()));
     let content = if board.read().is_some() || drawn {
         // What the device drew is not the machine's work now: shown as out of touch until read.
-        if route().starts_with("/task/") || route() == "/agents" {
+        if route().starts_with("/task/") {
             rsx! { crate::tasks::LiveTaskPage { route, data, connected: !stale() && device.is_none() } }
         } else {
             rsx! { p { "Page unavailable" } }
@@ -621,17 +621,6 @@ pub(crate) fn mark(name: &str) {
     if let Some(performance) = web_sys::window().and_then(|window| window.performance()) {
         let _ = performance.mark(name);
     }
-}
-
-/// The first task card drawn: the agents page's (`tasks::TaskRow`).
-#[cfg(feature = "page-tasks")]
-pub(crate) fn mark_tasks_ready() {
-    thread_local! { static MARKED: Cell<bool> = const { Cell::new(false) }; }
-    MARKED.with(|marked| {
-        if !marked.replace(true) {
-            mark("tasks-ready");
-        }
-    });
 }
 
 pub(crate) fn describe(value: JsValue) -> String {

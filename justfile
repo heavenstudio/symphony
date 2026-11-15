@@ -49,8 +49,12 @@ symphony-ui-dist OUT="build/symphony-ui" KIND="all" OPT="z":
     if [[ "$out" != /* ]]; then out="$PWD/$out"; fi
     PATH="$PWD/apps/symphony-ui/bin:$PATH" tools/cargo.sh symphony-ui dist "$out" {{quote(KIND)}} {{quote(OPT)}}
 
-symphony-ui-dev PORT="0":
-    @PATH="$(pwd)/apps/symphony-ui/bin:$PATH" tools/cargo.sh symphony-ui dev {{quote(PORT)}}
+# apps/symphony-web/dev.js (its guide's "The dev server"), on loopback port PORT (0 for any), over
+# a server of your own (`just symphony --port 0`) on port SERVER; 8765 it refuses as either.
+# The web client's dev server: its kinds from their sources, the page loaded again on each save.
+[no-exit-message]
+symphony-ui-dev SERVER PORT="0":
+    @bash apps/symphony-web/npm.sh run --silent dev -- {{quote(SERVER)}} {{quote(PORT)}}
 
 # A server of its own uses --port; the server CLI owns shared-server selection. These commands
 # say their own errors, with no recipe-failed line after them.

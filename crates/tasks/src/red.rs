@@ -34,6 +34,24 @@ pub const SERIES: [&str; 3] = [
 ];
 /// How long a red task may go without an executor before the PULL digest names it: ten minutes.
 pub const UNSTAFFED_SECONDS: f64 = 600.0;
+/// How a line of a red's body opens that names the commits it came between, `between: GOOD..BAD`:
+/// the newest commit its filer knew green and the first it found red, each by its object name
+/// (the release run's last green run and its candidate). The roll-up lists the landings in that
+/// range on the red's day files; a red whose body names none is filed and read as any other.
+pub const BETWEEN: &str = "between: ";
+
+/// The range of commits `body` names a red came between ([`BETWEEN`]), as `GOOD..BAD`: its last
+/// line that names one, so a quoted log above it cannot. None when no line does, or when an end is
+/// no object name (7 to 64 hex digits), which git would read as something else.
+pub fn between(body: &str) -> Option<&str> {
+    let commit =
+        |name: &str| (7..=64).contains(&name.len()) && name.bytes().all(|b| b.is_ascii_hexdigit());
+    body.lines().rev().find_map(|line| {
+        let range = line.trim_end().strip_prefix(BETWEEN)?;
+        let (good, bad) = range.split_once("..")?;
+        (commit(good) && commit(bad)).then_some(range)
+    })
+}
 
 /// Whether a task's `fields` mark it red.
 pub fn marked(fields: &BTreeMap<String, BTreeMap<String, Value>>) -> bool {
@@ -139,5 +157,61 @@ mod tests {
         for (slug, red) in cases {
             assert_eq!(filed(slug), red, "{slug}");
         }
+    }
+
+    #[test]
+    fn a_red_names_the_commits_it_came_between_on_its_last_line_that_names_two() {
+        let good = "0123456789abcdef0123456789abcdef01234567";
+        let bad = "fedcba9876543210fedcba9876543210fedcba98";
+        let range = format!("{good}..{bad}");
+        let footer = |line: &str| format!("The release run is red.\n\n{line}\nkey: verify\n");
+        assert_eq!(
+            between(&footer(&format!("between: {range}"))),
+            Some(range.as_str())
+        );
+        assert_eq!(
+            between(&format!("between: {range}  \r")),
+            Some(range.as_str()),
+            "trailing blanks are no part of it"
+        );
+        assert_eq!(
+            between("between: abc1234..DEF5678"),
+            Some("abc1234..DEF5678")
+        );
+        let quoted = format!("between: 1111111..2222222\n\nbetween: {range}\nkey: verify");
+        assert_eq!(
+            between(&quoted),
+            Some(range.as_str()),
+            "the last line that names one: a quoted log above it names nothing"
+        );
+        let sha256 = format!("{}..{}", "a".repeat(64), "b".repeat(64));
+        assert_eq!(
+            between(&format!("between: {sha256}")),
+            Some(sha256.as_str())
+        );
+        for (body, why) in [
+            ("", "no body"),
+            ("The release run is red.\nkey: verify", "no line names one"),
+            ("between: 0123456", "one end"),
+            ("between: 0123456..", "no second end"),
+            ("between: ..0123456", "no first end"),
+            (
+                "between: 012345..0123456",
+                "an end too short for git to take",
+            ),
+            (
+                "between: 0123456...0123456",
+                "three dots, a symmetric difference",
+            ),
+            ("between: main..0123456", "a branch, which moves"),
+            ("between: --output=x..0123456", "an option"),
+            ("between: 0123456..0123456 extra", "more after it"),
+            (" between: 0123456..1234567", "not at the line's start"),
+            ("Between: 0123456..1234567", "another word"),
+        ] {
+            assert_eq!(between(body), None, "{why}: {body:?}");
+        }
+        let long = format!("between: {}..0123456", "a".repeat(65));
+        assert_eq!(between(&long), None, "an end longer than any object name");
     }
 }

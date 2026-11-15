@@ -26,8 +26,10 @@ const PROGRAM: [&str; 4] = ["tasks", "panel", "overlay", "timeline"];
 /// which is no kind.
 const CHUNKS: [&str; 5] = ["media", "overlay", "panel", "tasks", "timeline"];
 /// The web client's kinds, one Vite build of them all, and whether each has a style sheet of its
-/// own (the task board's styles are the program's board.css, in the shared file).
-const WEB: [(&str, bool); 5] = [
+/// own (the task board's and the agents page's styles are the program's board.css, in the shared
+/// file).
+const WEB: [(&str, bool); 6] = [
+    ("agents", false),
     ("board", false),
     ("docs", true),
     ("queue", true),
@@ -71,7 +73,7 @@ cp -R "$work/public" "$out/"
 
 /// The stand-in web client's build, which bundle.sh runs as `bash apps/symphony-web/npm.sh run
 /// --silent build -- --outDir OUT --emptyOutDir`: each kind's script, the style sheet of each kind
-/// but the task board, and Vite's manifest naming them.
+/// but the task board and the agents page, and Vite's manifest naming them.
 const WEB_BUILD: &str = r#"#!/bin/bash
 set -euo pipefail
 [ "$*" = "run --silent build -- --outDir $6 --emptyOutDir" ]
@@ -79,10 +81,10 @@ out="$6"
 rm -rf "$out"
 mkdir -p "$out/.vite" "$out/assets"
 entries=""
-for kind in board docs queue reports review; do
+for kind in agents board docs queue reports review; do
     printf 'export{a as run,b as stop};/*%s*/\n' "$BUNDLE_ID" > "$out/assets/$kind-$BUNDLE_ID.js"
     css=""
-    if [ "$kind" != board ]; then
+    if [ "$kind" != board ] && [ "$kind" != agents ]; then
         printf '/*%s-%s*/body{}' "$BUNDLE_ID" "$kind" > "$out/assets/$kind-$BUNDLE_ID.css"
         css="$(printf ',"css":["assets/%s-%s.css"]' "$kind" "$BUNDLE_ID")"
     fi

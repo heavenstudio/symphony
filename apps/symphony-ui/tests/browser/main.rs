@@ -153,6 +153,27 @@ fn visible(selector: &str) -> String {
     )
 }
 
+/// Whether the focus is on the element `selector` names, once two frames and a task have passed
+/// (Chrome takes the focus from a button disabled under it at its next rendering update, not at
+/// once); else what holds it, for the failure.
+fn focus_on(chrome: &mut Chrome, selector: &str) -> serde_json::Value {
+    chrome.eval(&format!(
+        "new Promise(done => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(done)))).then(() => \
+         document.activeElement === document.querySelector({}) || (document.activeElement?.outerHTML ?? 'nothing').slice(0, 120))",
+        json!(selector)
+    ))
+}
+
+/// A script true once the element `selector` names is drawn as the shared sheet draws a disabled
+/// button (`.dx-button:disabled`: half its opacity, which the button's transition reaches in its
+/// own time, and no pointer events).
+fn drawn_disabled(selector: &str) -> String {
+    format!(
+        "(style => style.opacity === '0.5' && style.pointerEvents === 'none')(getComputedStyle(document.querySelector({})))",
+        json!(selector)
+    )
+}
+
 /// The text of every element `selector` matches, in document order.
 fn texts(chrome: &mut Chrome, selector: &str) -> Vec<String> {
     let value = chrome.eval(&format!(
@@ -204,7 +225,7 @@ fn entry_pages_fit_the_first_visit_budget_and_deferred_kinds_are_reported() {
             "[data-slug='tools/example']",
             Some(TASKS_FIRST_VISIT_BYTES),
         ),
-        ("/agents", "program", ".agents", None),
+        ("/agents", "agents", ".agents", None),
         ("/docs/", "docs", "[data-ready=folder]", None),
         ("/queue", "queue", "[data-ready=queue]", None),
         ("/reports", "reports", "[data-ready=reports]", None),
@@ -555,87 +576,84 @@ fn same_kind_navigation_resets_scroll_clamped_by_the_new_page() {
         "/api/task-history",
         &json!({"entries":[],"before":null,"after":null}),
     );
-    for destination in ["/task/tools/second", "/agents"] {
-        let Some(mut chrome) = chrome() else { return };
-        chrome.call("Profiler.enable", json!({}));
-        chrome.call(
-            "Profiler.startPreciseCoverage",
-            json!({"callCount":true,"detailed":true}),
-        );
-        chrome.open(&site.url("/task/tools/example"));
-        assert!(chrome.wait_for(
-            "document.documentElement.dataset.navigation === 'ready' && document.querySelector('.task[data-slug=\"tools/example\"]') !== null",
-            SHOWN
-        ));
-        chrome.eval(
-            r#"
-            const mount = document.getElementById('review-root-tasks');
-            mount.style.minHeight = '6000px';
-            scrollTo(0,5000);
-            addEventListener('review:navigate', () => {
-                window.beforeClamp = scrollY;
-                mount.style.minHeight = '3000px';
-                window.afterClamp = scrollY;
-            }, {once:true});
-        "#,
-        );
-        assert_eq!(chrome.eval("scrollY"), json!(5000));
-        chrome.eval(&format!(
-            "const next = document.createElement('a'); next.href = {}; document.body.append(next); next.click(); next.remove()",
-            json!(destination)
-        ));
-        assert!(chrome.wait_for(
-            "document.documentElement.dataset.navigation === 'ready'",
-            SHOWN
-        ));
-        assert_eq!(chrome.eval("window.beforeClamp"), json!(5000));
-        assert_eq!(
-            chrome.eval("afterClamp > 0 && afterClamp < beforeClamp"),
-            json!(true),
-            "{destination}: navigation must shrink the page after the shell's baseline"
-        );
-        assert_eq!(chrome.eval("scrollY"), json!(0), "{destination}");
-        // Keep the fixture honest: the second route must render its own page, rather than
-        // passing the scroll check with a missing API response or the first task still shown.
-        let selector = if destination == "/agents" {
-            ".agents"
-        } else {
-            ".task[data-slug=\"tools/second\"]"
-        };
-        assert!(chrome.wait_for(
-            &format!("document.querySelector({}) !== null", json!(selector)),
-            SHOWN
-        ));
-        let coverage = chrome.call("Profiler.takePreciseCoverage", json!({}));
-        let shell = coverage["result"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|script| {
-                script["url"]
-                    .as_str()
-                    .is_some_and(|url| url.contains("/symphony-shell-"))
-            })
-            .expect("navigation shell coverage");
-        let ranges: Vec<_> = shell["functions"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .flat_map(|function| function["ranges"].as_array().unwrap())
-            .collect();
-        let used = ranges
-            .iter()
-            .filter(|range| range["count"].as_u64().unwrap_or(0) > 0)
-            .count();
-        assert!(
-            used > 0,
-            "the shell coverage instrument returned no executed blocks"
-        );
-        eprintln!(
-            "NAVIGATION COVERAGE {destination}: {used}/{} executed shell blocks",
-            ranges.len()
-        );
-    }
+    // A task page to another: `/agents` is a kind of its own (the web client's), whose move from a
+    // task page resets the scroll as every move between kinds does (above).
+    let destination = "/task/tools/second";
+    let Some(mut chrome) = chrome() else { return };
+    chrome.call("Profiler.enable", json!({}));
+    chrome.call(
+        "Profiler.startPreciseCoverage",
+        json!({"callCount":true,"detailed":true}),
+    );
+    chrome.open(&site.url("/task/tools/example"));
+    assert!(chrome.wait_for(
+        "document.documentElement.dataset.navigation === 'ready' && document.querySelector('.task[data-slug=\"tools/example\"]') !== null",
+        SHOWN
+    ));
+    chrome.eval(
+        r#"
+        const mount = document.getElementById('review-root-tasks');
+        mount.style.minHeight = '6000px';
+        scrollTo(0,5000);
+        addEventListener('review:navigate', () => {
+            window.beforeClamp = scrollY;
+            mount.style.minHeight = '3000px';
+            window.afterClamp = scrollY;
+        }, {once:true});
+    "#,
+    );
+    assert_eq!(chrome.eval("scrollY"), json!(5000));
+    chrome.eval(&format!(
+        "const next = document.createElement('a'); next.href = {}; document.body.append(next); next.click(); next.remove()",
+        json!(destination)
+    ));
+    assert!(chrome.wait_for(
+        "document.documentElement.dataset.navigation === 'ready'",
+        SHOWN
+    ));
+    assert_eq!(chrome.eval("window.beforeClamp"), json!(5000));
+    assert_eq!(
+        chrome.eval("afterClamp > 0 && afterClamp < beforeClamp"),
+        json!(true),
+        "{destination}: navigation must shrink the page after the shell's baseline"
+    );
+    assert_eq!(chrome.eval("scrollY"), json!(0), "{destination}");
+    // Keep the fixture honest: the second route must render its own page, rather than
+    // passing the scroll check with a missing API response or the first task still shown.
+    let selector = ".task[data-slug=\"tools/second\"]";
+    assert!(chrome.wait_for(
+        &format!("document.querySelector({}) !== null", json!(selector)),
+        SHOWN
+    ));
+    let coverage = chrome.call("Profiler.takePreciseCoverage", json!({}));
+    let shell = coverage["result"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|script| {
+            script["url"]
+                .as_str()
+                .is_some_and(|url| url.contains("/symphony-shell-"))
+        })
+        .expect("navigation shell coverage");
+    let ranges: Vec<_> = shell["functions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|function| function["ranges"].as_array().unwrap())
+        .collect();
+    let used = ranges
+        .iter()
+        .filter(|range| range["count"].as_u64().unwrap_or(0) > 0)
+        .count();
+    assert!(
+        used > 0,
+        "the shell coverage instrument returned no executed blocks"
+    );
+    eprintln!(
+        "NAVIGATION COVERAGE {destination}: {used}/{} executed shell blocks",
+        ranges.len()
+    );
 }
 
 #[test]

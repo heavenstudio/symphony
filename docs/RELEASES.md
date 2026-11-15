@@ -353,9 +353,13 @@ shipped `symphony` does not carry ([CHECKS](CHECKS.md#size-budgets)):
      test of its own. The red says so, an environment failure, naming those targets and files,
      the target cargo started last before the first that found one gone (what removed them ran
      then: that target, something it started, or something outside the run), and what the build
-     folder holds when the red is filed, each entry with when it was made. Those targets are no
-     failures to rerun: with no other failure, the rerun is a run of the target they went while,
-     or of its build, with a look at its build folder after it;
+     folder holds when the red is filed, each entry with when it was made. Found gone while the
+     tests' lanes ran side by side (after `tools/test-lanes.sh`'s lines naming them, more than one
+     at once), they went while those lanes ran, which the red names, and no one target: the lanes'
+     outputs follow one another in the log, but a test of any of them may have removed them, and
+     the log holds no times to tell which. Those targets are no failures to rerun: with no other
+     failure, the rerun is a run of the target they went while, or of each of those lanes alone,
+     one after another, or of its build, with a look at its build folder after each;
    - the commands that rerun each failure alone (`crates/symphony/src/release/rerun.rs`), never
      `just verify`, which no task runs. Each test target cargo says failed in the log is rerun as
      `just test-rs ARGS -- NAME --exact` for each test libtest named `FAILED` in it, or whole when
@@ -367,7 +371,11 @@ shipped `symphony` does not carry ([CHECKS](CHECKS.md#size-budgets)):
      last recipe its log says failed other than `verify` and a private one (`_NAME`), its tests'
      a target at a time, else says its last lines name the step. Any other check's is its own
      command;
-   - the commits since the last green run (`git log --oneline LAST_GREEN..TIP`).
+   - the commits since the last green run (`git log --oneline LAST_GREEN..TIP`), and the same
+     range on a line of its own by the two commits' full names, `between: LAST_GREEN..TIP`
+     (`symphony_board::red::BETWEEN`), from which the Reports roll-up lists the landings the red
+     may trace back to ([the day files](analysis/reports-and-monitoring.md#the-day-files)). With
+     no green run on record the range starts at the release before; with neither there is none.
 
    **A test red on load** is discarded: a rerun neither fails nor passes on the machine's load
    (RULES.md `tests/no-test-fails-on-load`). A test that fails a run, or the release candidate's
@@ -724,7 +732,9 @@ A step moves what it can and nothing more:
   `Cargo.lock` and sources: once that changes it builds and installs a new server
   (`crates/symphony/src/reload.rs`, `cargo install --force --root` into its install folder) and
   hands its sockets to it by exec, a build that fails leaving the previous one serving and saying
-  why on its notice. When this refresh moved that checkout's main and a server built from it
+  why on its notice. A build that installs the very bytes the serving one runs, with no client to
+  publish, hands over to nothing: the serving server stamps the install as that build's and keeps
+  serving. When this refresh moved that checkout's main and a server built from it
   answered before the move, the run waits, 20 minutes at most, until another process answers for
   it, and says which; or that none has yet, and that `just symphony-status` says which answers
   later. With none answering for it before, it waits for none: which build answers after cannot

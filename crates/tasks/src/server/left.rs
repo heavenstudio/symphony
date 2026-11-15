@@ -66,6 +66,9 @@ const TELLING: Duration = Duration::from_secs(2);
 /// leaves one between the two.
 const GONE_FOR: Duration = Duration::from_secs(1);
 
+/// How long a settling waits after one look before the next ([`Home::left_server`]).
+const LOOK_AGAIN: Duration = Duration::from_millis(50);
+
 /// What `symphony/tasks/replay.json` says: the private replay whose server may still run.
 #[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub(super) struct Replay {
@@ -174,30 +177,32 @@ impl Home {
     /// None only once every look for [`GONE_FOR`], or for that bound when it is shorter, found
     /// nothing the record may name: a server seen between two programs is found at the next look.
     fn left_server(&self, replay: &Replay) -> Result<Option<LeftReplay>, ServerError> {
-        self.left_server_by(|| self.left_server_now(replay))
+        self.left_server_by(|| self.left_server_now(replay), Instant::now)
     }
 
-    /// [`Home::left_server`], each of its looks made by `look`: [`Home::left_server_now`], or a
-    /// test's, which counts them and moves a process from one program to the next between two.
+    /// [`Home::left_server`], each of its looks made by `look` and the time read from `now`:
+    /// [`Home::left_server_now`] and [`Instant::now`], or a test's, which counts the looks, moves a
+    /// process from one program to the next between two, or moves its own clock at each look.
     fn left_server_by(
         &self,
         mut look: impl FnMut() -> Result<Option<LeftReplay>, String>,
+        now: impl Fn() -> Instant,
     ) -> Result<Option<LeftReplay>, ServerError> {
         let bound = self.answer_wait().min(TELLING);
-        let until = Instant::now() + bound;
+        let until = now() + bound;
         let mut gone_since = None;
         loop {
             match look() {
                 Ok(None) => {
-                    if gone_since.get_or_insert_with(Instant::now).elapsed() >= GONE_FOR.min(bound)
-                    {
+                    let since = *gone_since.get_or_insert_with(&now);
+                    if now() - since >= GONE_FOR.min(bound) {
                         return Ok(None);
                     }
                 }
-                Err(_) if Instant::now() < until => gone_since = None,
+                Err(_) if now() < until => gone_since = None,
                 told => return told.map_err(|why| self.cannot_tell(&why)),
             }
-            std::thread::sleep(Duration::from_millis(50));
+            std::thread::sleep(LOOK_AGAIN);
         }
     }
 
@@ -409,6 +414,7 @@ mod tests {
         Home, LOG, PS_FAILS, REPLAY_ENDS, REPLAY_THROUGH, Running, SURREAL_VERSION, ServerError,
     };
     use crate::sys::{Stdio, command};
+    use std::cell::Cell;
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
     use std::path::PathBuf;
@@ -642,21 +648,24 @@ mod tests {
         let pid = i64::from(between.id());
         let mut go = between.stdin.take();
         let (mut looks, mut moved) = (Vec::new(), None);
-        let left = home.left_server_by(|| {
-            let found = home.left_server_now(&replay);
-            looks.push(found.clone());
-            // After the first look, which found none: the process moves to the server's program,
-            // and the next look is made once a listing shows it there.
-            if let Some(go) = go.take() {
-                drop(go);
-                moved = Some(test_time::until_true(
-                    "the process's exec into a server on the data",
-                    test_time::backstop(Duration::from_secs(1)),
-                    || matches!(home.listed(), Ok(Some(listed)) if listed.pid == pid),
-                ));
-            }
-            found
-        });
+        let left = home.left_server_by(
+            || {
+                let found = home.left_server_now(&replay);
+                looks.push(found.clone());
+                // After the first look, which found none: the process moves to the server's
+                // program, and the next look is made once a listing shows it there.
+                if let Some(go) = go.take() {
+                    drop(go);
+                    moved = Some(test_time::until_true(
+                        "the process's exec into a server on the data",
+                        test_time::backstop(Duration::from_secs(1)),
+                        || matches!(home.listed(), Ok(Some(listed)) if listed.pid == pid),
+                    ));
+                }
+                found
+            },
+            Instant::now,
+        );
         between.kill().unwrap();
         between.wait().unwrap();
         moved.expect("a first look").unwrap();
@@ -746,23 +755,49 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
     }
 
-    /// A `ps` that fails for a moment is asked again: the record is settled once it answers, here
-    /// as gone, its named pid having ended.
+    /// A `ps` that fails for a moment is asked again, and what it tells once it answers is taken:
+    /// here none, its named pid having ended, once every look for the patience found none. One
+    /// that still fails once the patience has passed is refused, saying so. Counted in looks,
+    /// never timed: the loop reads a clock of the test's, which moves one pause at each look, so
+    /// the third look is the last within the folder's patience of 200 ms whatever the load.
     #[test]
     fn a_ps_that_fails_for_a_moment_is_asked_again() {
         let (dir, home) = folder("ps-moment");
-        home.mark_replay(&Replay {
+        let replay = Replay {
             server: server(ended_pid()),
             ..Replay::default()
-        })
-        .unwrap();
-        let _failing = PsFails::new(2);
-        assert_eq!(home.left_replay_through().unwrap(), None);
-        assert_eq!(home.replay_record(), None);
-        assert_eq!(
-            fs::read_to_string(dir.join(LOG)).unwrap(),
-            format!("{GONE}\n")
-        );
+        };
+        // What each look found and what was told, while the first `fails` of `ps` fail.
+        let looked = |fails: u32| {
+            let clock = Cell::new(Instant::now());
+            let mut looks = Vec::new();
+            let _failing = PsFails::new(fails);
+            let left = home.left_server_by(
+                || {
+                    clock.set(clock.get() + super::LOOK_AGAIN);
+                    let found = home.left_server_now(&replay);
+                    looks.push(found.clone());
+                    found
+                },
+                || clock.get(),
+            );
+            (looks, left)
+        };
+        let why = "`ps`, which lists the processes, failed (ps failed, as a test made it)";
+        let failed: Result<Option<LeftReplay>, String> = Err(why.into());
+
+        // Failed at 50, 100 and 150 ms, within the patience; none from 200 ms, and at 400 ms every
+        // look for the patience has found none.
+        let (looks, left) = looked(3);
+        let mut expected = vec![failed.clone(); 3];
+        expected.extend(vec![Ok(None); 5]);
+        assert_eq!(looks, expected);
+        assert_eq!(left, Ok(None));
+
+        // Failed at 200 ms as well, once the patience has passed: refused.
+        let (looks, left) = looked(4);
+        assert_eq!(looks, vec![failed; 4]);
+        assert_eq!(left, Err(home.cannot_tell(why)));
         let _ = fs::remove_dir_all(&dir);
     }
 

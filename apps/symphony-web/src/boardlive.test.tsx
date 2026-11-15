@@ -5,17 +5,17 @@ import {
   type BoardHost,
   emptyBoard,
   LiveBoard,
-  ReadCursor,
   readChanges,
   sameTask,
-  statusNotice,
   TasksPage,
   TasksView,
   upsert,
   withListed,
 } from "./boardlive";
+import { ReadCursor } from "./journal";
 import { aMachine, anOperation, aTask, aWork, CASES, memoryStorage } from "./testing";
 import type { MachineWork, Task, TaskListing } from "./wire";
+import { statusNotice } from "./words";
 import { NO_WORK } from "./work";
 
 /** The wall clock the board reads: a task updated before it by more than its window is old. */

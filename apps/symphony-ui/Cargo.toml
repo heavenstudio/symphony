@@ -122,7 +122,7 @@ page-panel = ["overlays"]
 page-overlay = ["overlays"]
 # A task's timeline, loaded into the task page's box once the page is idle (task_timeline.rs).
 page-timeline = []
-# The program: the task pages with /agents, the chat, the menus and the timeline as one program that
+# The program: the task pages, the chat, the menus and the timeline as one program that
 # `dx bundle --wasm-split` cuts into a main module and a chunk for each (src/split.rs, bundle.sh).
 # Its kinds share one runtime.
 page-program = ["page-tasks", "page-panel", "page-overlay", "page-timeline"]

@@ -9,6 +9,10 @@
 //! waits for it. A roll-up that fails, the board unreachable or its read refused, writes nothing
 //! and is said once; the files stay as the last one left them, and the next hour tries again.
 //!
+//! The same thread then rolls the project's runs up ([`symphony_board::runs::rollup`]) from their
+//! day files, beside them: they need no board, so an hour whose board read failed rolls them up all
+//! the same. A day file of runs that cannot be read writes no roll-up of runs, said once as well.
+//!
 //! It keeps to its server generation's gate ([`symphony_board::recording`]), as the recorders do:
 //! a reload never has two generations writing a day file. A replacement rolls nothing up before its
 //! hand-off commits and then rolls the hour up, and the generation it replaces writes no file after
@@ -21,26 +25,34 @@ use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use symphony::reports::HOUR;
 use symphony_board::recording::State;
+use symphony_board::runs::rollup;
 
 /// Where the shared server keeps the project's day files, the hour it last rolled them up in and
 /// the roll-up under way.
 #[derive(Debug)]
 pub(crate) struct Rollup {
     pub(crate) folder: PathBuf,
+    /// Where the project's runs are kept ([`symphony_board::runs::folder`]), their roll-up beside
+    /// them; none where it keeps none.
+    pub(crate) runs: Option<PathBuf>,
     /// The hour of the hub's clock (its seconds over an hour, floored) last rolled up or tried.
     tried: Option<i64>,
     /// What went wrong last, so a failure that goes on is said once.
     said: Arc<Mutex<Option<String>>>,
+    /// The same, for the runs' roll-up.
+    said_runs: Arc<Mutex<Option<String>>>,
     /// The thread of the last roll-up, never joined but by a test.
     running: Option<JoinHandle<()>>,
 }
 
 impl Rollup {
-    pub(crate) fn new(folder: PathBuf) -> Rollup {
+    pub(crate) fn new(folder: PathBuf, runs: Option<PathBuf>) -> Rollup {
         Rollup {
             folder,
+            runs,
             tried: None,
             said: Arc::default(),
+            said_runs: Arc::default(),
             running: None,
         }
     }
@@ -73,6 +85,12 @@ impl Rollup {
     #[cfg(test)]
     pub(crate) fn said(&self) -> Option<String> {
         self.said.lock().unwrap().clone()
+    }
+
+    /// The same, of the runs' roll-up: a test's.
+    #[cfg(test)]
+    pub(crate) fn said_runs(&self) -> Option<String> {
+        self.said_runs.lock().unwrap().clone()
     }
 }
 
@@ -126,7 +144,7 @@ impl Hub {
             None => Err("the board could not be reached".into()),
         };
         let read = match read {
-            Ok(read) => read,
+            Ok(read) => Some(read),
             Err(why) => {
                 say(
                     &rollup.said,
@@ -135,38 +153,62 @@ impl Hub {
                          tries again"
                     )),
                 );
-                return;
+                None
             }
         };
+        if read.is_none() && rollup.runs.is_none() {
+            return;
+        }
         let cards = Arc::clone(&self.branches.lock().unwrap_or_else(|e| e.into_inner()).0);
         let root = self.root.clone();
         let folder = rollup.folder.clone();
+        let runs = rollup.runs.clone();
         let said = Arc::clone(&rollup.said);
+        let said_runs = Arc::clone(&rollup.said_runs);
         let gate = Arc::clone(gate);
         let started = std::thread::Builder::new()
             .name("reports".into())
             .spawn(move || {
                 let project = symphony::project::Project::of(&root).id.clone();
-                let rolled = symphony::reports::roll_up(
-                    &root, &project, now, &folder, &days, &read, &cards, &gate,
-                );
-                say(
-                    &said,
-                    match rolled {
-                        // Nothing written is a reload's: the generation replacing this one writes.
-                        Ok(rolled) if rolled.problems.is_empty() || rolled.written.is_empty() => {
-                            None
-                        }
-                        Ok(rolled) => Some(format!(
-                            "{} written without {}",
-                            rolled.written.join(" and "),
-                            rolled.problems.join("; ")
-                        )),
-                        Err(why) => Some(format!(
-                            "a day file could not be written ({why}); the next hour tries again"
-                        )),
-                    },
-                );
+                if let Some(read) = read {
+                    let rolled = symphony::reports::roll_up(
+                        &root, &project, now, &folder, &days, &read, &cards, &gate,
+                    );
+                    say(
+                        &said,
+                        match rolled {
+                            // Nothing written is a reload's: the generation replacing this one
+                            // writes.
+                            Ok(rolled)
+                                if rolled.problems.is_empty() || rolled.written.is_empty() =>
+                            {
+                                None
+                            }
+                            Ok(rolled) => Some(format!(
+                                "{} written without {}",
+                                rolled.written.join(" and "),
+                                rolled.problems.join("; ")
+                            )),
+                            Err(why) => Some(format!(
+                                "a day file could not be written ({why}); the next hour tries \
+                                 again"
+                            )),
+                        },
+                    );
+                }
+                if let Some(runs) = runs {
+                    let days = symphony::reports::due(&rollup::folder(&runs), now);
+                    let rolled = rollup::roll_up(&runs, &project, now, &days, &gate);
+                    say(
+                        &said_runs,
+                        rolled.err().map(|why| {
+                            format!(
+                                "runs: no roll-up written ({why}); the last ones stay, and the \
+                                 next hour tries again"
+                            )
+                        }),
+                    );
+                }
             });
         match started {
             Ok(running) => rollup.running = Some(running),
