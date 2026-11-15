@@ -53,7 +53,11 @@ never the whole target, which the release run runs.
   `symphony-build split-repair` puts right after dx
   (crates/symphony/src/cli/commands/split_repair.rs)
   and `assets/chunks.js` loads (`window.reviewChunk`), rejecting a chunk that does not load so
-  the shell's `gone` state, never a page left waiting, follows. The shell awaits a kind's chunk
+  the shell's `gone` state, never a page left waiting, follows. `package.sh` minifies the
+  program's script again, whole, after that repair: dx minified the glue while it named the chunks
+  by its own hashes, which differ on every build, and esbuild's short names follow the characters
+  in the file, so only a pass over the repaired names gives the same script from the same sources.
+  The shell awaits a kind's chunk
   before it stops the page shown, which stays until the chunk is in, and under the shell's
   notice when it does not load. A chunk mounts its kind's root
   in the one instance (a `VirtualDom` per root, `module.rs`). The

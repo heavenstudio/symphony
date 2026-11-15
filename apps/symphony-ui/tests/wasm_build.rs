@@ -442,11 +442,17 @@ fn cargo_symphony_ui_dist_bundles_into_out_as_named_from_where_it_runs() {
     let program = String::from_utf8(file(script)).unwrap();
     let chunks = fs::read_to_string(crate_dir().join("assets/chunks.js")).unwrap();
     let (loader, map) = chunks.split_once("__CHUNKS__").unwrap();
+    // The whole script goes through the minifier once, after split-repair named the modules by
+    // their bytes: the glue first, the loader after it, and nothing minified apart from the rest
+    // (dx's own minifying of the glue follows its hashes of the chunks, another on every build).
     assert!(
-        program.contains(&format!(
-            "/*esbuild --minify --format=esm --log-level=warning*/\n{loader}"
-        )) && program.trim_end().ends_with(map.trim_end()),
-        "the program's script ends with its chunk loader, through the minifier: {program}"
+        program.starts_with(
+            "/*esbuild --minify --format=esm --log-level=error*/\nlet __reviewInitSync;\n"
+        ) && program.matches("/*esbuild").count() == 1
+            && !program.contains("dxh")
+            && program.contains(&format!("\n{loader}"))
+            && program.trim_end().ends_with(map.trim_end()),
+        "the program's script, its glue and then its chunk loader, goes through the minifier whole: {program}"
     );
     assert!(
         program.contains(
