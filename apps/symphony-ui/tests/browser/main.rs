@@ -185,6 +185,34 @@ fn drawn_disabled(selector: &str) -> String {
     )
 }
 
+/// A finger put down at (`x`, `from`), drawn `by` px up the screen in ten steps and lifted: the
+/// page scrolls on by the swipe (510 px for 500, every time), and by no more. Each touch carries its own time, a frame apart and
+/// the lift half a second after the last move, so the finger rests before it leaves: Chrome reads
+/// a swipe's speed from the times of its touches, and with the times at which a loaded machine
+/// let it take them the lift flung the page on by anything from nothing to twice the swipe.
+fn swipe(chrome: &mut Chrome, x: u32, from: u32, by: u32) {
+    let start = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("a clock after 1970")
+        .as_secs_f64();
+    let mut touch = |kind: &str, at: f64, points: serde_json::Value| {
+        chrome.call(
+            "Input.dispatchTouchEvent",
+            json!({"type": kind, "touchPoints": points, "timestamp": start + at}),
+        );
+    };
+    let point = |y: u32| json!([{"x": x, "y": y}]);
+    touch("touchStart", 0.0, point(from));
+    for step in 1..=10 {
+        touch(
+            "touchMove",
+            0.016 * f64::from(step),
+            point(from - by * step / 10),
+        );
+    }
+    touch("touchEnd", 0.66, json!([]));
+}
+
 /// The text of every element `selector` matches, in document order.
 fn texts(chrome: &mut Chrome, selector: &str) -> Vec<String> {
     let value = chrome.eval(&format!(
