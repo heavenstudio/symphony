@@ -8,6 +8,7 @@
 
 use std::io::Write;
 
+mod attach;
 mod crates_check;
 mod release_inputs;
 mod shot;
@@ -15,7 +16,7 @@ mod size_budget;
 mod split_repair;
 
 /// The Symphony's own commands, in the order its usage names them, each with what it does.
-const OWN: [(&str, &str); 12] = [
+const OWN: [(&str, &str); 13] = [
     ("status", "the review board's open cards and comments"),
     (
         "reply",
@@ -39,6 +40,10 @@ const OWN: [(&str, &str); 12] = [
         "count the typed blocks every document parses into",
     ),
     ("shot", "a picture of a page: shot URL --out FILE.png"),
+    (
+        "attach",
+        "store evidence in the main checkout's uploads: attach FILE...",
+    ),
     (
         "init",
         "install or refresh the agents' skills, recipes and hooks here",
@@ -214,6 +219,9 @@ pub(super) fn plugin(name: &str, args: &[String], out: &mut dyn Write, err: &mut
     }
     if name == "shot" {
         return shot::main(args, out, err);
+    }
+    if name == "attach" {
+        return attach::main(args, out, err);
     }
     // Measured as the project the command runs in says, the nearest above the current folder.
     match crate::plugins::command(name, here().as_deref()) {

@@ -401,6 +401,71 @@ fn a_full_page_shot_takes_the_whole_document() {
     );
 }
 
+/// `--attach` stores each picture the run saved, by its content, in the uploads of the main
+/// checkout of the repository the shot runs in, and prints the line a thread post carries for it,
+/// in the order taken; the pictures stay where they were saved.
+#[test]
+fn an_attached_shot_stores_each_picture_it_saved_and_prints_its_line_in_the_order_taken() {
+    let Some(chrome) = chrome::find() else {
+        eprintln!("no Chrome on this machine (SYMPHONY_CHROME names one): shot not run");
+        return;
+    };
+    let site = site();
+    site.set_file(
+        "/attach.html",
+        b"<!doctype html><title>attach</title><h1>Before</h1>".to_vec(),
+        "text/html",
+    );
+    let scratch = Scratch::new("attach");
+    // A checkout's top folder as the board's lookup reads it, with no git process.
+    let checkout = scratch.join("checkout");
+    std::fs::create_dir_all(checkout.join(".git")).unwrap();
+    std::fs::write(checkout.join(".git/HEAD"), "ref: refs/heads/main\n").unwrap();
+    let output = shot(
+        &chrome,
+        &[
+            &site.url("/attach.html"),
+            "--out",
+            "evidence/after.png",
+            "--shot",
+            "evidence/before.png",
+            "--eval",
+            "document.querySelector('h1').textContent = 'After'",
+            "--attach",
+        ],
+    )
+    .current_dir(&checkout)
+    .output()
+    .unwrap();
+    assert!(output.status.success(), "{}", said(&output));
+    let stdout = String::from_utf8(output.stdout.clone()).unwrap();
+    let lines: Vec<&str> = stdout.lines().collect();
+    let [evaluated, before, after] = lines.as_slice() else {
+        panic!("the evaluation and a line a picture: {}", said(&output));
+    };
+    assert_eq!(*evaluated, "\"After\"");
+    let mut stored = Vec::new();
+    for (line, name) in [(before, "before.png"), (after, "after.png")] {
+        let file = line
+            .strip_prefix(&format!("![{name}](/artifacts/uploads/"))
+            .and_then(|rest| rest.strip_suffix(')'))
+            .unwrap_or_else(|| panic!("{line} is no line attaching {name}"));
+        let (sha, ext) = file.split_once('.').unwrap();
+        assert!(
+            ext == "png" && sha.len() == 64 && sha.bytes().all(|b| b.is_ascii_hexdigit()),
+            "{file}"
+        );
+        let saved = std::fs::read(checkout.join("evidence").join(name)).unwrap();
+        assert_eq!(
+            std::fs::read(checkout.join("artifacts/uploads").join(file)).unwrap(),
+            saved,
+            "{name} is stored as it was saved"
+        );
+        stored.push(file.to_string());
+    }
+    assert_ne!(stored[0], stored[1], "the page changed between the two");
+}
+
 #[test]
 fn an_escape_the_page_does_not_take_leaves_it_drawn_and_in_front_and_a_wait_scrolls_nothing() {
     let Some(chrome) = chrome::find() else {

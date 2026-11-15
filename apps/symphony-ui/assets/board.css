@@ -114,7 +114,8 @@ label { display:block; } html:root :focus-visible { outline:2px solid var(--ring
 .entry-text :is(p, li, blockquote, h1, h2, h3, h4, h5, h6, dt, dd), .entry-text.literal, #task-send { max-width:80ch; }
 .task-body table { display:block; max-width:100%; overflow:auto; }
 .entry, .ghost-entry { --c:var(--muted-foreground); position:relative; padding:5px 10px; border-radius:var(--r-sm); line-height:1.5; overflow-wrap:anywhere; }
-.entry::before, .ghost-entry::before { content:"";position:absolute; left:-18px; top:12px; width:8px; height:8px; border-radius:50%; background:var(--c); box-shadow:0 0 0 3px var(--ring,var(--background)); }
+/* A dot stands clear of its line in the colour of the surface it is on: a card's sets --dot-halo. */
+.entry::before, .ghost-entry::before { content:"";position:absolute; left:-18px; top:12px; width:8px; height:8px; border-radius:50%; background:var(--c); box-shadow:0 0 0 3px var(--dot-halo,var(--background)); }
 #task-thread .entry::before, .ghost-entry::before { box-shadow:0 0 0 3px var(--background); }
 .entry img { max-width:min(100%,460px); vertical-align:top; margin:2px 4px 2px 0; border-radius:var(--r-sm); }
 .entry time { color:var(--muted-foreground); font-variant-numeric:tabular-nums; margin-right:6px; font-size:.92em; }
@@ -152,7 +153,11 @@ li > .viewport-slot > p + p { margin-top:1em; }
 /* A ghost outlines what is still to come: the boxes it will draw (`ghost-*`, sized as the real
    ones), and a bar (.bone) at each line of text in them, at that line's height (viewport::Skeleton
    for plain lines). A page stays hidden under its ghost until its first screen is in
-   (viewport::Settle). The shimmer, one light across every bar, is for a reader who accepts motion. */
+   (viewport::Settle). The shimmer, one light across every bar, is for a reader who accepts motion,
+   and only on a ghost waiting for its read. A placeholder (.viewport-placeholder) waits for no read,
+   only to come within its sentinel's reach of the screen, where its content takes its place: its
+   bars are still, as an animation off the screen still runs every frame, under content-visibility
+   too, and a page at rest runs none. */
 .bone { display:inline-block; vertical-align:middle; width:var(--w,100%); max-width:100%; height:.8em; border-radius:var(--r-sm); background-color:var(--skeleton); }
 .skeleton > .bone { display:block; margin:calc(.5lh - .4em) 0; } .skeleton + .skeleton { margin-top:1em; }
 .skeleton > .bone:nth-child(3n+2) { --w:88%; } .skeleton > .bone:last-child:not(:first-child) { --w:60%; }
@@ -190,7 +195,7 @@ li > .viewport-slot > p + p { margin-top:1em; }
 .settle > .settle-cover { position:absolute; inset:0 0 auto; visibility:visible; }
 .status-text { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap; }
 @media (prefers-reduced-motion: no-preference) {
-  .bone { background-image:linear-gradient(90deg, transparent 35%, var(--skeleton-shine) 50%, transparent 65%); background-size:300% 100%; background-attachment:fixed; animation:shimmer 1.8s ease-in-out infinite; }
+  .bone:not(.viewport-placeholder *) { background-image:linear-gradient(90deg, transparent 35%, var(--skeleton-shine) 50%, transparent 65%); background-size:300% 100%; background-attachment:fixed; animation:shimmer 1.8s ease-in-out infinite; }
 }
 @keyframes shimmer { from { background-position:100% 0; } to { background-position:0 0; } }
 .history, .ghost-history { list-style:none; margin:12px 0 0; padding:0 0 0 20px; position:relative; font-size:var(--fs-sm); display:grid; gap:2px; }

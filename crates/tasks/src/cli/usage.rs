@@ -322,6 +322,12 @@ Codex thread, and refuses when there is neither. An address another registered
 handle holds is refused until that one unregisters or leaves, idle or not. An
 in-process subagent has no channel of its own: it reads `just tasks inbox`.
 
+The owner's chat goes to the session holding the seat (--chat). While nobody
+holds it, it goes to a fallback: the one next in line (--chat --if-free), else
+the live orchestrator with a callback first by handle, so a plain callback is
+enough for an orchestrator to hear chat. The CHAT line names who hears it, and
+says fallback and why when that session holds no seat.
+
 positional arguments:
   address               uds:/absolute/socket or codex:THREAD-UUID (default:
                         detected); through just tasks, a codex: one only
@@ -771,9 +777,11 @@ options:
     ),
     (
         "role",
-        r#"usage: just tasks role [-h] [--as ACTOR] slug {orchestrator,reviewer}
+        r#"usage: just tasks role [-h] [--as ACTOR] [--beside WHY]
+                       slug {orchestrator,reviewer}
 "#,
-        r#"usage: just tasks role [-h] [--as ACTOR] slug {orchestrator,reviewer}
+        r#"usage: just tasks role [-h] [--as ACTOR] [--beside WHY]
+                       slug {orchestrator,reviewer}
 
 positional arguments:
   slug
@@ -782,6 +790,7 @@ positional arguments:
 options:
   -h, --help            show this help message and exit
   --as ACTOR
+  --beside WHY          a reviewer's: why it joins beside one still there
 "#,
     ),
     (

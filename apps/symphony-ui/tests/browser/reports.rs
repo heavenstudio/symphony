@@ -1,10 +1,11 @@
 //! The Reports page (apps/symphony-web/src/reports.tsx, the web client's `reports` kind), the
 //! release client against the stand-in server answering `/api/reports` with a fortnight by the
 //! day: a phone's width held, one tap showing a period's every value on every chart, a day no file
-//! recorded told apart from a zero, the arrow keys moving between periods, two columns on a wide
-//! screen, the dark scheme's own colours, the empty state saying when the first roll-up comes, the
-//! last 24 hours with nothing chosen, and the window and the series hidden kept for the next
-//! visit, a hidden series' room given to the rest.
+//! recorded told apart from a zero, the arrow keys moving between periods, a window's many
+//! settings changes folded past the newest three so its first chart shows on a phone's first
+//! screen, two columns on a wide screen, the dark scheme's own colours, the empty state saying when
+//! the first roll-up comes, the last 24 hours with nothing chosen, and the window and the series
+//! hidden kept for the next visit, a hidden series' room given to the rest.
 use super::{SHOWN, chrome, chrome::Chrome, common, components::key, site, site::Site, texts};
 use serde_json::{Value, json};
 
@@ -220,6 +221,113 @@ fn on_a_wide_screen_the_charts_are_two_columns_and_dark_takes_its_own_colours() 
         );
         assert_eq!(chrome.eval(colours), json!(expected), "{scheme}");
     }
+}
+
+/// The days of [`fortnight`] its ten settings changes fall on, the last three before today, six on
+/// the middle one: as this repository's own fortnight stood on 13 Nov, symphony.toml changed six
+/// times on 12 Nov alone.
+const CHANGED: [u32; 10] = [10, 10, 11, 11, 11, 11, 11, 11, 12, 12];
+
+/// [`fortnight`] with the ten settings changes of [`CHANGED`], oldest first as the server sends
+/// them, the `n`th at `n + 1` o'clock, each subject as long as a merge's; the oldest names a
+/// 64-character hash, a word no line of a phone holds.
+fn changed_often() -> Value {
+    let mut page = fortnight();
+    page["marks"] = (0_u32..)
+        .zip(CHANGED)
+        .map(|(n, day)| {
+            let subject = if n == 0 {
+                format!(
+                    "Pin the board's SurrealDB at {}",
+                    "0123456789abcdef".repeat(4)
+                )
+            } else {
+                format!("Merge branch 'tools/settings-change-{n}': the board's limits and models")
+            };
+            json!({"at": FROM + f64::from(day) * DAY + 3600.0 * f64::from(n + 1),
+                "commit": format!("{n}f1c0a9b2d3e"), "subject": subject})
+        })
+        .collect();
+    page
+}
+
+/// On a phone the list of a window's ten settings changes shows the newest three and folds the
+/// rest under a disclosure, so the first chart starts on the first screen; a period with six says
+/// each in its readout.
+#[test]
+fn on_a_phone_a_window_s_many_settings_changes_fold_and_the_first_chart_shows_on_the_first_screen()
+{
+    let site = served(&changed_often());
+    let Some(mut chrome) = chrome() else { return };
+    screen(&mut chrome, 390, 844, true);
+    open(&mut chrome, &site, "[data-ready=reports] .chart-plot");
+    // The first chart's place on the page against the screen's height.
+    let first = chrome.eval(
+        "(() => { const c = document.querySelector('.chart').getBoundingClientRect(); return {top: Math.round(c.top + scrollY), screen: innerHeight}; })()",
+    );
+    assert!(
+        first["top"].as_i64().unwrap() < first["screen"].as_i64().unwrap(),
+        "the first chart starts on the first screen: {first}"
+    );
+    // The list's words read as drawn (`textContent`), whether the newest show whole or cut to a
+    // line, and whether the folded ones show (a closed `details` keeps its content's boxes,
+    // hidden: `checkVisibility`).
+    let marks = "(() => { const m = document.querySelector('.reports-marks'); const d = m.querySelector('details'); const newest = [...m.querySelectorAll(':scope > ul > li')]; return {listed: newest.map(li => li.textContent), whole: newest.every(li => li.scrollWidth <= li.clientWidth), more: d?.querySelector('summary').textContent ?? null, open: d?.open ?? null, folded: d ? [...d.querySelectorAll('li')].map(li => li.textContent.split(':')[0]) : null, drawn: d ? d.querySelector('ul').checkVisibility() : null, overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth}; })()";
+    let mark = |n: usize, day: &str| {
+        format!(
+            "{day}: settings changed, Merge branch 'tools/settings-change-{n}': the board's limits and models ({n}f1c0a9b2d3e)"
+        )
+    };
+    let folded = json!([
+        "Wed 13 Jan",
+        "Wed 13 Jan",
+        "Wed 13 Jan",
+        "Wed 13 Jan",
+        "Wed 13 Jan",
+        "Tue 12 Jan",
+        "Tue 12 Jan"
+    ]);
+    assert_eq!(
+        chrome.eval(marks),
+        json!({"listed": [mark(9, "Thu 14 Jan"), mark(8, "Thu 14 Jan"), mark(7, "Wed 13 Jan")],
+            "whole": false, "more": "7 more settings changes", "open": false, "folded": folded,
+            "drawn": false, "overflow": 0}),
+        "the newest three, newest first and cut to a line each, and the other seven, newest \
+         first, folded"
+    );
+    chrome.eval("document.querySelector('.reports-marks summary').click()");
+    assert!(
+        chrome.wait_for(
+            "document.querySelector('.reports-marks details').open && document.querySelector('.reports-marks details ul').checkVisibility()",
+            SHOWN
+        ),
+        "the disclosure opens on the other seven: {}",
+        chrome.eval(marks)
+    );
+    let opened = chrome.eval(marks);
+    assert_eq!(
+        (&opened["whole"], &opened["overflow"]),
+        (&json!(true), &json!(0)),
+        "opened, every change shows whole, the newest three too, within the phone's width, the \
+         hash's line broken: {opened}"
+    );
+    // The period with six says each of them when tapped.
+    tap(&mut chrome, usize::try_from(CHANGED[2]).unwrap());
+    assert!(
+        chrome.wait_for(
+            "document.querySelector('.chart .chart-readout').textContent.startsWith('Wed 13 Jan')",
+            SHOWN
+        ),
+        "the tapped day's readout: {}",
+        shown(&mut chrome)
+    );
+    assert_eq!(
+        chrome.eval(
+            "[...document.querySelector('.chart .chart-readout').querySelectorAll('.chart-mark-note')].map(p => p.textContent.split(' (')[1])"
+        ),
+        json!(["2f1c0a9b2d3e)", "3f1c0a9b2d3e)", "4f1c0a9b2d3e)", "5f1c0a9b2d3e)", "6f1c0a9b2d3e)", "7f1c0a9b2d3e)"]),
+        "each of the day's six settings changes, oldest first"
+    );
 }
 
 /// [`fortnight`] with Ready far over the other open stages each day it was rolled up, as the live

@@ -318,7 +318,7 @@ const COMMANDS: &[Command] = &[
                 many: false,
             },
         ],
-        opts: &[AS],
+        opts: &[AS, opt("--beside", "beside", STR)],
     },
     plain("handover", &[pos("slug"), pos("to")]),
     Command {
@@ -372,6 +372,7 @@ const COMMANDS: &[Command] = &[
             opt("--worktree", "worktree", STR),
             opt("--tab", "tab", STR),
             opt("--prompt", "prompt", STR),
+            opt("--beside", "beside", STR),
         ],
     },
     plain("restore", &[pos("slug"), maybe("handle")]),
