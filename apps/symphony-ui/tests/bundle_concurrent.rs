@@ -73,7 +73,7 @@ cp -R "$work/public" "$out/"
 
 /// The stand-in web client's build, which bundle.sh runs as `bash apps/symphony-web/npm.sh run
 /// --silent build -- --outDir OUT --emptyOutDir`: each kind's script, the style sheet of each kind
-/// but the task board, and Vite's manifest naming them.
+/// but the task board and the agents page, and Vite's manifest naming them.
 const WEB_BUILD: &str = r#"#!/bin/bash
 set -euo pipefail
 [ "$*" = "run --silent build -- --outDir $6 --emptyOutDir" ]
@@ -81,10 +81,10 @@ out="$6"
 rm -rf "$out"
 mkdir -p "$out/.vite" "$out/assets"
 entries=""
-for kind in board docs queue reports review; do
+for kind in agents board docs queue reports review; do
     printf 'export{a as run,b as stop};/*%s*/\n' "$BUNDLE_ID" > "$out/assets/$kind-$BUNDLE_ID.js"
     css=""
-    if [ "$kind" != board ]; then
+    if [ "$kind" != board ] && [ "$kind" != agents ]; then
         printf '/*%s-%s*/body{}' "$BUNDLE_ID" "$kind" > "$out/assets/$kind-$BUNDLE_ID.css"
         css="$(printf ',"css":["assets/%s-%s.css"]' "$kind" "$BUNDLE_ID")"
     fi
