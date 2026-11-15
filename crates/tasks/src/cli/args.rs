@@ -239,6 +239,7 @@ const COMMANDS: &[Command] = &[
             opt("--depends", "depends", Takes::Append),
             opt("--link", "link", Takes::Append),
             opt("--no-role", "no_role", Takes::Bool),
+            opt("--arm", "arm", STR),
         ],
     },
     Command {
