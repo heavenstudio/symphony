@@ -27,6 +27,39 @@ their dated history work is in [REVIEW](REVIEW.md).
 
 ## Waiting on an agent
 
+### Page loading
+
+- [x] **components-draw-when-data-arrives** — Each part of a page (a task's thread, its gates, a chart) would draw the moment its own data arrives, the copy from this device first, and redraw itself when newer data comes, with no part waiting for a slower one. Several pages do this already, each in its own hand-written way; Reports, the queue and home still arrive whole, and most pages start their reads one step later than they need to. How should a part get its data? A: one small piece of our own code that every page uses; each part asks the server for its own data, and the live channel tells a part when it has newer data to fetch. Reports' charts arrive in three groups. Nothing more to download. B: the same, built on the TanStack Query library: 10 kB more on each first visit, for features we already have or do not use. C: the same, but the data itself travels on the live channel, the streaming you described, in place of separate requests: a new protocol, and an unchanged part can no longer be answered with nothing. Recommended: A. Approve and say A, B or C in the note, or comment. [[analysis/components-draw-when-their-data-arrives#The choice]]
+  [2026-11-15 12:16] agent — Posted for the board task `app/components-draw-when-their-data-arrives`, from your words: "each component should be able to render itself once the data it needs is available".
+
+    **Today.** A task's page, the task board and a document already draw part by part. What holds their parts back is mostly the order the page asks in: nearly every page reads the board first and only then asks for anything else, though that read gives it one number. On a task's page under load the server answers the thread in 71 ms, the page in 146 and the gates in 252, and the page asks for them one after another. Three tasks in flight each fix one such order by hand.
+
+    **What you would see under A.** A task's thread, head and gates each appear as their own answer comes, not in a fixed order; every page starts all its reads at once. Reports draws its flow, decisions and code charts first, then the agents' charts, then the board's health, and each group refreshes when its own data changes, not every five minutes. Placeholders keep each part's place, so nothing jumps.
+
+    **What each costs.**
+    - **A:** about 300 lines of our own and their tests, 143 bytes on a first visit (measured on a probe), one small addition to the server's answers, and Reports' answer split in three. It takes out the read ordering each page writes by hand today.
+    - **B:** the same work plus the library: 10,028 bytes on every first visit, over half the room a task's page has under its cap. It adds retries, deduplication and re-reading on focus, which A's code has or the live channel replaces. Its own way of keeping data on the device would replace the device cache you approved with a weaker one, so it would be used beside ours, as a second cache.
+    - **C:** no separate requests, one channel. But today an unchanged part is answered with nothing, which is what makes a return visit cheap, and on the channel that is lost unless we build it again; the channel sends everything to every page, so it would need subscriptions; and a page's reads would stop whenever the channel reconnects.
+
+    **GraphQL** has a feature for exactly this (`@defer`). It is still outside the released GraphQL specification and neither Rust library serves it, and the rest of your earlier reasoning stands, so it is not offered.
+
+    **Not yet known.** How much sooner a task's parts appear with their reads side by side: about 150 ms sooner for the thread and the gates under load, from the server's times added up, not measured in a browser. The first step measures it before any other page moves.
+
+    **Why A.** The pattern you asked for is mostly there; what is missing is one place that does it, and A is that and little else. The live channel already is the data channel that tells a part when to refresh.
+
+    **The order.** The shared code and a task's page first, then the pages that follow the board, Reports, a document, runs; each measured before and after under load.
+
+    **Earlier verdicts checked.** **graphql** (A: keep the JSON reads, the live feed and the device cache, "let's keep it simple for now") decides against a GraphQL client, so none is an option here; it did not weigh a library over the reads as they are, which its card named as open if ever needed, so B is asked. **client-cache** (approved) keeps what a page drew on the device and checks it by checksum: A and C keep it whole, and B would use it beside the library's cache. **client-framework** (B, then React) named no data layer. None of them answers this card.
+  [2026-11-15 12:27] owner · approved — A. Code from tanstack can be compared agains the current one so that missing optmizations can be added. If too much is missing, then using a library could be more efficient assuming it is well maintained. Another aspect is that components could load their own "mockups" with the mocked line elements and etc while they wait to get their data. For example individual charts in the reports page could draw an empty chart and animate once data arrives or have a mocked box there.
+  [2026-11-15 12:30] agent — Recorded: A. Four corrections to the card as you read it, from its review; none changes A.
+
+    - **The 150 ms** is for the first visit to a task this device has not kept. On a return visit the page already asks for its parts side by side: the thread comes about 2 ms sooner, the gates no sooner, and the page is fully checked only when the gates' own read answers, which none of the options shortens (the board task `perf/task-gates-kept-by-tip` does).
+    - **A's cost** also includes a word on the live channel whenever the server writes a report's day file or a run, and Reports and the runs page opening a live channel, which they do not follow today.
+    - **The 143 bytes** is the probe's small store. The real one is not measured.
+    - **`@defer` at its sources:** GraphQL.js calls it "pending GraphQL specification work"; async-graphql removed it after its 1.x line and says it returns once it is a standard ([its issue 403](https://github.com/async-graphql/async-graphql/issues/403)); Juniper's request has been open since 2020 ([its issue 734](https://github.com/graphql-rust/juniper/issues/734)).
+
+    Your two asks are taken into the implementation's first task, filed when this lands: TanStack Query's code compared with ours for the optimizations ours lacks, with a library taken if too much is missing and it is well maintained; and each component drawing its own mock-up while it waits, such as a chart's empty frame that fills when its data arrives.
+
 ### Board
 
 - [x] **postgresql-binary-source** — The board is moving from SurrealDB to PostgreSQL, so every machine that runs a board needs the PostgreSQL program. SurrealDB's makers publish a ready program, which Symphony downloads once and checks. The PostgreSQL project publishes only source code: for a Mac it points to other people's installers, and for Linux to the system's packages. Nothing on the board's pages changes under any option. Where should the program come from? A: a ready-made build from a community project on GitHub, downloaded once and checked, as SurrealDB is today. B: PostgreSQL's own source code from postgresql.org, downloaded, checked and compiled once on each machine. C: whatever PostgreSQL is installed on the machine (Homebrew on a Mac, the system's packages on Linux), which a person installs. Recommended: B. Approve and say A, B or C in the note, or comment. [[analysis/postgresql-binary-source#The options]]

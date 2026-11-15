@@ -14,9 +14,16 @@ import {
   type TaskHost,
   withEntries,
 } from "./task-live";
-import { aRole, aTask, aWork, CASES, memoryStorage } from "./testing";
+import { aRole, aTask, aWork, CASES, feeds, memoryStorage, say } from "./testing";
 import { NOT_IN_TIME } from "./trouble";
-import { BOARD_PATH, type Task, type TaskChange, type TaskEntry, type TaskPage } from "./wire";
+import {
+  BOARD_PATH,
+  FEED_EVENT,
+  type Task,
+  type TaskChange,
+  type TaskEntry,
+  type TaskPage,
+} from "./wire";
 import { NO_WORK } from "./work";
 
 /** A response as the page reads one: its status, its tag and its JSON body. */
@@ -1214,7 +1221,9 @@ describe("the board under a task's page", () => {
   it("reads the task once the board's version is read and the device's copy drawn", async () => {
     const { task, asked } = live(() => answer(200, aPage(), '"p1"'));
     const run = task.run(FRAME);
-    await run.views.read();
+    // Nothing the board's loop waits for before it opens the feed.
+    expect(run.views.read()).toBeUndefined();
+    await pass();
     expect(urls(asked)).toEqual([PAGE_URL]);
     run.views.freshen((f) => ({ ...f, open: true }));
     expect(task.fresh.open).toBe(true);
@@ -1266,5 +1275,218 @@ describe("the board under a task's page", () => {
     await pass(60_000);
     await started;
     expect(asked).toHaveLength(1);
+  });
+
+  /**
+   * A page started on a server whose board answers once the test says (`answerBoard`) and whose
+   * other reads `route` answers, with the feed's sockets it makes (`opened`).
+   */
+  const begun = (route: Route, kept: Record<string, Kept> = {}) => {
+    const board = later<Response>();
+    const run = live((url, etag) => (url === BOARD_PATH ? board.promise : route(url, etag)), kept);
+    const listens = { addEventListener: () => {}, removeEventListener: () => {} };
+    vi.stubGlobal("window", { ...listens, reviewHoldPlace: () => {} });
+    vi.stubGlobal("document", {
+      ...listens,
+      getElementById: () => null,
+      querySelector: () => null,
+    });
+    vi.stubGlobal("sessionStorage", memoryStorage());
+    const opened = feeds("http://127.0.0.1/task/w/a");
+    const done = run.task.start(FRAME);
+    const answerBoard = () => board.settle(answer(200, CASES.samples.board, '"b1"'));
+    return { ...run, opened, done, answerBoard };
+  };
+  const KEPT = {
+    "task:w/a page": { value: aPage(), etag: '"p1"', saved: 1_000 },
+    "task:w/a thread": { value: history([anEntry(1)], null), etag: '"t1"', saved: 2_000 },
+  };
+  /** Feed event `version`, of `changes`, as the socket says it. */
+  const said = (version: number, ...changes: [string, unknown][]) =>
+    JSON.stringify({ ...event(...changes), version });
+
+  it("asks for nothing but the board, and makes no socket, before the board's version is read", async () => {
+    const { asked, opened, page, done, d, answerBoard } = begun(() => answer(304), KEPT);
+    await pass();
+    // The device's copy is drawn meanwhile; its checks and the feed wait for the version.
+    expect(d.page?.task.slug).toBe("w/a");
+    expect(urls(asked)).toEqual([BOARD_PATH]);
+    expect(opened).toEqual([]);
+    // Gone before the board answers: its answer starts nothing.
+    page.abort();
+    answerBoard();
+    await done;
+    expect(urls(asked)).toEqual([BOARD_PATH]);
+    expect(opened).toEqual([]);
+  });
+
+  it("opens the feed at the board's answer, while the page's and the thread's checks are out", async () => {
+    const pageRead = later<Response>();
+    const threadRead = later<Response>();
+    const { task, d, asked, opened, page, done, answerBoard } = begun(
+      (url) => (url === PAGE_URL ? pageRead.promise : threadRead.promise),
+      KEPT,
+    );
+    answerBoard();
+    await pass();
+    // One read of each, and the one socket, from the board's version: none waits for another.
+    expect(asked).toEqual([
+      [BOARD_PATH, ""],
+      [PAGE_URL, '"p1"'],
+      [THREAD_URL, '"t1"'],
+    ]);
+    expect(opened.map(({ url }) => url)).toEqual(["ws://127.0.0.1/api/feed?since=7&document="]);
+    const source = opened[0]?.source;
+    source?.dispatchEvent(new Event("open"));
+    await pass();
+    // Open, with neither check answered: still this device's copy.
+    expect(task.fresh).toMatchObject({ open: true, saved: 1_000, unanswered: [PAGE, THREAD] });
+    // What the feed says before the answers shows at once, on the copy.
+    say(source, FEED_EVENT, said(8, ["task-fields", change("w/a", { title: "Heard" })]));
+    say(source, FEED_EVENT, said(9, ["message", anEntry(5).message]));
+    await pass();
+    expect(d.page?.task.title).toBe("Heard");
+    expect(ids(d.entries)).toEqual([1, 5]);
+    // The page as the server had it before the event: the event is applied onto its answer.
+    pageRead.settle(answer(200, aPage(aTask("w/a", { title: "Read", updated: 3 })), '"p2"'));
+    await pass();
+    expect([d.page?.task.title, d.page?.task.updated]).toEqual(["Heard", 3]);
+    expect(waits(task.fresh, PAGE)).toBe(false);
+    // The thread's newest page, without the message the feed brought: it stays.
+    threadRead.settle(answer(200, history([anEntry(1), anEntry(2)], null), '"t2"'));
+    await pass();
+    expect(ids(d.entries)).toEqual([1, 2, 5]);
+    expect(task.fresh).toEqual({ ...FRESH, open: true });
+    // Three reads in all, and the one socket still open.
+    expect(asked).toHaveLength(3);
+    expect(opened.map(({ closed }) => closed)).toEqual([0]);
+    page.abort();
+    await done;
+    expect(opened.map(({ closed }) => closed)).toEqual([1]);
+  });
+
+  it("opens the feed beside a first visit's read, whose answer takes what was heard meanwhile", async () => {
+    const pageRead = later<Response>();
+    const { task, d, asked, opened, page, done, answerBoard } = begun(() => pageRead.promise);
+    answerBoard();
+    await pass();
+    expect(asked).toEqual([
+      [BOARD_PATH, ""],
+      [PAGE_URL, ""],
+    ]);
+    expect(opened).toHaveLength(1);
+    const source = opened[0]?.source;
+    source?.dispatchEvent(new Event("open"));
+    // With no page to change yet, the event is kept for the answer.
+    say(source, FEED_EVENT, said(8, ["task-fields", change("w/a", { title: "Heard" })]));
+    await pass();
+    expect(d.page).toBeNull();
+    pageRead.settle(answer(200, aPage(aTask("w/a", { title: "Read" })), '"p1"'));
+    await pass();
+    expect(d.page?.task.title).toBe("Heard");
+    expect(task.fresh).toEqual({ ...FRESH, open: true });
+    expect(asked).toHaveLength(2);
+    page.abort();
+    await done;
+  });
+
+  it("tries a failed check again while the feed stays open", async () => {
+    let tries = 0;
+    const { task, asked, opened, page, done, answerBoard } = begun((url) => {
+      if (url !== PAGE_URL) return answer(304);
+      tries += 1;
+      return tries === 1 ? answer(503) : answer(304);
+    }, KEPT);
+    answerBoard();
+    await pass();
+    opened[0]?.source.dispatchEvent(new Event("open"));
+    await pass();
+    expect(task.fresh).toMatchObject({ open: true, unanswered: [PAGE], failing: [PAGE] });
+    // The first of a failed read's waits, shorter than the feed's silence.
+    await pass(1_000);
+    expect(task.fresh).toEqual({ ...FRESH, open: true });
+    expect(urls(asked)).toEqual([BOARD_PATH, PAGE_URL, THREAD_URL, PAGE_URL]);
+    expect(opened).toHaveLength(1);
+    page.abort();
+    await done;
+  });
+
+  it("catches the thread up from the newest message shown before the feed opened again", async () => {
+    let held: ReturnType<typeof later<Response>> | null = null;
+    const { task, d, asked, opened, page, done, answerBoard } = begun((url) => {
+      if (url === PAGE_URL) return held?.promise ?? answer(200, aPage(), '"p1"');
+      if (url === THREAD_URL) return answer(200, history([anEntry(4), anEntry(5)], null), '"t1"');
+      // The messages posted while the feed was down.
+      if (url === `${THREAD_URL}&after=5`) return answer(200, history([anEntry(6), anEntry(7)]));
+      return answer(200, history([]));
+    });
+    answerBoard();
+    await pass();
+    await task.history(false);
+    expect(ids(d.entries)).toEqual([4, 5]);
+    // The feed is lost; after its wait the board is read again, and the page with it.
+    held = later<Response>();
+    opened[0]?.source.dispatchEvent(new Event("error"));
+    await pass(1_000);
+    expect(opened).toHaveLength(2);
+    const source = opened[1]?.source;
+    source?.dispatchEvent(new Event("open"));
+    // The new stream brings a message before the page's read answers.
+    say(source, FEED_EVENT, said(8, ["message", anEntry(10).message]));
+    await pass();
+    expect(ids(d.entries)).toEqual([4, 5, 10]);
+    held.settle(answer(200, aPage(), '"p1"'));
+    await pass();
+    expect(urls(asked).filter((url) => url.includes("after="))).toEqual([`${THREAD_URL}&after=5`]);
+    expect(ids(d.entries)).toEqual([4, 5, 6, 7, 10]);
+    page.abort();
+    await done;
+  });
+
+  it("drops the answer to a page read asked before one already answered", async () => {
+    const first = later<Response>();
+    let reads = 0;
+    const { d, opened, page, done, answerBoard, store } = begun((url) => {
+      if (url !== PAGE_URL) return answer(200, history([]));
+      reads += 1;
+      return reads === 1
+        ? first.promise
+        : answer(200, aPage(aTask("w/a", { title: "New" })), '"p2"');
+    });
+    answerBoard();
+    await pass();
+    expect(reads).toBe(1);
+    // The feed is refused while the first read is out: the next round reads the page beside it.
+    opened[0]?.source.dispatchEvent(new Event("error"));
+    await pass(1_000);
+    expect(reads).toBe(2);
+    expect(d.page?.task.title).toBe("New");
+    // The older read's answer, late: neither drawn nor kept on the device.
+    first.settle(answer(200, aPage(aTask("w/a", { title: "Old" })), '"p1"'));
+    await pass();
+    expect(d.page?.task.title).toBe("New");
+    expect(d.pageCopy?.[0]).toBe('"p2"');
+    expect(keptBy(store).map(([, part, etag]) => [part, etag])).toEqual([[PAGE, '"p2"']]);
+    page.abort();
+    await done;
+  });
+
+  it("says nothing of an older page read that fails after a later one answered", async () => {
+    const first = later<Response>();
+    let reads = 0;
+    const { task, d, opened, page, done, answerBoard } = begun((url) => {
+      if (url !== PAGE_URL) return answer(200, history([]));
+      reads += 1;
+      return reads === 1 ? first.promise : answer(200, aPage(), '"p2"');
+    });
+    answerBoard();
+    await pass();
+    opened[0]?.source.dispatchEvent(new Event("error"));
+    await pass(1_000);
+    first.settle(answer(503));
+    await pass();
+    expect([d.page?.task.slug, d.error, task.fresh.failing]).toEqual(["w/a", "", []]);
+    page.abort();
+    await done;
   });
 });

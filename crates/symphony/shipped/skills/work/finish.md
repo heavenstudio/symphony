@@ -17,6 +17,25 @@ required approval or perform a landing the task did not authorize. A move to rev
 project's configured `on_review` command; what it does, and any later landing, belong to the
 project's configuration and instructions.
 
+## The default branch, once
+
+Merge the default branch into the branch once: when the work is complete and you are about to
+ask for review, so the review is of the change on the default branch as it is. Run the focused
+checks again at that tip and name it in the evidence. From then on never merge it because it
+moved: it always moves, and merge, build, measure and merge again has no end. The task lands
+once its approvals stand and it merges without conflict. Merge again only when a land reports a
+conflict ([rare-endings.md](rare-endings.md#a-refused-land)) or a reviewer asks for it by naming
+what the default branch gained. A figure a document quotes (a size, a count of bytes) is measured
+once, at that tip. Where the project names another branch for a task to merge, that branch
+stands in the default branch's place.
+
+## Evidence at the tip, once
+
+Run the focused builds and tests through the project's recorded entrypoints, at the tip you ask
+review for: the runs recorded there are what a reviewer reads in place of running them again. A
+run made before your last commit is of another commit, so run it again yourself before the move
+to review; a reviewer builds or runs only what your record leaves open.
+
 ## Parent feature delivery
 
 A top-level task owns one feature branch and one delivery cycle. Subtasks are small

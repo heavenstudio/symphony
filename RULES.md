@@ -31,8 +31,8 @@ assessment's: an assessor, which neither filed, orchestrates nor executed it, re
 it is filed and each time it moves to review, before any reviewer, and writes the stamps it needs
 from the project's catalogue (`just tasks stamps`: its tests green at the tip, a fresh reviewer's
 approve, pictures, the owner's approve; [TASKS](docs/TASKS.md#needed-stamps)), a reviewer's approve
-alone with none written. Where it needs review, its reviewer runs the same tests, never the suite,
-judges whether the evidence is good enough for the change's risk, and its approve, a verdict on
+alone with none written. Where it needs review, its reviewer reads the task's recorded runs at
+the tip and builds or runs nothing they cover (`workflow/no-second-build-in-review`), judges whether the evidence is good enough for the change's risk, and its approve, a verdict on
 the task itself and never a review subtask, is that stamp. The land lands the task once every
 stamp it needs stands on its tip, and refuses naming who gives a missing one. A slice's evidence is
 judged in its parent's review. Higher risk asks for stronger evidence, never for the whole suite. No task runs `just verify`,
@@ -42,6 +42,36 @@ A run starts once `[releases] every_landings` tasks have landed (the cadence, st
 itself), and each day once the owner installs its schedule, so a break no task's focused tests
 reach is found within that many landings. Evidence by kind of change, how to pick the tests and
 worked examples: [CHECKS](docs/CHECKS.md).
+
+### `workflow/never-chase-main`
+
+A task merges main into its branch once: when its work is complete and it is about to ask for
+review, so the review is of the change on main as it is. It runs its closest tests again at that
+tip, posts the evidence naming it and moves to review
+([after main moves](docs/CHECKS.md#after-main-moves)). From then on it never merges main because
+main moved. Main always moves: a task that fetches main, builds and measures finds main moved
+again by the time that ends, a loop with no end, and each merge after an approve asks for a fresh
+one. It lands once its stamps stand on its tip and it merges without conflict. It merges main
+again only when its land reports a conflict, or when a reviewer asks for it by naming what main
+gained that breaks the change or that the change breaks. A reviewer never sends a branch back
+only because main moved. A figure a guide quotes (a page's first-visit bytes, a size) is measured
+once, at the review tip, never again for each new main. A release candidate's fix merges
+`release-candidate` in main's place (`workflow/release-reds-first`).
+
+### `workflow/no-second-build-in-review`
+
+What a task built and ran while it was made is not built or run again to review it. Its
+executor's builds and tests are recorded with the commit they ran at
+([MACHINE_WORK](docs/MACHINE_WORK.md#recording-builds-and-tests)), and the recorded runs at its
+tip are its evidence: a stamp stands on evidence of work already done, a build, a test run, a
+review, so that a task is quick to land. A reviewer takes a green recorded run at the tip as
+run. It reads the diff against the record, judges whether those runs cover the change, and
+builds or runs only what the record does not cover and reading cannot settle: a doubt it names,
+with the smallest target that answers it; a mutation, to see that a test can fail; a run the
+executor left out. A run the evidence claims and no record at the tip shows is the executor's
+to make, asked for in a changes. What changes do to each other once they are on main is the
+release run's to find, on the candidate it holds ([RELEASES](docs/RELEASES.md)), never a
+review's.
 
 ### `workflow/fast-bugfixes`
 
