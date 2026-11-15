@@ -494,7 +494,6 @@ fn hand_off(repo: &Repo, options: &Options, args: &[String], out: &mut dyn Write
         }
         Err(TryLockError::Error(_)) => return None,
     }
-    note(out, lock.moved.as_slice());
     let folder = lock.folder.clone();
     // Said while it builds, so a count or a run started meanwhile hears who holds the lock.
     let building = Running {
@@ -543,13 +542,6 @@ fn hand_off(repo: &Repo, options: &Options, args: &[String], out: &mut dyn Write
 /// fails.
 fn driver(repo: &Repo, options: &Options, out: &mut dyn Write) -> Result<Option<PathBuf>, String> {
     let until = Bound::until(Instant::now() + DRIVER_BUILD);
-    // A process in what a build older than the rename left keeps it where it is: the run goes on
-    // from this build, which stops as that look does.
-    let legacy = place::legacy(&repo.root, &repo.common, &options.worktree)?;
-    unused_in(&legacy.trees(), until).map_err(|stop| match stop {
-        Stop::Refused(why) | Stop::Error(why) | Stop::InUse(why) => why,
-    })?;
-    note(out, &legacy.moved(&repo.root, &repo.common, until)?);
     let mut place = place::place(&repo.root, &repo.main, &repo.common, &options.worktree)?;
     let tracking = format!("refs/remotes/{}/{}", options.remote, options.branch);
     let refspec = format!("+refs/heads/{}:{tracking}", options.branch);
@@ -695,7 +687,7 @@ fn status(
             return 1;
         }
     };
-    let folder = record::kept(&repo.common);
+    let folder = record::folder(&repo.common);
     let runs = record::read(&folder);
     let _ = write!(out, "{}", record::status(&runs, &ordered, now));
     // What a run waits for before it checks main ([`regenerated`]), in a project that has any.
@@ -767,7 +759,7 @@ fn cadence_of(
     let ordered = ordered_releases(&repo.root)?;
     cadence::of(
         &repo.root,
-        &record::kept(&repo.common),
+        &record::folder(&repo.common),
         &ordered,
         repo.project.releases.every_landings,
         remote,
@@ -830,7 +822,6 @@ fn settled(
     if lock.taken.is_err() {
         return candidate::read(&lock.folder);
     }
-    note(out, lock.moved.as_slice());
     let mut found = candidate::read(&lock.folder)?;
     if let Some(held) = found.as_mut().filter(|held| held.open()) {
         note(out, &settle_held(repo, remote, branch, held, now));
@@ -856,7 +847,6 @@ fn drop_candidate(repo: &Repo, now: f64, out: &mut dyn Write, err: &mut dyn Writ
             "a release run holds the lock: drop the release candidate once it ends",
         );
     }
-    note(out, lock.moved.as_slice());
     let mut held = match candidate::read(&lock.folder) {
         Ok(Some(held)) if held.open() => held,
         Ok(_) => {
@@ -976,7 +966,6 @@ fn run(repo: &Repo, options: &Options, out: &mut dyn Write, err: &mut dyn Write)
             return 1;
         }
     }
-    note(out, lock.moved.as_slice());
     // A run killed while its check ran left that said; while that check's group lives, it runs on.
     let earlier = record::holder(&folder).filter(|earlier| earlier.id != record.id);
     if let Some(earlier) = &earlier
@@ -1725,14 +1714,6 @@ fn night(
             Stop::Error(why)
         }
     };
-    // What a build older than the rename left moves once nothing works in it, as the checkout is
-    // checked out once nothing does.
-    let legacy = place::legacy(&repo.root, &repo.common, &options.worktree).map_err(placed)?;
-    unused_in(&legacy.trees(), until)?;
-    note(
-        out,
-        &(legacy.moved(&repo.root, &repo.common, until)).map_err(placed)?,
-    );
     let mut place =
         place::place(&repo.root, &repo.main, &repo.common, &options.worktree).map_err(placed)?;
     let remote = options.remote.as_str();

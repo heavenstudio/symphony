@@ -858,34 +858,24 @@ Until it is installed, only the cadence runs `just verify` on main.
 
 ## The rename
 
-`just nightly`, the command `nightly` and `--release COMMIT` are the release run's old names ([the
-names](analysis/release-candidate.md#the-names)). What a build that knew only them left on disk is
-this build's to take over (`crates/symphony/src/release.rs`, `release/record.rs`,
-`release/place.rs`):
+The release run's old names are `nightly`, the recipe and the command, and the flag `--release
+COMMIT` ([the names](analysis/release-candidate.md#the-names)). The first run of a build that knew
+the new ones moved what a build that knew only the old left on disk: its records from
+`.git/symphony/nightly/` to `.git/symphony/release/`, and its checkout from
+`../symphony-wt/nightly` to `../symphony-wt/release`. Releases have been cut under the new name
+since, and what is left of the old is this (`crates/symphony/src/release.rs`, `release/record.rs`,
+`release/board.rs`):
 
-- **The old recipe.** `just nightly` runs nothing and says "`just nightly` is now `just release`",
-  exit 2, until the first release `just release` cuts; then it goes.
-- **The old command.** Neither `symphony` nor `symphony-build` has a `nightly`: this repository's
-  `on_land` names `symphony-build release --due` ([the trigger](#the-cadence)), and a due count
-  hands its run only to the tip's `symphony-build`. An older build's count, which handed its run to
-  the tip's `symphony`, would find no release run there; none runs, as no `on_land` names an older
-  build any more. `symphony-build release --release COMMIT` says "`--release COMMIT` is now
-  `--commit COMMIT`", exit 2, and runs nothing.
-- **The records.** Until a run moves them, `--status` and the cadence read the records where an
-  older build keeps them, `.git/symphony/nightly/`, and move nothing. A run takes that folder's
-  lock before it decides anything, so no older build's run, and no second run starting at the same
-  time, goes beside it, and renames the folder to `.git/symphony/release/` while it holds it: a
-  lock is the open file's, not its name's, so a run that opens it after, at either name, finds it
-  held, and one that opened it before and takes it once let go finds it in the new folder and
-  moves nothing. A folder that cannot be renamed is recorded in where it is, which the run says.
-- **The checkout.** An older build's checkout is `../symphony-wt/nightly`, locked with `the
-  Symphony nightly's checkout` and marked `symphony-nightly`. While a process works in it, or holds
-  a file there open, the run moves nothing and stops as the look before it resets its checkout
-  ([above](#the-release-run)) stops it; else it moves the checkout (unlocked, moved by `git
-  worktree move` with its `.target/`, locked with the new reason and marked again, its build's
-  stamp renamed). A checkout that build did not make, or one with something where it would go, is
-  left as it is, and said. The board's sweep keeps a checkout locked with either reason, and
-  clears its build after a week.
+- **The old recipe and command.** Neither the justfile nor `symphony` nor `symphony-build` has a
+  `nightly`, so each refuses it as any name it lacks: this repository's `on_land` names
+  `symphony-build release --due` ([the trigger](#the-cadence)). `symphony-build release --release
+  COMMIT` says "`--release COMMIT` is now `--commit COMMIT`", exit 2, and runs nothing.
+- **What an older build makes again.** Its records' folder and its checkout, locked with `the
+  Symphony nightly's checkout`, are neither read nor moved: the run records in its own folder and
+  checks in its own checkout, whatever the old ones hold or whoever works in them. The checkout
+  named as `--worktree` is refused as one the release run did not lock, and the board's sweep
+  keeps it as it keeps any worktree locked for a reason it does not know. None of it happens while
+  `on_land` names only the linked `symphony-build`, which `just release` keeps current.
 - **Records of an older build.** One of version 1 reads as this build's (version 2): its kind
   `nightly` as `release`, its `release` (an out-of-cycle release) as `out-of-cycle`, and each log
   under the old folder where the move put it. The Runs page's day files keep the label `nightly
@@ -895,10 +885,6 @@ this build's to take over (`crates/symphony/src/release.rs`, `release/record.rs`
   (`symphony_board::red::SERIES`) while a red of the old name is open: the run writes to, and
   closes, a key's open red of the old name before it looks at the new, so the next green closes it
   and nothing is filed beside it. The old prefix goes once none is open.
-
-An older build that runs a count after a newer one moved the folder finds no record there, and a
-due run of it makes the old folder and checkout again; `on_land` names only the linked
-`symphony-build`, which `just release` keeps current ([the trigger](#the-cadence)).
 
 ## Never
 

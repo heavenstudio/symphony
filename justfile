@@ -94,12 +94,6 @@ release *ARGS:
     @tools/rs-bin.sh --link symphony-build >/dev/null
     @tools/rs-bin.sh symphony-build release "$@"
 
-# The release run's name before `just release`: it runs nothing and says so, exit 2, until the
-# first release `just release` cuts.
-[no-exit-message]
-nightly *ARGS:
-    @echo '`just nightly` is now `just release`' >&2; exit 2
-
 [no-exit-message]
 agent-send *ARGS:
     @tools/rs-bin.sh agent-send "$@"
