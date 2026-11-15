@@ -4,16 +4,23 @@ use crate::{AgentProbes, MachineWork};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[expect(clippy::struct_field_names, reason = "the field is the wire's name")]
 pub struct Agents {
     #[serde(default)]
     pub machine_work: MachineWork,
     pub generated: f64,
+    /// Written as the wire carries it, the panes probe under both its names.
+    #[cfg_attr(
+        feature = "typescript",
+        ts(as = "crate::agent_probes::ProbesWire", inline)
+    )]
     pub probes: AgentProbes,
     pub agents: Vec<Agent>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[expect(clippy::struct_field_names, reason = "the field is the wire's name")]
 pub struct Agent {
     pub handle: String,
@@ -54,12 +61,14 @@ pub struct Agent {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct AgentSlots {
     pub open: usize,
     pub cap: usize,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct HeldTask {
     pub slug: String,
     pub role: String,
@@ -67,6 +76,7 @@ pub struct HeldTask {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct AgentRun {
     pub recipe: String,
     pub phase: String,
@@ -74,6 +84,7 @@ pub struct AgentRun {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct AgentSaid {
     pub slug: String,
     pub ts: f64,
@@ -83,6 +94,7 @@ pub struct AgentSaid {
 /// Where an agent's Go to session control goes (docs/TASKS.md, "Going to a session"): a session
 /// the server knows a way into, by its web address, its pane on the server's machine, or both.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct SessionGo {
     /// Whose session it reaches: the agent's own, or for a subagent with no way in of its own,
     /// the parent session that runs it.
@@ -205,12 +217,14 @@ pub const AGENT_SCREEN_PATH: &str = "/api/agent-screen";
 
 /// What a focus did, as the page says it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct AgentFocus {
     pub said: String,
 }
 
 /// A pane's visible screen, as it was read.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct AgentScreen {
     /// Whose session it shows: the agent's own, or its parent's.
     pub handle: String,

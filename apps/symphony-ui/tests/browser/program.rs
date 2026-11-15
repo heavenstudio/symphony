@@ -1,4 +1,4 @@
-//! The program (src/split.rs): the task pages with `/agents`, the chat, the menus and the task
+//! The program (src/split.rs): the task pages, the chat, the menus and the task
 //! timeline share one script and main module, each kind with a chunk of its own. A move
 //! between its pages fetches the page's chunk alone, never the script or the main module again. The
 //! media layer is a chunk of its own, which a page fetches only once it shows media. The page shown
@@ -110,7 +110,7 @@ fn a_move_between_the_program_s_pages_fetches_the_page_s_chunk_and_never_the_pro
         [1, 1, 1, 1],
         "the chat: its chunk alone"
     );
-    // Away to a page of another module (Reports, the web client's) and back.
+    // Away to pages of other modules (Reports and the agents page, the web client's) and back.
     follow(&mut chrome, "/reports");
     shows(&mut chrome, "[data-ready=reports]");
     follow(&mut chrome, "/agents");
