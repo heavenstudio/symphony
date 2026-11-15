@@ -1,10 +1,11 @@
 # Symphony
 
-The app's workspace owns its server and its two web clients under `apps/` (the React one,
-`apps/symphony-web`, taking the pages over a kind at a time from the Dioxus one), and the review
-library, wire types, task board, working-directory scanner, headless Chrome driver and
-the tests' CPU meters and waits (`crates/test-time`, RULES.md `tests/no-test-fails-on-load`)
-under `crates/`.
+The app's workspace owns its server, its two web clients and its Mac app under `apps/` (the React
+one, `apps/symphony-web`, taking the pages over a kind at a time from the Dioxus one; the Mac app,
+`apps/symphony-desktop`, a thin shell over each server's own pages, `publish = false`, whose window
+crates no other package links), and the review library, wire types, task board,
+working-directory scanner, headless Chrome driver and the tests' CPU meters and waits
+(`crates/test-time`, RULES.md `tests/no-test-fails-on-load`) under `crates/`.
 The app's formats and operating contract live in [docs/](docs/README.md).
 A consuming project owns its landing policy and shared-service safeguards.
 
@@ -19,7 +20,7 @@ consume these libraries through an immutable Git dependency pin. The plugin kit,
 the product (the library as `symphony-app`, its library still `symphony`, the board as
 `symphony-board`, the server, the Chrome driver as `symphony-chrome` and the wire types,
 `symphony-api`) are made to be published on crates.io as well, each by its version; the client's
-sources and the tests' time keep `publish = false`
+sources, the Mac app and the tests' time keep `publish = false`
 ([RELEASES](docs/RELEASES.md#packages-on-cratesio)).
 
 ### Where each part is said
@@ -51,8 +52,9 @@ sources and the tests' time keep `publish = false`
   [CHECKS](docs/CHECKS.md); releases are [RELEASES](docs/RELEASES.md).
 
 Read [the client guide](apps/symphony-ui/AGENTS.md), [the React client's
-guide](apps/symphony-web/AGENTS.md) and [the board guide](crates/tasks/AGENTS.md) before editing
-those packages. A consuming project applies its own Rust, review and resource policy.
+guide](apps/symphony-web/AGENTS.md), [the Mac app's guide](apps/symphony-desktop/AGENTS.md) and
+[the board guide](crates/tasks/AGENTS.md) before editing those packages. A consuming project
+applies its own Rust, review and resource policy.
 Never run a shared-service restart as a test: use a private port and scratch board.
 
 ### Building and testing
@@ -138,15 +140,14 @@ agent sees it. In a Claude Code session the memory guard refuses the writes ther
 can read (below), and `.claude/settings.json` denies Edit there as well.
 
 **Models.** The model each role runs on is a setting, so a change of mind is one edit:
-`[agents.models]` in `symphony.toml` (`orchestrator`, `executor`, `reviewer`), which a board
-launch takes and `just tasks limits` prints with where each came from
-([TASKS](docs/TASKS.md#limits-and-models)). Until this file names them (it waits for the
-machine to run a build that reads the table), the orchestrator may run on the most capable
-model, for diagnosis and design, and executors and reviewers run on Opus, as `[agents] launch`
-says for a board launch. An Agent launch passes the model `just tasks limits` names for the
-role, `model: "opus"` today (a subagent otherwise inherits its orchestrator's model). A
-resumed agent keeps the model it started on. The work-in-progress limits are settings the same
-way, in `[limits]`.
+`[agents] launch` and `[agents.models]` in `symphony.toml` (`orchestrator`, `executor`,
+`reviewer`, `assessor`), which a board launch takes and `just tasks limits` prints with where
+each came from ([TASKS](docs/TASKS.md#limits-and-models)). The orchestrator may run on the most
+capable model, for diagnosis and design; executors, reviewers and assessors run on Fable, as
+`[agents] launch` and the table's `assessor` say. An Agent launch passes the model
+`just tasks limits` names for the role, `model: "fable"` today (a subagent otherwise inherits
+its orchestrator's model). A resumed agent keeps the model it started on. The work-in-progress
+limits are settings the same way, in `[limits]`.
 
 **Landing and pushing main.** An orchestrator lands an approved task with `just land SLUG --as
 HANDLE`, never a merge by hand: it merges, closes the task and pushes `main` to `origin` as its
