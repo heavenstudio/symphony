@@ -172,7 +172,7 @@ mod tests {
     use std::io::Read;
     use std::os::unix::fs::PermissionsExt;
     use std::path::{Path, PathBuf};
-    use std::time::{Duration, Instant};
+    use std::time::Duration;
 
     /// A folder of its own under the temporary one, for test `name`.
     fn folder(name: &str) -> PathBuf {
@@ -199,17 +199,17 @@ mod tests {
         path
     }
 
-    /// Waits up to five seconds for `path` to be there.
+    /// The wall-clock backstop of these tests' waits, of the five seconds they once gave each: only
+    /// a stall reaches it (RULES.md `tests/no-test-fails-on-load`).
+    const PATIENT: Duration = test_time::backstop(Duration::from_secs(5));
+
+    /// Waits for `path` to be there.
+    #[track_caller]
     fn appears(path: &Path) {
-        let began = Instant::now();
-        while !path.exists() {
-            assert!(
-                began.elapsed() < Duration::from_secs(5),
-                "{}",
-                path.display()
-            );
-            std::thread::sleep(Duration::from_millis(10));
-        }
+        test_time::until_true(format!("{} is there", path.display()), PATIENT, || {
+            path.exists()
+        })
+        .unwrap();
     }
 
     /// The SIGTERMs `dir`'s program took, once a moment has passed for its trap to run.
@@ -440,14 +440,10 @@ mod tests {
             );
             assert!(pid_alive(pid));
             terminate(pid, true);
-            let began = Instant::now();
-            while pid_alive(pid) {
-                assert!(
-                    began.elapsed() < Duration::from_secs(5),
-                    "{pid} survived its kill"
-                );
-                std::thread::sleep(Duration::from_millis(10));
-            }
+            test_time::until_true(format!("{pid} ended on its kill"), PATIENT, || {
+                !pid_alive(pid)
+            })
+            .unwrap();
             let _ = fs::remove_dir_all(&dir);
         }
     }
