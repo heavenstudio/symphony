@@ -22,10 +22,11 @@ import {
   type Room,
   readGate,
   readTaskGates,
+  type Waiter,
   WORDS,
 } from "./gates-model";
 import { NO_ANSWER } from "./request";
-import { asking, memoryStorage, reply, server } from "./testing";
+import { aRole, asking, aTask, memoryStorage, reply, server } from "./testing";
 import { UNREACHABLE } from "./trouble";
 import type { Gate, GatesSeen, TaskGates } from "./wire";
 
@@ -51,10 +52,18 @@ const room = (count: number, waiting: number, drawn: [number, number] | null = n
   drawn,
 });
 
-/** The section, in a window `wide` px wide. */
-const shown = (gates: Gates, held: Room = DEFAULT_ROOM, wide: number | null = null) =>
+/** A task in review, which waits on the gates it waits on. */
+const IN_REVIEW: Waiter = aTask("tools/x", { status: "review" });
+
+/** The section of a task in review, or of `task`, in a window `wide` px wide. */
+const shown = (
+  gates: Gates,
+  held: Room = DEFAULT_ROOM,
+  wide: number | null = null,
+  task: Waiter | null = IN_REVIEW,
+) =>
   renderToStaticMarkup(
-    <GatesView gates={gates} now={NOW} room={held} width={wide} onRetry={() => {}} />,
+    <GatesView gates={gates} task={task} now={NOW} room={held} width={wide} onRetry={() => {}} />,
   );
 
 const holding = (held: Room, wide: number | null = null) => shown(READING, held, wide);
@@ -81,9 +90,9 @@ const bylinesHeld = (html: string) =>
 const panel = (seen?: GatesSeen | null) =>
   renderToStaticMarkup(
     seen === undefined ? (
-      <TaskGatesPanel slug="tools/x" revision={1} />
+      <TaskGatesPanel slug="tools/x" task={IN_REVIEW} revision={1} />
     ) : (
-      <TaskGatesPanel slug="tools/x" revision={1} seen={seen} />
+      <TaskGatesPanel slug="tools/x" task={IN_REVIEW} revision={1} seen={seen} />
     ),
   );
 
@@ -168,6 +177,7 @@ describe("the section", () => {
     const retried: string[] = [];
     const view = GatesView({
       gates: { kind: "slow" },
+      task: IN_REVIEW,
       now: NOW,
       room: DEFAULT_ROOM,
       width: null,
@@ -261,7 +271,14 @@ describe("the panel", () => {
     expect(two).not.toContain("gates-waits");
     expect(bylinesHeld(two)).toEqual([true, false]);
     const told = renderToStaticMarkup(
-      <TaskGatesPanel slug="tools/x" revision={1} work={7} nudged={3} onBranch={() => {}} />,
+      <TaskGatesPanel
+        slug="tools/x"
+        task={IN_REVIEW}
+        revision={1}
+        work={7}
+        nudged={3}
+        onBranch={() => {}}
+      />,
     );
     expect(
       rows(told),
@@ -475,6 +492,61 @@ describe("a gate", () => {
     expect(web, "a web address stays as it is").toContain(
       '<a href="https://ci.example/runs/1">ci</a>',
     );
+  });
+});
+
+describe("the pill", () => {
+  /** An unassessed task's gates: its review stamp missing, the rest waived, its check unknown. */
+  const stamped = read(
+    answer([
+      gate({ name: "review", state: "missing", detail: "Not reviewed yet" }),
+      gate({ name: "check", state: "unknown", detail: "`just verify` has not run at 4be91c2" }),
+      gate({ name: "tests", state: "waived", detail: "Not needed by default" }),
+    ]),
+  );
+  /** The head of the section `stamped` draws for a task in `status`, its other fields `fields`. */
+  const head = (status: string, fields: Partial<Waiter> = {}) =>
+    shown(stamped, DEFAULT_ROOM, null, aTask("tools/x", { status, ...fields })).split(
+      '<ul class="gates">',
+    )[0] ?? "";
+
+  it("in review, says the gates the task waits on", () => {
+    expect(head("review", { roles: [aRole("reviewer", "rapid-badger")] })).toContain(
+      '<span class="pill gate-missing gates-waits">waits on <span dir="auto">review</span></span>',
+    );
+  });
+
+  it("in progress, says its executor in the status's colour", () => {
+    const html = head("in_progress", {
+      roles: [aRole("orchestrator", "silver-sparrow"), aRole("executor", "dusky-plover")],
+    });
+    expect(html).toContain(
+      '<span class="pill st-in_progress gates-waits">waits on <span dir="auto">executor dusky-plover</span></span>',
+    );
+    expect(html, "not the review it has not reached").not.toContain(">review<");
+  });
+
+  it("blocked, says the tasks it depends on", () => {
+    expect(
+      head("blocked", { depends: ["tools/board-postgresql", "tools/machine-runs-the-release"] }),
+    ).toContain(
+      '<span class="pill st-blocked gates-waits">waits on <span dir="auto">tools/board-postgresql</span> and <span dir="auto">tools/machine-runs-the-release</span></span>',
+    );
+  });
+
+  it("done, cancelled or not started, is not drawn, the gates still are", () => {
+    for (const status of ["done", "cancelled", "backlog", "ready"]) {
+      const html = shown(stamped, DEFAULT_ROOM, null, aTask("tools/x", { status }));
+      expect(html, status).not.toContain("gates-waits");
+      expect(html, status).toContain(
+        '<span class="gates-counts">1 waived · 1 unknown · 1 missing</span>',
+      );
+      expect(rows(html), status).toHaveLength(3);
+    }
+  });
+
+  it("is not drawn for a task the section is not told of", () => {
+    expect(shown(stamped, DEFAULT_ROOM, null, null)).not.toContain("gates-waits");
   });
 });
 
