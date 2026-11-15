@@ -3,8 +3,9 @@
 Finish only by the step the description names:
 
 - Branch work: post the complete tip, the changed behaviour and its evidence
-  ([build.md](build.md#evidence-is-the-gate)), then `just tasks move SLUG review --as HANDLE`
-  once the project's review prerequisites hold.
+  ([build.md](build.md#evidence-is-the-gate)), with what the description asked for that was
+  left out and why, then `just tasks move SLUG review --as HANDLE` once the project's review
+  prerequisites hold.
 - A slice of a feature: as [below](#parent-feature-delivery).
 - An instruction subtask: `just tasks done SLUG "complete result and remaining limits" --as HANDLE`.
 - Work that landed with another task's branch, or a land that refused your approved task:

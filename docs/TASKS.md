@@ -2332,7 +2332,11 @@ A task's own executor and reviewer need no subtask: the task's brief and thread 
 whole assignment. The executor's whole prompt is `/work SLUG HANDLE`
 (`.agents/skills/work/SKILL.md`) and a reviewer's `/review-task SLUG HANDLE`
 (`.agents/skills/review-task/SKILL.md`), on the task itself, never a brief in a file;
-anything more for either goes on the task's thread (`--to @executor`, `--to @reviewer`). A
+anything more for either that is this task's alone goes on the task's thread (`--to @executor`,
+`--to @reviewer`). What a project tells every executor or every reviewer is no part of a prompt
+either: it is the project's guides and rules, and for one role alone a `project.md` of the
+project's own beside that role's skill (`.agents/skills/work/project.md`), which the skill reads
+first and `symphony init` never writes. A
 reviewer takes the reviewer's role on the task, so its verdicts are that task's review rounds,
 and each later round goes to the same reviewer, resumed with the new tip on the thread (a
 subagent by its parent, a `claude -p` run by `--resume`, a terminal by `just tasks launch SLUG
