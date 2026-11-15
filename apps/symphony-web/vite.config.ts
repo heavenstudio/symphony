@@ -15,7 +15,8 @@ export default defineConfig({
     target: "es2023",
     // Vite's manifest, which package.sh reads to put each kind's script and styles in the shell's.
     manifest: true,
-    // The shell imports one script per kind; it preloads nothing on a module's behalf.
+    // The shell imports one script per kind, and preloads the chunks it imports beside it (package.sh
+    // names them in the shell's manifest from this one): no preload helper of Vite's.
     modulePreload: false,
     reportCompressedSize: false,
     rolldownOptions: {

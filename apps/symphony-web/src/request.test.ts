@@ -20,6 +20,26 @@ const answer = (status: number, body?: unknown, headers: Record<string, string> 
 
 let fetched: ReturnType<typeof vi.fn>;
 
+/**
+ * Fetches that never answer and, as the browser's, refuse once their signal ends, at once for one
+ * ended already: the signals they were given, in order.
+ */
+function unanswered(): AbortSignal[] {
+  const signals: AbortSignal[] = [];
+  fetched.mockImplementation(
+    (_: string, init: RequestInit) =>
+      new Promise((_answer, refuse) => {
+        const signal = init.signal;
+        if (!signal) return;
+        signals.push(signal);
+        const aborted = () => refuse(new DOMException("aborted", "AbortError"));
+        if (signal.aborted) aborted();
+        signal.addEventListener("abort", aborted);
+      }),
+  );
+  return signals;
+}
+
 beforeEach(() => {
   fetched = vi.fn();
   vi.stubGlobal("fetch", fetched);
@@ -83,27 +103,17 @@ describe("a read", () => {
   });
 
   it("is given up, its fetch aborted, once the signal it was given ends", async () => {
-    let signal: AbortSignal | undefined;
-    fetched.mockImplementation(
-      (_: string, init: RequestInit) =>
-        new Promise((_answer, refuse) => {
-          // As the browser's: a signal ended already refuses at once.
-          signal = init.signal ?? undefined;
-          const aborted = () => refuse(new DOMException("aborted", "AbortError"));
-          if (signal?.aborted) aborted();
-          signal?.addEventListener("abort", aborted);
-        }),
-    );
+    const signals = unanswered();
     const replaced = new AbortController();
     const read = getJson("/api/x", replaced.signal);
-    expect(signal?.aborted).toBe(false);
+    expect(signals[0]?.aborted).toBe(false);
     replaced.abort();
     await expect(read).rejects.toEqual(new Failure("uncertain", UNREACHABLE));
-    expect(signal?.aborted).toBe(true);
+    expect(signals[0]?.aborted).toBe(true);
     const gone = new AbortController();
     gone.abort();
     await expect(getJson("/api/x", gone.signal)).rejects.toMatchObject({ kind: "uncertain" });
-    expect(signal?.aborted).toBe(true);
+    expect(signals[1]?.aborted).toBe(true);
   });
 
   it("answered before its signal ends leaves the signal as it was", async () => {
@@ -130,6 +140,20 @@ describe("a read of what this device kept", () => {
     fetched.mockResolvedValue(answer(200, { n: 2 }, { ETag: '"e2"' }));
     expect(await getIf("/api/queue", "")).toEqual({ same: false, value: { n: 2 }, etag: '"e2"' });
     expect(fetched.mock.calls[0]?.[1]).not.toHaveProperty("headers");
+  });
+
+  it("is given up, its fetch aborted, once the signal it was given ends", async () => {
+    const signals = unanswered();
+    const page = new AbortController();
+    const read = getIf("/api/queue", '"e1"', page.signal);
+    expect(signals[0]?.aborted).toBe(false);
+    page.abort();
+    await expect(read).rejects.toEqual(new Failure("uncertain", UNREACHABLE));
+    expect(signals[0]?.aborted).toBe(true);
+    await expect(getIf("/api/queue", "", page.signal)).rejects.toMatchObject({
+      kind: "uncertain",
+    });
+    expect(signals[1]?.aborted).toBe(true);
   });
 });
 
@@ -161,6 +185,16 @@ describe("a document's read", () => {
     await expect(getDocument("/api/document", "")).rejects.toEqual(
       new Failure("uncertain", UNREACHABLE),
     );
+  });
+
+  it("is given up, its fetch aborted, once the signal it was given ends: a failure, not none", async () => {
+    const signals = unanswered();
+    const page = new AbortController();
+    const read = getDocument("/api/document", '"e1"', page.signal);
+    expect(signals[0]?.aborted).toBe(false);
+    page.abort();
+    await expect(read).rejects.toEqual(new Failure("uncertain", UNREACHABLE));
+    expect(signals[0]?.aborted).toBe(true);
   });
 
   it.each([

@@ -121,11 +121,15 @@ function pageWithoutWork() {
   vi.stubGlobal("window", new EventTarget());
 }
 
-/** One request the stubbed server holds: its address, its headers, and how to answer it. */
+/**
+ * One request the stubbed server holds: its address, its headers, how to answer it, and the signal
+ * that gives it up.
+ */
 interface Held {
   url: string;
   headers: Record<string, string>;
   answer: (response: Response) => void;
+  signal: AbortSignal | null;
 }
 
 /** The server, its answers held until a test gives them, on a page with nothing engaged. */
@@ -136,7 +140,8 @@ function serverOf(): Held[] {
     "fetch",
     (url: string, init?: RequestInit) =>
       new Promise<Response>((answer) => {
-        asked.push({ url, headers: (init?.headers ?? {}) as Record<string, string>, answer });
+        const headers = (init?.headers ?? {}) as Record<string, string>;
+        asked.push({ url, headers, answer, signal: init?.signal ?? null });
       }),
   );
   return asked;
@@ -355,7 +360,10 @@ describe("the outline read naming its copy's tag", () => {
     const left = new AbortController();
     const read = readOutlineAt(URL, copy, item, left.signal);
     await askedFor(asked, 1);
+    expect(asked[0]?.signal?.aborted).toBe(false);
     left.abort();
+    // Given up on the wire as well.
+    expect(asked[0]?.signal?.aborted).toBe(true);
     asked[0]?.answer(answered(304, null));
     await expect(read).resolves.toBeNull();
     // The read is over: no second request can follow it.
@@ -1097,6 +1105,21 @@ describe("a folder page's loop", () => {
     expect(page.folder).toEqual(FOLDER);
     left.abort();
     await done;
+  });
+
+  it("gives its read up on the wire once its page left, and changes nothing", async () => {
+    const asked = serverOf();
+    deviceOf();
+    const page = new FolderLive("docs", "", null);
+    const left = new AbortController();
+    const done = followFolder(page, left.signal);
+    await askedFor(asked, 1);
+    expect(asked[0]?.signal?.aborted).toBe(false);
+    left.abort();
+    expect(asked[0]?.signal?.aborted).toBe(true);
+    asked[0]?.answer(reply(200, FOLDER, '"f1"'));
+    await done;
+    expect(page.folder).toBeNull();
   });
 
   it("shows nothing it drew of a folder gone while away", async () => {

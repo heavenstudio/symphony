@@ -413,7 +413,7 @@ export class LiveBoard {
     path: string,
     copy: Copy | undefined,
   ): Promise<[TaskListing, { etag: string; value: unknown } | null]> {
-    const answer = await getIf(scoped(this.scope, path), copy?.etag ?? "");
+    const answer = await getIf(scoped(this.scope, path), copy?.etag ?? "", this.signal);
     if (answer.same) {
       if (copy === undefined) throw new Error("The server answered 304 to a plain read");
       return [copy.list, null];
@@ -453,7 +453,7 @@ export class LiveBoard {
     let work: MachineWork | null = null;
     let why = "";
     try {
-      value = await getJson(scoped(this.scope, "/api/machine-work"));
+      value = await getJson(scoped(this.scope, "/api/machine-work"), this.signal);
       work = readWork(value);
       if (work === null) why = "The machines' work is not readable";
     } catch (error) {

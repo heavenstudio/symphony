@@ -169,7 +169,8 @@ if [ "$(jq length <<< "$shared")" -gt 1 ]; then
 fi
 # The web client's kinds, which bundle.sh built with Vite into .modules/web: each entry of Vite's
 # manifest is a kind, its script the module the shell imports (it exports `run` and `stop`, and has
-# no wasm), its styles the shared stylesheet and then the CSS its entry and the chunks it imports
+# no wasm), its imports the chunks that script imports at any depth, which the shell preloads beside
+# it, and its styles the shared stylesheet and then the CSS its entry and the chunks it imports
 # carry, theirs first. A kind is one client's: one both build is refused, and so is a build
 # without the web client's.
 web="$out/.modules/web"
@@ -188,9 +189,12 @@ while IFS= read -r entry; do
         --slurpfile vite "$web/.vite/manifest.json" '
         $vite[0] as $chunks
         | def css($key): [($chunks[$key].imports // [])[] | css(.)[]] + ($chunks[$key].css // []);
+        def imports($key): ($chunks[$key].imports // [])[] | (., imports(.));
+        def once(items): reduce items as $item ([]; if any(.[]; . == $item) then . else . + [$item] end);
         . + {($kind): {
             script: ($prefix + $chunks[$entry].file),
-            styles: ($shared + (reduce css($entry)[] as $style ([]; if any(.[]; . == $style) then . else . + [$style] end) | map($prefix + .)))
+            imports: (once(imports($entry)) | map($prefix + $chunks[.].file)),
+            styles: ($shared + (once(css($entry)[]) | map($prefix + .)))
         }}' <<< "$manifest")"
 done < <(jq -r 'to_entries[] | select(.value.isEntry) | .key' "$web/.vite/manifest.json" | LC_ALL=C sort)
 # The shell's hash includes the page module manifest: a new module changes Board.build, while

@@ -79,20 +79,29 @@ async function gone() {
 // what the shell's own failures use, so every page's first visit carries none of the program's.
 window.reviewShell = { gone, alarm };
 
+// Each of `hrefs` asked for once, by a link of `attributes`, beside the module that needs it.
+function preload(hrefs, attributes) {
+    for (const href of hrefs) {
+        if (href && !preloaded.has(href)) {
+            preloaded.add(href);
+            document.head.insertAdjacentHTML("beforeend", `<link ${attributes} href="${href}">`);
+        }
+    }
+}
+
 async function initialize(kind) {
     const spec = modules[kind];
-    // A kind of the web client (apps/symphony-web) is its script alone, which exports its own `run`
-    // and `stop`: no wasm, no initializer to wait on.
-    if (!spec.wasm) return import(spec.script);
+    // A kind of the web client (apps/symphony-web) is its script, which exports its own `run` and
+    // `stop`: no wasm, no initializer to wait on. The script asks for the chunks it imports only
+    // once it is in: a module preload asks for them beside it.
+    if (!spec.wasm) {
+        preload(spec.imports, 'rel="modulepreload"');
+        return import(spec.script);
+    }
     // The module's initializer fetches its wasm only once its script has been fetched and run, and
     // a program kind's run its chunk (src/split.rs) only once that wasm has: a preload asks for all
     // at once, and each fetch takes the preloaded response.
-    for (const href of [spec.wasm, spec.chunk]) {
-        if (href && !preloaded.has(href)) {
-            preloaded.add(href);
-            document.head.insertAdjacentHTML("beforeend", `<link rel="preload" as="fetch" crossorigin href="${href}">`);
-        }
-    }
+    preload([spec.wasm, spec.chunk], 'rel="preload" as="fetch" crossorigin');
     const module = await import(spec.script);
     try {
         if (failed.has(kind)) await module.default({ module_or_path: spec.wasm });

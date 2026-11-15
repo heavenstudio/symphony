@@ -296,12 +296,14 @@ describe("the queue's check", () => {
     expect(asked).toHaveLength(3);
   });
 
-  it("stops, telling nothing, once the page that asked is gone", async () => {
+  it("stops, telling nothing and its read given up, once the page that asked is gone", async () => {
     const asked = server();
     const page = new AbortController();
     const { told, waits, done } = check(asked, page.signal);
     await asking(asked, 1);
+    expect(asked[0]?.signal?.aborted).toBe(false);
     page.abort();
+    expect(asked[0]?.signal?.aborted).toBe(true);
     asked[0]?.answer(reply(200, CASES.samples.queue, "q1"));
     await done;
     expect(told).toEqual([]);
