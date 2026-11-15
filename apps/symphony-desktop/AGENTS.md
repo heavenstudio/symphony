@@ -7,15 +7,16 @@ guide](../../AGENTS.md#rust). What the app is for and the choices behind it:
 
 `symphony-desktop` is the app for the Mac: a thin shell whose windows show each server's own
 pages, and which follows every server it knows with its windows closed. The library holds every
-decision and is tested on the host; the binary (`src/main.rs`, `src/app.rs`, macOS alone) only
-draws them, and no test opens a window. `publish = false`.
+decision and is tested on the host; the binary (`src/bin/symphony-desktop.rs` and its `app.rs`,
+macOS alone) only draws them, and no test opens a window. `publish = false`.
 
 ## Where each job lives
 
 - `src/address.rs`: a server's address and the rule for one (`Server::parse`): `http://` alone,
   to loopback, the tailnet's addresses (100.64.0.0/10, fd7a:115c:a1e0::/48) or a `*.ts.net`
   name, no credentials; kept as its origin. Its default name: "This Mac" for loopback, else the
-  first label of its name.
+  first label of its name. A page's path is the server's word, so one that would lead off the
+  origin (`//elsewhere/`, an address of its own, another scheme) gives the project list.
 - `src/navigation.rs`: where a server's window may go. Its own origin (and a frame's own
   `about:blank`, `about:srcdoc` or `blob:` of it) stays in the web view; any other `http` or
   `https` address, every new window and every download open in the system browser; any other
@@ -40,12 +41,15 @@ draws them, and no test opens a window. `publish = false`.
   answer). It reads the list rather than the feed: the list holds every project's counts and asks
   in one small answer the server keeps in memory, where the feed is one stream per project.
 - `src/cli.rs`: the command line, `symphony-desktop` (the app) and `symphony-desktop add URL`.
+- `src/main_menu.rs`: the menu bar, AppKit's standard items: macOS hands ⌘C, ⌘V, ⌘X, ⌘A, ⌘Z and
+  ⌘Q to the menu bar before the page, so without its Edit and app menus a page takes none of them.
 - `src/notification.js`: the one script the app puts in a server's pages, before their own:
-  notifications read as denied, so a page never notifies beside the app. Nothing else is
-  injected, and no page calls the app.
-- `src/app.rs`: one tao window and wry web view per server, hidden on close and kept alive; a
-  reader thread per server; the dock badge and the menu-bar item (tray-icon's) with the total, its
-  menu each server and project. Notices are a line on stderr until the app posts them.
+  notifications read as denied, so a page never notifies beside the app. The app injects nothing
+  else (wry adds its own `window.ipc`, with no handler behind it), and no page calls the app.
+- `src/bin/symphony-desktop/app.rs`: one tao window and wry web view per server, hidden on close
+  and kept alive; a reader thread per server; the menu bar; the dock badge and the menu-bar item
+  (tray-icon's) with the total, its menu each server and project. Notices are a line on stderr
+  until the app posts them.
 - `Info.plist`, which `build.rs` puts in the binary's `__TEXT,__info_plist`: the bundle's
   identifier and plain HTTP to local addresses and `*.ts.net` (App Transport Security).
 
@@ -75,4 +79,13 @@ tao, wry, tray-icon and the objc2 crates are this package's alone, at the versio
 
 The app's own screens (the server list, adding a server, a server that does not answer), renaming
 and removing a server, ⌘1 to ⌘9, notices through the notification centre, and an install recipe
-that builds the app at a release tag and signs it ad hoc.
+that builds the app at a release tag and signs it ad hoc. Then:
+
+- Frames: wry asks the navigation rule for every frame's navigation without saying which frame,
+  so a cross-origin frame in a page or a mockup opens the system browser. A rule that sends only
+  the top frame's links there needs a navigation delegate of the app's own, or a wry that names
+  the frame.
+- The menu-bar item's menu is made again on every read and keys its items by their place: it
+  should be made again only when its lines change, its items keyed by server and project.
+- A `*.ts.net` name is trusted by its name: the reader could check that each address it resolves
+  to is loopback or the tailnet's.

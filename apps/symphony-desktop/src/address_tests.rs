@@ -167,6 +167,42 @@ fn a_server_connects_to_its_host_and_port_and_names_its_pages_under_its_origin()
 }
 
 #[test]
+fn a_page_stays_on_its_server_whatever_path_the_server_gives() {
+    let local = Server::parse("http://127.0.0.1:8765").unwrap();
+    for (path, page) in [
+        ("desk/", "http://127.0.0.1:8765/desk/"),
+        (
+            "/desk/task/desk/judged",
+            "http://127.0.0.1:8765/desk/task/desk/judged",
+        ),
+        (
+            "/desk/../other/?q=1#c",
+            "http://127.0.0.1:8765/other/?q=1#c",
+        ),
+        ("http://127.0.0.1:8765/desk/", "http://127.0.0.1:8765/desk/"),
+    ] {
+        assert_eq!(local.page(path), page, "{path}");
+    }
+    for elsewhere in [
+        "//evil.example/",
+        "/\\evil.example/",
+        "\\\\evil.example/",
+        "http://evil.example/",
+        "https://127.0.0.1:8765/",
+        "http://127.0.0.1:8766/",
+        "javascript:alert(1)",
+        "file:///etc/hosts",
+        "data:text/html,x",
+    ] {
+        assert_eq!(
+            local.page(elsewhere),
+            "http://127.0.0.1:8765/",
+            "{elsewhere}"
+        );
+    }
+}
+
+#[test]
 fn a_saved_address_is_read_back_by_the_same_rule() {
     let server = Server::parse("http://studio.tail1234.ts.net:8765/tasks").unwrap();
     let text = serde_json::to_string(&server).unwrap();

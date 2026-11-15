@@ -1,9 +1,10 @@
 //! The Symphony's desktop app for the Mac, as a library: every decision the app makes, so each is
-//! tested on the host and the binary (`src/main.rs`) only draws them in windows
+//! tested on the host and the binary (`src/bin/symphony-desktop.rs`) only draws them in windows
 //! (docs/analysis/desktop-client.md).
 //!
 //! - [`address`]: the servers the app may follow, plain HTTP to this Mac and the tailnet alone;
 //! - [`navigation`]: where a server's window may go, and what opens in the system browser;
+//! - [`main_menu`]: the menu bar, which gives the pages the keyboard's edit keys and ⌘Q;
 //! - [`servers`]: this Mac's server, found by itself, and the list file of the others;
 //! - [`read`]: one read of a server's project list;
 //! - [`follow`]: the counts across servers, what notifies and what a notice says, the menu's lines
@@ -20,6 +21,7 @@
 pub mod address;
 pub mod cli;
 pub mod follow;
+pub mod main_menu;
 pub mod navigation;
 pub mod read;
 pub mod servers;

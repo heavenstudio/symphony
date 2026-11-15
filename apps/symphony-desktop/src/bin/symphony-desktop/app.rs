@@ -11,6 +11,7 @@ use objc2_app_kit::NSWorkspace;
 use objc2_foundation::{NSString, NSURL};
 use symphony_desktop::address::Server;
 use symphony_desktop::follow::{Follow, Line, Notice};
+use symphony_desktop::main_menu::{self, Standard};
 use symphony_desktop::navigation::{self, Go};
 use symphony_desktop::servers::{self, List, Places};
 use symphony_desktop::{NOTIFICATION_STUB, read};
@@ -19,7 +20,7 @@ use tao::event::{Event, StartCause, WindowEvent};
 use tao::event_loop::{ControlFlow, EventLoop, EventLoopBuilder, EventLoopProxy};
 use tao::platform::macos::EventLoopWindowTargetExtMacOS;
 use tao::window::{Window, WindowBuilder, WindowId};
-use tray_icon::menu::{Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem};
+use tray_icon::menu::{IsMenuItem, Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem, Submenu};
 use tray_icon::{TrayIcon, TrayIconBuilder};
 use wry::{NewWindowResponse, WebView, WebViewBuilder};
 
@@ -64,12 +65,17 @@ pub(crate) fn run(places: &Places) -> ! {
         let _ = chosen.send_event(Message::Chosen(event.id));
     }));
     let mut tray: Option<TrayIcon> = None;
+    // Kept for as long as the app runs, as the application's menu bar is, though never read.
+    let mut _bar: Option<Menu> = None;
     let mut lines: Vec<Line> = Vec::new();
     event_loop.run(move |event, target, flow| {
         *flow = ControlFlow::Wait;
         match event {
-            // The menu-bar item is made once the application runs, as AppKit asks.
+            // The menu bar and the menu-bar item are made once the application runs, as AppKit asks.
             Event::NewEvents(StartCause::Init) => {
+                _bar = menu_bar()
+                    .map_err(|why| say(&format!("no menu bar, so no edit keys: {why}")))
+                    .ok();
                 tray = TrayIconBuilder::new()
                     .with_title("0")
                     .with_tooltip("Symphony: what waits on you")
@@ -222,6 +228,41 @@ fn menu(lines: &[Line]) -> Menu {
     }
     let _ = menu.append(&MenuItem::with_id(QUIT, "Quit Symphony", true, None));
     menu
+}
+
+/// The menu bar ([`main_menu::MAIN`]), made the application's: what gives a page ⌘C, ⌘V and the
+/// other edit keys, and the app ⌘Q.
+fn menu_bar() -> Result<Menu, tray_icon::menu::Error> {
+    let bar = Menu::new();
+    for (title, items) in main_menu::MAIN {
+        let items: Vec<PredefinedMenuItem> = items.iter().map(|&item| standard(item)).collect();
+        let items: Vec<&dyn IsMenuItem> = items
+            .iter()
+            .map(|item| -> &dyn IsMenuItem { item })
+            .collect();
+        bar.append(&Submenu::with_items(title, true, &items)?)?;
+    }
+    bar.init_for_nsapp();
+    Ok(bar)
+}
+
+/// The system's own item for `item`, with its key equivalent.
+fn standard(item: Standard) -> PredefinedMenuItem {
+    match item {
+        Standard::Hide => PredefinedMenuItem::hide(None),
+        Standard::HideOthers => PredefinedMenuItem::hide_others(None),
+        Standard::ShowAll => PredefinedMenuItem::show_all(None),
+        Standard::Quit => PredefinedMenuItem::quit(None),
+        Standard::Undo => PredefinedMenuItem::undo(None),
+        Standard::Redo => PredefinedMenuItem::redo(None),
+        Standard::Cut => PredefinedMenuItem::cut(None),
+        Standard::Copy => PredefinedMenuItem::copy(None),
+        Standard::Paste => PredefinedMenuItem::paste(None),
+        Standard::SelectAll => PredefinedMenuItem::select_all(None),
+        Standard::Minimize => PredefinedMenuItem::minimize(None),
+        Standard::CloseWindow => PredefinedMenuItem::close_window(None),
+        Standard::Separator => PredefinedMenuItem::separator(),
+    }
 }
 
 /// What the web view does with a navigation the rule answered `go`: whether it loads it.

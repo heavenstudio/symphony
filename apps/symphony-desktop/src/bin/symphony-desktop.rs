@@ -9,7 +9,10 @@ use std::process::ExitCode;
 use symphony_desktop::cli::{self, Asked};
 use symphony_desktop::servers::Places;
 
+// Beside this file in a folder of the binary's name, as Cargo takes every `.rs` file in `src/bin/`
+// for a binary of its own.
 #[cfg(target_os = "macos")]
+#[path = "symphony-desktop/app.rs"]
 mod app;
 
 fn main() -> ExitCode {

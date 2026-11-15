@@ -20,7 +20,7 @@ consume these libraries through an immutable Git dependency pin. The plugin kit,
 the product (the library as `symphony-app`, its library still `symphony`, the board as
 `symphony-board`, the server, the Chrome driver as `symphony-chrome` and the wire types,
 `symphony-api`) are made to be published on crates.io as well, each by its version; the client's
-sources and the tests' time keep `publish = false`
+sources, the Mac app and the tests' time keep `publish = false`
 ([RELEASES](docs/RELEASES.md#packages-on-cratesio)).
 
 ### Where each part is said

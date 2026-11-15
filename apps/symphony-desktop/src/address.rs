@@ -96,10 +96,14 @@ impl Server {
     }
 
     /// The address of `path` on this server: `/` is its project list, `/<id>/` a project's home.
+    /// A path is the server's word (a card's link, a project's id, a task's slug), so one that
+    /// would lead off this origin (`//elsewhere/`, `/\elsewhere/`, an address of its own, another
+    /// scheme) gives the project list instead.
     pub fn page(&self, path: &str) -> String {
-        self.url
-            .join(path)
-            .map_or_else(|_| self.url.to_string(), String::from)
+        match self.url.join(path) {
+            Ok(page) if page.origin() == self.url.origin() => page.into(),
+            _ => self.url.to_string(),
+        }
     }
 
     /// Its host as the request's `Host` names it, `[…]` around an IPv6 address.
