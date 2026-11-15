@@ -1136,9 +1136,11 @@ impl Recording {
         let _ = recorded::sweep(&self.folder, crate::store::now());
     }
 
-    /// The line `record` says appended to the day files, when it is a run's or a step's.
+    /// The line `record` says appended to the day files, when it is a run's or a step's: an end
+    /// line with what its log, whole by then ([`Recording::logged`]), says of its tests.
     fn line(&self, record: &Record) {
         if let (Some(runs), Some(line)) = (&self.runs, crate::runs::line(record)) {
+            let line = crate::runs::with_tests(line, runs);
             let _ = crate::runs::append(runs, &line, crate::store::now(), self.wait);
         }
     }
