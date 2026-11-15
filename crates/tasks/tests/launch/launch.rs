@@ -433,8 +433,31 @@ fn unasked_a_launch_gives_its_agent_no_word_of_the_launchers() {
 fn a_reviewer_beside_an_executor_gets_a_worktree_of_its_own() {
     let w = World::new();
     let a = w.launch("sim/jump").row.worktree;
-    let b = w.review("sim/jump").row.worktree;
-    let c = w.review("sim/jump").row.worktree;
+    let first = w.review("sim/jump").row;
+    let b = first.worktree;
+    // A second reviewer is launched only beside the first, saying why: refused, it leaves nothing.
+    let ask = Ask {
+        role: "reviewer".into(),
+        kind: Some("reviewer".into()),
+        ..w.ask("sim/jump")
+    };
+    let launched = w.store().task_sessions("sim/jump").unwrap();
+    let refusal = refused(w.try_launch(&ask));
+    assert!(
+        refusal.starts_with(&format!("sim/jump is reviewed by {} (", first.handle)),
+        "{refusal}"
+    );
+    assert_eq!(w.store().task_sessions("sim/jump").unwrap(), launched);
+    assert!(!w.wt.join("sim-jump-review-2").exists());
+    let beside = Ask {
+        beside: Some("a second stamp".into()),
+        ..ask
+    };
+    let c = w.try_launch(&beside).unwrap().row.worktree;
+    assert_eq!(
+        w.store().get("sim/jump").unwrap().holders("reviewer").len(),
+        2
+    );
     assert_eq!(
         [a, b, c].map(|p| Path::new(&p)
             .file_name()
@@ -442,6 +465,15 @@ fn a_reviewer_beside_an_executor_gets_a_worktree_of_its_own() {
             .to_string_lossy()
             .into_owned()),
         ["sim-jump", "sim-jump-review", "sim-jump-review-2"].map(String::from)
+    );
+    // Only a reviewer joins beside another.
+    let executor = Ask {
+        beside: Some("why".into()),
+        ..w.ask("sim/jump")
+    };
+    assert_eq!(
+        refused(w.try_launch(&executor)),
+        "only a reviewer joins beside another, not 'executor'"
     );
 }
 
