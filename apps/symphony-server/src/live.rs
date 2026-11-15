@@ -158,8 +158,14 @@ pub(crate) struct Hub {
     /// ([`symphony_board::project::locate_quick`]): what [`Hub::holds_its_project`] holds the
     /// folder to. None for a folder no repository held.
     repository: Option<PathBuf>,
-    signoff_pending: Mutex<Option<Pending>>,
+    /// The cards waiting on the owner and how many plugin gate answers had come back
+    /// ([`symphony::gates::Kept::answered`]) when the sign-off lane was last read: either moving
+    /// reads it again.
+    signoff_pending: Mutex<Option<(Pending, usize)>>,
     task_activity: Mutex<Option<(i64, Vec<symphony_api::ActivityItem>)>>,
+    /// What the task board asks of each person beyond the cards ([`task_asks`]). Taken after
+    /// `pages` where both are held, never before.
+    task_asks: Mutex<task_asks::Asked>,
     worker: Mutex<Option<std::thread::JoinHandle<()>>>,
     /// The board's health over the last hour: the clock's dispatch passes, the idle sweeps and
     /// every request this process sent the board ([`symphony_board::board_health`]).
@@ -197,7 +203,8 @@ pub(crate) struct Hub {
     rendering: Mutex<()>,
     /// The store the page reads of the board share ([`Hub::reader`]), once one has been opened.
     reader: Mutex<Option<Arc<symphony_board::Store>>>,
-    /// How [`Hub::reader`] opens the board: [`taskview::connect`], or a test's board.
+    /// How [`Hub::reader`] opens the board: [`taskview::connect_held`], held to `repository`, or a
+    /// test's board.
     pub(crate) connect_reader: Box<Connect>,
     /// The hc a Go to session asks about the panes of the checkout at a path ([`Panes`]).
     pub(crate) panes: Box<Panes>,
@@ -260,9 +267,17 @@ impl OrderExpiry {
     }
 }
 
+/// The repository (its common dir) the board's lookup from `root` finds on the files alone
+/// ([`symphony_board::project::locate_quick`]): what a hub made there holds its folder to, and its
+/// reaches of the board ([`taskview::connect_held`]).
+pub(super) fn repository_of(root: &Path) -> Option<PathBuf> {
+    symphony_board::project::locate_quick(root).map(|place| place.common)
+}
+
 impl Hub {
     pub(crate) fn new(root: &Path, ui_dist: &Path) -> Self {
         let native_reader = machine_work::READER_ENV.os();
+        let repository = repository_of(root);
         Self {
             root: root.into(),
             ui_dist: ui_dist.into(),
@@ -309,9 +324,10 @@ impl Hub {
             common: measured("hub checkout", || crate::repo::checkout(root))
                 .ok()
                 .map(|c| c.common),
-            repository: symphony_board::project::locate_quick(root).map(|place| place.common),
+            repository: repository.clone(),
             signoff_pending: Mutex::new(None),
             task_activity: Mutex::new(None),
+            task_asks: Mutex::default(),
             worker: Mutex::new(None),
             health: symphony_board::board_health::Recorder::default(),
             agent_activity: Mutex::new(None),
@@ -325,7 +341,9 @@ impl Hub {
             low_disk: health::low_disk(root),
             rendering: Mutex::new(()),
             reader: Mutex::new(None),
-            connect_reader: Box::new(taskview::connect),
+            connect_reader: Box::new(move |root| {
+                taskview::connect_held(root, repository.as_deref())
+            }),
             panes: Box::new(|root| {
                 let mut env = symphony::children::board_env();
                 env.cwd = root.to_path_buf();
@@ -1170,6 +1188,8 @@ impl Hub {
             }
             cached.as_ref().expect("activity was read").1.clone()
         };
+        // Read before anything moves, so a failed read leaves the cursor where it was.
+        let asks = measured("task asks", || self.read_asks(store, latest, &next.tasks))?;
         let mut held = self.tasks.lock().unwrap_or_else(|e| e.into_inner());
         let mut changed = Vec::new();
         let pending = self
@@ -1183,37 +1203,42 @@ impl Hub {
                 .signoff_pending
                 .lock()
                 .unwrap_or_else(|e| e.into_inner());
+            // Counted before the read, so an answer that comes back during it reads it again.
+            let answered = self.gates.answered();
             if message_changed
-                || previous.as_ref() != Some(&pending)
+                || previous
+                    .as_ref()
+                    .is_none_or(|(cards, then)| *cards != pending || *then != answered)
                 || held
                     .last
                     .as_ref()
                     .is_none_or(|old| !tasks_alike(&old.tasks, &next.tasks))
             {
                 let signoff = measured("signoff", || {
-                    taskview::signoff(store, &next.tasks, &pending)
+                    taskview::signoff(store, &next.tasks, &pending, &self.root, &self.gates)
                 })?;
                 let mut old = self.task_signoff.lock().unwrap_or_else(|e| e.into_inner());
                 if *old != signoff {
                     changed.push(json!({"region":"task-signoff", "data":signoff}));
                     *old = signoff;
                 }
-                *previous = Some(pending);
+                *previous = Some((pending, answered));
             }
         }
         let mut cursor = self
             .latest_message
             .lock()
             .unwrap_or_else(|e| e.into_inner());
+        let mut lines = Vec::new();
         if let Some(since) = *cursor
             && since < latest
         {
             let render = symphony::render::Render::new(&self.root);
-            for message in store
+            lines = store
                 .messages_after(since, latest)
-                .map_err(|e| e.to_string())?
-            {
-                let record = taskview::message(&message);
+                .map_err(|e| e.to_string())?;
+            for message in &lines {
+                let record = taskview::message(message);
                 let mut data = json!(record);
                 let entry = taskview::entry(&record, &render);
                 data["blocks"] = json!(entry.blocks);
@@ -1223,6 +1248,9 @@ impl Hub {
         }
         *cursor = Some(latest);
         drop(cursor);
+        if let Some(change) = self.apply_asks(asks, &lines) {
+            changed.push(change);
+        }
         // A failed read keeps the recipient known before; it is no change.
         if let Ok(recipient) = store.chat_recipient()
             && let Some(change) = self.chat_read(recipient)
@@ -1928,6 +1956,7 @@ mod machine_work;
 mod owner_asks;
 mod reports;
 mod startup;
+mod task_asks;
 
 #[cfg(test)]
 mod owner_asks_tests;

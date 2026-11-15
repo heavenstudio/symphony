@@ -199,7 +199,8 @@ server and stops that one cleanly, so none of it is lost to a later kill.
 
 A replay is the one start that can remove what no server applied. A store that
 went back (a start that replayed its log in pieces and ended before its next
-flush, as an older build's kill of a starting server does) holds a log segment
+flush, as an older build's kill of a starting server does, or a crash in a
+private replay of a log over 2 GiB, which its largest memtable splits too) holds a log segment
 its manifest counts as written: every server on it skips that segment, and its
 clean stop removes it. So a replay never runs without a snapshot of the store as
 it is, taken before the private replay's server starts, on every board, scratch
@@ -628,7 +629,12 @@ pass of it is counted, and the picker says plainly that it has no task board. So
 folder is gone, or no longer holds the repository its server found there: the server says so once
 in its log, then reads, maintains and records nothing more of it, answers its pages' reads and saves
 with that refusal before any route runs, and never looks for its board in the folders above it,
-another repository's (`Hub::holds_its_project`, `symphony_board::project::at`). A board whose store is there is never no board: when the SurrealDB
+another repository's (`Hub::holds_its_project`, `symphony_board::project::at`). The hub's own
+reaches of its board are held to the repository it found when it began to serve the folder
+(`symphony_board::project::held`), so a `.git` removed after its check leads them to no other
+board, and a board's start, stop or hold makes no folder at or above the repository's common dir
+again; a start whose board folder goes while its server starts (SurrealDB makes every missing
+folder of its store's path) ends that server and records none. A board whose store is there is never no board: when the SurrealDB
 that serves it is missing (a version bump before the new binary is fetched, `SYMPHONY_SURREAL` naming a file that is not there), or its server answers with an
 older schema or not at all, its passes fail and it is unwell and says so.
 `tasks status` also warns when the record is more than a minute old, naming the server's pid and
@@ -1462,6 +1468,18 @@ a **Waiting for your sign-off** lane above the board. That needs all of:
 Deciding the card puts the task back in its column. Work nobody holds, or that
 posted no card, stays in its own column however its documents stand.
 
+A project's plugin that answers a gate named `owner` for the task ([Gates](#gates))
+decides in that rule's place: the open, executed task is in the lane while that
+gate is held, card or none, and out of it while the gate is met, waived or
+missing. The lane reads the answer the server keeps for the task's status and
+tip and never asks the plugin for it, so only a read of the task's gates (its
+page) starts the plugin's work. Only a known gate kept for that task decides:
+with no answer kept for it as it is now (before its page is read, after a new
+tip or a new status), an error kept, an answer with no `owner` gate or one
+answered `unknown`, the rule above holds, so the lane errs toward showing the
+owner what may wait on them. The lane is read again when the board, a message,
+a waiting card or a kept answer changes.
+
 **`done` is reached only by a reviewer's `approve` (its orchestrator's, on a fast
 fix), a landing, for a subtask its executor's `done`, or a close as covered by another
 task's landing ([above](#a-task-another-landing-covers)).** A session
@@ -1479,7 +1497,9 @@ that claimed an instruction under `SLUG` may still give `SLUG` its verdict, unle
 Work on the branch is a slice, filed without `--instruction`. `done` is left only by an approved task no landing has closed and whose tip the
 default branch does not hold, back to `review` by its executor, reviewer or orchestrator,
 for a fresh approve of a tip the approve does not cover
-([below](#the-default-landing)). A move of a done task the board refuses names that move
+([below](#the-default-landing)); the move itself tells `@executor` and `@reviewer` on the thread, as
+a finished task's status is followed no more, so a reopen edited into the board by hand tells
+nobody. A move of a done task the board refuses names that move
 back to review only while the approve stands; once a landing closed the task, it says what
 the task still needs goes in a new one. Several sessions
 can hold one task at once, one role each:
@@ -2083,7 +2103,11 @@ name, a state (`missing`, `held`, `unknown`, `waived` or `met`), who and when
 one-line detail, a link to its evidence, and the states it took before, oldest
 first, for the timeline. They come in that order of states: what the task waits
 on first. The task's page draws them in one section under its head, with what
-the task waits on and how many gates are in each state; on a phone a gate is
+the task waits on and how many gates are in each state. What it waits on follows
+its status: in review, the gates missing or held; in concept, design or progress,
+its executor; blocked, the tasks it depends on; before it starts (backlog, ready),
+nothing; and after those, while it is open, each gate held (a card waiting on the
+owner). A done or cancelled task waits on nothing. On a phone a gate is
 three lines, wide one row of bounded columns, a part whose words need more room
 wrapping within its own, so every word shows and none waits on a hover
 (`apps/symphony-web/src/gates.tsx`). A link is kept only for a path of the
@@ -2158,13 +2182,15 @@ stamps, so no task's history is judged again:
 - **owner**: held while a card the task posted waits on the owner, by the sign-off
   lane's rule above; absent otherwise.
 
-Every task has one more of the Symphony's:
+A task with work of its own to check has one more of the Symphony's:
 
 - **check**: the project's `[verdicts] check`, its words joined by spaces, as the
   board's recorder labels a run of it ([MACHINE_WORK](MACHINE_WORK.md#recording-builds-and-tests)),
   at the branch's tip: met when the newest such run there was green, missing when it
-  was red or is still going, unknown when none ran at the tip or the repository has
-  no such branch. A project with no check has no check gate.
+  was red or is still going, unknown when none ran at the tip. There is none for a
+  task whose branch holds no commit of its own (no such branch, one made at the default
+  branch and not yet committed to, or one already landed there), for an instruction
+  subtask, whose work lands with its task, or for a project with no check.
 
 A project's plugin answers its own through the gates seam (`symphony_plugin::Gates`,
 `Plugin::gates`) as the same typed data, so every project's gates are drawn the
@@ -2274,7 +2300,13 @@ A consuming project's optional wait guard refuses a loop waiting on machine-wide
 - `just tasks show` lists a task's subtasks with each one's status and holder;
   `just tasks list` and the Symphony's **tasks** page, under its **Task
   groups** heading, show the same tree, at any depth (`list` leaves finished
-  tasks out unless `--all`).
+  tasks out unless `--all`). The Symphony's tree and a task page's
+  **Subtasks** leave out a finished instruction to do or review the task
+  itself (`SLUG/work`, `SLUG/review`, the staffing pass's
+  `SLUG/staff-review-N`), filed before a task's executor and reviewer worked
+  on the task itself: its verdicts stand on the task's thread, and the task is
+  its row. Open, it is listed, where its agent is found
+  (`crates/symphony/src/taskview.rs`, `listed_under_parent`).
 - Events climb: a message to `@orchestrator`, any verdict and any
   status change on a subtask reaches the orchestrator of the nearest task, at
   or above it, that has one, so the orchestrator takes the role on the root
@@ -2559,8 +2591,11 @@ in progress is.
   Local submissions and receipts live in the folder the project's `[board]
   assessments` names (a `.git/` prefix names the common directory; none when
   unset, and an assessment is then refused); the delivery child is stopped and
-  reaped after 30 seconds or checkout removal. A delayed board, an older API or an unconfirmed reply
-  leaves pending evidence; `just land-stamps BRANCH` retries the latest
+  reaped after 30 seconds or checkout removal. A delayed board, an older API, an unknown method, an
+  incompatible payload or an unconfirmed reply leaves pending evidence: the API's version proves no
+  method, only a reply echoing the publication's witness and canonical receipt exactly confirms one,
+  and a retry's receipt confirms its occurrence, never that it still stands (`current: false` once
+  a newer assessment does). `just land-stamps BRANCH` retries the latest
   submission, preserving a committed occurrence's identity, time and line.
   Pending evidence alone does not confirm a board write.
 - **Rework.** The name `changes` in a record says a reviewer asked changes of
@@ -2587,6 +2622,15 @@ in progress is.
   a fresh assessment, is a request of its own, whatever its text: it waits on
   the branch's next move from that tip. The record answered, retried, is no
   new request: PULL and the alarm count the task in review alike.
+- **No review waited on.** A record that judged the branch's tip now and names
+  neither `review` nor `changes` says the project's own review gate, as its
+  landing keeps it, is met there or not needed, and that replaces the
+  Symphony's: PULL does not list the task as `review_unreviewed`, though no
+  reviewer holds it. A record of another tip, or none, says nothing of the tip
+  now, and a review with no reviewer is listed. A task whose tip the reader
+  cannot tell (no repository, or a branch not named for its slug or gone) is
+  listed too, its record unread there, unlike rework: the row errs toward
+  listing.
 
 ## Where the time goes
 

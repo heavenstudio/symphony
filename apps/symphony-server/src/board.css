@@ -42,10 +42,11 @@ label { display:block; } html:root :focus-visible { outline:2px solid var(--ring
 .kanban, .ghost-kanban { display:grid; grid-template-columns:minmax(0,1fr); gap:var(--sp-4); }
 .kanban > *, .ghost-kanban > * { min-width:0; }
 /* The board's scroller fits the window under what the page draws above it (the header, the
-   heading, the filters and the hint: 277 px on a desk, 395 on a phone) and over the dock while the
-   dock shows (frame.css), so its own horizontal scrollbar, at its foot, is never under the
-   prev/next bar. Its ghost is as tall. */
-:root:has(.frame-pending) { --board-dock:var(--dock); }
+   heading, the filters and the hint: 277 px on a desk, 395 on a phone) and over the dock's band
+   (frame.css), so its own horizontal scrollbar, at its foot, is never under the prev/next bar,
+   nor under the "+", which sits in that band, at its lift, when no bar draws. Its ghost is as
+   tall. */
+:root { --board-dock:var(--dock); }
 .board-scroll { max-width:100%; min-width:0; max-height:max(320px,calc(100dvh - 320px - var(--board-dock,0px))); overflow:auto; overscroll-behavior-x:contain; scroll-snap-type:x proximity; scrollbar-color:var(--muted-foreground) var(--muted); padding-bottom:12px; border-radius:var(--r-lg); }
 .board-scroll:focus-visible { outline:2px solid var(--primary); outline-offset:4px; }
 .board-scroll-hint, .ghost-hint { margin:0; font-size:var(--fs-sm); }
@@ -215,7 +216,7 @@ li > .viewport-slot > p + p { margin-top:1em; }
 .quick-actions form { width:360px; max-width:calc(100vw - 24px); box-sizing:border-box; max-height:75vh; overflow:auto; margin-top:8px; }
 .quick-actions h2 { margin-top:0; } .quick-actions input { width:100%; } .quick-actions label { margin-bottom:10px; }
 
-.card { background:var(--card); border:1px solid var(--border); border-radius:var(--r-lg); box-shadow:var(--shadow-1); padding:var(--sp-4) var(--sp-5); min-width:0; }
+.card { --dot-halo:var(--card); background:var(--card); border:1px solid var(--border); border-radius:var(--r-lg); box-shadow:var(--shadow-1); padding:var(--sp-4) var(--sp-5); min-width:0; }
 .tile { display:flex; flex-direction:column; gap:2px; padding:16px 18px; text-decoration:none; color:var(--foreground); border-top:3px solid var(--tone, var(--border)); transition:transform .12s ease; min-width:0; }
 .pill { --c:var(--muted-foreground); display:inline-flex; align-items:center; gap:5px; font-size:var(--fs-xs); font-weight:600; line-height:1.6; padding:0 10px; border-radius:var(--r-pill); border:1px solid color-mix(in srgb, var(--c) 35%, transparent); background:color-mix(in srgb, var(--c) 10%, transparent); color:var(--c); text-decoration:none; white-space:nowrap; vertical-align:1px; }
 .dot { --c:var(--border); display:inline-block; width:9px; height:9px; border-radius:50%; background:var(--c); vertical-align:0; }

@@ -14,7 +14,7 @@ use axum::http::Request;
 use serde_json::{Value, json};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError, mpsc};
 use std::time::{Duration, Instant};
 use symphony_board::cli::Env;
 use symphony_board::rpc::Client;
@@ -26,10 +26,25 @@ use tower::ServiceExt;
 /// `tests/no-test-fails-on-load`).
 const BACKSTOP: Duration = test_time::backstop(Duration::from_secs(30));
 
-/// A fixture project: its checkout, holding `symphony.toml` with its id, and its hub.
+/// What the hub's reach of a fixture's board says while its case keeps it from the board
+/// ([`Project::unreached`]).
+const UNREACHED: &str = "the case keeps its hub from its board while it ends";
+
+/// A fixture project: its checkout, holding `symphony.toml` with its id, its hub, whether that
+/// hub's reach of its board goes on ([`Project::unreached`]), and where its next reach waits
+/// ([`Project::paused`]).
 struct Project {
     root: PathBuf,
     hub: Arc<Hub>,
+    reaches: Arc<Mutex<bool>>,
+    pause: Arc<Mutex<Option<Pause>>>,
+}
+
+/// Where a hub's reach waits, once its tick's check that its folder holds its project has passed:
+/// it says it is there, and goes on once it hears.
+struct Pause {
+    there: mpsc::Sender<()>,
+    on: mpsc::Receiver<()>,
 }
 
 impl Project {
@@ -55,17 +70,60 @@ impl Project {
             .create(&NewTask::new(&format!("{id}/one"), "Made first", "owner"))
             .unwrap();
         let reach = env(&root);
+        let reaches = Arc::new(Mutex::new(true));
+        let gate = Arc::clone(&reaches);
+        let pause = Arc::new(Mutex::new(None::<Pause>));
+        let paused = Arc::clone(&pause);
+        // Held to the repository found as the hub is made, as `Hub::start`'s reach is.
+        let held = super::repository_of(&root);
         let hub = Hub::start_watching::<notify::NullWatcher>(
             &root,
             &root.join("build/client"),
             false,
             false,
             crate::backstop::PERIOD,
-            move |root| symphony::taskview::connect_in(root, reach.clone()),
+            move |root| {
+                // Held through the reach, so a case that closes the gate waits out one under way.
+                let open = gate.lock().unwrap_or_else(PoisonError::into_inner);
+                if !*open {
+                    return Err(UNREACHED.to_string());
+                }
+                if let Some(pause) = paused.lock().unwrap().take() {
+                    let _ = pause.there.send(());
+                    let _ = pause.on.recv();
+                }
+                symphony::taskview::connect_held_in(root, held.as_deref(), reach.clone())
+            },
         )
         .unwrap();
         hub.start_initial_board();
-        Project { root, hub }
+        Project {
+            root,
+            hub,
+            reaches,
+            pause,
+        }
+    }
+
+    /// Hold the hub's next reach of its board where it waits, once its check has passed: what
+    /// returns says when it is there, and lets it go on.
+    fn paused(&self) -> (mpsc::Receiver<()>, mpsc::Sender<()>) {
+        let (there, arrived) = mpsc::channel();
+        let (go, on) = mpsc::channel();
+        *self.pause.lock().unwrap() = Some(Pause { there, on });
+        (arrived, go)
+    }
+
+    /// What `end` returns, run while the hub's reach of the board is refused, once a reach under
+    /// way has ended: a case's end, its board's server stopped and its folder removed. Between the
+    /// two the hub's next read would start the server again, as it starts a stopped board
+    /// (`each_projects_hub_reads_its_own_board_and_reconnects_when_its_server_restarts`), and that
+    /// start would write into the folder while it is removed.
+    fn unreached<T>(&self, end: impl FnOnce() -> T) -> T {
+        *self.reaches.lock().unwrap() = false;
+        let ended = end();
+        *self.reaches.lock().unwrap() = true;
+        ended
     }
 
     fn home(&self) -> Home {
@@ -356,10 +414,11 @@ impl Drop for Stopped {
 
 /// A project in its own repository under another checkout's artifacts, as a test's scratch
 /// projects are, removed under its hub, or left without its `.git`, once its board's server has
-/// stopped (the case that ended it stopped it): the hub says once that its folder is gone and
-/// reads nothing more, as a project with no board, so the server's maintenance of it waits. It
-/// starts no board's server, the outer checkout's least of all, whose board is made and down, and
-/// so would be started by a lookup that walked up to it.
+/// stopped (the case that ended it stopped it, nothing reaching the board in between): the hub
+/// says once that its folder is gone and reads nothing more, as a project with no board, so the
+/// server's maintenance of it waits. It starts no board's server, the outer checkout's least of
+/// all, whose board is made and down, and so would be started by a lookup that walked up to it,
+/// and none runs on its removed data.
 #[test]
 fn a_project_removed_under_its_hub_starts_and_reads_no_board_of_the_checkout_above_it() {
     type Remove = fn(&Path) -> std::io::Result<()>;
@@ -383,8 +442,12 @@ fn a_project_removed_under_its_hub_starts_and_reads_no_board_of_the_checkout_abo
         let inner = Project::made_in(&tree, "outer/artifacts/scratch/inner", "inner", writer);
         inner.reads(&["inner/one"]);
         assert!(inner.hub.holds_its_project(), "{case}");
-        inner.home().stop().unwrap();
-        remove(&inner.root).unwrap();
+        let stopped = inner.unreached(|| {
+            let stopped = inner.home().stop().unwrap();
+            remove(&inner.root).unwrap();
+            stopped
+        });
+        assert!(stopped.is_some(), "{case}: its board's server ran");
 
         let why = inner.refused("the project's folder");
         assert_eq!(why, inner.hub.gone(), "{case}");
@@ -403,12 +466,48 @@ fn a_project_removed_under_its_hub_starts_and_reads_no_board_of_the_checkout_abo
             None,
             "{case}: the outer board started"
         );
+        // A server on its data that its removal left running has no record left to say so: the
+        // process table is read.
         assert_eq!(
-            inner.home().recorded(),
+            inner.home().serving(),
             None,
-            "{case}: its own board started"
+            "{case}: its own board's server runs, started again before the removal or after it"
         );
     }
+}
+
+/// A project in its own repository under another checkout's artifacts, its `.git` removed after
+/// its hub's tick found that its folder holds it and before that tick's reach of its board looked
+/// the board up: the reach, held to the repository the hub was made for, is refused as gone, never
+/// walks up to the outer checkout's board, whose server is down and would be started, and starts
+/// its own project's none. The hub then says its folder is gone.
+#[test]
+fn a_reach_whose_projects_git_goes_after_its_hubs_check_starts_no_board_above_it() {
+    let tree = Tree::new();
+    let outer = repository_at(&tree, "outer");
+    std::fs::write(outer.join("symphony.toml"), "[project]\nid = \"outer\"\n").unwrap();
+    writer(&outer)
+        .create(&NewTask::new("outer/one", "The outer checkout's", "owner"))
+        .unwrap();
+    let outer_board = Stopped(Home::in_common(&outer.join(".git"), Some(&surreal())));
+    assert!(outer_board.0.stop().unwrap().is_some());
+    let inner = Project::made_in(&tree, "outer/artifacts/scratch/inner", "inner", writer);
+    inner.reads(&["inner/one"]);
+
+    // Its board's server stopped, the hub's next tick reaches the board again.
+    let (there, go) = inner.paused();
+    assert!(inner.home().stop().unwrap().is_some());
+    test_time::until_true("the hub to reach its board again", BACKSTOP, || {
+        there.try_recv().is_ok()
+    })
+    .unwrap();
+    std::fs::remove_dir_all(inner.root.join(".git")).unwrap();
+    go.send(()).unwrap();
+
+    let why = inner.refused(&inner.hub.gone());
+    assert_eq!(why, inner.hub.gone());
+    assert_eq!(outer_board.0.recorded(), None, "the outer board started");
+    assert_eq!(inner.home().serving(), None, "its own board's server runs");
 }
 
 /// A page on this machine asking `method` at `uri`, with `body` as its JSON.
@@ -580,6 +679,12 @@ fn a_hub_holds_its_folder_while_the_boards_lookup_from_it_finds_its_repository()
     assert!(removed.holds_its_project());
     std::fs::remove_dir_all(&root).unwrap();
     assert!(!removed.holds_its_project(), "removed");
+
+    // As a board's start under way makes it again: its store's folders alone.
+    let (remade, root) = project("remade");
+    std::fs::remove_dir_all(root.join(".git")).unwrap();
+    std::fs::create_dir_all(root.join(".git").join(symphony_board::folders::TASKS)).unwrap();
+    assert!(!remade.holds_its_project(), "its .git made again");
 
     let below = outer.join("docs");
     std::fs::create_dir_all(&below).unwrap();

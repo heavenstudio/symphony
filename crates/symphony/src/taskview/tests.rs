@@ -43,6 +43,129 @@ fn project_task_counts_exclude_children_and_grandchildren() {
     );
 }
 
+/// Under its parent, a finished instruction to do or review the parent is no row of its own; a
+/// slice, an errand and any open subtask are.
+#[test]
+fn only_a_finished_instruction_to_work_on_or_review_its_parent_is_left_out_under_it() {
+    let staffing = [
+        "feature/work",
+        "feature/review",
+        "feature/staff-review-1",
+        "feature/staff-review-12",
+        "feature/part/work",
+        "work",
+    ];
+    for slug in staffing {
+        for finished in ["done", "cancelled"] {
+            assert!(
+                !listed_under_parent(slug, true, finished),
+                "{slug} {finished}"
+            );
+        }
+        for open in [
+            "concept",
+            "design",
+            "backlog",
+            "ready",
+            "in_progress",
+            "review",
+            "blocked",
+        ] {
+            assert!(listed_under_parent(slug, true, open), "{slug} {open}");
+        }
+        // A slice of that name is work on the parent's branch, listed whatever its status.
+        assert!(listed_under_parent(slug, false, "done"), "slice {slug}");
+    }
+    let errands = [
+        "feature/visual",
+        "feature/merge-main",
+        "feature/review-merge",
+        "feature/rework",
+        "feature/work-2",
+        "feature/reviews",
+        "feature/staff-review-",
+        "feature/staff-review-x",
+        "feature/staff-review-2b",
+        "feature/work/notes",
+    ];
+    for slug in errands {
+        for status in ["done", "cancelled", "ready"] {
+            assert!(listed_under_parent(slug, true, status), "{slug} {status}");
+        }
+    }
+}
+
+#[test]
+fn a_questions_task_is_open_until_it_is_done_or_cancelled() {
+    let task = |slug: &str, status: &str| Task {
+        slug: slug.into(),
+        title: slug.into(),
+        body: String::new(),
+        status: status.into(),
+        priority: 2,
+        parent: None,
+        created_by: "owner".into(),
+        created: 0.0,
+        updated: 0.0,
+        links: Vec::new(),
+        depends: Vec::new(),
+        roles: Vec::new(),
+        instruction: false,
+        fields: BTreeMap::new(),
+    };
+    let tasks: Vec<Task> = [
+        ("a", "backlog"),
+        ("b", "in_progress"),
+        ("c", "done"),
+        ("d", "review"),
+        ("e", "cancelled"),
+        ("f", "blocked"),
+    ]
+    .iter()
+    .map(|(slug, status)| task(slug, status))
+    .collect();
+    assert_eq!(open(&tasks), ["a", "b", "d", "f"]);
+    assert_eq!(open(&[]), Vec::<String>::new());
+}
+
+#[test]
+fn a_reviewers_verdict_is_news_for_every_person_and_any_other_line_is_none() {
+    let line = |kind: &str, text: &str| symphony_board::Message {
+        id: 6240,
+        slug: "tools/x".into(),
+        sender: "slate-wren".into(),
+        recipient: Some("@executor".into()),
+        kind: kind.into(),
+        text: text.into(),
+        ts: 1_763_213_045.25,
+    };
+    let given = verdict(&line("verdict", "changes: the hash moved")).unwrap();
+    assert_eq!(
+        given,
+        TaskVerdict {
+            id: 6240,
+            task: "tools/x".into(),
+            verdict: "changes".into(),
+            reviewer: "slate-wren".into(),
+            at: 1_763_213_045.25,
+        }
+    );
+    assert_eq!(verdict(&line("verdict", "done: integrated")), None);
+    assert_eq!(verdict(&line("msg", "approve")), None);
+    let questions = BTreeMap::from([("owner".to_string(), 2)]);
+    let asked = asks(questions.clone(), Some(&given));
+    assert_eq!(asked.questions, questions);
+    assert_eq!(
+        asked.verdicts.keys().collect::<Vec<_>>(),
+        PEOPLE.iter().collect::<Vec<_>>()
+    );
+    assert_eq!(asked.verdicts["owner"], given);
+    assert!(
+        asks(questions, None).verdicts.is_empty(),
+        "no verdict yet, none for anyone"
+    );
+}
+
 #[test]
 fn a_brief_within_the_limit_is_its_whole_reply() {
     let tree = Tree::new();

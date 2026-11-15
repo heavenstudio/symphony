@@ -875,7 +875,12 @@ interface ReportProps {
 /**
  * One window's report, its axis from the first period recorded or the roll-up's start
  * (`fromFirstRecord`). The period tapped is the same on every chart; the series `hidden` names are
- * hidden on theirs. Each figure links to its chart while the charts are drawn.
+ * hidden on theirs. Each figure links to its chart while the charts are drawn. A chart's id is an
+ * anchor of its slot (`chart-ID`), held in its ghost until it mounts, so the address of a chart not
+ * drawn yet finds its place, and a slot the address names mounts at once and lands its chart
+ * (`NearViewport`, the shell's `reviewLand`), as a document's part does: on a fresh load, whose
+ * charts come after the shell has looked for the address, too. The shell lands once a navigation,
+ * so a new window or the hourly slide, which mount every chart again, moves no one.
  */
 function Report({ page: whole, hidden, onToggle }: ReportProps) {
   const [tapped, setTapped] = useState<number | null>(null);
@@ -922,12 +927,8 @@ function Report({ page: whole, hidden, onToggle }: ReportProps) {
                   key={chart.id}
                   height={330}
                   className="chart-slot"
-                  ghost={
-                    <>
-                      <span id={`chart-${chart.id}`} />
-                      <GhostChart />
-                    </>
-                  }
+                  anchors={[`chart-${chart.id}`]}
+                  ghost={<GhostChart />}
                 >
                   <ChartCard
                     chart={chart}

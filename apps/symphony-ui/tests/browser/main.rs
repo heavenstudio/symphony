@@ -23,8 +23,10 @@
 //! Without Chrome on the machine the browser tests say so and pass: the one capability a test
 //! may lack. The build is made once per run of this binary, into `build/symphony-ui/` of the tree.
 
+mod agents;
 mod assets;
 mod binaries;
+mod board_place;
 mod board_search;
 mod board_status;
 mod cache_ahead;
@@ -37,6 +39,7 @@ mod chrome;
 mod common;
 mod components;
 mod document_cards;
+mod document_landing;
 mod feed_deltas;
 #[path = "../../../../tools/test-support/script_std.rs"]
 mod fixture_script;
@@ -65,6 +68,7 @@ mod server_notices;
 mod shot;
 mod site;
 mod skeleton;
+mod tabs;
 mod task_gates;
 mod timeline;
 
@@ -372,7 +376,7 @@ fn completed_requests(chrome: &mut Chrome) -> Vec<chrome::Request> {
         let requests = chrome.requests();
         requests
             .iter()
-            .all(|r| r.finished || r.kind == "EventSource" || r.kind == "Image")
+            .all(|r| r.finished || r.streams() || r.kind == "Image")
             .then_some(requests)
     })
     .unwrap_or_else(|stall| panic!("{stall}: {:#?}", chrome.requests()))
@@ -429,8 +433,14 @@ fn loaded(requests: &[chrome::Request]) -> impl Iterator<Item = &chrome::Request
         .filter(|request| request.kind != "Image" && !request.from_cache && !request.prefetch)
 }
 
+/// The bytes of `request`'s pings: each an event of an event stream, or a frame of a WebSocket.
 fn pings_of(request: &chrome::Request) -> f64 {
-    (request.pings * site::ping().len()) as f64
+    let ping = if request.kind == chrome::WEB_SOCKET {
+        site::ping().frame().len()
+    } else {
+        site::ping().sse().len()
+    };
+    (request.pings * ping) as f64
 }
 
 /// What the page warmed at idle for a later click: never its first paint's.
@@ -1299,6 +1309,12 @@ fn the_transfer_budget_counts_api_failures_and_open_streams_but_not_images_cache
             ..Default::default()
         },
         chrome::Request {
+            kind: chrome::WEB_SOCKET.into(),
+            bytes: 129.0 + 3.0 * 7.0,
+            pings: 3,
+            ..Default::default()
+        },
+        chrome::Request {
             kind: "Image".into(),
             bytes: 500.0,
             finished: true,
@@ -1312,9 +1328,11 @@ fn the_transfer_budget_counts_api_failures_and_open_streams_but_not_images_cache
             ..Default::default()
         },
     ];
-    assert_eq!(site::ping().len(), 19);
-    assert_eq!(needed_bytes(&requests), 222.0);
-    assert_eq!(ping_bytes(&requests), 38.0);
+    // A ping is 19 bytes as an event, and 7 as a WebSocket's frame: its head and `ping\n`.
+    assert_eq!(site::ping().sse().len(), 19);
+    assert_eq!(site::ping().frame(), b"\x81\x05ping\n");
+    assert_eq!(needed_bytes(&requests), 222.0 + 129.0);
+    assert_eq!(ping_bytes(&requests), 38.0 + 21.0);
     assert_eq!(
         prefetched_bytes(&requests),
         9_000.0,

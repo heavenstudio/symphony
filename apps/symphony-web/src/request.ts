@@ -73,8 +73,10 @@ function marker(post: boolean, url: string): (phase: string) => void {
 
 /**
  * One request: a POST of `payload`, else a GET naming `etag` when one is given (a kept read). Its
- * answer, and the headers it came with. The request is given up once `signal` ends, as when no
- * answer comes in time.
+ * answer, and the headers it came with. The request is given up once `signal` ends, its fetch
+ * failing with an `AbortError`, and when no answer comes in time, with a `TimeoutError`: the
+ * shell's count of the page's reads (assets/shell.js) takes the second as a read that got no
+ * answer, and the first as none.
  */
 async function exchange(
   url: string,
@@ -130,7 +132,7 @@ async function exchanged(
     throw new Failure("uncertain", reading ? UNREACHABLE : String(error), said(error));
   }
   if (response === null) {
-    controller.abort();
+    controller.abort(new DOMException(NO_ANSWER, "TimeoutError"));
     mark("no-answer");
     throw new Failure("uncertain", NO_ANSWER);
   }
@@ -185,7 +187,7 @@ async function answer(
 }
 
 /** A read: its body as the browser parsed it. Given up, its request with it, once `signal` ends. */
-export async function getJson(url: string, signal?: AbortSignal): Promise<unknown> {
+export async function getJson(url: string, signal: AbortSignal): Promise<unknown> {
   const [answered] = await exchange(url, undefined, undefined, signal);
   if (answered.same) throw new Failure("uncertain", "The server answered 304 to a plain read");
   return answered.value;
@@ -195,7 +197,7 @@ export async function getJson(url: string, signal?: AbortSignal): Promise<unknow
  * A read of something this device kept: it names the kept copy's tag (`If-None-Match`, when there
  * is one) and goes past the browser's cache. Given up, its request with it, once `signal` ends.
  */
-export async function getIf(url: string, etag: string, signal?: AbortSignal): Promise<Answer> {
+export async function getIf(url: string, etag: string, signal: AbortSignal): Promise<Answer> {
   return (await exchange(url, undefined, etag, signal))[0];
 }
 
@@ -224,7 +226,7 @@ export function cursorOf(header: string | null): number | null {
 export async function getDocument(
   url: string,
   etag: string,
-  signal?: AbortSignal,
+  signal: AbortSignal,
 ): Promise<DocumentAnswer | null> {
   try {
     const [answer, headers] = await exchange(url, undefined, etag, signal);
