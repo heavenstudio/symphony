@@ -27,7 +27,7 @@ use super::crates::Publication;
 use super::git::short;
 use super::group::Stamp;
 use super::tags::Release;
-use crate::clock::stamp_at;
+use symphony::clock::stamp_at;
 
 /// The records a run keeps.
 pub(crate) const KEPT_RUNS: usize = 60;
@@ -190,7 +190,7 @@ pub(crate) struct Checking {
 pub(crate) fn hold(folder: &Path, running: &Running) -> Result<(), String> {
     let path = folder.join("running.json");
     let text = serde_json::to_string_pretty(running).map_err(|e| e.to_string())? + "\n";
-    crate::text::write_whole(&path, &text).map_err(|e| crate::text::os_error(&e, &path))
+    symphony::text::write_whole(&path, &text).map_err(|e| symphony::text::os_error(&e, &path))
 }
 
 /// The run that said it holds the lock in `folder`, when one did and it reads, its kind as this
@@ -302,7 +302,7 @@ impl Drop for Lock {
 /// when missing.
 pub(crate) fn lock(common: &Path) -> Result<Lock, String> {
     let folder = folder(common);
-    fs::create_dir_all(&folder).map_err(|e| crate::text::os_error(&e, &folder))?;
+    fs::create_dir_all(&folder).map_err(|e| symphony::text::os_error(&e, &folder))?;
     let path = folder.join(LOCK);
     let file = OpenOptions::new()
         .read(true)
@@ -310,7 +310,7 @@ pub(crate) fn lock(common: &Path) -> Result<Lock, String> {
         .create(true)
         .truncate(false)
         .open(&path)
-        .map_err(|e| crate::text::os_error(&e, &path))?;
+        .map_err(|e| symphony::text::os_error(&e, &path))?;
     let taken = file.try_lock();
     Ok(Lock {
         folder,
@@ -328,10 +328,10 @@ pub(crate) fn logs(folder: &Path, id: &str) -> PathBuf {
 /// Write `run` whole into `folder`; its record so far, beside its logs, goes.
 pub(crate) fn write(folder: &Path, run: &Run) -> Result<(), String> {
     let runs = folder.join("runs");
-    fs::create_dir_all(&runs).map_err(|e| crate::text::os_error(&e, &runs))?;
+    fs::create_dir_all(&runs).map_err(|e| symphony::text::os_error(&e, &runs))?;
     let path = runs.join(format!("{}.json", run.id));
     let text = serde_json::to_string_pretty(run).map_err(|e| e.to_string())? + "\n";
-    crate::text::write_whole(&path, &text).map_err(|e| crate::text::os_error(&e, &path))?;
+    symphony::text::write_whole(&path, &text).map_err(|e| symphony::text::os_error(&e, &path))?;
     let _ = fs::remove_file(logs(folder, &run.id).join(SO_FAR));
     Ok(())
 }
@@ -340,7 +340,7 @@ pub(crate) fn write(folder: &Path, run: &Run) -> Result<(), String> {
 /// without writing its whole record.
 pub(crate) fn so_far(logs: &Path, run: &Run) {
     if let Ok(text) = serde_json::to_string_pretty(run) {
-        let _ = crate::text::write_whole(&logs.join(SO_FAR), &(text + "\n"));
+        let _ = symphony::text::write_whole(&logs.join(SO_FAR), &(text + "\n"));
     }
 }
 

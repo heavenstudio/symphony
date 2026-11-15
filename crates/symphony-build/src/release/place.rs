@@ -13,14 +13,16 @@ use std::path::{Component, Path, PathBuf};
 use super::git::{commit, git, git_until, short};
 use super::group::{self, Bound};
 
-/// The reason the release run's checkout is locked with, which keeps the board's sweep off it.
-pub(crate) const LOCK_REASON: &str = "the Symphony release run's checkout (docs/RELEASES.md)";
+/// The reason the release run's checkout is locked with, which keeps the board's sweep off it: the
+/// sweep's own, which it reads that lock by.
+pub(crate) use symphony_board::sweep::holder::RELEASE_LOCK as LOCK_REASON;
 /// The marker in the checkout's admin folder (`.git/worktrees/NAME/`): the checkout's real path.
 const MARK: &str = "symphony-release";
 /// When the build folder the release run keeps was last cleared, beside the checkout's marker.
 pub(crate) const BUILT: &str = "symphony-release-built";
-/// The days the build folder the release run keeps is built on incrementally before it is cleared.
-pub(crate) const BUILD_KEPT_DAYS: f64 = 7.0;
+/// The days the build folder the release run keeps is built on incrementally before it is cleared:
+/// the sweep's own, which clears it once nothing touched the checkout for that long.
+pub(crate) use symphony_board::sweep::holder::RELEASE_BUILD_DAYS as BUILD_KEPT_DAYS;
 /// The git locks a killed checkout or reset leaves in a worktree's admin folder.
 const GIT_LOCKS: [&str; 2] = ["index.lock", "HEAD.lock"];
 
@@ -246,7 +248,7 @@ fn stale_locks(admin: &Path) -> Result<Vec<String>, String> {
                 pids.join(", ")
             ));
         }
-        fs::remove_file(&lock).map_err(|e| crate::text::os_error(&e, &lock))?;
+        fs::remove_file(&lock).map_err(|e| symphony::text::os_error(&e, &lock))?;
         removed.push(format!(
             "removed {}, which an interrupted git left and no process holds",
             lock.display()
@@ -279,7 +281,7 @@ pub(crate) fn prune_build(target: &Path, stamp: &Path, now: f64) -> Option<Strin
             Err(e) => format!(
                 "cannot clear {}: {}",
                 target.display(),
-                crate::text::os_error(&e, target)
+                symphony::text::os_error(&e, target)
             ),
         }),
     }
@@ -314,7 +316,7 @@ impl Place {
             }
             registered => {
                 if let Some(parent) = path.parent() {
-                    fs::create_dir_all(parent).map_err(|e| crate::text::os_error(&e, parent))?;
+                    fs::create_dir_all(parent).map_err(|e| symphony::text::os_error(&e, parent))?;
                 }
                 let mut add = vec!["worktree", "add", "--quiet", "--detach", "--no-checkout"];
                 if registered.is_some() {
@@ -327,7 +329,7 @@ impl Place {
                     .ok_or_else(|| format!("git made no admin folder for {at}"))?;
                 let marker = admin.join(MARK);
                 fs::write(&marker, format!("{at}\n"))
-                    .map_err(|e| crate::text::os_error(&e, &marker))?;
+                    .map_err(|e| symphony::text::os_error(&e, &marker))?;
                 self.admin = Some(admin);
                 git_until(&path, &["reset", "--quiet", "--hard", to], until)?;
             }

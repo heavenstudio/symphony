@@ -465,6 +465,39 @@ fn land(tree: &Tree, hours: f64, slug: &str, subject: Option<&str>) {
     );
 }
 
+#[test]
+fn a_landing_is_the_lands_merge_or_gits_own_onto_the_branch() {
+    assert_eq!(
+        landing_slug("Merge branch 'tools/x'", "main"),
+        Some("tools/x")
+    );
+    assert_eq!(
+        landing_slug("Merge branch 'tools/x' into main", "main"),
+        Some("tools/x")
+    );
+    for none in [
+        "Merge remote-tracking branch 'origin/main'",
+        "Merge branch 'main' of github.com:heavenstudio/symphony",
+        "Merge branch 'main' into tools/x",
+        "Merge branch 'main'",
+        "Merge branch ''",
+        "Merge branch 'unclosed",
+        "Regenerate the client distribution after tools/x",
+        "Merge pull request #3 from x/y",
+    ] {
+        assert_eq!(landing_slug(none, "main"), None, "{none}");
+    }
+    // The default branch is the project's: another's merge of `main` is a landing of it.
+    assert_eq!(
+        landing_slug("Merge branch 'main' into trunk", "trunk"),
+        Some("main")
+    );
+    assert_eq!(
+        landing_slug("Merge branch 'trunk' into tools/x", "trunk"),
+        None
+    );
+}
+
 /// A red's range from the commit it was green on to the one it was red on: a landing before it,
 /// three in it (the last merged by hand, its branch having taken main in first), the regenerator's
 /// commit and a merge of the remote's main between them, and a landing after it.

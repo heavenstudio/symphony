@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   ANSWER_MS,
+  answerMs,
   cursorOf,
   Failure,
   getDocument,
@@ -11,12 +12,21 @@ import {
   post,
   said,
 } from "./request";
-import { UNREACHABLE } from "./trouble";
+import { NOT_IN_TIME, UNREACHABLE } from "./trouble";
 import { VERSION_HEADER } from "./wire";
 
 /** A response of `status` with the JSON `body` and the headers given. */
 const answer = (status: number, body?: unknown, headers: Record<string, string> = {}) =>
   new Response(body === undefined ? null : JSON.stringify(body), { status, headers });
+
+/** A `200` whose head came and whose body never does. */
+const stalled = () =>
+  ({
+    status: 200,
+    ok: true,
+    headers: new Headers(),
+    json: () => new Promise(() => {}),
+  }) as Response;
 
 let fetched: ReturnType<typeof vi.fn>;
 
@@ -96,12 +106,44 @@ describe("a read", () => {
       return new Promise(() => {});
     });
     const read = getJson("/api/x", STAYS);
-    const failed = expect(read).rejects.toEqual(new Failure("uncertain", NO_ANSWER));
+    // A read's own words: nothing was sent to check before sending again.
+    const failed = expect(read).rejects.toEqual(new Failure("uncertain", NOT_IN_TIME));
     await vi.advanceTimersByTimeAsync(ANSWER_MS);
     await failed;
     expect(signal?.aborted).toBe(true);
     // What the shell's count of the page's reads takes as a read that got no answer.
-    expect(signal?.reason).toMatchObject({ name: "TimeoutError", message: NO_ANSWER });
+    expect(signal?.reason).toMatchObject({ name: "TimeoutError", message: NOT_IN_TIME });
+  });
+
+  it("fails in its own words when its body does not come in time", async () => {
+    vi.useFakeTimers();
+    fetched.mockResolvedValue(stalled());
+    const read = getJson("/api/x", STAYS);
+    const failed = expect(read).rejects.toEqual(new Failure("uncertain", NOT_IN_TIME));
+    await vi.advanceTimersByTimeAsync(ANSWER_MS);
+    await failed;
+  });
+
+  it("waits as long as the page names, else ANSWER_MS", async () => {
+    vi.useFakeTimers();
+    expect(answerMs()).toBe(ANSWER_MS);
+    for (const ignored of [0, -5, "500", Number.NaN]) {
+      vi.stubGlobal("symphonyAnswerMs", ignored);
+      expect(answerMs(), String(ignored)).toBe(ANSWER_MS);
+    }
+    vi.stubGlobal("symphonyAnswerMs", 500);
+    expect(answerMs()).toBe(500);
+    const signals = unanswered();
+    let settled = false;
+    const read = getJson("/api/x", STAYS).finally(() => {
+      settled = true;
+    });
+    const failed = expect(read).rejects.toEqual(new Failure("uncertain", NOT_IN_TIME));
+    await vi.advanceTimersByTimeAsync(499);
+    expect(settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    await failed;
+    expect(signals[0]?.aborted).toBe(true);
   });
 
   it("refuses a 304 it did not ask for", async () => {
@@ -264,6 +306,25 @@ describe("a post", () => {
     await expect(post("/api/postpone", {})).rejects.toEqual(
       new Failure("uncertain", "TypeError: Load failed", "Load failed"),
     );
+  });
+
+  it("keeps its own words when no answer, or no body, comes in time: it may have acted", async () => {
+    vi.useFakeTimers();
+    let signal: AbortSignal | undefined;
+    fetched.mockImplementation((_: string, init: RequestInit) => {
+      signal = init.signal ?? undefined;
+      return new Promise(() => {});
+    });
+    const sent = post("/api/postpone", {});
+    const failed = expect(sent).rejects.toEqual(new Failure("uncertain", NO_ANSWER));
+    await vi.advanceTimersByTimeAsync(ANSWER_MS);
+    await failed;
+    expect(signal?.reason).toMatchObject({ name: "TimeoutError", message: NO_ANSWER });
+    fetched.mockResolvedValue(stalled());
+    const again = post("/api/postpone", {});
+    const late = expect(again).rejects.toEqual(new Failure("uncertain", NO_ANSWER));
+    await vi.advanceTimersByTimeAsync(ANSWER_MS);
+    await late;
   });
 });
 

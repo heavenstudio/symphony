@@ -139,7 +139,7 @@ mod tests {
     /// Run the shell line `line` with `PATH` `path`, as the schedule would.
     fn scheduled(line: &str, path: &str) {
         let done = output(
-            crate::children::command("/bin/sh")
+            symphony::children::command("/bin/sh")
                 .args(["-c", line])
                 .env("PATH", path)
                 .current_dir("/"),
@@ -245,11 +245,16 @@ mod tests {
                 true,
             ),
         );
-        let done = output(crate::children::command("plutil").arg("-lint").arg(&file)).unwrap();
+        let done = output(
+            symphony::children::command("plutil")
+                .arg("-lint")
+                .arg(&file),
+        )
+        .unwrap();
         assert!(done.status.success(), "{done:?}");
         let read = |key: &str| {
             let read = output(
-                crate::children::command("plutil")
+                symphony::children::command("plutil")
                     .args(["-extract", key, "raw", "-o", "-"])
                     .arg(&file),
             )

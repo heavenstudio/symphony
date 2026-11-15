@@ -201,7 +201,7 @@ pub(crate) fn holders(file: &Path) -> Result<Vec<u32>, String> {
 /// [`holders`], lsof stopped when `bound` ends.
 fn holders_within(file: &Path, bound: Bound<'_>) -> Result<Vec<u32>, String> {
     let done = output_until(
-        crate::children::command("lsof")
+        symphony::children::command("lsof")
             .args(["-w", "-t", "--"])
             .arg(file),
         bound,
@@ -271,7 +271,7 @@ const AGAIN: Duration = Duration::from_secs(1);
 pub(crate) fn inside(trees: &[&Path], bound: Bound<'_>) -> Result<Vec<Vec<Inside>>, String> {
     let mut list = || {
         listing(
-            &mut crate::children::command("lsof"),
+            &mut symphony::children::command("lsof"),
             bound.sooner(Duration::from_secs(60)),
         )
     };
@@ -402,8 +402,8 @@ fn inside_of(listing: &str, tree: &Path, me: u32) -> Vec<Inside> {
 mod tests {
     use super::super::waits::{far, gone, pid_written, untimed, written_pid};
     use super::*;
-    use crate::children::command;
     use crate::test_tree::Tree;
+    use symphony::children::command;
 
     /// A clock that moves only by the pauses taken on it.
     #[derive(Default)]

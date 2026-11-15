@@ -54,7 +54,7 @@ pub(crate) fn run(
                 out,
                 "release: `{}` is told as one check: {}",
                 step.name,
-                crate::text::os_error(&e, &folder)
+                symphony::text::os_error(&e, &folder)
             );
         }
     }
@@ -79,7 +79,7 @@ pub(crate) fn read(folder: &Path, check: &str) -> Result<Vec<Ran>, String> {
     let text = match fs::read_to_string(&path) {
         Ok(text) => text,
         Err(e) if e.kind() == ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(e) => return Err(crate::text::os_error(&e, &path)),
+        Err(e) => return Err(symphony::text::os_error(&e, &path)),
     };
     let mut steps: Vec<Ran> = Vec::new();
     for (n, line) in text.lines().enumerate() {

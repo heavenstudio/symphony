@@ -15,7 +15,7 @@ import { field, list } from "./shared";
 import { Backoff } from "./state";
 import { load, save } from "./storage";
 import { TaskTag } from "./task-tag";
-import { ready } from "./trouble";
+import { failed as failedRead, ready } from "./trouble";
 import { drawnHeight, drawnStyle, NearViewport, rememberDrawn } from "./viewport";
 import type { Card, Queue, QueueItem } from "./wire";
 
@@ -463,7 +463,7 @@ export function QueuePage({ scope, refreshed }: { scope: string; refreshed: numb
             <p className="lead">{LEAD}</p>
           </div>
         </div>
-        {error !== null && <p role="alert">{error}</p>}
+        {error !== null && <p role="alert">{failedRead(error, true)}</p>}
         {queue !== null ? (
           <>
             <WaitingQueue

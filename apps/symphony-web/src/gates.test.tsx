@@ -25,7 +25,6 @@ import {
   type Waiter,
   WORDS,
 } from "./gates-model";
-import { NO_ANSWER } from "./request";
 import { aRole, asking, aTask, memoryStorage, reply, server } from "./testing";
 import { UNREACHABLE } from "./trouble";
 import type { Gate, GatesSeen, TaskGates } from "./wire";
@@ -667,7 +666,6 @@ describe("the gates' read", () => {
     await vi.advanceTimersByTimeAsync(15_000);
     expect(await reading).toEqual({ kind: "slow" });
     expect(asked[0]?.signal?.aborted, "its request with it").toBe(true);
-    expect(NO_ANSWER).toContain("no answer");
   });
 
   it("aborts its request once its signal ends", async () => {

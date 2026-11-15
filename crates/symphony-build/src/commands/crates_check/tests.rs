@@ -59,8 +59,8 @@ fn a_version_the_registry_lacks_is_green_and_one_whose_sources_moved_is_red() {
     );
     tree.write("old/alpha-1.0.0/src/lib.rs", "pub fn old() {}\n");
     fs::create_dir_all(registry.join("crates/alpha")).unwrap();
-    let packed = crate::children::output(
-        crate::children::command("tar")
+    let packed = symphony::children::output(
+        symphony::children::command("tar")
             .arg("-czf")
             .arg(registry.join("crates/alpha/alpha-1.0.0.crate"))
             .arg("-C")

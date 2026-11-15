@@ -198,7 +198,7 @@ mod tests {
         );
         assert_eq!(
             constant(&read(PIN_FILE), "PIN"),
-            Some(i64::from(crate::machine::PIN))
+            Some(i64::from(symphony::machine::PIN))
         );
     }
 

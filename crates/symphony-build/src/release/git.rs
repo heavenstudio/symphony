@@ -1,5 +1,5 @@
 //! The git the release run runs, each command in a folder of its choosing, without the session that
-//! started it ([`crate::children`]). A command that reaches the remote never waits on a prompt, and
+//! started it ([`symphony::children`]). A command that reaches the remote never waits on a prompt, and
 //! none runs past [`GIT_BOUND`] or the run's own time ([`super::group`]).
 
 use std::path::Path;
@@ -13,9 +13,9 @@ pub(super) const GIT_BOUND: Duration = Duration::from_secs(15 * 60);
 
 /// `git ARGS` in `dir` run to its end within [`GIT_BOUND`] and `bound`, on the repository `dir` is
 /// in alone: no repository, index or tree the release run's own starter named, as a hook's or a
-/// worktree's environment may ([`crate::children::git`]).
+/// worktree's environment may ([`symphony::children::git`]).
 fn run(dir: &Path, args: &[&str], bound: Bound<'_>) -> Result<Output, String> {
-    let mut git = crate::children::git();
+    let mut git = symphony::children::git();
     git.args(args)
         .current_dir(dir)
         .env("GIT_TERMINAL_PROMPT", "0");

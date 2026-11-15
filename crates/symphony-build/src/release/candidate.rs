@@ -35,7 +35,7 @@ use super::checks::Ran;
 use super::git::{commit, git, is_ancestor, short};
 use super::record::{Carried, Held, Run, age, local};
 use super::steps;
-use crate::taskcli::CliBoard;
+use symphony::taskcli::CliBoard;
 
 /// The local branch that names the candidate's tip, never pushed.
 pub(crate) const BRANCH: &str = "release-candidate";
@@ -180,7 +180,7 @@ pub(crate) struct Bounds {
 
 impl Bounds {
     /// The project's.
-    pub(crate) fn of(releases: &crate::project::Releases) -> Bounds {
+    pub(crate) fn of(releases: &symphony::project::Releases) -> Bounds {
         Bounds {
             reruns: releases.candidate_reruns,
             hours: releases.candidate_hours,
@@ -209,7 +209,7 @@ pub(crate) fn read(folder: &Path) -> Result<Option<Candidate>, String> {
         Err(e) => {
             return Err(format!(
                 "the release candidate's record cannot be read: {}",
-                crate::text::os_error(&e, &path)
+                symphony::text::os_error(&e, &path)
             ));
         }
     };
@@ -235,7 +235,7 @@ pub(crate) fn read(folder: &Path) -> Result<Option<Candidate>, String> {
 pub(crate) fn write(folder: &Path, candidate: &Candidate) -> Result<(), String> {
     let path = path(folder);
     let text = serde_json::to_string_pretty(candidate).map_err(|e| e.to_string())? + "\n";
-    crate::text::write_whole(&path, &text).map_err(|e| crate::text::os_error(&e, &path))
+    symphony::text::write_whole(&path, &text).map_err(|e| symphony::text::os_error(&e, &path))
 }
 
 /// Whether the check or step `ran` is a red the candidate holds: a check's or a step's, never a

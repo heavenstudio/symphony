@@ -1,5 +1,8 @@
 // The pure half of following the feed: how long to wait before reading again, when another client
-// build loads the page again, and when the frame's metadata is read again.
+// build loads the page again, and when the frame's metadata is read again; and a failed read tried
+// again by itself on the same waits.
+
+import { sleep } from "./feed";
 
 /** The first wait before a lost feed is tried again, in ms. */
 const FIRST_WAIT_MS = 1_000;
@@ -35,6 +38,26 @@ export class Backoff {
       return 0;
     }
     return this.after(ended.lost);
+  }
+}
+
+/**
+ * A read that failed, tried again by itself: `read` again after each of Backoff's waits (1 s,
+ * doubling to 30 s, never a tight loop) for as long as `unanswered` says the page still waits for
+ * its answer. It ends once the read is answered, or when `unanswered` says the page has moved on
+ * (another route, a newer read, a 404) or `signal` ends, which ends the wait with it.
+ */
+export async function tryAgain(
+  unanswered: () => boolean,
+  read: () => Promise<unknown>,
+  signal: AbortSignal,
+  wait: (ms: number, signal: AbortSignal) => Promise<void> = sleep,
+): Promise<void> {
+  const backoff = new Backoff();
+  while (unanswered() && !signal.aborted) {
+    await wait(backoff.after(0), signal);
+    if (signal.aborted || !unanswered()) return;
+    await read();
   }
 }
 
