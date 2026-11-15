@@ -20,7 +20,9 @@
 # SYMPHONY_TEST_LANE_LOGS names (verify names one beside the step's log; a relative one is the
 # workspace's), else build/test-lanes, where a run first removes the logs of an earlier one. Before
 # any lane starts it says where each lane's log is, so a run stopped before its end (the release
-# run's stop ends with SIGKILL) leaves every lane's output named. Once every lane has ended their
+# run's stop ends with SIGKILL) leaves every lane's output named; the red's reader takes the lanes
+# and how many run at once from those lines, to say files of the build found gone went while those
+# lanes ran, not while the target before in the log's order did. Once every lane has ended their
 # logs follow each other whole on stdout in LANES' order, each target's output in one piece as a
 # red's reader reads it, a target at a time (crates/symphony/src/release/rerun.rs), then every red
 # lane's targets that failed as one list in cargo's words, `error: N targets failed:`: the last

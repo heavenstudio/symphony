@@ -353,9 +353,13 @@ shipped `symphony` does not carry ([CHECKS](CHECKS.md#size-budgets)):
      test of its own. The red says so, an environment failure, naming those targets and files,
      the target cargo started last before the first that found one gone (what removed them ran
      then: that target, something it started, or something outside the run), and what the build
-     folder holds when the red is filed, each entry with when it was made. Those targets are no
-     failures to rerun: with no other failure, the rerun is a run of the target they went while,
-     or of its build, with a look at its build folder after it;
+     folder holds when the red is filed, each entry with when it was made. Found gone while the
+     tests' lanes ran side by side (after `tools/test-lanes.sh`'s lines naming them, more than one
+     at once), they went while those lanes ran, which the red names, and no one target: the lanes'
+     outputs follow one another in the log, but a test of any of them may have removed them, and
+     the log holds no times to tell which. Those targets are no failures to rerun: with no other
+     failure, the rerun is a run of the target they went while, or of each of those lanes alone,
+     one after another, or of its build, with a look at its build folder after each;
    - the commands that rerun each failure alone (`crates/symphony/src/release/rerun.rs`), never
      `just verify`, which no task runs. Each test target cargo says failed in the log is rerun as
      `just test-rs ARGS -- NAME --exact` for each test libtest named `FAILED` in it, or whole when
