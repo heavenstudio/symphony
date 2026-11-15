@@ -793,7 +793,7 @@ describe("the board's loop on the agents page", () => {
     const listen = { addEventListener: () => {}, removeEventListener: () => {} };
     vi.stubGlobal("window", listen);
     vi.stubGlobal("document", { ...listen, getElementById: () => null, querySelector: () => null });
-    vi.stubGlobal("EventSource", undefined);
+    vi.stubGlobal("WebSocket", undefined);
     vi.stubGlobal("location", { reload: vi.fn() });
     vi.stubGlobal("sessionStorage", { getItem: () => null, setItem: () => {} });
     const running = agents.start({ refresh: vi.fn(), connected: vi.fn(), heard: vi.fn() });

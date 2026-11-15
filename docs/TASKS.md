@@ -199,7 +199,8 @@ server and stops that one cleanly, so none of it is lost to a later kill.
 
 A replay is the one start that can remove what no server applied. A store that
 went back (a start that replayed its log in pieces and ended before its next
-flush, as an older build's kill of a starting server does) holds a log segment
+flush, as an older build's kill of a starting server does, or a crash in a
+private replay of a log over 2 GiB, which its largest memtable splits too) holds a log segment
 its manifest counts as written: every server on it skips that segment, and its
 clean stop removes it. So a replay never runs without a snapshot of the store as
 it is, taken before the private replay's server starts, on every board, scratch
@@ -1491,7 +1492,9 @@ that claimed an instruction under `SLUG` may still give `SLUG` its verdict, unle
 Work on the branch is a slice, filed without `--instruction`. `done` is left only by an approved task no landing has closed and whose tip the
 default branch does not hold, back to `review` by its executor, reviewer or orchestrator,
 for a fresh approve of a tip the approve does not cover
-([below](#the-default-landing)). A move of a done task the board refuses names that move
+([below](#the-default-landing)); the move itself tells `@executor` and `@reviewer` on the thread, as
+a finished task's status is followed no more, so a reopen edited into the board by hand tells
+nobody. A move of a done task the board refuses names that move
 back to review only while the approve stands; once a landing closed the task, it says what
 the task still needs goes in a new one. Several sessions
 can hold one task at once, one role each:
@@ -2292,7 +2295,13 @@ A consuming project's optional wait guard refuses a loop waiting on machine-wide
 - `just tasks show` lists a task's subtasks with each one's status and holder;
   `just tasks list` and the Symphony's **tasks** page, under its **Task
   groups** heading, show the same tree, at any depth (`list` leaves finished
-  tasks out unless `--all`).
+  tasks out unless `--all`). The Symphony's tree and a task page's
+  **Subtasks** leave out a finished instruction to do or review the task
+  itself (`SLUG/work`, `SLUG/review`, the staffing pass's
+  `SLUG/staff-review-N`), filed before a task's executor and reviewer worked
+  on the task itself: its verdicts stand on the task's thread, and the task is
+  its row. Open, it is listed, where its agent is found
+  (`crates/symphony/src/taskview.rs`, `listed_under_parent`).
 - Events climb: a message to `@orchestrator`, any verdict and any
   status change on a subtask reaches the orchestrator of the nearest task, at
   or above it, that has one, so the orchestrator takes the role on the root
@@ -2577,8 +2586,11 @@ in progress is.
   Local submissions and receipts live in the folder the project's `[board]
   assessments` names (a `.git/` prefix names the common directory; none when
   unset, and an assessment is then refused); the delivery child is stopped and
-  reaped after 30 seconds or checkout removal. A delayed board, an older API or an unconfirmed reply
-  leaves pending evidence; `just land-stamps BRANCH` retries the latest
+  reaped after 30 seconds or checkout removal. A delayed board, an older API, an unknown method, an
+  incompatible payload or an unconfirmed reply leaves pending evidence: the API's version proves no
+  method, only a reply echoing the publication's witness and canonical receipt exactly confirms one,
+  and a retry's receipt confirms its occurrence, never that it still stands (`current: false` once
+  a newer assessment does). `just land-stamps BRANCH` retries the latest
   submission, preserving a committed occurrence's identity, time and line.
   Pending evidence alone does not confirm a board write.
 - **Rework.** The name `changes` in a record says a reviewer asked changes of

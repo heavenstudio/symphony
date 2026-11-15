@@ -64,6 +64,7 @@ pub use callbacks::{Callback, ChatSeat, Presence};
 pub use cap::STATEMENTS as SLOT_READS;
 pub use embeddings::{EmbeddingStats, VectorHit, VectorSearchProfile};
 pub use launches::NewLaunch;
+pub use messages::reviewer_verdict;
 pub use opening::Opening;
 use reading::{HELD, NATIVE_PRESENCE, native_bounds, native_health};
 pub use report_lines::{ReportRead, ReportTask};
