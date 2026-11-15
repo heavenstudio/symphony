@@ -23,19 +23,12 @@ afterEach(() => vi.unstubAllGlobals());
 const SHARED = "/assets/shared-cb43a0c990f14660.css";
 const SHELL = "/assets/symphony-shell-c8d2bbdc7691eafb.js";
 
-/** A built shell's manifest, as package.sh writes it: two program kinds and two web kinds. */
+/** A built shell's manifest, as package.sh writes it: three kinds. */
 const SERVED = {
-  tasks: {
-    script: "/assets/program-7d67008fbebc0e13.js",
-    wasm: "/assets/symphony-ui_bg-c6cc4de888a2fd81.wasm",
-    styles: [SHARED, "/assets/media-dxh6e288edb4c416.css"],
-    chunk: "/assets/module_3_tasks-60b0a2a1880baa30.wasm",
-  },
   panel: {
-    script: "/assets/program-7d67008fbebc0e13.js",
-    wasm: "/assets/symphony-ui_bg-c6cc4de888a2fd81.wasm",
-    styles: [SHARED, "/assets/style-dxh1ccad27589f1f569.css"],
-    chunk: "/assets/module_2_panel-c587f041389aafe0.wasm",
+    script: "/assets/panel-7d67008fbebc0e13.js",
+    imports: ["/assets/shared-c98795c5e95033c5.js"],
+    styles: [SHARED, "/assets/panel-1ccad27589f1f569.css"],
   },
   queue: {
     script: "/assets/queue-c951b76db6e1dad8.js",
@@ -162,22 +155,21 @@ describe("a built shell's manifest", () => {
 });
 
 describe("the dev server's manifest", () => {
-  it("keeps the program's kinds and serves the checkout's kinds from their sources", () => {
+  it("serves the checkout's kinds from their sources, with the build's shared stylesheet", () => {
     const manifest = devManifest(SERVED, { ...KINDS, agents: "src/kinds/agents.tsx" }, BASE);
     expect(manifest).toEqual({
-      tasks: SERVED.tasks,
-      panel: SERVED.panel,
       board: { script: "/@symphony-web/src/kinds/board.tsx", imports: [], styles: [SHARED] },
       queue: { script: "/@symphony-web/src/kinds/queue.tsx", imports: [], styles: [SHARED] },
       agents: { script: "/@symphony-web/src/kinds/agents.tsx", imports: [], styles: [SHARED] },
     });
-    // A web kind the checkout no longer has is gone, whatever the server's build holds.
+    // A kind the checkout no longer has is gone, whatever the server's build holds.
     expect(manifest).not.toHaveProperty("reports");
+    expect(manifest).not.toHaveProperty("panel");
   });
 
-  it("serves a kind the checkout moved from the program from its source", () => {
-    expect(devManifest(SERVED, { tasks: "src/kinds/tasks.tsx" }, BASE).tasks).toEqual({
-      script: "/@symphony-web/src/kinds/tasks.tsx",
+  it("serves a kind the server's build has from the checkout's source", () => {
+    expect(devManifest(SERVED, { panel: "src/kinds/panel.tsx" }, BASE).panel).toEqual({
+      script: "/@symphony-web/src/kinds/panel.tsx",
       imports: [],
       styles: [SHARED],
     });

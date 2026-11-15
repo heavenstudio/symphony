@@ -219,11 +219,11 @@ fn an_entry_select_loads_its_popup_on_use_and_keeps_keyboard_selection_and_escap
         json!(true),
         "a select's popup is drawn by the overlay module, never the chat's"
     );
-    let chat_chunk = module(dist(), "panel").chunk().clone();
+    let chat_script = module(dist(), "panel").script;
     let chat: Vec<_> = page
         .requests()
         .into_iter()
-        .filter(|request| request.url.ends_with(&chat_chunk))
+        .filter(|request| request.url.ends_with(&chat_script))
         .collect();
     assert!(
         chat.is_empty(),

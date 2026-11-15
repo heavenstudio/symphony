@@ -48,7 +48,8 @@ and test work the agents view reports ([MACHINE_WORK](../../docs/MACHINE_WORK.md
 orchestrator the board gives, covered closes), `messages.rs` threads, inboxes and keyed posts,
 `asks.rs` the owner's asks ([TASKS](../../docs/TASKS.md#asks)), `sessions.rs` sessions and beats,
 `launches.rs` launch records and the session hold, `cap.rs` the slot cap's reads, `history.rs` the
-status lines the alarm replays, `copy.rs` the whole-board copy, `opening.rs` how a store opens by
+status lines the alarm replays, `stamp.rs` what tells a task and its thread from the ones a reader
+read before, in one small read, `copy.rs` the whole-board copy, `opening.rs` how a store opens by
 the schema rule, `transaction.rs` the schema guard every write starts with, `writers.rs` the line
 each program that opens a board to write keeps, which `tasks migrate` reads before it moves one
 ([TASKS](../../docs/TASKS.md#who-writes-a-board)). `lib.rs`'s doc states

@@ -47,6 +47,7 @@ mod sessions;
 mod settings;
 mod snapshot;
 mod stage_lines;
+mod stamp;
 mod transaction;
 pub(crate) mod unanswered;
 mod waits;
@@ -70,6 +71,7 @@ pub use report_lines::{ReportRead, ReportTask};
 pub use search::SearchHit;
 pub use sessions::{Beat, Binding, KINDS, NewSession, Pick};
 pub use stage_lines::StageRecord;
+pub use stamp::TaskStamp;
 pub use unanswered::{LOOKUP_WAIT as UNANSWERED_WAIT, LOOKUP_WAIT_VAR as UNANSWERED_WAIT_VAR};
 pub use waits::{AssessmentReceipt, AssessmentState};
 pub use work::{

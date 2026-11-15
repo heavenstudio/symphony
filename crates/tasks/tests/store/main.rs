@@ -62,6 +62,7 @@ mod sessions;
 mod shown_sessions;
 mod slots;
 mod slow_builds;
+mod stamp;
 mod start;
 mod subtask_roles;
 mod tree;

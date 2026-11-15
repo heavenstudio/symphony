@@ -1131,8 +1131,8 @@ fn queue_agent_task_and_chat_surfaces_keep_their_compact_review_treatment() {
         browser.eval("window.reviewPanelReady === true"),
         json!(false)
     );
-    // The activity panel's own file: the chat's chunk of the program.
-    let panel = module(dist(), "panel").chunk().clone();
+    // The activity panel's own file: the chat's script.
+    let panel = module(dist(), "panel").script;
     assert!(
         browser
             .requests()
