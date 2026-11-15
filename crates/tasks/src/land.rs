@@ -165,18 +165,9 @@ fn signal_name(signal: i32) -> String {
         other => format!("signal {other}"),
     }
 }
-/// What names a repository to git: a child run in the land's worktree inherits none of them, nor
-/// does the command `[board] on_land` names ([`crate::on_land`]).
-pub(crate) const GIT_VARS: [&str; 8] = [
-    "GIT_DIR",
-    "GIT_WORK_TREE",
-    "GIT_COMMON_DIR",
-    "GIT_INDEX_FILE",
-    "GIT_OBJECT_DIRECTORY",
-    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
-    "GIT_NAMESPACE",
-    "GIT_PREFIX",
-];
+/// What names a repository to git ([`sys::GIT_VARS`]): a child run in the land's worktree inherits
+/// none of them, nor does the command `[board] on_land` names ([`crate::on_land`]).
+pub(crate) use crate::sys::GIT_VARS;
 
 /// A command the regenerator ([`regenerate`]) runs on the default branch's newest tip after a land,
 /// whose changes inside `outputs` it commits and lands; a project names its own in `[land]

@@ -1,4 +1,5 @@
-//! The entry module renders the styled field; opening loads the panel's primitive popup.
+//! The chat's select field: it draws the styled trigger, and opening it asks the overlay module
+//! (`components::deferred`) for its popup.
 use crate::components::deferred::{close, property, show};
 use dioxus::prelude::*;
 use futures_channel::mpsc::unbounded;

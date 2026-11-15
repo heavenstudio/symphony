@@ -70,10 +70,8 @@ fn ModuleRoot() -> Element {
     });
     #[cfg(feature = "page-panel")]
     return rsx! { if shown() { crate::frame::PanelApp {} } };
-    #[cfg(all(feature = "page-overlay", not(feature = "page-panel")))]
-    return rsx! { if shown() { crate::components::deferred::OverlayApp {} } };
-    // No page kind is left without the chat or the menus: every page is the web client's.
-    #[cfg(not(any(feature = "page-panel", feature = "page-overlay")))]
+    // No page kind is left without the chat: every page and the menus are the web client's.
+    #[cfg(not(feature = "page-panel"))]
     rsx! {}
 }
 
@@ -85,8 +83,6 @@ pub(crate) fn kind() -> &'static str {
         "program"
     } else if cfg!(feature = "page-panel") {
         "panel"
-    } else if cfg!(feature = "page-overlay") {
-        "overlay"
     } else {
         "review"
     }
@@ -106,10 +102,9 @@ pub fn install() {
     }
     start.forget();
     stop.forget();
-    // The shell's PERSISTENT roots: the chat panel's and the overlay host's.
+    // The shell's PERSISTENT root of the chat panel.
     let root = match kind {
         "panel" => "quick-root".into(),
-        "overlay" => "overlay-root".into(),
         _ => format!("review-root-{kind}"),
     };
     dioxus::web::launch::launch_cfg(ModuleRoot, dioxus::web::Config::default().rootname(root));
@@ -224,7 +219,6 @@ mod program {
         }
         match chunk {
             Chunk::Panel => rsx! { crate::split::PanelPart {} },
-            Chunk::Overlay => rsx! { crate::split::OverlayPart {} },
         }
     }
 

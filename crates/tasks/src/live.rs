@@ -554,13 +554,8 @@ pub fn committed(common: &Path, named: Option<&str>) -> Committed {
 /// read, when it cannot.
 fn source_on(common: &Path, branch: &str, named: bool) -> Result<Source, String> {
     let git = |args: &[&str]| {
-        crate::sys::output(
-            crate::sys::command("git")
-                .arg("--git-dir")
-                .arg(common)
-                .args(args),
-        )
-        .map_err(|error| format!("git could not run: {error}"))
+        crate::sys::output(crate::sys::git().arg("--git-dir").arg(common).args(args))
+            .map_err(|error| format!("git could not run: {error}"))
     };
     // What git said on standard error, on one line.
     let said = |out: &std::process::Output| {

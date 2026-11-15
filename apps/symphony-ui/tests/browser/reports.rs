@@ -7,8 +7,9 @@
 //! the first roll-up comes, the last 24 hours with nothing chosen, and the window and the series
 //! hidden kept for the next visit, a hidden series' room given to the rest. A chart's address
 //! (`#chart-ID`) lands that chart just below the header, opened fresh (its charts drawn after the
-//! shell looked for it) or followed in place from its figure, on a desk and a phone, and a reader
-//! who scrolls away from it is left there as the hour slides and a new window draws.
+//! shell looked for it) or followed in place from its figure, on a desk and a phone; a reader who
+//! scrolls away from it is left there as the hour slides and a new window draws, and one who chose
+//! a window before any chart drew (nothing recorded, or a failed read) is not taken to it.
 use super::document_landing::{COUNT_SCROLLS, TWO_FRAMES};
 use super::{SHOWN, chrome, chrome::Chrome, common, components::key, site, site::Site, texts};
 use serde_json::{Value, json};
@@ -58,6 +59,30 @@ fn fortnight() -> Value {
         "subject": "settings: land without the check"}]);
     page["unread"] = json!([]);
     page
+}
+
+/// `page` with no file recorded in any of its periods and no settings change: a window the
+/// roll-up has nothing in, which draws no chart.
+fn nothing_recorded(page: &Value) -> Value {
+    let mut empty = page.clone();
+    for bucket in empty["buckets"].as_array_mut().unwrap() {
+        for part in [
+            "flow",
+            "decisions",
+            "git",
+            "waits",
+            "lead",
+            "verdicts",
+            "red_fix",
+            "agents",
+            "health",
+        ] {
+            bucket[part] = Value::Null;
+        }
+        bucket["rolled"] = json!(0);
+    }
+    empty["marks"] = json!([]);
+    empty
 }
 
 fn served(page: &Value) -> Site {
@@ -468,25 +493,8 @@ fn the_window_and_the_series_hidden_are_kept_and_hiding_a_large_series_rescales_
 
 #[test]
 fn with_no_roll_up_yet_the_reports_page_says_when_the_first_comes() {
-    let mut empty = fortnight();
+    let mut empty = nothing_recorded(&fortnight());
     empty["first"] = Value::Null;
-    for bucket in empty["buckets"].as_array_mut().unwrap() {
-        for part in [
-            "flow",
-            "decisions",
-            "git",
-            "waits",
-            "lead",
-            "verdicts",
-            "red_fix",
-            "agents",
-            "health",
-        ] {
-            bucket[part] = Value::Null;
-        }
-        bucket["rolled"] = json!(0);
-    }
-    empty["marks"] = json!([]);
     let site = served(&empty);
     let Some(mut chrome) = chrome() else { return };
     screen(&mut chrome, 390, 844, true);
@@ -505,7 +513,7 @@ fn with_no_roll_up_yet_the_reports_page_says_when_the_first_comes() {
     );
 }
 
-/// The chart the address names: Decisions, the first of the page's fourth section, eight charts
+/// The chart the address names: Decisions, the first of the page's third section, eight charts
 /// above it, so the scroll to it brings charts near that draw after it.
 const ADDRESSED: &str = "chart-decisions";
 
@@ -730,6 +738,61 @@ fn a_reader_who_scrolls_away_from_a_landed_chart_is_left_there_as_the_hour_slide
         assert!(
             (number(place, "top") - number(place, "padding")).abs() > 100.0,
             "the chart is not brought back to the scroll padding: left {left}, the hour slid {slide}, a new window {later}"
+        );
+    }
+}
+
+#[test]
+fn a_chart_s_address_lands_nothing_once_the_reader_chose_a_window_before_any_chart_drew() {
+    // The first window draws no chart: it recorded nothing, or its read failed. The reader then
+    // chooses Days, whose fortnight draws every chart, the addressed one among them.
+    for failed in [false, true] {
+        let site = served(&fortnight());
+        let (first, way) = if failed {
+            site.fail_route(&hours_read(), true);
+            (".reports-error", "a failed read")
+        } else {
+            site.set_json(&hours_read(), &as_hours(&nothing_recorded(&fortnight())));
+            (
+                ".reports[aria-busy=false] .reports-figures",
+                "nothing recorded",
+            )
+        };
+        let Some(mut chrome) = chrome() else { return };
+        screen(&mut chrome, 1280, 900, false);
+        chrome.open(&site.url(&format!("/reports#{ADDRESSED}")));
+        assert!(
+            chrome.wait_for(
+                &format!(
+                    "document.documentElement.dataset.navigation === 'ready' && document.querySelector({}) !== null && document.querySelector('.chart-slot') === null",
+                    json!(first)
+                ),
+                SHOWN
+            ),
+            "{way}: the first window draws no chart: {}",
+            chrome.eval(&place())
+        );
+        chrome.eval(TWO_FRAMES);
+        chrome.eval(COUNT_SCROLLS);
+        chrome.eval("document.querySelector('.reports-controls [data-grain=day]').click()");
+        assert!(
+            chrome.wait_for(
+                "document.querySelector('.reports[aria-busy=false] [data-grain=day][aria-pressed=true]') !== null && document.querySelector('figure.chart') !== null",
+                SHOWN
+            ),
+            "{way}: Days draws its charts: {}",
+            chrome.eval(&place())
+        );
+        chrome.eval(TWO_FRAMES);
+        chrome.pump(std::time::Duration::from_millis(600));
+        let later = chrome.eval(&place());
+        let scrolls = chrome.eval("window.pageScrolls");
+        eprintln!("REPORTS CHOSE A WINDOW, {way}: {scrolls} page scrolls, {later}");
+        assert_eq!(
+            (&scrolls, &later["y"], &later["hash"]),
+            (&json!(0), &json!(0), &json!(format!("#{ADDRESSED}"))),
+            "{way}: the page stays where the reader chose the window, at the address they opened, \
+             its chart not landed: {later}"
         );
     }
 }
