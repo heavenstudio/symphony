@@ -101,6 +101,10 @@ export interface BoardData {
   /** The copy of each of the default view's reads the page holds, by its part of the board's item
    * (`counts`, `column:ready`): the next read of it names the copy's tag, and a `304` is that copy. */
   copies: Map<string, Copy>;
+  /** The last answer of each column's long read (`rows`, `readColumn`), by its part: the next long
+   * read of the column names its tag, and a `304` is that answer. Held on the page alone, never on
+   * the device. */
+  long: Map<string, Copy>;
   /** The columns drawn from this device's cache the server has not answered yet. */
   drawn: string[];
   /** Each column checked once the board's version was read, by the generation it was checked at:
@@ -143,6 +147,7 @@ export function emptyBoard(): BoardData {
     view: 0,
     journal: { version: 0, events: [], readers: new Map() },
     copies: new Map(),
+    long: new Map(),
     drawn: [],
     checked: new Map(),
     waiting: true,
@@ -601,7 +606,11 @@ export class LiveBoard {
    * again is as long as the rows the column shows, when they are more than a page (the server's
    * `rows`): it replaces them with the same rows as they stand now, so the pages Load more brought
    * stay, the reader's place among them with them, and the next page starts after them. Such a read
-   * is no first page this device keeps, and names no tag.
+   * is no first page this device keeps: it names the tag of the column's last long answer, which
+   * the page holds (`long`), and a `304` is that answer, so a refresh that changed nothing in the
+   * column transfers no body. While a search is active the feed's new tasks are not added to the
+   * column (`merge`'s `task` case), so the refresh reads as many rows as it showed before a filing
+   * that matches the search: the column stands one row short of its count until Load more.
    */
   async readColumn(
     status: string,
@@ -618,17 +627,19 @@ export class LiveBoard {
     const part = columnPart(status);
     const activity = d.connected ? 1 : 0;
     const rows = more ? 0 : this.shownRows(status);
-    const kept = !more && rows <= PAGE && keptView(query, days, activity);
+    const long = rows > PAGE;
+    const kept = !more && !long && keptView(query, days, activity);
+    const copy = kept ? d.copies.get(part) : long ? d.long.get(part) : undefined;
     const cursor = more ? (d.cursors.get(status) ?? null) : null;
     const since = new ReadCursor(d.journal);
     try {
       const after = cursor === null ? "" : `&cursor=${encodeURIComponent(cursor)}`;
-      const length = rows > PAGE ? `&rows=${rows}` : "";
+      const length = long ? `&rows=${rows}` : "";
       const path = `/api/task-board?q=${encodeURIComponent(query)}&status=${status}&days=${days}${after}${length}&activity=${activity}&work=0`;
       let read: Awaited<ReturnType<LiveBoard["readListing"]>> | null = null;
       let why = "";
       try {
-        read = await this.readListing(path, kept ? d.copies.get(part) : undefined);
+        read = await this.readListing(path, copy);
       } catch (error) {
         why = said(error);
       }
@@ -639,6 +650,7 @@ export class LiveBoard {
       }
       const [list, fresh] = read;
       if (kept) this.keep(part, list, fresh);
+      else if (long && fresh !== null) d.long.set(part, { etag: fresh.etag, list });
       d.fromDevice = d.fromDevice.filter((slug) => !list.tasks.some((task) => task.slug === slug));
       const hasNext = this.showColumn(status, more, list);
       this.replay(since);

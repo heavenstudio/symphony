@@ -1,17 +1,18 @@
 //! The header: one name for each of the Symphony's pages, the shown page lit and never named again
 //! by a crumb, Appearance opened from it rather than from the chat sheet, and on a phone two rows
-//! that keep seven pages in view at 390 wide.
+//! that keep the Symphony's seven pages in view at 390 wide and scroll a project's more across.
 use super::{SHOWN, chrome, chrome::Chrome, look_parity, site, site::Site, texts};
 use serde_json::json;
 
-/// The Symphony's six pages, then the stand-in project's own page under its plugin's label: seven,
-/// one more than the consuming project's header holds.
-const PAGES: [&str; 7] = [
+/// The Symphony's seven pages, then the stand-in project's own page under its plugin's label:
+/// eight, one more than a phone 390 wide holds in view.
+const PAGES: [&str; 8] = [
     "Home",
     "Queue",
     "Docs",
     "Board",
     "Reports",
+    "Runs",
     "Agents",
     "⬡ lamps",
 ];
@@ -65,6 +66,7 @@ fn every_page_lights_its_one_name_and_no_crumb_repeats_it() {
         ("/docs/", "[data-ready=folder]", "Docs", &[]),
         ("/tasks", "[data-slug='tools/example']", "Board", &[]),
         ("/reports", "[data-ready=reports]", "Reports", &[]),
+        ("/runs", "[data-ready=runs]", "Runs", &[]),
         ("/agents", ".agents", "Agents", &[]),
         (
             "/docs/look-parity.md",
@@ -100,8 +102,11 @@ fn every_page_lights_its_one_name_and_no_crumb_repeats_it() {
     assert_eq!(texts(&mut page, ".page-head h1"), ["Board"]);
 }
 
+/// On a phone 390 wide the header is two rows, the buttons and then the pages on one row. The
+/// Symphony's seven pages fit it; a project's own page beyond them makes the row scroll across,
+/// shaded at the edge it continues past, as the owner's header-on-a-phone card says.
 #[test]
-fn on_a_phone_the_header_is_two_rows_with_every_page_in_view() {
+fn on_a_phone_the_header_is_two_rows_and_its_pages_row_scrolls_a_project_s_more_shaded() {
     let site = content_site();
     let Some(mut page) = chrome() else { return };
     screen(&mut page, 390, 844, true);
@@ -109,6 +114,7 @@ fn on_a_phone_the_header_is_two_rows_with_every_page_in_view() {
         ("/", ".hero-title"),
         ("/tasks", "[data-slug='tools/example']"),
         ("/reports", "[data-ready=reports]"),
+        ("/runs", "[data-ready=runs]"),
         ("/docs/look-parity.md", ".doc-card"),
     ] {
         open(&mut page, &site, path, ready);
@@ -119,19 +125,34 @@ fn on_a_phone_the_header_is_two_rows_with_every_page_in_view() {
                     const mid = e => (box(e).top + box(e).bottom) / 2;
                     const bell = document.getElementById('bell'), look = document.getElementById('appearance');
                     const pages = document.querySelector('.app-pages');
-                    const links = [...pages.querySelectorAll('a')].map(box);
+                    const links = [...pages.querySelectorAll('a')];
+                    const inView = l => box(l).width > 0 && box(l).left >= box(pages).left - 0.5 && box(l).right <= box(pages).right + 0.5;
+                    const style = getComputedStyle(pages);
+                    pages.scrollLeft = 0;
+                    const firstAtTheStart = inView(links[0]);
+                    pages.scrollLeft = pages.scrollWidth;
+                    const lastAtTheEnd = inView(links.at(-1));
+                    pages.scrollLeft = 0;
+                    const scrolls = style.overflowX === 'auto' && pages.scrollWidth > pages.clientWidth;
+                    // The project's own page set aside: the Symphony's seven.
+                    links.at(-1).style.display = 'none';
+                    const symphonysFit = pages.scrollWidth <= pages.clientWidth && links.slice(0, -1).every(inView);
+                    links.at(-1).style.display = '';
                     return {
                         buttonsShareARow: Math.abs(mid(bell) - mid(look)) < 2,
                         pagesBelowThem: box(pages).top >= box(bell).bottom,
-                        pagesOnOneRow: new Set(links.map(b => Math.round(b.top))).size === 1,
-                        pagesFit: pages.scrollWidth <= pages.clientWidth,
-                        pagesInView: links.every(b => b.width > 0 && b.left >= box(pages).left - 0.5 && b.right <= box(pages).right + 0.5),
+                        pagesOnOneRow: new Set(links.map(l => Math.round(box(l).top))).size === 1,
+                        scrolls,
+                        shaded: style.backgroundImage.includes('linear-gradient'),
+                        firstAtTheStart,
+                        lastAtTheEnd,
+                        symphonysFit,
                         crumbsShown: [...document.querySelectorAll('.app-header .crumbs')].some(c => c.getClientRects().length > 0),
                         headerUnder100: box(document.querySelector('.app-header')).height < 100,
                     };
                 })()"#
             ),
-            json!({"buttonsShareARow":true,"pagesBelowThem":true,"pagesOnOneRow":true,"pagesFit":true,"pagesInView":true,"crumbsShown":false,"headerUnder100":true}),
+            json!({"buttonsShareARow":true,"pagesBelowThem":true,"pagesOnOneRow":true,"scrolls":true,"shaded":true,"firstAtTheStart":true,"lastAtTheEnd":true,"symphonysFit":true,"crumbsShown":false,"headerUnder100":true}),
             "{path}"
         );
     }

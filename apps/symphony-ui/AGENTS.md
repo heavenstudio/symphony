@@ -40,8 +40,8 @@ never the whole target, which the release run runs.
   (opt-level z, fat LTO, one codegen unit, abort on panic) and dx's wasm-opt at
   `-Oz` (`Dioxus.toml`). `KIND` defaults to `all`: independently compile the
   program, the one kind dx builds since every other moved to the React client, build the React
-  client's kinds (`web`: one Vite build of `apps/symphony-web`, home, the queue, Reports, the
-  documents, the task board, the agents page, a task's page and the menus, [its
+  client's kinds (`web`: one Vite build of `apps/symphony-web`, home, the queue, Reports, Runs,
+  the documents, the task board, the agents page, a task's page and the menus, [its
   guide](../symphony-web/AGENTS.md)),
   then assemble their content-hashed assets with `package.sh`, which refuses a kind both
   clients build. Naming a kind (`program` among
@@ -270,16 +270,16 @@ never the whole target, which the release run runs.
   the owner's choice, as the caps are.
   Other page kinds are reported separately for review.
   On the fixture (`entry_pages_fit_the_first_visit_budget_and_deferred_kinds_are_reported` prints
-  each page's requests) a first visit to `/` takes 112,403 bytes, `/tasks` 120,504, `/agents`
-  115,528, `/queue` 108,087, `/reports` 108,501, `/docs/` 138,657, a document 140,447 and a task's
-  page 142,095, and a return that finds what it kept unchanged 2,030, 2,441, 2,306, 2,271, 765,
-  574, 1,677 and 2,284. A first visit to a kind of the web client is its entry and its sheets, the
+  each page's requests) a first visit to `/` takes 112,641 bytes, `/tasks` 120,806, `/agents`
+  115,751, `/queue` 108,310, `/reports` 108,726, `/runs` 106,982, `/docs/` 138,893, a document
+  140,683 and a task's page 142,327, and a return that finds what it kept unchanged 2,031, 2,442,
+  2,307, 2,113, 765, 984, 574, 1,806 and 2,285. A first visit to a kind of the web client is its entry and its sheets, the
   chunk every kind shares (React and the frame) and the pieces it shares with some of the others
   (the board's feed and keep; the card and the task readers of the board and the agents page; the
   media layer's chunk and sheet, home's, the documents' and a task's page's), beside the HTML, the
   shell and the page's reads; a move to another kind takes its entry and the pieces no kind
   before it took (`tests/browser/preload.rs`). A task's page's timeline, a chunk of its own, comes
-  once the page has drawn and is idle: 12,437 bytes after its first visit. The reads ahead start
+  once the page has drawn and is idle: 12,351 bytes after its first visit. The reads ahead start
   only once the page's own reads have answered (`cache_ahead.rs`) and go marked as prefetches, so
   the budget counts them outside the first visit, with the warmed modules (`prefetched_bytes`).
   Once a page has its data and is idle, the shell warms the chat's files (the program's script,
@@ -485,6 +485,9 @@ never the whole target, which the release run runs.
 - **Reports.** `/reports` is the React client's, the second page kind it took over
   ([its guide](../symphony-web/AGENTS.md#reports)): this client builds none of it, and the
   program has no chunk of it.
+- **Runs.** `/runs` is the React client's, built there from the start
+  ([its guide](../symphony-web/AGENTS.md#runs)): this client builds none of it and the program
+  has no chunk of it; its header names the page and lights it (`project::header_links`).
 - **Home.** Home (`/`, the kind `review`) is the React client's, the third page kind it took
   over ([its guide](../symphony-web/AGENTS.md)): this client builds none of it. Its media layer
   (frames scaled, a viewer's script loaded, its view buttons, the picture viewer's opener) is
@@ -659,9 +662,9 @@ never the whole target, which the release run runs.
   the CLI to a version with [Dioxus #5843](https://github.com/DioxusLabs/dioxus/pull/5843)
   is an owner decision; no patched CLI is installed here.
   The development runtime draws the Dioxus kinds alone: the web client's pages (`/`, `/queue`,
-  `/reports`, `/tasks`, `/agents`, `/docs/` and the documents, a task's page) are no part of it:
-  it draws the chat alone, where a select opens no popup and a picture no viewer (the menus are
-  the web client's). The web client's dev server serves those pages and the menus with hot
+  `/reports`, `/runs`, `/tasks`, `/agents`, `/docs/` and the documents, a task's page) are no part
+  of it: it draws the chat alone, where a select opens no popup and a picture no viewer (the menus
+  are the web client's). The web client's dev server serves those pages and the menus with hot
   reload ([its guide](../symphony-web/AGENTS.md), `just symphony-ui-dev`).
 - **Platforms.** Every platform hook goes through `platform::Platform`; the
   desktop slice adds its implementation and a `desktop` feature. The projects

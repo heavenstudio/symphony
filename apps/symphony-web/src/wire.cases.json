@@ -73,6 +73,7 @@
         ["/docs/", "Docs"],
         ["/tasks", "Board"],
         ["/reports", "Reports"],
+        ["/runs", "Runs"],
         ["/agents", "Agents"]
       ],
       "readme": "docs/README.md"
@@ -120,6 +121,7 @@
         ["/docs/", "Docs"],
         ["/tasks", "Board"],
         ["/reports", "Reports"],
+        ["/runs", "Runs"],
         ["/agents", "Agents"]
       ],
       "readme": "docs/README.md"
@@ -167,6 +169,7 @@
         ["/docs/", "Docs"],
         ["/tasks", "Board"],
         ["/reports", "Reports"],
+        ["/runs", "Runs"],
         ["/agents", "Agents"]
       ],
       "readme": "docs/README.md"
@@ -214,6 +217,7 @@
         ["/", "Docs"],
         ["/tasks", "Board"],
         ["/reports", "Reports"],
+        ["/runs", "Runs"],
         ["/agents", "Agents"]
       ],
       "readme": "README.md"
@@ -269,6 +273,7 @@
         ["/docs/", "Docs"],
         ["/tasks", "Board"],
         ["/reports", "Reports"],
+        ["/runs", "Runs"],
         ["/agents", "Agents"]
       ],
       "readme": "docs/README.md"
@@ -4468,14 +4473,15 @@
       "rust": "crates/symphony-api/src/project.rs own_pages",
       "typescript": "ownPages, src/project.ts",
       "source": [
-        "    pub fn own_pages(&self) -> [(String, &'static str); 6] {",
-        "        use page_names::{AGENTS, BOARD, DOCS, HOME, QUEUE, REPORTS};",
+        "    pub fn own_pages(&self) -> [(String, &'static str); 7] {",
+        "        use page_names::{AGENTS, BOARD, DOCS, HOME, QUEUE, REPORTS, RUNS};",
         "        [",
         "            (\"/\".into(), HOME),",
         "            (\"/queue\".into(), QUEUE),",
         "            (self.documents_href(), DOCS),",
         "            (\"/tasks\".into(), BOARD),",
         "            (\"/reports\".into(), REPORTS),",
+        "            (\"/runs\".into(), RUNS),",
         "            (\"/agents\".into(), AGENTS),",
         "        ]",
         "    }"

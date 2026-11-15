@@ -124,16 +124,17 @@ impl ProjectView {
     }
 
     /// The Symphony's own pages in the header, in its order, each as its path and its name: the
-    /// review home, the owner's queue, the documents' folder page, the task board, the reports and
-    /// the agents. The plugins' pages ([`ProjectView::nav`]) follow them.
-    pub fn own_pages(&self) -> [(String, &'static str); 6] {
-        use page_names::{AGENTS, BOARD, DOCS, HOME, QUEUE, REPORTS};
+    /// review home, the owner's queue, the documents' folder page, the task board, the reports, the
+    /// runs and the agents. The plugins' pages ([`ProjectView::nav`]) follow them.
+    pub fn own_pages(&self) -> [(String, &'static str); 7] {
+        use page_names::{AGENTS, BOARD, DOCS, HOME, QUEUE, REPORTS, RUNS};
         [
             ("/".into(), HOME),
             ("/queue".into(), QUEUE),
             (self.documents_href(), DOCS),
             ("/tasks".into(), BOARD),
             ("/reports".into(), REPORTS),
+            ("/runs".into(), RUNS),
             ("/agents".into(), AGENTS),
         ]
     }
@@ -153,6 +154,8 @@ pub mod page_names {
     /// The project's reports, `/reports`: how its work flows, its agents, decisions and code, by
     /// the hour, the day and the week.
     pub const REPORTS: &str = "Reports";
+    /// The project's runs, `/runs`: what runs now, every run with its steps and its log.
+    pub const RUNS: &str = "Runs";
     /// The agents, `/agents`.
     pub const AGENTS: &str = "Agents";
     /// The machine's project list, `/` above every project's base, which the one server's
@@ -169,6 +172,7 @@ pub const SYMPHONY_ROUTES: &[&str] = &[
     "agents",
     "queue",
     "reports",
+    "runs",
     "api",
     "assets",
     "static",
@@ -286,6 +290,7 @@ mod tests {
                 "Docs /docs/",
                 "Board /tasks",
                 "Reports /reports",
+                "Runs /runs",
                 "Agents /agents"
             ]
         );
