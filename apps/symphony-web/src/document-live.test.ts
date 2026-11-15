@@ -985,6 +985,26 @@ describe("a document page's loops", () => {
     }
   });
 
+  it("say and change nothing once the page left before the outline answered", async () => {
+    const asked = serverOf();
+    const store = deviceOf();
+    const page = pageOf();
+    const left = new AbortController();
+    const done = documentLive(page, left.signal);
+    await askedFor(asked, 1);
+    const freshness = page.freshness;
+    const told = vi.fn();
+    page.subscribe(told);
+    left.abort();
+    await done;
+    expect(asked[0]?.signal?.aborted).toBe(true);
+    expect(page.trouble).toBeNull();
+    expect(page.freshness).toEqual(freshness);
+    expect(page.state).toBeNull();
+    expect(store.keep).not.toHaveBeenCalled();
+    expect(told).not.toHaveBeenCalled();
+  });
+
   it("do nothing more once the page left as the outline answered", async () => {
     const asked = serverOf();
     const store = deviceOf();
@@ -1105,6 +1125,17 @@ describe("a read of the bodies near the screen", () => {
     await end();
   });
 
+  it("says and changes nothing once the page left before its bodies answered", async () => {
+    const { asked, page, end } = await reading();
+    const told = vi.fn();
+    page.subscribe(told);
+    await end();
+    expect(asked[0]?.signal?.aborted).toBe(true);
+    expect(page.trouble).toBeNull();
+    expect(page.loaded).toEqual(new Set());
+    expect(told).not.toHaveBeenCalled();
+  });
+
   it("fails on an answer it cannot read", async () => {
     const { asked, page, end } = await reading();
     asked[0]?.answer(reply(200, { version: "seven" }));
@@ -1173,10 +1204,17 @@ describe("a folder page's loop", () => {
     const done = followFolder(page, left.signal);
     await askedFor(asked, 1);
     expect(asked[0]?.signal?.aborted).toBe(false);
+    const freshness = page.freshness;
+    const told = vi.fn();
+    page.subscribe(told);
     left.abort();
     expect(asked[0]?.signal?.aborted).toBe(true);
     await done;
     expect(page.folder).toBeNull();
+    expect(page.error).toBeNull();
+    expect(page.missing).toBe(false);
+    expect(page.freshness).toEqual(freshness);
+    expect(told).not.toHaveBeenCalled();
   });
 
   it("shows nothing it drew of a folder gone while away", async () => {

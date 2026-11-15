@@ -281,8 +281,7 @@ never the whole target, which the release run runs.
   keyboard's key names, `document::eval` with serde_json, and float formatting: dioxus-web makes
   at launch the event converter and the document that reach them, and the splitter keeps there
   every function of a table the main module reaches
-  ([the analysis](../../docs/analysis/client-shared-runtime.md#building-a-in-order)). How each
-  change of the client moved these figures is [on record](../../docs/history/client-first-visits.md).
+  ([the analysis](../../docs/analysis/client-shared-runtime.md#building-a-in-order)).
   Each module pays for its own compiled framework, the program once for all its kinds;
   later visits reuse cached imports. The home budget test
   is independent of the canonical-entry test, which gives every kind a fresh
