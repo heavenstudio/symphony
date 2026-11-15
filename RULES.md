@@ -125,7 +125,7 @@ around it.
 ### `workflow/claude-first-agents`
 
 Executors and reviewers are Claude on the model `just tasks limits` names for their role, from
-`[agents.models]`, Opus until it names another ([AGENTS.md](AGENTS.md#this-repository-as-its-own-project)),
+`[agents.models]`, Fable until it names another ([AGENTS.md](AGENTS.md#this-repository-as-its-own-project)),
 started as an in-process subagent (an Agent launch with `isolation: worktree`, its branch named
 for the task's slug) or a headless `claude -p`; a terminal of its own (`just tasks launch SLUG`)
 only when the work needs one. *A terminal keeps its memory until it is closed.*
