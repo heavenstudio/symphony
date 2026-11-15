@@ -1309,7 +1309,9 @@ const FILTERS: &str = "(() => {
 /// The tasks page's filters (app/tasks-page-polish): the search field is at least as wide as its
 /// label and says what it takes, so the labels never read as one phrase; choosing a status keeps
 /// the Status field's width and the Finished tasks filter where it was; the statuses are named as
-/// "All statuses" is; and a status filtered alone is a column's width, not the page's.
+/// "All statuses" is; and a status filtered alone is a column's width, not the page's. A phone's
+/// filters are read once their button shows them, and each of its columns is as wide as the
+/// board's scroller, a status alone too.
 #[test]
 fn the_tasks_filters_read_apart_and_a_chosen_status_moves_nothing() {
     let site = bare_site();
@@ -1327,6 +1329,17 @@ fn the_tasks_filters_read_apart_and_a_chosen_status_moves_nothing() {
             "{width}px: {}",
             page.eval("document.querySelector('main')?.innerText")
         );
+        let phone = width <= 600;
+        if phone {
+            page.eval("document.querySelector('.board-filters-toggle').click()");
+            assert!(
+                page.wait_for(
+                    "document.querySelector('#board-filters')?.checkVisibility() === true",
+                    SHOWN
+                ),
+                "{width}px: the button never showed the filters"
+            );
+        }
         let before = page.eval(FILTERS);
         assert_eq!(
             (&before["wide"], &before["apart"], &before["placeholder"]),
@@ -1360,8 +1373,15 @@ fn the_tasks_filters_read_apart_and_a_chosen_status_moves_nothing() {
                 (&before["status"], &before["finished"]),
                 "{width}px, {option}: choosing a status moved the filters: {before} then {after}"
             );
+            // A phone's In progress is the board's scroller's width exactly; Backlog stands in the
+            // row under the pipeline, as narrow on a phone.
+            let column = if phone && status == "in_progress" {
+                "=== document.querySelector('.board-scroll').clientWidth"
+            } else {
+                "<= 288"
+            };
             assert_eq!(
-                page.eval(&format!("document.querySelector('.column[data-status={status}]').getBoundingClientRect().width <= 288")),
+                page.eval(&format!("Math.round(document.querySelector('.column[data-status={status}]').getBoundingClientRect().width) {column}")),
                 json!(true),
                 "{width}px, {option}: a status filtered alone is a column's width"
             );
