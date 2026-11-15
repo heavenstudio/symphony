@@ -16,9 +16,9 @@
 //! marks of how its starter was asked for ([`MARKS`]): it is the project's command or the board's
 //! own work, never the one command an agent handed a path to, or the land the `land` recipe asked
 //! for. A git is [`git`], which keeps no repository its starter's environment names ([`GIT_VARS`]):
-//! it acts on the folder it is run in. Clippy refuses a child made anywhere else in the crate, however its path is spelled,
-//! imported or gated (the crate's clippy.toml, `disallowed-methods`; tried by the release run's
-//! `tests/child_guard`).
+//! it acts on the folder it is run in. Clippy refuses a child made anywhere else in the crate,
+//! however its path is spelled, imported or gated (the crate's clippy.toml, `disallowed-methods`;
+//! tried by the release run's `tests/child_guard`).
 
 use std::collections::BTreeMap;
 use std::ffi::{OsStr, c_char, c_int, c_long};
@@ -446,13 +446,10 @@ mod tests {
             assert_eq!(real(&kept), theirs.join(".git"), "a git that keeps them");
             let own = said(git().arg("-C").arg(&ours).args(common));
             assert_eq!(real(&own), ours.join(".git"));
-            // The recorder's tree and dirtiness, asked from a subfolder as a gate that went there.
-            let read = crate::runs::tree_and_dirty(
-                &ours.join("sub"),
-                "HEAD",
-                false,
-                std::time::Duration::from_secs(60),
-            );
+            // The recorder's tree and dirtiness, asked from a subfolder as a gate that went there,
+            // within a backstop only a stall reaches, as the recorder's own tests give it.
+            let patient = test_time::backstop(std::time::Duration::from_secs(30));
+            let read = crate::runs::tree_and_dirty(&ours.join("sub"), "HEAD", false, patient);
             assert_eq!(read, (std::env::var(TREE).ok(), Some(false)));
             // A session's branch, and the worktrees a launch looks for its branch among.
             let branch = crate::cli::probes::branch_of(&ours.to_string_lossy());
