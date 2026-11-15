@@ -356,6 +356,10 @@ fn a_waiting_orchestrator_holds_the_vacant_chat_seat() {
     let reader = f.session("orchestrator");
     read(&f, &reader);
     assert_eq!(f.store.chat_recipient().unwrap(), Some(reader.clone()));
+    assert_eq!(
+        f.store.chat_seat().unwrap(),
+        Some((reader.clone(), symphony_board::ChatSeat::Waiting))
+    );
     f.store.owner_callback("asks-1", VERDICT).unwrap();
     assert_eq!(read(&f, &reader), [VERDICT]);
     assert!(read(&f, &reader).is_empty(), "said once");
