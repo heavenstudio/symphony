@@ -1,6 +1,6 @@
 ---
 name: review-task
-description: Review one task in the board's review column, independently of its author: rerun its focused tests, judge its evidence and record a verdict naming the tip read. A reviewer's whole prompt is `/review-task SLUG HANDLE` (Codex `$review-task SLUG HANDLE`), never /work. Trigger on /review-task SLUG or $review-task SLUG.
+description: Review one task in the board's review column, independently of its author: read its diff against its recorded evidence, run only what that leaves open and record a verdict naming the tip read. A reviewer's whole prompt is `/review-task SLUG HANDLE` (Codex `$review-task SLUG HANDLE`), never /work. Trigger on /review-task SLUG or $review-task SLUG.
 ---
 
 # /review-task SLUG HANDLE
@@ -18,10 +18,15 @@ assumes no certificate or landing system.
    hold it already: `just tasks role SLUG reviewer --as HANDLE`. Refused the role, stop and say why on
    the thread `--to @orchestrator`; never pass `--beside` yourself.
 3. Read `just tasks show SLUG --as HANDLE`, its thread, and the diff of the tip it names.
-4. Rerun the focused tests its evidence names yourself, never the full suite; never take the
-   executor's word that they are green. A log or scratch file you write in your scratchpad is
-   named by your handle: every in-process agent of one orchestrator shares that folder, and two
-   writing one name read each other's output.
+4. Read its recorded builds and tests at that tip (the task page's gates, beside the thread's
+   evidence). A run recorded green at the tip is run: never build or run it again, and never the
+   full suite. Build or run only what the record does not cover and reading cannot settle: a
+   doubt you name, with the smallest target that answers it; a mutation, to see that a test can
+   fail; a run the executor left out. Green is the record's to say, never the executor's word:
+   where nothing recorded a run the evidence names, ask for it in a changes, or in a project
+   that records none rerun the focused tests yourself. A log or scratch file you write in your
+   scratchpad is named by your handle: every in-process agent of one orchestrator shares that
+   folder, and two writing one name read each other's output.
 5. Judge, naming what is missing in a changes:
    - whether the evidence is good enough for the change's risk: higher risk asks for stronger
      evidence, never for the whole suite;
@@ -30,6 +35,10 @@ assumes no certificate or landing system.
    - whether the change is bigger than what it solves (a new mechanism where an existing one
      serves, more files, options or pages than the ask needs, a committed tool for a problem met
      once): name the smaller form, which may be "once and done", as a finding.
+
+   That the default branch moved since the tip the evidence names is no finding: never send a
+   branch back only for that. Ask for a merge only by naming what the default branch gained that
+   breaks the change or that the change breaks.
 6. Record the verdict on SLUG, a round of its review: `just tasks verdict SLUG approve
    "FULL_SHA: why" --as HANDLE`, naming the whole tip you read (the approve is the task's stamp:
    SLUG becomes `done`, and the default landing lands that commit and no other), or
