@@ -215,7 +215,9 @@ impl Fixture {
         let styled = WEB.iter().filter(|(_, styled)| *styled).count();
         assert_eq!(files.len(), 1 + WEB.len() + styled + 1, "{files:?}");
         assert!(
-            files.iter().all(|name| !name.ends_with(".wasm") && !name.starts_with("symphony-ui-")),
+            files
+                .iter()
+                .all(|name| !name.ends_with(".wasm") && !name.starts_with("symphony-ui-")),
             "{files:?}"
         );
         let builds: serde_json::Value =

@@ -87,7 +87,7 @@ use site::Site;
 const HOME_FIRST_VISIT_BYTES: f64 = 115_000.0;
 /// The task board's first-visit cap (`/tasks`): lowered from the owner's 300,000 to 150,000 when
 /// the board moved to the React client, and to 125,000 once the chat moved and no kind was left
-/// to move (120,430 bytes on the fixture then); never raised.
+/// to move (120,521 bytes on the fixture then); never raised.
 const TASKS_FIRST_VISIT_BYTES: f64 = 125_000.0;
 /// A task's page's first-visit cap (`/task/SLUG`), its timeline loaded after it and reported
 /// beside it: lowered from the owner's 300,000 to 160,000 when the page moved to the React client

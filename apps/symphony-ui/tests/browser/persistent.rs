@@ -210,12 +210,7 @@ fn a_web_page_takes_its_pictures_up_itself_and_opens_them_in_the_menus_viewer() 
         "the picture never opens in the viewer: {:?}",
         chrome.eval("document.getElementById('media-lightbox')?.outerHTML")
     );
-    assert_eq!(
-        asks(&site, &[&chat.script]),
-        [0],
-        "{:?}",
-        site.requests()
-    );
+    assert_eq!(asks(&site, &[&chat.script]), [0], "{:?}", site.requests());
 }
 
 /// The chat's thread, ask 7, opened by the page's draft, its answer a picture, `/chat.svg`.
@@ -289,10 +284,7 @@ fn a_chat_picture_opens_in_the_viewer_on_every_page() {
         );
         chrome.eval("document.querySelector('#media-lightbox .lightbox-controls button').click()");
         assert!(
-            chrome.wait_for(
-                "document.getElementById('media-lightbox') === null",
-                SHOWN
-            ),
+            chrome.wait_for("document.getElementById('media-lightbox') === null", SHOWN),
             "{path}: the viewer never closes"
         );
         assert!(
