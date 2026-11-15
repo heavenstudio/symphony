@@ -487,6 +487,14 @@ describe("a task's page read with nothing from this device", () => {
     expect(asked).toHaveLength(1);
   });
 
+  it("takes a page answered under another name as no task of this one, and reads nothing again", async () => {
+    const { task, d, asked } = live(() => answer(200, aPage(aTask("w/other")), '"p1"'));
+    await task.load();
+    expect([d.missing, d.page, d.error, task.drawn()]).toEqual(["w/a", null, "", false]);
+    await settled();
+    expect(urls(asked).filter((url) => url === PAGE_URL)).toHaveLength(1);
+  });
+
   it("takes a read given up as the page leaves for no failure, and tries nothing again", async () => {
     const reads: ReturnType<typeof live>[] = [];
     const leaving = live(() => {

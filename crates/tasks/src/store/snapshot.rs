@@ -1,6 +1,6 @@
 //! The combined structural and session marker identifies cached board inputs.
 
-use super::{Board, Error, Snapshot, Store, View, Which};
+use super::{Board, Error, Sessions, Snapshot, Store, View, Which};
 use crate::schema::BOARD_MARKER;
 use serde_json::json;
 
@@ -18,7 +18,7 @@ impl Store {
         {
             return Ok((Self::board_view(View::new(self, snapshot.clone())), marker));
         }
-        let (read, vars) = Self::reading(&Which::All);
+        let (read, vars) = Self::reading(&Which::All, Sessions::Whole);
         let body = format!("LET $callback_sequence = {BOARD_MARKER};\n{read}");
         let snapshot: Snapshot = self.retrying(|| self.transact(&body, vars.clone()))?;
         let sequence = snapshot.callback_sequence;
