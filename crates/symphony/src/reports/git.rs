@@ -185,10 +185,62 @@ pub fn read(root: &Path, branch: &str, since: f64, excluded: &[String]) -> Resul
     Ok(Read { line, all })
 }
 
-/// The commits on `branch`'s line of first parents since `since` that changed the project's settings
-/// file ([`crate::project::FILE`]), a merge by what it brought against its first parent, tip first:
-/// where the Reports page marks a change of the gates and limits the file sets.
-pub fn settings_changes(root: &Path, branch: &str, since: f64) -> Result<Vec<Commit>, String> {
+/// The rules every agent of a project follows, at its root.
+pub const RULES: &str = "RULES.md";
+
+/// A guide an agent is told to read, by file name, at the root or in any package.
+pub const GUIDES: [&str; 2] = ["AGENTS.md", "CLAUDE.md"];
+
+/// The folder that holds a skill a folder, wherever it is: the project's installed ones
+/// (`.agents/skills`), a package's shipped ones.
+pub const SKILLS: &str = "skills";
+
+/// What a change of `path` changes of what the agents of a project work under, the one list of the
+/// files whose changes the Reports page marks: `settings` for the project's settings file
+/// ([`crate::project::FILE`]), `rules` for [`RULES`], `skill NAME` for a file of the skill NAME
+/// (anything under a `skills/NAME/` folder) and `guide PATH` for a guide ([`GUIDES`]); none for
+/// every other path, a link to a skill's folder (`.claude/skills/NAME`) among them.
+pub fn instruction(path: &str) -> Option<String> {
+    if path == crate::project::FILE {
+        return Some("settings".to_string());
+    }
+    if path == RULES {
+        return Some("rules".to_string());
+    }
+    let mut folders: Vec<&str> = path.split('/').collect();
+    let name = folders.pop()?;
+    let skills = folders.iter().position(|folder| *folder == SKILLS);
+    if let Some(skill) = skills.and_then(|at| folders.get(at + 1)) {
+        return Some(format!("skill {skill}"));
+    }
+    GUIDES.contains(&name).then(|| format!("guide {path}"))
+}
+
+/// The pathspecs of every path [`instruction`] names, so git reads no other.
+fn instructions() -> Vec<String> {
+    let mut specs = vec![
+        format!(":(literal){}", crate::project::FILE),
+        format!(":(literal){RULES}"),
+        format!(":(glob)**/{SKILLS}/*/**"),
+    ];
+    specs.extend(GUIDES.iter().map(|guide| format!(":(glob)**/{guide}")));
+    specs
+}
+
+/// A commit that changed what the agents of a project work under.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Change {
+    pub commit: Commit,
+    /// What it changed, as [`instruction`] names each, once: the settings, the rules, then the
+    /// guides and the skills by name.
+    pub changed: Vec<String>,
+}
+
+/// The commits on `branch`'s line of first parents since `since` that changed the project's
+/// settings or the instructions its agents work under ([`instruction`]), a merge by what it brought
+/// against its first parent, tip first: where the Reports page marks a change of the gates and
+/// limits the settings file sets, of a skill, of the rules or of a guide. One `git log`.
+pub fn changes(root: &Path, branch: &str, since: f64) -> Result<Vec<Change>, String> {
     let since = format!("--since=@{}", since.floor());
     let tip = format!("refs/heads/{branch}");
     let text = log(
@@ -200,19 +252,39 @@ pub fn settings_changes(root: &Path, branch: &str, since: f64) -> Result<Vec<Com
             "--name-only",
         ],
         std::slice::from_ref(&tip),
-        &[format!(":(literal){}", crate::project::FILE)],
+        &instructions(),
     )?;
-    Ok(parse(&text)
+    // The settings and the rules first, then the rest by name.
+    let rank = |name: &String| match name.as_str() {
+        "settings" => 0,
+        "rules" => 1,
+        _ => 2,
+    };
+    Ok(parse_each(&text, instruction)
         .into_iter()
-        .filter(|commit| commit.changed)
+        .filter(|(_, changed)| !changed.is_empty())
+        .map(|(commit, mut changed)| {
+            changed.sort_by(|a, b| (rank(a), a).cmp(&(rank(b), b)));
+            changed.dedup();
+            Change { commit, changed }
+        })
         .collect())
 }
 
 /// The commits of a read's `text`, in its order: after each record's head, a `--numstat` line
 /// (`added\tremoved\tpath`, `-` for a binary file's) or a `--name-only` path is a change.
 pub fn parse(text: &str) -> Vec<Commit> {
+    parse_each(text, |_| None)
+        .into_iter()
+        .map(|(commit, _)| commit)
+        .collect()
+}
+
+/// [`parse`], each commit with what `named` makes of each of its changes' lines.
+fn parse_each(text: &str, named: impl Fn(&str) -> Option<String>) -> Vec<(Commit, Vec<String>)> {
     text.split('\x1e')
         .filter_map(|record| {
+            let mut names = Vec::new();
             let mut lines = record.lines();
             let mut head = lines.next()?.splitn(4, '\x1f');
             let hash = head.next()?.trim().to_string();
@@ -240,8 +312,9 @@ pub fn parse(text: &str) -> Vec<Commit> {
                     commit.added += added;
                     commit.removed += removed;
                 }
+                names.extend(named(line));
             }
-            (!commit.hash.is_empty()).then_some(commit)
+            (!commit.hash.is_empty()).then_some((commit, names))
         })
         .collect()
 }

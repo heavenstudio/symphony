@@ -1768,6 +1768,7 @@ fn reports() -> api::ReportsPage {
             at: MONDAY + 3_600.0,
             commit: "4f1c0a9b2d3e".into(),
             subject: "settings: land without the check".into(),
+            changed: vec!["settings".into()],
         }],
         unread: vec!["/repo/.git/symphony/reports/2026-11-08.json: not read".into()],
     }

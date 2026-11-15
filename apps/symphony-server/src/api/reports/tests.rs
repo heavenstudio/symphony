@@ -343,11 +343,13 @@ fn days_sum_their_hours_and_a_day_no_file_holds_is_missing_never_zero() {
                 at: MONDAY - 1.0,
                 commit: "before".into(),
                 subject: "before the window".into(),
+                changed: vec!["settings".into()],
             },
             ReportMark {
                 at: MONDAY + 8.0 * HOUR,
                 commit: "abc".into(),
                 subject: "gates".into(),
+                changed: vec!["settings".into(), "skill work".into()],
             },
         ])
     });
@@ -369,9 +371,9 @@ fn days_sum_their_hours_and_a_day_no_file_holds_is_missing_never_zero() {
     assert_eq!(
         page.marks
             .iter()
-            .map(|m| m.commit.as_str())
+            .map(|m| (m.commit.as_str(), m.changed.join(", ")))
             .collect::<Vec<_>>(),
-        ["abc"]
+        [("abc", "settings, skill work".to_string())]
     );
     let [monday, tuesday, wednesday] = page.buckets.as_slice() else {
         panic!("{:?}", page.buckets);

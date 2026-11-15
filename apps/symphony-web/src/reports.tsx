@@ -160,18 +160,27 @@ function listed(value: unknown): unknown[] | null {
   return Array.isArray(value) ? value : null;
 }
 
-function isMark(value: unknown): value is ReportMark {
+/**
+ * A change's mark as the server writes it: what it changed is a list of names, or left out by a
+ * server built before the instructions were marked, whose marks are settings changes.
+ */
+function isMark(value: unknown): value is Omit<ReportMark, "changed"> {
+  const changed = listed(field(value, "changed"));
   return (
     typeof field(value, "at") === "number" &&
     typeof field(value, "commit") === "string" &&
-    typeof field(value, "subject") === "string"
+    typeof field(value, "subject") === "string" &&
+    changed?.every((name) => typeof name === "string") === true
   );
 }
+
+/** What a mark that names nothing changed: the settings, all a mark said before it named any. */
+const SETTINGS = ["settings"];
 
 /**
  * The reports as this client reads them, or none for a value without what the page draws: a grain,
  * its days, the window's ends, the periods (each read by path as it is drawn), the first roll-up,
- * the settings changes and the files not read, each of its type.
+ * the changes of the settings and the instructions and the files not read, each of its type.
  */
 export function readReports(value: unknown): Page | null {
   const grain = field(value, "grain");
@@ -206,7 +215,10 @@ export function readReports(value: unknown): Page | null {
     to,
     buckets: buckets.map((bucket) => new Bucket(bucket)),
     first,
-    marks,
+    marks: marks.map((mark) => {
+      const changed = listed(field(mark, "changed")) as string[];
+      return { ...mark, changed: changed.length > 0 ? changed : SETTINGS };
+    }),
     unread: unread as string[],
   };
 }
@@ -567,7 +579,8 @@ function round(value: number): number {
 /**
  * The page's one time axis out of `page`: each period's name and hours, at most six labels under
  * the plot (by the hour on the clock's round hours, else counted back from the last period) and the
- * settings changes.
+ * changes of the settings and of the instructions the agents work under, each saying what changed
+ * (`rules, skill work changed, …`), its commit's subject and its hash.
  */
 export function axis(page: Page): Axis {
   const count = page.buckets.length;
@@ -578,7 +591,8 @@ export function axis(page: Page): Axis {
     const [start, end] = spans[at] ?? [0, 0];
     if (at < 0) return [];
     const within = (mark.at - start) / Math.max(end - start, 1);
-    return [[((at + within) / count) * 100, at, `${mark.subject} (${mark.commit})`]];
+    const text = `${mark.changed.join(", ")} changed, ${mark.subject} (${mark.commit})`;
+    return [[((at + within) / count) * 100, at, text]];
   });
   let ticks: [number, string][];
   if (page.grain === "hour") {
@@ -777,7 +791,7 @@ export interface ReportsViewProps {
 }
 
 /**
- * The page under its header: the window's controls, its four figures, the settings changes and
+ * The page under its header: the window's controls, its four figures, the marked changes and
  * the charts, or the ghost of them while the first answer is on its way.
  */
 export function ReportsView({
@@ -924,7 +938,7 @@ function Report({ page: whole, hidden, onToggle, lands }: ReportProps) {
           </div>
         ))}
       </dl>
-      {shownAxis.marks.length > 0 && <SettingsChanges axis={shownAxis} />}
+      {shownAxis.marks.length > 0 && <MarkedChanges axis={shownAxis} />}
       {drawn &&
         charts(page, hidden).map(([heading, section]) => (
           <section key={heading} className="reports-section" aria-label={heading}>
@@ -955,25 +969,28 @@ function Report({ page: whole, hidden, onToggle, lands }: ReportProps) {
   );
 }
 
-/** How many settings changes the page lists before it folds the rest under a disclosure. */
+/** How many marked changes the page lists before it folds the rest under a disclosure. */
 const MARKS_SHOWN = 3;
 
 /**
- * The window's settings changes, newest first: the newest MARKS_SHOWN, a line each while the rest
- * are folded behind "N more settings changes" (reports.css), so a window of many still shows its
- * first chart on a phone's first screen.
+ * The window's changes of the settings and of the instructions the agents work under (a skill, the
+ * rules, a guide), newest first: the newest MARKS_SHOWN, a line each while the rest are folded
+ * behind "N more changes" (reports.css), so a window of many still shows its first chart on a
+ * phone's first screen.
  */
-function SettingsChanges({ axis: { marks, periods } }: { axis: Axis }) {
+function MarkedChanges({ axis: { marks, periods } }: { axis: Axis }) {
   const newest = marks
     .toReversed()
-    .map(([, at, text]) => <li key={text}>{`${periods[at]}: settings changed, ${text}`}</li>);
+    .map(([, at, text]) => <li key={text}>{`${periods[at]}: ${text}`}</li>);
   const folded = newest.length - MARKS_SHOWN;
   return (
     <div className="reports-marks">
-      <ul aria-label="Settings changes in the window">{newest.slice(0, MARKS_SHOWN)}</ul>
+      <ul aria-label="Changes to the settings and the agents' instructions in the window">
+        {newest.slice(0, MARKS_SHOWN)}
+      </ul>
       {folded > 0 && (
         <details>
-          <summary>{`${folded} more settings ${folded === 1 ? "change" : "changes"}`}</summary>
+          <summary>{`${folded} more ${folded === 1 ? "change" : "changes"}`}</summary>
           <ul>{newest.slice(MARKS_SHOWN)}</ul>
         </details>
       )}

@@ -2,8 +2,9 @@
 //! release client against the stand-in server answering `/api/reports` with a fortnight by the
 //! day: a phone's width held, one tap showing a period's every value on every chart, a day no file
 //! recorded told apart from a zero, the arrow keys moving between periods, a window's many
-//! settings changes folded past the newest three so its first chart shows on a phone's first
-//! screen, two columns on a wide screen, the dark scheme's own colours, the empty state saying when
+//! changes of the settings and the agents' instructions (a skill, the rules, a guide), each marked
+//! alike, folded past the newest three so its first chart shows on a phone's first screen, two
+//! columns on a wide screen, the dark scheme's own colours, the empty state saying when
 //! the first roll-up comes, the last 24 hours with nothing chosen, and the window and the series
 //! hidden kept for the next visit, a hidden series' room given to the rest. A chart's address
 //! (`#chart-ID`) lands that chart just below the header, opened fresh (its charts drawn after the
@@ -257,9 +258,10 @@ fn on_a_wide_screen_the_charts_are_two_columns_and_dark_takes_its_own_colours() 
 /// times on 12 Nov alone.
 const CHANGED: [u32; 10] = [10, 10, 11, 11, 11, 11, 11, 11, 12, 12];
 
-/// [`fortnight`] with the ten settings changes of [`CHANGED`], oldest first as the server sends
-/// them, the `n`th at `n + 1` o'clock, each subject as long as a merge's; the oldest names a
-/// 64-character hash, a word no line of a phone holds.
+/// [`fortnight`] with the ten changes of [`CHANGED`], oldest first as the server sends them, the
+/// `n`th at `n + 1` o'clock, each subject as long as a merge's; the oldest names a 64-character
+/// hash, a word no line of a phone holds. Each says what it changed ([`what`]), but the oldest,
+/// written as a server from before a mark named any wrote it: a settings change.
 fn changed_often() -> Value {
     let mut page = fortnight();
     page["marks"] = (0_u32..)
@@ -273,11 +275,25 @@ fn changed_often() -> Value {
             } else {
                 format!("Merge branch 'tools/settings-change-{n}': the board's limits and models")
             };
-            json!({"at": FROM + f64::from(day) * DAY + 3600.0 * f64::from(n + 1),
-                "commit": format!("{n}f1c0a9b2d3e"), "subject": subject})
+            let mut mark = json!({"at": FROM + f64::from(day) * DAY + 3600.0 * f64::from(n + 1),
+                "commit": format!("{n}f1c0a9b2d3e"), "subject": subject});
+            if n > 0 {
+                mark["changed"] = what(n).split(", ").collect();
+            }
+            mark
         })
         .collect();
     page
+}
+
+/// What the `n`th change of [`changed_often`] changed, as the page says it: the settings, but the
+/// work skill with the rules for the eighth and a guide for the ninth, the two newest but one.
+fn what(n: u32) -> &'static str {
+    match n {
+        7 => "rules, skill work",
+        8 => "guide crates/tasks/AGENTS.md",
+        _ => "settings",
+    }
 }
 
 /// On a phone the list of a window's ten settings changes shows the newest three and folds the
@@ -302,9 +318,10 @@ fn on_a_phone_a_window_s_many_settings_changes_fold_and_the_first_chart_shows_on
     // line, and whether the folded ones show (a closed `details` keeps its content's boxes,
     // hidden: `checkVisibility`).
     let marks = "(() => { const m = document.querySelector('.reports-marks'); const d = m.querySelector('details'); const newest = [...m.querySelectorAll(':scope > ul > li')]; return {listed: newest.map(li => li.textContent), whole: newest.every(li => li.scrollWidth <= li.clientWidth), more: d?.querySelector('summary').textContent ?? null, open: d?.open ?? null, folded: d ? [...d.querySelectorAll('li')].map(li => li.textContent.split(':')[0]) : null, drawn: d ? d.querySelector('ul').checkVisibility() : null, overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth}; })()";
-    let mark = |n: usize, day: &str| {
+    let mark = |n: u32, day: &str| {
         format!(
-            "{day}: settings changed, Merge branch 'tools/settings-change-{n}': the board's limits and models ({n}f1c0a9b2d3e)"
+            "{day}: {} changed, Merge branch 'tools/settings-change-{n}': the board's limits and models ({n}f1c0a9b2d3e)",
+            what(n)
         )
     };
     let folded = json!([
@@ -319,10 +336,21 @@ fn on_a_phone_a_window_s_many_settings_changes_fold_and_the_first_chart_shows_on
     assert_eq!(
         chrome.eval(marks),
         json!({"listed": [mark(9, "Thu 14 Jan"), mark(8, "Thu 14 Jan"), mark(7, "Wed 13 Jan")],
-            "whole": false, "more": "7 more settings changes", "open": false, "folded": folded,
+            "whole": false, "more": "7 more changes", "open": false, "folded": folded,
             "drawn": false, "overflow": 0}),
-        "the newest three, newest first and cut to a line each, and the other seven, newest \
+        "the newest three, newest first and cut to a line each, a settings change, a guide's \
+         and a skill's with the rules' each saying what it changed, and the other seven, newest \
          first, folded"
+    );
+    // A skill's change is marked on the plot as a settings change is: one dashed line each, of
+    // one look, and its title says what changed.
+    assert_eq!(
+        chrome.eval(
+            "(() => { const marks = [...document.querySelector('.chart').querySelectorAll('.chart-mark')]; const look = m => { const s = getComputedStyle(m); return [s.borderLeftStyle, s.borderLeftWidth, s.borderLeftColor, s.opacity].join(' '); }; return {marks: marks.length, looks: new Set(marks.map(look)).size, style: getComputedStyle(marks[0]).borderLeftStyle, skill: marks[7].title.split(' changed, ')[0], settings: marks[9].title.split(' changed, ')[0], oldest: marks[0].title.split(' changed, ')[0]}; })()"
+        ),
+        json!({"marks": 10, "looks": 1, "style": "dashed", "skill": "rules, skill work",
+            "settings": "settings", "oldest": "settings"}),
+        "ten marks on the first chart, a skill's drawn as the settings' are"
     );
     chrome.eval("document.querySelector('.reports-marks summary').click()");
     assert!(
@@ -355,7 +383,14 @@ fn on_a_phone_a_window_s_many_settings_changes_fold_and_the_first_chart_shows_on
             "[...document.querySelector('.chart .chart-readout').querySelectorAll('.chart-mark-note')].map(p => p.textContent.split(' (')[1])"
         ),
         json!(["2f1c0a9b2d3e)", "3f1c0a9b2d3e)", "4f1c0a9b2d3e)", "5f1c0a9b2d3e)", "6f1c0a9b2d3e)", "7f1c0a9b2d3e)"]),
-        "each of the day's six settings changes, oldest first"
+        "each of the day's six changes, oldest first"
+    );
+    assert_eq!(
+        chrome.eval(
+            "[...document.querySelector('.chart .chart-readout').querySelectorAll('.chart-mark-note')].map(p => p.textContent.split(' changed, ')[0])"
+        ),
+        json!(["Settings", "Settings", "Settings", "Settings", "Settings", "Rules, skill work"]),
+        "each saying what it changed"
     );
 }
 

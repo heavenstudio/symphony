@@ -112,7 +112,8 @@ const mondayAgents = () =>
 
 /**
  * Three days: Monday rolled up whole with its agents watched, Tuesday recorded by no source,
- * Wednesday under way, half rolled up; a settings change on Monday.
+ * Wednesday under way, half rolled up; a settings change on Monday, as a server that names what a
+ * mark changed writes it.
  */
 function wire(): Wire & { buckets: Wire[] } {
   return {
@@ -144,6 +145,7 @@ function wire(): Wire & { buckets: Wire[] } {
         at: MONDAY + 6 * HOUR,
         commit: "4f1c0a9b2d3e",
         subject: "settings: land without the check",
+        changed: ["settings"],
       },
     ],
     unread: [],
@@ -291,6 +293,14 @@ describe("the answer", () => {
     ["periods that are no list", { ...wire(), buckets: {} }],
     ["periods null", { ...wire(), buckets: null }],
     ["a settings change without its commit", { ...wire(), marks: [{ at: 1, subject: "s" }] }],
+    [
+      "a change that names what it changed by no list",
+      { ...wire(), marks: [{ at: 1, commit: "c", subject: "s", changed: "settings" }] },
+    ],
+    [
+      "a change that names something by no text",
+      { ...wire(), marks: [{ at: 1, commit: "c", subject: "s", changed: [3] }] },
+    ],
     ["a file not read named by no text", { ...wire(), unread: [3] }],
   ])("is none for %s", (_, value) => {
     expect(readReports(value)).toBeNull();
@@ -415,7 +425,7 @@ describe("the axis", () => {
     expect(period("day", MONDAY + 23 * DAY)).toBe("Wed 2 Dec");
   });
 
-  it("labels at most six periods and places each settings change", () => {
+  it("labels at most six periods and places each change, saying what it changed", () => {
     const shown = axis(page());
     expect(shown.periods).toEqual(["Mon 9 Nov", "Tue 10 Nov", "Wed 11 Nov"]);
     expect(shown.hours).toEqual([24, 24, 11]);
@@ -426,8 +436,34 @@ describe("the axis", () => {
     ]);
     expect(shown.marks).toHaveLength(1);
     const [left, at, text] = shown.marks[0] ?? [];
-    expect([at, text]).toEqual([0, "settings: land without the check (4f1c0a9b2d3e)"]);
+    expect([at, text]).toEqual([
+      0,
+      "settings changed, settings: land without the check (4f1c0a9b2d3e)",
+    ]);
     expect(left).toBeCloseTo(25 / 3, 9);
+    // A change of the instructions names each thing it changed, as the server orders them; one
+    // that names none, or comes from a server that named none, is a settings change.
+    const mark = (changed?: string[]) => ({
+      at: MONDAY + HOUR,
+      commit: "c",
+      subject: "s",
+      ...(changed ? { changed } : {}),
+    });
+    const said = (...marks: object[]) =>
+      axis(read({ ...wire(), marks })).marks.map(([, , text]) => text);
+    expect(
+      said(
+        mark(["skill work"]),
+        mark(["settings", "rules", "guide crates/tasks/AGENTS.md", "skill work"]),
+        mark([]),
+        mark(),
+      ),
+    ).toEqual([
+      "skill work changed, s (c)",
+      "settings, rules, guide crates/tasks/AGENTS.md, skill work changed, s (c)",
+      "settings changed, s (c)",
+      "settings changed, s (c)",
+    ]);
     const outside = { ...wire(), marks: [{ at: MONDAY - DAY, commit: "c", subject: "s" }] };
     expect(axis(read(outside)).marks).toEqual([]);
     const fortnight = {
@@ -646,13 +682,14 @@ describe("the page's view", () => {
     );
   });
 
-  it("draws the figures, the settings changes and a place for every chart", () => {
+  it("draws the figures, the marked changes and a place for every chart", () => {
     const html = view(page());
     expect(html).toContain('aria-busy="false"');
     expect(html).toContain('data-ready="reports"');
     expect(html).toContain('<dt><a href="#chart-done">Done</a></dt><dd class="value">7</dd>');
     expect(html).toContain(
-      '<div class="reports-marks"><ul aria-label="Settings changes in the window"><li>Mon 9 Nov: ' +
+      '<div class="reports-marks"><ul aria-label="Changes to the settings and the agents&#x27; ' +
+        'instructions in the window"><li>Mon 9 Nov: ' +
         "settings changed, settings: land without the check (4f1c0a9b2d3e)</li></ul></div>",
     );
     // Each chart mounts once it comes near the screen, its ghost in its place until then.
@@ -662,8 +699,10 @@ describe("the page's view", () => {
     expect(html).not.toContain("not read");
   });
 
-  it("lists the settings changes newest first, folding all but the newest three", () => {
-    // `count` changes on Monday, the `n`th at `n + 1` o'clock, oldest first as the server sends them.
+  it("lists the changes newest first, folding all but the newest three", () => {
+    // `count` changes on Monday, the `n`th at `n + 1` o'clock, oldest first as the server sends
+    // them: a skill's every third, the settings' the rest.
+    const what = (n: number) => (n % 3 === 0 ? "skill work" : "settings");
     const changes = (count: number) =>
       view(
         read({
@@ -672,19 +711,22 @@ describe("the page's view", () => {
             at: MONDAY + (n + 1) * HOUR,
             commit: `c${n}`,
             subject: `change ${n}`,
+            changed: [what(n)],
           })),
         }),
       );
     const items = (...ns: number[]) =>
-      ns.map((n) => `<li>Mon 9 Nov: settings changed, change ${n} (c${n})</li>`).join("");
-    const list = '<div class="reports-marks"><ul aria-label="Settings changes in the window">';
+      ns.map((n) => `<li>Mon 9 Nov: ${what(n)} changed, change ${n} (c${n})</li>`).join("");
+    const list =
+      '<div class="reports-marks"><ul aria-label="Changes to the settings and the agents&#x27; ' +
+      'instructions in the window">';
     expect(changes(3)).toContain(`${list}${items(2, 1, 0)}</ul></div>`);
     expect(changes(4)).toContain(
-      `${list}${items(3, 2, 1)}</ul><details><summary>1 more settings change</summary>` +
+      `${list}${items(3, 2, 1)}</ul><details><summary>1 more change</summary>` +
         `<ul>${items(0)}</ul></details></div>`,
     );
     expect(changes(10)).toContain(
-      `${list}${items(9, 8, 7)}</ul><details><summary>7 more settings changes</summary>` +
+      `${list}${items(9, 8, 7)}</ul><details><summary>7 more changes</summary>` +
         `<ul>${items(6, 5, 4, 3, 2, 1, 0)}</ul></details></div>`,
     );
     expect(changes(0)).not.toContain("reports-marks");

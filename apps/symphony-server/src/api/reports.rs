@@ -1,6 +1,6 @@
 //! The Reports page's read ([`symphony_api::report_page`]): the project's day files for a window,
 //! summed a period at a time. It reads three folders of `symphony/` in the project's git common dir
-//! ([`Folders`]) and, for the settings marks, one `git log` of the default branch; never the board,
+//! ([`Folders`]) and, for the marks of a settings or instructions change, one `git log` of the default branch; never the board,
 //! so a board slow or down leaves it as it is. Each source's part of a period is none when no file
 //! holds an hour of it: missing, never a zero.
 //!
@@ -66,7 +66,7 @@ impl Folders {
 
 /// The answer of a window of `days` by `grain` of the project `hub` serves, at its clock: its day
 /// files, from the folders found at the first read ([`crate::live::Hub::report_folders`]), and
-/// the settings marks from its default branch; the one the hub kept while none of them moved
+/// the marks from its default branch; the one the hub kept while none of them moved
 /// ([`Kept::answer`]).
 pub(crate) fn answer(hub: &crate::live::Hub, grain: Grain, days: u32) -> Answer {
     let folders = hub.report_folders.get_or_init(|| Folders::of(&hub.root));
@@ -74,17 +74,19 @@ pub(crate) fn answer(hub: &crate::live::Hub, grain: Grain, days: u32) -> Answer 
         .answer(folders, &hub.root, grain, days, hub.now())
 }
 
-/// The settings marks of `branch`, the default branch of the project at `root`, since `since`,
-/// oldest first: one `git log` ([`symphony::reports::git::settings_changes`]).
+/// The marks of `branch`, the default branch of the project at `root`, since `since`, oldest
+/// first: each commit that changed its settings or the instructions its agents work under, from
+/// one `git log` ([`symphony::reports::git::changes`]).
 fn marks(root: &Path, branch: &str, since: f64) -> Result<Vec<ReportMark>, String> {
-    let commits = symphony::reports::git::settings_changes(root, branch, since)?;
-    Ok(commits
+    let changes = symphony::reports::git::changes(root, branch, since)?;
+    Ok(changes
         .into_iter()
         .rev()
-        .map(|commit| ReportMark {
-            at: commit.at,
-            commit: commit.hash.chars().take(12).collect(),
-            subject: commit.subject,
+        .map(|change| ReportMark {
+            at: change.commit.at,
+            commit: change.commit.hash.chars().take(12).collect(),
+            subject: change.commit.subject,
+            changed: change.changed,
         })
         .collect())
 }
