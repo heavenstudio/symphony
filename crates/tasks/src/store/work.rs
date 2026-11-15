@@ -650,7 +650,7 @@ IF $task.title != $title {{
 
     /// The tasks right under `slug`, in the order they were made.
     pub fn children(&self, slug: &str) -> Result<Vec<Task>, Error> {
-        let view = self.retrying(|| self.view(&Which::Children(slug)))?;
+        let view = self.retrying(|| self.shown(&Which::Children(slug)))?;
         if !view.snap.known {
             return Err(no_task(slug));
         }
@@ -660,7 +660,7 @@ IF $task.title != $title {{
     /// Every task below `slug`, at any depth, in the order they were made: from one read of the
     /// whole board, so the tree is as of one moment however deep it goes.
     pub fn descendants(&self, slug: &str) -> Result<Vec<Task>, Error> {
-        let view = self.retrying(|| self.view(&Which::All))?;
+        let view = self.retrying(|| self.shown(&Which::All))?;
         let mut below: HashMap<&str, Vec<&str>> = HashMap::new();
         let mut known = false;
         for task in &view.snap.tasks {
@@ -692,7 +692,7 @@ IF $task.title != $title {{
 
     /// Tasks linked to `doc` itself or to one of its headings (`doc#Heading`), by priority then slug.
     pub fn linked_to(&self, doc: &str) -> Result<Vec<Task>, Error> {
-        Ok(self.retrying(|| self.view(&Which::Linked(doc)))?.tasks())
+        Ok(self.retrying(|| self.shown(&Which::Linked(doc)))?.tasks())
     }
 
     /// Move a task along (`can_transition`). Work started, or held by an executor, is moved only by a
@@ -987,7 +987,7 @@ LET $said = $actor + '{MOVED}' + $task.status + '{ARROW}' + $status;
     /// The best work for `handle`: its own reservation, then priority, then a red ([`crate::red`])
     /// before other work, then its areas, then the order made.
     pub fn next_for(&self, handle: &str) -> Result<Option<Task>, Error> {
-        let view = self.retrying(|| self.view(&Which::Pullable(handle)))?;
+        let view = self.retrying(|| self.shown(&Which::Pullable(handle)))?;
         let me = view
             .session(handle)
             .ok_or_else(|| refused(format!("no session {}", repr(handle))))?;
