@@ -143,6 +143,48 @@ fn a_projects_folder_that_is_gone_names_no_project_never_the_checkout_above_it()
     );
 }
 
+/// The project whose folder the Symphony reaches a board from, held to the repository it found
+/// there when it began to serve it (`project::held`), is the one there while the folder holds that
+/// repository. Once its `.git` went, the folder still there, the lookup from it finds the outer
+/// checkout's repository, and the folder is refused as gone; so it is once a `.git` made again
+/// holds only the board's folders, a repository no more.
+#[test]
+fn a_projects_folder_held_to_its_repository_names_no_other_once_its_git_goes() {
+    let (outer, inner) = nested("project-held");
+    let repository = project::locate_quick(&inner).unwrap().common;
+    assert!(project::is_repository(&repository));
+    assert_eq!(
+        project::held(&inner, None, &repository).unwrap().id,
+        "inner"
+    );
+    let refused = |why: String| {
+        assert_eq!(
+            why,
+            format!(
+                "the project's folder {} no longer holds the repository it was served from, {}: \
+                 {}",
+                inner.display(),
+                repository.display(),
+                project::GONE
+            )
+        );
+        assert!(symphony_board::board_health::absent(&why), "{why}");
+    };
+
+    std::fs::remove_dir_all(inner.join(".git")).unwrap();
+    assert_eq!(
+        project::at(&inner, None).unwrap().place.common,
+        outer.join(".git"),
+        "the lookup from the folder walks up"
+    );
+    refused(project::held(&inner, None, &repository).unwrap_err());
+
+    std::fs::create_dir_all(inner.join(".git").join(symphony_board::folders::TASKS)).unwrap();
+    assert_eq!(project::at(&inner, None).unwrap().place.common, repository);
+    assert!(!project::is_repository(&repository));
+    refused(project::held(&inner, None, &repository).unwrap_err());
+}
+
 /// A board's server, stopped when the case ends: one a reach that should start none started all
 /// the same.
 struct Stopped(symphony_board::server::Home);
