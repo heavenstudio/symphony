@@ -7,7 +7,9 @@
 //! they draw after it on any machine, and the device keeps no copy of them ([`NO_STORE`]): the
 //! shell's read-ahead of the other document's links would otherwise put the card's sections on it
 //! before the reads are held. A reader who scrolls away during the landing, by a wheel or a
-//! script, is left there when the reads land.
+//! script, is left there when the reads land; one who clicks, taps or presses a key that scrolls
+//! nothing keeps the card held; and once the landing has gone quiet, nothing lands it again, not a
+//! change to the document above the card after a script's scroll.
 
 use serde_json::{Map, Value, json};
 
@@ -102,6 +104,31 @@ fn from() -> Value {
         "tasks": [], "cards": [], "threads": {},
         "sections": [{"start": 1, "end": 2, "key": "intro", "hash": "intro", "part": 0,
             "blocks": [paragraph(vec![text("Read "), link, text(".")])]}]})
+}
+
+/// The fourth card, just above the fifth, grown by six paragraphs: the document after an edit above
+/// the card, and the feed's change that brings it, every section's ids in it again (as an outline
+/// read again names them, each a new list to the page).
+fn grown() -> (Value, Value) {
+    let mut four = card("four", 124);
+    four["hash"] = json!("four-grown");
+    let body = four["blocks"][0]["body"]
+        .as_array_mut()
+        .expect("the card's body");
+    for n in 1..=6 {
+        body.push(paragraph(vec![text(&format!(
+            "Grown above the fifth card, line {n}."
+        ))]));
+    }
+    let mut document = landing();
+    for section in document["sections"].as_array_mut().expect("its sections") {
+        if section["key"] == "card:four" {
+            *section = four.clone();
+        }
+    }
+    let change = json!({"version": 8, "changes": [{"region": "document", "data": {
+        "path": LANDING, "sections": [four], "anchors": document["anchors"].clone()}}]});
+    (document, change)
 }
 
 fn site() -> Site {
@@ -320,4 +347,140 @@ fn a_reader_who_scrolls_away_from_a_landing_is_left_there_when_the_reads_land() 
             "{away:?}: the card is not brought back to the scroll padding: left {left}, later {later}"
         );
     }
+}
+
+/// What a reader does on the card while it lands that scrolls nothing: a click on it, a key that
+/// moves nothing (Escape; a Tab moves the focus, which the page scrolls to when it is off the
+/// screen), or a tap on a phone.
+#[derive(Clone, Copy, Debug)]
+enum Still {
+    Click,
+    Key,
+    Tap,
+}
+
+#[test]
+fn a_click_a_tap_or_a_key_that_scrolls_nothing_leaves_the_card_held_as_the_reads_land() {
+    let site = site();
+    for act in [Still::Click, Still::Key, Still::Tap] {
+        let (width, height) = if matches!(act, Still::Tap) {
+            (390, 844)
+        } else {
+            (1280, 900)
+        };
+        let Some(mut page) = browser(width, height) else {
+            return;
+        };
+        if matches!(act, Still::Tap) {
+            page.call(
+                "Emulation.setTouchEmulationEnabled",
+                json!({"enabled": true, "maxTouchPoints": 1}),
+            );
+        }
+        site.hold_route("/api/section", true);
+        page.open(&site.url(&format!("/{LANDING}#five")));
+        assert!(
+            page.wait_for(&lifted(), SHOWN),
+            "{act:?}: the page lands on the card's ghost and its ghost lifts: {}",
+            page.eval(PLACE)
+        );
+        // On the card's ghost, below its first line.
+        let (x, y) = (width / 2, 76 + 40);
+        match act {
+            Still::Click => {
+                for kind in ["mousePressed", "mouseReleased"] {
+                    page.call(
+                        "Input.dispatchMouseEvent",
+                        json!({"type": kind, "x": x, "y": y, "button": "left", "clickCount": 1}),
+                    );
+                }
+            }
+            Still::Key => crate::components::key(&mut page, "Escape", "Escape", 27),
+            Still::Tap => {
+                page.call(
+                    "Input.dispatchTouchEvent",
+                    json!({"type": "touchStart", "touchPoints": [{"x": x, "y": y}]}),
+                );
+                page.call(
+                    "Input.dispatchTouchEvent",
+                    json!({"type": "touchEnd", "touchPoints": []}),
+                );
+            }
+        }
+        page.eval(TWO_FRAMES);
+        let acted = page.eval(PLACE);
+        site.hold_route("/api/section", false);
+        assert!(
+            page.wait_for(STILL, SHOWN),
+            "{act:?}: the page around the card draws and holds still: {}",
+            page.eval(PLACE)
+        );
+        page.pump(std::time::Duration::from_millis(600));
+        let later = page.eval(PLACE);
+        eprintln!("STILL {act:?}: acted {acted}, later {later}");
+        let number = |key: &str| later[key].as_f64().unwrap_or(f64::NAN);
+        assert!(
+            (number("line") - number("padding")).abs() <= 1.0 && number("card") >= number("header"),
+            "{act:?}: the card's first line stays at the scroll padding as the sections above draw: acted {acted}, later {later}"
+        );
+    }
+}
+
+#[test]
+fn once_a_landing_went_quiet_a_change_above_the_card_after_a_script_s_scroll_lands_nothing() {
+    let site = site();
+    let Some(mut page) = browser(1280, 900) else {
+        return;
+    };
+    page.open(&site.url(&format!("/{LANDING}#five")));
+    // Ten frames still with nothing waiting or busy near: the hold (four such frames) has ended.
+    assert!(
+        page.wait_for(
+            &format!("{LANDED} && document.querySelector('[data-feed=live]') !== null"),
+            SHOWN
+        ) && page.wait_for(STILL, SHOWN),
+        "the page lands on the card, follows its feed and holds still: {}",
+        page.eval(PLACE)
+    );
+    let y = page.eval(PLACE)["y"].as_f64().unwrap_or(f64::NAN);
+    page.eval("scrollBy(0, -500)");
+    assert!(
+        page.wait_for(&format!("scrollY < {y} - 250"), SHOWN),
+        "a script scrolls up from the card: {}",
+        page.eval(PLACE)
+    );
+    page.eval(TWO_FRAMES);
+    let left = page.eval(PLACE);
+    page.eval(COUNT_SCROLLS);
+    // An edit above the card: the fourth card grows, every section's ids named again.
+    let (document, change) = grown();
+    site.set_document(&document);
+    site.push(8, &change.to_string());
+    assert!(
+        page.wait_for(
+            "document.body.innerText.includes('Grown above the fifth card, line 6.')",
+            SHOWN
+        ) && page.wait_for(STILL, SHOWN),
+        "the change draws above the card and the page holds still: {}",
+        page.eval(PLACE)
+    );
+    page.pump(std::time::Duration::from_millis(600));
+    let later = page.eval(PLACE);
+    eprintln!("QUIET: left {left}, later {later}");
+    assert_eq!(
+        page.eval("window.pageScrolls"),
+        json!(0),
+        "nothing scrolls the page once its landing went quiet: left {left}, later {later}"
+    );
+    let number = |place: &Value, key: &str| place[key].as_f64().unwrap_or(f64::NAN);
+    // The page moved since the landing let it be, not only by the script: a landing compared
+    // with where it left the page would take the script's scroll for a draw.
+    assert!(
+        number(&later, "down") - number(&left, "down") >= 1.0,
+        "the change grows the document above the card: left {left}, later {later}"
+    );
+    assert!(
+        (number(&later, "line") - number(&later, "padding")).abs() > 100.0,
+        "the card is not brought back to the scroll padding: left {left}, later {later}"
+    );
 }

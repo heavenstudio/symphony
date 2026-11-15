@@ -348,21 +348,39 @@ function addressed() {
     try { return decodeURIComponent(location.hash.slice(1)); } catch { return null; }
 }
 
-// The landing on the element the address names, one for each navigation (`requested`): wherever
-// the page lands it (`land`, from `scrollAnchor` here and from the web client's route.ts: at the
-// page's scroll padding, just below the header), it is held there while the page draws around it.
-// Each frame it is scrolled into view again once something drawn moved it, or the page's length
-// changed (one at the page's end may go higher now), until four frames pass with nothing moved, no
-// reserved box waiting within its sentinel's reach (`pendingNear`) and no region busy within that
-// reach (`aria-busy`: a ghost not lifted, a read not in), or 1800 at most, a backstop as
-// `reviewHoldPlace`'s. The browser's own scroll anchoring holds none of this while the page is
+// The keys that scroll the page outside a field (and Space outside a button it would press).
+const SCROLL_KEYS = ["PageUp", "PageDown", "Home", "End", "ArrowUp", "ArrowDown", " "];
+
+// Call `stop` on the reader's own input that scrolls the page: a wheel, a touch that moves, a press
+// on the page's own scrollbar (its target the root element) or a scroll key. A click, a tap, a
+// selection or any other key scrolls nothing. What it returns stops listening.
+function onScrollInput(stop) {
+    const kinds = ["wheel", "touchmove", "mousedown", "keydown"];
+    const takes = event => `input, textarea, select, [contenteditable]${event.key === " " ? ", button, summary" : ""}`;
+    const input = event => {
+        if (event.type === "mousedown" ? event.target === document.documentElement
+            : event.type !== "keydown" || (SCROLL_KEYS.includes(event.key) && !event.target.matches?.(takes(event)))) stop();
+    };
+    kinds.forEach(kind => addEventListener(kind, input, { capture: true, passive: true }));
+    return () => kinds.forEach(kind => removeEventListener(kind, input, { capture: true }));
+}
+
+// The landing on the element the address names: one hold for each navigation (`requested`), from
+// the first call to land it (`land`, from `scrollAnchor` here and from the web client's route.ts:
+// at the page's scroll padding, just below the header). Each frame the element is scrolled into
+// view again once something drawn moved it, or the page's length changed (one at the page's end
+// may go higher now). The browser's own scroll anchoring holds none of this while the page is
 // under its ghost (`.settle`, hidden), and the sections that draw above a card once the landing
-// brings them near grow it by their pictures. The landing ends at the reader's own scroll, click
-// or key, and at a scroll that moved the page and the element alike (a script's, not a draw's: the
-// browser's own pull back at the page's end aside); once ended it stays so until the next
-// navigation, so a later call to land (a section's read in, or the page's last, route.ts) leaves
-// the page where the reader or the script put it. A hold that ran out lands again at such a call.
-let landing = { generation: 0, ended: true, holds: 0, place: null, listening: () => {} };
+// brings them near grow it by their pictures. The landing ends when it goes quiet: four frames
+// with nothing moved, no reserved box waiting within its sentinel's reach (`pendingNear`) and no
+// region busy within that reach (`aria-busy`: a ghost not lifted, a read not in), or 1800 at most,
+// a backstop as `reviewHoldPlace`'s. It ends too at the reader's input that scrolls
+// (`onScrollInput`), and at any scroll that moved the page and the element alike (find in the
+// page, a focus brought into view, a script: not a draw, the browser's own pull back at the page's
+// end aside). Only the next navigation lands again: a later call (a section's read in, the page's
+// last, an outline read again) opens what holds the element while the hold runs, and does nothing
+// once it has ended, leaving the page where the reader, or what they did, put it.
+let landing = { generation: 0, ended: true, place: null, listening: () => {} };
 
 // Where `target` and the page are: its top, the page's scroll and its scroller's, the page's length.
 function placeOf(target) {
@@ -382,34 +400,39 @@ function endLanding() {
     landing.listening();
 }
 
-// Land on `target`, the element the address names: open every `details` around it, scroll it into
-// view and hold it there, unless the reader or a script ended this navigation's landing.
+// Land on `target`, the element the address names, once for each navigation: open every `details`
+// around it, scroll it into view and hold it there (above).
 function land(target) {
-    if (landing.generation !== requested) {
-        endLanding();
-        const current = { generation: requested, ended: false, holds: 0, place: null };
-        current.listening = onGesture(() => { current.ended = true; current.listening(); });
-        landing = current;
-    } else if (landing.ended || (landing.place && scrolledAway(landing.place, placeOf(target)))) {
-        return endLanding();
-    }
+    const held = landing.generation === requested;
+    if (held && landing.ended) return;
     for (let parent = target; parent; parent = parent.parentElement) {
         if (parent instanceof HTMLDetailsElement) parent.open = true;
     }
+    // The hold running brings it back into view, from where it now is.
+    if (held) return;
+    endLanding();
+    const current = { generation: requested, ended: false, place: null, listening: () => {} };
+    landing = current;
     target.scrollIntoView();
-    const current = landing, id = target.id, href = location.href, held = ++current.holds;
-    let frame = 0, quiet = 0;
     current.place = placeOf(target);
+    current.listening = onScrollInput(endLanding);
+    const id = target.id, href = location.href;
+    let frame = 0, quiet = 0;
     const hold = () => {
+        if (current.ended || landing !== current) return;
+        if (location.href !== href) return endLanding();
+        // An element drawn again in its place is held in turn; none at all is nothing quiet.
         const now = document.getElementById(id);
-        if (current.ended || landing !== current || held !== current.holds || location.href !== href || !now) return;
-        const before = current.place, there = placeOf(now);
-        if (scrolledAway(before, there)) return endLanding();
-        if (Math.abs(there[0] - before[0]) >= 0.5 || there[3] !== before[3]) now.scrollIntoView();
-        current.place = placeOf(now);
-        const moved = Math.abs(there[0] - before[0]) >= 0.5 || Math.abs(current.place[0] - before[0]) >= 0.5;
-        quiet = moved || pendingNear() || near("[aria-busy=true]") ? 0 : quiet + 1;
+        if (now) {
+            const before = current.place, there = placeOf(now);
+            if (scrolledAway(before, there)) return endLanding();
+            if (Math.abs(there[0] - before[0]) >= 0.5 || there[3] !== before[3]) now.scrollIntoView();
+            current.place = placeOf(now);
+            const moved = Math.abs(there[0] - before[0]) >= 0.5 || Math.abs(current.place[0] - before[0]) >= 0.5;
+            quiet = moved || pendingNear() || near("[aria-busy=true]") ? 0 : quiet + 1;
+        } else quiet = 0;
         if (quiet < 4 && ++frame < 1800) requestAnimationFrame(hold);
+        else endLanding();
     };
     requestAnimationFrame(hold);
 }

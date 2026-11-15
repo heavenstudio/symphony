@@ -94,9 +94,9 @@ export function useAnchor(): string {
 
 /**
  * Bring the element the address's fragment names into view, opening every `details` around it.
- * The shell lands it (`reviewLand`, assets/shell.js): it holds it there while the page draws
- * around it, as a section drawn above it once the scroll brings it near would push it down, and
- * does nothing once the reader or a script scrolled away from this navigation's landing. Without a
+ * The shell lands it (`reviewLand`, assets/shell.js), once for each navigation: it holds it there
+ * while the page draws around it, as a section drawn above it once the scroll brings it near would
+ * push it down, and does nothing once that hold has ended (quiet, or scrolled away). Without a
  * fragment it does nothing: the shell owns the guarded top reset, and a late load must not undo a
  * scroll made since.
  */
