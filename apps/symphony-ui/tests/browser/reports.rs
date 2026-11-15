@@ -261,8 +261,9 @@ fn on_a_phone_a_window_s_many_settings_changes_fold_and_the_first_chart_shows_on
         first["top"].as_i64().unwrap() < first["screen"].as_i64().unwrap(),
         "the first chart starts on the first screen: {first}"
     );
-    // The list's words read as drawn (`textContent`), and whether the folded ones take room.
-    let marks = "(() => { const m = document.querySelector('.reports-marks'); const d = m.querySelector('details'); return {listed: [...m.querySelectorAll(':scope > ul > li')].map(li => li.textContent), more: d?.querySelector('summary').textContent ?? null, open: d?.open ?? null, folded: d ? [...d.querySelectorAll('li')].map(li => li.textContent.split(':')[0]) : null, drawn: d ? d.querySelector('ul').getClientRects().length > 0 : null, overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth}; })()";
+    // The list's words read as drawn (`textContent`), and whether the folded ones show (a closed
+    // `details` keeps its content's boxes, hidden: `checkVisibility`).
+    let marks = "(() => { const m = document.querySelector('.reports-marks'); const d = m.querySelector('details'); return {listed: [...m.querySelectorAll(':scope > ul > li')].map(li => li.textContent), more: d?.querySelector('summary').textContent ?? null, open: d?.open ?? null, folded: d ? [...d.querySelectorAll('li')].map(li => li.textContent.split(':')[0]) : null, drawn: d ? d.querySelector('ul').checkVisibility() : null, overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth}; })()";
     let mark = |n: usize, day: &str| {
         format!(
             "{day}: settings changed, Merge branch 'tools/settings-change-{n}': the board's limits and models ({n}f1c0a9b2d3e)"
@@ -287,7 +288,7 @@ fn on_a_phone_a_window_s_many_settings_changes_fold_and_the_first_chart_shows_on
     chrome.eval("document.querySelector('.reports-marks summary').click()");
     assert!(
         chrome.wait_for(
-            "document.querySelector('.reports-marks details').open && document.querySelector('.reports-marks details ul').getClientRects().length > 0",
+            "document.querySelector('.reports-marks details').open && document.querySelector('.reports-marks details ul').checkVisibility()",
             SHOWN
         ),
         "the disclosure opens on the other seven: {}",

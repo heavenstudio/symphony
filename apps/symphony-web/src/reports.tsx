@@ -949,9 +949,9 @@ function Report({ page: whole, hidden, onToggle }: ReportProps) {
 const MARKS_SHOWN = 3;
 
 /**
- * The window's settings changes, newest first: the newest MARKS_SHOWN, and the rest behind
- * "N more settings changes", so a window of many still shows its first chart on a phone's first
- * screen.
+ * The window's settings changes, newest first: the newest MARKS_SHOWN, a line each (reports.css),
+ * and the rest behind "N more settings changes", so a window of many still shows its first chart
+ * on a phone's first screen.
  */
 function SettingsChanges({ axis: { marks, periods } }: { axis: Axis }) {
   const newest = marks

@@ -83,6 +83,7 @@
   overflow-wrap: anywhere;
 }
 .reports-marks {
+  min-width: 0;
   font-size: var(--fs-sm);
   color: var(--muted-foreground);
 }
@@ -90,6 +91,13 @@
   margin: 0;
   padding: 0;
   list-style: none;
+}
+/* The newest, one line each, so a crowded window's first chart still starts on a phone's first
+   screen: each whole is in the page's text and in its period's readout. */
+.reports-marks > ul > li {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 .reports-marks summary {
   margin-top: 4px;
