@@ -27,21 +27,25 @@ export type SessionControl =
 /** `http://` or `https://` first, in any case of its ASCII letters (no other letter folds to one). */
 const SCHEME = /^https?:\/\//i;
 
-/** The spaces of Unicode's White_Space above the C0 and C1 controls, by their code points. */
-const SPACES = [0x1680, 0x2028, 0x2029, 0x202f, 0x205f, 0x3000];
+/** Unicode's White_Space but its one range (U+2000 to U+200A), by their code points. */
+const SPACES = [0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x20, 0x85, 0xa0, 0x1680, 0x2028, 0x2029, 0x202f];
+const MORE_SPACES = [0x205f, 0x3000];
+
+/**
+ * Whether `code`, a UTF-16 unit, is a space as Rust's `char::is_whitespace` names one: Unicode's
+ * White_Space. No surrogate is one, and U+FEFF, a space to JavaScript's `\s` and `trim`, is not;
+ * U+0085 is.
+ */
+export function whiteSpace(code: number): boolean {
+  return (code >= 0x2000 && code <= 0x200a) || SPACES.includes(code) || MORE_SPACES.includes(code);
+}
 
 /**
  * Whether `code`, a UTF-16 unit, is a space or a control character as Rust's `char` names them
- * (`is_whitespace`, `is_control`): the C0 and C1 controls with DEL, and Unicode's White_Space. No
- * surrogate is either, and U+FEFF, a space to JavaScript's `\s`, is neither.
+ * (`is_whitespace`, `is_control`): Unicode's White_Space, and the C0 and C1 controls with DEL.
  */
 export function spaceOrControl(code: number): boolean {
-  return (
-    code <= 0x20 ||
-    (code >= 0x7f && code <= 0xa0) ||
-    (code >= 0x2000 && code <= 0x200a) ||
-    SPACES.includes(code)
-  );
+  return code < 0x20 || (code >= 0x7f && code <= 0x9f) || whiteSpace(code);
 }
 
 /**

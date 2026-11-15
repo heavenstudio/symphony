@@ -13,6 +13,7 @@ import {
   spaceOrControl,
   viaParent,
   webAddress,
+  whiteSpace,
 } from "./session";
 import { asking, CASES, reply, server } from "./testing";
 import type { AgentScreen } from "./wire";
@@ -30,6 +31,16 @@ describe("a session's web address", () => {
     expect(CASES.webAddress.length).toBeGreaterThan(20);
     for (const [url, linked] of CASES.webAddress)
       expect([url, webAddress(url)]).toEqual([url, linked]);
+  });
+
+  it("knows the spaces Rust's `char::is_whitespace` names, and no other", () => {
+    const spaces = [0x09, 0x0d, 0x20, 0x85, 0xa0, 0x1680, 0x2000, 0x200a, 0x2028, 0x2029];
+    for (const code of [...spaces, 0x202f, 0x205f, 0x3000]) {
+      expect([code, whiteSpace(code)]).toEqual([code, true]);
+    }
+    for (const code of [0x00, 0x08, 0x0e, 0x1c, 0x1f, 0x7f, 0x84, 0x9f, 0x180e, 0x200b, 0xfeff]) {
+      expect([code, whiteSpace(code)]).toEqual([code, false]);
+    }
   });
 
   it("holds no space or control character Rust names, at each end of their ranges", () => {

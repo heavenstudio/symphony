@@ -1,38 +1,11 @@
-//! One build/test presentation for task cards and agents; uncertainty never means free capacity.
+//! One build/test presentation for a task page's cards; uncertainty never means free capacity. The
+//! agents page's machine context is the web client's (apps/symphony-web/src/agents.tsx).
 
 use dioxus::prelude::*;
-use symphony_api::MachineObservation;
 use symphony_api::{MachineWork, WorkFreshness, WorkKind, WorkOperation, WorkState};
-
-/// Immutable snapshots are shared by every card. A replacement, not a deep comparison,
-/// invalidates their props; connectivity is separate so disconnects retain original evidence.
-#[derive(Clone, Default)]
-pub struct SharedWork(std::rc::Rc<MachineWork>);
-
-impl From<MachineWork> for SharedWork {
-    fn from(work: MachineWork) -> Self {
-        Self(std::rc::Rc::new(work))
-    }
-}
-
-impl std::ops::Deref for SharedWork {
-    type Target = MachineWork;
-    fn deref(&self) -> &MachineWork {
-        &self.0
-    }
-}
-
-impl PartialEq for SharedWork {
-    fn eq(&self, other: &Self) -> bool {
-        std::rc::Rc::ptr_eq(&self.0, &other.0)
-    }
-}
 
 pub(crate) enum Scope<'a> {
     Task(&'a str),
-    Agent(&'a str),
-    Machine(&'a str),
-    Unassigned,
 }
 
 struct Phase<'a> {
@@ -46,14 +19,7 @@ impl Scope<'_> {
     fn contains(&self, operation: &WorkOperation) -> bool {
         match self {
             Self::Task(slug) => operation.is_for(slug),
-            Self::Agent(handle) => operation.handle.as_deref() == Some(*handle),
-            Self::Machine(id) => operation.machine_id.as_deref() == Some(*id),
-            Self::Unassigned => true,
         }
-    }
-
-    fn unassigned(&self) -> bool {
-        matches!(self, Self::Unassigned)
     }
 }
 
@@ -113,7 +79,7 @@ fn phases<'a>(work: &'a MachineWork, scope: &Scope<'_>) -> Vec<Phase<'a>> {
             proven_machine,
         });
     };
-    for machine in work.machines.iter().filter(|_| !scope.unassigned()) {
+    for machine in &work.machines {
         for operation in &machine.operations {
             if operation.machine_id.as_deref() != Some(machine.machine_id.as_str()) {
                 append(operation, "Machine unknown", WorkFreshness::Conflict, false);
@@ -173,7 +139,7 @@ fn shown_phases<'a>(work: &'a MachineWork, scope: &Scope<'_>, connected: bool) -
     rows
 }
 
-/// Task and agent views share the same ownership, kind and uncertainty rules.
+/// Every card shares the same ownership, kind and uncertainty rules.
 pub(crate) fn phases_view(work: &MachineWork, scope: &Scope<'_>, connected: bool) -> Element {
     let rows = shown_phases(work, scope, connected);
     rsx! {
@@ -190,71 +156,6 @@ pub(crate) fn phases_view(work: &MachineWork, scope: &Scope<'_>, connected: bool
             }
         }
     }
-}
-
-fn occupancy(machine: &MachineObservation) -> String {
-    if machine.complete
-        && machine.freshness == WorkFreshness::Fresh
-        && let Some(counts) = &machine.counts
-    {
-        format!(
-            "Builds: {} running, {} queued · Tests: {} running, {} queued",
-            counts.running_builds, counts.queued_builds, counts.running_tests, counts.queued_tests,
-        )
-    } else {
-        let observed = if !machine.complete && machine.freshness == WorkFreshness::Fresh {
-            WorkFreshness::Incomplete
-        } else {
-            machine.freshness.clone()
-        };
-        format!("Occupancy unknown · {}", freshness(&observed))
-    }
-}
-
-/// Machine occupancy is independent from task lifecycle and is never an admission rule.
-pub(crate) fn machines_view(work: &MachineWork, connected: bool) -> Element {
-    rsx! {
-        details { id: "machine-context", class: "machine-work", aria_label: "Machine build and test work",
-            summary { "Machine context" }
-            if work.machines.is_empty() {
-                p { class: "muted", "Machine occupancy unknown" }
-            }
-            for machine in &work.machines {
-                div { class: "machine-work-row", "data-machine-id": "{machine.machine_id}",
-                    strong { "{machine.label}" }
-                    p { if connected { "{occupancy(machine)}" } else { "Occupancy unknown · disconnected" } }
-                    {guidance(&machine.machine_id, work.guidance.get(&machine.machine_id))}
-                    {phases_view(work, &Scope::Machine(&machine.machine_id), connected)}
-                    if !machine.reason.is_empty() { p { class: "muted", "{machine.reason}" } }
-                }
-            }
-            for (id, guidance) in &work.guidance {
-                if !work.machines.iter().any(|machine| &machine.machine_id == id) {
-                    div { class: "machine-work-row", "data-machine-id": "{id}",
-                        strong { "{id}" }
-                        p { "Machine observation unknown" }
-                        {self::guidance(id, Some(guidance))}
-                    }
-                }
-            }
-            if !work.unassigned.is_empty() {
-                p { class: "muted", "Some work has no proven machine identity; capacity remains unknown." }
-                {phases_view(work, &Scope::Unassigned, connected)}
-            }
-        }
-    }
-}
-
-fn guidance(id: &str, guidance: Option<&symphony_api::WorkGuidance>) -> Element {
-    let target =
-        |value: Option<u32>| value.map_or_else(|| "unknown".into(), |value| value.to_string());
-    let build = guidance.and_then(|guidance| guidance.build);
-    let test = guidance.and_then(|guidance| guidance.test);
-    rsx! { details { class: "machine-guidance",
-        summary { "Advisory targets · builds {target(build)} · tests {target(test)}" }
-        p { class: "muted", "Orchestrators decide when to start work. These targets do not enforce admission." }
-        p { class: "muted", "Machine ID: " code { "{id}" } }
-    } }
 }
 
 #[cfg(test)]

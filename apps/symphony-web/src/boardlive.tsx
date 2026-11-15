@@ -37,7 +37,16 @@ import {
 } from "./cache";
 import { sleep } from "./feed";
 import { type FrameRefresh, useFrame } from "./frame";
-import { type BoardRun, flushReload, keepBoard, type PageBoard, PageNotices } from "./live";
+import {
+  type BoardRun,
+  flushReload,
+  holdPlace,
+  type Journal,
+  keepBoard,
+  type PageBoard,
+  PageNotices,
+  ReadCursor,
+} from "./live";
 import { href, scoped } from "./project";
 import { getIf, getJson, said } from "./request";
 import { field, list as items } from "./shared";
@@ -54,52 +63,8 @@ import {
 import { markTasksReady } from "./taskcard";
 import type { ItemChange, MachineWork, Task, TaskChange, TaskListing } from "./wire";
 import { PAGE_NAMES } from "./wire";
+import { statusNotice } from "./words";
 import { drawsAlike, NO_WORK, placesAlike, readWork, taskStage } from "./work";
-
-/**
- * The feed's events since a read began, for each read still out: an answer read meanwhile is drawn
- * with them replayed onto it. Only the events some read still needs are kept.
- */
-export interface Journal {
-  version: number;
-  events: [number, unknown][];
-  /** How many reads are out since each version. */
-  readers: Map<number, number>;
-}
-
-/** A read's place in the journal, from its start until it is released, answered or not. */
-export class ReadCursor {
-  readonly since: number;
-  private out = true;
-
-  constructor(private readonly journal: Journal) {
-    this.since = journal.version;
-    journal.readers.set(this.since, (journal.readers.get(this.since) ?? 0) + 1);
-  }
-
-  /** The events heard since the read began, in order. */
-  events(): unknown[] {
-    return this.journal.events
-      .filter(([version]) => version > this.since)
-      .map(([, value]) => value);
-  }
-
-  /** The read is over: the events no read still out needs are dropped. */
-  release(): void {
-    if (!this.out) return;
-    this.out = false;
-    const { journal } = this;
-    const readers = (journal.readers.get(this.since) ?? 1) - 1;
-    if (readers > 0) journal.readers.set(this.since, readers);
-    else journal.readers.delete(this.since);
-    if (journal.readers.size === 0) {
-      journal.events = [];
-      return;
-    }
-    const oldest = Math.min(...journal.readers.keys());
-    journal.events = journal.events.filter(([version]) => version > oldest);
-  }
-}
 
 /** A read's copy: the tag the server answered it with, and the listing. */
 interface Copy {
@@ -191,15 +156,6 @@ export function emptyBoard(): BoardData {
     counted: 0,
     worked: 0,
   };
-}
-
-/** What the task board says of the board's own state: nothing unless it is unavailable; that it is
- * slow when it is, else that it is unavailable. */
-export function statusNotice(available: boolean | undefined, slow: boolean): string {
-  if (available !== false) return "";
-  return slow
-    ? "The task board is slow to answer. Retrying…"
-    : "The task board is unavailable. Reconnecting…";
 }
 
 /** One change of a feed event, as the board reads it. */
@@ -304,11 +260,6 @@ export function withListed(
     } else next[index] = kept;
   }
   return next;
-}
-
-/** A live update about to be drawn keeps what the reader looks at in place (shell.js). */
-function holdPlace(rows: string): void {
-  (window as { reviewHoldPlace?: (rows: string) => void }).reviewHoldPlace?.(rows);
 }
 
 /** What the live board changes on the page that draws it. */

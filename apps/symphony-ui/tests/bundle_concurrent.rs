@@ -26,8 +26,10 @@ const PROGRAM: [&str; 4] = ["tasks", "panel", "overlay", "timeline"];
 /// which is no kind.
 const CHUNKS: [&str; 5] = ["media", "overlay", "panel", "tasks", "timeline"];
 /// The web client's kinds, one Vite build of them all, and whether each has a style sheet of its
-/// own (the task board's styles are the program's board.css, in the shared file).
-const WEB: [(&str, bool); 5] = [
+/// own (the task board's and the agents page's styles are the program's board.css, in the shared
+/// file).
+const WEB: [(&str, bool); 6] = [
+    ("agents", false),
     ("board", false),
     ("docs", true),
     ("queue", true),

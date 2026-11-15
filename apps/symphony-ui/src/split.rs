@@ -1,4 +1,4 @@
-//! The program (`page-program`): the task pages with `/agents`, the chat, the menus and the task
+//! The program (`page-program`): the task pages, the chat, the menus and the task
 //! timeline as one program, which `dx bundle --wasm-split` cuts into a main module and a chunk
 //! for each of those kinds (bundle.sh, then `symphony-build split-repair`). The main module holds
 //! the runtime, the frame and what each kind reaches before its own part; a kind's chunk holds that
@@ -28,7 +28,7 @@ use wasm_bindgen_futures::JsFuture;
 /// A kind of the program, named by the chunk that holds its own part.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Chunk {
-    /// The task pages and `/agents`.
+    /// The task pages.
     Tasks,
     /// The chat, the activity list and the Appearance panel.
     Panel,
@@ -210,7 +210,7 @@ pub extern "C" fn __wasm_split_00___media___00_export_5b5e7a5c000000000000000000
     rsx! { crate::media_live::MediaRuntime {} }
 }
 
-/// A task page or `/agents`, from the task pages' chunk.
+/// A task page, from the task pages' chunk.
 #[component]
 pub(crate) fn TasksPart(scope: String, route: Memo<String>) -> Element {
     if !use_chunk(Chunk::Tasks) {

@@ -1,18 +1,22 @@
 import { describe, expect, it } from "vitest";
 import { aMachine, anOperation, aWork, CASES } from "./testing";
-import type { MachineWork } from "./wire";
+import type { MachineObservation, MachineWork } from "./wire";
 import {
+  connection,
   drawsAlike,
   freshnessWord,
   isFor,
   NO_WORK,
+  occupancy,
   phaseLabel,
   phaseLabels,
   phases,
   placesAlike,
   readWork,
   samePhases,
+  scopedPhases,
   shownPhases,
+  shownScoped,
   taskStage,
 } from "./work";
 
@@ -288,5 +292,126 @@ describe("a freshness", () => {
     ["unknown", "unknown"],
   ] as const)("%s reads %s", (freshness, word) => {
     expect(freshnessWord(freshness)).toBe(word);
+  });
+});
+
+describe("an agent's, a machine's and the unassigned phases", () => {
+  const op = anOperation;
+
+  it("deduplicate a machine's reports of one operation without merging other machines'", () => {
+    const build = op("alpha", "same-nonce", "build", "running");
+    const twice = aWork([
+      aMachine("alpha", [build, { ...build }]),
+      aMachine("beta", [op("beta", "same-nonce", "test", "queued")]),
+    ]);
+    expect(scopedPhases(twice, { agent: "worker-a" }).map(phaseLabel)).toEqual([
+      "Build running · alpha",
+      "Test queued · beta",
+    ]);
+  });
+
+  it("count only builds and tests, owned by the agent or the task they name", () => {
+    const work = aWork([
+      aMachine("alpha", [
+        op("alpha", "build", "build", "queued"),
+        op("alpha", "native", "test", "running", { task: null }),
+        op("alpha", "setup", "setup", "running"),
+        op("alpha", "command", "command", "running"),
+        op("alpha", "reservation", "reservation", "queued"),
+      ]),
+    ]);
+    expect(scopedPhases(work, { task: "sim/a" }).map(phaseLabel)).toEqual(["Build queued · alpha"]);
+    expect(scopedPhases(work, { agent: "worker-a" })).toHaveLength(2);
+    expect(scopedPhases(work, { agent: "other-worker" })).toEqual([]);
+    expect(scopedPhases(work, { machine: "alpha" })).toHaveLength(2);
+    expect(scopedPhases(work, { machine: "beta" })).toEqual([]);
+  });
+
+  it("keep a stale machine's sibling stale in every scope, and an unproven row apart", () => {
+    const work = aWork([
+      aMachine(
+        "alpha",
+        [
+          op("alpha", "test", "test", "running"),
+          op("alpha", "new-sibling", "build", "queued", { task: "sim/new" }),
+        ],
+        { freshness: "stale", age_ms: 10_002 },
+      ),
+    ]);
+    for (const scope of [{ task: "sim/a" }, { agent: "worker-a" }, { machine: "alpha" }]) {
+      expect(shownScoped(work, scope, true).map(phaseLabel)).toContain(
+        "Observed Test running · alpha · stale",
+      );
+    }
+    const foreign = aWork([
+      aMachine("alpha", [op("foreign", "test", "test", "running")], { freshness: "stale" }),
+    ]);
+    expect(scopedPhases(foreign, { machine: "foreign" }).map(phaseLabel)).toEqual([
+      "Observed Test running · Machine unknown · conflicting evidence",
+    ]);
+    expect(scopedPhases(foreign, { machine: "alpha" })).toEqual([]);
+  });
+
+  it("of the unassigned are the operations no machine vouches for, never deduplicated", () => {
+    const legacy = op(null, null, "build", "queued");
+    const claimed = op("claimed-alpha", "same-untrusted-nonce", "build", "queued");
+    const work = aWork([aMachine("alpha", [op("alpha", "b", "test", "running")])], {
+      unassigned: [legacy, legacy, claimed, claimed],
+    });
+    const rows = scopedPhases(work, "unassigned");
+    expect(rows.map(phaseLabel)).toEqual(
+      Array(4).fill("Observed Build queued · Machine unknown · unknown"),
+    );
+    expect(scopedPhases(work, { machine: "claimed-alpha" })).toHaveLength(2);
+    expect(shownScoped(work, "unassigned", false).map((row) => row.freshness)).toEqual(
+      Array(4).fill("unknown"),
+    );
+  });
+});
+
+describe("a machine's occupancy", () => {
+  it("is its counts only from a fresh and complete report that has them", () => {
+    const machine = aMachine("alpha", []);
+    expect(occupancy(machine)).toBe("Builds: 0 running, 0 queued · Tests: 0 running, 0 queued");
+    const counts = { running_builds: 1, queued_builds: 2, running_tests: 3, queued_tests: 4 };
+    expect(occupancy({ ...machine, counts })).toBe(
+      "Builds: 1 running, 2 queued · Tests: 3 running, 4 queued",
+    );
+    for (const freshness of [
+      "stale",
+      "disconnected",
+      "incomplete",
+      "conflict",
+      "unknown",
+    ] as const) {
+      expect(occupancy({ ...machine, freshness })).toBe(
+        `Occupancy unknown · ${freshnessWord(freshness)}`,
+      );
+    }
+    expect(occupancy({ ...machine, complete: false })).toBe(
+      "Occupancy unknown · partial inventory",
+    );
+    expect(occupancy({ ...machine, complete: false, freshness: "stale" })).toBe(
+      "Occupancy unknown · stale",
+    );
+    expect(occupancy({ ...machine, counts: null })).toBe("Occupancy unknown · fresh");
+  });
+});
+
+describe("the machines' work while the feed is lost", () => {
+  it("claims no capacity, and keeps the exact phases last observed", () => {
+    const work = aWork([aMachine("alpha", [anOperation("alpha", "test", "test", "running")])]);
+    expect(connection(work, true)).toBe(work);
+    const lost = connection(work, false);
+    expect(lost.machines[0]?.freshness).toBe("disconnected");
+    expect(lost.machines[0]?.counts).toBeNull();
+    expect(lost.machines[0]?.operations).toBe(work.machines[0]?.operations);
+    expect(work.machines[0]?.freshness).toBe("fresh");
+    expect(occupancy(lost.machines[0] as MachineObservation)).toBe(
+      "Occupancy unknown · disconnected",
+    );
+    expect(scopedPhases(lost, { agent: "worker-a" }).map(phaseLabel)).toEqual([
+      "Observed Test running · alpha · disconnected",
+    ]);
   });
 });

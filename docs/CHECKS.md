@@ -212,7 +212,7 @@ both kinds, to copy after `--`:
 | the queue page (`/queue`) | `queue` `cache_pages::` `landmarks::` `skeleton::` `header::` `look_parity::` `postponed_labels` `later_advances` `restored_mockups` `reconnect_pills` `polish::` `projects::` `budget` |
 | the tasks board (`/tasks`) and its cards | `board` `task_columns` `task_controls` `tasks_and` `a_revealed_column` `owner_` `machine_work` `run_records::` `cache_pages::` `kept_pages::` `landmarks::` `layout_shift::` `skeleton::` `feed_deltas::` `header::` `look_parity::` `restored::` `components::` `polish::` `shot::` `projects::` `budget` |
 | a task's page | `task_page` `task_panel` `task_priority` `notice_layout::` `polish::` `projects::` |
-| the agents page (`/agents`) | `machine_work` `polish::` `projects::` |
+| the agents page (`/agents`) | `machine_work` `the_agents_page` `header::` `look_parity::` `a_move_between` `polish::` `projects::` `budget` |
 | the reports page (`/reports`) | `reports::` `header::` `polish::` `projects::` `budget` |
 | document and folder pages | `document` `docs_index` `owner_` `cache_ahead` `cache_pages::` `restored::` `landmarks::` `skeleton::` `layout_shift::` `look_parity::` `polish::` `projects::` `budget` |
 | the header, on every page | `header::` `floating_controls::` `panel_open::` `polish::` `projects::` |

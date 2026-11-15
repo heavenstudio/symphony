@@ -41,12 +41,12 @@ never the whole target, which the release run runs.
   `-Oz` (`Dioxus.toml`). `KIND` defaults to `all`: independently compile the
   program, the one kind dx builds since every other moved to the React client, build the React
   client's kinds (`web`: one Vite build of `apps/symphony-web`, home, the queue, Reports, the
-  documents and the task board, [its guide](../symphony-web/AGENTS.md)),
+  documents, the task board and the agents page, [its guide](../symphony-web/AGENTS.md)),
   then assemble their content-hashed assets with `package.sh`, which refuses a kind both
   clients build. Naming a kind (`program` among
   them) rebuilds it against the other kinds already in that output folder. The program
   (`page-program`, `src/split.rs`; [its card](../../docs/DECISIONS.md#client-shared-runtime)) is one
-  `dx bundle --wasm-split` of the task pages with `/agents`, the chat, the menus and
+  `dx bundle --wasm-split` of the task pages, the chat, the menus and
   the task timeline: one script and main module, and a chunk for each and one for the media
   layer (no kind: a page of the program loads it once it shows media, Media below), which
   `symphony-build split-repair` puts right after dx
@@ -185,8 +185,8 @@ never the whole target, which the release run runs.
   the feed replays what changed after the board's version. The landing offer, the gates and the
   timeline, which it never keeps, it reads at once. A task the server no longer has (`404`) says so and
   is forgotten. Never kept: earlier thread pages, the landing offer (`/api/task-offer`, read on
-  every visit), the agents, the subtasks' further pages and the brief's later chunks. `/agents`
-  draws nothing from the device.
+  every visit), the subtasks' further pages and the brief's later chunks. `/agents`, the React
+  client's, draws nothing from the device.
   The documents are the React client's since they moved ([its guide](../symphony-web/AGENTS.md)),
   which keeps them in the same store under the same names, so a copy kept by either reads back
   on the other. A document keeps `documentItem(path, false)` (`src/cache-document.ts` there): its
@@ -397,10 +397,10 @@ never the whole target, which the release run runs.
 - **Task views.** The task board (`/tasks`) is the React client's, the fifth page kind it took
   over: `src/board.tsx` draws its
   columns and groups, `src/boardlive.tsx` owns its summary-only counts, columns and deltas, and
-  its card is `src/taskcard.tsx`, as the agents page's will be ([its
-  guide](../symphony-web/AGENTS.md)). `tasks.rs` draws the agents page's cards (`TaskRow`) and
-  keeps the task state the program shares. `task_detail.rs` and `task_live.rs`
-  own task pages and agents, compiled only into their page kind. A task page's
+  its card is `src/taskcard.tsx`; the agents page (`/agents`) is the sixth, `src/agents.tsx`
+  over `src/agents-live.ts`, its cards the board's ([its guide](../symphony-web/AGENTS.md)).
+  `tasks.rs` keeps the task state the program shares. `task_detail.rs` and `task_live.rs`
+  own task pages, compiled only into their page kind. A task page's
   gates (`task_gates.rs`, docs/TASKS.md#gates) are one section under its head,
   read from `/api/task-gates` when it nears the screen and again when the one
   counter `task_live` keeps of the events that concern the shown task grows
@@ -421,8 +421,8 @@ never the whole target, which the release run runs.
   version, `BoardData.view` in `src/boardlive.tsx`) or a newer read of the same part, never for an event
   that came while it was read: the events since are replayed onto it, and the refresh reads again
   (app/board-search-slow-to-fill: a loaded machine's work, every second, kept a search's columns
-  grey for 5 to 60 s; `tests/browser/board_search.rs` counts a search's reads). Thread history, subtasks, hierarchy groups
-  and agents page separately. A reconnect catches up a loaded thread by
+  grey for 5 to 60 s; `tests/browser/board_search.rs` counts a search's reads). Thread history,
+  subtasks and hierarchy groups page separately. A reconnect catches up a loaded thread by
   message id before following the feed again. Composer drafts are local to
   their keyed component and saved through `Platform`, never replaced by a
   snapshot. The optional owner offer is pinned to the payload the server showed,
