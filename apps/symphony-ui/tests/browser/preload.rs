@@ -20,7 +20,11 @@ const KINDS: [(&str, &str, &str); 6] = [
     ("docs", "/docs/", "[data-ready=folder]"),
     ("queue", "/queue", "[data-ready=queue]"),
     ("reports", "/reports", "[data-ready=reports]"),
-    ("task", "/task/tools/example", ".task-page[data-ready=missing]"),
+    (
+        "task",
+        "/task/tools/example",
+        ".task-page[data-ready=missing]",
+    ),
 ];
 
 #[test]

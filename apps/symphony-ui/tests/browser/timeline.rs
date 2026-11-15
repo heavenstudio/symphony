@@ -1035,7 +1035,9 @@ fn an_answer_for_a_task_the_page_left_never_draws_one_tasks_timeline_in_anothers
     site.hold_route(&a, false);
     frames(&mut chrome);
     assert_eq!(
-        chrome.eval("[document.querySelector('.tl-drawn'), document.getElementById('timeline-root')]"),
+        chrome.eval(
+            "[document.querySelector('.tl-drawn'), document.getElementById('timeline-root')]"
+        ),
         json!([null, null])
     );
 }

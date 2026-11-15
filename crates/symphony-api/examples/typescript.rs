@@ -224,32 +224,41 @@ fn declarations() -> Vec<Declared> {
         declared::<api::AskMessage>(&cfg),
         // A file attached to a post.
         declared::<api::Upload>(&cfg),
+    ]
+    .into_iter()
+    .chain(task_declarations(&cfg))
+    .collect()
+}
+
+/// The types a task's page reads, after the others in wire.ts.
+fn task_declarations(cfg: &Config) -> Vec<Declared> {
+    vec![
         // A task's page: its brief, thread, landing offer, gates and its holders' sessions.
-        declared::<api::TaskPage>(&cfg),
-        declared::<api::TaskEntry>(&cfg),
-        declared::<api::Message>(&cfg),
-        declared::<api::TaskHistory>(&cfg),
-        declared::<api::TaskBrief>(&cfg),
-        declared::<api::TaskOffer>(&cfg),
-        declared::<api::SessionGo>(&cfg),
-        declared::<api::AgentFocus>(&cfg),
-        declared::<api::AgentScreen>(&cfg),
-        declared::<api::TaskGates>(&cfg),
-        declared::<api::Gate>(&cfg),
-        declared::<api::GatePast>(&cfg),
-        declared::<api::GateState>(&cfg),
-        declared::<api::GatesSeen>(&cfg),
+        declared::<api::TaskPage>(cfg),
+        declared::<api::TaskEntry>(cfg),
+        declared::<api::Message>(cfg),
+        declared::<api::TaskHistory>(cfg),
+        declared::<api::TaskBrief>(cfg),
+        declared::<api::TaskOffer>(cfg),
+        declared::<api::SessionGo>(cfg),
+        declared::<api::AgentFocus>(cfg),
+        declared::<api::AgentScreen>(cfg),
+        declared::<api::TaskGates>(cfg),
+        declared::<api::Gate>(cfg),
+        declared::<api::GatePast>(cfg),
+        declared::<api::GateState>(cfg),
+        declared::<api::GatesSeen>(cfg),
         // Its timeline.
-        declared::<api::TaskTimeline>(&cfg),
-        declared::<api::timeline::Offset>(&cfg),
-        declared::<api::timeline::Stage>(&cfg),
-        declared::<api::timeline::Claim>(&cfg),
-        declared::<api::timeline::Round>(&cfg),
-        declared::<api::timeline::Verdict>(&cfg),
-        declared::<api::timeline::Run>(&cfg),
-        declared::<api::timeline::RunResult>(&cfg),
-        declared::<api::timeline::GateLane>(&cfg),
-        declared::<api::timeline::GateSpan>(&cfg),
+        declared::<api::TaskTimeline>(cfg),
+        declared::<api::timeline::Offset>(cfg),
+        declared::<api::timeline::Stage>(cfg),
+        declared::<api::timeline::Claim>(cfg),
+        declared::<api::timeline::Round>(cfg),
+        declared::<api::timeline::Verdict>(cfg),
+        declared::<api::timeline::Run>(cfg),
+        declared::<api::timeline::RunResult>(cfg),
+        declared::<api::timeline::GateLane>(cfg),
+        declared::<api::timeline::GateSpan>(cfg),
     ]
 }
 
