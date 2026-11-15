@@ -37,6 +37,7 @@ mod chrome;
 #[path = "../common/mod.rs"]
 mod common;
 mod components;
+mod desktop_stub;
 mod document_cards;
 mod document_landing;
 mod feed_deltas;

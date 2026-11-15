@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- The app's property list, linked into the binary (build.rs): its name and identifier, and the
+     App Transport Security exception that lets its web views load a tailnet name over plain HTTP,
+     as they load loopback and the tailnet's addresses already. -->
+<plist version="1.0">
+<dict>
+	<key>CFBundleName</key>
+	<string>Symphony</string>
+	<key>CFBundleIdentifier</key>
+	<string>io.github.heavenstudio.symphony-desktop</string>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+		<key>NSExceptionDomains</key>
+		<dict>
+			<key>ts.net</key>
+			<dict>
+				<key>NSIncludesSubdomains</key>
+				<true/>
+				<key>NSExceptionAllowsInsecureHTTPLoads</key>
+				<true/>
+			</dict>
+		</dict>
+	</dict>
+</dict>
+</plist>

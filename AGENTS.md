@@ -1,10 +1,11 @@
 # Symphony
 
-The app's workspace owns its server and its two web clients under `apps/` (the React one,
-`apps/symphony-web`, taking the pages over a kind at a time from the Dioxus one), and the review
-library, wire types, task board, working-directory scanner, headless Chrome driver and
-the tests' CPU meters and waits (`crates/test-time`, RULES.md `tests/no-test-fails-on-load`)
-under `crates/`.
+The app's workspace owns its server, its two web clients and its Mac app under `apps/` (the React
+one, `apps/symphony-web`, taking the pages over a kind at a time from the Dioxus one; the Mac app,
+`apps/symphony-desktop`, a thin shell over each server's own pages, `publish = false`, whose window
+crates no other package links), and the review library, wire types, task board,
+working-directory scanner, headless Chrome driver and the tests' CPU meters and waits
+(`crates/test-time`, RULES.md `tests/no-test-fails-on-load`) under `crates/`.
 The app's formats and operating contract live in [docs/](docs/README.md).
 A consuming project owns its landing policy and shared-service safeguards.
 
@@ -185,8 +186,9 @@ closes inherited descriptors and supplies the owned EOF watchdog. These helpers
 do not start the shared board or Symphony server.
 
 Read [the client guide](apps/symphony-ui/AGENTS.md), [the React client's
-guide](apps/symphony-web/AGENTS.md) and [the board guide](crates/tasks/AGENTS.md) before editing
-those packages. A consuming project applies its own Rust, review and resource policy.
+guide](apps/symphony-web/AGENTS.md), [the Mac app's guide](apps/symphony-desktop/AGENTS.md) and
+[the board guide](crates/tasks/AGENTS.md) before editing those packages. A consuming project
+applies its own Rust, review and resource policy.
 Never run a shared-service restart as a test: use a private port and scratch board.
 
 ## This repository as its own project
