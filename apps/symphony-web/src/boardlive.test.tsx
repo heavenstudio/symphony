@@ -440,6 +440,32 @@ describe("the live board's counts", () => {
     await board.machineWork();
     expect(localStorage.getItem(SHAPE)).toBe("ready 2\nbuild-test 0");
   });
+
+  // The counts count a task waiting on the owner in its stage, and the board draws it in the
+  // sign-off lane: once a column's first page brings it, the next visit's ghost outlines no box
+  // for it in its stage.
+  it("keep each stage's count less its tasks in the sign-off lane, once a page brings them", async () => {
+    const counts: [string, number][] = [
+      ["ready", 1],
+      ["review", 2],
+    ];
+    const more = { statuses: ["ready", "review"], signoff: ["w/a"] };
+    const review = [aTask("w/a", { status: "review" }), aTask("w/b", { status: "review" })];
+    const { board, d } = live((url) => {
+      if (url === "/api/machine-work") return answer(200, NO_WORK);
+      return answer(200, listing(url === column("review") ? review : [], counts, more));
+    });
+    await board.counts();
+    await board.machineWork();
+    expect(localStorage.getItem(SHAPE)).toBe("signoff 1\nready 1\nbuild-test 0\nreview 2");
+    d.waiting = false;
+    void board.column("ready", false, "", 1);
+    await pass(250);
+    expect(localStorage.getItem(SHAPE)).toBe("signoff 1\nready 1\nbuild-test 0\nreview 2");
+    void board.column("review", false, "", 1);
+    await pass(250);
+    expect(localStorage.getItem(SHAPE)).toBe("signoff 1\nready 1\nbuild-test 0\nreview 1");
+  });
 });
 
 describe("the live board's machine work", () => {

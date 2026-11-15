@@ -13,6 +13,7 @@ import {
   PAGE,
   recallShape,
   SHAPE,
+  stageCounts,
   TaskBoard,
   UnreadBoard,
 } from "./board";
@@ -476,16 +477,19 @@ export class LiveBoard {
   }
 
   /**
-   * Keep the default view's columns and counts as the server answered them, for the next first
-   * visit's ghost (SHAPE): once both the counts and the machines' work that places its build and
-   * test columns are in, whichever comes last, and again at each answer of the counts.
+   * Keep the default view's columns and counts as the board draws them, for the next first visit's
+   * ghost (SHAPE): once both the counts and the machines' work that places its build and test
+   * columns are in, whichever comes last, and again at each answer of the counts or of a column's
+   * first page, which may bring the sign-off lane's tasks that their stages do not draw.
    */
   rememberShape(): void {
     const { d } = this;
     if (d.counted === 0 || d.worked === 0 || !keptView(d.query, d.days, d.connected ? 1 : 0)) {
       return;
     }
-    const shape = boardShape(d.counts, d.statuses, d.signoff.length, d.work.machines.length > 0);
+    const lane = d.tasks.filter((task) => isTask(task) && d.signoff.includes(task.slug));
+    const counts = stageCounts(d.counts, lane, (task) => taskStage(d.work, task, d.connected));
+    const shape = boardShape(counts, d.statuses, d.signoff.length, d.work.machines.length > 0);
     save(SHAPE, keepShape(shape));
   }
 
@@ -664,6 +668,7 @@ export class LiveBoard {
           d.fromDevice = [];
           d.tasks = d.tasks.filter((task) => !left.includes(task.slug));
         }
+        this.rememberShape();
         this.freshen((f) => answered(f, part));
       }
       const queued = !more && hasNext && d.pendingMore.includes(status);
