@@ -1,0 +1,85 @@
+symphony seed: /wt/symphony/.target/debug starts as a clone of /main/symphony/.target/debug (no disk until a build changes it)
+   Compiling symphony-args v1.0.0 (/wt/symphony/crates/symphony-args)
+warning: unused variable: `unused`
+   --> crates/symphony-args/src/lib.rs:246:9
+    |
+246 |     let unused = 1;
+    |         ^^^^^^ help: if this is intentional, prefix it with an underscore: `_unused`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: `symphony-args` (lib test) generated 1 warning (run `cargo fix --lib -p symphony-args --tests` to apply 1 suggestion)
+warning: `symphony-args` (lib) generated 1 warning (1 duplicate)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.41s
+     Running unittests src/lib.rs (.target/debug/deps/symphony_args-9baa2d0ba3e810b0)
+
+running 4 tests
+test fixture::waits ... ignored, slow
+test fixture::passes ... ok
+test fixture::panics ... FAILED
+test fixture::compares ... FAILED
+
+failures:
+
+---- fixture::panics stdout ----
+
+thread 'fixture::panics' (597908556) panicked at crates/symphony-args/src/lib.rs:263:9:
+it went wrong
+over two lines
+
+---- fixture::compares stdout ----
+a line the test printed
+
+thread 'fixture::compares' (597908555) panicked at crates/symphony-args/src/lib.rs:258:9:
+assertion `left == right` failed: one and one
+  left: 2
+ right: 3
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    fixture::compares
+    fixture::panics
+
+test result: FAILED. 1 passed; 2 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `-p symphony-args --lib`
+     Running tests/aborts.rs (.target/debug/deps/aborts-4c9c7c653b91aa89)
+
+running 2 tests
+error: test failed, to rerun pass `-p symphony-args --test aborts`
+
+Caused by:
+  process didn't exit successfully: `/wt/symphony/.target/debug/deps/aborts-4c9c7c653b91aa89` (signal: 6, SIGABRT: process abort signal)
+     Running tests/arguments.rs (.target/debug/deps/arguments-57c6e12e59ab8f5f)
+
+running 8 tests
+test end_of_options_help_negative_numbers_and_empty_values_keep_their_meaning ... ok
+test malformed_options_keep_their_refusals ... ok
+test options_keep_command_line_order_across_names_by_their_full_names ... ok
+test the_command_follows_options_and_their_values_without_consuming_positionals ... ok
+test a_refusal_writes_the_usage_then_the_error_and_exits_two ... ok
+test version_alone_is_answered_with_the_name_and_version_and_any_other_line_is_left ... ok
+test values_keep_repetitions_and_last_value_while_options_allow_unique_prefixes ... ok
+test nearest_names_the_words_a_mistyping_is_fewest_edits_from ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests symphony_args
+
+running 1 test
+test crates/symphony-args/src/lib.rs - fixture_two (line 238) ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+
+running 1 test
+test crates/symphony-args/src/lib.rs - fixture_two (line 242) ... ignored
+
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+all doctests ran in 0.76s; merged doctests compilation took 0.39s
+error: 2 targets failed:
+    `-p symphony-args --lib`
+    `-p symphony-args --test aborts`
+error: recipe `test-rs` failed on line 43 with exit code 101

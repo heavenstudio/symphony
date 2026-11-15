@@ -2150,6 +2150,13 @@ fn quoted(text: &str) -> Vec<String> {
         .collect()
 }
 
+/// A script that prints a real `cargo test`'s output (src/runs/suites/tests.rs says what it holds)
+/// on `stream` (`1` or `2`) and exits `code`.
+fn cargo_test(stream: u8, code: u8) -> String {
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/runs/fixtures/cargo-test.log");
+    format!("cat '{}' >&{stream}; exit {code}", fixture.display())
+}
+
 #[test]
 fn the_runs_doc_names_each_field_a_written_line_holds_in_its_order_and_each_end() {
     let case = Case::new();
@@ -2157,8 +2164,10 @@ fn the_runs_doc_names_each_field_a_written_line_holds_in_its_order_and_each_end(
     let repo = repository(&folders.dir.join("repo"));
     let runs = folders.dir.join("runs");
     let label = ("test", "just test-rs");
+    // A test run's, so its line says its tests too.
+    let script = cargo_test(1, 3);
     assert_eq!(
-        pipeline_run(&case, &folders, (&repo, &runs), label, "exit 3").code(),
+        pipeline_run(&case, &folders, (&repo, &runs), label, &script).code(),
         Some(3)
     );
     day_lines(&folders.work, &runs, 1);
@@ -2187,7 +2196,7 @@ fn the_runs_doc_names_each_field_a_written_line_holds_in_its_order_and_each_end(
         said.retain(|key| key != "cpu_partial");
     }
     assert_eq!(said, written);
-    // The table: each field a line holds, in its order, then those later tools fill.
+    // The table: each field a line holds, in its order.
     let table = doc.split("## A line").nth(1).unwrap();
     let rows: Vec<&str> = table
         .lines()
@@ -2198,9 +2207,7 @@ fn the_runs_doc_names_each_field_a_written_line_holds_in_its_order_and_each_end(
         .iter()
         .flat_map(|row| quoted(row.split('|').nth(1).unwrap()))
         .collect();
-    let mut every = keys(example);
-    every.extend(["suites", "failed"].map(String::from));
-    assert_eq!(fields, every);
+    assert_eq!(fields, keys(example));
     // Each end a line can say, as it says it.
     let ends = |end: End| match end {
         End::Green | End::Red | End::TimedOut | End::Interrupted | End::Incomplete => {
@@ -2678,4 +2685,45 @@ fn a_file_callers_log_holds_what_the_run_added_to_each_of_its_files_in_turn_and_
     let step = folded.iter().find(|line| line.step.is_some()).unwrap();
     assert_eq!(read(step), "inside\ninside err\n");
     assert_ne!(run.log, step.log);
+}
+
+#[test]
+fn a_test_runs_end_line_says_what_its_log_says_of_each_binary_and_each_failed_test() {
+    let case = Case::new();
+    let folders = Folders::new("recorder-run-suites");
+    let repo = repository(&folders.dir.join("repo"));
+    let runs = folders.dir.join("runs");
+    let script = cargo_test(2, 101);
+    let names = ("test", "just test-rs");
+    // From pipes, and from a file both streams name, as an agent's tool call hands it.
+    let piped = pipeline_run(&case, &folders, (&repo, &runs), names, &script);
+    let both = fs::File::create(folders.dir.join("both")).unwrap();
+    let mut command = pipeline_command(&case, &folders, (&repo, &runs), names, &script);
+    let filed = filed_run(&mut command, &both, &both);
+    assert_eq!((piped.code(), filed.code()), (Some(101), Some(101)));
+    let lines = day_lines(&folders.work, &runs, 2);
+    for start in lines.iter().filter(|line| line.end.is_none()) {
+        assert_eq!((&start.suites, &start.failed), (&None, &None), "{start:?}");
+    }
+    let ends: Vec<&RunLine> = lines.iter().filter(|line| line.end.is_some()).collect();
+    assert_eq!(ends.len(), 2);
+    for end in ends {
+        let suites: Vec<(&str, u32, u32, bool)> = (end.suites.iter().flatten())
+            .map(|suite| (suite.name.as_str(), suite.passed, suite.failed, suite.error))
+            .collect();
+        assert_eq!(
+            suites,
+            [
+                ("unittests src/lib.rs (symphony_args)", 1, 2, false),
+                ("tests/aborts.rs (aborts)", 0, 0, true),
+                ("tests/arguments.rs (arguments)", 8, 0, false),
+                ("Doc-tests symphony_args", 1, 0, false),
+            ],
+            "{end:?}"
+        );
+        let failed: Vec<&str> = (end.failed.iter().flatten())
+            .map(|test| test.name.as_str())
+            .collect();
+        assert_eq!(failed, ["fixture::compares", "fixture::panics"], "{end:?}");
+    }
 }
