@@ -30,6 +30,30 @@ their dated history work is in [REVIEW](REVIEW.md).
 
     **What it leaves for later:** the home page shows the hour's greeting and each card's age, so its picture needs the shot taken at a fixed time; that is built when its spec is written. The other thirteen specs, one paragraph each, and the ranked gaps are in the linked review.
 
+### The look
+
+- [ ] **symphony-mark** — Symphony would get a mark and a name of its own: at the start of the header on every page, on the browser's tab and on a phone's home screen. Today the header shows neither, the tab shows no icon or a generic ♫, and the icon the browser asks the server for by itself is the consuming project's star. Which mark and wordmark should Symphony's own look carry? A: the note-card, a note whose head is a task card. B: the podium, the orchestra's seats round two maestros. C: the fermata, the sign where the music holds for the maestro. D: the two-stroke S, one stroke for you and one for the orchestrator agents. Recommended: D. Approve and say A, B, C or D in the note, or comment. [[analysis/symphony-mark#The options]]
+  [2026-11-15 05:12] agent — Posted for the board task `app/symphony-mark-and-name-options`. Your words on its inbox item: "A proper "themed" design of Symphony could be develop that is closer to the concept of "a symphony that is executed by maestros" where maestro are the human + orchestrator agents. I would like to view different options to select."
+  [2026-11-15 05:12] agent — Base: today, wide and on a phone, no mark and no name in the header. ![Today: the header wide, then on a phone](analysis/symphony-mark/today.png)
+  [2026-11-15 05:12] agent — Each option in the header wide (light, then dark), on a phone (light, dark) and in the tab (light, dark), drawn on a private server with the option set as a scratch project's look; nothing in the app has changed. ![The note-card, A](analysis/symphony-mark/a.png) ![The podium, B](analysis/symphony-mark/b.png) ![The fermata, C](analysis/symphony-mark/c.png) ![The two-stroke S, D](analysis/symphony-mark/d.png)
+
+    **A, the note-card.** A note whose head is a task card: the board's work is the symphony's music. Wordmark: "Symphony" in the app's own sans.
+
+    **B, the podium.** The orchestra seen from above: its seats in an arc round two maestros, you and the orchestrator agent. Wordmark: "symphony" in lower case. At 16 px it reads as a fan of dots; the seats show from 32 px.
+
+    **C, the fermata.** The sign where the orchestra holds until the maestro moves on, as a card holds until you answer it. Wordmark: "Symphony" in a serif.
+
+    **D, the two-stroke S.** Symphony's S in two strokes, one full and one lighter: you and the orchestrator agents, two maestros conducting one work. Wordmark: "SYMPHONY" in spaced capitals.
+
+    Any wordmark can go with another mark: say which in the note.
+  [2026-11-15 05:12] agent — The four icons at 180, 32 and 16 px, light then dark: ![The icons at three sizes, light and dark](analysis/symphony-mark/sizes.png)
+
+    **Why D.** It is the only one that says the name at every size, down to the 16 px tab, and its two strokes are the two maestros you named. C is as clear at 16 px and the simplest, but it shows one maestro's hold, not two maestros. B tells the most and blurs the most when small. A is the closest to today's ♫ and says the least about the maestros.
+
+    **What it changes.** A project with no icon of its own and the machine's own pages show the chosen icon; the icon the browser asks the server for becomes Symphony's; the header opens with the mark and the wordmark, still two rows on a phone (measured at 390 wide for all four); a phone's home screen gets the icon. A project with a look of its own keeps it: the consuming project still shows its own name and star. A follow-up task builds it after your answer.
+
+    **Earlier verdicts checked.** **header-page-names**, **header-on-a-phone** and **header-appearance** set the header's words, its two rows on a phone and its ◑ button; every option keeps them. **symphony-own-names** took the consuming project's names out of Symphony's code and says nothing of a mark. **pictures-in-every-clone** decides that these pictures are committed beside this card. None of them chooses a mark or a wordmark: that is this card.
+
 ## Auto-approved: spot-check
 
 ### Releases
