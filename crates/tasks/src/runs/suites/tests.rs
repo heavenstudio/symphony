@@ -206,6 +206,99 @@ test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
     fs::remove_dir_all(&dir).unwrap();
 }
 
+/// A log of `binaries` binaries all named `tests/x.rs (x)`, each saying `results` as its result
+/// lines.
+fn binaries_saying(binaries: usize, results: &[&str]) -> String {
+    let binary = format!(
+        "     Running tests/x.rs (.target/debug/deps/x-0123456789abcdef)\n\n{}",
+        results
+            .iter()
+            .map(|result| format!("test result: ok. {result}\n"))
+            .collect::<String>()
+    );
+    binary.repeat(binaries)
+}
+
+#[test]
+fn counts_past_the_most_a_count_holds_stay_at_it_and_never_panic() {
+    let dir = scratch("counts");
+    let most = "4294967295 passed; 4294967295 failed; 4294967295 ignored; finished in 1.00s";
+    // Added up in one binary's results, and over two binaries of one name.
+    for log in [
+        binaries_saying(1, &[most, most]),
+        binaries_saying(2, &[most]),
+    ] {
+        let tests = read_text(&dir, &log).unwrap();
+        assert_eq!(
+            tests.suites,
+            [suite(
+                "tests/x.rs (x)",
+                (u32::MAX, u32::MAX, u32::MAX),
+                2.0,
+                false
+            )],
+            "{log}"
+        );
+    }
+    fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn a_time_past_the_largest_finite_seconds_stays_at_it_and_its_line_reads_back() {
+    let dir = scratch("time");
+    let long = "1 passed; 0 failed; finished in 1e308s";
+    for log in [
+        binaries_saying(1, &[long, long]),
+        binaries_saying(2, &[long]),
+    ] {
+        let tests = read_text(&dir, &log).unwrap();
+        assert_eq!(
+            tests.suites,
+            [suite("tests/x.rs (x)", (2, 0, 0), f64::MAX, false)],
+            "{log}"
+        );
+        // Infinity would be written as `null`, which no reader reads back as a time.
+        let text = serde_json::to_string(&tests.suites).unwrap();
+        assert_eq!(
+            serde_json::from_str::<Vec<Suite>>(&text).unwrap(),
+            tests.suites
+        );
+    }
+    fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn a_failures_line_a_passing_binary_printed_starts_no_report() {
+    let dir = scratch("stray");
+    // A child's output that libtest did not capture, in a binary in which nothing failed.
+    let log = "     Running tests/x.rs (.target/debug/deps/x-0123456789abcdef)
+
+running 1 test
+failures:
+    printed
+test a ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.50s
+
+     Running tests/y.rs (.target/debug/deps/y-0123456789abcdef)
+
+running 1 test
+test b ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.25s
+";
+    let tests = read_text(&dir, log).unwrap();
+    assert_eq!(
+        tests.suites,
+        [
+            suite("tests/x.rs (x)", (1, 0, 0), 0.5, false),
+            suite("tests/y.rs (y)", (1, 0, 0), 0.25, false),
+        ]
+    );
+    assert_eq!(tests.failed, []);
+    fs::remove_dir_all(&dir).unwrap();
+}
+
 #[test]
 fn a_binary_is_named_by_cargos_own_line_alone_its_hash_cut() {
     for (line, name) in [

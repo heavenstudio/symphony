@@ -206,8 +206,10 @@ is nightly's), so the recorder reads cargo's and libtest's words:
 - `test result: ok. 8 passed; 0 failed; 1 ignored; …; finished in 0.41s` gives its
   `passed`, `failed`, `ignored` and `s`, added up where it says several (merged
   doc-tests say two); doc-tests' `s` is what `all doctests ran in` says, their build
-  with them.
-- `failures:` starts libtest's report of the failed tests, each one's output under
+  with them. A sum stays at its most (a count at 4294967295, a time at the largest
+  finite seconds), so the line always reads back.
+- `failures:`, once the binary said a test failed (`test NAME ... FAILED`), starts
+  libtest's report of the failed tests, each one's output under
   `---- NAME stdout ----`, then their names under `failures:` again. Each named is in
   `failed` with its binary (`suite`) and `line`: the first line of what its panic said
   (`panicked at FILE:LINE:COL` when it said nothing), else the first its output holds,

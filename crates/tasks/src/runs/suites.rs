@@ -7,10 +7,12 @@
 //!   `   Doc-tests NAME`: cargo starting a binary, which is named by them, the hash cut ([`header`]);
 //! - `test result: ok. 8 passed; 0 failed; 1 ignored; …; finished in 0.41s`: its counts and time,
 //!   added up where it says several (merged doc-tests say two), and doc-tests' time as `all
-//!   doctests ran in 0.76s` says it, which counts their build;
-//! - `failures:`, which starts libtest's report of the failed tests: each one's output under
-//!   `---- NAME stdout ----`, then `failures:` again and their names. A failure's first line is the
-//!   first of what its panic said, else the first its output holds.
+//!   doctests ran in 0.76s` says it, which counts their build; a sum stays at its most, a count at
+//!   `u32::MAX` and a time at the largest finite seconds, so its line always reads back;
+//! - `failures:`, once the binary said a test `FAILED` (`test NAME ... FAILED`), which starts
+//!   libtest's report of the failed tests: each one's output under `---- NAME stdout ----`, then
+//!   `failures:` again and their names. A failure's first line is the first of what its panic
+//!   said, else the first its output holds.
 //!
 //! A binary with no result line before the next one starts or the log ends (it crashed, or its run
 //! was stopped) is a suite with an error, never a pass. A failed test's output is what the test
@@ -87,6 +89,9 @@ struct Binary {
     results: u32,
     /// What doc-tests say they took in all.
     doctests: Option<f64>,
+    /// Whether it said a test `FAILED` since its last report: else a `failures:` line is what a
+    /// test printed where libtest captured none of it.
+    failing: bool,
     at: At,
     blocks: Vec<Block>,
     listed: Vec<String>,
@@ -121,7 +126,9 @@ impl Reading {
             self.unordered |= result(line).is_some();
             return;
         };
-        if line == "failures:" {
+        if line.starts_with("test ") && line.ends_with(" ... FAILED") {
+            binary.failing = true;
+        } else if line == "failures:" && binary.failing {
             binary.at = At::Report;
         } else if let Some(said) = result(line) {
             binary.said(said);
@@ -146,15 +153,21 @@ impl Reading {
         }
         match (self.tests.suites.iter_mut()).find(|kept| kept.name == suite.name) {
             Some(kept) => {
-                kept.passed += suite.passed;
-                kept.failed += suite.failed;
-                kept.ignored += suite.ignored;
-                kept.s += suite.s;
+                add(kept, (suite.passed, suite.failed, suite.ignored, suite.s));
                 kept.error |= suite.error;
             }
             None => self.tests.suites.push(suite),
         }
     }
+}
+
+/// `said` added to `suite`, each sum held at its most: a count at `u32::MAX`, the time at the
+/// largest finite seconds (both times are finite and none negative), so its line reads back.
+fn add(suite: &mut Suite, (passed, failed, ignored, s): Said) {
+    suite.passed = suite.passed.saturating_add(passed);
+    suite.failed = suite.failed.saturating_add(failed);
+    suite.ignored = suite.ignored.saturating_add(ignored);
+    suite.s = (suite.s + s).min(f64::MAX);
 }
 
 impl Binary {
@@ -170,19 +183,17 @@ impl Binary {
             },
             results: 0,
             doctests: None,
+            failing: false,
             at: At::Tests,
             blocks: Vec::new(),
             listed: Vec::new(),
         }
     }
 
-    /// A result line's counts and time, added.
-    fn said(&mut self, (passed, failed, ignored, s): Said) {
-        self.results += 1;
-        self.suite.passed += passed;
-        self.suite.failed += failed;
-        self.suite.ignored += ignored;
-        self.suite.s += s;
+    /// A result line's counts and time, added ([`add`]).
+    fn said(&mut self, said: Said) {
+        self.results = self.results.saturating_add(1);
+        add(&mut self.suite, said);
     }
 
     /// A line of its report of failed tests: the tests it names failed once its list ends on its
@@ -215,7 +226,7 @@ impl Binary {
                 && (self.blocks.first()).is_none_or(|first| self.listed.contains(&first.name))
             {
                 self.said(said);
-                self.at = At::Tests;
+                (self.at, self.failing) = (At::Tests, false);
                 return Some(self.failed());
             }
             self.at = At::Report;
