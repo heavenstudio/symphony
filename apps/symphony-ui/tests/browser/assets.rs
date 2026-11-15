@@ -4,24 +4,13 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::OnceLock;
 
-/// One module's files, as the shell's manifest names them: the program's kind's (src/split.rs, the
-/// chat's) are the program's script and main module and its own chunk; a kind of the web client
-/// (apps/symphony-web, the menus' among them) is its script and styles, with no wasm (empty here).
+/// One kind's files (apps/symphony-web), as the shell's manifest names them: its script, the
+/// chunks that script imports at any depth and its styles, the shared stylesheet first.
 #[derive(Debug, serde::Deserialize)]
 pub(super) struct Module {
     pub script: String,
-    #[serde(default)]
-    pub wasm: String,
+    pub imports: Vec<String>,
     pub styles: Vec<String>,
-    #[serde(default)]
-    pub chunk: Option<String>,
-}
-
-impl Module {
-    /// A program kind's chunk.
-    pub fn chunk(&self) -> &String {
-        self.chunk.as_ref().expect("a program kind's chunk")
-    }
 }
 
 /// The files of the module `kind` (`panel`, `overlay`, `board`…) in `dist`'s shell.
@@ -29,13 +18,6 @@ pub(super) fn module(dist: &Path, kind: &str) -> Module {
     modules(dist)
         .remove(kind)
         .unwrap_or_else(|| panic!("no {kind} module in the shell's manifest"))
-}
-
-/// Whether `dist`'s shell names `kind` a kind of the web client: a script with no wasm.
-pub(super) fn web(dist: &Path, kind: &str) -> bool {
-    modules(dist)
-        .get(kind)
-        .is_some_and(|module| module.wasm.is_empty())
 }
 
 /// Every module of `dist`'s shell, by its kind.
@@ -51,27 +33,6 @@ fn modules(dist: &Path) -> std::collections::HashMap<String, Module> {
     let start = script.find(declared).expect("the shell's module manifest") + declared.len();
     let line = &script[start..start + script[start..].find('\n').expect("one line")];
     serde_json::from_str(line.trim_end_matches(';')).expect("the manifest's JSON")
-}
-
-/// The program's media layer's chunk in `dist` (src/split.rs `MediaPart`), which no kind is: the
-/// shell's manifest never names it, the program script's map of its chunks does, as the kinds'
-/// chunks are named there (the splitter's own loader, never used, names it `/./assets/…`).
-pub(super) fn media_chunk(dist: &Path) -> String {
-    let program = module(dist, "panel").script;
-    let script = std::fs::read_to_string(dist.join(program.trim_start_matches('/')))
-        .expect("the program's script");
-    let named = |name: &&str| {
-        name.starts_with("/assets/module_") && name.contains("_media-") && name.ends_with(".wasm")
-    };
-    let mut names = script.split('"').filter(named);
-    let chunk = names
-        .next()
-        .expect("the media layer's chunk in the program's map");
-    assert!(
-        names.all(|other| other == chunk),
-        "the program names two media chunks"
-    );
-    chunk.to_owned()
 }
 
 /// The client's build, made once for this run (or the one `SYMPHONY_UI_DIST` names).

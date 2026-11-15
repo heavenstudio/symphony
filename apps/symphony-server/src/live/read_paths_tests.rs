@@ -64,7 +64,7 @@ pub(super) fn observe(hub: &Hub, store: &symphony_board::Store, agents: &[&str])
 }
 
 /// How many requests every client of `store`'s board in this process has sent it.
-fn requests(store: &symphony_board::Store) -> u64 {
+pub(super) fn requests(store: &symphony_board::Store) -> u64 {
     store
         .client()
         .queries()
