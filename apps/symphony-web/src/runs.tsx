@@ -766,7 +766,7 @@ export const MACHINE_WORK_PATH = "/api/machine-work";
 
 /**
  * Reads what runs now at once and then every NOW_MS while the page is shown (through `wait`),
- * until `signal` ends it.
+ * until `signal` ends it or the server has no such thing (a `404`), which no later read brings.
  */
 export async function followNow(
   signal: AbortSignal,
@@ -782,6 +782,7 @@ export async function followNow(
     } catch (error) {
       if (signal.aborted) return;
       told.failed(failure(error, !isMissing(error)), isMissing(error));
+      if (isMissing(error)) return;
     }
     await wait(NOW_MS, signal);
   }
@@ -790,7 +791,7 @@ export async function followNow(
 /**
  * Reads the first page of the runs `filters` take at once and then every LIST_MS while the page is
  * shown (through `wait`), naming the last answer's tag so a list no day file changed under answers
- * `304`, until `signal` ends it.
+ * `304`, until `signal` ends it or the server has no such thing (a `404`).
  */
 export async function followList(
   filters: Filters,
@@ -815,6 +816,7 @@ export async function followList(
     } catch (error) {
       if (signal.aborted) return;
       told.failed(failure(error, !isMissing(error)), isMissing(error));
+      if (isMissing(error)) return;
     }
     await wait(LIST_MS, signal);
   }

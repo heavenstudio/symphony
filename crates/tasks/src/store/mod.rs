@@ -306,7 +306,7 @@ impl Store {
     /// The tasks, or those in `status`, by priority then creation.
     pub fn tasks(&self, status: Option<&str>) -> Result<Vec<Task>, Error> {
         let which = status.map_or(Which::All, Which::Status);
-        Ok(self.retrying(|| self.view(&which))?.tasks())
+        Ok(self.retrying(|| self.shown(&which))?.tasks())
     }
 
     /// Eligibility without transferring briefs, roles or session health for the entire board.
@@ -323,11 +323,11 @@ impl Store {
         if slugs.is_empty() {
             return Ok(Vec::new());
         }
-        Ok(self.retrying(|| self.view(&Which::Slugs(slugs)))?.tasks())
+        Ok(self.retrying(|| self.shown(&Which::Slugs(slugs)))?.tasks())
     }
 
     pub fn get(&self, slug: &str) -> Result<Task, Error> {
-        let view = self.retrying(|| self.view(&Which::Slug(slug)))?;
+        let view = self.retrying(|| self.shown(&Which::Slug(slug)))?;
         view.task(slug)?;
         Ok(view.tasks().remove(0))
     }
@@ -697,9 +697,19 @@ impl Store {
         })
     }
 
+    /// `which` with every session: what a rule decides on, the cap's ledger and a whole board read.
     #[track_caller]
     fn view(&self, which: &Which) -> Result<View, Failure> {
-        let (read, vars) = Self::reading(which);
+        let (read, vars) = Self::reading(which, Sessions::Whole);
+        let snap: Snapshot = self.transact(&read, vars)?;
+        Ok(View::new(self, snap))
+    }
+
+    /// `which` for an answer that is its tasks alone ([`Sessions::Shown`]): only [`View::tasks`],
+    /// and the asker of `Which::Pullable`, may be asked of it.
+    #[track_caller]
+    fn shown(&self, which: &Which) -> Result<View, Failure> {
+        let (read, vars) = Self::reading(which, Sessions::Shown);
         let snap: Snapshot = self.transact(&read, vars)?;
         Ok(View::new(self, snap))
     }
@@ -708,7 +718,7 @@ impl Store {
     /// left it, in the write's one round trip. `body` ends without a `RETURN`.
     #[track_caller]
     fn written(&self, body: &str, mut vars: Value, slug: &str) -> Result<Task, Failure> {
-        let (read, more) = Self::reading(&Which::Slug(slug));
+        let (read, more) = Self::reading(&Which::Slug(slug), Sessions::Shown);
         if let (Some(vars), Value::Object(more)) = (vars.as_object_mut(), more) {
             vars.extend(more);
         }
@@ -818,6 +828,20 @@ enum Which<'a> {
     Pullable(&'a str),
 }
 
+/// The sessions a read returns. The board keeps every session it has seen, so the whole list
+/// grows with its history, and a read that only shows tasks needs the few on them.
+#[derive(Clone, Copy)]
+enum Sessions {
+    /// Every session the board has seen: a rule may ask after any handle (its actor, a hand
+    /// over's target), the cap's ledger reads every session's parent, and a board is all of them.
+    Whole,
+    /// The sessions holding a role on the tasks read, and the session `Which::Pullable` asks
+    /// for: all a task's roles' health is derived from, since health is a session's own row and
+    /// `held`, which is read whole either way. A role whose holder has no session reads lost in
+    /// both.
+    Shown,
+}
+
 /// Why one try of a call ended without its result.
 enum Failure {
     /// The board moved under it: read and decide again.
@@ -838,8 +862,8 @@ impl From<DbError> for Failure {
     }
 }
 
-/// What a read gives back: the tasks asked for, their links and roles, every session, who holds
-/// claimable work, and the newest message's id.
+/// What a read gives back: the tasks asked for, their links and roles, the sessions asked for
+/// ([`Sessions`]), who holds claimable work, and the newest message's id.
 #[derive(Clone, Deserialize)]
 struct Snapshot {
     #[serde(default)]

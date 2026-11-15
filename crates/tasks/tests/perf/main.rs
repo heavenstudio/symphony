@@ -18,6 +18,8 @@
 //! - [`timings`]: say, claim, inbox, looks of `tasks wait` and the api answers, each run as the
 //!   `tasks` binary an agent runs, the CPU it costs (its own and the server's, [`cpu`]) within a
 //!   bound stated there, which the machine's load does not move as it moves a wall.
+//! - [`sessions`]: the session rows show, list, next, who and a claim read: the sessions on the
+//!   tasks a read shows, the whole list only where every session is asked for. Rows, never a time.
 //! - [`unanswered`]: the unanswered-post lookup a PULL digest runs reads the open tasks' threads
 //!   alone, by record range, within a bound of the server's CPU.
 //! - [`words`]: each sender's last word kept by its event where the board is biggest, a rare
@@ -47,6 +49,7 @@ mod listeners;
 mod plans;
 mod proxy;
 mod reports;
+mod sessions;
 mod sql;
 mod timings;
 mod unanswered;

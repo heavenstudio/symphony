@@ -9,7 +9,11 @@
 //! (`#chart-ID`) lands that chart just below the header, opened fresh (its charts drawn after the
 //! shell looked for it) or followed in place from its figure, on a desk and a phone; a reader who
 //! scrolls away from it is left there as the hour slides and a new window draws, and one who chose
-//! a window before any chart drew (nothing recorded, or a failed read) is not taken to it.
+//! a window before any chart drew (nothing recorded, or a failed read) is not taken to it. A
+//! return visit draws the window this device kept before its read answers, checks it with the
+//! kept tag (a `304` for one unchanged) and keeps a changed answer in its place; a read that fails
+//! leaves the kept window drawn and said stale until a retry answers.
+use super::cache_pages::{PARTS, keeps, kept, notice, shows, store_opened};
 use super::document_landing::{COUNT_SCROLLS, TWO_FRAMES};
 use super::{SHOWN, chrome, chrome::Chrome, common, components::key, site, site::Site, texts};
 use serde_json::{Value, json};
@@ -795,4 +799,190 @@ fn a_chart_s_address_lands_nothing_once_the_reader_chose_a_window_before_any_cha
              its chart not landed: {later}"
         );
     }
+}
+
+/// The part of the reports' item this device keeps the last 24 hours in, as [`PARTS`] names it.
+const HOURS_KEPT: &str = "reports: hour:1";
+
+/// The page shows the charts of the copy this device kept, marked as the device's, saying `said`.
+fn from_the_device(said: &str) -> String {
+    format!(
+        "document.querySelector('.reports[data-ready=reports][data-cache=device] #chart-open .chart-plot') !== null && document.querySelector('.reports .page-notices .device-notice')?.textContent === {}",
+        json!(said)
+    )
+}
+
+/// The page shows the server's answer: nothing marked as the device's, nothing said of it.
+const CURRENT: &str = "document.querySelector('.reports[data-ready=reports]:not([data-cache]) #chart-open .chart-plot') !== null && document.querySelector('.device-notice') === null";
+
+/// The settings change the page lists says `subject`.
+fn marked(subject: &str) -> String {
+    format!(
+        "document.querySelector('.reports-marks')?.textContent.includes({}) === true",
+        json!(subject)
+    )
+}
+
+/// A first visit to the last 24 hours: drawn from the server and kept on this device. When its
+/// copy was kept.
+fn first_visit(chrome: &mut Chrome, site: &Site) -> f64 {
+    store_opened(chrome, site);
+    open(
+        chrome,
+        site,
+        "[data-ready=reports][aria-busy=false] #chart-open .chart-plot",
+    );
+    shows(chrome, CURRENT, "the first visit draws the server's answer");
+    keeps(chrome, &[HOURS_KEPT]);
+    kept(chrome)[HOURS_KEPT].as_f64().expect("when it was kept")
+}
+
+/// The page left and opened again.
+fn come_back(chrome: &mut Chrome, site: &Site) {
+    chrome.open("about:blank");
+    chrome.open(&site.url("/reports"));
+}
+
+/// A return visit draws the window this device kept, charts and all, while its read is still
+/// unanswered, saying so in the other pages' words; the read names the kept copy's tag, and a
+/// window no roll-up changed is answered `304`, once, with no body, after which nothing says the
+/// device. A window that changed is drawn from the device first, then as the server answers it,
+/// and that answer replaces the kept copy: the visit after it is checked with a `304` again.
+#[test]
+fn a_return_visit_draws_the_kept_window_before_its_read_answers_and_an_unchanged_one_costs_no_body()
+{
+    let site = both_windows();
+    let Some(mut chrome) = chrome() else { return };
+    screen(&mut chrome, 1440, 900, false);
+    let saved = first_visit(&mut chrome, &site);
+    let reads = symphony_api::REPORTS_PATH;
+
+    let before = site.answers(reads).len();
+    site.hold_route(reads, true);
+    come_back(&mut chrome, &site);
+    let said = notice(&mut chrome, saved, false);
+    shows(
+        &mut chrome,
+        &from_the_device(&said),
+        "the kept window is drawn while its read is held",
+    );
+    assert!(
+        chrome.wait_for(&marked("land without the check"), SHOWN),
+        "the kept copy's settings change is listed"
+    );
+    assert_eq!(
+        site.answers(reads).len(),
+        before,
+        "drawn before any read of the reports answered"
+    );
+    site.hold_route(reads, false);
+    shows(&mut chrome, CURRENT, "the check answered");
+    let checks = site.answers(reads)[before..].to_vec();
+    assert_eq!(checks.len(), 1, "one check: {checks:#?}");
+    assert!(
+        checks[0]
+            .named
+            .as_deref()
+            .is_some_and(|tag| tag.starts_with("W/\""))
+            && checks[0].status == 304,
+        "the check names the kept copy's tag and is answered with no body: {checks:#?}"
+    );
+
+    // The hour slid since: the kept copy first, then the server's, which is kept in its place.
+    site.set_json(&hours_read(), &slid(&as_hours(&fortnight())));
+    let before = site.answers(reads).len();
+    site.hold_route(reads, true);
+    come_back(&mut chrome, &site);
+    shows(
+        &mut chrome,
+        &from_the_device(&said),
+        "the kept window is drawn while the changed one is held",
+    );
+    assert_eq!(
+        chrome.eval(&marked("the hour slid")),
+        json!(false),
+        "the device's copy is the hour before"
+    );
+    site.hold_route(reads, false);
+    shows(
+        &mut chrome,
+        &marked("the hour slid"),
+        "the changed window draws",
+    );
+    shows(&mut chrome, CURRENT, "the changed window is current");
+    let changed = site.answers(reads)[before..].to_vec();
+    assert_eq!(
+        changed
+            .iter()
+            .map(|answer| (answer.named.is_some(), answer.status))
+            .collect::<Vec<_>>(),
+        [(true, 200)],
+        "one read, naming the kept tag, answered whole: {changed:#?}"
+    );
+    shows(
+        &mut chrome,
+        &format!(
+            "{PARTS}.then(kept => kept[{}] > {saved})",
+            json!(HOURS_KEPT)
+        ),
+        "the new answer replaced the kept copy",
+    );
+    let before = site.answers(reads).len();
+    come_back(&mut chrome, &site);
+    shows(
+        &mut chrome,
+        &marked("the hour slid"),
+        "the copy kept last draws",
+    );
+    shows(&mut chrome, CURRENT, "its check answered");
+    let again = site.answers(reads)[before..].to_vec();
+    assert_eq!(
+        again.iter().map(|answer| answer.status).collect::<Vec<_>>(),
+        [304],
+        "the copy kept last is the one checked: {again:#?}"
+    );
+}
+
+/// A return visit whose read fails keeps the kept window drawn, said as this device's and the
+/// server as not reachable, with the failed read's own line saying it is tried again; the read
+/// is tried again by itself, and its answer leaves nothing said of the device or the failure.
+#[test]
+fn a_failed_read_leaves_the_kept_window_drawn_and_said_stale_until_a_retry_answers() {
+    let site = both_windows();
+    let Some(mut chrome) = chrome() else { return };
+    screen(&mut chrome, 1440, 900, false);
+    let saved = first_visit(&mut chrome, &site);
+    let reads = symphony_api::REPORTS_PATH;
+
+    let before = site.answers(reads).len();
+    site.fail_route(reads, true);
+    come_back(&mut chrome, &site);
+    let said = notice(&mut chrome, saved, true);
+    shows(
+        &mut chrome,
+        &from_the_device(&said),
+        "the kept window stays drawn, said not reachable",
+    );
+    assert_eq!(
+        texts(&mut chrome, ".reports-error"),
+        [
+            "The reports could not be read. Board snapshot unavailable (the server answered 500). Trying again…"
+        ],
+    );
+    assert!(
+        site.answers(reads)[before..]
+            .iter()
+            .all(|answer| answer.status == 500 && answer.named.is_some()),
+        "each failed read named the kept copy's tag: {:#?}",
+        &site.answers(reads)[before..]
+    );
+    site.fail_route(reads, false);
+    shows(&mut chrome, CURRENT, "the retry answered");
+    assert_eq!(texts(&mut chrome, ".reports-error"), [] as [&str; 0]);
+    let last = site.answers(reads).last().cloned().expect("an answer");
+    assert_eq!(
+        (last.named.is_some(), last.status),
+        (true, 304),
+        "the retry is the same check, answered with no body: {last:?}"
+    );
 }
