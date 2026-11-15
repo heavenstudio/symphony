@@ -56,12 +56,34 @@ const LOST_TO_NAVIGATION: [&str; 3] = [
     "Execution context was destroyed.",
     // The page went on in another frame host (another process, or a new frame while Chrome keeps
     // the page it left for Back): Chrome answers every command still in flight on the old one so.
-    // A page closed is answered so too, and its next command then finds no session.
+    // A page closed under an evaluation is not answered at all: Chrome tells of its session
+    // detached instead ([`Gone::Closed`]), and refuses each later command for want of a session.
     "Inspected target navigated or closed",
     // V8's answer to an evaluation of a frame with no document's context to run it in: asked
     // between two documents.
     "Cannot find default execution context",
 ];
+
+/// How the page under test went away, as Chrome told of it: it answers no evaluation then, neither
+/// the one in flight nor a probe, so a wait on it ends at once ([`Chrome::wait_for`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Gone {
+    /// Its session detached (`Target.detachedFromTarget`, naming it, on the browser's session):
+    /// the page closed. Each command after it is refused for want of a session.
+    Closed,
+    /// Its renderer crashed or was killed (`Inspector.targetCrashed`, on its own session); a
+    /// reload or a navigation starts another (`Inspector.targetReloadedAfterCrash`).
+    Crashed,
+}
+
+impl fmt::Display for Gone {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Gone::Closed => "the page under test closed: its session detached",
+            Gone::Crashed => "the page under test's renderer crashed",
+        })
+    }
+}
 
 /// What went wrong driving Chrome, in one message that names what was waited for.
 #[derive(Debug)]
@@ -110,6 +132,11 @@ impl Error {
                 .is_some_and(|message| LOST_TO_NAVIGATION.contains(&message)),
             ..Self::new(format!("{expression}: {error}"))
         }
+    }
+
+    /// A wait on `what` the page under test's end cut short, saying how it went ([`Gone`]).
+    fn gone(what: &str, gone: Gone) -> Self {
+        Self::new(format!("{what}: {gone}"))
     }
 
     /// Whether the wait ended because the deadline [`Chrome::set_deadline`] set had passed, rather
@@ -985,6 +1012,9 @@ pub struct Chrome {
     /// Whether the page under test is brought back in front as soon as another page appears or
     /// commits ([`Chrome::keep_in_front`]).
     fronting: bool,
+    /// How the page under test went away, as the last of Chrome's messages that told of it said
+    /// ([`Chrome::note_gone`]); `None` while it runs.
+    gone: Option<Gone>,
 }
 
 /// A mid phone's screen, as the browser tests emulate one: 390x844 CSS pixels at 3x, mobile.
@@ -1021,6 +1051,7 @@ impl Chrome {
             frame_domains: Vec::new(),
             own_pages: Vec::new(),
             fronting: false,
+            gone: None,
         };
         let targets = chrome.browser_call("Target.getTargets", json!({}))?;
         let blank = targets["targetInfos"]
@@ -1234,12 +1265,28 @@ impl Chrome {
     }
 
     fn eval_bounded(&mut self, expression: &str, budget: &mut WaitBudget) -> Result<Option<Value>> {
+        self.evaluate(expression, budget, false)
+    }
+
+    /// `expression` evaluated in the page within `budget` (awaiting a promise): its value as JSON,
+    /// or `None` once the budget ran out. With `ends_with_the_page`, the page under test going away
+    /// before its reply ends it at once with an error saying how ([`Gone`]), as Chrome never
+    /// answers it then.
+    fn evaluate(
+        &mut self,
+        expression: &str,
+        budget: &mut WaitBudget,
+        ends_with_the_page: bool,
+    ) -> Result<Option<Value>> {
         let id = self.send(
             "Runtime.evaluate",
             json!({"expression": expression, "returnByValue": true, "awaitPromise": true}),
             self.session.clone(),
         )?;
-        self.watch(budget, |_, value| {
+        self.watch(budget, |chrome, value| {
+            if let Some(gone) = chrome.gone.filter(|_| ends_with_the_page) {
+                return Err(Error::gone(expression, gone));
+            }
             if value["id"] != json!(id) {
                 return Ok(None);
             }
@@ -1259,11 +1306,16 @@ impl Chrome {
     /// renderer stalls until the wall-clock backstop is an error naming the stall, not a false
     /// condition: it never had the turns to make the condition true. An evaluation the page's
     /// navigation took from it ([`LOST_TO_NAVIGATION`]) is a turn whose condition is not met yet,
-    /// and the document the page went to is asked again; any other error reply ends the wait.
+    /// and the document the page went to is asked again; any other error reply ends the wait. A
+    /// page that closed, or whose renderer crashed, before the wait or under it, ends it at once
+    /// with an error saying which ([`Gone`]): Chrome answers none of its evaluations then.
     pub fn wait_for(&mut self, expression: &str, cpu: Duration) -> Result<bool> {
         let mut budget = self.page_budget(cpu)?;
         let state = loop {
-            let (met, state) = match self.eval_bounded(expression, &mut budget) {
+            if let Some(gone) = self.gone {
+                return Err(Error::gone(expression, gone));
+            }
+            let (met, state) = match self.evaluate(expression, &mut budget, true) {
                 Ok(Some(value)) => (
                     !(value.is_null()
                         || value == json!(false)
@@ -1855,10 +1907,30 @@ impl Chrome {
         )
     }
 
-    /// Read the browser's messages until `found` makes something of one (that), or `budget` runs
-    /// out (`None`), keeping an observer turn in flight throughout and, on a wait on the page
-    /// under test, a probe of that page whenever it has not answered since the last turn counted.
-    /// Events are kept, the one found among them.
+    /// Note what `message` tells of the page under test's end ([`Chrome::gone`]): its session
+    /// detached, its renderer crashed, or a renderer of its started again after a crash. A frame or
+    /// a worker followed ([`Chrome::follow_frames`]) detaches and crashes on a session of its own,
+    /// which is not the page's.
+    fn note_gone(&mut self, message: &Value) {
+        let Some(page) = self.session.as_deref() else {
+            return;
+        };
+        let own = message["sessionId"] == page;
+        self.gone = match message["method"].as_str() {
+            Some("Target.detachedFromTarget") if message["params"]["sessionId"] == page => {
+                Some(Gone::Closed)
+            }
+            Some("Inspector.targetCrashed") if own => Some(Gone::Crashed),
+            Some("Inspector.targetReloadedAfterCrash") if own => None,
+            _ => return,
+        };
+    }
+
+    /// Read the browser's messages until `found` makes something of one (that, or the error it
+    /// makes of it), or `budget` runs out (`None`), keeping an observer turn in flight throughout
+    /// and, on a wait on the page under test, a probe of that page whenever it has not answered
+    /// since the last turn counted. What each message tells of the page's end is noted before
+    /// `found` sees it ([`Chrome::note_gone`]). Events are kept, the one found among them.
     fn watch<T>(
         &mut self,
         budget: &mut WaitBudget,
@@ -1867,11 +1939,13 @@ impl Chrome {
         let mut marker = self.observer_poll()?;
         loop {
             if let Some(value) = self.read(true)? {
-                if let Some(found) = found(self, &value)? {
+                self.note_gone(&value);
+                let made = found(self, &value);
+                if !matches!(made, Ok(None)) {
                     if value.get("id").is_none() {
                         self.keep(value)?;
                     }
-                    return Ok(Some(found));
+                    return made;
                 }
                 if value["id"] == json!(marker) {
                     if value.get("error").is_some()
