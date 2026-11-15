@@ -93,6 +93,15 @@ event of a region or kind the page does not know is not its own, and is left alo
 fields among them, costs it nothing to receive: its types say what the server sends, and its
 guards read what it draws.
 
+The feed is followed on a WebSocket (`feed.ts`): the events the server sends any other request of
+the feed's as Server-Sent Events, each one message, its name, a line feed and its data (the feed
+contract, `crates/symphony-api`). A browser keeps six HTTP/1.1 connections to a host, and an event
+stream holds one for as long as it is open, so six tabs following the board would leave a seventh
+none for its reads; it counts its WebSockets apart. The socket's open is the stream's, its failure
+or close a lost stream, and a message the page cannot read lost too, as an event it cannot read
+is; a socket the page closed says nothing more. The tests fake it with `testing.ts`'s `feeds` and
+`say`.
+
 ## The tests
 
 Unit tests sit beside their module (`queue.test.tsx` beside `queue.tsx`) and run in Node, with no
@@ -194,7 +203,8 @@ prints (`--root DIR` another project's). It refuses 8765, the shared server's, a
 starts nothing: Ctrl-C, or a kill of the recipe's process, ends it. Every request but those for
 Vite's own files (under `/@symphony-web/`) goes to that server through Vite's proxy, its Host and
 Origin as the browser sent them, so a save meets the server's origin check as on the server itself:
-the pages, the API, the feed and the files of the Dioxus program's kinds. It sends no CORS header
+the pages, the API, the feed (its WebSocket's upgrade too, `ws`) and the files of the Dioxus
+program's kinds. It sends no CORS header
 (`cors: false`, where Vite's default lets a page on any loopback port read every answer), so a page
 of another origin reads through it no more than from the server. What it makes itself is the page's
 shell script: this checkout's shell (`apps/symphony-ui/assets/cache.js` and `shell.js`,

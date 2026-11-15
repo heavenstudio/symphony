@@ -480,6 +480,7 @@ fn request(url: &str, kind: &str) -> Request {
 fn a_page_is_drawn_once_loaded_navigated_with_no_region_loading_and_only_streams_open() {
     let drawn = json!({"ready": "complete", "navigation": "ready", "loading": 0});
     let stream = request("http://h/api/feed", "EventSource");
+    let socket = request("ws://h/api/feed", symphony_chrome::WEB_SOCKET);
     let done = Request {
         finished: true,
         ..request("http://h/api/task-board", "Fetch")
@@ -489,7 +490,13 @@ fn a_page_is_drawn_once_loaded_navigated_with_no_region_loading_and_only_streams
         canceled: true,
         ..request("http://h/api/old", "Fetch")
     };
-    assert!(waiting(&drawn, &[stream.clone(), done.clone(), failed.clone()]).is_empty());
+    assert!(
+        waiting(
+            &drawn,
+            &[stream.clone(), socket.clone(), done.clone(), failed.clone()]
+        )
+        .is_empty()
+    );
     // A page that is not the Symphony's has no navigation marker of its own.
     assert!(
         waiting(
@@ -503,7 +510,7 @@ fn a_page_is_drawn_once_loaded_navigated_with_no_region_loading_and_only_streams
         .collect();
     let said = waiting(
         &json!({"ready": "interactive", "navigation": "loading", "loading": 2}),
-        &[vec![stream, done, failed], pending].concat(),
+        &[vec![stream, socket, done, failed], pending].concat(),
     );
     assert_eq!(
         said,
@@ -2333,6 +2340,20 @@ fn traffic_is_quiet_since_its_last_request_began_finished_or_failed_but_not_befo
             at(40)
         ),
         at(50)
+    );
+    // A WebSocket made or closed is, its frames not.
+    let (made, frame, closed) = (
+        event("Network.webSocketCreated"),
+        event("Network.webSocketFrameReceived"),
+        event("Network.webSocketClosed"),
+    );
+    assert_eq!(
+        quiet_since([(at(50), &made), (at(80), &frame)].into_iter(), at(40)),
+        at(50)
+    );
+    assert_eq!(
+        quiet_since([(at(50), &made), (at(70), &closed)].into_iter(), at(40)),
+        at(70)
     );
 }
 
