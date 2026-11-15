@@ -37,6 +37,7 @@ mod chrome;
 mod common;
 mod components;
 mod document_cards;
+mod document_landing;
 mod feed_deltas;
 #[path = "../../../../tools/test-support/script_std.rs"]
 mod fixture_script;

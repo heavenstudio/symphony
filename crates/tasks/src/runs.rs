@@ -17,6 +17,7 @@ use std::time::{Duration, Instant};
 use symphony_api::{End, RUN_SCHEMA, RunLine, run_day};
 
 pub mod rollup;
+pub mod suites;
 
 /// The day files' folder in the git common dir: in the one folder of Symphony's there (DECISIONS:
 /// symphony-own-names).
@@ -61,7 +62,8 @@ pub fn in_common(common: &Path) -> PathBuf {
 }
 
 /// The line `record` writes, as it stands: none for an operation that is no run or step. Its end
-/// is set once it finished.
+/// is set once it finished; what its log says of its tests is its recorder's to add
+/// ([`with_tests`]).
 pub fn line(record: &Record) -> Option<RunLine> {
     let run = record.run.as_ref()?;
     let finished = record.state == Step::Finished;
@@ -96,6 +98,20 @@ pub fn line(record: &Record) -> Option<RunLine> {
         suites: None,
         failed: None,
     })
+}
+
+/// `line`, an end line naming its log in the day files' folder `runs`, with what that log says of
+/// its tests ([`suites::read`]): read once, as the run ended, never while it runs. A start line, a
+/// line with no log, and a log naming no test binary are left as they are.
+pub fn with_tests(mut line: RunLine, runs: &Path) -> RunLine {
+    if line.end.is_some()
+        && let Some(log) = &line.log
+        && let Some(tests) = suites::read(&runs.join(log))
+    {
+        line.suites = Some(tests.suites);
+        line.failed = Some(tests.failed);
+    }
+    line
 }
 
 /// The folder's lock, waited for at most `wait`; none when it stayed held that long.
@@ -854,6 +870,27 @@ mod tests {
         assert_eq!(line(&record).unwrap().end, Some(End::Incomplete));
         record.run = None;
         assert_eq!(line(&record), None, "an operation of the work folder alone");
+    }
+
+    #[test]
+    fn only_an_end_line_naming_a_log_of_tests_says_them() {
+        let dir = scratch("with-tests");
+        let log = "logs/2026-11-11/run.log";
+        fs::create_dir_all(dir.join("logs/2026-11-11")).unwrap();
+        fs::copy(suites::tests::FIXTURE, dir.join(log)).unwrap();
+        let mut end = ended("a", NOW, "t", false);
+        let said = |line: &RunLine| (line.suites.as_ref().map(Vec::len), line.failed.clone());
+        assert_eq!(said(&with_tests(end.clone(), &dir)), (None, None), "no log");
+        end.log = Some(log.into());
+        let mut start = end.clone();
+        start.end = None;
+        assert_eq!(said(&with_tests(start, &dir)), (None, None), "a start line");
+        let read = with_tests(end.clone(), &dir);
+        assert_eq!(read.suites.map(|suites| suites.len()), Some(4));
+        assert_eq!(read.failed.map(|failed| failed.len()), Some(2));
+        fs::write(dir.join(log), "    Finished `dev` profile\n").unwrap();
+        assert_eq!(said(&with_tests(end, &dir)), (None, None), "no test binary");
+        fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
