@@ -284,7 +284,9 @@ export function AgentLines({ agent, local, tasks, work, following }: AgentLinesP
       </details>
       {agent.chat && <p>{`Chat goes to ${handle}.`}</p>}
       {agent.parent !== null && <p>{`parent: ${agent.parent}`}</p>}
-      {agent.slots !== null && <p>{`open tasks: ${agent.slots.open} of ${agent.slots.cap}`}</p>}
+      {/* Its slots (crates/tasks/src/slots.rs), PULL's word: the tasks it is building, apart from
+          the open tasks it follows. */}
+      {agent.slots !== null && <p>{`slots: ${agent.slots.open} of ${agent.slots.cap}`}</p>}
       {agent.state_detail !== null && (
         <p>{`${agent.state_detail.recipe} · ${agent.state_detail.phase}`}</p>
       )}

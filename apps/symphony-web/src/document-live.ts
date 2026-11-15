@@ -158,8 +158,9 @@ export interface Copy {
  * The server's outline at `url`, read naming the tag of `copy`'s: a `304` is that copy again, at
  * the feed's cursor its answer names; a new outline replaces the copy, and this device keeps it in
  * `item`. A `304` that names no cursor opens no feed: the copy goes, and the outline is read again
- * whole. Null when the server has no such document, and once `signal` ended: then nothing is
- * kept, read again or changed, and its caller, which checks `signal` first, draws nothing.
+ * whole. Null when the server has no such document. Once `signal` ends nothing is kept, read again
+ * or changed: a read it ends before its answer fails, its fetch given up, and one whose answer was
+ * in is null; its caller, which checks `signal` first, draws nothing either way.
  */
 export async function readOutlineAt(
   url: string,
