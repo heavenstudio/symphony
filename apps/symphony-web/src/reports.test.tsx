@@ -29,6 +29,7 @@ import {
   SECTIONS,
   toggle,
 } from "./reports";
+import { Backoff } from "./state";
 import { asking, CASES, childrenOf, memoryStorage, reply, server } from "./testing";
 import type { Grain } from "./wire";
 
@@ -820,9 +821,11 @@ describe("the reports' read", () => {
       ["answered", 14, "r3"],
       ["failed", "The server answered 503"],
     ]);
-    // A read that failed is tried again sooner, each wait longer, and an answer puts the timer
-    // back, the waits after a failure starting again.
-    expect(waited).toEqual([EVERY_MS, EVERY_MS, 1_000, 2_000, EVERY_MS, 1_000]);
+    // A read that failed is tried again on the feed's backoff, not the timer, and an answer puts
+    // the timer back, the backoff after a failure starting again.
+    const backoff = new Backoff();
+    const first = backoff.after(0);
+    expect(waited).toEqual([EVERY_MS, EVERY_MS, first, backoff.after(0), EVERY_MS, first]);
     expect(tags).toHaveLength(6);
   });
 

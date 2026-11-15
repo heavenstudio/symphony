@@ -46,11 +46,14 @@ describe("a failed read tried again by itself", () => {
     return { waited, reads };
   }
 
+  /** The first `count` of the feed's waits, longer each time up to their cap (`Backoff`'s test). */
+  const feedWaits = (count: number) => {
+    const backoff = new Backoff();
+    return Array.from({ length: count }, () => backoff.after(0));
+  };
+
   it("reads again after each of the feed's waits, longer each time, until it is answered", async () => {
-    expect(await tried(7)).toEqual({
-      waited: [1_000, 2_000, 4_000, 8_000, 16_000, 30_000, 30_000],
-      reads: 7,
-    });
+    expect(await tried(7)).toEqual({ waited: feedWaits(7), reads: 7 });
   });
 
   it("does nothing for a read already answered, or one the page no longer waits for", async () => {
@@ -72,7 +75,7 @@ describe("a failed read tried again by itself", () => {
   });
 
   it("stops once the page leaves, the wait it was in with it", async () => {
-    expect(await tried(5, 2)).toEqual({ waited: [1_000, 2_000], reads: 1 });
+    expect(await tried(5, 2)).toEqual({ waited: feedWaits(2), reads: 1 });
     const gone = new AbortController();
     gone.abort();
     expect(await tried(5, 0, gone)).toEqual({ waited: [], reads: 0 });

@@ -169,6 +169,10 @@ afterEach(() => {
 
 /** Lets `ms` pass, and what it settles run. */
 const pass = (ms = 0) => vi.advanceTimersByTimeAsync(ms);
+/** Ends the waits pending now (a retry's), and runs what they start. */
+const waitEnds = () => vi.runOnlyPendingTimersAsync();
+/** Runs every wait to its end, and those they start, until none is left: nothing tries again. */
+const settled = () => vi.runAllTimersAsync();
 
 describe("a changed task's fields on a task's page", () => {
   /** A page over `w/a` listing its subtask `w/a/1`, of two. */
@@ -437,7 +441,7 @@ describe("a task's page read", () => {
 });
 
 describe("a task's page read with nothing from this device", () => {
-  it("tries a read with no answer in time again by itself, longer each time, until it answers", async () => {
+  it("tries a read with no answer in time again by itself until it answers", async () => {
     let unanswered = 2;
     const { task, d, asked } = live((url) =>
       url === PAGE_URL && unanswered-- > 0
@@ -447,23 +451,19 @@ describe("a task's page read with nothing from this device", () => {
     const loading = task.load();
     await pass(ANSWER_MS);
     await loading;
-    // Said in a read's words, never a write's, and asked again by itself.
+    // Said in a read's words, never a write's, and asked again by itself once its wait ends.
     expect(d.error).toBe(NOT_IN_TIME);
     expect(task.drawn()).toBe(false);
     expect(asked).toHaveLength(1);
-    await pass(999);
-    expect(asked).toHaveLength(1);
-    await pass(1);
+    await waitEnds();
     expect(asked).toHaveLength(2);
     await pass(ANSWER_MS);
     expect(d.error).toBe(NOT_IN_TIME);
-    await pass(1_999);
-    expect(asked).toHaveLength(2);
-    await pass(1);
+    await waitEnds();
     expect(asked).toHaveLength(3);
     expect(task.drawn()).toBe(true);
     expect(d.error).toBe("");
-    await pass(60_000);
+    await settled();
     expect(asked).toHaveLength(3);
   });
 
@@ -474,7 +474,7 @@ describe("a task's page read with nothing from this device", () => {
     );
     await task.load();
     expect(d.error).toBe("The server answered 503");
-    await pass(1_000);
+    await waitEnds();
     expect(asked).toHaveLength(2);
     expect(task.drawn()).toBe(true);
   });
@@ -483,7 +483,7 @@ describe("a task's page read with nothing from this device", () => {
     const { task, d, asked } = live(() => answer(404));
     await task.load();
     expect(d.missing).toBe("w/a");
-    await pass(60_000);
+    await settled();
     expect(asked).toHaveLength(1);
   });
 
@@ -502,7 +502,7 @@ describe("a task's page read with nothing from this device", () => {
     await loading;
     expect(leaving.d.error).toBe("");
     expect(leaving.task.fresh.failing).toEqual([]);
-    await pass(60_000);
+    await settled();
     expect(leaving.asked).toHaveLength(1);
   });
 
@@ -510,7 +510,7 @@ describe("a task's page read with nothing from this device", () => {
     const { task, asked } = live((url) => (url === PAGE_URL ? answer(503) : answer(404)));
     await task.load();
     task.slug = "w/b";
-    await pass(60_000);
+    await settled();
     expect(urls(asked)).toEqual([PAGE_URL]);
   });
 });

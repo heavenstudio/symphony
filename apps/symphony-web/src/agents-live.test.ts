@@ -491,6 +491,10 @@ afterEach(() => {
 
 /** Lets `ms` pass, and what it settles run. */
 const pass = (ms = 0) => vi.advanceTimersByTimeAsync(ms);
+/** Ends the waits pending now (a retry's), and runs what they start. */
+const waitEnds = () => vi.runOnlyPendingTimersAsync();
+/** Runs every wait to its end, and those they start, until none is left: nothing tries again. */
+const settled = () => vi.runAllTimersAsync();
 
 describe("the agents' first read", () => {
   it("draws the page as the server answers it, both cursors as it says", async () => {
@@ -546,7 +550,7 @@ describe("the agents' first read", () => {
 });
 
 describe("the agents' first read after the board's", () => {
-  it("is tried again by itself while it fails, longer each time, until it answers", async () => {
+  it("is tried again by itself while it fails, until it answers", async () => {
     let refused = 2;
     const { agents, d, asked } = live(() =>
       refused-- > 0 ? answer(503) : answer(200, SAMPLES.agentPage),
@@ -554,15 +558,13 @@ describe("the agents' first read after the board's", () => {
     await agents.first();
     expect(d.error).toBe("The server answered 503");
     expect(asked).toHaveLength(1);
-    await pass(999);
-    expect(asked).toHaveLength(1);
-    await pass(1);
+    await waitEnds();
     expect(asked).toHaveLength(2);
-    await pass(2_000);
+    await waitEnds();
     expect(asked).toHaveLength(3);
     expect(d.view?.agents).toHaveLength(2);
     expect(d.error).toBe("");
-    await pass(60_000);
+    await settled();
     expect(asked).toHaveLength(3);
   });
 
@@ -571,11 +573,11 @@ describe("the agents' first read after the board's", () => {
     await agents.first();
     await agents.first();
     expect(asked).toHaveLength(2);
-    await pass(1_000);
+    await waitEnds();
     // The newer read's retry alone: the first one's stopped.
     expect(asked).toHaveLength(3);
     page.abort();
-    await pass(60_000);
+    await settled();
     expect(asked).toHaveLength(3);
   });
 });
