@@ -1,7 +1,7 @@
 //! The Runs page's reads (docs/RUNS.md, *The Runs page*): the list of the project's runs
 //! ([`symphony_api::RUNS_PATH`]) and one run with its steps ([`symphony_api::RUN_PATH`]), from the
 //! day files the board's recorder appends beside its logs in `symphony/runs/`, folded a run at a
-//! time ([`fold`]); never the board, so a board slow or down leaves them as they are.
+//! time ([`symphony_api::fold`]); never the board, so a board slow or down leaves them as they are.
 //!
 //! Each read takes the day files newest first, back [`RUNS_DAYS`] days at most, and stops once what
 //! it answers is whole: the list once more runs that match were asked for since the start of the
@@ -11,33 +11,42 @@
 //! anything but a regular file or one that does not read is named in the answer's `unread` and left
 //! out. A line that does not parse, one a writer that died cut short among them, is passed over.
 //!
-//! What a read folds of a day file is kept in the project's [`Index`], by the file's length,
-//! modification time and inode, so the next read parses it again only once one of them changed: a
-//! closed day is parsed once, today's once each time the recorder wrote to it. It keeps the days of
-//! the window alone.
+//! What a read folds of a day file is kept in the project's [`Index`]: of each run, the keys the
+//! filters, the fold and the steps' order read, and where in the file its line is, by the file's
+//! length, modification time and inode. An answer's lines (a page of runs, or one run and its
+//! steps) are read again from the file, through the descriptor its status was taken on, and each
+//! must still be the run kept there; a line changed under its offset has its day parsed again, and
+//! the answer made again once. A file that only grew since, on the same inode, still holding the
+//! last line read where it was, is read on from there: a closed day is parsed once, today's a line
+//! at a time as the recorder writes them; any other change parses the file again. It keeps the
+//! days of the window alone.
 
 use axum::http::StatusCode;
 use std::collections::{BTreeSet, HashMap, HashSet};
-use std::fs::OpenOptions;
-use std::io::Read as _;
-use std::os::unix::fs::{MetadataExt as _, OpenOptionsExt as _};
+use std::fs::{File, OpenOptions};
+use std::hash::{DefaultHasher, Hasher as _};
+use std::io::{Read as _, Seek as _, SeekFrom};
+use std::os::unix::fs::{FileExt as _, MetadataExt as _, OpenOptionsExt as _};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 use symphony_api::{
-    End, RUNS_DAYS, RUNS_FILE_BYTES, RUNS_PAGE, RUNS_READ_BYTES, RunLine, RunPage, RunsPage, fold,
+    End, RUNS_DAYS, RUNS_FILE_BYTES, RUNS_PAGE, RUNS_READ_BYTES, RunLine, RunPage, RunsPage,
     run_day, run_name,
 };
 
 const DAY: f64 = 86_400.0;
 
-/// What the reads keep of the day files between them: each file's fold by the path read, with what
+/// What the reads keep of the day files between them: each file's runs by the path read, with what
 /// its status said when it was read. One is held by each project's hub ([`crate::live::Hub`]).
 #[derive(Default)]
 pub(crate) struct Index {
     days: Mutex<HashMap<PathBuf, Kept>>,
+    /// How many bytes of day files it parsed.
+    #[cfg(test)]
+    parsed: std::sync::atomic::AtomicU64,
 }
 
-/// A day file's fold as kept, and the length, modification time and inode it was read at.
+/// A day file's runs as kept, and the length, modification time and inode it was read at.
 struct Kept {
     seen: Seen,
     day: Arc<Day>,
@@ -47,11 +56,106 @@ struct Kept {
 /// device.
 type Seen = (u64, i64, i64, u64, u64);
 
-/// A day file's runs, each once ([`fold`]), and the pipelines they name.
+/// A day file's runs, each once as [`symphony_api::fold`] takes them, by id; the pipelines they
+/// name; the names their keys share, each held once; and where the last line read starts, with a
+/// hash of its bytes, its newline among them: none when the bytes read did not end a line.
 #[derive(Default)]
 struct Day {
-    lines: Vec<Arc<RunLine>>,
+    runs: HashMap<Arc<str>, Key>,
     pipelines: BTreeSet<String>,
+    names: HashSet<Arc<str>>,
+    last: Option<(u64, u64)>,
+}
+
+/// A run's line as a day's fold keeps it: what the filters, the fold and [`under`] read of it, and
+/// where it is in its file, `len` bytes from `at`, its newline left out.
+#[derive(Clone, Debug)]
+struct Key {
+    parent: Option<Arc<str>>,
+    queued: f64,
+    end: Option<End>,
+    pipeline: Arc<str>,
+    task: Option<Arc<str>>,
+    branch: Option<Arc<str>>,
+    at: u64,
+    len: u64,
+}
+
+impl Key {
+    /// Whether `line`, read again, is still the line of `run` this was kept of.
+    fn is(&self, run: &str, line: &RunLine) -> bool {
+        line.run == run
+            && line.parent.as_deref() == self.parent.as_deref()
+            && line.queued.to_bits() == self.queued.to_bits()
+            && line.end == self.end
+            && line.pipeline == *self.pipeline
+            && line.task.as_deref() == self.task.as_deref()
+            && line.branch.as_deref() == self.branch.as_deref()
+    }
+}
+
+/// The hash of a line's bytes that tells a longer file still holds it.
+fn hash(bytes: &[u8]) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    hasher.write(bytes);
+    hasher.finish()
+}
+
+impl Day {
+    /// `text`, held once among the names of the day's keys.
+    fn name(&mut self, text: String) -> Arc<str> {
+        if let Some(name) = self.names.get(text.as_str()) {
+            return name.clone();
+        }
+        let name: Arc<str> = text.into();
+        self.names.insert(name.clone());
+        name
+    }
+
+    /// Folds in the lines of `bytes`, the file's from `from` on, after the lines folded before, as
+    /// [`symphony_api::fold`] takes them: a run's first end line, else its newest start line. A line
+    /// that does not parse as a whole [`RunLine`] is passed over.
+    #[expect(
+        clippy::iter_over_hash_type,
+        reason = "the pipelines are a set, the same in any order"
+    )]
+    fn fold_in(&mut self, bytes: &[u8], from: u64) {
+        let mut at = from;
+        let mut last = None;
+        for piece in bytes.split_inclusive(|byte| *byte == b'\n') {
+            let text = piece.strip_suffix(b"\n").unwrap_or(piece);
+            if let Ok(line) = serde_json::from_slice::<RunLine>(text) {
+                let key = Key {
+                    parent: line.parent.map(|parent| self.name(parent)),
+                    queued: line.queued,
+                    end: line.end,
+                    pipeline: self.name(line.pipeline),
+                    task: line.task.map(|task| self.name(task)),
+                    branch: line.branch.map(|branch| self.name(branch)),
+                    at,
+                    len: text.len() as u64,
+                };
+                match self.runs.get_mut(line.run.as_str()) {
+                    None => {
+                        self.runs.insert(line.run.into(), key);
+                    }
+                    Some(kept) if kept.end.is_none() => *kept = key,
+                    Some(_) => {}
+                }
+            }
+            last = Some((at, piece));
+            at += piece.len() as u64;
+        }
+        self.last = last
+            .filter(|(_, piece)| piece.ends_with(b"\n"))
+            .map(|(at, piece)| (at, hash(piece)));
+        self.pipelines.clear();
+        for key in self.runs.values() {
+            if !self.pipelines.contains(&*key.pipeline) {
+                self.pipelines.insert(key.pipeline.to_string());
+            }
+        }
+    }
 }
 
 impl Index {
@@ -59,12 +163,14 @@ impl Index {
         self.days.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// The fold kept of `path` read at `seen`; none when it was read at another or never.
-    fn kept(&self, path: &Path, seen: Seen) -> Option<Arc<Day>> {
-        self.days()
-            .get(path)
-            .filter(|kept| kept.seen == seen)
-            .map(|kept| kept.day.clone())
+    /// The runs kept of `path` read at `seen`; else what was kept of it at another, taken out to be
+    /// read on, or none.
+    fn kept(&self, path: &Path, seen: Seen) -> Result<Arc<Day>, Option<Kept>> {
+        let mut days = self.days();
+        match days.get(path) {
+            Some(kept) if kept.seen == seen => Ok(kept.day.clone()),
+            _ => Err(days.remove(path)),
+        }
     }
 
     fn keep(&self, path: &Path, seen: Seen, day: Arc<Day>) {
@@ -88,6 +194,12 @@ impl Index {
     fn len(&self) -> usize {
         self.days().len()
     }
+
+    /// How many bytes of day files it parsed.
+    #[cfg(test)]
+    fn parsed(&self) -> u64 {
+        self.parsed.load(std::sync::atomic::Ordering::Relaxed)
+    }
 }
 
 /// What a read of the list asks for: the runs of a pipeline, that ended a way (or have not ended,
@@ -103,23 +215,23 @@ pub(crate) struct Filters {
 }
 
 impl Filters {
-    /// Whether `line` is a run, not a step, that the filters take.
-    fn take(&self, line: &RunLine) -> bool {
-        line.parent.is_none()
+    /// Whether the line kept as `key` is a run, not a step, that the filters take.
+    fn take(&self, key: &Key) -> bool {
+        key.parent.is_none()
             && self
                 .pipeline
-                .as_ref()
-                .is_none_or(|pipeline| *pipeline == line.pipeline)
-            && self.end.is_none_or(|end| end == line.end)
+                .as_deref()
+                .is_none_or(|pipeline| pipeline == &*key.pipeline)
+            && self.end.is_none_or(|end| end == key.end)
             && self
                 .task
-                .as_ref()
-                .is_none_or(|task| line.task.as_ref() == Some(task))
+                .as_deref()
+                .is_none_or(|task| key.task.as_deref() == Some(task))
             && self
                 .branch
-                .as_ref()
-                .is_none_or(|branch| line.branch.as_ref() == Some(branch))
-            && self.before.is_none_or(|before| line.queued <= before)
+                .as_deref()
+                .is_none_or(|branch| key.branch.as_deref() == Some(branch))
+            && self.before.is_none_or(|before| key.queued <= before)
     }
 }
 
@@ -190,12 +302,25 @@ fn day_path(runs: &Path, day: f64) -> PathBuf {
     runs.join(format!("{}.jsonl", run_day(day)))
 }
 
-/// The runs of the day file of the UTC day starting at `day` in `runs`, each once ([`fold`]), its
-/// bytes taken from `budget` whether `index` kept its fold or it is parsed now; none when there is
-/// none. A link, a FIFO or anything but a regular file, one larger than [`RUNS_FILE_BYTES`] or than
-/// what is left of `budget`, or one that cannot be read, is refused in a sentence naming it by its
-/// name alone (the server's folders are not the page's to know).
-fn day_file(index: &Index, runs: &Path, day: f64, budget: &mut u64) -> Result<Arc<Day>, String> {
+/// A day file as one answer read it: its path, the descriptor its status was taken on, which its
+/// answered lines are read again through, and its runs as kept for that status.
+struct Opened {
+    path: PathBuf,
+    file: File,
+    day: Arc<Day>,
+}
+
+/// The day file of the UTC day starting at `day` in `runs`, open, and its runs, each once, its
+/// bytes taken from `budget` whether `index` kept its runs, they are read on or parsed now; none
+/// when there is none. A link, a FIFO or anything but a regular file, one larger than
+/// [`RUNS_FILE_BYTES`] or than what is left of `budget`, or one that cannot be read, is refused in a
+/// sentence naming it by its name alone (the server's folders are not the page's to know).
+fn day_file(
+    index: &Index,
+    runs: &Path,
+    day: f64,
+    budget: &mut u64,
+) -> Result<Option<Opened>, String> {
     let path = day_path(runs, day);
     let name = format!("{}.jsonl", run_day(day));
     // Nothing is kept of a file gone, or refused but for the answer's budget.
@@ -211,7 +336,7 @@ fn day_file(index: &Index, runs: &Path, day: f64, budget: &mut u64) -> Result<Ar
         Ok(file) => file,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             index.forget(&path);
-            return Ok(Arc::default());
+            return Ok(None);
         }
         Err(e) => return gone(format!("{name}: {e}")),
     };
@@ -241,44 +366,139 @@ fn day_file(index: &Index, runs: &Path, day: f64, budget: &mut u64) -> Result<Ar
         meta.ino(),
         meta.dev(),
     );
-    if let Some(day) = index.kept(&path, seen) {
-        return Ok(day);
-    }
+    let before = match index.kept(&path, seen) {
+        Ok(day) => return Ok(Some(Opened { path, file, day })),
+        Err(before) => before,
+    };
+    let (mut day, from) = before
+        .and_then(|before| grown(before, &file, seen))
+        .unwrap_or_default();
     // The bytes the status counted, no more: a line the recorder appends meanwhile changes the
-    // length, so the next read parses the file again with it.
+    // length, so the next read reads on to it.
     let mut bytes = Vec::new();
-    if let Err(e) = file.take(size).read_to_end(&mut bytes) {
+    let mut reader = &file;
+    if let Err(e) = reader
+        .seek(SeekFrom::Start(from))
+        .and_then(|_| reader.take(size - from).read_to_end(&mut bytes))
+    {
         return gone(format!("{name}: {e}"));
     }
-    let lines = fold(
-        bytes
-            .split(|byte| *byte == b'\n')
-            .filter_map(|line| serde_json::from_slice::<RunLine>(line).ok()),
-    );
-    let day = Arc::new(Day {
-        pipelines: lines.iter().map(|line| line.pipeline.clone()).collect(),
-        lines: lines.into_iter().map(Arc::new).collect(),
-    });
+    #[cfg(test)]
+    index
+        .parsed
+        .fetch_add(bytes.len() as u64, std::sync::atomic::Ordering::Relaxed);
+    day.fold_in(&bytes, from);
+    let day = Arc::new(day);
     index.keep(&path, seen, day.clone());
-    Ok(day)
+    Ok(Some(Opened { path, file, day }))
 }
 
-/// The runs of an older day taken into `newer`'s, as a fold of every line in order would take
-/// them: a run's first end line, else its newest start line, so an older day's line stands only
-/// where it ended the run.
-fn merge<'a>(
-    newer: &mut HashMap<String, Arc<RunLine>>,
-    older: impl IntoIterator<Item = &'a Arc<RunLine>>,
+/// The runs kept `before` of the file `file`, whose status is now `seen`, to be read on from where
+/// they were read to: when the file only grew since, on the same inode and device, and still holds
+/// the last line read where it was. None when it is to be parsed whole, as it is too while another
+/// answer still holds them.
+fn grown(before: Kept, file: &File, seen: Seen) -> Option<(Day, u64)> {
+    let (size, .., inode, device) = seen;
+    let (read, .., was_inode, was_device) = before.seen;
+    let (at, kept) = before.day.last?;
+    if size <= read || inode != was_inode || device != was_device {
+        return None;
+    }
+    let mut last = vec![0; usize::try_from(read - at).ok()?];
+    file.read_exact_at(&mut last, at).ok()?;
+    if hash(&last) != kept {
+        return None;
+    }
+    Some((Arc::try_unwrap(before.day).ok()?, read))
+}
+
+/// A run as one answer found it: its id, its key, and the day it was read from, by its place among
+/// the answer's [`Opened`] days.
+#[derive(Clone)]
+struct Found {
+    run: Arc<str>,
+    key: Key,
+    day: usize,
+}
+
+/// The runs of an older day, the one at `day` among the answer's, that `keep` takes, taken into
+/// `newer`'s, as a fold of every line in order would take them: a run's first end line, else its
+/// newest start line, so an older day's line stands only where it ended the run.
+#[expect(
+    clippy::iter_over_hash_type,
+    reason = "each run of a day is taken or not by itself, so in any order the same"
+)]
+fn merge(
+    newer: &mut HashMap<Arc<str>, Found>,
+    day: usize,
+    older: &Day,
+    keep: impl Fn(&str, &Key) -> bool,
 ) {
-    for line in older {
-        if !line.is_start() || !newer.contains_key(&line.run) {
-            newer.insert(line.run.clone(), line.clone());
+    for (run, key) in &older.runs {
+        if keep(run, key) && (key.end.is_some() || !newer.contains_key(run)) {
+            newer.insert(
+                run.clone(),
+                Found {
+                    run: run.clone(),
+                    key: key.clone(),
+                    day,
+                },
+            );
         }
     }
 }
 
+/// The line `found` names, read again through its day's descriptor; none when the bytes there no
+/// longer hold the line kept of that run.
+fn line_of(days: &[Opened], found: &Found) -> Option<RunLine> {
+    let mut bytes = vec![0; usize::try_from(found.key.len).ok()?];
+    days.get(found.day)?
+        .file
+        .read_exact_at(&mut bytes, found.key.at)
+        .ok()?;
+    serde_json::from_slice::<RunLine>(&bytes)
+        .ok()
+        .filter(|line| found.key.is(&found.run, line))
+}
+
+/// The lines `found` name, read again ([`line_of`]), and the paths of the days that no longer hold
+/// one, whose line is left out.
+fn lines_of(days: &[Opened], found: &[Found]) -> (Vec<RunLine>, Vec<PathBuf>) {
+    let mut changed = Vec::new();
+    let lines = found
+        .iter()
+        .filter_map(|found| {
+            let line = line_of(days, found);
+            if line.is_none() {
+                changed.extend(days.get(found.day).map(|day| day.path.clone()));
+            }
+            line
+        })
+        .collect();
+    (lines, changed)
+}
+
+/// An answer made through `index` by `answer`, which says the days that no longer held a line it
+/// answered: those are parsed again and the answer made again, once; a line changed under its
+/// offset again meanwhile is left out.
+fn read_twice<T>(index: &Index, answer: impl Fn() -> (T, Vec<PathBuf>)) -> T {
+    let (first, changed) = answer();
+    if changed.is_empty() {
+        return first;
+    }
+    for path in &changed {
+        index.forget(path);
+    }
+    answer().0
+}
+
 /// The page of the runs `filters` take in the day files of `runs`, read at `now` through `index`.
 pub(crate) fn page(index: &Index, runs: &Path, filters: &Filters, now: f64) -> RunsPage {
+    read_twice(index, || page_once(index, runs, filters, now))
+}
+
+/// [`page`], and the days that no longer held a line it answered.
+fn page_once(index: &Index, runs: &Path, filters: &Filters, now: f64) -> (RunsPage, Vec<PathBuf>) {
     let today = day_of(now);
     let first = today - f64::from(RUNS_DAYS - 1) * DAY;
     // A run ends on the day it was asked for or the next as a rule, so the page after `before`
@@ -287,20 +507,23 @@ pub(crate) fn page(index: &Index, runs: &Path, filters: &Filters, now: f64) -> R
         .before
         .map_or(today, |before| (day_of(before) + DAY).min(today));
     let mut budget = RUNS_READ_BYTES;
-    let mut seen: HashMap<String, Arc<RunLine>> = HashMap::new();
+    let mut days: Vec<Opened> = Vec::new();
+    let mut seen: HashMap<Arc<str>, Found> = HashMap::new();
     let mut pipelines = BTreeSet::new();
     let mut unread = Vec::new();
     while day >= first {
         match day_file(index, runs, day, &mut budget) {
-            Ok(read) => {
-                pipelines.extend(read.pipelines.iter().cloned());
-                merge(&mut seen, &read.lines);
+            Ok(Some(read)) => {
+                pipelines.extend(read.day.pipelines.iter().cloned());
+                merge(&mut seen, days.len(), &read.day, |_, _| true);
+                days.push(read);
             }
+            Ok(None) => {}
             Err(why) => unread.push(why),
         }
         let whole = seen
             .values()
-            .filter(|line| line.queued >= day && filters.take(line))
+            .filter(|found| found.key.queued >= day && filters.take(&found.key))
             .count();
         if whole > RUNS_PAGE {
             break;
@@ -311,55 +534,92 @@ pub(crate) fn page(index: &Index, runs: &Path, filters: &Filters, now: f64) -> R
     if let Some(pipeline) = &filters.pipeline {
         pipelines.insert(pipeline.clone());
     }
-    let mut taken: Vec<Arc<RunLine>> = seen
+    let mut taken: Vec<Found> = seen
         .into_values()
-        .filter(|line| filters.take(line))
+        .filter(|found| filters.take(&found.key))
         .collect();
     taken.sort_by(|a, b| {
-        b.queued
-            .total_cmp(&a.queued)
+        b.key
+            .queued
+            .total_cmp(&a.key.queued)
             .then_with(|| a.run.cmp(&b.run))
     });
     let more = taken.len() > RUNS_PAGE;
-    RunsPage {
-        runs: taken
-            .into_iter()
-            .take(RUNS_PAGE)
-            .map(|line| RunLine::clone(&line))
-            .collect(),
+    taken.truncate(RUNS_PAGE);
+    let (runs, changed) = lines_of(&days, &taken);
+    let page = RunsPage {
+        runs,
         more,
         pipelines: pipelines.into_iter().collect(),
         unread,
+    };
+    (page, changed)
+}
+
+/// What [`under`] reads of a step: its id, the id of the run or step it ran inside, and when it was
+/// asked for.
+trait Step: Clone {
+    fn id(&self) -> &str;
+    fn parent(&self) -> Option<&str>;
+    fn queued(&self) -> f64;
+}
+
+impl Step for Found {
+    fn id(&self) -> &str {
+        &self.run
+    }
+
+    fn parent(&self) -> Option<&str> {
+        self.key.parent.as_deref()
+    }
+
+    fn queued(&self) -> f64 {
+        self.key.queued
+    }
+}
+
+#[cfg(test)]
+impl Step for RunLine {
+    fn id(&self) -> &str {
+        &self.run
+    }
+
+    fn parent(&self) -> Option<&str> {
+        self.parent.as_deref()
+    }
+
+    fn queued(&self) -> f64 {
+        self.queued
     }
 }
 
 /// Every step of `steps` under `run`, each after the one it ran inside, the steps of one in the
 /// order they were asked for. A step met twice (a loop of parents) is taken once.
-fn under(run: &str, steps: &[Arc<RunLine>]) -> Vec<RunLine> {
+fn under<S: Step>(run: &str, steps: &[impl std::ops::Deref<Target = S>]) -> Vec<S> {
     let mut ordered = Vec::new();
     let mut taken: HashSet<&str> = HashSet::from([run]);
     // The parents still to visit, the next on top: a step's own steps come before its next sibling.
-    let mut stack: Vec<&RunLine> = Vec::new();
-    let children = |parent: &str| -> Vec<&RunLine> {
-        let mut found: Vec<&RunLine> = steps
+    let mut stack: Vec<&S> = Vec::new();
+    let children = |parent: &str| -> Vec<&S> {
+        let mut found: Vec<&S> = steps
             .iter()
             .map(|step| &**step)
-            .filter(|step| step.parent.as_deref() == Some(parent))
+            .filter(|step| step.parent() == Some(parent))
             .collect();
         found.sort_by(|a, b| {
-            a.queued
-                .total_cmp(&b.queued)
-                .then_with(|| a.run.cmp(&b.run))
+            a.queued()
+                .total_cmp(&b.queued())
+                .then_with(|| a.id().cmp(b.id()))
         });
         found
     };
     stack.extend(children(run).into_iter().rev());
     while let Some(step) = stack.pop() {
-        if !taken.insert(step.run.as_str()) {
+        if !taken.insert(step.id()) {
             continue;
         }
         ordered.push(step.clone());
-        stack.extend(children(&step.run).into_iter().rev());
+        stack.extend(children(step.id()).into_iter().rev());
     }
     ordered
 }
@@ -367,47 +627,65 @@ fn under(run: &str, steps: &[Arc<RunLine>]) -> Vec<RunLine> {
 /// The run or step `id` and its steps, from the day files of `runs` read at `now` through `index`;
 /// why not when none of the days read holds it.
 pub(crate) fn run(index: &Index, runs: &Path, id: &str, now: f64) -> Result<RunPage, String> {
+    read_twice(index, || run_once(index, runs, id, now))
+}
+
+/// [`run`], and the days that no longer held a line it answered.
+fn run_once(
+    index: &Index,
+    runs: &Path,
+    id: &str,
+    now: f64,
+) -> (Result<RunPage, String>, Vec<PathBuf>) {
     let today = day_of(now);
     let first = today - f64::from(RUNS_DAYS - 1) * DAY;
     let mut budget = RUNS_READ_BYTES;
+    let mut days: Vec<Opened> = Vec::new();
     // The run's lines and every step's, folded across the days read.
-    let mut lines: HashMap<String, Arc<RunLine>> = HashMap::new();
+    let mut lines: HashMap<Arc<str>, Found> = HashMap::new();
     let mut unread = Vec::new();
     // Once found, the day it was asked for: its steps were asked for that day or later.
     let mut asked: Option<f64> = None;
     let mut day = today;
     while day >= first && asked.is_none_or(|asked| day >= asked) {
         match day_file(index, runs, day, &mut budget) {
-            Ok(found) => merge(
-                &mut lines,
-                found
-                    .lines
-                    .iter()
-                    .filter(|line| line.run == id || line.parent.is_some()),
-            ),
+            Ok(Some(read)) => {
+                merge(&mut lines, days.len(), &read.day, |run, key| {
+                    run == id || key.parent.is_some()
+                });
+                days.push(read);
+            }
+            Ok(None) => {}
             Err(why) => unread.push(why),
         }
         if let Some(found) = lines.get(id) {
-            asked = Some(day_of(found.queued));
+            asked = Some(day_of(found.key.queued));
         }
         day -= DAY;
     }
     index.window(runs, today);
-    let Some(run) = lines.remove(id).map(|run| RunLine::clone(&run)) else {
+    let Some(found) = lines.remove(id) else {
         let unread = match unread.len() {
             0 => String::new(),
             n => format!(", {n} of them not read"),
         };
-        return Err(format!(
-            "no run {id} in the last {RUNS_DAYS} days' files{unread}"
-        ));
+        return (
+            Err(format!(
+                "no run {id} in the last {RUNS_DAYS} days' files{unread}"
+            )),
+            Vec::new(),
+        );
     };
-    let steps: Vec<Arc<RunLine>> = lines.into_values().collect();
-    Ok(RunPage {
-        steps: under(id, &steps),
-        run,
-        unread,
-    })
+    let steps: Vec<&Found> = lines.values().collect();
+    let (steps, mut changed) = lines_of(&days, &under(id, &steps));
+    let page = match line_of(&days, &found) {
+        Some(run) => Ok(RunPage { run, steps, unread }),
+        None => {
+            changed.extend(days.get(found.day).map(|day| day.path.clone()));
+            Err(format!("run {id}'s line changed as it was read"))
+        }
+    };
+    (page, changed)
 }
 
 /// The day files' folder of the project `hub` serves, as the reports find it, or the status and
