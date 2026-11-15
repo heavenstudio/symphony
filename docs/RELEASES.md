@@ -724,7 +724,9 @@ A step moves what it can and nothing more:
   `Cargo.lock` and sources: once that changes it builds and installs a new server
   (`crates/symphony/src/reload.rs`, `cargo install --force --root` into its install folder) and
   hands its sockets to it by exec, a build that fails leaving the previous one serving and saying
-  why on its notice. When this refresh moved that checkout's main and a server built from it
+  why on its notice. A build that installs the very bytes the serving one runs, with no client to
+  publish, hands over to nothing: the serving server stamps the install as that build's and keeps
+  serving. When this refresh moved that checkout's main and a server built from it
   answered before the move, the run waits, 20 minutes at most, until another process answers for
   it, and says which; or that none has yet, and that `just symphony-status` says which answers
   later. With none answering for it before, it waits for none: which build answers after cannot
