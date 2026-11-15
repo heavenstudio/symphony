@@ -117,7 +117,7 @@ fn ask_git(cwd: &Path) -> Result<PathBuf, NotARepository> {
             cwd.display()
         ))
     };
-    let out = crate::sys::output(crate::sys::command("git").arg("-C").arg(cwd).args([
+    let out = crate::sys::output(crate::sys::git().arg("-C").arg(cwd).args([
         "rev-parse",
         "--path-format=absolute",
         "--git-common-dir",

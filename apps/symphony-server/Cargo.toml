@@ -29,7 +29,9 @@ include = [
 
 # One native axum server per machine, with JSON contracts in symphony-api and the Dioxus shell at /.
 [dependencies]
-axum = { version = "0.8", default-features = false, features = ["http1", "json", "tokio"] }
+# `ws` answers the feed on a WebSocket, which holds none of a browser's six connections a host
+# (`src/api/feed_socket.rs`).
+axum = { version = "0.8", default-features = false, features = ["http1", "json", "tokio", "ws"] }
 libc = "0.2"
 symphony-api = { path = "../../crates/symphony-api", version = "=0.1.0" }
 symphony = { package = "symphony-app", path = "../../crates/symphony", version = "=0.1.0" }
@@ -57,3 +59,6 @@ tower = { version = "0.5", default-features = false, features = ["util"] }
 test-time = { path = "../../crates/test-time" }
 # A paused runtime clock, so a drain's elapsed-time promise is read on time the test moves.
 tokio = { version = "1", features = ["test-util"] }
+# A WebSocket's client, for the feed on one (`src/api/feed_socket.rs`, tests/after_http.rs): the
+# version and features axum's `ws` builds already.
+tungstenite = "0.29"

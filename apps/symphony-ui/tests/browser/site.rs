@@ -132,6 +132,85 @@ fn runs(bytes: &[u8]) -> usize {
         .unwrap_or(0)
 }
 
+/// One open feed stream: its number, its socket, and whether it is a WebSocket.
+struct Stream {
+    id: u64,
+    out: TcpStream,
+    socket: bool,
+}
+
+/// One thing the feed says, as the server says it in either of its forms
+/// (apps/symphony-server/src/api/feed_socket.rs): a Server-Sent Event, or a WebSocket's text
+/// message, its name, a line feed and its data.
+#[derive(Clone, Debug)]
+pub struct Said {
+    name: &'static str,
+    id: Option<u64>,
+    data: String,
+}
+
+impl Said {
+    /// The board's event `data` at version `id`.
+    pub fn delta(id: u64, data: &str) -> Said {
+        Said {
+            name: symphony_api::FEED_EVENT,
+            id: Some(id),
+            data: data.to_owned(),
+        }
+    }
+
+    /// The keep-alive ping.
+    pub fn ping() -> Said {
+        Said {
+            name: symphony_api::PING_EVENT,
+            id: None,
+            data: String::new(),
+        }
+    }
+
+    /// The server's `message` to every page.
+    pub fn notice(message: &str) -> Said {
+        Said {
+            name: symphony_api::SERVER_EVENT,
+            id: None,
+            data: serde_json::json!(message).to_string(),
+        }
+    }
+
+    /// As a Server-Sent Event.
+    pub fn sse(&self) -> String {
+        let id = self.id.map(|id| format!("id: {id}\n")).unwrap_or_default();
+        if self.data.is_empty() {
+            format!("event: {}\n{id}data:\n\n", self.name)
+        } else {
+            format!("event: {}\n{id}data: {}\n\n", self.name, self.data)
+        }
+    }
+
+    /// As the server's WebSocket frame: one text frame, unmasked, its length in the shortest field
+    /// that holds it (RFC 6455, 5.2).
+    pub fn frame(&self) -> Vec<u8> {
+        let text = format!("{}\n{}", self.name, self.data);
+        let mut frame = vec![0x81];
+        match text.len() {
+            length @ 0..=125 => frame.push(length as u8),
+            length @ 126..=65_535 => {
+                frame.push(126);
+                frame.extend_from_slice(&(length as u16).to_be_bytes());
+            }
+            length => {
+                frame.push(127);
+                frame.extend_from_slice(&(length as u64).to_be_bytes());
+            }
+        }
+        frame.extend_from_slice(text.as_bytes());
+        frame
+    }
+}
+
+/// A WebSocket's close frame from the server, with no status: the answer to a page's close.
+const CLOSE: [u8; 2] = [0x88, 0x00];
+
 struct Shared {
     replies: HashMap<String, Body>,
     posts: Vec<(String, serde_json::Value)>,
@@ -145,7 +224,7 @@ struct Shared {
     ahead: Vec<String>,
     /// The open feed streams, by the number each was given, written to by `push`. A stream the
     /// page closes leaves at once ([`hold_feed`]).
-    feeds: Vec<(u64, TcpStream)>,
+    feeds: Vec<Stream>,
     /// How many feed streams were opened.
     opened_feeds: u64,
     /// The board as its route answers it now, but for its build.
@@ -157,8 +236,8 @@ struct Shared {
     /// How many of the next feed requests are answered 500.
     failing_feeds: usize,
     failing_routes: BTreeSet<String>,
-    /// Paths answered 404, as the server answers a read of what it does not have, each with the
-    /// server's error.
+    /// Paths or targets answered 404, as the server answers a read of what it does not have, each
+    /// with the server's error.
     missing_routes: BTreeMap<String, String>,
     held_routes: BTreeSet<String>,
     /// Paths whose next request alone is held, and the requests so held, by number.
@@ -180,6 +259,8 @@ struct Shared {
     retired: BTreeSet<String>,
     /// Documents read as the server reads them, by their path ([`Site::set_document`]).
     documents: HashMap<String, serde_json::Value>,
+    /// HTML documents by their route ([`Site::set_html_page`]).
+    html_pages: HashMap<String, Body>,
 }
 
 pub struct Site {
@@ -243,6 +324,10 @@ impl Site {
                     "to": 1_800_003_600.0, "buckets": [], "first": null
                 }),
             ),
+            (
+                symphony_api::RUNS_PATH,
+                serde_json::json!({"runs": [], "more": false, "pipelines": [], "unread": []}),
+            ),
         ] {
             files.insert(
                 path.into(),
@@ -291,6 +376,7 @@ impl Site {
             silent: false,
             retired: BTreeSet::new(),
             documents: HashMap::new(),
+            html_pages: HashMap::new(),
         }));
         let stop = Arc::new(AtomicBool::new(false));
         let released = Arc::new(Condvar::new());
@@ -378,15 +464,29 @@ impl Site {
 
     /// Serve `document` (as `/api/document` without a view sends it, its bodies and threads in it)
     /// at its path as the server does: its outline, the sections a read's `keys` name, each
-    /// tagged without the feed's cursor and naming it in a header ([`document_read`]). A reply
-    /// [`Site::set_json`] gave a read's route or target wins over it.
+    /// tagged without the feed's cursor and naming it in a header ([`document_read`]). Its
+    /// `anchors`, when it has them, are its outline's ([`outline_of`]). A reply
+    /// [`Site::set_json`] gave a read's route or target wins over it. Each section carries the
+    /// kinds of its first and last blocks as the server's do ([`with_ends`]).
     pub fn set_document(&self, document: &serde_json::Value) {
         let path = document["path"].as_str().expect("a document's path");
         self.shared
             .lock()
             .unwrap()
             .documents
-            .insert(path.to_string(), document.clone());
+            .insert(path.to_string(), with_ends(document));
+    }
+
+    /// Serve `html` as the HTML document at the route `path`, as the server does: the route is the
+    /// app's page, whatever headers ask for it, and the file's address (the route with the file's
+    /// query, `symphony_api::file_address`), which its frame loads, the file. The stand-in
+    /// sends no policy of its own with the file, so what a page sees of it is its frame's sandbox
+    /// alone (the server's policy on it is its own test, apps/symphony-server/src/media_files.rs).
+    pub fn set_html_page(&self, path: &str, html: &str) {
+        self.shared.lock().unwrap().html_pages.insert(
+            path.into(),
+            body(html.as_bytes().to_vec(), content_type(path), "no-cache"),
+        );
     }
 
     pub fn set_file(&self, path: &str, bytes: Vec<u8>, mime: &'static str) {
@@ -400,6 +500,13 @@ impl Site {
     /// How many feed streams are open now: opened, and neither closed by the page nor ended here.
     pub fn feeds(&self) -> usize {
         self.shared.lock().unwrap().feeds.len()
+    }
+
+    /// How many feed streams were opened so far, closed since or not: while no feed fails or ends
+    /// on opening, each one [`Site::feed_requests`] counts once it is open, and so in reach of
+    /// [`Site::drop_feeds`].
+    pub fn opened_feeds(&self) -> usize {
+        self.shared.lock().unwrap().opened_feeds as usize
     }
 
     /// How many times the feed was asked for, answered or not.
@@ -439,6 +546,12 @@ impl Site {
         self.shared.lock().unwrap().retired.insert(path.to_owned());
     }
 
+    /// Answer the build file at `path` again, after [`Site::retire`]: a load that failed and works
+    /// later.
+    pub fn restore(&self, path: &str) {
+        self.shared.lock().unwrap().retired.remove(path);
+    }
+
     /// End each feed stream as soon as it opens, from now on.
     pub fn end_feeds_on_open(&self) {
         self.shared.lock().unwrap().ending_feeds = true;
@@ -472,7 +585,8 @@ impl Site {
     }
 
     /// Answer a route 404 with the server's JSON error, `{"error": ERROR}`, as the server answers
-    /// a folder or record it does not have; none answers it again.
+    /// a folder, document or record it does not have; none answers it again. `path` is a route
+    /// (every query of it) or one target, its query included.
     pub fn miss_route(&self, path: &str, error: Option<&str>) {
         let mut shared = self.shared.lock().unwrap();
         match error {
@@ -555,30 +669,29 @@ impl Site {
     }
 
     pub fn server_notice(&self, message: &str) {
-        self.send(&format!(
-            "event: {}\ndata: {}\n\n",
-            symphony_api::SERVER_EVENT,
-            serde_json::json!(message)
-        ));
+        self.send(&Said::notice(message));
     }
 
     /// End every open feed stream, as a server that stops does.
     pub fn drop_feeds(&self) {
-        for (_, stream) in self.shared.lock().unwrap().feeds.drain(..) {
-            let _ = stream.shutdown(Shutdown::Both);
+        for stream in self.shared.lock().unwrap().feeds.drain(..) {
+            let _ = stream.out.shutdown(Shutdown::Both);
         }
     }
 
     /// Send one feed event to every open stream; the streams that are gone are dropped.
     pub fn push(&self, id: u64, data: &str) {
-        self.send(&format!(
-            "event: {}\nid: {id}\ndata: {data}\n\n",
-            symphony_api::FEED_EVENT
-        ));
+        self.send(&Said::delta(id, data));
     }
 
-    fn send(&self, event: &str) {
-        send(&self.shared, event);
+    /// How many of the open feed streams are on a WebSocket.
+    pub fn socket_feeds(&self) -> usize {
+        let shared = self.shared.lock().unwrap();
+        shared.feeds.iter().filter(|stream| stream.socket).count()
+    }
+
+    fn send(&self, said: &Said) {
+        send(&self.shared, said);
     }
 
     /// The size every file of the build is sent at (gzipped when its type compresses), by path.
@@ -634,28 +747,73 @@ impl Drop for Site {
     }
 }
 
-/// Write `event` to every open feed stream; the streams that are gone are dropped.
-fn send(shared: &Mutex<Shared>, event: &str) {
+/// Say `said` on every open feed stream, in its form; the streams that are gone are dropped.
+fn send(shared: &Mutex<Shared>, said: &Said) {
+    let (sse, frame) = (said.sse(), said.frame());
     let mut shared = shared.lock().unwrap();
-    shared.feeds.retain_mut(|(_, stream)| {
+    shared.feeds.retain_mut(|stream| {
+        let bytes = if stream.socket {
+            &frame[..]
+        } else {
+            sse.as_bytes()
+        };
         stream
-            .write_all(event.as_bytes())
-            .and_then(|_| stream.flush())
+            .out
+            .write_all(bytes)
+            .and_then(|_| stream.out.flush())
             .is_ok()
     });
 }
 
-/// Keep feed stream `id` open until the page closes its socket, then count it no more: a page
-/// sends nothing on its stream after the request, so the first read that ends is the close.
+/// Keep feed stream `id` open until the page closes it, then count it no more: a page sends
+/// nothing on its stream after the request, so the first read that ends is the close, and nothing
+/// on its WebSocket but its close frame, which is answered with the server's.
 fn hold_feed(mut reader: impl Read, shared: &Mutex<Shared>, id: u64) {
     let mut sent = [0; 64];
-    while matches!(reader.read(&mut sent), Ok(read) if read > 0) {}
-    shared.lock().unwrap().feeds.retain(|(open, _)| *open != id);
+    let closed = loop {
+        match reader.read(&mut sent) {
+            Ok(0) | Err(_) => break false,
+            Ok(_) => {
+                let socket = shared
+                    .lock()
+                    .unwrap()
+                    .feeds
+                    .iter()
+                    .any(|open| open.id == id && open.socket);
+                if socket {
+                    break true;
+                }
+            }
+        }
+    };
+    let mut shared = shared.lock().unwrap();
+    if let Some(at) = shared.feeds.iter().position(|open| open.id == id) {
+        let mut stream = shared.feeds.remove(at);
+        if closed {
+            let _ = stream.out.write_all(&CLOSE);
+            let _ = stream.out.shutdown(Shutdown::Both);
+        }
+    }
 }
 
-/// The keep-alive ping, as the stand-in and the server (apps/symphony-server/src/api.rs) write it.
-pub fn ping() -> String {
-    format!("event: {}\ndata:\n\n", symphony_api::PING_EVENT)
+/// The keep-alive ping, as the stand-in and the server (apps/symphony-server/src/api.rs) say it.
+pub fn ping() -> Said {
+    Said::ping()
+}
+
+/// Whether a request's `headers` ask for a WebSocket.
+fn asks_socket(headers: &HashMap<String, String>) -> bool {
+    headers
+        .get("upgrade")
+        .is_some_and(|upgrade| upgrade.eq_ignore_ascii_case("websocket"))
+}
+
+/// The head that answers a WebSocket handshake whose key is `key`.
+pub fn socket_head(key: &str) -> String {
+    format!(
+        "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: {}\r\n\r\n",
+        tungstenite::handshake::derive_accept_key(key.as_bytes())
+    )
 }
 
 /// Ping every open stream each `ping_ms` the board now names, until the site stops or falls
@@ -851,9 +1009,14 @@ pub fn asked_keys(target: &str) -> Vec<String> {
 }
 
 /// `document`'s outline (`/api/document?view=outline`): no bodies or threads, each card's thread
-/// named by a hash of it.
+/// named by a hash of it, and the ids each section holds as the fixture names them (its
+/// `anchors`, by section key; none where it names none).
 pub fn outline_of(document: &serde_json::Value) -> serde_json::Value {
-    let mut outline = document.clone();
+    let mut outline = with_ends(document);
+    let anchors = outline
+        .as_object_mut()
+        .and_then(|whole| whole.remove("anchors"))
+        .unwrap_or_else(|| serde_json::json!({}));
     for section in outline["sections"].as_array_mut().into_iter().flatten() {
         section["blocks"] = serde_json::json!([]);
     }
@@ -868,7 +1031,28 @@ pub fn outline_of(document: &serde_json::Value) -> serde_json::Value {
             (slug.clone(), hash.into())
         })
         .collect();
-    serde_json::json!({"document": outline, "anchors": {}, "thread_hashes": hashes})
+    serde_json::json!({"document": outline, "anchors": anchors, "thread_hashes": hashes})
+}
+
+/// `document` with each section's `ends` as the server gives it (`symphony_api::Section::ends_of`)
+/// where the fixture names none: a fixture's `"ends": null` stands for an outline kept from before
+/// the outline carried them.
+fn with_ends(document: &serde_json::Value) -> serde_json::Value {
+    let mut document = document.clone();
+    for section in document["sections"].as_array_mut().into_iter().flatten() {
+        if section.get("ends").is_some() {
+            continue;
+        }
+        // A fixture's blocks the wire cannot read (a page's own test of them) draw no edges.
+        let blocks = serde_json::from_value::<Vec<symphony_api::Block>>(section["blocks"].clone());
+        if let Some(ends) = blocks
+            .ok()
+            .and_then(|blocks| symphony_api::Section::ends_of(&blocks))
+        {
+            section["ends"] = serde_json::json!(ends);
+        }
+    }
+    document
 }
 
 /// What a page reads ahead of `document` (`/api/document?view=first`), as the server cuts it
@@ -999,6 +1183,10 @@ fn serve(
             }
         }
         let path = route_of(&target);
+        // An HTML document's file, asked for at its file's address; its route is the app's shell.
+        let file_asked = target
+            .split_once('?')
+            .is_some_and(|(_, query)| symphony_api::asks_for_file(query));
         let named = headers.get("if-none-match").cloned();
         // A read of the API marked as a prefetch is a read ahead of a visit (assets/shell.js);
         // the shell's warmed modules are prefetches too, but no reads of the API.
@@ -1064,7 +1252,14 @@ fn serve(
                 return;
             }
         }
-        let missing = shared.lock().unwrap().missing_routes.get(&path).cloned();
+        let missing = {
+            let shared = shared.lock().unwrap();
+            shared
+                .missing_routes
+                .get(&path)
+                .or_else(|| shared.missing_routes.get(&target))
+                .cloned()
+        };
         if let Some(error) = missing {
             answered(404);
             let error = serde_json::json!({ "error": error }).to_string();
@@ -1091,6 +1286,10 @@ fn serve(
             return;
         }
         if path == symphony_api::FEED_PATH {
+            // Every page follows the feed on a WebSocket. Any other request gets the events, as
+            // the server sends them, so a page that took the event stream again shows in
+            // `socket_feeds` (tabs.rs).
+            let socket = asks_socket(&headers);
             let held = {
                 let mut shared = shared.lock().unwrap();
                 if shared.failing_feeds > 0 {
@@ -1098,7 +1297,11 @@ fn serve(
                     let _ = out.write_all(b"HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
                     return;
                 }
-                let head = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-store\r\n\r\n: open\n\n";
+                let head = if socket {
+                    socket_head(headers.get("sec-websocket-key").map_or("", String::as_str))
+                } else {
+                    "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-store\r\n\r\n: open\n\n".to_owned()
+                };
                 if out.write_all(head.as_bytes()).is_err() {
                     return;
                 }
@@ -1109,13 +1312,14 @@ fn serve(
                 }
                 shared.opened_feeds += 1;
                 let id = shared.opened_feeds;
-                shared.feeds.push((id, out));
+                shared.feeds.push(Stream { id, out, socket });
                 id
             };
             hold_feed(reader, shared, held);
             return;
         }
         let board;
+        let html_page;
         let overridden = turn.or_else(|| {
             let shared = shared.lock().unwrap();
             shared
@@ -1148,6 +1352,12 @@ fn serve(
                 "no-store",
             );
             Some(&board)
+        } else if let Some(page) = file_asked
+            .then(|| shared.lock().unwrap().html_pages.get(&path).cloned())
+            .flatten()
+        {
+            html_page = page;
+            Some(&html_page)
         } else if shared.lock().unwrap().retired.contains(&path) {
             None
         } else {
@@ -1158,7 +1368,9 @@ fn serve(
                     let last = path.rsplit('/').next().unwrap_or("");
                     (!path.starts_with("/api/")
                         && (!last.contains('.')
-                            || path.starts_with("/docs/") && path.ends_with(".md")))
+                            || path.starts_with("/docs/")
+                                && (path.ends_with(".md")
+                                    || !file_asked && symphony_api::is_html(&path))))
                     .then(|| files.get("/"))
                     .flatten()
                 })

@@ -19,6 +19,8 @@ pub struct StageRecord {
     pub updated: f64,
     /// Whether a session holds its executor role.
     pub executing: bool,
+    /// The arm it was filed on ([`crate::arm`]).
+    pub arm: Option<String>,
     /// Its `system` and `verdict` messages, a verdict cut to the word that names it.
     pub lines: Vec<Line>,
 }
@@ -29,7 +31,7 @@ pub struct StageRecord {
 /// roles are read by their tasks' slugs, through `role_slug`, and kept by role after, as the
 /// board's snapshot reads them: one condition over both would read every role.
 const READ: &str = "
-LET $tasks = (SELECT sid, slug, status, created, updated FROM task
+LET $tasks = (SELECT sid, slug, status, created, updated, fields._board.arm AS arm FROM task
     WHERE parent = NONE AND (created >= $since OR (status = 'done' AND updated >= $since))
     ORDER BY sid);
 RETURN {
@@ -89,6 +91,7 @@ impl Store {
             status: String,
             created: f64,
             updated: f64,
+            arm: Option<Value>,
         }
         #[derive(Deserialize)]
         struct LineRow {
@@ -110,6 +113,10 @@ impl Store {
             .zip(read.lines)
             .map(|(task, lines)| StageRecord {
                 executing: read.executing.contains(&task.slug),
+                // Read as the task's own fields are ([`crate::arm::marked`]): a name alone.
+                arm: (task.arm.as_ref().and_then(Value::as_str))
+                    .filter(|arm| crate::arm::named(arm).is_ok())
+                    .map(str::to_string),
                 slug: task.slug,
                 status: task.status,
                 created: task.created,

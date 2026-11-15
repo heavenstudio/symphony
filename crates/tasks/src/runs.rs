@@ -3,7 +3,8 @@
 //! recorded operation that is a run, or a step of one ([`recorded::Run`]), appends a start line when
 //! its command starts and an end line when it ends, each to the file of the UTC day it says. Lines
 //! are appended whole under the folder's lock, and day files more than [`KEPT_DAYS`] days old go
-//! then. `symphony/runs/logs/` is not this module's.
+//! then, as do the day folders of `symphony/runs/logs/` more than [`crate::run_logs::KEPT_DAYS`]
+//! old: the runs' logs, which [`crate::run_logs`] writes and reads.
 
 use crate::cli::Env;
 use crate::cli::machine_work::recorded::{self, Record, Step};
@@ -14,6 +15,9 @@ use std::os::unix::fs::{FileExt as _, OpenOptionsExt as _};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 use symphony_api::{End, RUN_SCHEMA, RunLine, run_day};
+
+pub mod rollup;
+pub mod suites;
 
 /// The day files' folder in the git common dir: in the one folder of Symphony's there (DECISIONS:
 /// symphony-own-names).
@@ -58,7 +62,8 @@ pub fn in_common(common: &Path) -> PathBuf {
 }
 
 /// The line `record` writes, as it stands: none for an operation that is no run or step. Its end
-/// is set once it finished.
+/// is set once it finished; what its log says of its tests is its recorder's to add
+/// ([`with_tests`]).
 pub fn line(record: &Record) -> Option<RunLine> {
     let run = record.run.as_ref()?;
     let finished = record.state == Step::Finished;
@@ -88,11 +93,25 @@ pub fn line(record: &Record) -> Option<RunLine> {
         cpu_s: run.cpu_s.filter(|_| finished),
         cpu_partial: run.cpu_partial.filter(|_| finished && run.cpu_s.is_some()),
         rerun_of: run.rerun_of.clone(),
-        log: None,
-        log_bytes: None,
+        log: run.log.clone(),
+        log_bytes: run.log_bytes.filter(|_| finished && run.log.is_some()),
         suites: None,
         failed: None,
     })
+}
+
+/// `line`, an end line naming its log in the day files' folder `runs`, with what that log says of
+/// its tests ([`suites::read`]): read once, as the run ended, never while it runs. A start line, a
+/// line with no log, and a log naming no test binary are left as they are.
+pub fn with_tests(mut line: RunLine, runs: &Path) -> RunLine {
+    if line.end.is_some()
+        && let Some(log) = &line.log
+        && let Some(tests) = suites::read(&runs.join(log))
+    {
+        line.suites = Some(tests.suites);
+        line.failed = Some(tests.failed);
+    }
+    line
 }
 
 /// The folder's lock, waited for at most `wait`; none when it stayed held that long.
@@ -160,8 +179,9 @@ pub(crate) fn ends_a_line(file: &File) -> io::Result<bool> {
 
 /// `line` appended to the file of its day in `folder` at `now`, made as needed: whole, in one write,
 /// under the folder's lock, after a newline when a writer before was cut short, so each line stays
-/// its own; then the day files more than [`KEPT_DAYS`] days before `now`'s go. A lock held past
-/// `wait` is not waited for: the line is appended so all the same, and nothing pruned.
+/// its own; then the day files more than [`KEPT_DAYS`] days before `now`'s go, and the logs' day
+/// folders more than [`crate::run_logs::KEPT_DAYS`]. A lock held past `wait` is not waited for: the
+/// line is appended so all the same, and nothing pruned.
 pub fn append(folder: &Path, line: &RunLine, now: f64, wait: Duration) -> io::Result<()> {
     fs::create_dir_all(folder)?;
     let mut text = serde_json::to_vec(line).map_err(io::Error::other)?;
@@ -180,17 +200,20 @@ pub fn append(folder: &Path, line: &RunLine, now: f64, wait: Duration) -> io::Re
     file.write_all(&text)?;
     if held.is_some() {
         prune(folder, now, KEPT_DAYS);
+        crate::run_logs::prune(folder, now, crate::run_logs::KEPT_DAYS);
     }
     Ok(())
 }
 
 /// Whether `name` is a day file's: `YYYY-MM-DD.jsonl`.
 fn day_file(name: &str) -> bool {
-    let Some(day) = name.strip_suffix(".jsonl") else {
-        return false;
-    };
-    day.len() == 10
-        && day.bytes().enumerate().all(|(at, byte)| match at {
+    name.strip_suffix(".jsonl").is_some_and(date)
+}
+
+/// Whether `name` is a day as a day file or a logs' day folder names it: `YYYY-MM-DD`.
+pub(crate) fn date(name: &str) -> bool {
+    name.len() == 10
+        && name.bytes().enumerate().all(|(at, byte)| match at {
             4 | 7 => byte == b'-',
             _ => byte.is_ascii_digit(),
         })
@@ -306,7 +329,7 @@ pub fn tree_and_dirty(
 ) -> (Option<String>, Option<bool>) {
     let deadline = Instant::now() + within;
     let git = |args: &[&str]| {
-        let said = said_by(sys::command("git").arg("-C").arg(cwd).args(args), deadline)?;
+        let said = said_by(sys::git().arg("-C").arg(cwd).args(args), deadline)?;
         Some(String::from_utf8_lossy(&said).into_owned())
     };
     let tree = git(&[
@@ -466,7 +489,6 @@ mod tests {
         for name in kept.iter().chain(&gone) {
             fs::write(dir.join(name), "{}\n").unwrap();
         }
-        fs::create_dir_all(dir.join("logs/2026-01-01")).unwrap();
         fs::create_dir_all(dir.join("2026-01-02.jsonl")).unwrap();
         std::os::unix::fs::symlink(dir.join("notes.jsonl"), dir.join("2026-01-03.jsonl")).unwrap();
         append(&dir, &ended("a", NOW, "t", false), NOW, LOCK_WAIT).unwrap();
@@ -476,11 +498,54 @@ mod tests {
         for name in gone {
             assert!(!dir.join(name).exists(), "{name} stayed");
         }
-        for name in ["logs/2026-01-01", "2026-01-02.jsonl", "2026-01-03.jsonl"] {
+        for name in ["2026-01-02.jsonl", "2026-01-03.jsonl"] {
             assert!(dir.join(name).symlink_metadata().is_ok(), "{name} went");
         }
         assert!(dir.join("2026-11-11.jsonl").exists());
         fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn logs_day_folders_older_than_fourteen_days_go_with_the_lock_and_nothing_else_does() {
+        let dir = scratch("prune-logs");
+        let logs = dir.join(crate::run_logs::FOLDER);
+        // 14 days before 2026-11-11 is 2026-10-28: kept, and the day before it goes.
+        for day in ["2026-10-28", "2026-11-11", "2026-10-27", "2026-01-01"] {
+            fs::create_dir_all(logs.join(day)).unwrap();
+            fs::write(
+                logs.join(day).join(format!("{}.log", "a".repeat(32))),
+                "x\n",
+            )
+            .unwrap();
+        }
+        fs::create_dir_all(logs.join("notes")).unwrap();
+        fs::write(logs.join("2026-01-02"), "a file, not a day's folder\n").unwrap();
+        // A link named as an old day is never followed: what it names stays.
+        let elsewhere = scratch("prune-logs-elsewhere");
+        fs::write(elsewhere.join("keep.log"), "x\n").unwrap();
+        std::os::unix::fs::symlink(&elsewhere, logs.join("2026-01-03")).unwrap();
+        // Held, the lock prunes nothing.
+        let holder = File::create(dir.join(LOCK)).unwrap();
+        holder.lock().unwrap();
+        append(&dir, &ended("a", NOW, "t", false), NOW, BRIEF_WAIT).unwrap();
+        assert!(logs.join("2026-01-01").exists(), "pruned without the lock");
+        holder.unlock().unwrap();
+        append(&dir, &ended("b", NOW, "t", false), NOW, LOCK_WAIT).unwrap();
+        for kept in [
+            "2026-10-28",
+            "2026-11-11",
+            "notes",
+            "2026-01-02",
+            "2026-01-03",
+        ] {
+            assert!(logs.join(kept).symlink_metadata().is_ok(), "{kept} went");
+        }
+        for gone in ["2026-10-27", "2026-01-01"] {
+            assert!(!logs.join(gone).exists(), "{gone} stayed");
+        }
+        assert!(elsewhere.join("keep.log").exists());
+        fs::remove_dir_all(&dir).unwrap();
+        fs::remove_dir_all(&elsewhere).unwrap();
     }
 
     #[test]
@@ -740,6 +805,8 @@ mod tests {
                 cpu_s: Some(1.5),
                 cpu_partial: Some(true),
                 runs: Some("/repo/.git/symphony/runs".into()),
+                log: Some(format!("logs/2026-11-11/{}.log", "a".repeat(32))),
+                log_bytes: Some(12),
             }),
             reading: None,
         }
@@ -766,6 +833,12 @@ mod tests {
             (Some("d".repeat(32).as_str()), Some("symphony"))
         );
         assert_eq!(start.rerun_of.as_deref(), Some("f".repeat(32).as_str()));
+        // A start line names its log, so a run that still runs can be read, but not its size.
+        let log = format!("logs/2026-11-11/{}.log", "a".repeat(32));
+        assert_eq!(
+            (start.log.as_deref(), start.log_bytes),
+            (Some(log.as_str()), None)
+        );
         record.state = Step::Finished;
         record.ended_at = Some(NOW);
         record.exit_code = Some(101);
@@ -773,6 +846,16 @@ mod tests {
         assert_eq!(
             (end.ended, end.end, end.exit, end.cpu_s, end.cpu_partial),
             (Some(NOW), Some(End::Red), Some(101), Some(1.5), Some(true))
+        );
+        assert_eq!(
+            (end.log.as_deref(), end.log_bytes),
+            (Some(log.as_str()), Some(12))
+        );
+        // No log, no size.
+        record.run.as_mut().unwrap().log = None;
+        assert_eq!(
+            (line(&record).unwrap().log, line(&record).unwrap().log_bytes),
+            (None, None)
         );
         assert_eq!(end.day(), "2026-11-11");
         // No CPU read, no word on whether it is whole.
@@ -787,6 +870,27 @@ mod tests {
         assert_eq!(line(&record).unwrap().end, Some(End::Incomplete));
         record.run = None;
         assert_eq!(line(&record), None, "an operation of the work folder alone");
+    }
+
+    #[test]
+    fn only_an_end_line_naming_a_log_of_tests_says_them() {
+        let dir = scratch("with-tests");
+        let log = "logs/2026-11-11/run.log";
+        fs::create_dir_all(dir.join("logs/2026-11-11")).unwrap();
+        fs::copy(suites::tests::FIXTURE, dir.join(log)).unwrap();
+        let mut end = ended("a", NOW, "t", false);
+        let said = |line: &RunLine| (line.suites.as_ref().map(Vec::len), line.failed.clone());
+        assert_eq!(said(&with_tests(end.clone(), &dir)), (None, None), "no log");
+        end.log = Some(log.into());
+        let mut start = end.clone();
+        start.end = None;
+        assert_eq!(said(&with_tests(start, &dir)), (None, None), "a start line");
+        let read = with_tests(end.clone(), &dir);
+        assert_eq!(read.suites.map(|suites| suites.len()), Some(4));
+        assert_eq!(read.failed.map(|failed| failed.len()), Some(2));
+        fs::write(dir.join(log), "    Finished `dev` profile\n").unwrap();
+        assert_eq!(said(&with_tests(end, &dir)), (None, None), "no test binary");
+        fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

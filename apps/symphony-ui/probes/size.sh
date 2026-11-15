@@ -3,11 +3,11 @@
 #
 #     cargo symphony-ui size OUT NAME...        (bin/cargo-symphony-ui, under the cargo wrapper)
 #
-# NAME is a page kind built on its own (board, docs, review, queue), bundled with bundle.sh's own dx
-# line for that kind (the program, src/split.rs, is a main module and chunks, which the
-# canonical-entry browser test reports), or a size probe, a bin in this folder (floor_dioxus, floor_websys,
-# entry_websys), bundled the same way (dx, the wasm-release profile, wasm-opt -Oz, --debug-symbols
-# false) with the `size-probe` feature. Each goes into OUT/NAME/. For each it prints
+# NAME is a size probe, a bin in this folder (floor_dioxus, floor_websys), bundled as bundle.sh
+# bundles a page kind (dx, the wasm-release profile, wasm-opt -Oz, --debug-symbols false) with the
+# `size-probe` feature. No page kind is built on its own since the last one moved to the web client:
+# the program (src/split.rs) is a main module and chunks, which the canonical-entry browser test
+# reports. Each goes into OUT/NAME/. For each it prints
 # the shipped WASM's and JS glue's gzip -6 bytes and writes OUT/NAME-named.wasm: cargo's linked
 # module without its DWARF, then the release's wasm-bindgen and wasm-opt -Oz with the same feature
 # flags, keeping the name section (`--debuginfo` in place of the release's strip). Then:
@@ -41,15 +41,10 @@ bindgen_version="$(awk '$0 == "name = \"wasm-bindgen\"" { getline; gsub(/"/, "",
 bindgen="$DX_HOME/tools/wasm-bindgen-$bindgen_version/wasm-bindgen"
 
 for name in "$@"; do
-    case "$name" in
-        board|docs|review|queue) ;;
-        *)
-            if [ ! -f "$here/probes/$name.rs" ]; then
-                echo "symphony-ui size: $name is neither a page kind nor a probe in apps/symphony-ui/probes/" >&2
-                exit 2
-            fi
-            ;;
-    esac
+    if [ ! -f "$here/probes/$name.rs" ]; then
+        echo "symphony-ui size: $name is no probe in apps/symphony-ui/probes/" >&2
+        exit 2
+    fi
 done
 mkdir -p "$out"
 out="$(cd "$out" && pwd)"
@@ -79,12 +74,9 @@ bash "$here/wasm-fresh.sh"
 export CARGO_PROFILE_WASM_RELEASE_OPT_LEVEL=z
 
 for name in "$@"; do
-    case "$name" in
-        board|docs|review|queue) stem=symphony-ui features="page-$name" ;;
-        *) stem="$name" features=web,size-probe ;;
-    esac
+    stem="$name" features=web,size-probe
     rm -rf "${out:?}/$name" "$target/dx/$stem/release/web"
-    # bundle.sh's own line for a page kind, without the packaging that joins every kind.
+    # bundle.sh's own line for a page kind, with the probe's bin, without the packaging.
     (cd "$here" && "$dx" bundle --web --bin "$stem" --release --locked --no-default-features \
         --features "$features" --debug-symbols false --out-dir "$out/$name" >&2)
     assets="$out/$name/public/assets"

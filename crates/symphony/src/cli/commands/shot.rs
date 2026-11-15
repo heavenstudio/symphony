@@ -14,8 +14,8 @@ use symphony_args::{Flag, parse};
 use symphony_chrome::{Chrome, Leash, Request};
 
 const USAGE: &str = "usage: symphony shot [-h] URL --out FILE.png [--wait-for CSS] [--timeout SECS] \
-[--size WxH | --phone] [--full-page] [--scheme light|dark] [--report] [--click CSS] [--type CSS=TEXT] \
-[--key NAME] [--hover CSS] [--eval JS] [--pause MS] [--shot FILE.png] …";
+[--size WxH | --phone] [--full-page] [--scheme light|dark] [--report] [--attach] [--click CSS] \
+[--type CSS=TEXT] [--key NAME] [--hover CSS] [--eval JS] [--pause MS] [--shot FILE.png] …";
 const HELP: &str =
     "A page as an agent sees it: a private headless Chrome opens URL, waits until the page
 has drawn (its document loaded, a Symphony page's own navigation ready, no region still loading,
@@ -24,8 +24,12 @@ those Chrome runs in a process of their own too, but none of a frame since remov
 document its frame has left, nor a document its frame went on from; a shared worker's own loads
 are not waited for), runs the steps in the order given, and saves a PNG. A dialog the page or a
 frame opens is dismissed as it opens, and the page goes on: an alert closed, a confirm or a prompt
-answered as by its Cancel, a beforeunload let leave; --report names each. It only reads the page:
-no server is started, stopped or changed.
+answered as by its Cancel, a beforeunload let leave; --report names each. A tab the page opens
+(a link, a script) runs behind it as Chrome leaves it: the page is brought back in front as soon
+as Chrome tells of the new one, so Chrome closes that one's dialogs, which --report does not name.
+A window of its own the page opens (window.open with a size, or popup) stays in front and keeps
+its dialog: one of the page's own site shares the page's process, which its dialog holds until
+--timeout fails the step. It only reads the page: no server is started, stopped or changed.
 
 positional arguments:
   URL                  the page, an absolute URL (http://127.0.0.1:8765/symphony/tasks)
@@ -46,6 +50,9 @@ options:
                        (one Chrome runs in a process of its own too) naming its address, the
                        dialogs dismissed (each one's kind, text and document), and the
                        document's scroll width against the viewport's (horizontal overflow)
+  --attach             once every picture is saved, attach each (`symphony attach`): stored in
+                       the main checkout's uploads and its line for a thread post printed, the
+                       --shot pictures in their order, then --out's
 
 steps, run in order before the final capture, each as often as needed:
   --wait-for CSS       wait until an element matches CSS (the page is not scrolled)
@@ -104,11 +111,13 @@ anywhere but where the aim tested, or where be unknown, or, for a click, anythin
 label again), the step fails naming where the pointer landed or what the press would reach, and
 nothing is pressed. Typing focuses its element by script and types with no pointer, so what covers
 the element takes none of it. A click, typing, a key or a hover then waits for the page to settle
-again, as a capture does, bringing the page back in front if the step left it hidden (an Escape the
-page does not take).
+again, as a capture does, first bringing the page back in front, should the step have left it
+behind another tab (an Escape the page does not take, a page it opened), before asking the page
+anything: a page it opened, of its own site, shares its process, and a dialog it shows in front
+holds the page until another tab is in front.
 Chrome is SYMPHONY_CHROME, else the first Chrome found on this machine.
-Exit 0 with every picture saved, 1 when the browser, the page or a step failed, 2 for a command
-line it cannot run.";
+Exit 0 with every picture saved (and with --attach attached), 1 when the browser, the page or a
+step failed or a picture was not attached, 2 for a command line it cannot run.";
 
 const DEFAULT_SIZE: (u32, u32) = (1440, 900);
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(20);
@@ -163,10 +172,11 @@ struct Shot {
     full_page: bool,
     scheme: Option<Scheme>,
     report: bool,
+    attach: bool,
     steps: Vec<Step>,
 }
 
-const FLAGS: [Flag; 15] = [
+const FLAGS: [Flag; 16] = [
     Flag {
         name: "--out",
         value: true,
@@ -197,6 +207,10 @@ const FLAGS: [Flag; 15] = [
     },
     Flag {
         name: "--report",
+        value: false,
+    },
+    Flag {
+        name: "--attach",
         value: false,
     },
     Flag {
@@ -254,10 +268,17 @@ pub(super) fn main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) ->
         );
         return 1;
     }
-    match run(&shot, &binary, out) {
-        Ok(()) => 0,
-        Err(problem) => {
-            let _ = writeln!(err, "symphony shot: {problem}");
+    if let Err(problem) = run(&shot, &binary, out) {
+        let _ = writeln!(err, "symphony shot: {problem}");
+        return 1;
+    }
+    if !shot.attach {
+        return 0;
+    }
+    match std::env::current_dir() {
+        Ok(here) => super::attach::attach(&here, &shot.pictures(), out, err),
+        Err(error) => {
+            let _ = writeln!(err, "symphony shot: the current folder: {error}");
             1
         }
     }
@@ -286,6 +307,7 @@ fn read(args: &[String]) -> Result<Option<Shot>, String> {
     let mut full_page = false;
     let mut scheme = None;
     let mut report = false;
+    let mut attach = false;
     let mut steps = Vec::new();
     for (name, value) in parsed.options() {
         match name {
@@ -306,6 +328,7 @@ fn read(args: &[String]) -> Result<Option<Shot>, String> {
                 });
             }
             "--report" => report = true,
+            "--attach" => attach = true,
             "--wait-for" => steps.push(Step::WaitFor(selector(name, value)?)),
             "--click" => steps.push(Step::Click(selector(name, value)?)),
             "--hover" => steps.push(Step::Hover(selector(name, value)?)),
@@ -345,8 +368,20 @@ fn read(args: &[String]) -> Result<Option<Shot>, String> {
         full_page,
         scheme,
         report,
+        attach,
         steps,
     }))
+}
+
+impl Shot {
+    /// Every picture the shot saves, in the order taken: each `--shot`, then `--out`.
+    fn pictures(&self) -> Vec<PathBuf> {
+        let shots = self.steps.iter().filter_map(|step| match step {
+            Step::Shot(path) => Some(path.clone()),
+            _ => None,
+        });
+        shots.chain([self.out.clone()]).collect()
+    }
 }
 
 fn seconds(value: &str) -> Result<Duration, String> {
@@ -600,6 +635,12 @@ fn prepare(chrome: &mut Chrome, shot: &Shot, wait: Wait) -> Result<(), String> {
     // A dialog holds its document until answered: each is dismissed as it opens, and the report
     // names it.
     chrome.dismiss_dialogs();
+    // A tab the page opens runs behind it, as Chrome leaves it, and Chrome closes its dialogs
+    // there. In front, it would leave the page drawing no frames, and one of the page's own site
+    // shares its renderer, which that tab's dialog would hold, and every call on the page with it,
+    // the click that opened it among them. A window of its own stays in front in its own right
+    // and keeps its dialog, so such a call waits until the step's --timeout.
+    said(chrome.keep_in_front(), "keeping the page in front", late)?;
     if let Some(scheme) = &shot.scheme {
         let value = match scheme {
             Scheme::Light => "light",
@@ -1908,11 +1949,14 @@ requestAnimationFrame(() => requestAnimationFrame(() => resolve(true)))))";
 const LAYOUT: &str = "({scroll_width: document.documentElement.scrollWidth, \
 viewport_width: document.documentElement.clientWidth})";
 
-/// The protocol events that change a page's traffic: a request starting, finishing or failing.
-const TRAFFIC: [&str; 3] = [
+/// The protocol events that change a page's traffic: a request starting, finishing or failing, and
+/// a WebSocket, which Chrome tells of apart, made or closed.
+const TRAFFIC: [&str; 5] = [
     "Network.requestWillBeSent",
     "Network.loadingFinished",
     "Network.loadingFailed",
+    "Network.webSocketCreated",
+    "Network.webSocketClosed",
 ];
 
 /// Since when the page's traffic has been unchanged: the last request starting, finishing or
@@ -1929,8 +1973,14 @@ fn quiet_since<'a>(events: impl Iterator<Item = (Instant, &'a Value)>, start: In
 /// by when the browser's events were read, so a slow look at a busy machine's page does not count
 /// against it; then for its fonts and two frames. A page left behind another tab (an Escape the
 /// page does not take goes to the browser; a link may open a new tab) draws no frames, so it is
-/// brought back in front. Fails when the wait runs out, every call within it included, naming what
-/// it still waited for; or at once when the Symphony's shell says the page could not load.
+/// brought back in front: first of all, before the page is asked anything, and again whenever it
+/// says it is hidden. A page it opened in front of it, of its own site, runs in its process, and a
+/// dialog that page shows while in front holds that process, and with it every answer of the
+/// page's, until another tab is in front: Chrome then lets the dialog go (an alert as by its OK, a
+/// confirm or a prompt as by its Cancel), as it lets a tab behind another alert without holding
+/// it. The browser brings the page in front without asking it. Fails when the wait runs out,
+/// every call within it included, naming what it still waited for; or at once when the
+/// Symphony's shell says the page could not load.
 fn settle(chrome: &mut Chrome, wait: Wait, after: &str) -> Result<(), String> {
     settled(chrome, wait, after, &|still, failed| {
         not_drawn(after, wait, still, failed)
@@ -1946,8 +1996,12 @@ fn settled(
     late: &dyn Fn(&[String], &[Value]) -> String,
 ) -> Result<(), String> {
     let start = Instant::now();
-    let mut still = vec!["the page to answer".to_string()];
+    let mut still = vec!["the browser to bring the page in front".to_string()];
     let mut failed = Vec::new();
+    said(chrome.call("Page.bringToFront", json!({})), after, || {
+        late(&still, &failed)
+    })?;
+    still = vec!["the page to answer".to_string()];
     loop {
         let state = said(chrome.eval(STATE), after, || late(&still, &failed))?;
         if state["navigation"] == "failed" {
@@ -2022,9 +2076,7 @@ fn waiting(state: &Value, requests: &[Request]) -> Vec<String> {
     }
     let pending: Vec<&Request> = requests
         .iter()
-        .filter(|request| {
-            !request.finished && request.failed.is_none() && request.kind != "EventSource"
-        })
+        .filter(|request| !request.finished && request.failed.is_none() && !request.streams())
         .collect();
     let own: Vec<&str> = pending
         .iter()

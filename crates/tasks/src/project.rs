@@ -101,6 +101,63 @@ pub fn find(cwd: &Path, machine: Option<&Path>) -> Result<Project, String> {
     Ok(Project { place, id })
 }
 
+/// How a refusal to reach the board of a project whose folder is gone ends ([`at`]), and the
+/// Symphony's word for one whose folder no longer holds its repository: what counts as a project
+/// with no board ([`crate::board_health::absent`]).
+pub const GONE: &str = "its board is never looked for in the folders above it";
+
+/// The project whose folder is `root`, as the Symphony reaches a project's board from that folder
+/// ([`crate::cli::board`]): [`find`] from it, refused when `root` is not there, or went while it
+/// was looked up. [`find`] from a folder that is gone walks up its path to whatever checkout holds
+/// it and names that repository's board, which a reach then starts: a server serving a project
+/// removed under it would start another repository's board.
+///
+/// # Errors
+///
+/// When `root` is not a folder that is there, saying [`GONE`]; and as [`find`].
+pub fn at(root: &Path, machine: Option<&Path>) -> Result<Project, String> {
+    let gone = || format!("the project's folder {} is gone: {GONE}", root.display());
+    if !root.is_dir() {
+        return Err(gone());
+    }
+    let found = find(root, machine);
+    if !root.is_dir() {
+        return Err(gone());
+    }
+    found
+}
+
+/// The project whose folder is `root` ([`at`]), held to the repository whose common dir is
+/// `repository`, the one the Symphony found from that folder when it began to serve it: refused,
+/// saying [`GONE`], when the lookup finds another (a folder left without its `.git` leads it up to
+/// the checkout that holds the folder) or that one is a repository no more ([`is_repository`]). A
+/// reach takes the board in the common dir this checked, so a folder removed after the check leads
+/// it to no other repository's board.
+///
+/// # Errors
+///
+/// As [`at`], and when the folder no longer holds `repository`.
+pub fn held(root: &Path, machine: Option<&Path>, repository: &Path) -> Result<Project, String> {
+    let project = at(root, machine)?;
+    if project.place.common != repository || !is_repository(repository) {
+        return Err(format!(
+            "the project's folder {} no longer holds the repository it was served from, {}: \
+             {GONE}",
+            root.display(),
+            repository.display()
+        ));
+    }
+    Ok(project)
+}
+
+/// Whether the common dir `common` is a repository's still: it holds `HEAD`, which git keeps there
+/// at every moment. A `.git` removed and made again by a board's start under way, which makes only
+/// the board's own folders in it (SurrealDB makes every missing folder of its store's path), holds
+/// none.
+pub fn is_repository(common: &Path) -> bool {
+    common.join("HEAD").is_file()
+}
+
 /// The `[project] id` the file at `path` names, if it names one.
 fn file_id(path: &Path) -> Option<String> {
     let text = std::fs::read_to_string(path).ok()?;
@@ -181,6 +238,58 @@ pub fn artifacts(root: &Path) -> Option<String> {
         }
     }
     (!parts.is_empty()).then(|| parts.join("/"))
+}
+
+/// The convention's documents folder, read when a project file names no `[[entrypoints]]`.
+const DOCS: &str = "docs";
+
+/// The folders the Symphony reads a project's documents from, project-relative ("" the project's
+/// root), as the project file `text` names them in `[[entrypoints]] folder` and the Symphony reads
+/// them (`Project::pathspecs`): `docs` when it names none, the convention's. Where an owner's line on
+/// a card can be written. A file that does not read, or a folder outside the project (which the
+/// Symphony refuses), reads as the project's root: every folder, never one too few.
+pub fn documents(text: &str) -> Vec<String> {
+    let root = || vec![String::new()];
+    let Ok(table) = text.parse::<toml::Table>() else {
+        return root();
+    };
+    let Some(written) = table.get("entrypoints") else {
+        return vec![DOCS.into()];
+    };
+    let Some(entries) = written.as_array() else {
+        return root();
+    };
+    let mut folders = Vec::new();
+    for entry in entries {
+        let Some(folder) = entry.get("folder").and_then(toml::Value::as_str) else {
+            return root();
+        };
+        let mut parts = Vec::new();
+        for part in Path::new(folder).components() {
+            match part {
+                std::path::Component::Normal(name) => match name.to_str() {
+                    Some(name) => parts.push(name),
+                    None => return root(),
+                },
+                std::path::Component::CurDir => {}
+                _ => return root(),
+            }
+        }
+        folders.push(parts.join("/"));
+    }
+    if folders.is_empty() {
+        return root();
+    }
+    folders
+}
+
+/// [`documents`] as the project file at `root` names them: the convention's with no file there.
+pub fn documents_at(root: &Path) -> Vec<String> {
+    match std::fs::read_to_string(root.join(FILE)) {
+        Ok(text) => documents(&text),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => vec![DOCS.into()],
+        Err(_) => vec![String::new()],
+    }
 }
 
 /// The main checkout of the repository whose common dir is `common`: the folder holding it, when it
@@ -331,6 +440,42 @@ mod tests {
             std::fs::write(root.join(FILE), text).unwrap();
             assert_eq!(artifacts(&root).as_deref(), folder, "{text}");
         }
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn the_documents_are_the_entrypoints_folders_else_docs_and_the_root_when_unreadable() {
+        let entry = |folder: &str| format!("[[entrypoints]]\nurl = \"u\"\nfolder = {folder}\n");
+        for (text, folders) in [
+            ("[project]\nid = \"x\"\n".to_string(), vec!["docs"]),
+            (String::new(), vec!["docs"]),
+            (entry("\"spec\""), vec!["spec"]),
+            (
+                entry("\"./design/./notes/\"") + &entry("\"docs\""),
+                vec!["design/notes", "docs"],
+            ),
+            (entry("\".\""), vec![""]),
+            // What the Symphony refuses reads as every folder, never one too few.
+            (entry("\"../elsewhere\""), vec![""]),
+            (entry("\"/abs\""), vec![""]),
+            (entry("3"), vec![""]),
+            ("[[entrypoints]]\nurl = \"u\"\n".into(), vec![""]),
+            ("entrypoints = []\n".into(), vec![""]),
+            ("entrypoints = 3\n".into(), vec![""]),
+            ("[project\n".into(), vec![""]),
+        ] {
+            assert_eq!(documents(&text), folders, "{text}");
+        }
+        let root =
+            std::env::temp_dir().join(format!("symphony-project-documents-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        assert_eq!(documents_at(&root), ["docs"], "no file");
+        std::fs::write(root.join(FILE), entry("\"spec\"")).unwrap();
+        assert_eq!(documents_at(&root), ["spec"]);
+        std::fs::remove_file(root.join(FILE)).unwrap();
+        std::fs::create_dir(root.join(FILE)).unwrap();
+        assert_eq!(documents_at(&root), [""], "a file that does not read");
         std::fs::remove_dir_all(&root).unwrap();
     }
 }

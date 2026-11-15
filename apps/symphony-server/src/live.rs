@@ -154,8 +154,18 @@ pub(crate) struct Hub {
     /// What the backstop last saw of main and the served trees.
     swept: Mutex<Sweep>,
     common: Option<PathBuf>,
-    signoff_pending: Mutex<Option<Pending>>,
+    /// The repository (its common dir) the board's lookup from `root` found when the hub was made
+    /// ([`symphony_board::project::locate_quick`]): what [`Hub::holds_its_project`] holds the
+    /// folder to. None for a folder no repository held.
+    repository: Option<PathBuf>,
+    /// The cards waiting on the owner and how many plugin gate answers had come back
+    /// ([`symphony::gates::Kept::answered`]) when the sign-off lane was last read: either moving
+    /// reads it again.
+    signoff_pending: Mutex<Option<(Pending, usize)>>,
     task_activity: Mutex<Option<(i64, Vec<symphony_api::ActivityItem>)>>,
+    /// What the task board asks of each person beyond the cards ([`task_asks`]). Taken after
+    /// `pages` where both are held, never before.
+    task_asks: Mutex<task_asks::Asked>,
     worker: Mutex<Option<std::thread::JoinHandle<()>>>,
     /// The board's health over the last hour: the clock's dispatch passes, the idle sweeps and
     /// every request this process sent the board ([`symphony_board::board_health`]).
@@ -166,6 +176,8 @@ pub(crate) struct Hub {
     /// Where the Reports page reads the project's day files ([`crate::api::reports::Folders`]),
     /// found at its first read: the folders the shared server's writers find, or a test's.
     pub(crate) report_folders: OnceLock<crate::api::reports::Folders>,
+    /// What the Runs page's reads keep of its day files between them ([`crate::api::runs::Index`]).
+    pub(crate) runs_index: crate::api::runs::Index,
     /// When they are recorded: its server generation's gate ([`symphony_board::recording`]), the
     /// one `health` and the roll-up's writes of the day files ([`reports`]) keep to as well, given
     /// as the hub starts ([`Hub::gate_recorders`]); none records nothing.
@@ -193,7 +205,8 @@ pub(crate) struct Hub {
     rendering: Mutex<()>,
     /// The store the page reads of the board share ([`Hub::reader`]), once one has been opened.
     reader: Mutex<Option<Arc<symphony_board::Store>>>,
-    /// How [`Hub::reader`] opens the board: [`taskview::connect`], or a test's board.
+    /// How [`Hub::reader`] opens the board: [`taskview::connect_held`], held to `repository`, or a
+    /// test's board.
     pub(crate) connect_reader: Box<Connect>,
     /// The hc a Go to session asks about the panes of the checkout at a path ([`Panes`]).
     pub(crate) panes: Box<Panes>,
@@ -256,9 +269,17 @@ impl OrderExpiry {
     }
 }
 
+/// The repository (its common dir) the board's lookup from `root` finds on the files alone
+/// ([`symphony_board::project::locate_quick`]): what a hub made there holds its folder to, and its
+/// reaches of the board ([`taskview::connect_held`]).
+pub(super) fn repository_of(root: &Path) -> Option<PathBuf> {
+    symphony_board::project::locate_quick(root).map(|place| place.common)
+}
+
 impl Hub {
     pub(crate) fn new(root: &Path, ui_dist: &Path) -> Self {
         let native_reader = machine_work::READER_ENV.os();
+        let repository = repository_of(root);
         Self {
             root: root.into(),
             ui_dist: ui_dist.into(),
@@ -305,12 +326,15 @@ impl Hub {
             common: measured("hub checkout", || crate::repo::checkout(root))
                 .ok()
                 .map(|c| c.common),
+            repository: repository.clone(),
             signoff_pending: Mutex::new(None),
             task_activity: Mutex::new(None),
+            task_asks: Mutex::default(),
             worker: Mutex::new(None),
             health: symphony_board::board_health::Recorder::default(),
             agent_activity: Mutex::new(None),
             report_folders: OnceLock::new(),
+            runs_index: crate::api::runs::Index::default(),
             recording_gate: OnceLock::new(),
             notices: Mutex::new(health::Notices::default()),
             replaying: Mutex::new(None),
@@ -320,7 +344,9 @@ impl Hub {
             low_disk: health::low_disk(root),
             rendering: Mutex::new(()),
             reader: Mutex::new(None),
-            connect_reader: Box::new(taskview::connect),
+            connect_reader: Box::new(move |root| {
+                taskview::connect_held(root, repository.as_deref())
+            }),
             panes: Box::new(|root| {
                 let mut env = symphony::children::board_env();
                 env.cwd = root.to_path_buf();
@@ -424,6 +450,9 @@ impl Hub {
         let mut kept = self.reader.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(store) = &*kept {
             return Ok(Arc::clone(store));
+        }
+        if !self.holds_its_project() {
+            return Err(self.gone());
         }
         let store = Arc::new((self.connect_reader)(&self.root)?);
         *kept = Some(Arc::clone(&store));
@@ -855,7 +884,8 @@ impl Hub {
         Ok(())
     }
 
-    fn refresh_page(&self, scope: &str, root: &Path) -> Result<(), String> {
+    /// Read `scope`'s page again from its checkout at `root`, its documents among it.
+    pub(crate) fn refresh_page(&self, scope: &str, root: &Path) -> Result<(), String> {
         self.refresh_page_read(scope, root, true)
     }
 
@@ -1161,6 +1191,8 @@ impl Hub {
             }
             cached.as_ref().expect("activity was read").1.clone()
         };
+        // Read before anything moves, so a failed read leaves the cursor where it was.
+        let asks = measured("task asks", || self.read_asks(store, latest, &next.tasks))?;
         let mut held = self.tasks.lock().unwrap_or_else(|e| e.into_inner());
         let mut changed = Vec::new();
         let pending = self
@@ -1174,34 +1206,42 @@ impl Hub {
                 .signoff_pending
                 .lock()
                 .unwrap_or_else(|e| e.into_inner());
+            // Counted before the read, so an answer that comes back during it reads it again.
+            let answered = self.gates.answered();
             if message_changed
-                || previous.as_ref() != Some(&pending)
-                || held.last.as_ref().is_none_or(|old| old.tasks != next.tasks)
+                || previous
+                    .as_ref()
+                    .is_none_or(|(cards, then)| *cards != pending || *then != answered)
+                || held
+                    .last
+                    .as_ref()
+                    .is_none_or(|old| !tasks_alike(&old.tasks, &next.tasks))
             {
                 let signoff = measured("signoff", || {
-                    taskview::signoff(store, &next.tasks, &pending)
+                    taskview::signoff(store, &next.tasks, &pending, &self.root, &self.gates)
                 })?;
                 let mut old = self.task_signoff.lock().unwrap_or_else(|e| e.into_inner());
                 if *old != signoff {
                     changed.push(json!({"region":"task-signoff", "data":signoff}));
                     *old = signoff;
                 }
-                *previous = Some(pending);
+                *previous = Some((pending, answered));
             }
         }
         let mut cursor = self
             .latest_message
             .lock()
             .unwrap_or_else(|e| e.into_inner());
+        let mut lines = Vec::new();
         if let Some(since) = *cursor
             && since < latest
         {
             let render = symphony::render::Render::new(&self.root);
-            for message in store
+            lines = store
                 .messages_after(since, latest)
-                .map_err(|e| e.to_string())?
-            {
-                let record = taskview::message(&message);
+                .map_err(|e| e.to_string())?;
+            for message in &lines {
+                let record = taskview::message(message);
                 let mut data = json!(record);
                 let entry = taskview::entry(&record, &render);
                 data["blocks"] = json!(entry.blocks);
@@ -1211,6 +1251,9 @@ impl Hub {
         }
         *cursor = Some(latest);
         drop(cursor);
+        if let Some(change) = self.apply_asks(asks, &lines) {
+            changed.push(change);
+        }
         // A failed read keeps the recipient known before; it is no change.
         if let Ok(recipient) = store.chat_recipient()
             && let Some(change) = self.chat_read(recipient)
@@ -1222,7 +1265,8 @@ impl Hub {
         }
         if let Some(old) = &held.last {
             task_changes(&mut changed, &old.tasks, &next.tasks);
-            if old.tasks != next.tasks {
+            // A holder's health is no task's change: it moves no column's count.
+            if !tasks_alike(&old.tasks, &next.tasks) {
                 let mut counts = BTreeMap::<&str, usize>::new();
                 for status in symphony_board::STATUSES {
                     counts.insert(status, 0);
@@ -1256,37 +1300,19 @@ impl Hub {
                 self.gates.keep_open(|slug| open.contains(slug));
             }
             // Heartbeats are not displayed. Sending last_seen/last_tool on every beat makes every
-            // active worker a stream of pointless events. Sessions change when displayed state does.
-            let visible = |sessions: &[symphony_api::Session]| {
-                sessions
-                    .iter()
-                    .map(|s| {
-                        let mut s = s.clone();
-                        s.last_seen = 0.0;
-                        s.last_tool = None;
-                        s
-                    })
-                    .collect::<Vec<_>>()
-            };
-            let session_at = changed.len();
-            diff_items(
+            // active worker a stream of pointless events. Sessions change when displayed state does,
+            // and a session's health is its roles' too: the client sets them from this change.
+            diff_shown(
                 &mut changed,
                 "session",
-                &visible(&old.sessions),
-                &visible(&next.sessions),
+                &old.sessions,
+                &next.sessions,
                 |s| s.handle.clone(),
+                |s| {
+                    s.last_seen = 0.0;
+                    s.last_tool = None;
+                },
             );
-            for event in &mut changed[session_at..] {
-                if event["region"] == "session"
-                    && event["data"].get("value").is_some()
-                    && let Some(session) = next
-                        .sessions
-                        .iter()
-                        .find(|s| event["data"]["key"] == s.handle)
-                {
-                    event["data"]["value"] = json!(session);
-                }
-            }
         }
         held.last = Some(next.clone());
         held.raw = Some(snapshot);
@@ -1294,9 +1320,15 @@ impl Hub {
         drop(held);
         let mut old_agents = self.agents.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(old) = &*old_agents {
-            diff_items(&mut changed, "agent", &old.agents, &agents.agents, |a| {
-                a.handle.clone()
-            });
+            // No page shows when an agent last called a tool: a tool call alone sends nothing.
+            diff_shown(
+                &mut changed,
+                "agent",
+                &old.agents,
+                &agents.agents,
+                |a| a.handle.clone(),
+                |a| a.last_tool_call = None,
+            );
             if old.probes != agents.probes {
                 changed.push(json!({"region":"agent-probes","data":agents.probes}));
             }
@@ -1636,6 +1668,11 @@ fn run(
         // other document and worktree changes come from watcher events and the backstop's sweep.
         if last_board.elapsed() >= BOARD_INTERVAL {
             last_board = Instant::now();
+            // A project removed under the server: nothing more is read or recorded for it.
+            if !hub.holds_its_project() {
+                hub.lose();
+                break;
+            }
             expiry.tick(&hub.root, symphony::postpone::now(), || {
                 hub.refresh_order("")
             });
@@ -1650,6 +1687,7 @@ fn run(
             }
             measured("reports tick", || hub.reports_tick(board.as_ref()));
             measured("asks tick", || hub.asks_tick());
+            measured("project tick", || hub.tell_project());
         }
         drop(hub);
         let wake = backstop.wait(&recv, Duration::from_millis(250));
@@ -1759,11 +1797,120 @@ fn diff_items<T: serde::Serialize + PartialEq>(
     }
 }
 
+/// List changes of `region` by what a page shows of each item: two items alike once `hide` has
+/// cleared what no page draws send nothing, and an item that changed is sent as it is now, whole.
+fn diff_shown<T: serde::Serialize + PartialEq + Clone>(
+    changes: &mut Vec<Value>,
+    region: &str,
+    old: &[T],
+    new: &[T],
+    key: impl Fn(&T) -> String,
+    hide: impl Fn(&mut T),
+) {
+    let shown = |items: &[T]| {
+        items
+            .iter()
+            .map(|item| {
+                let mut item = item.clone();
+                hide(&mut item);
+                item
+            })
+            .collect::<Vec<_>>()
+    };
+    let at = changes.len();
+    diff_items(changes, region, &shown(old), &shown(new), &key);
+    let now: BTreeMap<String, &T> = new.iter().map(|item| (key(item), item)).collect();
+    for event in &mut changes[at..] {
+        if event["region"] == region
+            && event["data"].get("value").is_some()
+            && let Some(item) = event["data"]["key"].as_str().and_then(|key| now.get(key))
+        {
+            event["data"]["value"] = json!(item);
+        }
+    }
+}
+
+/// A task as the feed compares it: without its holders' health, which each holder's `session`
+/// change says once, rather than every task it ever held saying it again.
+#[derive(serde::Serialize)]
+#[serde(transparent)]
+struct Shown<'a>(&'a symphony_api::Task);
+
+impl PartialEq for Shown<'_> {
+    fn eq(&self, other: &Self) -> bool {
+        shown_alike(self.0, other.0)
+    }
+}
+
+/// Whether `a` and `b` are the same task, or differ only in their holders' health. Every field is
+/// named, so a new one is compared or the build fails.
+#[expect(clippy::float_cmp, reason = "the task's own derived equality")]
+fn shown_alike(a: &symphony_api::Task, b: &symphony_api::Task) -> bool {
+    let symphony_api::Task {
+        slug,
+        title,
+        body,
+        status,
+        priority,
+        parent,
+        created_by,
+        created,
+        updated,
+        links,
+        depends,
+        roles,
+        instruction,
+        fields,
+    } = a;
+    *slug == b.slug
+        && *title == b.title
+        && *body == b.body
+        && *status == b.status
+        && *priority == b.priority
+        && *parent == b.parent
+        && *created_by == b.created_by
+        && *created == b.created
+        && *updated == b.updated
+        && *links == b.links
+        && *depends == b.depends
+        && *instruction == b.instruction
+        && *fields == b.fields
+        && roles_alike(roles, &b.roles)
+}
+
+/// Whether `a` and `b` are the same roles, their holders' health aside.
+#[expect(clippy::float_cmp, reason = "the role's own derived equality")]
+fn roles_alike(a: &[symphony_api::Role], b: &[symphony_api::Role]) -> bool {
+    a.len() == b.len()
+        && a.iter().zip(b).all(|(a, b)| {
+            let symphony_api::Role {
+                handle,
+                role,
+                since,
+                expires,
+                health: _,
+            } = a;
+            *handle == b.handle && *role == b.role && *since == b.since && *expires == b.expires
+        })
+}
+
+/// Whether the board's tasks are the same in `old` and `new`, their holders' health aside.
+fn tasks_alike(old: &[symphony_api::Task], new: &[symphony_api::Task]) -> bool {
+    old.len() == new.len() && old.iter().zip(new).all(|(a, b)| shown_alike(a, b))
+}
+
 fn task_changes(changes: &mut Vec<Value>, old: &[symphony_api::Task], new: &[symphony_api::Task]) {
-    // Insertions/removals use the same keyed list protocol. Existing records send fields only,
-    // otherwise a status change would retransmit a task's potentially very long brief.
+    // Insertions/removals use the same keyed list protocol. An existing task is sent once, as the
+    // fields that changed, never its whole record again: a status change would retransmit a long
+    // brief, and a client that does not hold the task reads it with the view that shows it.
+    let (shown_old, shown_new): (Vec<_>, Vec<_>) = (
+        old.iter().map(Shown).collect(),
+        new.iter().map(Shown).collect(),
+    );
     let mut basic = Vec::new();
-    diff_items(&mut basic, "task", old, new, |t| t.slug.clone());
+    diff_items(&mut basic, "task", &shown_old, &shown_new, |t| {
+        t.0.slug.clone()
+    });
     for event in basic {
         if let Some(key) = event["data"]["key"].as_str()
             && event["region"] == "task"
@@ -1785,15 +1932,19 @@ fn task_changes(changes: &mut Vec<Value>, old: &[symphony_api::Task], new: &[sym
             field!(updated);
             field!(links);
             field!(depends);
-            field!(roles);
             field!(instruction);
+            // Roles that changed say their holders' health as it is now.
+            if !roles_alike(&before.roles, &after.roles) {
+                fields.roles = Some(after.roles.clone());
+            }
             if before.parent != after.parent {
                 fields.parent = Some(after.parent.clone().unwrap_or_default());
             }
-            changes.push(json!({"region":"task-fields", "data":symphony_api::TaskChange { key:key.into(), fields }}));
-            let mut summary = after.clone();
-            summary.body.clear();
-            changes.push(json!({"region":"task-summary", "data":symphony_api::ItemChange { key:key.into(), value:Some(summary), removed:false }}));
+            // A change of what no field carries (a plugin's board fields, which no page draws)
+            // sends nothing.
+            if fields != symphony_api::TaskFields::default() {
+                changes.push(json!({"region":"task-fields", "data":symphony_api::TaskChange { key:key.into(), fields }}));
+            }
         } else {
             changes.push(event);
         }
@@ -1808,6 +1959,7 @@ mod machine_work;
 mod owner_asks;
 mod reports;
 mod startup;
+mod task_asks;
 
 #[cfg(test)]
 mod owner_asks_tests;
@@ -1844,6 +1996,9 @@ mod no_documents_tests;
 
 #[cfg(test)]
 mod read_paths_tests;
+
+#[cfg(test)]
+mod feed_deltas_tests;
 
 #[cfg(test)]
 mod session_go_tests;

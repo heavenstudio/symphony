@@ -18,25 +18,25 @@ const failed = new Set();
 const preloaded = new Set();
 // The page's own reads in flight (its modules' wasm, its data) and when the last one answered:
 // the idle warm-up waits until none has been in flight for half a second, and after a read that
-// got no answer (its time ran out, the link dropped), until one does.
+// got no answer (its time ran out, the link dropped), until one does. A read the page gave up (an
+// `AbortError`) is neither: the web client's reads whose time ran out fail with a `TimeoutError`
+// (apps/symphony-web/src/request.ts).
 let reads = 0, answered = 0;
 const read = window.fetch;
 window.fetch = (...args) => (reads++, read(...args).then(
     response => (answered = Date.now(), response),
-    error => { answered = Infinity; throw error; },
+    error => { if (error?.name !== "AbortError") answered = Infinity; throw error; },
 ).finally(() => reads--));
 
 // The modules every page kind shares, each loaded once on its first use and kept mounted: the
-// chat and activity panel, and the overlay host that draws a select's popup or the picture
-// viewer for any module (components/deferred.rs). A select never waits on the chat's module.
+// chat and activity panel (the program's), and the overlay host that draws a select's popup or the
+// picture viewer for any module (the web client's, apps/symphony-web/src/overlay.tsx). A select
+// never waits on the chat's module.
 // Each has its root, its ready flag (`reviewPanelReady`, `reviewOverlayReady`) and event
-// (`review:panel-ready`...), and its failure notice (`#panel-error`...) with a retry. The task
-// timeline's (task_timeline.rs) is one too, but cold: never warmed, it is loaded only for a task
-// page that asks for it, and its root goes in that page's box.
+// (`review:panel-ready`...), and its failure notice (`#panel-error`...) with a retry.
 const PERSISTENT = {
     panel: { root: "quick-root", ready: "reviewPanelReady", said: "Conversation could not be loaded. ", retry: "Retry loading conversation" },
     overlay: { root: "overlay-root", ready: "reviewOverlayReady", said: "Menus and pictures could not be loaded. ", retry: "Retry loading menus" },
-    timeline: { root: "timeline-root", ready: "reviewTimelineReady", said: "The timeline could not be loaded. ", retry: "Retry loading the timeline", cold: true },
 };
 const persistent = new Map();
 
@@ -75,37 +75,53 @@ async function gone() {
     return true;
 }
 
+// The two the program's chunk loader (assets/chunks.js) says a failed load of its media layer with:
+// what the shell's own failures use, so every page's first visit carries none of the program's.
+window.reviewShell = { gone, alarm };
+
+// Each of `hrefs` asked for once, by a link of `attributes`, beside the module that needs it.
+function preload(hrefs, attributes) {
+    for (const href of hrefs) {
+        if (href && !preloaded.has(href)) {
+            preloaded.add(href);
+            document.head.insertAdjacentHTML("beforeend", `<link ${attributes} href="${href}">`);
+        }
+    }
+}
+
 async function initialize(kind) {
     const spec = modules[kind];
+    // A kind of the web client (apps/symphony-web) is its script, which exports its own `run` and
+    // `stop`: no wasm, no initializer to wait on. The script asks for the chunks it imports only
+    // once it is in: a module preload asks for them beside it.
+    if (!spec.wasm) {
+        preload(spec.imports, 'rel="modulepreload"');
+        return import(spec.script);
+    }
     // The module's initializer fetches its wasm only once its script has been fetched and run, and
     // a program kind's run its chunk (src/split.rs) only once that wasm has: a preload asks for all
     // at once, and each fetch takes the preloaded response.
-    for (const href of [spec.wasm, spec.chunk]) {
-        if (href && !preloaded.has(href)) {
-            preloaded.add(href);
-            document.head.insertAdjacentHTML("beforeend", `<link rel="preload" as="fetch" crossorigin href="${href}">`);
-        }
-    }
+    preload([spec.wasm, spec.chunk], 'rel="preload" as="fetch" crossorigin');
     const module = await import(spec.script);
     try {
         if (failed.has(kind)) await module.default({ module_or_path: spec.wasm });
         else await window[`reviewModuleReady_${kind}`];
         failed.delete(kind);
     } catch (error) { failed.add(kind); throw error; }
-    // A program kind draws nothing before its chunk is in: awaited here, the page shown before stays
-    // until then, and a chunk that does not load rejects while it still shows (chunks.js forgets the
-    // failure, so a retry fetches it again). The kind's `run` then finds the chunk in.
+    // A program kind (the chat) draws nothing before its chunk is in: awaited here, the
+    // page and the loading sheet stay until then, and a chunk that does not load rejects while they
+    // still show (chunks.js forgets the failure, so a retry fetches it again). The kind's `run` then
+    // finds the chunk in.
     if (spec.chunk) await window.reviewChunk(kind);
     return window[`reviewModule_${kind}`];
 }
 
 // Every module's Dioxus hears a bubbling event at its root and gives it to the element of its own
 // that bears the number in the `data-dioxus-id` nearest the event's target; each module counts
-// those numbers on its own. A root inside another's (the timeline's, in a task page's box) would
-// have its events taken by the outer module too, for whatever element of its own bears the same
-// number (the timeline's Show all and the page's +). So what listens on a module's root hears only
-// the events of that module's own part of the page, the ones whose nearest module root on their
-// path is that root.
+// those numbers on its own. A root inside another's would have its events taken by the outer module
+// too, for whatever element of its own bears the same number. So what listens on a module's root
+// hears only the events of that module's own part of the page, the ones whose nearest module root
+// on their path is that root.
 // Nothing is stopped: the inner module hears the event at its own root, and the document and the
 // window after, as before.
 const moduleRoots = new WeakSet();
@@ -245,18 +261,53 @@ window.reviewOverlay = request => {
     ensure("overlay").then(() => dispatchEvent(new Event("review:overlay")));
 };
 
+// The box that scrolls around `node`: its nearest ancestor that scrolls, or none for the page.
+function scrollerOf(node) {
+    while ((node = node.parentElement) && !(node.scrollHeight > node.clientHeight && /auto|scroll/.test(getComputedStyle(node).overflowY)));
+    return node;
+}
+
+// Whether `r` meets the window, cut to `clip` (a scroller's box) when there is one, and 600 px
+// above and below it.
+function reaches(r, clip) {
+    return r.bottom > r.top && r.right > r.left
+        && r.bottom > Math.max(0, clip?.top ?? 0) - 600 && r.top < Math.min(innerHeight, clip?.bottom ?? innerHeight) + 600
+        && r.right > Math.max(0, clip?.left ?? 0) && r.left < Math.min(innerWidth, clip?.right ?? innerWidth);
+}
+
+// Whether a box `selector` names is within a sentinel's reach: 600 px above and below what its own
+// scroller shows of the window (`.viewport-sentinel`, as `viewport::waits_near` decides).
+function near(selector) {
+    return [...document.querySelectorAll(selector)].some(box => {
+        const r = box.getBoundingClientRect();
+        return reaches(r) && reaches(r, scrollerOf(box)?.getBoundingClientRect());
+    });
+}
+
+// Whether a reserved box waits to draw within its sentinel's reach, for a box past it never draws.
+function pendingNear() {
+    return near("[data-pending=true]");
+}
+
+// Call `stop` on the reader's own scroll, click or key (typing in a field aside); what it returns
+// stops listening.
+function onGesture(stop) {
+    const gestures = ["wheel", "touchstart", "mousedown", "keydown"];
+    const gesture = event => { if (event.type !== "keydown" || !event.target.matches?.("input, textarea, select, [contenteditable]")) stop(); };
+    gestures.forEach(kind => addEventListener(kind, gesture, true));
+    return () => gestures.forEach(kind => removeEventListener(kind, gesture, true));
+}
+
 // A live update about to be drawn keeps what the reader looks at in place: the focused field on
 // the screen, else the first of `rows` on it. Only where the reader has scrolled: the box that
 // scrolls around it once it is off its top, else the page once it is. One at its top shows
-// what lands at the top. Each frame, until four pass with nothing moved and no reserved box within
-// 600 px of the screen waiting to draw (its `.viewport-sentinel`'s reach), thirty at most, the
-// box and then the page scroll by however far it moved. The reader's own scroll, click or key
-// (typing in a field aside) ends the hold.
+// what lands at the top. Each frame the box and then the page scroll by however far it moved, until
+// four pass with nothing moved and no reserved box waiting to draw within its sentinel's reach
+// (`pendingNear`). However many frames that takes, as on a slow phone, and 1800 at most (half a
+// minute at sixty a second; a hidden tab draws none), a backstop only a box that never draws
+// reaches. A move the box and the page cannot take back (one at its end) counts as nothing moved
+// once it stays. The reader's own scroll, click or key ends the hold.
 window.reviewHoldPlace = rows => {
-    const scrollerOf = node => {
-        while ((node = node.parentElement) && !(node.scrollHeight > node.clientHeight && /auto|scroll/.test(getComputedStyle(node).overflowY)));
-        return node;
-    };
     const shows = node => {
         const top = node.getBoundingClientRect().top, box = scrollerOf(node)?.getBoundingClientRect();
         return top >= 0 && top < innerHeight && (!box || (top >= box.top && top < box.bottom));
@@ -266,30 +317,126 @@ window.reviewHoldPlace = rows => {
     if (!anchor) return;
     const scroller = scrollerOf(anchor), page = scrollY > 0;
     if (scroller ? scroller.scrollTop <= 0 : !page) return;
-    const top = anchor.getBoundingClientRect().top, gestures = ["wheel", "touchstart", "mousedown", "keydown"];
-    let stopped = false, frame = 0, quiet = 0;
-    const gesture = event => { if (event.type !== "keydown" || !event.target.matches?.("input, textarea, select, [contenteditable]")) stopped = true; };
-    const near = () => [...document.querySelectorAll("[data-pending=true]")].some(box => {
-        const r = box.getBoundingClientRect();
-        return r.bottom > r.top && r.right > r.left && r.bottom > -600 && r.top < innerHeight + 600 && r.right > 0 && r.left < innerWidth;
-    });
+    const top = anchor.getBoundingClientRect().top;
+    let stopped = false, frame = 0, quiet = 0, stuck = 0;
+    const listening = onGesture(() => { stopped = true; });
     const hold = () => {
         if (!stopped && anchor.isConnected) {
-            let moved = anchor.getBoundingClientRect().top - top;
-            quiet = Math.abs(moved) >= 0.5 || near() ? 0 : quiet + 1;
-            if (Math.abs(moved) >= 0.5 && scroller) {
+            const moved = anchor.getBoundingClientRect().top - top;
+            let left = moved;
+            if (Math.abs(left) >= 0.5 && scroller) {
                 const before = scroller.scrollTop;
-                scroller.scrollTop = before + Math.round(moved);
-                moved -= scroller.scrollTop - before;
+                scroller.scrollTop = before + Math.round(left);
+                left -= scroller.scrollTop - before;
             }
-            if (Math.abs(moved) >= 0.5 && page) scrollBy(0, moved);
-            if (++frame < 30 && quiet < 4) return requestAnimationFrame(hold);
+            if (Math.abs(left) >= 0.5 && page) {
+                const before = scrollY;
+                scrollBy(0, left);
+                left -= scrollY - before;
+            }
+            quiet = Math.abs(moved - stuck) >= 0.5 || pendingNear() ? 0 : quiet + 1;
+            stuck = left;
+            if (quiet < 4 && ++frame < 1800) return requestAnimationFrame(hold);
         }
-        gestures.forEach(kind => removeEventListener(kind, gesture, true));
+        listening();
     };
-    gestures.forEach(kind => addEventListener(kind, gesture, true));
     requestAnimationFrame(hold);
 };
+
+// The id the address's fragment names, decoded: empty for none, null for one that does not decode.
+function addressed() {
+    try { return decodeURIComponent(location.hash.slice(1)); } catch { return null; }
+}
+
+// The keys that scroll the page outside a field (and Space outside a button it would press).
+const SCROLL_KEYS = ["PageUp", "PageDown", "Home", "End", "ArrowUp", "ArrowDown", " "];
+
+// Call `stop` on the reader's own input that scrolls the page: a wheel, a touch that moves, a press
+// on the page's own scrollbar (its target the root element) or a scroll key. A click, a tap, a
+// selection or any other key scrolls nothing. What it returns stops listening.
+function onScrollInput(stop) {
+    const kinds = ["wheel", "touchmove", "mousedown", "keydown"];
+    const takes = event => `input, textarea, select, [contenteditable]${event.key === " " ? ", button, summary" : ""}`;
+    const input = event => {
+        if (event.type === "mousedown" ? event.target === document.documentElement
+            : event.type !== "keydown" || (SCROLL_KEYS.includes(event.key) && !event.target.matches?.(takes(event)))) stop();
+    };
+    kinds.forEach(kind => addEventListener(kind, input, { capture: true, passive: true }));
+    return () => kinds.forEach(kind => removeEventListener(kind, input, { capture: true }));
+}
+
+// The landing on the element the address names: one hold for each navigation (`requested`), from
+// the first call to land it (`land`, from `scrollAnchor` here and from the web client's route.ts:
+// at the page's scroll padding, just below the header). Each frame the element is scrolled into
+// view again once something drawn moved it, or the page's length changed (one at the page's end
+// may go higher now). The browser's own scroll anchoring holds none of this while the page is
+// under its ghost (`.settle`, hidden), and the sections that draw above a card once the landing
+// brings them near grow it by their pictures. The landing ends when it goes quiet: four frames
+// with nothing moved, no reserved box waiting within its sentinel's reach (`pendingNear`) and no
+// region busy within that reach (`aria-busy`: a ghost not lifted, a read not in), or 1800 at most,
+// a backstop as `reviewHoldPlace`'s. It ends too at the reader's input that scrolls
+// (`onScrollInput`), and at any scroll that moved the page and the element alike (find in the
+// page, a focus brought into view, a script: not a draw, the browser's own pull back at the page's
+// end aside). Only the next navigation lands again: a later call (a section's read in, the page's
+// last, an outline read again) opens what holds the element while the hold runs, and does nothing
+// once it has ended, leaving the page where the reader, or what they did, put it.
+let landing = { generation: 0, ended: true, place: null, listening: () => {} };
+
+// Where `target` and the page are: its top, the page's scroll and its scroller's, the page's length.
+function placeOf(target) {
+    return [target.getBoundingClientRect().top, scrollY, scrollerOf(target)?.scrollTop ?? 0, document.documentElement.scrollHeight];
+}
+
+// Whether the page went from `before` to `now` (each `placeOf`) by a scroll that moved the element
+// alike.
+function scrolledAway([top, y, inner], [now, nowY, nowInner, nowLength]) {
+    const scrolled = nowY - y + nowInner - inner;
+    const pulledBack = nowY < y && nowY >= nowLength - document.documentElement.clientHeight - 1;
+    return Math.abs(scrolled) >= 0.5 && !pulledBack && Math.abs(now - top + scrolled) < 1;
+}
+
+function endLanding() {
+    landing.ended = true;
+    landing.listening();
+}
+
+// Land on `target`, the element the address names, once for each navigation: open every `details`
+// around it, scroll it into view and hold it there (above).
+function land(target) {
+    const held = landing.generation === requested;
+    if (held && landing.ended) return;
+    for (let parent = target; parent; parent = parent.parentElement) {
+        if (parent instanceof HTMLDetailsElement) parent.open = true;
+    }
+    // The hold running brings it back into view, from where it now is.
+    if (held) return;
+    endLanding();
+    const current = { generation: requested, ended: false, place: null, listening: () => {} };
+    landing = current;
+    target.scrollIntoView();
+    current.place = placeOf(target);
+    current.listening = onScrollInput(endLanding);
+    const id = target.id, href = location.href;
+    let frame = 0, quiet = 0;
+    const hold = () => {
+        if (current.ended || landing !== current) return;
+        if (location.href !== href) return endLanding();
+        // An element drawn again in its place is held in turn; none at all is nothing quiet.
+        const now = document.getElementById(id);
+        if (now) {
+            const before = current.place, there = placeOf(now);
+            if (scrolledAway(before, there)) return endLanding();
+            if (Math.abs(there[0] - before[0]) >= 0.5 || there[3] !== before[3]) now.scrollIntoView();
+            current.place = placeOf(now);
+            const moved = Math.abs(there[0] - before[0]) >= 0.5 || Math.abs(current.place[0] - before[0]) >= 0.5;
+            quiet = moved || pendingNear() || near("[aria-busy=true]") ? 0 : quiet + 1;
+        } else quiet = 0;
+        if (quiet < 4 && ++frame < 1800) requestAnimationFrame(hold);
+        else endLanding();
+    };
+    requestAnimationFrame(hold);
+}
+window.reviewLand = land;
 
 // `then`, once the page has drawn its data (none of its reads in flight for half a second, the
 // last of them answered) and the browser is idle.
@@ -300,52 +447,23 @@ function settled(then) {
     }, { timeout: 5000 });
 }
 
-// A task page's box asks for its task's timeline (timeline_slot.rs: owner, slug, revision), and
-// says when it is gone (`kind: "close"`). Boxes are numbered as they mount, so an ask from a box
-// older than the one held, or from one that has closed, came late and is dropped. The timeline's
-// root sits in the box of the task asked for, else hidden at the body's end, kept for the next box:
-// held here, as a box the page takes down takes the root out of the document with it.
-let timelineRoot, timelineClosed = 0;
-function placeTimeline() {
-    const root = timelineRoot ||= mountFor("timeline");
-    const request = window.reviewTimelineRequest, slot = request && document.getElementById("timeline-slot");
-    if (slot && slot.dataset.slug === request.slug) {
-        if (root.parentElement !== slot) slot.append(root);
-        root.hidden = false;
-    } else {
-        root.hidden = true;
-        if (root.parentElement !== document.body) document.body.append(root);
-    }
-}
-window.reviewTimeline = request => {
-    const held = window.reviewTimelineRequest;
-    if (request.kind === "close") {
-        timelineClosed = Math.max(timelineClosed, request.owner);
-        if (held?.owner !== request.owner) return;
-        window.reviewTimelineRequest = null;
-    } else if (request.owner <= timelineClosed || request.owner < (held?.owner ?? 0)) return;
-    else window.reviewTimelineRequest = request;
-    placeTimeline();
-    if (!window.reviewTimelineRequest) return dispatchEvent(new Event("review:timeline"));
-    const load = () => {
-        const loading = ensure("timeline");
-        placeTimeline();
-        loading.then(() => { placeTimeline(); dispatchEvent(new Event("review:timeline")); });
-    };
-    if (persistent.has("timeline")) load(); else settled(load);
-};
+// A task page's timeline box loads the timeline's chunk once the page has drawn its data and the
+// browser is idle (apps/symphony-web/src/timeline-slot.tsx), as a persistent module's files are
+// warmed: the page's own reads first.
+window.reviewSettled = settled;
 
 // Once the first page has drawn its data (none of its reads in flight for half a second, the last
 // of them answered) and the
 // browser is idle, the persistent modules' files go into the HTTP cache at the lowest priority,
 // nothing evaluated, so a first open waits on no network: the chat's first (the program's script
-// and main module, which a task page has in already, and its chunk), then, once its chunk (or its
-// own load, if a click came first) is in, the menus', so no two share a slow link. A browser asking
-// to save data, or a 2g link, skips it; the first open then fetches them. A browser without idle
-// callbacks warms them at once; one without prefetch (Safari) ignores it.
+// and main module, and its chunk), then, once its chunk (or its own load, if a click came first)
+// is in, the menus' (the web client's script, the chunks it imports that the page has not, and its
+// styles), so no two share a slow link. A browser asking to save data, or a 2g link, skips it; the
+// first open then fetches them. A browser without idle callbacks warms them at once; one without
+// prefetch (Safari) ignores it.
 let warmed = false;
 function warm() {
-    const link = navigator.connection, kinds = Object.keys(PERSISTENT).filter(kind => !PERSISTENT[kind].cold);
+    const link = navigator.connection, kinds = Object.keys(PERSISTENT);
     if (warmed || link?.saveData || /2g/.test(link?.effectiveType)) return;
     warmed = true;
     (window.requestIdleCallback || setTimeout)(function next() {
@@ -353,11 +471,11 @@ function warm() {
         const kind = kinds.shift();
         if (!kind) return;
         if (persistent.has(kind)) return persistent.get(kind).then(next);
-        const { script, wasm, styles, chunk } = modules[kind];
-        for (const href of [wasm, script, chunk, ...styles]) {
-            if (!document.querySelector(`link[href="${href}"]`)) document.head.insertAdjacentHTML("beforeend", `<link rel="prefetch" href="${href}">`);
+        const { script, wasm, styles, chunk, imports = [] } = modules[kind];
+        for (const href of [wasm, script, chunk, ...imports, ...styles]) {
+            if (href && !document.querySelector(`link[href="${href}"]`)) document.head.insertAdjacentHTML("beforeend", `<link rel="prefetch" href="${href}">`);
         }
-        const last = document.querySelector(`link[rel=prefetch][href="${chunk}"]`);
+        const last = document.querySelector(`link[rel=prefetch][href="${chunk || script}"]`);
         if (last) last.onload = last.onerror = next; else next();
     }, { timeout: 5000 });
 }
@@ -390,7 +508,7 @@ function ahead(generation, tries = 60) {
             if (path.startsWith("@")) continue;
             path = path.replace(/^doc\//, "");
             const api = name => `${base}/api/${name}`, encoded = encodeURIComponent;
-            if (kind === "tasks" && /^task\/./.test(path)) {
+            if (kind === "task" && /^task\/./.test(path)) {
                 const slug = path.slice(5).replace(/\/$/, "");
                 items.set(`task:${slug}`, ["task", [["page", api(`task-page?slug=${encoded(slug)}`)], ["thread", api(`task-history?slug=${encoded(slug)}`)]]]);
             } else if (kind === "docs" && path.endsWith(".md")) {
@@ -409,7 +527,7 @@ function ahead(generation, tries = 60) {
 
 // The routes the Symphony answers itself, symphony_api::SYMPHONY_ROUTES word for word (a test
 // keeps them equal): they win over every entrypoint.
-const SYMPHONY_ROUTES = ["tasks", "task", "agents", "queue", "reports", "api", "assets", "static", "thumb", "x", "artifacts/uploads", "app", "doc", "history", "diff", "wasm", "_dioxus", "favicon.ico"];
+const SYMPHONY_ROUTES = ["tasks", "task", "agents", "queue", "reports", "runs", "api", "assets", "static", "thumb", "x", "artifacts/uploads", "app", "doc", "history", "diff", "wasm", "_dioxus", "favicon.ico"];
 
 function within(route, path) {
     return route === "" || path === route || path.startsWith(`${route}/`);
@@ -452,31 +570,30 @@ function route(path) {
     path = path.replace(/^doc\//, "");
     const clean = path.replace(/\/$/, "");
     if (clean === "tasks" || clean === "task") return "board";
-    if (path.startsWith("task/") || clean === "agents") return "tasks";
-    if (clean === "queue" || clean === "reports") return clean;
+    if (path.startsWith("task/")) return "task";
+    if (clean === "queue" || clean === "reports" || clean === "runs" || clean === "agents") return clean;
     const view = project();
     const pages = (view.nav || []).map(item => item.href.replace(/^\/+|\/+$/g, "")).filter(Boolean);
     if (pages.includes(clean)) return "docs";
     // A document or folder page of an entrypoint (ProjectView::is_document_route): a trailing
-    // slash or an entrypoint's own route names a folder, whatever its name holds.
+    // slash or an entrypoint's own route names a folder, whatever its name holds; an HTML page (a
+    // name before `.html` or `.htm`: `.html` alone names none, as symphony_api::is_html) is a
+    // document, its frame drawn in the documents' kind.
     const urls = view.entrypoints?.length ? view.entrypoints : ["docs"];
     const name = clean.split("/").pop();
     if (!SYMPHONY_ROUTES.concat(pages).some(taken => within(taken, clean))
         && urls.some(url => within(url, clean))
-        && (path.endsWith("/") || urls.includes(clean) || !name.includes(".") || name.endsWith(".md"))) return "docs";
+        && (path.endsWith("/") || urls.includes(clean) || !name.includes(".") || name.endsWith(".md")
+            || /.\.html?$/i.test(name))) return "docs";
     return clean === "" ? "review" : null;
 }
 
 function scrollAnchor(preserveScroll) {
-    let id;
-    try { id = decodeURIComponent(location.hash.slice(1)); } catch { return; }
+    const id = addressed();
+    if (id === null) return;
     if (!id) { if (!preserveScroll) scrollTo(0, 0); return; }
     const target = document.getElementById(id);
-    if (!target) return;
-    for (let parent = target; parent; parent = parent.parentElement) {
-        if (parent instanceof HTMLDetailsElement) parent.open = true;
-    }
-    target.scrollIntoView();
+    if (target) land(target);
 }
 
 async function show(generation, scroll) {
@@ -531,6 +648,7 @@ function navigate() {
         dispatchEvent(new Event("review:overlay"));
         overlay.callback?.(null);
     }
+    endLanding();
     const generation = ++requested;
     const scroll = { x: scrollX, y: scrollY, initial: !active };
     document.documentElement.dataset.navigation = "loading";

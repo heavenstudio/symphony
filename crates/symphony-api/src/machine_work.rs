@@ -3,6 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[serde(rename_all = "snake_case")]
 pub enum WorkFreshness {
     #[default]
@@ -15,6 +16,7 @@ pub enum WorkFreshness {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[serde(rename_all = "snake_case")]
 pub enum WorkKind {
     Build,
@@ -25,6 +27,7 @@ pub enum WorkKind {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[serde(rename_all = "snake_case")]
 pub enum WorkState {
     Queued,
@@ -32,6 +35,7 @@ pub enum WorkState {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct WorkOperation {
     pub machine_id: Option<String>,
     /// None when legacy evidence has no operation nonce.
@@ -62,6 +66,7 @@ impl WorkOperation {
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct WorkCounts {
     pub running_builds: usize,
     pub queued_builds: usize,
@@ -70,6 +75,7 @@ pub struct WorkCounts {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct MachineObservation {
     pub machine_id: String,
     pub label: String,
@@ -85,6 +91,7 @@ pub struct MachineObservation {
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct MachineWork {
     pub freshness: WorkFreshness,
     pub machines: Vec<MachineObservation>,
@@ -122,6 +129,7 @@ impl MachineWork {
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct WorkGuidance {
     pub build: Option<u32>,
     pub test: Option<u32>,

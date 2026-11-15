@@ -79,7 +79,9 @@ pub fn excerpt(text: &str) -> String {
     )
 }
 
-fn cut(text: &str, limit: usize) -> String {
+/// `text` whole when it holds at most `limit` characters; else its words that fit before an
+/// ellipsis, the cut at a word's end and no dangling comma, colon or dash before the `…`.
+pub(crate) fn cut(text: &str, limit: usize) -> String {
     if text.chars().count() <= limit {
         return text.to_string();
     }
@@ -349,6 +351,8 @@ pub fn snapshot(
     // Branch discovery already removes identical copies carried by stacked branches.
     let plugins = Plugins::of(root);
     let Merged { proposals, pages } = merge_decisions(&mut docs, branch_cards, &plugins);
+    // One read of the registers: a plugin's process is asked every card at once.
+    let plugins = plugins.reading(root, &docs);
     let held = held(&docs, &pages);
     let task_names = if proposals.is_empty() {
         BTreeMap::new()

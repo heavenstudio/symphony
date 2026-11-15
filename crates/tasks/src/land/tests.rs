@@ -87,6 +87,14 @@ keys = { "the index" = ["tools/index-key"] }
 
 [board]
 on_review = ["just", "review"]
+
+[[entrypoints]]
+url = "spec"
+folder = "design/spec"
+
+[[entrypoints]]
+url = ""
+folder = "."
 "#,
     )
     .unwrap();
@@ -115,8 +123,11 @@ on_review = ["just", "review"]
             push: false,
             timeout: TIMEOUT,
             check_paths: check_paths::defaults(),
+            documents: vec!["design/spec".into(), String::new()],
         }
     );
+    assert_eq!(Settings::default().documents, ["docs"]);
+    assert_eq!(Settings::parse("").unwrap().documents, ["docs"]);
 }
 
 #[test]
@@ -475,7 +486,7 @@ fn only_a_fresh_reviewers_approve_counts_and_the_orchestrators_on_a_fast_fix() {
     let orchestrated = |by: &str| {
         format!(
             "tools/lamp's approve is {by}'s, which orchestrated it: a fresh reviewer approves it, \
-             and its orchestrator only a fast fix (filed with `just tasks create --fast-fix WHY`)"
+             and its orchestrator only a fast fix (a task filed with the fast-fix mark)"
         )
     };
     // Its orchestrator now, and one that orchestrated it before and reviews it now.
@@ -493,7 +504,7 @@ fn only_a_fresh_reviewers_approve_counts_and_the_orchestrators_on_a_fast_fix() {
     assert_eq!(
         independent(&plain, &approval_by("owner"), &held).unwrap_err(),
         "tools/lamp's approve is owner's, which filed it: a fresh reviewer approves it, and its \
-         orchestrator only a fast fix (filed with `just tasks create --fast-fix WHY`)"
+         orchestrator only a fast fix (a task filed with the fast-fix mark)"
     );
     for by in ["ochre", "taupe"] {
         assert_eq!(
@@ -1023,12 +1034,27 @@ fn a_land_runs_only_by_its_recipe() {
 #[test]
 fn no_approval_stands_on_open_work_on_work_closed_since_or_closed_another_way() {
     let approved = thread(&[("verdict", "slate", "approve: good")]);
-    for status in ["ready", "in_progress", "review", "blocked"] {
+    let approve = "a fresh reviewer, one that did not write it, approves it naming the tip it \
+                   read: `just tasks verdict tools/lamp approve \"FULL_SHA: why\" --as HANDLE`";
+    // In review, the reviewer's command; before it, the move to review first.
+    assert_eq!(
+        approval(&task("review"), &approved).unwrap_err(),
+        format!("tools/lamp is review, with no approving verdict standing: {approve}")
+    );
+    for status in ["ready", "in_progress", "blocked"] {
         assert_eq!(
             approval(&task(status), &approved).unwrap_err(),
-            format!("tools/lamp is {status}, with no approving verdict standing")
+            format!(
+                "tools/lamp is {status}, with no approving verdict standing: it goes to review \
+                 (`just tasks move tools/lamp review`), where {approve}"
+            )
         );
     }
+    // Cancelled work is approved by nobody.
+    assert_eq!(
+        approval(&task("cancelled"), &approved).unwrap_err(),
+        "tools/lamp is cancelled, with no approving verdict standing"
+    );
     let landed = thread(&[
         ("verdict", "slate", "approve: good"),
         (

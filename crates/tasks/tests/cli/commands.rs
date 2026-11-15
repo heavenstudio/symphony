@@ -122,6 +122,30 @@ fn callback_sets_or_clears_the_session_url_alone_or_beside_a_channel() {
 }
 
 #[test]
+fn a_plain_orchestrator_callback_says_it_hears_chat_only_as_a_fallback() {
+    let c = Case::new();
+    let me = c.register("orchestrator");
+    assert_eq!(
+        c.ok(&me, &["callback", "codex:abcdef01"]),
+        format!(
+            "CALLBACK {me} codex:abcdef01\n\
+             CHAT {me} (fallback: an orchestrator with a callback; --chat takes the seat)\n"
+        )
+    );
+    assert_eq!(
+        c.ok(&me, &["callback", "codex:abcdef01", "--chat"]),
+        format!("CALLBACK {me} codex:abcdef01\nCHAT {me}\n")
+    );
+    // A worker's plain callback hears no chat, and nobody else is there to.
+    let worker = c.register("worker");
+    c.ok(&me, &["callback", "--off"]);
+    assert_eq!(
+        c.ok(&worker, &["callback", "codex:abcdef02"]),
+        format!("CALLBACK {worker} codex:abcdef02\nCHAT nobody registered\n")
+    );
+}
+
+#[test]
 fn a_refused_callback_leaves_the_session_url_as_it_was() {
     let c = Case::new();
     let me = c.register("worker");
@@ -333,25 +357,21 @@ fn create_by_an_orchestrator_takes_the_role_and_any_other_filer_is_given_one() {
     );
 }
 
-/// With no orchestrator that stays a filed task waits, said so. An orchestrator that only
+/// With no orchestrator that stays a filed task waits, said so once any orchestrator is on the
+/// board: a board with none, a new project's, says nothing of it. An orchestrator that only
 /// registers is given nothing; a lone new one waiting is given it once it has waited past the
 /// first live line, at a look of its `tasks wait`, told in one GIVEN line.
 #[test]
 fn a_task_filed_with_no_orchestrator_that_stays_waits_for_a_new_one_to_wait() {
     let mut c = Case::new();
     let worker = c.register("worker");
+    // No orchestrator on the board: nothing is said of one.
     assert_eq!(
         c.ok(&worker, &["create", "sim/loose", "Loose"]),
-        "created sim/loose (ready); it waits for an orchestrator that stays\n"
+        "created sim/loose (ready)\n"
     );
     let shown = c.ok(&worker, &["show", "sim/loose"]);
-    assert!(
-        shown.contains(
-            "  waits for an orchestrator that stays, for 0 min: the first live past its first live \
-             line that waits, watches or holds a task is given it\n"
-        ),
-        "{shown}"
-    );
+    assert!(!shown.contains("orchestrator"), "{shown}");
     // Registering says the handle alone and gives nothing, nor does its first wait.
     let registered = c.run_as("", &["register", "--kind", "orchestrator"], "");
     assert_eq!((registered.code, registered.err.as_str()), (0, ""));
@@ -361,6 +381,12 @@ fn a_task_filed_with_no_orchestrator_that_stays_waits_for_a_new_one_to_wait() {
         "{:?}",
         registered.out
     );
+    // One is on the board now, which does not stay yet: the task is said to wait for one.
+    let waits = "  waits for an orchestrator that stays, for 0 min: the first live past its first \
+                 live line that waits, watches or holds a task is given it\n";
+    // (`create` says it waits the same way: tests/cli/pull/wait.rs.)
+    let shown = c.ok(&worker, &["show", "sim/loose"]);
+    assert!(shown.contains(waits), "{shown}");
     let first = c.ok(&handle, &["wait", "--timeout", "0"]);
     assert!(!first.contains("GIVEN"), "{first}");
     assert!(
@@ -386,29 +412,31 @@ fn a_task_filed_with_no_orchestrator_that_stays_waits_for_a_new_one_to_wait() {
     assert!(!again.contains("GIVEN"), "{again}");
 }
 
-/// A fast fix filed from the command line: its orchestrator, which did not execute it, gives the
-/// verdict a reviewer would; the executor never does.
+/// The command line files no fast fix: a task needing no reviewer says so by its assessment
+/// (`tests/sweep/land_stamps.rs`). One an older board filed with the mark, here written through the
+/// store as that board wrote it, keeps today's path until it closes: its orchestrator, which did
+/// not execute it, gives the verdict a reviewer would; the executor never does.
 #[test]
-fn a_fast_fix_is_filed_with_its_risk_and_approved_by_its_orchestrator() {
+fn a_fast_fix_is_no_longer_filed_and_one_filed_before_is_approved_by_its_orchestrator() {
     let c = Case::new();
     let orch = c.register("orchestrator");
     let exe = c.register_with("worker", &["--parent", &orch]);
     let why = "a one-line regex fix, its test posted";
-    c.ok(&orch, &["create", "fix/regex", "Regex", "--fast-fix", why]);
-    assert_eq!(c.store().get("fix/regex").unwrap().fast_fix(), Some(why));
-    let blank = c.run_as(
-        &orch,
-        &["create", "fix/blank", "Blank", "--fast-fix", " "],
-        "",
-    );
-    assert_eq!(blank.code, 1);
+    let refused = c.run_as(&orch, &["create", "fix/new", "New", "--fast-fix", why], "");
+    assert_eq!(refused.code, 2, "{}", refused.err);
     assert!(
-        blank
-            .err
-            .contains("a fast fix records why it needs no reviewer"),
+        refused.err.contains("unrecognized arguments: --fast-fix"),
         "{}",
-        blank.err
+        refused.err
     );
+    assert!(c.store().get("fix/new").is_err(), "nothing is filed");
+    (c.store())
+        .create(&symphony_board::NewTask {
+            fast_fix: Some(why.into()),
+            ..symphony_board::NewTask::new("fix/regex", "Regex", &orch)
+        })
+        .unwrap();
+    assert_eq!(c.store().get("fix/regex").unwrap().fast_fix(), Some(why));
     c.ok(&orch, &["role", "fix/regex", "orchestrator"]);
     c.ok(&exe, &["claim", "fix/regex"]);
     c.ok(&exe, &["move", "fix/regex", "review"]);
@@ -521,8 +549,8 @@ fn a_done_task_names_the_move_back_to_review_only_until_its_landing_closes_it() 
     assert_eq!(c.store().get("sim/jump").unwrap().status, "done");
 }
 
-/// A reviewer staffed as the skills say, on an instruction subtask made `--for` it, which it
-/// claims, approves the task; the executor of a work slice of it is refused, in these words.
+/// A reviewer that claimed an instruction subtask made `--for` it, which puts nothing on the task's
+/// branch, still approves the task; the executor of a work slice of it is refused, in these words.
 #[test]
 fn the_reviewer_of_a_review_instruction_approves_and_a_slices_executor_is_refused() {
     let c = Case::new();
@@ -889,10 +917,14 @@ fn list_mine_shows_only_the_tasks_it_holds() {
 }
 
 #[test]
-fn next_prints_the_best_slug_or_nothing() {
+fn next_prints_the_best_slug_or_that_there_is_nothing_to_take() {
     let c = Case::new();
     let a = c.register("worker");
-    assert_eq!(c.ok(&a, &["next"]).trim(), "");
+    assert_eq!(
+        c.ok(&a, &["next"]),
+        "nothing to take: no concept, design or ready task is free of an executor, of another's \
+         reservation and of an open dependency (`just tasks list` shows the board)\n"
+    );
     c.ok(&a, &["create", "sim/a", "A"]);
     assert!(c.ok(&a, &["next"]).contains("sim/a"));
 }

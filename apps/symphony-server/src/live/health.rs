@@ -8,7 +8,8 @@
 //! own, run apart from its reads, or another's) is said to be starting there, with the log's size,
 //! in place of the dispatch's words, until a reach finds no replay. While the disk holding the
 //! project has less free than `SYMPHONY_LOW_DISK_GB` ([`symphony_board::board_health::disk`]),
-//! every page says that too. None of it reads the board.
+//! every page says that too. None of it reads the board. While the project's settings do not load,
+//! every page says so and why, as the project is served with the defaults ([`Hub::tell_project`]).
 
 use super::Hub;
 use std::collections::BTreeMap;
@@ -21,6 +22,8 @@ use symphony_board::board_health::disk::{self, Low};
 pub(crate) struct Notices {
     /// A failed update of the server ([`crate::reload`]).
     update: String,
+    /// The project's settings that did not load ([`project`]).
+    project: String,
     /// The board's health ([`notice`]).
     health: String,
     /// The disk running low ([`Low::notice`]).
@@ -32,6 +35,7 @@ impl Notices {
     fn said(&self) -> String {
         [
             self.update.as_str(),
+            self.project.as_str(),
             self.health.as_str(),
             self.disk.as_str(),
         ]
@@ -96,6 +100,30 @@ impl Hub {
         }
     }
 
+    /// Tell every page, on the server's notice, whether the project's settings load, when that
+    /// changes: while they do not, the project is served with the defaults
+    /// ([`symphony::project::Project::problem`]). A change asks the loop to read the documents
+    /// again, as one a plugin's process makes comes with no file event; once they load, what the
+    /// defaults' read left of the plugins' watches is forgotten, so that read warms them as it
+    /// would a project's first, with no file they watch changed.
+    pub(crate) fn tell_project(&self) {
+        let said = symphony::project::Project::problem(&self.root)
+            .map(|why| project(&why))
+            .unwrap_or_default();
+        let mut notices = self.notices.lock().unwrap_or_else(PoisonError::into_inner);
+        if notices.project == said {
+            return;
+        }
+        let loads = said.is_empty();
+        notices.project = said;
+        self.server_notice.send_replace(notices.said());
+        drop(notices);
+        if loads {
+            self.forget_watched(&self.root);
+        }
+        self.rescan.store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
     /// Tell every page, on the server's notice, that the server's update failed, `message`
     /// saying how, beside the board's health.
     pub(crate) fn tell_update(&self, message: String) {
@@ -126,6 +154,11 @@ impl Hub {
             None => notice(self.health.failing(now)),
         }
     }
+}
+
+/// What a page says of a project whose settings do not load, `why` the load's words.
+pub(crate) fn project(why: &str) -> String {
+    format!("This project's settings do not load, so it is served with the defaults: {why}.")
 }
 
 /// What a page says of a board that cannot be reached while a start replays its store's log, `line`

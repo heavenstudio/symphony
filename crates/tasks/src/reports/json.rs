@@ -246,6 +246,14 @@ fn red(out: &mut Out, red: &Red) {
     out.number("filed", red.filed);
     out.maybe("closed", red.closed);
     out.text("status", &red.status);
+    match &red.between {
+        Some(range) => out.text("between", range),
+        None => out.null("between"),
+    }
+    match &red.landed {
+        Some(slugs) => out.list("landed", slugs, |out, slug| out.value(slug.as_str())),
+        None => out.null("landed"),
+    }
     out.close();
 }
 

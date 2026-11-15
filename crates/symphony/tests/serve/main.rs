@@ -323,7 +323,7 @@ fn the_retired_verdict_tasks_command_is_unknown_and_names_what_turns_them_into_a
 }
 
 /// The commands the binary lists: the Symphony's own, which a test build holds with no plugin.
-const COMMANDS: [&str; 12] = [
+const COMMANDS: [&str; 13] = [
     "status",
     "reply",
     "ask",
@@ -332,6 +332,7 @@ const COMMANDS: [&str; 12] = [
     "docs-audit",
     "blocks",
     "shot",
+    "attach",
     "init",
     "project",
     "hook",
@@ -348,6 +349,7 @@ fn the_build_only_commands_are_unknown_to_the_shipped_binary() {
         "publish-client",
         "release-inputs",
         "size-budget",
+        "crates-check",
         "split-repair",
         "release",
         "nightly",

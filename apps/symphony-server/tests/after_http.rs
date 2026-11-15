@@ -538,7 +538,7 @@ fn later_expiry(f: &Fixture) {
     let before = f.get("/api/queue").status(200).json();
     assert_eq!(before["waiting"][0]["slug"], "two");
     assert_eq!(before["waiting"][2]["postponed"], true);
-    let mut feed = f.feed("");
+    let mut feed = f.socket("");
     let path = symphony::postpone::order_file(&f.root);
     let mut order: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
     order["owners"]["owner"]["one"]["until"] = json!(0);
@@ -576,11 +576,12 @@ fn later_expiry(f: &Fixture) {
 fn contracts(f: &Fixture) {
     let shell = f.get("/").status(200);
     assert!(shell.text().contains("Native shell."));
+    // The fixture has no docs/DECISIONS.md: its page names no register, so its home links none.
     let project = format!(
         "<html><body><script type=\"application/json\" id=\"symphony-project\">{}</script>",
         json!({
             "name": f.root.file_name().unwrap().to_str().unwrap(),
-            "register": "docs/DECISIONS.md",
+            "register": "",
             "nav": [{"label": "▤ shelf", "title": "Shelf items", "href": "/shelf", "document": "docs/SHELF.md"}],
             "entrypoints": ["docs"],
         })
@@ -1538,7 +1539,9 @@ fn watcher(f: &Fixture) {
     assert!(gallery(f, "").contains("A.item"));
     assert!(gallery(f, SCOPE).contains("A.item"));
     let mut root_feed = f.feed("");
-    let mut branch_feed = f.feed(SCOPE);
+    // A branch's feed on a WebSocket, as the web client follows it: the same events, filtered to
+    // the same document and sections.
+    let mut branch_feed = f.socket(SCOPE);
     eprintln!("{PHASE}document");
     write(
         &f.root,

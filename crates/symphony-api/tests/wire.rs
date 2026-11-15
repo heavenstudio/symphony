@@ -11,10 +11,14 @@ mod cache_format;
 mod first_part;
 #[path = "wire/fixture.rs"]
 mod fixture;
+#[path = "wire/listing.rs"]
+mod listing;
 #[path = "wire/machine_work.rs"]
 mod machine_work;
 #[path = "wire/reader_tests.rs"]
 mod reader_tests;
+#[path = "wire/section_ends.rs"]
+mod section_ends;
 
 fn fixture(name: &str) -> String {
     let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -225,6 +229,7 @@ fn every_region_of_a_delta_reads_and_writes_back_as_the_same_json() {
             Change::Counts(_) => "counts",
             Change::Progress(_) => "progress",
             Change::Client { .. } => "client",
+            Change::TaskAsks(_) => "task-asks",
             Change::Other => "other",
         })
         .collect();
@@ -506,6 +511,74 @@ fn a_route_is_a_document_page_under_an_entrypoint_unless_the_symphony_answers_it
     assert_eq!(spec.readme_route(), "README.md");
 }
 
+/// An HTML page under an entrypoint is a document route, drawn in its frame, whatever the case of
+/// its extension; with a slash it names a folder, as any name does, and outside every entrypoint, or
+/// on a route the Symphony answers, it is a file served as itself.
+#[test]
+fn an_html_page_under_an_entrypoint_is_a_document_drawn_in_its_frame() {
+    let project: symphony_api::ProjectView =
+        serde_json::from_str(&fixture("project.json")).unwrap();
+    for (path, document, folder, html) in [
+        ("docs/analysis/readout.html", true, false, true),
+        ("docs/A.HTM", true, false, true),
+        ("docs/a.htm", true, false, true),
+        ("docs/game/SPEC.md", true, false, false),
+        ("docs/analysis/readout.html/", true, true, false),
+        ("docs/a.html.md", true, false, false),
+        ("docs/a.xhtml", false, false, false),
+        ("docs/a.html5", false, false, false),
+        ("docs/html", true, true, false),
+        ("readout.html", false, false, false),
+        ("artifacts/readout.html", false, false, false),
+        ("tasks/a.html", false, false, false),
+    ] {
+        assert_eq!(
+            (
+                project.is_document_route(path),
+                project.is_folder_route(path),
+                project.is_html_route(path)
+            ),
+            (document, folder, html),
+            "{path}"
+        );
+    }
+    for (name, html) in [
+        ("a.html", true),
+        ("A.HTML", true),
+        ("a.Htm", true),
+        ("docs/a.htm", true),
+        ("a.md", false),
+        ("html", false),
+        (".html", false),
+    ] {
+        assert_eq!(symphony_api::is_html(name), html, "{name}");
+    }
+}
+
+/// The frame of an HTML document asks for its file by a query on its route, the route's own folder
+/// kept for the files beside it: added before a fragment, after a query of the author's, once.
+#[test]
+fn an_html_documents_frame_asks_for_its_file_by_a_query_on_its_route() {
+    for (src, file) in [
+        ("/docs/a/readout.html", "/docs/a/readout.html?raw"),
+        ("/alpha/@wt/docs/a.htm", "/alpha/@wt/docs/a.htm?raw"),
+        ("/docs/a.html#part", "/docs/a.html?raw#part"),
+        ("/docs/a.html?state=b", "/docs/a.html?state=b&raw"),
+        ("/docs/a.html?state=b#x", "/docs/a.html?state=b&raw#x"),
+        ("/docs/a.html?raw", "/docs/a.html?raw"),
+        ("/docs/a.html?x=1&raw=1#y", "/docs/a.html?x=1&raw=1#y"),
+    ] {
+        assert_eq!(symphony_api::file_address(src), file, "{src}");
+        let query = file.split(['?', '#']).nth(1).unwrap();
+        assert!(symphony_api::asks_for_file(query), "{file}");
+    }
+    for query in ["", "rawness", "x=raw", "raws=1", "state=b&r=aw"] {
+        assert!(!symphony_api::asks_for_file(query), "{query}");
+    }
+    assert!(symphony_api::asks_for_file("raw="));
+    assert_eq!(symphony_api::FILE_QUERY, "raw");
+}
+
 /// A project's day file (`symphony/reports/YYYY-MM-DD.json` in its git common dir), as the hourly
 /// roll-up writes it and the Reports page reads it: every figure of the hours and the day reads and
 /// writes back, each hour is named by its first second, and the hours sum to a span's figure.
@@ -549,6 +622,22 @@ fn a_day_file_reads_and_writes_back_as_the_same_json_and_its_hours_sum_to_the_sp
     );
     let written = serde_json::to_value(&older).unwrap();
     assert_eq!(written["hours"][0]["top"]["done"], Value::Null);
+    // A red names the commits it came between and the tasks that landed in them.
+    let release = &day.reds[1];
+    assert_eq!(
+        (release.between.as_deref(), release.landed.as_deref()),
+        (
+            Some(
+                "1a5037fc9e2b4d6a8c0e1f3a5b7c9d0e2f4a6b8c..fd70821942b4c97d1e17b420217ada28988e27da"
+            ),
+            Some(
+                &[
+                    "tests/release-red-verify-lint".to_string(),
+                    "app/board-filter".into()
+                ][..]
+            )
+        )
+    );
     let decisions = day.decisions.unwrap();
     assert_eq!(
         decisions.open[0].since, None,
@@ -624,5 +713,14 @@ fn a_day_file_without_its_later_figures_reads_with_them_empty() {
             counts.withdrawn
         ),
         (2, 1, 0, 0)
+    );
+    let red: symphony_api::reports::Red = serde_json::from_str(
+        r#"{"slug":"tests/main-red-1","series":"main","filed":1799982000.0,"status":"ready"}"#,
+    )
+    .unwrap();
+    assert_eq!(
+        (red.closed, red.between, red.landed),
+        (None, None, None),
+        "a red of a file written before reds named their commits names none"
     );
 }

@@ -126,6 +126,10 @@ pub const GROUPS: &[(&str, &[(&str, &str)])] = &[
                 "the limits and models in force here, and where each came from",
             ),
             (
+                "stamps",
+                "the stamps a land can require, and what a task needs of them",
+            ),
+            (
                 "asks",
                 "what the owner waits on an agent for, and who holds each",
             ),
@@ -170,6 +174,10 @@ pub const GROUPS: &[(&str, &[(&str, &str)])] = &[
                 "as its reviewer: approve (done) or changes (back to work)",
             ),
             (
+                "needs",
+                "as its assessor: the stamps a task needs, at a tip, and why",
+            ),
+            (
                 "done",
                 "close a subtask, or a task covered by another's landing",
             ),
@@ -207,7 +215,7 @@ pub const GROUPS: &[(&str, &[(&str, &str)])] = &[
             ),
             (
                 "staff",
-                "one staffing pass over ready work (tools/task_staff.json)",
+                "staff ready work once, if tools/task_staff.json enables it",
             ),
             (
                 "sweep",
@@ -283,7 +291,8 @@ pub fn top() -> String {
         }
     }
     text.push_str(
-        "\noptions:\n  -h, --help       show this help message and exit\n  --as ACTOR       act as \
+        "\noptions:\n  -h, --help       show this help message and exit\n  --version        say \
+         the version and exit\n  --as ACTOR       act as \
          this session handle, before or after the command\n                   (default: \
          $TASKS_SESSION)\n  --database NAME  the scratch board NAME, not the project's; it comes \
          first,\n                   before every other word, and sweeps no repository\n\
@@ -312,6 +321,12 @@ turn directly. With no address it detects this Claude Code session's socket or
 Codex thread, and refuses when there is neither. An address another registered
 handle holds is refused until that one unregisters or leaves, idle or not. An
 in-process subagent has no channel of its own: it reads `just tasks inbox`.
+
+The owner's chat goes to the session holding the seat (--chat). While nobody
+holds it, it goes to a fallback: the one next in line (--chat --if-free), else
+the live orchestrator with a callback first by handle, so a plain callback is
+enough for an orchestrator to hear chat. The CHAT line names who hears it, and
+says fallback and why when that session holds no seat.
 
 positional arguments:
   address               uds:/absolute/socket or codex:THREAD-UUID (default:
@@ -449,6 +464,9 @@ counts each top-level task done now once, on the day of its last close in
 this machine's time zone, whenever it was made: one approved again after its
 landing sent it back counts once, one cancelled or reopened since counts
 none. The Reports page's Tasks done counts the same tasks, by UTC day.
+Where tasks of the window were filed on an arm (`create --arm`), each arm's
+tasks, how many are done, their median lead and review time, and how often
+review sent the arm's work back.
 
 options:
   -h, --help  show this help message and exit
@@ -490,8 +508,9 @@ orchestrator_slots (the tasks in progress an orchestrator holds, work in review
 and red work not counted; no cap unwritten; [board] orchestrator_slots is read
 where [limits] names none), low_volume (4) and machine_agents (no limit unwritten,
 then this machine's count of agents); [board] holds the pipeline alarm's
-thresholds; [agents.models] names the model of the orchestrator, executor and
-reviewer. A key of [limits] this build does not know is listed, left out. An
+thresholds; [agents.models] names the model of the orchestrator, executor,
+reviewer and assessor (the smallest its agent offers unwritten: Claude's
+haiku). A key of [limits] this build does not know is listed, left out. An
 edit to the file holds from the next command, and on a running server from
 its next read.
 
@@ -506,16 +525,16 @@ options:
                          [--body-file BODY_FILE] [--priority {0,1,2,3,4}]
                          [--stage {backlog,concept,design,ready}] [--backlog]
                          [--parent PARENT] [--for ASSIGNEE] [--instruction]
-                         [--depends DEPENDS] [--link LINK]
-                         [--fast-fix FAST_FIX] [--no-role]
+                         [--depends DEPENDS] [--link LINK] [--no-role]
+                         [--arm ARM]
                          slug title
 "#,
         r#"usage: just tasks create [-h] [--as ACTOR] [--body BODY]
                          [--body-file BODY_FILE] [--priority {0,1,2,3,4}]
                          [--stage {backlog,concept,design,ready}] [--backlog]
                          [--parent PARENT] [--for ASSIGNEE] [--instruction]
-                         [--depends DEPENDS] [--link LINK]
-                         [--fast-fix FAST_FIX] [--no-role]
+                         [--depends DEPENDS] [--link LINK] [--no-role]
+                         [--arm ARM]
                          slug title
 
 positional arguments:
@@ -544,14 +563,15 @@ options:
   --depends DEPENDS     a task that must be done first (repeatable)
   --link LINK           a document it implements, docs/X.md#Heading
                         (repeatable)
-  --fast-fix FAST_FIX   a bug fix whose recorded risk, FAST_FIX, calls for no
-                        reviewer: its orchestrator approves it (RULES.md
-                        workflow/fast-bugfixes)
   --no-role             file it for the orchestrator --for names, not for the
                         filer: else an orchestrator filing it takes the
                         role, and the board gives any other filer's task an
                         orchestrator, unless one holds the task it is filed
                         under
+  --arm ARM             the side of a process experiment it is filed on, one
+                        lowercase word such as control: `show` prints it and
+                        `stats` gives each arm's figures; nothing changes it
+                        after
 "#,
     ),
     (
@@ -585,6 +605,52 @@ positional arguments:
 options:
   -h, --help  show this help message and exit
   --as ACTOR
+"#,
+    ),
+    (
+        "stamps",
+        "usage: just tasks stamps [-h] [--as ACTOR] [slug]\n",
+        r#"usage: just tasks stamps [-h] [--as ACTOR] [slug]
+
+The stamps a land can require, from the main checkout's committed
+symphony.toml ([stamps], else the Symphony's own four), each with whether a
+task no assessment has read needs it, how the land knows it stands, where it
+applies and where it does not. With a slug, then the task's needs as they
+stand, its branch's tip and the paths [land] check_paths names that the branch
+changes: what an assessor reads first.
+
+positional arguments:
+  slug
+
+options:
+  -h, --help  show this help message and exit
+  --as ACTOR
+"#,
+    ),
+    (
+        "needs",
+        r#"usage: just tasks needs [-h] [--as ACTOR] [--tip TIP] --why WHY
+                        slug stamps [stamps ...]
+"#,
+        r#"usage: just tasks needs [-h] [--as ACTOR] [--tip TIP] --why WHY
+                        slug stamps [stamps ...]
+
+As the task's assessor, write the stamps it needs, from the catalogue `just
+tasks stamps` lists, with the tip read and why: the board's own field, and a
+line on its thread saying them and what it needed before. Refused to a session
+that executed the task or work under it, orchestrates or orchestrated it, or
+filed it, and on an empty reason or a stamp the catalogue lacks.
+
+positional arguments:
+  slug
+  stamps      the stamps it needs, by name; none alone for none
+
+options:
+  -h, --help  show this help message and exit
+  --as ACTOR
+  --tip TIP   the commit the assessment read, resolved to the whole commit;
+              left out, the assessment read the brief alone
+  --why WHY   one line for each stamp it left out or added
 "#,
     ),
     (
@@ -720,9 +786,11 @@ options:
     ),
     (
         "role",
-        r#"usage: just tasks role [-h] [--as ACTOR] slug {orchestrator,reviewer}
+        r#"usage: just tasks role [-h] [--as ACTOR] [--beside WHY]
+                       slug {orchestrator,reviewer}
 "#,
-        r#"usage: just tasks role [-h] [--as ACTOR] slug {orchestrator,reviewer}
+        r#"usage: just tasks role [-h] [--as ACTOR] [--beside WHY]
+                       slug {orchestrator,reviewer}
 
 positional arguments:
   slug
@@ -731,6 +799,7 @@ positional arguments:
 options:
   -h, --help            show this help message and exit
   --as ACTOR
+  --beside WHY          a reviewer's: why it joins beside one still there
 "#,
     ),
     (
@@ -1060,9 +1129,13 @@ options:
 "#,
         r#"usage: just tasks land [-h] [--as ACTOR] slug
 
-Land the task's branch, named as its slug, on the default branch: the approve
-of a fresh reviewer (or of its orchestrator, on a fast fix) must be its last
-verdict and cover the branch's tip; the branch is merged (--no-ff) in a
+Land the task's branch, named as its slug, on the default branch once every
+stamp it needs stands on the branch's tip: its assessment's on the tip it read,
+else the catalogue's defaults beside them (`just tasks stamps SLUG` says which).
+Where review is needed, the approve of a fresh reviewer (or of its orchestrator,
+on a task filed with the fast-fix mark) must be its last verdict and cover the
+tip; where it is not, the task lands from review or blocked. A missing stamp
+refuses, naming who gives it. The branch is merged (--no-ff) in a
 worktree of its own, main's side of each generated path kept, and checked by
 [verdicts] check unless [land] check = false; main moves there, is pushed to
 origin (unless [land] push = false), the task closes with its `landed` line,

@@ -6,6 +6,8 @@ mod audit;
 mod common;
 #[path = "after_worktrees/in_flight.rs"]
 mod in_flight;
+#[path = "after_worktrees/landed.rs"]
+mod landed;
 #[path = "after_worktrees/owner.rs"]
 mod owner;
 #[path = "after_worktrees/owner_save.rs"]
@@ -176,6 +178,11 @@ fn executable(tree: &Tree, rel: &str, text: &str) {
 /// Environment-dependent public APIs run in an owned copy of this test process. No test changes
 /// the suite's PATH/board configuration, and no read or background filer can reach the shared board.
 fn isolated(name: &str, body: impl FnOnce(&Tree)) {
+    isolated_with(name, &[], body);
+}
+
+/// [`isolated`], the child given `vars` as well (a `PATH` whose `git` the test wrote).
+fn isolated_with(name: &str, vars: &[(&str, std::ffi::OsString)], body: impl FnOnce(&Tree)) {
     if std::env::var(CHILD).as_deref() == Ok(name) {
         body(&Tree::new());
         return;
@@ -184,6 +191,7 @@ fn isolated(name: &str, body: impl FnOnce(&Tree)) {
     let done = symphony_board::sys::output(
         Command::new(std::env::current_exe().unwrap())
             .args(["--exact", name, "--nocapture"])
+            .envs(vars.iter().map(|(name, value)| (*name, value)))
             .env(CHILD, name)
             .env("TASKS_SERVER", "127.0.0.1:1")
             .env("SYMPHONY_TASKS_CLI", "/usr/bin/false")
@@ -382,6 +390,37 @@ fn branch_decisions_share_ranking_counts_and_navigation_with_main() {
 }
 
 #[test]
+fn a_verdict_on_a_landed_branchs_page_is_saved_on_main_and_status_agrees_with_the_page() {
+    landed::a_verdict_on_a_landed_branchs_page_is_mains();
+}
+
+#[test]
+fn a_line_on_mains_card_from_a_live_branchs_page_is_saved_on_main_and_its_own_card_stays_its() {
+    landed::a_line_on_mains_card_from_a_live_branchs_page_is_mains();
+}
+
+#[test]
+fn a_verdict_from_a_gone_worktrees_page_is_saved_on_main_when_main_holds_the_card() {
+    landed::a_verdict_from_a_gone_worktrees_page_is_mains();
+}
+
+#[test]
+fn a_verdict_when_the_worktrees_cannot_be_listed_stays_the_pages_and_main_takes_nothing() {
+    landed::a_verdict_when_the_worktrees_cannot_be_listed_stays_the_pages();
+}
+
+#[test]
+fn a_line_on_a_card_the_branch_posted_and_main_closed_since_is_saved_on_main_as_its_page_draws_it()
+{
+    landed::a_line_on_a_card_main_closed_since_the_branch_posted_it_is_mains();
+}
+
+#[test]
+fn a_verdict_from_a_gone_worktrees_page_is_judged_on_its_branch_while_it_is_kept() {
+    landed::a_verdict_from_a_gone_worktrees_page_reads_its_kept_branch();
+}
+
+#[test]
 fn a_branch_card_in_a_projects_own_folder_is_linked_read_and_saved_by_its_route() {
     routes::branch_card_in_project_folder();
 }
@@ -459,6 +498,11 @@ fn a_branch_page_a_merge_stopped_on_shows_its_last_committed_copy_and_takes_an_a
 #[test]
 fn while_merging_a_line_git_left_after_a_line_two_cards_share_is_not_the_branch_cards() {
     saving::a_line_git_left_by_a_shared_line_is_not_the_branch_cards();
+}
+
+#[test]
+fn a_comment_on_a_register_heading_is_refused_and_every_later_verdict_on_its_cards_saves() {
+    saving::a_comment_on_a_register_heading_leaves_its_cards_answerable();
 }
 
 #[test]
@@ -1475,6 +1519,7 @@ fn branch_verdict_saves_its_file_and_asks_about_its_card_not_mains_answered_copy
             let before = tree.read(DOC);
             let main_tip = command(&tree.root, &["rev-parse", "main"], 3);
             let saves = symphony::save::Saves::start(&tree.root);
+            let first = symphony::clock::now_stamp();
             assert_eq!(
                 post(
                     &saves,
@@ -1484,6 +1529,7 @@ fn branch_verdict_saves_its_file_and_asks_about_its_card_not_mains_answered_copy
                 ),
                 json!({"ok":true})
             );
+            let last = symphony::clock::now_stamp();
             saves.close();
             let written = std::fs::read_to_string(path.join(DOC)).unwrap();
             assert!(written.contains("owner · rejected — too dark"));
@@ -1501,7 +1547,15 @@ fn branch_verdict_saves_its_file_and_asks_about_its_card_not_mains_answered_copy
             let journal = journalled(&tree.root);
             assert_eq!(journal.len(), 1, "{journal:?}");
             let (text, ask) = &journal[0];
-            assert!(text.starts_with("OWNER /api/decision "), "{text}");
+            // The line says the minute the owner said it, as a card's stamp does.
+            let said = text
+                .strip_prefix("OWNER /api/decision at ")
+                .and_then(|rest| rest.split_once(" scope="))
+                .map_or("", |(stamp, _)| stamp);
+            assert!(
+                (first.as_str()..=last.as_str()).contains(&said),
+                "{first}..{last}: {text}"
+            );
             let mut ask = ask.clone().expect("the verdict waits on an agent");
             assert!(ask["at"].as_f64().is_some(), "{ask}");
             ask["at"] = serde_json::Value::Null;

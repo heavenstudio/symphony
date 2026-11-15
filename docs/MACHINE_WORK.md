@@ -109,6 +109,15 @@ A recorded command that is a run of a pipeline, or a step of one, also writes a 
 to the project's day files when it starts and when it ends ([RUNS](RUNS.md)):
 `--pipeline` names a run's, `--step` a step's inside a run. `--commit` and `--branch`
 name the commit it checks when that is not its checkout's (a review command's tip).
+Its log is kept by what the caller's stdout and stderr are ([RUNS](RUNS.md#logs)). At a
+terminal COMMAND keeps the caller's streams and the run keeps no log. Where either is a
+regular file (an agent's tool call; each step of the release run, into the log file
+`tools/verify.sh` keeps of it; the board's `on_review` and `on_land` commands) COMMAND
+keeps them as well, and its recorder copies what COMMAND added to the files, plain, into
+the run's log once it ended. Otherwise they are the one exception to the descriptors
+above: each is a pipe its recorder reads, copying what comes on to the caller's stream
+and, plain, into the run's log; a recorder that dies while COMMAND runs leaves it writing
+to a pipe with no reader, so its next write ends it by SIGPIPE (exit 141).
 
 **Where.** The work folder is `symphony/tasks/work/` in the git common dir of the working
 directory, so every worktree of a repository records where its Symphony reads;
@@ -119,9 +128,10 @@ records nothing.
 **A test's waits.** `TASKS_RUN_WAIT_SCALE=N`, a whole number from 1 to 60, makes each
 wait the machine's speed meets N times as long: the 1 s COMMAND waits to hear its
 recorder watches it, the 1 s the board is asked its task (below), the 0.6 s git is
-asked a run's tree, and, for a recorder apart from its command, the 5 s it waits for an
-earlier run it may repeat to end and the 2 s it waits for the day files' lock
-([RUNS](RUNS.md)). So a loaded machine never decides what a test's run records. It is taken only where the board the run reaches is on a database other
+asked a run's tree, the 1 s a run's recorder waits for its command's piped streams to end
+before its end line says what its log holds, and, for a recorder apart from its
+command, the 5 s it waits for an earlier run it may repeat to end and the 2 s it waits
+for the day files' lock ([RUNS](RUNS.md)). So a loaded machine never decides what a test's run records. It is taken only where the board the run reaches is on a database other
 than the live board's `tasks` (a test's `TASKS_DATABASE`, or `--database NAME`), which the
 board never takes for a live one either. A server `TASKS_SERVER` names is reached whether
 or not it answers, so a database of a test's own there takes it, on one that refuses
@@ -144,7 +154,7 @@ largest, in the three that ask a board that never answers (`ASKED`) and the one 
 wait of 120 s but in the case of that deadline. The server's test of what its machine panel
 reads takes the scale 20 on its board's scratch database
 (`apps/symphony-server/src/live/machine_work/tests`). The release run's test
-(`crates/symphony/tests/release/recorder.rs`) and the browser test of the board's Build and
+(`crates/symphony-build/tests/release/recorder.rs`) and the browser test of the board's Build and
 Test columns (`apps/symphony-ui/tests/browser/run_records.rs`) take both, the scale and the
 probe's 120 s, on their scratch boards, which every check and run of theirs inherits. Each
 waits for a record on its condition, with a backstop on the wall only a stall reaches (the
@@ -215,7 +225,8 @@ commands read. A `/work` or `/review-task` agent never runs `just tasks leave`, 
 finished one's binding stays; it stops counting once it goes quiet, wherever it last ran. A
 session holds a task when it executes it in concept, design, ready or in progress,
 or reviews it in review. Of several, it holds the one all the others are under (a
-feature's executor holds its `/work` instruction too). None, or several with no
+feature's executor that also holds a subtask of it, a slice or an instruction, holds the
+feature). None, or several with no
 one above the rest, is no task.
 
 Each step wins over the ones after it: a named task or session over a placed one, a
@@ -275,9 +286,9 @@ never on the recorder's history.
 `size-check` and `verify` recipes run through it as one run each, of `lint`, `test`,
 `client`, `client`, `size` and `verify`. Inside a recorded run only a step a recipe names
 is recorded again: `verify` records `lint-rs` as its step `lint`, `client-check` as
-`client-check`, `size-check` as `size-check`, the docs audit as `docs-audit` and its workspace
-tests as `tests`, each whatever the ones before it did (`tools/verify.sh`); every
-other command inside it runs as it is (`tools/record.sh [--pipeline NAME] [--step NAME]
+`client-check`, `size-check` as `size-check`, the docs audit as `docs-audit`, `crates-check` as
+`crates-check` and its workspace tests as `tests`, each whatever the ones before it did
+(`tools/verify.sh`); every other command inside it runs as it is (`tools/record.sh [--pipeline NAME] [--step NAME]
 build|test LABEL COMMAND...`). A tree without `tools/record.sh` runs them as they are.
 Its recorder is `TASKS_RECORDER` when it names one, else this checkout's prepared
 `.target/bin/tasks`, else that of the main checkout a worktree belongs to

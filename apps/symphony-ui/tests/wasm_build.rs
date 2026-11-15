@@ -6,6 +6,10 @@
 //! These cases use real Cargo and the owned native publisher with protocol stand-ins for dx
 //! and wasm-bindgen. Real seven-module compilation and browser acceptance are separate checks.
 
+#[path = "common/mod.rs"]
+mod common;
+
+use std::collections::BTreeMap;
 use std::fs;
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
@@ -19,10 +23,31 @@ const OURS: [&str; 2] = [
     "symphony-api-0123456789abcdef",
 ];
 const A_DEPENDENCY: &str = "serde-0123456789abcdef";
-/// What bundle.sh builds, each with its own dx run: four page kinds, and the program.
-const KINDS: [&str; 5] = ["board", "docs", "review", "queue", "program"];
-/// The program's kinds (src/split.rs), each a chunk of it, in the order of its split points' names.
-const PROGRAM: [&str; 5] = ["overlay", "panel", "reports", "tasks", "timeline"];
+/// What bundle.sh builds with dx: the program, the one kind it builds since every other moved to
+/// the web client.
+const KINDS: [&str; 1] = ["program"];
+/// The web client's kinds (apps/symphony-web), which bundle.sh builds with Vite, the real one: a
+/// kind is its script, with no wasm, and its styles, the shared stylesheet and then those named
+/// here, in order: the CSS of the chunks its entry imports (the media layer's, which brings the
+/// media sheet, for the three kinds that show media), then its entry's own. The task board and the
+/// agents page have none: their styles (assets/board.css) are the program's, in the shared file.
+/// The overlay, the menus every page mounts, is no page's but the shell's persistent kind.
+const WEB: [(&str, &[&str]); 9] = [
+    ("agents", &[]),
+    ("board", &[]),
+    ("docs", &["media-layer", "docs"]),
+    ("overlay", &["overlay"]),
+    ("queue", &["queue"]),
+    ("reports", &["reports"]),
+    ("review", &["media-layer"]),
+    ("runs", &["runs"]),
+    ("task", &["media-layer", "task"]),
+];
+/// The program's chunks (src/split.rs), in the order of its split points' names: the chat's (its
+/// kind) and the media layer's ([`MEDIA`]).
+const PROGRAM: [&str; 2] = ["media", "panel"];
+/// The program's chunk that is no kind, which the shell's manifest never names.
+const MEDIA: &str = "media";
 
 fn crate_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -205,19 +230,38 @@ if [ "$kind" = program ]; then
     printf '\0asm\1\0\0\0\5\3\1\0\1\13\11\1\0\101\200\10\13\2%s' "${PROGRAM_DATA:-ok}" > "$assets/symphony-ui_bg-dxh0.wasm"
     {
         printf 'export default function init(){return Promise.resolve()} init({module_or_path:"/assets/symphony-ui_bg-dxh0.wasm"}).then(()=>{});\n'
-        for chunk in chunk_0_split module_0_overlay module_1_panel module_2_reports module_3_tasks module_4_timeline; do
+        for chunk in chunk_0_split module_0_media module_1_panel; do
             printf '\0asm\1\0\0\0' > "$assets/$chunk-dxh1.wasm"
             printf 'makeLoad("/./assets/%s-dxh1.wasm");\n' "$chunk"
         done
     } > "$assets/symphony-ui-dxh2.js"
     printf '\0\12\11producers' >> "$assets/chunk_0_split-dxh1.wasm"
     if [ -n "${PROGRAM_SHARED:-}" ]; then printf '\1\1\0' >> "$assets/chunk_0_split-dxh1.wasm"; fi
-    printf '<script type="module" src="/assets/symphony-ui-dxh2.js"></script>\n' > "$out/public/index.html"
-    # Styles the other kinds load too, and the program kinds' own; and PROGRAM_STYLE, one no kind
-    # takes, when a case asks for it.
+    # The DX_HOME it ran with, and its tools. Where that holds wasm-opt, the media chunk as the
+    # splitter writes it (two data segments, out of order) and the main module go through it as dx
+    # runs it, and the chunk is what it wrote, which dx would name by its bytes.
+    printf '%s\n' "${DX_HOME:-}" > "$capture/$kind.dx-home"
+    wasm_opt="${DX_HOME:-}/tools/binaryen-129/bin/wasm-opt"
+    if [ -x "$wasm_opt" ]; then
+        ls "$DX_HOME/tools" > "$capture/$kind.dx-tools"
+        printf '\0asm\1\0\0\0\13\15\2\0\101\20\13\1b\0\101\0\13\1a' > "$capture/media.split"
+        "$wasm_opt" "$capture/media.split" -Oz -o "$capture/media.opt" --strip-debug
+        cp "$capture/media.opt" "$assets/module_0_media-dxh1.wasm"
+        cp "$assets/symphony-ui_bg-dxh0.wasm" "$capture/main.split"
+        "$wasm_opt" "$capture/main.split" -Oz -o "$capture/main.opt" --strip-debug
+    fi
+    # The page links its static-head styles, as dx's does: the two every kind takes, never a CSS
+    # module's (`style-`) or PROGRAM_STYLE, one no kind takes, when a case asks for it.
+    {
+        printf '<head>'
+        for style in a-shared z-shared; do
+            printf '<link rel="stylesheet" href="/./assets/%s.css" type="text/css">' "$style"
+        done
+        printf '</head>\n<script type="module" src="/assets/symphony-ui-dxh2.js"></script>\n'
+    } > "$out/public/index.html"
     printf '.a{}' > "$assets/a-shared.css"
     printf '.z{}\n' > "$assets/z-shared.css"
-    for own in reports task-timeline style ${PROGRAM_STYLE:-}; do printf 'p{}' > "$assets/$own-program.css"; done
+    for own in style ${PROGRAM_STYLE:-}; do printf 'p{}' > "$assets/$own-program.css"; done
     exit 0
 fi
 printf '<script type="module" src="/assets/%s-%s.js"></script>\n' "$bin" "$kind" > "$out/public/index.html"
@@ -276,6 +320,12 @@ fn cargo_symphony_ui_dist_bundles_into_out_as_named_from_where_it_runs() {
         .expect("run cargo-symphony-ui");
     succeeded(&done, "cargo symphony-ui dist");
     ran_from(&said, &stand);
+    // A machine whose DX_HOME holds no wasm-opt yet: dx runs with that DX_HOME, to fetch it there.
+    assert_eq!(
+        fs::read_to_string(said.join("program.dx-home")).unwrap(),
+        format!("{}\n", common.join("symphony/tools/dx-home").display())
+    );
+    assert!(!said.join("program.dx-tools").exists());
     let out = scratch.0.join("build/ui");
     for kind in KINDS {
         let said = fs::read_to_string(said.join(kind)).expect("dx never built this kind");
@@ -311,11 +361,12 @@ fn cargo_symphony_ui_dist_bundles_into_out_as_named_from_where_it_runs() {
         .split_once(";\n")
         .unwrap();
     let manifest: serde_json::Value = serde_json::from_str(manifest).unwrap();
-    // The four kinds built alone, and each of the program's.
+    // Each of the program's kinds (the media layer is none) and the web client's.
     assert_eq!(
         manifest.as_object().unwrap().len(),
-        KINDS.len() - 1 + PROGRAM.len()
+        PROGRAM.len() - 1 + WEB.len()
     );
+    assert!(manifest.get(MEDIA).is_none(), "{manifest}");
     let store = fs::read_to_string(crate_dir().join("assets/cache.js")).unwrap();
     let source = fs::read_to_string(crate_dir().join("assets/shell.js")).unwrap();
     let minified = format!(
@@ -331,7 +382,7 @@ fn cargo_symphony_ui_dist_bundles_into_out_as_named_from_where_it_runs() {
         "the rest of the shell is the client cache's store (assets/cache.js), then \
          assets/shell.js, through the minifier: {body}"
     );
-    let shared = manifest["board"]["styles"][0].as_str().unwrap();
+    let shared = manifest["panel"]["styles"][0].as_str().unwrap();
     assert!(
         shared.starts_with("/assets/shared-") && shared.ends_with(".css"),
         "{shared}"
@@ -345,21 +396,66 @@ fn cargo_symphony_ui_dist_bundles_into_out_as_named_from_where_it_runs() {
         fs::read(out.join("public").join(path.trim_start_matches('/')))
             .unwrap_or_else(|e| panic!("{path}: {e}"))
     };
-    for kind in &KINDS[..4] {
-        for key in ["script", "wasm"] {
-            file(manifest[kind][key].as_str().unwrap());
-        }
-        assert_eq!(
-            manifest[kind]["styles"],
-            serde_json::json!([shared, format!("/assets/board-{kind}.css")]),
-            "{kind} loads the shared stylesheet, then its own"
+    // A web client's kind: the script Vite named by its bytes, which exports what the shell calls,
+    // and the shared stylesheet before the CSS its chunks and its entry import.
+    for (kind, sheets) in WEB {
+        let script = manifest[kind]["script"].as_str().unwrap();
+        assert!(
+            script.starts_with(&format!("/assets/{kind}-")) && script.ends_with(".js"),
+            "{script}"
         );
+        let module = String::from_utf8(file(script)).unwrap();
+        assert!(
+            module.contains(" as run") && module.contains(" as stop"),
+            "{kind}"
+        );
+        assert!(manifest[kind].get("wasm").is_none(), "{kind}");
         assert!(manifest[kind].get("chunk").is_none(), "{kind}");
+        // The chunks the script imports, each once, which the shell preloads beside it: published
+        // files that import none outside them.
+        let imports: Vec<_> = manifest[kind]["imports"]
+            .as_array()
+            .unwrap_or_else(|| panic!("{kind} names its imports"))
+            .iter()
+            .map(|chunk| chunk.as_str().unwrap())
+            .collect();
+        let mut named = imports.clone();
+        named.sort_unstable();
+        named.dedup();
+        assert_eq!(named.len(), imports.len(), "{kind}: {imports:?}");
+        assert_eq!(named, common::imported(script, &module), "{kind}");
+        for chunk in &imports {
+            let chunk_module = String::from_utf8(file(chunk)).unwrap();
+            for inner in common::imported(chunk, &chunk_module) {
+                assert!(
+                    imports.contains(&inner.as_str()),
+                    "{kind}: {chunk} imports {inner}"
+                );
+            }
+        }
+        let styles = manifest[kind]["styles"].as_array().unwrap();
+        assert_eq!(styles[0], shared, "{kind}");
+        let own: Vec<_> = styles[1..]
+            .iter()
+            .map(|style| style.as_str().unwrap())
+            .collect();
+        assert_eq!(
+            own.len(),
+            sheets.len(),
+            "{kind} loads the shared stylesheet, then its own: {styles:?}"
+        );
+        for (style, sheet) in own.into_iter().zip(sheets) {
+            assert!(
+                style.starts_with(&format!("/assets/{sheet}-")),
+                "{kind}: {style}"
+            );
+            assert!(!file(style).is_empty(), "{style}");
+        }
     }
     // The program's kinds: its one script and main module, which split-repair named by their bytes,
     // and a chunk each, preloaded beside them.
-    let script = manifest["tasks"]["script"].as_str().unwrap();
-    let wasm = manifest["tasks"]["wasm"].as_str().unwrap();
+    let script = manifest["panel"]["script"].as_str().unwrap();
+    let wasm = manifest["panel"]["wasm"].as_str().unwrap();
     assert!(script.starts_with("/assets/program-"), "{script}");
     assert!(
         wasm.starts_with("/assets/symphony-ui_bg-") && !wasm.contains("dxh"),
@@ -375,44 +471,44 @@ fn cargo_symphony_ui_dist_bundles_into_out_as_named_from_where_it_runs() {
         "the program's script ends with its chunk loader, through the minifier: {program}"
     );
     assert!(
-        program.contains(
-            "globalThis.reviewModuleReady_tasks=globalThis.reviewModuleReady_reports=\
-             globalThis.reviewModuleReady_panel=globalThis.reviewModuleReady_overlay=\
-             globalThis.reviewModuleReady_timeline=init({module_or_path:"
-        ),
-        "every program kind is ready when its one initializer is: {program}"
+        program.contains("globalThis.reviewModuleReady_panel=init({module_or_path:"),
+        "the program's kind is ready when its one initializer is: {program}"
     );
-    for (at, kind) in PROGRAM.iter().enumerate() {
-        assert_eq!(manifest[kind]["script"], script, "{kind}");
-        assert_eq!(manifest[kind]["wasm"], wasm, "{kind}");
-        let chunk = manifest[kind]["chunk"].as_str().unwrap();
-        assert!(
-            chunk.starts_with(&format!("/assets/module_{at}_{kind}-")) && !chunk.contains("dxh"),
-            "{kind}: {chunk}"
-        );
-        assert_eq!(file(chunk), b"\0asm\x01\0\0\0", "{kind}");
-        assert!(
-            program.contains(&format!("\"{kind}\":\"{chunk}\"")),
-            "the loader names {kind}'s chunk: {program}"
-        );
-        // Every program kind takes the styles the other kinds load too, then its own.
-        let own = match *kind {
-            "reports" => vec!["/assets/reports-program.css"],
-            "timeline" => vec!["/assets/task-timeline-program.css"],
-            "panel" | "overlay" => vec!["/assets/style-program.css"],
-            _ => vec![],
-        };
-        assert_eq!(
-            manifest[kind]["styles"],
-            serde_json::json!([vec![shared], own].concat()),
-            "{kind}"
-        );
-    }
-    // The shared chunk dx leaves empty, which no kind loads, is not published.
     let published: Vec<_> = fs::read_dir(out.join("public/assets"))
         .unwrap()
         .map(|entry| entry.unwrap().file_name().into_string().unwrap())
         .collect();
+    for (at, kind) in PROGRAM.iter().enumerate() {
+        let name = format!("module_{at}_{kind}-");
+        let chunk = if *kind == MEDIA {
+            let named: Vec<_> = published.iter().filter(|n| n.starts_with(&name)).collect();
+            assert_eq!(named.len(), 1, "{kind}: {published:?}");
+            format!("/assets/{}", named[0])
+        } else {
+            manifest[kind]["chunk"].as_str().unwrap().to_string()
+        };
+        assert!(
+            chunk.starts_with(&format!("/assets/{name}")) && !chunk.contains("dxh"),
+            "{kind}: {chunk}"
+        );
+        assert_eq!(file(&chunk), b"\0asm\x01\0\0\0", "{kind}");
+        assert!(
+            program.contains(&format!("\"{kind}\":\"{chunk}\"")),
+            "the loader names {kind}'s chunk: {program}"
+        );
+        if *kind == MEDIA {
+            continue;
+        }
+        assert_eq!(manifest[kind]["script"], script, "{kind}");
+        assert_eq!(manifest[kind]["wasm"], wasm, "{kind}");
+        // Every program kind takes the styles its page links in its head, then its own.
+        assert_eq!(
+            manifest[kind]["styles"],
+            serde_json::json!([shared, "/assets/style-program.css"]),
+            "{kind}"
+        );
+    }
+    // The shared chunk dx leaves empty, which no kind loads, is not published.
     assert!(
         published.iter().all(|name| !name.starts_with("chunk_")),
         "{published:?}"
@@ -420,7 +516,7 @@ fn cargo_symphony_ui_dist_bundles_into_out_as_named_from_where_it_runs() {
     assert!(
         published
             .iter()
-            .any(|name| name.starts_with("module_0_overlay-")),
+            .any(|name| name.starts_with("module_1_panel-")),
         "{published:?}"
     );
 }
@@ -493,6 +589,115 @@ fn a_program_style_no_kind_takes_fails_the_package_and_publishes_nothing() {
     assert!(!public.exists());
 }
 
+/// Where the machine's DX_HOME holds wasm-opt, dx runs with a DX_HOME of bundle.sh's own, under the
+/// held target: the machine's tools linked, but for wasm-opt, wasm-opt.sh, which runs the machine's
+/// and then puts what it wrote of a chunk in order (`split-repair --chunk`) before dx names it by
+/// its bytes, and leaves a main module as it wrote it.
+#[test]
+fn dx_s_wasm_opt_puts_each_chunk_in_order_before_dx_names_it() {
+    let scratch = Scratch::new("wasm-build-wasm-opt");
+    let common = scratch.0.join("common");
+    let said = scratch.0.join("dx-said");
+    stand_in_tools(&common, &said);
+    let machine = common.join("symphony/tools/dx-home");
+    let calls_file = scratch.0.join("wasm-opt-said");
+    // The machine's wasm-opt: it says how it was called, and writes the module it is given (dx names
+    // it first) to its `-o` path.
+    executable(
+        &machine.join("tools/binaryen-129/bin/wasm-opt"),
+        &r#"#!/bin/bash
+set -euo pipefail
+printf '%s\n' "$*" >> __CALLS__
+input="$1"
+while [ "$#" -gt 0 ]; do
+    if [ "$1" = -o ]; then out="$2"; fi
+    shift
+done
+cp "$input" "$out"
+"#
+        .replace(
+            "__CALLS__",
+            &format!("'{}'", calls_file.to_string_lossy().replace('\'', "'\\''")),
+        ),
+    );
+    let stand = client_tools(&scratch);
+    let target = common.join("symphony/tools/target");
+    let done = cargo_symphony_ui(&["dist", "build/ui"])
+        .current_dir(&scratch.0)
+        .env("SYMPHONY_GIT_COMMON_DIR", &common)
+        .env("CARGO_TARGET_DIR", &target)
+        .env("SYMPHONY_CLIENT_TOOLS", &stand)
+        .output()
+        .expect("run cargo-symphony-ui");
+    succeeded(&done, "cargo symphony-ui dist");
+
+    // dx ran with bundle.sh's DX_HOME, in the target it holds, with the machine's other tools.
+    let home = fs::read_to_string(said.join("program.dx-home")).unwrap();
+    let home = Path::new(home.trim_end());
+    assert!(
+        home.starts_with(&target) && home.ends_with("dx-home"),
+        "{home:?}"
+    );
+    assert_eq!(
+        fs::read_to_string(said.join("program.dx-tools")).unwrap(),
+        format!(
+            "binaryen-129\nesbuild-fixture\nwasm-bindgen-{}\n",
+            bindgen_version()
+        )
+    );
+    for tool in [
+        "esbuild-fixture",
+        &format!("wasm-bindgen-{}", bindgen_version()),
+    ] {
+        assert_eq!(
+            fs::read_link(home.join("tools").join(tool)).unwrap(),
+            machine.join("tools").join(tool)
+        );
+    }
+    // The machine's wasm-opt ran on each module as dx called it.
+    let calls: Vec<String> = fs::read_to_string(&calls_file)
+        .unwrap()
+        .lines()
+        .map(str::to_owned)
+        .collect();
+    let called = |module: &str| {
+        format!(
+            "{} -Oz -o {} --strip-debug",
+            said.join(format!("{module}.split")).display(),
+            said.join(format!("{module}.opt")).display()
+        )
+    };
+    assert_eq!(calls, [called("media"), called("main")]);
+    // What dx names: the chunk's two segments in the order of their addresses; the main module as
+    // wasm-opt wrote it.
+    let ordered = b"\0asm\x01\0\0\0\x0b\x0d\x02\0\x41\0\x0b\x01a\0\x41\x10\x0b\x01b";
+    assert_ne!(fs::read(said.join("media.split")).unwrap(), ordered);
+    assert_eq!(fs::read(said.join("media.opt")).unwrap(), ordered);
+    assert_eq!(
+        fs::read(said.join("main.opt")).unwrap(),
+        fs::read(said.join("main.split")).unwrap()
+    );
+    // And so the chunk published, in order already when the repair after dx reads it.
+    let published = scratch.0.join("build/ui/public/assets");
+    let media: Vec<_> = fs::read_dir(&published)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| {
+            path.file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with("module_0_media-")
+        })
+        .collect();
+    assert_eq!(media.len(), 1, "{media:?}");
+    assert_eq!(fs::read(&media[0]).unwrap(), ordered);
+    let stderr = String::from_utf8_lossy(&done.stderr);
+    assert!(
+        stderr.contains("0 of its 2 segments put in order, 0 joined to the one before"),
+        "{stderr}"
+    );
+}
+
 /// The lines a stand-in that records its arguments wrote, one call per line.
 fn calls(said: &Path) -> Vec<String> {
     fs::read_to_string(said)
@@ -502,10 +707,10 @@ fn calls(said: &Path) -> Vec<String> {
         .collect()
 }
 
-/// A probe and a page kind, each bundled as the release bundles it, then named: the linked module
+/// Two probes, each bundled as the release bundles a page kind, then named: the linked module
 /// without DWARF, through the release's wasm-bindgen and wasm-opt keeping the names.
 #[test]
-fn cargo_symphony_ui_size_bundles_a_probe_and_a_kind_and_names_their_linked_modules() {
+fn cargo_symphony_ui_size_bundles_two_probes_and_names_their_linked_modules() {
     let scratch = Scratch::new("wasm-build-size");
     let common = scratch.0.join("common");
     let target = common.join("symphony/tools/target");
@@ -562,7 +767,7 @@ if [ "${{@: -3:1}}" = --strip-dwarf ]; then cp "${{@: -2:1}}" "${{@: -1}}"; fi
     );
     let linked = target.join(WASM32).join("wasm-release");
     fs::create_dir_all(&linked).unwrap();
-    for stem in ["floor_dioxus", "symphony-ui"] {
+    for stem in ["floor_dioxus", "floor_websys"] {
         fs::write(linked.join(format!("{stem}.wasm")), stem).unwrap();
     }
     let size = |names: &[&str]| {
@@ -574,14 +779,14 @@ if [ "${{@: -3:1}}" = --strip-dwarf ]; then cp "${{@: -2:1}}" "${{@: -1}}"; fi
             .output()
             .expect("run cargo-symphony-ui")
     };
-    let done = size(&["floor_dioxus", "review"]);
+    let done = size(&["floor_dioxus", "floor_websys"]);
     succeeded(&done, "cargo symphony-ui size");
     let out = scratch.0.join("sizes").canonicalize().unwrap();
 
-    // bundle.sh's arguments for a page kind (the dist test's), the probe's with its own bin.
+    // bundle.sh's arguments for a page kind (the dist test's), with each probe's own bin.
     for (name, bin, features) in [
         ("floor_dioxus", "floor_dioxus", "web,size-probe"),
-        ("review", "symphony-ui", "page-review"),
+        ("floor_websys", "floor_websys", "web,size-probe"),
     ] {
         let dx = fs::read_to_string(dx_said.join(name)).expect("dx never bundled it");
         assert_eq!(
@@ -610,26 +815,18 @@ if [ "${{@: -3:1}}" = --strip-dwarf ]; then cp "${{@: -2:1}}" "${{@: -1}}"; fi
         .collect();
     assert_eq!(
         stripped,
-        ["floor_dioxus", "symphony-ui"].map(|stem| format!(
+        ["floor_dioxus", "floor_websys"].map(|stem| format!(
             "run --quiet --locked -p symphony-ui --example wasm_size -- --strip-dwarf {} {}",
             linked.join(format!("{stem}.wasm")).display(),
-            out.join(format!(
-                "{}-nodwarf.wasm",
-                if stem == "symphony-ui" {
-                    "review"
-                } else {
-                    stem
-                }
-            ))
-            .display()
+            out.join(format!("{stem}-nodwarf.wasm")).display()
         ))
     );
     let bindgen = calls(&bindgen_said);
     assert_eq!(bindgen.len(), 2);
-    for (call, (name, stem)) in bindgen
-        .iter()
-        .zip([("floor_dioxus", "floor_dioxus"), ("review", "symphony-ui")])
-    {
+    for (call, (name, stem)) in bindgen.iter().zip([
+        ("floor_dioxus", "floor_dioxus"),
+        ("floor_websys", "floor_websys"),
+    ]) {
         assert_eq!(
             *call,
             format!(
@@ -641,10 +838,10 @@ if [ "${{@: -3:1}}" = --strip-dwarf ]; then cp "${{@: -2:1}}" "${{@: -1}}"; fi
     }
     let opt = calls(&opt_said);
     assert_eq!(opt.len(), 2);
-    for (call, (name, stem)) in opt
-        .iter()
-        .zip([("floor_dioxus", "floor_dioxus"), ("review", "symphony-ui")])
-    {
+    for (call, (name, stem)) in opt.iter().zip([
+        ("floor_dioxus", "floor_dioxus"),
+        ("floor_websys", "floor_websys"),
+    ]) {
         assert_eq!(
             *call,
             format!(
@@ -665,7 +862,7 @@ if [ "${{@: -3:1}}" = --strip-dwarf ]; then cp "${{@: -2:1}}" "${{@: -1}}"; fi
     let stdout = String::from_utf8(done.stdout).unwrap();
     let lines: Vec<_> = stdout.lines().collect();
     assert_eq!(lines.len(), 2, "{stdout}");
-    for (line, name) in lines.iter().zip(["floor_dioxus", "review"]) {
+    for (line, name) in lines.iter().zip(["floor_dioxus", "floor_websys"]) {
         let numbers: Vec<usize> = line
             .split(|c: char| !c.is_ascii_digit())
             .filter(|word| !word.is_empty())
@@ -684,8 +881,7 @@ if [ "${{@: -3:1}}" = --strip-dwarf ]; then cp "${{@: -2:1}}" "${{@: -1}}"; fi
     let refused = size(&["floor_dioxus", "nonsense"]);
     assert!(!refused.status.success());
     assert!(
-        String::from_utf8_lossy(&refused.stderr)
-            .contains("nonsense is neither a page kind nor a probe"),
+        String::from_utf8_lossy(&refused.stderr).contains("nonsense is no probe"),
         "{}",
         String::from_utf8_lossy(&refused.stderr)
     );
@@ -716,7 +912,7 @@ fn cargo_symphony_ui_clippy_cleans_another_trees_wasm32_build_before_it_lints_th
     };
     let mut clippy: Vec<_> = KINDS.iter().map(|kind| format!("clippy -p symphony-ui --target {WASM32} --lib --bins --locked --no-default-features --features web,page-{kind} -- -D warnings")).collect();
     clippy.push(format!("clippy -p symphony-ui --target {WASM32} --bin symphony-ui-dev --locked --no-default-features --features web,devtools -- -D warnings"));
-    clippy.push(format!("clippy -p symphony-ui --target {WASM32} --bin floor_dioxus --bin floor_websys --bin entry_websys --locked --no-default-features --features web,size-probe -- -D warnings"));
+    clippy.push(format!("clippy -p symphony-ui --target {WASM32} --bin floor_dioxus --bin floor_websys --locked --no-default-features --features web,size-probe -- -D warnings"));
     let mut expected = vec![
         format!("clean --workspace --target {WASM32} --profile dev --quiet --locked"),
         format!("clean --workspace --target {WASM32} --profile wasm-release --quiet --locked"),
@@ -857,6 +1053,11 @@ case "$PATH" in "$PWD/apps/symphony-ui/bin:"*) printf 'client-path=yes\n' ;; *) 
 printf 'arg=%s\n' "$@"
 "#,
     );
+    // The web client's checks, which bash reads as data.
+    executable(
+        &tree.join("apps/symphony-web/check.sh"),
+        "printf 'client-lint cwd=%s\\n' \"$PWD\"\n",
+    );
     let output = tree.join("output with spaces");
     let done = Command::new("just")
         .current_dir(&tree)
@@ -884,7 +1085,9 @@ printf 'arg=%s\n' "$@"
             concat!(
                 "cwd={0}\nclient-path=no\narg=fmt\narg=--all\narg=--check\n",
                 "cwd={0}\nclient-path=no\narg=clippy\narg=--workspace\narg=--all-targets\narg=--locked\narg=--\narg=-D\narg=warnings\n",
-                "cwd={0}\nclient-path=yes\narg=symphony-ui\narg=clippy\n"
+                "cwd={0}\nclient-path=no\narg=clippy\narg=-p\narg=symphony-api\narg=--features\narg=typescript\narg=--all-targets\narg=--locked\narg=--\narg=-D\narg=warnings\n",
+                "cwd={0}\nclient-path=yes\narg=symphony-ui\narg=clippy\n",
+                "client-lint cwd={0}\n"
             ),
             tree.display()
         )
@@ -921,4 +1124,68 @@ fn a_lint_in_a_trees_own_build_folder_leaves_the_trees_status_as_it_was() {
     succeeded(&done, "cargo symphony-ui clippy");
     assert_eq!(status(), before, "the lint changed the tree it ran in");
     assert!(record_in(&tree.join(".target")).is_file());
+}
+
+/// Every file under `dir`, by its path there, with its bytes.
+fn files_in(dir: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
+    let mut found = BTreeMap::new();
+    let mut folders = vec![dir.to_path_buf()];
+    while let Some(folder) = folders.pop() {
+        for entry in fs::read_dir(&folder).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                folders.push(path);
+            } else {
+                let bytes = fs::read(&path).unwrap();
+                found.insert(path.strip_prefix(dir).unwrap().to_path_buf(), bytes);
+            }
+        }
+    }
+    found
+}
+
+/// The web client's build (apps/symphony-web, the real Vite build bundle.sh runs) is the same bytes
+/// whatever NODE_ENV the shell that starts it exports: a shell's `development` would otherwise
+/// build React's development code, twice the size, and a release run's check from a clean shell
+/// would find the published client is not what it builds.
+#[test]
+fn the_web_clients_build_is_the_same_bytes_whatever_node_env_says() {
+    let scratch = Scratch::new("web-node-env");
+    let build = |name: &str, node_env: Option<&str>| {
+        let out = scratch.0.join(name);
+        let mut npm = Command::new("bash");
+        npm.arg(crate_dir().join("../symphony-web/npm.sh"))
+            .args(["run", "--silent", "build", "--", "--outDir"])
+            .arg(&out)
+            .arg("--emptyOutDir")
+            .env_remove("NODE_ENV");
+        if let Some(value) = node_env {
+            npm.env("NODE_ENV", value);
+        }
+        succeeded(&npm.output().expect("run npm.sh"), name);
+        files_in(&out)
+    };
+    let plain = build("plain", None);
+    assert!(
+        plain
+            .keys()
+            .any(|path| path.extension().is_some_and(|e| e == "js")),
+        "{:?}",
+        plain.keys()
+    );
+    for node_env in ["development", "test"] {
+        let built = build(node_env, Some(node_env));
+        assert_eq!(
+            built.keys().collect::<Vec<_>>(),
+            plain.keys().collect::<Vec<_>>(),
+            "NODE_ENV={node_env}"
+        );
+        for (path, bytes) in &plain {
+            assert!(
+                built[path] == *bytes,
+                "NODE_ENV={node_env}: {}",
+                path.display()
+            );
+        }
+    }
 }

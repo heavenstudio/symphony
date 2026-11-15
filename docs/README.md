@@ -1,5 +1,9 @@
 # Symphony documentation
 
+- [Product specs](product/README.md) — what each page of the app is for and how it behaves, with
+  pictures; the form of a spec and how its pictures are taken.
+- [The project file](PROJECT_FILE.md) — `symphony.toml`: every table and key a project can set,
+  with its default.
 - [Decision register](DECISIONS.md) — Symphony's own product and engineering decisions, one card
   each; the evidence behind a card is under [Analysis](analysis/).
 - [Concept review](REVIEW.md) — review cards, comments, questions and the owner queue.
@@ -14,10 +18,15 @@
   where, for how long, and how a reader takes them.
 - [Agent activity](AGENT_ACTIVITY.md) — the day files of the agents' health changes and their
   hours: sessions started, stale and lost, running by role and model, and the machine's load.
-- [PLUGIN_CALLS](PLUGIN_CALLS.md) — each call into a project's plugins timed, and sent through a
+- [Plugin calls](PLUGIN_CALLS.md) — each call into a project's plugins timed, and sent through a
   JSON round trip inside the process: the two settings, the record and how to read it.
-- [PLUGIN_PROTOCOL](PLUGIN_PROTOCOL.md) — a plugin answering from a process of its own: the
-  setting, its process, the line, each call's minor, the versions and the wire's shape.
+- [Plugin protocol](PLUGIN_PROTOCOL.md) — a plugin answering from a process of its own: the
+  setting, the seams it answers, its process, its commands, a register read in one request, the
+  line, each call's minor, the versions and the wire's shape.
+- [The Mac app](../apps/symphony-desktop/AGENTS.md) — the desktop app's guide: the servers it
+  follows and how it finds them, what it counts and notifies, where a server's window may go, and
+  what is not in it yet; why it is built so is [the desktop client
+  analysis](analysis/desktop-client.md).
 
 Agents working in this repository follow the standing [Rules](../RULES.md).
 

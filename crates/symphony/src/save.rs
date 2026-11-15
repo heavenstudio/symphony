@@ -146,17 +146,58 @@ impl Saves {
         })
     }
 
-    fn scope(&self, scope: &str, rel: &str) -> Result<(PathBuf, String), Failure> {
-        let (scope, rel) = if let Some(path) = rel.trim_start_matches('/').strip_prefix('@') {
-            path.split_once('/')
-                .ok_or_else(|| crate::project::Project::of(&self.root).not_a_document())?
-        } else {
-            (scope, rel.trim_start_matches('/'))
+    /// The scope and document name a save names: the page's `scope` and `rel`, or those a document
+    /// named `@<tree>/…` carries.
+    fn named<'a>(&self, scope: &'a str, rel: &'a str) -> Result<(&'a str, &'a str), Failure> {
+        Ok(
+            if let Some(path) = rel.trim_start_matches('/').strip_prefix('@') {
+                path.split_once('/')
+                    .ok_or_else(|| crate::project::Project::of(&self.root).not_a_document())?
+            } else {
+                (scope, rel.trim_start_matches('/'))
+            },
+        )
+    }
+
+    /// A card's save from a branch's page, as main's own when the card is main's
+    /// ([`branches::mains_card`]: main's copy of the document holds it, and the branch's page
+    /// draws main's card): its payload with its path the document's name, saved under main's
+    /// scope. None when the save stays the page's. So the owner's line on a card main holds is
+    /// main's, committed there, never left in a worktree a land does not carry. A branch whose
+    /// worktree is gone is read at its branch, and with neither the card is main's. A worktree
+    /// listing that fails ([`branches::listed`]) says nothing of the page's worktree, so the save
+    /// stays the page's, and its own failure is the owner's to see: never a worktree read as gone
+    /// and its card answered on main's copy.
+    fn mains(&self, scope: &str, payload: &Value) -> Option<Value> {
+        let (scope, rel) = self.named(scope, string(payload, "path")).ok()?;
+        if scope.is_empty() {
+            return None;
+        }
+        let tree = branches::listed(&self.root)?
+            .into_iter()
+            .find(|t| t.id() == scope);
+        let branch = scope.replace('~', "/");
+        let page = match &tree {
+            Some(tree) => branches::Page::Tree(&tree.path),
+            None => branches::Page::Gone(&branch),
         };
+        branches::mains_card(&self.root, page, rel, string(payload, "slug")).then(|| {
+            let mut payload = payload.clone();
+            payload["path"] = json!(rel);
+            payload
+        })
+    }
+
+    fn scope(&self, scope: &str, rel: &str) -> Result<(PathBuf, String), Failure> {
+        let (scope, rel) = self.named(scope, rel)?;
         let root = if scope.is_empty() {
             self.root.clone()
         } else {
-            branches::trees(&self.root)
+            branches::listed(&self.root)
+                .ok_or_else(|| Failure {
+                    status: 503,
+                    error: "the worktrees could not be listed".into(),
+                })?
                 .into_iter()
                 .find(|t| t.id() == scope)
                 .map(|t| t.path)
@@ -234,6 +275,14 @@ impl Saves {
             return Ok(value);
         }
         drop(unpublished);
+        // The owner's line on a card main holds is main's, whichever branch's page it was given on.
+        let moved = matches!(route, "/api/decision" | "/api/message")
+            .then(|| self.mains(scope, payload))
+            .flatten();
+        let (scope, payload) = match &moved {
+            Some(moved) => ("", moved),
+            None => (scope, payload),
+        };
         // The ask this save opens or joins, if it waits on an agent's answer.
         let mut asking: Option<NewAsk> = None;
         let result = match route {
@@ -350,24 +399,35 @@ impl Saves {
                 let actions = plugins.board_actions();
                 // The board action that made the offer, by the name the offer gave.
                 let named = string(payload, "action");
-                let Some(action) = actions.iter().find(|action| action.name() == named) else {
-                    return Err(Failure {
-                        status: 404,
-                        error: "no such board action".into(),
-                    });
+                let done = match actions.iter().find(|action| action.name() == named) {
+                    Some(action) => action.submit(
+                        &self.root,
+                        &symphony_plugin::TaskRef {
+                            slug,
+                            status: &task.status,
+                            branch: &branch,
+                        },
+                        &symphony_plugin::Submission {
+                            payload: string(payload, "payload").into(),
+                            note: string(payload, "note").into(),
+                        },
+                    )?,
+                    // The Symphony's own, where no plugin's has its name: the owner's approve of
+                    // the tip its offer showed, the line the `owner` stamp reads.
+                    None if named == crate::gates::stamps::OWNER_APPROVE => {
+                        symphony_plugin::Submitted {
+                            said: crate::gates::stamps::approve_line(string(payload, "payload"))
+                                .map_err(|error| Failure { status: 400, error })?,
+                            released: Vec::new(),
+                        }
+                    }
+                    None => {
+                        return Err(Failure {
+                            status: 404,
+                            error: "no such board action".into(),
+                        });
+                    }
                 };
-                let done = action.submit(
-                    &self.root,
-                    &symphony_plugin::TaskRef {
-                        slug,
-                        status: &task.status,
-                        branch: &branch,
-                    },
-                    &symphony_plugin::Submission {
-                        payload: string(payload, "payload").into(),
-                        note: string(payload, "note").into(),
-                    },
-                )?;
                 // With a note the owner's line waits on an agent: it opens the task's ask.
                 if string(payload, "note").trim().is_empty() {
                     store.say(slug, "owner", &done.said, None)?;
@@ -405,8 +465,11 @@ impl Saves {
                 let db = asks::default_path(&self.root, std::env::var("ASKS_DB").ok().as_deref());
                 let db = format!("'{}'", db.to_string_lossy().replace('\'', "'\\''"));
                 let reply = id.map_or_else(|| format!("Reply in the document/card at {}#{} using the chat-doc skill.", string(payload, "path"), string(payload, "slug")), |id| format!("Read: just symphony-ask --db {db} show {id}. Answer: just symphony-ask --db {db} answer {id} TEXT --as HANDLE."));
+                // When the owner said it, so a line delivered late (nobody heard chat then) is
+                // never read as new; a retry publishes this same text.
                 let text = format!(
-                    "OWNER {route} scope={scope} {}\n{reply}{}",
+                    "OWNER {route} at {} scope={scope} {}\n{reply}{}",
+                    clock::now_stamp(),
                     payload,
                     attached(&self.root, payload)
                 );

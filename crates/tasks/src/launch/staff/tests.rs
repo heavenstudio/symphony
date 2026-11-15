@@ -1,12 +1,14 @@
 //! The staffing pass's own cases on a scratch store: an idle agent reused for a job (`hc send` to
 //! its terminal, confirmed only by the turn hc saw start or later work), an idle reviewer picked
-//! only when the board would take its verdict, a review dispatch that fails or whose reviewer the
-//! board refuses and cancels its instruction, and an ended pass freeing its lock while a forked
-//! child still holds the descriptor. hc is a stand-in here (`NoHc`, `ReusedTerminal`): no terminal
-//! is started.
+//! only when the board would take its verdict, a review given on the task itself and never as a
+//! subtask, whether it is handed, refused or fails, and an ended pass freeing its lock while a
+//! forked child still holds the descriptor. hc is a stand-in here (`NoHc`, `ReusedTerminal`): no
+//! terminal is started.
 
 use super::store_fixture::{Fixture, Seed};
 use super::*;
+use crate::NewTask;
+use crate::rows::TaskSessionRow;
 use std::cell::Cell;
 
 use crate::launch::LaunchError;
@@ -24,6 +26,36 @@ impl Hc for NoHc {
 
     fn app(&self, _args: &[&str]) -> Result<String, LaunchError> {
         panic!("failed checkout must not reach the Herdr app")
+    }
+
+    fn caller(&self) -> Option<String> {
+        None
+    }
+
+    fn board(&self) -> String {
+        "fixture/tasks".into()
+    }
+}
+
+/// A machine whose only live terminal, `t9`, runs `handle` (none for `None`): what a launch asks
+/// to tell whether a recorded reviewer still runs.
+struct Running(Option<&'static str>);
+
+impl Hc for Running {
+    fn run(&self, args: &[&str]) -> Result<String, LaunchError> {
+        assert_eq!(args.first(), Some(&"ls"), "only listed: {args:?}");
+        let terminals = self.0.map_or_else(Vec::new, |handle| {
+            vec![serde_json::json!({"address": "t9", "state": "live", "name": handle})]
+        });
+        Ok(serde_json::json!({ "terminals": terminals }).to_string())
+    }
+
+    fn feed(&self, args: &[&str], _input: &str) -> Result<String, LaunchError> {
+        panic!("a job's choice feeds nothing: {args:?}")
+    }
+
+    fn app(&self, args: &[&str]) -> Result<String, LaunchError> {
+        panic!("a job's choice changes no window: {args:?}")
     }
 
     fn caller(&self) -> Option<String> {
@@ -65,6 +97,9 @@ impl Hc for ReusedTerminal<'_> {
                     "address": "t1", "state": "live", "status": {"app": "codex", "state": status},
                 })
                 .to_string())
+            }
+            ["send", "t1", _, "--json"] if self.outcome == "unsent" => {
+                Err(LaunchError("hc send t1: boom".into()))
             }
             ["send", "t1", _, "--json"] => {
                 self.sent.set(true);
@@ -115,6 +150,7 @@ fn idle(handle: &str, kind: &str, worktree: &str) -> agents::Agent {
         task: None,
         role: None,
         tasks: Vec::new(),
+        following: 0,
         worktree: worktree.into(),
         branch: String::new(),
         agent: Some("codex".into()),
@@ -145,9 +181,11 @@ const ORCHESTRATED: &str = "ochre-owl";
 const ORCHESTRATES: &str = "amber-heron";
 const EXECUTED: &str = "slate-wren";
 const FRESH: &str = "fleet-vole";
+/// Another fresh one.
+const SECOND: &str = "dune-lark";
 
 fn reviewing() -> Fixture {
-    let seed = [FILER, ORCHESTRATED, ORCHESTRATES, EXECUTED, FRESH];
+    let seed = [FILER, ORCHESTRATED, ORCHESTRATES, EXECUTED, FRESH, SECOND];
     Fixture::new(seed.into_iter().fold(Seed::default(), Seed::session))
 }
 
@@ -206,6 +244,70 @@ fn an_idle_reviewer_is_picked_only_when_the_board_takes_its_verdict() {
     assert_eq!(picked("sim/fast", &[ORCHESTRATES]), None);
 }
 
+#[test]
+fn a_review_goes_back_to_the_tasks_recorded_reviewer_never_to_another_idle_one() {
+    let f = reviewing();
+    in_review(&f, "sim/jump", false);
+    let idle = [idle_reviewer(SECOND)];
+    let job_in = |hc: &dyn Hc| {
+        let board = f.store.board().unwrap();
+        let task = board.tasks.iter().find(|t| t.slug == "sim/jump").unwrap();
+        let held = f.store.ever_held("sim/jump").unwrap();
+        let (resumed, picked) = job_for(
+            &f.store,
+            hc,
+            &idle,
+            &board,
+            task,
+            "reviewer",
+            &HashSet::new(),
+            &held,
+        )?;
+        Ok::<_, Error>((resumed, picked.map(|a| a.handle.clone())))
+    };
+    let job = || job_in(&Running(None)).unwrap();
+    let record = |conversation: &str| {
+        f.store
+            .record_launch(&NewLaunch {
+                claude_session: conversation.into(),
+                worktree: env!("CARGO_MANIFEST_DIR").into(),
+                ..NewLaunch::new("sim/jump", FRESH, "reviewer")
+            })
+            .unwrap();
+    };
+    // No reviewer recorded: the idle fresh one.
+    let another = (None, Some(SECOND.to_string()));
+    assert_eq!(job(), another);
+    // One recorded with no conversation, or a Codex thread that never arrived: none to go back to.
+    for none in ["", "codex:"] {
+        record(none);
+        assert_eq!(job(), another, "{none:?}");
+    }
+    // One recorded with a conversation: back to it, and the idle one is passed over.
+    record("codex:0abc-def");
+    assert_eq!(job(), (Some(FRESH.to_string()), None));
+    // While it still runs, the job fails as its launch would, the idle one passed over all the same.
+    let still = job_in(&Running(Some(FRESH))).unwrap_err().to_string();
+    assert!(
+        still.starts_with(&format!(
+            "{FRESH} reviews sim/jump and still runs in terminal t9"
+        )),
+        "{still}"
+    );
+    // An executor's record is no reviewer's.
+    f.store
+        .record_launch(&NewLaunch {
+            claude_session: "work".into(),
+            worktree: env!("CARGO_MANIFEST_DIR").into(),
+            ..NewLaunch::new("sim/jump", EXECUTED, "executor")
+        })
+        .unwrap();
+    assert_eq!(job(), (Some(FRESH.to_string()), None));
+    // Once it left, another takes the review.
+    f.store.leave(FRESH).unwrap();
+    assert_eq!(job(), another);
+}
+
 /// A machine a reuse whose turn hc saw start runs on: it launches, looks and inspects nothing.
 fn reusing() -> Machine {
     Machine {
@@ -228,8 +330,25 @@ fn jump_review() -> ReviewTarget {
     }
 }
 
+/// The subtasks under `slug`: a review is given on the task itself, so it files none.
+fn subtasks(f: &Fixture, slug: &str) -> Vec<String> {
+    let under = format!("{slug}/");
+    let tasks = f.store.tasks(None).unwrap();
+    tasks
+        .into_iter()
+        .filter(|t| t.slug.starts_with(&under))
+        .map(|t| t.slug)
+        .collect()
+}
+
+/// `handle`'s launch recorded on `slug`, if any.
+fn recorded(f: &Fixture, slug: &str, handle: &str) -> Option<TaskSessionRow> {
+    let ran = f.store.task_sessions(slug).unwrap();
+    ran.into_iter().find(|s| s.handle == handle)
+}
+
 #[test]
-fn a_reused_reviewer_the_board_refuses_is_left_no_job_and_the_job_is_cancelled() {
+fn a_reused_reviewer_the_board_refuses_is_handed_nothing_and_a_fresh_one_reviews_the_task_itself() {
     let f = reviewing();
     in_review(&f, "sim/jump", false);
     let (machine, target) = (reusing(), jump_review());
@@ -258,58 +377,75 @@ fn a_reused_reviewer_the_board_refuses_is_left_no_job_and_the_job_is_cancelled()
         "{error}"
     );
     assert!(!hc.sent.get(), "no prompt went to the filer");
-    let job = f.store.get("sim/jump/staff-review-1").unwrap();
-    assert_eq!(job.status, "cancelled");
-    assert!(job.holders("reserved").is_empty(), "{:?}", job.roles);
-    assert!(f.store.task_sessions(&job.slug).unwrap().is_empty());
-    assert!(
-        f.store
-            .get("sim/jump")
-            .unwrap()
-            .holders("reviewer")
-            .is_empty()
-    );
+    assert_eq!(subtasks(&f, "sim/jump"), Vec::<String>::new());
+    assert_eq!(recorded(&f, "sim/jump", FILER), None);
+    let jump = f.store.get("sim/jump").unwrap();
+    assert!(jump.holders("reviewer").is_empty(), "{:?}", jump.roles);
 
-    // The next job goes to a fresh reviewer, reserved for it once it holds the role.
+    // The next goes to a fresh reviewer, on the task it reviews: its role and its launch are
+    // recorded there, it reserves nothing (a reviewer never reserves the task it judges), and no
+    // subtask is filed.
     let line = staff(&idle_reviewer(FRESH)).unwrap();
-    assert!(
-        line.starts_with(&format!(
-            "pinged {FRESH} as reviewer, pane t1, prompt $review-task sim/jump/staff-review-2 {FRESH}"
-        )),
-        "{line}"
-    );
     assert_eq!(
-        f.store
-            .get("sim/jump/staff-review-2")
-            .unwrap()
-            .holders("reserved"),
-        [FRESH]
+        line,
+        format!("pinged {FRESH} as reviewer, pane t1, prompt $review-task sim/jump {FRESH}")
     );
+    assert!(hc.sent.get());
+    assert_eq!(subtasks(&f, "sim/jump"), Vec::<String>::new());
+    let jump = f.store.get("sim/jump").unwrap();
+    assert_eq!(jump.holders("reviewer"), [FRESH]);
+    assert!(jump.holders("reserved").is_empty(), "{:?}", jump.roles);
+    let launch = recorded(&f, "sim/jump", FRESH).expect("its launch is recorded on the task");
+    assert_eq!(launch.role, "reviewer");
+    assert_eq!(launch.pane, "t1");
+    assert_eq!(launch.claude_session, "codex:existing-conversation");
+}
+
+#[test]
+fn a_reused_reviewer_its_prompt_may_have_reached_keeps_its_role() {
+    let f = reviewing();
+    in_review(&f, "sim/jump", false);
+    let hc = ReusedTerminal::answering("unsent");
+    let task = f.store.get("sim/jump").unwrap();
+    let error = dispatch(
+        &f.store,
+        &hc,
+        &reusing(),
+        &Defaults::default().resolve(None, None),
+        &task,
+        ORCHESTRATES,
+        Some(&jump_review()),
+        Some(&idle_reviewer(FRESH)),
+    )
+    .unwrap_err();
+    assert!(error.to_string().contains("hc send t1: boom"), "{error}");
+    // Recorded before the prompt went, so it may have the review: it keeps the role, and its
+    // record says where it is.
     assert_eq!(
         f.store.get("sim/jump").unwrap().holders("reviewer"),
         [FRESH]
     );
+    let launch = recorded(&f, "sim/jump", FRESH).expect("recorded before the prompt");
+    assert_eq!(launch.role, "reviewer");
+    assert_eq!(subtasks(&f, "sim/jump"), Vec::<String>::new());
 }
 
 #[test]
-fn a_reused_reviewer_whose_job_is_reserved_first_lets_its_role_go_with_the_job() {
+fn a_reused_reviewer_whose_launch_is_not_recorded_lets_its_role_go() {
+    use std::sync::atomic::{AtomicBool, Ordering::SeqCst};
     let f = reviewing();
     in_review(&f, "sim/jump", false);
-    // Another session reserves the job once the reused reviewer holds the role, before its own
-    // reservation: the role taken, the job is not its to have.
-    let (other, taken) = (f.other(), std::sync::atomic::AtomicBool::new(false));
+    // Once the reused reviewer holds the role, before its launch is recorded, the board starts
+    // refusing a record of its terminal.
+    let (probe, client, refusing) = (f.other(), f.other_client(), AtomicBool::new(false));
     let store = f.busy(move || {
-        use std::sync::atomic::Ordering::SeqCst;
-        let holds = |slug| {
-            other
-                .get(slug)
-                .is_ok_and(|t| t.holders("reviewer") == [FRESH])
-        };
-        if !taken.load(SeqCst)
-            && holds("sim/jump")
-            && (other.reserve("sim/jump/staff-review-1", ORCHESTRATED, 3600.0)).is_ok()
-        {
-            taken.store(true, SeqCst);
+        let holds = probe
+            .get("sim/jump")
+            .is_ok_and(|t| t.holders("reviewer") == [FRESH]);
+        if holds && !refusing.swap(true, SeqCst) {
+            let refuse = "DEFINE FIELD OVERWRITE pane ON task_session TYPE string \
+                ASSERT $value != 't1';";
+            client.query(refuse, serde_json::json!({})).unwrap();
         }
     });
     let hc = ReusedTerminal::answering("started");
@@ -325,21 +461,19 @@ fn a_reused_reviewer_whose_job_is_reserved_first_lets_its_role_go_with_the_job()
         Some(&idle_reviewer(FRESH)),
     )
     .unwrap_err();
-    let reserved = format!("sim/jump/staff-review-1 is reserved by {ORCHESTRATED}");
-    assert!(error.to_string().contains(&reserved), "{error}");
-    assert!(!hc.sent.get(), "no prompt went to a reviewer with no job");
-    let job = f.store.get("sim/jump/staff-review-1").unwrap();
-    assert_eq!(job.status, "cancelled");
-    assert!(f.store.task_sessions(&job.slug).unwrap().is_empty());
-    let reviewed = f.store.get("sim/jump").unwrap();
+    assert!(error.to_string().contains("pane"), "{error}");
+    // Nothing was sent and nothing recorded, so the task waits on no reviewer with no job.
     assert!(
-        reviewed.holders("reviewer").is_empty(),
-        "{:?}",
-        reviewed.roles
+        !hc.sent.get(),
+        "no prompt went to a reviewer with no record"
     );
+    assert_eq!(recorded(&f, "sim/jump", FRESH), None);
+    let jump = f.store.get("sim/jump").unwrap();
+    assert!(jump.holders("reviewer").is_empty(), "{:?}", jump.roles);
     let said = f.said("sim/jump");
     let let_go = format!("{FRESH} released reviewer (released)");
     assert!(said.contains(&let_go), "{said:?}");
+    assert_eq!(subtasks(&f, "sim/jump"), Vec::<String>::new());
 }
 
 #[test]
@@ -363,7 +497,7 @@ fn reuse_reports_unconfirmed_acceptance_unless_hc_saw_the_turn_start() {
         let agent = idle("amber-heron", "worker", "fixture-reuse");
         let hc = ReusedTerminal::answering(outcome);
         let task = f.store.get("sim/jump").unwrap();
-        let line = reuse(&f.store, &hc, &machine, &agent, &task, &task, "executor").unwrap();
+        let line = reuse(&f.store, &hc, &machine, &agent, &task, "executor").unwrap();
         let expected = "pinged amber-heron as executor, pane t1, prompt $work sim/jump amber-heron";
         match outcome {
             "started" => {
@@ -397,7 +531,7 @@ fn reuse_reports_unconfirmed_acceptance_unless_hc_saw_the_turn_start() {
 }
 
 #[test]
-fn a_failed_staff_review_dispatch_cancels_its_instruction_on_the_store() {
+fn a_failed_staff_review_launch_files_no_subtask_and_leaves_the_task_waiting_on_no_reviewer() {
     let f = Fixture::new(
         Seed::default()
             .session("amber-heron")
@@ -432,15 +566,12 @@ fn a_failed_staff_review_dispatch_cancels_its_instruction_on_the_store() {
     )
     .unwrap_err();
     assert!(error.to_string().contains("not-a-folder"), "{error}");
-    let job = f.store.get("sim/jump/staff-review-1").unwrap();
-    assert!(job.instruction);
-    assert_eq!(job.parent.as_deref(), Some("sim/jump"));
-    assert_eq!(job.status, "cancelled");
-    assert_eq!(f.store.get("sim/jump").unwrap().status, "review");
-    assert_eq!(
-        f.said(&job.slug).last().unwrap(),
-        "amber-heron moved it ready → cancelled"
-    );
+    assert_eq!(subtasks(&f, "sim/jump"), Vec::<String>::new());
+    let jump = f.store.get("sim/jump").unwrap();
+    assert_eq!(jump.status, "review");
+    // What the launch took on the task its rollback let go: no reviewer that has no job.
+    assert!(jump.holders("reviewer").is_empty(), "{:?}", jump.roles);
+    assert!(f.store.task_sessions("sim/jump").unwrap().is_empty());
 }
 
 #[test]

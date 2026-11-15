@@ -4,10 +4,10 @@
 //! measures a compiled plugin's calls through the protocol's JSON (`symphony::plugins::measure`).
 //! It checks no JSON Schema (`serve` refuses `validate`: a schema check is a library call,
 //! `symphony::schema::validate`), so it links none of the validator, which would add a fifth to
-//! its size. The commands only this repository's own build and release run use answer from
-//! `symphony-build` alone, so it links none of them either. And on macOS it exports no symbol, as
-//! no other code loads it. The size each would add is the binary's budget's to hold
-//! (docs/CHECKS.md, "Size budgets").
+//! its size. And on macOS it exports no symbol, as no other code loads it. The size each would add
+//! is the binary's budget's to hold (docs/CHECKS.md, "Size budgets"). The commands only this
+//! repository's own build and release run use are a package of their own (crates/symphony-build),
+//! which this library never compiles, so there is nothing of theirs to look for here.
 
 use serde_json::json;
 use symphony::plugins::measure::READ_AS_ANOTHER;
@@ -62,37 +62,6 @@ fn the_binary_links_no_schema_validator() {
         "the symphony binary links the JSON Schema validator: something it runs reaches \
          `symphony::schema` (`serve` refuses `validate`; a schema check is a library call)"
     );
-}
-
-/// `publish-client`, `release-inputs`, `size-budget`, `split-repair` and `release` are
-/// `symphony-build`'s (`symphony::cli::build_main`), which no project is given (`init::BUILDS`), so
-/// neither this binary nor a consuming project's host, which runs `symphony::cli::main`, links
-/// them. Each is looked for by the prefix of its refusals, a text of its own module; the
-/// `symphony-build` binary, which runs them, holds each, and so shows the text is there to find
-/// where the command is linked.
-#[test]
-fn the_binary_links_none_of_the_build_only_commands() {
-    let build = std::fs::read(env!("CARGO_BIN_EXE_symphony-build")).unwrap();
-    let shipped = binary();
-    for command in [
-        "publish-client",
-        "release-inputs",
-        "size-budget",
-        "split-repair",
-        "release",
-    ] {
-        let said = format!("symphony-build {command}: ");
-        assert!(
-            holds(&build, said.as_bytes()),
-            "symphony-build holds no {said:?}: the text this test looks for is no longer \
-             `{command}`'s"
-        );
-        assert!(
-            !holds(&shipped, said.as_bytes()),
-            "the symphony binary links `{command}`: something it runs reaches it, which only \
-             `symphony::cli::build_main` should"
-        );
-    }
 }
 
 /// On macOS the binary links with `-no_exported_symbols` (crates/symphony/build.rs): no other code

@@ -5,12 +5,16 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use sha2::{Digest, Sha256};
-use symphony_api::{ActivityItem, Message, Role, Session, Task, TaskCounts, Tasks};
+use symphony_api::{
+    ActivityItem, Message, Role, Session, Task, TaskAsks, TaskCounts, TaskVerdict, Tasks,
+};
 
 use crate::{clock, dashboard, render::Render};
 
 mod connect;
-pub use connect::{connect, connect_in, connect_running, read_failure};
+pub use connect::{
+    connect, connect_held, connect_held_in, connect_in, connect_running, read_failure,
+};
 
 pub fn snapshot(store: &symphony_board::Store) -> Result<(Tasks, i64), symphony_board::Error> {
     let board = store.board()?;
@@ -53,34 +57,109 @@ pub fn counts(board: &Tasks) -> TaskCounts {
     }
 }
 
+/// The people the board's questions and verdicts are for ([`symphony_api::TaskAsks`]): the owner
+/// alone until Symphony has users. One added is a name in those maps, never a field.
+pub const PEOPLE: [&str; 1] = ["owner"];
+
+/// The slugs of `tasks` that are not done or cancelled: those whose questions can still wait.
+pub fn open(tasks: &[Task]) -> Vec<String> {
+    tasks
+        .iter()
+        .filter(|task| !task.is_finished())
+        .map(|task| task.slug.clone())
+        .collect()
+}
+
+/// The questions still waiting on each of [`PEOPLE`] on the tasks `open` names
+/// ([`symphony_board::Store::questions_waiting`]), by person, a person with none at 0.
+pub fn questions(
+    store: &symphony_board::Store,
+    open: &[String],
+) -> Result<BTreeMap<String, u32>, symphony_board::Error> {
+    PEOPLE
+        .iter()
+        .map(|person| {
+            let waiting = store.questions_waiting(person, open)?;
+            Ok(((*person).to_string(), dashboard::count(waiting.len())))
+        })
+        .collect()
+}
+
+/// `message` on the wire, when it is a reviewer's verdict ([`symphony_board::reviewer_verdict`]).
+pub fn verdict(message: &symphony_board::Message) -> Option<TaskVerdict> {
+    Some(TaskVerdict {
+        verdict: symphony_board::reviewer_verdict(message)?.to_string(),
+        id: message.id,
+        task: message.slug.clone(),
+        reviewer: message.sender.clone(),
+        at: message.ts,
+    })
+}
+
+/// What the board asks of each of [`PEOPLE`]: the `questions` waiting on them, and the newest
+/// `verdict`, news for each.
+pub fn asks(questions: BTreeMap<String, u32>, verdict: Option<&TaskVerdict>) -> TaskAsks {
+    TaskAsks {
+        questions,
+        verdicts: verdict
+            .map(|verdict| {
+                PEOPLE
+                    .iter()
+                    .map(|person| ((*person).to_string(), verdict.clone()))
+                    .collect()
+            })
+            .unwrap_or_default(),
+    }
+}
+
+/// The tasks of the owner's sign-off lane (docs/TASKS.md): open, executed, and held by their owner
+/// gate. The Symphony's is held while a card the task posted waits on the owner
+/// ([`crate::gates::owner`]); a gate named `owner` that a plugin of the project at `root` answered
+/// for the task as it is now replaces it ([`crate::gates::merged`]), read from what `kept` holds and
+/// never asked ([`crate::gates::kept_theirs`]), so the lane starts no plugin's work. Only a known
+/// gate kept for the task does: with nothing kept for it as it is now, an error kept, or the gate
+/// unknown, the card rule decides, erring toward showing the owner what may wait on them.
 pub fn signoff(
     store: &symphony_board::Store,
     tasks: &[Task],
     pending: &symphony_api::Pending,
+    root: &Path,
+    kept: &crate::gates::Kept,
 ) -> Result<Vec<String>, String> {
+    let answerers = crate::gates::answerers(&crate::project::Project::of(root), root);
     let mut result = Vec::new();
     for task in tasks.iter().filter(|t| {
         !["done", "blocked", "cancelled"].contains(&t.status.as_str())
             && t.roles.iter().any(|r| r.role == "executor")
     }) {
-        // The owner gate's rule (`gates::posted_cards`), the thread read only when the body names
-        // none of the cards.
         let cards = crate::gates::linked_cards(&task.links, pending);
-        if cards.is_empty() {
+        if cards.is_empty() && answerers.is_empty() {
             continue;
         }
-        let posted = |texts: &mut dyn Iterator<Item = &str>| {
-            !crate::gates::posted_cards(&cards, texts).is_empty()
+        // The owner gate's rule (`gates::posted_cards`), the thread read only when the body names
+        // none of the cards.
+        let mut posted = crate::gates::posted_cards(&cards, std::iter::once(task.body.as_str()));
+        if posted.is_empty() && !cards.is_empty() {
+            let thread = store.thread(&task.slug).map_err(|e| e.to_string())?;
+            posted = crate::gates::posted_cards(&cards, thread.iter().map(|m| m.text.as_str()));
+        }
+        let own: Vec<symphony_api::Gate> = crate::gates::owner(&posted).into_iter().collect();
+        let gates = if answerers.is_empty() {
+            own
+        } else {
+            let branch = branch_of(store, &task.slug, &task.body).map_err(|e| e.to_string())?;
+            let asked = crate::gates::Asked {
+                slug: task.slug.clone(),
+                status: task.status.clone(),
+                tip: crate::gates::tip(root, &branch),
+                branch,
+            };
+            let theirs = crate::gates::kept_theirs(kept, root, &answerers, &asked);
+            crate::gates::merged(own, theirs)
         };
-        if posted(&mut std::iter::once(task.body.as_str()))
-            || posted(
-                &mut store
-                    .thread(&task.slug)
-                    .map_err(|e| e.to_string())?
-                    .iter()
-                    .map(|m| m.text.as_str()),
-            )
-        {
+        if gates.iter().any(|gate| {
+            gate.name == symphony_api::gates::OWNER && gate.state == symphony_api::GateState::Held
+        }) {
             result.push(task.slug.clone());
         }
     }
@@ -140,8 +219,26 @@ fn brief_part(
     (typed_blocks(fragment, render), next)
 }
 
+/// Whether the subtask `slug`, with its instruction flag and status, is listed under its parent: on
+/// the task page's Subtasks, in their count and in the board's Task groups
+/// (`apps/symphony-server/src/api/task_board.rs`). Slices and errands are, and so is every open
+/// subtask. A finished instruction to do or to review the parent itself (`PARENT/work`,
+/// `PARENT/review`, the staffing pass's `PARENT/staff-review-N`) is not: the guidance filed those
+/// before a task's executor and reviewer worked on the task itself, its verdicts stand on the
+/// parent's thread, and the parent is the row. Open, it shows where its agent is at work.
+pub fn listed_under_parent(slug: &str, instruction: bool, status: &str) -> bool {
+    let name = slug.rsplit('/').next().unwrap_or(slug);
+    let staffs_parent = name == "work"
+        || name == "review"
+        || name
+            .strip_prefix("staff-review-")
+            .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()));
+    !(instruction && staffs_parent && ["done", "cancelled"].contains(&status))
+}
+
 /// The page of `record`, already read by the caller. Children are counted from the rows right under
-/// it: reading every descendant would load the whole board for a number.
+/// it, those [`listed_under_parent`]: reading every descendant would load the whole board for a
+/// number.
 pub fn page(
     store: &symphony_board::Store,
     record: &symphony_board::Task,
@@ -158,7 +255,9 @@ pub fn page(
         children_count: store
             .children(&record.slug)
             .map_err(|e| e.to_string())?
-            .len(),
+            .iter()
+            .filter(|child| listed_under_parent(&child.slug, child.instruction, &child.status))
+            .count(),
         brief_omitted: record.body.len() - brief_next,
         brief_next,
         brief_revision: digest(record.body.as_bytes()),
@@ -181,8 +280,9 @@ pub fn brief(record: &symphony_board::Task, from: usize, root: &Path) -> symphon
 }
 
 /// The first offer of `plugins`' board actions on `slug` that has a payload, whatever the task's
-/// status: each action decides which work it offers on. Requested only when the owner reaches the
-/// message/approval controls: preparing an offer must not delay the task's metadata and brief.
+/// status: each action decides which work it offers on; with none, the owner's approve of the tip
+/// while the task needs it (`gates::stamps::owner_offer`). Requested only when the owner reaches
+/// the message/approval controls: preparing an offer must not delay the task's metadata and brief.
 pub fn owner_offer(
     store: &symphony_board::Store,
     plugins: &crate::plugins::Plugins,
@@ -202,6 +302,9 @@ pub fn owner_offer(
             return Ok(offer);
         }
     }
+    if let Some(offer) = crate::gates::stamps::owner_offer(store, &task, root, &branch) {
+        return Ok(offer);
+    }
     Ok(symphony_api::TaskOffer {
         branch,
         ..symphony_api::TaskOffer::default()
@@ -214,8 +317,16 @@ pub(crate) fn approval_branch(
     store: &symphony_board::Store,
     task: &symphony_board::Task,
 ) -> Result<String, symphony_board::Error> {
-    if let Some(branch) = task
-        .body
+    branch_of(store, &task.slug, &task.body)
+}
+
+/// [`approval_branch`] of the task `slug`, whose brief is `body`.
+fn branch_of(
+    store: &symphony_board::Store,
+    slug: &str,
+    body: &str,
+) -> Result<String, symphony_board::Error> {
+    if let Some(branch) = body
         .trim_start()
         .strip_prefix("Review `")
         .and_then(|text| text.split_once("` before it lands"))
@@ -223,15 +334,15 @@ pub(crate) fn approval_branch(
     {
         return Ok(branch.to_string());
     }
-    if let Some(branch) = task.slug.strip_prefix("review/") {
+    if let Some(branch) = slug.strip_prefix("review/") {
         return Ok(branch.to_string());
     }
     Ok(store
-        .task_sessions(&task.slug)?
+        .task_sessions(slug)?
         .into_iter()
         .rev()
         .find(|s| s.role == "executor" && !s.branch.is_empty())
-        .map_or_else(|| task.slug.clone(), |s| s.branch))
+        .map_or_else(|| slug.to_string(), |s| s.branch))
 }
 
 pub fn history(

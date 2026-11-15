@@ -1,10 +1,14 @@
 //! Read-only board placement. Operational stages never change lifecycle or admission.
 
-use crate::{MachineWork, Task, TaskStatus, WorkFreshness, WorkKind, WorkOperation, WorkState};
+use crate::{
+    MachineObservation, MachineWork, Task, TaskStatus, WorkFreshness, WorkKind, WorkOperation,
+    WorkState,
+};
 use serde::{Deserialize, Serialize};
 
 /// Compact task board: briefs are fetched only when the owner opens a task.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct TaskListing {
     #[serde(default)]
     pub machine_work: MachineWork,
@@ -62,19 +66,8 @@ impl MachineWork {
         let mut stage = TaskStage::Lifecycle(&task.status);
         let mut priority = 0;
         for machine in &self.machines {
-            if !matches!(
-                machine.freshness,
-                WorkFreshness::Fresh | WorkFreshness::Incomplete
-            ) {
-                continue;
-            }
             for operation in &machine.operations {
-                if operation.machine_id.as_deref() != Some(&machine.machine_id)
-                    || !operation.is_for(&task.slug)
-                    || operation.operation_id.as_deref().is_none_or(str::is_empty)
-                    || !matches!(operation.kind, WorkKind::Build | WorkKind::Test)
-                    || self.conflicts(operation)
-                {
+                if !operation.is_for(&task.slug) || !self.can_place(machine, operation) {
                     continue;
                 }
                 // Queued Build < queued Test < running Build < running Test.
@@ -92,6 +85,46 @@ impl MachineWork {
             }
         }
         stage
+    }
+
+    /// Whether `other` puts every task in the stage this work puts it in ([`Self::task_stage`]):
+    /// the same operations place tasks, in the same order, each for the same task and the tasks
+    /// it is under, of the same kind, running or queued alike. A machine's heartbeat, its age,
+    /// its sequence and its other operations move nothing on a board, whose listings are read
+    /// without the work (`work=0`), so the board reads its counts and columns again only when
+    /// this is false. Two works placing alike in another order count as different.
+    pub fn places_alike(&self, other: &MachineWork) -> bool {
+        fn placing(work: &MachineWork) -> Vec<(&Option<String>, &Vec<String>, bool, bool)> {
+            let mut placing = Vec::new();
+            for machine in &work.machines {
+                for operation in &machine.operations {
+                    if work.can_place(machine, operation) {
+                        placing.push((
+                            &operation.task,
+                            &operation.under,
+                            operation.kind == WorkKind::Test,
+                            operation.state == WorkState::Running,
+                        ));
+                    }
+                }
+            }
+            placing
+        }
+        placing(self) == placing(other)
+    }
+
+    /// Whether `operation`, as `machine` reports it, can place a task in Build or Test: current
+    /// evidence on a fresh or partial machine, recorded by that machine, with an operation id, of
+    /// a build or a test, which no other report of the same operation contradicts (looked for
+    /// last, among every machine's).
+    fn can_place(&self, machine: &MachineObservation, operation: &WorkOperation) -> bool {
+        matches!(
+            machine.freshness,
+            WorkFreshness::Fresh | WorkFreshness::Incomplete
+        ) && operation.machine_id.as_deref() == Some(&machine.machine_id)
+            && !operation.operation_id.as_deref().is_none_or(str::is_empty)
+            && matches!(operation.kind, WorkKind::Build | WorkKind::Test)
+            && !self.conflicts(operation)
     }
 
     fn conflicts(&self, operation: &WorkOperation) -> bool {

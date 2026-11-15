@@ -43,6 +43,17 @@ pub struct Fragment {
     pub media: Vec<Media>,
 }
 
+/// The fragment as the wire's, with no blocks drawn of it yet.
+impl From<Fragment> for symphony_api::Fragment {
+    fn from(fragment: Fragment) -> Self {
+        symphony_api::Fragment {
+            blocks: Vec::new(),
+            html: fragment.html,
+            media: fragment.media,
+        }
+    }
+}
+
 /// One block of a document, rendered.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct Section {
@@ -59,6 +70,12 @@ pub struct Section {
     pub part: Option<usize>,
     pub html: String,
     pub media: Vec<Media>,
+}
+
+/// `text`, Markdown, as plain HTML: converted as a document is, its headings given the ids a
+/// document's anchors name, with no card, callout, link or component of a document's.
+pub fn plain_html(text: &str) -> String {
+    markdown::convert(text)
 }
 
 /// A block of text between blank lines (a card with its whole thread, a fence whole).

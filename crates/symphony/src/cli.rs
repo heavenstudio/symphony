@@ -6,6 +6,9 @@
 mod commands;
 mod publish;
 
+/// A built client published over the one served, keeping the builds published before it: what
+/// `symphony-build publish-client` (crates/symphony-build) runs.
+pub use publish::publish_keeping;
 pub(crate) use publish::{BUILDS, publish_client};
 
 use std::collections::BTreeMap;
@@ -58,6 +61,9 @@ options:
 
 /// `symphony COMMAND ARGS…`: the whole command line without the program name. Its exit code. A
 /// command the Symphony does not have is run by the first plugin this process holds that adds it.
+/// A host binary that calls this runs `symphony_chrome::leash_main()` first, as `bin/symphony.rs`
+/// does: `shot` leashes its Chrome by running the program again, and without it a shot fails
+/// before Chrome is ready, its leash exited.
 pub fn main(
     args: &[String],
     input: &mut dyn BufRead,
@@ -79,6 +85,9 @@ pub fn main_in(
     out: &mut dyn Write,
     err: &mut dyn Write,
 ) -> i32 {
+    if version(args, "symphony", env!("CARGO_PKG_VERSION"), out) {
+        return 0;
+    }
     let command = args.first().map(String::as_str);
     let symphony = &commands::SYMPHONY;
     if let Some(help) = command.and_then(|name| commands::plain_help(symphony, name, &args[1..])) {
@@ -102,18 +111,9 @@ pub fn main_in(
     }
 }
 
-/// `symphony-build COMMAND ARGS…` (`tools/rs-bin.sh symphony-build`): the commands only this
-/// repository's own build and release run use (publishing a built client, the client's release
-/// inputs, the size budgets, the splitter's repair and the release run), the whole command line
-/// without the program name. Its exit code. No project is given that binary, and [`main`] reaches
-/// none of them, so neither the shipped `symphony` nor a host that calls [`main`] links them.
-pub fn build_main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
-    commands::build(args, out, err)
-}
-
-/// The command line's reading and a refusal of it, as argparse words one: the helper
-/// `symphony-args`, which a plugin's commands use too.
-pub use symphony_args::{Flag, Parsed, command_at, parse, refuse};
+/// The command line's reading, a refusal of it as argparse words one, and the answer to
+/// `--version`: the helper `symphony-args`, which a plugin's commands and the server use too.
+pub use symphony_args::{Flag, Parsed, command_at, parse, refuse, version};
 
 /// This process's environment, each variable whose name and value are text: what [`main`] reads.
 fn process_env() -> BTreeMap<String, String> {
@@ -193,7 +193,7 @@ fn status_in(
             return 2;
         }
     };
-    let plugins = crate::plugins::Plugins::of(&root);
+    let plugins = crate::plugins::Plugins::of(&root).reading(&root, &docs);
     let said = if parsed.flag("--json") {
         to_json(&plugins, &docs)
     } else {
@@ -851,8 +851,9 @@ pub fn triage_main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) ->
             return 1;
         }
     };
+    let plugins = crate::plugins::Plugins::of(&root).reading(&root, &docs);
     let said = if command == "stats" {
-        match triage::stats(&crate::plugins::Plugins::of(&root), &docs) {
+        match triage::stats(&plugins, &docs) {
             Ok(found) => triage::render_stats(&found),
             Err(problem) => {
                 let _ = writeln!(err, "✖ {problem}");
@@ -860,7 +861,6 @@ pub fn triage_main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) ->
             }
         }
     } else {
-        let plugins = crate::plugins::Plugins::of(&root);
         triage::render_queue(&triage::queue(
             &plugins,
             &docs,

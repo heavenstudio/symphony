@@ -643,9 +643,10 @@ fn trouble(page: &mut Chrome) -> Value {
         headings:document.querySelectorAll('h1').length};})()")
 }
 
-/// Clicks the trouble block's Retry and waits for `shown`.
+/// Clicks the trouble block's Retry and waits for `shown`. The page reads again by itself too: a
+/// read of its own may have drawn it already.
 fn retry(page: &mut Chrome, shown: &str) {
-    page.eval("document.querySelector('.trouble button').click()");
+    page.eval("document.querySelector('.trouble button')?.click()");
     assert!(
         page.wait_for(shown, SHOWN),
         "Retry did not bring the page back: {}",
@@ -729,13 +730,14 @@ fn a_missing_document_says_so_and_a_failed_read_says_it_failed_with_a_retry() {
             json!(""),
             "{route}: the block says it once"
         );
-        site.fail_route(read, false);
         // No answer at all: the server could not be reached, and only then is the connection named.
+        // Dropped before the error ends, so the page's own next read meets no answering route.
         site.drop_route(read, true);
+        site.fail_route(read, false);
         page.eval("document.querySelector('.trouble button').click()");
         assert!(
             page.wait_for(
-                "document.querySelector('.trouble p')?.textContent.startsWith('The server could not be reached. Check the connection and try again.')",
+                "document.querySelector('.trouble p')?.textContent === 'The server could not be reached; check the connection. Trying again…'",
                 SHOWN
             ),
             "{route}: {}",
@@ -749,6 +751,54 @@ fn a_missing_document_says_so_and_a_failed_read_says_it_failed_with_a_retry() {
         site.drop_route(read, false);
         retry(&mut page, shown);
     }
+}
+
+/// A task page whose first read of its task gets no answer within the limit (`symphonyAnswerMs`, a
+/// page global that shortens the 15 s for this test) says so in a read's words and that it is
+/// trying again, and tries again by itself: once the server answers, the task is drawn with no
+/// click.
+#[test]
+fn a_task_read_with_no_answer_in_time_says_it_is_trying_again_and_draws_with_no_click() {
+    const READ: &str = "/api/task-page";
+    let site = site();
+    let Some(mut page) = chrome() else { return };
+    page.call(
+        "Page.addScriptToEvaluateOnNewDocument",
+        json!({"source": "window.symphonyAnswerMs = 5000;"}),
+    );
+    site.hold_route(READ, true);
+    page.open(&site.url("/task/visual/in-progress"));
+    let said = page.wait_for(
+        "document.querySelector('.trouble h1')?.textContent === 'The task could not be loaded'",
+        SHOWN,
+    );
+    let failed = page.eval("(() => {const block=document.querySelector('.trouble');return {text:block?.querySelector('p')?.textContent ?? null,\
+        retry:block?.querySelector('button')?.textContent ?? null};})()");
+    let asked = |site: &Site| site.requests().iter().filter(|path| *path == READ).count();
+    // Asked again by itself while the server still holds its reads.
+    let again = test_time::until_true("the page asking for its task again", STALL, || {
+        asked(&site) >= 2
+    });
+    site.hold_route(READ, false);
+    assert!(
+        said,
+        "no trouble block: {}",
+        page.eval("document.body.innerText")
+    );
+    assert_eq!(
+        failed,
+        json!({"text": "The server did not answer in time. Trying again…", "retry": "Retry"}),
+        "a read's words, never a write's, and its Retry kept"
+    );
+    again.unwrap_or_else(|stall| panic!("{stall}: asked {} times", asked(&site)));
+    assert!(
+        page.wait_for(
+            "document.querySelector('article.task') !== null && document.querySelector('.trouble') === null",
+            SHOWN
+        ),
+        "the task was not drawn by itself: {}",
+        page.eval("document.body.innerText")
+    );
 }
 
 /// What the page's notice stack says, its server notice aside.
@@ -795,6 +845,12 @@ fn a_missing_or_failed_page_says_which_and_no_region_is_left_loading() {
             "no task 'product/nope'",
             json!(["board", "missing"]),
         ),
+        (
+            "/runs",
+            symphony_api::RUNS_PATH,
+            "this project keeps no runs where this server reads",
+            json!(["missing"]),
+        ),
     ] {
         bare.miss_route(read, Some(error));
         page.open(&bare.url(route));
@@ -814,6 +870,7 @@ fn a_missing_or_failed_page_says_which_and_no_region_is_left_loading() {
         ("/", symphony_api::BOARD_PATH, json!(["failed"])),
         ("/queue", "/api/queue", json!(["board", "failed"])),
         ("/reports", symphony_api::REPORTS_PATH, json!(["failed"])),
+        ("/runs", symphony_api::RUNS_PATH, json!(["failed"])),
     ] {
         site.fail_route(read, true);
         page.open(&site.url(route));
@@ -1312,11 +1369,49 @@ fn the_tasks_filters_read_apart_and_a_chosen_status_moves_nothing() {
     }
 }
 
+/// The lower row's columns are each as tall as their own cards (app/visual-polish-3): a long
+/// Cancelled never stretches Backlog and Blocked beside it to its height.
+#[test]
+fn the_lower_rows_columns_are_each_as_tall_as_their_own_cards() {
+    let site = bare_site();
+    let mut board = every_status();
+    let tasks = board["tasks"].as_array_mut().unwrap();
+    for n in 1..=12 {
+        tasks.push(json!({"slug": format!("filters/cancelled-{n}"), "title": format!("A cancelled task {n}"),
+            "body": "", "status": "cancelled", "priority": 2, "parent": null, "created_by": "owner",
+            "created": 0.0, "updated": 4102444800.0, "links": [], "depends": [], "roles": [],
+            "instruction": false}));
+    }
+    board["counts"][8] = json!(["cancelled", 13]);
+    site.set_json("/api/task-board", &board);
+    let Some(mut page) = chrome() else { return };
+    viewport(&mut page, 1280, 900);
+    page.open(&site.url("/tasks"));
+    assert!(
+        page.wait_for(
+            "['backlog', 'blocked', 'cancelled'].every(status => document.querySelector(`.offline .column[data-status=${status}] .taskcard`) !== null)",
+            SHOWN
+        ),
+        "{}",
+        page.eval("document.querySelector('main')?.innerText")
+    );
+    let heights = page.eval(
+        "Object.fromEntries(['backlog', 'blocked', 'cancelled'].map(status => [status, \
+         Math.round(document.querySelector(`.offline .column[data-status=${status}]`).getBoundingClientRect().height)]))",
+    );
+    let height = |status: &str| heights[status].as_f64().unwrap();
+    assert!(
+        height("backlog") * 3.0 < height("cancelled")
+            && height("blocked") * 3.0 < height("cancelled"),
+        "one card's columns are a card's height, not the thirteen's: {heights}"
+    );
+}
+
 /// Thirty ready tasks numbered 1 to 30, in the order their slugs sort as text (`-1`, `-10`, …),
 /// as the board answers the tasks page. They carry what cards on a live board carry, so their
 /// heights differ as real cards' do: one role chip or two, a link chip or two on some, and titles
 /// of one, two or three lines. (The board shows no subtasks, so no card here has a parent.)
-fn thirty_ready() -> Value {
+pub(super) fn thirty_ready() -> Value {
     let mut numbers: Vec<u32> = (1..=30).collect();
     numbers.sort_by_key(u32::to_string);
     let role = |role: &str, handle: &str| json!({"handle": handle, "role": role, "since": 0.0, "expires": null, "health": "live"});

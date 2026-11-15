@@ -23,6 +23,7 @@ shows up in `git status`. Whatever needs the board starts the server when it is
 not running: the first `just tasks`, `just symphony` as it starts, a page of the
 Symphony. It starts detached, so it outlives whoever started it, and that is
 also the restart: a server that was killed is started again on the same data.
+A start says so in one line on stderr, as it takes seconds.
 The heartbeat hook never starts it. `TASKS_SERVER` (an address) and
 `TASKS_DATABASE` reach another board, as the tests do. It is working state, not
 history: `just tasks export` writes a readable snapshot to
@@ -252,7 +253,8 @@ server and stops that one cleanly, so none of it is lost to a later kill.
 
 A replay is the one start that can remove what no server applied. A store that
 went back (a start that replayed its log in pieces and ended before its next
-flush, as an older build's kill of a starting server does) holds a log segment
+flush, as an older build's kill of a starting server does, or a crash in a
+private replay of a log over 2 GiB, which its largest memtable splits too) holds a log segment
 its manifest counts as written: every server on it skips that segment, and its
 clean stop removes it. So a replay never runs without a snapshot of the store as
 it is, taken before the private replay's server starts, on every board, scratch
@@ -357,9 +359,10 @@ build linked at `.target/bin/tasks`, else, from a linked worktree, the main
 checkout's link, else `tasks` on `PATH`; it builds nothing, and says which link
 to make when it finds none. The Symphony's own board clients find it the same
 way. This repository's `justfile` has a `tasks` recipe of its own, which wins:
-`tools/rs-bin.sh` builds the binary before every run, so the first command after
-a change to its sources takes a minute or two, later ones only Cargo's check
-that nothing changed. On the live board it is the main checkout's build, from
+`tools/rs-bin.sh` builds the binary before a run once its sources or settings
+changed, so the first command after such a change takes a minute or two, and
+later ones run the build without asking Cargo ([the launcher](../AGENTS.md#rust)).
+On the live board it is the main checkout's build, from
 whichever worktree it runs; a branch's own build runs only on a scratch board
 (`--database NAME`). The heartbeat hook finds the build as the recipe does, and
 builds nothing. The sweeps work finishing starts, and the Symphony's reap and
@@ -376,9 +379,18 @@ with one line naming it, writing nothing (`crates/tasks/src/confine.rs`). An
 agent the board starts under the mark stays in the project the same way
 (`crates/tasks/src/launch/bounds.rs`): `launch --worktree DIR`, the worktree a
 launch makes and the one a restore makes again and starts in, an older record's
-too, lead only into those places or under the project's worktree base (`<repo>-wt/`,
-or `SYMPHONY_WT_DIR`), never into a git folder, or the command refuses with one
-line naming the folder and starts nothing. A launch takes no `--prompt` there: an
+too, lead only into those places or under the project's worktree base (`<repo>-wt/`
+beside a main checkout that lists the command's checkout as its own, so a worktree's
+`.git` file rewritten to name another repository has none, or `SYMPHONY_WT_DIR`), never
+into a git folder, or the command refuses with one line naming the folder and starts
+nothing. A submodule, a `--separate-git-dir` checkout or a bare repository's worktree
+has no main checkout (its common dir is no `.git` folder), so under the mark a launch
+there makes its worktree only under `SYMPHONY_WT_DIR`, or takes `--worktree DIR` in the
+checkout. The launcher's git commands run in that checkout itself (`root_of` in
+`crates/tasks/src/launch/mod.rs`; with no mark and no `SYMPHONY_WT_DIR` its worktrees go
+beside it), so what a launch makes there is of its own repository, never of the one
+holding its common dir, a submodule's superproject. A launch under the mark takes no
+`--prompt`: an
 agent's first message reads as its person's own word, so it is `/work SLUG HANDLE`
 alone (a reviewer's `/review-task SLUG HANDLE`, each with `$` for Codex), and the
 rest goes on the task's thread, which the skill reads. A restore
@@ -411,7 +423,10 @@ checked against its pinned SHA-256 (the Rust tests fetch it the same way). A
 project fetches the same tarball there, checked against the same SHA-256, by the
 line `symphony init` lists among the steps left, which the board also says when
 it is missing; a machine no build is pinned for puts SurrealDB's release binary
-there.
+there. A new project's board is made by its first board command, `just tasks list`
+say, which `symphony init` lists among the steps left too while the board is not
+made: the Symphony only reads a board, and its board page says so, in the
+refusal's words, in place of the board until a read answers.
 
 | | |
 |---|---|
@@ -664,9 +679,17 @@ there is one), told when it starts and when it ends, and the project picker says
 project's name; both read the server's memory, not the board (`apps/symphony-server/src/live/health.rs`).
 A project with no board, its server answering that none is made yet or no store (`symphony/tasks/data`)
 and no SurrealDB here to run one on (`symphony_board::board_health::absent`), is not unwell: no
-pass of it is counted, and the picker says plainly that it has no task board. A board whose store
-is there is never no board: when the SurrealDB that serves it is missing (a version bump before the
-new binary is fetched, `SYMPHONY_SURREAL` naming a file that is not there), or its server answers with an
+pass of it is counted, and the picker says plainly that it has no task board. So is a project whose
+folder is gone, or no longer holds the repository its server found there: the server says so once
+in its log, then reads, maintains and records nothing more of it, answers its pages' reads and saves
+with that refusal before any route runs, and never looks for its board in the folders above it,
+another repository's (`Hub::holds_its_project`, `symphony_board::project::at`). The hub's own
+reaches of its board are held to the repository it found when it began to serve the folder
+(`symphony_board::project::held`), so a `.git` removed after its check leads them to no other
+board, and a board's start, stop or hold makes no folder at or above the repository's common dir
+again; a start whose board folder goes while its server starts (SurrealDB makes every missing
+folder of its store's path) ends that server and records none. A board whose store is there is never no board: when the SurrealDB
+that serves it is missing (a version bump before the new binary is fetched, `SYMPHONY_SURREAL` naming a file that is not there), or its server answers with an
 older schema or not at all, its passes fail and it is unwell and says so.
 `tasks status` also warns when the record is more than a minute old, naming the server's pid and
 whether it still runs: no dispatch pass has been recorded since.
@@ -784,8 +807,16 @@ tasks cleanup`, or the task becoming done or cancelled: `hc kill`, then `hc rm`)
 record stays and says why and how to bring it back,
 `just tasks restore SLUG [HANDLE]`, which resumes the conversation in the same
 worktree, in a new terminal; through `just tasks`, only a worktree in the project
-([Where it lives](#where-it-lives)). A record from before hc names a herdr pane (`w1:p…`): that
-terminal is gone, so cleanup records it closed with its restore line, and restore brings
+([Where it lives](#where-it-lives)). A reviewer launch (`--role reviewer`) goes back to the
+task's recorded reviewer the same way: the newest that never said `just tasks leave` with a
+conversation recorded is resumed in its own worktree, agent and model, told `/review-task SLUG
+HANDLE` (the `resumed` line names it), and the launch is refused while a recorded reviewer still
+runs in a terminal; a new reviewer starts only where none can be resumed (no conversation
+recorded, a Codex thread that never arrived, a reviewer that left), or with `--beside WHY`, which
+resumes none and starts a second reviewer beside the one still there. One quiet since its task went
+back to `in_progress` reads `left` by its health and is resumed all the same. A reviewer launch on
+an instruction subtask is refused, naming the task it judges. A record from before hc names a
+herdr pane (`w1:p…`): that terminal is gone, so cleanup records it closed with its restore line, and restore brings
 the agent back in an hc terminal. `just tasks close SLUG HANDLE` closes one agent's terminal
 whatever role it holds (a reviewer waiting for a new tip), records it the same way once the
 terminal is killed, bound to that terminal, and retires the callback registered from it; it is
@@ -807,10 +838,15 @@ optional list of task slugs whose subtrees may be staffed; an empty list allows 
 orchestrated work. The config belongs to the checkout running the command (main for
 the Symphony). `reap` runs staffing before its five-minute idle sweep. A shared
 `symphony/tasks/staff.lock` keeps concurrent staffing passes from dispatching twice. A review
-goes to an idle reviewer only when the board would take its verdict, by the rule the
-verdict holds (`Held::unfresh`, [the default landing](#the-default-landing)), and that
-reviewer takes the role before its job is reserved; a review job no agent was handed is
-cancelled, and the reviewer's role a reuse took for it let go. Through `just tasks` a pass
+is given on the task itself, never as a subtask: its reviewer takes the reviewer's role there,
+its launch is recorded there, and the pass's line on the thread names the tip. A review whose
+task has a recorded reviewer to resume goes to it, by the launch's resume (`would resume HANDLE`
+in a dry run), never to another idle reviewer, and fails as that launch would while the reviewer
+still runs, in a dry run too. Otherwise it goes to an idle reviewer only when
+the board would take its verdict, by the rule the verdict holds
+(`Held::unfresh`, [the default landing](#the-default-landing)); a reused reviewer whose launch
+was not recorded lets the role go, so the task waits on no reviewer that has no job, and a
+launch that fails takes back what it took, as every launch does. Through `just tasks` a pass
 launches only where a launch there may ([Where it lives](#where-it-lives)): from a linked
 worktree, one continuing a branch checked out in the main checkout (its
 `.claude/worktrees/…` among them) or anywhere else outside that worktree and the worktree base
@@ -824,8 +860,8 @@ it never starts a fresh conversation on its own. A failed automatic attempt stay
 flagged for manual action. `reap --dry-run` starts no recovery.
 
 Only ready tasks with dependencies done and no executor or reservation qualify;
-review tasks with no reviewer get one breakage-only reviewer through an instruction
-child. A land-request task's opening `Review` line records the branch under review;
+review tasks with no reviewer get one, on the task itself. A land-request task's opening
+`Review` line records the branch under review;
 an explicit `Branch:` or `Worktree ..., branch ...` line does too. Otherwise reviews
 use the executor's recorded branch, falling back to the task slug.
 Dry runs resolve that branch and show its tip too. A task whose target or dispatch
@@ -837,8 +873,8 @@ line beginning `Owner-only:`, `Owner only:`, `Tier: owner` or `Review tier: owne
 Use these explicit markers for owner decisions.
 
 Before launching, the pass prompts an idle worker/reviewer holding no unfinished
-work in a suitable open terminal: an executor already on the task's own branch, or an
-instruction worker/reviewer in a detached checkout. A checkout with a live or stale
+work in a suitable open terminal: an executor already on the task's own branch, or a
+reviewer or an instruction's worker in a detached checkout. A checkout with a live or stale
 executor is never reused. Otherwise it launches what a bare `just tasks launch` of the role
 would (the project's `[agents] launch` on the role's `[agents.models]` model, else Codex) in a
 separate worktree: the task's own branch, or detached main for an instruction or review. Live
@@ -907,7 +943,9 @@ naming it, as `just land SLUG` run again finishes an interrupted land from that 
 branch, in a worktree of its own; and its task done by an approve no landing has closed, as what
 keeps such a task from going back to review once it is on main is its branch's tip.
 Nothing did not land when it has no tracked edit, no untracked file and no ignored file but
-build output and caches, and holds no owner verdict no commit has. No live work holds it when no
+build output and caches, and holds no owner verdict no commit has (an owner's dated line under a
+card, in a document of the project's entrypoint folders, that its HEAD does not hold; a worktree
+whose documents git cannot read for one is kept, saying so). No live work holds it when no
 live or stale session is bound to it (a subagent's session is bound to its own `agent-ID`
 worktree as well), no live task is tied to it (its branch names the task's slug, or the slug
 with its last `/` as `-`), no process works inside it and nothing touched it within the 2 h
@@ -1139,6 +1177,7 @@ rest of its document is the board's.
    "handle": "amber-heron", "kind": "worker", "model": "sonnet", "parent": "cobalt-otter",
    "task": "sim/jump", "role": "executor",           # the task it works now (an open one first)
    "tasks": [{"slug": "sim/jump", "role": "executor", "status": "in_progress"}],
+   "following": 0,                                   # the open tasks it orchestrates
    "worktree": "/…/lamp-works-wt/sim-jump", "branch": "sim/jump",   # where it really works
    "agent": "claude", "session_id": "9aa0…", "pane": "t5",
    "callback": "uds:/tmp/cc-socks/1234.sock", "chat": false,
@@ -1160,6 +1199,9 @@ question), `idle`, or `gone` (no terminal and no sign of life). An agent running
 `running_test` and `health: live`, never `lost`; so does a subagent whose worktree holds a live process, and one whose
 processes cannot be listed reads `health: unknown`. `last_tool_call` is the time of the last tool call of the agent
 (`null` before the first): the monitor's 20 s beat and board commands do not move it.
+`tasks` lists every task the agent holds a role on but those it orchestrates, and `following` counts
+the open ones it orchestrates (neither done nor cancelled), the count of its Following list on the
+agents page, which reads those tasks a page at a time.
 `callback` is the native address (`uds:` or `codex:`), or `null` for an inbox-only
 session; `chat` says whether this session is the current chat recipient, including
 an orchestrator fallback. `slots` is, under a project cap ([Slots](#slots)), the
@@ -1440,8 +1482,7 @@ in-progress task whose build or test run is going sits there until it ends, then
 returns to its column. They are display stages, never statuses: no command moves a
 task there, and a task in any other status (a task in review whose reviewer runs
 its tests) keeps its column and shows the run as a chip. A run for a subtask (a
-slice, or the `/work` instruction its executor holds) moves the card of the task it
-is under. Runs come from the board's
+slice, or an instruction its agent holds) moves the card of the task it is under. Runs come from the board's
 recorder (`tasks run`, which this repository's `tools/cargo.sh` and recipes use) or
 the project's own reader; until a machine reports either, the two stages are one
 narrow rail that says so once, and the board's Status filter offers neither of them
@@ -1481,6 +1522,18 @@ a **Waiting for your sign-off** lane above the board. That needs all of:
 Deciding the card puts the task back in its column. Work nobody holds, or that
 posted no card, stays in its own column however its documents stand.
 
+A project's plugin that answers a gate named `owner` for the task ([Gates](#gates))
+decides in that rule's place: the open, executed task is in the lane while that
+gate is held, card or none, and out of it while the gate is met, waived or
+missing. The lane reads the answer the server keeps for the task's status and
+tip and never asks the plugin for it, so only a read of the task's gates (its
+page) starts the plugin's work. Only a known gate kept for that task decides:
+with no answer kept for it as it is now (before its page is read, after a new
+tip or a new status), an error kept, an answer with no `owner` gate or one
+answered `unknown`, the rule above holds, so the lane errs toward showing the
+owner what may wait on them. The lane is read again when the board, a message,
+a waiting card or a kept answer changes.
+
 **`done` is reached only by a reviewer's `approve` (its orchestrator's, on a fast
 fix), a landing, for a subtask its executor's `done`, or a close as covered by another
 task's landing ([above](#a-task-another-landing-covers)).** A session
@@ -1489,13 +1542,18 @@ role it holds since. Nor, but on a fast fix, does a session that requested the w
 orchestrates the task or ever did, or that filed it. The board refuses it the reviewer's role
 and the verdict at once, naming the command a fresh reviewer takes the role with, by the rule
 the land goes by ([below](#the-default-landing)), so no approve leaves a task done that the land
-then refuses. An instruction subtask (`--instruction`: a review, a question, an errand)
-puts nothing on the task's branch, so its executor is not counted: the reviewer that claimed
-`SLUG/review` gives `SLUG` its verdict, unless it executed `SLUG` or a work subtask of it too.
+then refuses. A reviewer judges the task itself: it takes the reviewer's role on `SLUG`, its
+verdicts are `SLUG`'s review rounds ([Gates](#gates)), and a later round is the same reviewer's,
+resumed, with no subtask ([Subtasks](#subtasks)). An instruction subtask (`--instruction`: a
+question, an errand) puts nothing on the task's branch, so its executor is not counted: one
+that claimed an instruction under `SLUG` may still give `SLUG` its verdict, unless it executed
+`SLUG` or a work subtask of it too.
 Work on the branch is a slice, filed without `--instruction`. `done` is left only by an approved task no landing has closed and whose tip the
 default branch does not hold, back to `review` by its executor, reviewer or orchestrator,
 for a fresh approve of a tip the approve does not cover
-([below](#the-default-landing)). A move of a done task the board refuses names that move
+([below](#the-default-landing)); the move itself tells `@executor` and `@reviewer` on the thread, as
+a finished task's status is followed no more, so a reopen edited into the board by hand tells
+nobody. A move of a done task the board refuses names that move
 back to review only while the approve stands; once a landing closed the task, it says what
 the task still needs goes in a new one. Several sessions
 can hold one task at once, one role each:
@@ -1504,7 +1562,7 @@ can hold one task at once, one role each:
 |---|---|---|
 | orchestrator | `just tasks role SLUG orchestrator`, or `just tasks create` by an orchestrator session | coordinate: spawn the others, follow the thread; close it as covered or cancel it; one a task |
 | executor | `just tasks claim SLUG` | do the work, move it to `review`; close it as covered or cancel it |
-| reviewer | `just tasks role SLUG reviewer` | give the verdict: `approve` (done) or `changes` (back to the executor) |
+| reviewer | `just tasks role SLUG reviewer` | give the verdict: `approve` (done) or `changes` (back to the executor); one a task: another is refused, naming it, until it is lost or left, or joins beside it saying why (`--beside WHY`, a post of its own after its join line; `just tasks launch --role reviewer` takes it too) |
 | reserved | `just tasks reserve SLUG` | hold it for later, for an hour, so nobody else claims it |
 
 A branch reaches `main` only through `just land`: the Symphony's default
@@ -1514,7 +1572,7 @@ reviewer gives one verdict, not two: `just land-approve BRANCH --tip SHA` with
 the full commit it checked, from its own
 session (`TASKS_SESSION`), holding the reviewer role on the branch's task,
 recorded on the branch's patch (`--adversarial` for the second reviewer of a
-tier 3 change). The landing then finishes the task in review for it: no board
+tier 3 change, which takes the role beside the first with `--beside WHY`). The landing then finishes the task in review for it: no board
 `approve` is needed. A branch with no task gets `review/BRANCH` from
 `just land-request BRANCH`, and the session that ran that (or the task's
 executor) is the one that lands it.
@@ -1570,12 +1628,18 @@ reason with no words is refused.
 ### The default landing
 
 `just land SLUG --as HANDLE` (`tasks land`, `crates/tasks/src/land.rs`) lands the
-task's branch, named as its slug, on the default branch. It is the convention a project gets without configuring anything, and a lower level
+task's branch, named as its slug, on the default branch. `just tasks claim` says so of a top-level
+task (a slice works on its parent's branch, and an instruction subtask's slug is none), an approve
+of one says that the task is done on the board but not on the default branch until it lands, and
+the line that lands it (or the project's own `land`), an approve of a subtask that its work lands
+with the task it is under, and a land
+with no branch so named names the branch whose tip is the commit the approve names, and the rename
+(`git branch -m BRANCH SLUG`). It is the convention a project gets without configuring anything, and a lower level
 replaces a higher one: a project's own `land` recipe replaces it, everywhere. It runs only as `just land`, whose recipe sets `SYMPHONY_LAND`: `tasks
 land` without it refuses, so `just tasks land` run by itself never lands. The marker is a
 guard against accident, not the gate: anyone can set an environment variable, and what
-lands is decided by the approval check below, a fresh reviewer's approve standing on the
-tip. So `symphony init` allows `just land` with no permission prompt, and writes no ask
+lands is decided by the checks below, every stamp the task needs standing on the tip, a fresh
+reviewer's approve among them where it needs review. So `symphony init` allows `just land` with no permission prompt, and writes no ask
 rule; one an older init wrote, for the marker or for `just tasks land`, a run removes. A
 project's own `land` recipe gets the same allow rule, and its own landing policy decides
 what it lands. An orchestrator lands an approved task without asking the owner. In a project
@@ -1594,8 +1658,28 @@ check, nor what counts as one (`check_paths`, below). A land of this repository 
 takes seconds; what the client distribution needs, the regenerator it starts makes
 afterwards, and runs the check, the docs audit, on what it made ([below](#the-regenerator)).
 
-- **Approved by someone else.** The task's last verdict is an `approve`, which left
-  it done, given by a fresh reviewer: never a session that ever executed the task or a
+- **What it needs.** The land goes by the stamps the task needs ([needed
+  stamps](#needed-stamps), `crates/tasks/src/land/needs.rs`), read by the board's own readers:
+  its newest assessment's, on the tip it read; on another tip, or from the brief alone, those
+  and the catalogue's defaults; with none, the defaults, `review` alone in the Symphony's
+  catalogue, so a task nobody assessed lands as it did before stamps. Where it needs `review`,
+  the task is done by an approve the checks below go by. Where it does not, it lands from
+  review or blocked (its executor's move to review says the work is ready, and the landing
+  closes it with no verdict) or done by an approve standing; in progress or ready it is
+  refused to `@executor`, to move it to review. Each other stamp is read at the tip: `tests`
+  the task's recorded runs there (each command's newest run, so a red run of a command is
+  cleared by running it again green at the tip, and one that cannot pass only by a new
+  commit), `pictures` a post naming the tip with a picture, `owner` the owner's approve of the
+  tip. A missing one refuses, naming each and who gives it: `tests` or `pictures` to
+  `@executor`, at that tip; `review`, or an assessment of another tip, to `@orchestrator`, to
+  start an assessor or staff a fresh reviewer; one waiting on `owner` alone, to
+  `@orchestrator`, holds the task blocked from review (`Store::hold_blocked`, keeping its
+  slot), or leaves it done by its approve, until the owner approves the tip on the task's
+  page. A land of a task that needed no review says on its landing line the stamps and the
+  whole tip they stood on (`landed SLUG on main at MERGE; its needs (tests) stood at SHA`),
+  the commit it vouched for, as an approve names one.
+- **Approved by someone else.** Where it needs review, the task's last verdict is an
+  `approve`, which left it done, given by a fresh reviewer: never a session that ever executed the task or a
   work subtask of it (claimed it, whatever role it holds now), nor one that orchestrates or
   ever orchestrated it (joined as its orchestrator, or was handed the role or took it
   over), nor its filer, which requested it (RULES.md `workflow/reviewers-not-the-owner`).
@@ -1603,17 +1687,19 @@ afterwards, and runs the check, the docs audit, on what it made ([below](#the-re
   former executor's, a work subtask's included, and, but on a fast fix, its orchestrator's,
   a former orchestrator's and its filer's, which it refuses the reviewer's role as well, so an
   approve the land refuses for whose it is is one an older board took; the
-  executor of an instruction subtask, the review its reviewer claimed, is none. The one
-  exception is a **fast fix** (RULES.md `workflow/fast-bugfixes`): a task filed with
-  `just tasks create SLUG TITLE --fast-fix WHY`, the risk that calls for no reviewer in
-  words, which the board keeps among its own fields where no session sets or clears it
-  afterwards. On a fast fix its orchestrator, which did not execute it, gives the
-  verdict on the executor's posted evidence, and the land goes by that approve; on any
-  other task it refuses an orchestrator's. A fast fix its orchestrator executed itself
-  is landed by a fresh reviewer's approve, as any other task is.
-- **A red's fix changes no check.** A tool that files a red before any fix exists may
-  file it as a fast fix, its risk the bound `symphony_board::fast_fix::RED` states
-  (`crates/tasks/src/fast_fix.rs`), and the land enforces that bound, since the board
+  executor of an instruction subtask is none. The one
+  exception is a **fast fix**: a task an older board filed with the fast-fix mark, the
+  risk that called for no reviewer in words, which the board keeps among its own fields where
+  no session sets or clears it afterwards. No command files one now (a task needing no review
+  says so by its assessment), and the store's and the API's `fast_fix` are kept only for
+  such a task still open and an older client, until none is open: no live option. On a fast
+  fix its orchestrator, which did not execute it, gives the verdict on the executor's posted
+  evidence, and the land goes by that approve, its needs unread; on any other task it
+  refuses an orchestrator's. A fast fix its orchestrator executed itself is landed by a
+  fresh reviewer's approve, as any other task is.
+- **A red's fix changes no check.** A red an older tool filed as a fast fix, its risk the
+  bound `symphony_board::fast_fix::RED` states
+  (`crates/tasks/src/fast_fix.rs`), is held to that bound, since the board
   cannot read the repository: on a fast fix whose recorded risk is that bound, or one
   marked red, its orchestrator's approve (or its filer's) lands only a fix whose diff from
   where it left the default branch changes none of the project's tests and checks, and a
@@ -1636,10 +1722,12 @@ afterwards, and runs the check, the docs audit, on what it made ([below](#the-re
   [dev-dependencies]", "/justfile", "/symphony.just", "/tools/", "clippy.toml",
   ".clippy.toml", "rustfmt.toml", ".rustfmt.toml", "/.cargo/", "/Cargo.toml
   [workspace.lints]", "Cargo.toml [lints]", "/symphony.toml [verdicts]", "/symphony.toml [land]", "/symphony.toml [releases]",
-  "/crates/symphony/src/cli/commands/size_budget.rs", "/crates/symphony/src/docs_audit.rs",
-  "/crates/symphony/src/docs_audit/", "/crates/symphony/src/release.rs",
-  "/crates/symphony/src/release/checks.rs",
-  "/crates/symphony/src/release/steps.rs", "/crates/tasks/src/land.rs",
+  "/crates/symphony-build/src/commands/size_budget.rs",
+  "/crates/symphony-build/src/commands/crates_check.rs",
+  "/crates/symphony-build/src/release/crates.rs", "/crates/symphony/src/docs_audit.rs",
+  "/crates/symphony/src/docs_audit/", "/crates/symphony-build/src/release.rs",
+  "/crates/symphony-build/src/release/checks.rs",
+  "/crates/symphony-build/src/release/steps.rs", "/crates/tasks/src/land.rs",
   "/crates/tasks/src/land/", "/crates/tasks/src/fast_fix.rs", "/crates/tasks/src/red.rs",
   "/crates/tasks/src/store/work/red.rs"]`: the tests and what they read, the Cargo tables
   that say which tests run and how (a `[[test]]`, `[[bench]]`, `[[bin]]` or `[[example]]`
@@ -1647,8 +1735,8 @@ afterwards, and runs the check, the docs audit, on what it made ([below](#the-re
   defaults decide what `#[cfg(feature = …)]` and `required-features` leave out of a test run)
   and what tests alone build with (`[dev-dependencies]`), the recipes and the scripts and budget under
   `tools/` they run, the lint and format settings, the project file's tables that say what
-  checks, lands and releases, and the checks' own code: the size budgets, the docs audit,
-  the release run's checks and their steps, this land with its list, and the red and
+  checks, lands and releases, and the checks' own code: the size budgets, the crates check, the
+  docs audit, the release run's checks and their steps, this land with its list, and the red and
   fast-fix marks. A project's own list replaces it. Beside the list a Rust file counts where
   the diff reaches a test-only module (its file saying `#![cfg(test)]`, declared under a
   test's attribute, by `#[path]` too, or declared by a test-only module), an item a test's
@@ -1662,16 +1750,35 @@ afterwards, and runs the check, the docs audit, on what it made ([below](#the-re
   orchestrator's approve for a fresh reviewer's. What it does not see is product: a module
   declared inside an inline module is looked for beside its file, and a test-only file named
   only by a macro or a build script, or a lint set in a file no entry names, is product. The
-  release run files every red so (RULES.md `workflow/release-reds-first`,
-  [RELEASES](RELEASES.md#the-release-run)), but a stop the owner clears, for which nothing
-  lands; the regenerator files its reds (`tests/main-red-regenerate`,
-  `tests/main-red-check`) with no fast-fix mark, as it does on every project's board.
+  same list is the fact `just tasks stamps SLUG` gives an assessor (CHECK PATHS), whose
+  `review` guideline keeps a fresh reviewer for a fix that changes one. The release run
+  (RULES.md `workflow/release-reds-first`, [RELEASES](RELEASES.md#the-release-run)) and the
+  regenerator (`tests/main-red-regenerate`, `tests/main-red-check`) file their reds with no
+  fast-fix mark: what a red's fix needs is its assessor's, as any task's.
 - **Covering the tip.** The approve names the branch's tip: a reviewer approves as
   `just tasks verdict SLUG approve "FULL_SHA: why"`, and the land goes by the named
   commit over any commit time. An approve naming none of the branch's commits covers
   each commit made before the verdict and before the task last went to review; the
   landing's line on the thread then says it judged by time. A commit after the named
   one, after the verdict, or during the review without a named tip refuses, naming it.
+- **No owner's answer left behind.** A worktree at a commit the land brings (on the branch,
+  on another branch or detached at one of its commits) whose documents hold an owner's dated
+  line under a card that no commit has (the owner's answer on a card only the branch holds,
+  which the Symphony saves into that worktree's register:
+  [REVIEW](REVIEW.md#one-app-every-worktree)) refuses the land, naming the worktree, its
+  branch or commit, and its files: a land of the branch's commits would leave the answer
+  behind. The documents are those in the folders the project file's `[[entrypoints]]` serve
+  them from (`docs/` with none written), and a line counts per card against the copies the
+  worktree's HEAD and the tip hold of the documents it changed, so a line a regroup only
+  moved is none. It is said to `@executor`, which commits it on the branch (from a worktree
+  not on it, copying the line onto its card there) and has the new tip approved, as for a
+  conflict below. A worktree git cannot read refuses the land to the one landing alone, as
+  it may hold the answer; the land runs again once git reads it. The answers are asked again
+  once the merge is checked, before the default branch moves, so one saved meanwhile refuses
+  as well. One saved while the default branch moves is said to `@orchestrator` once it moved
+  (`land SLUG: PATH holds the owner's answer on CARD saved while SLUG landed, which main does
+  not hold`), to copy onto that card on the default branch and commit there; the sweep keeps
+  that worktree meanwhile.
 - **Back to review.** An approve that does not do (someone else's to give, or not
   covering the tip) sends the task back to review, said to `@orchestrator` or
   `@reviewer`. A conflict or a red check on the merge of the tip as approved is said to
@@ -1689,12 +1796,14 @@ afterwards, and runs the check, the docs audit, on what it made ([below](#the-re
 - **A release candidate's red.** While the release run holds a candidate
   ([RELEASES](RELEASES.md#the-release-candidate)), a red of it is fixed on a branch started
   at the local branch `release-candidate`, which merges that branch again before review and
-  never merges main before its approve, its approve naming the full tip, and it lands by this
-  same land. Nothing in the land changes for it: its `[board] on_land`, the release run's
-  `--due`, reads the land afterwards and moves the candidate to the newest commit of the
-  branch an approve named that holds the candidate and the fix alone. A conflict goes back to
-  `@executor` as above, who merges the default branch then and asks for a fresh approve; the
-  candidate keeps the commit approved before that merge. A red whose fix landed with another
+  never merges main before its land, its approve, where it needs review, naming the full tip,
+  and it lands by this same land. Nothing in the land changes for it: its `[board] on_land`,
+  the release run's `--due`, reads the land afterwards and moves the candidate to the newest
+  commit of the branch an approve named, or the tip the landing line says its needed stamps
+  stood on, that holds the candidate and the fix alone. A conflict goes back to `@executor` as
+  above, who merges the default branch then and asks for a fresh approve; the candidate keeps
+  the commit approved before that merge, and one that needed no review has none, and drops
+  it. A red whose fix landed with another
   red's task is closed as covered by that landing ([above](#a-task-another-landing-covers)),
   which answers it once that land advanced the candidate; one covered by any other landing has
   its fix on main and not in the candidate, which is dropped. A red fixed outside this
@@ -1852,8 +1961,8 @@ a task would come to have none (`crates/tasks/src/orchestration.rs`,
   task is already another's under a parent it holds; a subagent's claim of it leaves that role
   where it is. `--no-role --for HANDLE` files it for HANDLE, a live orchestrator, which takes the
   role instead; `--no-role` without `--for`, or with one naming no live orchestrator, is refused.
-  Any other filer's task (a worker's or a reviewer's follow-up, a filer's red, staffing's review
-  job, `tasks api`'s `create`) goes to the orchestrator of a task that session holds another role
+  Any other filer's task (a worker's or a reviewer's follow-up, a filer's red, `tasks api`'s
+  `create`) goes to the orchestrator of a task that session holds another role
   on, else to its parent session (`register --parent`) while that is a live orchestrator, else by
   the rule below; the owner's task by the rule alone. One filed under a task an orchestrator holds
   is that one's by the tree, and nothing is written. `create` names who took it.
@@ -1894,7 +2003,9 @@ since past the first live line (registered 90 seconds or more before), and eithe
 channel, a `just tasks wait` in progress, an `attach` monitor) or already holds the orchestrator role
 on an unfinished task. A session that only registered is given nothing by the board's own choice,
 so a throwaway that registers and goes moves nothing. With none that stays, the task is marked
-waiting (`just tasks show` says `waits for an orchestrator that stays, for N min`), and the first
+waiting (`just tasks show` says `waits for an orchestrator that stays, for N min`, and `create` that
+it waits, while any orchestrator that has not left is on the board: a new project's has none, and
+says nothing of it), and the first
 orchestrator to come to stay is given it at the next whole-board read, told in one line however
 many it was given: `GIVEN 2 open tasks are yours to orchestrate: sim/a, sim/b` (the first ten
 named), in its wait, its monitor or its channel. The board's gives reach their receiver as that one
@@ -1964,8 +2075,8 @@ build, its output appended to `symphony/tasks/land/regenerate.log` (set aside as
   the generators so a Symphony older than keys still reads the file), a command whose last
   line names everything it reads, runs it first: a key and committed outputs it passed on
   before (`symphony/tasks/land/regenerated.json`) need nothing made. This repository's key
-  is the release snapshot's name (`tools/client-key.sh`), so a land that changed no
-  client input builds no client. A key names one generator, so the file is refused when
+  is the release snapshot's name and the React client's package's hash
+  (`tools/client-key.sh`), so a land that changed no client input builds no client. A key names one generator, so the file is refused when
   two `[land] generators` share a name, keyed or not.
 - **One commit, landed in seconds, or discarded as stale.** What the generators change,
   inside their outputs alone, is one commit, `Regenerate NAMES for main at TIP`. When
@@ -2046,10 +2157,14 @@ name, a state (`missing`, `held`, `unknown`, `waived` or `met`), who and when
 one-line detail, a link to its evidence, and the states it took before, oldest
 first, for the timeline. They come in that order of states: what the task waits
 on first. The task's page draws them in one section under its head, with what
-the task waits on and how many gates are in each state; on a phone a gate is
+the task waits on and how many gates are in each state. What it waits on follows
+its status: in review, the gates missing or held; in concept, design or progress,
+its executor; blocked, the tasks it depends on; before it starts (backlog, ready),
+nothing; and after those, while it is open, each gate held (a card waiting on the
+owner). A done or cancelled task waits on nothing. On a phone a gate is
 three lines, wide one row of bounded columns, a part whose words need more room
 wrapping within its own, so every word shows and none waits on a hover
-(`apps/symphony-ui/src/task_gates.rs`). A link is kept only for a path of the
+(`apps/symphony-web/src/gates.tsx`). A link is kept only for a path of the
 app or an `http(s)` address (`symphony_api::linkable`): the server drops any
 other where it puts the answer together, and the page draws any other as words,
 so a plugin cannot hand a page a `javascript:` link in the origin every project
@@ -2067,22 +2182,69 @@ or a card in a document it links comes or goes; never for a plain post. The page
 feed counts those events for the task it shows, and the section reads again when
 the count grows. A newer read aborts the one before.
 
-The Symphony answers three of its own:
+The Symphony answers its own. A top-level task that is open, or that has an assessment
+([Needed stamps](#needed-stamps)), has a gate for each stamp of the project's catalogue, in
+its order (`crates/symphony/src/gates/stamps.rs`), each read at the branch's tip by its
+reader (`crates/tasks/src/stamps/read.rs`). A stamp the task needs there is met, missing
+or, for `owner`, held. A stamp its assessment left out is waived, the assessment's reason
+its why, its assessor the who and its line the link; with no assessment, a stamp the
+catalogue does not need by default is waived, saying so. A stamp stands on the tip alone:
+evidence naming another commit, a merge of the default branch included, is stale, not met,
+and the gate names the commit it stood on. A commit is named by a word of 7 to 40 hex
+digits, one digit at least, that the tip's id starts with. A done task whose branch the sweep
+removed is read at the tip its land merged: the second parent of the merge its landing's line
+names (`landed SLUG on main at MERGE`), else the commit the land's own line names (`land SLUG:
+merged TIP as MERGE`). With no tip, an open task's needed stamp is not met, and a closed task's
+is unknown, never missing, each saying so. A catalogue the board cannot read leaves the
+gates read as below, for a task with no stamps, and adds one gate, `stamps`, unknown, saying
+why.
 
 - **review**: the reviewer verdicts on the task's thread, one round each
   (`gates::review_rounds`, the Symphony's one reader of review rounds; the board's
   own commands in `crates/tasks` read the verdict words apart): met by an `approve`
-  in the last round, missing until then, the earlier rounds its past. A task done
-  with no round landed without review, as a bug fix may
-  (RULES.md `workflow/fast-bugfixes`): waived. A subtask
-  has none: only its top-level task goes to review.
+  in the last round that names the tip, missing until then, the earlier rounds its
+  past; an approve naming another commit, or none, is missing, naming what it
+  approved. A task done with no round, its assessment not having waived `review`,
+  landed without review: missing. A task done by a covered close
+  ([below](#a-task-another-landing-covers)) says so.
+- **tests**: the board's recorder's runs ([MACHINE_WORK](MACHINE_WORK.md#recording-builds-and-tests))
+  of the task and the work under it, at the tip: met when the newest run there of each
+  build and test command the task ran is green and one test run is among them; missing
+  while one is red, still going or queued, or when none ran at the tip, the last run
+  elsewhere named.
+- **pictures**: a post on the task's thread naming the tip and showing a picture (`png`,
+  `jpg`, `jpeg`, `gif` or `webp`) under the task's artifacts folder (`artifacts/SLUG/` by
+  default) or uploaded (`/artifacts/uploads/`, the owner's or an agent's `symphony attach`):
+  met; missing while the newest such post names another commit or none, or there is none.
+- **owner**: the owner's approve naming the tip, a line of the owner's whose first word is
+  `approve`: met; held until then. Needed or not, it is held while a card the task posted
+  waits on the owner, by the sign-off lane's rule above. Until the task page is ported
+  ([the design](analysis/needed-stamps.md#the-task-page)), its approval offers the stamp:
+  where no plugin's board action offers anything, the Symphony's own, `owner-approve`,
+  offers `Approve SHORT` while the task needs the stamp at its tip and has none there, open
+  or done by an approve no landing has closed (where a land waiting on the owner leaves it),
+  and posts the owner's line `approve TIP`, the whole tip, through `POST /api/task-action`,
+  refused unless its payload is one commit's id.
+
+A subtask, and a task done or cancelled with no assessment, keep the gates they had before
+stamps, so no task's history is judged again:
+
+- **review**: met by an `approve` in the last round, missing until then, the earlier
+  rounds its past. A task done with no round landed without review, as a bug fix filed
+  before stamps might: waived. A subtask has none: only its top-level
+  task goes to review.
+- **owner**: held while a card the task posted waits on the owner, by the sign-off
+  lane's rule above; absent otherwise.
+
+A task with work of its own to check has one more of the Symphony's:
+
 - **check**: the project's `[verdicts] check`, its words joined by spaces, as the
   board's recorder labels a run of it ([MACHINE_WORK](MACHINE_WORK.md#recording-builds-and-tests)),
   at the branch's tip: met when the newest such run there was green, missing when it
-  was red or is still going, unknown when none ran at the tip or the repository has
-  no such branch. A project with no check has no check gate.
-- **owner**: held while a card the task posted waits on the owner, by the
-  sign-off lane's rule above; absent otherwise.
+  was red or is still going, unknown when none ran at the tip. There is none for a
+  task whose branch holds no commit of its own (no such branch, one made at the default
+  branch and not yet committed to, or one already landed there), for an instruction
+  subtask, whose work lands with its task, or for a project with no check.
 
 A project's plugin answers its own through the gates seam (`symphony_plugin::Gates`,
 `Plugin::gates`) as the same typed data, so every project's gates are drawn the
@@ -2099,17 +2261,76 @@ still running after 60 s is abandoned and asked again; while four of one
 answerer's calls run, abandoned ones among them, none starts, so an answerer bounds
 its own work.
 
+## Needed stamps
+
+What a task needs to land is the stamps its risk calls for, named by an assessor from one
+catalogue ([the design](analysis/needed-stamps.md)). The board holds the catalogue's reading,
+each task's needs (`crates/tasks/src/stamps.rs`) and each stamp's reader at a tip
+(`stamps/read.rs`); the task page's [gates](#gates) draw them, and the default landing lands a
+task once every stamp it needs stands on its tip, by the same readers ([the default
+landing](#the-default-landing)).
+
+- **The catalogue** is the project's `[stamps]` ([PROJECT_FILE](PROJECT_FILE.md#stamps)), read
+  from the main checkout's committed `symphony.toml`, so neither a branch nor an edit not yet
+  committed changes what a task is held to; with none written, the Symphony's four: `tests`,
+  `review` (needed by default, today's rule), `pictures` and `owner`. A command that reads a
+  catalogue the board cannot read (a stamp with no reader, a key no stamp has, a table naming
+  none) is refused, naming it.
+- **`just tasks stamps [SLUG]`** prints the catalogue, where it was read and each stamp's
+  `met`, `applies` and `skips`, the stamps a task nobody assessed needs marked `(needed by
+  default)`. Given a task, it adds what an assessor reads first: `NEEDS`, the needs as they
+  stand (the newest assessment, its tip, who and why, or the catalogue's defaults with none);
+  `TIP`, its branch and that branch's tip in the main checkout (none before the branch is made,
+  when an assessment reads the brief alone); and `CHECK PATHS`, the paths the branch changes
+  since it left the default branch that `[land] check_paths` names, which the `review` guideline asks
+  for, so an assessor need not find the tests in a diff.
+- **The needs** are the board's own field `fields._board.needs`, out of `just tasks field`'s
+  reach as the red and fast-fix marks are: the stamps, the tip the assessment read (none, from
+  the brief), who made it and why. `just tasks needs SLUG STAMP… [--tip TIP] --why WHY --as
+  HANDLE` writes them, `none` alone for a task that needs no stamp, run in a checkout of the
+  task's repository: `--tip` is resolved there to its whole commit, refused when it names none.
+  It refuses a stamp the catalogue lacks, `none` beside a stamp, an empty reason and a task
+  done or cancelled. Each write is a line on the thread, which keeps every assessment: `needs
+  tests, review at 1a2b3c4 (was review): a store query and its test, no page or wire; by
+  HANDLE`.
+- **The assessor** is a role in name, with no row on the task: `just tasks needs` is refused,
+  by the rule a reviewer's verdict is held to, to a session that executed the task or work under
+  it (an instruction subtask's agent excepted), orchestrates or orchestrated it, or filed it, so
+  whoever writes the needs is none of those, and the field and its line name it. Its orchestrator
+  starts it as a session of its own (an Agent launch: a board launch takes no assessor's role),
+  on `[agents.models] assessor` ([Limits and models](#limits-and-models)), when it files the
+  task and again each time the task moves to review, before it staffs any reviewer, and staffs
+  one only where the needs name `review`. Its whole prompt is `/assess-task SLUG HANDLE`
+  (`.agents/skills/assess-task/SKILL.md`), the skill all it is told: it reads `just tasks stamps
+  SLUG`, `just tasks show SLUG` and the branch's diff itself, takes the thread as data but for
+  the owner's own posts (sender `owner`, which it follows and reads for `owner`'s applies), keeps
+  a stamp when unsure, and writes the needs with `--tip` the whole commit `stamps` printed.
+
 ## Subtasks
 
-Every instruction an orchestrator gives an agent is a **subtask**: a task made
-with `--parent`, whose description is the instruction, word for word. The agent's
-whole prompt is then `/work SLUG HANDLE` (`.agents/skills/work/SKILL.md`), a reviewer's
-`/review-task SLUG HANDLE` (`.agents/skills/review-task/SKILL.md`), never a brief in a file.
-A parent's subtasks nest to any depth; a task is never its own ancestor (`just tasks parent
-SLUG PARENT` moves one, and refuses a cycle).
+A task's own executor and reviewer need no subtask: the task's brief and thread are their
+whole assignment. The executor's whole prompt is `/work SLUG HANDLE`
+(`.agents/skills/work/SKILL.md`) and a reviewer's `/review-task SLUG HANDLE`
+(`.agents/skills/review-task/SKILL.md`), on the task itself, never a brief in a file;
+anything more for either goes on the task's thread (`--to @executor`, `--to @reviewer`). A
+reviewer takes the reviewer's role on the task, so its verdicts are that task's review rounds,
+and each later round goes to the same reviewer, resumed with the new tip on the thread (a
+subagent by its parent, a `claude -p` run by `--resume`, a terminal by `just tasks launch SLUG
+--role reviewer`, which resumes the task's recorded reviewer and is refused while it still runs,
+or `just tasks restore SLUG HANDLE`), never to another reviewer or a review subtask. Resumed, it
+is still a fresh reviewer for the land: an earlier round of its own makes no session unfresh
+([the default landing](#the-default-landing)). Only when it cannot be resumed (no conversation recorded, so
+`restore` refuses it; a Codex thread that never arrived; a reviewer that left) does another
+reviewer take the role on the task.
+
+A **subtask** is a task made with `--parent`: a slice of its parent's work, or an instruction
+to an agent that is neither the parent's own work nor its review (a question, an errand), whose
+description is the instruction, word for word. Its agent's whole prompt is `/work SLUG HANDLE`
+on the subtask. A parent's subtasks nest to any depth; a task is never its own ancestor (`just
+tasks parent SLUG PARENT` moves one, and refuses a cycle).
 
 ```
-just tasks create perf/x/review "Review perf/x" --parent perf/x --for amber-heron --instruction --body-file - <<'EOF'
+just tasks create perf/x/bisect "Find the commit that slowed perf/x's bench" --parent perf/x --for amber-heron --instruction --body-file - <<'EOF'
 (the instruction, verbatim)
 EOF
 ```
@@ -2117,8 +2338,8 @@ EOF
 `--body-file -` reads the body from stdin, so a long instruction needs no file.
 A consuming project's optional brief guard refuses writing a brief to a file: to
 `artifacts/orchestrator/` (which must not exist), or to a brief in a session scratchpad (a file named
-`brief*` or `*-brief.*`, or under `briefs/` or `followups/`), and says to
-create a subtask instead.
+`brief*` or `*-brief.*`, or under `briefs/` or `followups/`): a brief is a task's
+description, and anything more for its agent goes on the task's thread.
 A consuming project's optional wait guard refuses a loop waiting on machine-wide process state
 (`pgrep`/`ps` for verify, test-sim, godot): wait on your own run's log or PID.
 
@@ -2128,12 +2349,18 @@ A consuming project's optional wait guard refuses a loop waiting on machine-wide
   that handle reads `lost` or `left` (ten minutes without a sign of life, holding
   nothing claimable yet), after which anyone may claim the task: start the agent
   promptly, or register the handle again and re-reserve.
-- Every subtask closes with its executor's `just tasks done SLUG "integration commit and focused result"`, including ordinary implementation slices. Only the top-level parent enters review, gathers stamps and lands. `--instruction` still marks an agent instruction, but is not required for lightweight completion. It does say whose work is on the parent's branch: a slice's executor wrote it and gives the parent no verdict, an instruction's (a review) did not ([Tasks and roles](#tasks-and-roles)).
+- Every subtask closes with its executor's `just tasks done SLUG "integration commit and focused result"`, including ordinary implementation slices. Only the top-level parent enters review, gathers stamps and lands. `--instruction` still marks an agent instruction, but is not required for lightweight completion. It does say whose work is on the parent's branch: a slice's executor wrote it and gives the parent no verdict, an instruction's did not ([Tasks and roles](#tasks-and-roles)).
 - Source slices start from their parent feature branch, commit there or return commits for integration, and run only their focused checks. A separate agent is justified only by useful parallelism. No independent slice review or landing. A parent's gate is evidence too, the tests closest to its change, which its reviewer judges; the full verification is no task's, and is the release run's ([CHECKS](CHECKS.md)).
 - `just tasks show` lists a task's subtasks with each one's status and holder;
   `just tasks list` and the Symphony's **tasks** page, under its **Task
   groups** heading, show the same tree, at any depth (`list` leaves finished
-  tasks out unless `--all`).
+  tasks out unless `--all`). The Symphony's tree and a task page's
+  **Subtasks** leave out a finished instruction to do or review the task
+  itself (`SLUG/work`, `SLUG/review`, the staffing pass's
+  `SLUG/staff-review-N`), filed before a task's executor and reviewer worked
+  on the task itself: its verdicts stand on the task's thread, and the task is
+  its row. Open, it is listed, where its agent is found
+  (`crates/symphony/src/taskview.rs`, `listed_under_parent`).
 - Events climb: a message to `@orchestrator`, any verdict and any
   status change on a subtask reaches the orchestrator of the nearest task, at
   or above it, that has one, so the orchestrator takes the role on the root
@@ -2158,12 +2385,15 @@ machine_agents = 12     # the agents this machine runs
 orchestrator = "fable"
 executor = "opus"
 reviewer = "opus"
+assessor = "haiku"
 ```
 
 - **Defaults.** A key not written takes its default: `orchestrator_slots` none (no cap on an
   orchestrator's slots), `low_volume` 4, `machine_agents` none (no limit on the agents a
-  machine runs), and `orchestrator`, `executor` and `reviewer` none (a launch takes `[agents]
-  launch`'s `model`, else the board's own, as **Models** below says). `orchestrator_slots` is
+  machine runs), `orchestrator`, `executor` and `reviewer` none (a launch takes `[agents]
+  launch`'s `model`, else the board's own, as **Models** below says), and `assessor` the
+  smallest model its agent offers (Claude's `haiku`; for Codex, whose smallest the board does
+  not name, as for the others). `orchestrator_slots` is
   also read from `[board]` where `[limits]` names none, where a build that does not know
   `[limits]` reads it; written in both with two values, `[limits]`'s holds and the other is
   said on stderr.
@@ -2179,11 +2409,14 @@ reviewer = "opus"
   `[agents] launch`'s agent on its role's model, else on `[agents] launch`'s `model`, else on
   the board's own; `--model` and `--kind` win, and a role's model goes with the project's
   agent. No board launch starts an orchestrator: with no model written for it, whoever starts
-  one chooses. An agent starting a subagent passes the model `just tasks limits` names for the
+  one chooses. An assessor ([Needed stamps](#needed-stamps)) decides which of a few stamps
+  apply, from a diff and their guidelines, so with no model written it runs on the smallest its
+  agent offers. An agent starting a subagent passes the model `just tasks limits` names for the
   subagent's role.
 - **`just tasks limits`** prints each limit, the pipeline alarm's thresholds
   ([The pipeline alarm](#the-pipeline-alarm)) and each role's model, each with where it came
-  from (`[limits] low_volume, line 8`, `[agents] launch model, line 12`, or `default`), the
+  from (`[limits] low_volume, line 8`, `[agents] launch model, line 12`, `the smallest claude
+  offers`, or `default`), the
   machine's count of agents under `machine_agents`, and each key of `[limits]` this build does
   not know, left out.
 - **A change holds at once.** Every command reads the file as it stands, and a store kept open
@@ -2412,8 +2645,11 @@ in progress is.
   Local submissions and receipts live in the folder the project's `[board]
   assessments` names (a `.git/` prefix names the common directory; none when
   unset, and an assessment is then refused); the delivery child is stopped and
-  reaped after 30 seconds or checkout removal. A delayed board, an older API or an unconfirmed reply
-  leaves pending evidence; `just land-stamps BRANCH` retries the latest
+  reaped after 30 seconds or checkout removal. A delayed board, an older API, an unknown method, an
+  incompatible payload or an unconfirmed reply leaves pending evidence: the API's version proves no
+  method, only a reply echoing the publication's witness and canonical receipt exactly confirms one,
+  and a retry's receipt confirms its occurrence, never that it still stands (`current: false` once
+  a newer assessment does). `just land-stamps BRANCH` retries the latest
   submission, preserving a committed occurrence's identity, time and line.
   Pending evidence alone does not confirm a board write.
 - **Rework.** The name `changes` in a record says a reviewer asked changes of
@@ -2440,6 +2676,15 @@ in progress is.
   a fresh assessment, is a request of its own, whatever its text: it waits on
   the branch's next move from that tip. The record answered, retried, is no
   new request: PULL and the alarm count the task in review alike.
+- **No review waited on.** A record that judged the branch's tip now and names
+  neither `review` nor `changes` says the project's own review gate, as its
+  landing keeps it, is met there or not needed, and that replaces the
+  Symphony's: PULL does not list the task as `review_unreviewed`, though no
+  reviewer holds it. A record of another tip, or none, says nothing of the tip
+  now, and a review with no reviewer is listed. A task whose tip the reader
+  cannot tell (no repository, or a branch not named for its slug or gone) is
+  listed too, its record unread there, unlike rework: the row errs toward
+  listing.
 
 ## Where the time goes
 
@@ -2558,6 +2803,32 @@ tasks done per day, which its header says:
 `bounces`, `done_per_day`, `slowest`, `blocked` and
 `ready_unstaffed` (`tasks`, `median_seconds`), every duration in seconds.
 
+**Arms.** A process experiment compares tasks filed on its sides. A task's
+arm is that side's label, one word of lowercase letters, digits and dashes
+(at most 32), given where the task is filed: `just tasks create SLUG TITLE
+--arm control`. It is written with the task, among the board's own fields
+(`fields._board.arm`, `crates/tasks/src/arm.rs`), so no table or schema
+field holds it; no command changes it after, and `tasks api`'s `create`
+takes none. `just tasks show SLUG` prints `arm: NAME` above the stages. The
+board assigns no arm, applies no rule for one and names no winner: whoever
+files the work says which side it is on.
+
+Where a task of the window was filed on an arm, `stats` ends with each arm
+by name: its tasks, how many are done, the median lead time and the median
+time in review of the done ones (`-` with none done, or none reviewed), and
+how often review sent the arm's tasks back, the open ones' too:
+
+```
+Arms (the tasks filed with --arm; lead and review are the medians of the done):
+  control      tasks 2 · done 2 · lead 9.0 h · review 5.0 h · bounces 1
+  no-review    tasks 2 · done 1 · lead 3.0 h · review 1.0 h · bounces 2
+```
+
+A task filed on no arm is in none of them and in every figure above them.
+`--json` carries them as `arms`, by name (`tasks`, `done`, `lead_seconds`
+and `review_seconds`, each a spread or null, and `bounces`), `{}` where the
+window has none. The arm is read in the window's one read.
+
 `stats` reads the window in one round trip (`Store::stage_records`): the
 top-level tasks made since the window's start and the done ones written since
 (a task closed in the window is one of them), who executes them, and each one's thread
@@ -2609,18 +2880,26 @@ so each time reads on the server's local clock as it then stood, the thread's.
   every run, and the page says so.
 - **gates**: each gate's states from the [gates](#gates) answer, its past and its
   current, a lane each by name; a state taken before the task was made counts from
-  its creation, and the review gate's from the task's first move to review. A gates
-  answer that cannot be read leaves the lanes out, never the timeline.
+  its creation, and the review gate's from the task's first move to review. A stamp
+  left out, by the task's assessment or by default with none, has no lane: the gates
+  list it, waived. A gates answer that cannot be read leaves the lanes out, never the
+  timeline.
 
-The page keeps a box for it (`apps/symphony-ui/src/timeline_slot.rs`) as tall as
-this browser last drew the task's timeline, at most 240 px on a phone and wide (the
-owner's choice, so the brief and the thread start near the page's top), with
-placeholder rows in it, so nothing on the page moves when the timeline comes or a read
-adds a step: the steps fit the box, what does not fit fading out (the latest steps in
-view on a phone, the first lanes wide), and "Show all" lets it grow.
-The timeline itself is a module of its own (`apps/symphony-ui/src/task_timeline.rs`,
-the page kind `timeline`), which the shell loads once the page has drawn and is idle,
-so the page's first visit does not wait for it. On a phone it is a list: a row per
+The page keeps a box for it (`apps/symphony-web/src/timeline-slot.tsx`) as tall as
+this browser last drew the task's timeline, with placeholder rows in it, so nothing on
+the page moves when the timeline comes. On a phone the box is at most 240 px (the
+owner's choice, so the brief and the thread start near the page's top), and a read that
+adds a step moves nothing either: the steps fit the box, what does not fit fading out
+(the latest steps in view), and "Show all N steps", on the legend's line, lets it grow.
+From 900 px wide, where the lanes replace the list, the timeline is shown whole, with no
+"Show all" (the owner's choice: a collapse there saves little room and hides the lanes):
+the box grows to hold every lane and keeps that height for the next visit, a task never
+drawn there taking a typical whole timeline's, 408 px. The whole of the lanes' part the
+focus is on (a click focuses one too) is said in the legend's place while one has it, so
+the box does not grow for it.
+The timeline itself is a chunk of its own (`apps/symphony-web/src/timeline.tsx`),
+which its box loads once it nears the screen and the page has settled, so the page's
+first visit does not wait for it. On a phone it is a list: a row per
 stage with its start, its label, its length and a bar as long, the wait in it drawn
 lighter; under each stage the builds, tests and gate changes that began in it (the
 review gate's are its rounds), a build or test named by its recipe, the machine's by

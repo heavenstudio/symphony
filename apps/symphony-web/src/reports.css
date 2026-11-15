@@ -1,0 +1,512 @@
+/* The Reports page (reports.tsx, chart.tsx): its header, four figures and charts, two columns on
+   a wide screen. The series take --chart-1 to --chart-5 in their fixed order, a categorical palette
+   checked for colour-blind separation on the card in each scheme; a theme's own --chart-N win, as
+   these are set at no specificity. Text never wears a series' colour. */
+:where(:root) {
+  --chart-1: #2a78d6;
+  --chart-2: #eb6834;
+  --chart-3: #1baf7a;
+  --chart-4: #eda100;
+  --chart-5: #e87ba4;
+}
+@media (prefers-color-scheme: dark) {
+  :where(:root) {
+    --chart-1: #3987e5;
+    --chart-2: #d95926;
+    --chart-3: #199e70;
+    --chart-4: #c98500;
+    --chart-5: #d55181;
+  }
+}
+
+.reports {
+  display: grid;
+  gap: var(--sp-5);
+  min-width: 0;
+}
+.reports-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--sp-3) var(--sp-5);
+}
+.reports-head h1 {
+  margin: 0;
+  font-size: var(--fs-2xl);
+  line-height: 1.2;
+}
+.reports-sub {
+  margin: 4px 0 0;
+  color: var(--muted-foreground);
+  font-size: var(--fs-sm);
+}
+.reports-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2) var(--sp-4);
+}
+.reports-controls > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.reports-controls .dx-button {
+  border-radius: var(--r-pill);
+}
+.reports-controls .dx-button[aria-pressed="true"] {
+  background: var(--primary);
+  color: var(--primary-foreground);
+  border-color: var(--primary);
+}
+.reports-error {
+  margin: 0;
+  color: var(--dislike);
+}
+.reports-empty {
+  padding: var(--sp-4);
+  border: 1px dashed var(--border);
+  border-radius: var(--r-lg);
+  background: var(--card);
+}
+.reports-empty p {
+  margin: 0;
+  max-width: var(--measure);
+}
+.reports-unread {
+  font-size: var(--fs-sm);
+  color: var(--muted-foreground);
+}
+.reports-unread ul {
+  margin: 6px 0 0;
+  padding-left: 1.2em;
+  overflow-wrap: anywhere;
+}
+.reports-marks {
+  min-width: 0;
+  font-size: var(--fs-sm);
+  color: var(--muted-foreground);
+  overflow-wrap: anywhere;
+}
+.reports-marks ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+/* The newest, one line each while the rest are folded, so a crowded window's first chart still
+   starts on a phone's first screen; opening the fold shows every change whole, and a list with
+   no fold is never cut. */
+.reports-marks:has(> details:not([open])) > ul > li {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.reports-marks summary {
+  margin-top: 4px;
+  cursor: pointer;
+}
+.reports-marks li::before {
+  content: "";
+  display: inline-block;
+  width: 0;
+  height: 0.9em;
+  margin-right: 8px;
+  vertical-align: -0.1em;
+  border-left: 2px dashed var(--muted-foreground);
+}
+
+.reports-figures {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--sp-3);
+  margin: 0;
+}
+@media (min-width: 760px) {
+  .reports-figures {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+.reports-figure,
+.ghost-figure {
+  min-width: 0;
+  padding: var(--sp-3) var(--sp-4);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+}
+.reports-figure dt {
+  font-size: var(--fs-sm);
+  color: var(--muted-foreground);
+}
+/* A figure's label links to its chart, its link stretched over the figure's card: the whole card
+   is the tap, hovered or focused as one. */
+.reports-figure {
+  position: relative;
+}
+.reports-figure dt a {
+  color: inherit;
+  text-decoration: none;
+}
+.reports-figure dt a::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: var(--r-lg);
+}
+.reports-figure:has(dt a:hover) {
+  border-color: var(--muted-foreground);
+}
+.reports-figure dt a:focus-visible {
+  outline: none;
+}
+.reports-figure dt a:focus-visible::after {
+  outline: 2px solid var(--ring, var(--primary));
+  outline-offset: 2px;
+}
+.reports-figure dd {
+  margin: 0;
+}
+.reports-figure .value,
+.ghost-figure .value {
+  font-size: var(--fs-2xl);
+  font-weight: 700;
+  line-height: 1.25;
+  font-variant-numeric: tabular-nums;
+}
+.reports-figure .detail {
+  font-size: var(--fs-xs);
+  color: var(--muted-foreground);
+}
+.ghost-figure > .bone {
+  display: block;
+  margin: 6px 0;
+}
+.ghost-figure > .bone.value {
+  --w: 40%;
+  height: 1.4rem;
+}
+
+.reports-section {
+  display: grid;
+  gap: var(--sp-3);
+  min-width: 0;
+}
+.reports-section h2 {
+  margin: var(--sp-2) 0 0;
+  font-size: var(--fs-lg);
+}
+/* A window asked for and not answered yet: the last one's figures and charts, faint. */
+.reports[aria-busy="true"] .reports-figures,
+.reports[aria-busy="true"] .reports-section {
+  opacity: 0.6;
+  transition: opacity 0.2s;
+}
+.reports-charts {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--sp-4);
+}
+@media (min-width: 960px) {
+  .reports-charts {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* A chart: its caption, legend and readout over its plot, the plot's periods as columns. */
+.chart,
+.ghost-chart {
+  box-sizing: border-box;
+  min-width: 0;
+  margin: 0;
+  padding: var(--sp-4);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+}
+.ghost-chart {
+  min-height: 330px;
+}
+.ghost-chart > .bone {
+  display: block;
+  margin: 6px 0;
+}
+.ghost-plot {
+  height: 172px;
+  margin-top: var(--sp-4);
+  border-radius: var(--r-sm);
+  background: var(--muted);
+}
+.chart figcaption h3 {
+  margin: 0;
+  font-size: var(--fs-md);
+}
+.chart-note {
+  margin: 2px 0 0;
+  font-size: var(--fs-xs);
+  color: var(--muted-foreground);
+}
+.chart-instead {
+  margin: var(--sp-4) 0 0;
+  font-size: var(--fs-sm);
+  color: var(--muted-foreground);
+}
+.chart-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 12px;
+  margin: 4px 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--fs-xs);
+  color: var(--muted-foreground);
+}
+/* A legend's entry hides its series or shows it again: a hidden one struck through, its swatch faint. */
+.chart-key {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  border-radius: var(--r-sm);
+}
+.chart-key:hover {
+  color: var(--foreground);
+}
+.chart-key[aria-pressed="false"] {
+  text-decoration: line-through;
+}
+.swatch {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  margin-right: 5px;
+  border-radius: 3px;
+  background: var(--c);
+  vertical-align: -1px;
+}
+.swatch.line {
+  height: 3px;
+  width: 14px;
+  border-radius: 2px;
+  vertical-align: 2px;
+}
+.chart-key[aria-pressed="false"] .swatch {
+  opacity: 0.25;
+}
+.chart-readout {
+  min-height: 3.1em;
+  margin: 8px 0 6px;
+  font-size: var(--fs-xs);
+  line-height: 1.5;
+}
+.chart-readout p {
+  margin: 0;
+}
+.chart-when {
+  color: var(--muted-foreground);
+}
+.chart-when strong {
+  color: var(--foreground);
+}
+.chart-readout ul {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.chart-readout li strong {
+  font-variant-numeric: tabular-nums;
+}
+.chart-mark-note {
+  color: var(--muted-foreground);
+}
+
+.chart-plot {
+  display: grid;
+  grid-template-columns: 3.2em minmax(0, 1fr);
+  height: 172px;
+  border-radius: var(--r-sm);
+  outline-offset: 3px;
+}
+.chart-y {
+  position: relative;
+  font-size: 11px;
+  color: var(--muted-foreground);
+  font-variant-numeric: tabular-nums;
+}
+.chart-y > span {
+  position: absolute;
+  right: 6px;
+  transform: translateY(50%);
+  line-height: 1;
+  white-space: nowrap;
+}
+.chart-area {
+  position: relative;
+  min-width: 0;
+}
+.chart-grid {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 0;
+  border-top: 1px solid var(--border);
+}
+.chart-grid.zero {
+  border-top-color: var(--muted-foreground);
+  opacity: 0.5;
+}
+.chart-mark {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 0;
+  border-left: 2px dashed var(--muted-foreground);
+  opacity: 0.55;
+  pointer-events: none;
+}
+.chart-cols {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  grid-template-columns: repeat(var(--n), minmax(0, 1fr));
+}
+.chart-col {
+  position: relative;
+  min-width: 0;
+  cursor: pointer;
+}
+.chart-col.on {
+  background: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--border);
+  border-radius: 2px;
+}
+/* A period no file recorded: hatched, never a zero. */
+.chart-col.gap {
+  background-image: repeating-linear-gradient(135deg, transparent 0 4px, var(--skeleton) 4px 6px);
+}
+.seg {
+  position: absolute;
+  left: 50%;
+  width: min(24px, 72%);
+  transform: translateX(-50%);
+  background: var(--c);
+  box-sizing: border-box;
+}
+.seg.up.end {
+  border-radius: 4px 4px 0 0;
+}
+.seg.down.end {
+  border-radius: 0 0 4px 4px;
+}
+.seg.up.after {
+  border-bottom: 2px solid var(--card);
+}
+.seg.down.after {
+  border-top: 2px solid var(--card);
+}
+.chart-lines {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+}
+.chart-lines polyline {
+  fill: none;
+  stroke-width: 2;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+  vector-effect: non-scaling-stroke;
+}
+.chart-lines .dot {
+  stroke-width: 7;
+  stroke-linecap: round;
+  vector-effect: non-scaling-stroke;
+}
+.chart-lines .ring {
+  stroke: var(--card);
+  stroke-width: 11;
+  stroke-linecap: round;
+  vector-effect: non-scaling-stroke;
+}
+.chart-x {
+  position: relative;
+  height: 1.6em;
+  margin-left: 3.2em;
+  font-size: 11px;
+  color: var(--muted-foreground);
+}
+.chart-x > span {
+  position: absolute;
+  top: 4px;
+  transform: translateX(-50%);
+  white-space: nowrap;
+}
+.chart-x > span:first-child {
+  transform: none;
+}
+.chart-x > span:last-child {
+  transform: translateX(-100%);
+}
+.chart-x > span:only-child {
+  transform: translateX(-50%);
+}
+.chart-table-toggle {
+  margin-top: 4px;
+  padding: 4px 0;
+  border: 0;
+  background: none;
+  color: var(--primary);
+  font: inherit;
+  font-size: var(--fs-xs);
+  cursor: pointer;
+}
+.chart-table {
+  max-height: 320px;
+  overflow: auto;
+  margin-top: 6px;
+}
+/* The app's table (board.css), as wide as its chart: a table is a scrolling block there. */
+.chart-table table {
+  display: table;
+  width: 100%;
+  margin: 0;
+  font-size: var(--fs-xs);
+  font-variant-numeric: tabular-nums;
+}
+.chart-table caption {
+  text-align: left;
+  color: var(--muted-foreground);
+  padding: 0 0 4px;
+}
+.chart-table th,
+.chart-table td {
+  padding: 3px 8px;
+  text-align: right;
+  white-space: nowrap;
+  font-size: var(--fs-xs);
+}
+.chart-table th[scope="row"],
+.chart-table thead th:first-child {
+  text-align: left;
+}
+.chart-table th[scope="row"] {
+  background: none;
+  font-weight: 600;
+}
+@media (forced-colors: active) {
+  .seg {
+    background: CanvasText;
+  }
+  .chart-col.gap {
+    background-image: repeating-linear-gradient(135deg, transparent 0 4px, GrayText 4px 6px);
+  }
+}

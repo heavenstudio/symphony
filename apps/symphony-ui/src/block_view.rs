@@ -2,35 +2,14 @@
 
 use dioxus::prelude::*;
 use symphony_api::{
-    Block, Cell, ContainerKind, FigureSize, Image, InlineKind, LinkTarget, Presentation, Span,
-    VectorKind, VectorShape,
+    Block, Cell, ContainerKind, FigureSize, Image, InlineKind, Presentation, Span, VectorKind,
+    VectorShape,
 };
 
 use crate::doc_components as view;
 
 #[cfg(target_arch = "wasm32")]
 use crate::viewport::NearViewport;
-
-/// A card supplies how a link's excerpt is drawn; the link's own button opens it beside the link
-/// and closes it. Ordinary document/task links remain ordinary links.
-#[derive(Clone, Copy, Default)]
-pub struct Excerpts(pub Option<Callback<LinkTarget, Element>>);
-
-/// A settled card's outer details owns its anchor while its body is fetched.
-#[derive(Clone, Default)]
-pub struct CardAnchor(pub Option<String>);
-
-#[derive(Clone, Copy)]
-struct Historical;
-
-/// Blocks shown away from their place, a previous card version or a link's excerpt, retain their
-/// names without owning the current card's anchor or excerpts.
-#[component]
-pub fn HistoricalBlocks(blocks: Vec<Block>) -> Element {
-    use_context_provider(|| Historical);
-    use_context_provider(|| Excerpts(None));
-    rsx! { BlocksView { blocks } }
-}
 
 #[component]
 pub fn BlocksView(blocks: Vec<Block>) -> Element {
@@ -111,11 +90,8 @@ fn BlockView(block: Block) -> Element {
             comparison,
             ..
         } => {
-            let anchor = try_consume_context::<Historical>().is_none()
-                && try_consume_context::<CardAnchor>()
-                    .is_none_or(|suppressed| suppressed.0.as_deref() != Some(slug.as_str()));
             rsx! { view::Decision { slug, state: mark.as_str().to_string(), group: verdict.group.as_str().to_string(), open: verdict.open,
-                posted: verdict.posted.unwrap_or_default(), decided: verdict.decided.unwrap_or_default(), anchor,
+                posted: verdict.posted.unwrap_or_default(), decided: verdict.decided.unwrap_or_default(),
                 body: rsx! { if body.is_empty() { "{title}" } else { BlocksView { blocks: body } } },
                 comparison: rsx! { BlocksView { blocks: comparison } if !thread.is_empty() { ThreadView { entries: thread } } }
             } }
@@ -169,19 +145,12 @@ fn SpanView(span: Span) -> Element {
         Span::Strong { spans } => rsx! { strong { SpansView { spans } } },
         Span::Code { text } => rsx! { view::Code { text, language: String::new(), block: false } },
         Span::Link {
-            href,
-            target,
-            title,
-            spans,
+            href, title, spans, ..
         } => {
-            rsx! { LinkView { href, target, title, spans, presentation: Presentation::default() } }
+            rsx! { LinkView { href, title, spans, presentation: Presentation::default() } }
         }
-        Span::WikiLink {
-            href,
-            target,
-            spans,
-        } => {
-            rsx! { LinkView { href, target, title: String::new(), spans, presentation: Presentation::default() } }
+        Span::WikiLink { href, spans, .. } => {
+            rsx! { LinkView { href, title: String::new(), spans, presentation: Presentation::default() } }
         }
         Span::LineBreak => rsx! { br {} },
         Span::Image { image } => rsx! { crate::media::DocumentPicture { image } },
@@ -211,25 +180,10 @@ fn SpanView(span: Span) -> Element {
 }
 
 #[component]
-fn LinkView(
-    href: String,
-    target: Option<LinkTarget>,
-    title: String,
-    spans: Vec<Span>,
-    presentation: Presentation,
-) -> Element {
+fn LinkView(href: String, title: String, spans: Vec<Span>, presentation: Presentation) -> Element {
     let attrs = attributes(&presentation);
-    let excerpt = try_consume_context::<Excerpts>().and_then(|context| context.0);
-    let mut shown = use_signal(|| false);
     rsx! {
         a { href: crate::project::href(&href), title, ..attrs, SpansView { spans } }
-        if let (Some(excerpt), Some(target)) = (excerpt, target.filter(|target| target.anchor.is_some())) {
-            crate::components::button::Button { class: "show-link", r#type: "button", aria_expanded: shown(),
-                onclick: move |event: MouseEvent| { event.stop_propagation(); shown.toggle(); },
-                if shown() { "▾ hide" } else { "▸ show" }
-            }
-            if shown() { {excerpt.call(target)} }
-        }
         PresentationWarnings { presentation }
     }
 }
@@ -345,19 +299,12 @@ fn InlineView(tag: InlineKind, presentation: Presentation, spans: Vec<Span>) -> 
     if tag == InlineKind::Span && link_attributes && spans.len() == 1 {
         match &spans[0] {
             Span::Link {
-                href,
-                target,
-                title,
-                spans,
+                href, title, spans, ..
             } => {
-                return rsx! { LinkView { href: href.clone(), target: target.clone(), title: title.clone(), spans: spans.clone(), presentation } };
+                return rsx! { LinkView { href: href.clone(), title: title.clone(), spans: spans.clone(), presentation } };
             }
-            Span::WikiLink {
-                href,
-                target,
-                spans,
-            } => {
-                return rsx! { LinkView { href: href.clone(), target: target.clone(), title: String::new(), spans: spans.clone(), presentation } };
+            Span::WikiLink { href, spans, .. } => {
+                return rsx! { LinkView { href: href.clone(), title: String::new(), spans: spans.clone(), presentation } };
             }
             _ => {}
         }

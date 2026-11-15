@@ -73,11 +73,53 @@ impl Hub {
     }
 
     /// Whether the project has a board to maintain, as the hub knows it: none until its first
-    /// board read is done, then whether its last reach found one ([`Hub::boardless`]). A board that
-    /// cannot be reached now is one, and unwell. The server's maintenance of the project (its idle
-    /// sweep, its embedding catch-up) waits on this, so it never makes a board where none is.
+    /// board read is done, then whether its last reach found one ([`Hub::boardless`]) and its
+    /// folder still holds it ([`Hub::holds_its_project`]). A board that cannot be reached now is
+    /// one, and unwell. The server's maintenance of the project (its idle sweep, its embedding
+    /// catch-up) waits on this, so it never makes a board where none is, nor runs in a folder
+    /// whose board lookup would lead into another repository.
     pub(crate) fn has_board(&self) -> Option<bool> {
-        (*self.initial_board.borrow()).then(|| !self.boardless())
+        (*self.initial_board.borrow()).then(|| !self.boardless() && self.holds_its_project())
+    }
+
+    /// Whether the folder this hub reads still holds its project: it is there, and the board's
+    /// lookup from it, on the files alone ([`symphony_board::project::locate_quick`]), finds the
+    /// repository it found when the hub was made, whose board is the project's, and that is a
+    /// repository still ([`symphony_board::project::is_repository`]). A folder removed, emptied or
+    /// left without its `.git` leads that lookup up to whatever checkout holds it, whose board is
+    /// another repository's; a `.git` a board's start under way made again holds only the board's
+    /// folders. A folder no repository held then is held while it is there. The hub's own reaches
+    /// are held to the same repository ([`taskview::connect_held`]), so a removal after this check
+    /// leads them to no other board.
+    ///
+    /// [`taskview::connect_held`]: symphony::taskview::connect_held
+    pub(crate) fn holds_its_project(&self) -> bool {
+        self.root.is_dir()
+            && self.repository.as_ref().is_none_or(|repository| {
+                symphony_board::project::locate_quick(&self.root)
+                    .is_some_and(|now| &now.common == repository)
+                    && symphony_board::project::is_repository(repository)
+            })
+    }
+
+    /// Why the hub reads no board once its folder no longer holds its project, in words that count
+    /// as a project with no board ([`symphony_board::board_health::absent`]).
+    pub(crate) fn gone(&self) -> String {
+        format!(
+            "the project's folder {} is gone, or no longer holds the repository it was served \
+             from: {}",
+            self.root.display(),
+            symphony_board::project::GONE
+        )
+    }
+
+    /// The hub's folder no longer holds its project ([`Hub::holds_its_project`]): said once, in the
+    /// log and to its pages as a project with no board, so its maintenance waits. Its worker then
+    /// ends, and reads and records nothing more.
+    pub(super) fn lose(&self) {
+        let why = self.gone();
+        eprintln!("· Symphony: {why}; nothing more is read or recorded for it");
+        self.board_error(why);
     }
 
     /// A failed board read or reconnect: pages hear that the board went, whether it is slow, and

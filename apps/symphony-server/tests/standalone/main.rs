@@ -124,7 +124,7 @@ fn binary_launcher_refuses_missing_own_sources_and_never_executes_a_parent() {
     }
     tree.write(
         "workspace with spaces/crates/symphony/Cargo.toml",
-        "[package]\nname='symphony'\n",
+        "[package]\nname='symphony-app'\n",
     );
     tree.write(
         "workspace with spaces/crates/symphony/src/bin/symphony.rs",
@@ -372,7 +372,7 @@ fn binary_launcher_builds_then_execs_the_native_output_with_the_callers_cwd() {
     let root = owned_scripts(&tree);
     tree.write(
         "workspace with spaces/crates/symphony/Cargo.toml",
-        "[package]\nname='symphony'\n",
+        "[package]\nname='symphony-app'\n",
     );
     tree.write(
         "workspace with spaces/crates/symphony/src/bin/symphony.rs",
@@ -422,6 +422,6 @@ chmod 755 "$CARGO_TARGET_DIR/debug/symphony"
     );
     assert_eq!(
         fs::read_to_string(trace).unwrap(),
-        "build\n--quiet\n--locked\n-p\nsymphony\n--bin\nsymphony\n"
+        "build\n--quiet\n--locked\n-p\nsymphony-app\n--bin\nsymphony\n"
     );
 }

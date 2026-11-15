@@ -14,17 +14,21 @@ use crate::front::Shared;
 use crate::live::Hub;
 
 mod failure;
+mod feed_socket;
 pub(crate) mod reports;
+pub(crate) mod run_log;
+pub(crate) mod runs;
 mod validated;
 mod warm;
 
 use failure::{task_failure, unavailable};
+use feed_socket::Said;
 pub(crate) use warm::{start, warm};
 
 /// Where a plugin's routes answer: `/x/<route>/<rest>`.
 const PLUGIN_ROUTES: &str = "/x/";
 
-const READS: &[&str] = &[
+pub(crate) const READS: &[&str] = &[
     "/api/board",
     "/api/queue",
     "/api/postponed",
@@ -55,6 +59,9 @@ const READS: &[&str] = &[
     "/api/ask",
     "/api/health",
     symphony_api::REPORTS_PATH,
+    symphony_api::RUN_LOG_PATH,
+    symphony_api::RUNS_PATH,
+    symphony_api::RUN_PATH,
 ];
 
 type Request = axum::http::Request<()>;
@@ -104,9 +111,17 @@ async fn read(shared: &Arc<Shared>, request: Request) -> Option<Response> {
             .and_then(|v| v.to_str().ok())
             .is_some_and(|s| s.contains("application/json"));
     let alias = if json_queue { None } else { legacy_page(path) };
-    let static_file = client_page(&project_view(&shared.root), path)
-        || path.starts_with("/assets/")
-        || alias.is_some();
+    let view = project_view(&shared.root);
+    // An HTML document's route is the app's page, whatever headers ask for it; asked for with the
+    // file's query, the address its frame loads, it is the file itself in its sandbox
+    // (`symphony_api::file_address`, `media_files::html_document`).
+    let html_file = view.is_html_route(path.trim_start_matches('/'))
+        && request
+            .uri()
+            .query()
+            .is_some_and(symphony_api::asks_for_file);
+    let static_file =
+        !html_file && (client_page(&view, path) || path.starts_with("/assets/") || alias.is_some());
     // Typed document links can point to any project source or data file. Keep those raw downloads
     // behind the same canonical containment, metadata exclusion and sandbox as embedded media.
     let media_file = crate::media_files::handles(path)
@@ -238,12 +253,100 @@ async fn read(shared: &Arc<Shared>, request: Request) -> Option<Response> {
             },
         );
     }
+    // A run's log is a file beside the project's day files: the board is never read.
+    if path == symphony_api::RUN_LOG_PATH {
+        let asked = run_log::asked(
+            query(&request, "run").as_deref(),
+            query(&request, "tail").as_deref(),
+            query(&request, "from").as_deref(),
+            query(&request, "to").as_deref(),
+        );
+        let (run, asked) = match asked {
+            Ok(asked) => asked,
+            Err(why) => return Some(error(StatusCode::BAD_REQUEST, why)),
+        };
+        let Some(hub) = shared.api.get().cloned() else {
+            return Some(error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "the Symphony server is starting",
+            ));
+        };
+        return Some(
+            match tokio::task::spawn_blocking(move || run_log::answer(&hub, &run, asked)).await {
+                Ok(Ok(log)) => no_store(Json(log)),
+                Ok(Err((status, why))) => error(status, why),
+                Err(e) => error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("the log could not be read: {e}"),
+                ),
+            },
+        );
+    }
+    // The runs are the project's day files alone, the board never read.
+    if path == symphony_api::RUNS_PATH {
+        let asked = runs::asked(
+            query(&request, "pipeline").as_deref(),
+            query(&request, "end").as_deref(),
+            query(&request, "task").as_deref(),
+            query(&request, "branch").as_deref(),
+            query(&request, "before").as_deref(),
+        );
+        let filters = match asked {
+            Ok(filters) => filters,
+            Err(why) => return Some(error(StatusCode::BAD_REQUEST, why)),
+        };
+        let Some(hub) = shared.api.get().cloned() else {
+            return Some(error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "the Symphony server is starting",
+            ));
+        };
+        return Some(
+            match tokio::task::spawn_blocking(move || runs::answer(&hub, &filters)).await {
+                Ok(Ok(page)) => no_store(Json(page)),
+                Ok(Err((status, why))) => error(status, why),
+                Err(e) => error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("the runs could not be read: {e}"),
+                ),
+            },
+        );
+    }
+    if path == symphony_api::RUN_PATH {
+        let Some(run) = query(&request, "run").filter(|run| !run.is_empty()) else {
+            return Some(error(
+                StatusCode::BAD_REQUEST,
+                "run is required: a run's id",
+            ));
+        };
+        let Some(hub) = shared.api.get().cloned() else {
+            return Some(error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "the Symphony server is starting",
+            ));
+        };
+        return Some(
+            match tokio::task::spawn_blocking(move || runs::answer_run(&hub, &run)).await {
+                Ok(Ok(page)) => no_store(Json(page)),
+                Ok(Err((status, why))) => error(status, why),
+                Err(e) => error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("the run could not be read: {e}"),
+                ),
+            },
+        );
+    }
     // Uploads are the server's own, the same file for every branch's pages: a branch card's
     // picture names `/@tree/artifacts/uploads/…` and is read from this checkout's store.
     if let Some(file) = path.strip_prefix(symphony::uploads::ROUTE) {
         return Some(crate::media_files::upload(shared, file, &request).await);
     }
     if let Some(target) = alias {
+        // A `.` or `..` part (`/history/..%2f..%2fbeta%2fx.js`) would point the redirect out of
+        // the project, past any policy that bounds a page's loads by path: no such page.
+        if target.split('/').any(|part| part == "." || part == "..") {
+            return Some(StatusCode::NOT_FOUND.into_response());
+        }
         // Encode decoded path components again: spaces, percent signs and question marks in a
         // document name must remain path text. Keep the caller's query exactly as supplied.
         let target = if scope.is_empty() {
@@ -294,6 +397,11 @@ async fn read(shared: &Arc<Shared>, request: Request) -> Option<Response> {
         } else {
             hub.tree(scope).expect("scope was checked")
         };
+        if html_file {
+            return Some(
+                crate::media_files::html_document(shared, &root, path, scope, &request).await,
+            );
+        }
         return Some(crate::media_files::answer(shared, &root, path, &request).await);
     }
     if plugin_route {
@@ -337,7 +445,7 @@ async fn read(shared: &Arc<Shared>, request: Request) -> Option<Response> {
         });
     }
     let response = match path {
-        "/api/feed" => feed(hub, scope, &request),
+        "/api/feed" => feed(hub, scope, request).await,
         "/api/tasks" | "/api/task-board" => {
             let search = query(&request, "q")
                 .unwrap_or_default()
@@ -738,19 +846,17 @@ fn ask_response(
     let rendered = threads
         .into_iter()
         .map(|thread| {
-            let mut ask: symphony_api::Ask =
-                serde_json::from_value(json!(thread)).expect("ask wire shape");
+            let mut ask = symphony_api::Ask::from(thread);
             for message in &mut ask.messages {
                 // An answer is an agent's Markdown; the owner's words stay literal but for the
                 // lines naming the files they attached.
-                let mut fragment: symphony_api::Fragment =
-                    serde_json::from_value(json!(match (message.kind == "answer", typed) {
+                let mut fragment =
+                    symphony_api::Fragment::from(match (message.kind == "answer", typed) {
                         (true, true) => render.typed_reply(&message.text, &ask.path),
                         (true, false) => render.reply(&message.text, &ask.path),
                         (false, true) => render.typed_owner(&message.text, &ask.path),
                         (false, false) => render.owner(&message.text, &ask.path),
-                    }))
-                    .expect("fragment wire shape");
+                    });
                 symphony::docview::prepare_fragment(
                     &mut fragment.html,
                     &mut fragment.media,
@@ -1039,9 +1145,14 @@ fn events_since(
         .collect())
 }
 
-fn feed(hub: Arc<Hub>, scope: &str, request: &Request) -> Response {
+/// The feed from `?since=`: Server-Sent Events, or the same events on a WebSocket when the request
+/// asks to upgrade ([`feed_socket`]).
+async fn feed(hub: Arc<Hub>, scope: &str, request: Request) -> Response {
     use futures_util::StreamExt;
-    let Some(since) = query(request, "since").and_then(|v| v.parse::<u64>().ok()) else {
+    if let Some(refused) = feed_socket::refused(&request) {
+        return refused;
+    }
+    let Some(since) = query(&request, "since").and_then(|v| v.parse::<u64>().ok()) else {
         return error(
             StatusCode::BAD_REQUEST,
             "the feed needs ?since=VERSION from /api/board",
@@ -1054,8 +1165,8 @@ fn feed(hub: Arc<Hub>, scope: &str, request: &Request) -> Response {
     };
     let scope = scope.to_string();
     let document_filter = {
-        let path = query(request, "document").unwrap_or_default();
-        let keys = query(request, "sections")
+        let path = query(&request, "document").unwrap_or_default();
+        let keys = query(&request, "sections")
             .and_then(|keys| serde_json::from_str::<Vec<String>>(&keys).ok())
             .unwrap_or_default();
         (path, keys)
@@ -1069,14 +1180,7 @@ fn feed(hub: Arc<Hub>, scope: &str, request: &Request) -> Response {
                 return None;
             }
             let message = notices.borrow_and_update().clone();
-            Some((
-                Ok::<_, std::io::Error>(format!(
-                    "event: {}\ndata: {}\n\n",
-                    symphony_api::SERVER_EVENT,
-                    serde_json::to_string(&message).expect("a notice serializes")
-                )),
-                (notices, false),
-            ))
+            Some((Said::notice(&message), (notices, false)))
         });
     let stream = futures_util::stream::unfold(
         (
@@ -1092,11 +1196,10 @@ fn feed(hub: Arc<Hub>, scope: &str, request: &Request) -> Response {
             loop {
                 if let Some(event) = pending.pop_front() {
                     since = event.version;
-                    let item: Result<String, std::io::Error> = Ok(format!(
-                        "event: {}\nid: {since}\ndata: {}\n\n",
-                        symphony_api::FEED_EVENT,
-                        filtered_document_event(&event.json, &document_filter)
-                    ));
+                    let item = Said::delta(
+                        since,
+                        filtered_document_event(&event.json, &document_filter),
+                    );
                     deadline = tokio::time::Instant::now() + ping_after;
                     return Some((
                         item,
@@ -1119,9 +1222,7 @@ fn feed(hub: Arc<Hub>, scope: &str, request: &Request) -> Response {
                     Ok(Err(_)) => return None,
                     Err(_) => {
                         return Some((
-                            // Event::data("") writes no data field, which a browser never
-                            // dispatches. A blank data line is required for the named ping.
-                            Ok(format!("event: {}\ndata:\n\n", symphony_api::PING_EVENT)),
+                            Said::ping(),
                             (
                                 hub,
                                 scope,
@@ -1137,23 +1238,25 @@ fn feed(hub: Arc<Hub>, scope: &str, request: &Request) -> Response {
             }
         },
     );
+    // A terminal marker from the main subscription ends the whole feed. Notices must not keep an
+    // expired or removed subscription open without its normal pings.
+    let said = futures_util::stream::select(
+        stream
+            .map(Some)
+            .chain(futures_util::stream::once(std::future::ready(None))),
+        notices.map(Some),
+    )
+    .take_while(|event| std::future::ready(event.is_some()))
+    .filter_map(std::future::ready)
+    .take_until(async move {
+        let _ = draining.wait_for(|draining| *draining).await;
+    });
+    if feed_socket::asked(&request) {
+        return feed_socket::answer(request, said).await;
+    }
     let mut response = no_store((
         [(header::CONTENT_TYPE, "text/event-stream")],
-        Body::from_stream(
-            // A terminal marker from the main subscription closes the whole response. Notices
-            // must not keep an expired or removed subscription open without its normal pings.
-            futures_util::stream::select(
-                stream
-                    .map(Some)
-                    .chain(futures_util::stream::once(std::future::ready(None))),
-                notices.map(Some),
-            )
-            .take_while(|event| std::future::ready(event.is_some()))
-            .filter_map(std::future::ready)
-            .take_until(async move {
-                let _ = draining.wait_for(|draining| *draining).await;
-            }),
-        ),
+        Body::from_stream(said.map(|said| Ok::<_, std::io::Error>(said.sse()))),
     ));
     response
         .headers_mut()
@@ -1206,13 +1309,12 @@ fn filtered_document_event(json: &str, filter: &(String, Vec<String>)) -> String
                         card["key"].as_str().unwrap_or_default()
                     )) && let Some(value) = card["value"].as_object_mut()
                     {
-                        let summary = value
-                            .get("text")
-                            .and_then(|text| text.as_str())
-                            .unwrap_or_default()
-                            .chars()
-                            .take(140)
-                            .collect::<String>();
+                        let summary = symphony::docview::card_line(
+                            value
+                                .get("text")
+                                .and_then(|text| text.as_str())
+                                .unwrap_or_default(),
+                        );
                         value.insert("text".into(), json!(summary));
                     }
                 }
@@ -1280,7 +1382,7 @@ pub(crate) fn client_page(project: &symphony_api::ProjectView, path: &str) -> bo
     // `/task` with no slug is the board, as the shell's routes read it.
     matches!(
         page,
-        "" | "/tasks" | "/task" | "/agents" | "/queue" | "/reports"
+        "" | "/tasks" | "/task" | "/agents" | "/queue" | "/reports" | "/runs"
     ) || project
         .nav
         .iter()

@@ -5,10 +5,10 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use super::*;
 use crate::protocol::tests::{Declaring, card, every_request};
 use crate::protocol::{
-    Ask, CacheVersion, CardData, CardGates, Chosen, Declare, PROTOCOL, Recognises, Render, Slot,
-    Validate,
+    Ask, CacheVersion, CardData, CardGates, Chosen, Declare, PROTOCOL, ReadCards, Recognises,
+    Render, Slot, Validate,
 };
-use crate::vocabulary::{Block, FieldValue, Span};
+use crate::vocabulary::{Block, FieldValue, Picture, Span};
 use crate::{Card, CardKind, Component};
 
 /// What `plugin` answers to `lines`, by id: each answer line read raw, with the plugin's time.
@@ -590,5 +590,142 @@ fn a_card_kinds_gates_and_choice_answer_as_linked() {
     assert_eq!(
         answers[&2].0,
         answer_text::<Chosen>(&card.read(|c| Declaring.chosen(c)))
+    );
+}
+
+/// A card kind whose every call answers from what the card holds, so an answer made of another
+/// card, or of another root, reads otherwise.
+struct Tally;
+
+static TALLY: Tally = Tally;
+
+impl CardKind for Tally {
+    fn name(&self) -> &str {
+        "tally"
+    }
+    fn recognises(&self, card: &Card<'_>) -> bool {
+        card.text.contains("Pick")
+    }
+    fn pictures(&self, root: &std::path::Path, card: &Card<'_>) -> Vec<Picture> {
+        card.thread
+            .iter()
+            .map(|line| Picture {
+                src: Some(format!("{}/{}", root.display(), card.slug)),
+                caption: line.text.into(),
+                waiting: line.verdict.is_none(),
+            })
+            .collect()
+    }
+    fn slot(&self, card: &Card<'_>) -> Option<String> {
+        Some(card.doc.to_string()).filter(|doc| !doc.is_empty())
+    }
+    fn triage_category(&self, card: &Card<'_>) -> Option<String> {
+        Some(card.topic.into())
+    }
+    fn auto_approvable(&self, card: &Card<'_>) -> bool {
+        card.thread.is_empty()
+    }
+    fn gates(&self, card: &Card<'_>) -> Option<(usize, String)> {
+        Some((card.thread.len(), card.slug.into()))
+    }
+    fn approval_needs_agent(&self, card: &Card<'_>) -> bool {
+        card.thread.iter().any(|line| line.agent)
+    }
+    fn chosen(&self, card: &Card<'_>) -> Result<Option<String>, String> {
+        if card.text.is_empty() {
+            return Err(format!("{} says nothing", card.slug));
+        }
+        Ok(card.text.chars().next().map(String::from))
+    }
+}
+
+/// A plugin of two card kinds, [`TALLY`] then [`MOODY`].
+struct Kinds;
+
+impl Plugin for Kinds {
+    fn name(&self) -> &str {
+        "kinds"
+    }
+    fn card_kinds(&self) -> Vec<&dyn CardKind> {
+        vec![&TALLY, &MOODY]
+    }
+}
+
+/// The read of `cards` at `root` asked as the call `id`.
+fn reading(id: u64, root: &std::path::Path, cards: Vec<CardData>) -> String {
+    asking(
+        id,
+        ReadCards {
+            root: root.to_path_buf(),
+            cards,
+        },
+    )
+}
+
+#[test]
+fn a_reads_cards_are_each_answered_by_every_kind_in_the_plugins_order_as_linked() {
+    let root = std::path::PathBuf::from("/r/ünï");
+    let cards = vec![
+        card(),
+        CardData {
+            doc: String::new(),
+            thread: Vec::new(),
+            ..card()
+        },
+        moody_card(""),
+    ];
+    let answers = served(
+        &Kinds,
+        &[
+            reading(1, &root, cards.clone()),
+            reading(2, &root, Vec::new()),
+        ],
+    );
+    let read = serde_json::from_str::<Answered<Vec<Vec<KindAnswers>>>>(&answers[&1].0)
+        .unwrap()
+        .shown()
+        .unwrap();
+    let linked: Vec<Vec<KindAnswers>> = cards
+        .iter()
+        .map(|data| {
+            data.read(|card| {
+                Kinds
+                    .card_kinds()
+                    .iter()
+                    .map(|kind| KindAnswers::of(*kind, &root, card))
+                    .collect()
+            })
+        })
+        .collect();
+    assert_eq!(read, linked);
+    // Each card, each kind in the plugin's order, each call its own answer.
+    assert_eq!(read.len(), 3);
+    let kinds: Vec<&str> = read[0].iter().map(|kind| kind.kind.as_str()).collect();
+    assert_eq!(kinds, ["tally", "moody"]);
+    assert_eq!(read[0][0].slot.as_deref(), Some("docs/WIDGETS.md"));
+    assert_eq!(read[1][0].slot, None);
+    assert_eq!(
+        read[0][0].pictures[0].src.as_deref(),
+        Some("/r/ünï/pick-a-widget")
+    );
+    assert_eq!(read[2][0].chosen, Err("pick-a-widget says nothing".into()));
+    // A read of no card is answered with none.
+    assert_eq!(answers[&2].0, r#"{"answer":[]}"#);
+    // A kind that panics on one card refuses the read whole, naming it, and the next is answered.
+    let panicked = served(
+        &Kinds,
+        &[
+            reading(3, &root, vec![card(), moody_card("panic now")]),
+            reading(4, &root, vec![card()]),
+        ],
+    );
+    assert_eq!(
+        serde_json::from_str::<Answered<Vec<Vec<KindAnswers>>>>(&panicked[&3].0).unwrap(),
+        Answered::Refused("kinds panicked: pick-a-widget made it panic".into())
+    );
+    assert!(
+        panicked[&4].0.starts_with(r#"{"answer":[[{"#),
+        "{}",
+        panicked[&4].0
     );
 }

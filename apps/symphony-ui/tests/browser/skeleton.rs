@@ -1,10 +1,13 @@
 //! A page's ghost: it outlines what is to come, each box as the real one with a bar for each line
 //! of text in it; it stays over the page until the regions on its first screen have their
 //! reads (`viewport::Settle`), at most three seconds, and not at all once a read fails; its look
-//! follows the theme and the reader's motion setting. Past it, a live update that adds or removes
-//! a row leaves what the owner reads or types in where it is once they have scrolled, shows at
+//! follows the theme and the reader's motion setting, and a page at rest animates none of it, the
+//! placeholders out of reach of the screen included. Past it, a live update that adds or removes
+//! a row leaves what the owner reads or types in where it is once they have scrolled, however
+//! many frames the row takes to draw, shows at
 //! the top what lands there while they have not, and never scrolls against the owner's own
 //! scroll; the chat's form stays at the foot of its sheet.
+use super::feed_deltas::{agent, agent_page};
 use super::{NO_STORE, SHOWN, chrome, chrome::Chrome, layout_shift, site::Site, wait_for_feed};
 use serde_json::{Value, json};
 
@@ -274,6 +277,50 @@ fn the_board_before_its_first_read_draws_its_heading_filters_and_columns_of_card
     );
 }
 
+/// A first visit whose board read is refused (a board not made yet, say) says why in place of the
+/// ghost, which would wait for ever, once and in the server's words, and draws the board once a
+/// read answers: its own retry's, or the page's next.
+#[test]
+fn a_board_whose_first_read_fails_says_why_in_place_of_its_ghost_until_a_read_answers() {
+    let site = site();
+    site.fail_route("/api/task-board", true);
+    let Some(mut browser) = open(&site, "/tasks", 1280, 900) else {
+        site.fail_route("/api/task-board", false);
+        return;
+    };
+    let said = browser.wait_for(
+        "document.querySelector('main .unread-board') !== null",
+        SHOWN,
+    );
+    let shown = browser.eval(
+        "(() => { const block = document.querySelector('main .unread-board');
+            return {heading: block?.querySelector('h2')?.textContent, why: block?.querySelector('p')?.textContent,
+                retry: block?.querySelector('button')?.textContent, ghost: document.querySelector('.ghost-kanban') !== null,
+                status: [...document.querySelectorAll('main [role=status]')].map(status => status.className),
+                alerts: document.querySelectorAll('.page-notices [role=alert]').length,
+                busy: document.querySelector('main').getAttribute('aria-busy')}; })()",
+    );
+    site.fail_route("/api/task-board", false);
+    assert!(said, "the failed read is not said: {}", browser.eval(PAGE));
+    assert_eq!(
+        shown,
+        json!({"heading": "The task board could not be read",
+            "why": "Board snapshot unavailable (the server answered 500). Trying again…", "retry": "Retry",
+            "ghost": false, "status": ["trouble card unread-board"], "alerts": 0, "busy": "false"}),
+        "the block stands in the ghost's place, says the read's error once, and the page is not busy"
+    );
+    // The page reads again by itself too: a read of its own may have drawn the board already.
+    browser.eval("document.querySelector('main .unread-board button')?.click()");
+    assert!(
+        browser.wait_for(
+            "document.querySelector('main .unread-board') === null && document.querySelector('.pipeline') !== null",
+            SHOWN
+        ),
+        "the board never replaced the block: {}",
+        browser.eval(PAGE)
+    );
+}
+
 #[test]
 fn the_board_s_next_ghost_draws_the_columns_it_last_read_with_a_card_for_each_task() {
     let site = site();
@@ -379,6 +426,124 @@ fn a_column_still_reading_its_tasks_draws_a_card_box_for_each_it_will_hold() {
             "reserved": 139, "bars": 5, "colour": "rgba(127, 127, 127, 0.14)"}),
         "a typical card's box per task counted, no agent's yet: a bar for its slug, its title's lines and its row of links, and no Load more while the first page is read"
     );
+}
+
+/// The counts count a task waiting on the owner's sign-off in its stage, as the server does, and
+/// the board draws it in the sign-off lane: a stage counts the rest. One whose every task waits
+/// there holds none and waits for none once its first page is in (no ghost, no shimmer, not busy);
+/// one with part of its tasks there counts the cards it holds, with no Load more of the others
+/// (app/board-column-with-an-empty-answer-stops-loading).
+#[test]
+fn a_stage_counts_none_of_its_tasks_drawn_in_the_sign_off_lane() {
+    let site = site();
+    let task = |slug: &str, status: &str| {
+        json!({"slug": slug, "title": format!("The task {slug}"), "body": "", "status": status,
+            "priority": 2, "parent": null, "created_by": "owner", "created": 0.0, "updated": 0.0,
+            "links": [], "depends": [], "roles": [], "instruction": false})
+    };
+    site.set_json(
+        "/api/task-board",
+        &json!({"tasks": [task("probe/asks", "review"), task("probe/half-asks", "in_progress"),
+                task("probe/half-plain", "in_progress")],
+            "statuses": ["in_progress", "review"], "counts": [["in_progress", 2], ["review", 1]],
+            "signoff": ["probe/asks", "probe/half-asks"], "next": null}),
+    );
+    let Some(mut browser) = open(&site, "/tasks", 1280, 900) else {
+        return;
+    };
+    let reads = [column_read("in_progress"), column_read("review")];
+    if let Err(stall) =
+        test_time::until_true("both stages' first pages answered", super::STALL, || {
+            let answers = site.answers("/api/task-board");
+            reads.iter().all(|read| {
+                answers
+                    .iter()
+                    .any(|answer| &answer.target == read && answer.status == 200)
+            }) || {
+                browser.pump(std::time::Duration::from_millis(25));
+                false
+            }
+        })
+    {
+        panic!("{stall}: {:?}", site.targets());
+    }
+    let shows = "(() => { const at = status => { const c = document.querySelector(`.column[data-status=${status}]`);
+            return {busy: c.getAttribute('aria-busy'), ghosts: c.querySelectorAll('.ghost-card').length,
+                cards: [...c.querySelectorAll('.taskcard')].map(card => card.dataset.slug),
+                count: c.querySelector('h2 .count').textContent,
+                more: [...c.querySelectorAll('button')].some(button => button.textContent.includes('Load more')),
+                shimmer: document.getAnimations().filter(a => a.animationName === 'shimmer' && c.contains(a.effect?.target)).length}; };
+        return {in_progress: at('in_progress'), review: at('review'), lane: at('signoff').cards}; })()";
+    let settled = format!(
+        "(s => s.review.busy === 'false' && s.in_progress.busy === 'false' && s.lane.length === 2
+            && s.in_progress.cards.length === 1)({shows})"
+    );
+    assert!(
+        browser.wait_for(&settled, SHOWN),
+        "a stage kept waiting once its first page answered, its tasks in the sign-off lane: {}",
+        browser.eval(shows)
+    );
+    assert_eq!(
+        browser.eval(shows),
+        json!({
+            "in_progress": {"busy": "false", "ghosts": 0, "cards": ["probe/half-plain"], "count": "1", "more": false, "shimmer": 0},
+            "review": {"busy": "false", "ghosts": 0, "cards": [], "count": "0", "more": false, "shimmer": 0},
+            "lane": ["probe/asks", "probe/half-asks"]}),
+        "each stage counts the cards it holds, its tasks in the sign-off lane left out: no ghost, no Load more"
+    );
+}
+
+/// The default view's read of the first page of the column `status`, as the board asks for it.
+fn column_read(status: &str) -> String {
+    format!("/api/task-board?q=&status={status}&days=1&activity=1&work=0")
+}
+
+/// What a page animates: the shimmer animations that run (`document.getAnimations()`), and the
+/// bars its placeholders hold, the parts not yet within reach of the screen.
+const ANIMATED: &str = "(() => ({running: document.getAnimations().filter(a => a.animationName === 'shimmer' && a.playState === 'running').length,
+    held: document.querySelectorAll('.viewport-placeholder .bone').length}))()";
+
+/// Wait until `browser`'s page, every read on its screen in, runs no shimmer while its
+/// placeholders still hold their bars: a placeholder waits for no read, so its bars are still,
+/// and an animation off the screen would run every frame for as long as the page is open.
+fn comes_to_rest(browser: &mut Chrome, page: &str) {
+    assert!(
+        browser.wait_for(
+            &format!("(at => at.running === 0 && at.held > 0)({ANIMATED})"),
+            SHOWN
+        ),
+        "{page} never came to rest with its placeholders still waiting (shimmer animations running, placeholders' bars): {}",
+        browser.eval(ANIMATED)
+    );
+}
+
+#[test]
+fn a_board_at_rest_animates_none_of_the_rows_out_of_reach_of_the_screen() {
+    let site = site();
+    // Sixty tasks in one column: a screen of cards and the sentinel's reach drawn, the rest
+    // placeholders, each its card's ghost.
+    let Some(mut browser) = board_of(&site, 60) else {
+        return;
+    };
+    comes_to_rest(&mut browser, "the board");
+}
+
+#[test]
+fn the_agents_page_at_rest_animates_none_of_the_agents_out_of_reach_of_the_screen() {
+    let site = site();
+    let agents: Vec<Value> = (1..=40)
+        .map(|n| agent(&format!("agent-{n:02}"), "live"))
+        .collect();
+    site.set_json("/api/agent-page", &agent_page(&agents, &[]));
+    let Some(mut browser) = open(&site, "/agents", 1280, 900) else {
+        return;
+    };
+    assert!(
+        browser.wait_for("document.querySelector('.agent') !== null", SHOWN),
+        "the agents were never drawn: {}",
+        browser.eval(PAGE)
+    );
+    comes_to_rest(&mut browser, "the agents page");
 }
 
 /// A ready task's card and one under review, as the board draws them, each the typical card it
@@ -672,16 +837,27 @@ fn frames(browser: &mut Chrome) {
     assert!(browser.wait_for("window.__framed === true", SHOWN));
 }
 
+/// A page expression: whether a region waiting for its read (`[data-pending=true]`) lies within its
+/// sentinel's reach, 600 px above and below what its own scroller shows of the window, as the
+/// shell's hold (`reviewHoldPlace`) and `viewport::waits_near` decide: one past it never draws.
+const WAITS_NEAR: &str = "[...document.querySelectorAll('[data-pending=true]')].some(box => {
+    const scroller = node => { while ((node = node.parentElement) && !(node.scrollHeight > node.clientHeight && /auto|scroll/.test(getComputedStyle(node).overflowY))); return node; };
+    const reaches = (r, clip) => r.bottom > r.top && r.right > r.left
+        && r.bottom > Math.max(0, clip?.top ?? 0) - 600 && r.top < Math.min(innerHeight, clip?.bottom ?? innerHeight) + 600
+        && r.right > Math.max(0, clip?.left ?? 0) && r.left < Math.min(innerWidth, clip?.right ?? innerWidth);
+    const r = box.getBoundingClientRect();
+    return reaches(r) && reaches(r, scroller(box)?.getBoundingClientRect());
+})";
+
 /// Wait until the page is still: the top of `selector`'s box has stayed within 0.5 px for five
-/// frames in a row, and no region waiting for its read lies within its sentinel's 600 px reach of
-/// the screen (as the shell's `near` sees one), so nothing near it is about to draw.
+/// frames in a row, and no region waiting for its read lies within its sentinel's reach
+/// ([`WAITS_NEAR`]), so nothing near it is about to draw.
 fn still(browser: &mut Chrome, selector: &str) {
     browser.eval(&format!(
         "window.__still = false;
         (function frame(last, calm) {{
             const node = document.querySelector({}), top = node ? node.getBoundingClientRect().top : NaN;
-            const near = [...document.querySelectorAll('[data-pending=true]')].some(box => {{ const r = box.getBoundingClientRect();
-                return r.bottom > r.top && r.right > r.left && r.bottom > -600 && r.top < innerHeight + 600 && r.right > 0 && r.left < innerWidth; }});
+            const near = {WAITS_NEAR};
             calm = node && !near && Math.abs(top - last) <= 0.5 ? calm + 1 : 0;
             if (calm >= 5) window.__still = true; else requestAnimationFrame(() => frame(top, calm));
         }})(NaN, 0)",
@@ -723,8 +899,62 @@ const WATCH_SIZES: &str = "window.__sizes = []; window.__sized = true;
 const SIZES: &str = "(() => { window.__sized = false; const page = document.documentElement;
     return [...window.__sizes, [page.scrollWidth, page.clientWidth, innerWidth, innerHeight, page.clientHeight, scrollY]]; })()";
 
+/// A page script under which, once the test sets `window.__late` to a count of frames, every
+/// `IntersectionObserver` callback comes that many frames late, as on a slow phone: a region the
+/// page reserves draws that many frames after it comes near the screen.
+const LATE_DRAWS: &str = r#"window.__late = 0;
+const Observer = window.IntersectionObserver;
+window.IntersectionObserver = class extends Observer {
+    constructor(callback, options) {
+        super((entries, observer) => {
+            let left = window.__late;
+            (function wait() { if (left-- > 0) requestAnimationFrame(wait); else callback(entries, observer); })();
+        }, options);
+    }
+};"#;
+
+/// Counting frames from now (`window.__drawn`): the first in which the message `#message-7` holds
+/// the box it reserves, and the first in which its own box has taken that box's place.
+const WATCH_DRAWN: &str = "window.__drawn = {reserved: null, drawn: null};
+(function frame(at) {
+    const slot = document.getElementById('message-7'), waiting = slot?.querySelector('[data-pending=true]');
+    if (waiting && __drawn.reserved === null) __drawn.reserved = at;
+    if (slot && !waiting) __drawn.drawn = at; else requestAnimationFrame(() => frame(at + 1));
+})(0)";
+
 #[test]
 fn a_message_that_lands_above_the_composer_leaves_the_owner_typing_in_place() {
+    // A busy machine's frames: the message's box gives way to it frames after it is drawn.
+    message_lands_above_the_composer(
+        6,
+        0,
+        &[
+            "An answer that lands while the owner types, long enough to wrap over a few lines of a phone's thread.",
+        ],
+    );
+}
+
+#[test]
+fn a_message_drawn_late_above_the_composer_leaves_the_owner_typing_in_place() {
+    // A slow phone: the message's own box, far taller than the one it reserves, comes ninety frames
+    // after that box: the hold lasts until it is drawn, however many frames that takes.
+    message_lands_above_the_composer(
+        1,
+        90,
+        &[
+            "An answer that lands while the owner types, drawn long after its place in the thread is kept for it.",
+            "Its second paragraph, long enough to wrap over a few lines of a phone's thread like the first.",
+            "A third, so the message stands far taller than the box the thread kept for it.",
+            "And a fourth, the last of them.",
+        ],
+    );
+}
+
+/// The task's page on a phone, scrolled down to its composer with a reply typed in it, as a message
+/// of `paragraphs` lands above it from the feed on a machine `throttle` times slower, the message's
+/// own box drawn `late` frames after the box it reserves ([`LATE_DRAWS`]): the composer keeps its
+/// place, the focus and the reply.
+fn message_lands_above_the_composer(throttle: u32, late: u32, paragraphs: &[&str]) {
     let site = site();
     // A thread long enough to put the composer below the first screen.
     let entries: Vec<Value> = (1..=6)
@@ -736,9 +966,10 @@ fn a_message_that_lands_above_the_composer_leaves_the_owner_typing_in_place() {
         "/api/task-history",
         &json!({"entries": entries, "before": null, "after": 6}),
     );
-    let Some(mut browser) = open(&site, TASK, 390, 844) else {
+    let Some(mut browser) = watching(390, 844, &[LATE_DRAWS]) else {
         return;
     };
+    browser.open(&site.url(TASK));
     assert!(
         browser.wait_for(
             "document.querySelector('.settle[data-settled=true] .history') !== null && document.querySelector('[id^=composer-]') !== null",
@@ -767,17 +998,30 @@ fn a_message_that_lands_above_the_composer_leaves_the_owner_typing_in_place() {
         "Input.insertText",
         json!({"text": "A reply the owner is typing"}),
     );
+    // The way down brought the thread's last messages near the screen, each drawn in place of the
+    // box it reserved, and the thread's region, once none waits, laid out again: the composer's
+    // place is read once those have drawn, as no live update is there to hold it while they do.
+    still(&mut browser, composer);
     let (before, scrolled) = place(&mut browser, composer);
     browser.eval(WATCH_SIZES);
     assert!(
         scrolled > 0.0,
         "the composer must sit below the first screen for the page to have room to hold it"
     );
-    // A busy machine's frames: the message's box gives way to it frames after it is drawn.
-    browser.call("Emulation.setCPUThrottlingRate", json!({"rate": 6}));
+    if throttle > 1 {
+        browser.call(
+            "Emulation.setCPUThrottlingRate",
+            json!({ "rate": throttle }),
+        );
+    }
+    browser.eval(&format!("window.__late = {late}"));
+    browser.eval(WATCH_DRAWN);
+    let blocks: Vec<Value> = paragraphs
+        .iter()
+        .map(|text| json!({"type": "paragraph", "spans": [{"type": "text", "text": text}]}))
+        .collect();
     let message = json!({"id": 7, "slug": "visual/in-progress", "sender": "agent", "recipient": null,
-        "kind": "message", "text": "", "ts": 2.0, "stamp": "2026-11-11",
-        "blocks": [{"type": "paragraph", "spans": [{"type": "text", "text": "An answer that lands while the owner types, long enough to wrap over a few lines of a phone's thread."}]}]});
+        "kind": "message", "text": "", "ts": 2.0, "stamp": "2026-11-11", "blocks": blocks});
     site.push(
         4183,
         &json!({"version": 4183, "changes": [{"region": "message", "data": message}]}).to_string(),
@@ -790,15 +1034,24 @@ fn a_message_that_lands_above_the_composer_leaves_the_owner_typing_in_place() {
         "the message never landed: {}",
         browser.eval(PAGE)
     );
-    // The shell holds the composer in place frame by frame until four pass with nothing moved
-    // (`reviewHoldPlace`): a loaded machine's frames can still be in that hold three frames after
-    // the message lands, so the composer is read once the page stands still around it.
+    // The shell holds the composer in place frame by frame until four pass with nothing moved and
+    // no box near the screen waiting to draw (`reviewHoldPlace`): a loaded machine's frames can
+    // still be in that hold three frames after the message lands, so the composer is read once the
+    // page stands still around it.
     still(&mut browser, composer);
     let (after, _) = place(&mut browser, composer);
     let sizes = browser.eval(SIZES);
+    let drawn = browser.eval("window.__drawn");
     eprintln!(
-        "skeleton: the composer at {before} then {after}; [scrollWidth, clientWidth, innerWidth, innerHeight, clientHeight, scrollY] as each changed: {sizes}"
+        "skeleton: the composer at {before} then {after}; the message's box reserved and drawn at frames {drawn}; [scrollWidth, clientWidth, innerWidth, innerHeight, clientHeight, scrollY] as each changed: {sizes}"
     );
+    if late > 0 {
+        let frames = drawn["drawn"].as_u64().zip(drawn["reserved"].as_u64());
+        assert!(
+            frames.is_some_and(|(drawn, reserved)| drawn >= reserved + u64::from(late)),
+            "the message's own box must come {late} frames after the box it reserves, at frames {drawn}"
+        );
+    }
     assert_eq!(
         browser.eval(&format!(
             "(() => {{ const field = document.querySelector({}); return {{focused: document.activeElement === field, text: field.value}}; }})()",
@@ -808,7 +1061,7 @@ fn a_message_that_lands_above_the_composer_leaves_the_owner_typing_in_place() {
     );
     assert!(
         (after - before).abs() < 1.0,
-        "the composer moved from {before} to {after}; [scrollWidth, clientWidth, innerWidth, innerHeight, clientHeight, scrollY] as each changed: {sizes}"
+        "the composer moved from {before} to {after}; the message's box reserved and drawn at frames {drawn}; [scrollWidth, clientWidth, innerWidth, innerHeight, clientHeight, scrollY] as each changed: {sizes}"
     );
 }
 
@@ -889,13 +1142,17 @@ fn land(site: &Site, version: u64, row: Option<Value>) {
     );
 }
 
-/// The task board at 1280 x 900 with fourteen ready tasks at p2, following the feed, on a
-/// machine six times slower: a landed row's box gives way to it frames after it is drawn.
+/// The task board at 1280 x 900 with fourteen ready tasks at p2, following the feed.
 fn board_of_fourteen(site: &Site) -> Option<Chrome> {
-    let tasks: Vec<Value> = (1..=14).map(|n| task(n, 2)).collect();
+    board_of(site, 14)
+}
+
+/// The task board at 1280 x 900 with `count` ready tasks at p2, following the feed.
+fn board_of(site: &Site, count: u32) -> Option<Chrome> {
+    let tasks: Vec<Value> = (1..=count).map(|n| task(n, 2)).collect();
     site.set_json(
         "/api/task-board",
-        &json!({"tasks": tasks, "statuses": ["ready"], "counts": [["ready", 14]], "signoff": [], "next": null}),
+        &json!({"tasks": tasks, "statuses": ["ready"], "counts": [["ready", count]], "signoff": [], "next": null}),
     );
     let mut browser = open(site, "/tasks", 1280, 900)?;
     assert!(
@@ -1005,6 +1262,62 @@ fn a_task_added_or_removed_above_the_row_the_owner_reads_leaves_it_in_place() {
     assert!(
         (added - before).abs() < 1.0 && (removed - before).abs() < 1.0,
         "the row read moved from {before} to {added} when a task was added above it, and to {removed} when it was removed; [ms, row top, board scroll, page scroll] each frame from the add: {trace}"
+    );
+}
+
+#[test]
+fn a_task_whose_box_lands_past_the_board_s_reach_leaves_no_hold_running() {
+    let site = site();
+    let Some(mut browser) = board_of(&site, 30) else {
+        return;
+    };
+    // The board scrolled down its column until the place a task landing at its top takes is more
+    // than 600 px above the board's box, past the reach of its sentinel there, though within 600 px
+    // of the window: that box never draws while the board stays there.
+    let read = browser.eval(
+        "(() => { const board = document.querySelector('.board-scroll'), first = document.querySelector('[id=\"row-tools/t-01\"]');
+            board.scrollTop += first.getBoundingClientRect().top - (board.getBoundingClientRect().top - 800);
+            const top = board.getBoundingClientRect().top;
+            return [...document.querySelectorAll('[data-slug]')].find(row => row.getBoundingClientRect().top >= top)?.dataset.slug; })()",
+    );
+    let read = format!(
+        "[data-slug={}]",
+        json!(read.as_str().expect("a row shows on the scrolled board"))
+    );
+    still(&mut browser, &read);
+    land(&site, 4183, Some(task(0, 0)));
+    assert!(
+        browser.wait_for(
+            "document.querySelector('[id=\"row-tools/t-00\"]') !== null",
+            SHOWN
+        ),
+        "the added task never landed: {}",
+        browser.eval(PAGE)
+    );
+    // The hold kept the row read in place and ended once the board stood still, a few frames on:
+    // a scroll the page itself then makes, by no gesture, stays where it is put.
+    still(&mut browser, &read);
+    let at = browser.eval(
+        "(() => { const board = document.querySelector('.board-scroll'), clip = board.getBoundingClientRect();
+            const box = document.querySelector('[id=\"row-tools/t-00\"] [data-pending=true]')?.getBoundingClientRect();
+            board.scrollTop += 200;
+            return {box: box ? [box.top, box.bottom] : null, board: [clip.top, clip.bottom], set: board.scrollTop}; })()",
+    );
+    let (box_bottom, board_top) = (
+        at["box"][1].as_f64().unwrap_or(f64::NAN),
+        at["board"][0].as_f64().unwrap_or(f64::NAN),
+    );
+    assert!(
+        box_bottom > -600.0 && box_bottom + 600.0 < board_top,
+        "the landed task's box must wait within 600 px of the window yet past the board's reach: {at}"
+    );
+    for _ in 0..4 {
+        frames(&mut browser);
+    }
+    assert_eq!(
+        browser.eval("document.querySelector('.board-scroll').scrollTop"),
+        at["set"],
+        "a hold still running scrolled the board back for a box that cannot draw: {at}"
     );
 }
 

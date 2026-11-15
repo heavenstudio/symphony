@@ -12,6 +12,15 @@
 //!   (its data empty: the line `data:`) at least every [`Board::ping_ms`], never more than
 //!   [`PING_MAX_MS`] apart: an SSE comment never reaches a page's code, so a stream whose server
 //!   went quiet with its socket open would otherwise look live for ever.
+//! - The same `GET`, asking to upgrade (`Upgrade: websocket`), is the same stream on a WebSocket:
+//!   each event one text message, its name, a line feed, then its data (a [`FEED_EVENT`]'s
+//!   [`Delta`] or a [`SERVER_EVENT`]'s string, as JSON; nothing for a [`PING_EVENT`]), closed by
+//!   the server where the stream would end.
+//!   A browser keeps six HTTP/1.1 connections to a host and an event stream holds one while it is
+//!   open, so six tabs following the board would leave a seventh none for its reads; it counts
+//!   each WebSocket apart. The web client follows the feed so (`apps/symphony-web/src/feed.ts`). A
+//!   WebSocket has no same-origin rule for what it reads, so an upgrade whose `Origin` is not
+//!   `http://` and its own `Host` is refused (`403`), as such a write is.
 //!
 //! On one stream, versions only go up. A server that restarts counts again from its own start,
 //! so a version is never compared across streams, and nothing resumes by `Last-Event-ID`. A
@@ -27,8 +36,9 @@
 //! A field added later is `#[serde(default)]`, and a region a client does not know yet reads as
 //! [`Change::Other`], which it ignores: the server and an open client may be one build apart.
 //!
-//! The server's own route, [`FRONT_PATH`], answers a [`Front`]: the one server in front of the app,
-//! as its starters and the agents see it.
+//! The server's own routes answer before any project's: [`FRONT_PATH`] a [`Front`], the one server
+//! in front of the app, as its starters and the agents see it, and [`PROJECTS_PATH`] a
+//! [`ProjectList`], the projects it serves as the desktop app reads them ([`listing`]).
 
 #![forbid(unsafe_code)]
 
@@ -40,11 +50,13 @@ mod agents;
 pub mod gates;
 pub mod health;
 mod links;
+pub mod listing;
 mod machine_work;
 mod project;
 pub mod report_page;
 pub mod reports;
 mod runs;
+pub mod runs_rollup;
 mod task_queries;
 mod task_stage;
 pub mod timeline;
@@ -52,11 +64,15 @@ pub use agent_activity::{AGENT_ACTIVITY_SCHEMA, AgentHour, AgentLine};
 pub use gates::{Gate, GatePast, GateState, GatesSeen, TASK_GATES_PATH, TaskGates};
 pub use health::{HEALTH_SCHEMA, HealthHour, HourPasses, HourRequests, HourSlowest, HourWrites};
 pub use links::{app_path, linkable};
+pub use listing::{ListedCard, ListedProject, PROJECTS_PATH, ProjectList, TaskAsks, TaskVerdict};
 pub use report_page::{Grain, REPORTS_PATH, ReportBucket, ReportsPage};
 pub use reports::{REPORT_SCHEMA, ReportDay, ReportHour, report_file};
 pub use runs::{
-    End, FailedTest, PIPELINES, RUN_SCHEMA, RunLine, Suite, TRIGGERS, fold, run_day, run_name,
+    End, FailedTest, PIPELINES, RUN_LOG_MOST, RUN_LOG_PATH, RUN_LOG_TAIL, RUN_PATH, RUN_SCHEMA,
+    RUNS_DAYS, RUNS_FILE_BYTES, RUNS_PAGE, RUNS_PATH, RUNS_READ_BYTES, RunLine, RunLog, RunPage,
+    RunsPage, Suite, TRIGGERS, fold, run_day, run_name,
 };
+pub use runs_rollup::{RUNS_DAY_SCHEMA, RUNS_ROLLUP, RunsDay};
 pub use task_queries::{
     TaskKind, TaskStatus, slug_order, subtasks, tasks, tasks_in_progress, tasks_in_review,
     tasks_in_status,
@@ -115,7 +131,7 @@ pub struct Front {
 
 /// The route that answers a [`Board`].
 pub const BOARD_PATH: &str = "/api/board";
-/// The route of the feed: Server-Sent Events, `?since=VERSION`.
+/// The route of the feed: Server-Sent Events, or the same events on a WebSocket, `?since=VERSION`.
 pub const FEED_PATH: &str = "/api/feed";
 /// The response header a document read (`/api/document`, `/api/section`) names the feed's cursor
 /// at the read in, on its `200` and its `304` alike: a page that draws the copy it kept on a
@@ -159,6 +175,7 @@ text/plain,text/markdown,text/csv,application/json,.png,.jpg,.jpeg,.gif,.webp,.p
 
 /// A stored upload, as [`UPLOAD_PATH`] answers it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct Upload {
     /// The file's address, `/artifacts/uploads/<sha256>.<ext>`, the same on every branch's pages.
     pub url: String,
@@ -173,6 +190,7 @@ pub struct Upload {
 
 /// `GET /api/board`: what the front page shows.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct Board {
     /// The feed's version this snapshot is at: the client follows the feed from here.
     pub version: u64,
@@ -190,6 +208,7 @@ pub struct Board {
 
 /// A card waiting on the owner.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct Card {
     /// The owner's view order only; no verdict or document marker changes.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -229,6 +248,7 @@ impl Card {
 
 /// The row of counts, each linking to where its detail lives.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct Counts {
     /// Cards waiting on the owner: the whole queue, not only the ones the board shows.
     pub waiting: u32,
@@ -245,6 +265,7 @@ pub struct Counts {
 
 /// The task board's counts.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct TaskCounts {
     pub in_progress: u32,
     pub in_review: u32,
@@ -253,6 +274,7 @@ pub struct TaskCounts {
 
 /// The home's progress: the project's plugin regions and the document progress.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct Progress {
     /// The regions the project's plugins add to the home, in the order they are registered.
     #[serde(default)]
@@ -264,7 +286,8 @@ pub struct Progress {
 }
 
 /// One event of the feed: what changed since the version before.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct Delta {
     /// The version after this change: the next `since`.
     pub version: u64,
@@ -274,7 +297,8 @@ pub struct Delta {
 
 /// A region of the board that moved, with its new data: `{"region": "...", "data": ...}`, the
 /// region first (as the server writes it).
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[serde(tag = "region", content = "data", rename_all = "kebab-case")]
 pub enum Change {
     /// One card's words or pictures changed; it keeps its place in the queue.
@@ -287,8 +311,14 @@ pub enum Change {
     Client {
         build: String,
     },
-    /// A region this client does not know yet; it is ignored. Never sent.
+    /// What the task board asks of each person, as it is from now on: sent each time it changes,
+    /// for the desktop app ([`listing`]). The web client reads none, so its wire types leave it out.
+    #[cfg_attr(feature = "typescript", ts(skip))]
+    TaskAsks(TaskAsks),
+    /// A region this client does not know yet; it is ignored. Never sent, so the web client's wire
+    /// types leave it out: it reads a region it does not know as any `{region, data}`.
     #[serde(skip_serializing)]
+    #[cfg_attr(feature = "typescript", ts(skip))]
     Other,
 }
 
@@ -336,6 +366,7 @@ impl<'de> serde::de::Visitor<'de> for ChangeVisitor {
                         "client" => Change::Client {
                             build: map.next_value::<Build>()?.build,
                         },
+                        "task-asks" => Change::TaskAsks(map.next_value()?),
                         _ => {
                             map.next_value::<IgnoredAny>()?;
                             Change::Other
@@ -356,7 +387,7 @@ impl<'de> serde::de::Visitor<'de> for ChangeVisitor {
     }
 }
 
-const KNOWN_REGIONS: [&str; 5] = ["card", "queue", "counts", "progress", "client"];
+const KNOWN_REGIONS: [&str; 6] = ["card", "queue", "counts", "progress", "client", "task-asks"];
 
 #[expect(
     clippy::trivially_copy_pass_by_ref,
@@ -381,6 +412,7 @@ pub fn queue_category(path: &str) -> &str {
 
 /// The complete review queue, with mixed owner decisions, and the two queues below it.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct Queue {
     pub waiting: Vec<Card>,
     pub spot_check: Vec<QueueItem>,
@@ -390,6 +422,7 @@ pub struct Queue {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct QueueItem {
     pub href: String,
     pub path: String,
@@ -402,12 +435,14 @@ pub struct QueueItem {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct Pending {
     pub items: Vec<PendingItem>,
     pub docs: Vec<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct PendingItem {
     pub path: String,
     pub slug: String,
@@ -417,11 +452,13 @@ pub struct PendingItem {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct Activity {
     pub items: Vec<ActivityItem>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct ActivityItem {
     pub id: String,
     pub kind: String,
@@ -435,6 +472,7 @@ pub struct ActivityItem {
 
 /// The task board's read records. These stay serde-only so native and wasm clients share them.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct Task {
     pub slug: String,
     pub title: String,
@@ -455,6 +493,7 @@ pub struct Task {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[expect(clippy::struct_field_names, reason = "the field is the wire's name")]
 pub struct Role {
     pub handle: String,
@@ -490,6 +529,7 @@ pub struct Tasks {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct Message {
     pub id: i64,
     pub slug: String,
@@ -503,6 +543,7 @@ pub struct Message {
 /// Task metadata and its brief. Thread pages and the landing offer are fetched separately
 /// when the owner reaches their controls.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct TaskPage {
     #[serde(default)]
     pub machine_work: MachineWork,
@@ -538,6 +579,7 @@ pub struct TaskPage {
 /// A chunk of a long brief: its blocks, the byte it ends at, the bytes still left and the
 /// revision of the brief it was cut from.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct TaskBrief {
     pub blocks: Vec<Block>,
     pub next: usize,
@@ -551,6 +593,7 @@ pub struct TaskBrief {
 pub const TASK_ACTION_ROUTE: &str = "/api/task-action";
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct TaskEntry {
     pub message: Message,
     pub stamp: String,
@@ -558,6 +601,7 @@ pub struct TaskEntry {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct TaskHistory {
     pub entries: Vec<TaskEntry>,
     pub before: Option<i64>,
@@ -565,6 +609,7 @@ pub struct TaskHistory {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct AgentPage {
     pub view: Agents,
     pub tasks: Vec<Task>,
@@ -577,6 +622,7 @@ pub struct AgentPage {
 
 /// A document snapshot and the feed cursor taken atomically with it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct Document {
     pub version: u64,
     pub path: String,
@@ -595,6 +641,7 @@ pub struct Document {
 /// Why this document shows differences from main. The task link is global, while document links
 /// and all writes retain the selected checkout's scope.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct DocumentComparison {
     pub task: String,
 }
@@ -602,6 +649,7 @@ pub struct DocumentComparison {
 /// Metadata for a document whose bodies and threads are fetched near the viewport. Anchor ids
 /// reserve their destinations before their section's markup is mounted.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct DocumentOutline {
     pub document: Document,
     pub anchors: std::collections::BTreeMap<String, Vec<String>>,
@@ -675,18 +723,21 @@ impl DocumentOutline {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct DocumentSections {
     pub version: u64,
     pub change: DocumentChange,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct Crumb {
     pub name: String,
     pub href: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct Heading {
     pub level: u8,
     pub anchor: String,
@@ -694,17 +745,21 @@ pub struct Heading {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct Fragment {
     #[serde(default)]
     pub blocks: Vec<Block>,
     /// Internal compatibility with the server's Markdown pipeline; never sent to the client.
     #[serde(default, skip_serializing)]
+    #[cfg_attr(feature = "typescript", ts(skip))]
     pub html: String,
     #[serde(default, skip_serializing)]
+    #[cfg_attr(feature = "typescript", ts(skip))]
     pub media: Vec<Media>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct Section {
     pub start: usize,
     pub end: usize,
@@ -714,15 +769,78 @@ pub struct Section {
     #[serde(default)]
     pub blocks: Vec<Block>,
     #[serde(default, skip_serializing)]
+    #[cfg_attr(feature = "typescript", ts(skip))]
     pub html: String,
     #[serde(default, skip_serializing)]
+    #[cfg_attr(feature = "typescript", ts(skip))]
     pub media: Vec<Media>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub comparison: Option<SectionComparison>,
+    /// The kinds of the first and last blocks the section draws ([`Section::ends_of`]), so the
+    /// outline tells a page how a section it has not read yet will meet its neighbours. Left out
+    /// for a section that draws nothing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ends: Option<[String; 2]>,
+}
+
+impl Section {
+    /// The kinds of the first and last blocks `blocks` draw: a block's `type`, a heading's with its
+    /// level (`heading-3`), and a container drawn with the `callout` class as a `callout`. A group
+    /// draws its blocks, so its edges are theirs; a comment draws nothing and is passed over.
+    pub fn ends_of(blocks: &[Block]) -> Option<[String; 2]> {
+        Some([edges(blocks, false)?, edges(blocks, true)?])
+    }
+}
+
+/// The kind of the first block `blocks` draw, or of the last when `last`.
+fn edges(blocks: &[Block], last: bool) -> Option<String> {
+    if last {
+        blocks.iter().rev().find_map(|block| edge(block, true))
+    } else {
+        blocks.iter().find_map(|block| edge(block, false))
+    }
+}
+
+/// The kind `block` draws as at a section's first edge, or its last when `last`.
+fn edge(block: &Block, last: bool) -> Option<String> {
+    let kind = match block {
+        Block::Group { blocks } => return edges(blocks, last),
+        Block::Comment { .. } => return None,
+        Block::Heading { level, .. } => return Some(format!("heading-{level}")),
+        Block::Container { presentation, .. }
+            if presentation
+                .class
+                .split_whitespace()
+                .any(|word| word == "callout") =>
+        {
+            "callout"
+        }
+        Block::Paragraph { .. } => "paragraph",
+        Block::List { .. } => "list",
+        Block::Table { .. } => "table",
+        Block::Code { .. } => "code",
+        Block::Quote { .. } => "quote",
+        Block::Rule => "rule",
+        Block::Callout { .. } => "callout",
+        Block::Card { .. } => "card",
+        Block::Component { .. } => "component",
+        Block::Media { .. } => "media",
+        Block::Image { .. } => "image",
+        Block::Figure { .. } => "figure",
+        Block::Caption { .. } => "caption",
+        Block::Comparison { .. } => "comparison",
+        Block::Container { .. } => "container",
+        Block::Details { .. } => "details",
+        Block::SettledCard { .. } => "settled-card",
+        Block::Thread { .. } => "thread",
+        Block::Unknown { .. } => "unknown",
+    };
+    Some(kind.into())
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub enum Difference {
     Added,
     Changed,
@@ -731,6 +849,7 @@ pub enum Difference {
 
 /// Main's previous content is loaded with this section's body, never in its outline.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct SectionComparison {
     pub kind: Difference,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -738,6 +857,7 @@ pub struct SectionComparison {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct DocumentCard {
     pub slug: String,
     pub state: String,
@@ -747,6 +867,7 @@ pub struct DocumentCard {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct DocumentTask {
     pub slug: String,
     pub title: String,
@@ -766,6 +887,7 @@ impl DocumentTask {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct Folder {
     pub path: String,
     pub title: String,
@@ -776,6 +898,7 @@ pub struct Folder {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct FolderEntry {
     pub kind: String,
     pub path: String,
@@ -788,6 +911,7 @@ pub struct FolderEntry {
 /// Document deltas never carry an unchanged fragment. Positions are separate from content, so an
 /// inserted line does not resend every card below it. `order` is present only when keys move.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct DocumentChange {
     pub path: String,
     #[serde(default, skip_serializing_if = "is_false")]
@@ -820,6 +944,7 @@ pub struct DocumentChange {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct SectionPosition {
     pub key: String,
     pub start: usize,
@@ -828,6 +953,7 @@ pub struct SectionPosition {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct Version {
     pub sha: String,
     pub date: String,
@@ -835,6 +961,7 @@ pub struct Version {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct DocumentDiff {
     pub sha: String,
     pub subject: String,
@@ -842,6 +969,7 @@ pub struct DocumentDiff {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct Ask {
     pub id: i64,
     pub path: String,
@@ -856,6 +984,7 @@ pub struct Ask {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct AskAnswer {
     pub text: String,
     pub by: String,
@@ -863,6 +992,7 @@ pub struct AskAnswer {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct AskMessage {
     pub seq: i64,
     pub kind: String,
@@ -871,10 +1001,13 @@ pub struct AskMessage {
     pub at: f64,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub blocks: Vec<Block>,
-    /// Legacy reads only; `format=blocks` leaves these fields empty.
+    /// Legacy reads only; `format=blocks` leaves these fields empty, so the web client, which reads
+    /// blocks alone, is never sent them.
     #[serde(default, skip_serializing_if = "String::is_empty")]
+    #[cfg_attr(feature = "typescript", ts(skip))]
     pub html: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[cfg_attr(feature = "typescript", ts(skip))]
     pub media: Vec<Media>,
 }
 
@@ -883,6 +1016,7 @@ pub struct AskMessage {
 /// or to the front when `after` is null. The server never sends the whole task board in a delta.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(bound(deserialize = "T: Deserialize<'de>"))]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct ItemChange<T> {
     pub key: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -900,6 +1034,7 @@ pub struct OrderChange {
 /// A task's body is fetched in the initial snapshot. A task status/role update carries its changed
 /// fields only; this type lists every mutable field and lets a client merge it into its record.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct TaskFields {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
@@ -925,6 +1060,7 @@ pub struct TaskFields {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct TaskChange {
     pub key: String,
     pub fields: TaskFields,

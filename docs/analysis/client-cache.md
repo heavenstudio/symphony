@@ -60,18 +60,18 @@ the page draws comes before its first API answer.
 - **Home `/`** reads `/api/board` (`live.rs`, `fetch_board`).
 - **The task board `/tasks`** reads `/api/board`, then the counts
   (`/api/task-board?counts=1`), then each column near the screen. Each column waits 250 ms before
-  its read (`apps/symphony-ui/src/board_live.rs`, `column`), on the first visit as on a filter
+  its read (`apps/symphony-web/src/boardlive.tsx`, `LiveBoard.column`), on the first visit as on a filter
   change.
 - **A task page** reads `/api/board`, then, only once it has answered, `/api/task-page`, then the
   thread's newest page (`/api/task-history`) and the subtasks when they near the screen
-  (`live.rs`, `keep_live`; `apps/symphony-ui/src/task_live.rs`, `load`).
+  (`apps/symphony-web/src/task-live.ts`, `LiveTask.load`).
 - **A document or the register** reads `/api/document?view=outline`, then the bodies of the
   sections near the screen (`/api/section?keys=…`), then opens the feed for those sections and
   reopens it when the set of sections changes (`apps/symphony-ui/src/docs_live.rs`,
   `document_live`, `load_sections`, `follow_document`).
 - **Every page** also reads `/api/activity` and `/api/pending` for its header, and again each
-  time its feed opens after the first (`apps/symphony-ui/src/frame.rs`, `FrameRefresh::connected`;
-  `apps/symphony-ui/src/state.rs`, `MetadataReads::connected`): a document's feed reopens once its
+  time its feed opens after the first (`apps/symphony-web/src/frame.tsx`, `FrameRefresh.connected`;
+  `apps/symphony-web/src/state.ts`, `MetadataReads.connected`): a document's feed reopens once its
   sections are known, so a document reads them twice, and `/api/postponed` with them
   (`docs_live.rs`, `document_live`).
 
@@ -280,7 +280,7 @@ Sizes are the raw JSON of each read, measured on the private server.
 | queue | `/api/queue` | | 0.6 KB with one card waiting; it grows with the owner's queue |
 | task | its `/api/task-page` and its newest thread page, for the 30 tasks opened last | older thread pages, the landing offer (`/api/task-offer`), agents, subtasks' further pages, the brief's later chunks (`/api/task-brief`) | `perf/panel-first-open`: 9 KB page, 32 KB thread |
 | document | its outline, and the section bodies it drew, each under its `hash` (a card's with its thread's hash, which the outline names), for the 20 documents visited most; a project's entrypoint page, its folder and its intro, pinned | versions, diffs, asks, other folders | this register: 6 KB outline, 78 KB of bodies if read to the end; the consuming project's register: 56 KB outline, 464 KB of bodies |
-| header | nothing | `/api/activity`, `/api/pending`, a document's `/api/postponed`: 14 KB together, and the activity toasts compare against what the page last read (`apps/symphony-ui/src/state.rs`, `keeps_panel_baseline`) | |
+| header | nothing | `/api/activity`, `/api/pending`, a document's `/api/postponed`: 14 KB together, and the activity toasts compare against what the page last read (`apps/symphony-web/src/state.ts`, `keepsPanelBaseline`) | |
 
 **Caps.** At most 8 MB a project: 2 MB for tasks, 6 MB for documents, and the board and queue
 outside both, at well under 100 KB here (each column's first read is one page, so a larger board
@@ -316,7 +316,10 @@ given amount of its content, a screen's worth or a little more. As built (`perf/
   its reads in flight does not see, at `priority: "low"`, past the HTTP cache, marked
   `Purpose: prefetch` and naming the tag kept for it (`assets/cache.js`, `ahead`), so an item read
   ahead before costs a `304`. A task: its `/api/task-page` and its thread's newest page, the two
-  reads its visit keeps. A document: its first part, `/api/document?view=first`.
+  reads its visit keeps. A document: its first part, `/api/document?view=first`. Every answer's
+  body is read to its end, a refusal's too (a link to a document the project lacks answers
+  `404`): Chrome ends a read only once the page has read its body, and a read left unread stays in
+  flight for as long as the page is open, so `symphony shot` would wait on it.
 - **A document's first part.** The outline's head with all its headings, so a visit draws the
   contents whole at once and nothing moves when the outline answers, and, whole, the leading
   sections that fit with it in `symphony_api::AHEAD_BYTES`, 16,000 bytes of JSON, each with its
@@ -466,7 +469,7 @@ exercised; a format change clears the cache; the stale notice and the waiting bu
 first-visit budget test still passes.
 
 Independent of the cache, and cheaper: the 250 ms each `/tasks` column waits before its first read
-(`board_live.rs`, `column`) is most of that page's warm time on loopback. The wait folds repeated
+(`boardlive.tsx`, `LiveBoard.column`) is most of that page's warm time on loopback. The wait folds repeated
 requests for one column into one read; a column's first read could go at once and fold the
 repeats that follow it (inferred, not tried).
 

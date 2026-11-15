@@ -4,8 +4,10 @@
 //! The budgets are the owner's (tools/python-zero/ui-board), and a miss is reported, never
 //! loosened. They are absolute; the measurement they were set against is in
 //! docs/engineering/analysis/python-zero.md ("Today's app, measured for mobile").
-//! - a first visit loads at most 300 KB gzipped, everything the board needs (shell, JS glue,
-//!   wasm, CSS, API data, the feed's head and messages), independently for `/` and `/tasks`.
+//! - a first visit loads at most 125 KB gzipped to `/`, 150 KB to `/tasks` and 160 KB to a task's
+//!   page (each lowered from the owner's 300 KB as its page moved to the React client),
+//!   everything the page needs (shell, JS glue, wasm or the React client's scripts, CSS, API data,
+//!   the feed's head and messages), each independently.
 //!   The feed's keep-alive pings, which keep arriving while the page is open, are reported
 //!   beside the total. Deferred page kinds and the whole build are reported separately; a
 //!   visit pays for the resources it actually loads;
@@ -15,14 +17,17 @@
 //!   of it is the network and the server, which a loaded machine does not slow, and a board
 //!   answered late must fail it whatever the load (the wall is 0.4-0.5 s at load 8.5);
 //! - one feed event changes one card in place, and the page fetches nothing for it;
-//! - a page the browser keeps for back and forward holds no feed stream, so ten full loads in one
-//!   tab each draw their data, and a kept page shown again reads what changed (`kept_pages`).
+//! - a page the browser keeps for back and forward holds no feed stream, and a kept page shown
+//!   again reads what changed (`kept_pages`).
 //!
 //! Without Chrome on the machine the browser tests say so and pass: the one capability a test
 //! may lack. The build is made once per run of this binary, into `build/symphony-ui/` of the tree.
 
+mod agents;
 mod assets;
 mod binaries;
+mod board_place;
+mod board_search;
 mod board_status;
 mod cache_ahead;
 mod cache_documents;
@@ -33,11 +38,15 @@ mod chrome;
 #[path = "../common/mod.rs"]
 mod common;
 mod components;
+mod desktop_stub;
 mod document_cards;
+mod document_landing;
+mod feed_deltas;
 #[path = "../../../../tools/test-support/script_std.rs"]
 mod fixture_script;
 mod floating_controls;
 mod header;
+mod html_documents;
 mod kept_pages;
 mod landmarks;
 mod layout_shift;
@@ -50,15 +59,18 @@ mod owner_save;
 mod panel_open;
 mod phone;
 mod polish;
+mod preload;
 mod program;
 mod projects;
 mod reports;
 mod restored;
 mod run_records;
+mod runs;
 mod server_notices;
 mod shot;
 mod site;
 mod skeleton;
+mod tabs;
 mod task_gates;
 mod timeline;
 
@@ -69,7 +81,18 @@ use chrome::Chrome;
 use serde_json::json;
 use site::Site;
 
-const FIRST_VISIT_BYTES: f64 = 300_000.0;
+/// Home's first visit, the web client's since it moved (108,315 bytes on the fixture then), with
+/// modest room: lowered from the owner's 300,000 by that move, never raised.
+const HOME_FIRST_VISIT_BYTES: f64 = 125_000.0;
+/// The task board's first-visit cap (`/tasks`), lowered from the owner's 300,000 once the board
+/// moved to the React client: 116,215 bytes on the fixture then, beside home, Reports, the queue
+/// and the documents, the rest room for the code the kinds moving after it share with it.
+const TASKS_FIRST_VISIT_BYTES: f64 = 150_000.0;
+/// A task's page's first-visit cap (`/task/SLUG`), its timeline loaded after it and reported
+/// beside it: lowered from the owner's 300,000 once the page moved to the React client, 140,089
+/// bytes on the fixture then (546,351 on main's Dioxus build at f56bde5), with room for the code
+/// the kinds moving after it share with it.
+const TASK_FIRST_VISIT_BYTES: f64 = 160_000.0;
 const RETURN_VISIT_BYTES: f64 = 20_000.0;
 /// How long a page may take to show the board at all before a test gives up on it.
 const SHOWN: Duration = Duration::from_secs(30);
@@ -140,6 +163,27 @@ fn visible(selector: &str) -> String {
     )
 }
 
+/// Whether the focus is on the element `selector` names, once two frames and a task have passed
+/// (Chrome takes the focus from a button disabled under it at its next rendering update, not at
+/// once); else what holds it, for the failure.
+fn focus_on(chrome: &mut Chrome, selector: &str) -> serde_json::Value {
+    chrome.eval(&format!(
+        "new Promise(done => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(done)))).then(() => \
+         document.activeElement === document.querySelector({}) || (document.activeElement?.outerHTML ?? 'nothing').slice(0, 120))",
+        json!(selector)
+    ))
+}
+
+/// A script true once the element `selector` names is drawn as the shared sheet draws a disabled
+/// button (`.dx-button:disabled`: half its opacity, which the button's transition reaches in its
+/// own time, and no pointer events).
+fn drawn_disabled(selector: &str) -> String {
+    format!(
+        "(style => style.opacity === '0.5' && style.pointerEvents === 'none')(getComputedStyle(document.querySelector({})))",
+        json!(selector)
+    )
+}
+
 /// The text of every element `selector` matches, in document order.
 fn texts(chrome: &mut Chrome, selector: &str) -> Vec<String> {
     let value = chrome.eval(&format!(
@@ -183,15 +227,26 @@ fn entry_pages_fit_the_first_visit_budget_and_deferred_kinds_are_reported() {
     let mut entries = Vec::new();
     // Each kind gets a fresh browser profile, including when kinds share CSS. A cached
     // sibling must not make an oversized entry pass. Keep that profile for the return visit.
-    for (path, kind, ready, budgeted) in [
-        ("/", "review", ".hero-title", true),
-        ("/tasks", "board", "[data-slug='tools/example']", true),
-        ("/agents", "program", ".agents", false),
-        ("/docs/", "docs", "[data-ready=folder]", false),
-        ("/queue", "queue", "[data-ready=queue]", false),
-        ("/reports", "program", "[data-ready=reports]", false),
-        ("/task/visual/in-progress", "program", "article.task", false),
-        ("/docs/look-parity.md", "docs", ".doc-card", false),
+    for (path, kind, ready, cap) in [
+        ("/", "review", ".hero-title", Some(HOME_FIRST_VISIT_BYTES)),
+        (
+            "/tasks",
+            "board",
+            "[data-slug='tools/example']",
+            Some(TASKS_FIRST_VISIT_BYTES),
+        ),
+        ("/agents", "agents", ".agents", None),
+        ("/docs/", "docs", "[data-ready=folder]", None),
+        ("/queue", "queue", "[data-ready=queue]", None),
+        ("/reports", "reports", "[data-ready=reports]", None),
+        ("/runs", "runs", "[data-ready=runs]", None),
+        (
+            "/task/visual/in-progress",
+            "task",
+            "article.task",
+            Some(TASK_FIRST_VISIT_BYTES),
+        ),
+        ("/docs/look-parity.md", "docs", ".doc-card", None),
     ] {
         let Some(mut chrome) = chrome() else { return };
         chrome.open(&site.url(path));
@@ -203,12 +258,13 @@ fn entry_pages_fit_the_first_visit_budget_and_deferred_kinds_are_reported() {
             "{path} did not show {ready}: {:?}",
             chrome.eval("document.body.innerText")
         );
-        // A task page's timeline is the program's chunk of its own, loaded into its box once the
-        // page has drawn and is idle: reported beside the first visit, which never waits for it.
+        // A task page's timeline is a chunk of its own (apps/symphony-web/src/timeline.tsx), loaded
+        // into its box once the page has drawn and is idle: reported beside the first visit, which
+        // never waits for it.
         if path.starts_with("/task/") {
             assert!(
                 chrome.wait_for(
-                    "window.reviewTimelineReady === true && document.querySelector('.tl-drawn') !== null",
+                    "document.getElementById('timeline-root') !== null && document.querySelector('.tl-drawn') !== null",
                     SHOWN
                 ),
                 "{path} drew no timeline"
@@ -235,12 +291,15 @@ fn entry_pages_fit_the_first_visit_budget_and_deferred_kinds_are_reported() {
                 && !r.from_cache),
             "{path} did not fetch its {kind} module: {requests:#?}"
         );
-        assert!(
-            requests
-                .iter()
-                .any(|r| r.url.ends_with(".wasm") && r.bytes > 0.0 && !r.from_cache),
-            "{path} fetched no WASM: {requests:#?}"
-        );
+        // A kind of the web client (apps/symphony-web) is its script alone.
+        if !assets::web(dist(), kind) {
+            assert!(
+                requests
+                    .iter()
+                    .any(|r| r.url.ends_with(".wasm") && r.bytes > 0.0 && !r.from_cache),
+                "{path} fetched no WASM: {requests:#?}"
+            );
+        }
         let bytes = needed_bytes(&requests);
         eprintln!(
             "{path} first visit: {bytes} bytes; the feed's keep-alive pings beside it: {} bytes; \
@@ -263,8 +322,8 @@ fn entry_pages_fit_the_first_visit_budget_and_deferred_kinds_are_reported() {
             "{path} return visit: {again} bytes; keep-alive pings beside it: {} bytes",
             ping_bytes(&returned)
         );
-        if budgeted {
-            entries.push((path, bytes, again));
+        if let Some(cap) = cap {
+            entries.push((path, cap, bytes, again));
         }
     }
     let Some(mut chrome) = chrome() else { return };
@@ -284,10 +343,10 @@ fn entry_pages_fit_the_first_visit_budget_and_deferred_kinds_are_reported() {
         prefetched_bytes(&idle),
         with_panel - before
     );
-    for (path, first, again) in entries {
+    for (path, cap, first, again) in entries {
         assert!(
-            first <= FIRST_VISIT_BYTES,
-            "{path} first visit loads {first} bytes, over {FIRST_VISIT_BYTES}"
+            first <= cap,
+            "{path} first visit loads {first} bytes, over {cap}"
         );
         assert!(
             again <= RETURN_VISIT_BYTES,
@@ -296,18 +355,10 @@ fn entry_pages_fit_the_first_visit_budget_and_deferred_kinds_are_reported() {
     }
 }
 
-/// Whether `request` is the task timeline's: its chunk, the style sheets of its own (not those the
-/// task page loads already) or its read. Its script and main module are the task page's own, the
-/// program's.
+/// Whether `request` is the task timeline's: its chunk, which its box imports once the page is
+/// idle and which carries its style, or its read. The chunk is no kind, so the shell's manifest
+/// never names it: it is the published `timeline-HASH.js` beside the kinds' scripts.
 fn timeline_file(request: &chrome::Request) -> bool {
-    static TIMELINE: std::sync::OnceLock<(assets::Module, Vec<String>)> =
-        std::sync::OnceLock::new();
-    let (module, page) = TIMELINE.get_or_init(|| {
-        (
-            assets::module(dist(), "timeline"),
-            assets::module(dist(), "tasks").styles,
-        )
-    });
     let path = request
         .url
         .split_once("://")
@@ -315,11 +366,9 @@ fn timeline_file(request: &chrome::Request) -> bool {
             rest.find('/').map_or("", |at| &rest[at..])
         });
     path.starts_with(symphony_api::TASK_TIMELINE_PATH)
-        || path == module.chunk()
-        || module
-            .styles
-            .iter()
-            .any(|style| style == path && !page.contains(style))
+        || path
+            .strip_prefix("/assets/timeline-")
+            .is_some_and(|rest| rest.ends_with(".js") && !rest.contains('/'))
 }
 
 /// Include styles and API replies still in flight when the view first appeared. A live feed
@@ -330,7 +379,7 @@ fn completed_requests(chrome: &mut Chrome) -> Vec<chrome::Request> {
         let requests = chrome.requests();
         requests
             .iter()
-            .all(|r| r.finished || r.kind == "EventSource" || r.kind == "Image")
+            .all(|r| r.finished || r.streams() || r.kind == "Image")
             .then_some(requests)
     })
     .unwrap_or_else(|stall| panic!("{stall}: {:#?}", chrome.requests()))
@@ -356,8 +405,8 @@ fn a_first_visit_and_a_return_visit_fit_their_budgets() {
         ping_bytes(&again)
     );
     assert!(
-        first_bytes <= FIRST_VISIT_BYTES,
-        "a first visit loads {first_bytes} bytes, over {FIRST_VISIT_BYTES}: {first:#?}"
+        first_bytes <= HOME_FIRST_VISIT_BYTES,
+        "a first visit loads {first_bytes} bytes, over {HOME_FIRST_VISIT_BYTES}: {first:#?}"
     );
     assert!(
         again_bytes <= RETURN_VISIT_BYTES,
@@ -387,8 +436,14 @@ fn loaded(requests: &[chrome::Request]) -> impl Iterator<Item = &chrome::Request
         .filter(|request| request.kind != "Image" && !request.from_cache && !request.prefetch)
 }
 
+/// The bytes of `request`'s pings: each an event of an event stream, or a frame of a WebSocket.
 fn pings_of(request: &chrome::Request) -> f64 {
-    (request.pings * site::ping().len()) as f64
+    let ping = if request.kind == chrome::WEB_SOCKET {
+        site::ping().frame().len()
+    } else {
+        site::ping().sse().len()
+    };
+    (request.pings * ping) as f64
 }
 
 /// What the page warmed at idle for a later click: never its first paint's.
@@ -534,87 +589,84 @@ fn same_kind_navigation_resets_scroll_clamped_by_the_new_page() {
         "/api/task-history",
         &json!({"entries":[],"before":null,"after":null}),
     );
-    for destination in ["/task/tools/second", "/agents"] {
-        let Some(mut chrome) = chrome() else { return };
-        chrome.call("Profiler.enable", json!({}));
-        chrome.call(
-            "Profiler.startPreciseCoverage",
-            json!({"callCount":true,"detailed":true}),
-        );
-        chrome.open(&site.url("/task/tools/example"));
-        assert!(chrome.wait_for(
-            "document.documentElement.dataset.navigation === 'ready' && document.querySelector('.task[data-slug=\"tools/example\"]') !== null",
-            SHOWN
-        ));
-        chrome.eval(
-            r#"
-            const mount = document.getElementById('review-root-tasks');
-            mount.style.minHeight = '6000px';
-            scrollTo(0,5000);
-            addEventListener('review:navigate', () => {
-                window.beforeClamp = scrollY;
-                mount.style.minHeight = '3000px';
-                window.afterClamp = scrollY;
-            }, {once:true});
-        "#,
-        );
-        assert_eq!(chrome.eval("scrollY"), json!(5000));
-        chrome.eval(&format!(
-            "const next = document.createElement('a'); next.href = {}; document.body.append(next); next.click(); next.remove()",
-            json!(destination)
-        ));
-        assert!(chrome.wait_for(
-            "document.documentElement.dataset.navigation === 'ready'",
-            SHOWN
-        ));
-        assert_eq!(chrome.eval("window.beforeClamp"), json!(5000));
-        assert_eq!(
-            chrome.eval("afterClamp > 0 && afterClamp < beforeClamp"),
-            json!(true),
-            "{destination}: navigation must shrink the page after the shell's baseline"
-        );
-        assert_eq!(chrome.eval("scrollY"), json!(0), "{destination}");
-        // Keep the fixture honest: the second route must render its own page, rather than
-        // passing the scroll check with a missing API response or the first task still shown.
-        let selector = if destination == "/agents" {
-            ".agents"
-        } else {
-            ".task[data-slug=\"tools/second\"]"
-        };
-        assert!(chrome.wait_for(
-            &format!("document.querySelector({}) !== null", json!(selector)),
-            SHOWN
-        ));
-        let coverage = chrome.call("Profiler.takePreciseCoverage", json!({}));
-        let shell = coverage["result"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|script| {
-                script["url"]
-                    .as_str()
-                    .is_some_and(|url| url.contains("/symphony-shell-"))
-            })
-            .expect("navigation shell coverage");
-        let ranges: Vec<_> = shell["functions"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .flat_map(|function| function["ranges"].as_array().unwrap())
-            .collect();
-        let used = ranges
-            .iter()
-            .filter(|range| range["count"].as_u64().unwrap_or(0) > 0)
-            .count();
-        assert!(
-            used > 0,
-            "the shell coverage instrument returned no executed blocks"
-        );
-        eprintln!(
-            "NAVIGATION COVERAGE {destination}: {used}/{} executed shell blocks",
-            ranges.len()
-        );
-    }
+    // A task page to another: `/agents` is a kind of its own (the web client's), whose move from a
+    // task page resets the scroll as every move between kinds does (above).
+    let destination = "/task/tools/second";
+    let Some(mut chrome) = chrome() else { return };
+    chrome.call("Profiler.enable", json!({}));
+    chrome.call(
+        "Profiler.startPreciseCoverage",
+        json!({"callCount":true,"detailed":true}),
+    );
+    chrome.open(&site.url("/task/tools/example"));
+    assert!(chrome.wait_for(
+        "document.documentElement.dataset.navigation === 'ready' && document.querySelector('.task[data-slug=\"tools/example\"]') !== null",
+        SHOWN
+    ));
+    chrome.eval(
+        r#"
+        const mount = document.getElementById('review-root-task');
+        mount.style.minHeight = '6000px';
+        scrollTo(0,5000);
+        addEventListener('review:navigate', () => {
+            window.beforeClamp = scrollY;
+            mount.style.minHeight = '3000px';
+            window.afterClamp = scrollY;
+        }, {once:true});
+    "#,
+    );
+    assert_eq!(chrome.eval("scrollY"), json!(5000));
+    chrome.eval(&format!(
+        "const next = document.createElement('a'); next.href = {}; document.body.append(next); next.click(); next.remove()",
+        json!(destination)
+    ));
+    assert!(chrome.wait_for(
+        "document.documentElement.dataset.navigation === 'ready'",
+        SHOWN
+    ));
+    assert_eq!(chrome.eval("window.beforeClamp"), json!(5000));
+    assert_eq!(
+        chrome.eval("afterClamp > 0 && afterClamp < beforeClamp"),
+        json!(true),
+        "{destination}: navigation must shrink the page after the shell's baseline"
+    );
+    assert_eq!(chrome.eval("scrollY"), json!(0), "{destination}");
+    // Keep the fixture honest: the second route must render its own page, rather than
+    // passing the scroll check with a missing API response or the first task still shown.
+    let selector = ".task[data-slug=\"tools/second\"]";
+    assert!(chrome.wait_for(
+        &format!("document.querySelector({}) !== null", json!(selector)),
+        SHOWN
+    ));
+    let coverage = chrome.call("Profiler.takePreciseCoverage", json!({}));
+    let shell = coverage["result"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|script| {
+            script["url"]
+                .as_str()
+                .is_some_and(|url| url.contains("/symphony-shell-"))
+        })
+        .expect("navigation shell coverage");
+    let ranges: Vec<_> = shell["functions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|function| function["ranges"].as_array().unwrap())
+        .collect();
+    let used = ranges
+        .iter()
+        .filter(|range| range["count"].as_u64().unwrap_or(0) > 0)
+        .count();
+    assert!(
+        used > 0,
+        "the shell coverage instrument returned no executed blocks"
+    );
+    eprintln!(
+        "NAVIGATION COVERAGE {destination}: {used}/{} executed shell blocks",
+        ranges.len()
+    );
 }
 
 #[test]
@@ -772,6 +824,16 @@ fn a_page_whose_build_is_gone_loads_again_once_and_one_still_served_says_the_fai
     );
     assert_eq!(chrome.eval("window.__kept === true"), json!(true));
     assert_eq!(loads(&site), 0, "{:?}", site.requests());
+    // What it leaves on screen: the page before and its header, under the notice, never an empty
+    // page or the board half drawn.
+    assert_eq!(
+        chrome.eval(
+            "['.hero-title', '.app-header'].every(selector => document.querySelector(selector)?.getClientRects().length > 0) && document.querySelector('.kanban') === null"
+        ),
+        json!(true),
+        "the page before is hidden under the notice: {:?}",
+        chrome.eval("document.body.innerText.slice(0, 2000)")
+    );
     // Its build gone from the server, the page loads again, onto the build served now.
     site.retire(&shell);
     chrome.eval("document.querySelector('#module-error button').click()");
@@ -802,6 +864,45 @@ fn fetched(chrome: &mut Chrome, site: &Site, query: &str, what: &str) {
     }) {
         panic!("{stall}: {:?}", site.targets());
     }
+}
+
+/// The window of finished tasks already chosen, chosen again, reads the board again as the Dioxus
+/// page did: its columns never wait empty for the next event.
+#[test]
+fn task_controls_read_the_board_again_for_the_window_already_chosen() {
+    let site = site();
+    let Some(mut chrome) = chrome() else { return };
+    chrome.open(&site.url("/tasks"));
+    let shown = "document.querySelector('[data-slug=\"tools/example\"]') !== null && document.querySelector('.column[aria-busy=true]') === null";
+    assert!(
+        chrome.wait_for(shown, SHOWN),
+        "the board never drew its card"
+    );
+    let reads = |site: &Site| {
+        site.targets()
+            .iter()
+            .filter(|url| url.contains("status=ready"))
+            .count()
+    };
+    let before = reads(&site);
+    components::choose(
+        &mut chrome,
+        ".filters button[aria-label='Finished tasks']",
+        "Last 24 hours",
+    );
+    if let Err(stall) = test_time::until_true("the column read again", STALL, || {
+        reads(&site) > before || {
+            chrome.pump(Duration::from_millis(25));
+            false
+        }
+    }) {
+        panic!("{stall}: {:?}", site.targets());
+    }
+    assert!(
+        chrome.wait_for(shown, SHOWN),
+        "the column was left without its card: {:?}",
+        chrome.eval("document.querySelector('.column[data-status=ready]')?.outerHTML")
+    );
 }
 
 #[test]
@@ -983,6 +1084,92 @@ fn an_unrevealed_mockup_replaced_by_a_picture_attaches_to_its_new_node() {
     );
 }
 
+/// Home's pictures open in the overlay's picture viewer, its arrows moving through the next card's
+/// pictures alone (a later card's thumbnail is a link to its card) and Escape closing it; its
+/// mockup's frame is scaled to its box. Each wait is on the page, never on a clock.
+#[test]
+fn home_opens_its_pictures_in_the_viewer_and_scales_its_mockup() {
+    let site = site();
+    let mut board: serde_json::Value =
+        serde_json::from_str(&common::fixture("board.json")).unwrap();
+    board["next"][0]["pictures"] = json!([
+        {"src":"/first.svg", "caption":"First"},
+        {"src":"/mockup.html", "caption":"Mockup"},
+        {"src":"/second.svg", "caption":"Second"},
+    ]);
+    site.set_board(&board.to_string());
+    for name in ["first", "second"] {
+        site.set_file(
+            &format!("/{name}.svg"),
+            br#"<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200"/>"#.to_vec(),
+            "image/svg+xml",
+        );
+    }
+    site.set_file(
+        "/mockup.html",
+        b"<!doctype html><title>Mockup</title><p>Mockup</p>".to_vec(),
+        "text/html",
+    );
+    let Some(mut chrome) = chrome() else { return };
+    chrome.open(&site.url("/"));
+    wait_for_board(&mut chrome);
+    // The pictures come in as they near the screen, and the test's window leaves them under it.
+    chrome.eval("document.querySelector('.hero .pics').scrollIntoView({block:'center'})");
+    assert!(
+        chrome.wait_for(
+            "document.querySelectorAll('.hero img[data-zoom-ready][role=button][tabindex=\"0\"]').length === 2 \
+             && document.querySelector('.hero .mockup-frame iframe')?.getAttribute('style')?.startsWith('transform:scale(') === true",
+            SHOWN
+        ),
+        "{}",
+        chrome.eval("document.querySelector('.hero').outerHTML")
+    );
+    assert_eq!(
+        chrome.eval("document.querySelector('.hero img[alt=Second]').getAttribute('aria-label')"),
+        json!("Open picture Second")
+    );
+    chrome.eval("document.querySelector('.hero img[alt=Second]').click()");
+    assert!(
+        chrome.wait_for(
+            "document.querySelector('#media-lightbox[data-state=open] img')?.getAttribute('src') === '/second.svg'",
+            SHOWN
+        ),
+        "the viewer never opened: {}",
+        chrome.eval("document.querySelector('#overlay-root')?.outerHTML ?? 'no overlay root'")
+    );
+    // The next card's two pictures, its mockup no picture of the set: the second of two.
+    assert_eq!(
+        chrome.eval("document.querySelector('#media-lightbox .lightbox-caption').textContent"),
+        json!("Second · 2 / 2")
+    );
+    chrome.eval(
+        "document.dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowRight',bubbles:true}))",
+    );
+    assert!(chrome.wait_for(
+        "document.querySelector('#media-lightbox img')?.getAttribute('src') === '/first.svg'",
+        SHOWN
+    ));
+    chrome.eval(
+        "document.dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowLeft',bubbles:true}))",
+    );
+    assert!(chrome.wait_for(
+        "document.querySelector('#media-lightbox img')?.getAttribute('src') === '/second.svg'",
+        SHOWN
+    ));
+    components::key(&mut chrome, "Escape", "Escape", 27);
+    assert!(chrome.wait_for(
+        "document.querySelector('#media-lightbox[data-state=open]') === null",
+        SHOWN
+    ));
+    // The keyboard opens it too, on the picture it is on.
+    chrome.eval("document.querySelector('.hero img[alt=First]').focus()");
+    components::key(&mut chrome, "Enter", "Enter", 13);
+    assert!(chrome.wait_for(
+        "document.querySelector('#media-lightbox[data-state=open] img')?.getAttribute('src') === '/first.svg'",
+        SHOWN
+    ));
+}
+
 #[test]
 fn tasks_and_their_controls_work_without_a_visibility_observer() {
     let site = site();
@@ -1012,6 +1199,38 @@ fn tasks_and_their_controls_work_without_a_visibility_observer() {
         chrome.eval("document.body.innerText")
     );
     assert!(site.targets().iter().any(|url| url.contains("roots=1")));
+}
+
+/// A task the server sends with its plugins' board fields draws on the board as one without them
+/// does, whatever their values: the board draws no field, so its guard (`readTask` in the web
+/// client's `task.ts`) checks only what a card draws and leaves the fields as `JSON.parse` read
+/// them, not even refusing a value the fields' own reader refuses (a boolean:
+/// `symphony_blocks::FieldValue` is a number or text). That is the client's to accept: a page one
+/// build behind a server whose plugins write a new kind of value still draws the board, where a
+/// reader of the fields would lose the whole listing to the one value.
+#[test]
+fn a_task_with_plugin_board_fields_draws_on_the_board() {
+    let site = site();
+    site.set_json(
+        "/api/task-board",
+        &json!({
+            "tasks": [{"slug": "game/jump", "title": "Jump", "body": "", "status": "ready",
+                "priority": 2, "parent": null, "created_by": "owner", "created": 0.0,
+                "updated": 0.0, "links": [], "depends": [], "roles": [], "instruction": false,
+                "fields": {"game": {"effort": 3.0, "risk": "high", "done": true}}}],
+            "statuses": ["ready"], "counts": [["ready", 1]], "signoff": [], "next": null
+        }),
+    );
+    let Some(mut chrome) = chrome() else { return };
+    chrome.open(&site.url("/tasks"));
+    assert!(
+        chrome.wait_for(
+            "document.querySelector('[data-slug=\"game/jump\"]')?.textContent.includes('Jump') === true",
+            SHOWN
+        ),
+        "the task with board fields was not drawn: {:?}",
+        chrome.eval("document.body.innerText")
+    );
 }
 
 #[test]
@@ -1093,6 +1312,12 @@ fn the_transfer_budget_counts_api_failures_and_open_streams_but_not_images_cache
             ..Default::default()
         },
         chrome::Request {
+            kind: chrome::WEB_SOCKET.into(),
+            bytes: 129.0 + 3.0 * 7.0,
+            pings: 3,
+            ..Default::default()
+        },
+        chrome::Request {
             kind: "Image".into(),
             bytes: 500.0,
             finished: true,
@@ -1106,9 +1331,11 @@ fn the_transfer_budget_counts_api_failures_and_open_streams_but_not_images_cache
             ..Default::default()
         },
     ];
-    assert_eq!(site::ping().len(), 19);
-    assert_eq!(needed_bytes(&requests), 222.0);
-    assert_eq!(ping_bytes(&requests), 38.0);
+    // A ping is 19 bytes as an event, and 7 as a WebSocket's frame: its head and `ping\n`.
+    assert_eq!(site::ping().sse().len(), 19);
+    assert_eq!(site::ping().frame(), b"\x81\x05ping\n");
+    assert_eq!(needed_bytes(&requests), 222.0 + 129.0);
+    assert_eq!(ping_bytes(&requests), 38.0 + 21.0);
     assert_eq!(
         prefetched_bytes(&requests),
         9_000.0,

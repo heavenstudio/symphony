@@ -41,7 +41,13 @@ label { display:block; } html:root :focus-visible { outline:2px solid var(--ring
 .app-nav { padding-bottom:16px; border-bottom:1px solid var(--border); margin-bottom:20px; }
 .kanban, .ghost-kanban { display:grid; grid-template-columns:minmax(0,1fr); gap:var(--sp-4); }
 .kanban > *, .ghost-kanban > * { min-width:0; }
-.board-scroll { max-width:100%; min-width:0; max-height:max(320px,calc(100dvh - 320px)); overflow:auto; overscroll-behavior-x:contain; scroll-snap-type:x proximity; scrollbar-color:var(--muted-foreground) var(--muted); padding-bottom:12px; border-radius:var(--r-lg); }
+/* The board's scroller fits the window under what the page draws above it (the header, the
+   heading, the filters and the hint: 277 px on a desk, 395 on a phone) and over the dock's band
+   (frame.css), so its own horizontal scrollbar, at its foot, is never under the prev/next bar,
+   nor under the "+", which sits in that band, at its lift, when no bar draws. Its ghost is as
+   tall. */
+:root { --board-dock:var(--dock); }
+.board-scroll { max-width:100%; min-width:0; max-height:max(320px,calc(100dvh - 320px - var(--board-dock,0px))); overflow:auto; overscroll-behavior-x:contain; scroll-snap-type:x proximity; scrollbar-color:var(--muted-foreground) var(--muted); padding-bottom:12px; border-radius:var(--r-lg); }
 .board-scroll:focus-visible { outline:2px solid var(--primary); outline-offset:4px; }
 .board-scroll-hint, .ghost-hint { margin:0; font-size:var(--fs-sm); }
 /* The pipeline clips its rows' 600 px look-ahead below its longest column, which would otherwise
@@ -63,7 +69,8 @@ label { display:block; } html:root :focus-visible { outline:2px solid var(--ring
 .column[data-status=blocked], [data-for=blocked] { --c:var(--dislike); }
 .column[data-status=cancelled], [data-for=cancelled] { --c:var(--resolved); }
 .column h2 { font-size:.72rem; margin:2px 2px 10px; text-transform:uppercase; letter-spacing:.09em; color:var(--c); display:flex; align-items:center; gap:6px; }
-.offline { display:flex; flex-wrap:wrap; gap:12px; }
+/* Each column of the lower row is as tall as its own cards, never the tallest one's. */
+.offline { display:flex; flex-wrap:wrap; align-items:flex-start; gap:12px; }
 .offline .column { flex:1 1 240px; min-height:0; box-shadow:none; }
 /* A status filtered alone is a pipeline column's width, its cards never a line of the page. */
 .offline .column:only-child { flex:0 1 288px; box-sizing:border-box; }
@@ -74,7 +81,7 @@ label { display:block; } html:root :focus-visible { outline:2px solid var(--ring
 .column ul, .agents, .history, .facts { list-style:none; padding:0; }
 .column h2 .count { font-size:var(--fs-xs); font-weight:600; color:var(--muted-foreground); background:var(--muted); border-radius:var(--r-pill); padding:0 8px; letter-spacing:0; }
 .count { color:var(--muted-foreground); font-size:.8em; }
-/* src/tasks/card_height.rs repeats a column card's sizes (columns, padding, borders, faces, chips) to reserve its rows: change both together. */
+/* apps/symphony-web/src/cardheight.ts repeats a column card's sizes (columns, padding, borders, faces, chips) to reserve its rows: change both together. */
 .taskcard, .ghost-card { padding:8px 10px; border:1px solid var(--border); border-radius:var(--r-md); margin:0 0 8px; background:var(--card); overflow-wrap:anywhere; box-shadow:0 1px 2px rgba(0,0,0,.04); font-size:var(--fs-sm); line-height:1.45; transition:box-shadow .12s ease; }
 .taskcard:hover { box-shadow:var(--shadow-2); }
 .taskcard > .taskcard-slug { background:none; padding:0; color:var(--muted-foreground); font-size:.82em; }
@@ -104,9 +111,12 @@ label { display:block; } html:root :focus-visible { outline:2px solid var(--ring
 .task-body { margin-top:20px; overflow-wrap:anywhere; } .task-body pre, .entry pre { overflow:auto; }
 /* A brief reads in lines of a measure, as a page's lead does; its code and tables keep the card's width. */
 .task-body :is(p, li, blockquote, h1, h2, h3, h4, h5, h6, dt, dd) { max-width:80ch; }
+/* The thread's messages read in the brief's measure, and the message box is as wide. */
+.entry-text :is(p, li, blockquote, h1, h2, h3, h4, h5, h6, dt, dd), .entry-text.literal, #task-send { max-width:80ch; }
 .task-body table { display:block; max-width:100%; overflow:auto; }
 .entry, .ghost-entry { --c:var(--muted-foreground); position:relative; padding:5px 10px; border-radius:var(--r-sm); line-height:1.5; overflow-wrap:anywhere; }
-.entry::before, .ghost-entry::before { content:"";position:absolute; left:-18px; top:12px; width:8px; height:8px; border-radius:50%; background:var(--c); box-shadow:0 0 0 3px var(--ring,var(--background)); }
+/* A dot stands clear of its line in the colour of the surface it is on: a card's sets --dot-halo. */
+.entry::before, .ghost-entry::before { content:"";position:absolute; left:-18px; top:12px; width:8px; height:8px; border-radius:50%; background:var(--c); box-shadow:0 0 0 3px var(--dot-halo,var(--background)); }
 #task-thread .entry::before, .ghost-entry::before { box-shadow:0 0 0 3px var(--background); }
 .entry img { max-width:min(100%,460px); vertical-align:top; margin:2px 4px 2px 0; border-radius:var(--r-sm); }
 .entry time { color:var(--muted-foreground); font-variant-numeric:tabular-nums; margin-right:6px; font-size:.92em; }
@@ -144,7 +154,11 @@ li > .viewport-slot > p + p { margin-top:1em; }
 /* A ghost outlines what is still to come: the boxes it will draw (`ghost-*`, sized as the real
    ones), and a bar (.bone) at each line of text in them, at that line's height (viewport::Skeleton
    for plain lines). A page stays hidden under its ghost until its first screen is in
-   (viewport::Settle). The shimmer, one light across every bar, is for a reader who accepts motion. */
+   (viewport::Settle). The shimmer, one light across every bar, is for a reader who accepts motion,
+   and only on a ghost waiting for its read. A placeholder (.viewport-placeholder) waits for no read,
+   only to come within its sentinel's reach of the screen, where its content takes its place: its
+   bars are still, as an animation off the screen still runs every frame, under content-visibility
+   too, and a page at rest runs none. */
 .bone { display:inline-block; vertical-align:middle; width:var(--w,100%); max-width:100%; height:.8em; border-radius:var(--r-sm); background-color:var(--skeleton); }
 .skeleton > .bone { display:block; margin:calc(.5lh - .4em) 0; } .skeleton + .skeleton { margin-top:1em; }
 .skeleton > .bone:nth-child(3n+2) { --w:88%; } .skeleton > .bone:last-child:not(:first-child) { --w:60%; }
@@ -156,19 +170,19 @@ li > .viewport-slot > p + p { margin-top:1em; }
 .ghost-heading { font-size:var(--fs-xl); line-height:1.25; margin:1.6em 0 .8em; }
 .ghost-meta { font-size:var(--fs-sm); margin:0 0 12px; }
 .ghost-card { box-sizing:border-box; overflow:hidden; } .ghost-card > div { margin-top:2px; } .ghost-card > .bone:first-child { --w:55%; font-size:.75em; } .ghost-card > .ghost-pill { display:block; width:fit-content; margin-top:4px; line-height:1.45; } .ghost-card > div + .ghost-pill { margin-top:6px; }
-.ghost-pipeline { display:flex; gap:12px; align-items:flex-start; overflow:auto; padding-bottom:12px; max-height:max(320px,calc(100dvh - 320px)); }
+.ghost-pipeline { display:flex; gap:12px; align-items:flex-start; overflow:auto; padding-bottom:12px; max-height:max(320px,calc(100dvh - 320px - var(--board-dock,0px))); }
 /* A heading's line is as tall as its count's. */
 .ghost-column > div:first-child { font-size:.72rem; line-height:1.25; min-height:calc(var(--fs-xs) * 1.25); margin:2px 2px 10px; }
 [data-for=build-test] > div:first-child { min-height:0; } [data-for=build-test] > .skeleton { margin:0 2px 8px; }
-.ghost-offline { display:flex; flex-wrap:wrap; gap:12px; } .ghost-offline > .ghost-column { flex:1 1 240px; width:auto; min-height:0; box-shadow:none; }
+.ghost-offline { display:flex; flex-wrap:wrap; align-items:flex-start; gap:12px; } .ghost-offline > .ghost-column { flex:1 1 240px; width:auto; min-height:0; box-shadow:none; }
 .filters .ghost-field { display:block; } .ghost-field:has(> .bone) { display:flex; align-items:center; } .ghost-field > .bone { margin:0 12px; }
 .ghost-field { display:inline-block; vertical-align:middle; width:12rem; max-width:100%; height:2.25rem; border:1px solid var(--border); border-radius:var(--radius); }
 .ghost-head > div:first-child { font-size:var(--fs-sm); margin:0 0 4px; } .ghost-head > .ghost-meta:nth-child(3) { margin-bottom:14px; }
 .ghost-head .ghost-controls { margin-left:auto; }
 /* The role chips are a row of their own, as tall as a chip. */
 .ghost-head > .ghost-pill { display:block; width:fit-content; }
-/* A task's timeline box, as tall as its own will be (src/timeline_slot.rs, whose sheet the page
-   has only once the box is in). */
+/* A task's timeline box, as tall as its own will be (apps/symphony-web/src/timeline-slot.tsx, whose
+   sheet the page has only once the box is in). */
 .ghost-tl > .ghost-heading { margin-bottom:.2em; } .ghost-tl-box { height:var(--tl-narrow); box-sizing:border-box; overflow:hidden; display:flex; flex-direction:column; gap:var(--sp-3); }
 @media (min-width: 900px) { .ghost-tl-box { height:var(--tl-wide); } }
 .ghost-tl-box > div { display:flex; gap:var(--sp-3); }
@@ -182,7 +196,7 @@ li > .viewport-slot > p + p { margin-top:1em; }
 .settle > .settle-cover { position:absolute; inset:0 0 auto; visibility:visible; }
 .status-text { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); white-space:nowrap; }
 @media (prefers-reduced-motion: no-preference) {
-  .bone { background-image:linear-gradient(90deg, transparent 35%, var(--skeleton-shine) 50%, transparent 65%); background-size:300% 100%; background-attachment:fixed; animation:shimmer 1.8s ease-in-out infinite; }
+  .bone:not(.viewport-placeholder *) { background-image:linear-gradient(90deg, transparent 35%, var(--skeleton-shine) 50%, transparent 65%); background-size:300% 100%; background-attachment:fixed; animation:shimmer 1.8s ease-in-out infinite; }
 }
 @keyframes shimmer { from { background-position:100% 0; } to { background-position:0 0; } }
 .history, .ghost-history { list-style:none; margin:12px 0 0; padding:0 0 0 20px; position:relative; font-size:var(--fs-sm); display:grid; gap:2px; }
@@ -202,7 +216,7 @@ li > .viewport-slot > p + p { margin-top:1em; }
 .quick-actions form { width:360px; max-width:calc(100vw - 24px); box-sizing:border-box; max-height:75vh; overflow:auto; margin-top:8px; }
 .quick-actions h2 { margin-top:0; } .quick-actions input { width:100%; } .quick-actions label { margin-bottom:10px; }
 
-.card { background:var(--card); border:1px solid var(--border); border-radius:var(--r-lg); box-shadow:var(--shadow-1); padding:var(--sp-4) var(--sp-5); min-width:0; }
+.card { --dot-halo:var(--card); background:var(--card); border:1px solid var(--border); border-radius:var(--r-lg); box-shadow:var(--shadow-1); padding:var(--sp-4) var(--sp-5); min-width:0; }
 .tile { display:flex; flex-direction:column; gap:2px; padding:16px 18px; text-decoration:none; color:var(--foreground); border-top:3px solid var(--tone, var(--border)); transition:transform .12s ease; min-width:0; }
 .pill { --c:var(--muted-foreground); display:inline-flex; align-items:center; gap:5px; font-size:var(--fs-xs); font-weight:600; line-height:1.6; padding:0 10px; border-radius:var(--r-pill); border:1px solid color-mix(in srgb, var(--c) 35%, transparent); background:color-mix(in srgb, var(--c) 10%, transparent); color:var(--c); text-decoration:none; white-space:nowrap; vertical-align:1px; }
 .dot { --c:var(--border); display:inline-block; width:9px; height:9px; border-radius:50%; background:var(--c); vertical-align:0; }
@@ -246,8 +260,8 @@ form input, form textarea, .filters input { font:inherit; font-size:var(--fs-sm)
 .page-head .lead { max-width:80ch; }
 /* What a page shows in place of what it could not: its title, a sentence, a retry and the way back. */
 .trouble { max-width:42rem; margin:var(--sp-6) auto; padding:var(--sp-5); overflow-wrap:anywhere; }
-.trouble h1, .trouble h3 { margin:0 0 var(--sp-2); }
-.trouble h3 { font-size:var(--fs-lg); }
+.trouble h1, .trouble h2, .trouble h3 { margin:0 0 var(--sp-2); }
+.trouble h2, .trouble h3 { font-size:var(--fs-lg); }
 .trouble p { color:var(--muted-foreground); margin:0 0 var(--sp-4); }
 .trouble p.trouble-actions { display:flex; flex-wrap:wrap; align-items:center; gap:var(--sp-2) var(--sp-4); margin:0; }
 /* The way back is a link, at the retry's size: navigation, not a tag. */
@@ -328,7 +342,7 @@ a.bar:hover { background:var(--background); }
 }
 @media (max-width: 760px) {
   .pipeline > .column, .ghost-pipeline > .ghost-column:not([data-for=build-test]) { flex-basis:280px; width:280px; }
-  .board-scroll, .ghost-pipeline { max-height:max(280px,calc(100dvh - 400px)); }
+  .board-scroll, .ghost-pipeline { max-height:max(280px,calc(100dvh - 420px - var(--board-dock,0px))); }
   main { --page-end:96px; padding:var(--sp-4) var(--sp-4) var(--page-end); }
   .page-head h1, .task-head h1, .trouble h1, .ghost-title { font-size:var(--fs-2xl); }
   .ghost-title > .bone + .bone { display:inline-block; }

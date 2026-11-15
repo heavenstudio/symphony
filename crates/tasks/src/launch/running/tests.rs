@@ -23,6 +23,7 @@ fn session(handle: &str, kind: &str, pane: Option<&str>) -> Agent {
         task: None,
         role: None,
         tasks: Vec::new(),
+        following: 0,
         worktree: String::new(),
         branch: String::new(),
         agent: None,

@@ -61,16 +61,8 @@ impl Drop for BuildProcess {
 }
 
 fn git(root: &Path, args: &[&str]) -> Result<String, String> {
-    let done = symphony_board::sys::output(
-        crate::children::command("git")
-            .args(args)
-            .current_dir(root)
-            .env_remove("GIT_DIR")
-            .env_remove("GIT_WORK_TREE")
-            .env_remove("GIT_INDEX_FILE")
-            .env_remove("GIT_COMMON_DIR"),
-    )
-    .map_err(|e| e.to_string())?;
+    let done = symphony_board::sys::output(crate::children::git().args(args).current_dir(root))
+        .map_err(|e| e.to_string())?;
     if !done.status.success() {
         return Err(String::from_utf8_lossy(&done.stderr).trim().into());
     }
@@ -417,12 +409,7 @@ pub fn build(
         return Err("reload cancelled by shutdown".into());
     }
     let source = client_fingerprint(root)?;
-    // A consumer's immutable dependency already embeds its matching release. Its lockfile
-    // participates in fingerprint(), but it owns no client sources or client build recipe.
-    let client = if workspace(root)
-        .join("apps/symphony-ui/Cargo.toml")
-        .is_file()
-        && installed_client_source(home).as_deref() != Some(&source)
+    let client = if builds_client(root) && installed_client_source(home).as_deref() != Some(&source)
     {
         let stage = home.join(format!(".reload-client.{}", std::process::id()));
         // Only this reload worker owns its staging directory, including after a failed attempt.
@@ -453,6 +440,16 @@ pub fn build(
     };
     run_build(server_build(root, home), root, "symphony-server", stopping)?;
     Ok(client)
+}
+
+/// Whether a reload of `root` builds the client and stamps its install ([`build`]): the source
+/// workspace holds the client's package. A consumer's immutable dependency already embeds its
+/// matching release: its lockfile participates in [`fingerprint`], but it owns no client sources
+/// or client build recipe.
+pub fn builds_client(root: &Path) -> bool {
+    workspace(root)
+        .join("apps/symphony-ui/Cargo.toml")
+        .is_file()
 }
 
 /// The client's release bundle, written under `stage` by main's recipe.

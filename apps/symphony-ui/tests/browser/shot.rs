@@ -401,6 +401,71 @@ fn a_full_page_shot_takes_the_whole_document() {
     );
 }
 
+/// `--attach` stores each picture the run saved, by its content, in the uploads of the main
+/// checkout of the repository the shot runs in, and prints the line a thread post carries for it,
+/// in the order taken; the pictures stay where they were saved.
+#[test]
+fn an_attached_shot_stores_each_picture_it_saved_and_prints_its_line_in_the_order_taken() {
+    let Some(chrome) = chrome::find() else {
+        eprintln!("no Chrome on this machine (SYMPHONY_CHROME names one): shot not run");
+        return;
+    };
+    let site = site();
+    site.set_file(
+        "/attach.html",
+        b"<!doctype html><title>attach</title><h1>Before</h1>".to_vec(),
+        "text/html",
+    );
+    let scratch = Scratch::new("attach");
+    // A checkout's top folder as the board's lookup reads it, with no git process.
+    let checkout = scratch.join("checkout");
+    std::fs::create_dir_all(checkout.join(".git")).unwrap();
+    std::fs::write(checkout.join(".git/HEAD"), "ref: refs/heads/main\n").unwrap();
+    let output = shot(
+        &chrome,
+        &[
+            &site.url("/attach.html"),
+            "--out",
+            "evidence/after.png",
+            "--shot",
+            "evidence/before.png",
+            "--eval",
+            "document.querySelector('h1').textContent = 'After'",
+            "--attach",
+        ],
+    )
+    .current_dir(&checkout)
+    .output()
+    .unwrap();
+    assert!(output.status.success(), "{}", said(&output));
+    let stdout = String::from_utf8(output.stdout.clone()).unwrap();
+    let lines: Vec<&str> = stdout.lines().collect();
+    let [evaluated, before, after] = lines.as_slice() else {
+        panic!("the evaluation and a line a picture: {}", said(&output));
+    };
+    assert_eq!(*evaluated, "\"After\"");
+    let mut stored = Vec::new();
+    for (line, name) in [(before, "before.png"), (after, "after.png")] {
+        let file = line
+            .strip_prefix(&format!("![{name}](/artifacts/uploads/"))
+            .and_then(|rest| rest.strip_suffix(')'))
+            .unwrap_or_else(|| panic!("{line} is no line attaching {name}"));
+        let (sha, ext) = file.split_once('.').unwrap();
+        assert!(
+            ext == "png" && sha.len() == 64 && sha.bytes().all(|b| b.is_ascii_hexdigit()),
+            "{file}"
+        );
+        let saved = std::fs::read(checkout.join("evidence").join(name)).unwrap();
+        assert_eq!(
+            std::fs::read(checkout.join("artifacts/uploads").join(file)).unwrap(),
+            saved,
+            "{name} is stored as it was saved"
+        );
+        stored.push(file.to_string());
+    }
+    assert_ne!(stored[0], stored[1], "the page changed between the two");
+}
+
 #[test]
 fn an_escape_the_page_does_not_take_leaves_it_drawn_and_in_front_and_a_wait_scrolls_nothing() {
     let Some(chrome) = chrome::find() else {
@@ -2352,18 +2417,103 @@ fn a_board_whose_next_card_shows_a_mockup_is_shot_with_the_mockup_drawn() {
     );
 }
 
+/// Resolves once the shell has begun warming the persistent modules (assets/shell.js, `warm`): it
+/// does so once the page has drawn its data and gone quiet, as it starts reading ahead the links
+/// on the screen (`ahead`), so the shot's settle after it spans the page's reads ahead. Neither
+/// warming nor this wait reads this device's store.
+const WARMING: &str = "new Promise(resolve => { const look = () => \
+     document.querySelector('link[rel=prefetch]') ? resolve(true) : setTimeout(look, 100); look(); })";
+
+/// The home's links to the project's pages, by their words.
+const HOME_LINKS: &str =
+    "[...document.querySelectorAll('.dash-links a')].map(link => link.textContent.trim())";
+
+/// A new project's home, the real server's, as `symphony init` leaves the project: no
+/// docs/DECISIONS.md yet. The shot waits until the page has gone quiet and starts its reads ahead
+/// (of its next card's document, the links before it first), then is drawn and saved: the home
+/// links no register, so nothing reads one ahead. Before, the home linked docs/DECISIONS.md and
+/// read it ahead, the server answered 404, and that answer, its body never read, stayed in flight
+/// in Chrome's eyes until the shot's timeout. With the file there, the home links it and is shot
+/// as well.
+#[test]
+fn a_new_projects_home_without_a_register_links_none_and_is_shot_drawn() {
+    const LATER: &str = "# Later\n\n- [ ] **alpha** — First question.\n";
+    let Some(chrome) = chrome::find() else {
+        eprintln!("no Chrome on this machine (SYMPHONY_CHROME names one): shot not run");
+        return;
+    };
+    for (documents, register) in [
+        (&[("docs/LATER.md", LATER)][..], false),
+        (
+            &[
+                ("docs/LATER.md", LATER),
+                ("docs/DECISIONS.md", "# Decision register\n"),
+            ][..],
+            true,
+        ),
+    ] {
+        let site = super::restored::Native::start_committed(None, "main", documents, None);
+        let scratch = Scratch::new(if register {
+            "registered"
+        } else {
+            "unregistered"
+        });
+        let out = scratch.join("home.png");
+        let output = shot(
+            &chrome,
+            &[
+                &site.url("/"),
+                "--out",
+                out.to_str().unwrap(),
+                "--wait-for",
+                ".hero .docchip",
+                "--eval",
+                WARMING,
+                "--eval",
+                HOME_LINKS,
+                "--report",
+            ],
+        )
+        .output()
+        .unwrap();
+        assert!(
+            output.status.success(),
+            "register {register}: {}",
+            said(&output)
+        );
+        let [warming, links, report] = printed(&output).try_into().unwrap();
+        assert_eq!(warming, json!(true));
+        let links: Vec<&str> = links
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(Value::as_str)
+            .collect();
+        assert!(links.contains(&"Full queue"), "{links:?}");
+        assert_eq!(
+            links.contains(&"Decision register"),
+            register,
+            "the register linked only once its file is there: {links:?}"
+        );
+        assert!(
+            !report.to_string().contains("DECISIONS.md"),
+            "no read of a register failed: {report}"
+        );
+        let picture = Picture::read(&out);
+        assert!(
+            picture.colours([0.0, 0.0, 1440.0, 900.0], 1.0) > 16,
+            "register {register}: the home is not drawn in the picture"
+        );
+    }
+}
+
 /// What a shot of `url` that failed, its page not drawn within [`PATIENT`] seconds, said it still
 /// waited for, each part once: they come in the order each began, which a page's frames leave to
 /// the machine.
 fn still_waiting(output: &Output, url: &str) -> BTreeSet<String> {
-    waiting_within(output, url, PATIENT)
-}
-
-/// [`still_waiting`], for a shot given `timeout` seconds.
-fn waiting_within(output: &Output, url: &str, timeout: &str) -> BTreeSet<String> {
     assert_eq!(output.status.code(), Some(1), "{}", said(output));
     let prefix = format!(
-        "symphony shot: {url}: the page was not drawn within {timeout}s: still waiting for "
+        "symphony shot: {url}: the page was not drawn within {PATIENT}s: still waiting for "
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
     let parts = stderr
@@ -2420,12 +2570,14 @@ fn shared_fetching(path: &str) -> Vec<u8> {
 #[test]
 fn a_frame_or_a_worker_that_never_loads_fails_the_shot_within_its_timeout_naming_each() {
     // A sandboxed frame whose document the stand-in never answers, a frame of another site whose
-    // stylesheet it never answers, and a dedicated worker of the page whose fetch it never answers:
-    // the page's own document waits for its frames, and the shot fails at its timeout naming each
-    // frame that never loaded, by its address, and what it still waits for in it, and the worker's
-    // fetch by the worker's script, never as a frame's. The timeout is the patient one, which only
-    // a stall reaches, so by then the page has gone as far as it ever will, however loaded the
-    // machine. No picture is left.
+    // stylesheet it never answers, a dedicated worker of the page whose fetch it never answers, and
+    // one whose script it never answers: the page's own document waits for its frames, and the shot
+    // fails at its timeout naming each frame that never loaded, by its address, and what it still
+    // waits for in it, and the first worker's fetch by the worker's script, never as a frame's.
+    // Chrome attaches no worker to a script not yet answered, so the second's script stays a
+    // request of the page's own in flight, named as one, never as a frame or a worker. The timeout
+    // is the patient one, which only a stall reaches, so by then the page has gone as far as it
+    // ever will, however loaded the machine. No picture is left.
     let Some(chrome) = chrome::find() else {
         eprintln!("no Chrome on this machine (SYMPHONY_CHROME names one): shot not run");
         return;
@@ -2437,12 +2589,13 @@ fn a_frame_or_a_worker_that_never_loads_fails_the_shot_within_its_timeout_naming
     site.hold_route("/hung.html", true);
     site.set_file("/hung-worker.js", fetching("/hung-data"), "text/javascript");
     site.hold_route("/hung-data", true);
+    site.hold_route("/unanswered-worker.js", true);
     let stalled = format!("http://localhost:{}/stalled.html", other.addr.port());
     site.set_file(
         "/hung-frames.html",
         format!(
             r#"<!doctype html>{NO_ICON}<iframe sandbox="allow-scripts" src="/hung.html"></iframe><iframe src="{stalled}"></iframe>
-<script>new Worker('/hung-worker.js');</script>"#
+<script>new Worker('/hung-worker.js'); new Worker('/unanswered-worker.js');</script>"#
         )
         .into_bytes(),
         "text/html",
@@ -2457,6 +2610,10 @@ fn a_frame_or_a_worker_that_never_loads_fails_the_shot_within_its_timeout_naming
         still_waiting(&output, &url),
         BTreeSet::from([
             "the document to load (it is interactive)".to_string(),
+            format!(
+                "1 request(s) in flight: {}",
+                site.url("/unanswered-worker.js")
+            ),
             format!(
                 "the frame {} to load (its document is in flight)",
                 site.url("/hung.html")
@@ -3031,56 +3188,25 @@ fn a_dedicated_workers_script_answered_late_is_waited_for_and_what_its_worker_sa
 }
 
 #[test]
-fn a_dedicated_workers_script_never_answered_fails_the_shot_within_its_timeout_naming_it() {
-    // A dedicated worker whose script the stand-in never answers: Chrome attaches no worker, so the
-    // script stays a request of the page's in flight, and the shot, given five seconds, fails at
-    // them naming it, never as a frame or a worker of its own. The page has nothing else to load,
-    // so the script is all it waits for however busy the machine. No picture is left.
-    let Some(chrome) = chrome::find() else {
-        eprintln!("no Chrome on this machine (SYMPHONY_CHROME names one): shot not run");
-        return;
-    };
-    let site = site();
-    site.hold_route("/unanswered-worker.js", true);
-    site.set_file(
-        "/unanswered.html",
-        format!(
-            r#"<!doctype html>{NO_ICON}<p>a worker never started</p>
-<script>new Worker('/unanswered-worker.js');</script>"#
-        )
-        .into_bytes(),
-        "text/html",
-    );
-    let scratch = Scratch::new("unanswered-worker");
-    let out = scratch.join("unanswered.png");
-    let url = site.url("/unanswered.html");
-    let output = shot(
-        &chrome,
-        &[&url, "--out", out.to_str().unwrap(), "--timeout", "5"],
-    )
-    .output()
-    .unwrap();
-    assert_eq!(
-        waiting_within(&output, &url, "5"),
-        BTreeSet::from([format!(
-            "1 request(s) in flight: {}",
-            site.url("/unanswered-worker.js")
-        )]),
-        "{}",
-        said(&output)
-    );
-    assert!(!out.exists(), "a failed shot left a picture");
-}
-
-#[test]
 fn a_click_that_opens_a_page_with_its_opener_returns_and_the_page_is_shot() {
     // A button that opens a page of the page's own site with `window.open`, keeping its opener; one
-    // that opens a page of another site (as `localhost`); and two that open a page of the page's
-    // own site, which Chrome runs in the opener's process, that alerts as it loads or once it has
-    // loaded, then marks the opener (`#after`). The shot leaves a page it did not open as Chrome
-    // leaves it: let start, and its dialog closed, its script going on. Each click returns, the
-    // page goes on with the window it opened and is shot, and the report has no dialog of the
-    // opened page's.
+    // that opens a page of another site (as `localhost`); two that open a page of the page's own
+    // site, which Chrome runs in the opener's process, that alerts as it loads or once it has
+    // loaded, then marks the opener (`#after`); and one that opens a blank page, which takes the
+    // page's own site and process, and writes it a script that confirms, then alerts, then marks the
+    // opener, in its first turn after the click, which comes before the shot can ask the page
+    // anything: the opened page shows its dialog while it is in front. A dialog shown in front holds
+    // the process the two pages share, and every answer of the page's, until another tab is in
+    // front: the alerting page's own load left that order to a loaded machine's chance, and the
+    // page never answered. One more opens a blank page and writes it a script that alerts at once,
+    // then marks the opener, within the click, so the click itself waits on the process the alert
+    // holds. Each opens a tab. The shot leaves a page it did not open as Chrome leaves it: let
+    // start, and behind the shot's page, brought back in front as soon as Chrome tells of the new
+    // one, where Chrome lets its dialogs go (an alert as by its OK, a confirm as by its Cancel)
+    // and its script goes on. Each click returns, the page goes on with the window it opened and
+    // is shot, and the report has no dialog of the opened page's. (A page opened later, from a
+    // timer, needs the click's user activation, which lapses after five seconds, so no form of it
+    // here is free of the machine's load: the driver's own tests hold that case.)
     let other = site();
     let site = site();
     let away = format!("http://localhost:{}", other.addr.port());
@@ -3115,11 +3241,23 @@ fn a_click_that_opens_a_page_with_its_opener_returns_and_the_page_is_shot() {
 {NO_ICON}
 <script>
   const openPage = address => {{ window.opened = window.open(address); }};
+  const openAsking = () => {{
+    openPage('');
+    window.opened.document.write("<script>setTimeout(() => {{ confirm('as it opens'); alert('as it opens'); {marking}; }});<\/script>");
+    window.opened.document.close();
+  }};
+  const openAlerting = () => {{
+    openPage('');
+    window.opened.document.write("<script>alert('within the click'); {marking};<\/script>");
+    window.opened.document.close();
+  }};
 </script>
 <button id="same" type="button" onclick="openPage('/opened.html')">same site</button>
 <button id="cross" type="button" onclick="openPage('{away}/opened.html')">another site</button>
 <button id="alerting" type="button" onclick="openPage('/alerting.html')">alerting</button>
-<button id="later" type="button" onclick="openPage('/later.html')">alerting later</button>"#
+<button id="later" type="button" onclick="openPage('/later.html')">alerting later</button>
+<button id="asking" type="button" onclick="openAsking()">asking as it opens</button>
+<button id="written" type="button" onclick="openAlerting()">alerting within the click</button>"#
         )
         .into_bytes(),
         "text/html",
@@ -3130,6 +3268,8 @@ fn a_click_that_opens_a_page_with_its_opener_returns_and_the_page_is_shot() {
         ("#cross", &[][..]),
         ("#alerting", &marked[..]),
         ("#later", &marked[..]),
+        ("#asking", &marked[..]),
+        ("#written", &marked[..]),
     ] {
         let Some(chrome) = chrome::find() else {
             eprintln!("no Chrome on this machine (SYMPHONY_CHROME names one): shot not run");

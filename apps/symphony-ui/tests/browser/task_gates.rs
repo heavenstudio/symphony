@@ -1,10 +1,10 @@
-//! A task page's gates (src/task_gates.rs) in the release client: three lines a gate on a phone
+//! A task page's gates (apps/symphony-web/src/gates.tsx) in the release client: three lines a gate on a phone
 //! and bounded columns wide, every word of long text shown at 1280, 1000 and 820 px with none
 //! kept for a hover; the theme's colours for each state; the room the card holds before its
 //! answer, so the brief does not move, a gate with no who and when included; a read asked only
 //! near the screen, again on the board events that change the gates and never for a plain post,
 //! the latest alone drawn; a read that fails; and a task nothing gates. The task is the
-//! look-parity fixture's; its gates are the A pictures' task
+//! look-parity fixture's, in review; its gates are the A pictures' task
 //! (crates/symphony-api/fixtures/task-gates.json). That a gate's link names its page under the
 //! project's base is the one server's to show (projects.rs).
 use super::{
@@ -18,20 +18,23 @@ const SLUG: &str = "visual/in-progress";
 /// The branch the pictured answer was given for, as the panel learns it.
 const BRANCH: &str = "tools/verify-stops-when-moved";
 
-/// The fixture task's page, changed by `edit`.
+/// The fixture task's page, in review, where the pill says the gates it waits on, changed by
+/// `edit`.
 fn task_page(edit: impl FnOnce(&mut Value)) -> Value {
     let mut page = look_parity::responses()["/api/task-page"].clone();
+    page["task"]["status"] = json!("review");
     edit(&mut page);
     page
 }
 
-/// A server with the fixture task's page and thread, and `gates` as its gates.
+/// A server with the fixture task's page (`task_page`) and thread, and `gates` as its gates.
 fn site(gates: &Value) -> Site {
     let site = Site::start(dist(), &common::fixture("board.json"));
-    let content = look_parity::responses();
-    for path in ["/api/task-page", "/api/task-history"] {
-        site.set_json(path, &content[path]);
-    }
+    site.set_json("/api/task-page", &task_page(|_| {}));
+    site.set_json(
+        "/api/task-history",
+        &look_parity::responses()["/api/task-history"],
+    );
     site.set_json(GATES, gates);
     site
 }

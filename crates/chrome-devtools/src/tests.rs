@@ -16,8 +16,9 @@ use tungstenite::{Message, WebSocket};
 
 use crate::profiles::{self, next_profile};
 use crate::{
-    BACKSTOP_FLOOR, BrowserGroup, CLEANUP_CPU, Chrome, End, Leash, Owner, POLL, PROTOCOL_CPU,
-    WaitBudget, chrome_args, cleanup_profile, devtools_endpoint, find, process, signal_group,
+    BACKSTOP_FLOOR, BrowserGroup, CLEANUP_CPU, Chrome, End, LAUNCH_BACKSTOP, Leash, Owner, POLL,
+    PROTOCOL_CPU, WaitBudget, chrome_args, cleanup_profile, devtools_endpoint, find, load_said,
+    process, signal_group,
 };
 
 /// This test binary as the leash: it runs [`browser_leash`] alone.
@@ -194,6 +195,17 @@ fn the_tests_waits_and_the_driver_share_one_backstop_rule() {
         );
     }
     assert_eq!(test_time::FLOOR, BACKSTOP_FLOOR);
+    // The launch's wait for DevTools keeps the rule on its CPU allowance.
+    assert_eq!(LAUNCH_BACKSTOP, test_time::backstop(PROTOCOL_CPU));
+    assert_eq!(
+        LAUNCH_BACKSTOP,
+        WaitBudget::new(PROTOCOL_CPU, &[]).backstop()
+    );
+    assert_eq!(LAUNCH_BACKSTOP, Duration::from_secs(360));
+    // And a stall says the load in the tests' own words.
+    for load in [Some([0.5, 12.25, 250.0]), None] {
+        assert_eq!(load_said(load), test_time::Load(load).to_string());
+    }
 }
 
 #[test]
@@ -432,6 +444,14 @@ fn cpu_watchdog(
     (done, watcher)
 }
 
+/// A stand-in browser: `script`, written to a path of its own and made executable.
+fn stand_in_binary(script: &str) -> PathBuf {
+    let binary = next_profile().unwrap();
+    std::fs::write(&binary, script).unwrap();
+    std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o700)).unwrap();
+    binary
+}
+
 struct StandIn {
     owner: Owner,
     binary: PathBuf,
@@ -444,9 +464,7 @@ impl StandIn {
     }
 
     fn under(script: &str, leash: &Leash) -> Self {
-        let binary = next_profile().unwrap();
-        std::fs::write(&binary, script).unwrap();
-        std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let binary = stand_in_binary(script);
         let owner = Owner::launch(binary.to_str().unwrap(), leash).unwrap();
         Self {
             owner,
@@ -458,13 +476,18 @@ impl StandIn {
     fn group(&mut self) -> u32 {
         let group = self
             .owner
-            .ready("recorded stand-in PID", PROTOCOL_CPU, |profile| {
-                let pid = std::fs::read_to_string(profile.join("browser.pid")).ok()?;
-                if !pid.ends_with('\n') {
-                    return None;
-                }
-                pid.trim().parse::<u32>().ok().filter(|pid| *pid > 0)
-            })
+            .ready(
+                "recorded stand-in PID",
+                PROTOCOL_CPU,
+                LAUNCH_BACKSTOP,
+                |profile| {
+                    let pid = std::fs::read_to_string(profile.join("browser.pid")).ok()?;
+                    if !pid.ends_with('\n') {
+                        return None;
+                    }
+                    pid.trim().parse::<u32>().ok().filter(|pid| *pid > 0)
+                },
+            )
             .unwrap();
         self.group = Some(group);
         group
@@ -556,6 +579,150 @@ fn a_browser_that_cannot_start_fails_the_launch_promptly_with_why() {
     assert!(failure.contains(missing.to_str().unwrap()), "{failure}");
 }
 
+/// A browser that starts and exits at once fails its launch as soon as its leash has ended it,
+/// with how it ended and what it wrote, long before the launch's backstop.
+#[test]
+fn a_browser_that_exits_at_once_fails_the_launch_with_its_exit() {
+    let binary = stand_in_binary("#!/bin/sh\nprintf 'early exit detail\\n' >&2\nexit 3\n");
+    let failure = Chrome::launch(binary.to_str().unwrap(), &leash())
+        .err()
+        .expect("a browser that exits must fail its launch");
+    std::fs::remove_file(&binary).unwrap();
+    let failure = failure.to_string();
+    assert!(
+        failure.starts_with(
+            "Chrome DevTools readiness: Chrome's leash exited exit status: 3 before DevTools port \
+             readiness; "
+        ),
+        "{failure}"
+    );
+    assert!(
+        failure.contains("shutdown=browser exited: exit status: 3"),
+        "{failure}"
+    );
+    assert!(failure.contains("early exit detail"), "{failure}");
+}
+
+/// What a browser that never opens DevTools does: it sleeps, spending nothing.
+const ASLEEP: &str = "#!/bin/sh\nexec /bin/sleep 3600\n";
+
+/// A browser alive that never opens DevTools and spends no CPU, asleep, stalls its launch: the
+/// wait ends at its wall-clock backstop, not before, saying it stalled, the browser's pid, its
+/// group's processes alive, the CPU they spent, how long it waited and the machine's load. The
+/// backstop here is half a second; a launch's own is six minutes ([`LAUNCH_BACKSTOP`]).
+#[test]
+fn a_browser_that_never_opens_devtools_stalls_its_wait_at_the_backstop() {
+    let mut stand_in = StandIn::new(ASLEEP);
+    let group = stand_in.group();
+    let backstop = Duration::from_millis(500);
+    let began = Instant::now();
+    let error = stand_in
+        .owner
+        .ready(
+            "DevTools port readiness",
+            PROTOCOL_CPU,
+            backstop,
+            devtools_endpoint,
+        )
+        .expect_err("a browser that never opens DevTools must fail its wait");
+    let waited = began.elapsed();
+    // Asleep, so alive as the wait ends, in a group of one; the fixture's drop ends it.
+    let alive = process::members(group).unwrap();
+    drop(stand_in);
+    assert_eq!(error.kind(), ErrorKind::TimedOut);
+    assert!(waited >= backstop, "it gave up after {waited:?}");
+    assert_eq!(
+        alive.iter().map(|member| member.pid).collect::<Vec<_>>(),
+        [group]
+    );
+    let said = error.to_string();
+    let stalled = format!(
+        "Chrome stalled before DevTools port readiness: Chrome (pid {group}) has 1 process alive \
+         in its group, which spent "
+    );
+    assert!(said.starts_with(&stalled), "{said}");
+    assert!(
+        said.contains(
+            " CPU in the wait, and the launch's wall-clock backstop of 500.0ms ran out after "
+        ),
+        "{said}"
+    );
+    assert!(said.contains("; load average "), "{said}");
+    assert!(said.ends_with(" over 1, 5 and 15 minutes"), "{said}");
+    eprintln!("stalled wait group={group}: {said}");
+
+    // A leash that stalls before it records a browser is named instead: an idle owned process.
+    let profile = next_profile().unwrap();
+    std::fs::create_dir(&profile).unwrap();
+    let idle = Command::new("/bin/cat")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .process_group(0)
+        .spawn()
+        .unwrap();
+    let leash = idle.id();
+    let mut owner = Owner {
+        leash: idle,
+        profile: profile.clone(),
+        stderr: std::fs::File::open("/dev/null").unwrap(),
+        shutdown: std::fs::File::open("/dev/null").unwrap(),
+    };
+    let error = owner
+        .ready(
+            "DevTools port readiness",
+            PROTOCOL_CPU,
+            Duration::from_millis(100),
+            devtools_endpoint,
+        )
+        .expect_err("a leash that never records a browser must fail its wait");
+    drop(owner);
+    assert!(!profile.exists());
+    assert_eq!(error.kind(), ErrorKind::TimedOut);
+    let said = error.to_string();
+    let stalled = format!(
+        "Chrome stalled before DevTools port readiness: its leash (pid {leash}) had not recorded \
+         Chrome's pid, and spent "
+    );
+    assert!(said.starts_with(&stalled), "{said}");
+    assert!(
+        said.contains("the launch's wall-clock backstop of 100.0ms ran out after "),
+        "{said}"
+    );
+}
+
+/// The same stall through a whole launch: it fails with the stall first and the launch's
+/// diagnostics after, and leaves no browser, leash or profile behind.
+#[test]
+fn a_launch_whose_browser_never_opens_devtools_fails_as_a_stall() {
+    let binary = stand_in_binary(ASLEEP);
+    let failure = Chrome::launch_within(binary.to_str().unwrap(), &leash(), Duration::from_secs(1))
+        .err()
+        .expect("a browser that never opens DevTools must fail its launch");
+    std::fs::remove_file(&binary).unwrap();
+    let failure = failure.to_string();
+    assert!(
+        failure.starts_with(
+            "Chrome DevTools readiness: Chrome stalled before DevTools port readiness: "
+        ),
+        "{failure}"
+    );
+    assert!(
+        failure.contains("the launch's wall-clock backstop of 1.0s ran out after "),
+        "{failure}"
+    );
+    assert!(failure.contains("; load average "), "{failure}");
+    assert!(failure.contains("; leash="), "{failure}");
+    // The pid it names, Chrome's or, on a machine too loaded to have started it, its leash's,
+    // leads a group no process is left in: the launch ended them before it returned.
+    let pid: u32 = failure
+        .split_once("(pid ")
+        .and_then(|(_, rest)| rest.split_once(')'))
+        .and_then(|(pid, _)| pid.parse().ok())
+        .unwrap_or_else(|| panic!("no pid in {failure}"));
+    assert!(process::members(pid).unwrap().is_empty(), "{failure}");
+    eprintln!("stalled launch: {failure}");
+}
+
 /// Set on the run of [`a_quiet_leash_keeps_its_reports_off_the_launchers_stderr`] that launches.
 const QUIET: &str = "SYMPHONY_CHROME_QUIET_LEASH";
 
@@ -592,13 +759,7 @@ fn a_quiet_leash_keeps_its_reports_off_the_launchers_stderr() {
 
 #[test]
 fn an_unexpected_protocol_reset_fails_with_the_browser_exit_evidence() {
-    let binary = next_profile().unwrap();
-    std::fs::write(
-        &binary,
-        "#!/bin/sh\nprintf 'reset exit detail\\n' >&2\nexit 47\n",
-    )
-    .unwrap();
-    std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let binary = stand_in_binary("#!/bin/sh\nprintf 'reset exit detail\\n' >&2\nexit 47\n");
     let mut owner = Owner::launch(binary.to_str().unwrap(), &leash()).unwrap();
     let lifetime = owner.leash.stdin.take();
     assert_eq!(owner.leash.wait().unwrap().code(), Some(47));
@@ -629,6 +790,9 @@ fn an_unexpected_protocol_reset_fails_with_the_browser_exit_evidence() {
         following: false,
         dismissing: false,
         frame_domains: Vec::new(),
+        own_pages: Vec::new(),
+        fronting: false,
+        gone: None,
     };
     let failure = chrome
         .read(false)
@@ -697,18 +861,23 @@ wait "$helper"
     let group = stand_in.group();
     let (main, helper) = stand_in
         .owner
-        .ready("spinning helper", PROTOCOL_CPU, |profile| {
-            let ready = std::fs::read_to_string(profile.join("spinner-ready")).ok()?;
-            if !ready.ends_with('\n') {
-                return None;
-            }
-            let pids: Vec<u32> = ready
-                .split_whitespace()
-                .map(str::parse)
-                .collect::<Result<_, _>>()
-                .ok()?;
-            (pids.len() == 2 && pids.iter().all(|pid| *pid > 0)).then(|| (pids[0], pids[1]))
-        })
+        .ready(
+            "spinning helper",
+            PROTOCOL_CPU,
+            LAUNCH_BACKSTOP,
+            |profile| {
+                let ready = std::fs::read_to_string(profile.join("spinner-ready")).ok()?;
+                if !ready.ends_with('\n') {
+                    return None;
+                }
+                let pids: Vec<u32> = ready
+                    .split_whitespace()
+                    .map(str::parse)
+                    .collect::<Result<_, _>>()
+                    .ok()?;
+                (pids.len() == 2 && pids.iter().all(|pid| *pid > 0)).then(|| (pids[0], pids[1]))
+            },
+        )
         .unwrap();
     // SAFETY: the owned fixture announced this positive main PID; killing it leaves
     // its helper running in the recorded group, under the separate leash's ownership.
@@ -926,24 +1095,29 @@ fn chrome_dies_with_its_suite() {
             .clone();
         let helper = fake.as_mut().map(|owner| {
             owner
-                .ready("stand-in helper handshake", PROTOCOL_CPU, |profile| {
-                    if let Ok(ready) = std::fs::read_to_string(profile.join("fake-ready"))
-                        && ready.ends_with('\n')
-                    {
-                        let pids: Vec<u32> = ready
-                            .split_whitespace()
-                            .filter_map(|pid| pid.parse().ok())
-                            .collect();
-                        let recorded = std::fs::read_to_string(profile.join("browser.pid"))
-                            .ok()
-                            .filter(|text| text.ends_with('\n'))
-                            .and_then(|text| text.trim().parse::<u32>().ok());
-                        if pids.len() == 2 && recorded == Some(pids[0]) {
-                            return Some(pids[1]);
+                .ready(
+                    "stand-in helper handshake",
+                    PROTOCOL_CPU,
+                    LAUNCH_BACKSTOP,
+                    |profile| {
+                        if let Ok(ready) = std::fs::read_to_string(profile.join("fake-ready"))
+                            && ready.ends_with('\n')
+                        {
+                            let pids: Vec<u32> = ready
+                                .split_whitespace()
+                                .filter_map(|pid| pid.parse().ok())
+                                .collect();
+                            let recorded = std::fs::read_to_string(profile.join("browser.pid"))
+                                .ok()
+                                .filter(|text| text.ends_with('\n'))
+                                .and_then(|text| text.trim().parse::<u32>().ok());
+                            if pids.len() == 2 && recorded == Some(pids[0]) {
+                                return Some(pids[1]);
+                            }
                         }
-                    }
-                    None
-                })
+                        None
+                    },
+                )
                 .expect("stand-in helper handshake")
         });
         let endpoint = real
@@ -1214,7 +1388,12 @@ fn startup_requires_complete_readiness_and_observes_leash_exit() {
     let waiter = std::thread::spawn(move || {
         let mut owner = owner;
         let endpoint = owner
-            .ready("complete test port", PROTOCOL_CPU, devtools_endpoint)
+            .ready(
+                "complete test port",
+                PROTOCOL_CPU,
+                LAUNCH_BACKSTOP,
+                devtools_endpoint,
+            )
             .unwrap();
         (owner, endpoint)
     });
@@ -1235,7 +1414,12 @@ fn startup_requires_complete_readiness_and_observes_leash_exit() {
     drop(release);
     assert!(!owner.leash.wait().unwrap().success());
     let error = owner
-        .ready("missing port after exit", PROTOCOL_CPU, devtools_endpoint)
+        .ready(
+            "missing port after exit",
+            PROTOCOL_CPU,
+            LAUNCH_BACKSTOP,
+            devtools_endpoint,
+        )
         .unwrap_err();
     assert!(error.to_string().contains("exited"), "{error}");
     drop(owner);
@@ -1248,6 +1432,7 @@ fn startup_requires_complete_readiness_and_observes_leash_exit() {
     let result = stand_in.owner.ready(
         "missing stand-in port",
         Duration::from_millis(50),
+        LAUNCH_BACKSTOP,
         devtools_endpoint,
     );
     let _ = done.send(());
@@ -1384,6 +1569,10 @@ fn with_peer<T: Send + 'static>(
         following: false,
         dismissing: false,
         frame_domains: Vec::new(),
+        // The targets of the observer's page and the page under test, as a launch has them.
+        own_pages: vec!["observer-target".into(), "page-target".into()],
+        fronting: false,
+        gone: None,
     };
     (chrome, served)
 }
@@ -1927,6 +2116,318 @@ fn an_error_reply_or_a_failed_observer_turn_fails_the_wait_naming_it() {
 }
 
 #[test]
+fn an_evaluation_lost_to_a_navigation_is_told_by_chromes_message_alone() {
+    for (error, lost) in [
+        (
+            json!({"code": -32000, "message": "Execution context was destroyed."}),
+            true,
+        ),
+        (
+            json!({"code": -32000, "message": "Inspected target navigated or closed"}),
+            true,
+        ),
+        (
+            json!({"code": -32000, "message": "Cannot find default execution context"}),
+            true,
+        ),
+        // The message alone, whole: another message, one that only begins as a lost one does,
+        // or none, is a failure of the evaluation itself.
+        (
+            json!({"code": -32001, "message": "Session with given id not found."}),
+            false,
+        ),
+        (
+            json!({"code": -32000, "message": "Execution context was destroyed"}),
+            false,
+        ),
+        (
+            json!({"code": -32000, "message": "Inspected target navigated or closed!"}),
+            false,
+        ),
+        (json!({"code": -32000}), false),
+        (json!("Execution context was destroyed."), false),
+    ] {
+        let told = crate::Error::evaluation("window.x", &error);
+        assert_eq!(told.navigated, lost, "{error}");
+        assert_eq!(told.to_string(), format!("window.x: {error}"));
+        assert!(!told.stalled() && !told.past_deadline(), "{error}");
+    }
+}
+
+/// Chrome's error reply of `message` to `command`.
+fn refuse(peer: &Peer, command: &Value, message: &str) {
+    peer.send(json!({"id": command["id"], "error": {"code": -32000, "message": message}}));
+}
+
+#[test]
+fn a_wait_whose_evaluation_a_navigation_takes_asks_the_page_again_within_its_allowance() {
+    const DESTROYED: &str = "Execution context was destroyed.";
+    const NAVIGATED: &str = "Inspected target navigated or closed";
+    const BETWEEN: &str = "Cannot find default execution context";
+    // The stand-in page answers each evaluation of an expression in turn: with Chrome's error
+    // reply (`Err`) or a value, at once, or once the browser has taken one more observer turn
+    // after the one its watch began with (`held`), the evaluation in flight as the page leaves.
+    // Probes and observer turns are answered at once. What it saw: each expression asked.
+    let (mut chrome, peer) = with_peer(true, BACKSTOP_FLOOR, |peer| {
+        let answer = |peer: &Peer, command: &Value, answer: Result<Value, &str>| match answer {
+            Ok(value) => peer.reply(command, json!({"result": {"value": value}})),
+            Err(message) => refuse(peer, command, message),
+        };
+        let mut asked: Vec<String> = Vec::new();
+        let mut markers = 0u32;
+        let mut held: Vec<(Value, Result<Value, &str>, u32)> = Vec::new();
+        while let Some(command) = peer.next() {
+            if marker(&command) {
+                markers += 1;
+                for (command, value, _) in held.extract_if(.., |(_, _, at)| markers > *at + 1) {
+                    answer(peer, &command, value);
+                }
+                peer.reply(&command, json!({"result": {"value": null}}));
+                continue;
+            }
+            if probe(&command) {
+                peer.reply(&command, json!({"result": {"value": 0}}));
+                continue;
+            }
+            assert_eq!(command["method"], "Runtime.evaluate", "{command}");
+            let expression = command["params"]["expression"].as_str().unwrap().to_owned();
+            asked.push(expression.clone());
+            let count = asked.iter().filter(|asked| **asked == expression).count();
+            let (value, hold) = match (expression.as_str(), count) {
+                // The page goes on to another process under the first look, is asked between two
+                // documents, goes on in its own frame host under the third, and meets the
+                // condition on the second look at the document it stays on.
+                ("window.arrived", 1) => (Err(NAVIGATED), true),
+                ("window.arrived", 2) => (Err(BETWEEN), false),
+                ("window.arrived", 3) => (Err(DESTROYED), true),
+                ("window.arrived", 4) => (Ok(json!(false)), false),
+                ("window.arrived", 5) => (Ok(json!(true)), false),
+                // A page that goes on to another document whenever it is asked.
+                ("window.leaving", _) => (Err(DESTROYED), false),
+                // A page whose next ask, after a lost one, is refused otherwise (here as Chrome
+                // refuses a session it no longer has): any error reply but a lost evaluation's
+                // ends the wait. A page closed under an evaluation leaves it unanswered
+                // (a_wait_on_a_page_that_closes_or_crashes_fails_at_once_saying_which).
+                ("window.refused", 1) => (Err(NAVIGATED), false),
+                ("window.refused", 2) => (Err("Session with given id not found."), false),
+                ("window.asked", 1) => (Err(NAVIGATED), false),
+                (other, count) => panic!("evaluation {count} of {other}"),
+            };
+            if hold {
+                held.push((command, value, markers));
+            } else {
+                answer(peer, &command, value);
+            }
+        }
+        asked
+    });
+    assert!(chrome.wait_for("window.arrived", PROTOCOL_CPU).unwrap());
+    // Each lost evaluation is one of the page's turns: a 26 ms wait's two (two asks), and the one
+    // a zero allowance still takes. The condition was never met.
+    assert!(
+        !chrome
+            .wait_for("window.leaving", Duration::from_millis(26))
+            .unwrap()
+    );
+    assert!(!chrome.wait_for("window.leaving", Duration::ZERO).unwrap());
+    let refused = chrome.wait_for("window.refused", PROTOCOL_CPU).unwrap_err();
+    assert!(
+        refused.to_string().starts_with(
+            "window.refused: {\"code\":-32000,\"message\":\"Session with given id not found.\""
+        ),
+        "{refused}"
+    );
+    assert!(!refused.stalled() && !refused.past_deadline(), "{refused}");
+    // An evaluation on its own is asked once: it may act.
+    let lost = chrome.eval("window.asked").unwrap_err().to_string();
+    assert!(
+        lost.starts_with("window.asked: ") && lost.contains(NAVIGATED),
+        "{lost}"
+    );
+    drop(chrome);
+    let asked = peer.join().unwrap();
+    let count = |expression: &str| asked.iter().filter(|asked| *asked == expression).count();
+    assert_eq!(
+        [
+            "window.arrived",
+            "window.leaving",
+            "window.refused",
+            "window.asked"
+        ]
+        .map(count),
+        [5, 2 + 1, 2, 1],
+        "{asked:?}"
+    );
+}
+
+#[test]
+fn a_wait_on_a_page_that_closes_or_crashes_fails_at_once_saying_which() {
+    const CRASHED: &str = "the page under test's renderer crashed";
+    const CLOSED: &str = "the page under test closed: its session detached";
+    // Chrome's messages as it tells of the page under test going away, as the real Chrome sends
+    // them (a_real_page_closed_or_crashed_under_a_wait_fails_it_at_once_saying_which), and those
+    // of a followed frame, which detaches and crashes on its own session.
+    let crashed = |session: &str| {
+        json!({"method": "Inspector.targetCrashed",
+            "params": {}, "sessionId": session})
+    };
+    let detached = |session: &str, target: &str, on: Option<&str>| {
+        let mut event = json!({"method": "Target.detachedFromTarget",
+            "params": {"sessionId": session, "targetId": target}});
+        if let Some(on) = on {
+            event["sessionId"] = json!(on);
+        }
+        event
+    };
+    let page_closes = vec![
+        json!({"method": "Inspector.detached", "params": {"reason": "Render process gone."},
+            "sessionId": "page"}),
+        detached("page", "page-target", None),
+    ];
+    let a_frame_goes = vec![
+        detached("frame", "frame-target", Some("page")),
+        crashed("frame"),
+    ];
+    let page_crashes = vec![crashed("page")];
+    // What the stand-in page's renderer does with what is asked of it: answers it, answers nothing
+    // (crashed) or refuses it for want of a session (closed), as Chrome does.
+    #[derive(Clone, Copy, PartialEq)]
+    enum Renderer {
+        Running,
+        Crashed,
+        Closed,
+    }
+    // Each evaluation of a wait's expression is held until the browser's next observer turn,
+    // which sends what it names first, then its answer (none: never answered), and leaves the
+    // renderer as it names. Probes and observer turns are answered at once while it runs. What it
+    // saw: each expression asked, refused or not.
+    let (mut chrome, peer) = with_peer(true, BACKSTOP_FLOOR, move |peer| {
+        let mut asked: Vec<String> = Vec::new();
+        let mut renderer = Renderer::Running;
+        let mut held: Option<(Value, Vec<Value>, Option<Value>, Renderer)> = None;
+        while let Some(command) = peer.next() {
+            if marker(&command) {
+                if let Some((evaluation, events, answer, then)) = held.take() {
+                    for event in events {
+                        peer.send(event);
+                    }
+                    if let Some(value) = answer {
+                        peer.reply(&evaluation, json!({"result": {"value": value}}));
+                    }
+                    renderer = then;
+                }
+                peer.reply(&command, json!({"result": {"value": null}}));
+                continue;
+            }
+            assert_eq!(command["sessionId"], "page", "{command}");
+            if !probe(&command) && command["method"] == "Runtime.evaluate" {
+                asked.push(command["params"]["expression"].as_str().unwrap().to_owned());
+            }
+            match renderer {
+                Renderer::Closed => {
+                    peer.send(json!({"id": command["id"],
+                        "error": {"code": -32001, "message": "Session with given id not found."}}));
+                    continue;
+                }
+                // A reload starts another renderer, which Chrome tells of before its reply.
+                Renderer::Crashed if command["method"] == "Page.reload" => {
+                    peer.send(json!({"method": "Inspector.targetReloadedAfterCrash",
+                        "params": {}, "sessionId": "page"}));
+                    peer.reply(&command, json!({}));
+                    renderer = Renderer::Running;
+                    continue;
+                }
+                Renderer::Crashed => continue,
+                Renderer::Running => {}
+            }
+            if probe(&command) {
+                peer.reply(&command, json!({"result": {"value": 0}}));
+                continue;
+            }
+            let expression = command["params"]["expression"].as_str().unwrap();
+            let (events, answer, then) = match expression {
+                "window.framed" => (a_frame_goes.clone(), Some(json!(true)), Renderer::Running),
+                "window.crashing" => (page_crashes.clone(), None, Renderer::Crashed),
+                "window.back" => (Vec::new(), Some(json!(true)), Renderer::Running),
+                "window.closing" => (page_closes.clone(), None, Renderer::Closed),
+                other => panic!("evaluation of {other}"),
+            };
+            held = Some((command, events, answer, then));
+        }
+        asked
+    });
+    // A followed frame's session detaching, or its renderer crashing, is not the page's: the wait
+    // goes on and meets its condition.
+    assert!(chrome.wait_for("window.framed", PROTOCOL_CPU).unwrap());
+    // The page's renderer crashes under the wait, which Chrome answers nothing of after: no turn
+    // of the page's counts, so only the backstop would end it, two minutes on. It fails at once,
+    // and so does a wait begun on the crashed page, which asks nothing.
+    let gone = |chrome: &mut Chrome, expression: &str| {
+        let error = chrome
+            .wait_for(expression, Duration::from_millis(100))
+            .unwrap_err();
+        assert!(!error.stalled() && !error.past_deadline(), "{error}");
+        error.to_string()
+    };
+    assert_eq!(
+        gone(&mut chrome, "window.crashing"),
+        format!("window.crashing: {CRASHED}")
+    );
+    assert_eq!(
+        gone(&mut chrome, "window.after"),
+        format!("window.after: {CRASHED}")
+    );
+    // A reload brings the renderer back, and the page is waited on again.
+    chrome.call("Page.reload", json!({})).unwrap();
+    assert!(chrome.wait_for("window.back", PROTOCOL_CPU).unwrap());
+    // The page closes under the wait. Chrome refuses every probe after it, each a turn of the
+    // page's, which would spend the wait's allowance and end it with its condition unmet: it fails
+    // at once, and so does a wait begun after, which asks nothing.
+    assert_eq!(
+        gone(&mut chrome, "window.closing"),
+        format!("window.closing: {CLOSED}")
+    );
+    assert_eq!(
+        gone(&mut chrome, "window.gone"),
+        format!("window.gone: {CLOSED}")
+    );
+    // An evaluation on its own is asked as before, and refused.
+    assert_eq!(
+        chrome.eval("window.asked").unwrap_err().to_string(),
+        "window.asked: {\"code\":-32001,\"message\":\"Session with given id not found.\"}"
+    );
+    // Each message that told of the page's end is kept, the one that ended a wait among them.
+    let told: Vec<(Value, Value)> = chrome
+        .events()
+        .iter()
+        .map(|event| (event["method"].clone(), event["sessionId"].clone()))
+        .collect();
+    assert_eq!(
+        told,
+        [
+            ("Target.detachedFromTarget", json!("page")),
+            ("Inspector.targetCrashed", json!("frame")),
+            ("Inspector.targetCrashed", json!("page")),
+            ("Inspector.targetReloadedAfterCrash", json!("page")),
+            ("Inspector.detached", json!("page")),
+            ("Target.detachedFromTarget", Value::Null),
+        ]
+        .map(|(method, session)| (json!(method), session))
+    );
+    drop(chrome);
+    assert_eq!(
+        peer.join().unwrap(),
+        [
+            "window.framed",
+            "window.crashing",
+            "window.back",
+            "window.closing",
+            "window.asked"
+        ]
+    );
+}
+
+#[test]
 fn a_chrome_that_refuses_to_tell_of_shared_workers_still_has_frames_followed() {
     let (mut chrome, peer) = with_peer(true, BACKSTOP_FLOOR, |peer| {
         let mut refused = false;
@@ -2108,6 +2609,142 @@ fn a_dialog_is_answered_on_the_session_it_opened_on_once_dialogs_are_dismissed_a
             answer("page", true),
         ]
     );
+}
+
+#[test]
+fn a_page_the_page_opens_brings_it_back_in_front_unwaited_as_it_is_told_of_once_kept_in_front() {
+    let (mut chrome, peer) = with_peer(true, BACKSTOP_FLOOR, |peer| {
+        // Every command but the observer's turns and the page's probes: its session, its method and
+        // its parameters.
+        let mut seen = Vec::new();
+        while let Some(command) = peer.next() {
+            if marker(&command) || probe(&command) {
+                peer.reply(&command, json!({"result": {"value": 0}}));
+                continue;
+            }
+            seen.push((
+                command["sessionId"].as_str().unwrap_or("").to_string(),
+                command["method"].as_str().unwrap_or("").to_string(),
+                command["params"].clone(),
+            ));
+            if command["method"] == "Fixture.open" {
+                // Told of before the reply, as Chrome tells of what a call started: a page the
+                // page opened, appearing and committing its document; the page itself and the
+                // observer's page changing; a shared worker appearing; the opened page closing.
+                for (method, target, kind) in [
+                    ("Target.targetCreated", "opened", "page"),
+                    ("Target.targetInfoChanged", "opened", "page"),
+                    ("Target.targetInfoChanged", "page-target", "page"),
+                    ("Target.targetInfoChanged", "observer-target", "page"),
+                    ("Target.targetCreated", "shared", "shared_worker"),
+                ] {
+                    peer.send(json!({"method": method, "params": {
+                        "targetInfo": {"targetId": target, "type": kind, "url": "http://a/"}}}));
+                }
+                peer.send(json!({"method": "Target.targetDestroyed",
+                    "params": {"targetId": "opened"}}));
+            }
+            // Bringing the page in front is never waited for: it gets no reply here.
+            if command["method"] != "Page.bringToFront" {
+                peer.reply(&command, json!({}));
+            }
+        }
+        seen
+    });
+    // Not kept in front, a page opened is only kept among the events.
+    chrome.call("Fixture.open", json!({})).unwrap();
+    chrome.keep_in_front().unwrap();
+    chrome.follow_frames().unwrap();
+    chrome.call("Fixture.open", json!({})).unwrap();
+    // A wait goes on, the page never answering its bringing in front.
+    chrome.call("Fixture.after", json!({})).unwrap();
+    let told = chrome
+        .events()
+        .iter()
+        .filter(|event| {
+            event["method"]
+                .as_str()
+                .unwrap()
+                .starts_with("Target.target")
+        })
+        .count();
+    assert_eq!(told, 12);
+    drop(chrome);
+    let command = |session: &str, method: &str, params: Value| {
+        (session.to_string(), method.to_string(), params)
+    };
+    let discover = |kinds: &[&str]| {
+        let filter: Vec<Value> = kinds.iter().map(|kind| json!({ "type": kind })).collect();
+        json!({"discover": true, "filter": filter})
+    };
+    assert_eq!(
+        peer.join().unwrap(),
+        [
+            command("page", "Fixture.open", json!({})),
+            // Of the browser's own session: pages told of, then shared workers too, as frames
+            // are followed.
+            command("", "Target.setDiscoverTargets", discover(&["page"])),
+            command(
+                "page",
+                "Target.setAutoAttach",
+                json!({"autoAttach": true, "waitForDebuggerOnStart": true, "flatten": true}),
+            ),
+            command(
+                "",
+                "Target.setDiscoverTargets",
+                discover(&["shared_worker", "page"]),
+            ),
+            command("page", "Fixture.open", json!({})),
+            // The opened page appearing, then committing: the page brought in front each time,
+            // on its own session; nothing for the page itself, the observer's, a worker or a page
+            // closing.
+            command("page", "Page.bringToFront", json!({})),
+            command("page", "Page.bringToFront", json!({})),
+            command("page", "Fixture.after", json!({})),
+        ]
+    );
+}
+
+#[test]
+fn a_page_opened_while_the_page_is_asked_is_put_behind_it_so_the_page_answers() {
+    // As Chrome holds the page when a page of its own site, opened later (from a timer) while the
+    // page is being asked something, shows a dialog in front: the page answers nothing, its probes
+    // included, until it is brought back in front, which closes that dialog. Told of that page as
+    // the evaluation waits, the driver brings the page in front, and the evaluation is answered.
+    let (mut chrome, peer) = with_peer(true, BACKSTOP_FLOOR, |peer| {
+        let mut held = Vec::new();
+        let mut fronted = false;
+        while let Some(command) = peer.next() {
+            let asked = command["sessionId"] == "page" && command["method"] == "Runtime.evaluate";
+            if command["method"] == "Page.bringToFront" {
+                fronted = true;
+                for command in held.drain(..) {
+                    answer(peer, &command);
+                }
+            } else if asked && !fronted {
+                if command["params"]["expression"] == "document.title" {
+                    peer.send(json!({"method": "Target.targetCreated", "params": {
+                        "targetInfo": {"targetId": "opened", "type": "page", "url": ""}}}));
+                }
+                held.push(command);
+            } else {
+                answer(peer, &command);
+            }
+        }
+        fronted
+    });
+    fn answer(peer: &Peer, command: &Value) {
+        let value = if command["params"]["expression"] == "document.title" {
+            json!("answered")
+        } else {
+            json!(0)
+        };
+        peer.reply(command, json!({"result": {"value": value}}));
+    }
+    chrome.keep_in_front().unwrap();
+    assert_eq!(chrome.eval("document.title").unwrap(), json!("answered"));
+    drop(chrome);
+    assert!(peer.join().unwrap());
 }
 
 /// A loopback server ([`framing_server`]) and how a test drives it: its address and port, the
@@ -2596,6 +3233,170 @@ fn a_real_page_blocked_in_its_renderer_spends_nothing_and_a_stopped_browser_ends
     );
     chrome.backstop = BACKSTOP_FLOOR;
     assert_eq!(chrome.eval("window.held").unwrap(), json!(1));
+}
+
+#[test]
+fn a_real_page_navigating_under_a_wait_is_asked_again_on_the_document_it_went_to() {
+    let Some(binary) = find() else {
+        eprintln!("no Chrome: real browser capability unavailable");
+        return;
+    };
+    let (base, _release, _arrived) = holding_server();
+    let mut chrome = Chrome::launch(&binary, &leash()).unwrap();
+    // A condition false on the first document, where it navigates the page and stays pending, so
+    // its evaluation is surely in flight as the page leaves: for a document of the page's own
+    // site (Chrome answers `Execution context was destroyed.` where the page keeps its frame
+    // host, `Inspected target navigated or closed` where it keeps the page it left for Back and
+    // gives the next a new one), and for one of another site, in another process (the latter).
+    for to in [
+        format!("{base}second"),
+        format!("{}second", base.replace("127.0.0.1", "localhost")),
+    ] {
+        chrome.open(&format!("{base}first")).unwrap();
+        let to = json!(to);
+        assert!(
+            chrome
+                .wait_for(
+                    &format!(
+                        "location.href === {to} || \
+                         new Promise(() => setTimeout(() => {{ location.href = {to}; }}))"
+                    ),
+                    PROTOCOL_CPU
+                )
+                .unwrap(),
+            "{to}"
+        );
+        assert_eq!(chrome.eval("location.href").unwrap(), to);
+    }
+    // An evaluation on its own is asked once: the navigation it started is its error.
+    chrome.open(&format!("{base}first")).unwrap();
+    let lost = chrome
+        .eval("new Promise(() => setTimeout(() => { location.href = '/second'; }))")
+        .unwrap_err();
+    assert!(lost.navigated, "{lost}");
+}
+
+/// A DevTools connection of its own to `chrome`'s browser, and a thread that, once the page under
+/// test has asked for `/held` (`arrived`, as [`holding_server`] tells of it), so that a wait's
+/// evaluation asking for it is surely in flight, ends that page by `how`: `Target.closeTarget`, or
+/// `Page.crash` on a session of its own. The connection and that session are made here, so that
+/// their failure is the test's at once, before any wait. The thread ends the page even when the
+/// arrival stalls, and then fails with the stall: left running, the page would hold the wait under
+/// it to its allowance, and the test, which joins the thread ([`ended`]) before it judges the wait,
+/// would report the wait. The end's reply is not waited for: a crashed renderer answers none. The
+/// connection, to keep until the wait is over, and the arrivals back.
+fn end_the_page_once_held(
+    chrome: &Chrome,
+    arrived: std::sync::mpsc::Receiver<()>,
+    how: &'static str,
+) -> std::thread::JoinHandle<(
+    std::sync::mpsc::Receiver<()>,
+    WebSocket<MaybeTlsStream<TcpStream>>,
+)> {
+    let (port, path) = devtools_endpoint(chrome.profile()).unwrap();
+    let target = chrome.own_pages[1].clone();
+    let backstop = test_time::backstop(Duration::from_secs(10));
+    let (mut socket, _) = tungstenite::connect(format!("ws://127.0.0.1:{port}{path}")).unwrap();
+    if let MaybeTlsStream::Plain(stream) = socket.get_mut() {
+        stream.set_read_timeout(Some(backstop)).unwrap();
+    }
+    let send = |socket: &mut WebSocket<_>, command: Value| {
+        socket.send(Message::text(command.to_string())).unwrap();
+    };
+    let end = if how == "Page.crash" {
+        send(
+            &mut socket,
+            json!({"id": 1, "method": "Target.attachToTarget",
+                "params": {"targetId": target, "flatten": true}}),
+        );
+        let session = loop {
+            let Message::Text(text) = socket.read().unwrap() else {
+                continue;
+            };
+            let reply: Value = serde_json::from_str(text.as_str()).unwrap();
+            if reply["id"] == 1 {
+                break reply["result"]["sessionId"].as_str().unwrap().to_owned();
+            }
+        };
+        json!({"id": 2, "method": how, "params": {}, "sessionId": session})
+    } else {
+        json!({"id": 1, "method": how, "params": {"targetId": target}})
+    };
+    std::thread::spawn(move || {
+        let held = test_time::until("the page asks for /held", backstop, || {
+            arrived.try_recv().ok()
+        });
+        send(&mut socket, end);
+        held.unwrap_or_else(|stall| panic!("{stall}"));
+        (arrived, socket)
+    })
+}
+
+/// What the thread `ender` returned. Its panic, if it panicked, is re-raised here, so that the test
+/// reports the thread's own failure rather than what came of the wait the thread was to end.
+fn ended<T>(ender: std::thread::JoinHandle<T>) -> T {
+    ender
+        .join()
+        .unwrap_or_else(|failure| std::panic::resume_unwind(failure))
+}
+
+#[test]
+fn a_real_page_closed_or_crashed_under_a_wait_fails_it_at_once_saying_which() {
+    let Some(binary) = find() else {
+        eprintln!("no Chrome: real browser capability unavailable");
+        return;
+    };
+    let (base, _release, arrived) = holding_server();
+    let mut chrome = Chrome::launch(&binary, &leash()).unwrap();
+    // A condition whose evaluation asks for /held, which the server never answers: Chrome answers
+    // it only with the page's end. Without that, the crash would run to the backstop (six minutes
+    // for the protocol's allowance) and the close would spend the allowance on the probes Chrome
+    // refuses, each a turn of the page's.
+    const HELD: &str = "fetch('/held').then(() => false)";
+    chrome.open(&base).unwrap();
+    let ender = end_the_page_once_held(&chrome, arrived, "Page.crash");
+    let crashed = chrome.wait_for(HELD, PROTOCOL_CPU);
+    // The ender's failure, if it failed, is the test's, before the wait's is judged.
+    let (arrived, crasher) = ended(ender);
+    let crashed = crashed.unwrap_err();
+    assert!(!crashed.stalled() && !crashed.past_deadline(), "{crashed}");
+    assert_eq!(
+        crashed.to_string(),
+        format!("{HELD}: the page under test's renderer crashed")
+    );
+    // A wait begun on the crashed page fails at once too; going to a document again starts another
+    // renderer, which Chrome tells of before the document loads.
+    assert_eq!(
+        chrome
+            .wait_for("true", PROTOCOL_CPU)
+            .unwrap_err()
+            .to_string(),
+        "true: the page under test's renderer crashed"
+    );
+    chrome.open(&base).unwrap();
+    assert!(
+        chrome
+            .wait_for("document.readyState !== 'loading'", PROTOCOL_CPU)
+            .unwrap()
+    );
+    drop(crasher);
+
+    let ender = end_the_page_once_held(&chrome, arrived, "Target.closeTarget");
+    let closed = chrome.wait_for(HELD, PROTOCOL_CPU);
+    let (_arrived, _closer) = ended(ender);
+    let closed = closed.unwrap_err();
+    assert!(!closed.stalled() && !closed.past_deadline(), "{closed}");
+    assert_eq!(
+        closed.to_string(),
+        format!("{HELD}: the page under test closed: its session detached")
+    );
+    assert_eq!(
+        chrome
+            .wait_for("true", PROTOCOL_CPU)
+            .unwrap_err()
+            .to_string(),
+        "true: the page under test closed: its session detached"
+    );
 }
 
 /// Two more visits to a page's own URL after the first, in a browser launched as `binary`, traced:
@@ -3450,6 +4251,89 @@ fn an_open_stream_counts_its_head_and_every_chunk_read_and_names_its_pings() {
     );
     assert!(!feed.finished);
     assert_eq!((glue.bytes, glue.pings, glue.finished), (512.0, 0, true));
+}
+
+#[test]
+fn a_websocket_counts_its_handshake_and_every_frame_and_names_its_pings() {
+    let event = |method: &str, params: Value| json!({"method": method, "params": params});
+    let frame = |id: &str, payload: &str| {
+        event(
+            "Network.webSocketFrameReceived",
+            json!({"requestId": id, "response": {"opcode": 1, "mask": false, "payloadData": payload}}),
+        )
+    };
+    let delta = format!(
+        "{}\n{{\"version\":{}}}",
+        symphony_api::FEED_EVENT,
+        "9".repeat(200)
+    );
+    let ping = format!("{}\n", symphony_api::PING_EVENT);
+    let events = [
+        event(
+            "Network.webSocketCreated",
+            json!({"requestId": "feed", "url": "ws://h/api/feed?since=3"}),
+        ),
+        event(
+            "Network.webSocketWillSendHandshakeRequest",
+            json!({"requestId": "feed", "request": {"headers": {}}}),
+        ),
+        event(
+            "Network.webSocketHandshakeResponseReceived",
+            json!({"requestId": "feed", "response": {"status": 101, "statusText": "Switching Protocols", "headersText": "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n\r\n"}}),
+        ),
+        frame(
+            "feed",
+            &format!("{}\n\"Serving\"", symphony_api::SERVER_EVENT),
+        ),
+        frame("feed", &ping),
+        frame("feed", &delta),
+        frame("feed", &ping),
+        // Another, told no text of its head, which is closed.
+        event(
+            "Network.webSocketCreated",
+            json!({"requestId": "gone", "url": "ws://h/api/feed?since=4"}),
+        ),
+        event(
+            "Network.webSocketHandshakeResponseReceived",
+            json!({"requestId": "gone", "response": {"status": 101, "statusText": "Switching Protocols", "headers": {"Upgrade": "websocket", "Vary": "a\nb"}}}),
+        ),
+        frame("gone", &"x".repeat(70_000)),
+        event("Network.webSocketClosed", json!({"requestId": "gone"})),
+    ];
+    let requests = crate::requests(&events, None);
+    let [feed, gone] = requests.as_slice() else {
+        panic!("two sockets: {requests:#?}")
+    };
+    let head = "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n\r\n".len();
+    // A frame's head is 2 bytes up to 125 bytes of payload, 4 up to 65,535, 10 beyond.
+    let frames = (2 + 16) + 2 * (2 + ping.len()) + (4 + delta.len());
+    assert_eq!(
+        (
+            feed.url.as_str(),
+            feed.kind.as_str(),
+            feed.status,
+            feed.bytes,
+            feed.pings,
+            feed.finished
+        ),
+        (
+            "ws://h/api/feed?since=3",
+            crate::WEB_SOCKET,
+            101,
+            (head + frames) as f64,
+            2,
+            false
+        )
+    );
+    // Its status line, each header (a repeated one on each of its lines) and the blank line.
+    let head = "HTTP/1.1 101 Switching Protocols\r\n".len()
+        + "Upgrade: websocket\r\n".len()
+        + "Vary: a\r\nVary: b\r\n".len()
+        + 2;
+    assert_eq!(
+        (gone.bytes, gone.pings, gone.finished),
+        ((head + 10 + 70_000) as f64, 0, true)
+    );
 }
 
 #[test]

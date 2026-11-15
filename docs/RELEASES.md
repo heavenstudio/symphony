@@ -13,13 +13,15 @@ A release is an annotated tag on a commit of `origin/main` that every check foun
 
 - **Its name** is `release-YYYY-MM-DD`, the day's date on the machine that cut it, and
   `release-YYYY-MM-DD.N` for that day's Nth release, N from 2. Releases sort by day, then by
-  number, so `.10` follows `.9` (`crates/symphony/src/release/tags.rs`).
+  number, so `.10` follows `.9` (`crates/symphony-build/src/release/tags.rs`).
 - **Its message** begins `NAME: Symphony main at COMMIT`, then a `Board schema N` line and a
   `Pin N` line, each saying whether it changed since the release before (`Board schema 17,
   changed since release-2026-11-12.2 (16 then).`, `Pin 1, unchanged since …`), then the checks it
-  passed and the commits on main's first-parent line since that release. The first release says
-  so instead. The schema is `VERSION` in `crates/tasks/src/schema.rs` and the pin `PIN` in
-  `crates/symphony/src/machine.rs`, read at the tagged commit.
+  passed, what it publishes on crates.io while the project publishes
+  ([the packages](#packages-on-cratesio)), and the commits on main's first-parent line since that
+  release. The first release says so instead. The schema is `VERSION` in
+  `crates/tasks/src/schema.rs` and the pin `PIN` in `crates/symphony/src/machine.rs`, read at the
+  tagged commit.
 - **Reading one:** `git ls-remote --tags origin 'release-*'` lists them, and
   `git tag -l --format='%(contents)' NAME` prints a message. A project names the tag in its
   `Cargo.toml` (`tag = "release-…"` in place of `branch = "main"`) and its `Cargo.lock` binds the
@@ -48,8 +50,9 @@ version, under MIT: crates.io is the package manager their versions live in
   (`symphony-server`), the Chrome driver `symphony shot` drives as `symphony-chrome`, and the app's
   wire types (`symphony-api`). One version for the five, from 0.1.0, each requiring the others at
   exactly it (`=0.1.0`), so they are always taken together; below 1.0, it promises no name.
-- **The rest,** the client's sources (`symphony-ui`, which the server embeds built) and the tests'
-  time (`test-time`), keep the workspace's `publish = false`.
+- **The rest,** the client's sources (`symphony-ui`, which the server embeds built), the Mac app
+  (`symphony-desktop`), this repository's own build and release commands (`symphony-build`) and
+  the tests' time (`test-time`), keep the workspace's `publish = false`.
 
 Two names were another project's on crates.io, so those two packages alone are renamed (the board
 task `tools/publish-to-crates-io`): the library's package is
@@ -62,13 +65,15 @@ task `tools/publish-to-crates-io`): the library's package is
 The product's commands install from crates.io with:
 
 ```sh
-cargo install --locked --config profile.release.strip=true symphony-app symphony-board symphony-server
+cargo install --locked --config profile.release.strip=true --config profile.release.codegen-units=1 symphony-app symphony-board symphony-server
 ```
 
 The workspace's `[profile.release]` is read from its root manifest alone and is not in a published
-one, so the install line strips the symbol table itself, as the shipped binaries' size budgets
-assume ([CHECKS](CHECKS.md#size-budgets)); no member carries a profile of its own, which Cargo
-would ignore with a warning on every build here. The server embeds its client at build time from
+one, so the install line sets both of its settings itself: it strips the symbol table and builds
+each crate as one codegen unit, as the shipped binaries' size budgets assume
+([CHECKS](CHECKS.md#size-budgets)). Without the second an install builds 16 units a crate and its
+binaries are 0.5 to 2.7 MB larger than the lines measure. No member carries a profile of its own,
+which Cargo would ignore with a warning on every build here. The server embeds its client at build time from
 its package's `client/public`, so an installed server serves it with no build of the client; its
 package carries every build that folder keeps, as it stands (7.6 to 8.0 MiB compressed in
 November 2026, of the 10 MiB crates.io takes). The day it would not fit, the packages test fails, and the package is cut
@@ -78,7 +83,8 @@ so a list that followed each build would move the next build's asset names.
 A published package's manifest says `publish = true` with a description, the repository, a readme of
 its own, keywords, categories and an `include` list (its sources, its build script, what it embeds,
 readme and LICENSE: no `tests/` folder or fixtures, and none of the binaries only this repository
-runs: `symphony-build`, `symphony-test-plugin`, `fake-hc`, `symphony-shelf`, `symphony-ui-dev`).
+runs: `symphony-test-plugin`, `fake-hc`, `symphony-shelf`, `symphony-ui-dev`; `symphony-build`
+is a package of its own, unpublished).
 Its LICENSE is a copy of the root's, never a link, which the client's release inputs refuse
 (`symphony-api` and `symphony-blocks` are among them). Its readme stands alone, with no link into
 this repository, which is private; the server's is `CRATE.md`, as its `README.md` is its guide. It
@@ -92,14 +98,71 @@ each carries all of this, that each copy is its file byte for byte, and that the
 is one crates.io takes.
 
 A version is published once: crates.io can yank it but never removes or reuses it. So nothing here
-publishes yet. The first publication is the owner's act, or runs on the owner's word, with the
-owner's crates.io token in the owner's environment; no agent logs in or reads a token. It waits on
-one more answer of the owner's, asked on the board task `tools/publish-to-crates-io`: each manifest
-names this repository as its `repository`, which answers 404 to anyone but the owner while the
-repository is private, so either the repository is made public first or the packages are published
-with no `repository` line. Up to then, the packages are proven by `cargo publish --dry-run` naming
-the thirteen together, which packages them in dependency order and builds each against the others as
-packaged, before any is on crates.io.
+has been published yet. The first publication is the owner's act, or runs on the owner's word,
+with the owner's crates.io token in the owner's environment; no agent logs in or reads a token. It
+waits on one more answer of the owner's, asked on the board task `tools/publish-to-crates-io`: each
+manifest names this repository as its `repository`, which answers 404 to anyone but the owner while
+the repository is private, so either the repository is made public first or the packages are
+published with no `repository` line. Up to then, the packages are proven by `cargo publish
+--dry-run` naming the thirteen together, which packages them in dependency order and builds each
+against the others as packaged, before any is on crates.io.
+
+One more thing that answer touches: `symphony init`'s `Next:` names the project file's reference,
+docs/PROJECT_FILE.md, by its github.com URL in this repository (`init::PROJECT_FILE_REFERENCE`),
+true while a clone is the only way to the binaries. Once the packages are on crates.io with the
+repository still private, that link answers 404 to whoever installed them, so the reference then
+travels in `symphony-app`'s package or the binary prints it.
+
+**A release publishes them** only on the project's word: `[releases] publish = true` in
+`symphony.toml`, off when unsaid. This repository's `symphony.toml` leaves it off, so turning it on
+is the owner's word for the first publication. While it is off, a green release says
+`release: crates.io: not published: [releases] publish is off`, its record and `--status` say the
+same, and no `cargo publish` runs (`crates/symphony-build/src/release/crates.rs`). While it is on, a
+green release, once its tag is pushed and before [the refresh](#the-refresh), publishes from its
+own checkout brought to the release's commit, within an hour, the packages of the workspace that
+publish (`publish` unset, or naming `crates-io`) whose version crates.io's index lacks. A version
+the index lists already is skipped (`on crates.io already: …`), so a run again publishes only what
+is left. The rest go up by one `cargo publish --locked -p A -p B …` naming only them: cargo orders
+them, packages and builds each against the others as packaged before it uploads the first, so a
+package that does not build uploads none, and waits for the index between uploads. The index is
+read again after it: what it lists went up (`published …`), and the rest are left, with why. What
+cargo said goes to `logs/ID/publish.log`. The tests publish to a registry folder of their own
+through a stand-in for cargo, never to crates.io.
+
+- **The token** is cargo's own: `CARGO_REGISTRY_TOKEN` in the run's environment, cargo's
+  credentials or a credential provider, read by cargo and never by the run. With none, cargo
+  refuses the first upload, the step says `not published: no token: …` with the packages left; the
+  release stays green and the run's exit is unchanged.
+- **A failed command** says `not published: cargo publish failed (…)`, with cargo's line and the
+  log, then what the index read again lacks and that the release stays tagged. The release stands,
+  its tag pushed; the run exits 1 and nothing is filed: the record and `--status` keep it
+  (`last publish: red, …`). `just release --refresh`, an orchestrator's retry once the cause is put
+  right, publishes what is left before it refreshes, and so does the next release's run.
+- **A version crates.io had already**, which cargo refuses as existing though the first read of the
+  index lacked it, is no red: the step says what is left, and the next publication finishes it.
+- **`--no-push`** publishes nothing: a run under it pushes no tag and so publishes none, and a
+  refresh under it says `not published: --no-push publishes nothing`.
+- **Its notes**, written before its tag, say after the checks it passed what it publishes: each
+  package and version crates.io lacked then (`Publishes to crates.io: NAME VERSION, ….`), or that
+  crates.io holds each (`Publishes nothing: …`).
+
+**A version moves with its sources.** `just crates-check` (`symphony-build crates-check`, the step
+`crates-check` of the release run's `just verify`) packages, for each published package whose
+version crates.io lists, that package here (`cargo package --no-verify`, offline, building nothing)
+and compares every file with that version's `.crate` from crates.io, Cargo's own
+`.cargo_vcs_info.json` and `Cargo.lock` aside. A difference is red, naming the package and the
+files that differ: its version must move before a release publishes it. A version crates.io does
+not list yet is green, with nothing to compare, and a crates.io it cannot read is red too
+(exit 2). It reads crates.io and publishes nothing, so it is cheap enough for the evidence of a
+task that changes a published package; in the release run, its red is a step's
+(`tests/release-red-verify-crates-check`).
+
+**How a bump cascades.** A package names a published sibling at exactly the version the sibling is
+at (`crates/symphony/tests/packages.rs`), so a sibling's new version changes the manifest of each
+published package that builds with it. That package then packages other sources at its own
+version, and the crates check is red for it until its version moves too, and so on to each package
+that builds with it in turn. A helper's new version so moves each kit or product package that names
+it, the kit's three together and the product's five together, each line by its own version.
 
 Nothing is on crates.io yet, so a project takes all of Symphony from Git at its pin: today the
 consuming project names each package at a release tag (`tag = "release-…"`) and its `Cargo.lock`
@@ -111,10 +174,11 @@ crates.io beside a library from Git would be two copies of the kit, whose types 
 
 ## The release run
 
-`just release` (`symphony-build release`, `crates/symphony/src/release.rs`) cuts the releases, and
-is the one place the full verification runs ([CHECKS](CHECKS.md#the-release-run)). It is a
-command of `symphony-build`, this repository's own binary, which no project is given and the
-shipped `symphony` does not carry ([CHECKS](CHECKS.md#size-budgets)):
+`just release` (`symphony-build release`, `crates/symphony-build/src/release.rs`) cuts the
+releases, and is the one place the full verification runs ([CHECKS](CHECKS.md#the-release-run)).
+It is a command of `symphony-build`, this repository's own binary in a package of its own, which no
+project is given and neither the library nor the shipped `symphony` compiles
+([CHECKS](CHECKS.md#size-budgets)):
 
 1. **The candidate.** It fetches `origin/main` (`--remote` and `--branch` name another remote and
    main line), the commit a project can fetch, and takes its tip; while a release candidate is
@@ -146,7 +210,10 @@ shipped `symphony` does not carry ([CHECKS](CHECKS.md#size-budgets)):
    checkout for 7 days), and marked in its git admin folder (`symphony-release`, holding the
    checkout's real path). Each run resets it to the candidate and removes every untracked and
    ignored file but `.target/`, so the build stays incremental; a `.target/` built on for 7 days
-   is cleared. It resets nothing else. A link in that place, a path that is, holds or lies inside
+   is cleared. It resets nothing else. The React client's `node_modules` goes with the ignored
+   files, so each run installs it again from npm's cache on the machine (a network
+   fetch only for what that cache lacks), and the run needs the client's pinned Node, on PATH or
+   by fnm ([its guide](../apps/symphony-web/AGENTS.md#the-tools)), as it needs Chrome. A link in that place, a path that is, holds or lies inside
    the main checkout or another worktree (compared by real path), a worktree it did not lock and
    mark, or any other folder is refused and left as it is, and the run stops, naming it. An
    `index.lock` or `HEAD.lock` that an interrupted git left in the checkout's admin folder is
@@ -166,8 +233,9 @@ shipped `symphony` does not carry ([CHECKS](CHECKS.md#size-budgets)):
    holds a file there open. One that moved elsewhere (a daemon that changed to `/`) and writes
    into the checkout by path is not seen.
 3. **The full verification** runs there: `just verify`, which is lint, the real client check, the
-   size budgets ([CHECKS](CHECKS.md#size-budgets)), the docs audit and every test target of the
-   workspace, the board's `perf` and `child_guard` among them. Each check goes through the
+   size budgets ([CHECKS](CHECKS.md#size-budgets)), the docs audit, the crates check
+   ([the packages](#packages-on-cratesio)) and every test target of the workspace, the board's
+   `perf` and `child_guard` among them. Each check goes through the
    checkout's `tools/record.sh` as one test operation of the board's recorder, labelled
    `release NAME` ([MACHINE_WORK](MACHINE_WORK.md#recording-builds-and-tests)), and writes its
    output to a log of its own. It runs in a process group of its own and inherits no descriptor of
@@ -177,7 +245,7 @@ shipped `symphony` does not carry ([CHECKS](CHECKS.md#size-budgets)):
    (`SYMPHONY_CHECK_STEPS`, `logs/ID/KEY.steps/`), where `just verify` lists the steps it ran, each
    with its exit status and a log of its own ([CHECKS](CHECKS.md#the-release-run)). The run records
    each listed step under its check (`verify/tests`) and tells a check by its steps
-   (`crates/symphony/src/release/steps.rs`): each red step is a red of its own (step 5), keyed by
+   (`crates/symphony-build/src/release/steps.rs`): each red step is a red of its own (step 5), keyed by
    the check and the step, `tests/release-red-verify-tests`, with that step's log; the check files
    a red of its own only for a red no step it listed holds, when it was stopped, ended by a signal,
    never ran, or ended red with every step green. While its steps hold its red, an open red of the
@@ -250,19 +318,18 @@ shipped `symphony` does not carry ([CHECKS](CHECKS.md#size-budgets)):
    takes no orchestrator slot and is offered before other work of its priority
    ([TASKS](TASKS.md#slots)). It is staffed before anything else (RULES.md
    `workflow/release-reds-first`), fixed in the code and never by a loosened test or check (a test
-   red on load is discarded instead, below), and filed as a fast fix whose recorded risk is the
-   bound the land holds a red's fix to
-   (`symphony_board::fast_fix::RED`): its orchestrator's approve lands a fix that changes none of
-   the project's tests and checks (`[land] check_paths`), the failing tests unchanged and green at
-   its tip, and a fix that changes a test, a check, a budget or a run step lands only on a fresh
-   reviewer's approve ([the default landing](TASKS.md#the-default-landing)), a bound that stands
-   though its red mark is lifted, as no session clears the risk. Its text says, a red step's as
+   red on load is discarded instead, below), and filed with no fast-fix mark: what its fix needs
+   to land is read at review by its assessor, as any task's ([needed
+   stamps](TASKS.md#needed-stamps)): its tests, the failing tests unchanged and green at its tip,
+   for a fix that changes none of the project's tests and checks (`[land] check_paths`), and a
+   fresh reviewer's approve as well for one that changes a test, a check, a budget or a run step
+   ([the default landing](TASKS.md#the-default-landing)). Its text says, a red step's as
    its line in its check's list recorded it:
    - the command and how it ended;
    - its log, and the load average when it ended (over 1, 5 and 15 minutes, with the processor
      count): a step's, the one its line says it ended under; a check's, the run's reading, kept in
      its record;
-   - what the log names failed (`crates/symphony/src/release/failures.rs`), then a few of its last
+   - what the log names failed (`crates/symphony-build/src/release/failures.rs`), then a few of its last
      lines; its last 40 lines alone when it names nothing it knows, and for a check that listed its
      steps, whose log is its own lines and its steps' tails. A test run's, a log in which cargo
      started a test target, names each test libtest said `FAILED`, with where it panicked (its own
@@ -281,7 +348,7 @@ shipped `symphony` does not carry ([CHECKS](CHECKS.md#size-budgets)):
      the same way (`size-budget: …`), and never a line of cargo's progress (`Compiling gix-error
      v0.3.2`). Each stops at 40, then says how many more, and a quote is fenced past every run of
      backticks its lines hold;
-   - what of it is the environment's (`crates/symphony/src/release/gone.rs`): a test target that
+   - what of it is the environment's (`crates/symphony-build/src/release/gone.rs`): a test target that
      named no failed test and never ran or never compiled because a file its own build had made
      was gone (its executable, cargo's `could not execute process … (never executed)` for no such
      file; a library it links, rustc's `extern location for … does not exist`; a build script's
@@ -289,10 +356,14 @@ shipped `symphony` does not carry ([CHECKS](CHECKS.md#size-budgets)):
      test of its own. The red says so, an environment failure, naming those targets and files,
      the target cargo started last before the first that found one gone (what removed them ran
      then: that target, something it started, or something outside the run), and what the build
-     folder holds when the red is filed, each entry with when it was made. Those targets are no
-     failures to rerun: with no other failure, the rerun is a run of the target they went while,
-     or of its build, with a look at its build folder after it;
-   - the commands that rerun each failure alone (`crates/symphony/src/release/rerun.rs`), never
+     folder holds when the red is filed, each entry with when it was made. Found gone while the
+     tests' lanes ran side by side (after `tools/test-lanes.sh`'s lines naming them, more than one
+     at once), they went while those lanes ran, which the red names, and no one target: the lanes'
+     outputs follow one another in the log, but a test of any of them may have removed them, and
+     the log holds no times to tell which. Those targets are no failures to rerun: with no other
+     failure, the rerun is a run of the target they went while, or of each of those lanes alone,
+     one after another, or of its build, with a look at its build folder after each;
+   - the commands that rerun each failure alone (`crates/symphony-build/src/release/rerun.rs`), never
      `just verify`, which no task runs. Each test target cargo says failed in the log is rerun as
      `just test-rs ARGS -- NAME --exact` for each test libtest named `FAILED` in it, or whole when
      it named none, at most 12 lines. A log naming no failed target reruns by what it ran: a step,
@@ -303,7 +374,11 @@ shipped `symphony` does not carry ([CHECKS](CHECKS.md#size-budgets)):
      last recipe its log says failed other than `verify` and a private one (`_NAME`), its tests'
      a target at a time, else says its last lines name the step. Any other check's is its own
      command;
-   - the commits since the last green run (`git log --oneline LAST_GREEN..TIP`).
+   - the commits since the last green run (`git log --oneline LAST_GREEN..TIP`), and the same
+     range on a line of its own by the two commits' full names, `between: LAST_GREEN..TIP`
+     (`symphony_board::red::BETWEEN`), from which the Reports roll-up lists the landings the red
+     may trace back to ([the day files](analysis/reports-and-monitoring.md#the-day-files)). With
+     no green run on record the range starts at the release before; with neither there is none.
 
    **A test red on load** is discarded: a rerun neither fails nor passes on the machine's load
    (RULES.md `tests/no-test-fails-on-load`). A test that fails a run, or the release candidate's
@@ -330,9 +405,9 @@ shipped `symphony` does not carry ([CHECKS](CHECKS.md#size-budgets)):
    under a check, a main behind the newest release, a push that fails, a run told to
    stop, a lock or a check that outlives its run, below) is red too, as the task
    `tests/release-red-run`, filed, updated and closed by the next run that gets through, as a
-   check's is, and filed the same way, but with no fast-fix mark when a process stopped it, since
-   nothing lands for that. Its body says who fixes it: the owner when a process stopped it, else
-   any free executor, then how a check's red is staffed and approved. A command
+   check's is, and filed the same way. Its body says who fixes it: the owner when a process
+   stopped it, for which nothing lands, else any free executor, then how a check's red is
+   staffed and what its fix needs to land. A command
    line or
    `--commit`/`--worktree` argument refused (exit 2, or exit 1 naming why) runs nothing and files
    nothing.
@@ -342,8 +417,9 @@ shipped `symphony` does not carry ([CHECKS](CHECKS.md#size-budgets)):
    `remote.origin.push` list) adds nothing to it. `--no-push` keeps the tag here. A push that
    fails keeps the tag here and is the red `run`; a later run on that same commit fails the same
    way, naming the push that delivers it, and `--status` names each release here that the last run
-   found missing from the remote. No run pushes an older tag. A pushed release then refreshes the
-   machine ([below](#the-refresh)).
+   found missing from the remote. No run pushes an older tag. A pushed release then publishes its
+   packages on crates.io while the project says so ([above](#packages-on-cratesio)), and refreshes
+   the machine ([below](#the-refresh)).
 
 **Its time.** A run has ten hours (`--timeout SECONDS`, at most 24 hours: a killed run's check
 holds later runs off for its run's time). A check still running then is stopped (its
@@ -379,7 +455,8 @@ logs among the newest 14 runs'; nothing is filed for it.
 Each run is recorded in the git common dir: `.git/symphony/release/runs/ID.json` (the commit,
 each check with its exit and log, the result, the tag, what it did on the board) and each check's
 log under `logs/ID/`. The newest 60 records and the logs of the newest 14 runs stay. Its exit is 0
-green (or nothing new), 1 red, stopped short or refused, 2 a command line refused.
+green (or nothing new), 1 red, stopped short or refused, or a green release whose publication or
+refresh failed, 2 a command line refused.
 
 ## Out of cycle
 
@@ -397,7 +474,7 @@ A release may never come if each run judges main's tip: a red's fix lands with e
 that landed meanwhile, and the next run judges a different tree, whose new landings can be red in
 turn. So a run of main's tip red in a check holds the commit it judged as the release candidate
 while its reds are fixed, and the release that comes is that commit and its fixes alone, however
-fast main moves (`crates/symphony/src/release/candidate.rs`; the design and the options weighed:
+fast main moves (`crates/symphony-build/src/release/candidate.rs`; the design and the options weighed:
 [the analysis](analysis/release-candidate.md), A).
 
 - **Held.** Its record is `candidate.json` beside the runs (`.git/symphony/release/`): the commit
@@ -412,23 +489,24 @@ fast main moves (`crates/symphony/src/release/candidate.rs`; the design and the 
   read, or of a newer version, stops the run as the red `run` and is left as it is.
 - **A red's fix** is the red's own task, whose text says so. Its branch, named for its slug,
   starts at `release-candidate`, never at main; it merges `release-candidate` again before review,
-  as that branch moves when another red's fix lands, and never merges main before its approve
+  as that branch moves when another red's fix lands, and never merges main before its land
   ([CHECKS](CHECKS.md#after-main-moves)). When the fix changes what the client is
   built from it commits the distribution its own sources make (`just client-update`), the one kind
   of branch that commits it, since no regenerator builds the candidate; the land keeps main's side
-  of it ([TASKS](TASKS.md#the-default-landing)). Its approve names the full tip it read, and it
-  lands by `just land`, as any task. A red fixed by another red's fix is closed as covered by that
+  of it ([TASKS](TASKS.md#the-default-landing)). Its approve, where it needs review, names the
+  full tip it read, and it lands by `just land`, as any task. A red fixed by another red's fix is closed as covered by that
   landing (`just tasks done SLUG NOTE --covered-by OTHER`), never landed. A fix made outside this
   repository (a consumer's) answers its red by the task cancelled, saying where. A test red on load
   is discarded by its red's fix ([step 5](#the-release-run)): the candidate's rerun runs without
   it, and no rerun is spent to see it pass.
 - **The advance.** The land's `--due` (`[board] on_land`) settles the candidate first, under the
   run's lock: a landing whose slug is a red's task in the record moves it to the newest commit an
-  approve on that task named that is the landed branch's tip or behind it, descends from the
+  approve on that task named, or its landing's line says its needed stamps stood on where it
+  needed no review, that is the landed branch's tip or behind it, descends from the
   candidate's tip, and holds beyond it nothing main held before the land (`git rev-list --count
   X ^TIP` equal to `git rev-list --count X ^TIP ^MERGE^1`). A land that went straight in gives its
   tip; one that conflicted, whose executor merged main and was approved again, gives the commit
-  approved before that merge. A task forked at the candidate passes the same tests, which is why
+  approved before that merge, and one that needed no review gives none, and drops it. A task forked at the candidate passes the same tests, which is why
   only a red's own land moves it, and a land of any other task, stray or not, moves nothing. A
   landing counts only once `origin/main`, as this checkout last fetched or pushed it, holds its
   merge: one landed in the main checkout and not pushed (its push failed) waits, said, until its
@@ -489,7 +567,7 @@ the next landing; after a drop, at once.
 
 Tasks land fast, so a release run also starts once a given number of them have landed, whatever
 the hour, and its green release refreshes the server and its projects
-(`crates/symphony/src/release/cadence.rs`):
+(`crates/symphony-build/src/release/cadence.rs`):
 
 - **The count** is `[releases] every_landings` in `symphony.toml`, 20 unless the project says. `0`
   turns the cadence off, and then only the scheduled run or `just release` releases.
@@ -554,8 +632,8 @@ consuming project among them.
 Once a release's tag is pushed, the run refreshes the machine to it: one step `refresh-ID` for each
 project in the machine's registry (`projects.json`) whose `symphony.toml` names plugins, this
 repository aside, and whose packages take one of the Symphony's from git
-(`crates/symphony/src/release/refresh.rs`, its projects found by
-`crates/symphony/src/release/consumers.rs`). A registered project whose checkout is gone, or is
+(`crates/symphony-build/src/release/refresh.rs`, its projects found by
+`crates/symphony-build/src/release/consumers.rs`). A registered project whose checkout is gone, or is
 not a git checkout, is left out, and the refresh says so (`left out: ID: …`).
 
 **What the run does with a consuming project.** It builds and tests nothing of a consuming
@@ -662,8 +740,13 @@ A step moves what it can and nothing more:
   Its own reload (`apps/symphony-server/src/reload.rs`) fingerprints the checkout it serves, its
   `Cargo.lock` and sources: once that changes it builds and installs a new server
   (`crates/symphony/src/reload.rs`, `cargo install --force --root` into its install folder) and
-  hands its sockets to it by exec, a build that fails leaving the previous one serving and saying
-  why on its notice. When this refresh moved that checkout's main and a server built from it
+  hands its sockets to it by exec. A build or a hand-over that fails leaves the previous one
+  serving and says on its notice why, and when it tries that version again: 5 minutes after its
+  first failure, the wait doubling with each failure of it in a row up to an hour, so a hand-over
+  that failed under load is tried again though the sources do not change again. A build that
+  installs the very bytes the serving one runs, with no client to
+  publish, hands over to nothing: the serving server stamps the install as that build's and keeps
+  serving. When this refresh moved that checkout's main and a server built from it
   answered before the move, the run waits, 20 minutes at most, until another process answers for
   it, and says which; or that none has yet, and that `just symphony-status` says which answers
   later. With none answering for it before, it waits for none: which build answers after cannot
@@ -696,8 +779,8 @@ A red step says what it found, the release stands (its tag is pushed), and the r
 before its main moved leaves that main as it was, with the branch made and its board moved only to
 the pin that main already locks; a migrate that fails leaves the snapshot taken before it. It is
 filed as `tests/release-red-refresh-ID` (`tests/release-red-refresh` when the registry cannot be
-read), saying what was left as it was and who fixes it, and filed as a fast fix as a check's red
-is. A refresh green for it closes the task.
+read), saying what was left as it was and who fixes it, and filed as a check's red is. A refresh
+green for it closes the task.
 
 What stays by hand, said in `--status` under a refresh with a step that is its project's to
 finish:
@@ -724,7 +807,9 @@ does either only on the owner's word. The cadence's run has that word (*The cade
 land starts `--due` without asking, and the release it runs is automatic. So has a green release's
 refresh (*The refresh*, above), so its retry, `just release --refresh`, is an orchestrator's act,
 run without asking on a red refresh's task once it is fixed, or once a project finished what its
-step left to it.
+step left to it. Turning `[releases] publish` on is the owner's word, the first publication's
+([the packages](#packages-on-cratesio)); once it is on, `just release --refresh` after a failed
+upload's cause is put right is an orchestrator's act as well.
 Running `--due` by hand starts a release, and stays the owner's call. The release candidate's two
 retries are an orchestrator's acts as well: `just release --rerun`, once every red of it is
 answered and no landing has started its rerun (a red answered outside this repository, say), and
@@ -746,12 +831,15 @@ and answer (`open (in_progress)`, `open (landed here, not pushed)`, `answered: i
 the candidate to …`, `answered: its task closed as covered by …`), and what its rerun waits for;
 ended, how and when, its red runs, and whether the run of main's tip its drop made due has reached
 its checks; `none held`, or `off` while a bound is 0. Then it
-prints the cadence, the landings since what it counts from and what the next run waits for, and
+prints the cadence, the landings since what it counts from and what the next run waits for, the
+last publication on crates.io with each line it said ([the packages](#packages-on-cratesio)), and
 the last refresh, with each line it said and each step red or its project's to finish:
 
 ```text
 landings: 7 on origin/main since release-2026-11-12 (91b39f209e72); the last tools/g (23e3da01bc80)
 next run: after 13 more landings (7 of 20), or the scheduled run
+last publish: of release-2026-11-12 by the run 2026-11-12T1000-34446, 2026-11-12 10:00 (1 h ago)
+  not published: [releases] publish is off
 last refresh: green, of release-2026-11-12 by the run 2026-11-12T1000-34446, 2026-11-12 10:00 (1 h ago)
   consumer: its pin to release-2026-11-12 is on the branch symphony/release-2026-11-12 (11bbf043d060), made through its own commit gate and not pushed
   consumer: its main is fast-forwarded to symphony/release-2026-11-12 (11bbf043d060) in its main checkout /work/consumer, through its own hooks and not pushed: its own next push carries it
@@ -792,34 +880,24 @@ Until it is installed, only the cadence runs `just verify` on main.
 
 ## The rename
 
-`just nightly`, the command `nightly` and `--release COMMIT` are the release run's old names ([the
-names](analysis/release-candidate.md#the-names)). What a build that knew only them left on disk is
-this build's to take over (`crates/symphony/src/release.rs`, `release/record.rs`,
-`release/place.rs`):
+The release run's old names are `nightly`, the recipe and the command, and the flag `--release
+COMMIT` ([the names](analysis/release-candidate.md#the-names)). The first run of a build that knew
+the new ones moved what a build that knew only the old left on disk: its records from
+`.git/symphony/nightly/` to `.git/symphony/release/`, and its checkout from
+`../symphony-wt/nightly` to `../symphony-wt/release`. Releases have been cut under the new name
+since, and what is left of the old is this (`crates/symphony-build/src/release.rs`, `release/record.rs`,
+`release/board.rs`):
 
-- **The old recipe.** `just nightly` runs nothing and says "`just nightly` is now `just release`",
-  exit 2, until the first release `just release` cuts; then it goes.
-- **The old command.** Neither `symphony` nor `symphony-build` has a `nightly`: this repository's
-  `on_land` names `symphony-build release --due` ([the trigger](#the-cadence)), and a due count
-  hands its run only to the tip's `symphony-build`. An older build's count, which handed its run to
-  the tip's `symphony`, would find no release run there; none runs, as no `on_land` names an older
-  build any more. `symphony-build release --release COMMIT` says "`--release COMMIT` is now
-  `--commit COMMIT`", exit 2, and runs nothing.
-- **The records.** Until a run moves them, `--status` and the cadence read the records where an
-  older build keeps them, `.git/symphony/nightly/`, and move nothing. A run takes that folder's
-  lock before it decides anything, so no older build's run, and no second run starting at the same
-  time, goes beside it, and renames the folder to `.git/symphony/release/` while it holds it: a
-  lock is the open file's, not its name's, so a run that opens it after, at either name, finds it
-  held, and one that opened it before and takes it once let go finds it in the new folder and
-  moves nothing. A folder that cannot be renamed is recorded in where it is, which the run says.
-- **The checkout.** An older build's checkout is `../symphony-wt/nightly`, locked with `the
-  Symphony nightly's checkout` and marked `symphony-nightly`. While a process works in it, or holds
-  a file there open, the run moves nothing and stops as the look before it resets its checkout
-  ([above](#the-release-run)) stops it; else it moves the checkout (unlocked, moved by `git
-  worktree move` with its `.target/`, locked with the new reason and marked again, its build's
-  stamp renamed). A checkout that build did not make, or one with something where it would go, is
-  left as it is, and said. The board's sweep keeps a checkout locked with either reason, and
-  clears its build after a week.
+- **The old recipe and command.** Neither the justfile nor `symphony` nor `symphony-build` has a
+  `nightly`, so each refuses it as any name it lacks: this repository's `on_land` names
+  `symphony-build release --due` ([the trigger](#the-cadence)). `symphony-build release --release
+  COMMIT` says "`--release COMMIT` is now `--commit COMMIT`", exit 2, and runs nothing.
+- **What an older build makes again.** Its records' folder and its checkout, locked with `the
+  Symphony nightly's checkout`, are neither read nor moved: the run records in its own folder and
+  checks in its own checkout, whatever the old ones hold or whoever works in them. The checkout
+  named as `--worktree` is refused as one the release run did not lock, and the board's sweep
+  keeps it as it keeps any worktree locked for a reason it does not know. None of it happens while
+  `on_land` names only the linked `symphony-build`, which `just release` keeps current.
 - **Records of an older build.** One of version 1 reads as this build's (version 2): its kind
   `nightly` as `release`, its `release` (an out-of-cycle release) as `out-of-cycle`, and each log
   under the old folder where the move put it. The Runs page's day files keep the label `nightly
@@ -829,10 +907,6 @@ this build's to take over (`crates/symphony/src/release.rs`, `release/record.rs`
   (`symphony_board::red::SERIES`) while a red of the old name is open: the run writes to, and
   closes, a key's open red of the old name before it looks at the new, so the next green closes it
   and nothing is filed beside it. The old prefix goes once none is open.
-
-An older build that runs a count after a newer one moved the folder finds no record there, and a
-due run of it makes the old folder and checkout again; `on_land` names only the linked
-`symphony-build`, which `just release` keeps current ([the trigger](#the-cadence)).
 
 ## Never
 
@@ -851,7 +925,7 @@ pushes a project's branch, makes a merge commit in a project, bypasses a project
 starts, signals, stops or restarts a board's database or a server; past its time it stops only
 the `surreal export` client it started. Its tests run on a repository of their own with a bare
 repository for its remote and a user git configuration that asks every push for more, a scratch
-board and a machine folder of their own, with stand-in checks (`crates/symphony/tests/release/`),
+board and a machine folder of their own, with stand-in checks (`crates/symphony-build/tests/release/`),
 and shorten the refresh's wait for the shared server with `SYMPHONY_RELEASE_RELOAD_SECONDS`,
 which no flag sets. They set its clock with `SYMPHONY_RELEASE_NOW`, which no flag sets either: a
 run on it is refused unless it pushes nothing (`--no-push`) or every place its remote pushes to

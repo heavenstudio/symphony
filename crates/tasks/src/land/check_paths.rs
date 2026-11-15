@@ -80,13 +80,23 @@ pub const DEFAULT: &[&str] = &[
     "/symphony.toml [verdicts]",
     "/symphony.toml [land]",
     "/symphony.toml [releases]",
-    "/crates/symphony/src/cli/commands/size_budget.rs",
+    "/crates/symphony-build/src/commands/size_budget.rs",
+    "/crates/symphony-build/src/commands/crates_check.rs",
+    "/crates/symphony-build/src/release/crates.rs",
     "/crates/symphony/src/docs_audit.rs",
     "/crates/symphony/src/docs_audit/",
+    "/crates/symphony-build/src/release.rs",
+    "/crates/symphony-build/src/release/checks.rs",
+    "/crates/symphony-build/src/release/steps.rs",
+    // Their paths before the move to a package of their own, which a branch made before it still
+    // names.
+    "/crates/symphony/src/cli/commands/size_budget.rs",
+    "/crates/symphony/src/cli/commands/crates_check.rs",
+    "/crates/symphony/src/release/crates.rs",
     "/crates/symphony/src/release.rs",
     "/crates/symphony/src/release/checks.rs",
     "/crates/symphony/src/release/steps.rs",
-    // Their paths before the rename to `just release`, which a branch made before it still names.
+    // And before the rename to `just release`.
     "/crates/symphony/src/nightly.rs",
     "/crates/symphony/src/nightly/checks.rs",
     "/crates/symphony/src/nightly/steps.rs",

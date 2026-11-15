@@ -26,6 +26,7 @@ mod finish;
 mod limits;
 mod list;
 mod panes;
+mod stamps;
 mod stats;
 mod wait;
 
@@ -86,7 +87,7 @@ impl Context<'_> {
 
     /// `git ARGS` in the working directory: its output, or "" if it fails.
     fn git(&self, args: &[&str]) -> String {
-        sys::output(sys::command("git").args(args).current_dir(&self.env.cwd))
+        sys::output(sys::git().args(args).current_dir(&self.env.cwd))
             .ok()
             .filter(|done| done.status.success())
             .map(|done| String::from_utf8_lossy(&done.stdout).trim().to_string())
@@ -218,13 +219,7 @@ pub fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
                 "CALLBACK {actor} {}",
                 address.as_deref().unwrap_or("none — inbox fallback")
             ));
-            c.say(&format!(
-                "CHAT {}",
-                store
-                    .chat_recipient()?
-                    .as_deref()
-                    .unwrap_or("nobody registered")
-            ));
+            c.say(&chat_line(store.chat_seat()?));
         }
         "register" => {
             // Checked before the session exists, so a refused address registers nothing.
@@ -294,9 +289,17 @@ pub fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
                     let _ = writeln!(c.err, "⚠ {warning}");
                 }
                 c.say(&format!("{}  p{}  {}", t.slug, t.priority, t.title));
+            } else {
+                c.say(
+                    "nothing to take: no concept, design or ready task is free of an executor, of \
+                     another's reservation and of an open dependency (`just tasks list` shows the \
+                     board)",
+                );
             }
         }
         "limits" => limits::run(store, c)?,
+        "stamps" => stamps::stamps(store, c)?,
+        "needs" => stamps::needs(store, c)?,
         "create" => create(store, c)?,
         "priority" => {
             // This command's input errors use exit 2, including a task the board does not hold;
@@ -351,7 +354,17 @@ pub fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
         }
         "claim" => {
             let t = store.claim(&c.arg("slug"), &c.actor()?)?;
-            c.say(&format!("claimed {}", t.slug));
+            // Only a top-level task's slug is the branch that lands: a slice works on its parent's
+            // branch, and an instruction subtask's slug is never one.
+            let lands = crate::on_review::delivery_task(t.parent.as_deref(), t.instruction);
+            c.say(&if lands {
+                format!(
+                    "claimed {0}: its work goes on the branch {0}, which the land takes",
+                    t.slug
+                )
+            } else {
+                format!("claimed {}", t.slug)
+            });
         }
         "reserve" => {
             let t = store.reserve(&c.arg("slug"), &c.actor()?, RESERVE_SECONDS)?;
@@ -364,7 +377,7 @@ pub fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
         }
         "role" => {
             let (slug, role) = (c.arg("slug"), c.arg("role"));
-            store.take_role(&slug, &c.actor()?, &role)?;
+            store.take_role_beside(&slug, &c.actor()?, &role, p.get("beside"))?;
             c.say(&format!("{role} on {slug}"));
         }
         "handover" => {
@@ -384,7 +397,15 @@ pub fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
         "verdict" => {
             let slug = c.arg("slug");
             let t = store.verdict(&slug, &c.actor()?, &c.arg("verdict"), &c.arg("text"))?;
-            c.say(&format!("{slug} is {}", t.status));
+            // Done is not landed: an approve says what lands it, a subtask's the task it is under.
+            c.say(&match (t.status.as_str(), t.parent.as_deref()) {
+                ("done", None) => crate::land::approved(c.env, &slug),
+                ("done", Some(parent)) => format!(
+                    "{slug} is approved: done on the board; its work lands when the task it is \
+                     under, {parent}, does"
+                ),
+                (status, _) => format!("{slug} is {status}"),
+            });
             finish::after_finish(store, c, &t);
         }
         "say" => {
@@ -526,6 +547,22 @@ fn snapshot(path: &Path) -> bool {
             .is_some_and(|rest| matches!(rest, [] | [b'\n'] | [b'\r']))
 }
 
+/// What `callback` says of the owner's chat: who hears it and, when that session holds no seat,
+/// that it hears it as a fallback, why, and what takes the seat.
+fn chat_line(seat: Option<(String, crate::ChatSeat)>) -> String {
+    use crate::ChatSeat::{Held, NextInLine, Orchestrator, Waiting};
+    let Some((handle, why)) = seat else {
+        return "CHAT nobody registered".into();
+    };
+    let fallback = match why {
+        Held => return format!("CHAT {handle}"),
+        NextInLine => "next in line by --chat --if-free",
+        Orchestrator => "an orchestrator with a callback",
+        Waiting => "an orchestrator reading by tasks wait",
+    };
+    format!("CHAT {handle} (fallback: {fallback}; --chat takes the seat)")
+}
+
 /// Whom `say --to` addresses: `owner` and a role after `@` in any case, as the board spells them;
 /// a session's handle as it is written.
 fn recipient(to: &str) -> String {
@@ -617,13 +654,18 @@ fn create(store: &Store, c: &mut Context) -> Result<(), Stop> {
         instruction: p.flag("instruction"),
         // Reds are marked by what files them (`tasks api` `create`); work under one is red work.
         red: None,
-        fast_fix: p.get("fast_fix").map(str::to_string),
+        // No task is filed as a fast fix any more: what it needs to land is its assessor's.
+        fast_fix: None,
     };
-    let t = store.create(&new)?;
+    let t = match p.get("arm") {
+        Some(arm) => store.create_in_arm(&new, arm)?,
+        None => store.create(&new)?,
+    };
     // Every open task has an orchestrator: the filer when it is one, else the board gives it. One
-    // line says who, or that it waits for one that stays.
+    // line says who, or that it waits for one that stays, where any orchestrator is on the board.
     let role = match store.give_filed(&t.slug, &new.by, for_orchestrator.as_deref()) {
         Ok(Some(to)) => format!("; {to} orchestrates it"),
+        Ok(None) if !any_orchestrator(store)? => String::new(),
         Ok(None) => "; it waits for an orchestrator that stays".to_string(),
         Err(error) => format!(
             "; no orchestrator was given it yet ({error}): the board gives it at its next read"
@@ -631,6 +673,13 @@ fn create(store: &Store, c: &mut Context) -> Result<(), Stop> {
     };
     c.say(&format!("created {} ({}){role}", t.slug, t.status));
     Ok(())
+}
+
+/// Whether a session of kind orchestrator that has not left is on the board. With none, as on a new
+/// project's board, a task waiting for one is not said to wait: nothing there would give it one.
+fn any_orchestrator(store: &Store) -> Result<bool, Stop> {
+    let sessions = store.sessions()?;
+    Ok((sessions.iter()).any(|s| s.row.kind == "orchestrator" && s.health != crate::Health::Left))
 }
 
 /// `handle`, when it names a live orchestrator's session: what `--no-role --for` files a task for.
@@ -731,7 +780,11 @@ fn show(store: &Store, c: &mut Context) -> Result<(), Stop> {
         ));
     }
     let held = (task.roles.iter()).any(|r| r.role == "orchestrator" && r.health.holds());
-    if let Some(at) = crate::orchestration::waiting(&task.fields).filter(|_| !held) {
+    let waiting = match crate::orchestration::waiting(&task.fields) {
+        Some(at) if !held && any_orchestrator(store)? => Some(at),
+        _ => None,
+    };
+    if let Some(at) = waiting {
         let minutes = ((store.now() - at) / 60.0).max(0.0).floor();
         c.say(&format!(
             "  waits for an orchestrator that stays, for {minutes} min: the first live past its \
@@ -747,6 +800,9 @@ fn show(store: &Store, c: &mut Context) -> Result<(), Stop> {
         if !items.is_empty() {
             c.say(&format!("  {label}: {}", items.join(", ")));
         }
+    }
+    if let Some(arm) = task.arm() {
+        c.say(&format!("  arm: {arm}"));
     }
     c.say(&format!("  {}", stages::summary_line(&stages)));
     if !children.is_empty() {
@@ -875,9 +931,27 @@ fn who(store: &Store, c: &mut Context) -> Result<(), Stop> {
 
 #[cfg(test)]
 mod tests {
-    use super::{imported_worktree, recipient};
+    use super::{chat_line, imported_worktree, recipient};
+    use crate::ChatSeat;
     use crate::sweep::git::Listed;
     use std::path::PathBuf;
+
+    #[test]
+    fn the_chat_line_says_when_its_recipient_hears_chat_only_as_a_fallback() {
+        let seat = |why| Some(("amber-heron".to_string(), why));
+        assert_eq!(chat_line(seat(ChatSeat::Held)), "CHAT amber-heron");
+        for (why, fallback) in [
+            (ChatSeat::NextInLine, "next in line by --chat --if-free"),
+            (ChatSeat::Orchestrator, "an orchestrator with a callback"),
+            (ChatSeat::Waiting, "an orchestrator reading by tasks wait"),
+        ] {
+            assert_eq!(
+                chat_line(seat(why)),
+                format!("CHAT amber-heron (fallback: {fallback}; --chat takes the seat)")
+            );
+        }
+        assert_eq!(chat_line(None), "CHAT nobody registered");
+    }
 
     #[test]
     fn the_owner_and_a_role_are_addressed_in_any_case_and_a_handle_as_written() {

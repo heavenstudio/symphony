@@ -12,7 +12,7 @@ use crate::gate::Gate;
 use crate::testing::{
     Tree,
     board::{Fixture, HOST, NOW, Seed},
-    repository,
+    repository, shelf,
 };
 use axum::http::{Request, StatusCode};
 use std::net::{Shutdown, TcpListener, TcpStream};
@@ -414,6 +414,89 @@ fn a_low_disk_is_said_on_every_page_beside_the_boards_health_until_it_is_freed()
         DISPATCH_FAILING,
         "the disk freed: its part clears alone"
     );
+}
+
+/// A project whose settings do not load is served with the defaults, and every page says so and
+/// why until they load; each change asks the loop to read the documents again.
+#[test]
+fn a_project_whose_settings_do_not_load_says_so_on_every_page_until_they_do() {
+    use std::sync::atomic::Ordering::SeqCst;
+    let tree = Tree::new();
+    let root = repository(&tree);
+    let hub = hub(&root, &tree.path("health.json"), &Clock::at(now()));
+    let mut notices = hub.server_notice.subscribe();
+    hub.tell_project();
+    assert!(!notices.has_changed().unwrap(), "it loads: nothing said");
+    assert!(!hub.rescan.load(SeqCst));
+
+    let file = root.join(symphony::project::FILE);
+    let entrypoint = |types: &str| {
+        format!("[[entrypoints]]\nurl = \"/docs/\"\nfolder = \"docs\"\ntypes = [{types}]\n")
+    };
+    std::fs::write(&file, entrypoint("\"none\"")).unwrap();
+    hub.tell_project();
+    let said = notices.borrow_and_update().clone();
+    let why = symphony::project::Project::load(&root).unwrap_err();
+    assert!(
+        why.contains("type \"none\": no renderer handles it"),
+        "{why}"
+    );
+    assert_eq!(said, super::health::project(&why));
+    assert!(
+        said.starts_with(
+            "This project's settings do not load, so it is served with the defaults: symphony.toml: "
+        ),
+        "{said}"
+    );
+    assert!(hub.rescan.swap(false, SeqCst), "a change asks for a read");
+    hub.tell_project();
+    assert!(
+        !notices.has_changed().unwrap(),
+        "still not loading: the pages are not told again"
+    );
+    assert!(!hub.rescan.load(SeqCst));
+
+    std::fs::write(&file, entrypoint("\"markdown\", \"media\"")).unwrap();
+    hub.tell_project();
+    assert_eq!(
+        *notices.borrow_and_update(),
+        "",
+        "it loads: its part clears"
+    );
+    assert!(hub.rescan.swap(false, SeqCst));
+}
+
+/// A project that loads again, its settings mended or its plugin's process declared at last, has
+/// its plugins' watches warmed by the read its notice's change asks for, as at its first read, not
+/// once a file they watch next changes: the defaults' read, with no plugin, warmed none of theirs.
+#[test]
+fn a_project_that_loads_again_has_its_plugins_watches_warmed_at_the_next_read() {
+    use std::sync::atomic::Ordering::SeqCst;
+    shelf::install().unwrap();
+    let tree = Tree::new();
+    let root = repository(&tree);
+    let file = root.join(symphony::project::FILE);
+    let manifest = |types: &str| {
+        format!(
+            "{}\n[[entrypoints]]\nurl = \"/docs/\"\nfolder = \"docs\"\ntypes = [{types}]\n",
+            shelf::MANIFEST
+        )
+    };
+    std::fs::write(&file, manifest("\"none\"")).unwrap();
+    tree.write(&format!("main/{}/FIRST.item", shelf::ITEMS), "first");
+    let hub = hub(&root, &tree.path("health.json"), &Clock::at(now()));
+    // Read with the defaults, which hold no plugin: nothing of the shelf's is watched or warmed.
+    hub.refresh_page("", &root).unwrap();
+    hub.tell_project();
+    assert!(hub.rescan.swap(false, SeqCst));
+
+    std::fs::write(&file, manifest("\"markdown\", \"media\"")).unwrap();
+    hub.tell_project();
+    assert!(hub.rescan.swap(false, SeqCst), "it loads: a read is asked");
+    hub.refresh_page("", &root).unwrap();
+    // Warmed as the shelf stood at that read: an item put there since, unnotified, is not in it.
+    tree.write(&format!("main/{}/SECOND.item", shelf::ITEMS), "second");
+    assert_eq!(shelf::warm(&root), 1, "the read warmed the shelf");
 }
 
 #[test]
@@ -823,5 +906,41 @@ fn only_the_shared_servers_hub_keeps_its_hours_and_in_the_common_dir() {
         );
         assert_eq!(folder.exists(), shared);
         hub.stop();
+    }
+}
+
+/// The shared server's hub stops by appending the hour so far, unless its project was removed under
+/// it: that line would make the removed checkout's folders anew, so it writes none.
+#[test]
+fn a_hub_whose_project_was_removed_appends_no_hour_as_it_stops() {
+    for removed in [false, true] {
+        let tree = Tree::new();
+        let root = repository(&tree);
+        // Its records in the project's common dir, as the shared server keeps them.
+        let common = symphony_board::git::common_dir(&root).unwrap();
+        let folder = common.join(hours::FOLDER);
+        let clock = Clock::at(HOUR_START);
+        let hub = hub(&root, &common.join("symphony/tasks/health.json"), &clock);
+        hub.health.keep_hours(folder.clone(), |now| now, |_| {});
+        hub.gate_recorders(Arc::default());
+        // Two ticks half a minute apart, and the stop half a second after the second.
+        hub.health.dispatched(HOUR_START, Ok(()));
+        clock.pass(30.0);
+        hub.health.dispatched(clock.now(), Ok(()));
+        clock.pass(0.5);
+        if removed {
+            std::fs::remove_dir_all(&root).unwrap();
+        }
+        hub.stop();
+        if removed {
+            assert!(!root.exists(), "its stop made its folder anew");
+        } else {
+            let lines = hours::read(&folder, &run_day(HOUR_START));
+            assert_eq!(lines.len(), 1, "the hour so far: {lines:?}");
+            assert_eq!(
+                (lines[0].to, lines[0].partial, lines[0].dispatch.ok),
+                (HOUR_START + 30.5, true, 2)
+            );
+        }
     }
 }

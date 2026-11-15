@@ -1,11 +1,13 @@
-use super::{Setup, source_event, watch_with};
-use crate::front::Shared;
+use super::{Retry, RunningImage, Setup, source_event, stamp_install, watch_with};
+use crate::front::{Shared, told};
 use crate::gate::Gate;
 use crate::testing::{Tree, git, repository};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
-use std::path::Path;
-use std::sync::Arc;
+use std::os::unix::fs::MetadataExt;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::Ordering;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 #[test]
@@ -88,12 +90,19 @@ fn a_source_edit_whose_event_is_lost_still_starts_a_build_within_a_period() {
         lease: Some(std::fs::File::create(home.join("server.lock")).unwrap()),
         control: None,
         fingerprint: Some(symphony::reload::fingerprint(&root).unwrap()),
+        running: None,
     };
     let period = Duration::from_millis(500);
     // A watcher that never delivers: past the startup read, only the period sees an edit.
-    let worker =
-        watch_with::<notify::NullWatcher>(serve, setup, shared.clone(), Vec::new(), period)
-            .unwrap();
+    let worker = watch_with::<notify::NullWatcher>(
+        serve,
+        setup,
+        shared.clone(),
+        Vec::new(),
+        period,
+        Retry::new(),
+    )
+    .unwrap();
     // The first edit may land before or after the startup read; the second lands after the
     // first attempt has ended, so the worker is waiting again.
     for edit in ["first", "second"] {
@@ -487,6 +496,7 @@ fn a_replacement_is_ready_once_committed_or_once_its_parent_has_gone() {
                 lease: None,
                 control: Some(control),
                 fingerprint: None,
+                running: None,
             }
             .ready()
         })
@@ -611,4 +621,501 @@ fn standalone_source_watch_includes_client_assets_and_its_own_build_scripts() {
             "{path}"
         );
     }
+}
+
+/// How often the reload workers of the cases below read the sources with no event.
+const PERIOD: Duration = Duration::from_millis(500);
+
+/// A wait that only a stall reaches, for a build and its outcome.
+fn stall() -> Duration {
+    test_time::backstop(PERIOD + Duration::from_secs(30))
+}
+
+/// A main checkout whose project builds its server with a fixture script (its Cargo,
+/// `tools/rs-bin.sh`, run from the root with the install's arguments), and the state of a server
+/// serving it from the install folder `home`. Its installed image is the plain file
+/// `home/bin/symphony-server`, which this test process stands in for as the image it runs.
+struct Reloading {
+    tree: Tree,
+    root: PathBuf,
+    home: PathBuf,
+    shared: Arc<Shared>,
+    hub: Arc<crate::live::Hub>,
+}
+
+impl Reloading {
+    /// `build(folder, home)` is the build's body: `folder` holds the case's records and stand-ins,
+    /// `home` is the install folder.
+    fn new(build: impl FnOnce(&Path, &Path) -> String) -> Self {
+        let mut tree = Tree::new();
+        tree.root = tree.root.canonicalize().unwrap();
+        let root = repository(&tree);
+        tree.write(
+            "main/symphony/apps/symphony-server/Cargo.toml",
+            "[package]\nname = \"symphony-server\"\n",
+        );
+        tree.write(
+            "main/symphony/apps/symphony-server/src/main.rs",
+            "fn main() {}\n",
+        );
+        tree.write("main/apps/symphony-host/Cargo.toml", "[package]\nname = 'symphony-host'\n[dependencies]\nsymphony-server = { path = '../../symphony/apps/symphony-server' }\n");
+        tree.write(
+            "main/apps/symphony-host/src/bin/symphony-server.rs",
+            "fn main() {}\n",
+        );
+        tree.write(
+            "main/symphony.toml",
+            "[project]\ncargo = [\"tools/rs-bin.sh\"]\n",
+        );
+        let (folder, home) = (tree.path("case"), tree.path("home"));
+        std::fs::create_dir_all(&folder).unwrap();
+        std::fs::create_dir_all(root.join("tools")).unwrap();
+        let script = root.join("tools/rs-bin.sh");
+        let body = format!("#!/bin/sh\n{}", build(&folder, &home));
+        crate::fixture_script::write(&script, &body, false);
+        crate::testing::assert_primed(&script);
+        git(&root, &["add", "."]);
+        git(&root, &["commit", "-qm", "Reload sources"]);
+        tree.write("home/bin/symphony-server", RUNNING);
+        let shared = Shared::new(
+            i64::from(std::process::id()),
+            1,
+            &root,
+            Some(&home),
+            Gate::new(Arc::new(|_| Ok(None)), Arc::new(Instant::now)),
+        );
+        let hub = Arc::new(crate::live::Hub::new(&root, &home.join("client/public")));
+        assert!(shared.api.set(hub.clone()).is_ok());
+        Self {
+            tree,
+            root,
+            home,
+            shared,
+            hub,
+        }
+    }
+
+    /// The case's records and stand-ins.
+    fn folder(&self) -> PathBuf {
+        self.tree.path("case")
+    }
+
+    fn image(&self) -> PathBuf {
+        self.home.join("bin/symphony-server")
+    }
+
+    /// The setup of a start from the installed image, the image it runs: unstamped, as an install
+    /// by a recipe leaves it, or `stamped` as built from the sources as they are.
+    fn setup(&self, stamped: bool) -> Setup {
+        let fingerprint = stamped.then(|| {
+            let fingerprint = symphony::reload::fingerprint(&self.root).unwrap();
+            stamp_install(&self.home, &fingerprint).unwrap();
+            fingerprint
+        });
+        Setup {
+            listeners: Vec::new(),
+            lease: Some(std::fs::File::create(self.home.join("server.lock")).unwrap()),
+            control: None,
+            fingerprint,
+            running: RunningImage::at(&self.image()),
+        }
+    }
+
+    /// The reload worker of a server set up by `setup`, watching by `W`.
+    fn watch<W: notify::Watcher + Send + 'static>(
+        &self,
+        setup: Setup,
+    ) -> std::thread::JoinHandle<()> {
+        self.retrying::<W>(setup, Retry::new())
+    }
+
+    /// [`Self::watch`], trying a failed version again as `retry` says.
+    fn retrying<W: notify::Watcher + Send + 'static>(
+        &self,
+        setup: Setup,
+        retry: Retry,
+    ) -> std::thread::JoinHandle<()> {
+        let serve = crate::cli::Serve {
+            home: Some(self.home.clone()),
+            root: self.root.clone(),
+            port: 1,
+            hosts: Vec::new(),
+            install: None,
+        };
+        watch_with::<W>(serve, setup, self.shared.clone(), Vec::new(), PERIOD, retry).unwrap()
+    }
+
+    /// Each build's arguments, in the order they ran.
+    fn builds(&self) -> Vec<String> {
+        std::fs::read_to_string(self.folder().join("builds"))
+            .map(|text| text.lines().map(String::from).collect())
+            .unwrap_or_default()
+    }
+
+    /// The install's stamp, once it is written.
+    fn stamp(&self) -> Option<serde_json::Value> {
+        serde_json::from_slice(&std::fs::read(self.home.join("installed.json")).ok()?).ok()
+    }
+
+    /// The server's notice: what it says of a failed update.
+    fn notice(&self) -> String {
+        self.hub.server_notice.borrow().clone()
+    }
+
+    /// The worker stopped and joined.
+    fn stop(&self, worker: std::thread::JoinHandle<()>) {
+        self.shared.stop();
+        worker.join().unwrap();
+    }
+}
+
+/// The bytes of the image the case's server runs.
+const RUNNING: &str = "the image this generation runs";
+
+fn sha256(text: &str) -> String {
+    Sha256::digest(text)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+/// A build's body that records its arguments and installs the image again as `cargo install
+/// --force` installs a build that changed nothing: the same bytes in a new file, of the same size
+/// and modification time.
+fn reinstalls(folder: &Path, home: &Path) -> String {
+    format!(
+        "printf '%s\\n' \"$*\" >> '{builds}'\ncp -p '{image}' '{next}' && mv '{next}' '{image}'\n",
+        builds = folder.join("builds").display(),
+        image = home.join("bin/symphony-server").display(),
+        next = home.join("bin/next").display(),
+    )
+}
+
+/// An unstamped start, as a recipe's own `cargo install` leaves one, whose reload build installs
+/// the same bytes again: the install is stamped as that build's, an earlier failed update's notice
+/// goes, and this generation keeps serving, handing over to nothing.
+#[test]
+fn a_build_that_leaves_the_running_image_installed_stamps_it_and_hands_over_to_nothing() {
+    let server = Reloading::new(reinstalls);
+    let started = std::fs::metadata(server.image()).unwrap();
+    let stale =
+        "Symphony server update failed; the previous server is still serving. a build before";
+    server.hub.tell_update(stale.into());
+    let worker = server.watch::<notify::NullWatcher>(server.setup(false));
+    let notice = test_time::until("the build's outcome on the notice", stall(), || {
+        Some(server.notice()).filter(|notice| notice != stale)
+    })
+    .unwrap();
+    // A replacement started from it would have failed: the image is no program.
+    assert_eq!(notice, "", "the build was kept and the old failure cleared");
+    let installed = std::fs::metadata(server.image()).unwrap();
+    assert_ne!(
+        installed.ino(),
+        started.ino(),
+        "the same bytes as a new file"
+    );
+    let stamp = server.stamp().expect("the install is stamped");
+    assert_eq!(
+        stamp["source"],
+        symphony::reload::fingerprint(&server.root).unwrap()
+    );
+    assert_eq!(stamp["binary"], sha256(RUNNING));
+    // The file the build installed, so the next start takes the stamp's hash unread.
+    assert_eq!(stamp["image"]["inode"], installed.ino());
+    assert!(!server.shared.stopping(), "still serving");
+    assert!(!server.shared.replaced.load(Ordering::SeqCst));
+    let builds = server.builds();
+    assert_eq!(builds.len(), 1, "{builds:?}");
+    assert!(
+        builds[0].ends_with(&format!("--root {}", server.home.display())),
+        "{builds:?}"
+    );
+    server.stop(worker);
+}
+
+/// A build that installs other bytes hands over to them as before: a replacement started from the
+/// install says it is ready on the hand-off's pipe and is committed, the install is stamped as the
+/// build's, and this generation drains.
+#[test]
+fn a_build_that_installs_another_image_hands_over_to_it() {
+    let server = Reloading::new(|folder, home| {
+        // The other image: a replacement that says it is ready and records the commit it reads,
+        // with its arguments.
+        let replacement = folder.join("replacement");
+        crate::fixture_script::write(
+            &replacement,
+            &format!(
+                r#"#!/bin/sh
+ready=$(printf '%s' "$SYMPHONY_HANDOVER" | sed 's/.*"ready":\([0-9]*\).*/\1/')
+commit=$(printf '%s' "$SYMPHONY_HANDOVER" | sed 's/.*"commit":\([0-9]*\).*/\1/')
+printf R >&"$ready"
+said=$(dd bs=1 count=1 2>/dev/null <&"$commit")
+printf '%s %s\n' "$said" "$*" > '{next}' && mv '{next}' '{replaced}'
+"#,
+                next = folder.join("replaced.next").display(),
+                replaced = folder.join("replaced").display(),
+            ),
+            false,
+        );
+        crate::testing::assert_primed(&replacement);
+        format!(
+            "printf '%s\\n' \"$*\" >> '{builds}'\nln -s '{replacement}' '{next}' && mv '{next}' '{image}'\n",
+            builds = folder.join("builds").display(),
+            replacement = replacement.display(),
+            next = home.join("bin/next").display(),
+            image = home.join("bin/symphony-server").display(),
+        )
+    });
+    let worker = server.watch::<notify::NullWatcher>(server.setup(false));
+    let replaced = server.folder().join("replaced");
+    test_time::until("the hand-off to the other image", stall(), || {
+        let notice = server.notice();
+        if !notice.is_empty() {
+            return Some(Err(notice));
+        }
+        (server.shared.stopping() && replaced.is_file()).then_some(Ok(()))
+    })
+    .unwrap()
+    .unwrap();
+    worker.join().unwrap();
+    assert!(server.shared.replaced.load(Ordering::SeqCst));
+    assert_eq!(
+        std::fs::read_to_string(&replaced).unwrap(),
+        format!(
+            "C serve --home {home} --root {root} --port 1 --install {home}\n",
+            home = server.home.display(),
+            root = server.root.display()
+        )
+    );
+    let stamp = server.stamp().expect("the install is stamped");
+    assert_eq!(
+        stamp["source"],
+        symphony::reload::fingerprint(&server.root).unwrap()
+    );
+    assert_ne!(stamp["binary"], sha256(RUNNING));
+    assert_eq!(server.builds().len(), 1);
+}
+
+/// A build's body that records its arguments and installs another image: a stand-in replacement
+/// that records its start and ends before it says it is ready, so every hand-over to it fails.
+fn installs_a_replacement_that_ends(folder: &Path, home: &Path) -> String {
+    let replacement = folder.join("replacement");
+    crate::fixture_script::write(
+        &replacement,
+        &format!(
+            "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{started}'\n",
+            started = folder.join("started").display()
+        ),
+        false,
+    );
+    crate::testing::assert_primed(&replacement);
+    format!(
+        "printf '%s\\n' \"$*\" >> '{builds}'\nln -s '{replacement}' '{next}' && mv '{next}' '{image}'\n",
+        builds = folder.join("builds").display(),
+        replacement = replacement.display(),
+        next = home.join("bin/next").display(),
+        image = home.join("bin/symphony-server").display(),
+    )
+}
+
+/// A version whose hand-over failed is built and handed over again once the wait after its failure
+/// is over on the reload's clock, a test's here, and not before; its second failure waits longer.
+/// The notice says each time when it is tried again. A source change is built at once, whatever
+/// that wait.
+#[test]
+fn a_version_whose_hand_over_failed_is_tried_again_after_a_wait_that_grows() {
+    use std::sync::atomic::AtomicUsize;
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let server = Reloading::new(installs_a_replacement_that_ends);
+    // A whole minute of wall time, so the notice names the minute each wait ends.
+    let start = (
+        Instant::now(),
+        UNIX_EPOCH + Duration::from_secs(1_800_000_000),
+    );
+    let now = Arc::new(Mutex::new(start));
+    let reads = Arc::new(AtomicUsize::new(0));
+    let clock = {
+        let (now, reads) = (now.clone(), reads.clone());
+        move || {
+            reads.fetch_add(1, Ordering::SeqCst);
+            *now.lock().unwrap()
+        }
+    };
+    let minute = Duration::from_secs(60);
+    // The reload's clock set to `by` past the start, and two of its reads after that: the check
+    // that read it first has ended, whatever it did.
+    let at = |by: Duration| {
+        *now.lock().unwrap() = (start.0 + by, start.1 + by);
+        let read = reads.load(Ordering::SeqCst);
+        test_time::until_true("two checks at the time set", stall(), || {
+            reads.load(Ordering::SeqCst) >= read + 2
+        })
+        .unwrap();
+    };
+    let started = || {
+        std::fs::read_to_string(server.folder().join("started"))
+            .map(|text| text.lines().count())
+            .unwrap_or_default()
+    };
+    let notice = |again: Duration| {
+        let seconds = (start.1 + again)
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        format!(
+            "Symphony server update failed; the previous server is still serving. replacement did \
+             not become ready: it ended. It tries this version again at about {}.",
+            symphony::clock::stamp_at(libc::time_t::try_from(seconds).unwrap())
+        )
+    };
+    // The `tries`th build and hand-over have failed, and the notice says the next is due `again`
+    // past the start.
+    let failed = |tries: usize, again: Duration| {
+        let said = notice(again);
+        test_time::until(format!("failure {tries} on the notice"), stall(), || {
+            (server.notice() == said).then(|| (server.builds().len(), started()))
+        })
+        .unwrap()
+    };
+    let worker =
+        server.retrying::<notify::NullWatcher>(server.setup(false), Retry::timed_by(clock));
+    // The start's first read builds the sources, an unstamped install's, and hands over: that fails.
+    assert_eq!(failed(1, 5 * minute), (1, 1));
+    at(5 * minute - Duration::from_secs(1));
+    assert_eq!(
+        (server.builds().len(), started()),
+        (1, 1),
+        "not before 5 min"
+    );
+    at(5 * minute);
+    assert_eq!(failed(2, 15 * minute), (2, 2), "tried again at 5 min");
+    // Nine minutes after the second failure, where a wait as long as the first's would be over.
+    at(14 * minute);
+    assert_eq!(
+        (server.builds().len(), started()),
+        (2, 2),
+        "10 min this time"
+    );
+    let before = symphony::reload::fingerprint(&server.root).unwrap();
+    server.tree.write(
+        "main/symphony/apps/symphony-server/src/main.rs",
+        "fn main() { /* changed */ }\n",
+    );
+    assert_ne!(symphony::reload::fingerprint(&server.root).unwrap(), before);
+    // The clock stands where the failed version's wait is not over, and the new version's first
+    // failure waits the first wait again.
+    assert_eq!(failed(3, 19 * minute), (3, 3), "a source change at once");
+    server.stop(worker);
+    let builds = server.builds();
+    assert!(builds.iter().all(|build| build == &builds[0]), "{builds:?}");
+}
+
+/// A watcher that delivers nothing and keeps each folder it is asked to watch (`true`) or no
+/// longer to watch (`false`). The reload worker lets go of a folder that went only at a period's
+/// check, which comes after its first read of the sources and any build that read started: a test
+/// sees that read done by the folder it removed being let go.
+struct Seeing;
+
+static SEEN: Mutex<Vec<(bool, PathBuf)>> = Mutex::new(Vec::new());
+
+fn seen(watched: bool, path: &Path) -> bool {
+    SEEN.lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .iter()
+        .any(|seen| *seen == (watched, path.to_path_buf()))
+}
+
+fn see(watched: bool, path: &Path) -> notify::Result<()> {
+    SEEN.lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .push((watched, path.into()));
+    Ok(())
+}
+
+impl notify::Watcher for Seeing {
+    fn new<F: notify::EventHandler>(_: F, _: notify::Config) -> notify::Result<Self> {
+        Ok(Self)
+    }
+
+    fn watch(&mut self, path: &Path, _: notify::RecursiveMode) -> notify::Result<()> {
+        see(true, path)
+    }
+
+    fn unwatch(&mut self, path: &Path) -> notify::Result<()> {
+        see(false, path)
+    }
+
+    fn kind() -> notify::WatcherKind {
+        notify::WatcherKind::NullWatcher
+    }
+}
+
+/// A start from a stamped install builds nothing until the sources change: past its first read
+/// and a period's check, no build has run. Once a source changes its one build runs, and as it
+/// leaves the image installed it is kept, stamped as the changed sources'.
+#[test]
+fn a_stamped_start_builds_nothing_until_the_sources_change() {
+    let server = Reloading::new(reinstalls);
+    // A watched folder of no crate, so neither it nor its going changes the sources' fingerprint.
+    let marker = server.root.join("crates");
+    std::fs::create_dir(&marker).unwrap();
+    let worker = server.watch::<Seeing>(server.setup(true));
+    // Watched in the start's first look at the sources, before its first read: once it is,
+    // removing it is seen only at a later check.
+    test_time::until_true("the start's first look at the sources", stall(), || {
+        seen(true, &marker)
+    })
+    .unwrap();
+    std::fs::remove_dir(&marker).unwrap();
+    test_time::until_true("a period's check after the first read", stall(), || {
+        seen(false, &marker)
+    })
+    .unwrap();
+    assert_eq!(server.builds(), Vec::<String>::new());
+
+    server.tree.write(
+        "main/symphony/apps/symphony-server/src/main.rs",
+        "fn main() { /* changed */ }\n",
+    );
+    let changed = symphony::reload::fingerprint(&server.root).unwrap();
+    let stamp = test_time::until("the changed sources' build", stall(), || {
+        let notice = server.notice();
+        if !notice.is_empty() {
+            return Some(Err(notice));
+        }
+        server
+            .stamp()
+            .filter(|stamp| stamp["source"] == changed)
+            .map(Ok)
+    })
+    .unwrap()
+    .unwrap();
+    assert_eq!(stamp["binary"], sha256(RUNNING));
+    assert_eq!(server.builds().len(), 1, "{:?}", server.builds());
+    assert!(!server.shared.replaced.load(Ordering::SeqCst));
+    server.stop(worker);
+}
+
+/// A kept build says so in one line; a build that installed other bytes is not kept and says
+/// nothing here, and neither is a build of a generation that runs no installed image.
+#[test]
+fn a_kept_build_says_so_in_one_line() {
+    let server = Reloading::new(|_, _| String::new());
+    let mut running = RunningImage::at(&server.image()).unwrap();
+    running.hash(&server.home);
+    let kept = || super::kept(Some(&running), &server.home, "source", &server.shared);
+    let (was, told) = told::during(kept);
+    assert!(was);
+    assert_eq!(
+        told,
+        ["· Symphony reload: the build left the running image as it was; stamped"]
+    );
+    assert_eq!(server.stamp().unwrap()["source"], "source");
+    std::fs::write(server.image(), "another image").unwrap();
+    let (was, told) = told::during(kept);
+    assert!(!was);
+    assert!(told.is_empty(), "{told:?}");
+    let (was, told) = told::during(|| super::kept(None, &server.home, "source", &server.shared));
+    assert!(!was);
+    assert!(told.is_empty(), "{told:?}");
 }

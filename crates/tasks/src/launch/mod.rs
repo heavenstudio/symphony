@@ -15,8 +15,10 @@
 //! that cannot be confirmed fails, naming the terminal, which is killed and removed. The launch is
 //! recorded on the task: handle, role, conversation id, worktree, branch, terminal, model, start
 //! time. [`restore`] reopens the recorded conversation in its worktree, in a new terminal, the same
-//! way. [`cleanup`] closes unneeded terminals (killed, then removed), each closure recorded on its
-//! task with the restore line; [`finish`] is the same for one task that just became done or
+//! way, and so does a reviewer launch for the task's recorded reviewer, refused while it still runs
+//! (a new reviewer starts only where none can be resumed). [`cleanup`] closes unneeded terminals
+//! (killed, then removed), each closure recorded on its task with the restore line; [`finish`] is
+//! the same for one task that just became done or
 //! cancelled (its worktree is the worktree sweep's, `tasks sweep --task`). [`reap`] is the periodic
 //! sweep of idle agents (`just tasks clean` runs one). [`close`] closes one agent's terminal on its
 //! orchestrator's word, whatever it holds, recorded the same way, under the rules its module gives.
@@ -116,8 +118,8 @@ pub type Processes = dyn Fn(i64) -> Result<Vec<String>, LaunchError>;
 /// worktrees beside it, the session ids, the waits, the process table and the board a launched
 /// agent is to reach.
 pub struct Machine {
-    /// The main checkout, whichever worktree the command runs in. Its folder's name is the Herdr
-    /// app space's.
+    /// The main checkout, whichever worktree the command runs in ([`root_of`]). Its folder's name
+    /// is the Herdr app space's.
     pub root: PathBuf,
     /// Where new worktrees go: `SYMPHONY_WT_DIR`, else `<repo>-wt/` beside the main checkout.
     pub wt_base: PathBuf,
@@ -163,10 +165,20 @@ impl Machine {
     }
 }
 
-/// The main checkout of the repository `env`'s working directory is in, whichever worktree that is;
-/// the working directory itself outside a repository.
+/// The main checkout of the repository `env`'s working directory is in, whichever worktree that is:
+/// the folder holding the common dir when that is a `.git` folder. A repository with none (a
+/// submodule, a `--separate-git-dir` checkout, a bare repository's worktree), whose common dir's
+/// folder is no checkout of it, has the checkout the command runs in, from which git reaches the
+/// same repository; the working directory itself outside a repository. The launcher's git commands
+/// run there, so a worktree it makes is of this repository, never the common dir's neighbour's.
 pub fn root_of(env: &Env) -> PathBuf {
-    probes::repo_root(&env.cwd).unwrap_or_else(|| env.cwd.clone())
+    let Ok(common) = crate::git::common_dir(&env.cwd) else {
+        return env.cwd.clone();
+    };
+    match crate::sweep::trigger::main_checkout(&common) {
+        Some(main) => main.to_path_buf(),
+        None => crate::git::checkout(&env.cwd).map_or_else(|| env.cwd.clone(), |(top, _)| top),
+    }
 }
 
 /// The caller's `TASKS_DATABASE` and `TASKS_SERVER`, those it has: what a launched agent needs to
@@ -208,6 +220,8 @@ pub struct Ask {
     pub worktree: Option<PathBuf>,
     pub prompt: String,
     pub tab: Option<String>,
+    /// A reviewer's: why it joins beside one still there ([`Store::take_role_beside`]).
+    pub beside: Option<String>,
 }
 
 impl Ask {
@@ -224,6 +238,7 @@ impl Ask {
             worktree: None,
             prompt: String::new(),
             tab: None,
+            beside: None,
         }
     }
 }
@@ -233,15 +248,28 @@ impl Ask {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Started {
     pub row: TaskSessionRow,
+    /// A recorded conversation resumed (a restore, or a reviewer launch going back to the task's
+    /// reviewer), not a new one started.
+    pub resumed: bool,
 }
 
 /// Start a session for `ask.slug`: handle, worktree, terminal with its agent and `/work SLUG
-/// HANDLE` (a reviewer's `/review-task SLUG HANDLE`), and the record on the task.
+/// HANDLE` (a reviewer's `/review-task SLUG HANDLE`), and the record on the task. A reviewer goes
+/// to the task itself, never an instruction subtask, and a reviewer launch goes back to the task's
+/// recorded reviewer, resumed as a restore resumes it, refused while it still runs
+/// ([`restore::reviewer_to_resume`]); a new reviewer starts only where none can be resumed, or
+/// beside it when the launch says why (`ask.beside`).
 pub fn launch(store: &Store, hc: &dyn Hc, m: &Machine, ask: &Ask) -> Result<Started, Error> {
     let (slug, role) = (ask.slug.as_str(), ask.role.as_str());
     if role != "executor" && role != "reviewer" {
         return Err(Error::Refused(format!(
             "a launched session is an executor or a reviewer, not {}",
+            crate::pyjson::repr(role)
+        )));
+    }
+    if ask.beside.is_some() && role != "reviewer" {
+        return Err(Error::Refused(format!(
+            "only a reviewer joins beside another, not {}",
             crate::pyjson::repr(role)
         )));
     }
@@ -261,6 +289,29 @@ pub fn launch(store: &Store, hc: &dyn Hc, m: &Machine, ask: &Ask) -> Result<Star
     let task = store.get(slug)?;
     if FINISHED.contains(&task.status.as_str()) {
         return Err(Error::Refused(format!("{slug} is {}", task.status)));
+    }
+    if role == "reviewer" {
+        if task.instruction {
+            let parent = task.parent.as_deref().unwrap_or("its parent");
+            return Err(Error::Refused(format!(
+                "{slug} is an instruction subtask: a reviewer judges the task itself \
+                 (/review-task takes no subtask), so launch it there: just tasks launch {parent} \
+                 --role reviewer"
+            )));
+        }
+        // A reviewer beside one still there (`--beside WHY`) is a second on purpose: no resume.
+        if ask.beside.is_none()
+            && let Some(record) = restore::reviewer_to_resume(store, hc, slug)?
+        {
+            return restore::resume_reviewer(
+                store,
+                hc,
+                m,
+                &record,
+                &ask.prompt,
+                ask.tab.as_deref(),
+            );
+        }
     }
     let dashed = slug.replace('/', "-");
     let made_worktree = ask.worktree.is_none();
@@ -355,7 +406,7 @@ pub fn launch(store: &Store, hc: &dyn Hc, m: &Machine, ask: &Ask) -> Result<Star
     let mut terminal = String::new();
     let mut checkout_made = false;
     let started = (|| {
-        take_up(store, ask, &task, &handle)?;
+        take_up(store, ask, &handle)?;
         if made_worktree {
             let base = checkout::base(store, m, ask, &task)?;
             checkout::make(m, &path, &use_branch, detach, &base, &mut checkout_made)?;
@@ -405,7 +456,10 @@ pub fn launch(store: &Store, hc: &dyn Hc, m: &Machine, ask: &Ask) -> Result<Star
             model: ask.model.clone(),
             ..NewLaunch::default()
         })?;
-        Ok(Started { row })
+        Ok(Started {
+            row,
+            resumed: false,
+        })
     })();
     started.map_err(|problem| {
         rollback::failed(
@@ -488,6 +542,15 @@ pub(super) fn prompt_text(
     }
 }
 
+/// The agent whose conversation a record names: Codex's ids are kept as `codex:ID`.
+pub(super) fn agent_of(conversation: &str) -> &'static str {
+    if conversation.starts_with("codex:") {
+        "codex"
+    } else {
+        "claude"
+    }
+}
+
 fn agent_kind(ask: &Ask) -> &'static str {
     match ask.kind.as_deref() {
         Some("claude" | "worker" | "reviewer") => "claude",
@@ -495,22 +558,25 @@ fn agent_kind(ask: &Ask) -> &'static str {
     }
 }
 
-/// The new session takes its part on the task (an executor reserves it; a review subtask's reviewer
-/// reserves the subtask and judges its parent; any other reviewer takes the reviewer role).
-fn take_up(store: &Store, ask: &Ask, task: &crate::Task, handle: &str) -> Result<(), Error> {
+/// The new session takes its part on the task: an executor reserves it, a reviewer takes the
+/// reviewer role, beside one still there only when the launch says why. A refusal naming how one
+/// joins beside it names the launch's own `--beside`, not `tasks role`'s.
+fn take_up(store: &Store, ask: &Ask, handle: &str) -> Result<(), Error> {
     let slug = ask.slug.as_str();
+    let beside = ask.beside.as_deref();
     if ask.role == "executor" {
         store.reserve(slug, handle, RESERVE_SECONDS)?;
-    } else if let Some(parent) = task.parent.as_deref().filter(|_| task.instruction) {
-        // A review subtask: its reviewer claims it (`/review-task` does) and judges the
-        // task it reviews, so the reviewer role goes on the parent, never on the subtask it must claim.
-        store.reserve(slug, handle, RESERVE_SECONDS)?;
-        match store.take_role(parent, handle, "reviewer") {
-            Ok(_) | Err(Error::Refused(_)) => {} // the parent is not open for review: the reviewer says so
-            Err(problem) => return Err(problem),
-        }
     } else {
-        store.take_role(slug, handle, "reviewer")?;
+        let board = store.board_command();
+        store
+            .take_role_beside(slug, handle, "reviewer", beside)
+            .map_err(|problem| match problem {
+                Error::Refused(text) => Error::Refused(text.replace(
+                    &format!("{board} role {slug} reviewer --beside WHY"),
+                    &format!("{board} launch {slug} --role reviewer --beside WHY"),
+                )),
+                problem => problem,
+            })?;
     }
     Ok(())
 }
@@ -635,7 +701,7 @@ fn claude_args(
 // -- git -------------------------------------------------------------------------------------
 
 fn git(root: &Path, args: &[&str]) -> Result<String, LaunchError> {
-    let done = sys::output(sys::command("git").arg("-C").arg(root).args(args))
+    let done = sys::output(sys::git().arg("-C").arg(root).args(args))
         .map_err(|e| LaunchError(format!("git {}: {e}", args[..2.min(args.len())].join(" "))))?;
     if !done.status.success() {
         return Err(LaunchError(format!(
@@ -648,7 +714,7 @@ fn git(root: &Path, args: &[&str]) -> Result<String, LaunchError> {
 }
 
 fn branch_exists(root: &Path, branch: &str) -> bool {
-    sys::output(sys::command("git").arg("-C").arg(root).args([
+    sys::output(sys::git().arg("-C").arg(root).args([
         "rev-parse",
         "--verify",
         "-q",
@@ -659,15 +725,10 @@ fn branch_exists(root: &Path, branch: &str) -> bool {
 
 /// The worktree that has `branch` checked out, if any.
 fn checked_out_in(root: &Path, branch: &str) -> Result<Option<String>, LaunchError> {
-    let mut at = "";
-    let listed = git(root, &["worktree", "list", "--porcelain"])?;
-    let wanted = format!("branch refs/heads/{branch}");
-    for line in listed.lines() {
-        if let Some(path) = line.strip_prefix("worktree ") {
-            at = path;
-        } else if line == wanted {
-            return Ok(Some(at.to_string()));
-        }
-    }
-    Ok(None)
+    let wanted = format!("refs/heads/{branch}");
+    let listed = crate::sweep::git::worktrees(root).map_err(LaunchError)?;
+    let held = listed
+        .into_iter()
+        .find(|tree| tree.branch.as_ref() == Some(&wanted));
+    Ok(held.map(|tree| tree.path.to_string_lossy().into_owned()))
 }

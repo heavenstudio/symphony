@@ -20,6 +20,11 @@ const SHELL: &str = "<!DOCTYPE html><html lang=\"en\"><head><title>Symphony</tit
 
 impl Machine {
     pub(super) fn new() -> Machine {
+        Machine::with_gate(Gate::new(Arc::new(|_| Ok(None)), Arc::new(Instant::now)))
+    }
+
+    /// [`Machine::new`], its starter judging who may reach it by `gate`.
+    fn with_gate(gate: Gate) -> Machine {
         let tree = Tree::new();
         for (id, color) in [("alpha", "#a00"), ("beta", "#0b0")] {
             tree.write(&format!("{id}/docs/README.md"), "# Docs\n");
@@ -39,14 +44,7 @@ impl Machine {
         }
         registry.write(&machine).unwrap();
         let root = tree.path("alpha").canonicalize().unwrap();
-        let starter = Shared::project(
-            1,
-            1,
-            &root,
-            Some(&tree.path("install")),
-            Gate::new(Arc::new(|_| Ok(None)), Arc::new(Instant::now)),
-            "/alpha",
-        );
+        let starter = Shared::project(1, 1, &root, Some(&tree.path("install")), gate, "/alpha");
         let projects = Projects::made(&machine, &starter, Warming::OnRequest);
         Machine { tree, projects }
     }
@@ -56,9 +54,18 @@ impl Machine {
     }
 
     async fn from(&self, client: &str, path: &str, headers: &[(&str, &str)]) -> Response {
-        let mut request = Request::builder()
-            .uri(path)
-            .header(header::HOST, "127.0.0.1:1");
+        self.named(client, "127.0.0.1:1", path, headers).await
+    }
+
+    /// `path` asked by `client` of the Host `host`.
+    async fn named(
+        &self,
+        client: &str,
+        host: &str,
+        path: &str,
+        headers: &[(&str, &str)],
+    ) -> Response {
+        let mut request = Request::builder().uri(path).header(header::HOST, host);
         for (name, value) in headers {
             request = request.header(*name, *value);
         }
@@ -263,6 +270,112 @@ async fn a_project_served_at_the_root_answers_only_the_names_its_folder_holds() 
     assert_eq!(location(&tasks), "/alpha/tasks");
     let page = unknown(&machine, "/docs/README.md", &[PAGE]).await;
     assert!(page.contains("No project is called <q>docs</q>"), "{page}");
+}
+
+/// An HTML document through the whole routing, the machine's and its project's: its route is the
+/// project's app page whatever headers ask for it, none among them, as a browser asks a plain-http
+/// address that is not loopback's (a phone over the tailnet); its file's address is the file,
+/// under its sandbox and its entrypoint's bounds, for a frame, an object, an embed or a request
+/// with no headers; an HTML file outside every entrypoint keeps the plain sandbox at either
+/// address; and a document's own folder's files load as they are.
+#[tokio::test]
+async fn an_html_document_is_its_projects_page_at_its_route_and_its_file_at_its_files_address() {
+    let machine = Machine::new();
+    let page = "<!doctype html><title>Readout</title><script>document.title = 'ran'</script>";
+    machine.tree.write("alpha/docs/analysis/readout.html", page);
+    machine
+        .tree
+        .write("alpha/docs/analysis/board.css", "body { margin: 0 }");
+    machine.tree.write("alpha/outside.html", page);
+    let app = text(machine.get("/alpha/docs/README.md", &[]).await).await;
+    assert!(app.contains("\"base\":\"/alpha\""), "{app}");
+    let page_load = (
+        "accept",
+        "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    );
+    for headers in [
+        &[][..],
+        &[page_load],
+        &[page_load, PAGE, ("sec-fetch-dest", "document")],
+        &[page_load, ("sec-fetch-dest", "iframe")],
+    ] {
+        let route = machine
+            .get("/alpha/docs/analysis/readout.html", headers)
+            .await;
+        assert_eq!(route.status(), StatusCode::OK, "{headers:?}");
+        assert_eq!(text(route).await, app, "{headers:?}");
+    }
+    let bounded = "sandbox allow-scripts; default-src 'unsafe-inline' 'unsafe-eval' data: blob: \
+                   127.0.0.1:1/alpha/docs/; connect-src 'none'";
+    for (path, policy) in [
+        ("/alpha/docs/analysis/readout.html?raw", bounded),
+        ("/alpha/docs/analysis/readout.html?state=b&raw", bounded),
+        ("/alpha/outside.html?raw", "sandbox allow-scripts"),
+        ("/alpha/outside.html", "sandbox allow-scripts"),
+    ] {
+        for headers in [
+            &[][..],
+            &[page_load],
+            &[page_load, ("sec-fetch-dest", "iframe")],
+            &[("sec-fetch-dest", "object")],
+            &[("sec-fetch-dest", "embed")],
+        ] {
+            let file = machine.get(path, headers).await;
+            assert_eq!(file.status(), StatusCode::OK, "{path} {headers:?}");
+            let said = |name| file.headers()[name].to_str().unwrap().to_string();
+            assert_eq!(
+                [
+                    said(header::CONTENT_SECURITY_POLICY),
+                    said(header::CONTENT_TYPE),
+                    said(header::X_CONTENT_TYPE_OPTIONS),
+                ],
+                [policy, "text/html; charset=utf-8", "nosniff"],
+                "{path} {headers:?}"
+            );
+            assert_eq!(text(file).await, page, "{path} {headers:?}");
+        }
+    }
+    let beside = machine.get("/alpha/docs/analysis/board.css", &[]).await;
+    assert_eq!(beside.status(), StatusCode::OK);
+    assert_eq!(text(beside).await, "body { margin: 0 }");
+    for missing in [
+        "/alpha/docs/analysis/missing.html?raw",
+        "/alpha/docs/analysis/..%2f..%2foutside.html?raw",
+    ] {
+        let response = machine.get(missing, &[]).await;
+        assert_eq!(response.status(), StatusCode::NOT_FOUND, "{missing}");
+    }
+}
+
+/// A legacy alias whose path climbs out of its project (`..`, escaped or not) is no page: its
+/// redirect, put back under the project's prefix, would land in another project's files, past the
+/// path an HTML document's policy bounds its loads by.
+#[tokio::test]
+async fn a_legacy_alias_that_would_leave_its_project_is_not_found() {
+    let machine = Machine::new();
+    machine
+        .tree
+        .write("beta/docs/data.js", "window.secret = 1;");
+    for path in [
+        "/alpha/history/..%2f..%2fbeta%2fdocs%2fdata.js",
+        "/alpha/history/..%2F..%2Fbeta/docs/data.js",
+        "/alpha/app/..%2f..%2fbeta%2fdocs%2fdata.js",
+        "/alpha/doc/.%2e/.%2e/beta/docs/data.js",
+        "/alpha/diff/abc/..%2fbeta%2fdocs%2fdata.js",
+        "/alpha/history/docs/.%2fdata.js",
+    ] {
+        let response = machine.get(path, &[]).await;
+        assert_eq!(response.status(), StatusCode::NOT_FOUND, "{path}");
+        assert!(
+            response.headers().get(header::LOCATION).is_none(),
+            "{path}: {:?}",
+            response.headers()
+        );
+    }
+    // A path that stays in the project still redirects there.
+    let kept = machine.get("/alpha/history/docs/README.md", &[]).await;
+    assert_eq!(kept.status(), StatusCode::PERMANENT_REDIRECT);
+    assert_eq!(location(&kept), "/alpha/docs/README.md");
 }
 
 #[tokio::test]
@@ -474,6 +587,14 @@ async fn the_list_warns_under_a_project_whose_board_is_unwell_until_it_is_well()
         1,
         "beta is well: {list}"
     );
+    // The project list as data says the same warning, as plain text, and only of alpha.
+    let unwell = listed(&machine, "alpha").await.unwell.unwrap();
+    assert!(
+        unwell.starts_with("The task board is unwell: its callback dispatch is failing")
+            && unwell.ends_with("to see why."),
+        "{unwell}"
+    );
+    assert_eq!(listed(&machine, "beta").await.unwell, None);
 
     hub.health.dispatched(at + 1.0, Ok(()));
     clock.store((at + 1.0).to_bits(), Ordering::SeqCst);
@@ -487,6 +608,7 @@ async fn the_list_warns_under_a_project_whose_board_is_unwell_until_it_is_well()
     clock.store(later.to_bits(), Ordering::SeqCst);
     let list = text(machine.get("/", &[]).await).await;
     assert!(!list.contains("class=\"health\""), "{list}");
+    assert_eq!(listed(&machine, "alpha").await.unwell, None, "well again");
 }
 
 #[tokio::test]
@@ -537,6 +659,24 @@ async fn the_list_says_calmly_that_a_project_with_no_board_has_none() {
     assert!(
         list_row(alpha, Some(&counts), "", false)
             .contains("<span class=\"counts\">2 waiting on you</span>")
+    );
+    // A board's in-progress count is the status's, the board's Build and Test columns in it, and
+    // it says so: the board's own In progress column leaves them out.
+    let counts = symphony_api::Counts {
+        waiting: 2,
+        tasks: Some(symphony_api::TaskCounts {
+            in_progress: 9,
+            in_review: 3,
+            agents_live: 1,
+        }),
+        ..Default::default()
+    };
+    let row = list_row(alpha, Some(&counts), "", false);
+    assert!(
+        row.contains(
+            "<span class=\"counts\">2 waiting on you · 9 in progress (Build and Test included) · 3 in review</span>"
+        ),
+        "{row}"
     );
 }
 
@@ -623,6 +763,166 @@ async fn front_names_the_projects_and_answers_loopback_alone() {
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::FORBIDDEN);
+}
+
+/// The project list as data: every project, the starter's with its hub's counts, its first card,
+/// its feed's version and its task asks, and one with no hub yet with none of them.
+#[tokio::test]
+async fn the_project_list_names_each_project_with_its_counts_first_card_and_task_asks() {
+    use crate::testing::board::{Fixture, Seed};
+    let machine = Machine::new();
+    let root = crate::testing::repository_holding(
+        &machine.tree,
+        "alpha",
+        "docs/TOPIC.md",
+        "# Topic\n\n- [ ] **initial-card** — Initial question.\n",
+    );
+    let hub = Arc::new(crate::live::Hub::new(&root, &root.join("build/client")));
+    hub.refresh_page("", &root).unwrap();
+    let board = Fixture::new(
+        Seed::default()
+            .session("worker")
+            .task("tools/ask", "in_progress"),
+    );
+    board
+        .store
+        .say("tools/ask", "worker", "flat or falling?", Some("owner"))
+        .unwrap();
+    hub.observe(&board.store);
+    assert!(machine.projects.starter.api.set(hub.clone()).is_ok());
+
+    let response = machine.get(symphony_api::PROJECTS_PATH, &[]).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.headers()[header::CONTENT_TYPE], "application/json");
+    let list: symphony_api::ProjectList = serde_json::from_str(&text(response).await).unwrap();
+    assert_eq!(list.pin, symphony::machine::PIN);
+    let installation = list.installation.clone().unwrap();
+    assert_eq!(
+        installation,
+        symphony::machine::installation_id_in(&machine.tree.path("machine")).unwrap(),
+        "the machine folder the registry is in names the server"
+    );
+    assert_eq!(
+        list.projects
+            .iter()
+            .map(|project| (project.id.as_str(), project.name.as_str()))
+            .collect::<Vec<_>>(),
+        [("alpha", "alpha works"), ("beta", "beta works")]
+    );
+    let alpha = &list.projects[0];
+    let page = hub.pages.read().unwrap()[""].board.clone();
+    assert_eq!(alpha.version, Some(page.version));
+    assert_eq!(alpha.waiting, Some(1));
+    assert_eq!(
+        alpha.next,
+        Some(symphony_api::ListedCard {
+            title: page.next[0].title.clone(),
+            href: "/alpha/docs/TOPIC.md#initial-card".into(),
+        })
+    );
+    let asks = alpha.asks.as_ref().unwrap();
+    assert_eq!(asks.questions["owner"], 1);
+    assert!(asks.verdicts.is_empty());
+    assert_eq!((&alpha.refused, &alpha.unwell), (&None, &None));
+    // Beta's hub is not made yet: named, with nothing of its board.
+    let beta = &list.projects[1];
+    assert_eq!(
+        (
+            beta.version,
+            beta.waiting,
+            &beta.next,
+            &beta.asks,
+            &beta.refused
+        ),
+        (None, None, &None, &None, &None)
+    );
+    // Asked again, the same server answers the same id.
+    assert_eq!(
+        project_list(&machine).await.installation,
+        Some(installation)
+    );
+}
+
+/// The one server's project list, as `machine` answers it on loopback.
+async fn project_list(machine: &Machine) -> symphony_api::ProjectList {
+    serde_json::from_str(&text(machine.get(symphony_api::PROJECTS_PATH, &[]).await).await).unwrap()
+}
+
+/// The project `id` as `machine`'s project list lists it.
+async fn listed(machine: &Machine, id: &str) -> symphony_api::ListedProject {
+    let list = project_list(machine).await;
+    list.projects.into_iter().find(|p| p.id == id).unwrap()
+}
+
+/// A refused project is listed with why, and nothing of a board its build cannot serve.
+#[tokio::test]
+async fn the_project_list_says_why_a_project_is_refused_and_nothing_else_of_it() {
+    let machine = Machine::new();
+    let path = machine.tree.path("machine");
+    let mut registry = Registry::read(&path).unwrap();
+    let beta = registry
+        .projects
+        .iter_mut()
+        .find(|entry| entry.id == "beta")
+        .unwrap();
+    beta.plugins.push("fixture-uncompiled".into());
+    registry.write(&path).unwrap();
+    let beta = listed(&machine, "beta").await;
+    assert!(
+        beta.refused
+            .as_deref()
+            .is_some_and(|why| why.contains("lacks the plugin fixture-uncompiled")),
+        "{beta:?}"
+    );
+    assert_eq!(
+        (beta.version, &beta.asks, &beta.unwell),
+        (None, &None, &None)
+    );
+}
+
+/// The project list answers a tailnet peer that names this machine by its tailnet name, as every
+/// route but `/api/front` does, and nobody else.
+#[tokio::test]
+async fn the_project_list_answers_this_machines_tailnet_name_and_front_does_not() {
+    let peer = |_: &str| {
+        Ok(Some(
+            r#"{"Node":{"Name":"phone.tailnet-name.ts.net."}}"#.to_string(),
+        ))
+    };
+    let names = || Ok(r#"{"Self":{"DNSName":"studio.tailnet-name.ts.net."}}"#.to_string());
+    let machine = Machine::with_gate(
+        Gate::new(Arc::new(peer), Arc::new(Instant::now)).with_status(Arc::new(names)),
+    );
+    let phone = "100.101.102.103:1";
+    let tailnet = "studio.tailnet-name.ts.net:8765";
+    let listed = machine
+        .named(phone, tailnet, symphony_api::PROJECTS_PATH, &[])
+        .await;
+    assert_eq!(listed.status(), StatusCode::OK);
+    let list: symphony_api::ProjectList = serde_json::from_str(&text(listed).await).unwrap();
+    assert_eq!(list.projects.len(), 2);
+    assert_eq!(
+        machine
+            .named(phone, tailnet, symphony_api::FRONT_PATH, &[])
+            .await
+            .status(),
+        StatusCode::FORBIDDEN,
+        "the front answers loopback's name alone"
+    );
+    for (client, host) in [
+        (phone, "rebound.example"),
+        ("192.0.2.7:1", tailnet),
+        ("127.0.0.1:1", "rebound.example"),
+    ] {
+        assert_eq!(
+            machine
+                .named(client, host, symphony_api::PROJECTS_PATH, &[])
+                .await
+                .status(),
+            StatusCode::FORBIDDEN,
+            "{client} naming {host}"
+        );
+    }
 }
 
 #[tokio::test]
@@ -740,6 +1040,46 @@ async fn a_refused_project_is_refused_through_todays_paths_as_under_its_prefix()
         // The starter's project, which this build serves, still answers today's paths.
         let starter = machine.get("/tasks", &[PAGE]).await;
         assert_eq!(location(&starter), "/alpha/tasks", "{lack}");
+    }
+}
+
+/// The one server's own JSON answers, its `/api/front` and a refused project's error, say
+/// `nosniff` as a project's own answers do, under its prefix and through today's paths.
+#[tokio::test]
+async fn the_one_servers_own_json_answers_say_nosniff_as_a_projects_do() {
+    let machine = Machine::new();
+    let path = machine.tree.path("machine");
+    let mut registry = Registry::read(&path).unwrap();
+    let beta = registry
+        .projects
+        .iter_mut()
+        .find(|entry| entry.id == "beta")
+        .unwrap();
+    beta.plugins.push("fixture-uncompiled".into());
+    registry.write(&path).unwrap();
+    let from_beta = ("referer", "http://127.0.0.1:1/beta/docs/");
+    for (route, headers, status) in [
+        (symphony_api::FRONT_PATH, vec![], StatusCode::OK),
+        (symphony_api::PROJECTS_PATH, vec![], StatusCode::OK),
+        ("/beta/api/board", vec![], StatusCode::SERVICE_UNAVAILABLE),
+        (
+            "/api/board",
+            vec![from_beta],
+            StatusCode::SERVICE_UNAVAILABLE,
+        ),
+        ("/alpha/api/nope", vec![], StatusCode::NOT_FOUND),
+    ] {
+        let response = machine.get(route, &headers).await;
+        assert_eq!(response.status(), status, "{route} {headers:?}");
+        let said = |name| response.headers()[name].to_str().unwrap().to_string();
+        assert_eq!(
+            [
+                said(header::CONTENT_TYPE),
+                said(header::X_CONTENT_TYPE_OPTIONS)
+            ],
+            ["application/json", "nosniff"],
+            "{route} {headers:?}"
+        );
     }
 }
 

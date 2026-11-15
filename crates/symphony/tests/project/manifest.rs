@@ -9,6 +9,7 @@ use symphony::project::{Entrypoint, FILE, PANES, Project, TRANSPORTS, slug};
 use super::Tree;
 mod limits;
 mod machine_work;
+mod stamps;
 
 /// A project folder called `name` inside a temporary tree.
 fn folder(tree: &Tree, name: &str) -> std::path::PathBuf {
@@ -97,8 +98,8 @@ fn each_key_left_out_takes_its_default_beside_those_given() {
         (project.name.as_str(), project.id.as_str()),
         ("Night Shift", "df")
     );
-    // An entrypoint shows every Markdown file in its folder and passes over no history folder;
-    // the register sits in the first entrypoint's folder, unless named.
+    // An entrypoint shows every Markdown and HTML document in its folder and passes over no
+    // history folder; the register sits in the first entrypoint's folder, unless named.
     let project = parsed(&entry("/", "notes/")).unwrap();
     assert_eq!(
         project.entrypoints,
@@ -107,7 +108,7 @@ fn each_key_left_out_takes_its_default_beside_those_given() {
             folder: "notes".into(),
             include: vec!["**".into()],
             exclude: Vec::new(),
-            types: vec![symphony::entrypoint::MARKDOWN],
+            types: vec![symphony::entrypoint::MARKDOWN, symphony::entrypoint::HTML],
             history: Vec::new(),
         }]
     );
@@ -160,6 +161,21 @@ fn each_key_left_out_takes_its_default_beside_those_given() {
         assert!(!releases.holds_candidates(), "{off}");
     }
     assert!(refused("[releases]\ncandidate_hours = -1\n").contains("candidate_hours"));
+    // A green release publishes on crates.io only on the project's word.
+    assert!(!parsed("").unwrap().releases.publish);
+    assert!(
+        !parsed("[releases]\nrefresh = true\n")
+            .unwrap()
+            .releases
+            .publish
+    );
+    assert!(
+        parsed("[releases]\npublish = true\n")
+            .unwrap()
+            .releases
+            .publish
+    );
+    assert!(refused("[releases]\npublish = \"yes\"\n").contains("publish"));
 }
 
 #[test]
@@ -286,7 +302,7 @@ fn an_entrypoint_that_cannot_serve_is_refused_by_name() {
     for (text, says) in [
         (
             format!("{}types = [\"markdown\", \"rust\"]\n", entry("/", ".")),
-            "[[entrypoints]] / type \"rust\": no renderer handles it (the renderers are markdown, media)",
+            "[[entrypoints]] / type \"rust\": no renderer handles it (the renderers are markdown, html, media)",
         ),
         (
             format!("{docs}types = []\n"),
@@ -321,6 +337,10 @@ fn an_entrypoint_that_cannot_serve_is_refused_by_name() {
         (
             entry("/reports/", "spec"),
             "[[entrypoints]] /reports/ lies on /reports, a route the Symphony answers",
+        ),
+        (
+            entry("/runs/", "spec"),
+            "[[entrypoints]] /runs/ lies on /runs, a route the Symphony answers",
         ),
         (
             entry("/artifacts/uploads/x/", "spec"),

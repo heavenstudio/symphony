@@ -167,6 +167,34 @@ fn exercise_land_approve(address: std::net::SocketAddr) {
     assert_eq!(response.json()["error"], "no such board action");
     assert_eq!(f.board.thread(slug).unwrap().len(), heard);
     assert_eq!(f.board.get(slug).unwrap().status, "blocked");
+    // The Symphony's own action, beside the plugin's: the owner's approve of the tip its offer
+    // showed, posted as the owner's line the `owner` stamp reads. A payload that is no commit's id
+    // says nothing; neither moves the work.
+    let own = |payload: &str| {
+        f.request(
+            "POST",
+            symphony_api::TASK_ACTION_ROUTE,
+            Some(&host),
+            Some(&origin),
+            &json!({"slug":slug, "action":"owner-approve", "payload":payload, "note":""}),
+        )
+    };
+    let response = own("the tip");
+    assert_eq!(response.status, 400, "{response:?}");
+    assert_eq!(
+        response.json()["error"],
+        "the owner's approve names the commit it approves, 7 to 40 hex digits: not \"the tip\""
+    );
+    assert_eq!(f.board.thread(slug).unwrap().len(), heard);
+    let response = own("0123abc4");
+    assert_eq!(response.status, 200, "{response:?}");
+    assert_eq!(response.json()["said"], "approve 0123abc4");
+    let last = f.board.thread(slug).unwrap().pop().unwrap();
+    assert_eq!(
+        (last.sender.as_str(), last.text.as_str()),
+        ("owner", "approve 0123abc4")
+    );
+    assert_eq!(f.board.get(slug).unwrap().status, "blocked");
 }
 
 #[test]
@@ -453,6 +481,10 @@ fn exercise(address: std::net::SocketAddr) {
             "Forbidden: the Host header does not name this machine",
         );
         f.refused_writes(host, None, HOST_REFUSED);
+        // Nor does the feed's WebSocket read past it, under the Host's own Origin, which the
+        // socket's own rule would let in, or with neither, which only the Host gate refuses.
+        let own = host.map(|host| format!("http://{host}"));
+        assert_eq!(f.socket(host, own.as_deref()), 403, "{host:?}");
         // Even a matching Origin cannot rescue an untrusted Host.
         if let Some(host) = host {
             f.refused_writes(Some(host), Some(&format!("http://{host}")), HOST_REFUSED);
@@ -483,6 +515,8 @@ fn exercise(address: std::net::SocketAddr) {
     ] {
         f.refused_writes(Some(&f.host()), Some(&origin), ORIGIN_REFUSED);
         f.assert_unchanged(&baseline, &format!("Origin {origin:?}"));
+        // A WebSocket has no same-origin rule for its reads: the feed's is refused another page.
+        assert_eq!(f.socket(Some(&f.host()), Some(&origin)), 403, "{origin:?}");
     }
     let refused = f.refusals();
 
@@ -506,6 +540,11 @@ fn exercise(address: std::net::SocketAddr) {
         // Each missing-Origin request is a command-line request permitted by the README.
         // Each present-Origin request checks the same Host's exact scheme, name and port.
         for origin in [None, Some(format!("http://{host}"))] {
+            assert_eq!(
+                f.socket(Some(host), origin.as_deref()),
+                101,
+                "{host} {origin:?}"
+            );
             let marker = format!("allowed-{index}-{}", origin.is_some());
             let response = f.request(
                 "POST",
@@ -543,6 +582,13 @@ fn exercise(address: std::net::SocketAddr) {
     assert_eq!(ask.question, "Host Origin fixture question");
     assert_eq!(ask.path, "docs/TOPIC.md");
     // Origin comparison is case-insensitive, as are DNS names.
+    assert_eq!(
+        f.socket(
+            Some(&format!("LOCALHOST:{port}")),
+            Some(&format!("HTTP://localhost:{port}"))
+        ),
+        101
+    );
     let response = f.request(
         "POST",
         "/api/task-message",
@@ -581,7 +627,7 @@ fn exercise(address: std::net::SocketAddr) {
     assert_eq!(f.refusals(), refused, "an allowed write logs no refusal");
     f.assert_lookup_used();
     println!(
-        "coverage: 21 refused Hosts; 12 allowed Hosts x absent/matching Origin; 12 refused Origins; {} refusal log lines; document, asks and board side effects checked",
+        "coverage: 21 refused Hosts; 12 allowed Hosts x absent/matching Origin; 12 refused Origins; the feed's WebSocket under each; {} refusal log lines; document, asks and board side effects checked",
         refused.len()
     );
 }

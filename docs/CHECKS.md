@@ -27,19 +27,22 @@ Every task, parent or slice, feature or fix, proves that what it changed works:
 No task runs `just verify`, the whole browser target or the whole workspace's tests as its gate,
 whatever its brief asks: that is [the release run](#the-release-run)'s.
 
-A reviewer runs the same focused tests itself, never the suite, reads the diff against the
-evidence and judges whether it is good enough for the change's risk. Evidence that falls short is
-a `changes` verdict naming what to add. The reviewer's approve is the task's stamp: the board
-verdict (`just tasks verdict SLUG approve "FULL_SHA: why"`, naming the tip it read, RULES.md
-`workflow/reviewers-not-the-owner`), which the task [[task:tools/review-as-stamps]] records as a
-stamp on the task it reviews. A slice's evidence is judged in its parent's review. A fix whose
-recorded risk calls for no reviewer (RULES.md `workflow/fast-bugfixes`), filed as one with `just
-tasks create SLUG TITLE --fast-fix WHY`, is landed on its posted evidence by its orchestrator,
-which did not execute it: its approve, naming the tip, is the verdict the default land goes by on
-such a task and on no other ([the default landing](TASKS.md#the-default-landing)). A fast fix its
-orchestrator executed itself is landed by a fresh reviewer's approve, as any other task is, and so
-is a red's fast fix that changes a test or a check (`[land] check_paths`): the land refuses its
-orchestrator's approve on that, since a loosened test or check is how a red turns green unfixed.
+What a task needs to land is its assessment's ([needed stamps](TASKS.md#needed-stamps)): an
+assessor that neither filed, orchestrates nor executed it reads its diff when it is filed and each
+time it moves to review, before any reviewer, and writes the stamps it needs from the project's
+catalogue (`just tasks stamps`): `tests` (its recorded test runs green at the tip), `review`,
+`pictures`, `owner`; a task no assessment has read needs `review` alone. The land lands it once
+every stamp it needs stands on its tip, and refuses naming who gives a missing one ([the default
+landing](TASKS.md#the-default-landing)). A change to a test or a check (`[land] check_paths`)
+keeps `review`, since a loosened test or check is how a red turns green unfixed.
+
+Where review is needed, a reviewer runs the same focused tests itself, never the suite, reads the
+diff against the evidence and judges whether it is good enough for the change's risk. Evidence
+that falls short is a `changes` verdict naming what to add. The reviewer's approve is that stamp:
+the board verdict (`just tasks verdict SLUG approve "FULL_SHA: why"`, naming the tip it read,
+RULES.md `workflow/reviewers-not-the-owner`), given on the task it reviews, never on a review
+subtask, and drawn as a round of its review gate ([Gates](TASKS.md#gates)). A slice's evidence is
+judged in its parent's review.
 
 **Higher risk asks for stronger evidence, never for the whole suite.** A change's risk is what a
 mistake in it would break and how far that reaches: one view, every agent's board commands, the
@@ -88,9 +91,11 @@ a measurement before and after.
   or a published package's dependency on a sibling): `just test-rs -p symphony-app --test packages`
   and `cargo publish --dry-run` naming every published package together, from the committed tip
   (no `--allow-dirty`), its output on the thread ([RELEASES](RELEASES.md#packages-on-cratesio));
-  never a publication. The packages test is also the closest one for a change to a file a package
-  carries a copy of (the client's `board.css` and `frame.css`, `tools/fixture_process.sh`): it
-  fails until the copy is made again, naming the `cp`.
+  never a publication. A change to a published package's sources adds `just crates-check`, red
+  for a package whose version crates.io holds with other sources, which only reads crates.io. The
+  packages test is also the closest one for a change to a file a package carries a copy of (the
+  client's `board.css` and `frame.css`, `tools/fixture_process.sh`): it fails until the copy is
+  made again, naming the `cp`.
 - **Weight added to a shipped binary** (a dependency or a dependency's feature, a library the
   binary did not reach before): `just size-check` at the tip, its lines on the thread, every binary within its
   line ([a red at the size check](#a-red-at-the-size-check)).
@@ -157,7 +162,9 @@ audit on main after the land's round files it within minutes
 1. List what the branch changed: `git diff --name-only main...HEAD`.
 2. Name each file's package: `crates/tasks` is `symphony-board`, `crates/symphony` is
    `symphony`, `apps/symphony-server` is `symphony-server`, `apps/symphony-ui` is `symphony-ui`,
-   and any other `crates/NAME` is `NAME`.
+   `apps/symphony-desktop` is `symphony-desktop` (the Mac app, whose windows no test opens), and
+   any other `crates/NAME` is `NAME`; `apps/symphony-web` is the React client, no Cargo
+   package, whose unit tests `just client-lint` runs with its other checks.
 3. For each package:
    - the unit tests of the changed modules: `just test-rs -p PACKAGE --lib MODULE`, the module
      path as a filter (`store::work` for `crates/tasks/src/store/work.rs`);
@@ -168,8 +175,9 @@ audit on main after the land's round files it within minutes
      any of them matches;
    - when a public item's contract changed, the tests of the packages that call it (`git grep`
      its name).
-4. `just lint-rs`, and, when `apps/symphony-ui` changed, the client built (`just client-update`)
-   for its tests and pictures, its distribution never committed.
+4. `just lint-rs` (which runs `just client-lint`), and, when `apps/symphony-ui` or
+   `apps/symphony-web` changed, the client built (`just client-update`) for its tests and
+   pictures, its distribution never committed.
 5. After merging main, the targets steps 1 to 3 pick run again at the new tip, before review,
    as main may have changed what the branch's code meets ([after main moves](#after-main-moves)).
 
@@ -202,17 +210,18 @@ both kinds, to copy after `--`:
 | What changed | Filters after `--` |
 |---|---|
 | the home queue (`/`) | `queue` `polish::` `projects::` `budget` `phone::` |
-| the queue page (`/queue`) | `queue` `polish::` `projects::` |
-| the tasks board (`/tasks`) and its cards | `board` `task_columns` `task_controls` `tasks_and` `a_revealed_column` `owner_` `machine_work` `run_records::` `polish::` `shot::` `projects::` `budget` |
-| a task's page | `task_page` `task_panel` `task_priority` `notice_layout::` `polish::` `projects::` |
-| the agents page (`/agents`) | `machine_work` `polish::` `projects::` |
+| the queue page (`/queue`) | `queue` `cache_pages::` `landmarks::` `skeleton::` `header::` `look_parity::` `postponed_labels` `later_advances` `restored_mockups` `reconnect_pills` `polish::` `projects::` `budget` |
+| the tasks board (`/tasks`) and its cards | `board` `task_columns` `task_controls` `tasks_and` `a_revealed_column` `owner_` `machine_work` `run_records::` `cache_pages::` `kept_pages::` `landmarks::` `layout_shift::` `skeleton::` `feed_deltas::` `header::` `look_parity::` `restored::` `components::` `polish::` `shot::` `projects::` `budget` |
+| a task's page, its gates and its timeline | `task_page` `task_panel` `task_priority` `task_gates::` `timeline::` `owner_controls::` `owner_save::` `cache_tasks::` `cache_ahead` `feed_deltas::` `notice_layout::` `landmarks::` `layout_shift::` `skeleton::` `header::` `look_parity::` `restored::` `components::` `program::` `polish::` `projects::` `budget` `preload::` |
+| the agents page (`/agents`) | `machine_work` `the_agents_page` `header::` `look_parity::` `the_chat_opened_on` `polish::` `projects::` `budget` |
 | the reports page (`/reports`) | `reports::` `header::` `polish::` `projects::` `budget` |
-| document and folder pages | `document` `docs_index` `restored::` `polish::` `projects::` |
-| the header, on every page | `header::` `floating_controls::` `panel_open::` `polish::` `projects::` |
+| the runs page (`/runs`) | `runs::` `header::` `polish::` `projects::` `preload::` `budget` |
+| document and folder pages | `document` `docs_index` `owner_` `cache_ahead` `cache_pages::` `restored::` `landmarks::` `skeleton::` `layout_shift::` `look_parity::` `polish::` `projects::` `budget` |
+| the header, on every page | `header::` `floating_controls::` `panel_open::` `program::` `polish::` `projects::` |
 | shared controls (select, menu, button, tooltip, theme) | `components::` `select` `theme` `polish::` |
 | the project switch and a project's look | `projects::` |
 | the feed and its stream | `feed` `stream` |
-| what an entry page loads (its bytes) | `budget` `phone::` |
+| what an entry page loads (its bytes, its order) | `budget` `phone::` `preload::` |
 
 ## Worked examples
 
@@ -231,31 +240,32 @@ The thread gets the four commands and their result lines. No `perf`: the stateme
 sends is unchanged, and a change to it would add `--test perf`. No client test: no client file
 changed.
 
-**A row on the home queue.** The branch shows each card's priority beside its title in the home
-queue's rows, in `apps/symphony-ui/src/queue.rs` and `apps/symphony-ui/assets/queue.css`.
+**A row on the queue page.** The branch shows each card's priority beside its title in the queue
+page's rows, in `apps/symphony-web/src/queue.tsx` and `apps/symphony-web/src/queue.css`.
 
 ```
 just symphony-cli shot URL --out queue-before.png   (desktop and phone, light and dark, before the change)
 just symphony-cli shot URL --out queue-after.png    (the same four, after it)
-just test-rs -p symphony-ui --test view queue::
-just test-rs -p symphony-ui --test browser -- queue polish:: projects:: budget phone::
+just client-lint
+just test-rs -p symphony-ui --test browser -- queue polish:: projects::
 just client-update
 just lint-rs
 ```
 
-A new view test pins the priority in the row's markup; `queue` runs the browser tests of the
-queue's counts, order, spacing and filter colours, which a taller row or new markup could break,
-and the branch updates any that pinned the old row, naming it. `polish::` and `projects::` draw
-the home page too: its panels and its one heading, and the link each row draws under the
-project's base. `budget` and `phone::` are there because the home page is an entry page and its
-bytes grew. The thread gets the eight pictures, the commands and their result lines and the
-updated tests named; the commit holds the source alone, `just client-update`'s distribution put
-back as main has it.
+A new unit test in `queue.test.tsx` pins the priority in the row's markup, and `just client-lint`
+runs it with the lint, the type check and the wire types' check; `queue` runs the browser tests of
+the queue's counts, order, spacing and filter colours, which a taller row or new markup could
+break, and the branch updates any that pinned the old row, naming it. `polish::` and `projects::`
+draw the page's panels and its one heading, and the link each row draws under the project's base.
+A change to home's rows would add `budget` and `phone::`, as home is an entry page. The thread
+gets the eight pictures, the commands and their result lines and the updated tests named; the
+commit holds the source alone, `just client-update`'s distribution put back as main has it.
 
 ## The release run
 
 `just verify` is the full verification: lint, the real client check, the
-[size budgets](#size-budgets), the docs audit, and every test target of the workspace, the
+[size budgets](#size-budgets), the docs audit, the crates check
+([RELEASES](RELEASES.md#packages-on-cratesio)), and every test target of the workspace, the
 headless browser acceptance and the board's `perf` and `child_guard` targets
 ([the board guide](../crates/tasks/AGENTS.md)) among them. It is the release run's, and no task's.
 `just release` runs it on main's tip, as fetched from `origin`, in a clean checkout outside this
@@ -282,8 +292,9 @@ never beside a run in progress ([the cadence](RELEASES.md#the-cadence)). How it 
 records and how it is scheduled: [RELEASES](RELEASES.md#the-release-run).
 
 **Every step runs.** `just verify` runs its steps in order, lint, the client check, the size
-budgets, the docs audit and the tests (`tools/verify.sh`), each whatever the ones before it did,
-and is red when any is, so a red step never hides the ones after it. Each step is recorded as a step
+budgets, the docs audit, the crates check and the tests (`tools/verify.sh`), each whatever the
+ones before it did, and is red when any is, so a red step never hides the ones after it. Each step
+is recorded as a step
 of the verify run ([RUNS](RUNS.md)) and writes its output to a log of its own,
 `build/verify/STEP.log` (a folder of the run's when the release run runs it), which `steps.tsv`
 beside it lists with each step's exit status, seconds and command and the load average it ended
@@ -296,6 +307,41 @@ the client check built in the same verify (`SYMPHONY_UI_DIST`), and the check's 
 never served. When the client check is red on a client it built, the tests run against that one;
 when it built none, or did not run, the browser tests build the client themselves, red if that
 build fails too. The tests' log and the summary say which.
+
+**The tests side by side.** The tests step (`tools/test-lanes.sh`) builds every test of the
+workspace once, then runs them in lanes side by side, each lane one `cargo test --workspace` over
+the targets it names: `perf`, `sweep`, `browser`, the board's heavy targets, the server's `after_*`
+targets, the libraries' and binaries' own tests, the rest, and the doc tests
+(`tools/test-lanes.sh --list` prints them); cargo running the targets one after another made the
+step 35 to 42 minutes. A test target no lane names runs in the rest, so a new heavy target gets a
+lane by its name. At most half the processors online run lanes at once (`getconf
+_NPROCESSORS_ONLN`; one when the system says no number), each taking the next lane none has taken.
+The build and every lane give build scripts and proc macros the rest of the build's debug info, so
+every lane's units are the build's and no lane builds or links anything while the others run.
+
+Each lane writes its log as it runs, `tests-lanes/NAME.log` beside the step's log
+(`SYMPHONY_TEST_LANE_LOGS`; `build/test-lanes/` when run by hand), and the step's log names each
+before any lane starts: a run the release run stops, with SIGTERM and then SIGKILL, leaves every
+lane's output where the step's log said. SIGTERM, SIGHUP and an interrupt end the lanes, and the
+step prints what they wrote. Once every lane has ended, each lane's output follows the one before it
+whole in the step's log, then every red lane's targets that failed as one list in cargo's words,
+the last the release run's reader keeps. A lane is green only when it said the exit status 0. A red
+lane's targets are the list cargo ended its log with on failed targets (exit 101); any other red
+lane (killed by a signal, its cargo failing before any target, its status unsaid or none) is listed
+whole, `--workspace` and its targets, and named after its output by a line in cargo's words
+(`error: the lane NAME is red …, to rerun pass` and those arguments), which the reader reruns as a
+target that failed.
+
+The lanes share no port or store: every server, store and browser a test starts takes a port the
+system picks and a folder of its own. The one test writing the build folder (`wasm_build`, which
+links `symphony-build` there again) runs in the rest with every `symphony-build` and
+`symphony-app` target and `standalone`, which copies that folder. The browser lane writes it too
+when `SYMPHONY_UI_DIST` names no client: its own client build (`cargo symphony-ui dist`, whose
+`bundle.sh` runs `tools/rs-bin.sh --build symphony-build`) can link `symphony-build` there again
+while the rest runs it. Verify names the client its client check built, so only a verify whose
+client check built none leaves it to the browser lane. The binaries a test would build for itself under its case's clock
+are the build's own, named by `SYMPHONY_TEST_TASKS_BINARY` and `SYMPHONY_TEST_BINARIES` (a target
+run alone builds them as before).
 
 **Until the owner installs its schedule, only the cadence runs `just verify` on main.** A break
 that no task's focused tests reach stays unseen until 20 landings have gathered: the gap is the
@@ -397,10 +443,14 @@ On macOS every binary of the three packages links with `-no_exported_symbols` (e
 `build.rs`), and the same `tests/links.rs`, with the board's, holds each shipped binary to it. A
 link writes by default an export trie, a name for each global symbol, for code that loads the
 binary to find them by, and no code loads these: the trie the flag leaves out is about 360 KB of
-the server and 330 KB of `symphony` and of `tasks`. Two dependencies build in one codegen unit
-(`Cargo.toml`), comrak and regex-syntax, whose large constant tables each unit that reads one
-would otherwise hold a copy of: about 200 KB of the server and of `symphony`, and 100 KB of
-`tasks`.
+the server and 330 KB of `symphony` and of `tasks`. Every crate builds in one codegen unit
+(`codegen-units = 1` under `Cargo.toml`'s `[profile.release]`): in the compiler's default 16 a
+crate compiles a generic or helper into each unit that reaches it, with its unwind tables, inlines
+across none of them, and copies a large constant table (comrak's, regex-syntax's Unicode tables)
+into each unit that reads it. One unit saves about 2.7 MB of the server, 1.8 MB of `symphony`,
+2.4 MB of `tasks` and 0.5 MB of `agent-send`. It costs each crate's release compile, a cold
+release build about 30 % longer, and a change's size no longer moves with code shifting between
+units.
 
 The release profile leaves out the symbol table (`strip = true`), and with no export trie either,
 nothing in a shipped binary names a function. A panic still prints its thread, file:line:col and
@@ -408,13 +458,12 @@ message, but `RUST_BACKTRACE=1` prints no frames and `RUST_BACKTRACE=full` raw a
 lldb and atos (so `sample`, a crash report and Instruments) name no frame. A build to debug or
 profile sets `CARGO_PROFILE_RELEASE_STRIP=debuginfo`, which keeps every name.
 
-The release profile, the two codegen units and the link flag are this workspace's: a consuming
-project that builds its own host or board binaries in a workspace of its own gets them only by
-setting them there. That is `strip = true` under `[profile.release]` and a
-`[profile.release.package.NAME]` with `codegen-units = 1` for comrak and for regex-syntax in its
-workspace's `Cargo.toml`, and, on macOS, `cargo:rustc-link-arg-bins=-Wl,-no_exported_symbols`
-printed by its host package's own `build.rs`, as Cargo passes a link argument only to the bins of
-the package that prints it, never to a dependent's.
+The release profile and the link flag are this workspace's: a consuming project that builds its
+own host or board binaries in a workspace of its own gets them only by setting them there. That is
+`strip = true` and `codegen-units = 1` under `[profile.release]` in its workspace's `Cargo.toml`,
+and, on macOS, `cargo:rustc-link-arg-bins=-Wl,-no_exported_symbols` printed by its host package's
+own `build.rs`, as Cargo passes a link argument only to the bins of the package that prints it,
+never to a dependent's.
 
 It is a step of `just verify` (`size-check`), so [the release run](#the-release-run) runs it on
 main's tip. No task's gate runs it, as it costs a release build of the whole workspace, except a
@@ -478,7 +527,8 @@ too.
 
 A land runs none of its `[land] generators` either: the regenerator it starts makes them of
 main's newest tip after it ([TASKS](TASKS.md#the-regenerator)). This project's one is the
-client distribution. Its key (`tools/client-key.sh`, the release snapshot's name) skips a tip
+client distribution. Its key (`tools/client-key.sh`, the release snapshot's name and the React
+client's package's hash) skips a tip
 whose client inputs and committed distribution passed before; otherwise `just client-check`
 builds the client fresh and compares it with the committed one, and only when they differ does
 `just client-update` rebuild it and `just client-check` compare again, the change landed on main
@@ -507,15 +557,16 @@ lists the branch's own files alone; a package only main's commits touched is mai
 the branch's. The evidence posted names the new tip. The reviewer approves only a tip the
 evidence names, and a branch that merges main during its review runs them again first.
 
-**A release candidate's fix merges `release-candidate`, never main, before its approve.** A red's
+**A release candidate's fix merges `release-candidate`, never main, before its land.** A red's
 own task while the release run holds a candidate ([RELEASES](RELEASES.md#the-release-candidate))
 starts at the local branch `release-candidate` and merges it again before review, as that branch
 moves when another red's fix lands; the same rule then holds with `release-candidate` in place of
 main: its closest targets run again at the new tip, and the evidence names it. Its evidence is
 the red check's failures run alone at its tip, the commands its task names. Main is merged only
 when its land conflicts, after an approve, and then the fresh approve the merged tip needs leaves
-the candidate on the commit approved before the merge. One that merges main before any approve
-gives the candidate nothing it can take, and drops it.
+the candidate on the commit approved before the merge; a fix that needed no review has none, so
+its land then drops the candidate. One that merges main before any approve gives the candidate
+nothing it can take, and drops it.
 
 **At the land: nothing automatic, and nothing that blocks.** A land's only check on the merge is
 `[verdicts] check`, which this project turns off (`[land] check = false`, `symphony.toml`), for

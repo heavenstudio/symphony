@@ -87,13 +87,21 @@ fn a_second_run_changes_nothing() {
         "claude settings",
         "symphony.just",
         ".gitignore",
+        // The justfile init wrote, as it wrote it: the project's own once it changes it.
+        "justfile",
     ] {
         assert_eq!(outcome(&report, entry), "current", "{entry}");
     }
-    // The justfile init wrote is the project's from then on.
-    assert_eq!(outcome(&report, "justfile"), "kept (the project's own)");
     let after: Vec<String> = files.iter().map(|file| tree.read(file)).collect();
     assert_eq!(before, after);
+    tree.write("justfile", &format!("{JUSTFILE}\nbuild:\n    true\n"));
+    let report = init(&tree.root, &shipped).unwrap();
+    assert_eq!(outcome(&report, "justfile"), "kept (the project's own)");
+}
+
+/// What a run says of a stamped copy it wrote over an edit to, the project's own going to `own`.
+fn replaced(own: &str) -> String {
+    format!("replaced: it differed from its stamp, so an edit to it is gone; {own}")
 }
 
 #[test]
@@ -107,14 +115,71 @@ fn a_stamped_copy_out_of_date_is_updated_whole() {
 }
 
 #[test]
-fn a_stamped_file_edited_in_place_is_brought_back() {
-    let tree = Tree::new();
+fn a_stamped_file_edited_in_place_is_brought_back_saying_the_edit_is_gone() {
     let shipped = kit(vec![skill("work", "v1")]);
-    init(&tree.root, &shipped).unwrap();
-    tree.write(".agents/skills/work/notes.md", "scribbled\n");
-    let report = init(&tree.root, &shipped).unwrap();
-    assert_eq!(outcome(&report, "skill work"), "updated");
-    assert_eq!(tree.read(".agents/skills/work/notes.md"), "notes for v1\n");
+    let newer = kit(vec![skill("work", "v2")]);
+    // An edit to any file of the skill, its SKILL.md below or above the stamp among them, by the
+    // same build or a newer one.
+    for (file, edit, kit, want) in [
+        ("notes.md", "scribbled\n", &shipped, "notes for v1\n"),
+        ("notes.md", "scribbled\n", &newer, "notes for v2\n"),
+        ("SKILL.md", "a line of ours\n", &shipped, "v1"),
+        ("SKILL.md", "a line of ours\n", &newer, "v2"),
+    ] {
+        let tree = Tree::new();
+        init(&tree.root, &shipped).unwrap();
+        let path = format!(".agents/skills/work/{file}");
+        let text = tree.read(&path);
+        let edited = if file == "SKILL.md" {
+            text.replacen("---\n", &format!("---\n{edit}"), 1)
+        } else {
+            edit.to_string()
+        };
+        tree.write(&path, &edited);
+        let report = init(&tree.root, kit).unwrap();
+        assert_eq!(
+            outcome(&report, "skill work"),
+            replaced(OWN_SKILL),
+            "{file}"
+        );
+        assert!(tree.read(&path).contains(want), "{file}");
+        assert!(!tree.read(&path).contains(edit), "{file}");
+    }
+}
+
+#[test]
+fn a_stamped_skill_whose_stamp_names_no_digest_differs_from_it() {
+    let tree = Tree::new();
+    let folder = tree.path("work");
+    assert!(skill_differs_from_stamp(&folder, "---\nname: work\n---\nno stamp\n").unwrap());
+    assert!(
+        skill_differs_from_stamp(&folder, "<!-- symphony-stamp: abc -->\nno files named\n")
+            .unwrap()
+    );
+    let skill = skill("work", "v1");
+    let text = stamped_skill(&skill, &skill.files[0].1);
+    tree.write("work/SKILL.md", &text);
+    tree.write("work/notes.md", &skill.files[1].1);
+    assert!(!skill_differs_from_stamp(&folder, &text).unwrap());
+    let unnamed = text.replace(" files=SKILL.md,notes.md", " files=SKILL.md");
+    assert!(skill_differs_from_stamp(&folder, &unnamed).unwrap());
+}
+
+#[test]
+fn a_first_line_stamp_holds_the_digest_of_the_text_below_it() {
+    let text = "tasks *ARGS:\n    @echo tasks\n";
+    let stamped = stamped_rules(text);
+    assert!(!differs_from_stamp(&stamped));
+    assert!(differs_from_stamp(&format!("{stamped}ours:\n    true\n")));
+    assert!(differs_from_stamp(&stamped.replacen("tasks", "task", 1)));
+    assert!(differs_from_stamp(&format!("# {MARK}\n{text}")));
+    assert!(differs_from_stamp(&format!(
+        "# {MARK} 0123456789abcdef\n{text}"
+    )));
+    // A stamp on its own, with or without its line's end: the empty text below it, as written.
+    assert!(!differs_from_stamp(&stamped_rules("")));
+    assert!(!differs_from_stamp(stamped_rules("").trim_end()));
+    assert!(differs_from_stamp(""));
 }
 
 #[test]
@@ -201,7 +266,8 @@ fn a_stamped_skill_with_a_missing_file_gets_it_back() {
     init(&tree.root, &shipped).unwrap();
     std::fs::remove_file(tree.path(".agents/skills/work/notes.md")).unwrap();
     let report = init(&tree.root, &shipped).unwrap();
-    assert_eq!(outcome(&report, "skill work"), "updated");
+    // A file gone is a difference from the stamp too, which the run undoes.
+    assert_eq!(outcome(&report, "skill work"), replaced(OWN_SKILL));
     assert!(tree.path(".agents/skills/work/notes.md").exists());
 }
 
@@ -218,13 +284,21 @@ type ShippedText = fn(&mut Shipped) -> &mut String;
 
 #[test]
 fn codex_rules_and_recipes_follow_the_same_stamp_rule() {
-    let cases: [(&str, &str, ShippedText); 2] = [
-        (CODEX_RULES, "codex rules", |kit| &mut kit.codex_rules),
-        (RECIPES, "symphony.just", |kit| {
-            kit.recipes.as_mut().unwrap()
-        }),
+    let cases: [(&str, &str, ShippedText, &str); 2] = [
+        (
+            CODEX_RULES,
+            "codex rules",
+            |kit| &mut kit.codex_rules,
+            OWN_RULES,
+        ),
+        (
+            RECIPES,
+            "symphony.just",
+            |kit| kit.recipes.as_mut().unwrap(),
+            OWN_RECIPES,
+        ),
     ];
-    for (file, entry, text) in cases {
+    for (file, entry, text, own) in cases {
         let tree = Tree::new();
         init(&tree.root, &kit(vec![])).unwrap();
         let mut newer = kit(vec![]);
@@ -232,6 +306,17 @@ fn codex_rules_and_recipes_follow_the_same_stamp_rule() {
         let report = init(&tree.root, &newer).unwrap();
         assert_eq!(outcome(&report, entry), "updated");
         assert!(tree.read(file).ends_with("# a newer line\n"), "{entry}");
+
+        // An edit below the stamp (a recipe added) is written over, by this build or a newer one,
+        // and the run says so, and where the project's own goes.
+        for shipped in [&newer, &kit(vec![])] {
+            let edited = format!("{}ours:\n    true\n", tree.read(file));
+            tree.write(file, &edited);
+            let report = init(&tree.root, shipped).unwrap();
+            assert_eq!(outcome(&report, entry), replaced(own), "{entry}");
+            assert!(!tree.read(file).contains("ours:"), "{entry}");
+        }
+        init(&tree.root, &newer).unwrap();
 
         // The stamp must be the first line: one further down is the project's text.
         let own = format!("# ours\n{}", tree.read(file));
@@ -769,7 +854,7 @@ fn settings_that_are_not_json_or_not_an_object_are_refused_and_left() {
 
 #[test]
 fn the_command_installs_and_reports_and_refuses_what_it_does_not_know() {
-    let tree = Tree::new();
+    let tree = Tree::checkout();
     let run = |args: &[&str]| {
         let args: Vec<String> = args.iter().map(ToString::to_string).collect();
         let (mut out, mut err) = (Vec::new(), Vec::new());
@@ -821,6 +906,53 @@ fn the_command_installs_and_reports_and_refuses_what_it_does_not_know() {
     let (code, _, err) = run(&["--root", "no such folder here"]);
     assert_eq!(code, 2, "{err}");
     assert!(err.contains("/no such folder here: --root names"), "{err}");
+    // A folder in no git repository is refused, and nothing is made in it: the board lives in the
+    // repository's common dir, and every board command there would refuse it.
+    let outside = Tree::new();
+    let (code, out, err) = run(&["--root", outside.root.to_str().unwrap()]);
+    assert_eq!((code, out.as_str()), (2, ""), "{err}");
+    let real = outside.root.canonicalize().unwrap();
+    assert!(
+        err.starts_with(&format!(
+            "{USAGE}\nsymphony init: error: {} is not inside a git repository (",
+            real.display()
+        )) && err.ends_with(
+            "): the board lives in the project's git repository, so init sets up only a folder in \
+             a checkout of one (`git init` makes it one)\n"
+        ),
+        "{err}"
+    );
+    assert_eq!(outside.names(""), Vec::<String>::new());
+    // A git dir is in no checkout, though git answers a common dir there: a checkout's `.git` and
+    // a bare repository are refused, and nothing is made among git's own files.
+    let bare = Tree::new();
+    bare.write("HEAD", "ref: refs/heads/main\n");
+    bare.write("objects/.keep", "");
+    bare.write("refs/.keep", "");
+    let listing = |dir: &Path| {
+        let mut names: Vec<_> = std::fs::read_dir(dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        names.sort();
+        names
+    };
+    for git_dir in [tree.path(".git"), bare.root.clone()] {
+        let before = listing(&git_dir);
+        let (code, out, err) = run(&["--root", git_dir.to_str().unwrap()]);
+        assert_eq!((code, out.as_str()), (2, ""), "{err}");
+        let real = git_dir.canonicalize().unwrap();
+        assert_eq!(
+            err,
+            format!(
+                "{USAGE}\nsymphony init: error: {} is in the git dir {}, in no checkout of it: \
+                 init sets up only a folder in a git checkout, never among git's own files\n",
+                real.display(),
+                real.display()
+            )
+        );
+        assert_eq!(listing(&git_dir), before, "{git_dir:?}: nothing made");
+    }
     let (code, _, err) = run(&["stray"]);
     assert_eq!(code, 2);
     assert!(err.contains("unrecognized arguments: stray"), "{err}");
@@ -944,7 +1076,7 @@ fn removed_managed_support_files_retire_but_project_data_and_own_links_survive()
 fn all_builtin_skills_leave_a_projects_own_copies_in_use_byte_for_byte() {
     let tree = Tree::new();
     let shipped = Shipped::builtin();
-    assert_eq!(shipped.skills.len(), 8);
+    assert_eq!(shipped.skills.len(), 9);
     for skill in &shipped.skills {
         tree.write(
             &format!(".agents/skills/{}/SKILL.md", skill.name),
@@ -1137,7 +1269,9 @@ fn a_fresh_project_is_told_every_step_it_has_left() {
         left(&tree, ""),
         [
             "write symphony.toml to name the project (until then it is `lamp-shop`, after its \
-             folder) and to set its agents, verdicts and board",
+             folder) and to set its agents, verdicts and board: \
+             https://github.com/heavenstudio/symphony/blob/main/docs/PROJECT_FILE.md lists its \
+             tables and keys",
             "make docs/ for the documents the Symphony serves at /lamp-shop/docs/, or name the \
              folders it serves with [[entrypoints]] in symphony.toml",
             NO_BUILDS[0],
@@ -1146,6 +1280,80 @@ fn a_fresh_project_is_told_every_step_it_has_left() {
              (a start of `just symphony` registers it too)",
         ]
     );
+}
+
+/// The step that makes a board not made yet.
+const MAKE_BOARD: &str = "make the board: the first board command makes it (`just tasks list`); \
+                          the Symphony only reads a board and never makes one";
+
+#[test]
+fn every_checkout_layout_is_a_checkout_and_a_git_dir_is_none() {
+    use crate::test_layouts::{git, others, repository};
+    let tree = Tree::new();
+    let (main, linked) = repository(&tree.path("lantern"));
+    let found = others(&tree.root);
+    // A worktree of the bare repository placed inside it has a `.git` of its own.
+    let inside = found.bare.join("inside");
+    git(
+        &found.bare,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "inside",
+            inside.to_str().unwrap(),
+        ],
+    );
+    let in_git_dir_here = |root: &Path| {
+        let common = symphony_board::git::common_dir(root).unwrap();
+        in_git_dir(root, &common)
+    };
+    for checkout in [
+        &main,
+        &linked,
+        &main.join("docs"),
+        &found.submodule,
+        &found.separate,
+        &found.bare_worktree,
+        &inside,
+    ] {
+        assert!(!in_git_dir_here(checkout), "{checkout:?} is a checkout");
+    }
+    for git_dir in [
+        main.join(".git"),
+        main.join(".git/refs"),
+        tree.path("outer/.git/modules/sub"),
+        tree.path("sep.gitdir"),
+        found.bare.clone(),
+        found.bare.join("refs"),
+    ] {
+        assert!(in_git_dir_here(&git_dir), "{git_dir:?} is in a git dir");
+    }
+    assert!(!in_git_dir(&tree.path("gone"), &main.join(".git")));
+}
+
+#[test]
+fn a_checkout_is_told_to_make_its_board_until_its_store_is_there() {
+    let tree = Tree::new();
+    tree.write("Lamp Shop/.git/HEAD", "ref: refs/heads/main\n");
+    // After the SurrealDB the board's server runs, before the registration the Symphony reads it by.
+    let steps = left(&tree, "");
+    let at = |start: &str| {
+        steps
+            .iter()
+            .position(|step| step.starts_with(start))
+            .unwrap_or_else(|| panic!("{start}: {steps:?}"))
+    };
+    assert_eq!(steps[at("make the board")], MAKE_BOARD);
+    assert_eq!(at("fetch SurrealDB") + 1, at("make the board"), "{steps:?}");
+    assert_eq!(at("make the board") + 1, at("register "), "{steps:?}");
+    // A store a server left: a board, as far as the folder tells with nothing running.
+    tree.write("Lamp Shop/.git/symphony/tasks/data/manifest", "");
+    assert!(!left(&tree, "").contains(&MAKE_BOARD.to_string()));
+    // Outside a checkout no board is asked for.
+    let outside = Tree::new();
+    assert!(!unmade_board(&outside.root, None));
 }
 
 #[test]
@@ -1579,7 +1787,7 @@ fn the_justfile_init_wrote_with_the_setting_is_brought_to_the_import_alone() {
     assert_eq!(tree.read("justfile"), JUSTFILE);
     assert!(!sets_duplicates(JUSTFILE));
     let report = init(&tree.root, &kit(vec![])).unwrap();
-    assert_eq!(outcome(&report, "justfile"), "kept (the project's own)");
+    assert_eq!(outcome(&report, "justfile"), "current");
     // The same text the project changed by a line is its own.
     let own = format!("{JUSTFILE_SETTING_ITSELF}\nbuild:\n    true\n");
     tree.write("justfile", &own);

@@ -436,6 +436,182 @@ fn the_settings_marks_are_the_commits_on_the_line_that_changed_the_project_file(
     assert!(error.contains("trunk"), "{error}");
 }
 
+/// The full name of what `rev` names in `root`.
+fn rev_parse(root: &Path, rev: &str) -> String {
+    let done = symphony_board::sys::output(
+        symphony_board::sys::Command::new("git")
+            .args(["rev-parse", rev])
+            .current_dir(root)
+            .env_remove("GIT_DIR")
+            .env_remove("GIT_WORK_TREE"),
+    )
+    .unwrap();
+    assert!(done.status.success(), "{done:?}");
+    String::from_utf8(done.stdout).unwrap().trim().to_string()
+}
+
+/// Land the task `slug` on main as of `hours`, as the land merges it: a branch of one commit,
+/// merged with the land's own subject, or `subject` when given.
+fn land(tree: &Tree, hours: f64, slug: &str, subject: Option<&str>) {
+    git(&tree.root, hours, &["switch", "-qc", slug]);
+    commit(tree, hours, slug, &[(&format!("{slug}.txt"), "work\n")]);
+    git(&tree.root, hours, &["switch", "-q", "main"]);
+    let said = format!("Merge branch '{slug}'");
+    let subject = subject.unwrap_or(&said);
+    git(
+        &tree.root,
+        hours,
+        &["merge", "-q", "--no-ff", "-m", subject, slug],
+    );
+}
+
+#[test]
+fn a_landing_is_the_lands_merge_or_gits_own_onto_the_branch() {
+    assert_eq!(
+        landing_slug("Merge branch 'tools/x'", "main"),
+        Some("tools/x")
+    );
+    assert_eq!(
+        landing_slug("Merge branch 'tools/x' into main", "main"),
+        Some("tools/x")
+    );
+    for none in [
+        "Merge remote-tracking branch 'origin/main'",
+        "Merge branch 'main' of github.com:heavenstudio/symphony",
+        "Merge branch 'main' into tools/x",
+        "Merge branch 'main'",
+        "Merge branch ''",
+        "Merge branch 'unclosed",
+        "Regenerate the client distribution after tools/x",
+        "Merge pull request #3 from x/y",
+    ] {
+        assert_eq!(landing_slug(none, "main"), None, "{none}");
+    }
+    // The default branch is the project's: another's merge of `main` is a landing of it.
+    assert_eq!(
+        landing_slug("Merge branch 'main' into trunk", "trunk"),
+        Some("main")
+    );
+    assert_eq!(
+        landing_slug("Merge branch 'trunk' into tools/x", "trunk"),
+        None
+    );
+}
+
+/// A red's range from the commit it was green on to the one it was red on: a landing before it,
+/// three in it (the last merged by hand, its branch having taken main in first), the regenerator's
+/// commit and a merge of the remote's main between them, and a landing after it.
+#[test]
+fn the_landings_in_a_red_s_range_are_its_merges_on_the_line_of_first_parents_by_slug() {
+    let tree = Tree::new();
+    git(&tree.root, 0.0, &["init", "-q", "-b", "main"]);
+    commit(&tree, 0.0, "base", &[("a.txt", "a\n")]);
+    land(&tree, 0.5, "sim/before", None);
+    let good = rev_parse(&tree.root, "HEAD");
+    land(&tree, 1.0, "sim/one", None);
+    commit(
+        &tree,
+        1.25,
+        "Regenerate the client distribution for main at 1234567",
+        &[("dist/app.js", "js\n")],
+    );
+    land(&tree, 1.5, "sim/two", None);
+    git(&tree.root, 1.75, &["switch", "-qc", "upstream"]);
+    commit(&tree, 1.75, "pushed from elsewhere", &[("u.txt", "u\n")]);
+    git(&tree.root, 1.75, &["switch", "-q", "main"]);
+    git(
+        &tree.root,
+        1.75,
+        &[
+            "merge",
+            "-q",
+            "--no-ff",
+            "-m",
+            "Merge remote-tracking branch 'origin/main'",
+            "upstream",
+        ],
+    );
+    git(&tree.root, 2.0, &["switch", "-qc", "sim/three"]);
+    commit(&tree, 2.0, "three", &[("three.txt", "3\n")]);
+    git(
+        &tree.root,
+        2.0,
+        &[
+            "merge",
+            "-q",
+            "--no-ff",
+            "-m",
+            "Merge branch 'main' into sim/three",
+            "main",
+        ],
+    );
+    git(&tree.root, 2.25, &["switch", "-q", "main"]);
+    git(
+        &tree.root,
+        2.25,
+        &[
+            "merge",
+            "-q",
+            "--no-ff",
+            "-m",
+            "Merge branch 'sim/three' into main",
+            "sim/three",
+        ],
+    );
+    let bad = rev_parse(&tree.root, "HEAD");
+    land(&tree, 3.0, "sim/after", None);
+    let range = format!("{good}..{bad}");
+    assert_eq!(
+        landed(&tree.root, "main", &range).unwrap(),
+        ["sim/three", "sim/two", "sim/one"],
+        "newest first; the landings before and after the range, the regenerator's commit, the \
+         remote's merge and a branch's merge of main left out"
+    );
+    assert_eq!(
+        landed(&tree.root, "main", &format!("{bad}..{bad}")).unwrap(),
+        Vec::<String>::new(),
+        "red where it was green: no landing"
+    );
+    let unknown = format!("{}..{bad}", "0".repeat(40));
+    let error = landed(&tree.root, "main", &unknown).unwrap_err();
+    assert!(
+        error.starts_with(&format!("git log of {unknown} failed: ")),
+        "{error}"
+    );
+
+    let red = |slug: &str, between: Option<&str>| symphony_api::reports::Red {
+        slug: slug.into(),
+        between: between.map(str::to_string),
+        ..symphony_api::reports::Red::default()
+    };
+    let mut day = day(4.0);
+    day.reds = vec![
+        red("tests/release-red-verify", Some(&range)),
+        red("tests/main-red-1", None),
+        red("tests/release-red-lint", Some(&unknown)),
+    ];
+    let mut problems = Vec::new();
+    trace(&mut day, &tree.root, "main", &mut problems);
+    trace(&mut day, &tree.root, "main", &mut problems);
+    let traced: Vec<Option<Vec<String>>> = day.reds.iter().map(|red| red.landed.clone()).collect();
+    assert_eq!(
+        traced,
+        [
+            Some(vec!["sim/three".into(), "sim/two".into(), "sim/one".into()]),
+            None,
+            None,
+        ],
+        "a red that names no range, or one git cannot read, has no landings"
+    );
+    assert_eq!(problems.len(), 1, "said once: {problems:?}");
+    assert!(
+        problems[0].starts_with(&format!(
+            "git: tests/release-red-lint: git log of {unknown}"
+        )),
+        "{problems:?}"
+    );
+}
+
 #[test]
 fn a_read_of_no_repository_or_no_branch_fails_with_why() {
     let tree = Tree::new();

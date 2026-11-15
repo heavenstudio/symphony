@@ -27,6 +27,7 @@ fn a_bare_shot_takes_the_desktop_viewport_and_twenty_seconds() {
             full_page: false,
             scheme: None,
             report: false,
+            attach: false,
             steps: Vec::new(),
         }
     );
@@ -73,6 +74,28 @@ fn steps_keep_their_command_line_order_across_kinds_and_repeat() {
             Step::Click("h1".into()),
             Step::Shot("again.png".into()),
         ]
+    );
+    // Attached, each picture goes in the order it was taken, the final one last.
+    assert!(!shot.attach);
+    assert_eq!(
+        shot.pictures(),
+        [
+            PathBuf::from("open.png"),
+            "again.png".into(),
+            "closed.png".into()
+        ]
+    );
+}
+
+#[test]
+fn attach_is_a_flag_and_a_shot_with_no_step_attaches_its_one_picture() {
+    let shot = shot(&["http://h/x", "--attach", "--out", "evidence/a.png"]);
+    assert!(shot.attach);
+    assert_eq!(shot.pictures(), [PathBuf::from("evidence/a.png")]);
+    assert!(
+        refusal(&["http://h/x", "--out", "a.png", "--attach=yes"])
+            .contains("argument --attach: ignored explicit argument \"yes\""),
+        "a flag takes no value"
     );
 }
 
@@ -327,6 +350,14 @@ fn the_help_says_what_the_page_waits_for_what_a_dialog_gets_and_what_the_report_
         "A dialog the page or a frame opens is dismissed as it opens, and the page goes on: an \
          alert closed, a confirm or a prompt answered as by its Cancel, a beforeunload let leave; \
          --report names each",
+        // A tab the page opens is let run behind it, and its dialogs are Chrome's to close; a
+        // window of its own keeps its dialog, which only the step's --timeout ends.
+        "A tab the page opens (a link, a script) runs behind it as Chrome leaves it: the page is \
+         brought back in front as soon as Chrome tells of the new one, so Chrome closes that \
+         one's dialogs, which --report does not name",
+        "A window of its own the page opens (window.open with a size, or popup) stays in front \
+         and keeps its dialog: one of the page's own site shares the page's process, which its \
+         dialog holds until --timeout fails the step",
         "naming what it waited for, a frame by its address and a worker by its script's",
         // Every frame's console errors are in the report, each naming its frame.
         "the console errors and failed requests seen, a frame's (one Chrome runs in a process of \
@@ -449,6 +480,7 @@ fn request(url: &str, kind: &str) -> Request {
 fn a_page_is_drawn_once_loaded_navigated_with_no_region_loading_and_only_streams_open() {
     let drawn = json!({"ready": "complete", "navigation": "ready", "loading": 0});
     let stream = request("http://h/api/feed", "EventSource");
+    let socket = request("ws://h/api/feed", symphony_chrome::WEB_SOCKET);
     let done = Request {
         finished: true,
         ..request("http://h/api/task-board", "Fetch")
@@ -458,7 +490,13 @@ fn a_page_is_drawn_once_loaded_navigated_with_no_region_loading_and_only_streams
         canceled: true,
         ..request("http://h/api/old", "Fetch")
     };
-    assert!(waiting(&drawn, &[stream.clone(), done.clone(), failed.clone()]).is_empty());
+    assert!(
+        waiting(
+            &drawn,
+            &[stream.clone(), socket.clone(), done.clone(), failed.clone()]
+        )
+        .is_empty()
+    );
     // A page that is not the Symphony's has no navigation marker of its own.
     assert!(
         waiting(
@@ -472,7 +510,7 @@ fn a_page_is_drawn_once_loaded_navigated_with_no_region_loading_and_only_streams
         .collect();
     let said = waiting(
         &json!({"ready": "interactive", "navigation": "loading", "loading": 2}),
-        &[vec![stream, done, failed], pending].concat(),
+        &[vec![stream, socket, done, failed], pending].concat(),
     );
     assert_eq!(
         said,
@@ -2302,6 +2340,20 @@ fn traffic_is_quiet_since_its_last_request_began_finished_or_failed_but_not_befo
             at(40)
         ),
         at(50)
+    );
+    // A WebSocket made or closed is, its frames not.
+    let (made, frame, closed) = (
+        event("Network.webSocketCreated"),
+        event("Network.webSocketFrameReceived"),
+        event("Network.webSocketClosed"),
+    );
+    assert_eq!(
+        quiet_since([(at(50), &made), (at(80), &frame)].into_iter(), at(40)),
+        at(50)
+    );
+    assert_eq!(
+        quiet_since([(at(50), &made), (at(70), &closed)].into_iter(), at(40)),
+        at(70)
     );
 }
 

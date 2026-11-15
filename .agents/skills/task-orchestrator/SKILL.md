@@ -2,7 +2,7 @@
 name: task-orchestrator
 description: Keep the development pipeline healthy through the task board: find approved work, file complete briefs, staff executors and independent reviewers, and follow the project's landing contract.
 ---
-<!-- symphony-stamp: 6bbdd615e107de96 files=SKILL.md -->
+<!-- symphony-stamp: 9d5a67e4c056b3c4 files=SKILL.md -->
 
 # Orchestrate development from the board
 
@@ -37,21 +37,24 @@ full suite).
    decision point (resuming, before staffing, after a verdict or landing) run
    just tasks pull --as HANDLE for the whole digest as you hear it, with any owner
    verdict nobody received. Staff a red (tests/main-red-*, tests/release-red-*,
-   tests/nightly-red-*) before anything else. One filed as a fast fix is yours to
-   approve when its fix changes no test or check, the failing tests unchanged and
-   green at its tip; the land refuses your approve on a fix that changes a test, a
-   check, a budget or a run step ([land] check_paths), and you staff a fresh reviewer
-   for it. A test red on load (it passes alone, or its failure is a wall-clock bound,
-   a sleep-ordered step or a timeout under load) is discarded in its red's own fix,
+   tests/nightly-red-*) before anything else. Its assessor (step 5) reads what its
+   fix needs: its tests, the failing tests unchanged and green at its tip, and a
+   fresh reviewer's approve as well where the fix changes a test, a check, a budget
+   or a run step ([land] check_paths). One filed with the fast-fix mark by an older
+   board keeps that path until it closes: yours to approve when its fix changes no
+   test or check, a fresh reviewer's otherwise. A test red on load (it passes
+   alone, or its failure is a wall-clock bound, a sleep-ordered step or a timeout
+   under load) is discarded in its red's own fix,
    with a line on the red's thread naming it, the evidence and what it proved; the
    release waits for no card, rerun or rewrite of it, and you hold no other work back
    to keep the load down for a run: a rerun neither fails nor passes on the machine's
    load, and a test that does is discarded and the run moves on.
    A red whose release run held its commit as the release candidate says so in
    its text: brief its executor to start from the local branch release-candidate, never
-   main, and to merge no main before its approve; its own land moves the candidate, and
-   the land that answers the last red starts its rerun. Your approve of its fast fix
-   names the fix's full tip, the commit the candidate moves to. Rerunning or dropping a
+   main, and to merge no main before its land; its own land moves the candidate, and
+   the land that answers the last red starts its rerun. The candidate moves to the
+   fix's full tip an approve names, or, where it needed no review, the tip its
+   landing's line says its stamps stood on. Rerunning or dropping a
    candidate by hand is an orchestrator's retry the project's guidance names. A red
    whose fix landed with another red's is closed as covered by that landing, which
    answers it once that land moved the candidate; closed as covered by any other
@@ -65,11 +68,24 @@ full suite).
    explicit stacking and source-availability rules in the task. Coordinate file
    ownership and record actual conflicts on the thread.
 5. Assign disjoint files and complete briefs. Put repeated instructions in skills.
-   Register a worker handle, reserve the instruction with --for HANDLE, and give
-   it only $work SLUG HANDLE (Claude: /work SLUG HANDLE), a reviewer only
-   $review-task SLUG HANDLE (Claude: /review-task SLUG HANDLE). The work skill owns
-   claiming, milestones and finishing, the review-task skill the verdict. Use a
-   separate checkout per executor.
+   Register a worker handle and give it only $work SLUG HANDLE (Claude: /work SLUG
+   HANDLE), a reviewer's handle only $review-task SLUG HANDLE (Claude: /review-task
+   SLUG HANDLE), on the task itself: its brief and thread are their assignment, with
+   no work or review subtask, and what more they need goes on the thread. The work
+   skill owns claiming, milestones and finishing, the review-task skill the reviewer's
+   role on the task and the verdict. A later review round resumes the same reviewer
+   with the new tip, never another reviewer; resumed, it is still a fresh reviewer
+   for the land (#8). Only one that cannot be resumed (no conversation recorded, a
+   Codex thread that never arrived, a reviewer that left) is replaced: then another
+   reviewer takes the role on the task. Use a separate checkout per executor.
+   Start an assessor on each task you file, and again each time it moves to review,
+   before you staff any reviewer: an Agent launch on the model just tasks limits names
+   for the assessor, its handle registered with just tasks register --kind reviewer
+   --parent HANDLE, its whole prompt $assess-task SLUG HANDLE (Claude: /assess-task
+   SLUG HANDLE). It writes the stamps the task needs at the tip it read, and the
+   board refuses it to whoever filed, orchestrates or executed the task; never write
+   them yourself. Staff a reviewer only where they need review (just tasks stamps
+   SLUG says them).
 6. Choose a supported launch method under project policy: an in-process agent,
    a headless run, or just tasks launch SLUG --kind claude|codex. Pass the model
    just tasks limits names for its role, and its required effort. A terminal is for
@@ -85,21 +101,22 @@ full suite).
    Follow the project's review tiers and stamps. Reviewers must be independent of
    author, requester and lander. Never let an executor approve its own branch: the
    board refuses the verdict of a session that executed the task or a slice of it (a
-   subtask filed without --instruction), and, but on a fast fix, the reviewer's role
-   and the verdict of one that orchestrates it, orchestrated it or filed it, you
-   included; a fresh reviewer gives it, as the one that claimed its --instruction
-   review subtask does.
-   Land an approved task with just land SLUG --as HANDLE, in the background (it
-   merges and checks in a fresh worktree, which can take many minutes), never a
-   merge by hand: by default it lands only the tip a fresh reviewer approved, checks
-   the merge, closes the task and pushes the default branch; a project's own land
-   recipe replaces it. Never waive a check it refuses on: its one line names what to
-   fix, and an approve it cannot go by sends the task back to review. Run it again
-   after an interrupted land: it finishes the push and the close.
-   A bug fix whose risk calls for no reviewer is filed with just tasks create SLUG
-   TITLE --fast-fix "the risk, in words"; you, never its executor, approve it on its
-   posted evidence, naming the tip, and land it. One you executed yourself is
-   approved by a fresh reviewer, as any other task.
+   subtask filed without --instruction), and, but on a task an older board filed
+   with the fast-fix mark, the reviewer's role and the verdict of one that
+   orchestrates it, orchestrated it or filed it, you included; a fresh reviewer gives
+   it, holding the reviewer role on the task.
+   Land a task with just land SLUG --as HANDLE once every stamp it needs stands on
+   its tip, in the background (it merges and checks in a fresh worktree, which can
+   take many minutes), never a merge by hand: by default it lands from review or
+   blocked a task that needs no review, and only the tip a fresh reviewer approved
+   of one that does; it checks the merge, closes the task and pushes the default
+   branch; a project's own land recipe replaces it. A missing stamp refuses, naming
+   who gives it: its executor its tests or pictures at the tip, you an assessor of
+   the tip or a fresh reviewer, the owner its approve on the task's page, the task
+   held blocked (or left done by its approve) meanwhile. Never waive a check it
+   refuses on: its one line names what to fix, and an approve it cannot go by sends
+   the task back to review. Run it again after an interrupted land: it finishes the
+   push and the close.
    A task whose work landed with another task's branch, leaving none of its own,
    is closed by its executor, or by you holding its orchestrator role, with just
    tasks done SLUG "what landed, where" --covered-by OTHER, never a verdict of

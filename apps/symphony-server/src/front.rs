@@ -286,7 +286,39 @@ pub fn router(shared: Arc<Shared>) -> Router {
         )
         .layer(middleware::from_fn(head))
         .layer(middleware::from_fn_with_state(shared.clone(), judge))
+        .layer(middleware::map_response(nosniff))
         .with_state(shared)
+}
+
+/// `response`, saying `X-Content-Type-Options: nosniff` when it is JSON or the feed
+/// ([`sniffless`]), whichever route made it, its refusals and misses among them. A browser then
+/// runs or applies none of them as a script or a stylesheet: a page that loads an answer of the
+/// app's (an HTML document an entrypoint at the project's root serves can name any of its
+/// addresses) gets the same refusal whether the route answered or not, and learns nothing from
+/// the load. A project's own files and uploads say it themselves ([`crate::media_files`]); its
+/// router and the one server's dispatch ([`crate::projects::router`]) each end with this.
+pub(crate) async fn nosniff(mut response: Response) -> Response {
+    if sniffless(response.headers()) {
+        response.headers_mut().insert(
+            header::X_CONTENT_TYPE_OPTIONS,
+            header::HeaderValue::from_static("nosniff"),
+        );
+    }
+    response
+}
+
+/// Whether `headers` name a type [`nosniff`] marks: the API's `application/json` or the event
+/// feed's `text/event-stream`, its parameters and letters' case aside.
+fn sniffless(headers: &HeaderMap) -> bool {
+    headers
+        .get(header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|kind| kind.split(';').next())
+        .is_some_and(|essence| {
+            let essence = essence.trim();
+            essence.eq_ignore_ascii_case("application/json")
+                || essence.eq_ignore_ascii_case("text/event-stream")
+        })
 }
 
 /// Let routing and compression see GET's representation before discarding a HEAD body.
@@ -445,8 +477,15 @@ pub(crate) fn names_loopback(host: &str) -> bool {
 
 /// Saves own their request body; reads need only its metadata. Unknown routes end here, and so
 /// does every miss a read answers with no body (a file nothing serves, say): each is the one page
-/// or API error a miss is ([`crate::pages::missing`]).
+/// or API error a miss is ([`crate::pages::missing`]). A project whose folder no longer holds it
+/// ([`crate::live::Hub::holds_its_project`]) is answered nothing more: each read or save would reach
+/// the board of whatever checkout holds its folder, and start it.
 async fn answer(State(shared): State<Arc<Shared>>, request: Request) -> Response {
+    if let Some(hub) = shared.api.get()
+        && !hub.holds_its_project()
+    {
+        return lost(&request, &hub.gone());
+    }
     if crate::write::handles(&request) {
         return crate::write::answer(&shared, request).await;
     }
@@ -454,10 +493,9 @@ async fn answer(State(shared): State<Arc<Shared>>, request: Request) -> Response
     *metadata.method_mut() = request.method().clone();
     *metadata.uri_mut() = request.uri().clone();
     *metadata.headers_mut() = request.headers().clone();
-    // Where the request came from: a Go to session focuses a pane only for this machine's own.
-    if let Some(peer) = request.extensions().get::<ConnectInfo<SocketAddr>>() {
-        metadata.extensions_mut().insert(*peer);
-    }
+    // Where the request came from (a Go to session focuses a pane only for this machine's own) and
+    // the connection's upgrade, which a feed asked for on a WebSocket takes over.
+    *metadata.extensions_mut() = request.extensions().clone();
     let response = match crate::api::answer(&shared, metadata).await {
         Some(response) => response,
         None => match crate::write::methods(request.uri().path()) {
@@ -483,6 +521,27 @@ async fn answer(State(shared): State<Arc<Shared>>, request: Request) -> Response
         return missing(&shared, &request, response.status());
     }
     response
+}
+
+/// What a project whose folder no longer holds it answers every request with: `why`, as a page to a
+/// browser loading one and as JSON to a read or a save.
+fn lost(request: &Request, why: &str) -> Response {
+    if !crate::projects::navigation(request.method(), request.headers()) {
+        return crate::pages::json(StatusCode::SERVICE_UNAVAILABLE, why);
+    }
+    let said = format!(
+        "<p><strong>The Symphony does not serve this project now</strong>: {}</p>",
+        symphony::markup::escape(why)
+    );
+    crate::pages::html(
+        StatusCode::SERVICE_UNAVAILABLE,
+        crate::pages::machine(
+            "Not served · Symphony",
+            "not served",
+            &crate::pages::notice("alert", &said),
+            "",
+        ),
+    )
 }
 
 /// A thread named `name`, running `body`.
@@ -1310,6 +1369,9 @@ mod sweep_tests;
 
 #[cfg(test)]
 mod head_tests;
+
+#[cfg(test)]
+mod nosniff_tests;
 
 #[cfg(test)]
 mod broken_stderr_tests;

@@ -98,7 +98,10 @@ main's, or one main changed after the branch forked, is skipped.
   main's. Once main closes a
   card (resolved, or rejected and answered) after every line of a branch's copy, that copy adds nothing.
   A branch's page draws main's card for every card the branch did not post, and for one main closed
-  after the branch's copy, so a stale copy shows main's resolution.
+  after the branch's copy, so a stale copy shows main's resolution. A card a page draws in another
+  group than its file's copy sits in (an answer given there and saved on main) is drawn in that
+  group, the register regrouped as a save would regroup it, each block still standing for the
+  file's own lines, where a save or a comment from the page lands.
 - **The owner's word never disappears.** A line the owner saved in any worktree counts, whether the
   branch is live or finished and whether the card is posted or a draft. On a card a live branch posted,
   it is laid on the branch's copy, which is one card with main's by the rule above. Otherwise (a card the
@@ -123,12 +126,23 @@ main's, or one main changed after the branch forked, is skipped.
   branch card's.
 
 The card's page and every page its links reach are served from that worktree, under
-`/@<branch>/docs/…` (a `/` in the branch name is written `~`). The owner's verdict is written **into that
-worktree's file**, uncommitted, where the agent's `just symphony-status --open` reads it exactly as before; it is
-never committed onto main (the branch carries it when the agent commits and lands). Until then the owner's own
-lines there count at once, laid on the posted card; on a card the branch did not post (its copy is the one it
-forked with, or main's), and in a finished branch's worktree, they join main's copy of the card, on the same
-terms, or stand as the branch page's card when main has none. No second app is needed,
+`/@<branch>/docs/…` (a `/` in the branch name is written `~`). The owner's verdict on a card the branch posted,
+or on its draft, is written **into that worktree's file**, uncommitted, where the agent's
+`just symphony-status --open` reads it exactly as before; the branch carries it once the agent commits it, and
+a land refuses while a worktree at a commit it brings holds an owner's answer no commit has
+([TASKS](TASKS.md#the-default-landing)). Until then
+the owner's own lines there count at once, laid on the posted card. A line given on a branch's page is main's
+exactly when that page draws main's card: main holds the card, and the branch did not post it (its copy is the
+one it forked with, or main's), the branch is in main already (landed), or main closed its copy after every line
+of the page's. A card the branch posted that main has not closed since stays its own. A page whose worktree is
+gone is judged on its branch while the branch is kept, as the page was drawn from it, and only with neither left
+is a line on a card main holds main's. A line that is main's is saved in main's
+file and committed there like a line given on main's page, so `just symphony-status` counts it at once; a line
+that is the branch's from a gone worktree's page, or on a card main lacks, has nowhere to go and is refused.
+While git cannot list the worktrees, or read the branch of a gone one, nothing says where the card is: a branch
+page's line is refused, never taken to main. A line left in a worktree
+whose branch reached main another way (merged by hand, or saved while it landed) still joins main's copy of the
+card on the terms above, or stands as the branch page's card when main has none. No second app is needed,
 and a per-worktree app is never something the owner is pointed at. The document shows added, removed
 and changed blocks in place against main, with the previous content available beside a changed block
 and a line linking the task those differences belong to. Identical documents have no comparison marks.
@@ -146,8 +160,10 @@ moves (and every minute, for a register file only a branch has), and an owner's 
 About 160 worktrees take ~3 s to scan on a busy machine; a check that nothing moved is stat calls.
 
 **A worktree with an owner line no commit has is never removed.** The worktree sweep (`just tasks sweep`) and
-`land`'s cleanup keep it and say so (`symphony::landing::owner_lines_left`, and the sweep's own reading of it);
-commit the verdict first.
+`land`'s cleanup keep it and say so: the board reads the owner's dated lines under a card, in the documents of the
+project's entrypoint folders, that the worktree's HEAD does not hold, and keeps a worktree it cannot read as well;
+commit the verdict first. A consuming project's own gate asks the Symphony with
+`symphony::landing::owner_lines_left`, which names the documents holding such a line.
 
 ## Start with the decision register
 
@@ -392,6 +408,12 @@ title, and writes exactly this after the block you were on:
 
 > [!decision] Drop the brass finish from the lamp matrix.
 ```
+
+Anywhere but inside a decision register, which holds cards only: a callout
+between its markers would stop every later verdict on its cards, so a comment
+left on a register's group or topic heading is refused, the save saying to put
+it on the card itself (its **Verdict / message**) or on a block outside the
+register.
 
 The first line is the tag and a short title; the `>` lines under it are the
 body. `comment`, `question` and `decision` are open work until an agent nests

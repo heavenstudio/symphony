@@ -24,7 +24,20 @@ lint-rs:
 _lint-rs:
     @tools/cargo.sh fmt --all --check
     @tools/cargo.sh clippy --workspace --all-targets --locked -- -D warnings
+    @tools/cargo.sh clippy -p symphony-api --features typescript --all-targets --locked -- -D warnings
     @PATH="$(pwd)/apps/symphony-ui/bin:$PATH" tools/cargo.sh symphony-ui clippy
+    @just --justfile {{quote(justfile())}} client-lint
+
+# The web client's checks (apps/symphony-web/check.sh): its wire types against crates/symphony-api's
+# and the tests of the example that writes them, Biome's lint and format and TypeScript's types,
+# every warning an error, and its unit tests. Part of `just lint-rs`.
+client-lint:
+    @{{record}} --pipeline lint --step client-lint build "just client-lint" bash apps/symphony-web/check.sh
+
+# Write the web client's wire types (apps/symphony-web/src/wire.ts) and the cases its tests hold its
+# TypeScript to again, from crates/symphony-api.
+client-wire:
+    @bash apps/symphony-web/wire.sh
 
 test-rs *ARGS:
     @{{record}} --pipeline test test "just test-rs $*" tools/cargo.sh test --locked "$@"
@@ -36,8 +49,12 @@ symphony-ui-dist OUT="build/symphony-ui" KIND="all" OPT="z":
     if [[ "$out" != /* ]]; then out="$PWD/$out"; fi
     PATH="$PWD/apps/symphony-ui/bin:$PATH" tools/cargo.sh symphony-ui dist "$out" {{quote(KIND)}} {{quote(OPT)}}
 
-symphony-ui-dev PORT="0":
-    @PATH="$(pwd)/apps/symphony-ui/bin:$PATH" tools/cargo.sh symphony-ui dev {{quote(PORT)}}
+# apps/symphony-web/dev.js (its guide's "The dev server"), on loopback port PORT (0 for any), over
+# a server of your own (`just symphony --port 0`) on port SERVER; 8765 it refuses as either.
+# The web client's dev server: its kinds from their sources, the page loaded again on each save.
+[no-exit-message]
+symphony-ui-dev SERVER PORT="0":
+    @bash apps/symphony-web/npm.sh run --silent dev -- {{quote(SERVER)}} {{quote(PORT)}}
 
 # A server of its own uses --port; the server CLI owns shared-server selection. These commands
 # say their own errors, with no recipe-failed line after them.
@@ -81,12 +98,6 @@ release *ARGS:
     @tools/rs-bin.sh --link symphony-build >/dev/null
     @tools/rs-bin.sh symphony-build release "$@"
 
-# The release run's name before `just release`: it runs nothing and says so, exit 2, until the
-# first release `just release` cuts.
-[no-exit-message]
-nightly *ARGS:
-    @echo '`just nightly` is now `just release`' >&2; exit 2
-
 [no-exit-message]
 agent-send *ARGS:
     @tools/rs-bin.sh agent-send "$@"
@@ -111,10 +122,17 @@ _size-check:
     @tools/cargo.sh build --release --locked -p symphony-server -p symphony-app -p symphony-board --bin symphony-server --bin symphony --bin tasks --bin agent-send
     @tools/rs-bin.sh symphony-build size-budget . "${CARGO_TARGET_DIR:-.target}/release"
 
-# The full verification (tools/verify.sh): lint, the client check, the size budgets, the docs audit
-# and every test target, each a step of this run with a log of its own, run whatever the ones before
-# it did; red when any step is, naming each. `just verify STEP...` runs those steps alone. The native
-# browser harness runs headless Chrome; no game engine or display is needed.
+# Each published package whose version crates.io holds, packaged here and compared with what
+# crates.io holds of that version: red, naming the package, where the sources moved and the version
+# did not (docs/RELEASES.md, "Packages on crates.io"). It reads crates.io and publishes nothing.
+crates-check:
+    @tools/rs-bin.sh symphony-build crates-check .
+
+# The full verification (tools/verify.sh): lint, the client check, the size budgets, the docs audit,
+# the crates check and every test target, each a step of this run with a log of its own, run
+# whatever the ones before it did; red when any step is, naming each. `just verify STEP...` runs
+# those steps alone. The native browser harness runs headless Chrome; no game engine or display is
+# needed.
 verify *STEPS:
     @{{record}} --pipeline verify test "just verify${*:+ $*}" just --justfile {{quote(justfile())}} _verify "$@"
 

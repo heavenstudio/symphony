@@ -285,11 +285,15 @@ nightly, dependency, review, adversarial, owner and holds. A plugin's gate with 
 Symphony's takes its place. Its review stamp, for example, is the approval its landing counts.
 
 **The rule: the more specific level's answer replaces the general one's**, everywhere, for the
-level that gives it. A project's gate
-replaces Symphony's same-named gate for that project everywhere the board judges it: the task page,
-the sign-off lane, the PULL digest orchestrators get, the move to blocked and the default land
-command. A project with no answer keeps Symphony's gates. The page's part is
-`tools/task-gates-seam`; the rest is `tools/project-gates-everywhere`.
+level that gives it. A project's gate replaces Symphony's same-named gate for that project
+everywhere the board judges it. The task page, its timeline and the sign-off lane read the plugin's
+answer, the lane only what the server keeps of it. The PULL digest orchestrators get runs in the
+board's own processes, which link no plugin, so it reads what the project's landing records of the
+tip: a review whose landing waits on no review there is not unreviewed
+([TASKS](../TASKS.md#the-pipeline-alarm)). The move to blocked and the land are the project's own
+`land` recipe, or the default land by the project's own stamp catalogue
+([TASKS](../TASKS.md#needed-stamps)). A project with no answer keeps Symphony's gates. The page's
+part is `tools/task-gates-seam`; the rest is `tools/project-gates-everywhere`.
 
 **Decided: A, a typed gates seam**, as the pictures below draw it.
 - A plugin trait answers a task's gates as data: name, state, by, when, commit, why, detail, link
@@ -342,7 +346,7 @@ tokens stay with it.
 - Its times are invented.
 
 The pictures are SVG written by hand. They use the client's tokens
-(`apps/symphony-ui/assets/board.css`) and the task head as `task_detail.rs` draws it, and they
+(`apps/symphony-ui/assets/board.css`) and the task head as `task_detail.rs` drew it, and they
 follow the reader's light or dark setting.
 
 The A pictures and the timeline pictures are the look the filed tasks build to; the B pictures
@@ -401,9 +405,15 @@ Where a defect was caught, how long it took to fix, and whether it escaped.
 
 - **Time to fix**: a red task's creation to done; a `changes` verdict to the next move to review.
 - **Escape rate**: of the tasks landed in a window, how many a later main red, nightly red or
-  revert traces back to. The trace needs the red's filer (the project's landing and nightly) to
-  record which landing or commit it came from; Symphony shows reds per week beside landings per
-  week until it does.
+  revert traces back to. A red traces back through the commits its filer names it came between,
+  a `between: GOOD..BAD` line in its body (`crates/tasks/src/red.rs`, `BETWEEN`): the newest
+  commit known green and the first known red. The release run writes it (its last green run and
+  its candidate), and the roll-up lists the landings in that range on the red
+  ([the day files](#the-day-files)); a filer that writes none (the consuming project's landing
+  and nightly, until they do) leaves its reds untraced. At 20 landings a release, a release red's
+  range holds about that many landings: what it traces to is the landings it may have come from,
+  not the one that broke it. The page shows reds per week beside landings per week until it reads
+  them.
 - **Which checks catch what**: per step or check, its reds before landing against those on main
   or at night (from the run files' branch). A project adds its own classification through its
   report section: the consuming project's test ledger (a database of 11 MB, not opened) sorts
@@ -499,7 +509,8 @@ good ([open question 1](#open-questions)).
 **From what.** One read of the board (`Store::report_records`): every task open now, however old,
 every one written since yesterday's start, and every one with a line since then, since a landing
 writes its verdict on a closed task without writing the task; each with its thread's lines (a post
-by its sender and time alone, a verdict by its first words). Two cheap reads of the default
+by its sender and time alone, a verdict by its first words), and a red's body, for the commits it
+names it came between. Two cheap reads of the default
 branch's history since then. The decision cards of the documents in the main checkout
 (`crates/symphony/src/board.rs`, `documents`), with the cards a live branch posted laid on main's
 as the owner's queue lays them (`dashboard::merge_decisions`). A board read that fails writes
@@ -522,9 +533,11 @@ hours of any span sum to that span's figure (a day, a week, a local day):
 - **Waits**, each counted in the hour it ended:
   - approved to landed: the approve the landing went by, to the landing;
   - in review to a reviewer: a move into review, to the first session that joins the task as its
-    reviewer or claims a review subtask of it while it is in review; zero when a reviewer already
-    held it (so a re-review whose reviewer kept the role, the usual case, reads zero: this wait is
-    the first round's staffing), and no wait at all when none came before the task left review;
+    reviewer or claims a review subtask of it while it is in review, and no wait at all when none
+    came before the task left review: so a re-review whose reviewer kept the role, the usual case,
+    has none, as the board's lines cannot tell when that reviewer came back (its first line is its
+    verdict, which would make the wait the review itself), and this wait is the first round's
+    staffing;
   - a `changes` verdict to its executor resuming: the first claim of the task after it, or a post,
     move or verdict by a session holding its executor role then, its release left out (board lines
     alone: an executor that works without a word reads as resumed at its move to review);
@@ -543,7 +556,10 @@ lines name an hour by its first second as `start` too, so a page joins an hour o
 
 **Per day**: the lead time of the tasks done (median, p90), each from its creation to its last
 close, the ten open tasks longest in their status,
-the `changes` and `approve` verdicts by review round, each red with its filing and close, the
+the `changes` and `approve` verdicts by review round, each red with its filing and close (and,
+where its body names the commits it came between, those commits and the tasks that landed in them:
+the merges on the default branch's line of first parents in that range, `Merge branch 'SLUG'`, by
+slug, as the release cadence counts landings, read with one more `git log` for each such red), the
 cards still waiting with since when, each card that left the queue in the day with its minute and
 the word of its line (`answered`, `auto_approved`, `withdrawn`), and what git was read with what it
 left out.
@@ -561,8 +577,9 @@ those groups is counted in the hour of its minute, by whose it is and what it sa
 agent posts already out of the queue, `resolved` say, never asked the owner and is counted nowhere,
 unless it was posted auto-approved. A card waits since the line that last put it in the queue: its
 posting, an agent's answer to the owner's comment, or an agent's question. A card is named by its
-page, `docs/DECISIONS.md` for main's and `@BRANCH/docs/DECISIONS.md` for one a live branch posted;
-once its branch lands, main holds the same lines.
+page, `docs/DECISIONS.md` for main's, a live branch's copy of one of main's cards included, and
+`@BRANCH/docs/DECISIONS.md` for one only a live branch posted; once its branch lands, main holds
+the same lines.
 
 What the register's history can tell: which line took a card out of the queue, whose it was, its
 verdict word and its minute. What it cannot tell yet:

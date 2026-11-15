@@ -27,6 +27,7 @@ pub use media::{GalleryItem, Media, View, Viewer};
 
 /// One picture a card shows.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct Picture {
     /// Where the picture is served; `None` for an item not drawn yet ("picture coming").
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -40,6 +41,7 @@ pub struct Picture {
 
 /// A region of the home a plugin adds: a headline over bars of done, waiting and remaining work.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct Region {
     /// The region's id among the project's regions, stable across snapshots.
     pub id: String,
@@ -53,6 +55,7 @@ pub struct Region {
 
 /// One bar of a home region: how much of `total` is done, waiting, and (the rest) remaining.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct ProgressBar {
     pub key: String,
     pub name: String,
@@ -69,6 +72,7 @@ pub struct ProgressBar {
 /// task's `branch`, shown while there is a `payload`, which the button sends back to the action
 /// `action` as it came (approve to land: the exact patch to land).
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct TaskOffer {
     /// The board action's name.
     pub action: String,
@@ -79,6 +83,7 @@ pub struct TaskOffer {
 
 /// A plugin's entry in the header and in the home's links.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct NavItem {
     /// The header's word (`▤ shelf`), drawn as the plugin gives it, after the Symphony's own
     /// (`symphony_api::page_names`).

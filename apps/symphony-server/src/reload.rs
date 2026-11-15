@@ -17,8 +17,10 @@ use std::sync::{Mutex, mpsc};
 use std::time::{Duration, Instant};
 use symphony_board::sys::{self, Stdio};
 
+mod retry;
 mod stamp;
-use stamp::{installed_source, stamp_install};
+use retry::Retry;
+use stamp::{RunningImage, installed_source, stamp_install};
 
 /// What a serving server hands its successor; no person sets it.
 const INHERITED: symphony_env::Var = symphony_env::HANDOVER;
@@ -128,6 +130,8 @@ pub(crate) struct Setup {
     pub lease: Option<File>,
     control: Option<Control>,
     fingerprint: Option<String>,
+    /// The installed image this generation runs, when it runs that image.
+    running: Option<RunningImage>,
 }
 
 fn cloexec(fd: RawFd, on: bool) -> std::io::Result<()> {
@@ -168,6 +172,7 @@ fn inherited(
 /// Called inside the runtime, before binding. Only the direct child of the transfer's sender may
 /// consume it; build tools and other descendants cannot reuse stale descriptor numbers.
 pub(crate) fn setup(serve: &Serve) -> Result<Setup, String> {
+    let running = RunningImage::of(serve);
     if let Some(transfer) = inherited(std::env::var, crate::sys::parent())? {
         if serve.home.is_none() {
             return Err("socket handover requires a shared server home".into());
@@ -217,6 +222,7 @@ pub(crate) fn setup(serve: &Serve) -> Result<Setup, String> {
             lease: Some(lease),
             control: Some(control),
             fingerprint: Some(transfer.fingerprint),
+            running,
         });
     }
     let lease = serve
@@ -244,6 +250,7 @@ pub(crate) fn setup(serve: &Serve) -> Result<Setup, String> {
         lease,
         control: None,
         fingerprint,
+        running,
     })
 }
 
@@ -417,16 +424,25 @@ pub(crate) fn watch(
     shared: Arc<Shared>,
     sockets: Vec<OwnedFd>,
 ) -> Option<std::thread::JoinHandle<()>> {
-    watch_with::<notify::RecommendedWatcher>(serve, setup, shared, sockets, backstop::PERIOD)
+    watch_with::<notify::RecommendedWatcher>(
+        serve,
+        setup,
+        shared,
+        sockets,
+        backstop::PERIOD,
+        Retry::new(),
+    )
 }
 
-/// [`watch`] with watcher `W`, checking the sources on its own every `period`.
+/// [`watch`] with watcher `W`, checking the sources on its own every `period`, and trying a version
+/// whose update failed again when `retry` says.
 fn watch_with<W: Watcher + Send + 'static>(
     serve: Serve,
     setup: Setup,
     shared: Arc<Shared>,
     sockets: Vec<OwnedFd>,
     period: Duration,
+    mut retry: Retry,
 ) -> Option<std::thread::JoinHandle<()>> {
     let lease = setup.lease?;
     let reload = move || {
@@ -463,6 +479,7 @@ fn watch_with<W: Watcher + Send + 'static>(
             return;
         }
         let mut attempted = setup.fingerprint;
+        let mut running = setup.running;
         let mut last_problem = String::new();
         let mut initial = true;
         let mut backstop = Backstop::new(period);
@@ -534,7 +551,9 @@ fn watch_with<W: Watcher + Send + 'static>(
                     continue;
                 }
             };
-            if attempted.as_deref() == Some(&fingerprint) {
+            // A version tried before is built again only once its update failed and the wait
+            // after that failure is over ([`retry`]); any other is built now.
+            if attempted.as_deref() == Some(&fingerprint) && !retry.again(&fingerprint) {
                 continue;
             }
             attempted = Some(fingerprint.clone());
@@ -542,6 +561,11 @@ fn watch_with<W: Watcher + Send + 'static>(
                 return;
             };
             let exe = install.join("bin/symphony-server");
+            // This generation's own bytes, read while they are still installed: the build may
+            // install other bytes in their place.
+            if let Some(running) = &mut running {
+                running.hash(install);
+            }
             let result = symphony::reload::build(&serve.root, install, || shared.stopping());
             if shared.stopping() {
                 return;
@@ -551,23 +575,66 @@ fn watch_with<W: Watcher + Send + 'static>(
             if symphony::reload::fingerprint(&serve.root).ok().as_deref() != Some(&fingerprint) {
                 continue;
             }
-            let result = result.and_then(|client| {
-                replace(
-                    &serve,
-                    &exe,
-                    &sockets,
-                    &lease,
-                    &fingerprint,
-                    &shared,
-                    client,
-                )
-            });
+            if matches!(result, Ok(None)) && kept(running.as_ref(), install, &fingerprint, &shared)
+            {
+                continue;
+            }
+            let result = result
+                .and_then(|client| {
+                    replace(
+                        &serve,
+                        &exe,
+                        &sockets,
+                        &lease,
+                        &fingerprint,
+                        &shared,
+                        client,
+                    )
+                })
+                .map_err(|why| {
+                    // A build that said nothing leaves its separator, and diagnostics may end a
+                    // sentence: the reason ends where the notice's next sentence starts.
+                    let why = why.trim_end_matches([' ', ':', '.']);
+                    let again = retry.failed(&fingerprint);
+                    format!("{why}. It tries this version again at about {again}.")
+                });
             if replaced(&shared, result) {
                 return;
             }
         }
     };
     Some(crate::front::worker(crate::front::RELOAD_WORKER, reload))
+}
+
+/// After a build of `fingerprint` into `install` with no client to publish: whether the installed
+/// image still holds the bytes this generation runs (`running`, [`RunningImage::kept`]), stamped
+/// then as that build's, so this generation keeps serving with no hand-off, said in one line. The
+/// notice of an update that failed before, which said an older server still serves, goes.
+///
+/// A build with a client to publish hands over all the same: its publication is staged against
+/// the replacement's readiness and rolled back when that fails ([`replace`]).
+fn kept(
+    running: Option<&RunningImage>,
+    install: &Path,
+    fingerprint: &str,
+    shared: &Shared,
+) -> bool {
+    let Some(stamped) = running.and_then(|running| running.kept(install, fingerprint)) else {
+        return false;
+    };
+    match stamped {
+        Ok(()) => crate::front::tell(format_args!(
+            "· Symphony reload: the build left the running image as it was; stamped"
+        )),
+        Err(why) => crate::front::tell(format_args!(
+            "· Symphony reload: the build left the running image as it was; could not stamp it: \
+             {why}"
+        )),
+    }
+    if let Some(hub) = shared.api.get() {
+        hub.tell_update(String::new());
+    }
+    true
 }
 
 /// Whether a replacement took over: this generation then drains. A failure is said on the

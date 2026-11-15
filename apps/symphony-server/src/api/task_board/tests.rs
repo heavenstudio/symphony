@@ -146,52 +146,56 @@ fn cursor(page: &TaskListing) -> String {
         .collect()
 }
 
+/// A task of `status` and `priority` last changed at `updated`, its slug its title.
+fn task(slug: String, status: &str, priority: i64, updated: f64) -> symphony_api::Task {
+    serde_json::from_value(json!({"slug":slug,"title":slug,"body":"","status":status,
+        "priority":priority,"parent":null,"created_by":"owner","created":0.0,
+        "updated":updated,"links":[],"depends":[],"roles":[],"instruction":false}))
+    .unwrap()
+}
+
+/// The listing `query` reads of `records`, with no search, machine work or sign-off.
+async fn listing_of(records: &[symphony_api::Task], query: &str) -> TaskListing {
+    let request = Request::builder()
+        .uri(format!("/api/task-board?{query}"))
+        .body(())
+        .unwrap();
+    let tasks = Tasks {
+        version: String::new(),
+        tasks: records.to_vec(),
+        sessions: vec![],
+    };
+    let response = project(
+        &request,
+        tasks,
+        "",
+        &BTreeMap::new(),
+        MachineWork::default(),
+        vec![],
+    );
+    let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    serde_json::from_slice(&bytes).unwrap()
+}
+
+fn slugs(page: &TaskListing) -> Vec<String> {
+    page.tasks.iter().map(|t| t.slug.clone()).collect()
+}
+
 /// A column's slugs order by their numbers (`ready-3` before `ready-30`), on its first page and
 /// across the cursor to the next, which starts where the first ended and repeats none of it.
 #[tokio::test]
 async fn a_columns_numbered_slugs_page_in_number_order() {
-    let task = |slug: String, status: &str, priority: i64, updated: f64| {
-        serde_json::from_value(json!({"slug":slug,"title":slug,"body":"","status":status,
-            "priority":priority,"parent":null,"created_by":"owner","created":0.0,
-            "updated":updated,"links":[],"depends":[],"roles":[],"instruction":false}))
-        .unwrap()
-    };
     let mut records: Vec<symphony_api::Task> = (1..=35)
         .rev()
         .map(|n| task(format!("bulk/ready-{n}"), "ready", 3, 0.0))
         .collect();
     records.push(task("app/urgent".into(), "ready", 1, 0.0));
     records.extend((1..=33).map(|n| task(format!("old/done-{n}"), "done", 2, 5.0)));
-    let tasks = Tasks {
-        version: String::new(),
-        tasks: records,
-        sessions: vec![],
-    };
     let read = |query: String| {
-        let request = Request::builder()
-            .uri(format!("/api/task-board?{query}"))
-            .body(())
-            .unwrap();
-        let response = project(
-            &request,
-            tasks.clone(),
-            "",
-            &BTreeMap::new(),
-            MachineWork::default(),
-            vec![],
-        );
-        async move {
-            let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
-                .await
-                .unwrap();
-            serde_json::from_slice::<TaskListing>(&bytes).unwrap()
-        }
-    };
-    let slugs = |page: &TaskListing| {
-        page.tasks
-            .iter()
-            .map(|t| t.slug.clone())
-            .collect::<Vec<_>>()
+        let records = &records;
+        async move { listing_of(records, &query).await }
     };
     let first = read("status=ready".into()).await;
     let next = read(format!("status=ready&cursor={}", cursor(&first))).await;
@@ -205,6 +209,60 @@ async fn a_columns_numbered_slugs_page_in_number_order() {
     let done: Vec<_> = (1..=33).map(|n| format!("old/done-{n}")).collect();
     assert_eq!(slugs(&first), done[..30]);
     assert_eq!(slugs(&next), done[30..]);
+}
+
+/// `rows` makes a column's first page as long as it asks, never shorter than a page, and its
+/// cursor goes on after the last of them: the board's refresh reads a column's loaded pages again
+/// as one. A number it cannot read, or none, is a page.
+#[tokio::test]
+async fn rows_reads_a_page_as_long_as_it_asks_and_never_shorter_than_one() {
+    let records: Vec<symphony_api::Task> = (1..=70)
+        .map(|n| task(format!("bulk/ready-{n}"), "ready", 2, 0.0))
+        .chain((1..=3).map(|n| task(format!("bulk/review-{n}"), "review", 2, 0.0)))
+        .collect();
+    let ready: Vec<_> = (1..=70).map(|n| format!("bulk/ready-{n}")).collect();
+    let long = listing_of(&records, "status=ready&rows=45").await;
+    assert_eq!(slugs(&long), ready[..45]);
+    assert_eq!(total(&long, "ready"), 70);
+    assert_eq!(total(&long, "review"), 3);
+    let after = listing_of(&records, &format!("status=ready&cursor={}", cursor(&long))).await;
+    assert_eq!(slugs(&after), ready[45..70]);
+    for asked in ["rows=10", "rows=0", "rows=-5", "rows=many", "rows=", ""] {
+        let page = listing_of(&records, &format!("status=ready&{asked}")).await;
+        assert_eq!(slugs(&page), ready[..30], "{asked}");
+    }
+    let past_the_end = listing_of(&records, "status=ready&rows=500").await;
+    assert_eq!(slugs(&past_the_end), ready);
+    // However large, `rows` is bounded by the column, as `all=1` is: from its start, from an
+    // offset (whose end saturates) and after a cursor. A number past the largest a `usize` holds
+    // is none it can read: a page.
+    let all = listing_of(&records, "status=ready&all=1").await;
+    assert_eq!(slugs(&all), ready);
+    let most = usize::MAX;
+    let largest = listing_of(&records, &format!("status=ready&rows={most}")).await;
+    assert_eq!(slugs(&largest), slugs(&all));
+    assert_eq!(largest.next, all.next);
+    assert_eq!(total(&largest, "ready"), 70);
+    let from_offset = listing_of(&records, &format!("status=ready&offset=60&rows={most}")).await;
+    assert_eq!(slugs(&from_offset), ready[60..]);
+    let first = listing_of(&records, "status=ready").await;
+    let after_cursor = listing_of(
+        &records,
+        &format!("status=ready&cursor={}&rows={most}", cursor(&first)),
+    )
+    .await;
+    assert_eq!(slugs(&after_cursor), ready[30..]);
+    let unreadable = listing_of(&records, &format!("status=ready&rows={most}0")).await;
+    assert_eq!(slugs(&unreadable), ready[..30]);
+    // A page further on is as long as `rows` too, by an offset as by a cursor.
+    let offset = listing_of(&records, "status=ready&offset=10&rows=40").await;
+    assert_eq!(slugs(&offset), ready[10..50]);
+    let further = listing_of(
+        &records,
+        &format!("status=ready&cursor={}&rows=35", cursor(&first)),
+    )
+    .await;
+    assert_eq!(slugs(&further), ready[30..65]);
 }
 
 #[tokio::test]
@@ -269,6 +327,84 @@ async fn finished_window_is_applied_before_stage_counts_including_searches() {
         assert_eq!(total(&listing, "done"), expected, "days={days}");
         assert_eq!(total(&listing, "build"), 0, "search must precede counting");
     }
+}
+
+/// A task's subtasks (`parent=`, its page's Subtasks and its branch of the task groups) list its
+/// slices, its errands and an open instruction, never a finished instruction to do or review it;
+/// the task groups (`roots=`) hold no task whose subtasks are all such.
+#[tokio::test]
+async fn subtasks_and_task_groups_leave_out_finished_instructions_to_staff_their_task() {
+    let task = |slug: &str, status: &str, parent: Option<&str>, instruction: bool| {
+        serde_json::from_value(
+            json!({"slug":slug,"title":slug,"body":"brief","status":status,
+            "priority":2,"parent":parent,"created_by":"owner","created":0.0,"updated":0.0,
+            "links":[],"depends":[],"roles":[],"instruction":instruction}),
+        )
+        .unwrap()
+    };
+    let tasks = Tasks {
+        version: String::new(),
+        tasks: vec![
+            task("feature", "in_progress", None, false),
+            task("feature/slice", "done", Some("feature"), false),
+            task("feature/visual", "done", Some("feature"), true),
+            task("feature/work", "in_progress", Some("feature"), true),
+            task("feature/review", "done", Some("feature"), true),
+            task("feature/staff-review-1", "cancelled", Some("feature"), true),
+            task("staffed", "done", None, false),
+            task("staffed/work", "done", Some("staffed"), true),
+            task("staffed/review", "cancelled", Some("staffed"), true),
+            task("in-flight", "ready", None, false),
+            task("in-flight/work", "ready", Some("in-flight"), true),
+            task("alone", "ready", None, false),
+        ],
+        sessions: vec![],
+    };
+    let read = |query: &str| {
+        let request = Request::builder()
+            .uri(format!("/api/task-board?{query}&older=1"))
+            .body(())
+            .unwrap();
+        let response = project(
+            &request,
+            tasks.clone(),
+            "",
+            &BTreeMap::new(),
+            MachineWork::default(),
+            vec![],
+        );
+        async move {
+            let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+                .await
+                .unwrap();
+            let listing: TaskListing = serde_json::from_slice(&bytes).unwrap();
+            let total: usize = listing.counts.iter().map(|(_, n)| n).sum();
+            let slugs: Vec<_> = listing.tasks.into_iter().map(|t| t.slug).collect();
+            (slugs, total)
+        }
+    };
+    assert_eq!(
+        read("parent=feature").await,
+        (
+            vec![
+                "feature/slice".to_string(),
+                "feature/visual".into(),
+                "feature/work".into()
+            ],
+            3
+        )
+    );
+    assert_eq!(read("parent=staffed").await, (vec![], 0));
+    assert_eq!(
+        read("parent=in-flight").await,
+        (vec!["in-flight/work".to_string()], 1)
+    );
+    assert_eq!(
+        read("roots=1").await,
+        (vec!["feature".to_string(), "in-flight".into()], 2)
+    );
+    // The board's columns list top-level tasks, a staffed one among them, as before.
+    assert_eq!(read("status=done").await.0, vec!["staffed".to_string()]);
 }
 
 /// `work=0` leaves the machine's work out of a listing, which a page then reads from

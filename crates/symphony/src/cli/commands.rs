@@ -1,20 +1,17 @@
-//! The commands the workspace's two command-line binaries answer to. The shipped `symphony`: the
-//! Symphony's own ([`OWN`]), `serve` last, with the commands the plugins this process holds add
-//! before it. `symphony-build`: the commands only this repository's own build and release run use
-//! ([`BUILD`]), which no project is given (`init::BUILDS` does not name it), so neither the shipped
-//! binary nor a consuming project's host links them. A name a binary does not have is refused with
-//! the nearest of its own; `--help`, `-h` and `help` list them all, each with one line on what it
-//! does.
+//! The commands the shipped `symphony` answers to: the Symphony's own ([`OWN`]), `serve` last, with
+//! the commands the plugins this process holds add before it. A name it does not have is refused
+//! with the nearest of its own; `--help`, `-h` and `help` list them all, each with one line on what
+//! it does. The commands only this repository's own build and release run use are
+//! `symphony-build`'s, a package of their own (crates/symphony-build) that no project is given
+//! (`init::BUILDS` does not name it), so this library compiles none of them.
 
 use std::io::Write;
 
-mod release_inputs;
+mod attach;
 mod shot;
-mod size_budget;
-mod split_repair;
 
 /// The Symphony's own commands, in the order its usage names them, each with what it does.
-const OWN: [(&str, &str); 12] = [
+const OWN: [(&str, &str); 13] = [
     ("status", "the review board's open cards and comments"),
     (
         "reply",
@@ -38,6 +35,10 @@ const OWN: [(&str, &str); 12] = [
         "count the typed blocks every document parses into",
     ),
     ("shot", "a picture of a page: shot URL --out FILE.png"),
+    (
+        "attach",
+        "store evidence in the main checkout's uploads: attach FILE...",
+    ),
     (
         "init",
         "install or refresh the agents' skills, recipes and hooks here",
@@ -68,60 +69,7 @@ const PLAIN: [(&str, &str, &str); 3] = [
     ),
 ];
 
-/// The commands only this repository's own build and release run use, `symphony-build`'s, in the
-/// order its usage names them, each with what it does.
-const BUILD: [(&str, &str); 5] = [
-    (
-        "publish-client",
-        "publish a built client into the server's embedded copy",
-    ),
-    (
-        "release-inputs",
-        "list the files the client's release build reads",
-    ),
-    (
-        "size-budget",
-        "check the shipped binaries' sizes against their budget",
-    ),
-    (
-        "split-repair",
-        "repair dx's --wasm-split output: safe, same bytes each build",
-    ),
-    (
-        "release",
-        "verify main's tip in full and tag it a release when green",
-    ),
-];
-
-/// The usage of `symphony-build`'s commands that read no options of their own, and what their help
-/// says after their line.
-const BUILD_PLAIN: [(&str, &str, &str); 4] = [
-    (
-        "publish-client",
-        "usage: symphony-build publish-client STAGE PUBLIC",
-        "",
-    ),
-    (
-        "release-inputs",
-        "usage: symphony-build release-inputs ROOT METADATA FILES COMPONENT_FILES --key|LOCK",
-        "",
-    ),
-    (
-        "size-budget",
-        "usage: symphony-build size-budget ROOT RELEASE",
-        "",
-    ),
-    (
-        "split-repair",
-        "usage: symphony-build split-repair PROGRAM PUBLIC",
-        "PROGRAM is the program dx linked, with its relocations; PUBLIC the folder\n\
-         dx bundle --wasm-split wrote. It writes back the merged constants the splitter\n\
-         zeroed in the main module, puts each chunk's segments in a fixed order and\n\
-         names every module and script it changed by its bytes, in place.\n",
-    ),
-];
-
-/// One of the two binaries, as its listing, its help and its refusals name it.
+/// The binary, as its listing, its help and its refusals name it.
 pub(super) struct Binary {
     /// Its name, as its usage and its refusals say it.
     name: &'static str,
@@ -130,14 +78,10 @@ pub(super) struct Binary {
     /// What an unknown command's refusal says lists them.
     listed: &'static str,
     /// Its own commands, in the order its usage names them; the last stays last, after the ones
-    /// the plugins add where they add any.
+    /// the plugins add.
     own: &'static [(&'static str, &'static str)],
     /// The usage of its commands that read no options of their own ([`plain_help`]).
     plain: &'static [(&'static str, &'static str, &'static str)],
-    /// Whether the plugins this process holds add commands to it.
-    plugins: bool,
-    /// The binary itself, with no input: what `help COMMAND` runs as `COMMAND --help`.
-    run: fn(&[String], &mut dyn Write, &mut dyn Write) -> i32,
 }
 
 /// The shipped `symphony` (`just symphony-cli`).
@@ -145,27 +89,11 @@ pub(super) const SYMPHONY: Binary = Binary {
     name: "symphony",
     head: "usage: symphony COMMAND [ARGS]... (`just symphony-cli COMMAND`)\n\n\
            The Symphony's document CLI. `just symphony-cli help COMMAND`, or\n\
-           `just symphony-cli COMMAND --help`, shows a command's arguments and options.\n\n",
+           `just symphony-cli COMMAND --help`, shows a command's arguments and options;\n\
+           `symphony --version` says its version.\n\n",
     listed: "`just symphony-cli help`",
     own: &OWN,
     plain: &PLAIN,
-    plugins: true,
-    run: |args, out, err| super::main(args, &mut &b""[..], out, err),
-};
-
-/// `symphony-build` (`tools/rs-bin.sh symphony-build`), this repository's alone.
-pub(super) const SYMPHONY_BUILD: Binary = Binary {
-    name: "symphony-build",
-    head: "usage: symphony-build COMMAND [ARGS]...\n\n\
-           The commands only the Symphony's own build and release run use, never shipped\n\
-           to a project: `tools/rs-bin.sh symphony-build COMMAND` in its checkout.\n\
-           `symphony-build help COMMAND`, or `symphony-build COMMAND --help`, shows a\n\
-           command's arguments and options.\n\n",
-    listed: "`symphony-build help`",
-    own: &BUILD,
-    plain: &BUILD_PLAIN,
-    plugins: false,
-    run: build,
 };
 
 /// `name ARGS`'s help when `name` is a command of `binary` that reads no options and `args` ask
@@ -189,7 +117,10 @@ pub(super) fn plain_help(binary: &Binary, name: &str, args: &[String]) -> Option
 }
 
 /// `name`, a command the Symphony's `symphony` does not have of its own, run by the first plugin
-/// that adds it with `args`; a name no plugin adds is refused, naming the nearest. Its exit code.
+/// that adds it with `args`; a name no plugin adds is refused, naming the nearest, exit 2. While a
+/// plugin of the project answering from its process did not declare, its commands are not known:
+/// the name is refused naming each such plugin, why and its log, exit 1, as the command may be
+/// one of its. Its exit code.
 pub(super) fn plugin(name: &str, args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
     if name == "init" {
         return crate::init::main(args, out, err);
@@ -197,38 +128,32 @@ pub(super) fn plugin(name: &str, args: &[String], out: &mut dyn Write, err: &mut
     if name == "shot" {
         return shot::main(args, out, err);
     }
-    // Measured as the project the command runs in says, the nearest above the current folder.
-    let root = std::env::current_dir()
-        .ok()
-        .and_then(|here| crate::project::Project::find(&here));
-    if let Some(command) = crate::plugins::command(name, root.as_deref()) {
-        return command.run(args, out, err);
+    if name == "attach" {
+        return attach::main(args, out, err);
     }
-    let _ = writeln!(err, "{}", unknown(&SYMPHONY, name));
-    2
+    // Measured as the project the command runs in says, the nearest above the current folder.
+    match crate::plugins::command(name, here().as_deref()) {
+        Ok(command) => command.run(args, out, err),
+        Err(failed) => refuse_unknown(&SYMPHONY, name, &failed, err),
+    }
 }
 
-/// `symphony-build COMMAND ARGS…`: one of [`BUILD`]'s commands. Its exit code.
-pub(super) fn build(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
-    let command = args.first().map(String::as_str);
-    let rest = args.get(1..).unwrap_or_default();
-    if let Some(help) = command.and_then(|name| plain_help(&SYMPHONY_BUILD, name, rest)) {
-        let _ = write!(out, "{help}");
-        return 0;
+/// The refusal of `name`, no command of `binary`'s, on `err`: first each plugin whose process
+/// failed (`failed`, [`crate::plugins::Commands::failed`]), as the command may be one of its, exit
+/// 1; then the nearest commands ([`unknown`]), exit 2 when no process failed.
+fn refuse_unknown(binary: &Binary, name: &str, failed: &[String], err: &mut dyn Write) -> i32 {
+    for line in failed {
+        let _ = writeln!(err, "{}: {line}", binary.name);
     }
-    match command {
-        Some("--help" | "-h" | "help") => help(&SYMPHONY_BUILD, rest, out, err),
-        Some("publish-client") => super::publish::publish_client_main(rest, err),
-        Some("release-inputs") => release_inputs::main(rest, out, err),
-        Some("size-budget") => size_budget::main(rest, out, err),
-        Some("split-repair") => split_repair::main(rest, out, err),
-        Some("release") => crate::release::main(rest, out, err),
-        Some(name) => {
-            let _ = writeln!(err, "{}", unknown(&SYMPHONY_BUILD, name));
-            2
-        }
-        None => usage(&SYMPHONY_BUILD, err),
-    }
+    let _ = writeln!(err, "{}", unknown(binary, name));
+    if failed.is_empty() { 2 } else { 1 }
+}
+
+/// The project a command runs in: the nearest above the current folder.
+fn here() -> Option<std::path::PathBuf> {
+    std::env::current_dir()
+        .ok()
+        .and_then(|here| crate::project::Project::find(&here))
 }
 
 /// The refusal of `name`, a command `binary` does not have: the nearest ones, and where they are
@@ -273,12 +198,18 @@ pub(super) fn help(
             let _ = write!(out, "{}", listing(binary));
             0
         }
-        Some(name) if names(binary).iter().any(|known| known == name) => {
-            (binary.run)(&[name.to_string(), "--help".into()], out, err)
-        }
         Some(name) => {
-            let _ = writeln!(err, "{}", unknown(binary, name));
-            2
+            let (every, failed) = every(binary);
+            if every.iter().any(|(known, _)| known == name) {
+                super::main(
+                    &[name.to_string(), "--help".into()],
+                    &mut &b""[..],
+                    out,
+                    err,
+                )
+            } else {
+                refuse_unknown(binary, name, &failed, err)
+            }
         }
     }
 }
@@ -289,19 +220,20 @@ pub(super) fn usage(binary: &Binary, err: &mut dyn Write) -> i32 {
     2
 }
 
-/// Every command `binary` runs, with what it does, in the order its usage names them.
-fn every(binary: &Binary) -> Vec<(String, String)> {
+/// Every command `binary` runs, with what it does, in the order its usage names them; and a line
+/// for each plugin of the project whose process did not declare, so whose commands are not among
+/// them ([`crate::plugins::Commands::failed`]).
+fn every(binary: &Binary) -> (Vec<(String, String)>, Vec<String>) {
     let line = |(name, said): &(&str, &str)| ((*name).to_string(), (*said).to_string());
     let Some((last, own)) = binary.own.split_last() else {
-        return Vec::new();
+        return (Vec::new(), Vec::new());
     };
-    let plugins = binary
-        .plugins
-        .then(crate::plugins::commands)
-        .unwrap_or_default();
-    own.iter()
+    // The plugins' commands of the project the binary runs in, as [`plugin`] runs them.
+    let plugins = crate::plugins::commands_of(here().as_deref());
+    let listed = own
+        .iter()
         .map(line)
-        .chain(plugins.into_iter().map(|command| {
+        .chain(plugins.listed.into_iter().map(|command| {
             let said = command.summary();
             let said = if said.is_empty() {
                 "a command of the project's plugins"
@@ -311,21 +243,26 @@ fn every(binary: &Binary) -> Vec<(String, String)> {
             (command.name().to_string(), said.to_string())
         }))
         .chain([line(last)])
-        .collect()
+        .collect();
+    (listed, plugins.failed)
 }
 
 /// Every command name of `binary`, in the order its usage names them.
 fn names(binary: &Binary) -> Vec<String> {
-    every(binary).into_iter().map(|(name, _)| name).collect()
+    every(binary).0.into_iter().map(|(name, _)| name).collect()
 }
 
-/// `binary`'s usage and every command with what it does: what its `help` prints.
+/// `binary`'s usage and every command with what it does: what its `help` prints, and after the
+/// commands each plugin whose process failed, as an unknown command says it ([`plugin`]).
 fn listing(binary: &Binary) -> String {
-    let every = every(binary);
+    let (every, failed) = every(binary);
     let width = every.iter().map(|(name, _)| name.len()).max().unwrap_or(0);
     let mut text = format!("{}commands:\n", binary.head);
     for (name, said) in &every {
         text.push_str(&format!("  {name:<width$}  {said}\n"));
+    }
+    for line in &failed {
+        text.push_str(&format!("\n{}: {line}\n", binary.name));
     }
     text
 }
@@ -334,68 +271,58 @@ fn listing(binary: &Binary) -> String {
 mod tests {
     use super::*;
 
-    /// `symphony-build ARGS`, in process: its exit code, stdout and stderr.
-    fn built(args: &[&str]) -> (i32, String, String) {
-        let args: Vec<String> = args.iter().map(ToString::to_string).collect();
-        let (mut out, mut err) = (Vec::new(), Vec::new());
-        let code = build(&args, &mut out, &mut err);
-        let text = |bytes| String::from_utf8(bytes).unwrap();
-        (code, text(out), text(err))
-    }
-
     #[test]
     fn the_listing_names_every_command_once_with_its_line_within_80_columns() {
-        for binary in [&SYMPHONY, &SYMPHONY_BUILD] {
-            let listing = listing(binary);
-            assert!(
-                listing.starts_with(&format!("usage: {} COMMAND ", binary.name)),
-                "{listing}"
-            );
-            for (name, said) in binary.own {
-                let rows: Vec<&str> = listing
-                    .lines()
-                    .filter(|line| line.split_whitespace().next() == Some(name))
-                    .collect();
-                assert_eq!(rows.len(), 1, "{name}: {listing}");
-                assert!(rows[0].ends_with(said), "{name}: {}", rows[0]);
-            }
-            let (last, _) = binary.own.last().unwrap();
-            let end = listing.lines().last().unwrap();
-            assert!(end.starts_with(&format!("  {last} ")), "{listing}");
-            for line in listing.lines() {
-                assert!(line.chars().count() <= 80, "{line}");
-            }
+        let listing = listing(&SYMPHONY);
+        assert!(listing.starts_with("usage: symphony COMMAND "), "{listing}");
+        for (name, said) in SYMPHONY.own {
+            let rows: Vec<&str> = listing
+                .lines()
+                .filter(|line| line.split_whitespace().next() == Some(name))
+                .collect();
+            assert_eq!(rows.len(), 1, "{name}: {listing}");
+            assert!(rows[0].ends_with(said), "{name}: {}", rows[0]);
         }
-        assert!(listing(&SYMPHONY).contains("\n  project "));
-        assert!(listing(&SYMPHONY_BUILD).contains("\n  split-repair "));
+        let (last, _) = SYMPHONY.own.last().unwrap();
+        let end = listing.lines().last().unwrap();
+        assert!(end.starts_with(&format!("  {last} ")), "{listing}");
+        for line in listing.lines() {
+            assert!(line.chars().count() <= 80, "{line}");
+        }
+        assert!(listing.contains("\n  project "));
     }
 
     #[test]
-    fn neither_binary_has_a_command_of_the_other() {
-        let (shipped, build) = (names(&SYMPHONY), names(&SYMPHONY_BUILD));
-        for (name, _) in BUILD {
-            assert!(!shipped.iter().any(|known| known == name), "{name}");
-        }
-        for (name, _) in OWN {
-            assert!(!build.iter().any(|known| known == name), "{name}");
-        }
-        let every = [
-            "publish-client",
-            "release-inputs",
-            "size-budget",
-            "split-repair",
-            "release",
-        ];
-        assert_eq!(build, every);
-        // Each command that reads no options of its own says what the listing says it does.
-        for binary in [&SYMPHONY, &SYMPHONY_BUILD] {
-            for (name, usage, _) in binary.plain {
-                assert!(binary.own.iter().any(|(own, _)| own == name), "{name}");
-                assert!(
-                    usage.starts_with(&format!("usage: {} {name}", binary.name)),
-                    "{usage}"
-                );
-            }
+    fn version_alone_says_the_name_and_the_packages_version_and_the_listing_names_it() {
+        let (mut out, mut err) = (Vec::new(), Vec::new());
+        let code = crate::cli::main(&["--version".into()], &mut &b""[..], &mut out, &mut err);
+        assert_eq!(
+            (code, String::from_utf8(out).unwrap(), err),
+            (
+                0,
+                format!("symphony {}\n", env!("CARGO_PKG_VERSION")),
+                Vec::new()
+            )
+        );
+        assert!(listing(&SYMPHONY).contains("`symphony --version`"));
+        // Beside a command it is that command's word, never the version.
+        let (mut out, mut err) = (Vec::new(), Vec::new());
+        let args = ["status".into(), "--version".into()];
+        assert_eq!(
+            crate::cli::main(&args, &mut &b""[..], &mut out, &mut err),
+            2
+        );
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn each_command_that_reads_no_options_is_its_own_and_says_its_usage() {
+        for (name, usage, _) in SYMPHONY.plain {
+            assert!(SYMPHONY.own.iter().any(|(own, _)| own == name), "{name}");
+            assert!(
+                usage.starts_with(&format!("usage: symphony {name}")),
+                "{usage}"
+            );
         }
     }
 
@@ -406,160 +333,22 @@ mod tests {
                 "symphony: unknown command {name:?}{near} (`just symphony-cli help` lists them)"
             )
         };
-        let build = |name, near: &str| {
-            format!(
-                "symphony-build: unknown command {name:?}{near} (`symphony-build help` lists them)"
-            )
-        };
-        for (binary, name, said) in [
+        for (name, said) in [
+            ("statsu", shipped("statsu", "; did you mean \"status\"?")),
             (
-                &SYMPHONY,
-                "statsu",
-                shipped("statsu", "; did you mean \"status\"?"),
-            ),
-            (
-                &SYMPHONY,
                 "docs-audt",
                 shipped("docs-audt", "; did you mean \"docs-audit\"?"),
             ),
-            (&SYMPHONY, "frobnicate", shipped("frobnicate", "")),
-            (
-                &SYMPHONY,
-                "--hlep",
-                shipped("--hlep", "; did you mean \"--help\"?"),
-            ),
-            (
-                &SYMPHONY,
-                "-help",
-                shipped("-help", "; did you mean \"--help\"?"),
-            ),
+            ("frobnicate", shipped("frobnicate", "")),
+            ("--hlep", shipped("--hlep", "; did you mean \"--help\"?")),
+            ("-help", shipped("-help", "; did you mean \"--help\"?")),
             // A command's name is answered with a command, never a flag.
-            (
-                &SYMPHONY,
-                "hlep",
-                shipped("hlep", "; did you mean \"help\"?"),
-            ),
-            // The build's commands are not the shipped binary's, nor its own the build's.
-            (&SYMPHONY, "size-budget", shipped("size-budget", "")),
-            (&SYMPHONY, "release", shipped("release", "")),
-            (
-                &SYMPHONY_BUILD,
-                "size-budgte",
-                build("size-budgte", "; did you mean \"size-budget\"?"),
-            ),
-            (
-                &SYMPHONY_BUILD,
-                "relase",
-                build("relase", "; did you mean \"release\"?"),
-            ),
-            (
-                &SYMPHONY_BUILD,
-                "--hepl",
-                build("--hepl", "; did you mean \"--help\"?"),
-            ),
-            (&SYMPHONY_BUILD, "status", build("status", "")),
-            (&SYMPHONY_BUILD, "serve", build("serve", "")),
+            ("hlep", shipped("hlep", "; did you mean \"help\"?")),
+            // The build's commands are `symphony-build`'s (crates/symphony-build), not this one's.
+            ("size-budget", shipped("size-budget", "")),
+            ("release", shipped("release", "")),
         ] {
-            assert_eq!(unknown(binary, name), said);
-        }
-    }
-
-    #[test]
-    fn the_build_binary_lists_its_commands_and_says_each_ones_usage() {
-        let listing = listing(&SYMPHONY_BUILD);
-        for args in [
-            &["help"][..],
-            &["--help"],
-            &["-h"],
-            &["help", "help"],
-            &["help", "-h"],
-        ] {
-            assert_eq!(built(args), (0, listing.clone(), String::new()), "{args:?}");
-        }
-        assert_eq!(built(&[]), (2, String::new(), listing), "no command");
-        for (name, usage, _) in BUILD_PLAIN {
-            for args in [
-                &["help", name][..],
-                &[name, "--help"],
-                &[name, "-h"],
-                &[name, "x", "-h"],
-            ] {
-                let (code, out, err) = built(args);
-                assert_eq!((code, err.as_str()), (0, ""), "{args:?}");
-                assert!(out.starts_with(&format!("{usage}\n\n")), "{args:?}: {out}");
-            }
-        }
-        assert_eq!(
-            built(&["help", "size-budget"]),
-            (
-                0,
-                "usage: symphony-build size-budget ROOT RELEASE\n\n\
-                 check the shipped binaries' sizes against their budget.\n"
-                    .into(),
-                String::new()
-            )
-        );
-        let (code, out, err) = built(&["help", "split-repair"]);
-        assert_eq!((code, err.as_str()), (0, ""));
-        assert!(out.ends_with("in place.\n"), "{out}");
-        for args in [&["help", "release"][..], &["release", "--help"]] {
-            let (code, out, err) = built(args);
-            assert_eq!((code, err.as_str()), (0, ""), "{args:?}");
-            assert!(
-                out.starts_with("usage: symphony-build release [-h] "),
-                "{out}"
-            );
-        }
-    }
-
-    #[test]
-    fn the_build_binary_runs_its_commands_and_refuses_any_other() {
-        // Each command's own refusal of a command line it cannot read, said under its binary.
-        for (name, said) in [
-            (
-                "publish-client",
-                "usage: symphony-build publish-client STAGE PUBLIC\n",
-            ),
-            (
-                "size-budget",
-                "usage: symphony-build size-budget ROOT RELEASE\n",
-            ),
-            (
-                "split-repair",
-                "usage: symphony-build split-repair PROGRAM PUBLIC\n",
-            ),
-            (
-                "release-inputs",
-                "usage: symphony-build release-inputs ROOT METADATA FILES COMPONENT_FILES --key|LOCK\n",
-            ),
-        ] {
-            assert_eq!(
-                built(&[name, "one"]),
-                (2, String::new(), said.into()),
-                "{name}"
-            );
-        }
-        let (code, out, err) = built(&["release", "--frobnicate"]);
-        assert_eq!((code, out.as_str()), (2, ""));
-        assert!(
-            err.starts_with("usage: symphony-build release [-h] "),
-            "{err}"
-        );
-        assert!(err.contains("\nsymphony-build release: error: "), "{err}");
-        // A command of the shipped binary's, and the release run's name before the rename, which
-        // nothing here runs any more.
-        for name in ["status", "nightly"] {
-            let refused = format!(
-                "symphony-build: unknown command {name:?} (`symphony-build help` lists them)\n"
-            );
-            for args in [
-                &[name][..],
-                &[name, "--due"],
-                &[name, "--help"],
-                &["help", name],
-            ] {
-                assert_eq!(built(args), (2, String::new(), refused.clone()), "{args:?}");
-            }
+            assert_eq!(unknown(&SYMPHONY, name), said);
         }
     }
 }

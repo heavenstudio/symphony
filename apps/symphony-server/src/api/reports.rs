@@ -38,6 +38,9 @@ pub(crate) struct Folders {
     pub(crate) agents: Result<PathBuf, String>,
     /// The board's health hours, `symphony/health/`.
     pub(crate) health: Result<PathBuf, String>,
+    /// The recorder's runs, `symphony/runs/`, whose logs the run-log read serves
+    /// ([`crate::api::run_log`]); none where a run keeps no line.
+    pub(crate) runs: Option<PathBuf>,
 }
 
 impl Folders {
@@ -50,6 +53,7 @@ impl Folders {
             reports: symphony_board::reports::folder(&env),
             agents: crate::live::agent_activity::folder(&env),
             health: symphony_board::board_health::hours::folder(&env),
+            runs: symphony_board::runs::folder(&env).map(|runs| root.join(runs)),
         }
     }
 }

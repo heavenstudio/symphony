@@ -3,7 +3,7 @@
 use crate::{Ran, env, run};
 use serde_json::{Value, json};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use symphony_board::cli::{Env, connect};
 use symphony_board::launch::hc::board_of;
 use symphony_board::sys::Command;
@@ -803,6 +803,42 @@ fn a_restore_says_each_session_it_reopened() {
 }
 
 #[test]
+fn a_reviewer_launch_says_it_resumed_the_tasks_recorded_reviewer() {
+    let p = Terminals::new("resumed");
+    let orch = p.orchestrator();
+    let given = p.dir.display().to_string();
+    let review = [
+        "launch", "sim/jump", "--role", "reviewer", "--kind", "claude",
+    ];
+    let launched = p.as_(&orch, &[&review[..], &["--worktree", &given]].concat());
+    assert_eq!((launched.code, launched.err.as_str()), (0, ""));
+    let board = p.board();
+    let [s] = <[_; 1]>::try_from(board.task_sessions("sim/jump").unwrap()).unwrap();
+    board
+        .close_task_session("sim/jump", &s.handle, "idle", "r")
+        .unwrap();
+    p.set_state({
+        let mut state = p.state();
+        state["terminals"] = json!([]);
+        state
+    });
+    let ran = p.as_(&orch, &review);
+    let [again] = <[_; 1]>::try_from(board.task_sessions("sim/jump").unwrap()).unwrap();
+    assert_eq!(
+        (ran.code, ran.out, ran.err.as_str()),
+        (
+            0,
+            format!(
+                "resumed {}, sim/jump's recorded reviewer: pane {}, agent session {}, worktree \
+                 {given}\n",
+                s.handle, again.pane, s.claude_session
+            ),
+            ""
+        )
+    );
+}
+
+#[test]
 fn a_herdr_pane_record_is_closed_by_cleanup_and_restored_into_an_hc_terminal() {
     let p = Terminals::new("herdr-record");
     let orch = p.orchestrator();
@@ -926,6 +962,239 @@ fn through_just_tasks_a_launch_starts_its_agent_only_in_the_project_and_with_no_
     let [s] = <[_; 1]>::try_from(p.board().task_sessions("sim/jump").unwrap()).unwrap();
     assert_eq!(s.worktree, inside.display().to_string());
     assert_eq!(p.sent(), format!("$work sim/jump {}", s.handle));
+}
+
+#[test]
+fn through_just_tasks_a_worktree_whose_git_file_names_another_repository_has_no_worktree_base() {
+    let mut p = Terminals::new("unasked-renamed");
+    let orch = p.orchestrator();
+    p.board()
+        .create(&NewTask::new("sim/dock", "Dock", &orch))
+        .unwrap();
+    // The base beside the main checkout, `lamp-works-wt`: no `SYMPHONY_WT_DIR` names one.
+    p.env.vars.remove("SYMPHONY_WT_DIR");
+    let (tree, other) = (p.dir.join("tree"), p.dir.join("other"));
+    git(
+        &p.env.cwd,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "tree",
+            &tree.display().to_string(),
+        ],
+    );
+    fs::create_dir_all(&other).unwrap();
+    git(&other, &["init", "-q", "-b", "main"]);
+    git(&other, &["commit", "-q", "--allow-empty", "-m", "x"]);
+    let (theirs, ours) = (
+        p.dir.join("other-wt/given"),
+        p.dir.join("lamp-works-wt/given"),
+    );
+    for folder in [&theirs, &ours] {
+        fs::create_dir_all(folder).unwrap();
+    }
+    p.env.cwd = tree.clone();
+    p.set(symphony_board::confine::MARKER, "1");
+    let listed = fs::read_to_string(tree.join(".git")).unwrap();
+    // The worktree's `.git` file, untracked, rewritten to name the other repository, which does
+    // not list this worktree: no base beside either main checkout, and no worktree made in it.
+    fs::write(
+        tree.join(".git"),
+        format!("gitdir: {}\n", other.join(".git").display()),
+    )
+    .unwrap();
+    for folder in [&theirs, &ours] {
+        let given = folder.display().to_string();
+        let ran = p.as_(&orch, &["launch", "sim/jump", "--worktree", &given]);
+        assert_eq!(
+            (ran.code, ran.out.as_str(), ran.err),
+            (1, "", no_base(&format!("--worktree {given}"), &tree))
+        );
+    }
+    let ran = p.as_(&orch, &["launch", "sim/jump"]);
+    let made = p.dir.join("other-wt/sim-jump");
+    assert_eq!(
+        (ran.code, ran.out.as_str(), ran.err),
+        (
+            1,
+            "",
+            no_base(&format!("its worktree {}", made.display()), &tree)
+        )
+    );
+    assert!(!made.exists());
+    assert_eq!(p.calls_of("run"), Vec::<Vec<String>>::new());
+    assert_eq!(p.board().task_sessions("sim/jump").unwrap(), vec![]);
+    // A base `SYMPHONY_WT_DIR` names is the setting's, taken as it is.
+    let mut named = p.env.clone();
+    named.vars.insert(
+        "SYMPHONY_WT_DIR".into(),
+        p.dir.join("other-wt").display().to_string(),
+    );
+    named.vars.insert("TASKS_SESSION".into(), orch.clone());
+    let given = theirs.display().to_string();
+    let ran = run(&named, &["launch", "sim/jump", "--worktree", &given], "");
+    assert_eq!((ran.code, ran.err.as_str()), (0, ""), "{}", ran.out);
+    // Listed by its repository again, the base beside its main checkout is the worktree's.
+    fs::write(tree.join(".git"), listed).unwrap();
+    let given = ours.display().to_string();
+    let ran = p.as_(&orch, &["launch", "sim/dock", "--worktree", &given]);
+    assert_eq!((ran.code, ran.err.as_str()), (0, ""), "{}", ran.out);
+    let [s] = <[_; 1]>::try_from(p.board().task_sessions("sim/dock").unwrap()).unwrap();
+    assert_eq!(s.worktree, given);
+}
+
+/// What a command run unasked in the checkout at `checkout`, which has no worktree base, says of a
+/// folder it will not start an agent in: `place` names it.
+fn no_base(place: &str, checkout: &Path) -> String {
+    format!(
+        "✖ {place} is not a folder a recipe an agent runs unasked starts an agent in: only the \
+         checkout at {}, none of its git folders, and no worktree base, which is taken only beside \
+         a main checkout that lists this checkout as its own, or where SYMPHONY_WT_DIR names one \
+         (a submodule, a --separate-git-dir checkout or a bare repository's worktree has no main \
+         checkout); the binary run by itself starts one anywhere\n",
+        checkout.display()
+    )
+}
+
+/// A checkout whose repository has no main checkout, its common dir being no `.git` folder.
+#[derive(Clone, Copy)]
+enum NoMain {
+    /// `lamp-works/sub`, a submodule of `lamp-works`, its common dir `lamp-works/.git/modules/sub`.
+    Submodule,
+    /// `work`, which `git init --separate-git-dir store.git` made.
+    SeparateGitDir,
+    /// `bwt`, a linked worktree of the bare repository `bare.git`.
+    BareWorktree,
+}
+
+impl Terminals {
+    /// A checkout of `layout` with one commit on `main`: its folder and its repository's common dir.
+    fn no_main(&self, layout: NoMain) -> (PathBuf, PathBuf) {
+        let dir = &self.dir;
+        match layout {
+            NoMain::Submodule => {
+                let lib = dir.join("lib");
+                fs::create_dir_all(&lib).unwrap();
+                git(&lib, &["init", "-q", "-b", "main"]);
+                git(&lib, &["commit", "-q", "--allow-empty", "-m", "x"]);
+                let lib = lib.display().to_string();
+                let allow = "protocol.file.allow=always";
+                git(
+                    &self.env.cwd,
+                    &["-c", allow, "submodule", "add", "-q", &lib, "sub"],
+                );
+                (
+                    self.env.cwd.join("sub"),
+                    self.env.cwd.join(".git/modules/sub"),
+                )
+            }
+            NoMain::SeparateGitDir => {
+                let (work, store) = (dir.join("work"), dir.join("store.git"));
+                let (work_dir, store_dir) =
+                    (work.display().to_string(), store.display().to_string());
+                git(
+                    dir,
+                    &[
+                        "init",
+                        "-q",
+                        "-b",
+                        "main",
+                        "--separate-git-dir",
+                        &store_dir,
+                        &work_dir,
+                    ],
+                );
+                git(&work, &["commit", "-q", "--allow-empty", "-m", "x"]);
+                (work, store)
+            }
+            NoMain::BareWorktree => {
+                let bare = dir.join("bare.git");
+                let bare_dir = bare.display().to_string();
+                git(dir, &["init", "-q", "--bare", "-b", "main", &bare_dir]);
+                git(&self.env.cwd, &["push", "-q", &bare_dir, "main"]);
+                git(&bare, &["worktree", "add", "-q", "../bwt", "main"]);
+                (dir.join("bwt"), bare)
+            }
+        }
+    }
+}
+
+/// Through `just tasks` in a checkout of `layout`, which has no main checkout: no worktree base
+/// beside it, a folder in it taken as `--worktree`, and under `SYMPHONY_WT_DIR` a worktree made of
+/// the checkout's own repository, never of `lamp-works` beside it (a submodule's superproject).
+fn through_just_tasks_a_checkout_without_a_main_checkout(name: &str, layout: NoMain) {
+    let mut p = Terminals::new(name);
+    let orch = p.orchestrator();
+    p.board()
+        .create(&NewTask::new("sim/dock", "Dock", &orch))
+        .unwrap();
+    p.env.vars.remove("SYMPHONY_WT_DIR");
+    let (checkout, common) = p.no_main(layout);
+    let superproject = p.env.cwd.join(".git/worktrees");
+    p.env.cwd = checkout.clone();
+    p.set(symphony_board::confine::MARKER, "1");
+    // No repository lists the checkout back as its main checkout: no base beside it.
+    let beside = checkout
+        .with_file_name(format!(
+            "{}-wt",
+            checkout.file_name().unwrap().to_string_lossy()
+        ))
+        .join("sim-jump");
+    let ran = p.as_(&orch, &["launch", "sim/jump"]);
+    assert_eq!(
+        (ran.code, ran.out.as_str(), ran.err),
+        (
+            1,
+            "",
+            no_base(&format!("its worktree {}", beside.display()), &checkout)
+        )
+    );
+    assert!(!beside.exists());
+    assert_eq!(p.calls_of("run"), Vec::<Vec<String>>::new());
+    assert_eq!(p.board().task_sessions("sim/jump").unwrap(), vec![]);
+    // A folder in the checkout is the checkout's own.
+    let given = checkout.join("given");
+    fs::create_dir_all(&given).unwrap();
+    let given = given.display().to_string();
+    let ran = p.as_(&orch, &["launch", "sim/jump", "--worktree", &given]);
+    assert_eq!((ran.code, ran.err.as_str()), (0, ""), "{}", ran.out);
+    let [s] = <[_; 1]>::try_from(p.board().task_sessions("sim/jump").unwrap()).unwrap();
+    assert_eq!(s.worktree, given);
+    // The base `SYMPHONY_WT_DIR` names: the worktree a launch makes there is of the checkout's own
+    // repository, its git run in the checkout, not in the folder holding the common dir.
+    p.set("SYMPHONY_WT_DIR", &p.dir.join("wt").display().to_string());
+    let ran = p.as_(&orch, &["launch", "sim/dock"]);
+    assert_eq!((ran.code, ran.err.as_str()), (0, ""), "{}", ran.out);
+    let made = p.dir.join("wt/sim-dock");
+    assert_eq!(
+        symphony_board::git::checkout_common_dir(&made),
+        Some(common.canonicalize().unwrap())
+    );
+    assert!(!superproject.exists());
+    let [s] = <[_; 1]>::try_from(p.board().task_sessions("sim/dock").unwrap()).unwrap();
+    assert_eq!(s.worktree, made.display().to_string());
+}
+
+#[test]
+fn through_just_tasks_a_submodule_has_a_worktree_base_only_where_symphony_wt_dir_names_one() {
+    through_just_tasks_a_checkout_without_a_main_checkout("unasked-submodule", NoMain::Submodule);
+}
+
+#[test]
+fn through_just_tasks_a_separate_git_dir_checkout_has_a_worktree_base_only_where_symphony_wt_dir_names_one()
+ {
+    through_just_tasks_a_checkout_without_a_main_checkout(
+        "unasked-separate",
+        NoMain::SeparateGitDir,
+    );
+}
+
+#[test]
+fn through_just_tasks_a_bare_repositorys_worktree_has_a_worktree_base_only_where_symphony_wt_dir_names_one()
+ {
+    through_just_tasks_a_checkout_without_a_main_checkout("unasked-bare", NoMain::BareWorktree);
 }
 
 #[test]

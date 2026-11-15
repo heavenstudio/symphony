@@ -301,9 +301,16 @@ RETURN NONE;");
     /// Who receives the owner's chat events: a registered channel's session, as [`recipient`]
     /// chooses one; while none can, the waiting orchestrator ([`Store::waiting_orchestrator`]).
     pub fn chat_recipient(&self) -> Result<Option<String>, Error> {
-        match recipient(&self.cached_callbacks()?) {
-            Some(handle) => Ok(Some(handle.to_owned())),
-            None => self.waiting_orchestrator(),
+        Ok(self.chat_seat()?.map(|(handle, _)| handle))
+    }
+
+    /// [`Store::chat_recipient`], with why it hears the owner's chat.
+    pub fn chat_seat(&self) -> Result<Option<(String, ChatSeat)>, Error> {
+        match seat(&self.cached_callbacks()?) {
+            Some((handle, why)) => Ok(Some((handle.to_owned(), why))),
+            None => Ok(self
+                .waiting_orchestrator()?
+                .map(|handle| (handle, ChatSeat::Waiting))),
         }
     }
 
@@ -1671,19 +1678,38 @@ fn event_line(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
+/// Why a session hears the owner's chat ([`Store::chat_seat`]): it holds the seat, or, while
+/// nobody does, it is a fallback.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ChatSeat {
+    /// It took the seat (`callback --chat`).
+    Held,
+    /// It stands next in line for the seat (`callback --chat --if-free`).
+    NextInLine,
+    /// A live orchestrator with a native callback, the first by handle.
+    Orchestrator,
+    /// An orchestrator reading by `tasks wait`, with no channel.
+    Waiting,
+}
+
 fn recipient(callbacks: &[Callback]) -> Option<&str> {
-    callbacks
-        .iter()
-        .find(|c| c.chat)
-        .or_else(|| callbacks.iter().find(|c| c.chat_fallback))
-        // Handles are stable; database row order and registration order do not choose chat.
-        .or_else(|| {
-            callbacks
-                .iter()
-                .filter(|c| c.live_orchestrator)
-                .min_by(|a, b| a.handle.cmp(&b.handle))
-        })
-        .map(|c| c.handle.as_str())
+    seat(callbacks).map(|(handle, _)| handle)
+}
+
+fn seat(callbacks: &[Callback]) -> Option<(&str, ChatSeat)> {
+    let held = callbacks.iter().find(|c| c.chat);
+    let next = || callbacks.iter().find(|c| c.chat_fallback);
+    // Handles are stable; database row order and registration order do not choose chat.
+    let orchestrator = || {
+        callbacks
+            .iter()
+            .filter(|c| c.live_orchestrator)
+            .min_by(|a, b| a.handle.cmp(&b.handle))
+    };
+    (held.map(|c| (c, ChatSeat::Held)))
+        .or_else(|| next().map(|c| (c, ChatSeat::NextInLine)))
+        .or_else(|| orchestrator().map(|c| (c, ChatSeat::Orchestrator)))
+        .map(|(c, why)| (c.handle.as_str(), why))
 }
 
 fn session_task(board: &crate::Board, handle: &str) -> Option<String> {

@@ -9,21 +9,17 @@
 //!   started at S (`crate::land::started`), or, written by an earlier land with no start
 //!   (`(pid N)`), once N is not running; dead, it marks the worktree of a land that ended without
 //!   removing it;
-//! * the release run's ([`RELEASE_LOCK`], or [`LEGACY_LOCK`] where a build older than the rename
-//!   locked it and no run has moved it yet) marks the checkout it reuses on each run, which keeps
-//!   it;
+//! * the release run's ([`RELEASE_LOCK`]) marks the checkout it reuses on each run, which keeps it;
 //! * any other lock, or one in doubt, keeps its worktree.
 
 use super::process::{self, Claude};
 
-/// The reason the release run's checkout is locked with (`symphony::release::place::LOCK_REASON`).
+/// The reason the release run's checkout is locked with, which the release run locks it with
+/// (`symphony-build release`, crates/symphony-build/src/release/place.rs).
 pub const RELEASE_LOCK: &str = "the Symphony release run's checkout (docs/RELEASES.md)";
-/// The reason a build older than the rename locked that checkout with, at `nightly` beside where it
-/// is now (`symphony::release::place::LEGACY_LOCK_REASON`): the same checkout until a run moves it.
-pub const LEGACY_LOCK: &str = "the Symphony nightly's checkout (docs/RELEASES.md)";
-/// How long the release run builds incrementally in its checkout before it clears the build itself
-/// (`symphony::release::place::BUILD_KEPT_DAYS`): the sweep clears it once nothing touched the
-/// checkout for that long, a release run no longer running.
+/// How long the release run builds incrementally in its checkout before it clears the build itself,
+/// which the release run reads too: the sweep clears it once nothing touched the checkout for that
+/// long, a release run no longer running.
 pub const RELEASE_BUILD_DAYS: f64 = 7.0;
 
 /// A worktree's holder, as its lock says.
@@ -62,7 +58,7 @@ impl Holder {
                 _ => Holder::Foreign(reason.to_string()),
             };
         }
-        if [RELEASE_LOCK, LEGACY_LOCK].contains(&reason.trim()) {
+        if reason.trim() == RELEASE_LOCK {
             return Holder::Release;
         }
         if reason.starts_with(crate::land::REASON) {
@@ -119,10 +115,12 @@ mod tests {
         assert_eq!(of(Some(land), true), Holder::Land(77));
         assert_eq!(of(Some(land), false), Holder::LandEnded(77));
         assert_eq!(of(Some(RELEASE_LOCK), false), Holder::Release);
-        assert_eq!(of(Some(LEGACY_LOCK), false), Holder::Release);
         for foreign in [
             "",
             "on a USB disk",
+            // A build older than the rename to `just release` locked its checkout so; one it makes
+            // again is not the release run's, and is kept as any other lock keeps its worktree.
+            "the Symphony nightly's checkout (docs/RELEASES.md)",
             "symphony land: sim/jump (pid 0)",
             "symphony land: sim/jump",
             "claude agent agent-a5a6 (pid 41 start sometime)",

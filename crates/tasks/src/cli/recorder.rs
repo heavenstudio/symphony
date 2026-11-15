@@ -38,10 +38,24 @@
 //! record is written once the board answered or the wait ran out.
 //!
 //! Nothing it records reaches the command's streams: a record it cannot write leaves the command
-//! running as it would unrecorded. It says something only of a command line it cannot read (2) and
-//! of a command that cannot start (127, or 126, as a shell says them). `tasks run --probe` answers
-//! [`PROBE`]: what a wrapper asks before it hands a build to a `tasks` that may be older than this
-//! command.
+//! running as it would unrecorded. A run's or a step's stdout and stderr, which its lines name a
+//! log of ([`crate::run_logs`]), are the one exception, by what its caller handed it ([`keeps`]).
+//! Where either is a terminal, the command keeps the caller's streams and the run keeps no log.
+//! Where either is a regular file, the command keeps them as well, and what it added to the
+//! caller's files past where they ended as it started is copied, plain, into the log once it ended
+//! ([`crate::run_logs::Files`]): its bytes are in the file before its status reaches anyone, and a
+//! recorder that dies loses only the record and the log. Otherwise each stream is a pipe its
+//! recorder reads, copying what comes on to the caller's stream and, plain, into the log; the end
+//! line its size once both streams ended, or [`DRAIN`] after the command did. A command whose
+//! recorder died with it still running finds its pipes' reader gone: its next write ends it by
+//! SIGPIPE (141, as a shell says it), as a pipeline's command whose reader went. On macOS the pipes
+//! are made, and the files marked, before the command execs, its recorder saying whether it copies
+//! pipes, and the command takes them as its stdout and stderr only once it did; elsewhere the
+//! command is its child on them.
+//!
+//! It says something only of a command line it cannot read (2) and of a command that cannot start
+//! (127, or 126, as a shell says them). `tasks run --probe` answers [`PROBE`]: what a wrapper asks
+//! before it hands a build to a `tasks` that may be older than this command.
 //!
 //! An operation is also a run, or a step of one, which the day files keep a line of
 //! ([`crate::runs`], docs/RUNS.md): a step when `--step` names it and it runs inside a run or a step
@@ -106,6 +120,10 @@ const SAMPLE: Duration = Duration::from_millis(250);
 const GIT_WAIT: Duration = Duration::from_millis(600);
 /// The longest a recorder apart from its command waits for an earlier run it may repeat to end.
 const RERUN_WAIT: Duration = Duration::from_secs(5);
+/// The longest a run's recorder waits, once its command ended, for the streams it copies to end
+/// before its end line says how much its log holds: a process that outlived the command and holds
+/// one is not waited for longer.
+const DRAIN: Duration = Duration::from_secs(1);
 /// Names a test's scale of the waits a machine's speed decides ([`Waits`]): a whole number from 1
 /// to [`MOST_SCALE`], taken only on a scratch board.
 pub const SCALE_VAR: &str = "TASKS_RUN_WAIT_SCALE";
@@ -353,6 +371,11 @@ impl Waits {
     fn lock(self) -> Duration {
         crate::runs::LOCK_WAIT * self.0
     }
+
+    /// How long a run's recorder waits for the streams it copies to end once its command ended.
+    fn drain(self) -> Duration {
+        DRAIN * self.0
+    }
 }
 
 /// `tasks run ARGS` in `env`, the probe's answer on `out` and what it must say on `err`. `process`
@@ -439,16 +462,118 @@ fn unstarted(error: &io::Error) -> i32 {
     }
 }
 
+/// What a stream a caller handed a command is, as its log is concerned.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Caller {
+    /// A terminal: a person's.
+    Terminal,
+    /// A regular file, which its caller may read the moment it has the command's status.
+    File,
+    /// Anything else: a pipe, a socket, `/dev/null`, one closed.
+    Other,
+}
+
+/// How a run's log is written, if at all.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Keeps {
+    /// No log: the command keeps its caller's streams.
+    Nothing,
+    /// The command's streams made pipes its recorder copies on and into the log as they come.
+    Pipes,
+    /// The command keeps its caller's streams, and what it added to its caller's regular files is
+    /// copied into the log once it ended ([`crate::run_logs::Files`]).
+    Files,
+}
+
+/// How the log of a command is written, by whether it is a run or a step (`run`) and what the
+/// stdout and stderr its caller handed it are: none at a terminal, so a person sees the command
+/// exactly as it would run unrecorded; from a regular file, which nothing then stands between the
+/// command and, so its bytes are there before its status reaches anyone; else through pipes, whose
+/// reader to their end gets every byte.
+fn keeps(run: bool, streams: [Caller; 2]) -> Keeps {
+    if !run || streams.contains(&Caller::Terminal) {
+        Keeps::Nothing
+    } else if streams.contains(&Caller::File) {
+        Keeps::Files
+    } else {
+        Keeps::Pipes
+    }
+}
+
+/// What this process's stdout and stderr are.
+fn callers() -> [Caller; 2] {
+    [1, 2].map(|fd| {
+        // SAFETY: isatty only asks what a descriptor of this process's is.
+        if unsafe { libc::isatty(fd) } == 1 {
+            return Caller::Terminal;
+        }
+        // SAFETY: fstat writes one stat into it.
+        let mut stat: libc::stat = unsafe { std::mem::zeroed() };
+        // SAFETY: as above, of a descriptor of this process's.
+        let read = unsafe { libc::fstat(fd, &raw mut stat) } == 0;
+        if read && stat.st_mode & libc::S_IFMT == libc::S_IFREG {
+            Caller::File
+        } else {
+            Caller::Other
+        }
+    })
+}
+
+/// How `asked`'s log is written in `env`, as [`keeps`] decides for this process's own streams.
+fn kept(asked: &Asked, env: &Env) -> Keeps {
+    keeps(role(asked, env).is_some(), callers())
+}
+
+/// This process's stdout and stderr, each a descriptor of its own, close-on-exec: where the streams
+/// of a run's command are copied on to, as they went before. None when either is closed.
+fn originals() -> io::Result<[fs::File; 2]> {
+    use std::os::fd::FromRawFd as _;
+    let copy = |fd: libc::c_int| {
+        // SAFETY: copies a descriptor of this process's, to one above the standard streams.
+        let copied = unsafe { libc::fcntl(fd, libc::F_DUPFD_CLOEXEC, 3) };
+        if copied == -1 {
+            return Err(io::Error::last_os_error());
+        }
+        // SAFETY: a new descriptor nothing else owns.
+        Ok(unsafe { fs::File::from_raw_fd(copied) })
+    };
+    Ok([copy(1)?, copy(2)?])
+}
+
 /// `asked`'s command run as this process's child, recorded while it runs. In a caller's process
 /// (`process` false), in the `env` it was handed; as the `tasks` binary, in its own environment,
 /// passing on the signals it gets, then ending as its command did.
 fn child(asked: &Asked, env: &Env, err: &mut dyn Write, process: bool) -> i32 {
     let queued_at = crate::store::now();
     let waits = Waits::of(env);
-    // Its lease, and a run's tree and whether its checkout is clean, before its command starts.
-    let prepared = recorded::folder(env)
-        .zip(recorded::new_id().ok())
-        .and_then(|(folder, id)| Prepared::new(folder, id, (asked, None), env, waits).ok());
+    // A run's log, kept as [`keeps`] says from this process's own streams, both of which it can
+    // copy.
+    let keeps = kept(asked, env);
+    let originals = (keeps != Keeps::Nothing)
+        .then(originals)
+        .and_then(Result::ok);
+    // Its lease, and a run's tree and whether its checkout is clean, and its log, before its command
+    // starts.
+    let mut prepared =
+        recorded::folder(env)
+            .zip(recorded::new_id().ok())
+            .and_then(|(folder, id)| {
+                let logged = originals.as_ref().map(|_| queued_at);
+                Prepared::new(folder, id, (asked, None, logged), env, waits).ok()
+            });
+    let (mut tee, mut source) = (None, None);
+    match prepared
+        .as_mut()
+        .and_then(Prepared::log_file)
+        .zip(originals)
+    {
+        Some((log, originals)) if keeps == Keeps::Files => {
+            // Where its caller's files end before its command can write to them.
+            let files = crate::run_logs::Files::mark(originals);
+            source = Some(crate::run_logs::Source::files(files, log));
+        }
+        logged => tee = logged,
+    }
     let id = prepared.as_ref().map(|prepared| prepared.id.clone());
     let mut command = if process {
         sys::command(&asked.command[0])
@@ -476,15 +601,20 @@ fn child(asked: &Asked, env: &Env, err: &mut dyn Write, process: bool) -> i32 {
             None => command.env_remove(recorded::PIPELINE_VAR),
         };
     }
+    if tee.is_some() {
+        command
+            .stdout(sys::Stdio::piped())
+            .stderr(sys::Stdio::piped());
+    }
     // Its caller waits on it: the board's answer, and no other run's end, nor a held lock.
-    let begin = |started: Option<Start>| {
+    let begin = |prepared: Option<Prepared>, started: Option<Start>| {
         let recording =
             Recording::begin(prepared?, asked, env, (queued_at, started), false).ok()?;
         recording.sweep();
         Some(recording)
     };
     let forwarding = process.then(signals::Forwarding::install);
-    let child = match command.spawn() {
+    let mut child = match command.spawn() {
         Ok(child) => child,
         Err(error) => {
             drop(forwarding);
@@ -494,7 +624,11 @@ fn child(asked: &Asked, env: &Env, err: &mut dyn Write, process: bool) -> i32 {
                 "tasks run: {}: {error}",
                 asked.command[0].to_string_lossy()
             );
-            if let Some(recording) = begin(None) {
+            // A command that never ran wrote nothing to keep.
+            if let Some(prepared) = &mut prepared {
+                prepared.unlogged();
+            }
+            if let Some(recording) = begin(prepared, None) {
                 recording.finish(
                     Some(code),
                     None,
@@ -505,6 +639,23 @@ fn child(asked: &Asked, env: &Env, err: &mut dyn Write, process: bool) -> i32 {
             return code;
         }
     };
+    if let Some((log, [out, err])) = tee
+        && let (Some(read_out), Some(read_err)) = (child.stdout.take(), child.stderr.take())
+    {
+        let streams = vec![
+            crate::run_logs::Stream {
+                from: fs::File::from(std::os::fd::OwnedFd::from(read_out)),
+                to: out,
+            },
+            crate::run_logs::Stream {
+                from: fs::File::from(std::os::fd::OwnedFd::from(read_err)),
+                to: err,
+            },
+        ];
+        source = crate::run_logs::Copying::start(streams, log)
+            .ok()
+            .map(crate::run_logs::Source::Copying);
+    }
     let started = (child.id(), crate::store::now());
     if let Some(forwarding) = &forwarding {
         forwarding.child(started.0);
@@ -519,7 +670,7 @@ fn child(asked: &Asked, env: &Env, err: &mut dyn Write, process: bool) -> i32 {
         let _ = end.send((seen, crate::store::now()));
         stamped(mark.as_deref());
     });
-    let recording = begin(Some(started));
+    let recording = begin(prepared, Some(started));
     let (seen, at) = loop {
         match ends.recv_timeout(BEAT) {
             Ok(end) => break end,
@@ -538,6 +689,12 @@ fn child(asked: &Asked, env: &Env, err: &mut dyn Write, process: bool) -> i32 {
     drop(forwarding);
     let ended = reaped(started.0);
     drop(child);
+    // Its last output reaches its caller before its status does, and its log holds what its end
+    // line says.
+    let logged = source.as_ref().map(|source| source.ended(waits.drain()));
+    if let (Some(recording), Some(bytes)) = (&recording, logged) {
+        recording.logged(bytes);
+    }
     // An end its waiter could not see is the one the reap read, as it came.
     let at = if seen.is_ok() {
         at
@@ -751,7 +908,7 @@ impl Drop for Lease {
 }
 
 /// What a recorder knows before its command starts: its operation's lease, taken, and for a run or
-/// a step, the commit, its tree and whether the checkout was clean then.
+/// a step, the commit, its tree and whether the checkout was clean then, and its log, made.
 struct Prepared {
     folder: PathBuf,
     id: String,
@@ -760,6 +917,11 @@ struct Prepared {
     /// Its role, the tree and whether the checkout differed from its commit: none for an operation
     /// of the work folder alone.
     run: Option<(Role, Option<String>, Option<bool>)>,
+    /// The day files' folder its lines go to, when it has one.
+    runs: Option<PathBuf>,
+    /// A run's or a step's log, by its name in `runs`, and its file until its copy takes it
+    /// ([`crate::run_logs`]).
+    log: Option<(String, Option<fs::File>)>,
     /// How long it waits on the board's answer, as on git's.
     waits: Waits,
 }
@@ -768,11 +930,13 @@ impl Prepared {
     /// The lease of the operation `id` of `asked` in `env` taken in the work folder `folder`, never
     /// waited for longer than [`crate::runs::BRIEF_WAIT`] (a new file only a sweep's look holds, for
     /// an instant), naming the process its command is when that is known; then a run's or a step's
-    /// tree and cleanliness asked of git for as long as its `waits` say ([`GIT_WAIT`]).
+    /// tree and cleanliness asked of git for as long as its `waits` say ([`GIT_WAIT`]), and, when
+    /// its command's streams can be copied (`queued_at`, the time it was asked for), its log made in
+    /// its day files' folder.
     fn new(
         folder: PathBuf,
         id: String,
-        (asked, command): (&Asked, Option<u32>),
+        (asked, command, queued_at): (&Asked, Option<u32>, Option<f64>),
         env: &Env,
         waits: Waits,
     ) -> io::Result<Prepared> {
@@ -799,14 +963,38 @@ impl Prepared {
             });
             (role, tree, dirty)
         });
+        let runs = crate::runs::folder(env).map(|runs| env.cwd.join(runs));
+        let log = match (&run, &runs, queued_at) {
+            (Some(_), Some(runs), Some(at)) => {
+                let name = crate::run_logs::name(&id, at);
+                crate::run_logs::create(runs, &name)
+                    .ok()
+                    .map(|file| (name, Some(file)))
+            }
+            _ => None,
+        };
         Ok(Prepared {
             folder,
             id,
             lease,
             commit,
             run,
+            runs,
+            log,
             waits,
         })
+    }
+
+    /// Its log's file, for its copy to write: none for an operation that keeps no log.
+    fn log_file(&mut self) -> Option<fs::File> {
+        self.log.as_mut().and_then(|(_, file)| file.take())
+    }
+
+    /// Its log no longer kept, its file removed: its command's streams are not copied after all.
+    fn unlogged(&mut self) {
+        if let (Some((name, _)), Some(runs)) = (self.log.take(), &self.runs) {
+            let _ = fs::remove_file(runs.join(name));
+        }
     }
 }
 
@@ -843,6 +1031,8 @@ impl Recording {
             lease,
             commit,
             run,
+            runs,
+            log,
             waits,
         } = prepared;
         let (handle, task) = attributed(asked, env, waits.board());
@@ -851,7 +1041,6 @@ impl Recording {
                 .map(|(_, branch)| branch)
                 .filter(|branch| !branch.is_empty())
         });
-        let runs = crate::runs::folder(env).map(|runs| env.cwd.join(runs));
         let label = recorded::bounded(&asked.label());
         let run = run.map(|(Role { pipeline, step }, tree, dirty)| {
             let rerun_of = match (&runs, &tree, dirty) {
@@ -884,6 +1073,8 @@ impl Recording {
                     .and_then(|runs| runs.to_str())
                     .filter(|runs| runs.len() <= recorded::MAX_TEXT)
                     .map(str::to_owned),
+                log: log.map(|(name, _)| name),
+                log_bytes: None,
             }
         });
         let path = folder.join(recorded::OPERATIONS).join(format!("{id}.json"));
@@ -945,9 +1136,11 @@ impl Recording {
         let _ = recorded::sweep(&self.folder, crate::store::now());
     }
 
-    /// The line `record` says appended to the day files, when it is a run's or a step's.
+    /// The line `record` says appended to the day files, when it is a run's or a step's: an end
+    /// line with what its log, whole by then ([`Recording::logged`]), says of its tests.
     fn line(&self, record: &Record) {
         if let (Some(runs), Some(line)) = (&self.runs, crate::runs::line(record)) {
+            let line = crate::runs::with_tests(line, runs);
             let _ = crate::runs::append(runs, &line, crate::store::now(), self.wait);
         }
     }
@@ -981,6 +1174,16 @@ impl Recording {
         record.beat_at = crate::store::now();
         let _ = recorded::write(&self.path, &record);
         self.line(&record);
+    }
+
+    /// Its log holds `bytes`, its command's streams having ended or been waited for: what its end
+    /// line says.
+    fn logged(&self, bytes: u64) {
+        if let Some(run) = &mut self.held().run
+            && run.log.is_some()
+        {
+            run.log_bytes = Some(bytes);
+        }
     }
 
     /// It still runs, its processes as `reading` last read them when there is one.
@@ -1051,13 +1254,15 @@ fn settled(folder: &Path, ours: &str, same: crate::runs::Same, before: f64, with
 #[cfg(target_os = "macos")]
 mod supervised {
     use super::{
-        Asked, BEAT, Cpu, Prepared, Recording, SAMPLE, Waits, cpu_seconds, role, unstarted,
+        Asked, BEAT, Cpu, Keeps, Prepared, Recording, SAMPLE, Waits, cpu_seconds, kept, role,
+        unstarted,
     };
     use crate::cli::Env;
     use crate::cli::machine_work::recorded;
+    use crate::run_logs::{Copying, Files, Source, Stream};
     use std::ffi::CString;
     use std::io::{self, Write};
-    use std::os::fd::{AsRawFd as _, FromRawFd as _, OwnedFd};
+    use std::os::fd::{AsRawFd, FromRawFd as _, OwnedFd};
     use std::os::unix::ffi::OsStrExt as _;
     use std::sync::mpsc::{self, RecvTimeoutError};
     use std::sync::{Arc, Mutex, PoisonError};
@@ -1087,9 +1292,15 @@ mod supervised {
         };
         let mut argv: Vec<*const libc::c_char> = words.iter().map(|word| word.as_ptr()).collect();
         argv.push(std::ptr::null());
+        // A run's log, kept as [`super::keeps`] says from this process's own streams: through pipes
+        // its recorder copies on, once it says it does, or from its caller's files.
+        let tee = Tee::new(kept(asked, env));
         if let Ok(id) = recorded::new_id()
-            && watched(asked, env, (&id, queued_at), waits)
+            && let Some(teed) = watched(asked, env, (&id, queued_at), waits, tee.as_ref())
         {
+            if teed && let Some(tee) = &tee {
+                tee.redirect();
+            }
             // SAFETY: this process runs one thread: nothing reads its environment beside this.
             unsafe { std::env::set_var(recorded::PARENT_VAR, &id) };
             match role(asked, env) {
@@ -1114,24 +1325,103 @@ mod supervised {
         unstarted(&error)
     }
 
+    /// Copies of where a run's command's stdout and stderr went, made before its recorder is
+    /// forked, and, where they are copied as they come, the pipes the command writes them to
+    /// instead: the recorder keeps the copies and the pipes' reading ends, and copies each stream on
+    /// and into the run's log, or reads its caller's files once the command ended.
+    struct Tee {
+        /// Each pipe's reading end and writing end, close-on-exec; none where the command keeps
+        /// its caller's files.
+        pipes: Option<[(OwnedFd, OwnedFd); 2]>,
+        originals: [std::fs::File; 2],
+    }
+
+    impl Tee {
+        /// The copies of this process's stdout and stderr, and the pipes where `keeps` says;
+        /// none for no log, or when either stream is closed.
+        fn new(keeps: Keeps) -> Option<Tee> {
+            let pipes = match keeps {
+                Keeps::Nothing => return None,
+                Keeps::Pipes => Some([pipe().ok()?, pipe().ok()?]),
+                Keeps::Files => None,
+            };
+            Some(Tee {
+                pipes,
+                originals: super::originals().ok()?,
+            })
+        }
+
+        /// The descriptors its recorder keeps: the originals and the pipes' reading ends.
+        fn kept(&self) -> Vec<libc::c_int> {
+            let originals = self.originals.iter().map(AsRawFd::as_raw_fd);
+            let pipes = self
+                .pipes
+                .iter()
+                .flatten()
+                .map(|(read, _)| read.as_raw_fd());
+            originals.chain(pipes).collect()
+        }
+
+        /// This process's stdout and stderr made the pipes' writing ends, if it has pipes: what
+        /// its command execs with, the ends themselves closing at that exec.
+        fn redirect(&self) {
+            for (pipe, stream) in self.pipes.iter().flatten().zip([1, 2]) {
+                // SAFETY: points a standard stream at a pipe's end this process holds open.
+                unsafe { libc::dup2(pipe.1.as_raw_fd(), stream) };
+            }
+        }
+
+        /// In its recorder, where `log` is written from, on the descriptors it kept: owned by the
+        /// files made of them, since the forked copy of the caller's memory that names them here
+        /// is never dropped in a process that only ever `_exit`s. The caller's files are marked
+        /// now, before the command hears it may exec.
+        fn source(&self, log: std::fs::File) -> io::Result<Source> {
+            // SAFETY: a descriptor the recorder kept open (`detach`), which nothing else here
+            // closes.
+            let adopt = |fd: &dyn AsRawFd| unsafe { std::fs::File::from_raw_fd(fd.as_raw_fd()) };
+            let [out, err] = &self.originals;
+            match &self.pipes {
+                Some([read_out, read_err]) => {
+                    let streams = vec![
+                        Stream {
+                            from: adopt(&read_out.0),
+                            to: adopt(out),
+                        },
+                        Stream {
+                            from: adopt(&read_err.0),
+                            to: adopt(err),
+                        },
+                    ];
+                    Copying::start(streams, log).map(Source::Copying)
+                }
+                None => Ok(Source::files(Files::mark([adopt(out), adopt(err)]), log)),
+            }
+        }
+    }
+
     /// Whether a recorder forked now watches this process, as the operation `id` asked for at
-    /// `queued_at`: told on a pipe of their own, within as long as its `waits` say
-    /// ([`super::READY`]).
-    fn watched(asked: &Asked, env: &Env, (id, queued_at): (&str, f64), waits: Waits) -> bool {
-        let Ok((told, tell)) = pipe() else {
-            return false;
-        };
+    /// `queued_at`, and whether it copies `tee`'s streams: told on a pipe of their own, within as
+    /// long as its `waits` say ([`super::READY`]); none when it does not watch it.
+    fn watched(
+        asked: &Asked,
+        env: &Env,
+        (id, queued_at): (&str, f64),
+        waits: Waits,
+        tee: Option<&Tee>,
+    ) -> Option<bool> {
+        let (told, tell) = pipe().ok()?;
         // SAFETY: getpid and getppid cannot fail.
         let (target, caller) = unsafe { (libc::getpid(), libc::getppid()) };
         // SAFETY: this process runs one thread, so its child may run what follows.
         match unsafe { libc::fork() } {
-            -1 => false,
+            -1 => None,
             0 => {
                 drop(told);
                 // SAFETY: as above: the grandchild records, and its parent ends at once, so the
                 // command has no child of the recorder's to wait for.
                 if unsafe { libc::fork() } == 0 {
-                    record((target, caller), &tell, asked, env, (id, queued_at), waits);
+                    let place = (target, caller);
+                    record(place, &tell, (asked, env), (id, queued_at), waits, tee);
                 }
                 // SAFETY: ends the child between without the runtime's exit, which is the caller's.
                 unsafe { libc::_exit(0) }
@@ -1144,10 +1434,19 @@ mod supervised {
                     && io::Error::last_os_error().kind() == io::ErrorKind::Interrupted
                 {
                 }
-                ready(&told, waits.ready())
+                match ready(&told, waits.ready()) {
+                    Some(WATCHED) => Some(false),
+                    Some(TEED) => Some(tee.is_some_and(|tee| tee.pipes.is_some())),
+                    _ => None,
+                }
             }
         }
     }
+
+    /// What a recorder says once it watches its command, and copies none of its streams.
+    const WATCHED: u8 = b'1';
+    /// What it says once it watches its command and copies its streams.
+    const TEED: u8 = b'2';
 
     /// A pipe, both its ends close-on-exec: the command holds neither.
     fn pipe() -> io::Result<(OwnedFd, OwnedFd)> {
@@ -1169,9 +1468,9 @@ mod supervised {
         Ok((read, write))
     }
 
-    /// Whether the recorder said on `told`, `within` ([`super::READY`], or a test's scale of it),
-    /// that it watches this process.
-    fn ready(told: &OwnedFd, within: Duration) -> bool {
+    /// What the recorder said on `told`, `within` ([`super::READY`], or a test's scale of it), once
+    /// it watches this process ([`WATCHED`] or [`TEED`]); none when it said nothing by then.
+    fn ready(told: &OwnedFd, within: Duration) -> Option<u8> {
         let deadline = Instant::now() + within;
         loop {
             let left = deadline.saturating_duration_since(Instant::now());
@@ -1185,67 +1484,92 @@ mod supervised {
             match unsafe { libc::poll(&raw mut poll, 1, wait) } {
                 1 => break,
                 -1 if io::Error::last_os_error().kind() == io::ErrorKind::Interrupted => {}
-                _ => return false,
+                _ => return None,
             }
         }
         let mut byte = 0_u8;
         // SAFETY: reads at most one byte into it.
-        unsafe { libc::read(told.as_raw_fd(), (&raw mut byte).cast(), 1) == 1 }
+        (unsafe { libc::read(told.as_raw_fd(), (&raw mut byte).cast(), 1) } == 1).then_some(byte)
     }
 
     /// The recorder: out of the caller's session and streams, it watches `target`, takes the
-    /// operation's lease and reads a run's tree and cleanliness, and says so on `tell` when it has
-    /// a work folder to record it in; then it records the operation `id` asked for at `queued_at`
-    /// until `target` ends, and ends, waiting on git and the board as its `waits` say. Told, the
-    /// command execs: that is its start.
+    /// operation's lease, reads a run's tree and cleanliness and, given `tee`, makes its log and
+    /// starts copying its streams or marks its caller's files; and says so on `tell` when it has a
+    /// work folder to record it in ([`TEED`] when it copies streams, else [`WATCHED`]). Then it
+    /// records the operation `id` asked for at `queued_at` until `target` ends, waiting on git and
+    /// the board as its `waits` say, and ends once the streams it copies ended. Told, the command
+    /// execs: that is its start.
     fn record(
         (target, caller): (libc::pid_t, libc::pid_t),
         tell: &OwnedFd,
-        asked: &Asked,
-        env: &Env,
+        (asked, env): (&Asked, &Env),
         (id, queued_at): (&str, f64),
         waits: Waits,
+        tee: Option<&Tee>,
     ) -> ! {
         let watch = Watch::new(target);
         // SAFETY: a session of its own: no signal for the caller's group or terminal reaches it.
         unsafe { libc::setsid() };
-        detach(&[
+        let mut keep = vec![
             watch.as_ref().map_or(-1, |watch| watch.0.as_raw_fd()),
             tell.as_raw_fd(),
-        ]);
-        let prepared = watch
+        ];
+        keep.extend(tee.map(Tee::kept).into_iter().flatten());
+        detach(&keep);
+        let mut prepared = watch
             .as_ref()
             .ok()
             .and_then(|_| recorded::folder(env))
             .and_then(|folder| {
-                Prepared::new(
-                    folder,
-                    id.to_owned(),
-                    (asked, Some(target.unsigned_abs())),
-                    env,
-                    waits,
-                )
-                .ok()
+                let command = Some(target.unsigned_abs());
+                let logged = tee.map(|_| queued_at);
+                Prepared::new(folder, id.to_owned(), (asked, command, logged), env, waits).ok()
             });
+        // Its copy starts, or its caller's files are marked, before its command hears it is kept:
+        // a copy that cannot start keeps none.
+        let source = tee
+            .zip(prepared.as_mut().and_then(Prepared::log_file))
+            .and_then(|(tee, log)| tee.source(log).ok());
+        if let (None, Some(prepared)) = (&source, &mut prepared) {
+            prepared.unlogged();
+        }
         let start = (target.unsigned_abs(), crate::store::now());
+        let said = if matches!(source, Some(Source::Copying(_))) {
+            TEED
+        } else {
+            WATCHED
+        };
         let told = prepared.is_some()
             // SAFETY: writes one byte from it; a command gone on without it hears nothing.
-            && unsafe { libc::write(tell.as_raw_fd(), b"1".as_ptr().cast(), 1) } == 1;
+            && unsafe { libc::write(tell.as_raw_fd(), (&raw const said).cast(), 1) } == 1;
         // The command waited for no more than that.
-        if let (true, Ok(watch), Some(prepared)) = (told, watch, prepared) {
-            // Read on a thread of its own, so what it sees is stamped as it comes while the board
-            // is asked which task this is for.
-            let (tell, heard) = mpsc::channel();
-            let latest = Latest::default();
-            let read = Arc::clone(&latest);
-            let mark = super::end_mark(env);
-            std::thread::spawn(move || {
-                watching(&watch, &tell, (target, caller), &read, mark.as_deref());
-            });
-            if let Ok(recording) = Recording::begin(prepared, asked, env, (queued_at, None), true) {
-                recording.sweep();
-                follow(&heard, recording, start, &latest);
+        match (told, watch, prepared) {
+            (true, Ok(watch), Some(prepared)) => {
+                // Read on a thread of its own, so what it sees is stamped as it comes while the
+                // board is asked which task this is for.
+                let (tell, heard) = mpsc::channel();
+                let latest = Latest::default();
+                let read = Arc::clone(&latest);
+                let mark = super::end_mark(env);
+                let ending = source.as_ref().and_then(Source::ending);
+                std::thread::spawn(move || {
+                    let place = (target, caller);
+                    watching(&watch, &tell, place, (&read, ending), mark.as_deref());
+                });
+                let begun = Recording::begin(prepared, asked, env, (queued_at, None), true);
+                if let Ok(recording) = begun {
+                    recording.sweep();
+                    let drain = source.as_ref().map(|source| (source, waits.drain()));
+                    follow(&heard, recording, start, &latest, drain);
+                }
             }
+            // Gone on unrecorded, its command keeps its own streams: nothing to keep.
+            (_, _, Some(mut prepared)) => prepared.unlogged(),
+            _ => {}
+        }
+        // What its command and the processes it left write is copied on to their end.
+        if let Some(source) = source {
+            source.join();
         }
         // SAFETY: ends the recorder without the runtime's exit, which is the caller's.
         unsafe { libc::_exit(0) }
@@ -1256,13 +1580,15 @@ mod supervised {
     /// fails, or nothing listens. That is read every [`SAMPLE`] and as soon as each event comes,
     /// its exit's first: a process that ended is read until its parent reaps it, and a last reading
     /// that comes after misses what ran since the one before, which the tree weighs
-    /// ([`cpu::Tree::reaped_first`]). Each reading the root answered is also left in `latest`, and
-    /// once the exit is stamped, `mark` is made ([`super::END_MARK_VAR`]).
+    /// ([`cpu::Tree::reaped_first`]). Each reading the root answered is also left in `latest`.
+    /// Once the exit is told, what the caller's files gained is copied into the run's log, given
+    /// their `ending`, before anything slower its recorder does: its caller may write to them
+    /// again as soon as it has the status. Then `mark` is made ([`super::END_MARK_VAR`]).
     fn watching(
         watch: &Watch,
         tell: &mpsc::Sender<Heard>,
         (target, caller): (libc::pid_t, libc::pid_t),
-        latest: &Latest,
+        (latest, ending): (&Latest, Option<Arc<crate::run_logs::Ending>>),
         mark: Option<&std::path::Path>,
     ) {
         let mut tree = cpu::Tree::new(cpu::Machine, target).reaped_by(caller);
@@ -1287,6 +1613,9 @@ mod supervised {
                     });
                     let told = tell.send(Ok((seen, crate::store::now(), cpu)));
                     if exited {
+                        if let Some(ending) = &ending {
+                            ending.copy();
+                        }
                         super::stamped(mark);
                     }
                     if told.is_err() || exited {
@@ -1347,12 +1676,14 @@ mod supervised {
 
     /// Record its command as its watch was `heard`: started at `start` once it exec'd, said again
     /// every [`BEAT`] while it runs with the `latest` reading of its processes, finished with its
-    /// status when its exit was seen.
+    /// status when its exit was seen, and with what its log holds once its `source` ended
+    /// ([`Source::ended`], within the time given).
     fn follow(
         heard: &mpsc::Receiver<Heard>,
         recording: Recording,
         start: super::Start,
         latest: &Latest,
+        source: Option<(&Source, Duration)>,
     ) {
         let mut started = false;
         loop {
@@ -1364,6 +1695,9 @@ mod supervised {
                     }
                     if let Some(status) = seen.exit {
                         let (code, signal) = ended(status);
+                        if let Some((source, within)) = source {
+                            recording.logged(source.ended(within));
+                        }
                         let reason = if started {
                             ""
                         } else {
@@ -1892,6 +2226,33 @@ mod tests {
 
     fn args(words: &[&str]) -> Vec<OsString> {
         words.iter().map(OsString::from).collect()
+    }
+
+    #[test]
+    fn a_runs_log_is_kept_from_pipes_or_its_callers_files_and_never_at_a_terminal() {
+        use Caller::{File, Other, Terminal};
+        // Anything piped, `/dev/null` or closed: copied as it comes.
+        assert_eq!(keeps(true, [Other, Other]), Keeps::Pipes);
+        // An agent's tool call, the release run's steps, a detached board command: a regular file
+        // on either stream, which the command keeps and its log is copied from at its end.
+        for files in [[File, File], [File, Other], [Other, File]] {
+            assert_eq!(keeps(true, files), Keeps::Files, "{files:?}");
+        }
+        // A person at a terminal, on either stream, whatever the other is: the command keeps the
+        // caller's own and the run no log.
+        for streams in [
+            [Terminal, Other],
+            [Other, Terminal],
+            [Terminal, Terminal],
+            [Terminal, File],
+            [File, Terminal],
+        ] {
+            assert_eq!(keeps(true, streams), Keeps::Nothing, "{streams:?}");
+        }
+        // An operation that is no run keeps its caller's streams whatever they are.
+        for streams in [[Other, Other], [File, File], [Terminal, Terminal]] {
+            assert_eq!(keeps(false, streams), Keeps::Nothing, "{streams:?}");
+        }
     }
 
     #[test]

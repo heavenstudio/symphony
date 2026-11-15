@@ -2,7 +2,7 @@
 //! is announced or a data request needs it, run in the hub's owned worker, awaited by data reads,
 //! released by stop.
 
-use super::{Hub, measured, run};
+use super::{Hub, measured, repository_of, run};
 use crate::backstop::Sweep;
 use notify::Watcher;
 use std::collections::BTreeSet;
@@ -19,13 +19,15 @@ impl Hub {
         embedded_ui: bool,
         drain_chat: bool,
     ) -> Result<Arc<Self>, String> {
+        // The worker's reach is held to the repository the hub holds its folder to, as it is made.
+        let held = repository_of(root);
         Self::start_watching::<notify::RecommendedWatcher>(
             root,
             ui_dist,
             embedded_ui,
             drain_chat,
             crate::backstop::PERIOD,
-            taskview::connect,
+            move |root| taskview::connect_held(root, held.as_deref()),
         )
     }
 
@@ -42,9 +44,12 @@ impl Hub {
             ));
         }
         drop(worker);
-        // The worker has ended, so no tick records after the hour so far is written.
-        self.stop_agents();
-        self.health.stop_hours(self.now());
+        // The worker has ended, so no tick records after the hour so far is written. A project
+        // removed under the server records nothing: its records would make its folders anew.
+        if self.holds_its_project() {
+            self.stop_agents();
+            self.health.stop_hours(self.now());
+        }
     }
 
     /// Install watcher `W` and documents. The owned worker starts its board read when activated,
@@ -84,11 +89,12 @@ impl Hub {
                     crate::front::tell(format_args!("→ board health: no hours kept ({why})"))
                 }
             }
-            // So are the project's day files, rolled up once an hour.
+            // So are the project's day files, rolled up once an hour, and its runs' beside them.
             match symphony_board::reports::folder(&env) {
                 Ok(folder) => {
+                    let runs = symphony_board::runs::folder(&env);
                     *hub.reports.get_mut().unwrap_or_else(|e| e.into_inner()) =
-                        Some(super::reports::Rollup::new(folder));
+                        Some(super::reports::Rollup::new(folder, runs));
                 }
                 Err(why) => eprintln!("→ reports: no day files written ({why})"),
             }

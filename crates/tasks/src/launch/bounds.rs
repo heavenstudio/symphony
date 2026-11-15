@@ -4,12 +4,14 @@
 //! Under it `launch` and `restore` start an agent, in auto mode, only in a folder the
 //! [`confine::places`] of the command's folder admit (its checkout, from a linked worktree the main
 //! checkout's artifacts folder, never a git folder) or under the project's worktree base
-//! ([`super::Machine::wt_base`], where a launch makes them), each path's links and `..` resolved
-//! first: `launch --worktree DIR`, the worktree a launch makes, and the worktree a record names that
-//! a restore makes again and starts in, an older record's too. A launch takes no `--prompt` there:
-//! an agent's first message is its person's own word, so it is `/work SLUG HANDLE` alone (a
-//! reviewer's `/review-task SLUG HANDLE`, each with `$` for Codex), and what else the launcher has
-//! to say goes on the task's thread, which the skill reads, as board text.
+//! ([`super::Machine::wt_base`], where a launch makes them: `SYMPHONY_WT_DIR`, or the folder beside
+//! a main checkout that lists the command's checkout as its own, [`Bounds::new`]), each path's
+//! links and `..` resolved first: `launch --worktree DIR`, the worktree a launch makes, and the
+//! worktree a record names that a restore makes again and starts in, an older record's too. A
+//! launch takes no `--prompt` there: an agent's first message is its person's own word, so it is
+//! `/work SLUG HANDLE` alone (a reviewer's `/review-task SLUG HANDLE`, each with `$` for Codex),
+//! and what else the launcher has to say goes on the task's thread, which the skill reads, as board
+//! text.
 //!
 //! The conversation a restore resumes is the one the record names. Under the mark `tasks api`'s
 //! `record_launch` writes no record a restore would start elsewhere, nor one naming a conversation;
@@ -37,23 +39,43 @@ use std::path::{Path, PathBuf};
 pub struct Bounds {
     places: Places,
     /// The project's worktree base, resolved: a folder below it is admitted, not the base itself.
-    base: PathBuf,
+    /// None where the base would be beside a main checkout the command's own checkout does not
+    /// confirm ([`Places::main`]).
+    base: Option<PathBuf>,
 }
 
 impl Bounds {
-    /// Those of a command run in `cwd`, whose worktrees go under `wt_base`, which git makes from the
-    /// main checkout at `root`.
+    /// Those of a command run in `cwd`, whose worktrees go under `wt_base`, the folder beside the
+    /// main checkout at `root` ([`super::worktree_base`]), which counts only when `root` is the main
+    /// checkout `cwd`'s checkout confirms ([`Places::main`], what [`confine`] admits the main
+    /// artifacts folder by). `root` is read from the worktree's `.git` file, untracked, and one
+    /// rewritten to name another repository moves `root`, and the base beside it, there. A
+    /// submodule, a `--separate-git-dir` checkout or a bare repository's worktree has no main
+    /// checkout (its `root` is the checkout itself, [`super::root_of`], which no repository lists
+    /// back), so only `SYMPHONY_WT_DIR` gives it a base ([`Bounds::of`]).
     pub fn new(cwd: &Path, root: &Path, wt_base: &Path) -> Bounds {
+        let places = confine::places(cwd);
+        let confirmed = places
+            .main
+            .as_ref()
+            .is_some_and(|main| root.canonicalize().is_ok_and(|root| root == *main));
         Bounds {
-            places: confine::places(cwd),
-            base: confine::resolve(root, wt_base).unwrap_or_else(|_| root.join(wt_base)),
+            base: confirmed.then(|| base(root, wt_base)),
+            places,
         }
     }
 
     /// Those of a command run in `env` under the marker, its main checkout at `root` and its
-    /// worktree base `wt_base`; none for one run without it, which starts an agent anywhere.
+    /// worktree base `wt_base`; none for one run without it, which starts an agent anywhere. A base
+    /// `SYMPHONY_WT_DIR` names is the setting's, taken as it is, from `root` when it is relative.
     pub fn of(env: &Env, root: &Path, wt_base: &Path) -> Option<Bounds> {
         env.var(confine::MARKER)?;
+        if env.read(symphony_env::WT_DIR).is_some() {
+            return Some(Bounds {
+                places: confine::places(&env.cwd),
+                base: Some(base(root, wt_base)),
+            });
+        }
         Some(Bounds::new(&env.cwd, root, wt_base))
     }
 
@@ -78,7 +100,10 @@ impl Bounds {
         } else {
             let resolved =
                 confine::resolve(Path::new("/"), folder).map_err(|why| format!("{what} {why}"))?;
-            let below_base = resolved != self.base && self.places.admit_in(&self.base, &resolved);
+            let below_base = self
+                .base
+                .as_ref()
+                .is_some_and(|base| resolved != *base && self.places.admit_in(base, &resolved));
             if self.places.admit(&resolved) || below_base {
                 return Ok(resolved);
             }
@@ -92,12 +117,23 @@ impl Bounds {
                 )
             }
         };
+        let base = match &self.base {
+            Some(base) => format!(
+                ", or a folder under the project's worktree base {}",
+                base.display()
+            ),
+            None => {
+                ", and no worktree base, which is taken only beside a main checkout that lists \
+                     this checkout as its own, or where SYMPHONY_WT_DIR names one (a submodule, a \
+                     --separate-git-dir checkout or a bare repository's worktree has no main \
+                     checkout)"
+                    .into()
+            }
+        };
         Err(format!(
-            "{place} not a folder a recipe an agent runs unasked starts an agent in: {}, or a \
-             folder under the project's worktree base {}; the binary run by itself starts one \
-             anywhere",
-            self.places.said(),
-            self.base.display()
+            "{place} not a folder a recipe an agent runs unasked starts an agent in: {}{base}; the \
+             binary run by itself starts one anywhere",
+            self.places.said()
         ))
     }
 
@@ -137,6 +173,12 @@ impl Bounds {
         self.admit("the record's worktree", Path::new(&launch.worktree))
             .map(|_| ())
     }
+}
+
+/// The worktree base `wt_base`, from `root` when it is relative, resolved ([`confine::resolve`]);
+/// as written where a link on it leads nowhere.
+fn base(root: &Path, wt_base: &Path) -> PathBuf {
+    confine::resolve(root, wt_base).unwrap_or_else(|_| root.join(wt_base))
 }
 
 /// Whether `callback`, run in `env`, may register `address`: under the mark a Codex thread only as

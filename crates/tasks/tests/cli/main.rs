@@ -40,8 +40,10 @@ mod recorder;
 mod scratch_folder;
 mod search;
 mod slots;
+mod stamps;
 mod stats;
 mod sweep;
+mod test_lanes;
 mod write_load;
 
 use std::collections::BTreeMap;

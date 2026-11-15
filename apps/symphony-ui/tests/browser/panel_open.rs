@@ -2,7 +2,8 @@
 //! after the click, loading; the panel's script, wasm and styles are requested together; once a
 //! page is idle the persistent modules' files are warmed into the HTTP cache, outside the first
 //! visit's transfer; an open chat reads its thread when the page's feed says it moved, never on a
-//! timer.
+//! timer. On the board, whose page has no media layer, the chat fetches the program's only for a
+//! thread that shows media.
 
 use super::{
     SHOWN, assets::module, chrome, chrome::Chrome, completed_requests, dist, needed_bytes,
@@ -207,17 +208,17 @@ fn an_idle_page_warms_the_chat_and_the_menus_outside_its_first_visit_and_their_f
     browser.open(&site.url("/"));
     wait_for_board(&mut browser);
     let (panel, overlay) = (module(dist(), "panel"), module(dist(), "overlay"));
-    // The chat and the menus are the program's: its script and main module, and a chunk each.
-    assert_eq!(
-        (&overlay.script, &overlay.wasm),
-        (&panel.script, &panel.wasm)
-    );
+    // The chat is the program's: its script and main module, and its chunk. The menus are the web
+    // client's: their script and their own styles (the shared sheet, and the chunks the script
+    // imports, the page has already).
+    assert!(overlay.wasm.is_empty() && overlay.chunk.is_none());
     let (warmed, requests) = settled(&mut browser);
-    let files = [&panel.script, &panel.wasm, panel.chunk(), overlay.chunk()];
-    for file in files {
+    let mut files = vec![&panel.script, &panel.wasm, panel.chunk(), &overlay.script];
+    files.extend(&overlay.styles[1..]);
+    for &file in &files {
         assert!(warmed.contains(file), "{file} is not warmed: {warmed:?}");
     }
-    for file in files {
+    for file in &files {
         assert!(
             requests
                 .iter()
@@ -231,7 +232,7 @@ fn an_idle_page_warms_the_chat_and_the_menus_outside_its_first_visit_and_their_f
         "first visit {} bytes; warmed at idle, outside it: {prefetched} bytes",
         needed_bytes(&requests)
     );
-    for file in [&panel.script, &panel.wasm, panel.chunk()] {
+    for &file in &files {
         assert_eq!(
             asked(&mut browser, &site, file, 1),
             1,
@@ -248,6 +249,24 @@ fn an_idle_page_warms_the_chat_and_the_menus_outside_its_first_visit_and_their_f
             asked(&mut browser, &site, file, 1),
             1,
             "the first open took the warmed {file} from the cache"
+        );
+    }
+    // The menus' first use, a picture shown in their viewer, takes their warmed files too.
+    browser.eval(
+        "window.reviewOverlay({kind: 'picture', owner: 'warmed', photos: [{src: '/first.svg', caption: 'First'}], at: 0, callback() {}})",
+    );
+    assert!(browser.wait_for(
+        "window.reviewOverlayReady === true && document.querySelector('#media-lightbox[data-state=open]') !== null",
+        SHOWN
+    ));
+    for file in [&overlay.script]
+        .into_iter()
+        .chain(overlay.styles[1..].iter())
+    {
+        assert_eq!(
+            asked(&mut browser, &site, file, 1),
+            1,
+            "the menus' first use took the warmed {file} from the cache"
         );
     }
 }
@@ -280,22 +299,22 @@ fn an_idle_page_warms_the_menus_only_once_the_chat_s_chunk_is_in() {
     );
     browser.pump(Duration::from_millis(500));
     assert_eq!(
-        linked(&mut browser, &[&panel.script, &panel.wasm, overlay.chunk()]),
+        linked(&mut browser, &[&panel.script, &panel.wasm, &overlay.script]),
         [true, true, false],
-        "the chat's files are warmed together, the menus' chunk waits for the chat's"
+        "the chat's files are warmed together, the menus' script waits for the chat's chunk"
     );
-    assert_eq!(asked(&mut browser, &site, overlay.chunk(), 0), 0);
+    assert_eq!(asked(&mut browser, &site, &overlay.script, 0), 0);
     site.hold_route(panel.chunk(), false);
     let (warmed, _) = settled(&mut browser);
     assert!(
-        warmed.contains(overlay.chunk()),
-        "the menus' chunk is not warmed: {warmed:?}"
+        warmed.contains(&overlay.script),
+        "the menus' script is not warmed: {warmed:?}"
     );
-    assert_eq!(asked(&mut browser, &site, overlay.chunk(), 1), 1);
+    assert_eq!(asked(&mut browser, &site, &overlay.script, 1), 1);
     assert_eq!(
         asked(&mut browser, &site, &panel.wasm, 1),
         1,
-        "the menus' main module is the chat's, warmed once"
+        "the chat's main module is warmed once"
     );
 }
 
@@ -323,20 +342,20 @@ fn a_click_before_the_idle_warm_up_holds_the_menus_until_the_chat_is_up() {
         json!(0),
         "the chat's own load is under way and the menus wait for it"
     );
-    assert_eq!(asked(&mut browser, &site, overlay.chunk(), 0), 0);
+    assert_eq!(asked(&mut browser, &site, &overlay.script, 0), 0);
     site.hold_route(&panel.script, false);
     assert!(browser.wait_for("window.reviewPanelReady === true", SHOWN));
     assert!(
         browser.wait_for(
             &format!(
                 "document.querySelector(`link[rel=prefetch][href=\"${{{}}}\"]`) !== null",
-                json!(overlay.chunk())
+                json!(overlay.script)
             ),
             SHOWN
         ),
         "the menus are warmed once the chat is up"
     );
-    assert_eq!(asked(&mut browser, &site, overlay.chunk(), 1), 1);
+    assert_eq!(asked(&mut browser, &site, &overlay.script, 1), 1);
     assert_eq!(
         asked(&mut browser, &site, &panel.wasm, 1),
         1,
@@ -505,6 +524,52 @@ fn a_read_with_no_answer_holds_the_warm_up_until_one_answers() {
     );
 }
 
+#[test]
+fn a_read_the_page_gave_up_holds_no_warm_up() {
+    let site = site();
+    let Some(mut browser) = chrome() else { return };
+    // A read the page gives up, as a page does by its signal, ends after every other read has
+    // answered: no read answers after it, so a warm-up that took it for a read with no answer
+    // would wait for ever.
+    browser.call(
+        "Page.addScriptToEvaluateOnNewDocument",
+        json!({ "source": READS }),
+    );
+    site.hold_route("/api/given-up", true);
+    site.hold_route("/api/task-board", true);
+    tasks_reading_columns(&mut browser, &site);
+    browser.eval(
+        "window.__giveUp = new AbortController(); \
+         fetch('/api/given-up', { signal: window.__giveUp.signal }).catch(() => {}); true",
+    );
+    site.hold_route("/api/task-board", false);
+    assert!(browser.wait_for(
+        "document.querySelector('[data-slug=\"tools/example\"]') !== null",
+        SHOWN
+    ));
+    reads_until(
+        &mut browser,
+        "every read but the one to be given up ended",
+        "[...window.__reads.values()].every(path => path === '/api/given-up')",
+    );
+    browser.eval("window.__giveUp.abort()");
+    reads_until(
+        &mut browser,
+        "the read given up ended",
+        "window.__reads.size === 0",
+    );
+    assert_eq!(
+        browser.eval("JSON.stringify(window.__ended.at(-1))"),
+        json!(r#"["/api/given-up",false]"#),
+        "the read given up ended last"
+    );
+    assert!(
+        browser.wait_for(PREFETCHING, SHOWN),
+        "the warm-up waits on a read the page gave up: the reads ended {}",
+        browser.eval("JSON.stringify(window.__ended)")
+    );
+}
+
 /// A page at desktop width, where an open chat hides `+`, that keeps the data it is given and
 /// whose panel's script is held, so a sheet the keyboard opens stays loading; `opener` focused.
 fn desktop_loading(opener: &str) -> Option<(super::Site, Chrome, super::assets::Module)> {
@@ -615,7 +680,7 @@ fn escape_closes_a_loading_sheet_and_gives_the_focus_back_to_its_opener() {
 }
 
 /// The chat's reply for ask 7, its messages saying `texts`.
-fn chat(texts: &[&str]) -> Value {
+pub(super) fn chat(texts: &[&str]) -> Value {
     let messages: Vec<_> = texts
         .iter()
         .enumerate()
@@ -703,9 +768,87 @@ fn an_open_chat_reads_its_thread_when_the_feed_says_it_moved_never_on_a_timer() 
     assert_eq!(browser.eval("askPoll.length"), json!(0));
 }
 
+#[test]
+fn the_board_s_chat_fetches_the_media_layer_only_for_a_thread_that_shows_media() {
+    let site = site();
+    site.set_json("/api/ask", &chat(&["First question"]));
+    site.set_file(
+        "/mockup.html",
+        b"<!doctype html><title>Mockup</title>".to_vec(),
+        "text/html",
+    );
+    let Some(mut browser) = chrome() else { return };
+    // The board's own page has no media layer: the chat's panel holds one there.
+    browser.call(
+        "Page.addScriptToEvaluateOnNewDocument",
+        json!({"source": "localStorage.setItem('review-quick-draft', JSON.stringify({open: false, task: false, ask: 7}));"}),
+    );
+    browser.open(&site.url("/tasks"));
+    assert!(
+        browser.wait_for(
+            "document.querySelector(\"[data-slug='tools/example']\") !== null",
+            SHOWN
+        ),
+        "the board is never drawn"
+    );
+    wait_for_feed(&site).expect("the page holds its feed open");
+    browser.eval("document.querySelector('#quick-open').click()");
+    assert!(
+        browser.wait_for(
+            "[...document.querySelectorAll('#quick-sheet .quick-message p:not(.by)')].some(p => p.textContent === 'First question')",
+            SHOWN
+        ),
+        "the chat opens on its thread: {}",
+        browser.eval("document.getElementById('quick-sheet')?.innerText ?? null")
+    );
+    assert_eq!(chat_reads(&mut browser, &site, 1), 1);
+    assert_eq!(
+        super::program::media_asked(&site),
+        0,
+        "a chat of text fetched the media layer: {:?}",
+        site.requests()
+    );
+    // The thread moves on to a mockup, which the open chat reads and shows.
+    let mut thread = chat(&["First question", "A mockup"]);
+    thread["ask"]["messages"][1]["blocks"] =
+        json!([{"type":"media","media":{"kind":"mockup","src":"/mockup.html","label":"Mockup"}}]);
+    site.set_json("/api/ask", &thread);
+    site.push(
+        4184,
+        r#"{"version":4184,"changes":[{"region":"asks","data":{"threads":[{"id":7,"path":""}]}}]}"#,
+    );
+    // The mockup shows once it is scrolled to in the thread, as a reader would.
+    assert!(
+        browser.wait_for(
+            "document.querySelector('#quick-root .mockup-shell') !== null",
+            SHOWN
+        ),
+        "the thread's move is never read: {}",
+        browser.eval("document.getElementById('quick-sheet')?.innerText ?? null")
+    );
+    browser.eval(
+        "document.querySelector('#quick-root .mockup-shell').scrollIntoView({block:'center'})",
+    );
+    assert!(
+        browser.wait_for(
+            "document.querySelector('#quick-root .mockup-frame iframe')?.getAttribute('style')?.includes('transform:scale(') === true",
+            SHOWN
+        ),
+        "the media layer never scales the chat's mockup: {:?}; {:?}",
+        browser.eval("document.querySelector('#quick-root .mockup-shell')?.outerHTML ?? null"),
+        site.requests()
+    );
+    assert_eq!(
+        super::program::media_asked(&site),
+        1,
+        "{:?}",
+        site.requests()
+    );
+}
+
 /// Wait for the page's idle warm-up to start (once its own reads are over; up to 10 s, for a
 /// build that has none) and to end, every request it made, its prefetches included, finished,
-/// and no further file linked after that (the menus' follow the chat's wasm): the files warmed,
+/// and no further file linked after that (the menus' follow the chat's chunk): the files warmed,
 /// and the requests.
 pub(super) fn settled(browser: &mut Chrome) -> (Vec<String>, Vec<super::chrome::Request>) {
     browser.wait_for(PREFETCHING, Duration::from_secs(10));

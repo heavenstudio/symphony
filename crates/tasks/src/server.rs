@@ -353,6 +353,9 @@ type Tell = std::sync::Arc<dyn Fn(&str) + Send + Sync>;
 #[derive(Clone)]
 pub struct Home {
     dir: PathBuf,
+    /// The folder `dir` is kept in, never made by the board ([`Home::make`]): the repository's
+    /// common dir for [`Home::in_common`], else the folder holding `dir`.
+    within: PathBuf,
     surreal: PathBuf,
     patience: Duration,
     closing: Duration,
@@ -375,6 +378,7 @@ impl Home {
     pub fn new(dir: &Path, surreal: &Path) -> Home {
         Home {
             dir: dir.into(),
+            within: dir.parent().unwrap_or(dir).into(),
             surreal: surreal.into(),
             patience: PATIENCE,
             closing: CLOSING,
@@ -410,10 +414,44 @@ impl Home {
     /// The board of the repository whose common dir is `common`: `symphony/tasks/` there, served by
     /// the pinned `surreal` beside it ([`surreal_fetch`]), or by `named` (`SYMPHONY_SURREAL`'s).
     pub fn in_common(common: &Path, named: Option<&Path>) -> Home {
-        Home::new(
-            &common.join(FOLDER),
-            &named.map_or_else(|| pinned(common), Path::to_path_buf),
-        )
+        Home {
+            within: common.into(),
+            ..Home::new(
+                &common.join(FOLDER),
+                &named.map_or_else(|| pinned(common), Path::to_path_buf),
+            )
+        }
+    }
+
+    /// `folder`, the board's own or one in it, made where it is not there, with each folder between
+    /// it and the one the board is kept in (`within`), one at a time, but never that one or a
+    /// folder above it: a start, stop or ask under way when the project's folder or its `.git` is
+    /// removed never makes them again, and is refused, saying [`crate::project::GONE`], so that it
+    /// counts as a project with no board.
+    fn make(&self, folder: &Path) -> Result<(), ServerError> {
+        let mut made = self.within.clone();
+        for part in folder
+            .strip_prefix(&self.within)
+            .unwrap_or(folder)
+            .components()
+        {
+            made.push(part);
+            match fs::create_dir(&made) {
+                Ok(()) => {}
+                Err(problem)
+                    if problem.kind() == std::io::ErrorKind::AlreadyExists && made.is_dir() => {}
+                Err(problem) if problem.kind() == std::io::ErrorKind::NotFound => {
+                    return Err(ServerError::Io(format!(
+                        "{}, which holds the board's folder, is gone, and nothing is made there \
+                         again: {}",
+                        self.within.display(),
+                        crate::project::GONE
+                    )));
+                }
+                Err(problem) => return Err(io("could not make", &made)(problem)),
+            }
+        }
+        Ok(())
     }
 
     /// How long a server that is starting, or that runs and does not answer, is waited for.
@@ -462,6 +500,13 @@ impl Home {
         &self.surreal
     }
 
+    /// Whether the board's store is there, as it is once a server has run on it: none is a board
+    /// not made yet. A server that runs makes the store, never the board: only a writer does that
+    /// ([`crate::schema::decide`]).
+    pub fn has_store(&self) -> bool {
+        fs::symlink_metadata(self.dir.join(DATA)).is_ok()
+    }
+
     /// What the address file says, without asking the server: the fast path, which goes to
     /// [`Home::ensure`] when the server does not answer.
     pub fn recorded(&self) -> Option<Running> {
@@ -474,7 +519,11 @@ impl Home {
     /// one older than the pinned version is replaced; a newer one is used as it is, so that two trees
     /// pinning two versions never end each other's server. An answer on a server's address, recorded or
     /// found, counts only from that process's own listener there ([`port::listens`]): a process that
-    /// took its port answers too. A recorded server that ends while it is waited for is started again.
+    /// took its port answers too. Where that cannot be told (no `lsof` runs), the answer counts for a
+    /// server kept, started or found, and the start or the wait that took it says so in one line
+    /// ([`unsure`]); one that would be ended on it (an older one, a replay's) is not, the caller
+    /// refused naming why ([`untold`]): nothing is ended on a check that could not say. A recorded
+    /// server that ends while it is waited for is started again.
     /// One that runs and does not answer within the patience, recorded or not, is left running,
     /// never ended nor joined by a second: it is still replaying its log, or stuck, and the refusal
     /// says so. Refused while the board is held ([`Home::hold`]). A caller starting apart
@@ -496,7 +545,8 @@ impl Home {
             && !self.dir.join(left::RECORD).exists()
             && self.serves(running.pid)
             && rpc::healthy(&running.addr)
-            && owns(&running).unwrap_or(false)
+            // Unknown is the server's, said when it was started or found; not on each read.
+            && owns(&running).unwrap_or(true)
         {
             return Ok(running);
         }
@@ -514,24 +564,40 @@ impl Home {
         if let Some(running) = self.recorded()
             && self.serves(running.pid)
         {
-            match self.answers(&running)? {
+            match self.answers(&running) {
                 Waited::Answers if older(&running.version) => self.end(running.pid)?,
+                Waited::Unsure(why) if older(&running.version) => {
+                    return Err(untold(&running, &why));
+                }
                 Waited::Answers => return Ok(running),
+                Waited::Unsure(why) => return Ok(self.kept_unsure(running, &why)),
                 Waited::Ended => {}
                 Waited::Silent => return Err(self.silent(&running)),
             }
         }
         if let Some(running) = self.unrecorded() {
-            match self.answers(&running)? {
-                Waited::Answers => {
-                    self.record(&running)?;
-                    return Ok(running);
-                }
-                Waited::Ended => {}
+            let running = match self.answers(&running) {
+                Waited::Answers => running,
+                Waited::Unsure(why) => self.kept_unsure(running, &why),
+                Waited::Ended => return self.start(&starters),
                 Waited::Silent => return Err(self.silent(&running)),
-            }
+            };
+            self.record(&running)?;
+            return Ok(running);
         }
         self.start(&starters)
+    }
+
+    /// `running`, which answers where whether from its own listener cannot be told (`why`), kept
+    /// as the board's server, and that said in one line ([`unsure`]).
+    fn kept_unsure(&self, running: Running, why: &str) -> Running {
+        (self.tell)(&unsure(
+            "the board's server",
+            running.pid,
+            &running.addr,
+            &why,
+        ));
+        running
     }
 
     /// Why a server on this board's data that runs and has not answered within the wait
@@ -728,18 +794,23 @@ impl Home {
 
     /// What the server `running` names comes to within the wait ([`Home::answer_wait`]): it answers
     /// on its address from a listener of its own ([`owns`]), it ends, or it runs and does neither.
-    fn answers(&self, running: &Running) -> Result<Waited, ServerError> {
+    /// One that answers where whether from its own listener cannot be told is [`Waited::Unsure`].
+    fn answers(&self, running: &Running) -> Waited {
         let began = Instant::now();
         let wait = self.answer_wait();
         loop {
-            if rpc::healthy(&running.addr) && owns(running)? {
-                return Ok(Waited::Answers);
+            if rpc::healthy(&running.addr) {
+                match owns(running) {
+                    Ok(true) => return Waited::Answers,
+                    Ok(false) => {}
+                    Err(why) => return Waited::Unsure(why),
+                }
             }
             if !pid_alive(running.pid) {
-                return Ok(Waited::Ended);
+                return Waited::Ended;
             }
             if began.elapsed() >= wait {
-                return Ok(Waited::Silent);
+                return Waited::Silent;
             }
             std::thread::sleep(Duration::from_millis(50));
         }
@@ -755,7 +826,12 @@ impl Home {
     /// replay never runs without ([`Home::replay`]), `starters` saying so to whoever waits on them;
     /// otherwise the snapshot every start takes ([`Home::snapshot_before_start`]). A start whose
     /// log is to be replayed, for a caller starting apart ([`Home::starting_apart`]), is run on a
-    /// thread of its own, the caller refused at once naming it.
+    /// thread of its own, the caller refused at once naming it. A start with no replay says it
+    /// starts, in one line ([`Home::telling`]): it takes seconds, which would otherwise pass in
+    /// silence; a replay says its own. SurrealDB makes every missing folder of its store's path, so
+    /// a board's folder removed while its server starts comes back, its repository's with it: a
+    /// start whose folder no longer holds the lock it took ([`Starters::here`]) gives up, its
+    /// server ended before it is recorded, and is refused saying [`crate::project::GONE`].
     fn start(&self, starters: &Starters) -> Result<Running, ServerError> {
         self.unheld()?;
         let old = self.dir.join(RECLAIM).join(OLD);
@@ -774,9 +850,29 @@ impl Home {
             return Err(self.start_apart(logged));
         }
         if !self.replay(starters)? {
+            (self.tell)(&format!(
+                "· the board's server is not running: it starts now, on its store at {}, which \
+                 takes some seconds",
+                self.dir.join(DATA).display()
+            ));
             self.snapshot_before_start();
         }
-        let running = self.spawn(&self.data(), &[])?;
+        let spawned = self.spawn(&self.data(), &[]);
+        if !starters.here() {
+            let ended = match &spawned {
+                Ok(running) => self.end(running.pid).err(),
+                Err(_) => None,
+            };
+            return Err(ServerError::Io(format!(
+                "the board's folder {} went while its server started, and is not served: {}{}",
+                self.dir.display(),
+                crate::project::GONE,
+                ended
+                    .map(|why| format!("; and then {why}"))
+                    .unwrap_or_default()
+            )));
+        }
+        let running = spawned?;
         if let Err(problem) = self.record(&running) {
             return Err(match self.end(running.pid) {
                 Ok(()) => problem,
@@ -908,7 +1004,8 @@ impl Home {
     /// the port was taken meanwhile is started again on another ([`port`]), every start within the
     /// one patience. It is up once it answers and holds the port's listener itself
     /// ([`port::listens`]): a process that took its port answers too, while this server is still on
-    /// its way to ending. One that has not answered by then is left running, never signalled: it is
+    /// its way to ending. One whose listener cannot be told is up once it answers, a line saying so
+    /// ([`unsure`]). One that has not answered by then is left running, never signalled: it is
     /// still replaying its log, and a signal before its handlers are set ends it at once. `what`
     /// names the server in what is said of it; `on_start` is handed each start's pid and address as
     /// soon as the start says them, before it is waited for, and its error refuses the start, the
@@ -987,25 +1084,17 @@ impl Home {
                 version: SURREAL_VERSION.into(),
             })?;
             loop {
-                if rpc::healthy(&addr) {
-                    match port::listens(child, reserved, output) {
-                        Ok(true) => {
-                            return Ok(Start::Up(Running {
-                                addr,
-                                pid,
-                                version: SURREAL_VERSION.into(),
-                            }));
-                        }
-                        Ok(false) => {}
-                        Err(problem) => {
-                            self.end(pid)?;
-                            return Err(ServerError::NotUp(format!(
-                                "{what} (pid {pid}, {addr}) answered, and {problem}; \
-                                 its log is {}",
-                                log.display()
-                            )));
-                        }
-                    }
+                if rpc::healthy(&addr)
+                    && port::listens(child, reserved, output).unwrap_or_else(|problem| {
+                        (self.tell)(&unsure(what, pid, &addr, &problem));
+                        true
+                    })
+                {
+                    return Ok(Start::Up(Running {
+                        addr,
+                        pid,
+                        version: SURREAL_VERSION.into(),
+                    }));
                 }
                 if !pid_alive(pid) {
                     return Ok(Start::Ended(since(&log, from)));
@@ -1056,10 +1145,14 @@ impl Home {
 }
 
 /// What a server that runs came to, waited on within the patience ([`Home::answers`]).
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 enum Waited {
     /// It answers on its address from a listener of its own.
     Answers,
+    /// It answers on its address, and whether from a listener of its own cannot be told: why
+    /// ([`owns`]). A caller that keeps it says so ([`unsure`]); one that would end it refuses
+    /// ([`untold`]).
+    Unsure(String),
     /// Its process ended.
     Ended,
     /// It runs and does not answer from a listener of its own.
@@ -1067,18 +1160,38 @@ enum Waited {
 }
 
 /// Whether the process `running` names holds the listener on its address itself
-/// ([`port::listens`]): a health answer there is that server's only then. A record whose pid or
-/// address cannot be one, or an `lsof` that cannot say, is the error.
-fn owns(running: &Running) -> Result<bool, ServerError> {
-    let failed = |why: &dyn fmt::Display| {
-        ServerError::NotUp(format!(
-            "could not tell whether the board's server (pid {}, {}) listens there: {why}",
-            running.pid, running.addr
-        ))
-    };
-    let pid = u32::try_from(running.pid).map_err(|problem| failed(&problem))?;
-    let addr: SocketAddr = running.addr.parse().map_err(|problem| failed(&problem))?;
-    port::listens(pid, addr, output).map_err(|problem| failed(&problem))
+/// ([`port::listens`]): a health answer there is that server's only then. Where that cannot be
+/// told (a record whose pid or address cannot be one, an `lsof` that cannot run or say), why: an
+/// unknown, never a no.
+fn owns(running: &Running) -> Result<bool, String> {
+    let pid = u32::try_from(running.pid).map_err(|problem| problem.to_string())?;
+    let addr: SocketAddr = running
+        .addr
+        .parse()
+        .map_err(|problem: std::net::AddrParseError| problem.to_string())?;
+    port::listens(pid, addr, output).map_err(|problem| problem.to_string())
+}
+
+/// The one line said of `what`, the server `pid` that answers on `addr`, when whether it holds that
+/// address's listener itself cannot be told (`why`): it is kept and taken as up. A check that could
+/// not say is never a "not listening", so no server that answers is ended or passed over on it: one
+/// was ended at each start where `lsof` could not run, and its next reader started another.
+fn unsure(what: &str, pid: i64, addr: &str, why: &dyn fmt::Display) -> String {
+    format!(
+        "· {what} (pid {pid}, {addr}) answers, and whether it holds that port's listener itself \
+         cannot be told, so it is kept as up: {why}"
+    )
+}
+
+/// Why `running`, which answers on its address, is not ended when whether that answer is its own
+/// cannot be told (`why`): a process that took its port answers too, while it may still be on its
+/// way up, before its handlers are set, where a signal ends it at once. It is left running.
+fn untold(running: &Running, why: &str) -> ServerError {
+    ServerError::NotUp(format!(
+        "could not tell whether the board's server (pid {}, {}) listens there: {why}; it is left \
+         running, never ended on a check that could not say",
+        running.pid, running.addr
+    ))
 }
 
 /// Whether `version` is older than the pinned SurrealDB, release by release (`3.10.0` after `3.9.1`); one

@@ -5,21 +5,6 @@ are at the top, and the page regroups itself every time one is answered. How car
 their dated history work is in [REVIEW](REVIEW.md).
 
 <!-- register:start -->
-## Needs your decision
-
-### Releases
-
-- [ ] **kit-new-block-version** — Before the plugin kit goes to crates.io at 1.0.0, one thing about it cannot be changed later without a new major version: what happens to its version when Symphony adds a new kind of block (or a new kind of text span or media) to the vocabulary plugins draw with. A: a new block is a small update (1.1.0): a plugin written for 1.0.0 keeps building and gets the update by itself. B: a new block is a new major version (2.0.0): every plugin's author must change its requirement by hand before it can use any later kit. Recommended: A. Approve and say A or B in the note, or comment. [[RELEASES#Packages on crates.io]]
-  [2026-11-14 02:12] agent — Posted for the board tasks `tools/kit-version-lines` and `tools/release-publishes-to-crates-io`; nothing is published yet, and nothing will be until you say so.
-
-    **What it is in the code.** The vocabulary is three lists in `symphony-blocks`: `Block`, `Span` and `Media`. Rust lets a list be marked as one that may grow. Marked, adding to it is a small update. Unmarked, as today, adding to it is a breaking change, because code elsewhere may have listed every case.
-
-    **A, marked as growing.** A plugin only makes blocks, it does not list them, so nothing changes for a plugin. The cost is in Symphony's own client, the one place that lists every block to draw it: the compiler no longer refuses a build where a new block has no drawing, so a test does that instead (it goes through every block and fails on one the client does not draw).
-
-    **B, as today.** The compiler keeps checking the client. Every new block, span or media kind makes the kit 2.0.0, 3.0.0 and so on, and each consuming project and plugin author moves by hand each time.
-
-    **Why A.** New blocks are how the product grows, so under B the kit's major version would move often and mean little. The check B keeps can be kept by a test. Choosing A after 1.0.0 is published would itself be a new major version, so now is the cheap moment.
-
 ## Auto-approved: spot-check
 
 ### Releases
@@ -39,6 +24,265 @@ their dated history work is in [REVIEW](REVIEW.md).
 
     **Earlier verdicts checked.** **consumer-contract-versioning** (B) lets a project link only the kit and the helpers, so neither tool keeps the library, and it leaves open how they get what they use. No other card speaks of either tool. Symphony's side is filed after your answer.
   [2026-11-13 20:43] agent · auto-approved — A: the owner, 2026-11-13, in the terminal: "contract-tool-route reads like it should be auto triaged". The card's own evidence leaves A standing: both tools exist to check what the machine does (the card you will see, whether the machine would hold a land), and under B the project's copies "keep passing while the machine does otherwise, until someone copies again", so they would stop checking it. Symphony adds the two commands (one that draws a single card, one that answers the landing's checks for a branch) and keeps their output, and status's and triage's, stable; its side is filed on the board now. Any verdict here overrides this.
+
+## Waiting on an agent
+
+### Delivery to projects
+
+- [x] **consumer-manifest-line** — The app you open on port 8765 still runs release-2026-11-13.2, and no release since has reached it. Every refresh since 2026-11-14 stops at its first command in the consuming project, whose manifest asks for a package named `symphony`; from release-2026-11-14 on that package is named `symphony-app`. One line of that project's manifest has to name it, and nobody here edits that project without your word. Who makes that change? A: the refresh: `just release --refresh`, which already moves that project's pin, also changes the package's name on that line when it finds the old one. B: an orchestrator, once, by hand in that project's checkout. C: you. Recommended: A. Approve and say A, B or C in the note, or comment. [[RELEASES#The refresh]]
+  [2026-11-15 10:20] agent — Posted for the board task `docs/consumer-manifest-line-card`. The red refresh has a task of its own on this board, blocked since 2026-11-14 on this question, which until now was asked only in chat and on that thread.
+
+    **The line**, in the consuming project's workspace manifest, the one place it names the library: `symphony = { package = "symphony-app", git = "https://github.com/heavenstudio/symphony", tag = "release-2026-11-15" }`. Nothing else moves: the key stays `symphony`, so no code changes.
+
+    **It is not an edit on its own.** The release that project is pinned to holds no `symphony-app`, and the releases after it hold no package named `symphony`. So the new name goes in the same commit as the new tag: that line, the tag on all ten of the project's Symphony lines, and its lock. That commit is the pin's move, which the refresh makes at every release.
+
+    **What each costs.**
+    - **A:** a small change to the refresh, as a board task with its review, then a rerun: hours, not minutes. The move is made as today, in a worktree beside that project's checkout and through its own commit gate, and its main takes it only if the commit changes manifests and the lock alone and its hooks allow it. The refresh stays the only thing of Symphony's that edits that project, and a later rename is handled the same way.
+    - **B:** no code, and the soonest. The orchestrator makes the pin's whole move by hand (the line, the ten tags, the lock), commits it on that project's default branch through its commit gate, then reruns the refresh, which finds the pin moved and goes on to the board. It is one exception to the rule that Symphony's agents do not edit that project, made in the checkout the shared server is built from, without the refresh's checks. Pushing that project's branch stays a separate act that needs its own word.
+    - **C:** the same work by your hand, when you get to it. The orchestrator reruns the refresh when you say it is done.
+
+    **What a green refresh brings, and what it does not.** It brings the newest release, release-2026-11-15 (c944025a, 03:11 today), not main's tip.
+    - Your approval of **live-board-schema-moves** (A) waits on it: `tools/board-token-usage` lands only after the server is refreshed.
+    - The fix for pages that never load is not in that release. Measured today on the shared server: with five of its tabs open in one browser, a further page got no answer in 40 s. Main's client, with eight tabs open, returned the queue in 31 to 48 ms. That fix (22afbd67) landed after release-2026-11-15, so it reaches you only with the next release after a refresh works.
+    - The next release is held: a release candidate is open, red in two checks, and no run judges main's tip until it is released or dropped (2026-11-16 04:18 at the latest).
+
+    **What is unknown.** Whether more is red behind this one. `cargo update` is the refresh's first command in that project, so nothing after it has run since 2026-11-13: that project's build against a newer release, its commit gate, its hooks, its board's move, the server's reload. Under every option the first rerun shows the next red, if there is one.
+
+    **Why A.** The commit this needs is the pin's move, and the refresh already makes that move with checks a hand does not have; B and C make it by hand in the checkout your server is built from. A's cost is some hours after B, on a refresh red for two days, and those hours do not delay the tab fix, which waits for the next release either way.
+
+    **Earlier verdicts checked.** **consumer-api-break-release** (A) is about code a project uses staying in place for a release; it does not say who changes a manifest line. No other card speaks of who edits the consuming project.
+  [2026-11-15 10:38] owner · approved — B
+- [x] **live-board-schema-moves** — Two approved tasks each move Symphony's own board (this repository's, in its git common dir) from schema 17 to 18, and both are held unlanded on that: `tasks/board-writer-record` (approved at 6394e33a) and `tools/board-token-usage` (approved at 71f05a84). The shared server on port 8765 runs release-2026-11-13.2, schema 17, and from the first land until it is refreshed you cannot write this board from the app. When may the board move? A: now, `tasks/board-writer-record` to 18 at once and `tools/board-token-usage`, renumbered to 19, only after the server is refreshed. B: only once the refresh works again and no release candidate is open, then `tasks/board-writer-record` lands in a quiet moment and `just release` is run by hand at once, on main's tip, which is then its merge commit, so the app's writes are out until that commit is released; `tools/board-token-usage` follows the same way at 19. C: not yet, both stay held. Recommended: B. Approve and say A, B or C in the note, or comment.
+  [2026-11-15 02:40] agent — Posted by the two orchestrators (quiet-plover, silver-sparrow) for those two tasks. One decision, not two: the second to land must renumber, so the order is part of it.
+
+    **What the shared server does against a board ahead of it.** It is built from the consuming project's checkout at its pin, release-2026-11-13.2 (4056a635), schema 17; "ahead" is counted from that pin, not from main, which is also 17 today. Read in that release's code (`crates/tasks/src/schema.rs`, `decide`):
+    - **At 18 it reads and writes nothing.** Pages and the board draw. Every write of yours from the app is refused at once: a post on a task's thread, a priority, a field, a cancel, a board action. Document saves and chat wait in its journal until it can write.
+    - **At 19 it reads nothing either:** more than one ahead is refused, so this project shows no board.
+    - Only its idle sweep, its embedding catch-up and the end of a cancel run the main checkout's `.target/bin/tasks`, and so follow that link.
+
+    **What a 17 build of `tasks` does against 18**, measured on a private scratch board by the reviewer of `tools/board-token-usage` (main's 17 build against that task's 18; `tasks/board-writer-record`'s 18 adds one table and meets the same rule): every command is refused before any write, `list` and `show` included, and a heartbeat writes nothing, so its agent reads quiet or lost until the link it runs is renewed.
+
+    **What each costs.**
+    - **A:** you cannot act on this board from the app from the land until a refresh. The refresh is red today (the release run's refresh of the consuming project, filed 2026-11-14, waiting on your word for who edits one line of that project's manifest), so that time has no end in sight. Agents and both orchestrators keep working through `just tasks`.
+    - **B:** nothing changes until the refresh is mended. Then each move costs the app's writes until its commit is released: one run when it is green (a run took 23 to 124 minutes), hours more through a release candidate when it is red, and 7 of the last 10 runs were red. Three steps are in it. Your word on that manifest line comes first. The release candidate open today (f35f9eb4, red in one test, its fix in work) is released or dropped before the land, since no run judges main's tip while one is open. And approving B is your word for two `just release` runs by hand, one right after each land, a run that is otherwise yours to start; a red one holds that merge commit as the release candidate until its fixes land and a rerun is green. The quiet moment runs from the land to the first `just tasks` after it, whose build moves the board: no land or review mid-flight in a worktree with a board binary of its own. The refresh moves the server only if the consuming project's own gate and hooks pass the pin's move; otherwise ending the wait is that project's to do.
+    - **C:** the board shows no writers still behind and no token cost per task, and the two branches age.
+
+    **Your earlier verdict.** `board-schema-at-update` (C, 2026-11-12), given for `symphony update`: a board moves only once every program that writes it is on the new schema. The shared server writes this board, so A moves it while a writer is behind; B keeps that time to the wait for one release. `tasks/board-writer-record` leaves the server out of its count of writers on purpose, since counting it would refuse the very migrate a refresh runs.
+  [2026-11-15 06:49] owner · approved — A
+- [-] **client-distribution-on-main** — Each land that changes the web client is followed by a background run that commits a fresh build of the client to main. Those builds are about 85 % of what git holds for main's history and grow about 27 MiB a day, which every clone downloads. Nothing on the pages changes under any option. How often should the built client be committed? A: only by a release, the one it verified, on a commit of its own under its tag that main never holds; a checkout that needs pages builds its own. B: once a release: the release run starts the run that commits it to main, and no land does. C: after every land that changes it, as today. None of them shrinks the history already there: that takes rewriting it, a choice of its own. Recommended: B. Approve and say A, B or C in the note, or comment. [[analysis/code-review-2026-11#2. The built client is committed, and is 85 % of the repository]]
+  [2026-11-15 03:46] agent — Posted for the board task `docs/code-review-owner-choices`, from the codebase review.
+
+    **Today**, read at main `3f3d9186` with the review's command (in its finding): git holds 156.2 MiB for main's history, 134.0 MiB of it the client under `apps/symphony-server/client/public`, first committed on 2026-11-10. 95 of main's commits regenerate it, 12 to 39 a day, and all but `e3314c18` (which also restates figures in two documents) do nothing else; in the tree it is 110 files, 6.3 MB. Each of those rounds is also main's only build of the client after a land, and between releases the only audit of the documents on main's tip: a round that fails files a red task within minutes, as one did on 2026-11-15.
+
+    **What A and B both change:**
+    - *A fresh clone* fetches every release tag, so under either it gets one client a release. Since the first release (2026-11-13), main gained 1,918 client files, 247 MiB before git compresses them; the five releases since hold 545 of them, 71 MiB: about three tenths, at one release every 20 landings.
+    - *No round after a land.* A land that breaks the client's build, or the documents, is found by the next task that builds the client, or by the release run. While a release candidate is open, up to 24 hours, main's landings have only their own evidence. A build after each land that commits nothing would keep that check, at a build a land.
+
+    **A, only a release:**
+    - *Main holds no client.* A pin to a commit of main would build a server with no pages, so it is no longer possible. A checkout that serves pages (an agent's server of its own, for pictures) builds the client first, as a task already does for its tests; while the Dioxus client remains, that takes minutes.
+    - *The release* builds the client in its own checkout, commits it on top of the tip it verified and tags that commit. `just client-check` then has no client on main to compare a fresh build with: the release's check becomes the build it commits, and the two older builds a page may still be open on (`KEEP` in `crates/symphony/src/cli/publish.rs`) come from the previous release's tag.
+    - *What goes:* the regenerator, 1,674 lines (`crates/tasks/src/land/regenerate.rs`) and 1,962 of tests, with the rule that a branch never commits the client, the land keeping main's side of it and a pin's wait for it.
+    - *What changes:* 32 tracked code, script and settings files name the folder (`git grep -l client/public`, less the documents, test fixtures and one experiment): 26 Rust files, among them the server's build script, its client and their tests, the size budget's client line, the release's verified client and the packaging test, and the server's manifest, the justfile, `symphony.toml`, the size budget, `tools/client-check.sh` and `tools/verify.sh`. The review sizes it as a project.
+
+    **B, once a release.** The release run starts the regenerator's round on main's tip and waits for it before it verifies, as it waits for one today; no land starts one. The regenerator, its check and those 32 files stay as they are. Between releases main's client is older than its sources, so a pin to a commit of main waits for the next release, and main's tree keeps its 6.3 MB of client. A task.
+
+    **C, as today.** About 27 MiB a day, some 0.8 GiB more in a month at this pace.
+
+    **Why B.** A fresh clone gets the same bytes under A and B, so B takes nearly all of A's saving for a task rather than a project: the release run starts the round a land starts today, and the rest stays as it is. What A adds, a main with no client in it and the regenerator's removal, is cheaper once the Dioxus client is gone and the client is one quick build.
+
+    **Earlier verdicts checked.** **symphony-update-command** (B, projects follow release tags) already makes every pin a release, which A and B rely on. **pin-waits-for-current-client** (A) keeps a pin to a commit of main off a client older than its sources; A leaves such a pin no client and B makes it wait for a release, so neither changes that choice. **release-main-while-candidate-open** (A) counts on "the regenerator's client check and docs audit each round" to check main's landings while a candidate is open; under A or B those landings would have only their own evidence for up to 24 hours, a consequence of either, not a change to that choice. **release-delivery** (C) ships a release's client beside the server once `symphony update` is built; it does not say whether main commits one before then. **pictures-in-every-clone** (F) commits the documents' pictures, not the client. None of them answers this card.
+  [2026-11-15 06:46] owner · rejected — we should push those releases as crates to crates.io and not commit then at all if possible.
+
+### The shared server
+
+- [x] **server-socket-hand-over** — When the shared server takes a new build (the checkout it is built from changed, as a release's refresh changes it, or a newer build was started), the new server gets ready while the old one keeps answering, then takes over the old one's open port. Pages never meet a server that is down, and a new build that fails to start leaves the old one serving. Should it keep this hand-over, or simply stop and start again? A: keep it. B: a plain restart: the old server stops and the new one starts on the port; the watch for a new build and the build itself stay as they are. Recommended: A. Approve and say A or B in the note, or comment. [[analysis/code-review-2026-11#Choices that are the owner's]]
+  [2026-11-15 03:46] agent — Posted for the board task `docs/code-review-owner-choices`, from the codebase review.
+
+    **What you would notice under B**, at each switch:
+    - The port is closed until the new server listens, then its pages wait while it warms up: 0.9 to 47 s over the 25 warm-ups in its log (one a project) across 13 server starts, 6.3 s at the median.
+    - Open pages say "Reconnecting: the board may be out of date" and try again after 1 s, then 2, 4 and on up to 30 s. A page opened then fails to load or waits; a save fails and keeps its draft.
+    - A new build that compiles but fails to start leaves no server until someone starts one, and the refresh's wait for it ends unanswered.
+
+    Under A, open pages lose their live feed for about a second and take it again from the new server, warmed up already, and a failed start is said on the old server's notice while it keeps serving. Under both, the build itself (10 s to 21 minutes in the log) runs while the old server answers.
+
+    **How often.** The server's log holds 10 hand-overs since 2026-11-11, none failed. Once, at 10:34:21 UTC on 2026-11-12, the new server (pid 42043) began to stop 22 ms after it took over, the log not saying why; it had stopped by 10:34:27, and the next server answered at 10:35:14. That was a stop, not a failed hand-over. A release's refresh makes a hand-over each time it moves the consuming project's pin.
+
+    **What the refresh depends on.** The server's own reload: it sees the new `Cargo.lock` of the checkout it is built from, builds and switches. The refresh then waits up to 20 minutes for another process to answer on the port (`crates/symphony/src/release/refresh.rs`). Under B that still holds, as long as the new server runs as a new process rather than in the old one's place, which keeps its process number.
+
+    **The lines.** The server's whole update is 2,046 lines of source and 2,920 of tests (`wc -l` of the server's `src/reload.rs`, `src/reload/stamp.rs`, `src/reload/source_event.rs` and `src/host.rs` with the library's `src/reload.rs`; and of the server's `src/reload/tests.rs`, `src/host_tests.rs` and `tests/after_reload.rs` with the library's `src/reload/build_tests.rs`). B keeps the watch, the stamp and the build. It removes the hand-over itself, about 530 lines of source (`sed -n '23,415p;619,651p' apps/symphony-server/src/reload.rs` gives 426 of them, `src/host.rs` 78, the hand-off signal and the old server's drain in `src/front.rs` the rest) and 549 of tests (lines 353 to 592 of `src/reload/tests.rs`, 1007 to 1230 of `tests/after_reload.rs`, and `src/host_tests.rs`), and needs a stop and a start of its own, with their tests, not written.
+
+    **Why A.** It works, and B saves about a quarter of the update's lines for a gap of seconds at every switch and no server at all after a build that fails to start.
+
+    **Earlier verdicts checked.** No card asks about the hand-over. **server-framework** (A, keep Axum) counted the server's own listener, which the hand-over relies on, in the cost of moving off Axum, and noted that Axum's next version will need the drain checked; it did not ask whether to keep the hand-over.
+  [2026-11-15 06:48] owner · approved — A
+
+### Board
+
+- [x] **board-search-by-meaning** — The board can find tasks by what they mean as well as by their words, with a small language model that runs on this machine: you asked for tasks to be searchable by meaning, and chose the model. Nothing calls it today: the board page searches by words, no skill or document names it but the board's own guide and help, and the consuming project's tools never call it. It costs 153 of the 189 packages the board is built from, a 133 MB download for each project, and a pass every minute on the server for each project, 13 hours of it on this repository's board since 2026-11-14. What becomes of it? A: delete it; the board searches by words alone. B: move the model into a program of its own, as an approved branch that never landed does: the board and the server build without it, and search by meaning works where that program is built. C: keep it in the board behind a build switch that is off by default. D: keep it as it is. Recommended: B. Approve and say A, B, C or D in the note, or comment. [[analysis/code-review-2026-11#4. Eight tenths of the board's dependencies serve a search mode nothing calls]]
+  [2026-11-15 03:46] agent — Posted for the board task `docs/code-review-owner-choices`, from the codebase review.
+
+    **Who uses it**, read today. `just tasks search` searches by words unless `--mode vector`, `hybrid` or `exact` is given (`crates/tasks/src/cli/search.rs`). The board page's search is by words (`apps/symphony-server/src/api.rs`, `store.search`). Of the shipped skills and the documents only the board's guide (`crates/tasks/AGENTS.md`) names those modes, and of the consuming project's tracked files only one analysis. Whether an agent has typed them is not known: the board records no search.
+
+    **What it finds.** The consuming project's database card (2026-10-06) measured 0.82 of the top five results on target over ten real queries, against 0.76 for keywords. The later study with the model you chose, in that project's port plan, gave 0.82 for words and meaning together against 0.80 for words alone and 0.74 for meaning alone: one more useful result in fifty.
+
+    **What it costs:**
+    - *Packages:* `cargo tree -p symphony-board -e normal,build --prefix none --no-dedupe | sort -u` lists 189, and 36 with `--prune tract-onnx --prune tract-linalg --prune tokenizers` before the sort. Every build of the board, the server, `symphony` and `agent-send` compiles them.
+    - *The model:* 133 MB in each project's `symphony/models/`, in its git common dir; two copies on this machine.
+    - *The server's pass*, counted in its log (`grep -E 'task embedding catch-up( of [a-z-]+)? ended after'` on `server.log` in the machine folder) up to 07:30 UTC on 2026-11-15: 6,262 passes since 2026-11-11, 15.9 hours in all, 0.9 s at the median. 3,578 are from before the log named each pass's project (2.5 hours), 1,655 the consuming project's (0.4 hours) and 1,029 this repository's (13.0 hours). On 2026-11-14 this repository's passes ran 9.5 hours back to back: two stopped at the 4-hour limit ("failed: no answer within 14400 s", at 07:52 and 11:52 UTC) and the third embedded 1,792 chunks in 89 minutes. From 01:00 to 07:30 UTC on 2026-11-15, 172 of its 332 passes embedded something, each 2 s to 4.6 minutes, 43 s at the median: 2.9 of those 6.5 hours. Each pass loads the model again (7.8 s on average) and runs it on one thread at low priority (`nice -n 10 tasks embed --maintenance --threads 1`, `apps/symphony-server/src/front/embeddings.rs`); by its own count, 832 chunks took 8,756 s. Its CPU is not measured.
+    - *Bytes:* the release run's build of `tasks` at hand is 20,337,280; without the model it is not measured today. On B's branch, at its thread's last measure (2026-11-12), `tasks` went from 24,293,376 to 8,484,176 bytes with the model's program at 16,641,552; its first measure took a cold build of `tasks` from 769 to 183 s of CPU.
+
+    **A, delete it.** It removes what you asked for and chose a model for. The three modes, `tasks embed`, the server's pass and its hours, the download and the three packages go: about 1,150 lines of source (`crates/tasks/src/embedding.rs` and `cli/embedding.rs` less their tests, `store/embeddings.rs`, half of `cli/search.rs`, the server's `front/embeddings.rs`), about 800 of tests and two benchmarks (`examples/search_bench.rs`, `examples/embedding_cpu.rs`). The model's tables can stay in the board's schema, unused, so no board need move to a new schema for it. B's branch is dropped.
+
+    **B, a program of its own.** `tasks-embed` holds the model, and `tasks embed` and a search by meaning start it. Where it is not built, those searches say what to build, and searching by words is unchanged. The branch (`perf/embedding-in-its-own-binary`, `c7142edd`, approved by its reviewer on 2026-11-12; no land of it was tried) adds about 3,500 lines. It is 704 commits behind main and conflicts with it in 14 files, so its cost is bringing it up to main and a second review. A consuming project then builds `tasks-embed` from its own board package, as the branch's guide says; until it does, its pass fails each minute there is a change to embed. B leaves the pass's hours as they are: the server already runs the pass as a process of its own, and under B that process starts the model's program, which loads the model each pass as today.
+
+    **C, a build switch.** One package as now; the default build leaves the model out, and the modes say which build has it. The build with the model has its tests to run somewhere too, in the release run at least.
+
+    **D, as today.** Nothing changes.
+
+    **What would end the pass's hours**, short of A: a change to the pass itself, such as running it less often or only once a search by meaning is asked for, or keeping the model loaded between passes. That is a task of its own under B, C or D.
+
+    **Why B.** It keeps what you asked for and the model you chose, and takes the 153 packages out of `tasks`, the server, `symphony` and `agent-send`, as your words below ask; it is built and approved, so its cost is a merge and a second review rather than new work. A is smaller and ends the pass too, but it removes a feature you asked for to save what B saves.
+
+    **Earlier verdicts checked.** No card here asks about search by meaning. In the consuming project's register, from before this repository was split from it: its port plan records that you asked for tasks to be searchable by meaning, and your approval of `tasks-search-embedding-model` (A, 2026-10-29) chose bge-small and authorized "a local Rust inference runtime in a follow-up", which `crates/tasks/Cargo.toml` cites for the three packages. That card chose the model, not whether the feature stays, and B, C and D keep it. The board's database card (2026-10-06) offered search by meaning under both databases, and your approval chose the database. Your words of 2026-11-12, "we should really have separate crates that have lower binary sizes", are what B's task was filed on: A, B and C each meet them and D does not.
+  [2026-11-15 06:48] owner · approved — A for now.
+
+### The look
+
+- [x] **symphony-mark** — Symphony would get a mark and a name of its own, at the start of the header, on the browser's tab and on a phone's home screen. They show on the machine's own pages (the project list and the pages the server draws) and on every project with no theme name or icon of its own; a project's own theme name and icon take their place on its pages. Today the header shows neither, the tab shows no icon or a generic ♫, and the icon the browser asks the server for by itself is the consuming project's star. Which mark and wordmark should Symphony's own look carry? A: the note-card, a note whose head is a task card. B: the podium, the orchestra's seats round two maestros. C: the fermata, the sign where the music holds for the maestro. D: the two-stroke S, one stroke for you and one for the orchestrator agents. Recommended: D. Approve and say A, B, C or D in the note, or comment. [[analysis/symphony-mark#The options]]
+  [2026-11-15 05:12] agent — Posted for the board task `app/symphony-mark-and-name-options`. Your words on its inbox item: "A proper "themed" design of Symphony could be develop that is closer to the concept of "a symphony that is executed by maestros" where maestro are the human + orchestrator agents. I would like to view different options to select."
+  [2026-11-15 05:12] agent — Base: today, wide and on a phone, no mark and no name in the header. ![Today: the header wide, then on a phone](analysis/symphony-mark/today.png)
+  [2026-11-15 05:12] agent — Each option in the header wide (light, then dark), on a phone (light, dark) and in the tab (light, dark), drawn on a private server with the option set as a scratch project's look; nothing in the app has changed. A headless browser shows no tab strip, so the tab is a stand-in drawn around the real icon file, and the Projects link the machine's server draws is added to the private server's header. ![The note-card, A](analysis/symphony-mark/a.png) ![The podium, B](analysis/symphony-mark/b.png) ![The fermata, C](analysis/symphony-mark/c.png) ![The two-stroke S, D](analysis/symphony-mark/d.png)
+
+    **A, the note-card.** A note whose head is a task card: the board's work is the symphony's music. Wordmark: "Symphony" in the app's own sans.
+
+    **B, the podium.** The orchestra seen from above: its seats in an arc round two maestros, you and the orchestrator agent. Wordmark: "symphony" in lower case. At 16 px it reads as a fan of dots; the seats show from 32 px.
+
+    **C, the fermata.** The sign where the orchestra holds until the maestro moves on, as a card holds until you answer it. Wordmark: "Symphony" in a serif.
+
+    **D, the two-stroke S.** Symphony's S in two strokes, one full and one lighter: you and the orchestrator agents, two maestros conducting one work. Wordmark: "SYMPHONY" in spaced capitals.
+
+    Any wordmark can go with another mark: say which in the note.
+  [2026-11-15 05:12] agent — The four icons at 180, 32 and 16 px, light then dark: ![The icons at three sizes, light and dark](analysis/symphony-mark/sizes.png)
+
+    **Why D.** It is the only one that says the name at every size, down to the 16 px tab, and its two strokes are the two maestros you named. Its cost: a letter says nothing of music, and the two maestros show only once explained; the lighter stroke loses contrast at 16 px, most on the light tile; and it is close in kind to other music products' S marks. C is as clear at 16 px and the simplest, but it shows one maestro's hold, not two maestros. B tells the most and blurs the most when small. A is the closest to today's ♫ and says the least about the maestros.
+
+    **What it changes.** The machine's own pages and every project with no theme name or icon of its own show the chosen mark and wordmark in the header and the icon in the tab; a project's own theme name and icon take their place on its pages, as the project file's reference already says, so the consuming project keeps its own name and star. The icon the browser asks the server for by itself becomes Symphony's where no project's own answers it; the header stays two rows on a phone (measured at 390 wide for all four); a phone's home screen gets the icon. A follow-up task builds it after your answer.
+
+    **Earlier verdicts checked.** **header-page-names**, **header-on-a-phone** and **header-appearance** set the header's words, its two rows on a phone and its ◑ button; every option keeps them. **symphony-own-names** took the consuming project's names out of Symphony's code and says nothing of a mark. **pictures-in-every-clone** decides that these pictures are committed beside this card. None of them chooses a mark or a wordmark: that is this card.
+  [2026-11-15 05:52] agent — Corrected after the task's review, before any answer: the first lines say where the mark and the wordmark show (not on every page), Why D gives D's own cost, and the pictures' line says the tab is a stand-in.
+  [2026-11-15 06:40] owner · approved — C
+
+### Web stack
+
+- [x] **server-framework** — Should the server stay on Axum, or move to another Rust web framework (Actix Web, Rocket, Warp, bare Hyper, Poem, Salvo)? Nothing you see changes; this decides what the server is built on. A: keep Axum. B: move to Actix Web, the one serious alternative. Recommended: A. Approve and say A or B in the note, or comment. [[analysis/graphql-and-server-framework#Which server framework]]
+  [2026-11-14 11:01] agent — Posted for the board task `inbox/evaluate-graphql-and-other-web-stacks`.
+
+    **Is Axum failing?** No. No task or bug names it, and it is 0.03 MiB of the server's binary. The server uses it thinly: one route and a fallback, with its own dispatch picking among 30 reads and 15 saves.
+
+    **The others.** Rocket cannot take the listening sockets the reload hands a new build. Poem has had no release in 15 months. Warp moves slowly, under one person's account. Salvo and ntex each rest on one person. Bare Hyper is what Axum already runs on. Actix Web is maintained, released often, and offers everything the server needs.
+
+    **Speed.** Actix Web has scored above Axum in published benchmarks; Axum's last published JSON figure is 2.7 million requests a second, about 21 µs of a core each. This server's reads take 1 to 200 ms of their own work, for a handful of browsers, so a faster framework would save microseconds no page could show.
+
+    **B's cost.** 14 of the server's files and 25 of its test files: its own listener, which the reload's hand-over and drain rely on; its layers; the projects' dispatch; the streams.
+
+    **A's cost.** Axum's next version changes `axum::serve`, which the server calls in one file: a small compile fix, plus a 30-second limit on reading a request's head that it applies, with no setting to turn it off. That would close a connection that sends nothing for 30 s, an idle browser connection among them, where today it is kept, so the server's drain on reload needs checking when it comes.
+
+    **Why A.** Nothing to fix, nothing to win at this load, and the move would rewrite the parts that are hardest to test.
+
+    **Earlier verdicts checked.** No card speaks of the server's framework; **client-framework** left the server as it is.
+  [2026-11-14 11:19] owner · approved — A
+- [x] **graphql** — Should the React client read the server through GraphQL, with Apollo or another GraphQL client and its cache, instead of today's JSON reads and live feed? The hope is better caching in the browser and faster responses; measured here, the caching is mostly built already, and the speed would come from elsewhere. A: keep the JSON reads, the live feed and the device cache the React port is built on. B: GraphQL: a schema on the server, a GraphQL client and its cache in the browser, live updates as subscriptions. Recommended: A. Approve and say A or B in the note, or comment. [[analysis/graphql-and-server-framework#GraphQL or not]]
+  [2026-11-14 11:01] agent — Posted for the board task `inbox/evaluate-graphql-and-other-web-stacks`.
+
+    **What a page reads today,** measured on the live board: the board 12 reads and 23 kB of data before it is drawn, a task's page 4 reads and 10 kB, this register 6 reads and 17 kB. A return visit makes 3 to 5 reads of about 5 kB, every unchanged read answered empty (`304`). The server answers most reads in 1 to 2 ms and its slowest in 20 to 200 ms, all of it the work behind them.
+
+    **A, keep them.** Nothing changes in the port. Two small changes would give what one GraphQL query saves, if wanted later: a task's page asking for the task and the board together (the server already does this for documents), and the board asking for its counts and columns with the board. Over a slow phone network each saves about 0.6 s; on this machine, nothing.
+
+    **B, GraphQL.** One query a page in place of several reads. Its costs:
+    - 10 kB (urql) to 58 kB (Apollo) more on every first visit, against the queue's whole 101 kB on React.
+    - Apollo's cache lives in the page's memory and keeps nothing across visits without an add-on last released in March 2024. A query sent by POST never gets the empty `304` that makes return visits cheap today.
+    - Subscriptions need a WebSocket the server does not have, with the feed's rules rebuilt on top.
+    - A second set of generated types beside today's.
+    - The plugins' blocks and fields cross as untyped JSON, since a query cannot ask for a tree of any depth.
+    - The port's reads, feed and cache modules are replaced before its nine page tasks start.
+
+    **Why A.** Where GraphQL saves time, the same saving is open without it. Weighed in bytes, it costs more than it saves. The cache it brings is weaker here than the one built. The server's time would not change: about 0.06 ms more a query.
+
+    **The weakest point.** A normalized cache (one task kept once, every view of it updated together) is the one thing the client would gain. The live feed covers most of it today; if it is ever needed, TanStack Query gives it over the reads as they are, for 10 kB.
+
+    **Earlier verdicts checked.** **client-framework** (React, TypeScript, Vite) moved the front end and named no data layer, so it does not decide this. **client-cache** (the device cache, checked by checksum) would be partly replaced under B; that would change an approved design, so it is asked here, not assumed.
+  [2026-11-14 11:17] owner · approved — A let's keep it simple for now. Agree this seems to be solving a problem we don't have (yet?)
+
+### Landing
+
+- [x] **needed-stamps** — `just land` would require exactly the stamps a task's risk calls for: its tests, a reviewer, pictures, your own look at it, or nothing at all. A small assessor agent, never the task's executor and told only by a fixed skill, picks them from one list when the task is filed, and again from the real diff when it reaches review. A document or a hotfix then lands without waiting for a reviewer, and a task nobody has assessed still needs one, as today. Is this the design, with the default list and where each stamp applies? Approve, or comment with what to change. [[analysis/needed-stamps#The default catalogue]]
+  [2026-11-14 07:52] agent — Posted for the board task `tools/land-requires-the-stamps-its-risk-names`.
+
+    **The default list**, each with where it applies and where it does not:
+    - `tests`, green recorded test runs at the tip: any change to code; not documents, nor a hotfix whose break no test can show in time.
+    - `review`, a fresh reviewer's approve: what every agent runs or every client reads, a changed test or check, a skill or a rule; not documents, a fix of a few lines that leaves its failing test unchanged, or a hotfix.
+    - `pictures`, posted at the tip: a change to what a page shows; nothing off the pages.
+    - `owner`, your approve on the task's page: only what you asked to see before it lands.
+
+    **What keeps it honest.** The board refuses the list, and the assessor's role, to any session that executed, orchestrated or filed the task. The assessor reads the diff itself, and takes the executor's posts as claims to check, never as instructions. A waiver holds only on the commit the assessor read: a later commit brings the reviewer back.
+
+    **Cost.** Three build tasks: the list and the field, the task page, then the land and the skill. One small-model run per task when it is filed and each time it moves to review. The land runs nothing new. `--fast-fix` goes: a fast fix is an assessment that needs only tests.
+
+    **Left out.** Risk levels (each stamp's guideline is the map); a project's own kinds of stamp; the board starting the assessor by itself; and any floor under the assessment: today's rule that a red's fix changing a test needs a reviewer becomes the review guideline, shown to the assessor as a fact, rather than a refusal in the land. Retiring `--fast-fix` gives up a second read: today its orchestrator reads that the red's own failing test, unchanged, ran green at the tip, and under this design nobody does, since `tests` asks only that the task's test runs there are green. Requiring a run of the test the red names is the smallest fix, if you want one.
+
+    **Earlier verdicts checked.** **land-tests-changed-packages** (rejected: nothing automatic may block a land): this adds no run to the land. **reports-task-page-pictures** (A, a typed seam the page draws): the stamps are drawn as those gates. Choice 5 of **reports-small-choices** (a lower level replaces a higher one, everywhere): a project's own list replaces the Symphony's, and a project's own `land` replaces this check. None of them decides this card.
+
+    This card is the only change: nothing is built until you answer.
+  [2026-11-14 08:33] owner · approved — should had been auto approved, it's exactly what I had asked for
+
+### Client framework
+
+- [x] **client-framework** — Should the web client stay in Dioxus or move to JSX? Three of its pages (the board, a task's page, a document with a card's verdict) were written again in JSX, built on React and on Preact from one source, drawn with the client's own style sheets and served by the same server, then measured beside the Dioxus pages of main at `a8490d80` on the same fixture. The JSX pages leave out parts the Dioxus pages carry (the device cache, the ghosts' kept shapes, the task page's gates and timeline, search), so their figures are a floor. With those parts added at an estimate, a JSX first visit is about a tenth to a quarter of the Dioxus bytes on Preact and a fifth to under a half on React, and a cold visit is usable sooner on either, most of all on a slow CPU; Dioxus is quicker on a return visit to a small board or a task's page at full speed and draws a card's move sooner, and keeps the compiler's checks of the wire. A: keep Dioxus. B: move the client to JSX, a page kind at a time; whether on Preact or on React is chosen after, on a card of its own: Preact sends about 60 kB less on every first visit and runs a tenth to a quarter less script, with neither usable sooner throughout, while React needs no compatibility layer and takes the libraries as their authors support them (below). Recommended: B. Approve and say A or B in the note, or comment. [[analysis/client-framework-comparison#The choice]]
+  [2026-11-14 04:21] agent — Posted for the board task `perf/client-framework-comparison`.
+
+    **Measured, like for like.** Bytes: Preact's first visits are 9 % to 14 % of the Dioxus pages' as measured and React's 19 % to 34 % (the board 44 kB and 104 kB against 307 kB, a task's page 48 kB and 109 kB against 566 kB without the timeline's module, which the JSX page lacks). The left-out parts are estimated at 10 to 30 kB a page, from the port's own bytes per line and at most the Dioxus client's own price for the same parts (its device cache about 14 kB of a page, the ghosts' shapes about 13 kB); with them, Preact's first visits come to about 10 % to 25 % of the Dioxus bytes and React's to about 20 % to 45 %. A second page, a task's opened from the board, is about 35 to 55 kB with its parts against about 550 kB on main. The estimate is not measured. Cold visits with the CPU slowed four times: the JSX board is usable in about half the Dioxus time (0.4 on a phone's screen), a task's page in 0.6 to 0.7, a long document in 0.8 to 0.9; at full speed in 0.6 to 0.9. Those times are a floor for the JSX side too, which skips the device's store and the gates' read. Level: typing, Load more on a 2,000-card board, memory (one run), and code size (the blocks, the one closely matched pair, 815 lines of JSX against 962 of Rust).
+
+    **Where each side is ahead beyond that.** Dioxus, at full speed: a return visit to a small board or a task's page is about a quarter quicker, most likely by its device cache, and a card moved between columns is drawn in 23 ms against Preact's 43, every batch agreeing, and React's 30, undecided (the likely cause is the port's near-the-screen latch, read in the code, not traced). JSX: scrolling a long document at full speed, one or two frames over 50 ms against six to nine on Dioxus. With the CPU slowed the JSX return visits are quicker as well, but that is most likely the device cache's own draw, which B would port, so it counts for neither side.
+
+    **A, keep Dioxus.** One language and one toolchain with the server. The compiler checks the wire's types and that every block, span and media kind a plugin renders is drawn. Nothing is written again, and the shared runtime main now has goes on. Cost: first visits stay four to ten times Preact's bytes and two to five times React's, like for like; a build takes a minute or more whatever changed; and each build, 5.9 MB on main, is new wasm the repository takes again whenever the client changes.
+
+    **B, move to JSX.** One Vite build whose chunks the pages share: about 3 s and 0.2 MB for the three pages on Preact, 0.4 MB on React, perhaps twice both for the whole client (inferred). The library is chosen after, on a card of its own (below). Cost of the switch: about 19,000 lines of Rust and 7,800 of their tests written again while the client keeps changing; the device cache and the other parts left out here ported; Node and npm pinned where the client builds, so that `client-check` stays byte for byte; TypeScript types generated from `crates/symphony-api` and a test over every block kind, to replace the compiler's checks; the Rust-only build parts retired or replaced (the split and its repair, the input snapshot, the size probes, the `dx` development front door, about 6,700 lines with their tests); and two UI stacks while the desktop app's own few screens are Dioxus. The server, API, feed, board, style sheets and browser tests stay, and the shell already loads a module per page kind, so a kind can move at a time.
+
+    **Why B.** Like for like, every first visit is four to ten times lighter on Preact and two to five times on React, and every second page about ten times on either, the gap the framework makes (each Dioxus page kind is a wasm module with its own runtime); cold visits are usable sooner, by the widest margin on a slow CPU; and the build and the committed distribution shrink by an order of magnitude.
+
+    **The weakest point.** The rewrite: it is large, against a client that keeps changing, and the compiler's checks of the wire and of the block kinds are lost unless generated types and a test replace them, neither tried here. The port must also catch up where Dioxus is ahead, the return visit at full speed and the card's move. The byte and slow-CPU margins are wide enough to survive the left-out parts at the estimate, but the estimate is not measured.
+
+    **Timings on a busy machine.** Other agents built and tested throughout, the one-minute load between about 40 and 280 on 16 cores, half the runs between 90 and 150. The timings are paired rounds, Dioxus, React and Preact in turn, 15 of them a scenario, so the three sides shared the load; the analysis reports ratios, by batch of five rounds and the load each ran at, and calls undecided any ratio whose batches fall on both sides of 1. Bytes, decoded code and DOM counts do not move with load.
+
+    **Earlier verdicts checked.** The shared runtime between the Dioxus client's modules (approved, every page but home and the board) landed on main while this ran: the task pages and four other kinds are one program now, the board kept its own module. Read from main's build, it trims a task page with its timeline by about a fifth and the modules warmed at idle by a fifth to a half, and leaves the first visits where they were, so the figures above stand; where main's differ, main's are given. Under B that work is replaced: Vite shares the runtime between chunks by itself. The desktop app's thin shell shows each server's own pages, so it takes whichever client the server serves; its own few screens are planned in Dioxus, and under B would either stay so, a second UI stack, or become pages too. The device cache (approved) would be ported under B. The first-visit cap stays as it is under either.
+
+    This card is the only change: nothing is migrated by it.
+  [2026-11-14 07:48] agent — Amended for the board task `docs/jsx-recommendation-weighs-react-compatibility`: B no longer names its library. Preact and React were weighed on the libraries and tools as well as bytes and speed, and the findings leave the choice open, so it waits for a card of its own if you approve B. [[analysis/client-framework-comparison#Preact or React]]
+
+    **What Preact gains.** About 60 kB less on every first visit (the board 44 kB against 104, a task's page 48 against 109, the guide 60 against 120), all of it React's runtime, and about 200 kB less script to decode; a second page costs the same on both. A cold visit spends about a tenth to a quarter less time running script, on each of the three pages at every speed (the board 34 ms against 43 at full speed, 113 against 154 on a phone's screen slowed four times), though its long tasks are no shorter, the batches split. Neither leads in when a page is usable: slowed four times, Preact's board and guide are usable a little sooner and React's task page is; at full speed React opens a task from the board sooner and draws a card's move in 30 ms against 43. The board is also read from a phone over the tailnet, where the bytes and the script count for more; every visit here was served from the same machine with only the CPU slowed, so what 60 kB costs on a phone's network was not measured. The bytes saved are a fixed amount, so their share falls as libraries are added: with the three tried, the board would be about 0.63 of React's bytes, not 0.42.
+
+    **What Preact costs.** React's code runs through a compatibility layer that trails React: React 18's `createRoot` reached it in 11 weeks and its hooks in 14 to 24, its transitions only in name; React 19's refs as props and `use` in 22 months, and its actions, form hooks and page metadata not at all. Its current major, Preact 11, was first published on 30 September 2026. The libraries are made and tested for React: Radix, React Aria, Headless UI and TanStack Router say they do not support Preact (Motion, not explicitly), React Aria is reported broken on Preact 11, and React Router's newest major no longer builds on it (its previous one does); TanStack Query, TanStack Form, wouter, visx and auto-animate do support it, mostly through Preact packages of their own. And keeping React reachable, so that a library that stops working means a switch and not a rewrite, is a standing cost none of which exists today: a second build at every gate, which catches only what fails to build unless the browser tests also run on it; a lint rule that also refuses Preact's own packages (`wouter-preact`, `@tanstack/preact-query`, `@preact/signals` and the like); and each library driven on both builds before it is taken.
+
+    **What React costs.** The 60 kB on every first visit, the 200 kB of script and the tenth to a quarter more time running it; none of the above.
+
+    **What this client would use.** The Dioxus client writes its own router, data cache, chart and timeline, and the server renders Markdown, so most of those libraries would never be needed. What a port would reach for first was tried on both builds: Radix's select, menu, dialog, tabs, tooltip and checkbox (the controls the client has today), TanStack Query and TanStack Virtual all worked alike, each adding the same bytes on either side (40, 10 and 10 kB). Radix's slider, which Preact's own tracker lists as broken, failed there too: on Preact a build that passes does not show a library works.
+
+    **Two readings, neither settled.** For Preact: what the client would use runs on it, so the libraries' lead may never be drawn on, while the 60 kB and the script are paid on every first visit for good, a phone's over the network among them; its weakest point, those gains bought no lead in when a page is usable, and are held by guards every gate pays for and a library's next major can still defeat, on a compat major six weeks old. For React: Preact's gains, the bytes and the script time, bought no lead in when a page is usable, at either speed or on a phone's screen, against four libraries of the kinds a client reaches for that do not support Preact and guards that are not built; its weakest point, it pays 60 kB and more script on every first visit, a board's 104 kB where Preact's is 44, most where they count most, on a phone over a network that was not measured, for a lead in libraries the probe has not yet needed. Which weighs more is yours to say, on that later card; this card asks only A or B.
+  [2026-11-14 08:32] owner · approved — Should be moved ro React. Typescript. Will need linting and type checking tooling, as well as vite.
+
+### Releases
+
+- [x] **kit-new-block-version** — Before the plugin kit goes to crates.io at 1.0.0, one thing about it cannot be changed later without a new major version: what happens to its version when Symphony adds a new kind of block (or a new kind of text span or media) to the vocabulary plugins draw with. A: a new block is a small update (1.1.0): a plugin written for 1.0.0 keeps building and gets the update by itself. B: a new block is a new major version (2.0.0): every plugin's author must change its requirement by hand before it can use any later kit. Recommended: A. Approve and say A or B in the note, or comment. [[RELEASES#Packages on crates.io]]
+  [2026-11-14 02:12] agent — Posted for the board tasks `tools/kit-version-lines` and `tools/release-publishes-to-crates-io`; nothing is published yet, and nothing will be until you say so.
+
+    **What it is in the code.** The vocabulary is three lists in `symphony-blocks`: `Block`, `Span` and `Media`. Rust lets a list be marked as one that may grow. Marked, adding to it is a small update. Unmarked, as today, adding to it is a breaking change, because code elsewhere may have listed every case.
+
+    **A, marked as growing.** A plugin only makes blocks, it does not list them, so nothing changes for a plugin. The cost is in Symphony's own client, the one place that lists every block to draw it: the compiler no longer refuses a build where a new block has no drawing, so a test does that instead (it goes through every block and fails on one the client does not draw).
+
+    **B, as today.** The compiler keeps checking the client. Every new block, span or media kind makes the kit 2.0.0, 3.0.0 and so on, and each consuming project and plugin author moves by hand each time.
+
+    **Why A.** New blocks are how the product grows, so under B the kit's major version would move often and mean little. The check B keeps can be kept by a test. Choosing A after 1.0.0 is published would itself be a new major version, so now is the cheap moment.
+  [2026-11-14 06:29] owner · approved — A
 
 ## Rejected and replaced
 
@@ -161,6 +405,48 @@ their dated history work is in [REVIEW](REVIEW.md).
   [2026-11-11 19:13] agent — Done on `tools/orphan-processes`: the Symphony no longer looks for copies of itself or for test databases. The census, the notice at the top of every page, the `symphony-server orphans` command and the starter's line about leftovers are gone, with their tests and docs; no notice moved to the live feed. The repairs at the source stay: the database of a board in the temporary folder or under `artifacts/` ends when the process that started it ends, even when that process is killed, and the two test fixtures that start a database themselves end it the same way. The server's status still sends `orphans`, always 0, so a starter built before this can still read it.
 
 ## Resolved
+
+### Product specs
+
+- [x] **product-spec-form** — Each page of the Symphony would get a short document of its own, written for whoever uses the page: what it is for, what you do there, what it shows, its states, and how it looks on a phone, with pictures taken by one command from a made-up project. Today no document does this for any page, and no document outside this register shows a picture. One spec is written so you can judge the form: [the review queue](product/QUEUE.md). Is this the form the other thirteen should take? Approve, or comment with what to change. [[analysis/product-docs-review-2026-11#Proposed specs]]
+  [2026-11-15 02:40] agent — Posted for the board task `docs/product-docs-review`. The example's pictures, as the command took them, wide and on a phone:
+
+    ![The queue, wide](product/pictures/queue-wide.png) ![The queue on a phone](product/pictures/queue-phone.png)
+
+    **What approving sets:**
+
+    - **One page, one document**, under `docs/product/`, with the same parts in the same order ([the form](product/README.md#the-form-of-a-spec)). No source file, route or wire type in it: those stay in the reference documents, which a spec links.
+    - **Pictures are taken, never pasted.** `tools/product-pictures.sh` takes every listed page, on a phone, wide or both as a spec shows it, from a small fixture project, on a server of its own. Taken twice on one Chrome, a picture comes out byte for byte the same, so after a retake git lists the ones that went stale. No checker is added.
+    - **The task that changes a page retakes its pictures**, as its after pictures.
+
+    **Cost:**
+
+    - About 0.1 MB a wide picture and 0.3 MB a phone picture, committed beside the specs as documents' pictures already are. At three wide and one phone picture a spec, the whole set is about 8 MB.
+    - Each retake commits the changed pictures again, into every clone's history: about 0.1 to 0.4 MB for each picture of the page that changed.
+    - A Chrome update, or other fonts, can redraw every picture with no page changed. Git then shows the whole set as stale, and one retake commits the whole set again, about 8 MB.
+
+    **Earlier verdicts checked:** your approval of **pictures-in-every-clone** ("agreed with F") decides where these pictures live, committed beside the documents that show them, so that is not asked. It says nothing of what a product spec holds or how its pictures are made and kept current, and no other verdict does: that is this card.
+
+    **What it leaves for later:** the home page shows the hour's greeting and each card's age, so its picture needs the shot taken at a fixed time; that is built when its spec is written. The other thirteen specs, one paragraph each, and the ranked gaps are in the linked review.
+  [2026-11-15 06:38] owner · approved
+
+### Web stack
+
+- [~] **graphql-library** — If the client reads the server through GraphQL (**graphql**), which Rust library serves it? It matters only if that card is B. A: Juniper. B: async-graphql. Recommended: A, by a narrow margin. Approve and say A or B in the note, or comment. [[analysis/graphql-and-server-framework#Which GraphQL library, if GraphQL is taken]]
+  [2026-11-14 11:01] agent — Posted for the board task `inbox/evaluate-graphql-and-other-web-stacks`.
+
+    **Both work.** Each served a query on Axum in a probe and speaks subscriptions over WebSocket. Each needs a derive of its own on every wire type, as neither reads serde's.
+
+    **A, Juniper.** Released on 2026-10-30 with its Axum integration; last commit 2026-11-09. The lighter: compiled from nothing it took 54 s more CPU than a plain JSON server and 0.8 MiB more binary. Its costs: about a thirteenth of the users; no JSON value built in, so the blocks and the plugins' fields need a small scalar of the Symphony's own; a 0.x line whose minor versions break.
+
+    **B, async-graphql.** About 13 times the users, two maintainers, and it takes any serde type whole as JSON. It is maintained: asked in November 2025 whether it still was, it took on a second maintainer, who answered in December and made most of its commits since. Its costs: its newest stable is from 2026-01-20, nothing has been pushed since 2026-04-21, and its 8.0 has been a release candidate for ten months. It took 158 s more CPU and 1.5 MiB more binary.
+
+    **Why A, by a narrow margin.** Mostly the measured weight: it is the lighter to compile and to ship, a gap that grows with each of the wire's 158 types. Its recent release counts for less than it would against an abandoned library: seven quiet months, not a stall. Speed is level: 74 µs a query against 62.
+
+    **The size budget.** The server has about 0.6 MiB of room under its line, so either needs the line raised, A by less.
+
+    **Earlier verdicts checked.** No card speaks of a GraphQL library.
+  [2026-11-14 11:18] owner · dismissed
 
 ### Documents
 

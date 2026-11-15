@@ -38,9 +38,18 @@ pub(super) fn launch(store: &Store, c: &mut Context) -> Result<(), Stop> {
         worktree: p.get("worktree").map(|w| c.env.cwd.join(w)),
         prompt: p.or("prompt", "").into(),
         tab: p.get("tab").map(str::to_string),
+        beside: p.get("beside").map(str::to_string),
     };
     let started = launch::launch(store, &hc, &machine, &ask)?;
     let s = &started.row;
+    if started.resumed {
+        // The task's recorded reviewer, on its own agent and model: not what a launch would start.
+        c.say(&format!(
+            "resumed {}, {}'s recorded {}: pane {}, agent session {}, worktree {}",
+            s.handle, s.slug, s.role, s.pane, s.claude_session, s.worktree
+        ));
+        return Ok(());
+    }
     c.say(&format!(
         "launched {} on {} as {}: {}, pane {}, agent session {}, worktree {}",
         s.handle,

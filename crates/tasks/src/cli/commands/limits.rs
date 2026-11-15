@@ -14,7 +14,8 @@ use std::path::Path;
 
 /// The width of a setting's name, the longest (`review_alarm_clear_hours`) and a space.
 const NAME: usize = 25;
-/// The width of a value before the space that ends it, a longer one (a model) running on.
+/// The least width of a value before the space that ends it: wider when a model's name is longer,
+/// so every row's source starts in one column.
 const VALUE: usize = 7;
 
 pub(super) fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
@@ -61,8 +62,13 @@ pub fn lines(
             .get(key)
             .map_or_else(|| "default".to_string(), limits::Written::said)
     };
+    let width = models.map_or(VALUE, |defaults| {
+        (ROLES.iter().filter_map(|role| defaults.model_of(role).1))
+            .map(|model| model.chars().count())
+            .fold(VALUE, usize::max)
+    });
     let row =
-        |key: &str, value: String, from: String| format!("{key:<NAME$}{value:<VALUE$} {from}");
+        |key: &str, value: String, from: String| format!("{key:<NAME$}{value:<width$} {from}");
     let held = read.limits;
     let none = |value: Option<usize>| value.map_or_else(|| "none".to_string(), |n| n.to_string());
     lines.push(row(KEYS[0], none(held.orchestrator_slots), source(KEYS[0])));
@@ -104,6 +110,7 @@ pub fn lines(
                         "model",
                     ),
                     Chosen::Board => format!("the board's own for {agent}"),
+                    Chosen::Smallest => format!("the smallest {agent} offers"),
                     Chosen::Starter => "whoever starts one chooses".into(),
                 };
                 lines.push(row(role, model.unwrap_or_else(|| "-".into()), from));

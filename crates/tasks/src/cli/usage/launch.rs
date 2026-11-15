@@ -7,19 +7,25 @@ use crate::launch::{Defaults, root_of};
 pub const USAGE: &str = r#"usage: just tasks launch [-h] [--as ACTOR] [--model MODEL]
                          [--kind {codex,claude}] [--role {executor,reviewer}]
                          [--branch BRANCH | --detached] [--worktree WORKTREE]
-                         [--tab TAB] [--prompt PROMPT]
+                         [--tab TAB] [--prompt PROMPT] [--beside WHY]
                          slug
 "#;
 
 pub const HELP: &str = r#"usage: just tasks launch [-h] [--as ACTOR] [--model MODEL]
                          [--kind {codex,claude}] [--role {executor,reviewer}]
                          [--branch BRANCH | --detached] [--worktree WORKTREE]
-                         [--tab TAB] [--prompt PROMPT]
+                         [--tab TAB] [--prompt PROMPT] [--beside WHY]
                          slug
 
 Start an agent on a task in an hc terminal of its own, its first message
 /work SLUG HANDLE (a reviewer's /review-task SLUG HANDLE). --kind says which
 agent runs, --role what it does there.
+A reviewer launch resumes the task's recorded reviewer, in its own worktree,
+agent and model, and is refused while that one still runs; a new reviewer
+starts only where none can be resumed (no conversation recorded, a Codex
+thread that never arrived, a reviewer that left). --beside WHY resumes none:
+it starts a second reviewer beside the one still there. A reviewer goes on
+the task itself, never an instruction subtask.
 Refused while this machine runs as many agents as the project's [limits]
 machine_agents allows (`just tasks limits` prints it).
 
@@ -49,6 +55,7 @@ options:
   --prompt PROMPT       text sent after /work SLUG HANDLE (or /review-task);
                         refused through just tasks: say it on the task's
                         thread
+  --beside WHY          a reviewer's: why it joins beside one still there
 "#;
 
 /// [`HELP`] as `launch --help` prints it in `env`: then what a bare launch starts there, from the

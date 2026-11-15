@@ -98,6 +98,162 @@ fn a_repository_inside_another_projects_folder_is_its_own_never_the_outer_ones()
     assert_eq!(project::locate(&beside).unwrap().common, outer.join(".git"));
 }
 
+/// A fixture project in its own repository under another checkout's artifacts, as a server's
+/// scratch projects are: the outer checkout and the project's folder.
+fn nested(name: &str) -> (std::path::PathBuf, std::path::PathBuf) {
+    let dir = scratch(name);
+    let outer = repository(&dir.join("outer"));
+    write(&outer.join(FILE), "[project]\nid = \"outer\"\n");
+    let inner = repository(&outer.join("artifacts/scratch/inner"));
+    write(&inner.join(FILE), "[project]\nid = \"inner\"\n");
+    (outer, inner)
+}
+
+/// The project whose folder the Symphony reaches a board from (`project::at`) is the one there
+/// while the folder is; once it is gone, none is, never the checkout its path leads up to: the
+/// refusal counts as a project with no board.
+#[test]
+fn a_projects_folder_that_is_gone_names_no_project_never_the_checkout_above_it() {
+    let (outer, inner) = nested("project-at-gone");
+    assert_eq!(project::at(&inner, None).unwrap().id, "inner");
+    // A folder in a project is that project's, as a command's lookup has it.
+    std::fs::create_dir_all(outer.join("docs/notes")).unwrap();
+    assert_eq!(
+        project::at(&outer.join("docs/notes"), None).unwrap().id,
+        "outer"
+    );
+    std::fs::remove_dir_all(&inner).unwrap();
+    let refused = project::at(&inner, None).unwrap_err();
+    assert_eq!(
+        refused,
+        format!(
+            "the project's folder {} is gone: {}",
+            inner.display(),
+            project::GONE
+        )
+    );
+    assert!(symphony_board::board_health::absent(&refused), "{refused}");
+    // A folder whose parent went too names nothing.
+    let deeper = outer.join("artifacts/scratch/inner/docs");
+    std::fs::remove_dir_all(outer.join("artifacts")).unwrap();
+    assert!(
+        project::at(&deeper, None)
+            .unwrap_err()
+            .ends_with(project::GONE)
+    );
+}
+
+/// The project whose folder the Symphony reaches a board from, held to the repository it found
+/// there when it began to serve it (`project::held`), is the one there while the folder holds that
+/// repository. Once its `.git` went, the folder still there, the lookup from it finds the outer
+/// checkout's repository, and the folder is refused as gone; so it is once a `.git` made again
+/// holds only the board's folders, a repository no more.
+#[test]
+fn a_projects_folder_held_to_its_repository_names_no_other_once_its_git_goes() {
+    let (outer, inner) = nested("project-held");
+    let repository = project::locate_quick(&inner).unwrap().common;
+    assert!(project::is_repository(&repository));
+    assert_eq!(
+        project::held(&inner, None, &repository).unwrap().id,
+        "inner"
+    );
+    let refused = |why: String| {
+        assert_eq!(
+            why,
+            format!(
+                "the project's folder {} no longer holds the repository it was served from, {}: \
+                 {}",
+                inner.display(),
+                repository.display(),
+                project::GONE
+            )
+        );
+        assert!(symphony_board::board_health::absent(&why), "{why}");
+    };
+
+    std::fs::remove_dir_all(inner.join(".git")).unwrap();
+    assert_eq!(
+        project::at(&inner, None).unwrap().place.common,
+        outer.join(".git"),
+        "the lookup from the folder walks up"
+    );
+    refused(project::held(&inner, None, &repository).unwrap_err());
+
+    std::fs::create_dir_all(inner.join(".git").join(symphony_board::folders::TASKS)).unwrap();
+    assert_eq!(project::at(&inner, None).unwrap().place.common, repository);
+    assert!(!project::is_repository(&repository));
+    refused(project::held(&inner, None, &repository).unwrap_err());
+}
+
+/// A board's server, stopped when the case ends: one a reach that should start none started all
+/// the same.
+struct Stopped(symphony_board::server::Home);
+
+impl Drop for Stopped {
+    fn drop(&mut self) {
+        let _ = self.0.stop();
+    }
+}
+
+/// The Symphony's reaches of the board of a project removed under it (`cli::board`, which starts
+/// a board's server, and `cli::running_board`) are refused as gone, and start no server and write
+/// nothing in the checkout that held its folder, though a SurrealDB is there to start one.
+#[test]
+fn the_symphonys_reach_from_a_projects_folder_that_is_gone_starts_no_board() {
+    let (outer, inner) = nested("project-reach-gone");
+    let surreal = crate::common::surreal();
+    let outer_board = Stopped(symphony_board::server::Home::in_common(
+        &outer.join(".git"),
+        Some(&surreal),
+    ));
+    std::fs::remove_dir_all(&inner).unwrap();
+    let env = symphony_board::cli::Env {
+        vars: [
+            ("SYMPHONY_SURREAL", surreal.display().to_string()),
+            (
+                MACHINE_DIR,
+                outer
+                    .parent()
+                    .unwrap()
+                    .join("machine")
+                    .display()
+                    .to_string(),
+            ),
+            ("TASKS_SWEEP", "off".to_string()),
+        ]
+        .into_iter()
+        .map(|(name, value)| (name.to_string(), value))
+        .collect(),
+        cwd: inner.clone(),
+    };
+    type Reach = fn(&symphony_board::cli::Env) -> Result<symphony_board::cli::Reached, String>;
+    for (how, reach) in [
+        ("board", symphony_board::cli::board as Reach),
+        ("running_board", symphony_board::cli::running_board),
+    ] {
+        let refused = reach(&env)
+            .err()
+            .unwrap_or_else(|| panic!("{how} reached a board"));
+        assert_eq!(
+            refused,
+            format!(
+                "the project's folder {} is gone: {}",
+                inner.display(),
+                project::GONE
+            ),
+            "{how}"
+        );
+    }
+    assert_eq!(outer_board.0.recorded(), None, "a board's server started");
+    assert!(
+        !outer
+            .join(".git")
+            .join(symphony_board::folders::TASKS)
+            .exists(),
+        "the outer checkout's board folder was made"
+    );
+}
+
 #[test]
 fn a_checkout_with_no_file_is_named_by_the_registry_else_by_its_main_checkouts_folder() {
     let dir = scratch("project-registry");

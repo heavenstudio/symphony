@@ -4,8 +4,16 @@
 //!
 //! 0. **Asked for.** It runs only as `just land SLUG`, whose recipe sets [`RECIPE`], and never
 //!    where the project's justfile runs a `land` of its own ([`admit`]). The marker is a guard
-//!    against running it by accident; the approval below is the gate.
-//! 1. **Approved.** The task's last verdict is an `approve`, which left it done, from a fresh
+//!    against running it by accident; the stamps below are the gate.
+//! 1. **What it needs** ([`needs`]): the stamps the task needs at the branch's tip, its
+//!    assessment's on the tip it read, else beside the catalogue's defaults (`review` alone in the
+//!    Symphony's, so a task nobody assessed lands as before stamps), each other than `review` read
+//!    there by the board's own reader. A missing one refuses, naming who gives it; one waiting on
+//!    the owner alone holds the task blocked ([`Landing::lacks`]). Where `review` is not needed the
+//!    task lands from review or blocked with no verdict, its landing line naming the tip its stamps
+//!    stood on ([`needs::Needed::stood`]); where it is, by its approve:
+//!
+//!    **Approved.** The task's last verdict is an `approve`, which left it done, from a fresh
 //!    reviewer: never a session that ever executed the task or one of its work subtasks (an
 //!    instruction subtask, the review the reviewer claimed, is none), nor one that ever
 //!    orchestrated it, nor its filer, but on a fast fix ([`crate::fast_fix`]), whose
@@ -17,7 +25,11 @@
 //!    the landing says on the thread that it judged by time). A commit it does not cover refuses,
 //!    naming it. An approve that does not do sends the task back to review for a fresh one; a
 //!    conflict or a red on the tip as approved is said to its executor, which fixes it on the
-//!    branch and sends the task back to review itself. A tip the default branch holds already is
+//!    branch and sends the task back to review itself, and so is a worktree at a commit the land
+//!    brings (on the branch, on another or detached) that holds an owner's answer no commit has
+//!    ([`Landing::owner_lines`]): the owner's answer on a card the branch posted, which a land of
+//!    its commits would leave behind. A worktree git cannot read for that refuses the land, said to
+//!    the one landing. A tip the default branch holds already is
 //!    finished only when this land recorded its merge ([`Record`]): a land interrupted after it
 //!    moved the default branch pushes the commit it checked, writes its landed line and sweeps,
 //!    nothing merged again; a tip merged by hand is refused, nothing pushed or recorded, the line
@@ -36,7 +48,8 @@
 //!    ([`Settings::main_check`]). A land runs no generator. This merge is one step,
 //!    [`Landing::integrate`] with [`Merging::Tip`], the one seam a hosted pull-request merge would
 //!    replace.
-//! 3. **Moved.** The land records its merge and the commit the check passed on, in
+//! 3. **Moved.** The owner's answers are asked again, as in 1., for one saved while the land
+//!    merged and checked. The land records its merge and the commit the check passed on, in
 //!    `symphony/tasks/land/` and on the thread (which says `checked at` only when a check ran);
 //!    then the main checkout, with no staged or tracked edit and on the default branch,
 //!    fast-forwards to what passed, so the default branch's new tree is the tree the check passed
@@ -47,7 +60,10 @@
 //!    checkout ([`Landing::fast_forward`], [`Landing::restore`]). [`MOVING`] names the move
 //!    meanwhile, so the next land restores what one killed outright left ([`Landing::recover`]).
 //!    When the default branch moved meanwhile, the merge and the check run again on its new tip,
-//!    at most [`TRIES`] times; a red then is said on the thread to the orchestrator.
+//!    at most [`TRIES`] times; a red then is said on the thread to the orchestrator. Once it
+//!    moved, the Symphony saves a line given on the branch's page on the default branch; an
+//!    owner's answer saved into a worktree while it moved is found after, and said on the thread
+//!    to the orchestrator ([`Landing::owner_lines_after`]).
 //! 4. **Pushed.** Unless `[land] push = false` or there is no `origin`: the default branch is
 //!    fetched from `origin`; what it gained there is merged in the same way and checked again,
 //!    never forced, its generated paths kept but where they conflict; then the default branch
@@ -80,12 +96,12 @@
 
 use crate::cli::Env;
 use crate::on_review::{self, Started};
-use crate::sweep::git::{ancestor, git, rev, succeeds, worktrees};
+use crate::sweep::git::{Answer, Listed, ancestor, answers, git, rev, succeeds, told, worktrees};
 use crate::sweep::trigger;
 use crate::sys::{self, Stdio};
 use crate::{Error, Held, Message, Store, Task, Unfresh};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File, OpenOptions, TryLockError};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
@@ -96,6 +112,8 @@ pub mod check_paths;
 mod moving;
 use moving::Move;
 pub use moving::Moving;
+pub mod needs;
+use needs::Needed;
 pub mod regenerate;
 
 /// What a main checkout with staged or tracked edits refuses with; the verdict publisher reads it.
@@ -147,18 +165,9 @@ fn signal_name(signal: i32) -> String {
         other => format!("signal {other}"),
     }
 }
-/// What names a repository to git: a child run in the land's worktree inherits none of them, nor
-/// does the command `[board] on_land` names ([`crate::on_land`]).
-pub(crate) const GIT_VARS: [&str; 8] = [
-    "GIT_DIR",
-    "GIT_WORK_TREE",
-    "GIT_COMMON_DIR",
-    "GIT_INDEX_FILE",
-    "GIT_OBJECT_DIRECTORY",
-    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
-    "GIT_NAMESPACE",
-    "GIT_PREFIX",
-];
+/// What names a repository to git ([`sys::GIT_VARS`]): a child run in the land's worktree inherits
+/// none of them, nor does the command `[board] on_land` names ([`crate::on_land`]).
+pub(crate) use crate::sys::GIT_VARS;
 
 /// A command the regenerator ([`regenerate`]) runs on the default branch's newest tip after a land,
 /// whose changes inside `outputs` it commits and lands; a project names its own in `[land]
@@ -243,6 +252,9 @@ pub struct Settings {
     /// orchestrator approves changes none of ([`check_paths`]); [`check_paths::DEFAULT`] unless
     /// the project names its own.
     pub check_paths: Vec<check_paths::Entry>,
+    /// The folders the project's `[[entrypoints]]` serve documents from, where the Symphony writes
+    /// the owner's answers ([`crate::project::documents`]); `docs` unless the project names its own.
+    pub documents: Vec<String>,
 }
 
 /// How long a generator or a land's check takes at most, unless the project names another `[land]
@@ -263,6 +275,7 @@ impl Default for Settings {
             push: true,
             timeout: TIMEOUT,
             check_paths: check_paths::defaults(),
+            documents: crate::project::documents(""),
         }
     }
 }
@@ -368,6 +381,7 @@ impl Settings {
             push: file.land.push,
             timeout: Duration::from_secs(file.land.timeout_seconds),
             check_paths,
+            documents: crate::project::documents(text),
         })
     }
 
@@ -428,12 +442,22 @@ pub struct Approval {
 }
 
 /// The approval standing on `task`, read from its `thread`: it is done, and its last verdict is an
-/// `approve` ([`crate::approved`]). Otherwise the one line saying why there is none.
+/// `approve` ([`crate::approved`]). Otherwise the one line saying why there is none, and, for open
+/// work, who approves it and by which command.
 pub fn approval(task: &Task, thread: &[Message]) -> Result<Approval, String> {
     let slug = &task.slug;
     if task.status != "done" {
+        let approve = format!(
+            "a fresh reviewer, one that did not write it, approves it naming the tip it read: \
+             `just tasks verdict {slug} approve \"FULL_SHA: why\" --as HANDLE`"
+        );
+        let then = match task.status.as_str() {
+            "cancelled" => String::new(),
+            "review" => format!(": {approve}"),
+            _ => format!(": it goes to review (`just tasks move {slug} review`), where {approve}"),
+        };
         return Err(format!(
-            "{slug} is {}, with no approving verdict standing",
+            "{slug} is {}, with no approving verdict standing{then}",
             task.status
         ));
     }
@@ -512,7 +536,7 @@ pub fn independent(task: &Task, approval: &Approval, held: &Held) -> Result<Scop
     };
     Err(format!(
         "{slug}'s approve is {by}'s, {whose}: a fresh reviewer approves it, and its orchestrator \
-         only a fast fix (filed with `just tasks create --fast-fix WHY`)"
+         only a fast fix (a task filed with the fast-fix mark)"
     ))
 }
 
@@ -578,6 +602,65 @@ pub fn named(text: &str) -> Vec<&str> {
         .collect()
 }
 
+/// Why the checkout `main` has no branch `slug` to land, and the rename that gives it one: the land
+/// takes the branch named as the task, so work on another is renamed to it. The branch named is
+/// one whose tip is a commit `approved` (the approve's text, empty with none) names, when one is,
+/// never the `default` branch; else the rename is said with `BRANCH`.
+fn no_branch(main: &Path, slug: &str, default: &str, approved: &str) -> String {
+    let at: Vec<(String, String)> = named(approved)
+        .into_iter()
+        .filter_map(|word| rev(main, &format!("{word}^{{commit}}")))
+        .flat_map(|sha| {
+            let points = format!("--points-at={sha}");
+            let args = [
+                "for-each-ref",
+                &points,
+                "--format=%(refname:short)",
+                "refs/heads/",
+            ];
+            let names = run_git(main, &args).unwrap_or_default();
+            (names.lines())
+                .filter(|name| *name != default)
+                .map(|name| (name.to_string(), sha.clone()))
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    let lands = format!("the land takes the branch named as the task, {slug}");
+    match at.first() {
+        Some((branch, sha)) => format!(
+            "no branch {slug} to land: {lands}, and the approved tip {} is on {branch}: `git \
+             branch -m {branch} {slug}` renames it, then land again",
+            short(sha)
+        ),
+        None => format!(
+            "no branch {slug} to land: {lands}: rename the branch holding the approved work \
+             (`git branch -m BRANCH {slug}`), then land again"
+        ),
+    }
+}
+
+/// What a verdict that approved `slug` says, run where `env` runs: that it is done on the board but
+/// not on the default branch until it lands, and the line that lands it: `just land SLUG --as
+/// HANDLE`, the Symphony's default landing, or the `land` recipe of the project's own that replaces
+/// it ([`own_land`]). Outside a checkout, or where the justfile cannot be read for it, the default
+/// landing is named.
+pub fn approved(env: &Env, slug: &str) -> String {
+    let main = crate::git::common_dir(&env.cwd)
+        .ok()
+        .and_then(|common| trigger::main_checkout(&common).map(Path::to_path_buf));
+    let default = (main.as_deref())
+        .and_then(|main| Settings::of(main).ok())
+        .map_or_else(|| "the default branch".into(), |s| s.default_branch);
+    let how = match main.and_then(|main| own_land(&main, env).ok().flatten()) {
+        Some(justfile) => format!(
+            "the `land` recipe of the project's own lands it ({}): `just land {slug}`",
+            justfile.display()
+        ),
+        None => format!("`just land {slug} --as HANDLE` lands it"),
+    };
+    format!("{slug} is approved: done on the board, not on {default} until it lands; {how}")
+}
+
 /// How an approval covers the tip.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Covered {
@@ -585,6 +668,16 @@ pub enum Covered {
     Named,
     /// It names none of the branch's commits, and each of the branch's `n` commits is older.
     ByTime(usize),
+}
+
+/// How a land found its task ready ([`needs`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Judged {
+    /// It needs `review`: a fresh reviewer's approve, covering the tip so, left it done.
+    Approved(Covered),
+    /// It needs no review: its stamps stand at the tip, and it is in review, blocked, or done by
+    /// an approve. What its landing's line adds ([`Needed::stood`]).
+    Stamped(String),
 }
 
 /// One commit as `git log` gives it.
@@ -1682,9 +1775,11 @@ impl Landing<'_> {
         self.recover().map_err(Stop::Refused)?;
         let task = self.store.get(slug)?;
         let thread = self.store.thread(slug)?;
-        let approval =
-            approval(&task, &thread).map_err(|line| self.refuse(Refusal::thread(line)))?;
-        let held = self.store.ever_held(slug)?;
+        let branch_tip = rev(&self.main, &format!("refs/heads/{slug}"));
+        // Which stamps: the assessment's on the tip it read, else beside the catalogue's defaults;
+        // with no assessment, the defaults, which are `review` alone in the Symphony's catalogue.
+        let needed = Needed::of(&task, &self.main, branch_tip.as_deref())
+            .map_err(|line| self.refuse(Refusal::here(line)))?;
         let staff = |line: String| {
             Refusal::reopening(
                 line,
@@ -1692,40 +1787,106 @@ impl Landing<'_> {
                 "Staff a fresh reviewer, which approves naming the tip it read".into(),
             )
         };
-        let scope =
-            independent(&task, &approval, &held).map_err(|line| self.refuse(staff(line)))?;
-        let tip = rev(&self.main, &format!("refs/heads/{slug}"))
-            .ok_or_else(|| self.refuse(Refusal::thread(format!("no branch {slug} to land"))))?;
+        // Ready: where `review` is needed, done by an approve the land goes by, the approval check
+        // as before stamps; where it is not, in review or blocked, or done by an approve.
+        let approved = if needed.review() {
+            let approval = approval(&task, &thread).map_err(|line| {
+                let stale = (branch_tip.as_deref()).and_then(|tip| needed.stale(tip));
+                self.refuse(match (&needed.needs, stale) {
+                    (None, _) => Refusal::thread(line),
+                    (Some(_), None) => Refusal::to(
+                        line,
+                        "@orchestrator",
+                        "Staff a fresh reviewer, which approves naming the tip it read".into(),
+                    ),
+                    (Some(_), Some(stale)) => Refusal::to(
+                        format!("{line}; {stale}"),
+                        "@orchestrator",
+                        "Start an assessor for the tip, or staff a fresh reviewer, which approves \
+                         naming it"
+                            .into(),
+                    ),
+                })
+            })?;
+            let held = self.store.ever_held(slug)?;
+            let scope =
+                independent(&task, &approval, &held).map_err(|line| self.refuse(staff(line)))?;
+            Some((approval, scope))
+        } else {
+            if let Some((line, to)) = needs::not_ready(slug, &task.status) {
+                return Err(self.refuse(match to {
+                    Some(to) => Refusal::to(
+                        line,
+                        to,
+                        "Move it to review once the work is ready, then land it".into(),
+                    ),
+                    None => Refusal::thread(line),
+                }));
+            }
+            if task.status == "done" {
+                approval(&task, &thread).map_err(|line| self.refuse(Refusal::thread(line)))?;
+            }
+            None
+        };
+        let tip = branch_tip.clone().ok_or_else(|| {
+            let named = approved.as_ref().map_or("", |(approval, _)| &approval.text);
+            let line = no_branch(&self.main, slug, &self.settings.default_branch, named);
+            self.refuse(Refusal::thread(line))
+        })?;
         self.clean().map_err(|line| self.refuse(line.into()))?;
         let mut base = self.base().map_err(|line| self.refuse(line.into()))?;
         let default = self.settings.default_branch.clone();
         if ancestor(&self.main, &tip, &base) {
-            return self.finish(&tip, &base, &approval);
+            let approval = approved.as_ref().map(|(approval, _)| approval);
+            return self.finish(&tip, &base, approval, &needed);
         }
-        let covered = covered(&self.main, slug, &base, &tip, &approval).map_err(|line| {
-            self.refuse(Refusal::reopening(
-                line,
-                "@reviewer",
-                format!(
-                    "Read what the approve does not cover, then approve the tip naming it: \
-                     `just tasks verdict {slug} approve \"{tip}: …\"`"
-                ),
-            ))
-        })?;
-        if let Scope::ChecksUnchanged(why) = scope {
-            let touched = check_paths::touched(&self.main, &base, &tip, &self.settings.check_paths);
-            unchanged_checks(&task, &approval, why, &tip, touched)
-                .map_err(|line| self.refuse(staff(line)))?;
-        }
-        self.say(&format!(
-            "land {slug}: approved by {} at {}, {}",
-            approval.by,
-            sys::local_minute(approval.at),
-            match covered {
-                Covered::Named => format!("naming its tip {}", short(&tip)),
-                Covered::ByTime(_) => format!("before every commit to its tip {}", short(&tip)),
+        self.owner_lines(&base, &tip)
+            .map_err(|refusal| self.refuse(refusal))?;
+        let judged = match &approved {
+            Some((approval, scope)) => {
+                let covered = covered(&self.main, slug, &base, &tip, approval).map_err(|line| {
+                    self.refuse(Refusal::reopening(
+                        line,
+                        "@reviewer",
+                        format!(
+                            "Read what the approve does not cover, then approve the tip naming \
+                             it: `just tasks verdict {slug} approve \"{tip}: …\"`"
+                        ),
+                    ))
+                })?;
+                if let Scope::ChecksUnchanged(why) = *scope {
+                    let touched =
+                        check_paths::touched(&self.main, &base, &tip, &self.settings.check_paths);
+                    unchanged_checks(&task, approval, why, &tip, touched)
+                        .map_err(|line| self.refuse(staff(line)))?;
+                }
+                Judged::Approved(covered)
             }
-        ));
+            None => Judged::Stamped(needed.stood(&tip)),
+        };
+        // Standing on the tip: each stamp but `review` by its reader.
+        let evidence =
+            needs::Evidence::of(self.store, self.env, &self.main, slug, &thread, &needed);
+        let (met, missing) = needs::standing(&needed, &tip, &evidence);
+        if !missing.is_empty() {
+            return Err(self.lacks(&task, &tip, &missing));
+        }
+        if let (Some((approval, _)), Judged::Approved(covered)) = (&approved, &judged) {
+            self.say(&format!(
+                "land {slug}: approved by {} at {}, {}",
+                approval.by,
+                sys::local_minute(approval.at),
+                match covered {
+                    Covered::Named => format!("naming its tip {}", short(&tip)),
+                    Covered::ByTime(_) => {
+                        format!("before every commit to its tip {}", short(&tip))
+                    }
+                }
+            ));
+        }
+        if needed.told() {
+            self.say(&needed.line(slug, &tip, &met));
+        }
         let mut landed = None;
         for attempt in 0..TRIES {
             self.go_on(None).map_err(Stop::Refused)?;
@@ -1756,7 +1917,42 @@ impl Landing<'_> {
             );
             return Err(self.refuse(Refusal::here(line)));
         };
-        self.close(&merge, &top, &taken, &covered, false)
+        self.owner_lines_after(&base, &tip);
+        self.close(&merge, &top, &taken, &judged, false)
+    }
+
+    /// The refusal of a land whose task lacks the stamps `missing` at `tip` ([`needs::refusal`]),
+    /// said on the thread to its executor when a stamp of its is missing. One waiting on the owner
+    /// alone is said to its orchestrator, and waits: held blocked from review
+    /// ([`Store::hold_blocked`], which keeps its slot), blocked or done as it is (a task its approve
+    /// left done stays done, the approve standing), the owner giving the stamp on its page.
+    fn lacks(&self, task: &Task, tip: &str, missing: &[needs::Missing]) -> Stop {
+        let slug = self.slug;
+        let (line, to) = needs::refusal(slug, tip, missing);
+        let at = short(tip);
+        let then = if !needs::owner_alone(missing) {
+            format!(
+                "Give them at {at}, then land it again: a commit after it goes back to review, \
+                 where what it needs is read again"
+            )
+        } else {
+            let waits = format!(
+                "waiting on the owner's approve of {at}, which the owner gives on the task's page \
+                 (its Approve {at}); land it again once it is given"
+            );
+            match task.status.as_str() {
+                "review" => match self.store.hold_blocked(slug, self.actor) {
+                    Ok(_) => format!("{slug} is held blocked, {waits}"),
+                    Err(error) => format!(
+                        "It stays in review, as the land could not hold it blocked ({error}), \
+                         {waits}"
+                    ),
+                },
+                "done" => format!("{slug} stays done, its approve standing, {waits}"),
+                status => format!("{slug} stays {status}, {waits}"),
+            }
+        };
+        self.refuse(Refusal::to(line, to, then))
     }
 
     /// The land of a tip the default branch holds already: only one this command started and
@@ -1767,7 +1963,15 @@ impl Landing<'_> {
     /// push of the checked commit, never of a newer tip no check passed on, the landed line and the
     /// sweep. A tip merged by hand, or by a land that did not record it, is refused: nothing is
     /// pushed, closed or said on the thread.
-    fn finish(&mut self, tip: &str, base: &str, approval: &Approval) -> Result<String, Stop> {
+    /// A task that needs no review (`approval` none) is finished by its record alone, its landed
+    /// line saying the stamps it needs (`needed`) stood at the tip.
+    fn finish(
+        &mut self,
+        tip: &str,
+        base: &str,
+        approval: Option<&Approval>,
+        needed: &Needed,
+    ) -> Result<String, Stop> {
         let (slug, default) = (self.slug, self.settings.default_branch.clone());
         let record = Record::read(&self.folder, slug).filter(|record| {
             record.tip == tip
@@ -1790,17 +1994,22 @@ impl Landing<'_> {
         };
         let before =
             rev(&self.main, &format!("{}^1", record.merge)).unwrap_or_else(|| tip.to_string());
-        let covered = covered(&self.main, slug, &before, tip, approval).map_err(|line| {
-            self.refuse(Refusal::to(
-                format!(
-                    "{slug}'s tip {} is on {default} already, by {}, but {line}",
-                    short(tip),
-                    short(&record.merge)
-                ),
-                "@orchestrator",
-                "Nothing is pushed or closed: what landed is not what was approved".into(),
-            ))
-        })?;
+        let judged = match approval {
+            None => Judged::Stamped(needed.stood(tip)),
+            Some(approval) => Judged::Approved(
+                covered(&self.main, slug, &before, tip, approval).map_err(|line| {
+                    self.refuse(Refusal::to(
+                        format!(
+                            "{slug}'s tip {} is on {default} already, by {}, but {line}",
+                            short(tip),
+                            short(&record.merge)
+                        ),
+                        "@orchestrator",
+                        "Nothing is pushed or closed: what landed is not what was approved".into(),
+                    ))
+                })?,
+            ),
+        };
         self.say(&format!(
             "land {slug}: its tip {} is on {default} already, by this land's merge {}{}: \
              finishing the land (the push, the landed line, the sweep)",
@@ -1812,20 +2021,21 @@ impl Landing<'_> {
             &record.merge,
             &record.checked,
             &record.regenerated,
-            &covered,
+            &judged,
             true,
         )
     }
 
     /// The landing's end once `merge` is on the default branch, at `top` here: the push, the
     /// landed line closing the task, the sweep and the regenerator's start; the line saying where
-    /// it landed. `taken` are the generated paths the merge took from the default branch.
+    /// it landed. `taken` are the generated paths the merge took from the default branch; `judged`
+    /// how the task was found ready, which says what statuses its landing closes.
     fn close(
         &mut self,
         merge: &str,
         top: &str,
         taken: &[String],
-        covered: &Covered,
+        judged: &Judged,
         finishing: bool,
     ) -> Result<String, Stop> {
         let (slug, default) = (self.slug, self.settings.default_branch.clone());
@@ -1833,6 +2043,9 @@ impl Landing<'_> {
             "landed {slug} on {default} at {}",
             &merge[..merge.len().min(12)]
         );
+        if let Judged::Stamped(stood) = judged {
+            landed.push_str(stood);
+        }
         if finishing {
             landed.push_str(", finishing a land interrupted after its merge");
         }
@@ -1851,18 +2064,24 @@ impl Landing<'_> {
         let line = format!("{landed}{pushed}");
         // The thread also says how the approval was judged, before the push, whose retry command
         // ends the line.
-        let said = match *covered {
-            Covered::ByTime(n) => format!(
+        let said = match judged {
+            Judged::Approved(Covered::ByTime(n)) => format!(
                 "{landed}; judged by time, the approval naming no commit of the branch: its {} {} \
                  older than the approval{pushed}",
-                commits(n),
-                if n == 1 { "is" } else { "are" }
+                commits(*n),
+                if *n == 1 { "is" } else { "are" }
             ),
-            Covered::Named => line.clone(),
+            _ => line.clone(),
         };
         // The approval on the board is the gate here, not who runs the land: any session may. A
         // task sent back to review since it was read stays there: what it has now did not land.
-        if let Err(error) = self.store.landed(slug, self.actor, &said, true, &["done"]) {
+        // One that needs no review closes from review or blocked, its executor's move to review
+        // having said the work is ready, or done by an approve.
+        let from: &[&str] = match judged {
+            Judged::Approved(_) => &["done"],
+            Judged::Stamped(_) => &["review", "blocked", "done"],
+        };
+        if let Err(error) = self.store.landed(slug, self.actor, &said, true, from) {
             return Err(Stop::Refused(format!(
                 "{line}, but the board did not close {slug}: {error}"
             )));
@@ -2325,6 +2544,9 @@ impl Landing<'_> {
         self.go_on(None)?;
         let recorded = matches!(merging, Merging::Tip(_));
         if let Merging::Tip(tip) = merging {
+            // Asked again right before the move: the owner may have answered while it merged
+            // and checked, and once the default branch holds the tip, nothing is refused.
+            self.owner_lines(base, tip)?;
             // Kept before the default branch moves, so a land stopped after it is one to finish,
             // and only this one.
             let record = Record {
@@ -2652,6 +2874,144 @@ impl Landing<'_> {
         // `--exit-code`: 2 is an answer listing no such branch.
         self.remote_output(&["ls-remote", "--exit-code", "--heads", REMOTE, &branch])
             .is_ok_and(|done| done.status.code() == Some(2))
+    }
+
+    /// The worktrees holding an owner's answer that a land of `tip` onto `base` would leave behind,
+    /// each with its answers ([`answers`]): an owner's dated line under a card of the project's
+    /// documents, saved into the worktree and in no commit of it, that the tip does not hold on
+    /// that card either. A worktree counts when its HEAD is a commit the land brings (`git rev-list
+    /// TIP ^BASE`): the task's branch's, and one on another branch or detached at such a commit, as
+    /// a slice's or a reviewer's at the tip. The Symphony saves only into a worktree on a branch,
+    /// but a line stays where it was saved when its worktree is detached after. Why a worktree or
+    /// the commits could not be read, when they could not: the land cannot tell, so it refuses.
+    fn answers_left(&self, base: &str, tip: &str) -> Result<Vec<(Listed, Vec<Answer>)>, String> {
+        let slug = self.slug;
+        let listed = worktrees(&self.main)?;
+        let range = format!("^{base}");
+        let brought = told(&self.main, &["rev-list", tip, &range])
+            .map_err(|why| format!("the commits {slug} brings could not be listed: {why}"))?;
+        let brought = String::from_utf8_lossy(&brought.stdout).into_owned();
+        let brought: BTreeSet<&str> = brought.split_whitespace().collect();
+        let mut left = Vec::new();
+        for entry in listed {
+            if entry.bare
+                || entry.prunable
+                || !entry.path.is_dir()
+                || !brought.contains(entry.head.as_str())
+            {
+                continue;
+            }
+            let against = (entry.head != tip).then_some(tip);
+            let found = answers(&entry.path, &self.settings.documents, against).map_err(|why| {
+                format!(
+                    "the worktree {} could not be read for the owner's answers no commit has: {why}",
+                    entry.path.display()
+                )
+            })?;
+            if !found.is_empty() {
+                left.push((entry, found));
+            }
+        }
+        Ok(left)
+    }
+
+    /// The worktrees [`Landing::answers_left`] found, as a refusal names them: each with the
+    /// branch it is on when that is not the task's, and its files.
+    fn holding(&self, held: &[(Listed, Vec<Answer>)]) -> String {
+        let said: Vec<String> = held
+            .iter()
+            .map(|(entry, found)| {
+                let mut files: Vec<&str> = Vec::new();
+                for answer in found {
+                    if !files.contains(&answer.file.as_str()) {
+                        files.push(&answer.file);
+                    }
+                }
+                let on = match entry
+                    .branch
+                    .as_deref()
+                    .and_then(|b| b.strip_prefix("refs/heads/"))
+                {
+                    Some(branch) if branch == self.slug => String::new(),
+                    Some(branch) => format!(" on {branch}"),
+                    None => format!(" detached at {}", short(&entry.head)),
+                };
+                format!("{}{on} ({})", entry.path.display(), files.join(", "))
+            })
+            .collect();
+        said.join(", ")
+    }
+
+    /// Refused while a worktree the land brings holds an owner's answer no commit has
+    /// ([`Landing::answers_left`]): the owner's answer the Symphony saved into a card the branch
+    /// posted, which a land of its commits would leave behind. Said to the executor, which commits
+    /// it on the branch and has the new tip approved. A worktree git cannot read refuses too, to
+    /// the one landing alone: no branch's commit fixes git, and a land that cannot tell must not
+    /// leave the answer behind. Asked before the merge and again right before the default branch
+    /// moves, so an answer saved while the land merged and checked is not left behind either.
+    fn owner_lines(&self, base: &str, tip: &str) -> Result<(), Refusal> {
+        let slug = self.slug;
+        let held = self.answers_left(base, tip).map_err(|why| {
+            Refusal::here(format!(
+                "{why}: nothing landed, as {slug} may hold the owner's answer there. Run the land \
+                 again once git reads it"
+            ))
+        })?;
+        if held.is_empty() {
+            return Ok(());
+        }
+        let elsewhere = held
+            .iter()
+            .any(|(entry, _)| entry.branch.as_deref() != Some(&format!("refs/heads/{slug}")));
+        Err(Refusal::to(
+            format!(
+                "{slug}'s worktree {} holds the owner's answer no commit has, which a land of its \
+                 commits would leave behind",
+                self.holding(&held)
+            ),
+            "@executor",
+            format!(
+                "Commit it on {slug} there{}, then move it back to review (`just tasks move {slug} \
+                 review`) and ask its reviewer to approve the new tip naming it",
+                if elsewhere {
+                    " (from a worktree not on it, copy the line onto its card on {slug})"
+                        .replace("{slug}", slug)
+                } else {
+                    String::new()
+                }
+            ),
+        ))
+    }
+
+    /// After the default branch moved: an owner's answer [`Landing::answers_left`] finds now was
+    /// saved while the default branch moved, after the last look. The land cannot refuse any more,
+    /// so it says it on the thread to the orchestrator, which puts it on the default branch's card:
+    /// from then on the Symphony saves a line on a landed branch's page on the default branch, and
+    /// the sweep keeps the worktree holding it.
+    fn owner_lines_after(&mut self, base: &str, tip: &str) {
+        let (slug, default) = (self.slug, &self.settings.default_branch);
+        let said = match self.answers_left(base, tip) {
+            Ok(held) if held.is_empty() => return,
+            Ok(held) => {
+                let cards: Vec<&str> = held
+                    .iter()
+                    .flat_map(|(_, found)| found.iter().map(|a| a.card.as_str()))
+                    .collect();
+                format!(
+                    "land {slug}: {} holds the owner's answer on {} saved while {slug} landed, \
+                     which {default} does not hold: copy it onto that card on {default} and \
+                     commit it there; the sweep keeps that worktree meanwhile",
+                    self.holding(&held),
+                    cards.join(", ")
+                )
+            }
+            Err(why) => format!(
+                "land {slug}: after it landed, {why}: read it by hand for an owner's answer \
+                 {default} lacks; the sweep keeps a worktree it cannot read"
+            ),
+        };
+        self.say(&said);
+        self.post(&said, Some("@orchestrator"));
     }
 
     /// What the executor does when the branch, as approved, cannot land: fix it there and have its

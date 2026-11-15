@@ -113,6 +113,46 @@ pub struct Thread {
     pub status: String,
 }
 
+/// The thread as the Symphony's API sends it, its messages not drawn yet: field for field, so a
+/// reader of the store deserializes no wire shape (and the server links none of the blocks').
+impl From<Thread> for symphony_api::Ask {
+    fn from(thread: Thread) -> Self {
+        symphony_api::Ask {
+            id: thread.id,
+            path: thread.path,
+            anchor: thread.anchor,
+            quote: thread.quote,
+            question: thread.question,
+            asked: thread.asked,
+            updated: thread.updated,
+            answers: thread
+                .answers
+                .into_iter()
+                .map(|answer| symphony_api::AskAnswer {
+                    text: answer.text,
+                    by: answer.by,
+                    at: answer.at,
+                })
+                .collect(),
+            messages: thread
+                .messages
+                .into_iter()
+                .map(|message| symphony_api::AskMessage {
+                    seq: message.seq,
+                    kind: message.kind,
+                    by: message.by,
+                    text: message.text,
+                    at: message.at,
+                    blocks: Vec::new(),
+                    html: String::new(),
+                    media: Vec::new(),
+                })
+                .collect(),
+            status: thread.status,
+        }
+    }
+}
+
 /// Who answered the owner on a card or a comment, as `symphony reply --as HANDLE` names itself: the
 /// register's lines say only `agent`, so the owner's ask is credited from here
 /// ([`crate::owner_asks`]). Kept a day, as threads are.
@@ -576,14 +616,15 @@ impl AskStore {
     }
 }
 
-/// `ASKS_DB` when set, else `asks/asks.db` in the artifacts folder (`artifacts/`) of the main
-/// checkout every worktree of `root`'s repository shares, else under `root`.
+/// `ASKS_DB` when set, else `asks/asks.db` in the artifacts folder (`[project] artifacts`, else
+/// `artifacts/`, read alone: [`symphony_board::project::artifacts`]) of the main checkout every
+/// worktree of `root`'s repository shares, else under `root`.
 pub fn default_path(root: &Path, asks_db: Option<&str>) -> PathBuf {
     if let Some(db) = asks_db.filter(|db| !db.is_empty()) {
         return PathBuf::from(db);
     }
     let mut base = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
-    let common = symphony_board::sys::output(command("git").arg("-C").arg(root).args([
+    let common = symphony_board::sys::output(crate::children::git().arg("-C").arg(root).args([
         "rev-parse",
         "--path-format=absolute",
         "--git-common-dir",
@@ -599,7 +640,10 @@ pub fn default_path(root: &Path, asks_db: Option<&str>) -> PathBuf {
             base = checkout.to_path_buf();
         }
     }
-    base.join(crate::project::Project::of(&base).artifact("asks/asks.db"))
+    // The artifacts folder read alone and quietly, as the board finds the store: no plugin's
+    // process starts for a path, and a project that does not load keeps its store where it is.
+    let artifacts = symphony_board::project::artifacts(&base).unwrap_or_else(|| "artifacts".into());
+    base.join(format!("{artifacts}/asks/asks.db"))
 }
 
 /// `ASK <id> <path>#<anchor> — <question>` on one line.

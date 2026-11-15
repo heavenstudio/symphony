@@ -1,0 +1,5098 @@
+{
+  "here": [
+    ["", "/tasks", "/tasks"],
+    ["", "/", "/"],
+    ["", "tasks", "tasks"],
+    ["", "//cdn.example/x", "//cdn.example/x"],
+    ["", "#top", "#top"],
+    ["", "https://a.example/b", "https://a.example/b"],
+    ["", "", ""],
+    ["/alpha", "/tasks", "/alpha/tasks"],
+    ["/alpha", "/", "/alpha/"],
+    ["/alpha", "tasks", "tasks"],
+    ["/alpha", "//cdn.example/x", "//cdn.example/x"],
+    ["/alpha", "#top", "#top"],
+    ["/alpha", "https://a.example/b", "https://a.example/b"],
+    ["/alpha", "", ""]
+  ],
+  "strip": [
+    ["", "/alpha", "/alpha"],
+    ["", "/alpha/", "/alpha/"],
+    ["", "/alpha/queue", "/alpha/queue"],
+    ["", "/alphabet", "/alphabet"],
+    ["", "/queue", "/queue"],
+    ["", "/", "/"],
+    ["/alpha", "/alpha", "/"],
+    ["/alpha", "/alpha/", "/"],
+    ["/alpha", "/alpha/queue", "/queue"],
+    ["/alpha", "/alphabet", "/alphabet"],
+    ["/alpha", "/queue", "/queue"],
+    ["/alpha", "/", "/"]
+  ],
+  "views": [
+    {
+      "view": { "name": "", "register": "", "nav": [], "entrypoints": [] },
+      "routes": [
+        ["", false, false],
+        ["queue", false, false],
+        ["tasks", false, false],
+        ["task/a/b", false, false],
+        ["docs", true, true],
+        ["docs/", true, true],
+        ["docs/A.md", true, false],
+        ["docs/a/", true, true],
+        ["docs/a", true, true],
+        ["docs/x.png", false, false],
+        ["docs/page.html", true, false],
+        ["docs/A.HTM", true, false],
+        ["docs/a/b.Htm", true, false],
+        ["docs/.html", false, false],
+        ["docs/page.html/", true, true],
+        ["docs/a.html.md", true, false],
+        ["docs/a.xhtml", false, false],
+        ["docs/html", true, true],
+        ["design/c.html", false, false],
+        ["readout.html", false, false],
+        ["tasks/a.html", false, false],
+        ["docs/guide.md/", true, true],
+        ["design/", false, false],
+        ["design/B.md", false, false],
+        ["README.md", false, false],
+        ["notes", false, false],
+        ["shelf", false, false],
+        ["maps/", false, false],
+        ["docs/SHELF.md", true, false],
+        ["taskforce/notes.md", false, false],
+        ["api/x", false, false],
+        ["assets/a.js", false, false],
+        ["artifacts/uploads/a", false, false]
+      ],
+      "ownPages": [
+        ["/", "Home"],
+        ["/queue", "Queue"],
+        ["/docs/", "Docs"],
+        ["/tasks", "Board"],
+        ["/reports", "Reports"],
+        ["/runs", "Runs"],
+        ["/agents", "Agents"]
+      ],
+      "readme": "docs/README.md"
+    },
+    {
+      "view": { "name": "", "register": "", "nav": [], "entrypoints": [], "base": "/alpha" },
+      "routes": [
+        ["", false, false],
+        ["queue", false, false],
+        ["tasks", false, false],
+        ["task/a/b", false, false],
+        ["docs", true, true],
+        ["docs/", true, true],
+        ["docs/A.md", true, false],
+        ["docs/a/", true, true],
+        ["docs/a", true, true],
+        ["docs/x.png", false, false],
+        ["docs/page.html", true, false],
+        ["docs/A.HTM", true, false],
+        ["docs/a/b.Htm", true, false],
+        ["docs/.html", false, false],
+        ["docs/page.html/", true, true],
+        ["docs/a.html.md", true, false],
+        ["docs/a.xhtml", false, false],
+        ["docs/html", true, true],
+        ["design/c.html", false, false],
+        ["readout.html", false, false],
+        ["tasks/a.html", false, false],
+        ["docs/guide.md/", true, true],
+        ["design/", false, false],
+        ["design/B.md", false, false],
+        ["README.md", false, false],
+        ["notes", false, false],
+        ["shelf", false, false],
+        ["maps/", false, false],
+        ["docs/SHELF.md", true, false],
+        ["taskforce/notes.md", false, false],
+        ["api/x", false, false],
+        ["assets/a.js", false, false],
+        ["artifacts/uploads/a", false, false]
+      ],
+      "ownPages": [
+        ["/", "Home"],
+        ["/queue", "Queue"],
+        ["/docs/", "Docs"],
+        ["/tasks", "Board"],
+        ["/reports", "Reports"],
+        ["/runs", "Runs"],
+        ["/agents", "Agents"]
+      ],
+      "readme": "docs/README.md"
+    },
+    {
+      "view": { "name": "", "register": "", "nav": [], "entrypoints": ["docs", "design"] },
+      "routes": [
+        ["", false, false],
+        ["queue", false, false],
+        ["tasks", false, false],
+        ["task/a/b", false, false],
+        ["docs", true, true],
+        ["docs/", true, true],
+        ["docs/A.md", true, false],
+        ["docs/a/", true, true],
+        ["docs/a", true, true],
+        ["docs/x.png", false, false],
+        ["docs/page.html", true, false],
+        ["docs/A.HTM", true, false],
+        ["docs/a/b.Htm", true, false],
+        ["docs/.html", false, false],
+        ["docs/page.html/", true, true],
+        ["docs/a.html.md", true, false],
+        ["docs/a.xhtml", false, false],
+        ["docs/html", true, true],
+        ["design/c.html", true, false],
+        ["readout.html", false, false],
+        ["tasks/a.html", false, false],
+        ["docs/guide.md/", true, true],
+        ["design/", true, true],
+        ["design/B.md", true, false],
+        ["README.md", false, false],
+        ["notes", false, false],
+        ["shelf", false, false],
+        ["maps/", false, false],
+        ["docs/SHELF.md", true, false],
+        ["taskforce/notes.md", false, false],
+        ["api/x", false, false],
+        ["assets/a.js", false, false],
+        ["artifacts/uploads/a", false, false]
+      ],
+      "ownPages": [
+        ["/", "Home"],
+        ["/queue", "Queue"],
+        ["/docs/", "Docs"],
+        ["/tasks", "Board"],
+        ["/reports", "Reports"],
+        ["/runs", "Runs"],
+        ["/agents", "Agents"]
+      ],
+      "readme": "docs/README.md"
+    },
+    {
+      "view": { "name": "", "register": "", "nav": [], "entrypoints": [""] },
+      "routes": [
+        ["", true, true],
+        ["queue", false, false],
+        ["tasks", false, false],
+        ["task/a/b", false, false],
+        ["docs", true, true],
+        ["docs/", true, true],
+        ["docs/A.md", true, false],
+        ["docs/a/", true, true],
+        ["docs/a", true, true],
+        ["docs/x.png", false, false],
+        ["docs/page.html", true, false],
+        ["docs/A.HTM", true, false],
+        ["docs/a/b.Htm", true, false],
+        ["docs/.html", false, false],
+        ["docs/page.html/", true, true],
+        ["docs/a.html.md", true, false],
+        ["docs/a.xhtml", false, false],
+        ["docs/html", true, true],
+        ["design/c.html", true, false],
+        ["readout.html", true, false],
+        ["tasks/a.html", false, false],
+        ["docs/guide.md/", true, true],
+        ["design/", true, true],
+        ["design/B.md", true, false],
+        ["README.md", true, false],
+        ["notes", true, true],
+        ["shelf", true, true],
+        ["maps/", true, true],
+        ["docs/SHELF.md", true, false],
+        ["taskforce/notes.md", true, false],
+        ["api/x", false, false],
+        ["assets/a.js", false, false],
+        ["artifacts/uploads/a", false, false]
+      ],
+      "ownPages": [
+        ["/", "Home"],
+        ["/queue", "Queue"],
+        ["/", "Docs"],
+        ["/tasks", "Board"],
+        ["/reports", "Reports"],
+        ["/runs", "Runs"],
+        ["/agents", "Agents"]
+      ],
+      "readme": "README.md"
+    },
+    {
+      "view": {
+        "name": "",
+        "register": "",
+        "nav": [
+          { "label": "▤ shelf", "title": "▤ shelf", "href": "/shelf", "document": "docs/SHELF.md" },
+          { "label": "◇ maps", "title": "◇ maps", "href": "/maps/", "document": "docs/MAPS.md" }
+        ],
+        "entrypoints": []
+      },
+      "routes": [
+        ["", false, false],
+        ["queue", false, false],
+        ["tasks", false, false],
+        ["task/a/b", false, false],
+        ["docs", true, true],
+        ["docs/", true, true],
+        ["docs/A.md", true, false],
+        ["docs/a/", true, true],
+        ["docs/a", true, true],
+        ["docs/x.png", false, false],
+        ["docs/page.html", true, false],
+        ["docs/A.HTM", true, false],
+        ["docs/a/b.Htm", true, false],
+        ["docs/.html", false, false],
+        ["docs/page.html/", true, true],
+        ["docs/a.html.md", true, false],
+        ["docs/a.xhtml", false, false],
+        ["docs/html", true, true],
+        ["design/c.html", false, false],
+        ["readout.html", false, false],
+        ["tasks/a.html", false, false],
+        ["docs/guide.md/", true, true],
+        ["design/", false, false],
+        ["design/B.md", false, false],
+        ["README.md", false, false],
+        ["notes", false, false],
+        ["shelf", false, false],
+        ["maps/", false, false],
+        ["docs/SHELF.md", true, false],
+        ["taskforce/notes.md", false, false],
+        ["api/x", false, false],
+        ["assets/a.js", false, false],
+        ["artifacts/uploads/a", false, false]
+      ],
+      "ownPages": [
+        ["/", "Home"],
+        ["/queue", "Queue"],
+        ["/docs/", "Docs"],
+        ["/tasks", "Board"],
+        ["/reports", "Reports"],
+        ["/runs", "Runs"],
+        ["/agents", "Agents"]
+      ],
+      "readme": "docs/README.md"
+    }
+  ],
+  "queueCategory": [
+    ["docs/ROOT.md", "docs"],
+    ["docs/lamps/a.md", "lamps"],
+    ["docs/a/b/c.md", "a"],
+    ["@proposal~topic/docs/pictures/CARDS.md", "pictures"],
+    ["@scope", "docs"],
+    ["other/a.md", "docs"],
+    ["docs/", "docs"],
+    ["", "docs"]
+  ],
+  "answersVerdicts": [
+    ["verdicts/2026-11-11-1244", true],
+    ["verdicts/", true],
+    ["verdicts", false],
+    ["app/verdicts/a", false],
+    ["Verdicts/a", false],
+    ["", false]
+  ],
+  "isHtml": [
+    ["a.html", true],
+    ["A.HTML", true],
+    ["a.Htm", true],
+    ["docs/a.htm", true],
+    ["a.md", false],
+    ["html", false],
+    [".html", false],
+    ["docs/.htm", false],
+    ["a.html/", false],
+    ["a.html.md", false],
+    ["a.xhtml", false],
+    ["a.html5", false]
+  ],
+  "slugOrder": [
+    ["", "", 0],
+    ["", "0", -1],
+    ["", "00", -1],
+    ["", "01", -1],
+    ["", "1", -1],
+    ["", "9", -1],
+    ["", "10", -1],
+    ["", "ready-3", -1],
+    ["", "ready-30", -1],
+    ["", "ready-03", -1],
+    ["", "ready-3a", -1],
+    ["", "ready-3-1", -1],
+    ["", "a2b9", -1],
+    ["", "a2b10", -1],
+    ["", "a10b1", -1],
+    ["", "ready", -1],
+    ["", "ready-", -1],
+    ["", "ready-#", -1],
+    ["", "ready-a", -1],
+    ["", "ready-é", -1],
+    ["", "é01", -1],
+    ["", "a/2", -1],
+    ["", "a/10", -1],
+    ["", "A1", -1],
+    ["", "a 1", -1],
+    ["", "￿", -1],
+    ["", "𐀀", -1],
+    ["0", "", 1],
+    ["0", "0", 0],
+    ["0", "00", -1],
+    ["0", "01", -1],
+    ["0", "1", -1],
+    ["0", "9", -1],
+    ["0", "10", -1],
+    ["0", "ready-3", -1],
+    ["0", "ready-30", -1],
+    ["0", "ready-03", -1],
+    ["0", "ready-3a", -1],
+    ["0", "ready-3-1", -1],
+    ["0", "a2b9", -1],
+    ["0", "a2b10", -1],
+    ["0", "a10b1", -1],
+    ["0", "ready", -1],
+    ["0", "ready-", -1],
+    ["0", "ready-#", -1],
+    ["0", "ready-a", -1],
+    ["0", "ready-é", -1],
+    ["0", "é01", -1],
+    ["0", "a/2", -1],
+    ["0", "a/10", -1],
+    ["0", "A1", -1],
+    ["0", "a 1", -1],
+    ["0", "￿", -1],
+    ["0", "𐀀", -1],
+    ["00", "", 1],
+    ["00", "0", 1],
+    ["00", "00", 0],
+    ["00", "01", -1],
+    ["00", "1", -1],
+    ["00", "9", -1],
+    ["00", "10", -1],
+    ["00", "ready-3", -1],
+    ["00", "ready-30", -1],
+    ["00", "ready-03", -1],
+    ["00", "ready-3a", -1],
+    ["00", "ready-3-1", -1],
+    ["00", "a2b9", -1],
+    ["00", "a2b10", -1],
+    ["00", "a10b1", -1],
+    ["00", "ready", -1],
+    ["00", "ready-", -1],
+    ["00", "ready-#", -1],
+    ["00", "ready-a", -1],
+    ["00", "ready-é", -1],
+    ["00", "é01", -1],
+    ["00", "a/2", -1],
+    ["00", "a/10", -1],
+    ["00", "A1", -1],
+    ["00", "a 1", -1],
+    ["00", "￿", -1],
+    ["00", "𐀀", -1],
+    ["01", "", 1],
+    ["01", "0", 1],
+    ["01", "00", 1],
+    ["01", "01", 0],
+    ["01", "1", -1],
+    ["01", "9", -1],
+    ["01", "10", -1],
+    ["01", "ready-3", -1],
+    ["01", "ready-30", -1],
+    ["01", "ready-03", -1],
+    ["01", "ready-3a", -1],
+    ["01", "ready-3-1", -1],
+    ["01", "a2b9", -1],
+    ["01", "a2b10", -1],
+    ["01", "a10b1", -1],
+    ["01", "ready", -1],
+    ["01", "ready-", -1],
+    ["01", "ready-#", -1],
+    ["01", "ready-a", -1],
+    ["01", "ready-é", -1],
+    ["01", "é01", -1],
+    ["01", "a/2", -1],
+    ["01", "a/10", -1],
+    ["01", "A1", -1],
+    ["01", "a 1", -1],
+    ["01", "￿", -1],
+    ["01", "𐀀", -1],
+    ["1", "", 1],
+    ["1", "0", 1],
+    ["1", "00", 1],
+    ["1", "01", 1],
+    ["1", "1", 0],
+    ["1", "9", -1],
+    ["1", "10", -1],
+    ["1", "ready-3", -1],
+    ["1", "ready-30", -1],
+    ["1", "ready-03", -1],
+    ["1", "ready-3a", -1],
+    ["1", "ready-3-1", -1],
+    ["1", "a2b9", -1],
+    ["1", "a2b10", -1],
+    ["1", "a10b1", -1],
+    ["1", "ready", -1],
+    ["1", "ready-", -1],
+    ["1", "ready-#", -1],
+    ["1", "ready-a", -1],
+    ["1", "ready-é", -1],
+    ["1", "é01", -1],
+    ["1", "a/2", -1],
+    ["1", "a/10", -1],
+    ["1", "A1", -1],
+    ["1", "a 1", -1],
+    ["1", "￿", -1],
+    ["1", "𐀀", -1],
+    ["9", "", 1],
+    ["9", "0", 1],
+    ["9", "00", 1],
+    ["9", "01", 1],
+    ["9", "1", 1],
+    ["9", "9", 0],
+    ["9", "10", -1],
+    ["9", "ready-3", -1],
+    ["9", "ready-30", -1],
+    ["9", "ready-03", -1],
+    ["9", "ready-3a", -1],
+    ["9", "ready-3-1", -1],
+    ["9", "a2b9", -1],
+    ["9", "a2b10", -1],
+    ["9", "a10b1", -1],
+    ["9", "ready", -1],
+    ["9", "ready-", -1],
+    ["9", "ready-#", -1],
+    ["9", "ready-a", -1],
+    ["9", "ready-é", -1],
+    ["9", "é01", -1],
+    ["9", "a/2", -1],
+    ["9", "a/10", -1],
+    ["9", "A1", -1],
+    ["9", "a 1", -1],
+    ["9", "￿", -1],
+    ["9", "𐀀", -1],
+    ["10", "", 1],
+    ["10", "0", 1],
+    ["10", "00", 1],
+    ["10", "01", 1],
+    ["10", "1", 1],
+    ["10", "9", 1],
+    ["10", "10", 0],
+    ["10", "ready-3", -1],
+    ["10", "ready-30", -1],
+    ["10", "ready-03", -1],
+    ["10", "ready-3a", -1],
+    ["10", "ready-3-1", -1],
+    ["10", "a2b9", -1],
+    ["10", "a2b10", -1],
+    ["10", "a10b1", -1],
+    ["10", "ready", -1],
+    ["10", "ready-", -1],
+    ["10", "ready-#", -1],
+    ["10", "ready-a", -1],
+    ["10", "ready-é", -1],
+    ["10", "é01", -1],
+    ["10", "a/2", -1],
+    ["10", "a/10", -1],
+    ["10", "A1", -1],
+    ["10", "a 1", -1],
+    ["10", "￿", -1],
+    ["10", "𐀀", -1],
+    ["ready-3", "", 1],
+    ["ready-3", "0", 1],
+    ["ready-3", "00", 1],
+    ["ready-3", "01", 1],
+    ["ready-3", "1", 1],
+    ["ready-3", "9", 1],
+    ["ready-3", "10", 1],
+    ["ready-3", "ready-3", 0],
+    ["ready-3", "ready-30", -1],
+    ["ready-3", "ready-03", 1],
+    ["ready-3", "ready-3a", -1],
+    ["ready-3", "ready-3-1", -1],
+    ["ready-3", "a2b9", 1],
+    ["ready-3", "a2b10", 1],
+    ["ready-3", "a10b1", 1],
+    ["ready-3", "ready", 1],
+    ["ready-3", "ready-", 1],
+    ["ready-3", "ready-#", 1],
+    ["ready-3", "ready-a", -1],
+    ["ready-3", "ready-é", -1],
+    ["ready-3", "é01", -1],
+    ["ready-3", "a/2", 1],
+    ["ready-3", "a/10", 1],
+    ["ready-3", "A1", 1],
+    ["ready-3", "a 1", 1],
+    ["ready-3", "￿", -1],
+    ["ready-3", "𐀀", -1],
+    ["ready-30", "", 1],
+    ["ready-30", "0", 1],
+    ["ready-30", "00", 1],
+    ["ready-30", "01", 1],
+    ["ready-30", "1", 1],
+    ["ready-30", "9", 1],
+    ["ready-30", "10", 1],
+    ["ready-30", "ready-3", 1],
+    ["ready-30", "ready-30", 0],
+    ["ready-30", "ready-03", 1],
+    ["ready-30", "ready-3a", 1],
+    ["ready-30", "ready-3-1", 1],
+    ["ready-30", "a2b9", 1],
+    ["ready-30", "a2b10", 1],
+    ["ready-30", "a10b1", 1],
+    ["ready-30", "ready", 1],
+    ["ready-30", "ready-", 1],
+    ["ready-30", "ready-#", 1],
+    ["ready-30", "ready-a", -1],
+    ["ready-30", "ready-é", -1],
+    ["ready-30", "é01", -1],
+    ["ready-30", "a/2", 1],
+    ["ready-30", "a/10", 1],
+    ["ready-30", "A1", 1],
+    ["ready-30", "a 1", 1],
+    ["ready-30", "￿", -1],
+    ["ready-30", "𐀀", -1],
+    ["ready-03", "", 1],
+    ["ready-03", "0", 1],
+    ["ready-03", "00", 1],
+    ["ready-03", "01", 1],
+    ["ready-03", "1", 1],
+    ["ready-03", "9", 1],
+    ["ready-03", "10", 1],
+    ["ready-03", "ready-3", -1],
+    ["ready-03", "ready-30", -1],
+    ["ready-03", "ready-03", 0],
+    ["ready-03", "ready-3a", -1],
+    ["ready-03", "ready-3-1", -1],
+    ["ready-03", "a2b9", 1],
+    ["ready-03", "a2b10", 1],
+    ["ready-03", "a10b1", 1],
+    ["ready-03", "ready", 1],
+    ["ready-03", "ready-", 1],
+    ["ready-03", "ready-#", 1],
+    ["ready-03", "ready-a", -1],
+    ["ready-03", "ready-é", -1],
+    ["ready-03", "é01", -1],
+    ["ready-03", "a/2", 1],
+    ["ready-03", "a/10", 1],
+    ["ready-03", "A1", 1],
+    ["ready-03", "a 1", 1],
+    ["ready-03", "￿", -1],
+    ["ready-03", "𐀀", -1],
+    ["ready-3a", "", 1],
+    ["ready-3a", "0", 1],
+    ["ready-3a", "00", 1],
+    ["ready-3a", "01", 1],
+    ["ready-3a", "1", 1],
+    ["ready-3a", "9", 1],
+    ["ready-3a", "10", 1],
+    ["ready-3a", "ready-3", 1],
+    ["ready-3a", "ready-30", -1],
+    ["ready-3a", "ready-03", 1],
+    ["ready-3a", "ready-3a", 0],
+    ["ready-3a", "ready-3-1", 1],
+    ["ready-3a", "a2b9", 1],
+    ["ready-3a", "a2b10", 1],
+    ["ready-3a", "a10b1", 1],
+    ["ready-3a", "ready", 1],
+    ["ready-3a", "ready-", 1],
+    ["ready-3a", "ready-#", 1],
+    ["ready-3a", "ready-a", -1],
+    ["ready-3a", "ready-é", -1],
+    ["ready-3a", "é01", -1],
+    ["ready-3a", "a/2", 1],
+    ["ready-3a", "a/10", 1],
+    ["ready-3a", "A1", 1],
+    ["ready-3a", "a 1", 1],
+    ["ready-3a", "￿", -1],
+    ["ready-3a", "𐀀", -1],
+    ["ready-3-1", "", 1],
+    ["ready-3-1", "0", 1],
+    ["ready-3-1", "00", 1],
+    ["ready-3-1", "01", 1],
+    ["ready-3-1", "1", 1],
+    ["ready-3-1", "9", 1],
+    ["ready-3-1", "10", 1],
+    ["ready-3-1", "ready-3", 1],
+    ["ready-3-1", "ready-30", -1],
+    ["ready-3-1", "ready-03", 1],
+    ["ready-3-1", "ready-3a", -1],
+    ["ready-3-1", "ready-3-1", 0],
+    ["ready-3-1", "a2b9", 1],
+    ["ready-3-1", "a2b10", 1],
+    ["ready-3-1", "a10b1", 1],
+    ["ready-3-1", "ready", 1],
+    ["ready-3-1", "ready-", 1],
+    ["ready-3-1", "ready-#", 1],
+    ["ready-3-1", "ready-a", -1],
+    ["ready-3-1", "ready-é", -1],
+    ["ready-3-1", "é01", -1],
+    ["ready-3-1", "a/2", 1],
+    ["ready-3-1", "a/10", 1],
+    ["ready-3-1", "A1", 1],
+    ["ready-3-1", "a 1", 1],
+    ["ready-3-1", "￿", -1],
+    ["ready-3-1", "𐀀", -1],
+    ["a2b9", "", 1],
+    ["a2b9", "0", 1],
+    ["a2b9", "00", 1],
+    ["a2b9", "01", 1],
+    ["a2b9", "1", 1],
+    ["a2b9", "9", 1],
+    ["a2b9", "10", 1],
+    ["a2b9", "ready-3", -1],
+    ["a2b9", "ready-30", -1],
+    ["a2b9", "ready-03", -1],
+    ["a2b9", "ready-3a", -1],
+    ["a2b9", "ready-3-1", -1],
+    ["a2b9", "a2b9", 0],
+    ["a2b9", "a2b10", -1],
+    ["a2b9", "a10b1", -1],
+    ["a2b9", "ready", -1],
+    ["a2b9", "ready-", -1],
+    ["a2b9", "ready-#", -1],
+    ["a2b9", "ready-a", -1],
+    ["a2b9", "ready-é", -1],
+    ["a2b9", "é01", -1],
+    ["a2b9", "a/2", 1],
+    ["a2b9", "a/10", 1],
+    ["a2b9", "A1", 1],
+    ["a2b9", "a 1", 1],
+    ["a2b9", "￿", -1],
+    ["a2b9", "𐀀", -1],
+    ["a2b10", "", 1],
+    ["a2b10", "0", 1],
+    ["a2b10", "00", 1],
+    ["a2b10", "01", 1],
+    ["a2b10", "1", 1],
+    ["a2b10", "9", 1],
+    ["a2b10", "10", 1],
+    ["a2b10", "ready-3", -1],
+    ["a2b10", "ready-30", -1],
+    ["a2b10", "ready-03", -1],
+    ["a2b10", "ready-3a", -1],
+    ["a2b10", "ready-3-1", -1],
+    ["a2b10", "a2b9", 1],
+    ["a2b10", "a2b10", 0],
+    ["a2b10", "a10b1", -1],
+    ["a2b10", "ready", -1],
+    ["a2b10", "ready-", -1],
+    ["a2b10", "ready-#", -1],
+    ["a2b10", "ready-a", -1],
+    ["a2b10", "ready-é", -1],
+    ["a2b10", "é01", -1],
+    ["a2b10", "a/2", 1],
+    ["a2b10", "a/10", 1],
+    ["a2b10", "A1", 1],
+    ["a2b10", "a 1", 1],
+    ["a2b10", "￿", -1],
+    ["a2b10", "𐀀", -1],
+    ["a10b1", "", 1],
+    ["a10b1", "0", 1],
+    ["a10b1", "00", 1],
+    ["a10b1", "01", 1],
+    ["a10b1", "1", 1],
+    ["a10b1", "9", 1],
+    ["a10b1", "10", 1],
+    ["a10b1", "ready-3", -1],
+    ["a10b1", "ready-30", -1],
+    ["a10b1", "ready-03", -1],
+    ["a10b1", "ready-3a", -1],
+    ["a10b1", "ready-3-1", -1],
+    ["a10b1", "a2b9", 1],
+    ["a10b1", "a2b10", 1],
+    ["a10b1", "a10b1", 0],
+    ["a10b1", "ready", -1],
+    ["a10b1", "ready-", -1],
+    ["a10b1", "ready-#", -1],
+    ["a10b1", "ready-a", -1],
+    ["a10b1", "ready-é", -1],
+    ["a10b1", "é01", -1],
+    ["a10b1", "a/2", 1],
+    ["a10b1", "a/10", 1],
+    ["a10b1", "A1", 1],
+    ["a10b1", "a 1", 1],
+    ["a10b1", "￿", -1],
+    ["a10b1", "𐀀", -1],
+    ["ready", "", 1],
+    ["ready", "0", 1],
+    ["ready", "00", 1],
+    ["ready", "01", 1],
+    ["ready", "1", 1],
+    ["ready", "9", 1],
+    ["ready", "10", 1],
+    ["ready", "ready-3", -1],
+    ["ready", "ready-30", -1],
+    ["ready", "ready-03", -1],
+    ["ready", "ready-3a", -1],
+    ["ready", "ready-3-1", -1],
+    ["ready", "a2b9", 1],
+    ["ready", "a2b10", 1],
+    ["ready", "a10b1", 1],
+    ["ready", "ready", 0],
+    ["ready", "ready-", -1],
+    ["ready", "ready-#", -1],
+    ["ready", "ready-a", -1],
+    ["ready", "ready-é", -1],
+    ["ready", "é01", -1],
+    ["ready", "a/2", 1],
+    ["ready", "a/10", 1],
+    ["ready", "A1", 1],
+    ["ready", "a 1", 1],
+    ["ready", "￿", -1],
+    ["ready", "𐀀", -1],
+    ["ready-", "", 1],
+    ["ready-", "0", 1],
+    ["ready-", "00", 1],
+    ["ready-", "01", 1],
+    ["ready-", "1", 1],
+    ["ready-", "9", 1],
+    ["ready-", "10", 1],
+    ["ready-", "ready-3", -1],
+    ["ready-", "ready-30", -1],
+    ["ready-", "ready-03", -1],
+    ["ready-", "ready-3a", -1],
+    ["ready-", "ready-3-1", -1],
+    ["ready-", "a2b9", 1],
+    ["ready-", "a2b10", 1],
+    ["ready-", "a10b1", 1],
+    ["ready-", "ready", 1],
+    ["ready-", "ready-", 0],
+    ["ready-", "ready-#", -1],
+    ["ready-", "ready-a", -1],
+    ["ready-", "ready-é", -1],
+    ["ready-", "é01", -1],
+    ["ready-", "a/2", 1],
+    ["ready-", "a/10", 1],
+    ["ready-", "A1", 1],
+    ["ready-", "a 1", 1],
+    ["ready-", "￿", -1],
+    ["ready-", "𐀀", -1],
+    ["ready-#", "", 1],
+    ["ready-#", "0", 1],
+    ["ready-#", "00", 1],
+    ["ready-#", "01", 1],
+    ["ready-#", "1", 1],
+    ["ready-#", "9", 1],
+    ["ready-#", "10", 1],
+    ["ready-#", "ready-3", -1],
+    ["ready-#", "ready-30", -1],
+    ["ready-#", "ready-03", -1],
+    ["ready-#", "ready-3a", -1],
+    ["ready-#", "ready-3-1", -1],
+    ["ready-#", "a2b9", 1],
+    ["ready-#", "a2b10", 1],
+    ["ready-#", "a10b1", 1],
+    ["ready-#", "ready", 1],
+    ["ready-#", "ready-", 1],
+    ["ready-#", "ready-#", 0],
+    ["ready-#", "ready-a", -1],
+    ["ready-#", "ready-é", -1],
+    ["ready-#", "é01", -1],
+    ["ready-#", "a/2", 1],
+    ["ready-#", "a/10", 1],
+    ["ready-#", "A1", 1],
+    ["ready-#", "a 1", 1],
+    ["ready-#", "￿", -1],
+    ["ready-#", "𐀀", -1],
+    ["ready-a", "", 1],
+    ["ready-a", "0", 1],
+    ["ready-a", "00", 1],
+    ["ready-a", "01", 1],
+    ["ready-a", "1", 1],
+    ["ready-a", "9", 1],
+    ["ready-a", "10", 1],
+    ["ready-a", "ready-3", 1],
+    ["ready-a", "ready-30", 1],
+    ["ready-a", "ready-03", 1],
+    ["ready-a", "ready-3a", 1],
+    ["ready-a", "ready-3-1", 1],
+    ["ready-a", "a2b9", 1],
+    ["ready-a", "a2b10", 1],
+    ["ready-a", "a10b1", 1],
+    ["ready-a", "ready", 1],
+    ["ready-a", "ready-", 1],
+    ["ready-a", "ready-#", 1],
+    ["ready-a", "ready-a", 0],
+    ["ready-a", "ready-é", -1],
+    ["ready-a", "é01", -1],
+    ["ready-a", "a/2", 1],
+    ["ready-a", "a/10", 1],
+    ["ready-a", "A1", 1],
+    ["ready-a", "a 1", 1],
+    ["ready-a", "￿", -1],
+    ["ready-a", "𐀀", -1],
+    ["ready-é", "", 1],
+    ["ready-é", "0", 1],
+    ["ready-é", "00", 1],
+    ["ready-é", "01", 1],
+    ["ready-é", "1", 1],
+    ["ready-é", "9", 1],
+    ["ready-é", "10", 1],
+    ["ready-é", "ready-3", 1],
+    ["ready-é", "ready-30", 1],
+    ["ready-é", "ready-03", 1],
+    ["ready-é", "ready-3a", 1],
+    ["ready-é", "ready-3-1", 1],
+    ["ready-é", "a2b9", 1],
+    ["ready-é", "a2b10", 1],
+    ["ready-é", "a10b1", 1],
+    ["ready-é", "ready", 1],
+    ["ready-é", "ready-", 1],
+    ["ready-é", "ready-#", 1],
+    ["ready-é", "ready-a", 1],
+    ["ready-é", "ready-é", 0],
+    ["ready-é", "é01", -1],
+    ["ready-é", "a/2", 1],
+    ["ready-é", "a/10", 1],
+    ["ready-é", "A1", 1],
+    ["ready-é", "a 1", 1],
+    ["ready-é", "￿", -1],
+    ["ready-é", "𐀀", -1],
+    ["é01", "", 1],
+    ["é01", "0", 1],
+    ["é01", "00", 1],
+    ["é01", "01", 1],
+    ["é01", "1", 1],
+    ["é01", "9", 1],
+    ["é01", "10", 1],
+    ["é01", "ready-3", 1],
+    ["é01", "ready-30", 1],
+    ["é01", "ready-03", 1],
+    ["é01", "ready-3a", 1],
+    ["é01", "ready-3-1", 1],
+    ["é01", "a2b9", 1],
+    ["é01", "a2b10", 1],
+    ["é01", "a10b1", 1],
+    ["é01", "ready", 1],
+    ["é01", "ready-", 1],
+    ["é01", "ready-#", 1],
+    ["é01", "ready-a", 1],
+    ["é01", "ready-é", 1],
+    ["é01", "é01", 0],
+    ["é01", "a/2", 1],
+    ["é01", "a/10", 1],
+    ["é01", "A1", 1],
+    ["é01", "a 1", 1],
+    ["é01", "￿", -1],
+    ["é01", "𐀀", -1],
+    ["a/2", "", 1],
+    ["a/2", "0", 1],
+    ["a/2", "00", 1],
+    ["a/2", "01", 1],
+    ["a/2", "1", 1],
+    ["a/2", "9", 1],
+    ["a/2", "10", 1],
+    ["a/2", "ready-3", -1],
+    ["a/2", "ready-30", -1],
+    ["a/2", "ready-03", -1],
+    ["a/2", "ready-3a", -1],
+    ["a/2", "ready-3-1", -1],
+    ["a/2", "a2b9", -1],
+    ["a/2", "a2b10", -1],
+    ["a/2", "a10b1", -1],
+    ["a/2", "ready", -1],
+    ["a/2", "ready-", -1],
+    ["a/2", "ready-#", -1],
+    ["a/2", "ready-a", -1],
+    ["a/2", "ready-é", -1],
+    ["a/2", "é01", -1],
+    ["a/2", "a/2", 0],
+    ["a/2", "a/10", -1],
+    ["a/2", "A1", 1],
+    ["a/2", "a 1", 1],
+    ["a/2", "￿", -1],
+    ["a/2", "𐀀", -1],
+    ["a/10", "", 1],
+    ["a/10", "0", 1],
+    ["a/10", "00", 1],
+    ["a/10", "01", 1],
+    ["a/10", "1", 1],
+    ["a/10", "9", 1],
+    ["a/10", "10", 1],
+    ["a/10", "ready-3", -1],
+    ["a/10", "ready-30", -1],
+    ["a/10", "ready-03", -1],
+    ["a/10", "ready-3a", -1],
+    ["a/10", "ready-3-1", -1],
+    ["a/10", "a2b9", -1],
+    ["a/10", "a2b10", -1],
+    ["a/10", "a10b1", -1],
+    ["a/10", "ready", -1],
+    ["a/10", "ready-", -1],
+    ["a/10", "ready-#", -1],
+    ["a/10", "ready-a", -1],
+    ["a/10", "ready-é", -1],
+    ["a/10", "é01", -1],
+    ["a/10", "a/2", 1],
+    ["a/10", "a/10", 0],
+    ["a/10", "A1", 1],
+    ["a/10", "a 1", 1],
+    ["a/10", "￿", -1],
+    ["a/10", "𐀀", -1],
+    ["A1", "", 1],
+    ["A1", "0", 1],
+    ["A1", "00", 1],
+    ["A1", "01", 1],
+    ["A1", "1", 1],
+    ["A1", "9", 1],
+    ["A1", "10", 1],
+    ["A1", "ready-3", -1],
+    ["A1", "ready-30", -1],
+    ["A1", "ready-03", -1],
+    ["A1", "ready-3a", -1],
+    ["A1", "ready-3-1", -1],
+    ["A1", "a2b9", -1],
+    ["A1", "a2b10", -1],
+    ["A1", "a10b1", -1],
+    ["A1", "ready", -1],
+    ["A1", "ready-", -1],
+    ["A1", "ready-#", -1],
+    ["A1", "ready-a", -1],
+    ["A1", "ready-é", -1],
+    ["A1", "é01", -1],
+    ["A1", "a/2", -1],
+    ["A1", "a/10", -1],
+    ["A1", "A1", 0],
+    ["A1", "a 1", -1],
+    ["A1", "￿", -1],
+    ["A1", "𐀀", -1],
+    ["a 1", "", 1],
+    ["a 1", "0", 1],
+    ["a 1", "00", 1],
+    ["a 1", "01", 1],
+    ["a 1", "1", 1],
+    ["a 1", "9", 1],
+    ["a 1", "10", 1],
+    ["a 1", "ready-3", -1],
+    ["a 1", "ready-30", -1],
+    ["a 1", "ready-03", -1],
+    ["a 1", "ready-3a", -1],
+    ["a 1", "ready-3-1", -1],
+    ["a 1", "a2b9", -1],
+    ["a 1", "a2b10", -1],
+    ["a 1", "a10b1", -1],
+    ["a 1", "ready", -1],
+    ["a 1", "ready-", -1],
+    ["a 1", "ready-#", -1],
+    ["a 1", "ready-a", -1],
+    ["a 1", "ready-é", -1],
+    ["a 1", "é01", -1],
+    ["a 1", "a/2", -1],
+    ["a 1", "a/10", -1],
+    ["a 1", "A1", 1],
+    ["a 1", "a 1", 0],
+    ["a 1", "￿", -1],
+    ["a 1", "𐀀", -1],
+    ["￿", "", 1],
+    ["￿", "0", 1],
+    ["￿", "00", 1],
+    ["￿", "01", 1],
+    ["￿", "1", 1],
+    ["￿", "9", 1],
+    ["￿", "10", 1],
+    ["￿", "ready-3", 1],
+    ["￿", "ready-30", 1],
+    ["￿", "ready-03", 1],
+    ["￿", "ready-3a", 1],
+    ["￿", "ready-3-1", 1],
+    ["￿", "a2b9", 1],
+    ["￿", "a2b10", 1],
+    ["￿", "a10b1", 1],
+    ["￿", "ready", 1],
+    ["￿", "ready-", 1],
+    ["￿", "ready-#", 1],
+    ["￿", "ready-a", 1],
+    ["￿", "ready-é", 1],
+    ["￿", "é01", 1],
+    ["￿", "a/2", 1],
+    ["￿", "a/10", 1],
+    ["￿", "A1", 1],
+    ["￿", "a 1", 1],
+    ["￿", "￿", 0],
+    ["￿", "𐀀", -1],
+    ["𐀀", "", 1],
+    ["𐀀", "0", 1],
+    ["𐀀", "00", 1],
+    ["𐀀", "01", 1],
+    ["𐀀", "1", 1],
+    ["𐀀", "9", 1],
+    ["𐀀", "10", 1],
+    ["𐀀", "ready-3", 1],
+    ["𐀀", "ready-30", 1],
+    ["𐀀", "ready-03", 1],
+    ["𐀀", "ready-3a", 1],
+    ["𐀀", "ready-3-1", 1],
+    ["𐀀", "a2b9", 1],
+    ["𐀀", "a2b10", 1],
+    ["𐀀", "a10b1", 1],
+    ["𐀀", "ready", 1],
+    ["𐀀", "ready-", 1],
+    ["𐀀", "ready-#", 1],
+    ["𐀀", "ready-a", 1],
+    ["𐀀", "ready-é", 1],
+    ["𐀀", "é01", 1],
+    ["𐀀", "a/2", 1],
+    ["𐀀", "a/10", 1],
+    ["𐀀", "A1", 1],
+    ["𐀀", "a 1", 1],
+    ["𐀀", "￿", 1],
+    ["𐀀", "𐀀", 0]
+  ],
+  "stages": {
+    "works": {
+      "none": { "freshness": "unknown", "machines": [], "unassigned": [], "guidance": {} },
+      "queued build": {
+        "freshness": "fresh",
+        "machines": [
+          {
+            "machine_id": "alpha",
+            "label": "alpha",
+            "producer_id": "fixture",
+            "sequence": 1,
+            "age_ms": 0,
+            "freshness": "fresh",
+            "complete": true,
+            "reason": "",
+            "counts": null,
+            "operations": [
+              {
+                "machine_id": "alpha",
+                "operation_id": "b",
+                "parent_id": null,
+                "handle": "amber",
+                "task": "w/a",
+                "checkout": "/opaque",
+                "recipe": "fixture",
+                "kind": "build",
+                "state": "queued",
+                "resource": "run_slot",
+                "reason": "",
+                "phase_since": null
+              }
+            ]
+          }
+        ],
+        "unassigned": [],
+        "guidance": {}
+      },
+      "running build": {
+        "freshness": "fresh",
+        "machines": [
+          {
+            "machine_id": "alpha",
+            "label": "alpha",
+            "producer_id": "fixture",
+            "sequence": 1,
+            "age_ms": 0,
+            "freshness": "fresh",
+            "complete": true,
+            "reason": "",
+            "counts": null,
+            "operations": [
+              {
+                "machine_id": "alpha",
+                "operation_id": "b",
+                "parent_id": null,
+                "handle": "amber",
+                "task": "w/a",
+                "checkout": "/opaque",
+                "recipe": "fixture",
+                "kind": "build",
+                "state": "running",
+                "resource": "run_slot",
+                "reason": "",
+                "phase_since": null
+              }
+            ]
+          }
+        ],
+        "unassigned": [],
+        "guidance": {}
+      },
+      "queued test": {
+        "freshness": "fresh",
+        "machines": [
+          {
+            "machine_id": "alpha",
+            "label": "alpha",
+            "producer_id": "fixture",
+            "sequence": 1,
+            "age_ms": 0,
+            "freshness": "fresh",
+            "complete": true,
+            "reason": "",
+            "counts": null,
+            "operations": [
+              {
+                "machine_id": "alpha",
+                "operation_id": "t",
+                "parent_id": null,
+                "handle": "amber",
+                "task": "w/a",
+                "checkout": "/opaque",
+                "recipe": "fixture",
+                "kind": "test",
+                "state": "queued",
+                "resource": "run_slot",
+                "reason": "",
+                "phase_since": null
+              }
+            ]
+          }
+        ],
+        "unassigned": [],
+        "guidance": {}
+      },
+      "running build, queued test": {
+        "freshness": "fresh",
+        "machines": [
+          {
+            "machine_id": "alpha",
+            "label": "alpha",
+            "producer_id": "fixture",
+            "sequence": 1,
+            "age_ms": 0,
+            "freshness": "fresh",
+            "complete": true,
+            "reason": "",
+            "counts": null,
+            "operations": [
+              {
+                "machine_id": "alpha",
+                "operation_id": "b",
+                "parent_id": null,
+                "handle": "amber",
+                "task": "w/a",
+                "checkout": "/opaque",
+                "recipe": "fixture",
+                "kind": "build",
+                "state": "running",
+                "resource": "run_slot",
+                "reason": "",
+                "phase_since": null
+              },
+              {
+                "machine_id": "alpha",
+                "operation_id": "t",
+                "parent_id": null,
+                "handle": "amber",
+                "task": "w/a",
+                "checkout": "/opaque",
+                "recipe": "fixture",
+                "kind": "test",
+                "state": "queued",
+                "resource": "run_slot",
+                "reason": "",
+                "phase_since": null
+              }
+            ]
+          }
+        ],
+        "unassigned": [],
+        "guidance": {}
+      },
+      "queued test, running test": {
+        "freshness": "fresh",
+        "machines": [
+          {
+            "machine_id": "alpha",
+            "label": "alpha",
+            "producer_id": "fixture",
+            "sequence": 1,
+            "age_ms": 0,
+            "freshness": "fresh",
+            "complete": true,
+            "reason": "",
+            "counts": null,
+            "operations": [
+              {
+                "machine_id": "alpha",
+                "operation_id": "t",
+                "parent_id": null,
+                "handle": "amber",
+                "task": "w/a",
+                "checkout": "/opaque",
+                "recipe": "fixture",
+                "kind": "test",
+                "state": "queued",
+                "resource": "run_slot",
+                "reason": "",
+                "phase_since": null
+              },
+              {
+                "machine_id": "alpha",
+                "operation_id": "r",
+                "parent_id": null,
+                "handle": "amber",
+                "task": "w/a",
+                "checkout": "/opaque",
+                "recipe": "fixture",
+                "kind": "test",
+                "state": "running",
+                "resource": "run_slot",
+                "reason": "",
+                "phase_since": null
+              }
+            ]
+          }
+        ],
+        "unassigned": [],
+        "guidance": {}
+      },
+      "another task's": {
+        "freshness": "fresh",
+        "machines": [
+          {
+            "machine_id": "alpha",
+            "label": "alpha",
+            "producer_id": "fixture",
+            "sequence": 1,
+            "age_ms": 0,
+            "freshness": "fresh",
+            "complete": true,
+            "reason": "",
+            "counts": null,
+            "operations": [
+              {
+                "machine_id": "alpha",
+                "operation_id": "o",
+                "parent_id": null,
+                "handle": "amber",
+                "task": "w/b",
+                "checkout": "/opaque",
+                "recipe": "fixture",
+                "kind": "test",
+                "state": "running",
+                "resource": "run_slot",
+                "reason": "",
+                "phase_since": null
+              }
+            ]
+          }
+        ],
+        "unassigned": [],
+        "guidance": {}
+      },
+      "a command": {
+        "freshness": "fresh",
+        "machines": [
+          {
+            "machine_id": "alpha",
+            "label": "alpha",
+            "producer_id": "fixture",
+            "sequence": 1,
+            "age_ms": 0,
+            "freshness": "fresh",
+            "complete": true,
+            "reason": "",
+            "counts": null,
+            "operations": [
+              {
+                "machine_id": "alpha",
+                "operation_id": "c",
+                "parent_id": null,
+                "handle": "amber",
+                "task": "w/a",
+                "checkout": "/opaque",
+                "recipe": "fixture",
+                "kind": "command",
+                "state": "running",
+                "resource": "run_slot",
+                "reason": "",
+                "phase_since": null
+              }
+            ]
+          }
+        ],
+        "unassigned": [],
+        "guidance": {}
+      },
+      "another machine's id": {
+        "freshness": "fresh",
+        "machines": [
+          {
+            "machine_id": "alpha",
+            "label": "alpha",
+            "producer_id": "fixture",
+            "sequence": 1,
+            "age_ms": 0,
+            "freshness": "fresh",
+            "complete": true,
+            "reason": "",
+            "counts": null,
+            "operations": [
+              {
+                "machine_id": "beta",
+                "operation_id": "m",
+                "parent_id": null,
+                "handle": "amber",
+                "task": "w/a",
+                "checkout": "/opaque",
+                "recipe": "fixture",
+                "kind": "build",
+                "state": "running",
+                "resource": "run_slot",
+                "reason": "",
+                "phase_since": null
+              }
+            ]
+          }
+        ],
+        "unassigned": [],
+        "guidance": {}
+      },
+      "no machine id": {
+        "freshness": "fresh",
+        "machines": [
+          {
+            "machine_id": "alpha",
+            "label": "alpha",
+            "producer_id": "fixture",
+            "sequence": 1,
+            "age_ms": 0,
+            "freshness": "fresh",
+            "complete": true,
+            "reason": "",
+            "counts": null,
+            "operations": [
+              {
+                "machine_id": null,
+                "operation_id": "m",
+                "parent_id": null,
+                "handle": "amber",
+                "task": "w/a",
+                "checkout": "/opaque",
+                "recipe": "fixture",
+                "kind": "build",
+                "state": "running",
+                "resource": "run_slot",
+                "reason": "",
+                "phase_since": null
+              }
+            ]
+          }
+        ],
+        "unassigned": [],
+        "guidance": {}
+      },
+      "no operation id": {
+        "freshness": "fresh",
+        "machines": [
+          {
+            "machine_id": "alpha",
+            "label": "alpha",
+            "producer_id": "fixture",
+            "sequence": 1,
+            "age_ms": 0,
+            "freshness": "fresh",
+            "complete": true,
+            "reason": "",
+            "counts": null,
+            "operations": [
+              {
+                "machine_id": "alpha",
+                "operation_id": null,
+                "parent_id": null,
+                "handle": "amber",
+                "task": "w/a",
+                "checkout": "/opaque",
+                "recipe": "fixture",
+                "kind": "test",
+                "state": "running",
+                "resource": "run_slot",
+                "reason": "",
+                "phase_since": null
+              }
+            ]
+          }
+        ],
+        "unassigned": [],
+        "guidance": {}
+      },
+      "an empty operation id": {
+        "freshness": "fresh",
+        "machines": [
+          {
+            "machine_id": "alpha",
+            "label": "alpha",
+            "producer_id": "fixture",
+            "sequence": 1,
+            "age_ms": 0,
+            "freshness": "fresh",
+            "complete": true,
+            "reason": "",
+            "counts": null,
+            "operations": [
+              {
+                "machine_id": "alpha",
+                "operation_id": "",
+                "parent_id": null,
+                "handle": "amber",
+                "task": "w/a",
+                "checkout": "/opaque",
+                "recipe": "fixture",
+                "kind": "test",
+                "state": "running",
+                "resource": "run_slot",
+                "reason": "",
+                "phase_since": null
+              }
+            ]
+          }
+        ],
+        "unassigned": [],
+        "guidance": {}
+      },
+      "a subtask's": {
+        "freshness": "fresh",
+        "machines": [
+          {
+            "machine_id": "alpha",
+            "label": "alpha",
+            "producer_id": "fixture",
+            "sequence": 1,
+            "age_ms": 0,
+            "freshness": "fresh",
+            "complete": true,
+            "reason": "",
+            "counts": null,
+            "operations": [
+              {
+                "machine_id": "alpha",
+                "operation_id": "u",
+                "parent_id": null,
+                "handle": "amber",
+                "task": "w/a/1",
+                "checkout": "/opaque",
+                "recipe": "fixture",
+                "kind": "build",
+                "state": "running",
+                "resource": "run_slot",
+                "reason": "",
+                "phase_since": null,
+                "under": ["w/a", "w"]
+              }
+            ]
+          }
+        ],
+        "unassigned": [],
+        "guidance": {}
+      },
+      "contradicted": {
+        "freshness": "fresh",
+        "machines": [
+          {
+            "machine_id": "alpha",
+            "label": "alpha",
+            "producer_id": "fixture",
+            "sequence": 1,
+            "age_ms": 0,
+            "freshness": "fresh",
+            "complete": true,
+            "reason": "",
+            "counts": null,
+            "operations": [
+              {
+                "machine_id": "alpha",
+                "operation_id": "c",
+                "parent_id": null,
+                "handle": "amber",
+                "task": "w/a",
+                "checkout": "/opaque",
+                "recipe": "fixture",
+                "kind": "build",
+                "state": "running",
+                "resource": "run_slot",
+                "reason": "",
+                "phase_since": null
+              }
+            ]
+          },
+          {
+            "machine_id": "beta",
+            "label": "beta",
+            "producer_id": "fixture",
+            "sequence": 1,
+            "age_ms": 0,
+            "freshness": "fresh",
+            "complete": true,
+            "reason": "",
+            "counts": null,
+            "operations": [
+              {
+                "machine_id": "alpha",
+                "operation_id": "c",
+                "parent_id": null,
+                "handle": "amber",
+                "task": "w/a",
+                "checkout": "/opaque",
+                "recipe": "fixture",
+                "kind": "build",
+                "state": "queued",
+                "resource": "run_slot",
+                "reason": "",
+                "phase_since": null
+              }
+            ]
+          }
+        ],
+        "unassigned": [],
+        "guidance": {}
+      },
+      "stale": {
+        "freshness": "fresh",
+        "machines": [
+          {
+            "machine_id": "alpha",
+            "label": "alpha",
+            "producer_id": "fixture",
+            "sequence": 1,
+            "age_ms": 0,
+            "freshness": "stale",
+            "complete": true,
+            "reason": "",
+            "counts": null,
+            "operations": [
+              {
+                "machine_id": "alpha",
+                "operation_id": "s",
+                "parent_id": null,
+                "handle": "amber",
+                "task": "w/a",
+                "checkout": "/opaque",
+                "recipe": "fixture",
+                "kind": "test",
+                "state": "running",
+                "resource": "run_slot",
+                "reason": "",
+                "phase_since": null
+              }
+            ]
+          }
+        ],
+        "unassigned": [],
+        "guidance": {}
+      },
+      "partial": {
+        "freshness": "fresh",
+        "machines": [
+          {
+            "machine_id": "alpha",
+            "label": "alpha",
+            "producer_id": "fixture",
+            "sequence": 1,
+            "age_ms": 0,
+            "freshness": "incomplete",
+            "complete": false,
+            "reason": "",
+            "counts": null,
+            "operations": [
+              {
+                "machine_id": "alpha",
+                "operation_id": "p",
+                "parent_id": null,
+                "handle": "amber",
+                "task": "w/a",
+                "checkout": "/opaque",
+                "recipe": "fixture",
+                "kind": "test",
+                "state": "queued",
+                "resource": "run_slot",
+                "reason": "",
+                "phase_since": null
+              }
+            ]
+          }
+        ],
+        "unassigned": [],
+        "guidance": {}
+      },
+      "unassigned": {
+        "freshness": "unknown",
+        "machines": [],
+        "unassigned": [
+          {
+            "machine_id": "alpha",
+            "operation_id": "x",
+            "parent_id": null,
+            "handle": "amber",
+            "task": "w/a",
+            "checkout": "/opaque",
+            "recipe": "fixture",
+            "kind": "build",
+            "state": "running",
+            "resource": "run_slot",
+            "reason": "",
+            "phase_since": null
+          }
+        ],
+        "guidance": {}
+      },
+      "a heartbeat later": {
+        "freshness": "fresh",
+        "machines": [
+          {
+            "machine_id": "alpha",
+            "label": "alpha",
+            "producer_id": "fixture",
+            "sequence": 9,
+            "age_ms": 900,
+            "freshness": "fresh",
+            "complete": true,
+            "reason": "",
+            "counts": null,
+            "operations": [
+              {
+                "machine_id": "alpha",
+                "operation_id": "b",
+                "parent_id": null,
+                "handle": "amber",
+                "task": "w/a",
+                "checkout": "/opaque",
+                "recipe": "fixture",
+                "kind": "build",
+                "state": "running",
+                "resource": "run_slot",
+                "reason": "",
+                "phase_since": null
+              },
+              {
+                "machine_id": "alpha",
+                "operation_id": "t",
+                "parent_id": null,
+                "handle": "amber",
+                "task": "w/a",
+                "checkout": "/opaque",
+                "recipe": "fixture",
+                "kind": "test",
+                "state": "queued",
+                "resource": "run_slot",
+                "reason": "",
+                "phase_since": null
+              }
+            ]
+          }
+        ],
+        "unassigned": [],
+        "guidance": {}
+      },
+      "swapped": {
+        "freshness": "fresh",
+        "machines": [
+          {
+            "machine_id": "alpha",
+            "label": "alpha",
+            "producer_id": "fixture",
+            "sequence": 1,
+            "age_ms": 0,
+            "freshness": "fresh",
+            "complete": true,
+            "reason": "",
+            "counts": null,
+            "operations": [
+              {
+                "machine_id": "alpha",
+                "operation_id": "t",
+                "parent_id": null,
+                "handle": "amber",
+                "task": "w/a",
+                "checkout": "/opaque",
+                "recipe": "fixture",
+                "kind": "test",
+                "state": "queued",
+                "resource": "run_slot",
+                "reason": "",
+                "phase_since": null
+              },
+              {
+                "machine_id": "alpha",
+                "operation_id": "b",
+                "parent_id": null,
+                "handle": "amber",
+                "task": "w/a",
+                "checkout": "/opaque",
+                "recipe": "fixture",
+                "kind": "build",
+                "state": "running",
+                "resource": "run_slot",
+                "reason": "",
+                "phase_since": null
+              }
+            ]
+          }
+        ],
+        "unassigned": [],
+        "guidance": {}
+      },
+      "with a command": {
+        "freshness": "fresh",
+        "machines": [
+          {
+            "machine_id": "alpha",
+            "label": "alpha",
+            "producer_id": "fixture",
+            "sequence": 1,
+            "age_ms": 0,
+            "freshness": "fresh",
+            "complete": true,
+            "reason": "",
+            "counts": null,
+            "operations": [
+              {
+                "machine_id": "alpha",
+                "operation_id": "b",
+                "parent_id": null,
+                "handle": "amber",
+                "task": "w/a",
+                "checkout": "/opaque",
+                "recipe": "fixture",
+                "kind": "build",
+                "state": "running",
+                "resource": "run_slot",
+                "reason": "",
+                "phase_since": null
+              },
+              {
+                "machine_id": "alpha",
+                "operation_id": "t",
+                "parent_id": null,
+                "handle": "amber",
+                "task": "w/a",
+                "checkout": "/opaque",
+                "recipe": "fixture",
+                "kind": "test",
+                "state": "queued",
+                "resource": "run_slot",
+                "reason": "",
+                "phase_since": null
+              },
+              {
+                "machine_id": "alpha",
+                "operation_id": "x",
+                "parent_id": null,
+                "handle": "amber",
+                "task": "w/c",
+                "checkout": "/opaque",
+                "recipe": "fixture",
+                "kind": "command",
+                "state": "running",
+                "resource": "run_slot",
+                "reason": "",
+                "phase_since": null
+              }
+            ]
+          }
+        ],
+        "unassigned": [],
+        "guidance": {}
+      }
+    },
+    "tasks": [
+      {
+        "slug": "w/a",
+        "title": "A task",
+        "body": "",
+        "status": "in_progress",
+        "priority": 2,
+        "parent": null,
+        "created_by": "owner",
+        "created": 1.0,
+        "updated": 2.0,
+        "links": ["docs/A.md"],
+        "depends": [],
+        "roles": [
+          { "handle": "amber", "role": "executor", "since": 1.0, "expires": null, "health": "live" }
+        ],
+        "instruction": false
+      },
+      {
+        "slug": "w/a",
+        "title": "A task",
+        "body": "",
+        "status": "review",
+        "priority": 2,
+        "parent": null,
+        "created_by": "owner",
+        "created": 1.0,
+        "updated": 2.0,
+        "links": ["docs/A.md"],
+        "depends": [],
+        "roles": [
+          { "handle": "amber", "role": "executor", "since": 1.0, "expires": null, "health": "live" }
+        ],
+        "instruction": false
+      },
+      {
+        "slug": "w",
+        "title": "A task",
+        "body": "",
+        "status": "in_progress",
+        "priority": 2,
+        "parent": null,
+        "created_by": "owner",
+        "created": 1.0,
+        "updated": 2.0,
+        "links": ["docs/A.md"],
+        "depends": [],
+        "roles": [
+          { "handle": "amber", "role": "executor", "since": 1.0, "expires": null, "health": "live" }
+        ],
+        "instruction": false
+      },
+      {
+        "slug": "w/a/1",
+        "title": "A task",
+        "body": "",
+        "status": "in_progress",
+        "priority": 2,
+        "parent": "w/a",
+        "created_by": "owner",
+        "created": 1.0,
+        "updated": 2.0,
+        "links": ["docs/A.md"],
+        "depends": [],
+        "roles": [
+          { "handle": "amber", "role": "executor", "since": 1.0, "expires": null, "health": "live" }
+        ],
+        "instruction": false
+      },
+      {
+        "slug": "w/b",
+        "title": "A task",
+        "body": "",
+        "status": "in_progress",
+        "priority": 2,
+        "parent": null,
+        "created_by": "owner",
+        "created": 1.0,
+        "updated": 2.0,
+        "links": ["docs/A.md"],
+        "depends": [],
+        "roles": [
+          { "handle": "amber", "role": "executor", "since": 1.0, "expires": null, "health": "live" }
+        ],
+        "instruction": false
+      }
+    ],
+    "placed": [
+      ["none", 0, true, "in_progress"],
+      ["none", 0, false, "in_progress"],
+      ["none", 1, true, "review"],
+      ["none", 1, false, "review"],
+      ["none", 2, true, "in_progress"],
+      ["none", 2, false, "in_progress"],
+      ["none", 3, true, "in_progress"],
+      ["none", 3, false, "in_progress"],
+      ["none", 4, true, "in_progress"],
+      ["none", 4, false, "in_progress"],
+      ["queued build", 0, true, "build"],
+      ["queued build", 0, false, "in_progress"],
+      ["queued build", 1, true, "review"],
+      ["queued build", 1, false, "review"],
+      ["queued build", 2, true, "in_progress"],
+      ["queued build", 2, false, "in_progress"],
+      ["queued build", 3, true, "in_progress"],
+      ["queued build", 3, false, "in_progress"],
+      ["queued build", 4, true, "in_progress"],
+      ["queued build", 4, false, "in_progress"],
+      ["running build", 0, true, "build"],
+      ["running build", 0, false, "in_progress"],
+      ["running build", 1, true, "review"],
+      ["running build", 1, false, "review"],
+      ["running build", 2, true, "in_progress"],
+      ["running build", 2, false, "in_progress"],
+      ["running build", 3, true, "in_progress"],
+      ["running build", 3, false, "in_progress"],
+      ["running build", 4, true, "in_progress"],
+      ["running build", 4, false, "in_progress"],
+      ["queued test", 0, true, "test"],
+      ["queued test", 0, false, "in_progress"],
+      ["queued test", 1, true, "review"],
+      ["queued test", 1, false, "review"],
+      ["queued test", 2, true, "in_progress"],
+      ["queued test", 2, false, "in_progress"],
+      ["queued test", 3, true, "in_progress"],
+      ["queued test", 3, false, "in_progress"],
+      ["queued test", 4, true, "in_progress"],
+      ["queued test", 4, false, "in_progress"],
+      ["running build, queued test", 0, true, "build"],
+      ["running build, queued test", 0, false, "in_progress"],
+      ["running build, queued test", 1, true, "review"],
+      ["running build, queued test", 1, false, "review"],
+      ["running build, queued test", 2, true, "in_progress"],
+      ["running build, queued test", 2, false, "in_progress"],
+      ["running build, queued test", 3, true, "in_progress"],
+      ["running build, queued test", 3, false, "in_progress"],
+      ["running build, queued test", 4, true, "in_progress"],
+      ["running build, queued test", 4, false, "in_progress"],
+      ["queued test, running test", 0, true, "test"],
+      ["queued test, running test", 0, false, "in_progress"],
+      ["queued test, running test", 1, true, "review"],
+      ["queued test, running test", 1, false, "review"],
+      ["queued test, running test", 2, true, "in_progress"],
+      ["queued test, running test", 2, false, "in_progress"],
+      ["queued test, running test", 3, true, "in_progress"],
+      ["queued test, running test", 3, false, "in_progress"],
+      ["queued test, running test", 4, true, "in_progress"],
+      ["queued test, running test", 4, false, "in_progress"],
+      ["another task's", 0, true, "in_progress"],
+      ["another task's", 0, false, "in_progress"],
+      ["another task's", 1, true, "review"],
+      ["another task's", 1, false, "review"],
+      ["another task's", 2, true, "in_progress"],
+      ["another task's", 2, false, "in_progress"],
+      ["another task's", 3, true, "in_progress"],
+      ["another task's", 3, false, "in_progress"],
+      ["another task's", 4, true, "test"],
+      ["another task's", 4, false, "in_progress"],
+      ["a command", 0, true, "in_progress"],
+      ["a command", 0, false, "in_progress"],
+      ["a command", 1, true, "review"],
+      ["a command", 1, false, "review"],
+      ["a command", 2, true, "in_progress"],
+      ["a command", 2, false, "in_progress"],
+      ["a command", 3, true, "in_progress"],
+      ["a command", 3, false, "in_progress"],
+      ["a command", 4, true, "in_progress"],
+      ["a command", 4, false, "in_progress"],
+      ["another machine's id", 0, true, "in_progress"],
+      ["another machine's id", 0, false, "in_progress"],
+      ["another machine's id", 1, true, "review"],
+      ["another machine's id", 1, false, "review"],
+      ["another machine's id", 2, true, "in_progress"],
+      ["another machine's id", 2, false, "in_progress"],
+      ["another machine's id", 3, true, "in_progress"],
+      ["another machine's id", 3, false, "in_progress"],
+      ["another machine's id", 4, true, "in_progress"],
+      ["another machine's id", 4, false, "in_progress"],
+      ["no machine id", 0, true, "in_progress"],
+      ["no machine id", 0, false, "in_progress"],
+      ["no machine id", 1, true, "review"],
+      ["no machine id", 1, false, "review"],
+      ["no machine id", 2, true, "in_progress"],
+      ["no machine id", 2, false, "in_progress"],
+      ["no machine id", 3, true, "in_progress"],
+      ["no machine id", 3, false, "in_progress"],
+      ["no machine id", 4, true, "in_progress"],
+      ["no machine id", 4, false, "in_progress"],
+      ["no operation id", 0, true, "in_progress"],
+      ["no operation id", 0, false, "in_progress"],
+      ["no operation id", 1, true, "review"],
+      ["no operation id", 1, false, "review"],
+      ["no operation id", 2, true, "in_progress"],
+      ["no operation id", 2, false, "in_progress"],
+      ["no operation id", 3, true, "in_progress"],
+      ["no operation id", 3, false, "in_progress"],
+      ["no operation id", 4, true, "in_progress"],
+      ["no operation id", 4, false, "in_progress"],
+      ["an empty operation id", 0, true, "in_progress"],
+      ["an empty operation id", 0, false, "in_progress"],
+      ["an empty operation id", 1, true, "review"],
+      ["an empty operation id", 1, false, "review"],
+      ["an empty operation id", 2, true, "in_progress"],
+      ["an empty operation id", 2, false, "in_progress"],
+      ["an empty operation id", 3, true, "in_progress"],
+      ["an empty operation id", 3, false, "in_progress"],
+      ["an empty operation id", 4, true, "in_progress"],
+      ["an empty operation id", 4, false, "in_progress"],
+      ["a subtask's", 0, true, "build"],
+      ["a subtask's", 0, false, "in_progress"],
+      ["a subtask's", 1, true, "review"],
+      ["a subtask's", 1, false, "review"],
+      ["a subtask's", 2, true, "build"],
+      ["a subtask's", 2, false, "in_progress"],
+      ["a subtask's", 3, true, "build"],
+      ["a subtask's", 3, false, "in_progress"],
+      ["a subtask's", 4, true, "in_progress"],
+      ["a subtask's", 4, false, "in_progress"],
+      ["contradicted", 0, true, "in_progress"],
+      ["contradicted", 0, false, "in_progress"],
+      ["contradicted", 1, true, "review"],
+      ["contradicted", 1, false, "review"],
+      ["contradicted", 2, true, "in_progress"],
+      ["contradicted", 2, false, "in_progress"],
+      ["contradicted", 3, true, "in_progress"],
+      ["contradicted", 3, false, "in_progress"],
+      ["contradicted", 4, true, "in_progress"],
+      ["contradicted", 4, false, "in_progress"],
+      ["stale", 0, true, "in_progress"],
+      ["stale", 0, false, "in_progress"],
+      ["stale", 1, true, "review"],
+      ["stale", 1, false, "review"],
+      ["stale", 2, true, "in_progress"],
+      ["stale", 2, false, "in_progress"],
+      ["stale", 3, true, "in_progress"],
+      ["stale", 3, false, "in_progress"],
+      ["stale", 4, true, "in_progress"],
+      ["stale", 4, false, "in_progress"],
+      ["partial", 0, true, "test"],
+      ["partial", 0, false, "in_progress"],
+      ["partial", 1, true, "review"],
+      ["partial", 1, false, "review"],
+      ["partial", 2, true, "in_progress"],
+      ["partial", 2, false, "in_progress"],
+      ["partial", 3, true, "in_progress"],
+      ["partial", 3, false, "in_progress"],
+      ["partial", 4, true, "in_progress"],
+      ["partial", 4, false, "in_progress"],
+      ["unassigned", 0, true, "in_progress"],
+      ["unassigned", 0, false, "in_progress"],
+      ["unassigned", 1, true, "review"],
+      ["unassigned", 1, false, "review"],
+      ["unassigned", 2, true, "in_progress"],
+      ["unassigned", 2, false, "in_progress"],
+      ["unassigned", 3, true, "in_progress"],
+      ["unassigned", 3, false, "in_progress"],
+      ["unassigned", 4, true, "in_progress"],
+      ["unassigned", 4, false, "in_progress"]
+    ],
+    "alike": [
+      ["none", "none", true],
+      ["none", "queued build", false],
+      ["none", "running build", false],
+      ["none", "queued test", false],
+      ["none", "running build, queued test", false],
+      ["none", "queued test, running test", false],
+      ["none", "another task's", false],
+      ["none", "a command", true],
+      ["none", "another machine's id", true],
+      ["none", "no machine id", true],
+      ["none", "no operation id", true],
+      ["none", "an empty operation id", true],
+      ["none", "a subtask's", false],
+      ["none", "contradicted", true],
+      ["none", "stale", true],
+      ["none", "partial", false],
+      ["none", "unassigned", true],
+      ["none", "a heartbeat later", false],
+      ["none", "swapped", false],
+      ["none", "with a command", false],
+      ["queued build", "none", false],
+      ["queued build", "queued build", true],
+      ["queued build", "running build", false],
+      ["queued build", "queued test", false],
+      ["queued build", "running build, queued test", false],
+      ["queued build", "queued test, running test", false],
+      ["queued build", "another task's", false],
+      ["queued build", "a command", false],
+      ["queued build", "another machine's id", false],
+      ["queued build", "no machine id", false],
+      ["queued build", "no operation id", false],
+      ["queued build", "an empty operation id", false],
+      ["queued build", "a subtask's", false],
+      ["queued build", "contradicted", false],
+      ["queued build", "stale", false],
+      ["queued build", "partial", false],
+      ["queued build", "unassigned", false],
+      ["queued build", "a heartbeat later", false],
+      ["queued build", "swapped", false],
+      ["queued build", "with a command", false],
+      ["running build", "none", false],
+      ["running build", "queued build", false],
+      ["running build", "running build", true],
+      ["running build", "queued test", false],
+      ["running build", "running build, queued test", false],
+      ["running build", "queued test, running test", false],
+      ["running build", "another task's", false],
+      ["running build", "a command", false],
+      ["running build", "another machine's id", false],
+      ["running build", "no machine id", false],
+      ["running build", "no operation id", false],
+      ["running build", "an empty operation id", false],
+      ["running build", "a subtask's", false],
+      ["running build", "contradicted", false],
+      ["running build", "stale", false],
+      ["running build", "partial", false],
+      ["running build", "unassigned", false],
+      ["running build", "a heartbeat later", false],
+      ["running build", "swapped", false],
+      ["running build", "with a command", false],
+      ["queued test", "none", false],
+      ["queued test", "queued build", false],
+      ["queued test", "running build", false],
+      ["queued test", "queued test", true],
+      ["queued test", "running build, queued test", false],
+      ["queued test", "queued test, running test", false],
+      ["queued test", "another task's", false],
+      ["queued test", "a command", false],
+      ["queued test", "another machine's id", false],
+      ["queued test", "no machine id", false],
+      ["queued test", "no operation id", false],
+      ["queued test", "an empty operation id", false],
+      ["queued test", "a subtask's", false],
+      ["queued test", "contradicted", false],
+      ["queued test", "stale", false],
+      ["queued test", "partial", true],
+      ["queued test", "unassigned", false],
+      ["queued test", "a heartbeat later", false],
+      ["queued test", "swapped", false],
+      ["queued test", "with a command", false],
+      ["running build, queued test", "none", false],
+      ["running build, queued test", "queued build", false],
+      ["running build, queued test", "running build", false],
+      ["running build, queued test", "queued test", false],
+      ["running build, queued test", "running build, queued test", true],
+      ["running build, queued test", "queued test, running test", false],
+      ["running build, queued test", "another task's", false],
+      ["running build, queued test", "a command", false],
+      ["running build, queued test", "another machine's id", false],
+      ["running build, queued test", "no machine id", false],
+      ["running build, queued test", "no operation id", false],
+      ["running build, queued test", "an empty operation id", false],
+      ["running build, queued test", "a subtask's", false],
+      ["running build, queued test", "contradicted", false],
+      ["running build, queued test", "stale", false],
+      ["running build, queued test", "partial", false],
+      ["running build, queued test", "unassigned", false],
+      ["running build, queued test", "a heartbeat later", true],
+      ["running build, queued test", "swapped", false],
+      ["running build, queued test", "with a command", true],
+      ["queued test, running test", "none", false],
+      ["queued test, running test", "queued build", false],
+      ["queued test, running test", "running build", false],
+      ["queued test, running test", "queued test", false],
+      ["queued test, running test", "running build, queued test", false],
+      ["queued test, running test", "queued test, running test", true],
+      ["queued test, running test", "another task's", false],
+      ["queued test, running test", "a command", false],
+      ["queued test, running test", "another machine's id", false],
+      ["queued test, running test", "no machine id", false],
+      ["queued test, running test", "no operation id", false],
+      ["queued test, running test", "an empty operation id", false],
+      ["queued test, running test", "a subtask's", false],
+      ["queued test, running test", "contradicted", false],
+      ["queued test, running test", "stale", false],
+      ["queued test, running test", "partial", false],
+      ["queued test, running test", "unassigned", false],
+      ["queued test, running test", "a heartbeat later", false],
+      ["queued test, running test", "swapped", false],
+      ["queued test, running test", "with a command", false],
+      ["another task's", "none", false],
+      ["another task's", "queued build", false],
+      ["another task's", "running build", false],
+      ["another task's", "queued test", false],
+      ["another task's", "running build, queued test", false],
+      ["another task's", "queued test, running test", false],
+      ["another task's", "another task's", true],
+      ["another task's", "a command", false],
+      ["another task's", "another machine's id", false],
+      ["another task's", "no machine id", false],
+      ["another task's", "no operation id", false],
+      ["another task's", "an empty operation id", false],
+      ["another task's", "a subtask's", false],
+      ["another task's", "contradicted", false],
+      ["another task's", "stale", false],
+      ["another task's", "partial", false],
+      ["another task's", "unassigned", false],
+      ["another task's", "a heartbeat later", false],
+      ["another task's", "swapped", false],
+      ["another task's", "with a command", false],
+      ["a command", "none", true],
+      ["a command", "queued build", false],
+      ["a command", "running build", false],
+      ["a command", "queued test", false],
+      ["a command", "running build, queued test", false],
+      ["a command", "queued test, running test", false],
+      ["a command", "another task's", false],
+      ["a command", "a command", true],
+      ["a command", "another machine's id", true],
+      ["a command", "no machine id", true],
+      ["a command", "no operation id", true],
+      ["a command", "an empty operation id", true],
+      ["a command", "a subtask's", false],
+      ["a command", "contradicted", true],
+      ["a command", "stale", true],
+      ["a command", "partial", false],
+      ["a command", "unassigned", true],
+      ["a command", "a heartbeat later", false],
+      ["a command", "swapped", false],
+      ["a command", "with a command", false],
+      ["another machine's id", "none", true],
+      ["another machine's id", "queued build", false],
+      ["another machine's id", "running build", false],
+      ["another machine's id", "queued test", false],
+      ["another machine's id", "running build, queued test", false],
+      ["another machine's id", "queued test, running test", false],
+      ["another machine's id", "another task's", false],
+      ["another machine's id", "a command", true],
+      ["another machine's id", "another machine's id", true],
+      ["another machine's id", "no machine id", true],
+      ["another machine's id", "no operation id", true],
+      ["another machine's id", "an empty operation id", true],
+      ["another machine's id", "a subtask's", false],
+      ["another machine's id", "contradicted", true],
+      ["another machine's id", "stale", true],
+      ["another machine's id", "partial", false],
+      ["another machine's id", "unassigned", true],
+      ["another machine's id", "a heartbeat later", false],
+      ["another machine's id", "swapped", false],
+      ["another machine's id", "with a command", false],
+      ["no machine id", "none", true],
+      ["no machine id", "queued build", false],
+      ["no machine id", "running build", false],
+      ["no machine id", "queued test", false],
+      ["no machine id", "running build, queued test", false],
+      ["no machine id", "queued test, running test", false],
+      ["no machine id", "another task's", false],
+      ["no machine id", "a command", true],
+      ["no machine id", "another machine's id", true],
+      ["no machine id", "no machine id", true],
+      ["no machine id", "no operation id", true],
+      ["no machine id", "an empty operation id", true],
+      ["no machine id", "a subtask's", false],
+      ["no machine id", "contradicted", true],
+      ["no machine id", "stale", true],
+      ["no machine id", "partial", false],
+      ["no machine id", "unassigned", true],
+      ["no machine id", "a heartbeat later", false],
+      ["no machine id", "swapped", false],
+      ["no machine id", "with a command", false],
+      ["no operation id", "none", true],
+      ["no operation id", "queued build", false],
+      ["no operation id", "running build", false],
+      ["no operation id", "queued test", false],
+      ["no operation id", "running build, queued test", false],
+      ["no operation id", "queued test, running test", false],
+      ["no operation id", "another task's", false],
+      ["no operation id", "a command", true],
+      ["no operation id", "another machine's id", true],
+      ["no operation id", "no machine id", true],
+      ["no operation id", "no operation id", true],
+      ["no operation id", "an empty operation id", true],
+      ["no operation id", "a subtask's", false],
+      ["no operation id", "contradicted", true],
+      ["no operation id", "stale", true],
+      ["no operation id", "partial", false],
+      ["no operation id", "unassigned", true],
+      ["no operation id", "a heartbeat later", false],
+      ["no operation id", "swapped", false],
+      ["no operation id", "with a command", false],
+      ["an empty operation id", "none", true],
+      ["an empty operation id", "queued build", false],
+      ["an empty operation id", "running build", false],
+      ["an empty operation id", "queued test", false],
+      ["an empty operation id", "running build, queued test", false],
+      ["an empty operation id", "queued test, running test", false],
+      ["an empty operation id", "another task's", false],
+      ["an empty operation id", "a command", true],
+      ["an empty operation id", "another machine's id", true],
+      ["an empty operation id", "no machine id", true],
+      ["an empty operation id", "no operation id", true],
+      ["an empty operation id", "an empty operation id", true],
+      ["an empty operation id", "a subtask's", false],
+      ["an empty operation id", "contradicted", true],
+      ["an empty operation id", "stale", true],
+      ["an empty operation id", "partial", false],
+      ["an empty operation id", "unassigned", true],
+      ["an empty operation id", "a heartbeat later", false],
+      ["an empty operation id", "swapped", false],
+      ["an empty operation id", "with a command", false],
+      ["a subtask's", "none", false],
+      ["a subtask's", "queued build", false],
+      ["a subtask's", "running build", false],
+      ["a subtask's", "queued test", false],
+      ["a subtask's", "running build, queued test", false],
+      ["a subtask's", "queued test, running test", false],
+      ["a subtask's", "another task's", false],
+      ["a subtask's", "a command", false],
+      ["a subtask's", "another machine's id", false],
+      ["a subtask's", "no machine id", false],
+      ["a subtask's", "no operation id", false],
+      ["a subtask's", "an empty operation id", false],
+      ["a subtask's", "a subtask's", true],
+      ["a subtask's", "contradicted", false],
+      ["a subtask's", "stale", false],
+      ["a subtask's", "partial", false],
+      ["a subtask's", "unassigned", false],
+      ["a subtask's", "a heartbeat later", false],
+      ["a subtask's", "swapped", false],
+      ["a subtask's", "with a command", false],
+      ["contradicted", "none", true],
+      ["contradicted", "queued build", false],
+      ["contradicted", "running build", false],
+      ["contradicted", "queued test", false],
+      ["contradicted", "running build, queued test", false],
+      ["contradicted", "queued test, running test", false],
+      ["contradicted", "another task's", false],
+      ["contradicted", "a command", true],
+      ["contradicted", "another machine's id", true],
+      ["contradicted", "no machine id", true],
+      ["contradicted", "no operation id", true],
+      ["contradicted", "an empty operation id", true],
+      ["contradicted", "a subtask's", false],
+      ["contradicted", "contradicted", true],
+      ["contradicted", "stale", true],
+      ["contradicted", "partial", false],
+      ["contradicted", "unassigned", true],
+      ["contradicted", "a heartbeat later", false],
+      ["contradicted", "swapped", false],
+      ["contradicted", "with a command", false],
+      ["stale", "none", true],
+      ["stale", "queued build", false],
+      ["stale", "running build", false],
+      ["stale", "queued test", false],
+      ["stale", "running build, queued test", false],
+      ["stale", "queued test, running test", false],
+      ["stale", "another task's", false],
+      ["stale", "a command", true],
+      ["stale", "another machine's id", true],
+      ["stale", "no machine id", true],
+      ["stale", "no operation id", true],
+      ["stale", "an empty operation id", true],
+      ["stale", "a subtask's", false],
+      ["stale", "contradicted", true],
+      ["stale", "stale", true],
+      ["stale", "partial", false],
+      ["stale", "unassigned", true],
+      ["stale", "a heartbeat later", false],
+      ["stale", "swapped", false],
+      ["stale", "with a command", false],
+      ["partial", "none", false],
+      ["partial", "queued build", false],
+      ["partial", "running build", false],
+      ["partial", "queued test", true],
+      ["partial", "running build, queued test", false],
+      ["partial", "queued test, running test", false],
+      ["partial", "another task's", false],
+      ["partial", "a command", false],
+      ["partial", "another machine's id", false],
+      ["partial", "no machine id", false],
+      ["partial", "no operation id", false],
+      ["partial", "an empty operation id", false],
+      ["partial", "a subtask's", false],
+      ["partial", "contradicted", false],
+      ["partial", "stale", false],
+      ["partial", "partial", true],
+      ["partial", "unassigned", false],
+      ["partial", "a heartbeat later", false],
+      ["partial", "swapped", false],
+      ["partial", "with a command", false],
+      ["unassigned", "none", true],
+      ["unassigned", "queued build", false],
+      ["unassigned", "running build", false],
+      ["unassigned", "queued test", false],
+      ["unassigned", "running build, queued test", false],
+      ["unassigned", "queued test, running test", false],
+      ["unassigned", "another task's", false],
+      ["unassigned", "a command", true],
+      ["unassigned", "another machine's id", true],
+      ["unassigned", "no machine id", true],
+      ["unassigned", "no operation id", true],
+      ["unassigned", "an empty operation id", true],
+      ["unassigned", "a subtask's", false],
+      ["unassigned", "contradicted", true],
+      ["unassigned", "stale", true],
+      ["unassigned", "partial", false],
+      ["unassigned", "unassigned", true],
+      ["unassigned", "a heartbeat later", false],
+      ["unassigned", "swapped", false],
+      ["unassigned", "with a command", false],
+      ["a heartbeat later", "none", false],
+      ["a heartbeat later", "queued build", false],
+      ["a heartbeat later", "running build", false],
+      ["a heartbeat later", "queued test", false],
+      ["a heartbeat later", "running build, queued test", true],
+      ["a heartbeat later", "queued test, running test", false],
+      ["a heartbeat later", "another task's", false],
+      ["a heartbeat later", "a command", false],
+      ["a heartbeat later", "another machine's id", false],
+      ["a heartbeat later", "no machine id", false],
+      ["a heartbeat later", "no operation id", false],
+      ["a heartbeat later", "an empty operation id", false],
+      ["a heartbeat later", "a subtask's", false],
+      ["a heartbeat later", "contradicted", false],
+      ["a heartbeat later", "stale", false],
+      ["a heartbeat later", "partial", false],
+      ["a heartbeat later", "unassigned", false],
+      ["a heartbeat later", "a heartbeat later", true],
+      ["a heartbeat later", "swapped", false],
+      ["a heartbeat later", "with a command", true],
+      ["swapped", "none", false],
+      ["swapped", "queued build", false],
+      ["swapped", "running build", false],
+      ["swapped", "queued test", false],
+      ["swapped", "running build, queued test", false],
+      ["swapped", "queued test, running test", false],
+      ["swapped", "another task's", false],
+      ["swapped", "a command", false],
+      ["swapped", "another machine's id", false],
+      ["swapped", "no machine id", false],
+      ["swapped", "no operation id", false],
+      ["swapped", "an empty operation id", false],
+      ["swapped", "a subtask's", false],
+      ["swapped", "contradicted", false],
+      ["swapped", "stale", false],
+      ["swapped", "partial", false],
+      ["swapped", "unassigned", false],
+      ["swapped", "a heartbeat later", false],
+      ["swapped", "swapped", true],
+      ["swapped", "with a command", false],
+      ["with a command", "none", false],
+      ["with a command", "queued build", false],
+      ["with a command", "running build", false],
+      ["with a command", "queued test", false],
+      ["with a command", "running build, queued test", true],
+      ["with a command", "queued test, running test", false],
+      ["with a command", "another task's", false],
+      ["with a command", "a command", false],
+      ["with a command", "another machine's id", false],
+      ["with a command", "no machine id", false],
+      ["with a command", "no operation id", false],
+      ["with a command", "an empty operation id", false],
+      ["with a command", "a subtask's", false],
+      ["with a command", "contradicted", false],
+      ["with a command", "stale", false],
+      ["with a command", "partial", false],
+      ["with a command", "unassigned", false],
+      ["with a command", "a heartbeat later", true],
+      ["with a command", "swapped", false],
+      ["with a command", "with a command", true]
+    ]
+  },
+  "grains": [
+    ["hour", "hour", 2, 7],
+    ["day", "day", 14, 90],
+    ["week", "week", 84, 90],
+    ["month", null, null, null],
+    ["", null, null, null],
+    ["Hour", null, null, null],
+    ["days", null, null, null]
+  ],
+  "fileAddress": [
+    ["/docs/a.html", "/docs/a.html?raw"],
+    ["/docs/a.html#top", "/docs/a.html?raw#top"],
+    ["/docs/a.html?state=b#x", "/docs/a.html?state=b&raw#x"],
+    ["/docs/a.html?raw", "/docs/a.html?raw"],
+    ["/docs/a.html?x=1&raw=1#y", "/docs/a.html?x=1&raw=1#y"],
+    ["/docs/a.html?rawness=1", "/docs/a.html?rawness=1&raw"],
+    ["/docs/a.html?#x", "/docs/a.html?&raw#x"],
+    ["", "?raw"]
+  ],
+  "webAddress": [
+    ["https://example.com/s/1", true],
+    ["http://example.com", true],
+    ["HTTPS://Example.com?x#y", true],
+    ["HtTp://h/", true],
+    ["https://", false],
+    ["https:///path", false],
+    ["https://?q", false],
+    ["https://#f", false],
+    ["https://h ost/", false],
+    ["https://h/\tx", false],
+    ["https://h/", false],
+    ["https://h/ ", false],
+    ["https://h/ ", false],
+    ["https://h/", false],
+    ["https://h/　", false],
+    ["https://h/﻿", true],
+    ["https://h/​", true],
+    ["https://h/\u001c", false],
+    ["https://h/", false],
+    ["https://h /", false],
+    ["https://h:8080/x", true],
+    ["javascript:alert(1)", false],
+    ["ftp://h/", false],
+    ["//h/", false],
+    ["http:/h", false],
+    ["https:h", false],
+    ["", false],
+    ["é://h", false],
+    ["httpś://h", false],
+    ["httpſ://h", false]
+  ],
+  "sessionControl": [
+    [
+      { "handle": "amber", "url": "https://example.com/s", "pane": "w1:p2" },
+      true,
+      { "focus": "w1:p2" },
+      false
+    ],
+    [
+      { "handle": "amber", "url": "https://example.com/s", "pane": "w1:p2" },
+      false,
+      { "link": "https://example.com/s" },
+      false
+    ],
+    [
+      { "handle": "amber", "url": "https://example.com/s", "pane": null },
+      true,
+      { "link": "https://example.com/s" },
+      false
+    ],
+    [
+      { "handle": "amber", "url": "https://example.com/s", "pane": null },
+      false,
+      { "link": "https://example.com/s" },
+      false
+    ],
+    [{ "handle": "amber", "url": null, "pane": "w1:p2" }, true, { "focus": "w1:p2" }, false],
+    [{ "handle": "amber", "url": null, "pane": "w1:p2" }, false, { "screen": "w1:p2" }, false],
+    [{ "handle": "amber", "url": null, "pane": null }, true, null, false],
+    [{ "handle": "amber", "url": null, "pane": null }, false, null, false],
+    [
+      { "handle": "amber", "url": "javascript:alert(1)", "pane": "w1:p2" },
+      true,
+      { "focus": "w1:p2" },
+      false
+    ],
+    [
+      { "handle": "amber", "url": "javascript:alert(1)", "pane": "w1:p2" },
+      false,
+      { "screen": "w1:p2" },
+      false
+    ],
+    [{ "handle": "amber", "url": "javascript:alert(1)", "pane": null }, true, null, false],
+    [{ "handle": "amber", "url": "javascript:alert(1)", "pane": null }, false, null, false],
+    [{ "handle": "amber", "url": "", "pane": "" }, true, { "focus": "" }, false],
+    [{ "handle": "amber", "url": "", "pane": "" }, false, { "screen": "" }, false],
+    [{ "handle": "birch", "url": "http://h", "pane": null }, true, { "link": "http://h" }, true],
+    [{ "handle": "birch", "url": "http://h", "pane": null }, false, { "link": "http://h" }, true]
+  ],
+  "elementHtml": [
+    [
+      {
+        "element": "orbit-view",
+        "script": "/static/orbit.js",
+        "attributes": [["controls", ""], ["angle", "-45deg"]],
+        "views": [],
+        "download": null,
+        "open_label": null,
+        "close_label": null
+      },
+      "/a.item",
+      "A",
+      "/a.svg",
+      "<orbit-view src=\"/a.item\" alt=\"A\" controls=\"\" angle=\"-45deg\" poster=\"/a.svg\"></orbit-view>"
+    ],
+    [
+      {
+        "element": "orbit-view",
+        "script": "/static/orbit.js",
+        "attributes": [["controls", ""], ["angle", "-45deg"]],
+        "views": [],
+        "download": null,
+        "open_label": null,
+        "close_label": null
+      },
+      "/a.item",
+      "A",
+      null,
+      "<orbit-view src=\"/a.item\" alt=\"A\" controls=\"\" angle=\"-45deg\"></orbit-view>"
+    ],
+    [
+      {
+        "element": "orbit-view",
+        "script": "/static/orbit.js",
+        "attributes": [
+          ["onload x", "1"],
+          ["Upper", "1"],
+          ["9th", "1"],
+          ["data-x", "\"><script>'&"]
+        ],
+        "views": [],
+        "download": null,
+        "open_label": null,
+        "close_label": null
+      },
+      "/a\".item",
+      "<b>",
+      "/p&q.png",
+      "<orbit-view src=\"/a&quot;.item\" alt=\"&lt;b&gt;\" data-x=\"&quot;&gt;&lt;script&gt;&#x27;&amp;\" poster=\"/p&amp;q.png\"></orbit-view>"
+    ],
+    [
+      {
+        "element": "",
+        "script": "/static/orbit.js",
+        "attributes": [],
+        "views": [],
+        "download": null,
+        "open_label": null,
+        "close_label": null
+      },
+      "/a.item",
+      "A",
+      null,
+      null
+    ],
+    [
+      {
+        "element": "script",
+        "script": "/static/orbit.js",
+        "attributes": [],
+        "views": [],
+        "download": null,
+        "open_label": null,
+        "close_label": null
+      },
+      "/a.item",
+      "A",
+      null,
+      null
+    ],
+    [
+      {
+        "element": "Orbit-view",
+        "script": "/static/orbit.js",
+        "attributes": [],
+        "views": [],
+        "download": null,
+        "open_label": null,
+        "close_label": null
+      },
+      "/a.item",
+      "A",
+      null,
+      null
+    ],
+    [
+      {
+        "element": "-view",
+        "script": "/static/orbit.js",
+        "attributes": [],
+        "views": [],
+        "download": null,
+        "open_label": null,
+        "close_label": null
+      },
+      "/a.item",
+      "A",
+      null,
+      null
+    ],
+    [
+      {
+        "element": "orbit view",
+        "script": "/static/orbit.js",
+        "attributes": [],
+        "views": [],
+        "download": null,
+        "open_label": null,
+        "close_label": null
+      },
+      "/a.item",
+      "A",
+      null,
+      null
+    ],
+    [
+      {
+        "element": "orbit-view>",
+        "script": "/static/orbit.js",
+        "attributes": [],
+        "views": [],
+        "download": null,
+        "open_label": null,
+        "close_label": null
+      },
+      "/a.item",
+      "A",
+      null,
+      null
+    ],
+    [
+      {
+        "element": "x-1",
+        "script": "/static/orbit.js",
+        "attributes": [],
+        "views": [],
+        "download": null,
+        "open_label": null,
+        "close_label": null
+      },
+      "/a.item",
+      "A",
+      null,
+      "<x-1 src=\"/a.item\" alt=\"A\"></x-1>"
+    ]
+  ],
+  "encoded": [
+    [
+      {
+        "label": "Above",
+        "title": null,
+        "set": [["angle", "0deg 25deg auto"], ["zoom", "a=b"]],
+        "call": null
+      },
+      "angle=0deg 25deg auto\nzoom=a=b"
+    ],
+    [
+      {
+        "label": "Above",
+        "title": null,
+        "set": [["bad name", "x"], ["wrapped", "one\ntwo"], ["cr", "a\rb"]],
+        "call": null
+      },
+      ""
+    ],
+    [
+      {
+        "label": "Above",
+        "title": null,
+        "set": [["Upper", "1"], ["ok", ""], ["x-2", "y"]],
+        "call": null
+      },
+      "ok=\nx-2=y"
+    ],
+    [{ "label": "Above", "title": null, "set": [], "call": null }, ""]
+  ],
+  "decode": [
+    ["angle=0deg 25deg auto\nzoom=a=b", [["angle", "0deg 25deg auto"], ["zoom", "a=b"]]],
+    ["no pair\n=empty\nBad=x\nok=", [["ok", ""]]],
+    ["a=1\r\nb=2\r\n", [["a", "1"], ["b", "2"]]],
+    ["a=1\r", [["a", "1\r"]]],
+    ["x=a\rb\n\n\ny-2=", [["x", "a\rb"], ["y-2", ""]]],
+    ["\n", []],
+    ["", []],
+    ["a-=1\n9=2\nb c=3", [["a-", "1"]]]
+  ],
+  "samples": {
+    "queue": {
+      "waiting": [
+        {
+          "postponed": true,
+          "slug": "lamp-colour",
+          "doc": "@proposal~lamps/docs/lamps/LAMPS.md",
+          "doc_title": "Lamps",
+          "title": "Which colour do the lamps take?",
+          "summary": "Warm or cold.",
+          "why": "design · gates 2 items",
+          "posted": "2026-11-14 08:32",
+          "pictures": [{ "src": "/thumb/a.png", "caption": "A", "waiting": true }],
+          "task": "app/lamps"
+        },
+        {
+          "slug": "s",
+          "doc": "docs/DECISIONS.md",
+          "doc_title": "Decisions",
+          "title": "T",
+          "why": "w"
+        }
+      ],
+      "spot_check": [
+        {
+          "href": "/docs/A.md#s",
+          "path": "docs/A.md",
+          "slug": "s",
+          "title": "A card",
+          "kind": "comment",
+          "text": "Answered."
+        }
+      ],
+      "agent": [
+        {
+          "href": "/docs/A.md#s",
+          "path": "docs/A.md",
+          "slug": "s",
+          "title": "A card",
+          "kind": "comment",
+          "text": "Answered.",
+          "branch": "app/lamps"
+        }
+      ],
+      "branches": []
+    },
+    "emptyQueue": { "waiting": [], "spot_check": [], "agent": [], "branches": [] },
+    "board": {
+      "version": 7,
+      "build": "/assets/symphony-shell-0123456789abcdef.js",
+      "ping_ms": 15000,
+      "next": [
+        {
+          "postponed": true,
+          "slug": "lamp-colour",
+          "doc": "@proposal~lamps/docs/lamps/LAMPS.md",
+          "doc_title": "Lamps",
+          "title": "Which colour do the lamps take?",
+          "summary": "Warm or cold.",
+          "why": "design · gates 2 items",
+          "posted": "2026-11-14 08:32",
+          "pictures": [{ "src": "/thumb/a.png", "caption": "A", "waiting": true }],
+          "task": "app/lamps"
+        },
+        {
+          "slug": "s",
+          "doc": "docs/DECISIONS.md",
+          "doc_title": "Decisions",
+          "title": "T",
+          "why": "w"
+        }
+      ],
+      "counts": {
+        "waiting": 0,
+        "docs_waiting": 0,
+        "spot_check": 0,
+        "answered_today": 0,
+        "tasks": null
+      },
+      "progress": { "regions": [], "docs": 0, "decisions_waiting": 0 }
+    },
+    "listing": {
+      "machine_work": {
+        "freshness": "fresh",
+        "machines": [
+          {
+            "machine_id": "alpha",
+            "label": "alpha",
+            "producer_id": "fixture",
+            "sequence": 1,
+            "age_ms": 0,
+            "freshness": "fresh",
+            "complete": true,
+            "reason": "",
+            "counts": null,
+            "operations": [
+              {
+                "machine_id": "alpha",
+                "operation_id": "b",
+                "parent_id": null,
+                "handle": "amber",
+                "task": "w/a",
+                "checkout": "/opaque",
+                "recipe": "fixture",
+                "kind": "build",
+                "state": "running",
+                "resource": "run_slot",
+                "reason": "",
+                "phase_since": null
+              }
+            ]
+          }
+        ],
+        "unassigned": [
+          {
+            "machine_id": null,
+            "operation_id": "x",
+            "parent_id": null,
+            "handle": "amber",
+            "task": "w/b",
+            "checkout": "/opaque",
+            "recipe": "fixture",
+            "kind": "test",
+            "state": "queued",
+            "resource": "run_slot",
+            "reason": "",
+            "phase_since": null
+          }
+        ],
+        "guidance": { "alpha": { "build": 2, "test": null } }
+      },
+      "tasks": [
+        {
+          "slug": "w/a",
+          "title": "A task",
+          "body": "",
+          "status": "in_progress",
+          "priority": 2,
+          "parent": null,
+          "created_by": "owner",
+          "created": 1.0,
+          "updated": 2.0,
+          "links": ["docs/A.md"],
+          "depends": [],
+          "roles": [
+            {
+              "handle": "amber",
+              "role": "executor",
+              "since": 1.0,
+              "expires": null,
+              "health": "live"
+            }
+          ],
+          "instruction": false
+        },
+        {
+          "slug": "w/a/1",
+          "title": "A task",
+          "body": "",
+          "status": "in_progress",
+          "priority": 2,
+          "parent": "w/a",
+          "created_by": "owner",
+          "created": 1.0,
+          "updated": 2.0,
+          "links": ["docs/A.md"],
+          "depends": [],
+          "roles": [
+            {
+              "handle": "amber",
+              "role": "executor",
+              "since": 1.0,
+              "expires": null,
+              "health": "live"
+            }
+          ],
+          "instruction": false,
+          "fields": { "game": { "effort": 3.0, "risk": "high" } }
+        },
+        {
+          "slug": "w/b",
+          "title": "A task",
+          "body": "",
+          "status": "ready",
+          "priority": 2,
+          "parent": null,
+          "created_by": "owner",
+          "created": 1.0,
+          "updated": 2.0,
+          "links": [],
+          "depends": [],
+          "roles": [],
+          "instruction": false
+        }
+      ],
+      "statuses": ["ready", "in_progress"],
+      "signoff": ["w/a"],
+      "counts": [["ready", 1], ["in_progress", 2]],
+      "lifecycle_counts": [["ready", 1], ["in_progress", 2]],
+      "next": "w/b"
+    },
+    "emptyListing": {
+      "machine_work": { "freshness": "unknown", "machines": [], "unassigned": [], "guidance": {} },
+      "tasks": [],
+      "statuses": [],
+      "signoff": [],
+      "counts": [],
+      "lifecycle_counts": [],
+      "next": null
+    },
+    "work": {
+      "freshness": "fresh",
+      "machines": [
+        {
+          "machine_id": "alpha",
+          "label": "alpha",
+          "producer_id": "fixture",
+          "sequence": 1,
+          "age_ms": 0,
+          "freshness": "fresh",
+          "complete": true,
+          "reason": "",
+          "counts": null,
+          "operations": [
+            {
+              "machine_id": "alpha",
+              "operation_id": "b",
+              "parent_id": null,
+              "handle": "amber",
+              "task": "w/a",
+              "checkout": "/opaque",
+              "recipe": "fixture",
+              "kind": "build",
+              "state": "running",
+              "resource": "run_slot",
+              "reason": "",
+              "phase_since": null
+            }
+          ]
+        }
+      ],
+      "unassigned": [
+        {
+          "machine_id": null,
+          "operation_id": "x",
+          "parent_id": null,
+          "handle": "amber",
+          "task": "w/b",
+          "checkout": "/opaque",
+          "recipe": "fixture",
+          "kind": "test",
+          "state": "queued",
+          "resource": "run_slot",
+          "reason": "",
+          "phase_since": null
+        }
+      ],
+      "guidance": { "alpha": { "build": 2, "test": null } }
+    },
+    "emptyWork": { "freshness": "unknown", "machines": [], "unassigned": [], "guidance": {} },
+    "taskChange": {
+      "key": "w/a",
+      "fields": { "status": "review", "priority": 1, "parent": "", "roles": [] }
+    },
+    "bareTaskChange": { "key": "w/b", "fields": {} },
+    "taskAdded": {
+      "key": "w/a",
+      "value": {
+        "slug": "w/a",
+        "title": "A task",
+        "body": "",
+        "status": "ready",
+        "priority": 2,
+        "parent": null,
+        "created_by": "owner",
+        "created": 1.0,
+        "updated": 2.0,
+        "links": ["docs/A.md"],
+        "depends": [],
+        "roles": [
+          { "handle": "amber", "role": "executor", "since": 1.0, "expires": null, "health": "live" }
+        ],
+        "instruction": false
+      }
+    },
+    "taskRemoved": { "key": "w/a", "removed": true },
+    "agentPage": {
+      "view": {
+        "machine_work": {
+          "freshness": "fresh",
+          "machines": [
+            {
+              "machine_id": "alpha",
+              "label": "alpha",
+              "producer_id": "fixture",
+              "sequence": 1,
+              "age_ms": 0,
+              "freshness": "fresh",
+              "complete": true,
+              "reason": "",
+              "counts": null,
+              "operations": [
+                {
+                  "machine_id": "alpha",
+                  "operation_id": "b",
+                  "parent_id": null,
+                  "handle": "amber",
+                  "task": "w/a",
+                  "checkout": "/opaque",
+                  "recipe": "fixture",
+                  "kind": "build",
+                  "state": "running",
+                  "resource": "run_slot",
+                  "reason": "",
+                  "phase_since": null
+                }
+              ]
+            }
+          ],
+          "unassigned": [],
+          "guidance": {}
+        },
+        "generated": 3.0,
+        "probes": { "panes": "ok", "herdr": "ok", "slots": "unavailable" },
+        "agents": [
+          {
+            "handle": "amber",
+            "kind": "worker",
+            "model": "a model",
+            "parent": "birch",
+            "task": "w/a",
+            "role": "executor",
+            "tasks": [{ "slug": "w/a", "role": "executor", "status": "in_progress" }],
+            "following": 2,
+            "worktree": "/tmp/w/a",
+            "branch": "w/a",
+            "agent": "claude",
+            "session_id": "s1",
+            "pane": "w1:p2",
+            "callback": "unix:/tmp/amber.sock",
+            "chat": true,
+            "state": "working",
+            "state_detail": { "recipe": "test-rs", "phase": "running", "since": 1.0 },
+            "health": "live",
+            "last_tool_call": 2.0,
+            "last_message": { "slug": "w/a", "ts": 2.0, "text": "Built." },
+            "slots": { "open": 3, "cap": 8 },
+            "session_url": "https://example.com/s",
+            "in_process": true,
+            "go": { "handle": "birch", "url": "https://example.com/s", "pane": "w1:p2" }
+          },
+          {
+            "handle": "birch",
+            "kind": "",
+            "model": "",
+            "parent": null,
+            "task": null,
+            "role": null,
+            "tasks": [],
+            "following": 0,
+            "worktree": "",
+            "branch": "",
+            "agent": null,
+            "session_id": null,
+            "pane": null,
+            "callback": null,
+            "chat": false,
+            "state": "",
+            "state_detail": null,
+            "health": "lost",
+            "last_tool_call": null,
+            "last_message": null,
+            "slots": null,
+            "session_url": null,
+            "in_process": false,
+            "go": null
+          }
+        ]
+      },
+      "tasks": [
+        {
+          "slug": "w/a",
+          "title": "A task",
+          "body": "",
+          "status": "in_progress",
+          "priority": 2,
+          "parent": null,
+          "created_by": "owner",
+          "created": 1.0,
+          "updated": 2.0,
+          "links": ["docs/A.md"],
+          "depends": [],
+          "roles": [
+            {
+              "handle": "amber",
+              "role": "executor",
+              "since": 1.0,
+              "expires": null,
+              "health": "live"
+            }
+          ],
+          "instruction": false
+        }
+      ],
+      "total": 2,
+      "next": "birch",
+      "local": true
+    },
+    "emptyAgentPage": {
+      "view": {
+        "machine_work": {
+          "freshness": "unknown",
+          "machines": [],
+          "unassigned": [],
+          "guidance": {}
+        },
+        "generated": 0.0,
+        "probes": { "panes": "ok", "herdr": "ok", "slots": "unavailable" },
+        "agents": []
+      },
+      "tasks": [],
+      "total": 0,
+      "next": null,
+      "local": false
+    },
+    "agentChange": {
+      "key": "amber",
+      "value": {
+        "handle": "amber",
+        "kind": "worker",
+        "model": "a model",
+        "parent": "birch",
+        "task": "w/a",
+        "role": "executor",
+        "tasks": [{ "slug": "w/a", "role": "executor", "status": "in_progress" }],
+        "following": 2,
+        "worktree": "/tmp/w/a",
+        "branch": "w/a",
+        "agent": "claude",
+        "session_id": "s1",
+        "pane": "w1:p2",
+        "callback": "unix:/tmp/amber.sock",
+        "chat": true,
+        "state": "working",
+        "state_detail": { "recipe": "test-rs", "phase": "running", "since": 1.0 },
+        "health": "live",
+        "last_tool_call": 2.0,
+        "last_message": { "slug": "w/a", "ts": 2.0, "text": "Built." },
+        "slots": { "open": 3, "cap": 8 },
+        "session_url": "https://example.com/s",
+        "in_process": true,
+        "go": { "handle": "birch", "url": "https://example.com/s", "pane": "w1:p2" }
+      }
+    },
+    "bareAgent": {
+      "handle": "birch",
+      "kind": "",
+      "model": "",
+      "parent": null,
+      "task": null,
+      "role": null,
+      "tasks": [],
+      "following": 0,
+      "worktree": "",
+      "branch": "",
+      "agent": null,
+      "session_id": null,
+      "pane": null,
+      "callback": null,
+      "chat": false,
+      "state": "",
+      "state_detail": null,
+      "health": "lost",
+      "last_tool_call": null,
+      "last_message": null,
+      "slots": null,
+      "session_url": null,
+      "in_process": false,
+      "go": null
+    },
+    "agentProbes": { "panes": "ok", "herdr": "ok", "slots": "unavailable" },
+    "agentFocus": { "said": "Shown in the Herdr app" },
+    "agentScreen": { "handle": "amber", "pane": "w1:p2", "text": "$ just test-rs", "read_at": 4.0 },
+    "reports": {
+      "grain": "day",
+      "days": 1,
+      "from": 1794182400.0,
+      "to": 1794268800.0,
+      "buckets": [
+        {
+          "start": 1794182400.0,
+          "end": 1794268800.0,
+          "rolled": 24,
+          "flow": {
+            "held": {
+              "backlog": 1,
+              "blocked": 1,
+              "cancelled": 1,
+              "concept": 1,
+              "design": 1,
+              "done": 1,
+              "in_progress": 1,
+              "ready": 1,
+              "review": 1
+            },
+            "entered": {
+              "backlog": 2,
+              "blocked": 2,
+              "cancelled": 2,
+              "concept": 2,
+              "design": 2,
+              "done": 2,
+              "in_progress": 2,
+              "ready": 2,
+              "review": 2
+            },
+            "done": 3,
+            "task_hours": {
+              "backlog": 1.5,
+              "blocked": 1.5,
+              "cancelled": 1.5,
+              "concept": 1.5,
+              "design": 1.5,
+              "done": 1.5,
+              "in_progress": 1.5,
+              "ready": 1.5,
+              "review": 1.5
+            },
+            "unclaimed_hours": 0.5,
+            "bounces": 1,
+            "landed": 2,
+            "reds_filed": 1,
+            "reds_closed": 1
+          },
+          "decisions": { "open": 4, "answered": 3, "auto_approved": 2, "withdrawn": 1 },
+          "git": { "commits": 12, "merges": 3, "added": 1200, "removed": 300, "reverts": 1 },
+          "waits": {
+            "review_to_reviewer": { "n": 2, "median": 60.0, "p90": 90.0 },
+            "changes_to_resumed": { "n": 2, "median": 60.0, "p90": 90.0 },
+            "changes_to_review": { "n": 2, "median": 60.0, "p90": 90.0 },
+            "approved_to_landed": { "n": 2, "median": 60.0, "p90": 90.0 }
+          },
+          "lead": { "n": 2, "median": 60.0, "p90": 90.0 },
+          "verdicts": { "changes": 1, "approved": 2 },
+          "red_fix": { "n": 2, "median": 60.0, "p90": 90.0 },
+          "agents": {
+            "observed_s": 86400.0,
+            "samples": 1440,
+            "running": [
+              { "role": "orchestrator", "peak": 2, "mean": 1.5 },
+              { "role": "executor", "peak": 2, "mean": 1.5 },
+              { "role": "reviewer", "peak": 2, "mean": 1.5 }
+            ],
+            "running_agents": { "peak": 3, "mean": 2.5 },
+            "holding": [],
+            "holding_agents": { "peak": 0, "mean": 0.0 },
+            "live": [],
+            "started": 4,
+            "went_stale": 1,
+            "went_lost": 1,
+            "stale_s": 0.0,
+            "lost_s": 0.0,
+            "load_1m": { "peak": 6.5, "mean": 3.25 },
+            "load_15m": null
+          },
+          "health": {
+            "covered_s": 86400.0,
+            "dispatch": { "ok": 10, "failed": 1 },
+            "sweep": { "ok": 10, "failed": 2 },
+            "requests": 100,
+            "slow": 3,
+            "unanswered": 1,
+            "slowest_ms": null,
+            "writes": 0,
+            "write_p90_ms": null
+          }
+        }
+      ],
+      "first": 1794182400.0,
+      "marks": [
+        {
+          "at": 1794186000.0,
+          "commit": "4f1c0a9b2d3e",
+          "subject": "settings: land without the check"
+        }
+      ],
+      "unread": ["/repo/.git/symphony/reports/2026-11-08.json: not read"]
+    },
+    "emptyReports": {
+      "grain": "day",
+      "days": 0,
+      "from": 0.0,
+      "to": 0.0,
+      "buckets": [],
+      "first": null,
+      "marks": [],
+      "unread": []
+    },
+    "blocks": [
+      {
+        "type": "heading",
+        "level": 2,
+        "anchor": "lamps",
+        "spans": [{ "type": "text", "text": "Lamps" }]
+      },
+      {
+        "type": "paragraph",
+        "spans": [
+          { "type": "text", "text": "Text " },
+          { "type": "emphasis", "spans": [{ "type": "text", "text": "emphasis" }] },
+          { "type": "strong", "spans": [{ "type": "text", "text": "strong" }] },
+          { "type": "code", "text": "code" },
+          {
+            "type": "link",
+            "href": "/docs/lamps/north.md#nor-l01",
+            "target": { "path": "docs/lamps/north.md", "anchor": "nor-l01" },
+            "title": "North",
+            "spans": [{ "type": "text", "text": "NOR-L01" }]
+          },
+          {
+            "type": "wiki-link",
+            "href": "/docs/lamps/north.md",
+            "target": { "path": "docs/lamps/north.md", "anchor": null },
+            "spans": [{ "type": "text", "text": "North" }]
+          },
+          { "type": "line-break" },
+          {
+            "type": "image",
+            "image": {
+              "src": "/k.png",
+              "alt": "Lumen",
+              "presentation": {
+                "attributes": {
+                  "data-full": "/full.png",
+                  "height": "480",
+                  "style": "outline: 1px dashed rgb(176, 0, 32) !important; /* a; b */ background-color: rgba(0, 96, 192, 0.1)",
+                  "width": "640"
+                }
+              }
+            }
+          },
+          {
+            "type": "media",
+            "media": { "kind": "mockup", "src": "/docs/ui/hud.html", "label": "HUD" }
+          },
+          {
+            "type": "component",
+            "kind": "lamp",
+            "blocks": [{ "type": "paragraph", "spans": [{ "type": "text", "text": "NOR-L01" }] }]
+          },
+          {
+            "type": "icon",
+            "shape": [
+              { "kind": "path", "attributes": { "d": "M4 12h16" } },
+              { "kind": "circle", "attributes": { "cx": "12", "cy": "12", "r": "4" } },
+              { "kind": "ellipse", "attributes": { "cx": "12", "cy": "12", "rx": "6", "ry": "3" } },
+              { "kind": "rect", "attributes": { "height": "8", "width": "8", "x": "2", "y": "2" } },
+              { "kind": "line", "attributes": { "x1": "0", "x2": "24", "y1": "0", "y2": "24" } },
+              { "kind": "polyline", "attributes": { "points": "0,0 12,6 24,0" } },
+              {
+                "kind": "polygon",
+                "attributes": { "onclick": "x()", "points": "0,24 12,12 24,24" }
+              }
+            ],
+            "label": "Lamp",
+            "named": true,
+            "tip": "A lamp"
+          },
+          {
+            "type": "styled",
+            "tag": "span",
+            "presentation": {
+              "class": "tasklink",
+              "attributes": {
+                "data-task": "app/lamps",
+                "style": "outline: 1px dashed rgb(176, 0, 32) !important; /* a; b */ background-color: rgba(0, 96, 192, 0.1)"
+              }
+            },
+            "spans": [
+              {
+                "type": "link",
+                "href": "/docs/lamps/north.md#nor-l01",
+                "target": { "path": "docs/lamps/north.md", "anchor": "nor-l01" },
+                "title": "North",
+                "spans": [{ "type": "text", "text": "NOR-L01" }]
+              }
+            ]
+          },
+          {
+            "type": "graphic",
+            "view_box": "0 0 24 24",
+            "presentation": {
+              "class": "chart",
+              "attributes": {
+                "role": "img",
+                "style": "outline: 1px dashed rgb(176, 0, 32) !important; /* a; b */ background-color: rgba(0, 96, 192, 0.1)"
+              }
+            },
+            "shapes": [
+              { "kind": "path", "attributes": { "d": "M4 12h16" } },
+              { "kind": "circle", "attributes": { "cx": "12", "cy": "12", "r": "4" } },
+              { "kind": "ellipse", "attributes": { "cx": "12", "cy": "12", "rx": "6", "ry": "3" } },
+              { "kind": "rect", "attributes": { "height": "8", "width": "8", "x": "2", "y": "2" } },
+              { "kind": "line", "attributes": { "x1": "0", "x2": "24", "y1": "0", "y2": "24" } },
+              { "kind": "polyline", "attributes": { "points": "0,0 12,6 24,0" } },
+              {
+                "kind": "polygon",
+                "attributes": { "onclick": "x()", "points": "0,24 12,12 24,24" }
+              }
+            ]
+          },
+          {
+            "type": "blocks",
+            "blocks": [
+              {
+                "type": "figure",
+                "picture": {
+                  "src": "/k.png",
+                  "alt": "Lumen",
+                  "presentation": {
+                    "attributes": {
+                      "data-full": "/full.png",
+                      "height": "480",
+                      "style": "outline: 1px dashed rgb(176, 0, 32) !important; /* a; b */ background-color: rgba(0, 96, 192, 0.1)",
+                      "width": "640"
+                    }
+                  }
+                },
+                "caption": [{ "type": "text", "text": "NOR-L01 Lumen" }],
+                "href": null,
+                "badge": null,
+                "size": "cell"
+              }
+            ]
+          },
+          { "type": "unknown", "tag": "blink", "text": "old" },
+          {
+            "type": "styled",
+            "tag": "span",
+            "presentation": {
+              "class": "span",
+              "attributes": {
+                "style": "outline: 1px dashed rgb(176, 0, 32) !important; /* a; b */ background-color: rgba(0, 96, 192, 0.1)"
+              }
+            },
+            "spans": [{ "type": "text", "text": "span" }]
+          },
+          {
+            "type": "styled",
+            "tag": "small",
+            "presentation": {
+              "class": "small",
+              "attributes": {
+                "style": "outline: 1px dashed rgb(176, 0, 32) !important; /* a; b */ background-color: rgba(0, 96, 192, 0.1)"
+              }
+            },
+            "spans": [{ "type": "text", "text": "small" }]
+          },
+          {
+            "type": "styled",
+            "tag": "sub",
+            "presentation": {
+              "class": "sub",
+              "attributes": {
+                "style": "outline: 1px dashed rgb(176, 0, 32) !important; /* a; b */ background-color: rgba(0, 96, 192, 0.1)"
+              }
+            },
+            "spans": [{ "type": "text", "text": "sub" }]
+          },
+          {
+            "type": "styled",
+            "tag": "sup",
+            "presentation": {
+              "class": "sup",
+              "attributes": {
+                "style": "outline: 1px dashed rgb(176, 0, 32) !important; /* a; b */ background-color: rgba(0, 96, 192, 0.1)"
+              }
+            },
+            "spans": [{ "type": "text", "text": "sup" }]
+          },
+          {
+            "type": "styled",
+            "tag": "time",
+            "presentation": {
+              "class": "time",
+              "attributes": {
+                "style": "outline: 1px dashed rgb(176, 0, 32) !important; /* a; b */ background-color: rgba(0, 96, 192, 0.1)"
+              }
+            },
+            "spans": [{ "type": "text", "text": "time" }]
+          },
+          {
+            "type": "styled",
+            "tag": "mark",
+            "presentation": {
+              "class": "mark",
+              "attributes": {
+                "style": "outline: 1px dashed rgb(176, 0, 32) !important; /* a; b */ background-color: rgba(0, 96, 192, 0.1)"
+              }
+            },
+            "spans": [{ "type": "text", "text": "mark" }]
+          },
+          {
+            "type": "styled",
+            "tag": "kbd",
+            "presentation": {
+              "class": "kbd",
+              "attributes": {
+                "style": "outline: 1px dashed rgb(176, 0, 32) !important; /* a; b */ background-color: rgba(0, 96, 192, 0.1)"
+              }
+            },
+            "spans": [{ "type": "text", "text": "kbd" }]
+          },
+          {
+            "type": "styled",
+            "tag": "samp",
+            "presentation": {
+              "class": "samp",
+              "attributes": {
+                "style": "outline: 1px dashed rgb(176, 0, 32) !important; /* a; b */ background-color: rgba(0, 96, 192, 0.1)"
+              }
+            },
+            "spans": [{ "type": "text", "text": "samp" }]
+          },
+          {
+            "type": "styled",
+            "tag": "delete",
+            "presentation": {
+              "class": "delete",
+              "attributes": {
+                "style": "outline: 1px dashed rgb(176, 0, 32) !important; /* a; b */ background-color: rgba(0, 96, 192, 0.1)"
+              }
+            },
+            "spans": [{ "type": "text", "text": "delete" }]
+          },
+          {
+            "type": "styled",
+            "tag": "insert",
+            "presentation": {
+              "class": "insert",
+              "attributes": {
+                "style": "outline: 1px dashed rgb(176, 0, 32) !important; /* a; b */ background-color: rgba(0, 96, 192, 0.1)"
+              }
+            },
+            "spans": [{ "type": "text", "text": "insert" }]
+          },
+          {
+            "type": "styled",
+            "tag": "underline",
+            "presentation": {
+              "class": "underline",
+              "attributes": {
+                "style": "outline: 1px dashed rgb(176, 0, 32) !important; /* a; b */ background-color: rgba(0, 96, 192, 0.1)"
+              }
+            },
+            "spans": [{ "type": "text", "text": "underline" }]
+          },
+          {
+            "type": "styled",
+            "tag": "abbreviation",
+            "presentation": {
+              "class": "abbreviation",
+              "attributes": {
+                "style": "outline: 1px dashed rgb(176, 0, 32) !important; /* a; b */ background-color: rgba(0, 96, 192, 0.1)"
+              }
+            },
+            "spans": [{ "type": "text", "text": "abbreviation" }]
+          }
+        ]
+      },
+      {
+        "type": "list",
+        "ordered": true,
+        "start": 3,
+        "items": [
+          [{ "type": "paragraph", "spans": [{ "type": "text", "text": "third" }] }],
+          [{ "type": "paragraph", "spans": [{ "type": "text", "text": "fourth" }] }]
+        ]
+      },
+      {
+        "type": "list",
+        "ordered": false,
+        "start": 1,
+        "items": [[{ "type": "paragraph", "spans": [{ "type": "text", "text": "one" }] }]]
+      },
+      {
+        "type": "table",
+        "head": [
+          {
+            "header": true,
+            "spans": [{ "type": "text", "text": "Lamp" }],
+            "presentation": {
+              "attributes": {
+                "scope": "col",
+                "style": "outline: 1px dashed rgb(176, 0, 32) !important; /* a; b */ background-color: rgba(0, 96, 192, 0.1)"
+              }
+            }
+          }
+        ],
+        "rows": [
+          [
+            {
+              "header": false,
+              "spans": [{ "type": "text", "text": "NOR-L01" }],
+              "presentation": {}
+            }
+          ]
+        ],
+        "presentation": {
+          "class": "lamps",
+          "attributes": {
+            "style": "outline: 1px dashed rgb(176, 0, 32) !important; /* a; b */ background-color: rgba(0, 96, 192, 0.1)"
+          }
+        }
+      },
+      { "type": "code", "language": "rust", "text": "fn main() {}" },
+      {
+        "type": "quote",
+        "blocks": [{ "type": "paragraph", "spans": [{ "type": "text", "text": "Quoted" }] }]
+      },
+      { "type": "rule" },
+      {
+        "type": "callout",
+        "kind": "question",
+        "title": [
+          {
+            "type": "styled",
+            "tag": "span",
+            "presentation": {
+              "class": "callout-kind",
+              "attributes": {
+                "style": "outline: 1px dashed rgb(176, 0, 32) !important; /* a; b */ background-color: rgba(0, 96, 192, 0.1)"
+              }
+            },
+            "spans": [{ "type": "text", "text": "question" }]
+          },
+          { "type": "text", "text": "Warm or cold?" }
+        ],
+        "resolved": false,
+        "blocks": [{ "type": "paragraph", "spans": [{ "type": "text", "text": "Which one?" }] }]
+      },
+      {
+        "type": "callout",
+        "kind": "resolved",
+        "title": [{ "type": "text", "text": "Settled" }],
+        "resolved": true,
+        "blocks": [{ "type": "paragraph", "spans": [{ "type": "text", "text": "Warm." }] }]
+      },
+      {
+        "type": "card",
+        "slug": "lamp-colour",
+        "mark": "pending",
+        "title": "Which colour do the lamps take?",
+        "body": [{ "type": "paragraph", "spans": [{ "type": "text", "text": "Warm or cold." }] }],
+        "verdict": {
+          "group": "decide",
+          "open": true,
+          "posted": "2026-11-14 08:32",
+          "decided": null
+        },
+        "thread": [
+          {
+            "who": "agent",
+            "timestamp": "2026-11-14 08:32",
+            "verdict": null,
+            "blocks": [{ "type": "paragraph", "spans": [{ "type": "text", "text": "Asked." }] }]
+          },
+          {
+            "who": "owner",
+            "timestamp": "2026-11-14 08:32",
+            "verdict": "approved",
+            "blocks": [{ "type": "paragraph", "spans": [{ "type": "text", "text": "Warm." }] }]
+          }
+        ],
+        "line": 12,
+        "line_offset": null,
+        "comparison": [
+          {
+            "type": "comparison",
+            "figures": [
+              {
+                "type": "figure",
+                "picture": {
+                  "src": "/a.png",
+                  "alt": "A",
+                  "presentation": {
+                    "attributes": {
+                      "data-full": "/full.png",
+                      "height": "480",
+                      "style": "outline: 1px dashed rgb(176, 0, 32) !important; /* a; b */ background-color: rgba(0, 96, 192, 0.1)",
+                      "width": "640"
+                    }
+                  }
+                },
+                "caption": [{ "type": "text", "text": "NOR-L01 Lumen" }],
+                "href": null,
+                "badge": null,
+                "size": "slot"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "type": "card",
+        "slug": "lamp-size",
+        "mark": "approved",
+        "title": "How large?",
+        "body": [],
+        "verdict": { "group": "resolved", "open": false, "posted": null, "decided": "2026-11-14" },
+        "thread": [],
+        "line": null,
+        "line_offset": 4,
+        "comparison": []
+      },
+      {
+        "type": "component",
+        "kind": "lamp",
+        "blocks": [{ "type": "paragraph", "spans": [{ "type": "text", "text": "A lamp" }] }]
+      },
+      {
+        "type": "media",
+        "media": { "kind": "mockup", "src": "/docs/ui/hud.html?state=b#x", "label": "" }
+      },
+      {
+        "type": "media",
+        "media": {
+          "kind": "viewer",
+          "src": "/models/a.item",
+          "label": "Model",
+          "poster": "/models/a.png",
+          "viewer": {
+            "element": "orbit-view",
+            "script": "/static/orbit.js",
+            "attributes": [["controls", ""]],
+            "views": [
+              {
+                "label": "Above",
+                "title": "From above",
+                "set": [["angle", "0deg 25deg"]],
+                "call": "settle"
+              }
+            ],
+            "download": ".item",
+            "open_label": "Look",
+            "close_label": null
+          }
+        }
+      },
+      {
+        "type": "media",
+        "media": {
+          "kind": "gallery",
+          "items": [
+            { "name": "FIRST", "src": "/first.item", "poster": "/first.png" },
+            { "name": "SECOND", "src": "/second.item", "poster": null }
+          ],
+          "viewer": {
+            "element": "orbit-view",
+            "script": "/static/orbit.js",
+            "attributes": [["controls", ""]],
+            "views": [
+              {
+                "label": "Above",
+                "title": "From above",
+                "set": [["angle", "0deg 25deg"]],
+                "call": "settle"
+              }
+            ],
+            "download": ".item",
+            "open_label": "Look",
+            "close_label": null
+          }
+        }
+      },
+      {
+        "type": "image",
+        "image": {
+          "src": "/k.png",
+          "alt": "Lumen",
+          "presentation": {
+            "attributes": {
+              "data-full": "/full.png",
+              "height": "480",
+              "style": "outline: 1px dashed rgb(176, 0, 32) !important; /* a; b */ background-color: rgba(0, 96, 192, 0.1)",
+              "width": "640"
+            }
+          }
+        }
+      },
+      {
+        "type": "figure",
+        "picture": {
+          "src": "/k.png",
+          "alt": "Lumen",
+          "presentation": {
+            "attributes": {
+              "data-full": "/full.png",
+              "height": "480",
+              "style": "outline: 1px dashed rgb(176, 0, 32) !important; /* a; b */ background-color: rgba(0, 96, 192, 0.1)",
+              "width": "640"
+            }
+          }
+        },
+        "caption": [{ "type": "text", "text": "NOR-L01 Lumen" }],
+        "href": "/docs/lamps/north.md#nor-l01",
+        "badge": null,
+        "size": "small"
+      },
+      {
+        "type": "figure",
+        "picture": null,
+        "caption": [{ "type": "text", "text": "NOR-L01 Lumen" }],
+        "href": null,
+        "badge": "coming",
+        "size": "row"
+      },
+      {
+        "type": "figure",
+        "picture": null,
+        "caption": [{ "type": "text", "text": "NOR-L01 Lumen" }],
+        "href": null,
+        "badge": null,
+        "size": "large"
+      },
+      {
+        "type": "figure",
+        "picture": {
+          "src": "/k.png",
+          "alt": "Lumen",
+          "presentation": {
+            "attributes": {
+              "data-full": "/full.png",
+              "height": "480",
+              "style": "outline: 1px dashed rgb(176, 0, 32) !important; /* a; b */ background-color: rgba(0, 96, 192, 0.1)",
+              "width": "640"
+            }
+          }
+        },
+        "caption": [{ "type": "text", "text": "NOR-L01 Lumen" }],
+        "href": null,
+        "badge": null,
+        "size": "tile"
+      },
+      {
+        "type": "figure",
+        "picture": {
+          "src": "/k.png",
+          "alt": "Lumen",
+          "presentation": {
+            "attributes": {
+              "data-full": "/full.png",
+              "height": "480",
+              "style": "outline: 1px dashed rgb(176, 0, 32) !important; /* a; b */ background-color: rgba(0, 96, 192, 0.1)",
+              "width": "640"
+            }
+          }
+        },
+        "caption": [{ "type": "text", "text": "NOR-L01 Lumen" }],
+        "href": "/docs/lamps/north.md",
+        "badge": null,
+        "size": "wide"
+      },
+      {
+        "type": "figure",
+        "picture": null,
+        "caption": [{ "type": "text", "text": "NOR-L01 Lumen" }],
+        "href": null,
+        "badge": "coming",
+        "size": "cell"
+      },
+      {
+        "type": "caption",
+        "blocks": [{ "type": "paragraph", "spans": [{ "type": "text", "text": "A caption" }] }]
+      },
+      {
+        "type": "group",
+        "blocks": [{ "type": "paragraph", "spans": [{ "type": "text", "text": "Grouped" }] }]
+      },
+      {
+        "type": "details",
+        "summary": [{ "type": "text", "text": "More" }],
+        "open": true,
+        "blocks": [{ "type": "paragraph", "spans": [{ "type": "text", "text": "Detail" }] }]
+      },
+      {
+        "type": "settled-card",
+        "summary": [{ "type": "text", "text": "lamp-size · approved" }],
+        "open": false,
+        "blocks": [{ "type": "paragraph", "spans": [{ "type": "text", "text": "Settled" }] }]
+      },
+      {
+        "type": "thread",
+        "entries": [
+          {
+            "who": "unknown",
+            "timestamp": "2026-11-14 08:32",
+            "verdict": null,
+            "blocks": [{ "type": "paragraph", "spans": [{ "type": "text", "text": "Who?" }] }]
+          }
+        ]
+      },
+      {
+        "type": "thread",
+        "entries": [
+          {
+            "who": "owner",
+            "timestamp": "2026-11-14 08:32",
+            "verdict": null,
+            "blocks": [
+              { "type": "paragraph", "spans": [{ "type": "text", "text": "Still waiting" }] }
+            ]
+          }
+        ]
+      },
+      { "type": "comment", "text": "a note" },
+      { "type": "unknown", "tag": "marquee", "text": "Scrolling" },
+      {
+        "type": "container",
+        "tag": "div",
+        "presentation": {
+          "class": "box",
+          "attributes": {
+            "data-kind": "lamp",
+            "style": "outline: 1px dashed rgb(176, 0, 32) !important; /* a; b */ background-color: rgba(0, 96, 192, 0.1)"
+          }
+        },
+        "blocks": [{ "type": "paragraph", "spans": [{ "type": "text", "text": "Inside" }] }]
+      },
+      {
+        "type": "container",
+        "tag": "section",
+        "presentation": {
+          "class": "box",
+          "attributes": {
+            "data-kind": "lamp",
+            "style": "outline: 1px dashed rgb(176, 0, 32) !important; /* a; b */ background-color: rgba(0, 96, 192, 0.1)"
+          }
+        },
+        "blocks": [{ "type": "paragraph", "spans": [{ "type": "text", "text": "Inside" }] }]
+      },
+      {
+        "type": "container",
+        "tag": "figure",
+        "presentation": {
+          "class": "box",
+          "attributes": {
+            "data-kind": "lamp",
+            "style": "outline: 1px dashed rgb(176, 0, 32) !important; /* a; b */ background-color: rgba(0, 96, 192, 0.1)"
+          }
+        },
+        "blocks": [{ "type": "paragraph", "spans": [{ "type": "text", "text": "Inside" }] }]
+      },
+      {
+        "type": "container",
+        "tag": "figcaption",
+        "presentation": {
+          "class": "box",
+          "attributes": {
+            "data-kind": "lamp",
+            "style": "outline: 1px dashed rgb(176, 0, 32) !important; /* a; b */ background-color: rgba(0, 96, 192, 0.1)"
+          }
+        },
+        "blocks": [{ "type": "paragraph", "spans": [{ "type": "text", "text": "Inside" }] }]
+      },
+      {
+        "type": "container",
+        "tag": "aside",
+        "presentation": {
+          "class": "box",
+          "attributes": {
+            "data-kind": "lamp",
+            "style": "outline: 1px dashed rgb(176, 0, 32) !important; /* a; b */ background-color: rgba(0, 96, 192, 0.1)"
+          }
+        },
+        "blocks": [{ "type": "paragraph", "spans": [{ "type": "text", "text": "Inside" }] }]
+      },
+      {
+        "type": "container",
+        "tag": "header",
+        "presentation": {
+          "class": "box",
+          "attributes": {
+            "data-kind": "lamp",
+            "style": "outline: 1px dashed rgb(176, 0, 32) !important; /* a; b */ background-color: rgba(0, 96, 192, 0.1)"
+          }
+        },
+        "blocks": [{ "type": "paragraph", "spans": [{ "type": "text", "text": "Inside" }] }]
+      },
+      {
+        "type": "container",
+        "tag": "footer",
+        "presentation": {
+          "class": "box",
+          "attributes": {
+            "data-kind": "lamp",
+            "style": "outline: 1px dashed rgb(176, 0, 32) !important; /* a; b */ background-color: rgba(0, 96, 192, 0.1)"
+          }
+        },
+        "blocks": [{ "type": "paragraph", "spans": [{ "type": "text", "text": "Inside" }] }]
+      },
+      {
+        "type": "container",
+        "tag": "address",
+        "presentation": {
+          "class": "box",
+          "attributes": {
+            "data-kind": "lamp",
+            "style": "outline: 1px dashed rgb(176, 0, 32) !important; /* a; b */ background-color: rgba(0, 96, 192, 0.1)"
+          }
+        },
+        "blocks": [{ "type": "paragraph", "spans": [{ "type": "text", "text": "Inside" }] }]
+      },
+      {
+        "type": "container",
+        "tag": "center",
+        "presentation": {
+          "class": "box",
+          "attributes": {
+            "data-kind": "lamp",
+            "style": "outline: 1px dashed rgb(176, 0, 32) !important; /* a; b */ background-color: rgba(0, 96, 192, 0.1)"
+          }
+        },
+        "blocks": [{ "type": "paragraph", "spans": [{ "type": "text", "text": "Inside" }] }]
+      }
+    ],
+    "outline": {
+      "document": {
+        "version": 12,
+        "path": "docs/lamps/LAMPS.md",
+        "title": "Lamps",
+        "waiting": ["lamp-colour"],
+        "crumbs": [{ "name": "docs", "href": "/docs/" }, { "name": "docs", "href": null }],
+        "headings": [{ "level": 2, "anchor": "colour", "text": "Colour" }],
+        "sections": [
+          {
+            "start": 3,
+            "end": 9,
+            "key": "colour",
+            "hash": "h1",
+            "part": null,
+            "blocks": [{ "type": "paragraph", "spans": [{ "type": "text", "text": "Body" }] }],
+            "comparison": {
+              "kind": "changed",
+              "before": [{ "type": "paragraph", "spans": [{ "type": "text", "text": "Before" }] }]
+            },
+            "ends": ["paragraph", "paragraph"]
+          },
+          {
+            "start": 3,
+            "end": 9,
+            "key": "card:lamp-colour",
+            "hash": "h1",
+            "part": 1,
+            "blocks": [{ "type": "paragraph", "spans": [{ "type": "text", "text": "Body" }] }],
+            "ends": ["paragraph", "paragraph"]
+          }
+        ],
+        "cards": [
+          {
+            "slug": "lamp-colour",
+            "state": "pending",
+            "text": "Which colour?",
+            "group": "decide",
+            "open": true
+          }
+        ],
+        "threads": {
+          "lamp-colour": {
+            "blocks": [{ "type": "paragraph", "spans": [{ "type": "text", "text": "Agreed." }] }]
+          }
+        },
+        "tasks": [{ "slug": "app/lamps", "title": "Lamps", "status": "in_progress" }],
+        "comparison": { "task": "design/lamps" }
+      },
+      "anchors": { "colour": ["colour"] },
+      "thread_hashes": { "lamp-colour": "t1" }
+    },
+    "bareOutline": {
+      "document": {
+        "version": 0,
+        "path": "docs/A.md",
+        "title": "A",
+        "waiting": [],
+        "crumbs": [],
+        "headings": [],
+        "sections": [],
+        "cards": [],
+        "threads": {},
+        "tasks": []
+      },
+      "anchors": {}
+    },
+    "sections": {
+      "version": 13,
+      "change": {
+        "path": "docs/lamps/LAMPS.md",
+        "removed": true,
+        "sections": [
+          {
+            "start": 3,
+            "end": 9,
+            "key": "colour",
+            "hash": "h1",
+            "part": 0,
+            "blocks": [{ "type": "paragraph", "spans": [{ "type": "text", "text": "Body" }] }],
+            "comparison": {
+              "kind": "changed",
+              "before": [{ "type": "paragraph", "spans": [{ "type": "text", "text": "Before" }] }]
+            },
+            "ends": ["paragraph", "paragraph"]
+          }
+        ],
+        "deleted": ["old"],
+        "positions": [{ "key": "colour", "start": 4, "end": 10, "part": null }],
+        "order": ["colour", "card:lamp-colour"],
+        "threads": {
+          "lamp-colour": {
+            "blocks": [{ "type": "paragraph", "spans": [{ "type": "text", "text": "Agreed." }] }]
+          },
+          "lamp-size": null
+        },
+        "title": "Lamps",
+        "waiting": [],
+        "crumbs": [{ "name": "docs", "href": null }],
+        "headings": [],
+        "cards": [
+          {
+            "key": "lamp-colour",
+            "value": {
+              "slug": "lamp-colour",
+              "state": "pending",
+              "text": "Which colour?",
+              "group": "decide",
+              "open": true
+            }
+          },
+          { "key": "lamp-size", "removed": true }
+        ],
+        "tasks": [{ "slug": "app/lamps", "title": "Lamps", "status": "in_progress" }],
+        "comparison": []
+      }
+    },
+    "change": {
+      "path": "docs/lamps/LAMPS.md",
+      "removed": true,
+      "sections": [
+        {
+          "start": 3,
+          "end": 9,
+          "key": "colour",
+          "hash": "h1",
+          "part": 0,
+          "blocks": [{ "type": "paragraph", "spans": [{ "type": "text", "text": "Body" }] }],
+          "comparison": {
+            "kind": "changed",
+            "before": [{ "type": "paragraph", "spans": [{ "type": "text", "text": "Before" }] }]
+          },
+          "ends": ["paragraph", "paragraph"]
+        }
+      ],
+      "deleted": ["old"],
+      "positions": [{ "key": "colour", "start": 4, "end": 10, "part": null }],
+      "order": ["colour", "card:lamp-colour"],
+      "threads": {
+        "lamp-colour": {
+          "blocks": [{ "type": "paragraph", "spans": [{ "type": "text", "text": "Agreed." }] }]
+        },
+        "lamp-size": null
+      },
+      "title": "Lamps",
+      "waiting": [],
+      "crumbs": [{ "name": "docs", "href": null }],
+      "headings": [],
+      "cards": [
+        {
+          "key": "lamp-colour",
+          "value": {
+            "slug": "lamp-colour",
+            "state": "pending",
+            "text": "Which colour?",
+            "group": "decide",
+            "open": true
+          }
+        },
+        { "key": "lamp-size", "removed": true }
+      ],
+      "tasks": [{ "slug": "app/lamps", "title": "Lamps", "status": "in_progress" }],
+      "comparison": []
+    },
+    "bareChange": { "path": "docs/A.md" },
+    "folder": {
+      "path": "docs",
+      "title": "Docs",
+      "crumbs": [{ "name": "docs", "href": null }],
+      "docs": 4,
+      "intro": {
+        "version": 12,
+        "path": "docs/lamps/LAMPS.md",
+        "title": "Lamps",
+        "waiting": ["lamp-colour"],
+        "crumbs": [{ "name": "docs", "href": "/docs/" }, { "name": "docs", "href": null }],
+        "headings": [{ "level": 2, "anchor": "colour", "text": "Colour" }],
+        "sections": [
+          {
+            "start": 3,
+            "end": 9,
+            "key": "colour",
+            "hash": "h1",
+            "part": null,
+            "blocks": [{ "type": "paragraph", "spans": [{ "type": "text", "text": "Body" }] }],
+            "comparison": {
+              "kind": "changed",
+              "before": [{ "type": "paragraph", "spans": [{ "type": "text", "text": "Before" }] }]
+            },
+            "ends": ["paragraph", "paragraph"]
+          },
+          {
+            "start": 3,
+            "end": 9,
+            "key": "card:lamp-colour",
+            "hash": "h1",
+            "part": 1,
+            "blocks": [{ "type": "paragraph", "spans": [{ "type": "text", "text": "Body" }] }],
+            "ends": ["paragraph", "paragraph"]
+          }
+        ],
+        "cards": [
+          {
+            "slug": "lamp-colour",
+            "state": "pending",
+            "text": "Which colour?",
+            "group": "decide",
+            "open": true
+          }
+        ],
+        "threads": {
+          "lamp-colour": {
+            "blocks": [{ "type": "paragraph", "spans": [{ "type": "text", "text": "Agreed." }] }]
+          }
+        },
+        "tasks": [{ "slug": "app/lamps", "title": "Lamps", "status": "in_progress" }],
+        "comparison": { "task": "design/lamps" }
+      },
+      "entries": [
+        {
+          "kind": "folder",
+          "path": "docs/lamps",
+          "title": "Lamps",
+          "docs": 3,
+          "waiting": 1,
+          "summary": "The lamps."
+        },
+        {
+          "kind": "doc",
+          "path": "docs/lamps",
+          "title": "Lamps",
+          "docs": 3,
+          "waiting": 1,
+          "summary": "The lamps."
+        }
+      ]
+    },
+    "bareFolder": {
+      "path": "docs",
+      "title": "Docs",
+      "crumbs": [{ "name": "docs", "href": null }],
+      "docs": 4,
+      "intro": null,
+      "entries": [
+        {
+          "kind": "folder",
+          "path": "docs/lamps",
+          "title": "Lamps",
+          "docs": 3,
+          "waiting": 1,
+          "summary": "The lamps."
+        },
+        {
+          "kind": "doc",
+          "path": "docs/lamps",
+          "title": "Lamps",
+          "docs": 3,
+          "waiting": 1,
+          "summary": "The lamps."
+        }
+      ]
+    },
+    "versions": { "versions": [{ "sha": "0123abc", "date": "2026-11-14", "subject": "Lamps" }] },
+    "diff": { "sha": "0123abc", "subject": "Lamps", "diff": "-a\n+b" },
+    "asks": {
+      "asks": [
+        {
+          "id": 7,
+          "path": "docs/lamps/LAMPS.md",
+          "anchor": "colour",
+          "quote": "warm",
+          "question": "Why?",
+          "asked": 1.0,
+          "updated": 2.5,
+          "answers": [{ "text": "Because.", "by": "agent", "at": 2.0 }],
+          "messages": [
+            {
+              "seq": 1,
+              "kind": "question",
+              "by": "owner",
+              "text": "Why?",
+              "at": 1.5,
+              "blocks": [{ "type": "paragraph", "spans": [{ "type": "text", "text": "Why?" }] }]
+            },
+            { "seq": 1, "kind": "question", "by": "owner", "text": "Why?", "at": 1.5 }
+          ],
+          "status": "open"
+        }
+      ],
+      "listening": true,
+      "recipient": "amber-heron"
+    },
+    "noAsks": { "asks": [], "listening": false, "recipient": null }
+  },
+  "carried": [
+    {
+      "rust": "crates/symphony-api/src/project.rs here",
+      "typescript": "here, src/project.ts",
+      "source": [
+        "    pub fn here(&self, path: &str) -> String {",
+        "        if self.base.is_empty() || !path.starts_with('/') || path.starts_with(\"//\") {",
+        "            path.to_string()",
+        "        } else {",
+        "            format!(\"{}{path}\", self.base)",
+        "        }",
+        "    }"
+      ]
+    },
+    {
+      "rust": "crates/symphony-api/src/project.rs strip",
+      "typescript": "strip, src/project.ts",
+      "source": [
+        "    pub fn strip<'a>(&self, path: &'a str) -> &'a str {",
+        "        if self.base.is_empty() {",
+        "            return path;",
+        "        }",
+        "        match path.strip_prefix(self.base.as_str()) {",
+        "            Some(\"\") => \"/\",",
+        "            Some(rest) if rest.starts_with('/') => rest,",
+        "            _ => path,",
+        "        }",
+        "    }"
+      ]
+    },
+    {
+      "rust": "crates/symphony-api/src/project.rs entrypoints",
+      "typescript": "entrypoints, src/project.ts",
+      "source": [
+        "    pub fn entrypoints(&self) -> Vec<&str> {",
+        "        if self.entrypoints.is_empty() {",
+        "            vec![\"docs\"]",
+        "        } else {",
+        "            self.entrypoints.iter().map(String::as_str).collect()",
+        "        }",
+        "    }"
+      ]
+    },
+    {
+      "rust": "crates/symphony-api/src/project.rs is_document_route",
+      "typescript": "isDocumentRoute, src/project.ts",
+      "source": [
+        "    pub fn is_document_route(&self, path: &str) -> bool {",
+        "        let page = path.trim_end_matches('/');",
+        "        let pages = self.nav.iter().map(|item| item.href.trim_matches('/'));",
+        "        let entrypoints = self.entrypoints();",
+        "        let name = page.rsplit('/').next().unwrap_or(page);",
+        "        !SYMPHONY_ROUTES",
+        "            .iter()",
+        "            .copied()",
+        "            .chain(pages)",
+        "            .any(|route| within(route, page))",
+        "            && entrypoints.iter().any(|url| within(url, page))",
+        "            && (path.ends_with('/')",
+        "                || entrypoints.contains(&page)",
+        "                || !name.contains('.')",
+        "                || is_page(name))",
+        "    }"
+      ]
+    },
+    {
+      "rust": "crates/symphony-api/src/project.rs is_folder_route",
+      "typescript": "isFolderRoute, src/project.ts",
+      "source": [
+        "    pub fn is_folder_route(&self, path: &str) -> bool {",
+        "        let page = path.trim_end_matches('/');",
+        "        self.is_document_route(path)",
+        "            && (path.ends_with('/') || self.entrypoints().contains(&page) || !is_page(page))",
+        "    }"
+      ]
+    },
+    {
+      "rust": "crates/symphony-api/src/project.rs documents_href",
+      "typescript": "documentsHref, src/project.ts",
+      "source": [
+        "    pub fn documents_href(&self) -> String {",
+        "        match self.entrypoints().first() {",
+        "            Some(url) if !url.is_empty() => format!(\"/{url}/\"),",
+        "            _ => \"/\".into(),",
+        "        }",
+        "    }"
+      ]
+    },
+    {
+      "rust": "crates/symphony-api/src/project.rs readme_route",
+      "typescript": "readmeRoute, src/project.ts",
+      "source": [
+        "    pub fn readme_route(&self) -> String {",
+        "        match self.entrypoints().first() {",
+        "            Some(url) if !url.is_empty() => format!(\"{url}/README.md\"),",
+        "            _ => \"README.md\".into(),",
+        "        }",
+        "    }"
+      ]
+    },
+    {
+      "rust": "crates/symphony-api/src/project.rs own_pages",
+      "typescript": "ownPages, src/project.ts",
+      "source": [
+        "    pub fn own_pages(&self) -> [(String, &'static str); 7] {",
+        "        use page_names::{AGENTS, BOARD, DOCS, HOME, QUEUE, REPORTS, RUNS};",
+        "        [",
+        "            (\"/\".into(), HOME),",
+        "            (\"/queue\".into(), QUEUE),",
+        "            (self.documents_href(), DOCS),",
+        "            (\"/tasks\".into(), BOARD),",
+        "            (\"/reports\".into(), REPORTS),",
+        "            (\"/runs\".into(), RUNS),",
+        "            (\"/agents\".into(), AGENTS),",
+        "        ]",
+        "    }"
+      ]
+    },
+    {
+      "rust": "crates/symphony-api/src/project.rs is_page",
+      "typescript": "isPage, src/project.ts",
+      "source": [
+        "fn is_page(name: &str) -> bool {",
+        "    extension(name).is_some_and(|extension| extension == \"md\" || html_extension(extension))",
+        "}"
+      ]
+    },
+    {
+      "rust": "crates/symphony-api/src/project.rs is_html",
+      "typescript": "isHtml, src/project.ts",
+      "source": [
+        "pub fn is_html(name: &str) -> bool {",
+        "    extension(name).is_some_and(html_extension)",
+        "}"
+      ]
+    },
+    {
+      "rust": "crates/symphony-api/src/project.rs extension",
+      "typescript": "extension, src/project.ts",
+      "source": [
+        "fn extension(name: &str) -> Option<&str> {",
+        "    let last = name.rsplit('/').next()?;",
+        "    let (stem, extension) = last.rsplit_once('.')?;",
+        "    (!stem.is_empty()).then_some(extension)",
+        "}"
+      ]
+    },
+    {
+      "rust": "crates/symphony-api/src/project.rs html_extension",
+      "typescript": "htmlExtension, src/project.ts",
+      "source": [
+        "fn html_extension(extension: &str) -> bool {",
+        "    extension.eq_ignore_ascii_case(\"html\") || extension.eq_ignore_ascii_case(\"htm\")",
+        "}"
+      ]
+    },
+    {
+      "rust": "crates/symphony-api/src/project.rs within",
+      "typescript": "within, src/project.ts",
+      "source": [
+        "fn within(route: &str, path: &str) -> bool {",
+        "    route.is_empty()",
+        "        || path == route",
+        "        || path",
+        "            .strip_prefix(route)",
+        "            .is_some_and(|rest| rest.starts_with('/'))",
+        "}"
+      ]
+    },
+    {
+      "rust": "crates/symphony-api/src/project.rs asks_for_file",
+      "typescript": "asksForFile, src/project.ts",
+      "source": [
+        "pub fn asks_for_file(query: &str) -> bool {",
+        "    query",
+        "        .split('&')",
+        "        .any(|pair| pair.split('=').next() == Some(FILE_QUERY))",
+        "}"
+      ]
+    },
+    {
+      "rust": "crates/symphony-api/src/project.rs file_address",
+      "typescript": "fileAddress, src/project.ts",
+      "source": [
+        "pub fn file_address(src: &str) -> String {",
+        "    let (address, fragment) = src.split_at(src.find('#').unwrap_or(src.len()));",
+        "    match address.split_once('?') {",
+        "        Some((_, query)) if asks_for_file(query) => src.to_string(),",
+        "        Some(_) => format!(\"{address}&{FILE_QUERY}{fragment}\"),",
+        "        None => format!(\"{address}?{FILE_QUERY}{fragment}\"),",
+        "    }",
+        "}"
+      ]
+    },
+    {
+      "rust": "crates/symphony-api/src/lib.rs queue_category",
+      "typescript": "queueCategory, src/queue.tsx",
+      "source": [
+        "pub fn queue_category(path: &str) -> &str {",
+        "    let path = if path.starts_with('@') {",
+        "        path.split_once('/').map_or(path, |(_, path)| path)",
+        "    } else {",
+        "        path",
+        "    };",
+        "    path.strip_prefix(\"docs/\")",
+        "        .and_then(|path| path.split_once('/'))",
+        "        .map_or(\"docs\", |(folder, _)| folder)",
+        "}"
+      ]
+    },
+    {
+      "rust": "crates/symphony-api/src/lib.rs answers_verdicts",
+      "typescript": "answersVerdicts, src/document.ts",
+      "source": [
+        "    pub fn answers_verdicts(&self) -> bool {",
+        "        self.slug.starts_with(VERDICT_TASKS)",
+        "    }"
+      ]
+    },
+    {
+      "rust": "crates/symphony-api/src/task_queries.rs slug_order",
+      "typescript": "slugOrder, src/task.ts",
+      "source": [
+        "pub fn slug_order(a: &str, b: &str) -> std::cmp::Ordering {",
+        "    use std::cmp::Ordering;",
+        "    fn digits(s: &[u8]) -> usize {",
+        "        s.iter().take_while(|c| c.is_ascii_digit()).count()",
+        "    }",
+        "    /// A run of digits without its leading zeros, which compares as its number by length first.",
+        "    fn number(s: &[u8]) -> &[u8] {",
+        "        &s[s.iter().take_while(|c| **c == b'0').count()..]",
+        "    }",
+        "    let (mut left, mut right) = (a.as_bytes(), b.as_bytes());",
+        "    loop {",
+        "        match (left.first(), right.first()) {",
+        "            (None, None) => return a.cmp(b),",
+        "            (None, Some(_)) => return Ordering::Less,",
+        "            (Some(_), None) => return Ordering::Greater,",
+        "            (Some(one), Some(other)) if one.is_ascii_digit() && other.is_ascii_digit() => {",
+        "                let (ends, other_ends) = (digits(left), digits(right));",
+        "                let (value, other_value) = (number(&left[..ends]), number(&right[..other_ends]));",
+        "                let order = value",
+        "                    .len()",
+        "                    .cmp(&other_value.len())",
+        "                    .then(value.cmp(other_value));",
+        "                if order != Ordering::Equal {",
+        "                    return order;",
+        "                }",
+        "                (left, right) = (&left[ends..], &right[other_ends..]);",
+        "            }",
+        "            (Some(one), Some(other)) if one != other => return one.cmp(other),",
+        "            _ => (left, right) = (&left[1..], &right[1..]),",
+        "        }",
+        "    }",
+        "}"
+      ]
+    },
+    {
+      "rust": "crates/symphony-api/src/task_queries.rs kind",
+      "typescript": "isTask, src/task.ts",
+      "source": [
+        "    pub fn kind(&self) -> TaskKind {",
+        "        match self.parent {",
+        "            None => TaskKind::Task,",
+        "            Some(_) => TaskKind::Subtask,",
+        "        }",
+        "    }"
+      ]
+    },
+    {
+      "rust": "crates/symphony-api/src/task_queries.rs is_task",
+      "typescript": "isTask, src/task.ts",
+      "source": [
+        "    pub fn is_task(&self) -> bool {",
+        "        self.kind() == TaskKind::Task",
+        "    }"
+      ]
+    },
+    {
+      "rust": "crates/symphony-api/src/task_queries.rs has_status",
+      "typescript": "taskStage, src/work.ts",
+      "source": [
+        "    pub fn has_status(&self, status: TaskStatus) -> bool {",
+        "        self.status == status.as_str()",
+        "    }"
+      ]
+    },
+    {
+      "rust": "crates/symphony-api/src/machine_work.rs is_for",
+      "typescript": "isFor, src/work.ts",
+      "source": [
+        "    pub fn is_for(&self, slug: &str) -> bool {",
+        "        self.task.as_deref() == Some(slug) || self.under.iter().any(|above| above == slug)",
+        "    }"
+      ]
+    },
+    {
+      "rust": "crates/symphony-api/src/task_stage.rs task_stage",
+      "typescript": "taskStage, src/work.ts",
+      "source": [
+        "    pub fn task_stage<'a>(&self, task: &'a Task, connected: bool) -> TaskStage<'a> {",
+        "        if !connected || !task.has_status(TaskStatus::InProgress) {",
+        "            return TaskStage::Lifecycle(&task.status);",
+        "        }",
+        "        let mut stage = TaskStage::Lifecycle(&task.status);",
+        "        let mut priority = 0;",
+        "        for machine in &self.machines {",
+        "            for operation in &machine.operations {",
+        "                if !operation.is_for(&task.slug) || !self.can_place(machine, operation) {",
+        "                    continue;",
+        "                }",
+        "                // Queued Build < queued Test < running Build < running Test.",
+        "                let candidate = 1",
+        "                    + 2 * u8::from(operation.state == WorkState::Running)",
+        "                    + u8::from(operation.kind == WorkKind::Test);",
+        "                if candidate > priority {",
+        "                    priority = candidate;",
+        "                    stage = if operation.kind == WorkKind::Test {",
+        "                        TaskStage::Test",
+        "                    } else {",
+        "                        TaskStage::Build",
+        "                    };",
+        "                }",
+        "            }",
+        "        }",
+        "        stage",
+        "    }"
+      ]
+    },
+    {
+      "rust": "crates/symphony-api/src/task_stage.rs places_alike",
+      "typescript": "placesAlike, src/work.ts",
+      "source": [
+        "    pub fn places_alike(&self, other: &MachineWork) -> bool {",
+        "        fn placing(work: &MachineWork) -> Vec<(&Option<String>, &Vec<String>, bool, bool)> {",
+        "            let mut placing = Vec::new();",
+        "            for machine in &work.machines {",
+        "                for operation in &machine.operations {",
+        "                    if work.can_place(machine, operation) {",
+        "                        placing.push((",
+        "                            &operation.task,",
+        "                            &operation.under,",
+        "                            operation.kind == WorkKind::Test,",
+        "                            operation.state == WorkState::Running,",
+        "                        ));",
+        "                    }",
+        "                }",
+        "            }",
+        "            placing",
+        "        }",
+        "        placing(self) == placing(other)",
+        "    }"
+      ]
+    },
+    {
+      "rust": "crates/symphony-api/src/task_stage.rs can_place",
+      "typescript": "canPlace, src/work.ts",
+      "source": [
+        "    fn can_place(&self, machine: &MachineObservation, operation: &WorkOperation) -> bool {",
+        "        matches!(",
+        "            machine.freshness,",
+        "            WorkFreshness::Fresh | WorkFreshness::Incomplete",
+        "        ) && operation.machine_id.as_deref() == Some(&machine.machine_id)",
+        "            && !operation.operation_id.as_deref().is_none_or(str::is_empty)",
+        "            && matches!(operation.kind, WorkKind::Build | WorkKind::Test)",
+        "            && !self.conflicts(operation)",
+        "    }"
+      ]
+    },
+    {
+      "rust": "crates/symphony-api/src/task_stage.rs conflicts",
+      "typescript": "conflicts, src/work.ts",
+      "source": [
+        "    fn conflicts(&self, operation: &WorkOperation) -> bool {",
+        "        for machine in &self.machines {",
+        "            for other in &machine.operations {",
+        "                if other.machine_id == operation.machine_id",
+        "                    && other.operation_id == operation.operation_id",
+        "                    && other != operation",
+        "                {",
+        "                    return true;",
+        "                }",
+        "            }",
+        "        }",
+        "        false",
+        "    }"
+      ]
+    },
+    {
+      "rust": "crates/symphony-blocks/src/media.rs element_html",
+      "typescript": "elementHtml, src/media.tsx",
+      "source": [
+        "    pub fn element_html(&self, src: &str, label: &str, poster: Option<&str>) -> Option<String> {",
+        "        if !is_element(&self.element) {",
+        "            return None;",
+        "        }",
+        "        let given = [(\"src\", src), (\"alt\", label)];",
+        "        let poster = poster.map(|poster| (\"poster\", poster));",
+        "        let attributes = given",
+        "            .into_iter()",
+        "            .chain(",
+        "                self.attributes",
+        "                    .iter()",
+        "                    .map(|(n, v)| (n.as_str(), v.as_str())),",
+        "            )",
+        "            .chain(poster)",
+        "            .filter(|(name, _)| is_name(name))",
+        "            .fold(String::new(), |mut out, (name, value)| {",
+        "                let _ = write!(out, \" {name}=\\\"{}\\\"\", escape(value));",
+        "                out",
+        "            });",
+        "        Some(format!(\"<{0}{attributes}></{0}>\", self.element))",
+        "    }"
+      ]
+    },
+    {
+      "rust": "crates/symphony-blocks/src/media.rs encoded",
+      "typescript": "encoded, src/media.tsx",
+      "source": [
+        "    pub fn encoded(&self) -> String {",
+        "        self.set",
+        "            .iter()",
+        "            .filter(|(name, value)| is_name(name) && !value.contains(['\\n', '\\r']))",
+        "            .map(|(name, value)| format!(\"{name}={value}\"))",
+        "            .collect::<Vec<_>>()",
+        "            .join(\"\\n\")",
+        "    }"
+      ]
+    },
+    {
+      "rust": "crates/symphony-blocks/src/media.rs decode",
+      "typescript": "decode, src/media.tsx",
+      "source": [
+        "    pub fn decode(value: &str) -> Vec<(&str, &str)> {",
+        "        value",
+        "            .lines()",
+        "            .filter_map(|line| line.split_once('='))",
+        "            .filter(|(name, _)| is_name(name))",
+        "            .collect()",
+        "    }"
+      ]
+    },
+    {
+      "rust": "crates/symphony-blocks/src/media.rs is_name",
+      "typescript": "isName, src/media.tsx",
+      "source": [
+        "fn is_name(name: &str) -> bool {",
+        "    let mut chars = name.chars();",
+        "    chars.next().is_some_and(|c| c.is_ascii_lowercase())",
+        "        && chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')",
+        "}"
+      ]
+    },
+    {
+      "rust": "crates/symphony-blocks/src/media.rs is_element",
+      "typescript": "isElement, src/media.tsx",
+      "source": [
+        "fn is_element(name: &str) -> bool {",
+        "    is_name(name) && name.contains('-')",
+        "}"
+      ]
+    },
+    {
+      "rust": "crates/symphony-blocks/src/media.rs escape",
+      "typescript": "escapeText, src/media.tsx",
+      "source": [
+        "fn escape(text: &str) -> String {",
+        "    let mut out = String::with_capacity(text.len());",
+        "    for c in text.chars() {",
+        "        match c {",
+        "            '&' => out.push_str(\"&amp;\"),",
+        "            '<' => out.push_str(\"&lt;\"),",
+        "            '>' => out.push_str(\"&gt;\"),",
+        "            '\"' => out.push_str(\"&quot;\"),",
+        "            '\\'' => out.push_str(\"&#x27;\"),",
+        "            _ => out.push(c),",
+        "        }",
+        "    }",
+        "    out",
+        "}"
+      ]
+    },
+    {
+      "rust": "crates/symphony-api/src/report_page.rs parse",
+      "typescript": "parseGrain, src/reports.tsx",
+      "source": [
+        "    pub fn parse(word: &str) -> Option<Grain> {",
+        "        match word {",
+        "            \"hour\" => Some(Grain::Hour),",
+        "            \"day\" => Some(Grain::Day),",
+        "            \"week\" => Some(Grain::Week),",
+        "            _ => None,",
+        "        }",
+        "    }"
+      ]
+    },
+    {
+      "rust": "crates/symphony-api/src/report_page.rs default_days",
+      "typescript": "defaultDays, src/reports.tsx",
+      "source": [
+        "    pub fn default_days(self) -> u32 {",
+        "        match self {",
+        "            Grain::Hour => 2,",
+        "            Grain::Day => 14,",
+        "            Grain::Week => 84,",
+        "        }",
+        "    }"
+      ]
+    },
+    {
+      "rust": "crates/symphony-api/src/agents.rs web_address",
+      "typescript": "webAddress, src/links.ts",
+      "source": [
+        "pub fn web_address(url: &str) -> bool {",
+        "    let after = |scheme: &str| {",
+        "        url.get(..scheme.len())",
+        "            .filter(|start| start.eq_ignore_ascii_case(scheme))",
+        "            .and_then(|_| url.get(scheme.len()..))",
+        "    };",
+        "    let Some(rest) = [\"https://\", \"http://\"].into_iter().find_map(after) else {",
+        "        return false;",
+        "    };",
+        "    !url.chars().any(|c| c.is_whitespace() || c.is_control())",
+        "        && rest",
+        "            .split(['/', '?', '#'])",
+        "            .next()",
+        "            .is_some_and(|host| !host.is_empty())",
+        "}"
+      ]
+    },
+    {
+      "rust": "crates/symphony-api/src/agents.rs control",
+      "typescript": "sessionControl, src/session.tsx",
+      "source": [
+        "    pub fn control(&self, local: bool) -> Option<SessionControl<'_>> {",
+        "        let url = self.url.as_deref().filter(|url| web_address(url));",
+        "        match (&self.pane, url) {",
+        "            (Some(pane), _) if local => Some(SessionControl::Focus(pane)),",
+        "            (_, Some(url)) => Some(SessionControl::Link(url)),",
+        "            (Some(pane), None) => Some(SessionControl::Screen(pane)),",
+        "            (None, None) => None,",
+        "        }",
+        "    }"
+      ]
+    },
+    {
+      "rust": "crates/symphony-api/src/agents.rs via_parent",
+      "typescript": "viaParent, src/session.tsx",
+      "source": [
+        "    pub fn via_parent(&self, handle: &str) -> bool {",
+        "        self.handle != handle",
+        "    }"
+      ]
+    },
+    {
+      "rust": "crates/symphony-api/src/links.rs app_path",
+      "typescript": "appPath, src/links.ts",
+      "source": [
+        "pub fn app_path(path: &str) -> bool {",
+        "    path.starts_with('/')",
+        "        && !path.starts_with(\"//\")",
+        "        && !path.chars().any(|c| c.is_control() || c == '\\\\')",
+        "}"
+      ]
+    },
+    {
+      "rust": "crates/symphony-api/src/links.rs linkable",
+      "typescript": "linkable, src/links.ts",
+      "source": [
+        "pub fn linkable(link: &str) -> bool {",
+        "    app_path(link) || web_address(link)",
+        "}"
+      ]
+    },
+    {
+      "rust": "crates/symphony-api/src/gates.rs count",
+      "typescript": "countOf, src/gates-model.ts",
+      "source": [
+        "    pub fn count(&self, state: GateState) -> usize {",
+        "        self.gates.iter().filter(|gate| gate.state == state).count()",
+        "    }"
+      ]
+    },
+    {
+      "rust": "crates/symphony-api/src/gates.rs waiting",
+      "typescript": "waitingGates, src/gates-model.ts",
+      "source": [
+        "    pub fn waiting(&self) -> impl Iterator<Item = &Gate> {",
+        "        self.gates.iter().filter(|gate| gate.state.waits())",
+        "    }"
+      ]
+    },
+    {
+      "rust": "crates/symphony-api/src/gates.rs seen",
+      "typescript": "seenOf, src/gates-model.ts",
+      "source": [
+        "    pub fn seen(&self) -> GatesSeen {",
+        "        GatesSeen {",
+        "            count: self.gates.len(),",
+        "            waiting: self.waiting().count(),",
+        "            unsigned: self.gates.iter().filter(|gate| !gate.signed()).count(),",
+        "        }",
+        "    }"
+      ]
+    },
+    {
+      "rust": "crates/symphony-blocks/src/gates.rs unsaid_commit",
+      "typescript": "unsaidCommit, src/gates-model.ts",
+      "source": [
+        "    pub fn unsaid_commit(&self) -> Option<String> {",
+        "        let commit = self.commit.as_deref().filter(|commit| !commit.is_empty())?;",
+        "        let short: String = commit.chars().take(7).collect();",
+        "        let said = |text: &str| text.contains(&short);",
+        "        (!said(&self.detail) && !self.why.as_deref().is_some_and(said)).then_some(short)",
+        "    }"
+      ]
+    },
+    {
+      "rust": "crates/symphony-blocks/src/gates.rs signed",
+      "typescript": "signed, src/gates-model.ts",
+      "source": [
+        "    pub fn signed(&self) -> bool {",
+        "        self.by.as_deref().is_some_and(|by| !by.is_empty())",
+        "            || self.at.is_some()",
+        "            || self.unsaid_commit().is_some()",
+        "    }"
+      ]
+    },
+    {
+      "rust": "crates/symphony-blocks/src/gates.rs waits",
+      "typescript": "waits, src/gates-model.ts",
+      "source": [
+        "    pub const fn waits(self) -> bool {",
+        "        matches!(self, Self::Missing | Self::Held)",
+        "    }"
+      ]
+    },
+    {
+      "rust": "crates/symphony-api/src/timeline.rs offset_at",
+      "typescript": "offsetAt, src/timeline-layout.ts",
+      "source": [
+        "    pub fn offset_at(&self, at: f64) -> i64 {",
+        "        self.zone",
+        "            .iter()",
+        "            .take_while(|change| change.from <= at)",
+        "            .last()",
+        "            .or(self.zone.first())",
+        "            .map_or(0, |change| change.seconds)",
+        "    }"
+      ]
+    },
+    {
+      "rust": "crates/symphony-api/src/timeline.rs every_seconds",
+      "typescript": "everySeconds, src/timeline-layout.ts",
+      "source": [
+        "    pub fn every_seconds(&self) -> u32 {",
+        "        if self.every == 0 {",
+        "            TIMELINE_EVERY",
+        "        } else {",
+        "            self.every",
+        "        }",
+        "    }"
+      ]
+    },
+    {
+      "rust": "crates/symphony-api/src/timeline.rs end",
+      "typescript": "timelineEnd, src/timeline-layout.ts",
+      "source": [
+        "    pub fn end(&self) -> f64 {",
+        "        let close = self.closed.unwrap_or(self.now);",
+        "        self.runs",
+        "            .iter()",
+        "            .map(|run| run.ended.unwrap_or(self.now))",
+        "            .fold(close, f64::max)",
+        "            .max(self.created)",
+        "    }"
+      ]
+    },
+    {
+      "rust": "crates/symphony-api/src/timeline.rs machine_seconds",
+      "typescript": "machineSeconds, src/timeline-layout.ts",
+      "source": [
+        "    pub fn machine_seconds(&self) -> f64 {",
+        "        self.runs.iter().map(|run| run.ran(self.now)).sum()",
+        "    }"
+      ]
+    },
+    {
+      "rust": "crates/symphony-api/src/timeline.rs queued_seconds",
+      "typescript": "queuedSeconds, src/timeline-layout.ts",
+      "source": [
+        "    pub fn queued_seconds(&self) -> f64 {",
+        "        self.runs.iter().map(|run| run.waited(self.now)).sum()",
+        "    }"
+      ]
+    },
+    {
+      "rust": "crates/symphony-api/src/timeline.rs seconds",
+      "typescript": "stageSeconds, src/timeline-layout.ts",
+      "source": [
+        "    pub fn seconds(&self, now: f64) -> f64 {",
+        "        (self.to.unwrap_or(now) - self.from).max(0.0)",
+        "    }"
+      ]
+    },
+    {
+      "rust": "crates/symphony-api/src/timeline.rs waited",
+      "typescript": "waited, src/timeline-layout.ts",
+      "source": [
+        "    pub fn waited(&self, now: f64) -> f64 {",
+        "        (self.started.or(self.ended).unwrap_or(now) - self.queued).max(0.0)",
+        "    }"
+      ]
+    },
+    {
+      "rust": "crates/symphony-api/src/timeline.rs ran",
+      "typescript": "ran, src/timeline-layout.ts",
+      "source": [
+        "    pub fn ran(&self, now: f64) -> f64 {",
+        "        self.started.map_or(0.0, |started| {",
+        "            (self.ended.unwrap_or(now) - started).max(0.0)",
+        "        })",
+        "    }"
+      ]
+    }
+  ]
+}

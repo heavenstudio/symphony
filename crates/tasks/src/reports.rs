@@ -273,29 +273,25 @@ fn happened(replayed: &[Replayed], hours: &mut [ReportHour], start: f64, until: 
         };
         for review in task.review_segments() {
             let (from, to) = (review.from, review.to.unwrap_or(f64::INFINITY));
-            let held = task.holds.iter().any(|hold| {
-                hold.role == "reviewer" && hold.from <= from && hold.to.is_none_or(|t| t > from)
-            });
-            let staffed = if held {
-                Some(from)
-            } else {
-                let joined = task
+            // A reviewer that kept the role from a round before joins nothing: the board's lines
+            // cannot tell when it came back (its first line is its verdict), so the stretch has a
+            // wait only once a session joins as its reviewer or claims a review subtask in it.
+            let joined = task
+                .holds
+                .iter()
+                .filter(|hold| hold.role == "reviewer")
+                .map(|hold| hold.from);
+            let claimed = reviews().flat_map(|child| {
+                child
                     .holds
                     .iter()
-                    .filter(|hold| hold.role == "reviewer")
-                    .map(|hold| hold.from);
-                let claimed = reviews().flat_map(|child| {
-                    child
-                        .holds
-                        .iter()
-                        .filter(|hold| hold.role == "executor")
-                        .map(|hold| hold.from)
-                });
-                joined
-                    .chain(claimed)
-                    .filter(|at| from <= *at && *at < to)
-                    .min_by(f64::total_cmp)
-            };
+                    .filter(|hold| hold.role == "executor")
+                    .map(|hold| hold.from)
+            });
+            let staffed = joined
+                .chain(claimed)
+                .filter(|at| from <= *at && *at < to)
+                .min_by(f64::total_cmp);
             if let Some(at) = staffed {
                 wait(hours, |w| &mut w.review_to_reviewer, from, at);
             }
@@ -363,7 +359,8 @@ fn flow(replayed: &[Replayed], top: bool, from: f64, to: f64, now: f64) -> Flow 
     flow
 }
 
-fn spread(values: Vec<f64>) -> Option<Spread> {
+/// The median and p90 of `values`, as a day file keeps a spread; none of none.
+pub(crate) fn spread(values: Vec<f64>) -> Option<Spread> {
     stages::stats::spread(values).map(|s| Spread {
         n: u32::try_from(s.n).unwrap_or(u32::MAX),
         median: s.median,
@@ -427,6 +424,9 @@ fn reds(replayed: &[Replayed], start: f64, until: f64) -> Vec<Red> {
                 status: task
                     .holding(until)
                     .map_or_else(|| task.task.status.clone(), |s| s.status.clone()),
+                between: task.task.between.clone(),
+                // The landings in that range are git's to say: the roll-up's.
+                landed: None,
             })
         })
         .collect()

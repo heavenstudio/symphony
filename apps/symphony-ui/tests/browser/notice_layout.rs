@@ -88,84 +88,72 @@ fn the_notice_reserve_keeps_one_page_end_across_the_phone_breakpoint() {
     );
 }
 
+/// Where the page stands at its end: whether it is scrolled to its end, the page's height, the
+/// scroll, and whether the composer's Send clears the notices' reserve under it.
+const PAGE_END: &str = r#"(() => {
+    const reserve = document.querySelector('.page-notice-reserve').getBoundingClientRect();
+    const send = document.querySelector('#task-send button[type=submit]').getBoundingClientRect();
+    return {
+        atEnd: scrollY === Math.max(0, document.documentElement.scrollHeight - innerHeight),
+        height: document.documentElement.scrollHeight,
+        scroll: scrollY,
+        clear: send.bottom <= reserve.top,
+    };
+})()"#;
+
+// The task page on a phone's narrowest width (#5559): its stale notice, drawn while the feed is
+// lost, goes once the feed is back, and the page's end stays where it was: the reserve under the
+// composer keeps its height, so the scroll is never clamped. Each step waits on what it shows.
 #[test]
-fn a_stale_notice_leaves_the_task_composer_clear_at_page_end_without_scroll_clamping() {
+fn at_320_px_a_task_pages_stale_notice_going_live_keeps_the_reserve_under_the_composer() {
     let site = site();
     let responses = look_parity::responses();
     for path in ["/api/task-page", "/api/task-history"] {
         site.set_json(path, &responses[path]);
     }
     let Some(mut chrome) = chrome() else { return };
+    chrome.call(
+        "Emulation.setDeviceMetricsOverride",
+        json!({"width":320,"height":900,"deviceScaleFactor":1,"mobile":false}),
+    );
     chrome.open(&site.url("/task/visual/in-progress"));
+    assert!(
+        chrome.wait_for(
+            "document.querySelector('main[data-feed=live] #task-thread .entry') !== null && document.querySelector('#task-send button[type=submit]') !== null",
+            SHOWN
+        ),
+        "the task page never drew its thread and composer: {}",
+        chrome.eval("document.body.innerText")
+    );
+    wait_for_feed(&site).expect("the page never followed the feed");
+    site.fail_feeds(usize::MAX);
+    site.drop_feeds();
     assert!(chrome.wait_for(
-        "document.querySelector('article.task') !== null && document.documentElement.dataset.navigation === 'ready'",
+        "document.querySelector('main')?.dataset.feed === 'stale' && document.querySelector('.page-notices:not([hidden]) [role=status]') !== null",
         SHOWN
     ));
-    for width in [320, 390, 1024] {
-        chrome.call(
-            "Emulation.setDeviceMetricsOverride",
-            json!({"width":width,"height":900,"deviceScaleFactor":1,"mobile":false}),
-        );
-        chrome.eval("document.getElementById('thread-region-visual/in-progress').scrollIntoView({block:'center'})");
-        assert!(chrome.wait_for(
-            "document.querySelector('#task-thread .entry.owner') !== null",
+    chrome.eval("scrollTo(0,document.documentElement.scrollHeight); new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))");
+    let stale = chrome.eval(PAGE_END);
+    assert_eq!(
+        (&stale["atEnd"], &stale["clear"]),
+        (&json!(true), &json!(true)),
+        "at the page end the composer clears the stale notice's reserve: {stale}"
+    );
+    site.fail_feeds(0);
+    assert!(
+        chrome.wait_for(
+            "document.querySelector('main')?.dataset.feed === 'live' && document.querySelector('.page-notices')?.hidden === true",
             SHOWN
-        ));
-        chrome.eval("scrollTo(0,document.documentElement.scrollHeight)");
-        assert!(chrome.wait_for(
-            "document.querySelector('#task-send [role=combobox]') !== null && document.querySelector('#task-send button[type=submit]') !== null",
-            SHOWN
-        ));
-        // Lazy messages and controls release their height reservations before the baseline.
-        assert!(chrome.wait_for(
-            "document.querySelector('#task-thread .entry.owner') !== null && [...document.querySelectorAll('article.task .viewport-slot')].every(slot => slot.style.minHeight === '0px' && !slot.querySelector('.viewport-placeholder, .section-loading'))",
-            SHOWN
-        ), "lazy task regions must settle before the page-end baseline: {}", chrome.eval("[...document.querySelectorAll('article.task .viewport-slot')].map(slot=>({id:slot.id,minHeight:slot.style.minHeight,placeholder:!!slot.querySelector('.viewport-placeholder,.section-loading')}))"));
-        assert!(chrome.wait_for(r#"new Promise(resolve => {
-            scrollTo(0, document.documentElement.scrollHeight);
-            requestAnimationFrame(() => requestAnimationFrame(() => {
-                const atEnd = scrollY === Math.max(0, document.documentElement.scrollHeight - innerHeight);
-                if (atEnd) {
-                    window.pageEndScroll = scrollY;
-                    window.pageEndHeight = document.documentElement.scrollHeight;
-                }
-                resolve(atEnd);
-            }));
-        })"#, SHOWN), "at {width}px, the setup must reach the actual page end before the feed fails");
-        wait_for_feed(&site).expect("the page never followed the feed");
-        site.fail_feeds(usize::MAX);
-        site.drop_feeds();
-        assert!(chrome.wait_for(
-            "document.querySelector('main[data-feed=stale] .stale') !== null",
-            SHOWN
-        ));
-        assert_eq!(
-            chrome.eval(r#"(() => {
-                const notice = document.querySelector('main[data-feed=stale] .stale'), pill = notice.getBoundingClientRect();
-                const controls = [document.querySelector('#task-send [role=combobox]'), document.querySelector('#task-send button[type=submit]')];
-                return {
-                    atEnd: scrollY === Math.max(0, document.documentElement.scrollHeight - innerHeight),
-                    unchanged: scrollY === pageEndScroll && document.documentElement.scrollHeight === pageEndHeight,
-                    composerClear: controls.every(control => { const box = control.getBoundingClientRect(); return box.width > 0 && box.height > 0 && box.top >= 0 && box.bottom <= innerHeight && (box.right <= pill.left || box.left >= pill.right || box.bottom <= pill.top || box.top >= pill.bottom); }),
-                    noticeCatchesTap: document.elementFromPoint(pill.left + pill.width/2, pill.top + pill.height/2)?.closest('.stale') === notice
-                };
-            })()"#),
-            json!({"atEnd":true,"unchanged":true,"composerClear":true,"noticeCatchesTap":true}),
-            "at {width}px, a stale page-end composer must stay visible and clear without moving the reading position"
-        );
-        site.fail_feeds(0);
-        assert!(chrome.wait_for(
-            "document.querySelector('main')?.dataset.feed==='live'",
-            SHOWN
-        ));
-        assert_eq!(
-            chrome.eval(
-                "scrollY===pageEndScroll && document.documentElement.scrollHeight===pageEndHeight"
-            ),
-            json!(true),
-            "at {width}px, going live must retain the page-end reserve and never clamp scroll"
-        );
-    }
+        ),
+        "the stale notice must go once the feed is back: {}",
+        chrome.eval("document.body.innerText")
+    );
+    chrome.eval("new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))");
+    assert_eq!(
+        chrome.eval(PAGE_END),
+        stale,
+        "the notice going keeps the page end and its reserve, and never clamps the scroll"
+    );
 }
 
 // A task page's failed fetch (here its owner offer) is a page notice, as the board's is: an

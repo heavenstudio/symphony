@@ -2,8 +2,9 @@
 //! docs/analysis/reports-and-monitoring.md, *The day files*):
 //! today's file written again with what the day held up to now, and yesterday's made final once,
 //! from one read of the board ([`symphony_board::reports`] counts it), two cheap reads of the
-//! default branch's history ([`git`]) and the decision cards of the project's documents with a
-//! live branch's posted cards ([`decisions`]).
+//! default branch's history ([`git`]), one more for each red that names the commits it came
+//! between ([`git::trace`]), and the decision cards of the project's documents with a live
+//! branch's posted cards ([`decisions`]).
 //!
 //! Only the machine's one server rolls a project up, once an hour (apps/symphony-server,
 //! `live/reports.rs`): it reads the board for the days [`due`] names and hands that read here, off
@@ -16,7 +17,9 @@
 pub mod decisions;
 pub mod git;
 
+use crate::board::Doc;
 use crate::branches::BranchCard;
+use crate::plugins::Plugins;
 use std::path::Path;
 use symphony_api::reports::GitRead;
 use symphony_board::ReportRead;
@@ -76,17 +79,20 @@ pub fn roll_up(
     if let Err(why) = &commits {
         rolled.problems.push(format!("git: {why}"));
     }
-    let plugins = crate::plugins::Plugins::of(root);
-    let docs = crate::board::documents(root).map(|mut docs| {
-        crate::dashboard::merge_decisions(&mut docs, branch_cards, &plugins);
-        docs
-    });
+    let plugins = Plugins::of(root);
+    let docs = crate::board::documents(root).map(|docs| cards(docs, branch_cards, &plugins));
     if let Err(why) = &docs {
         rolled.problems.push(format!("documents: {why}"));
     }
     for start in days {
         let until = now.min(start + DAY);
         let mut day = symphony_board::reports::day(project, *start, until, now, read);
+        git::trace(
+            &mut day,
+            root,
+            &settings.default_branch,
+            &mut rolled.problems,
+        );
         if let Ok(docs) = &docs {
             decisions::fill(&mut day, docs, &plugins);
         }
@@ -110,6 +116,35 @@ pub fn roll_up(
         rolled.written.push(day.day);
     }
     Ok(rolled)
+}
+
+/// The cards of `docs` with the live branches' (`branch_cards`) laid on them as the owner's queue
+/// lays them ([`crate::dashboard::merge_decisions`]), each under its own page: a branch's copy of
+/// one of main's cards goes back under main's page, so the day file names it by the card's page,
+/// and only a card main has not got is named by the branch's.
+fn cards(mut docs: Vec<Doc>, branch_cards: &[BranchCard], plugins: &Plugins) -> Vec<Doc> {
+    // Where the card `slug` is in the page `path`: the page's place and the card's in it.
+    let place = |docs: &[Doc], path: &str, slug: &str| {
+        let page = docs.iter().position(|doc| doc.path == path)?;
+        let card = docs[page].decisions.iter().position(|c| c.slug == slug)?;
+        Some((page, card))
+    };
+    // Each branch card main has too, with main's page's place, which stands through the merge: it
+    // takes cards out of pages and adds pages after them, never taking a page out.
+    let mains: Vec<(&BranchCard, usize)> = branch_cards
+        .iter()
+        .filter(|b| !b.on_main)
+        .filter_map(|b| Some((b, place(&docs, &b.doc, &b.card.slug)?.0)))
+        .collect();
+    crate::dashboard::merge_decisions(&mut docs, branch_cards, plugins);
+    for (branch, main) in mains {
+        let Some((page, card)) = place(&docs, &branch.path(), &branch.card.slug) else {
+            continue; // no proposal: main's copy says it all, or closed the card after it
+        };
+        let card = docs[page].decisions.remove(card);
+        docs[main].decisions.push(card);
+    }
+    docs
 }
 
 #[cfg(test)]

@@ -6,7 +6,7 @@ use super::{Ask, Defaults, Machine, Resolved, launch, prompt_text};
 use crate::cli::{Env, agents, probes};
 use crate::health::{EXECUTING, FINISHED};
 use crate::sys::FileLock;
-use crate::{Board, Error, Health, Held, NewLaunch, NewTask, Store, Task, git};
+use crate::{Board, Error, Health, Held, NewLaunch, Store, Task, git};
 use serde::Deserialize;
 use std::collections::HashSet;
 use std::fs::{File, TryLockError};
@@ -257,31 +257,6 @@ fn review_target(store: &Store, task: &Task, machine: &Machine) -> Result<Review
     Ok(ReviewTarget { branch, tip })
 }
 
-/// A review is an instruction child: `/review-task` claims it and the parent keeps its reviewer role.
-fn review_job(
-    store: &Store,
-    task: &Task,
-    actor: &str,
-    target: &ReviewTarget,
-) -> Result<Task, Error> {
-    let ReviewTarget { branch, tip } = target;
-    let tasks = store.tasks(None)?;
-    let slug = (1..)
-        .map(|n| format!("{}/staff-review-{n}", task.slug))
-        .find(|slug| !tasks.iter().any(|t| t.slug == *slug))
-        .expect("unbounded review names");
-    let made = store.create(&NewTask {
-        slug, title: format!("Review {}", task.slug), parent: Some(task.slug.clone()),
-        instruction: true, priority: task.priority, by: actor.into(),
-        body: format!("Review {branch} at tip {tip}. In your detached checkout, check out {tip}. Read for breakage (a hang, a wrong exit, a lost record, or a command that stopped working) and for tests that cannot fail. Follow the interim bar in AGENTS.md: the executor posts verify, check and lint-rs green on a tip containing main; a clean merge of main reruns check and lint-rs only, and the orchestrator merges. Do not run another verify or request a stamp. Post findings on {}. Finish with just tasks verdict {} approve|changes followed by the reason, then close this instruction with just tasks done and a complete result note.", task.slug, task.slug),
-        ..NewTask::default()
-    })?;
-    // Under its task, the review is that task's orchestrator's; else the board gives it one, and
-    // one it cannot give now the board's next read of the whole board gives.
-    let _ = store.give_filed(&made.slug, actor, None);
-    Ok(made)
-}
-
 /// Print each proposal/deferral; post only successful dispatches. A dry run changes no board rows.
 pub fn pass(store: &Store, env: &Env, dry_run: bool) -> Result<Vec<String>, Error> {
     pass_inner(store, env, dry_run, false)
@@ -366,7 +341,12 @@ fn pass_inner(
         } else {
             Held::default()
         };
-        let idle = idle_for(&view.agents, &board, task, role, &used, &held);
+        // A review whose recorded reviewer still runs fails here as its launch would, in a dry run
+        // too.
+        let job = job_for(store, &hc, &view.agents, &board, task, role, &used, &held);
+        let (resuming, idle) = job
+            .as_ref()
+            .map_or((None, None), |(resuming, idle)| (resuming.clone(), *idle));
         let memory = free_memory_gib()?;
         let machine_agents = store.limits().machine_agents;
         let blocked = if idle.is_none() && live >= config.max_sessions {
@@ -384,7 +364,9 @@ fn pass_inner(
             None
         };
         let mut dispatched = false;
-        let action = if let Some(why) = blocked {
+        let action = if let Err(problem) = &job {
+            format!("staff {}: failed: {problem}", task.slug)
+        } else if let Some(why) = blocked {
             format!("staff {}: deferred ({why})", task.slug)
         } else if dry_run {
             if let Some(a) = idle {
@@ -395,6 +377,9 @@ fn pass_inner(
                     a.handle,
                     a.pane.as_deref().unwrap_or_default()
                 )
+            } else if let Some(handle) = &resuming {
+                projected += 1;
+                format!("staff {}: would resume {handle} as {role}", task.slug)
             } else {
                 projected += 1;
                 format!(
@@ -497,6 +482,32 @@ fn idle_for<'a>(
     })
 }
 
+/// Who a job on `task` as `role` goes to: a review to the task's recorded reviewer that its launch
+/// resumes, by the launch's own rule ([`super::restore::reviewer_to_resume`]), never another idle
+/// one, and refused, as the launch is, while that reviewer still runs; else the idle agent
+/// [`idle_for`] picks, if any. Neither: a launch.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one job of the pass, named by what it reads"
+)]
+fn job_for<'a>(
+    store: &Store,
+    hc: &dyn Hc,
+    agents: &'a [agents::Agent],
+    board: &Board,
+    task: &Task,
+    role: &str,
+    used: &HashSet<String>,
+    held: &Held,
+) -> Result<(Option<String>, Option<&'a agents::Agent>), Error> {
+    if role == "reviewer"
+        && let Some(record) = super::restore::reviewer_to_resume(store, hc, &task.slug)?
+    {
+        return Ok((Some(record.handle), None));
+    }
+    Ok((None, idle_for(agents, board, task, role, used, held)))
+}
+
 /// Whether `handle` is a fresh reviewer of `task`, `held` its [`Store::ever_held`]: one that
 /// executed none of it and, but on a fast fix, neither orchestrates, orchestrated nor filed it, by
 /// the one rule the board's verdict and the land hold ([`Held::unfresh`]).
@@ -506,11 +517,10 @@ fn fresh(task: &Task, held: &Held, handle: &str) -> bool {
     (held.unfresh(handle, &task.created_by, orchestrates, fast_fix)).is_none()
 }
 
-/// Keep task-specific failures (target, child creation, checkout, launch and reuse) inside this job.
-/// A review job no agent was handed, its launch failed or its reuse stopped before the launch was
-/// recorded (the reviewer's role refused, the agent at work, its reservation or record failed), is
-/// cancelled, so no pass staffs it beside the next one's own, and the reused agent lets go of the
-/// reviewer's role it took, so the task waits on no reviewer that has no job.
+/// Keep task-specific failures (target, checkout, launch and reuse) inside this job. A review is
+/// given on the task itself, never a subtask: its reviewer takes the reviewer's role there and its
+/// launch is recorded there, and the pass's line on the thread names the tip. A failed reuse lets
+/// go of what it took ([`reuse`]), as a launched agent's own rollback does.
 #[expect(
     clippy::too_many_arguments,
     reason = "one dispatch of the pass, named by what it reads"
@@ -530,62 +540,54 @@ fn dispatch(
     } else {
         "executor"
     };
-    let job = match review {
-        Some(target) => review_job(store, task, actor, target)?,
-        None => task.clone(),
-    };
-    let outcome = (|| {
-        if let Some(agent) = idle {
-            return reuse(store, hc, machine, agent, task, &job, role);
-        }
-        let mut ask = Ask::new(&job.slug, actor, &launching.model);
-        ask.kind = Some(launching.agent.into());
-        ask.effort.clone_from(&launching.effort);
-        ask.role = role.into();
-        if role == "executor"
-            && !task.instruction
-            && let Some(path) = super::checked_out_in(&machine.root, &task.slug)?
-        {
-            ask.worktree = Some(PathBuf::from(path));
-        }
-        launch(store, hc, machine, &ask).map(|s| {
-            format!(
-                "launched {} as {role}: {}, pane {}, worktree {}, prompt {}",
-                s.row.handle,
-                launching.said(),
-                s.row.pane,
-                s.row.worktree,
-                prompt_text(&job.slug, &s.row.handle, "", launching.agent, role),
-            )
-        })
-    })();
-    if outcome.is_err() && review.is_some() {
-        // Reused, it may have the job unless the board shows no launch of it recorded.
-        let handed = idle.is_some()
-            && !store
-                .task_sessions(&job.slug)
-                .is_ok_and(|ran| ran.is_empty());
-        if !handed {
-            if let Some(agent) = idle {
-                // Picked holding no role on the task ([`idle_for`]): a reviewer's role it holds now
-                // is the one this reuse took before its reservation or record failed.
-                let _ = store.release(&task.slug, &agent.handle, Some("reviewer"));
-            }
-            let _ = store.move_to(&job.slug, "cancelled", actor);
-        }
+    if let Some(agent) = idle {
+        return reuse(store, hc, machine, agent, task, role);
     }
-    outcome
+    let mut ask = Ask::new(&task.slug, actor, &launching.model);
+    ask.kind = Some(launching.agent.into());
+    ask.effort.clone_from(&launching.effort);
+    ask.role = role.into();
+    if role == "executor"
+        && !task.instruction
+        && let Some(path) = super::checked_out_in(&machine.root, &task.slug)?
+    {
+        ask.worktree = Some(PathBuf::from(path));
+    }
+    launch(store, hc, machine, &ask).map(|s| {
+        let row = &s.row;
+        if s.resumed {
+            // The task's recorded reviewer, on its own agent: its prompt's `/` or `$` says which.
+            let agent = super::agent_of(&row.claude_session);
+            return format!(
+                "resumed {} as {role}: pane {}, worktree {}, prompt {}",
+                row.handle,
+                row.pane,
+                row.worktree,
+                prompt_text(&task.slug, &row.handle, "", agent, role),
+            );
+        }
+        format!(
+            "launched {} as {role}: {}, pane {}, worktree {}, prompt {}",
+            row.handle,
+            launching.said(),
+            row.pane,
+            row.worktree,
+            prompt_text(&task.slug, &row.handle, "", launching.agent, role),
+        )
+    })
 }
 
-/// Give an idle agent the job in its own terminal (`hc send`), recorded first. hc saying its turn
-/// started, or a look finding it at work, confirms it; else the line says it is unconfirmed.
+/// Give an idle agent the job on `task` in its own terminal (`hc send`), recorded first: an
+/// executor's reservation of the task, or a reviewer's role on it. A reviewer whose launch record
+/// fails lets go of the role it took, as nothing was sent, so the task waits on no reviewer with no
+/// job; once the record is written it keeps the role, as the prompt may reach it. hc saying its
+/// turn started, or a look finding it at work, confirms it; else the line says it is unconfirmed.
 fn reuse(
     store: &Store,
     hc: &dyn Hc,
     machine: &Machine,
     agent: &agents::Agent,
-    target: &Task,
-    job: &Task,
+    task: &Task,
     role: &str,
 ) -> Result<String, Error> {
     let handle = &agent.handle;
@@ -600,17 +602,18 @@ fn reuse(
         return Err(refused(format!("checkout has live executor {other}")));
     }
     store.revive(handle)?;
-    // The reviewer's role before the job: one the board refuses it ([`Store::take_role`]) is
-    // left holding no reservation of a job it cannot do.
+    // A reviewer never reserves the task it judges: it takes the role ([`Store::take_role`] refuses
+    // one the board would take no verdict from).
     if role == "reviewer" {
-        store.take_role(&target.slug, handle, "reviewer")?;
+        store.take_role(&task.slug, handle, "reviewer")?;
+    } else {
+        store.reserve(&task.slug, handle, crate::health::RESERVE_SECONDS)?;
     }
-    store.reserve(&job.slug, handle, crate::health::RESERVE_SECONDS)?;
     let kind = agent.agent.as_deref().unwrap_or("codex");
-    let prompt = prompt_text(&job.slug, handle, "", kind, role);
+    let prompt = prompt_text(&task.slug, handle, "", kind, role);
     // Record before prompting: once the prompt is sent, a timeout must never free this job for a duplicate.
-    store.record_launch(&NewLaunch {
-        slug: job.slug.clone(),
+    let recorded = store.record_launch(&NewLaunch {
+        slug: task.slug.clone(),
         handle: handle.clone(),
         role: role.into(),
         pane: pane.into(),
@@ -623,7 +626,14 @@ fn reuse(
         branch: agent.branch.clone(),
         model: agent.model.clone(),
         ..NewLaunch::default()
-    })?;
+    });
+    if let Err(error) = recorded {
+        // Picked holding no role on the task ([`idle_for`]): the reviewer's role is the one just taken.
+        if role == "reviewer" {
+            let _ = store.release(&task.slug, handle, Some("reviewer"));
+        }
+        return Err(error);
+    }
     let started = hc.send(pane, &prompt)?;
     let confirmed = started
         || (0..super::SEND_LOOKS).any(|_| {

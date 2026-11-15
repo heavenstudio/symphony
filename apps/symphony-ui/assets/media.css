@@ -35,17 +35,13 @@
 .hero .pics .mockup { margin:0; }
 .hero .pics .mockup-bar { display:none; }
 .nextcard .mockup-thumb { width:52px; height:52px; flex:none; margin:0; }
-#media-lightbox [role=dialog] { border:0; background:transparent; color:white; padding:16px; max-width:100vw; max-height:100dvh; width:calc(100vw - 32px); box-sizing:border-box; }
-#media-lightbox { background:rgba(0,0,0,.9); }
-#media-lightbox img { display:block; max-width:100%; max-height:calc(100dvh - 140px); width:auto; height:auto; margin:auto; object-fit:contain; }
-#media-lightbox .lightbox-controls { display:flex; gap:12px; align-items:center; justify-content:center; margin:12px 0; }
-#media-lightbox button { min-width:44px; min-height:44px; font-size:1rem; background:#222; color:#fff; border:1px solid #666; border-radius:6px; cursor:pointer; }
-#media-lightbox .lightbox-caption { text-align:center; }
 .asks { margin-top:32px; border-top:1px solid var(--border); padding-top:16px; }
 .asks-shell { min-height:160px; }
 .ask-thread { content-visibility:auto; contain-intrinsic-size:auto 220px; }
 .ask-thread[data-deferred=true] { min-height:220px; }
 .asks form { display:grid; gap:8px; margin-top:12px; }
+/* A question and its answers read in a brief's measure (80ch), the box to ask in as wide. */
+.asks form, .asks .ask-thread { max-width:80ch; }
 .asks textarea { box-sizing:border-box; width:100%; min-height:5rem; font:inherit; background:var(--card); color:var(--foreground); border:1px solid var(--border); border-radius:6px; padding:8px; }
 .asks button { justify-self:start; font:inherit; padding:8px 12px; min-height:44px; background:var(--card); color:var(--primary); border:1px solid var(--border); border-radius:6px; cursor:pointer; }
 .asks button:disabled { opacity:.6; cursor:wait; }

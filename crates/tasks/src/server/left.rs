@@ -35,7 +35,7 @@
 //! replay's server as the board's.
 
 use super::starters::{REPLAYED_BEFORE, REPLAYING};
-use super::{DATA, Home, LOG, Running, ServerError, Waited, io, storage};
+use super::{DATA, Home, LOG, Running, ServerError, Waited, io, storage, untold};
 use crate::sys::pid_alive;
 use std::fs;
 use std::time::{Duration, Instant};
@@ -65,6 +65,9 @@ const TELLING: Duration = Duration::from_secs(2);
 /// the next, in which no listing names it a server, as a wrapper that runs `surreal` by `exec`
 /// leaves one between the two.
 const GONE_FOR: Duration = Duration::from_secs(1);
+
+/// How long a settling waits after one look before the next ([`Home::left_server`]).
+const LOOK_AGAIN: Duration = Duration::from_millis(50);
 
 /// What `symphony/tasks/replay.json` says: the private replay whose server may still run.
 #[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -174,21 +177,32 @@ impl Home {
     /// None only once every look for [`GONE_FOR`], or for that bound when it is shorter, found
     /// nothing the record may name: a server seen between two programs is found at the next look.
     fn left_server(&self, replay: &Replay) -> Result<Option<LeftReplay>, ServerError> {
+        self.left_server_by(|| self.left_server_now(replay), Instant::now)
+    }
+
+    /// [`Home::left_server`], each of its looks made by `look` and the time read from `now`:
+    /// [`Home::left_server_now`] and [`Instant::now`], or a test's, which counts the looks, moves a
+    /// process from one program to the next between two, or moves its own clock at each look.
+    fn left_server_by(
+        &self,
+        mut look: impl FnMut() -> Result<Option<LeftReplay>, String>,
+        now: impl Fn() -> Instant,
+    ) -> Result<Option<LeftReplay>, ServerError> {
         let bound = self.answer_wait().min(TELLING);
-        let until = Instant::now() + bound;
+        let until = now() + bound;
         let mut gone_since = None;
         loop {
-            match self.left_server_now(replay) {
+            match look() {
                 Ok(None) => {
-                    if gone_since.get_or_insert_with(Instant::now).elapsed() >= GONE_FOR.min(bound)
-                    {
+                    let since = *gone_since.get_or_insert_with(&now);
+                    if now() - since >= GONE_FOR.min(bound) {
                         return Ok(None);
                     }
                 }
-                Err(_) if Instant::now() < until => gone_since = None,
+                Err(_) if now() < until => gone_since = None,
                 told => return told.map_err(|why| self.cannot_tell(&why)),
             }
-            std::thread::sleep(Duration::from_millis(50));
+            std::thread::sleep(LOOK_AGAIN);
         }
     }
 
@@ -267,7 +281,7 @@ impl Home {
     /// and has not answered within the wait ([`Home::answer_wait`]) is still replaying its log:
     /// never signalled, nor adopted as the board's, and the caller refused, naming the replay. One
     /// that ends while it is waited for is settled again. Refused, and nothing removed, while what
-    /// runs cannot be told.
+    /// runs cannot be told, or whether its answer is its own ([`untold`]).
     pub(super) fn left_replay_through(&self) -> Result<Option<LeftReplay>, ServerError> {
         let Some(replay) = self.replay_record() else {
             return Ok(None);
@@ -278,8 +292,10 @@ impl Home {
                 self.forget_replay()?;
                 return Ok(None);
             };
-            match self.answers(&left.server)? {
+            match self.answers(&left.server) {
                 Waited::Answers => return Ok(Some(left)),
+                // Stopped next, it is never taken as answering on a check that could not say.
+                Waited::Unsure(why) => return Err(untold(&left.server, &why)),
                 Waited::Silent => return Err(self.replay_unanswered(&left)),
                 Waited::Ended => {}
             }
@@ -393,11 +409,12 @@ impl Home {
 
 #[cfg(test)]
 mod tests {
-    use super::{GONE, RECORD, Replay};
+    use super::{GONE, LeftReplay, RECORD, Replay};
     use crate::server::{
         Home, LOG, PS_FAILS, REPLAY_ENDS, REPLAY_THROUGH, Running, SURREAL_VERSION, ServerError,
     };
     use crate::sys::{Stdio, command};
+    use std::cell::Cell;
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
     use std::path::PathBuf;
@@ -598,9 +615,11 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
     }
 
-    /// A server that no listing names one for a moment, between two programs as a wrapper runs
-    /// `surreal` by `exec`, while the record names a pid that has ended, is found once it is one:
-    /// the record is settled as gone only after every look for a second found none.
+    /// A server that no listing names one at a look, between two programs as a wrapper runs
+    /// `surreal` by `exec`, while the record names a pid that has ended, is found at the next look
+    /// once it is one, never settled as gone: the record is settled as gone only after every look
+    /// for a second found none. What it is about is counted in looks, never timed: the process
+    /// moves to the server's program between the first look and the second, whatever the load.
     #[test]
     fn a_server_seen_between_two_programs_is_found_never_settled_as_gone() {
         let (dir, home) = folder("between");
@@ -614,31 +633,52 @@ mod tests {
             ..Replay::default()
         };
         home.mark_replay(&replay).unwrap();
-        // No server's command line for its first 0.3 s (its words are in its environment), then a
-        // server on the data by `exec`, its pid the same.
+        // No server's command line until its stdin closes (its words are in its environment), then
+        // a server on the data by `exec`, its pid the same.
         let mut between = command("/bin/sh")
             .arg("-c")
-            .arg(
-                "sleep 0.3; exec \"$SYMPHONY_SURREAL\" start --bind 127.0.0.1:1 \"$SYMPHONY_DATA\"",
-            )
+            .arg("read go; exec \"$SYMPHONY_SURREAL\" start --bind 127.0.0.1:1 \"$SYMPHONY_DATA\"")
             .env("SYMPHONY_SURREAL", &surreal)
             .env("SYMPHONY_DATA", home.data())
-            .stdin(Stdio::null())
+            .stdin(Stdio::piped())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
             .unwrap();
         let pid = i64::from(between.id());
-        let began = Instant::now();
-        let left = home.left_server(&replay);
-        let took = began.elapsed();
+        let mut go = between.stdin.take();
+        let (mut looks, mut moved) = (Vec::new(), None);
+        let left = home.left_server_by(
+            || {
+                let found = home.left_server_now(&replay);
+                looks.push(found.clone());
+                // After the first look, which found none: the process moves to the server's
+                // program, and the next look is made once a listing shows it there.
+                if let Some(go) = go.take() {
+                    drop(go);
+                    moved = Some(test_time::until_true(
+                        "the process's exec into a server on the data",
+                        test_time::backstop(Duration::from_secs(1)),
+                        || matches!(home.listed(), Ok(Some(listed)) if listed.pid == pid),
+                    ));
+                }
+                found
+            },
+            Instant::now,
+        );
         between.kill().unwrap();
         between.wait().unwrap();
-        assert_eq!(
-            left.map(|left| left.map(|left| (left.server.pid, left.named))),
-            Ok(Some((pid, false)))
-        );
-        assert!(took < Duration::from_secs(1), "looked for {took:?}");
+        moved.expect("a first look").unwrap();
+        let found = LeftReplay {
+            server: Running {
+                addr: "127.0.0.1:1".into(),
+                pid,
+                version: SURREAL_VERSION.into(),
+            },
+            named: false,
+        };
+        assert_eq!(looks, [Ok(None), Ok(Some(found.clone()))]);
+        assert_eq!(left, Ok(Some(found)));
         assert!(dir.join(RECORD).exists());
         assert!(!dir.join(LOG).exists(), "said gone");
 
@@ -715,23 +755,49 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
     }
 
-    /// A `ps` that fails for a moment is asked again: the record is settled once it answers, here
-    /// as gone, its named pid having ended.
+    /// A `ps` that fails for a moment is asked again, and what it tells once it answers is taken:
+    /// here none, its named pid having ended, once every look for the patience found none. One
+    /// that still fails once the patience has passed is refused, saying so. Counted in looks,
+    /// never timed: the loop reads a clock of the test's, which moves one pause at each look, so
+    /// the third look is the last within the folder's patience of 200 ms whatever the load.
     #[test]
     fn a_ps_that_fails_for_a_moment_is_asked_again() {
         let (dir, home) = folder("ps-moment");
-        home.mark_replay(&Replay {
+        let replay = Replay {
             server: server(ended_pid()),
             ..Replay::default()
-        })
-        .unwrap();
-        let _failing = PsFails::new(2);
-        assert_eq!(home.left_replay_through().unwrap(), None);
-        assert_eq!(home.replay_record(), None);
-        assert_eq!(
-            fs::read_to_string(dir.join(LOG)).unwrap(),
-            format!("{GONE}\n")
-        );
+        };
+        // What each look found and what was told, while the first `fails` of `ps` fail.
+        let looked = |fails: u32| {
+            let clock = Cell::new(Instant::now());
+            let mut looks = Vec::new();
+            let _failing = PsFails::new(fails);
+            let left = home.left_server_by(
+                || {
+                    clock.set(clock.get() + super::LOOK_AGAIN);
+                    let found = home.left_server_now(&replay);
+                    looks.push(found.clone());
+                    found
+                },
+                || clock.get(),
+            );
+            (looks, left)
+        };
+        let why = "`ps`, which lists the processes, failed (ps failed, as a test made it)";
+        let failed: Result<Option<LeftReplay>, String> = Err(why.into());
+
+        // Failed at 50, 100 and 150 ms, within the patience; none from 200 ms, and at 400 ms every
+        // look for the patience has found none.
+        let (looks, left) = looked(3);
+        let mut expected = vec![failed.clone(); 3];
+        expected.extend(vec![Ok(None); 5]);
+        assert_eq!(looks, expected);
+        assert_eq!(left, Ok(None));
+
+        // Failed at 200 ms as well, once the patience has passed: refused.
+        let (looks, left) = looked(4);
+        assert_eq!(looks, vec![failed; 4]);
+        assert_eq!(left, Err(home.cannot_tell(why)));
         let _ = fs::remove_dir_all(&dir);
     }
 

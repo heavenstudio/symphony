@@ -219,17 +219,21 @@ impl Render {
                 summary: tree::summary(&sub),
             });
         }
-        let documents = place.documents();
-        for name in &documents {
-            let doc = folder.join(name);
-            let text = read_text(&doc)?;
+        for (name, title) in place.listed() {
+            let doc = folder.join(&name);
+            // An HTML page holds no cards and no prose summary: it is listed by its title alone.
+            let (waiting, summary) = if crate::entrypoint::is_html(&name) {
+                (0, String::new())
+            } else {
+                (tree::pending(&read_text(&doc)?).len(), tree::summary(&doc))
+            };
             entries.push(Entry {
                 kind: EntryKind::Doc,
-                path: route(name),
-                title: tree::title(&doc),
+                path: route(&name),
+                title,
                 docs: 0,
-                waiting: tree::pending(&text).len(),
-                summary: tree::summary(&doc),
+                waiting,
+                summary,
             });
         }
         for name in place.media() {

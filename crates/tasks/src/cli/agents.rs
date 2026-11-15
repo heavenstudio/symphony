@@ -13,6 +13,7 @@
 //!     "handle", "kind", "model", "parent",
 //!     "task", "role",                 # the task it works now (an open one first) and its role there
 //!     "tasks": [{"slug", "role", "status"}],     # every task it holds a role on, bar orchestrating
+//!     "following",                    # how many open tasks it orchestrates
 //!     "worktree", "branch",           # where it really works (its task session, else its pane)
 //!     "agent", "session_id", "pane",  # claude|codex, its conversation id, its hc terminal
 //!     "state", "state_detail",
@@ -46,7 +47,7 @@ mod attribution;
 mod selection;
 pub(crate) use attribution::find_pane;
 use attribution::{cut, fallback_owners, owned_pane};
-use selection::{first, pane_state, primary, tasks_by_handle};
+use selection::{first, following_by_handle, pane_state, primary, tasks_by_handle};
 
 /// The longest last message shown, in characters, before it is cut.
 pub const MESSAGE_CHARS: usize = 200;
@@ -139,6 +140,9 @@ pub struct Agent {
     pub task: Option<String>,
     pub role: Option<String>,
     pub tasks: Vec<Held>,
+    /// How many open tasks it orchestrates (neither done nor cancelled), which `tasks` leaves out:
+    /// what the agents page's Following list counts.
+    pub following: usize,
     pub worktree: String,
     pub branch: String,
     pub agent: Option<String>,
@@ -233,8 +237,8 @@ impl Agent {
                 ("text", Py::str(&m.text)),
             ])
         });
+        let count = |n: usize| Py::Int(i64::try_from(n).unwrap_or(i64::MAX));
         let slots = self.slots.map_or(Py::Null, |s| {
-            let count = |n: usize| Py::Int(i64::try_from(n).unwrap_or(i64::MAX));
             Py::obj(vec![("open", count(s.open)), ("cap", count(s.cap))])
         });
         Py::obj(vec![
@@ -245,6 +249,7 @@ impl Agent {
             ("task", Py::opt_str(self.task.as_deref())),
             ("role", Py::opt_str(self.role.as_deref())),
             ("tasks", Py::List(held)),
+            ("following", count(self.following)),
             ("worktree", Py::str(&self.worktree)),
             ("branch", Py::str(&self.branch)),
             ("agent", Py::opt_str(self.agent.as_deref())),
@@ -335,6 +340,7 @@ pub fn describe_board_observed(
         .slots()
         .map(|cap| (cap, crate::slots::Ledger::of_board(board).counts()));
     let mut held_by_handle = tasks_by_handle(&board.tasks);
+    let following = following_by_handle(&board.tasks);
     let mut by_handle: HashMap<&str, Vec<&TaskSessionRow>> = HashMap::new();
     for r in &records {
         by_handle.entry(r.handle.as_str()).or_default().push(r);
@@ -531,6 +537,7 @@ pub fn describe_board_observed(
                     status: t.status.clone(),
                 })
                 .collect(),
+            following: following.get(handle).copied().unwrap_or(0),
             worktree: row.worktree,
             branch: row.branch,
             agent: row.pane.and_then(|p| p.agent.clone()),

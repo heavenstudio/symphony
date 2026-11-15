@@ -66,8 +66,8 @@ async fn focus_first(selectors: Vec<String>) {
     }
 }
 
-/// Moves focus into the panel `which` when the page asked for it on opening the panel
-/// (`frame::focus_on_open`); a panel shown again on a new page leaves focus where it is.
+/// Moves focus into the panel `which` when the page asked for it on opening the panel (the web
+/// client's header, `reviewPanelFocus`); a panel shown again on a new page leaves focus where it is.
 fn take_focus(which: &str, selectors: &[&str]) {
     if snapshot("reviewPanelFocus").as_string().as_deref() != Some(which) {
         return;
@@ -569,7 +569,6 @@ fn use_draft() -> Signal<Draft> {
     });
     use_effect(move || {
         save_draft(&draft());
-        crate::live::flush_reload();
         if let Some(window) = web_sys::window()
             && let Ok(event) = web_sys::Event::new("review:quick")
         {
@@ -590,9 +589,24 @@ pub fn PanelApp() -> Element {
     rsx! { div { class: "app-frame",
         FrameExtras { route: route(), draft }
         AppearancePanel {}
-        // The board itself has no media. When its conversation is mounted, that persistent
-        // panel owns media there; every other page kind owns its own adapter instead.
-        if route().path == "tasks" { crate::media_live::MediaRuntime {} }
+        // The task board and the agents page have no media of their own, nor a media layer: when
+        // their conversation is mounted, this persistent panel owns media there; every other page
+        // kind (home, the documents, a task's page) owns its own layer instead.
+        if matches!(route().path.as_str(), "tasks" | "agents") { BoardMedia {} }
         QuickPanel { route: route(), draft }
     } }
+}
+
+/// The media layer of the conversation on the task board and the agents page. The program's is a
+/// chunk of its own, loaded once the conversation shows media.
+#[cfg(feature = "page-panel")]
+#[component]
+fn BoardMedia() -> Element {
+    #[cfg(feature = "page-program")]
+    {
+        let needed = crate::media_live::use_activation();
+        rsx! { if needed() { crate::split::MediaPart { needed } } }
+    }
+    #[cfg(not(feature = "page-program"))]
+    rsx! { crate::media_live::MediaRuntime {} }
 }

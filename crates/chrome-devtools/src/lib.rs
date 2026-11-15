@@ -43,9 +43,53 @@ const CLEANUP_CPU: Duration = Duration::from_secs(1);
 /// wait well past its allowance, neither of which may end it.
 const BACKSTOP_TIMES: u32 = 6;
 const BACKSTOP_FLOOR: Duration = Duration::from_secs(120);
+/// The longest a launch waits on the wall for Chrome to open DevTools, by the rule every wait here
+/// keeps: [`BACKSTOP_TIMES`] its CPU allowance ([`PROTOCOL_CPU`]), six minutes. Chrome opens
+/// DevTools on about half a second of its group's CPU, in under a second on a quiet machine, which
+/// a loaded machine's fair share stretches to tens of seconds: only a Chrome that stalled, alive and
+/// spending next to nothing, reaches it.
+const LAUNCH_BACKSTOP: Duration = PROTOCOL_CPU.saturating_mul(BACKSTOP_TIMES);
 /// A probe of the page under test unanswered this long goes again, so no reply lost to a
 /// navigation leaves the page's turns uncounted.
 const PROBE_AGAIN: Duration = Duration::from_secs(1);
+
+/// What Chrome answers an evaluation the page's navigation took from it, or one that found no
+/// document to run in, each the `message` of its error reply: nothing was evaluated, and the
+/// document the page went to can be asked again ([`Chrome::wait_for`]).
+const LOST_TO_NAVIGATION: [&str; 3] = [
+    // The page went on to a document in its own frame host, which tore the old one's context
+    // down while the evaluation was in it.
+    "Execution context was destroyed.",
+    // The page went on in another frame host (another process, or a new frame while Chrome keeps
+    // the page it left for Back): Chrome answers every command still in flight on the old one so.
+    // A page closed under an evaluation is not answered at all: Chrome tells of its session
+    // detached instead ([`Gone::Closed`]), and refuses each later command for want of a session.
+    "Inspected target navigated or closed",
+    // V8's answer to an evaluation of a frame with no document's context to run it in: asked
+    // between two documents.
+    "Cannot find default execution context",
+];
+
+/// How the page under test went away, as Chrome told of it: it answers no evaluation then, neither
+/// the one in flight nor a probe, so a wait on it ends at once ([`Chrome::wait_for`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Gone {
+    /// Its session detached (`Target.detachedFromTarget`, naming it, on the browser's session):
+    /// the page closed. Each command after it is refused for want of a session.
+    Closed,
+    /// Its renderer crashed or was killed (`Inspector.targetCrashed`, on its own session); a
+    /// reload or a navigation starts another (`Inspector.targetReloadedAfterCrash`).
+    Crashed,
+}
+
+impl fmt::Display for Gone {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Gone::Closed => "the page under test closed: its session detached",
+            Gone::Crashed => "the page under test's renderer crashed",
+        })
+    }
+}
 
 /// What went wrong driving Chrome, in one message that names what was waited for.
 #[derive(Debug)]
@@ -53,6 +97,8 @@ pub struct Error {
     message: String,
     past_deadline: bool,
     stalled: bool,
+    /// An evaluation's reply was one of [`LOST_TO_NAVIGATION`]'s.
+    navigated: bool,
 }
 
 impl Error {
@@ -61,6 +107,7 @@ impl Error {
             message: message.into(),
             past_deadline: false,
             stalled: false,
+            navigated: false,
         }
     }
 
@@ -69,6 +116,7 @@ impl Error {
             message: format!("{what}: no reply before the deadline"),
             past_deadline: true,
             stalled: false,
+            navigated: false,
         }
     }
 
@@ -77,7 +125,24 @@ impl Error {
             message: format!("{what}: {}", budget.stall()),
             past_deadline: false,
             stalled: true,
+            navigated: false,
         }
+    }
+
+    /// The error reply `error` to the evaluation of `expression`, which says whether the page's
+    /// navigation took the evaluation from it ([`LOST_TO_NAVIGATION`]).
+    fn evaluation(expression: &str, error: &Value) -> Self {
+        Self {
+            navigated: error["message"]
+                .as_str()
+                .is_some_and(|message| LOST_TO_NAVIGATION.contains(&message)),
+            ..Self::new(format!("{expression}: {error}"))
+        }
+    }
+
+    /// A wait on `what` the page under test's end cut short, saying how it went ([`Gone`]).
+    fn gone(what: &str, gone: Gone) -> Self {
+        Self::new(format!("{what}: {gone}"))
     }
 
     /// Whether the wait ended because the deadline [`Chrome::set_deadline`] set had passed, rather
@@ -349,11 +414,14 @@ pub struct Request {
     pub status: i64,
     /// Bytes on the wire, headers included: the finished total, or what arrived so far. An open
     /// event stream counts its response head and the body the page has read: Chrome reports a
-    /// stream's transfer size one chunk late, so its last message would wait for the next one.
+    /// stream's transfer size one chunk late, so its last message would wait for the next one. A
+    /// WebSocket ([`WEB_SOCKET`]) counts its handshake's answer and every frame it received.
     pub bytes: f64,
+    /// It finished: its answer arrived whole, or a WebSocket closed.
     pub finished: bool,
     /// The keep-alive pings an event stream delivered, each named by Chrome's
-    /// `Network.eventSourceMessageReceived`; their bytes are in `bytes`.
+    /// `Network.eventSourceMessageReceived`, or a WebSocket, each a frame whose message is named
+    /// a ping; their bytes are in `bytes`.
     pub pings: usize,
     /// Why it failed (`net::ERR_…`), when it did; such a request never finishes.
     pub failed: Option<String>,
@@ -378,6 +446,54 @@ pub struct Request {
     /// A speculative `<link rel=prefetch>` (its `Purpose` or `Sec-Purpose` header says so): a
     /// later use's, warmed at idle, not the page's own.
     pub prefetch: bool,
+}
+
+/// The [`Request::kind`] of a WebSocket, as Chrome names the resource type.
+pub const WEB_SOCKET: &str = "WebSocket";
+
+impl Request {
+    /// Whether it is a stream its page holds open for as long as it follows it, an event stream or
+    /// a WebSocket: one never finished while open.
+    pub fn streams(&self) -> bool {
+        self.kind == "EventSource" || self.kind == WEB_SOCKET
+    }
+}
+
+/// The bytes of a WebSocket's handshake answer (a DevTools `WebSocketResponse`): its head as sent,
+/// or, when Chrome gives no text of it, its status line and headers as they are written.
+fn handshake_bytes(response: &Value) -> f64 {
+    if let Some(head) = response["headersText"].as_str() {
+        return head.len() as f64;
+    }
+    let status = format!(
+        "HTTP/1.1 {} {}\r\n",
+        response["status"].as_i64().unwrap_or(0),
+        response["statusText"].as_str().unwrap_or("")
+    );
+    let headers: usize = response["headers"]
+        .as_object()
+        .into_iter()
+        .flatten()
+        .flat_map(|(name, values)| {
+            // Chrome joins a header sent more than once with line feeds.
+            let values = values.as_str().unwrap_or("");
+            values
+                .split('\n')
+                .map(move |value| name.len() + value.len() + 4)
+        })
+        .sum();
+    (status.len() + headers + 2) as f64
+}
+
+/// The bytes of a frame from a server carrying `payload` bytes: unmasked, with the shortest length
+/// field that holds it (RFC 6455, 5.2).
+fn frame_bytes(payload: usize) -> f64 {
+    let head = match payload {
+        0..=125 => 2,
+        126..=65_535 => 4,
+        _ => 10,
+    };
+    (head + payload) as f64
 }
 
 /// Whether request `headers` (a DevTools header object) name a prefetch.
@@ -627,23 +743,31 @@ impl Owner {
         })
     }
 
-    fn snapshot(&self) -> std::io::Result<Vec<process::Member>> {
-        let group = std::fs::read_to_string(self.profile.join("browser.pid"))
+    /// The browser's process id, which leads its group, once its leash has recorded it.
+    fn browser(&self) -> Option<u32> {
+        std::fs::read_to_string(self.profile.join("browser.pid"))
             .ok()
             .filter(|text| text.ends_with('\n'))
             .and_then(|text| text.trim().parse::<u32>().ok())
             .filter(|pid| *pid > 0)
-            .unwrap_or(self.leash.id());
-        process::members(group)
     }
 
-    /// Success comes only from the handshake; exit and CPU exhaustion report broken startup.
+    fn snapshot(&self) -> std::io::Result<Vec<process::Member>> {
+        process::members(self.browser().unwrap_or(self.leash.id()))
+    }
+
+    /// Success comes only from the handshake. The leash's exit (which the browser's own exit
+    /// makes), `cpu` of the group's CPU spent, or the wall-clock `backstop` reached first by a
+    /// browser alive that neither answered nor spent its CPU (a stall) fails it, saying what was
+    /// seen.
     fn ready<T>(
         &mut self,
         what: &str,
         cpu: Duration,
+        backstop: Duration,
         mut handshake: impl FnMut(&Path) -> Option<T>,
     ) -> std::io::Result<T> {
+        let started = Instant::now();
         let mut budget = process::Budget::new(cpu, &self.snapshot()?);
         loop {
             if let Some(value) = handshake(&self.profile) {
@@ -654,10 +778,38 @@ impl Owner {
                     "Chrome's leash exited {status} before {what}"
                 )));
             }
-            if budget.exhausted(&self.snapshot()?) {
+            let browser = self.browser();
+            let members = process::members(browser.unwrap_or(self.leash.id()))?;
+            if budget.exhausted(&members) {
                 return Err(std::io::Error::new(
                     ErrorKind::TimedOut,
                     format!("Chrome spent {:?} CPU without {what}", budget.used()),
+                ));
+            }
+            let waited = started.elapsed();
+            if waited >= backstop {
+                let watched = match browser {
+                    Some(pid) => format!(
+                        "Chrome (pid {pid}) has {} alive in its group, which",
+                        match members.len() {
+                            1 => "1 process".to_string(),
+                            alive => format!("{alive} processes"),
+                        }
+                    ),
+                    None => format!(
+                        "its leash (pid {}) had not recorded Chrome's pid, and",
+                        self.leash.id()
+                    ),
+                };
+                return Err(std::io::Error::new(
+                    ErrorKind::TimedOut,
+                    format!(
+                        "Chrome stalled before {what}: {watched} spent {:?} CPU in the wait, \
+                         and the launch's wall-clock backstop of {backstop:.1?} ran out after \
+                         {waited:.1?}; {}",
+                        budget.used(),
+                        load_said(load_average())
+                    ),
                 ));
             }
             std::thread::sleep(POLL);
@@ -828,6 +980,25 @@ impl Drop for Owner {
     }
 }
 
+/// The machine's load average over 1, 5 and 15 minutes, as `getloadavg` reads it.
+fn load_average() -> Option<[f64; 3]> {
+    let mut load = [0.0f64; 3];
+    // SAFETY: writes at most three doubles into `load`, which holds three.
+    let read = unsafe { libc::getloadavg(load.as_mut_ptr(), 3) };
+    (read == 3).then_some(load)
+}
+
+/// A load average as a stall's error says it, in the words of the tests' own stalls
+/// (`test_time::Load`).
+fn load_said(load: Option<[f64; 3]>) -> String {
+    match load {
+        Some([one, five, fifteen]) => {
+            format!("load average {one:.2} {five:.2} {fifteen:.2} over 1, 5 and 15 minutes")
+        }
+        None => "no load average to read".into(),
+    }
+}
+
 /// The launcher's output reader may die before its leash. Diagnostics must never interrupt cleanup.
 fn leash_report(message: fmt::Arguments<'_>) {
     use std::io::Write;
@@ -947,6 +1118,15 @@ pub struct Chrome {
     /// What each frame followed turns on beyond its network and page events
     /// ([`Chrome::enable_in_frames`]).
     frame_domains: Vec<String>,
+    /// The targets of the pages this driver opened itself: the observer's and the page under
+    /// test's, which [`Chrome::keep_in_front`] tells from the pages the page opens.
+    own_pages: Vec<String>,
+    /// Whether the page under test is brought back in front as soon as another page appears or
+    /// commits ([`Chrome::keep_in_front`]).
+    fronting: bool,
+    /// How the page under test went away, as the last of Chrome's messages that told of it said
+    /// ([`Chrome::note_gone`]); `None` while it runs.
+    gone: Option<Gone>,
 }
 
 /// A mid phone's screen, as the browser tests emulate one: 390x844 CSS pixels at 3x, mobile.
@@ -954,11 +1134,23 @@ pub const PHONE: (u32, u32, u32) = (390, 844, 3);
 
 impl Chrome {
     /// Chrome at `binary`, on a new profile, under a leash `leash` starts, with one blank page
-    /// attached and its page and network events on.
+    /// attached and its page and network events on. A Chrome that exits first, spends a minute of
+    /// CPU without opening DevTools, or stalls, alive and opening none, for six minutes on the wall,
+    /// fails its launch with an error saying which.
     pub fn launch(binary: &str, leash: &Leash) -> Result<Chrome> {
+        Self::launch_within(binary, leash, LAUNCH_BACKSTOP)
+    }
+
+    /// [`Chrome::launch`], waiting at most `backstop` on the wall for Chrome to open DevTools.
+    fn launch_within(binary: &str, leash: &Leash, backstop: Duration) -> Result<Chrome> {
         let mut owner = Owner::launch(binary, leash)?;
         let (port, path) = owner
-            .ready("DevTools port readiness", PROTOCOL_CPU, devtools_endpoint)
+            .ready(
+                "DevTools port readiness",
+                PROTOCOL_CPU,
+                backstop,
+                devtools_endpoint,
+            )
             .map_err(|error| {
                 Error::new(format!(
                     "Chrome DevTools readiness: {error}; {}",
@@ -981,6 +1173,9 @@ impl Chrome {
             following: false,
             dismissing: false,
             frame_domains: Vec::new(),
+            own_pages: Vec::new(),
+            fronting: false,
+            gone: None,
         };
         let targets = chrome.browser_call("Target.getTargets", json!({}))?;
         let blank = targets["targetInfos"]
@@ -1006,6 +1201,7 @@ impl Chrome {
             json!({"targetId": target_id, "flatten": true}),
         )?;
         chrome.session = Some(session_id(&attached)?);
+        chrome.own_pages = vec![blank, target_id];
         chrome.call("Page.enable", json!({}))?;
         chrome.call("Network.enable", json!({}))?;
         Ok(chrome)
@@ -1085,10 +1281,39 @@ impl Chrome {
     pub fn follow_frames(&mut self) -> Result<()> {
         self.following = true;
         self.call("Target.setAutoAttach", auto_attach())?;
-        // Shared workers, which the browser runs, are only told of: discovery attaches to and
-        // holds nothing. A Chrome that refuses it tells of none.
-        let shared = json!({"discover": true, "filter": [{"type": SHARED_WORKER}]});
-        match self.browser_call("Target.setDiscoverTargets", shared) {
+        self.discover()
+    }
+
+    /// From now on, keep the page under test in front of every page it opens. Each page Chrome
+    /// tells of that this driver did not open itself (`Target.targetCreated`: a page the page
+    /// opened, by a link or a script; `Target.targetInfoChanged`: its document committed, or its
+    /// title) has the page brought back in front at once, unwaited, as its event is read, in any
+    /// call or wait: the browser does it without asking the page. A page behind another tab draws
+    /// no frames, and Chrome closes the dialog of a tab behind another. A page of the page's own
+    /// site opened with its opener runs in the page's renderer, and a dialog it shows in front
+    /// holds that renderer, and every call and wait on the page with it, until it is answered:
+    /// opened as a tab, its dialog is closed as the page comes back in front, or as it opens once
+    /// that tab is behind. A window of its own (`window.open` with window features) stays in front
+    /// in its own right whatever the page does, and keeps its dialog. Such a page is only told of
+    /// (`Target.setDiscoverTargets`), never attached or held: it runs as Chrome leaves it, and its
+    /// dialogs are not among [`Chrome::events`].
+    pub fn keep_in_front(&mut self) -> Result<()> {
+        self.fronting = true;
+        self.discover()
+    }
+
+    /// Have the browser tell of the targets that are only told of, never attached to or held:
+    /// shared workers once frames are followed ([`Chrome::follow_frames`]), which the browser
+    /// runs, and pages once the page is kept in front ([`Chrome::keep_in_front`]). A Chrome that
+    /// refuses tells of none, and nothing else is lost.
+    fn discover(&mut self) -> Result<()> {
+        let filter: Vec<Value> = [(self.following, SHARED_WORKER), (self.fronting, PAGE)]
+            .into_iter()
+            .filter(|(on, _)| *on)
+            .map(|(_, kind)| json!({ "type": kind }))
+            .collect();
+        let discover = json!({"discover": true, "filter": filter});
+        match self.browser_call("Target.setDiscoverTargets", discover) {
             Err(error) if error.past_deadline() => Err(error),
             _ => Ok(()),
         }
@@ -1151,7 +1376,8 @@ impl Chrome {
             .map_err(|error| Error::new(format!("Page.captureScreenshot: {error}")))
     }
 
-    /// Evaluate `expression` in the page (awaiting a promise), its value as JSON.
+    /// Evaluate `expression` in the page (awaiting a promise), its value as JSON. It is asked once,
+    /// as it may act: an evaluation the page's navigation took from it is an error naming that.
     pub fn eval(&mut self, expression: &str) -> Result<Value> {
         let mut budget = self.page_budget(PROTOCOL_CPU)?;
         self.eval_bounded(expression, &mut budget)?.ok_or_else(|| {
@@ -1163,17 +1389,33 @@ impl Chrome {
     }
 
     fn eval_bounded(&mut self, expression: &str, budget: &mut WaitBudget) -> Result<Option<Value>> {
+        self.evaluate(expression, budget, false)
+    }
+
+    /// `expression` evaluated in the page within `budget` (awaiting a promise): its value as JSON,
+    /// or `None` once the budget ran out. With `ends_with_the_page`, the page under test going away
+    /// before its reply ends it at once with an error saying how ([`Gone`]), as Chrome never
+    /// answers it then.
+    fn evaluate(
+        &mut self,
+        expression: &str,
+        budget: &mut WaitBudget,
+        ends_with_the_page: bool,
+    ) -> Result<Option<Value>> {
         let id = self.send(
             "Runtime.evaluate",
             json!({"expression": expression, "returnByValue": true, "awaitPromise": true}),
             self.session.clone(),
         )?;
-        self.watch(budget, |_, value| {
+        self.watch(budget, |chrome, value| {
+            if let Some(gone) = chrome.gone.filter(|_| ends_with_the_page) {
+                return Err(Error::gone(expression, gone));
+            }
             if value["id"] != json!(id) {
                 return Ok(None);
             }
             if let Some(error) = value.get("error") {
-                return Err(Error::new(format!("{expression}: {error}")));
+                return Err(Error::evaluation(expression, error));
             }
             let result = &value["result"];
             if let Some(exception) = result.get("exceptionDetails") {
@@ -1186,23 +1428,36 @@ impl Chrome {
     /// Wait until `expression` is truthy, bounded by browser CPU and the page's completed turns,
     /// including observer turns while an evaluation's promise is still pending. A page whose
     /// renderer stalls until the wall-clock backstop is an error naming the stall, not a false
-    /// condition: it never had the turns to make the condition true.
+    /// condition: it never had the turns to make the condition true. An evaluation the page's
+    /// navigation took from it ([`LOST_TO_NAVIGATION`]) is a turn whose condition is not met yet,
+    /// and the document the page went to is asked again; any other error reply ends the wait. A
+    /// page that closed, or whose renderer crashed, before the wait or under it, ends it at once
+    /// with an error saying which ([`Gone`]): Chrome answers none of its evaluations then.
     pub fn wait_for(&mut self, expression: &str, cpu: Duration) -> Result<bool> {
         let mut budget = self.page_budget(cpu)?;
         let state = loop {
-            let Some(value) = self.eval_bounded(expression, &mut budget)? else {
-                break "evaluation still pending";
+            if let Some(gone) = self.gone {
+                return Err(Error::gone(expression, gone));
+            }
+            let (met, state) = match self.evaluate(expression, &mut budget, true) {
+                Ok(Some(value)) => (
+                    !(value.is_null()
+                        || value == json!(false)
+                        || value == json!(0)
+                        || value == json!("")),
+                    "condition still false",
+                ),
+                Ok(None) => break "evaluation still pending",
+                Err(error) if error.navigated => (false, "evaluation lost to a navigation"),
+                Err(error) => return Err(error),
             };
-            if !(value.is_null()
-                || value == json!(false)
-                || value == json!(0)
-                || value == json!(""))
-            {
+            if met {
                 return Ok(true);
             }
-            // The evaluation's reply is the page's own turn.
+            // The evaluation's reply is the page's own turn, or the browser's on its behalf as it
+            // navigated.
             if budget.poll(&self.owner.members()?) {
-                break "condition still false";
+                break state;
             }
             self.pump(POLL)?;
         };
@@ -1263,10 +1518,15 @@ impl Chrome {
 
     /// Keep `event`; one that says a frame or a worker followed ([`Chrome::follow_frames`]) has
     /// started is answered first ([`Chrome::follow`]), and so is a dialog opening, once dialogs
-    /// are dismissed ([`Chrome::dismiss_dialogs`]).
+    /// are dismissed ([`Chrome::dismiss_dialogs`]), and one of a page the page opened, once the
+    /// page is kept in front ([`Chrome::keep_in_front`]).
     fn keep(&mut self, event: Value) -> Result<()> {
         if self.following && event["method"] == "Target.attachedToTarget" {
             self.follow(&event["params"])?;
+        }
+        if self.fronting && self.opened_by_the_page(&event) {
+            // Unwaited: the browser answers it, whatever holds the page's renderer.
+            self.send("Page.bringToFront", json!({}), self.session.clone())?;
         }
         if self.dismissing && event["method"] == "Page.javascriptDialogOpening" {
             // Answered on the session it opened on, the page's or a followed frame's, unwaited:
@@ -1319,6 +1579,19 @@ impl Chrome {
         Ok(())
     }
 
+    /// Whether `event` tells of a page this driver did not open itself, as it appears or commits
+    /// its document: a page the page opened.
+    fn opened_by_the_page(&self, event: &Value) -> bool {
+        let target = &event["params"]["targetInfo"];
+        matches!(
+            event["method"].as_str(),
+            Some("Target.targetCreated" | "Target.targetInfoChanged")
+        ) && target["type"] == PAGE
+            && target["targetId"]
+                .as_str()
+                .is_some_and(|id| !self.own_pages.iter().any(|own| own == id))
+    }
+
     fn forget_events(&mut self) {
         self.events.clear();
         self.arrivals.clear();
@@ -1338,6 +1611,12 @@ impl Chrome {
     /// One DevTools command; its result. Events read meanwhile are kept.
     pub fn call(&mut self, method: &str, params: Value) -> Result<Value> {
         self.session_call(method, params, self.session.clone())
+    }
+
+    /// One DevTools command on another target's `session`, as `Target.attachToTarget` with
+    /// `flatten` names it (another tab's, say); its result. Events read meanwhile are kept.
+    pub fn call_on(&mut self, session: &str, method: &str, params: Value) -> Result<Value> {
+        self.session_call(method, params, Some(session.to_owned()))
     }
 
     fn session_call(
@@ -1410,6 +1689,10 @@ const WORKER: &str = "worker";
 /// The kind of target that is a shared worker, which the browser runs: only discovered
 /// ([`Chrome::follow_frames`]), never followed.
 const SHARED_WORKER: &str = "shared_worker";
+
+/// The kind of target that is a page (a tab): one the page opens is only discovered
+/// ([`Chrome::keep_in_front`]), never followed.
+const PAGE: &str = "page";
 
 /// The auto-attach that follows a page's, a followed frame's or a followed worker's frames in
 /// processes of their own and workers ([`Chrome::follow_frames`]): each held as it starts, on a
@@ -1657,6 +1940,27 @@ fn requests(events: &[Value], frame: Option<&str>) -> Vec<Request> {
             {
                 request.pings += 1;
             }
+            // A WebSocket is told of apart from requests: made, its handshake answered, then each
+            // frame it received, the feed's events among them, each one message whose name comes
+            // first (`symphony_api`'s feed contract).
+            "Network.webSocketCreated" => {
+                request.url = params["url"].as_str().unwrap_or("").to_string();
+                request.kind = WEB_SOCKET.to_string();
+            }
+            "Network.webSocketHandshakeResponseReceived" => {
+                let response = &params["response"];
+                request.status = response["status"].as_i64().unwrap_or(0);
+                request.bytes += handshake_bytes(response);
+            }
+            "Network.webSocketFrameReceived" => {
+                let payload = params["response"]["payloadData"].as_str().unwrap_or("");
+                request.bytes += frame_bytes(payload.len());
+                if payload.split_once('\n').map(|(name, _)| name) == Some(symphony_api::PING_EVENT)
+                {
+                    request.pings += 1;
+                }
+            }
+            "Network.webSocketClosed" => request.finished = true,
             "Network.loadingFinished" => {
                 request.bytes = params["encodedDataLength"]
                     .as_f64()
@@ -1754,10 +2058,30 @@ impl Chrome {
         )
     }
 
-    /// Read the browser's messages until `found` makes something of one (that), or `budget` runs
-    /// out (`None`), keeping an observer turn in flight throughout and, on a wait on the page
-    /// under test, a probe of that page whenever it has not answered since the last turn counted.
-    /// Events are kept, the one found among them.
+    /// Note what `message` tells of the page under test's end ([`Chrome::gone`]): its session
+    /// detached, its renderer crashed, or a renderer of its started again after a crash. A frame or
+    /// a worker followed ([`Chrome::follow_frames`]) detaches and crashes on a session of its own,
+    /// which is not the page's.
+    fn note_gone(&mut self, message: &Value) {
+        let Some(page) = self.session.as_deref() else {
+            return;
+        };
+        let own = message["sessionId"] == page;
+        self.gone = match message["method"].as_str() {
+            Some("Target.detachedFromTarget") if message["params"]["sessionId"] == page => {
+                Some(Gone::Closed)
+            }
+            Some("Inspector.targetCrashed") if own => Some(Gone::Crashed),
+            Some("Inspector.targetReloadedAfterCrash") if own => None,
+            _ => return,
+        };
+    }
+
+    /// Read the browser's messages until `found` makes something of one (that, or the error it
+    /// makes of it), or `budget` runs out (`None`), keeping an observer turn in flight throughout
+    /// and, on a wait on the page under test, a probe of that page whenever it has not answered
+    /// since the last turn counted. What each message tells of the page's end is noted before
+    /// `found` sees it ([`Chrome::note_gone`]). Events are kept, the one found among them.
     fn watch<T>(
         &mut self,
         budget: &mut WaitBudget,
@@ -1766,11 +2090,13 @@ impl Chrome {
         let mut marker = self.observer_poll()?;
         loop {
             if let Some(value) = self.read(true)? {
-                if let Some(found) = found(self, &value)? {
+                self.note_gone(&value);
+                let made = found(self, &value);
+                if !matches!(made, Ok(None)) {
                     if value.get("id").is_none() {
                         self.keep(value)?;
                     }
-                    return Ok(Some(found));
+                    return made;
                 }
                 if value["id"] == json!(marker) {
                     if value.get("error").is_some()

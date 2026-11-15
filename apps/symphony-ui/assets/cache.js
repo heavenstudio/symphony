@@ -1,6 +1,7 @@
 // The client cache (docs/analysis/client-cache.md): what a page drew, kept on this device in
 // IndexedDB, so a return visit draws at once and then asks the server only whether it changed.
-// The page kinds reach it as `symphonyCache` (src/cache.rs): no kind's wasm carries IndexedDB.
+// The page kinds reach it as `symphonyCache` (apps/symphony-web/src/cache.ts): no kind's entry
+// carries IndexedDB.
 //
 // An item is what one visit opens (the board, a task, a document) and goes whole; its parts are
 // the reads it drew, each kept with the tag the server answered it with. Every call names the
@@ -23,6 +24,32 @@ window.symphonyCache = (() => {
     const OPENING = 500, VISIT = 6e4;
     let opened, named;
     let checked = new Map();
+    // The transactions open now, and whether the page is away: left (`pagehide`, into its
+    // back/forward cache or for good) or frozen (Chrome's `freeze`), and not shown or resumed
+    // since. A page away runs none of its callbacks, so a transaction it left between two of them
+    // would hold its locks on the stores for as long as it is kept, and Chrome evicts a kept page
+    // as soon as another page of the origin asks for a lock it holds: Back would load it again
+    // (the next page's first call asks for every store). So a page going away aborts every
+    // transaction it has open and starts none until it is back, as it closes its feed's stream
+    // (apps/symphony-web/src/feed.ts). What an aborted keep would have kept the next keep of it keeps; a page
+    // back checks the format again, as a check cut short by its going, or asked while it was away,
+    // gave it no store.
+    const running = new Set();
+    let away = false;
+    for (const [target, leaving, returning] of [[window, "pagehide", "pageshow"], [document, "freeze", "resume"]]) {
+        target.addEventListener(leaving, () => {
+            away = true;
+            for (const transaction of running) {
+                try { transaction.abort(); } catch (_) { /* Committing: it needs the page no more. */ }
+            }
+            running.clear();
+        });
+        target.addEventListener(returning, () => {
+            if (!away) return;
+            away = false;
+            checked = new Map();
+        });
+    }
 
     // Each name with its length first, so no item's key begins another's: the parts of an item are
     // the keys that begin with its key, and a part's name begins with a digit.
@@ -84,13 +111,21 @@ window.symphonyCache = (() => {
     }
 
     // `work` in one transaction over `names`: what it gives once that commits, or null when it
-    // fails (a full disk aborts it).
+    // fails (a full disk aborts it, and so does the page going away) or the page is away.
     function run(db, names, work, mode = "readwrite") {
+        if (away) return Promise.resolve(null);
         return new Promise(resolve => {
             let given = null;
             const transaction = db.transaction(names, mode);
-            transaction.oncomplete = () => resolve(given);
-            transaction.onabort = () => resolve(null);
+            running.add(transaction);
+            transaction.oncomplete = () => {
+                running.delete(transaction);
+                resolve(given);
+            };
+            transaction.onabort = () => {
+                running.delete(transaction);
+                resolve(null);
+            };
             work(Object.fromEntries(names.map(name => [name, transaction.objectStore(name)])), value => { given = value; });
         }).catch(() => null);
     }
@@ -199,7 +234,9 @@ window.symphonyCache = (() => {
         // Read the item ahead of its visit (shell.js, `ahead`): each of `reads`, [part, url], with
         // `fetch` at the lowest priority, marked as a prefetch and naming the tag kept for its part,
         // so an unchanged one costs no body; what the server sends is kept unvisited. Nothing for
-        // an item a visit kept, nor before the page's own code named its format.
+        // an item a visit kept, nor before the page's own code named its format. Every answer's
+        // body is read to its end, a refusal's too: the browser ends a read only once its body is
+        // read, and one left unread stays in flight for as long as the page is open.
         ahead: async (fetch, project, id, kind, reads) => {
             const format = named;
             const tags = format === undefined ? null : await within(format, ["items", "parts"], (stores, give) => {
@@ -223,6 +260,7 @@ window.symphonyCache = (() => {
                 try {
                     const response = await fetch(url, { priority: "low", cache: "no-store", headers });
                     if (response.status === 200) await keep(format, project, id, kind, part, response.headers.get("ETag") || "", await response.json(), undefined, true);
+                    else await response.arrayBuffer();
                 } catch (_) { /* Read when opened, then. */ }
             }
         },

@@ -285,6 +285,16 @@ pub struct Red {
     /// Its status at [`ReportDay::until`]: its time to fix is `closed` less `filed` once it is
     /// `done`.
     pub status: String,
+    /// The commits its filer said it came between, `GOOD..BAD`, the newest it knew green and the
+    /// first it found red, as its body's `between:` line names them; none for a red that names
+    /// none.
+    #[serde(default)]
+    pub between: Option<String>,
+    /// The tasks that landed in `between`, by slug, newest first: each merge the land made on the
+    /// default branch's line of first parents in that range, the landings it may trace back to.
+    /// None where it names no range, or git could not read it.
+    #[serde(default)]
+    pub landed: Option<Vec<String>>,
 }
 
 /// The waits that ended in an hour, each in the hour it ended.
@@ -294,8 +304,9 @@ pub struct Waits {
     #[serde(default)]
     pub approved_to_landed: Vec<Wait>,
     /// From a move into review to the first reviewer on it: a session joining the task as its
-    /// reviewer, or claiming an instruction subtask of it, while it is in review; none at once
-    /// where one already held the task.
+    /// reviewer, or claiming an instruction subtask of it, while it is in review. A reviewer that
+    /// already held the role at the move (a re-review whose reviewer kept it) ends none, as the
+    /// board's lines cannot tell when it came back.
     #[serde(default)]
     pub review_to_reviewer: Vec<Wait>,
     /// From a `changes` verdict to its executor's first line after it: a claim of the task, or a
@@ -358,8 +369,8 @@ pub struct Decisions {
 /// A card waiting on the owner.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct OpenCard {
-    /// The page it is on, by its route: `docs/DECISIONS.md`, or `@BRANCH/docs/DECISIONS.md` for a
-    /// card a live branch posted.
+    /// The page it is on, by its route: `docs/DECISIONS.md`, a live branch's copy of one of main's
+    /// cards included, or `@BRANCH/docs/DECISIONS.md` for a card only a live branch posted.
     pub doc: String,
     pub slug: String,
     /// Since when it has waited: the minute of its line that last put it in the owner's queue,

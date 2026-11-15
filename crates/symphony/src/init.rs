@@ -4,7 +4,9 @@
 //! (Claude's in `.claude/settings.json`, Codex's in `.codex/rules/symphony.rules`), the heartbeat
 //! hook and the memory guard. Each file it writes carries a stamp, which is how a later run knows the
 //! file is its own to bring up to date. A file of the same name without the stamp is the project's
-//! own: it is the one in use and this never writes over it. Where the project has none, the
+//! own: it is the one in use and this never writes over it. A stamped one that differs from its
+//! stamp, an edit since, is written over all the same, and the run says so and where the
+//! project's own goes ([`Outcome::Replaced`]). Where the project has none, the
 //! Symphony's is used. The project's own skills and guards sit beside the shipped ones and are never
 //! touched. It writes no permission rule but the allow rules: each names a recipe `symphony.just`
 //! holds, its board and reply recipes and `land`, never the server ones ([`ALLOW`]). A rule carries
@@ -12,7 +14,7 @@
 //! one dropped, which a run removes: an allow rule ([`RETIRED`], the env-prefixed board rule, whose
 //! `*` passed any program) or an ask rule ([`RETIRED_ASK`], those that asked before a land), an ask
 //! list they leave empty going with them. What the Symphony's default land lands is decided by its
-//! approval check, a fresh reviewer's approve standing on the tip it lands, never by a prompt; a
+//! checks, every stamp the task needs standing on the tip it lands, never by a prompt; a
 //! project whose own `land` recipe replaces it gets the same allow rule, and its own landing policy
 //! decides what lands.
 //!
@@ -25,7 +27,8 @@
 //! `allow-duplicate-recipes` itself, which is brought current. Retiring the recipes removes the
 //! stamped copy and that stamped line. The project's `.gitignore` gets a line
 //! for each folder the Symphony fills that it does not ignore yet: the build links' `.target/` and
-//! the artifacts folder. A run refuses a root that is not a folder, making nothing. It ends with
+//! the artifacts folder. A run refuses a root that is not a folder, or is in no git checkout (the
+//! board lives in the repository's common dir; a git dir is git's own), making nothing. It ends with
 //! what is left for the owner to do ([`steps`]) and what it cannot see from the folder, that Claude
 //! Code must trust it ([`TRUST`]), and warns when the heartbeat has no build to run.
 
@@ -140,8 +143,8 @@ const MEMORY_GUARD: Hook = Hook {
 const HOOKS: [Hook; 2] = [HEARTBEAT, MEMORY_GUARD];
 
 /// What Claude allows without a prompt: the board and reply recipes of `symphony.just`, and `land`.
-/// The Symphony's default land lands only what its approval check passes, a fresh reviewer's
-/// approve standing on the tip, so a prompt before it would add only a wait on the owner; a
+/// The Symphony's default land lands only what its checks pass, every stamp the task needs
+/// standing on the tip, so a prompt before it would add only a wait on the owner; a
 /// project's own `land` recipe, which replaces it, is allowed the same, and the project's landing
 /// policy decides what that one lands. Its server recipes, `symphony` (which starts, replaces or
 /// stops the machine's shared server) and `symphony-cli` (which reaches `serve` and `init`), ask
@@ -248,6 +251,8 @@ impl Shipped {
         Shipped {
             skills: vec![
                 skill!("apply-review", "rewrite-brief.md"),
+                // The assessor's skill: the stamps a task needs to land, read from its diff.
+                skill!("assess-task"),
                 skill!("chat-doc"),
                 skill!("create-task"),
                 skill!("review-task"),
@@ -274,7 +279,11 @@ impl Shipped {
 #[derive(Debug, PartialEq, Eq)]
 pub enum Outcome {
     Installed,
+    /// A copy init wrote, as it wrote it, brought to what this build ships.
     Updated,
+    /// A copy init wrote that differed from its stamp, an edit since (a file of a skill gone
+    /// among them), written whole again: the edit is gone. It names where the project's own goes.
+    Replaced(&'static str),
     Current,
     /// The project's own copy, left as it is.
     Own,
@@ -282,16 +291,29 @@ pub enum Outcome {
 }
 
 impl Outcome {
-    fn word(&self) -> &'static str {
+    fn word(&self) -> String {
         match self {
-            Outcome::Installed => "installed",
-            Outcome::Updated => "updated",
-            Outcome::Current => "current",
-            Outcome::Own => "kept (the project's own)",
-            Outcome::Removed => "removed",
+            Outcome::Installed => "installed".into(),
+            Outcome::Updated => "updated".into(),
+            Outcome::Replaced(own) => {
+                format!("replaced: it differed from its stamp, so an edit to it is gone; {own}")
+            }
+            Outcome::Current => "current".into(),
+            Outcome::Own => "kept (the project's own)".into(),
+            Outcome::Removed => "removed".into(),
         }
     }
 }
+
+/// Where a skill of the project's own goes, said when an edit to a stamped one is replaced.
+const OWN_SKILL: &str = "a skill of the project's own is a SKILL.md with no stamp line, which init \
+                         never writes over";
+/// Where the project's own recipes go.
+const OWN_RECIPES: &str = "a recipe of the project's own goes in its justfile, where it replaces \
+                           the Symphony's of the same name";
+/// Where the project's own Codex rules go.
+const OWN_RULES: &str = "rules of the project's own are a copy with no stamp line, which init \
+                         never writes over";
 
 /// A line of the run's report: the thing and what happened to it.
 pub type Report = Vec<(String, Outcome)>;
@@ -358,6 +380,48 @@ fn stamped_files(text: &str) -> Vec<&str> {
 
 fn stamped_rules(text: &str) -> String {
     format!("# {MARK} {}\n{text}", digest(&[text]))
+}
+
+/// Whether `have`, a file init writes whole with its stamp on its first line ([`stamped_rules`]),
+/// differs from that stamp: the stamp is the digest of the text below it as init wrote it, so any
+/// other text there is an edit since.
+fn differs_from_stamp(have: &str) -> bool {
+    let (stamp, text) = have.split_once('\n').unwrap_or((have, ""));
+    let named = stamp
+        .strip_prefix("# ")
+        .and_then(|rest| rest.strip_prefix(MARK))
+        .map(str::trim);
+    named != Some(digest(&[text]).as_str())
+}
+
+/// Whether the skill in `folder`, whose stamped `SKILL.md` reads `have`, differs from its stamp
+/// ([`stamped_skill`]): the stamp is the digest of the files it names as init wrote them, the
+/// `SKILL.md` without the stamp's line, so an edit to any of them, or one of them gone, is a
+/// difference.
+fn skill_differs_from_stamp(folder: &Path, have: &str) -> io::Result<bool> {
+    let Some((line, named)) = have.lines().find_map(|line| {
+        let rest = line.strip_prefix("<!-- ")?.strip_prefix(MARK)?;
+        Some((line, rest.trim_start().split_once(" files=")?.0))
+    }) else {
+        return Ok(true);
+    };
+    let skill = have.replacen(&format!("{line}\n"), "", 1);
+    let mut parts = Vec::new();
+    for path in stamped_files(have) {
+        let Some(body) = (if path == "SKILL.md" {
+            Some(skill.clone())
+        } else {
+            read_optional(&folder.join(path))?
+        }) else {
+            return Ok(true);
+        };
+        parts.push((path, body));
+    }
+    let parts: Vec<&str> = parts
+        .iter()
+        .flat_map(|(path, body)| [*path, body.as_str()])
+        .collect();
+    Ok(digest(&parts) != named)
 }
 
 /// Writes `text` at `path` when it differs; whether it wrote.
@@ -429,6 +493,10 @@ fn install_skills(root: &Path, shipped: &Shipped, report: &mut Report) -> io::Re
             _ if is_link(&folder) || is_link(&main) => Outcome::Own,
             Some(text) if !is_stamped(text) => Outcome::Own,
             _ => {
+                let edited = match &have {
+                    Some(old) => skill_differs_from_stamp(&folder, old)?,
+                    None => false,
+                };
                 let mut wrote = false;
                 if let Some(old) = &have {
                     for path in stamped_files(old) {
@@ -446,11 +514,7 @@ fn install_skills(root: &Path, shipped: &Shipped, report: &mut Report) -> io::Re
                     };
                     wrote |= put(&folder.join(path), &text)?;
                 }
-                match (wrote, have.is_some()) {
-                    (false, _) => Outcome::Current,
-                    (true, true) => Outcome::Updated,
-                    (true, false) => Outcome::Installed,
-                }
+                written(wrote, have.is_some(), edited.then_some(OWN_SKILL))
             }
         };
         if folder.is_dir() {
@@ -511,12 +575,13 @@ fn remove_retired(root: &Path, shipped: &Shipped, report: &mut Report) -> io::Re
 }
 
 /// A file the Symphony writes whole, its stamp on its first line (the Codex rules, the recipes),
-/// reported as `entry`.
+/// reported as `entry`; `own` says where the project's own goes, should an edit be replaced.
 fn install_stamped(
     root: &Path,
     rel: &str,
     entry: &str,
     text: &str,
+    own: &'static str,
     report: &mut Report,
 ) -> io::Result<()> {
     let path = root.join(rel);
@@ -524,18 +589,24 @@ fn install_stamped(
     let outcome = match &have {
         _ if is_link(&path) => Outcome::Own,
         Some(text) if !text.lines().next().is_some_and(is_mark_line) => Outcome::Own,
-        _ => written(put(&path, &stamped_rules(text))?, have.is_some()),
+        _ => {
+            let edited = have.as_deref().is_some_and(differs_from_stamp);
+            let wrote = put(&path, &stamped_rules(text))?;
+            written(wrote, have.is_some(), edited.then_some(own))
+        }
     };
     report.push((entry.to_string(), outcome));
     Ok(())
 }
 
-/// What a write did: nothing, or brought an old copy up to date, or made the file.
-fn written(wrote: bool, existed: bool) -> Outcome {
-    match (wrote, existed) {
-        (false, _) => Outcome::Current,
-        (true, true) => Outcome::Updated,
-        (true, false) => Outcome::Installed,
+/// What a write did: nothing, or brought an old copy up to date, or wrote over an edit to one
+/// (`edited`, naming where the project's own goes), or made the file.
+fn written(wrote: bool, existed: bool, edited: Option<&'static str>) -> Outcome {
+    match (wrote, existed, edited) {
+        (false, _, _) => Outcome::Current,
+        (true, true, Some(own)) => Outcome::Replaced(own),
+        (true, true, None) => Outcome::Updated,
+        (true, false, _) => Outcome::Installed,
     }
 }
 
@@ -638,17 +709,19 @@ fn sets_duplicates(text: &str) -> bool {
 }
 
 /// A justfile importing the recipes where the project has none; the project's own is left as it
-/// is, but for one init wrote setting what `symphony.just` now sets, which is brought current.
+/// is, but for one init wrote setting what `symphony.just` now sets, which is brought current. One
+/// that is still what init writes is current: the project's once it changes it.
 fn install_justfile(root: &Path, report: &mut Report) -> io::Result<()> {
     let outcome = match justfile(root)? {
-        Some(path)
-            if !is_link(&path)
-                && read_optional(&path)?.as_deref() == Some(JUSTFILE_SETTING_ITSELF) =>
-        {
-            put(&path, JUSTFILE)?;
-            Outcome::Updated
-        }
-        Some(_) => Outcome::Own,
+        Some(path) if is_link(&path) => Outcome::Own,
+        Some(path) => match read_optional(&path)?.as_deref() {
+            Some(JUSTFILE_SETTING_ITSELF) => {
+                put(&path, JUSTFILE)?;
+                Outcome::Updated
+            }
+            Some(JUSTFILE) => Outcome::Current,
+            _ => Outcome::Own,
+        },
         None => {
             put(&root.join("justfile"), JUSTFILE)?;
             Outcome::Installed
@@ -737,7 +810,7 @@ fn install_ignores(root: &Path, artifacts: &str, report: &mut Report) -> io::Res
             text.push_str(&format!("/{folder}/\n"));
         }
     }
-    let outcome = written(put(&path, &text)?, have.is_some());
+    let outcome = written(put(&path, &text)?, have.is_some(), None);
     report.push((IGNORE.to_string(), outcome));
     Ok(())
 }
@@ -918,13 +991,14 @@ pub fn init(root: &Path, shipped: &Shipped) -> io::Result<Report> {
         CODEX_RULES,
         "codex rules",
         &shipped.codex_rules,
+        OWN_RULES,
         &mut report,
     )?;
     install_settings(root, &mut report)?;
     match &shipped.recipes {
         Some(recipes) => {
             let recipes = recipes_for(root, recipes)?;
-            install_stamped(root, RECIPES, RECIPES, &recipes, &mut report)?;
+            install_stamped(root, RECIPES, RECIPES, &recipes, OWN_RECIPES, &mut report)?;
             install_justfile(root, &mut report)?;
         }
         None => retire_recipes(root, &mut report)?,
@@ -955,11 +1029,40 @@ fn missing_surreal(root: &Path, named: Option<&Path>) -> Option<PathBuf> {
     (!builds::runnable(home.surreal())).then(|| home.surreal().to_path_buf())
 }
 
+/// Whether `root` lies in its repository's git dir `common` (canonical) and in no checkout there:
+/// a bare repository, or a folder of a checkout's `.git`, which git answers a common dir for too.
+/// A worktree placed inside the git dir has a `.git` of its own, and is a checkout.
+fn in_git_dir(root: &Path, common: &Path) -> bool {
+    let Ok(root) = root.canonicalize() else {
+        return false;
+    };
+    root.starts_with(common)
+        && !root
+            .ancestors()
+            .take_while(|folder| folder.starts_with(common))
+            .any(|folder| folder.join(".git").symlink_metadata().is_ok())
+}
+
+/// Whether the board of the checkout at `root`, its server run from `named` (`SYMPHONY_SURREAL`)
+/// or the pinned one, is not made yet, read without starting anything: by the server's answer
+/// while one runs (the Symphony's reads start it, and never make the board), else by its store not
+/// being there, as before any server ran on it. False outside a checkout.
+fn unmade_board(root: &Path, named: Option<&Path>) -> bool {
+    let Some(common) = symphony_board::git::checkout_common_dir(root) else {
+        return false;
+    };
+    let home = symphony_board::server::Home::in_common(&common, named);
+    match home.schema(symphony_board::DATABASE) {
+        Ok(schema) => schema.is_none(),
+        Err(_) => !home.has_store(),
+    }
+}
+
 /// The builds a project runs: the hooks' first (they run `symphony`, whose heartbeat runs `tasks`),
 /// then the other ones [`RUNS`] names. These are the binaries the workspace delivers, each held to
 /// a size budget (`symphony-build size-budget`, docs/CHECKS.md "Size budgets"). The workspace's
 /// `symphony-build`, the commands only its own build and release run use, is none of them.
-pub(crate) const BUILDS: [&str; 4] = ["symphony", "tasks", "agent-send", "symphony-server"];
+pub const BUILDS: [&str; 4] = ["symphony", "tasks", "agent-send", "symphony-server"];
 
 /// What runs the build `name`: the hooks that do, then each recipe of [`RUNS`] that does but those
 /// the project's justfile has of its own (`own`), which replace the Symphony's.
@@ -1017,6 +1120,13 @@ const HEARTBEAT_BUILDS: [&str; 2] = ["symphony", "tasks"];
 /// Where a Symphony checkout's `cargo build --release` leaves its builds.
 const RELEASE: &str = ".target/release";
 
+/// The reference of the project file's tables and keys, docs/PROJECT_FILE.md, where a project
+/// that has no Symphony checkout reads it: in the Symphony's repository.
+pub const PROJECT_FILE_REFERENCE: &str = concat!(
+    env!("CARGO_PKG_REPOSITORY"),
+    "/blob/main/docs/PROJECT_FILE.md"
+);
+
 /// What is left for the owner to do after a run at `root`, each one line: what init cannot do for
 /// the project. None left means agents can run the board.
 pub fn steps(root: &Path, machine: &Machine) -> Vec<String> {
@@ -1032,7 +1142,7 @@ pub fn steps(root: &Path, machine: &Machine) -> Vec<String> {
         if !root.join(crate::project::FILE).is_file() {
             steps.push(format!(
                 "write {} to name the project (until then it is `{}`, after its folder) and to set \
-                 its agents, verdicts and board",
+                 its agents, verdicts and board: {PROJECT_FILE_REFERENCE} lists its tables and keys",
                 crate::project::FILE,
                 project.id
             ));
@@ -1096,6 +1206,13 @@ pub fn steps(root: &Path, machine: &Machine) -> Vec<String> {
             machine.surreal.is_some(),
             fetch.flatten(),
         ));
+    }
+    if unmade_board(root, machine.surreal) {
+        steps.push(
+            "make the board: the first board command makes it (`just tasks list`); the Symphony \
+             only reads a board and never makes one"
+                .to_string(),
+        );
     }
     if let Some(folder) = machine.folder
         && !registered(root, folder)
@@ -1306,6 +1423,25 @@ pub fn main(args: &[String], out: &mut dyn io::Write, err: &mut dyn io::Write) -
         let problem = format!(
             "no folder at {}: --root names the project's folder, which init never makes",
             root.display()
+        );
+        return refuse(err, USAGE, "init", &problem);
+    }
+    let common = match symphony_board::git::common_dir(&root) {
+        Ok(common) => common,
+        Err(outside) => {
+            let problem = format!(
+                "{outside}: the board lives in the project's git repository, so init sets up only \
+                 a folder in a checkout of one (`git init` makes it one)"
+            );
+            return refuse(err, USAGE, "init", &problem);
+        }
+    };
+    if in_git_dir(&root, &common) {
+        let problem = format!(
+            "{} is in the git dir {}, in no checkout of it: init sets up only a folder in a git \
+             checkout, never among git's own files",
+            root.display(),
+            common.display()
         );
         return refuse(err, USAGE, "init", &problem);
     }

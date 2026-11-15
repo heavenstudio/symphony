@@ -108,7 +108,8 @@ impl Renderer for Twin {
 /// The names of the renderers the project using `plugins` has.
 fn names(plugins: &[&str]) -> Result<Vec<&'static str>, String> {
     let plugins: Vec<String> = plugins.iter().map(|name| (*name).to_string()).collect();
-    renderers::of_project(&plugins).map(|has| has.iter().map(|r| r.name).collect())
+    renderers::of_project(&plugins, &Default::default(), &[])
+        .map(|has| has.iter().map(|r| r.name).collect())
 }
 
 #[test]
@@ -118,18 +119,18 @@ fn a_type_no_renderer_of_the_project_handles_is_refused_naming_the_ones_it_has()
     assert_eq!(
         refused,
         "symphony.toml: [[entrypoints]] / type \"one\": no renderer handles it (the renderers are \
-         markdown, media)"
+         markdown, html, media)"
     );
     let other = serving(&["second", "bare"], "\"one\"");
     let refused = Project::load(&other.root).unwrap_err();
     assert_eq!(
         refused,
         "symphony.toml: [[entrypoints]] / type \"one\": no renderer handles it (the renderers are \
-         markdown, media, two)"
+         markdown, html, media, two)"
     );
     assert_eq!(
         names(&["first", "second", "missing"]),
-        Ok(vec!["markdown", "media", "one", "two"])
+        Ok(vec!["markdown", "html", "media", "one", "two"])
     );
 }
 

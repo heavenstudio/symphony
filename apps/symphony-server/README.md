@@ -50,9 +50,13 @@ Unadmitted sockets receive 503, then close their write side and drain input to E
 existing five-second shutdown grace, so unread request bytes cannot reset away the response.
 Clients that send nothing or leave a header incomplete cannot hold the old process indefinitely;
 admitted request bodies drain normally.
-The startup lock serializes publication with starters and stops. A build failure is logged once
-per source fingerprint and sent to open clients as a named `server` SSE event containing a JSON
-string; a fresh stream receives the current notice too. Editing the sources retries the build.
+The startup lock serializes publication with starters and stops. A failed update, its build or
+its hand-over, is logged and sent to open clients as the feed's named `server` event containing a
+JSON string; a fresh stream receives the current notice too. The notice says when that source
+fingerprint is built and handed over again: 5 min after its first failure, the wait doubling with
+each failure of it in a row up to 1 h (`src/reload/retry.rs`), on either clock, so the machine
+never stays on the old build for want of a retry. Editing the sources builds the new fingerprint
+at its first check, whatever that wait.
 Only the main checkout on branch `main` is followed; foreground servers do not reload.
 Shared installation and live rebuilds both use Cargo's release profile. The debug
 server exceeded the idle CPU budget on the normal board; the release build keeps
@@ -94,9 +98,18 @@ cannot keep installing after `--stop` returns.
 | `/api/task-thread?slug=…` | Alias for the typed paged task history |
 | `/api/agents` | The board's agents view, including probe availability |
 | `/api/reports?grain=…&days=…` | The Reports page's window (`ReportsPage`): its periods by the hour, day or week, each summed from the project's roll-up, agents and board-health day files, a period no file recorded none of; the settings file's commits in the window; what was not read. It reads files only, never the board, and at most 64 MiB of them (`src/api/reports.rs`) |
+| `/api/run-log?run=…&tail=…` | Part of a run's log (`RunLog`): its last 64 KiB by default, its last `tail` bytes, or `from=…&to=…` a range, at most 1 MiB; only a regular file in a day folder of the project's `logs/`, never the board (`src/api/run_log.rs`, [RUNS](../../docs/RUNS.md#logs)) |
 | `/api/activity` | Latest forty document and owner-addressed task entries |
 | `/api/pending` | Pending cards in document navigation order, then branch cards |
-| `/api/feed?since=…` | Server-Sent Events after the snapshot's version |
+| `/api/feed?since=…` | The feed after the snapshot's version: a WebSocket to a request that asks to upgrade, Server-Sent Events to any other (`src/api/feed_socket.rs`; both forms are `symphony_api`'s feed contract) |
+
+Before any project the one server answers `/api/projects`, to loopback and this machine's tailnet
+names like every route of a project's: each project it serves, with its feed's version, the cards
+waiting on the owner and the first of them, why it is refused or its board unwell, and its task
+asks, beside the server's installation id and pin (`symphony_api::ProjectList`, what the desktop
+app reads). The task asks are the questions agents asked each person on open tasks that still wait
+on them, and the board's newest reviewer verdict; a project's feed sends them again each time they
+change, as the region `task-asks` (`src/live/task_asks.rs`).
 
 Every JSON read, these and the document reads and a plugin's JSON alike, is answered
 `no-store` with a weak `ETag`: the first 16 hex digits of the SHA-256 of the JSON it sends,
@@ -163,7 +176,7 @@ gzips, up to 16 MiB (about eight builds of every page's files), and drops the
 least recently asked-for past that, gzipping it again should it be asked for
 again (`src/api/client/gzipped.rs`). A file gzip cannot shrink goes as it is, as
 do PNG and WOFF2 files. Gzip is the one encoding offered: `br` and `zstd` get
-the file as it is. SSE is never compressed or buffered. A changed shell script path
+the file as it is. The feed is never compressed or buffered. A changed shell script path
 emits a `client` region, which the existing client uses to reload once per build.
 
 Only the shared server started with `--home`, holding the server lease, drains
@@ -174,17 +187,25 @@ scratch database for a preview, and set `ASKS_DB` to a private path when exercis
 ask or chat writes, which still use that store. Leaving the journal alone is
 simpler than creating a second preview journal with its own delivery lifecycle.
 
-Every SSE delta has an increasing `id` and a single JSON line containing
-`version` and `changes`. The existing board regions are `card`, `queue` (only
-the five visible cards), `counts`, `progress` and `client`. Additional list
+Every delta's data is a single JSON line containing `version` and `changes`; as a
+Server-Sent Event it has an increasing `id` too, and on the WebSocket none (how each
+form says an event: `symphony_api`'s feed contract). The existing board regions are
+`card`, `queue` (only the five visible cards), `counts`, `progress` and `client`. Additional list
 regions use keyed upserts/removals (`ItemChange<T>`); their `-order` events
 move one key after another (`OrderChange`). They are `queue-item`,
 `spot-check`, `agent-queue`, `pending`, `activity`, `task`,
-`session` and `agent`. `task-fields` merges changed mutable fields into an
-existing task, avoiding its unchanged brief. `message` appends one structured
-thread message by id, with its typed `blocks` and display `stamp`. `task-summary` upserts
-one brief-free record so a task entering a paged view appears without a board
-refetch; `task-counts` and `task-signoff` update the column totals and owner queue.
+`session` and `agent`. A `task` upsert is a new task; an existing task that
+changed is sent once, as `task-fields`, its changed mutable fields alone,
+never its unchanged brief or record again: a view that does not hold the task
+(a column page, a task page's subtasks, `/agents`) reads it again when the
+change brings it in, `/agents` merging that read into the agents it drew. A role's holder's health is no task's change: it is sent
+once, as that holder's `session` change, and the client sets each role of that
+handle from it (`lost` when the session is gone, as the board reads a role of
+no session). A `session` or `agent` change is sent only when something a page
+shows changed, never for a heartbeat or a tool call alone (`last_seen`,
+`last_tool`, `last_tool_call`), and carries the record as it is now. `message`
+appends one structured thread message by id, with its typed `blocks` and display
+`stamp`; `task-counts` and `task-signoff` update the column totals and owner queue.
 `docs` replaces navigation order; `agent-probes` reports
 probe availability; `tasks-status` reports board availability, and of a board
 that went whether it is `slow` (it took the read and answered late) or
@@ -194,7 +215,10 @@ ask thread with a message the hub has not announced yet (`threads`, each `id` an
 document's questions read their thread again only then, and once after a
 reconnect, instead of polling. The hub compares the asks file's size and time each
 board interval and reads it only when they changed; `/api/ask` and `/api/asks` take
-the chat recipient from the hub's last board read. `branches` names the branches of the
+the chat recipient from the hub's last board read. `task-asks` is what the task
+board asks of each person, the questions waiting on them and the newest reviewer
+verdict, sent each time it changes, for the desktop app (`src/live/task_asks.rs`):
+no page reads it. `branches` names the branches of the
 project's repository whose tip moved, as the watcher saw their refs change: an open task page
 reads its gates again when the branch they were answered for is among them. Unknown regions
 are ignored by the current board client.
@@ -266,7 +290,9 @@ action is a board action of the project's plugins, named by the offer it answers
 (`TaskOffer`: the action, its label, the branch and the payload it hands back);
 an action no plugin of the project offers is a 404, and one the action refuses
 says and moves nothing on the board.
-Writes require an allowed Host and, when supplied, the app's exact Origin.
+Writes require an allowed Host and, when supplied, the app's exact Origin. So does the feed's
+WebSocket upgrade, as a page of any site may open a WebSocket and read what it says: its Origin
+must be the server's own page (`src/api/feed_socket.rs`).
 One register lock covers read, edit, no-loss validation, write and tap
 deduplication across all worktrees. Asks share the existing `ASKS_DB` store.
 

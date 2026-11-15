@@ -505,7 +505,67 @@ fn an_owner_verdict_no_commit_has_keeps_a_merged_worktree_and_says_why() {
         result.spared
     );
     git(&wt, &["commit", "-qam", "verdict"]); // committed, the line no longer keeps it here
-    assert!(sweep::git::owner_lines_left(&wt).is_empty());
+    assert!(sweep::git::answers(&wt, &docs(), None).unwrap().is_empty());
+}
+
+/// The convention's document folder, where the Symphony writes the owner's answers.
+fn docs() -> Vec<String> {
+    vec!["docs".into()]
+}
+
+/// A merged worktree whose documents git cannot read for the owner's answers is kept, saying so,
+/// and read again on the next sweep, never remembered as holding none.
+#[test]
+fn a_worktree_whose_owner_answers_cannot_be_read_is_kept_and_read_again() {
+    let r = Repo::new();
+    let wt = r.add("tools-u", Some("tools/u"), "main");
+    let register = "# Decisions\n\n- [ ] **beta** — b.\n  [2026-10-06 09:00] agent — Posted.\n";
+    write(&wt, "docs/DECISIONS.md", register);
+    git(&wt, &["add", "-A"]);
+    git(&wt, &["commit", "-qm", "card"]);
+    git(&r.root, &["merge", "-q", "--no-edit", "tools/u"]);
+    write(
+        &wt,
+        "docs/DECISIONS.md",
+        &format!("{register}  [2026-10-06 10:00] owner · approved — yes\n"),
+    );
+    // A file the read cannot open where the document's folder holds an untracked one.
+    let blocked = wt.join("docs/NEW.md");
+    write(&wt, "docs/NEW.md", "# New\n");
+    std::fs::set_permissions(
+        &blocked,
+        std::os::unix::fs::PermissionsExt::from_mode(0o000),
+    )
+    .unwrap();
+    let unread = sweep::git::answers(&wt, &docs(), None).unwrap_err();
+    assert!(unread.contains("docs/NEW.md could not be read"), "{unread}");
+    let result = r.sweep_with(|_| {});
+    assert!(wt.exists());
+    assert!(
+        result.kept.iter().any(|(_, left)| {
+            left.iter().any(|why| {
+                why.starts_with("(its documents could not be read for the owner's answers")
+            })
+        }),
+        "{:?}",
+        result.kept
+    );
+    // Readable again, the same tree is read anew: the owner's answer keeps it, said as such.
+    std::fs::set_permissions(
+        &blocked,
+        std::os::unix::fs::PermissionsExt::from_mode(0o644),
+    )
+    .unwrap();
+    let result = r.sweep_with(|_| {});
+    assert!(wt.exists());
+    assert!(
+        result
+            .spared
+            .iter()
+            .any(|(_, why)| why == "holds an owner verdict no commit has: docs/DECISIONS.md"),
+        "{:?}",
+        result.spared
+    );
 }
 
 #[test]
@@ -547,7 +607,8 @@ fn foreign_worktree_reads_preserve_stale_merged_and_unmerged_indexes() {
         write(
             &wt,
             "docs/OWNER.md",
-            "# Owner\n[2026-10-27 10:00] owner · approved — keep this answer\n",
+            "# Owner\n\n- [x] **keep** — K.\n  [2026-10-27 10:00] owner · approved — keep this \
+             answer\n",
         );
         // Touch without changing content, and age the index so even a same-tick rewrite is visible.
         let tracked = wt.join("docs/OTHER.md");
@@ -562,7 +623,13 @@ fn foreign_worktree_reads_preserve_stale_merged_and_unmerged_indexes() {
         let before = fs::read(&index).unwrap();
         let modified = fs::metadata(&index).unwrap().modified().unwrap();
 
-        assert_eq!(sweep::git::owner_lines_left(&wt), ["docs/OWNER.md"]);
+        assert_eq!(
+            sweep::git::answers(&wt, &docs(), None).unwrap(),
+            [sweep::git::Answer {
+                file: "docs/OWNER.md".into(),
+                card: "keep".into()
+            }]
+        );
         assert_eq!(
             fs::read(&index).unwrap(),
             before,

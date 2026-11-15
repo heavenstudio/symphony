@@ -1,0 +1,1280 @@
+import { describe, expect, it } from "vitest";
+import FIXTURE from "../../../crates/symphony-api/fixtures/task-timeline.json";
+import {
+  BAR_SPAN,
+  CHAR_PX,
+  capitalised,
+  civil,
+  clock,
+  clockOf,
+  date,
+  dateOf,
+  everySeconds,
+  type Fit,
+  failed,
+  fitClass,
+  fitted,
+  GAP_PX,
+  gateChanges,
+  gateTone,
+  keptNote,
+  LONGEST_WAIT,
+  label,
+  lanes,
+  legendStates,
+  lookClass,
+  machineSeconds,
+  nextRead,
+  offsetAt,
+  PAD_PX,
+  queuedSeconds,
+  type Row,
+  RUN_ROWS,
+  ran,
+  readTimeline,
+  reason,
+  resultTone,
+  resultWord,
+  roomCss,
+  rows,
+  runLabel,
+  runRow,
+  runRows,
+  Scale,
+  short,
+  shortCommit,
+  showAll,
+  stageSeconds,
+  statusTone,
+  stops,
+  timelineEnd,
+  took,
+  totals,
+  trimmed,
+  verdictTone,
+  verdictWord,
+  WIDTHS,
+  waited,
+  widthFor,
+} from "./timeline-layout";
+import type { Run, RunResult, Stage, TaskTimeline } from "./wire";
+import { TIMELINE_EVERY } from "./wire";
+import { moment } from "./words";
+
+/**
+ * The text of the style sheet `name`, beside this file. Vitest empties every CSS import, `?raw`
+ * among them, while its `css` option processes none, so the sheet is read through Node's own
+ * `fs`, which this package takes no types of.
+ */
+function sheet(name: string): string {
+  const { process } = globalThis as unknown as {
+    process: {
+      getBuiltinModule(id: "node:fs"): { readFileSync(path: URL, encoding: "utf8"): string };
+    };
+  };
+  return process.getBuiltinModule("node:fs").readFileSync(new URL(name, import.meta.url), "utf8");
+}
+
+const CSS = sheet("./timeline.css");
+
+/** The approved pictures' task: two review rounds, a build and its tests, one running now, a gate
+ * met then missing again. */
+function pictures(): TaskTimeline {
+  const read = readTimeline(JSON.parse(JSON.stringify(FIXTURE)));
+  if (read === null) throw new Error("the fixture is no timeline");
+  return read;
+}
+
+/** `minutes` after the pictures' task was made (09:02 on their clock). */
+const at = (minutes: number) => pictures().created + minutes * 60;
+
+/** A timeline with nothing in it but what `fields` say, as Rust's `TaskTimeline::default()`. */
+function aTimeline(fields: Partial<TaskTimeline> = {}): TaskTimeline {
+  return {
+    slug: "",
+    now: 0,
+    zone: [],
+    created: 0,
+    bounces: 0,
+    stages: [],
+    claims: [],
+    rounds: [],
+    runs: [],
+    gates: [],
+    ...fields,
+  };
+}
+
+/** A stage as Rust's `Stage::default()` with `fields`. */
+const aStage = (fields: Partial<Stage>): Stage => ({ status: "", from: 0, ...fields });
+
+/** The words of `fits` drawn on a track `px` wide. */
+function shown(fits: Fit[], px: number): string {
+  return fits
+    .filter((fit) => (fit.from === null || fit.from <= px) && (fit.to === null || px < fit.to))
+    .map((fit) => fit.text)
+    .join("|");
+}
+
+function aRun(
+  phase: string,
+  recipe: string,
+  by: string | null,
+  [queued, started, ended]: [number, number, number | null],
+): Run {
+  return {
+    phase,
+    label: recipe,
+    by,
+    commit: "0123456789abcdef",
+    host: "studio",
+    queued,
+    started,
+    ended,
+    result: ended === null ? "running" : "green",
+  };
+}
+
+/** Each row as (at, label, took, word, under its stage). */
+const said = (listed: Row[]) =>
+  listed.map((row) => [row.at, row.label, row.took ?? "", row.word?.[0] ?? "", row.sub]);
+
+const close = (a: number, b: number) => Math.abs(a - b) < 1e-9;
+
+describe("a task's timeline as the server answers it", () => {
+  it("a run's wait and run time count up to now while it goes on", () => {
+    const now = 100;
+    const run = (queued: number, started: number | null, ended: number | null, result: RunResult) =>
+      ({ phase: "test", label: "just test-rs", queued, started, ended, result }) as Run;
+    const finished = run(10, 13, 40, "green");
+    expect([waited(finished, now), ran(finished, now)]).toEqual([3, 27]);
+    const running = run(50, 60, null, "running");
+    expect([waited(running, now), ran(running, now)]).toEqual([10, 40]);
+    const queued = run(90, null, null, "queued");
+    expect([waited(queued, now), ran(queued, now)]).toEqual([10, 0]);
+    // A recorder lost before its command started: it waited until it ended, and never ran.
+    const lost = run(20, null, 25, "unknown");
+    expect([waited(lost, now), ran(lost, now)]).toEqual([5, 0]);
+    const timeline = aTimeline({ now, runs: [finished, running, queued, lost] });
+    expect(machineSeconds(timeline)).toBe(67);
+    expect(queuedSeconds(timeline)).toBe(28);
+    // A run's times written out of order count as nothing, never below it.
+    expect([waited(run(50, 40, 30, "green"), now), ran(run(50, 40, 30, "green"), now)]).toEqual([
+      0, 0,
+    ]);
+  });
+
+  it("a time takes the offset of the last change of the zone before it", () => {
+    const timeline = aTimeline({
+      zone: [
+        { from: 100, seconds: 7200 },
+        { from: 500, seconds: 3600 },
+      ],
+      every: 5,
+    });
+    // Before the first change (a time before the task), at it, between and after.
+    expect([50, 100, 499, 500, 9e9].map((when) => offsetAt(timeline, when))).toEqual([
+      7200, 7200, 7200, 3600, 3600,
+    ]);
+    expect(everySeconds(timeline)).toBe(5);
+    // A change of summer time at the very second: before it the old offset, at it the new.
+    expect([499.999, 500].map((when) => offsetAt(timeline, when))).toEqual([7200, 3600]);
+    expect(offsetAt(aTimeline(), 3)).toBe(0);
+  });
+
+  it("a timeline ends at its close or now or a run that went on past them", () => {
+    const timeline = aTimeline({ now: 100, created: 10 });
+    expect(timelineEnd(timeline)).toBe(100);
+    timeline.closed = 60;
+    expect(timelineEnd(timeline)).toBe(60);
+    timeline.runs = [{ ...aRun("test", "x", null, [50, 55, 70]) }];
+    expect(timelineEnd(timeline)).toBe(70);
+    timeline.runs.push(aRun("test", "x", null, [80, 81, null]));
+    expect(timelineEnd(timeline)).toBe(100);
+    // Never before its making, whatever its clock says.
+    expect(timelineEnd(aTimeline({ now: 5, created: 10 }))).toBe(10);
+  });
+
+  it("words a newer server writes read as unknown and empty fields stay out", () => {
+    const verdict = readTimeline({
+      now: 5,
+      created: 1,
+      rounds: [{ round: 1, from: 1, verdict: "withdrawn" }],
+      runs: [{ phase: "test", label: "x", queued: 1, result: "cancelled" }],
+      gates: [{ name: "g", states: [{ state: "expired", from: 1 }] }],
+    });
+    expect(verdict?.rounds[0]?.verdict).toBe("other");
+    expect(verdictWord("other")).toBe("verdict");
+    expect(verdict?.runs[0]?.result).toBe("unknown");
+    expect(resultWord("unknown")).toBe("ended");
+    expect(verdict?.gates[0]?.states[0]?.state).toBe("unknown");
+    for (const word of ["queued", "running", "green", "red"] as const) {
+      expect(resultWord(word)).toBe(word);
+    }
+    const read = readTimeline({ slug: "tools/x", now: 5, created: 1 });
+    expect(read).not.toBeNull();
+    expect([offsetAt(read as TaskTimeline, 3), everySeconds(read as TaskTimeline)]).toEqual([
+      0,
+      TIMELINE_EVERY,
+    ]);
+    expect(read?.stages).toEqual([]);
+    expect(read?.runs).toEqual([]);
+    expect(read?.gates).toEqual([]);
+    expect(stageSeconds(aStage({ status: "review", from: 2 }), 5)).toBe(3);
+  });
+});
+
+describe("the read's guard", () => {
+  it("reads the server's fixture whole, each field as serde reads it", () => {
+    const timeline = pictures();
+    expect(timeline.slug).toBe("tools/verify-stops-when-moved");
+    expect(timeline.stages).toHaveLength(6);
+    expect(timeline.stages[0]).toEqual({
+      status: "ready",
+      from: 1794380520,
+      to: 1794382980,
+      by: "glacial-merlin",
+      round: 0,
+      approved: false,
+    });
+    expect(timeline.stages[5]?.approved).toBe(true);
+    expect(timeline.rounds[1]).toEqual({
+      round: 2,
+      from: 1794397020,
+      taken: 1794397260,
+      to: 1794398700,
+      by: "lucid-heron",
+      verdict: "approved",
+    });
+    expect(timeline.runs[4]).toMatchObject({ by: null, ended: null, result: "running" });
+    expect(timeline.gates[1]?.states[0]).toEqual({
+      state: "missing",
+      from: 1794380520,
+      by: null,
+      detail: "Waits on tools/slot-pool-by-tree",
+    });
+    expect([timeline.runs_from, timeline.closed, timeline.first_claimed]).toEqual([
+      null,
+      null,
+      1794382980,
+    ]);
+  });
+
+  it("gives what serde defaults its default when it is absent, and an option none when null", () => {
+    const read = readTimeline({
+      now: 5,
+      created: 1,
+      closed: null,
+      stages: [{ status: "ready", from: 1, to: null }],
+      runs: [{ phase: "build", label: "x", queued: 1, result: "green" }],
+      gates: [{ name: "g" }, { name: "h", states: [{ state: "met", from: 2 }] }],
+      claims: [{ by: "a", from: 1 }],
+    });
+    expect(read).toMatchObject({ every: 0, bounces: 0, closed: null, zone: [], rounds: [] });
+    expect(read?.stages[0]).toEqual({
+      status: "ready",
+      from: 1,
+      to: null,
+      by: null,
+      round: 0,
+      approved: false,
+    });
+    expect(read?.runs[0]).toMatchObject({ host: "", by: null, commit: null, started: null });
+    expect(read?.gates[0]?.states).toEqual([]);
+    expect(read?.gates[1]?.states[0]?.detail).toBe("");
+    expect(read?.claims[0]).toEqual({ by: "a", from: 1, to: null });
+    // A slug, which nothing draws, is not checked.
+    expect(readTimeline({ now: 5, created: 1, slug: 7 })?.slug).toBe("");
+  });
+
+  it("refuses an answer without what the timeline draws, or one of another type", () => {
+    const good = { now: 5, created: 1 };
+    for (const value of [
+      null,
+      "timeline",
+      [good],
+      { created: 1 },
+      { now: "5", created: 1 },
+      { ...good, zone: null },
+      { ...good, zone: [{ from: 1, seconds: 1.5 }] },
+      { ...good, every: -1 },
+      { ...good, every: 2.5 },
+      { ...good, bounces: null },
+      { ...good, closed: "soon" },
+      { ...good, first_claimed: "x" },
+      { ...good, runs_from: true },
+      { ...good, stages: {} },
+      { ...good, stages: [{ status: "ready" }] },
+      { ...good, stages: [{ status: "ready", from: 1, round: -1 }] },
+      { ...good, stages: [{ status: "ready", from: 1, approved: "yes" }] },
+      { ...good, stages: [{ status: "ready", from: 1, by: 3 }] },
+      { ...good, claims: [{ by: null, from: 1 }] },
+      { ...good, claims: [{ by: "a", from: 1, to: "x" }] },
+      { ...good, rounds: [{ round: 1, from: 1, verdict: 5 }] },
+      { ...good, rounds: [{ round: "1", from: 1 }] },
+      { ...good, rounds: [{ round: 1, from: 1, taken: "x" }] },
+      { ...good, runs: [{ phase: "test", label: "x", queued: 1 }] },
+      { ...good, runs: [{ phase: "test", label: "x", queued: 1, result: "green", host: null }] },
+      { ...good, runs: [{ phase: "test", queued: 1, result: "green" }] },
+      { ...good, runs: [{ phase: "test", label: "x", queued: 1, result: "green", ended: "x" }] },
+      { ...good, gates: [{ states: [] }] },
+      { ...good, gates: [{ name: "g", states: [{ state: 1, from: 1 }] }] },
+      { ...good, gates: [{ name: "g", states: [{ state: "met", from: 1, detail: null }] }] },
+    ]) {
+      expect(readTimeline(value), JSON.stringify(value)).toBeNull();
+    }
+  });
+});
+
+describe("a task's timeline laid out", () => {
+  it("a length reads to the minute in hours and days and never below nothing", () => {
+    const cases: [number, string][] = [
+      [-5, "0 m"],
+      [0, "0 m"],
+      [29, "0 m"],
+      [31, "1 m"],
+      [2460, "41 m"],
+      [3580, "1 h"],
+      [6720, "1 h 52 m"],
+      [22_680, "6 h 18 m"],
+      [86_400, "1 d"],
+      [2 * 86_400 + 3 * 3600 + 20 * 60, "2 d 3 h"],
+      // Half a minute is a minute, as Rust rounds a tie away from nothing; nothing at all is none.
+      [30, "1 m"],
+      [90, "2 m"],
+      [Number.NaN, "0 m"],
+    ];
+    for (const [seconds, words] of cases) expect(took(seconds), `${seconds} s`).toBe(words);
+  });
+
+  it("a time reads on the server's local clock and its day by the calendar", () => {
+    const midnight = 20_768 * 86_400;
+    expect(clock(midnight, 0)).toBe("00:00");
+    expect(clock(midnight - 1, 0)).toBe("23:59");
+    expect(clock(midnight, 7200)).toBe("02:00");
+    expect(clock(midnight, -60)).toBe("23:59");
+    expect(date(midnight - 1, 0)).toBe(date(midnight - 86_400, 0));
+    expect(date(midnight, -60)).not.toBe(date(midnight, 0));
+    expect(civil(0)).toEqual([1970, 1, 1]);
+    for (const [year, month, day] of [
+      [2026, 11, 11],
+      [2024, 2, 29],
+      [2000, 3, 1],
+      [1969, 12, 31],
+      [1900, 2, 28],
+      [-1, 12, 31],
+    ] as const) {
+      const minutes = moment(year, month, day, 0, 0) as number;
+      expect(civil(Math.floor(minutes / 1440))).toEqual([year, month, day]);
+    }
+    const timeline = pictures();
+    expect(clockOf(timeline, timeline.created)).toBe("09:02");
+    expect(dateOf(timeline, timeline.created)).toBe("11-11");
+    // Before 1970 a time still reads on its own day.
+    expect([clock(-60, 0), date(-60, 0)]).toEqual(["23:59", "12-31"]);
+  });
+
+  it("each time reads at the offset its own instant had across a change of summer time", () => {
+    // The clock went back an hour at 12:00 on the pictures' clock (10:00 UTC).
+    const change = at(178);
+    const timeline = {
+      ...pictures(),
+      zone: [
+        { from: pictures().created, seconds: 7200 },
+        { from: change, seconds: 3600 },
+      ],
+    };
+    expect(clockOf(timeline, timeline.created)).toBe("09:02");
+    expect(clockOf(timeline, change - 60)).toBe("11:59");
+    expect(clockOf(timeline, change)).toBe("11:00");
+    // The second's own offset at the change's very second, the one before a second earlier.
+    expect(clockOf(timeline, change - 1)).toBe("11:59");
+    const listed = rows(timeline).map((row) => row.at);
+    // The second round's changes came after the change.
+    expect(listed.slice(0, 6)).toEqual(["09:02", "09:43", "10:28", "10:52", "11:35", "11:27"]);
+    expect(lanes(timeline).now?.label).toBe("now 14:20");
+  });
+
+  it("the pictures' task heads its timeline with its totals", () => {
+    expect(totals(pictures())).toEqual([
+      "6 h 18 m so far · 2 review rounds · 1 bounce",
+      "1 h 33 m, queued 26 m",
+    ]);
+    const closed = { ...pictures(), closed: pictures().now, rounds: [], bounces: 0, runs: [] };
+    expect(totals(closed)).toEqual(["6 h 18 m in all · 0 review rounds · 0 bounces", null]);
+    expect(keptNote(pictures())).toBeNull();
+    const rotated = { ...pictures(), runs_from: at(83) };
+    expect(keptNote(rotated)).toBe("Builds and tests before 11-11 10:25 are no longer kept.");
+    // One round, one bounce: each said once.
+    const one = { ...pictures(), rounds: pictures().rounds.slice(0, 1) };
+    expect(totals(one)[0]).toBe("6 h 18 m so far · 1 review round · 1 bounce");
+  });
+
+  it("the phone list reads as the approved picture, each run and gate change under its stage", () => {
+    const listed = rows(pictures());
+    expect(said(listed)).toEqual([
+      ["09:02", "Ready, unclaimed", "41 m", "", false],
+      ["09:43", "In progress · quiet-wren", "1 h 52 m", "", false],
+      // A build that went green says no more than that it was built.
+      ["10:28", "Build · queued 3 m", "4 m", "", true],
+      ["10:52", "Test, just verify · queued 6 m", "24 m", "green", true],
+      ["11:35", "Review, round 1 · lucid-heron", "52 m", "changes", false],
+      ["12:27", "In progress again", "1 h 10 m", "", false],
+      ["13:00", "Test, just verify · queued 2 m", "23 m", "green", true],
+      ["13:37", "Review, round 2 · lucid-heron", "28 m", "approved", false],
+      ["14:05", "Approved, waiting to land", "1 h 15 m", "now", false],
+      // The machine's own run, nobody's: what it runs and the commit it ran at.
+      ["14:05", "Certificate verify · e19d3a0", "24 m", "green", true],
+      ["14:12", "Dependency waived · cobalt-otter", "", "", true],
+      // The certificate met at 14:34 is the green run's row: no row of its own. Missing again, it
+      // says why.
+      ["14:50", "Main moved: certificate again", "", "", true],
+      ["14:52", "Certificate verify · 4be91c2", "18 m", "running", true],
+    ]);
+    // One day: no day marks.
+    expect(listed.every((row) => row.day === null)).toBe(true);
+    // The longest step, in progress for 1 h 52 m, fills the bar's span; the rest are as long as
+    // their time.
+    const bar = (index: number) => listed[index]?.bar as NonNullable<Row["bar"]>;
+    expect(bar(1).work).toBe(BAR_SPAN);
+    expect(close(bar(0).work, (41 / 112) * BAR_SPAN)).toBe(true);
+    // A review's bar waits for its reviewer, lighter, then works.
+    expect(close(bar(4).wait, (18 / 112) * BAR_SPAN)).toBe(true);
+    expect(close(bar(4).work, (34 / 112) * BAR_SPAN)).toBe(true);
+    // Waiting to land is all wait; what runs now is striped after its queue; a gate change is an
+    // instant.
+    expect([bar(8).work, bar(8).wait > 0]).toEqual([0, true]);
+    expect(bar(12).running && !bar(9).running).toBe(true);
+    expect(bar(12).waitTone).toBe("primary");
+    expect(listed[10]?.event && listed[10]?.bar === null).toBe(true);
+    expect(listed[11]?.title).toBe("Main moved: verify on the merge tree 4be91c2 running");
+    expect(listed[12]?.tone).toBe("primary");
+    expect(listed[3]?.tone).toBe("like");
+    expect(listed[9]?.title).toContain("queued 5 m");
+    expect(listed[0]?.title).toBe(
+      "Ready, unclaimed: from 09:02 to 09:43, moved there by glacial-merlin",
+    );
+    expect(listed[8]?.title).toBe(
+      "Approved, waiting to land: from 14:05 until now, moved there by lucid-heron",
+    );
+  });
+
+  it("a gate change says why only from a short reason, and shows a met no run said", () => {
+    expect(reason("Main moved: verify on the merge tree 4be91c2 running")).toBe("Main moved");
+    expect(reason("Verify on the merge tree e19d3a0 running")).toBeNull();
+    expect(reason(": nothing")).toBeNull();
+    // More than three words is no short reason.
+    expect(reason("the branch moved on and on again: rerun")).toBeNull();
+    // Words are told apart by any space, as Rust's.
+    expect(reason("Main  moved\tagain: rerun")).toBe("Main  moved\tagain");
+    // No run went green when the certificate was met: its row says so.
+    const timeline = { ...pictures(), runs: [] };
+    expect(gateChanges(timeline).map((row) => row.label)).toEqual([
+      "Certificate met",
+      "Main moved: certificate again",
+      "Dependency waived · cobalt-otter",
+    ]);
+    // Missing again with no reason to give.
+    const unsaid = pictures();
+    (unsaid.gates[0]?.states[2] as { detail: string }).detail =
+      "Verify on the merge tree 4be91c2 running";
+    expect(gateChanges(unsaid)[0]?.label).toBe("Certificate missing again");
+  });
+
+  it("a gate change says each state it took, who held or waived it, and its detail", () => {
+    const span = (state: GateState, from: number, by: string | null = null, detail = "") => ({
+      state,
+      from,
+      by,
+      detail,
+    });
+    type GateState = "met" | "missing" | "waived" | "held" | "unknown";
+    const timeline = aTimeline({
+      now: 600,
+      gates: [
+        {
+          name: "owner_card",
+          states: [
+            span("missing", 0),
+            span("held", 60, "owner"),
+            span("unknown", 120),
+            span("waived", 180),
+            span("missing", 240),
+            span("met", 300, null, "Met at last"),
+          ],
+        },
+      ],
+    });
+    expect(gateChanges(timeline).map((row) => [row.label, row.tone, row.title])).toEqual([
+      ["Owner card held · owner", "dislike", "Owner card held · owner"],
+      ["Owner card unknown", "muted-foreground", "Owner card unknown"],
+      ["Owner card waived", "resolved", "Owner card waived"],
+      ["Owner card missing", "question", "Owner card missing"],
+      ["Owner card met", "like", "Met at last"],
+    ]);
+  });
+
+  it("a stage left within its first half minute draws no 0 m row", () => {
+    const timeline = pictures();
+    // Moved to review and back within twenty seconds, before the first claim.
+    timeline.stages.splice(
+      1,
+      0,
+      aStage({ status: "blocked", from: at(41), to: at(41) + 20, by: "cobalt-otter" }),
+    );
+    (timeline.stages[2] as Stage).from = at(41) + 20;
+    const listed = rows(timeline);
+    expect(listed.every((row) => row.took !== "0 m")).toBe(true);
+    expect(listed.every((row) => !row.label.startsWith("Blocked"))).toBe(true);
+    // The one stage going on now keeps its row however short.
+    const now = pictures().now;
+    const fresh = {
+      ...pictures(),
+      created: now - 10,
+      stages: [aStage({ status: "ready", from: now - 10 })],
+      rounds: [],
+      runs: [],
+      gates: [],
+      claims: [],
+      first_claimed: null,
+    };
+    expect(said(rows(fresh))).toEqual([["15:19", "Ready, unclaimed", "0 m", "now", false]]);
+  });
+
+  it("with no run kept there is no run row, no machine time and no runs lane", () => {
+    const timeline = { ...pictures(), runs: [] };
+    const listed = rows(timeline);
+    expect(
+      listed.every((row) => !row.label.startsWith("Build") && !row.label.startsWith("Test")),
+    ).toBe(true);
+    // Six stages and three gate changes.
+    expect(listed).toHaveLength(9);
+    expect(totals(timeline)[1]).toBeNull();
+    expect(lanes(timeline).lanes.every((lane) => lane.key !== "runs")).toBe(true);
+  });
+
+  it("a timeline over two days marks each day's first row", () => {
+    // Made at 23:30 the day before, ready until 09:43.
+    const made = pictures().created - (9 * 3600 + 32 * 60);
+    const timeline = { ...pictures(), created: made };
+    (timeline.stages[0] as Stage).from = made;
+    const listed = rows(timeline);
+    expect(listed.filter((row) => row.day !== null).map((row) => [row.at, row.day])).toEqual([
+      ["23:30", "11-10"],
+      ["09:43", "11-11"],
+    ]);
+    expect(listed[0]?.label).toBe("Ready, unclaimed");
+    expect(listed[0]?.took).toBe("10 h 13 m");
+  });
+
+  it("a stage says who moved it only where its name says nothing else", () => {
+    const created = pictures().created;
+    const stage = (status: string, by: string) =>
+      aStage({ status, from: created, to: created + 600, by });
+    const timeline = {
+      ...pictures(),
+      first_claimed: created + 300,
+      stages: [
+        stage("ready", "glacial-merlin"),
+        stage("blocked", "cobalt-otter"),
+        { ...stage("done", "lucid-heron"), to: null },
+      ],
+      rounds: [],
+      runs: [],
+      gates: [],
+      closed: created + 600,
+    };
+    const listed = rows(timeline);
+    expect(said(listed)).toEqual([
+      ["09:02", "Ready", "10 m", "", false],
+      ["09:02", "Blocked · cobalt-otter", "10 m", "", false],
+      ["09:02", "Done · lucid-heron", "", "", false],
+    ]);
+    expect([listed[1]?.tone, listed[2]?.tone]).toEqual(["dislike", "like"]);
+    // A close is an instant.
+    expect(listed[2]?.bar).toBeNull();
+    // A closed task has no now.
+    expect(lanes(timeline).now).toBeNull();
+  });
+
+  it("a stage of a status the list does not name says its own word, in progress again by whom", () => {
+    const timeline = aTimeline({
+      now: 7200,
+      stages: [
+        aStage({ status: "concept", from: 0, to: 600 }),
+        aStage({ status: "in_progress", from: 600, to: 1200 }),
+        aStage({ status: "review", from: 1200, to: 1800 }),
+        aStage({ status: "in_progress", from: 1800, to: 2400 }),
+        aStage({ status: "in_progress", from: 2400, to: 3000 }),
+        aStage({ status: "odd_word", from: 3000 }),
+      ],
+      claims: [
+        { by: "quiet-wren", from: 600, to: 1200 },
+        { by: "teal-lynx", from: 2400, to: 3000 },
+      ],
+    });
+    expect(rows(timeline).map((row) => [row.label, row.tone])).toEqual([
+      ["Concept", "decision"],
+      ["In progress · quiet-wren", "primary"],
+      // A review with no round says its status alone.
+      ["Review", "question"],
+      // Nobody claimed it this time; the next claim was another executor's, who is named.
+      ["In progress again", "primary"],
+      ["In progress again · teal-lynx", "primary"],
+      ["Odd word", "muted-foreground"],
+    ]);
+  });
+
+  it("a review round's bar waits until its reviewer took it, and says its verdict", () => {
+    const timeline = aTimeline({
+      now: 3600,
+      stages: [aStage({ status: "review", from: 0, round: 1 })],
+      rounds: [{ round: 1, from: 0, taken: 600, by: "lucid-heron", verdict: "other" }],
+    });
+    const [row] = rows(timeline);
+    expect(row?.word).toEqual(["verdict", "muted-foreground"]);
+    expect(row?.bar?.wait).toBeCloseTo((600 / 3600) * BAR_SPAN);
+    expect(row?.bar?.work).toBeCloseTo((3000 / 3600) * BAR_SPAN);
+    // Taken before the stage began, its wait is none.
+    const early = aTimeline({
+      now: 3600,
+      stages: [aStage({ status: "review", from: 600, round: 1 })],
+      rounds: [{ round: 1, from: 0, taken: 0 }],
+    });
+    expect(rows(early)[0]?.bar?.wait).toBe(0);
+    expect(rows(early)[0]?.label).toBe("Review, round 1");
+  });
+
+  it("rows that begin at one instant keep the order they were found in, as Rust's stable sort", () => {
+    const met = (from: number) => ({
+      name: "check",
+      states: [
+        { state: "missing" as const, from: -1, by: null, detail: "" },
+        { state: "met" as const, from, by: null, detail: "" },
+      ],
+    });
+    const at100 = aTimeline({
+      now: 600,
+      stages: [aStage({ status: "in_progress", from: 0 })],
+      runs: [
+        aRun("build", "just lint-rs", "a", [100, 100, 200]),
+        aRun("test", "just verify", "a", [100, 110, 300]),
+      ],
+      gates: [met(100)],
+    });
+    expect(rows(at100).map((row) => row.label)).toEqual([
+      "In progress",
+      "Build",
+      "Test, just verify",
+      "Check met",
+    ]);
+    // Rust's `total_cmp` puts -0 before 0, so a change at -0 goes before a run at 0.
+    const zeros = {
+      ...at100,
+      runs: [aRun("build", "just lint-rs", "a", [0, 0, 200])],
+      gates: [met(-0)],
+    };
+    expect(rows(zeros).map((row) => row.label)).toEqual(["In progress", "Check met", "Build"]);
+  });
+
+  it("a word is drawn only at the track widths its room holds it", () => {
+    // Room enough at every width, at some, at none.
+    expect(widthFor("41 m", 50, PAD_PX)).toBeNull();
+    expect(widthFor("ready 41 m", 10, PAD_PX)).toBe(750);
+    expect(widthFor("ready 41 m", 0.5, PAD_PX)).toBeUndefined();
+    expect(widthFor("", 50, PAD_PX)).toBeUndefined();
+    expect(widthFor("41 m", 0, PAD_PX)).toBeUndefined();
+    // The long words where they fit, the short below that, nothing below the short's own.
+    const fits = fitted("ready 41 m", "41 m", 10);
+    expect(shown(fits, 1280)).toBe("ready 41 m");
+    expect(shown(fits, 750)).toBe("ready 41 m");
+    expect(shown(fits, 700)).toBe("41 m");
+    expect(shown(fits, 400)).toBe("41 m");
+    expect(shown(fits, 350)).toBe("");
+    expect(fitClass(fits[1] as Fit)).toBe("tl-fit tl-from-400 tl-to-750");
+    // A short word no narrower than the long one is never drawn beside it.
+    expect(fitted("41 m", "41 m", 10)).toHaveLength(1);
+    // The last label may run into the lanes' end margin.
+    const last = { room: 1, last: true };
+    expect(label("running 18 m", last)?.from).toBeNull();
+    expect(roomCss(last)).toBe("calc(1.00% + var(--end))");
+    const between = { room: 1, last: false };
+    expect(label("running 18 m", between)).toBeNull();
+    expect(roomCss(between)).toBe("1.00%");
+  });
+
+  it("a word's room is weighed by its characters, and a room's width rounds a tie to even", () => {
+    // Weighed at exactly 300 px it shows at every width; a hair more, from 400.
+    expect(widthFor("ab", ((2 * CHAR_PX + PAD_PX) * 100) / 300, PAD_PX)).toBeNull();
+    expect(widthFor("ab", ((2 * CHAR_PX + PAD_PX) * 100) / 301, PAD_PX)).toBe(400);
+    // An accented word is as wide as its letters, not its bytes.
+    expect(widthFor("é".repeat(8), 10, PAD_PX)).toBe(widthFor("e".repeat(8), 10, PAD_PX));
+    // A short word that fits where the long one never does shows wherever it fits.
+    // "2 m" needs 3 × 6 + 12 = 30 px, 3 % of a 1000 px track exactly.
+    expect(fitted("a very long word for one segment", "2 m", 3)).toEqual([
+      { text: "2 m", from: 1000, to: null },
+    ]);
+    // A short word that fits only where the long one does is left out.
+    expect(fitted("ab", "a", 0.5)).toEqual([]);
+    // "abc" needs 30 px of 3.2 %, a 937.5 px track: from 950; "ab" 24 px, from 750 to there.
+    expect(fitted("abc", "ab", 3.2)).toEqual([
+      { text: "abc", from: 950, to: null },
+      { text: "ab", from: 750, to: 950 },
+    ]);
+    // No short word: the long one alone, from where it fits (36 px of 10 %, 360 px) or at every
+    // width (of 20 %, 180 px, below the narrowest track).
+    expect(fitted("long", "", 10)).toEqual([{ text: "long", from: 400, to: null }]);
+    expect(fitted("long", "", 20)).toEqual([{ text: "long", from: null, to: null }]);
+    // Rust's `{:.2}`: a tie rounds to the even digit.
+    expect(roomCss({ room: 0.125, last: false })).toBe("0.12%");
+    expect(roomCss({ room: 0.375, last: true })).toBe("calc(0.38% + var(--end))");
+    // The last label of none at all still shows: it takes the end margin.
+    expect(label("", { room: 0, last: true })).toEqual({ text: "", from: null, to: null });
+    // Twenty characters past the end margin need 120 + 4 − 88 = 36 px: 5 % of 720 px, from 750;
+    // 2 % of 1800 px, wider than the widest track.
+    expect(label("a".repeat(20), { room: 5, last: true })?.from).toBe(750);
+    expect(label("a".repeat(20), { room: 2, last: true })).toBeNull();
+    expect(fitClass({ text: "x", from: null, to: 500 })).toBe("tl-fit tl-to-500");
+    expect(WIDTHS).toEqual(Array.from({ length: 25 }, (_, at) => 400 + 50 * at));
+  });
+
+  it("the wide lanes read as the approved picture at its width, and mark the hours and now", () => {
+    const drawn = lanes(pictures());
+    expect(drawn.ticks.map((tick) => tick.label)).toEqual([
+      "09:00",
+      "10:00",
+      "11:00",
+      "12:00",
+      "13:00",
+      "14:00",
+      "15:00",
+    ]);
+    expect(Math.abs(drawn.ticks[0]?.left as number)).toBeLessThan(1e-9);
+    expect(close(drawn.ticks[6]?.left as number, (360 / 380) * 100)).toBe(true);
+    expect(drawn.now).toEqual({ left: 100, label: "now 15:20" });
+    const lane = (key: string) => drawn.lanes.find((one) => one.key === key);
+    // The words of a lane on a track `px` wide: the picture's is 950.
+    const texts = (key: string, px: number) => lane(key)?.segs.map((seg) => shown(seg.text, px));
+    expect(drawn.lanes.map((one) => [one.name, one.who, one.rows])).toEqual([
+      ["Stage", "", 1],
+      ["Executor", "quiet-wren", 1],
+      ["Reviewer", "lucid-heron", 1],
+      ["Builds & tests", "studio", 1],
+    ]);
+    expect(texts("stage", 950)).toEqual([
+      "ready 41 m",
+      "in progress 1 h 52 m",
+      "review 52 m",
+      "in progress 1 h 10 m",
+      "28 m",
+      "waiting to land 1 h 15 m",
+    ]);
+    // At the narrowest the lanes are drawn (a 900 px page), the shorter words.
+    expect(texts("stage", 600)).toEqual([
+      "41 m",
+      "in progress 1 h 52 m",
+      "review 52 m",
+      "1 h 10 m",
+      "28 m",
+      "1 h 15 m",
+    ]);
+    expect(lane("stage")?.segs[5]?.look).toBe("waiting");
+    expect(texts("executor", 950)).toEqual(["claimed 1 h 52 m", "1 h 10 m"]);
+    expect(texts("reviewer", 950)).toEqual(["", "round 1", "", "round 2"]);
+    expect(texts("reviewer", 600)).toEqual(["", "", "", ""]);
+    expect(
+      lane("reviewer")
+        ?.segs.filter((seg) => seg.after !== null)
+        .map((seg) => [shown([seg.after?.[0] as Fit], 600), seg.after?.[1]]),
+    ).toEqual([
+      ["changes", "dislike"],
+      ["approved", "like"],
+    ]);
+    expect(
+      lane("runs")
+        ?.segs.filter((seg) => seg.under !== null)
+        .map((seg) => shown([seg.under?.[0] as Fit], 950)),
+    ).toEqual(["build 4 m", "verify 24 m", "verify 23 m", "certificate 24 m", "running 18 m"]);
+    // On the narrowest track the build's label would meet the next run's: it is left out.
+    expect(shown([lane("runs")?.segs[0]?.under?.[0] as Fit], 600)).toBe("");
+    const looks = lane("runs")?.segs.map((seg) => seg.look) ?? [];
+    expect(looks.filter((look) => look === "running")).toHaveLength(1);
+    expect(looks.at(-1)).toBe("running");
+    expect(drawn.gates.map((gate) => [gate.name, gate.spans.map((span) => span.state)])).toEqual([
+      ["certificate", ["missing", "met", "missing"]],
+      ["dependency", ["missing", "waived"]],
+      ["nightly", ["met"]],
+      // From the move to review: not reviewed yet, changes asked, approved.
+      ["review", ["missing", "missing", "met"]],
+    ]);
+    // The nightly, met before the task, holds from the task's making to now, and says so.
+    const nightly = drawn.gates[2]?.spans[0];
+    expect(close(nightly?.left as number, (2 / 380) * 100)).toBe(true);
+    expect(close((nightly?.left as number) + (nightly?.width as number), 100)).toBe(true);
+    expect(nightly?.word?.text).toBe("met");
+    expect(nightly?.title.startsWith("nightly met from 09:02: ")).toBe(true);
+    // Each step a stop for the keyboard (a round's wait and a run's queue are their step's), and
+    // each gate's state.
+    const parts = (key: string) => {
+      const segs = lane(key)?.segs ?? [];
+      return [segs.length, segs.filter((seg) => seg.stop).length];
+    };
+    expect(parts("reviewer")).toEqual([4, 2]);
+    expect(parts("runs")).toEqual([10, 5]);
+    expect(stops(drawn)).toBe(6 + 2 + 2 + 5 + 3 + 2 + 1 + 3);
+    expect(legendStates(drawn)).toEqual(["met", "missing", "waived"]);
+  });
+
+  it("runs that overlap take a row each, and a fourth shares the row that frees first", () => {
+    const runs = [
+      aRun("build", "just lint-rs", "a", [0, 10, 100]),
+      aRun("test", "just verify", "a", [20, 30, 60]),
+      aRun("test", "just verify", "b", [40, 50, 90]),
+      aRun("test", "just verify", "c", [45, 50, 80]),
+      // After the second's end: back in its row.
+      aRun("test", "just verify", "d", [70, 75, 95]),
+    ];
+    expect(runRows(runs, 200)).toEqual([[0, 1, 2, 1, 1], RUN_ROWS]);
+    expect(runRows(runs.slice(0, 1), 200)).toEqual([[0], 1]);
+    expect(runRows([], 200)).toEqual([[], 1]);
+    // One after another: one row.
+    const apart = [
+      aRun("build", "just lint-rs", "a", [0, 10, 20]),
+      aRun("test", "just verify", "a", [20, 30, 60]),
+    ];
+    expect(runRows(apart, 200)[0]).toEqual([0, 0]);
+    // A label has room up to the next run in its own row.
+    const drawn = lanes({ ...pictures(), runs });
+    const lane = drawn.lanes.find((one) => one.key === "runs");
+    expect(lane?.rows).toBe(RUN_ROWS);
+    expect(lane?.segs.map((seg) => seg.row)).toEqual([0, 0, 1, 1, 2, 2, 1, 1, 1, 1]);
+    // Rows that free at once: the first of them is shared.
+    const tied = [0, 1, 2, 3].map((n) => aRun("test", "x", "a", [0, 1, 50 + n * 0]));
+    expect(runRows(tied, 200)[0]).toEqual([0, 1, 2, 0]);
+  });
+
+  it("a run's label says its result unless it went green", () => {
+    const red = { ...aRun("test", "just verify", "a", [0, 1, 60]), result: "red" as const };
+    expect(short(red)).toBe("verify red");
+    const queued = { ...aRun("test", "just verify", "a", [0, 1, null]), result: "queued" as const };
+    expect(short(queued)).toBe("verify queued");
+    expect(short(aRun("test", "just verify", null, [0, 1, null]))).toBe("running");
+    const build = aRun("build", "just lint-rs", "a", [0, 1, 60]);
+    expect(short(build)).toBe("build");
+    const redBuild = { ...build, result: "red" as const };
+    expect(short(redBuild)).toBe("build red");
+    // A red build says so in the list too.
+    expect(runRow(redBuild, pictures(), () => 1).word).toEqual(["red", "dislike"]);
+    expect(runLabel(redBuild, 120)).toBe("Build · queued 2 m");
+    const gate = aRun("test", "certificate verify", null, [0, 1, 60]);
+    expect(runLabel(gate, 600)).toBe("Certificate verify · 0123456");
+    // A run of a recipe with no `just`, ended unknown: its first word and "ended".
+    expect(short({ ...aRun("test", "  cargo test", "a", [0, 1, 2]), result: "unknown" })).toBe(
+      "cargo ended",
+    );
+    expect(short({ ...aRun("test", "", "a", [0, 1, 2]), result: "green" })).toBe("");
+    // A run nobody holds with no commit names what it runs alone.
+    expect(runLabel({ ...gate, commit: null }, 0)).toBe("Certificate verify");
+  });
+
+  it("a run's row says all of it, and what waits to start counts its wait", () => {
+    const timeline = { ...pictures(), now: 1000 };
+    const waiting: Run = {
+      phase: "test",
+      label: "just verify",
+      by: "a",
+      commit: null,
+      host: "",
+      queued: 100,
+      started: null,
+      ended: null,
+      result: "queued",
+    };
+    const row = runRow(waiting, timeline, (seconds) => seconds / 10);
+    expect([row.label, row.took, row.title]).toEqual([
+      "Test, just verify · queued 15 m",
+      "15 m",
+      "just verify: queued by a, queued 15 m",
+    ]);
+    expect(row.bar).toEqual({ wait: 90, waitTone: "primary", work: 0, running: false });
+    expect(row.word).toEqual(["queued", "primary"]);
+  });
+
+  it("a long timeline marks fewer hours, and a midnight by its date", () => {
+    const made = pictures().now - 30 * 3600;
+    const timeline = { ...pictures(), created: made };
+    (timeline.stages[0] as Stage).from = made;
+    expect(lanes(timeline).ticks.map((tick) => tick.label)).toEqual([
+      "12:00",
+      "16:00",
+      "20:00",
+      "11-11",
+      "04:00",
+      "08:00",
+      "12:00",
+    ]);
+    // A step of days marks each midnight by its date.
+    const longer = pictures().now - 40 * 86_400;
+    const month = { ...timeline, created: longer };
+    (month.stages[0] as Stage).from = longer;
+    expect(lanes(month).ticks.map((tick) => tick.label)).toEqual([
+      "10-03",
+      "10-10",
+      "10-17",
+      "10-24",
+      "10-31",
+      "11-07",
+    ]);
+  });
+
+  it("a week of short rounds prints no word over another", () => {
+    const drawn = lanes(week());
+    const reviewer = drawn.lanes.find((lane) => lane.key === "reviewer");
+    for (const px of [600, 950, 1600]) {
+      // No round's word drawn in its two minutes, and no verdict wider than its room.
+      expect(reviewer?.segs.every((seg) => shown(seg.text, px) === "")).toBe(true);
+      for (const seg of reviewer?.segs ?? []) {
+        if (seg.after === null) continue;
+        const [word, , room] = seg.after;
+        const drawnWord = shown([word], px) !== "";
+        const wide = [...word.text].length * CHAR_PX + GAP_PX;
+        expect(!drawnWord || wide <= (room.room / 100) * px + 0.5, `${px}`).toBe(true);
+      }
+    }
+    // Each stage's word only where it fits: two-minute reviews say nothing, six hours of work say
+    // their length.
+    const stage = drawn.lanes.find((lane) => lane.key === "stage");
+    for (const seg of stage?.segs ?? []) {
+      const words = shown(seg.text, 950);
+      const wide = [...words].length * CHAR_PX + PAD_PX;
+      expect(words === "" || wide <= (seg.width / 100) * 950 + 0.5).toBe(true);
+    }
+  });
+
+  it("a task with nothing but its making lays out one stage and no other lane", () => {
+    const now = 1_794_403_200;
+    const timeline = aTimeline({
+      slug: "tools/new",
+      now,
+      zone: [{ from: now - 120, seconds: 7200 }],
+      created: now - 120,
+      stages: [aStage({ status: "ready", from: now - 120 })],
+    });
+    expect(said(rows(timeline))).toEqual([["15:18", "Ready, unclaimed", "2 m", "now", false]]);
+    const drawn = lanes(timeline);
+    expect(drawn.lanes).toHaveLength(1);
+    expect(drawn.gates).toEqual([]);
+    expect(legendStates(drawn)).toEqual([]);
+  });
+
+  it("an empty timeline lays out nothing but its stage lane and its hour", () => {
+    const empty = aTimeline({ now: 7200 * 10, created: 7200 * 10 });
+    expect(rows(empty)).toEqual([]);
+    expect(totals(empty)).toEqual(["0 m so far · 0 review rounds · 0 bounces", null]);
+    const drawn = lanes(empty);
+    expect(drawn.lanes).toEqual([{ key: "stage", name: "Stage", who: "", rows: 1, segs: [] }]);
+    // Nothing to draw before now: no hour marked, and now at its start (20:00 UTC, no zone).
+    expect(drawn.ticks).toEqual([]);
+    expect(drawn.now).toEqual({ left: 0, label: "now 20:00" });
+    expect(stops(drawn)).toBe(0);
+    // A closed one marks its hour, by its time as it is no midnight, and has no now.
+    const closed = lanes({ ...empty, closed: empty.now });
+    expect([closed.ticks, closed.now]).toEqual([[{ left: 0, label: "20:00" }], null]);
+    // At midnight, by its date.
+    const midnight = lanes(aTimeline({ now: 86_400, created: 86_400, closed: 86_400 }));
+    expect(midnight.ticks).toEqual([{ left: 0, label: "01-02" }]);
+  });
+
+  it("an open task's lanes mark no hour so near now that its label would meet now's", () => {
+    const timeline = pictures();
+    const scale = new Scale(timeline);
+    // An hour 4 % of the track before now is marked; nearer, it is not.
+    expect(scale.ticks(true).at(-1)?.label).toBe("15:00");
+    const later = new Scale({ ...timeline, now: timeline.now - 13 * 60 });
+    expect(later.ticks(true).map((tick) => tick.label)).not.toContain("15:00");
+    expect(later.ticks(false).map((tick) => tick.label)).toContain("15:00");
+    expect([scale.at(scale.start - 60), scale.at(scale.end + 60)]).toEqual([0, 100]);
+  });
+
+  it("the executor lane names each executor where several held the task", () => {
+    const timeline = {
+      ...pictures(),
+      claims: [
+        { by: "quiet-wren", from: at(41), to: at(153) },
+        { by: "teal-lynx", from: at(205), to: at(275) },
+      ],
+    };
+    const executor = lanes(timeline).lanes.find((lane) => lane.key === "executor");
+    expect(executor?.who).toBe("quiet-wren, teal-lynx");
+    expect(executor?.segs.map((seg) => shown(seg.text, 1600))).toEqual([
+      "quiet-wren 1 h 52 m",
+      "teal-lynx 1 h 10 m",
+    ]);
+    expect(executor?.segs[1]?.title).toBe("teal-lynx held it 1 h 10 m, from 12:27 to 13:37");
+  });
+
+  it("a round nobody has taken waits in its lane, its words its own and its stop", () => {
+    const timeline = aTimeline({
+      now: 7200,
+      created: 0,
+      stages: [aStage({ status: "review", from: 0, round: 1 })],
+      rounds: [{ round: 1, from: 0, verdict: "changes", to: 3600 }],
+    });
+    const reviewer = lanes(timeline).lanes.find((lane) => lane.key === "reviewer");
+    expect(reviewer?.who).toBe("");
+    expect(reviewer?.segs).toHaveLength(1);
+    const [wait] = reviewer?.segs ?? [];
+    expect([wait?.look, wait?.stop, shown(wait?.text ?? [], 1600)]).toEqual([
+      "waiting",
+      true,
+      "round 1",
+    ]);
+    expect(wait?.title).toBe("round 1: waited 1 h for a reviewer, changes");
+    expect(wait?.after?.[1]).toBe("dislike");
+    // Taken at once, a round has no wait to draw: its reviewer's time alone.
+    const taken = aTimeline({
+      now: 7200,
+      rounds: [{ round: 1, from: 0, taken: 0, to: 3600, by: "lucid-heron" }],
+    });
+    const segs = lanes(taken).lanes.find((lane) => lane.key === "reviewer")?.segs;
+    expect(segs?.map((seg) => [seg.look, seg.after])).toEqual([["solid", null]]);
+  });
+
+  it("a gate's state that held no time is not drawn, and its title says its detail", () => {
+    const timeline = aTimeline({
+      now: 3600,
+      gates: [
+        {
+          name: "check",
+          states: [
+            { state: "missing", from: 0, by: null, detail: "" },
+            { state: "met", from: 0, by: null, detail: "" },
+            { state: "held", from: 1800, by: "owner", detail: "Waits on the owner" },
+          ],
+        },
+      ],
+    });
+    const [gate] = lanes(timeline).gates;
+    expect(gate?.spans.map((span) => [span.state, span.title])).toEqual([
+      ["met", "check met from 00:00"],
+      ["held", "check held from 00:30: Waits on the owner"],
+    ]);
+  });
+
+  it("the tones are the theme's tokens for each status, result, gate state and verdict", () => {
+    expect(
+      [
+        "ready",
+        "in_progress",
+        "review",
+        "done",
+        "blocked",
+        "cancelled",
+        "concept",
+        "design",
+        "x",
+      ].map(statusTone),
+    ).toEqual([
+      "auto",
+      "primary",
+      "question",
+      "like",
+      "dislike",
+      "resolved",
+      "decision",
+      "decision",
+      "muted-foreground",
+    ]);
+    expect((["green", "red", "queued", "running", "unknown"] as const).map(resultTone)).toEqual([
+      "like",
+      "dislike",
+      "primary",
+      "primary",
+      "resolved",
+    ]);
+    expect((["met", "missing", "waived", "held", "unknown"] as const).map(gateTone)).toEqual([
+      "like",
+      "question",
+      "resolved",
+      "dislike",
+      "muted-foreground",
+    ]);
+    expect((["approved", "changes", "other"] as const).map(verdictTone)).toEqual([
+      "like",
+      "dislike",
+      "muted-foreground",
+    ]);
+    expect((["solid", "waiting", "running"] as const).map(lookClass)).toEqual([
+      "tl-seg",
+      "tl-seg tl-waiting",
+      "tl-seg tl-running",
+    ]);
+  });
+
+  it("a word reads with a capital and spaces, and a commit by its first seven bytes", () => {
+    expect(capitalised("in_progress")).toBe("In progress");
+    expect(capitalised("")).toBe("");
+    expect(capitalised("ßeta")).toBe("SSeta");
+    expect(shortCommit("0123456789abcdef")).toBe("0123456");
+    expect(shortCommit("e19d3a0")).toBe("e19d3a0");
+    expect(shortCommit("abc")).toBe("abc");
+    // Seven bytes that end a character are cut there; seven that split one keep the whole.
+    expect(shortCommit("abcdeéxyz")).toBe("abcdeé");
+    expect(shortCommit("abcdefé")).toBe("abcdefé");
+    expect(shortCommit("😀😀x")).toBe("😀😀x");
+    expect(shortCommit("ab€€")).toBe("ab€€");
+    expect(trimmed("\u0085 a b　")).toBe("a b");
+  });
+
+  it("the style sheet shows the list on a phone and the lanes from 900 px, in theme colours", () => {
+    // As Rust's `split_once`: before the first switch, and all after it.
+    const switches = CSS.indexOf("@media (min-width: 900px)");
+    expect(switches, "one width switches the views").toBeGreaterThan(0);
+    const phone = CSS.slice(0, switches);
+    const wide = CSS.slice(switches + "@media (min-width: 900px)".length);
+    expect(phone).toContain(".tl-lanes {\n  --name: 9rem;\n  --end: 5.5rem;\n  display: none;\n");
+    // Wide, the list stays for assistive technology, out of sight but not display:none.
+    expect(wide).toContain(
+      "  .tl-list {\n    position: absolute;\n    width: 1px;\n    height: 1px;\n    overflow: hidden;\n    clip-path: inset(50%);\n",
+    );
+    expect(wide).not.toContain(".tl-list {\n    display: none;\n  }");
+    expect(wide).toContain("  .tl-lanes {\n    display: block;\n  }");
+    // A phone's text keeps clear of the + button's column.
+    expect(phone).toContain(
+      "@media (max-width: 899.98px) {\n  .tl-drawn {\n    padding-right: 40px;\n  }",
+    );
+    // A phone's clipped list is drawn from its end, the latest steps in view, and fades out at its
+    // top; the lanes are never clipped, and no fade is drawn wide.
+    expect(phone).toContain(
+      '  .tl-clipped .tl-body {\n    display: flex;\n    flex-direction: column;\n    justify-content: flex-end;\n  }\n  .tl-clipped .tl-list {\n    flex: none;\n  }\n  .tl-clipped .tl-body::after {\n    content: "";\n    position: absolute;\n    left: 0;\n    right: 0;\n    top: 0;\n    height: 28px;\n    background: linear-gradient(var(--card), transparent);\n    pointer-events: none;\n  }\n}',
+    );
+    expect(CSS.split("::after")).toHaveLength(2);
+    expect(wide).not.toContain("tl-clipped");
+    expect(CSS).not.toContain("data-cut");
+    // "Show all" is a phone's alone: wide the box holds every lane, and the style sheet hides the
+    // button even where a draw at a phone's width offered it.
+    expect(wide).toContain("  .tl-foot .tl-more {\n    display: none;\n  }");
+    expect(CSS).not.toContain("tl-more-");
+    // "Show all" sits on the legend's line, the legend wrapping beside it, and the lanes' detail
+    // reserves no line of its own: it takes the legend's place while it shows.
+    expect(phone).toContain(".tl-foot .tl-legend {\n  flex: 1 1 0;\n}");
+    expect(CSS).not.toContain("min-height: 1.3em");
+    expect(phone).toContain(".tl-detail {\n  flex: 1 1 0;\n");
+    expect(CSS).not.toContain("flex-basis: 100%");
+    expect(wide).toContain("  .tl-foot:has(.tl-detail) .tl-legend {\n    display: none;\n  }");
+    // The gate states' marks are in the legend wide only, beside the lanes that draw them: a rule
+    // as specific as the legend's items' own hides them on a phone.
+    expect(phone).toContain(".tl-legend .tl-wide {\n  display: none;\n}");
+    expect(wide).toContain("  .tl-legend .tl-wide {\n    display: inline-flex;\n  }");
+    // A light page draws the segments' words in its own colour.
+    expect(CSS).toContain(
+      "@media not (prefers-color-scheme: dark) {\n  .tl-seg {\n    color: var(--foreground);\n  }\n}",
+    );
+    // Each width a word is weighed at shows it from there, and its shorter one below.
+    for (const width of WIDTHS) {
+      expect(CSS).toContain(
+        `@container (max-width: ${width - 1}.5px) {\n  .tl-from-${width} {\n    display: none;\n  }\n}`,
+      );
+      expect(CSS).toContain(
+        `@container (min-width: ${width}px) {\n  .tl-to-${width} {\n    display: none;\n  }\n}`,
+      );
+    }
+    // Every gate state has a pattern of its own besides its colour.
+    for (const [state, pattern] of [
+      ["missing", "dotted"],
+      ["waived", "dashed"],
+      ["held", "double"],
+      ["unknown", "dotted"],
+    ]) {
+      expect(CSS.includes(`.tl-g-${state}::before {`) && CSS.includes(pattern as string)).toBe(
+        true,
+      );
+    }
+    // Every colour is a theme token (mixed in sRGB at most), so an imported theme colours the
+    // timeline too.
+    for (const written of ["#", "rgb(", "rgba(", "hsl("]) expect(CSS).not.toContain(written);
+  });
+
+  it("a failed read says its reason's first line as a sentence, never a stack", () => {
+    // Each says when it is tried again: a minute after a failure (`nextRead`).
+    expect(TIMELINE_EVERY).toBe(60);
+    const again = (said: string) => `${said} Trying again in a minute.`;
+    expect(failed("Failed to fetch")).toBe(
+      again("The timeline could not be read: Failed to fetch."),
+    );
+    expect(failed(" Board snapshot unavailable. ")).toBe(
+      again("The timeline could not be read: Board snapshot unavailable."),
+    );
+    expect(
+      failed("TypeError: Failed to fetch\n    at window.fetch (shell.js:1:2)\n    at 0xe43e"),
+    ).toBe(again("The timeline could not be read: TypeError: Failed to fetch."));
+    expect(failed("")).toBe(again("The timeline could not be read."));
+    expect(failed(" . ")).toBe(again("The timeline could not be read."));
+    // A line's carriage return and every trailing point go; a point between words stays.
+    expect(failed("gone.\r\nmore")).toBe(again("The timeline could not be read: gone."));
+    expect(failed("a. b...")).toBe(again("The timeline could not be read: a. b."));
+  });
+
+  it("the next read is the timeline's own while open, a minute after a failure, none once closed", () => {
+    const read = (timeline: TaskTimeline) => nextRead({ timeline });
+    expect(read({ ...pictures(), every: 45 })).toBe(45);
+    expect(read({ ...pictures(), every: 0 })).toBe(TIMELINE_EVERY);
+    const unsaid = pictures();
+    delete unsaid.every;
+    expect(read(unsaid)).toBe(TIMELINE_EVERY);
+    expect(read({ ...pictures(), closed: pictures().now })).toBeNull();
+    expect(nextRead({ error: "Failed to fetch" })).toBe(TIMELINE_EVERY);
+    expect(nextRead(null)).toBeNull();
+    // A browser's timer waits an `i32` of ms at most.
+    expect(LONGEST_WAIT).toBe(2 ** 31 - 1);
+  });
+
+  it("show all counts the steps of a phone's list", () => {
+    const steps = rows(pictures()).length;
+    expect(showAll(steps)).toBe(`Show all ${steps} steps`);
+    expect(showAll(1)).toBe("Show all 1 step");
+  });
+});
+
+/**
+ * A week-long task of 24 review rounds, two minutes each, each sent back: the case the review
+ * found the verdicts printed over each other.
+ */
+function week(): TaskTimeline {
+  const now = pictures().now;
+  const made = now - 7 * 86_400;
+  const stages: Stage[] = [aStage({ status: "ready", from: made, to: made + 3600 })];
+  const rounds: TaskTimeline["rounds"] = [];
+  let from = made + 3600;
+  for (let number = 1; number <= 24; number += 1) {
+    const review = from + 6 * 3600;
+    stages.push(aStage({ status: "in_progress", from, to: review }));
+    stages.push(aStage({ status: "review", from: review, to: review + 120, round: number }));
+    rounds.push({
+      round: number,
+      from: review,
+      taken: review + 30,
+      to: review + 120,
+      by: "lucid-heron",
+      verdict: "changes",
+    });
+    from = review + 120;
+  }
+  stages.push(aStage({ status: "in_progress", from }));
+  return {
+    ...pictures(),
+    created: made,
+    first_claimed: made + 3600,
+    bounces: 24,
+    stages,
+    claims: [{ by: "quiet-wren", from: made + 3600, to: null }],
+    rounds,
+    runs: [],
+    gates: [
+      {
+        name: "review",
+        states: [{ state: "missing", from: made + 7 * 3600, by: null, detail: "Changes asked" }],
+      },
+    ],
+  };
+}

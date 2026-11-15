@@ -3,8 +3,8 @@
 //! confused with another process or with a server on other data.
 
 use crate::common::{
-    Repository, Scratch, command_of, exists, gone, healthy_occupier, parent_of, script, signal,
-    surreal,
+    Repository, Scratch, Told, command_of, exists, gone, healthy_occupier, parent_of, script,
+    signal, surreal,
 };
 use crate::home_fixture::{Unresponsive, healthy_server};
 use std::convert::Infallible;
@@ -42,8 +42,10 @@ fn session_of(pid: i64) -> i32 {
 #[test]
 fn nothing_running_starts_a_server_that_is_recorded_and_found_again() {
     let s = Scratch::new("start");
-    let home = s.home();
+    let told = Told::default();
+    let home = s.home().telling(told.sink());
     assert_eq!(home.recorded(), None);
+    assert!(!home.has_store());
     let first = home.ensure().unwrap();
     assert!(first.addr.starts_with("127.0.0.1:"), "{}", first.addr);
     assert!(rpc::healthy(&first.addr));
@@ -51,8 +53,22 @@ fn nothing_running_starts_a_server_that_is_recorded_and_found_again() {
     assert_eq!(first.version, SURREAL_VERSION);
     assert!(command_of(first.pid).unwrap().contains(&s.data()));
     assert_eq!(home.recorded(), Some(first.clone()));
+    // The start said so, once: it takes seconds, which would otherwise pass in silence.
+    assert_eq!(
+        told.lines(),
+        [format!(
+            "· the board's server is not running: it starts now, on its store at {}, which takes \
+             some seconds",
+            s.dir.join("data").display()
+        )]
+    );
+    // The server makes the store, never the board.
+    assert!(home.has_store());
+    assert_eq!(home.schema("tasks").unwrap(), None);
+    // A server found running is used, saying nothing.
     assert_eq!(home.ensure().unwrap(), first);
-    assert_eq!(s.home().ensure().unwrap(), first);
+    assert_eq!(s.home().telling(told.sink()).ensure().unwrap(), first);
+    assert_eq!(told.lines().len(), 1, "{:?}", told.lines());
 }
 
 #[test]
@@ -726,6 +742,61 @@ fn the_board_lives_in_the_common_dir_served_by_the_pinned_surreal() {
     );
     let named = Path::new("/opt/surreal");
     assert_eq!(Home::in_common(common, Some(named)).surreal(), named);
+}
+
+/// A board in a repository's common dir makes its folders there, `symphony/` and its own, and
+/// never the common dir or a folder above it: a project's folder removed under a start, a stop or a
+/// hold on its way is not made again, and each is refused as a project with no board.
+#[test]
+fn a_board_whose_common_dir_is_gone_makes_none_of_its_folders_again() {
+    let s = Scratch::new("common-gone");
+    let project = s.dir.join("project");
+    let common = project.join(".git");
+    std::fs::create_dir_all(&common).unwrap();
+    let home = Home::in_common(&common, Some(s.surreal()));
+    assert_eq!(home.stop().unwrap(), None);
+    assert!(home.dir().is_dir(), "its folders made in the common dir");
+
+    std::fs::remove_dir_all(&project).unwrap();
+    for (what, refused) in [
+        ("a start", home.ensure().err()),
+        ("a stop", home.stop().err()),
+        ("a hold", home.hold("x", "its project went").err()),
+    ] {
+        let why = refused
+            .unwrap_or_else(|| panic!("{what} went on"))
+            .to_string();
+        assert!(symphony_board::board_health::absent(&why), "{what}: {why}");
+        assert!(!exists(&project), "{what} made the project's folder again");
+    }
+}
+
+/// SurrealDB makes every missing folder of its store's path, so a board's folder removed while its
+/// server starts comes back: here a stand-in removes it as SurrealDB begins, before that opens its
+/// store. The start gives up on that folder: its server is ended before it is recorded, no server
+/// runs on the data, and the start is refused as a project with no board.
+#[test]
+fn a_start_whose_folder_goes_while_its_server_starts_ends_that_server_and_records_none() {
+    let s = Scratch::new("folder-goes");
+    let board = s.dir.join("board");
+    let removing = stand_in(
+        &s,
+        &format!(
+            "rm -rf '{}'\nexec '{}' \"$@\"",
+            board.display(),
+            s.surreal().display()
+        ),
+    );
+    let home = Home::new(&board, &removing).patience(PATIENCE);
+    let why = home.ensure().unwrap_err().to_string();
+    assert_eq!(starts(&s), 1);
+    assert!(symphony_board::board_health::absent(&why), "{why}");
+    assert!(
+        exists(&board.join("data")),
+        "the stand-in's SurrealDB made its store again"
+    );
+    assert_eq!(home.recorded(), None);
+    assert_eq!(home.serving(), None, "a server runs on the data");
 }
 
 #[test]
