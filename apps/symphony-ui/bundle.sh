@@ -121,8 +121,8 @@ out="$(cd "$out" && pwd)" # named from here, and dx runs from the crate
 cd "$here"
 # The stylesheets every page shares are what dx links from the head of the page it builds for
 # src/main.rs, which draws nothing: package.sh publishes them as one file and nothing else of that
-# build. The web client's kinds (home, the queue, Reports, the task board, the agents page, the
-# documents, a task's page, and the chat and the menus every page mounts) are one Vite build,
+# build. The web client's kinds (home, the queue, Reports, Runs, the task board, the agents page,
+# the documents, a task's page, and the chat and the menus every page mounts) are one Vite build,
 # `web`. All assets are content hashed; identical files from separate kinds share one URL and one
 # browser-cache entry.
 for kind in "${kinds[@]}"; do

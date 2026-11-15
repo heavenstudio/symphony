@@ -23,7 +23,7 @@ use std::process::{Child, ChildStderr, Command, Stdio};
 /// The web client's kinds, one Vite build of them all (the chat, `panel`, and the menus,
 /// `overlay`, among them), and whether each has a style sheet of its own (the task board's and the
 /// agents page's styles are board.css, in the shared file).
-const WEB: [(&str, bool); 9] = [
+const WEB: [(&str, bool); 10] = [
     ("agents", false),
     ("board", false),
     ("docs", true),
@@ -32,6 +32,7 @@ const WEB: [(&str, bool); 9] = [
     ("queue", true),
     ("reports", true),
     ("review", true),
+    ("runs", true),
     ("task", true),
 ];
 
@@ -75,7 +76,7 @@ out="$6"
 rm -rf "$out"
 mkdir -p "$out/.vite" "$out/assets"
 entries=""
-for kind in agents board docs overlay panel queue reports review task; do
+for kind in agents board docs overlay panel queue reports review runs task; do
     printf 'export{a as run,b as stop};/*%s*/\n' "$BUNDLE_ID" > "$out/assets/$kind-$BUNDLE_ID.js"
     css=""
     if [ "$kind" != board ] && [ "$kind" != agents ]; then

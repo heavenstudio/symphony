@@ -113,4 +113,4 @@ if [ -n "${2:-}" ]; then
 else
     "$here/../../tools/rs-bin.sh" symphony-build publish-client "$stage" "$out/public"
 fi
-echo "symphony-ui: the web client's kinds (home, the queue, Reports, the task board, the agents page, the documents, a task's page, the chat, the menus) over one shared stylesheet, one SPA shell: $out/public" >&2
+echo "symphony-ui: the web client's kinds (home, the queue, Reports, Runs, the task board, the agents page, the documents, a task's page, the chat, the menus) over one shared stylesheet, one SPA shell: $out/public" >&2

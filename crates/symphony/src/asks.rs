@@ -624,7 +624,7 @@ pub fn default_path(root: &Path, asks_db: Option<&str>) -> PathBuf {
         return PathBuf::from(db);
     }
     let mut base = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
-    let common = symphony_board::sys::output(command("git").arg("-C").arg(root).args([
+    let common = symphony_board::sys::output(crate::children::git().arg("-C").arg(root).args([
         "rev-parse",
         "--path-format=absolute",
         "--git-common-dir",

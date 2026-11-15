@@ -32,7 +32,7 @@ const KINDS: [&str; 1] = ["styles"];
 /// page have none: their styles (assets/board.css) are in the shared file. The overlay, the menus
 /// every page mounts, and the panel, the chat every page mounts, are no page's but the shell's
 /// persistent kinds.
-const WEB: [(&str, &[&str]); 9] = [
+const WEB: [(&str, &[&str]); 10] = [
     ("agents", &[]),
     ("board", &[]),
     ("docs", &["media-layer", "docs"]),
@@ -41,6 +41,7 @@ const WEB: [(&str, &[&str]); 9] = [
     ("queue", &["queue"]),
     ("reports", &["reports"]),
     ("review", &["media-layer"]),
+    ("runs", &["runs"]),
     ("task", &["media-layer", "task"]),
 ];
 

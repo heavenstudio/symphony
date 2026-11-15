@@ -12,13 +12,14 @@ use super::{SHOWN, STALL, assets::module, chrome, common, dist, site};
 
 /// Each kind of the web client, the page that shows it and what the page draws once it is in (a
 /// task's page, the stand-in having no page of its task, says so once it has asked for it).
-const KINDS: [(&str, &str, &str); 7] = [
+const KINDS: [(&str, &str, &str); 8] = [
     ("review", "/", ".hero-title"),
     ("board", "/tasks", "[data-slug='tools/example']"),
     ("agents", "/agents", "[data-ready=agents]"),
     ("docs", "/docs/", "[data-ready=folder]"),
     ("queue", "/queue", "[data-ready=queue]"),
     ("reports", "/reports", "[data-ready=reports]"),
+    ("runs", "/runs", "[data-ready=runs]"),
     (
         "task",
         "/task/tools/example",
