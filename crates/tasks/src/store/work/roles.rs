@@ -40,14 +40,46 @@ impl Store {
     /// raises the taker's open tasks past the store's cap ([`crate::slots`]). The reviewer's role
     /// is refused to its executor, and to a session that requested the work, one that orchestrates
     /// the task or did or that filed it, but on a fast fix ([`Held::requested`]): its verdict is
-    /// none the board takes ([`Store::verdict`]), so it is told at once who gives it instead.
+    /// none the board takes ([`Store::verdict`]), so it is told at once who gives it instead. One
+    /// reviewer a task: while another holds the role and is still there, a new one is refused naming
+    /// it, as each later round resumes that one, unless it says why it joins beside it
+    /// ([`Store::take_role_beside`]); one lost or left is replaced. A red's filer
+    /// ([`crate::red::FILER`]) takes the role beside it, only to close a red that passed.
     pub fn take_role(&self, slug: &str, handle: &str, role: &str) -> Result<Task, Error> {
+        self.take_role_beside(slug, handle, role, None)
+    }
+
+    /// [`Store::take_role`], with `beside`: why a reviewer joins beside another still there (a
+    /// second stamp's, say), a post of its own after its join line in the one write, naming those it
+    /// joins beside. The join line stays the board's record of the role, as every reader of a
+    /// thread's holds reads it. Refused for another role, and with no words.
+    pub fn take_role_beside(
+        &self,
+        slug: &str,
+        handle: &str,
+        role: &str,
+        beside: Option<&str>,
+    ) -> Result<Task, Error> {
         if role != "orchestrator" && role != "reviewer" {
             return Err(refused(format!(
                 "take_role is for orchestrator or reviewer; use claim or reserve for {}",
                 repr(role)
             )));
         }
+        let beside = match beside.map(str::trim) {
+            Some(_) if role != "reviewer" => {
+                return Err(refused(format!(
+                    "only a reviewer joins beside another, not {}",
+                    repr(role)
+                )));
+            }
+            Some("") => {
+                return Err(refused(
+                    "a reviewer joining beside another says why, in words".into(),
+                ));
+            }
+            given => given,
+        };
         let starts = role == "orchestrator";
         // The board the commands a refusal names reach: this one.
         let board = self.board_command();
@@ -68,6 +100,7 @@ impl Store {
                     "{handle} executes {slug} and cannot review its own work"
                 )));
             }
+            let mut change = Change::default();
             if role == "reviewer" {
                 let fast = crate::fast_fix::marked(&task.fields).is_some();
                 let orchestrates = view.holds(handle, "orchestrator");
@@ -76,8 +109,36 @@ impl Store {
                         &board, slug, handle, why, true,
                     )));
                 }
+                // A new reviewer, not one joining again or a red's filer, beside those still there
+                // whose verdict the board takes: a holder that executed or requested the work
+                // reviews nothing.
+                let filer = view.session(handle).is_some_and(|s| s.kind == crate::red::FILER);
+                let mut there = Vec::new();
+                for other in view.holders(role).filter(|_| !filer && !view.holds(handle, role)) {
+                    let (who, health) = (&other.handle, view.health(&other.handle));
+                    let theirs = view.holds(who, "orchestrator");
+                    if held.unfresh(who, &task.created_by, theirs, fast).is_some() {
+                        continue;
+                    }
+                    if health.holds() {
+                        there.push(format!("{who} ({})", health.as_str()));
+                    } else {
+                        change.saw(view, who);
+                    }
+                }
+                if !there.is_empty() {
+                    let named = there.join(", ");
+                    let Some(why) = beside else {
+                        return Err(refused(format!(
+                            "{slug} is reviewed by {named}: a later round resumes it, never \
+                             another reviewer; it lets the role go with: {board} release {slug} \
+                             --role reviewer, or one joins beside it with: {board} role {slug} \
+                             reviewer --beside WHY"
+                        )));
+                    };
+                    change.reason = Some(format!("reviewer beside {named}: {why}"));
+                }
             }
-            let mut change = Change::default();
             let holding = view.holds(handle, role);
             // One orchestrator a task: a holder still there refuses, one lost or left is dropped.
             let mut took = Vec::new();

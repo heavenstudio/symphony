@@ -418,8 +418,12 @@ impl Project {
     /// the project answering from its process has not declared (its program missing, or slow to
     /// declare at a start) is no setting of the project's: it is read again [`AGAIN`] after, until
     /// it loads, by one read at a time on a thread of its own, the claim held until that read ends
-    /// ([`HELD`] at most), so every reader keeps the plain project meanwhile and none waits on the
-    /// process: a server's live loop no more than a request. `symphony-status --lint` refuses each
+    /// ([`HELD`] at most), so while it is read again every reader keeps the plain project and none
+    /// waits on the process; what that read finds is kept only while the files it was started for
+    /// are still what is held ([`Project::keep`]). The first read, and the first after a file the
+    /// load looked at changes, are no read again: each is the reader's own and waits on the
+    /// process's declaration, [`crate::plugins::process::WAIT`] at most, a server's live loop as
+    /// much as a request. `symphony-status --lint` refuses each
     /// ([`crate::lint::project_problems`]).
     pub fn of(root: &Path) -> Arc<Project> {
         Self::seen(root).0
@@ -441,23 +445,47 @@ impl Project {
         {
             if held.again.is_some_and(|at| Instant::now() >= at) {
                 // Read again on a thread of its own, which may wait on a process's declaration:
-                // every reader, this one too, keeps what was read meanwhile, none waits.
-                let (again, said) = (root.to_path_buf(), held.problem.clone());
+                // every reader, this one too, keeps what was read meanwhile, none waits. What it
+                // read is kept only while the files are still the ones it was started for.
+                let (again, said, started) = (
+                    root.to_path_buf(),
+                    held.problem.clone(),
+                    held.stamps.clone(),
+                );
                 let reading = std::thread::Builder::new()
                     .name("project read again".into())
-                    .spawn(move || drop(Self::read_seen(&again, said.as_deref())));
+                    .spawn(move || {
+                        let read = Self::load_seen(&again, said.as_deref());
+                        Self::keep(&again, &started, read);
+                    });
                 // Claimed until that read ends, its own result setting the next; a read that
                 // cannot start is left to the next pause.
                 held.again = Some(Instant::now() + if reading.is_ok() { HELD } else { AGAIN });
             }
             return (held.project.clone(), held.problem.clone());
         }
-        Self::read_seen(root, None)
+        let read = Self::load_seen(root, None);
+        let seen = (read.project.clone(), read.problem.clone());
+        lock(&SEEN).insert(root.to_path_buf(), read);
+        seen
     }
 
-    /// The project at `root` read and kept for [`Project::of`], and why it is the plain project when
+    /// `read`, a read again of the project at `root` started while [`Project::of`] held it as read
+    /// from the files `started` stamps, kept in its place only while it still holds that: a reader
+    /// that found a file changed meanwhile read the project afresh, and a read of the files before
+    /// would only cost the next reader one more load. Whether it was kept.
+    fn keep(root: &Path, started: &[(PathBuf, Stamp)], read: Seen) -> bool {
+        let mut seen = lock(&SEEN);
+        let current = seen.get(root).is_some_and(|held| held.stamps == started);
+        if current {
+            seen.insert(root.to_path_buf(), read);
+        }
+        current
+    }
+
+    /// The project at `root` read for [`Project::of`] to keep, and why it is the plain project when
     /// it is; `said`, the problem a read before said, is not said again.
-    fn read_seen(root: &Path, said: Option<&str>) -> (Arc<Project>, Option<String>) {
+    fn load_seen(root: &Path, said: Option<&str>) -> Seen {
         let stamped = |path: PathBuf| {
             let stamp = Stamp::of(&path);
             (path, stamp)
@@ -491,17 +519,12 @@ impl Project {
                 (Self::plain(root), Some(problem), again)
             }
         };
-        let project = Arc::new(project);
-        lock(&SEEN).insert(
-            root.to_path_buf(),
-            Seen {
-                stamps,
-                project: project.clone(),
-                problem: problem.clone(),
-                again,
-            },
-        );
-        (project, problem)
+        Seen {
+            stamps,
+            project: Arc::new(project),
+            problem,
+            again,
+        }
     }
 
     /// The project as the client's header and home read it: its theme package's name, its register
@@ -835,6 +858,32 @@ impl Project {
     pub fn route(&self, file: &str) -> Option<String> {
         self.holding(file)
             .map(|(entry, inside)| entry.route(inside))
+    }
+
+    /// The route of the project-relative `file` in the project at `root`, as [`Project::of`]
+    /// names it ([`Project::route`]), found with no plugin's process started or waited on while
+    /// the project loads without one: a route is an entrypoint's URL and the file's path in its
+    /// folder, which no declaration changes, so a command run once (`symphony reply`) costs no
+    /// process. Only an entrypoint naming a type no renderer but a process's handles needs the
+    /// declaration: then the project is read as [`Project::of`] reads it.
+    pub fn route_in(root: &Path, file: &str) -> Option<String> {
+        match Self::unasked(root) {
+            Some(project) => project.route(file),
+            None => Self::of(root).route(file),
+        }
+    }
+
+    /// The project at `root` as [`Project::of`] reads it with its `[plugins.process]` left out, so
+    /// no process is asked; none when its file names no process, or does not load without one.
+    fn unasked(root: &Path) -> Option<Project> {
+        let mut written = Self::written(&Self::read(root).ok()??).ok()?;
+        if written.plugins.process.is_empty() {
+            return None;
+        }
+        written.plugins.process.clear();
+        let project = Self::resolve(root, written).ok()?;
+        project.check_files(root, &mut Vec::new()).ok()?;
+        Some(project)
     }
 
     /// The project-relative file `route` stands for, through the entrypoint with the longest URL

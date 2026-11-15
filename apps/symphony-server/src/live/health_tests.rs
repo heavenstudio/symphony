@@ -12,7 +12,7 @@ use crate::gate::Gate;
 use crate::testing::{
     Tree,
     board::{Fixture, HOST, NOW, Seed},
-    repository,
+    repository, shelf,
 };
 use axum::http::{Request, StatusCode};
 use std::net::{Shutdown, TcpListener, TcpStream};
@@ -464,6 +464,39 @@ fn a_project_whose_settings_do_not_load_says_so_on_every_page_until_they_do() {
         "it loads: its part clears"
     );
     assert!(hub.rescan.swap(false, SeqCst));
+}
+
+/// A project that loads again, its settings mended or its plugin's process declared at last, has
+/// its plugins' watches warmed by the read its notice's change asks for, as at its first read, not
+/// once a file they watch next changes: the defaults' read, with no plugin, warmed none of theirs.
+#[test]
+fn a_project_that_loads_again_has_its_plugins_watches_warmed_at_the_next_read() {
+    use std::sync::atomic::Ordering::SeqCst;
+    shelf::install().unwrap();
+    let tree = Tree::new();
+    let root = repository(&tree);
+    let file = root.join(symphony::project::FILE);
+    let manifest = |types: &str| {
+        format!(
+            "{}\n[[entrypoints]]\nurl = \"/docs/\"\nfolder = \"docs\"\ntypes = [{types}]\n",
+            shelf::MANIFEST
+        )
+    };
+    std::fs::write(&file, manifest("\"none\"")).unwrap();
+    tree.write(&format!("main/{}/FIRST.item", shelf::ITEMS), "first");
+    let hub = hub(&root, &tree.path("health.json"), &Clock::at(now()));
+    // Read with the defaults, which hold no plugin: nothing of the shelf's is watched or warmed.
+    hub.refresh_page("", &root).unwrap();
+    hub.tell_project();
+    assert!(hub.rescan.swap(false, SeqCst));
+
+    std::fs::write(&file, manifest("\"markdown\", \"media\"")).unwrap();
+    hub.tell_project();
+    assert!(hub.rescan.swap(false, SeqCst), "it loads: a read is asked");
+    hub.refresh_page("", &root).unwrap();
+    // Warmed as the shelf stood at that read: an item put there since, unnotified, is not in it.
+    tree.write(&format!("main/{}/SECOND.item", shelf::ITEMS), "second");
+    assert_eq!(shelf::warm(&root), 1, "the read warmed the shelf");
 }
 
 #[test]

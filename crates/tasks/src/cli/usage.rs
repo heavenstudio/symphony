@@ -777,9 +777,11 @@ options:
     ),
     (
         "role",
-        r#"usage: just tasks role [-h] [--as ACTOR] slug {orchestrator,reviewer}
+        r#"usage: just tasks role [-h] [--as ACTOR] [--beside WHY]
+                       slug {orchestrator,reviewer}
 "#,
-        r#"usage: just tasks role [-h] [--as ACTOR] slug {orchestrator,reviewer}
+        r#"usage: just tasks role [-h] [--as ACTOR] [--beside WHY]
+                       slug {orchestrator,reviewer}
 
 positional arguments:
   slug
@@ -788,6 +790,7 @@ positional arguments:
 options:
   -h, --help            show this help message and exit
   --as ACTOR
+  --beside WHY          a reviewer's: why it joins beside one still there
 "#,
     ),
     (

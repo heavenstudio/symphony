@@ -218,6 +218,8 @@ pub struct Ask {
     pub worktree: Option<PathBuf>,
     pub prompt: String,
     pub tab: Option<String>,
+    /// A reviewer's: why it joins beside one still there ([`Store::take_role_beside`]).
+    pub beside: Option<String>,
 }
 
 impl Ask {
@@ -234,6 +236,7 @@ impl Ask {
             worktree: None,
             prompt: String::new(),
             tab: None,
+            beside: None,
         }
     }
 }
@@ -252,6 +255,12 @@ pub fn launch(store: &Store, hc: &dyn Hc, m: &Machine, ask: &Ask) -> Result<Star
     if role != "executor" && role != "reviewer" {
         return Err(Error::Refused(format!(
             "a launched session is an executor or a reviewer, not {}",
+            crate::pyjson::repr(role)
+        )));
+    }
+    if ask.beside.is_some() && role != "reviewer" {
+        return Err(Error::Refused(format!(
+            "only a reviewer joins beside another, not {}",
             crate::pyjson::repr(role)
         )));
     }
@@ -506,21 +515,23 @@ fn agent_kind(ask: &Ask) -> &'static str {
 }
 
 /// The new session takes its part on the task (an executor reserves it; a review subtask's reviewer
-/// reserves the subtask and judges its parent; any other reviewer takes the reviewer role).
+/// reserves the subtask and judges its parent; any other reviewer takes the reviewer role, beside
+/// one still there only when the launch says why).
 fn take_up(store: &Store, ask: &Ask, task: &crate::Task, handle: &str) -> Result<(), Error> {
     let slug = ask.slug.as_str();
+    let beside = ask.beside.as_deref();
     if ask.role == "executor" {
         store.reserve(slug, handle, RESERVE_SECONDS)?;
     } else if let Some(parent) = task.parent.as_deref().filter(|_| task.instruction) {
         // A review subtask: its reviewer claims it (`/review-task` does) and judges the
         // task it reviews, so the reviewer role goes on the parent, never on the subtask it must claim.
         store.reserve(slug, handle, RESERVE_SECONDS)?;
-        match store.take_role(parent, handle, "reviewer") {
+        match store.take_role_beside(parent, handle, "reviewer", beside) {
             Ok(_) | Err(Error::Refused(_)) => {} // the parent is not open for review: the reviewer says so
             Err(problem) => return Err(problem),
         }
     } else {
-        store.take_role(slug, handle, "reviewer")?;
+        store.take_role_beside(slug, handle, "reviewer", beside)?;
     }
     Ok(())
 }

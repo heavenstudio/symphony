@@ -1,8 +1,9 @@
 //! Joining and releasing a task, moving it along, and landing it.
 
-use crate::common::{Fixture, NOW, Seed, refused};
+use crate::common::{Fixture, GONE, NOW, Seed, refused};
 use std::collections::BTreeSet;
-use symphony_board::health::RESERVE_SECONDS;
+use symphony_board::Health;
+use symphony_board::health::{LIVE_SECONDS, RESERVE_SECONDS};
 use symphony_board::{LANDS_FROM, NewTask};
 
 /// An orchestrator, an executor and a reviewer on `sim/jump`, in review, each joined through the store.
@@ -71,6 +72,140 @@ fn the_executor_cannot_review_its_own_work() {
     assert_eq!(
         refused(f.store.take_role("sim/jump", &exe, "reviewer")),
         format!("{exe} executes sim/jump and cannot review its own work")
+    );
+}
+
+/// One reviewer a task, each later round resumed: a second is refused while the first holds the
+/// role and is still there, live or stale, after a changes as before it, naming it, how it lets the
+/// role go and how one joins beside it; once it is lost the second takes over, beside a holder
+/// whose verdict the board refuses. The first joins again, and a red's filer joins beside a
+/// reviewer to cancel the red, as before.
+#[test]
+fn a_second_reviewer_is_refused_while_the_first_is_still_there() {
+    let (f, _, exe, rev) = in_review();
+    let second = f.session("reviewer");
+    let board = f.store.board_command();
+    let reviewed_by = |health: &str| {
+        format!(
+            "sim/jump is reviewed by {rev} ({health}): a later round resumes it, never another \
+             reviewer; it lets the role go with: {board} release sim/jump --role reviewer, or one \
+             joins beside it with: {board} role sim/jump reviewer --beside WHY"
+        )
+    };
+    let before = f.store.dump().unwrap();
+    assert_eq!(
+        refused(f.store.take_role("sim/jump", &second, "reviewer")),
+        reviewed_by("live")
+    );
+    assert_eq!(f.store.dump().unwrap(), before);
+    f.store
+        .verdict("sim/jump", &rev, "changes", "again")
+        .unwrap();
+    f.store.move_to("sim/jump", "review", &exe).unwrap();
+    f.advance(LIVE_SECONDS + 1.0);
+    assert_eq!(
+        refused(f.store.take_role("sim/jump", &second, "reviewer")),
+        reviewed_by("stale")
+    );
+    let again = f.store.take_role("sim/jump", &rev, "reviewer").unwrap();
+    assert_eq!(again.holders("reviewer"), [rev.as_str()]);
+    f.advance(GONE);
+    assert_eq!(f.health(&rev), Health::Lost);
+    // Its executor, that role let go, holds the reviewer's too: it gives no verdict, so it keeps
+    // no fresh reviewer out.
+    f.store.release("sim/jump", &exe, Some("executor")).unwrap();
+    f.store.take_role("sim/jump", &exe, "reviewer").unwrap();
+    let taken = f.store.take_role("sim/jump", &second, "reviewer").unwrap();
+    assert_eq!(
+        BTreeSet::from_iter(taken.holders("reviewer")),
+        BTreeSet::from([rev.as_str(), exe.as_str(), second.as_str()])
+    );
+    let filer = f.session("filer");
+    f.store.take_role("sim/jump", &filer, "reviewer").unwrap();
+    let closed = f.store.move_to("sim/jump", "cancelled", &filer).unwrap();
+    assert_eq!(closed.status, "cancelled");
+}
+
+/// A reviewer joins beside one still there when it says why: its join line is the board's record as
+/// ever, and its why a post of its own after it, naming those it joins beside. Refused with no
+/// words, or for the orchestrator's role; with nobody there it joins with no post.
+#[test]
+fn a_reviewer_joins_beside_another_saying_why() {
+    let (f, orch, _, rev) = in_review();
+    let second = f.session("reviewer");
+    let before = f.store.dump().unwrap();
+    assert_eq!(
+        refused(
+            f.store
+                .take_role_beside("sim/jump", &second, "reviewer", Some("  "))
+        ),
+        "a reviewer joining beside another says why, in words"
+    );
+    assert_eq!(
+        refused(
+            f.store
+                .take_role_beside("sim/jump", &orch, "orchestrator", Some("why"))
+        ),
+        "only a reviewer joins beside another, not 'orchestrator'"
+    );
+    assert_eq!(f.store.dump().unwrap(), before);
+    let said = f.store.thread("sim/jump").unwrap().len();
+    let task = f
+        .store
+        .take_role_beside(
+            "sim/jump",
+            &second,
+            "reviewer",
+            Some(" the adversarial stamp "),
+        )
+        .unwrap();
+    assert_eq!(
+        BTreeSet::from_iter(task.holders("reviewer")),
+        BTreeSet::from([rev.as_str(), second.as_str()])
+    );
+    let lines: Vec<(String, String, String)> = f.store.thread("sim/jump").unwrap()[said..]
+        .iter()
+        .map(|m| (m.sender.clone(), m.kind.clone(), m.text.clone()))
+        .collect();
+    assert_eq!(
+        lines,
+        [
+            (
+                second.clone(),
+                "system".into(),
+                format!("{second} joined as reviewer")
+            ),
+            (
+                second.clone(),
+                "msg".into(),
+                format!("reviewer beside {rev} (live): the adversarial stamp")
+            ),
+        ]
+    );
+    // A third names both, as the board lists them; with nobody there, a reason joins as a plain
+    // take does.
+    let third = f.session("reviewer");
+    f.store
+        .take_role_beside("sim/jump", &third, "reviewer", Some("a third look"))
+        .unwrap();
+    let mut both = [&rev, &second];
+    both.sort();
+    assert_eq!(
+        f.said("sim/jump").last().unwrap(),
+        &format!(
+            "reviewer beside {} (live), {} (live): a third look",
+            both[0], both[1]
+        )
+    );
+    f.task("sim/other");
+    let alone = f
+        .store
+        .take_role_beside("sim/other", &third, "reviewer", Some("why"))
+        .unwrap();
+    assert_eq!(alone.holders("reviewer"), [third.as_str()]);
+    assert_eq!(
+        f.said("sim/other").last().unwrap(),
+        &format!("{third} joined as reviewer")
     );
 }
 
@@ -885,7 +1020,9 @@ fn whoever_executed_work_under_the_task_or_ever_orchestrated_it_is_remembered() 
     let below = f.store.ever_held("sim/jump/step").unwrap();
     assert_eq!(below.executed, BTreeSet::from([step.clone(), one.clone()]));
     assert_eq!(below.orchestrated, BTreeSet::from([step_orch]));
-    // Who executed work under it gives the task no verdict, a reviewer's role or not.
+    // Who executed work under it gives the task no verdict, a reviewer's role or not, once the
+    // fresh reviewer, the one a task, has let it go; holding it, they keep no other out.
+    f.store.release("sim/jump", &rev, Some("reviewer")).unwrap();
     for who in [&step, &one] {
         f.store.take_role("sim/jump", who, "reviewer").unwrap();
         assert_eq!(
