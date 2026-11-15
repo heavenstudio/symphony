@@ -1,9 +1,10 @@
 //! `/api/task-gates` over a scratch board and a temporary repository: a project's plugin answers
 //! (the shelf's, as its checkout's `gates.json` says), the Symphony's own gates where none does or
-//! beside it, a failing or slow plugin as an unknown gate, and a plugin asked once a tip.
+//! beside it, a failing or slow plugin as an unknown gate, and a plugin asked once a tip; and what
+//! a read costs: one with nothing new asks the board once and reads nothing again.
 
 use super::Hub;
-use super::read_paths_tests::{observe, served, store_on};
+use super::read_paths_tests::{observe, requests, served, store_on};
 use crate::shelf;
 use crate::testing::{
     Tree,
@@ -1002,5 +1003,145 @@ fn a_plugins_owner_gate_for_one_task_never_hides_another_tasks_card_from_the_lan
         ["tools/x", "tools/z"],
         "tools/z's page too: the plugin's answer has no owner gate for it"
     );
+    shared.stop();
+}
+
+/// `text` committed to `file` on `branch` of `root`, main checked out again after: its tip.
+fn commit_more(root: &Path, branch: &str, file: &str, text: &str) -> String {
+    git(root, &["checkout", "-q", branch]);
+    std::fs::write(root.join(file), text).unwrap();
+    git(root, &["add", file]);
+    git(root, &["commit", "-q", "-m", text]);
+    git(root, &["checkout", "-q", "main"]);
+    git_tip(root, branch)
+}
+
+/// The state of the gate `name` in `answer`.
+fn state(answer: &Value, name: &str) -> GateState {
+    gates(answer)
+        .into_iter()
+        .find(|(gate, _, _)| gate == name)
+        .unwrap_or_else(|| panic!("no gate {name} in {answer}"))
+        .1
+}
+
+/// What a gates read costs is counted, never timed: the requests the board is sent, and each part
+/// read anew (`symphony::gates::Reads`).
+#[test]
+fn a_gates_read_with_nothing_new_asks_the_board_once_and_reads_nothing_again() {
+    use symphony::gates::Reads;
+    use symphony_board::stamps::{Catalogue, Needs};
+    let tree = Tree::new();
+    let root = repository(&tree);
+    std::fs::write(
+        root.join(symphony::project::FILE),
+        "[verdicts]\ncheck = [\"just\", \"verify\"]\n",
+    )
+    .unwrap();
+    git(&root, &["branch", "tools/kept"]);
+    let tip = commit_on(&root, "tools/kept");
+    let mut seed = Seed::default()
+        .task("tools/kept", "in_progress")
+        .task("tools/kept/work", "in_progress");
+    seed.dump
+        .tasks
+        .iter_mut()
+        .filter(|task| task.slug == "tools/kept/work")
+        .for_each(|task| task.parent = Some("tools/kept".into()));
+    let f = Fixture::new(seed);
+    let needs = Needs {
+        stamps: vec!["tests".into(), "owner".into()],
+        tip: Some(tip.clone()),
+        by: f.session("worker"),
+        why: "it changes code the owner asked to see".into(),
+    };
+    f.store
+        .set_needs("tools/kept", &Catalogue::symphony(), &needs)
+        .unwrap();
+    let (shared, ask) = served(&root, hub(&root, &f, BACKSTOP));
+    let hub = shared.api.get().unwrap();
+    let read = || {
+        let sent = requests(&f.store);
+        let (status, answer) = ask("/api/task-gates?slug=tools/kept");
+        assert_eq!(status, StatusCode::OK, "{answer}");
+        (answer, requests(&f.store) - sent, hub.gates.reads())
+    };
+    let states = |answer: &Value| ["tests", "owner", "check"].map(|name| state(answer, name));
+
+    // The first read reads everything once: the task and its thread, the recorder's history (no
+    // operation is in its folder), the catalogue, and whether the tip holds work of its own.
+    let (first, _, counted) = read();
+    assert_eq!(
+        states(&first),
+        [GateState::Missing, GateState::Held, GateState::Unknown],
+        "{first}"
+    );
+    let all_once = Reads {
+        tasks: 1,
+        histories: 1,
+        records: 0,
+        catalogues: 1,
+        merge_bases: 1,
+    };
+    assert_eq!(counted, all_once);
+
+    // With nothing new, a read asks the board once, for the task's stamp, and reads nothing
+    // again: the same answer.
+    for _ in 0..3 {
+        let (again, sent, counted) = read();
+        assert_eq!(again, first);
+        assert_eq!(sent, 1, "one request to the board");
+        assert_eq!(counted, all_once, "nothing read again");
+    }
+
+    // A post on its thread: the task and its thread are read again, nothing else.
+    let said = symphony::gates::stamps::approve_line(&tip).unwrap();
+    f.store.say("tools/kept", "owner", &said, None).unwrap();
+    let (posted, _, counted) = read();
+    assert_eq!(state(&posted, "owner"), GateState::Met, "{posted}");
+    let after_post = Reads {
+        tasks: 2,
+        ..all_once
+    };
+    assert_eq!(counted, after_post);
+
+    // A run recorded for the work under it: the history is read again, the board's task is not.
+    keep_run(&root, 1, "tools/kept/work", "just test-rs", (&tip, 0));
+    let (ran, sent, counted) = read();
+    assert_eq!(state(&ran, "tests"), GateState::Met, "{ran}");
+    assert_eq!(sent, 1);
+    let after_run = Reads {
+        histories: 2,
+        ..after_post
+    };
+    assert_eq!(counted, after_run);
+
+    // A new tip: what stood on the old one stands no more, and only the merge base is read again.
+    let later = commit_more(&root, "tools/kept", "work.txt", "more work");
+    let (moved, sent, counted) = read();
+    assert_eq!(moved["tip"], json!(later));
+    assert_ne!(states(&moved), states(&ran), "{moved}");
+    assert_eq!(sent, 1);
+    let after_tip = Reads {
+        merge_bases: 2,
+        ..after_run
+    };
+    assert_eq!(counted, after_tip);
+
+    // A commit on main: the catalogue is read again at the main checkout's new head, and the
+    // merge base past the default branch's new tip.
+    commit_more(&root, "main", "main.txt", "on main");
+    let (_, sent, counted) = read();
+    assert_eq!(sent, 1);
+    let after_main = Reads {
+        catalogues: 2,
+        merge_bases: 3,
+        ..after_tip
+    };
+    assert_eq!(counted, after_main);
+
+    // Each stands once read: the next read is one request again, and reads nothing.
+    let (_, sent, counted) = read();
+    assert_eq!((sent, counted), (1, after_main));
     shared.stop();
 }
