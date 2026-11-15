@@ -630,7 +630,8 @@ describe("a column of the live board", () => {
     d.copies.set("column:ready", { etag: '"first"', list: listing(readyRows(30)) });
     void board.column("ready", false, "", 1);
     await pass(250);
-    // One read of them all, which names no tag and is not kept on the device.
+    // One read of them all, the column's first long one, which names no tag and is not kept on
+    // the device.
     expect(asked).toEqual([[column("ready", "&rows=46"), ""]]);
     expect(store.keep).not.toHaveBeenCalled();
     expect(d.copies.get("column:ready")?.etag).toBe('"first"');
@@ -642,6 +643,116 @@ describe("a column of the live board", () => {
     });
     expect(d.tasks[1]).toBe(filed);
     expect(d.cursors.get("ready")).toBe("w/r-45");
+  });
+
+  it("read again past its first page names its last long answer's tag, and a 304 is that answer", async () => {
+    const answered = listing(readyRows(46), [["ready", 50]], { next: "w/r-46" });
+    // What the server holds for the read, and its tag.
+    let served = { tag: '"long-1"', list: answered };
+    const { board, d, asked, store, host } = live((url, etag) => {
+      if (url !== column("ready", "&rows=46")) return answer(404);
+      return etag === served.tag ? answer(304) : answer(200, served.list, served.tag);
+    });
+    d.waiting = false;
+    d.tasks = readyRows(46);
+    d.copies.set("column:ready", { etag: '"first"', list: listing(readyRows(30)) });
+    const refresh = async () => {
+      void board.column("ready", false, "", 1);
+      await pass(250);
+    };
+    await refresh();
+    expect(d.long.get("column:ready")).toEqual({ etag: '"long-1"', list: answered });
+    const drawn = d.tasks;
+    host.redraw.mockClear();
+    // Nothing changed in the column: the next refresh names the tag, and the 304 draws the
+    // answer the page holds, each card the object it was.
+    await refresh();
+    expect(asked).toEqual([
+      [column("ready", "&rows=46"), ""],
+      [column("ready", "&rows=46"), '"long-1"'],
+    ]);
+    expect(d.tasks).toHaveLength(46);
+    d.tasks.forEach((task, at) => {
+      expect(task).toBe(drawn[at]);
+    });
+    expect(d.cursors.get("ready")).toBe("w/r-46");
+    expect(d.counts).toEqual([["ready", 50]]);
+    expect(host.redraw).toHaveBeenCalled();
+    expect(board.fresh.failing).toEqual([]);
+    // Neither read is kept on the device, nor touches the first page it keeps.
+    expect(store.keep).not.toHaveBeenCalled();
+    expect(d.copies.get("column:ready")?.etag).toBe('"first"');
+    // A card of the column changed: the server answers the whole read, which replaces the one held.
+    const retitled = listing(
+      [aTask("w/r-1", { title: "Retitled" }), ...readyRows(45, 2)],
+      [["ready", 50]],
+      { next: "w/r-46" },
+    );
+    served = { tag: '"long-2"', list: retitled };
+    await refresh();
+    expect(asked.at(-1)).toEqual([column("ready", "&rows=46"), '"long-1"']);
+    expect(d.tasks[0]?.title).toBe("Retitled");
+    expect(d.long.get("column:ready")).toEqual({ etag: '"long-2"', list: retitled });
+    await refresh();
+    expect(asked.at(-1)).toEqual([column("ready", "&rows=46"), '"long-2"']);
+    expect(d.tasks[0]?.title).toBe("Retitled");
+  });
+
+  it("holds a long answer under a search too, and names it on no page-long read", async () => {
+    const searched = (more: string) =>
+      `/api/task-board?q=w&status=ready&days=1${more}&activity=1&work=0`;
+    const { board, d, asked } = live((url) =>
+      url === searched("&rows=31")
+        ? answer(200, listing(readyRows(31), [["ready", 31]]), '"found"')
+        : answer(200, listing(readyRows(30), [["ready", 30]]), '"page"'),
+    );
+    d.waiting = false;
+    d.query = "w";
+    d.tasks = readyRows(31);
+    d.long.set("column:ready", { etag: '"long"', list: listing(readyRows(31)) });
+    void board.column("ready", false, "w", 1);
+    await pass(250);
+    // A search's long read names the tag held, whichever view it came from: the server answers
+    // `304` only to the same bytes.
+    expect(asked).toEqual([[searched("&rows=31"), '"long"']]);
+    expect(d.long.get("column:ready")?.etag).toBe('"found"');
+    // A page or less: the search's first page names no tag, the default view's its device copy.
+    d.tasks = readyRows(30);
+    void board.column("ready", false, "w", 1);
+    await pass(250);
+    d.query = "";
+    d.copies.set("column:ready", { etag: '"first"', list: listing(readyRows(30)) });
+    void board.column("ready", false, "", 1);
+    await pass(250);
+    expect(asked.slice(1)).toEqual([
+      [searched(""), ""],
+      [column("ready"), '"first"'],
+    ]);
+    expect(d.long.get("column:ready")?.etag).toBe('"found"');
+  });
+
+  it("keeps the long answer it held when a long read fails or a newer view replaces it", async () => {
+    const held = later<Response>();
+    let failing = true;
+    const { board, d, asked } = live(() =>
+      failing ? answer(500, { error: "unavailable" }) : held.promise,
+    );
+    d.waiting = false;
+    d.tasks = readyRows(31);
+    const kept = { etag: '"long"', list: listing(readyRows(31)) };
+    d.long.set("column:ready", kept);
+    void board.column("ready", false, "", 1);
+    await pass(250);
+    expect(board.fresh.failing).toEqual(["column:ready"]);
+    expect(d.long.get("column:ready")).toBe(kept);
+    failing = false;
+    void board.column("ready", false, "", 1);
+    await pass(250);
+    d.view += 1;
+    held.settle(answer(200, listing(readyRows(31, 2)), '"dropped"'));
+    await pass();
+    expect(asked.map(([, etag]) => etag)).toEqual(['"long"', '"long"']);
+    expect(d.long.get("column:ready")).toBe(kept);
   });
 
   it("counts the rows it shows: its own stage's tasks as the stages place them, no subtask", async () => {
