@@ -353,6 +353,9 @@ type Tell = std::sync::Arc<dyn Fn(&str) + Send + Sync>;
 #[derive(Clone)]
 pub struct Home {
     dir: PathBuf,
+    /// The folder `dir` is kept in, never made by the board ([`Home::make`]): the repository's
+    /// common dir for [`Home::in_common`], else the folder holding `dir`.
+    within: PathBuf,
     surreal: PathBuf,
     patience: Duration,
     closing: Duration,
@@ -375,6 +378,7 @@ impl Home {
     pub fn new(dir: &Path, surreal: &Path) -> Home {
         Home {
             dir: dir.into(),
+            within: dir.parent().unwrap_or(dir).into(),
             surreal: surreal.into(),
             patience: PATIENCE,
             closing: CLOSING,
@@ -410,10 +414,44 @@ impl Home {
     /// The board of the repository whose common dir is `common`: `symphony/tasks/` there, served by
     /// the pinned `surreal` beside it ([`surreal_fetch`]), or by `named` (`SYMPHONY_SURREAL`'s).
     pub fn in_common(common: &Path, named: Option<&Path>) -> Home {
-        Home::new(
-            &common.join(FOLDER),
-            &named.map_or_else(|| pinned(common), Path::to_path_buf),
-        )
+        Home {
+            within: common.into(),
+            ..Home::new(
+                &common.join(FOLDER),
+                &named.map_or_else(|| pinned(common), Path::to_path_buf),
+            )
+        }
+    }
+
+    /// `folder`, the board's own or one in it, made where it is not there, with each folder between
+    /// it and the one the board is kept in (`within`), one at a time, but never that one or a
+    /// folder above it: a start, stop or ask under way when the project's folder or its `.git` is
+    /// removed never makes them again, and is refused, saying [`crate::project::GONE`], so that it
+    /// counts as a project with no board.
+    fn make(&self, folder: &Path) -> Result<(), ServerError> {
+        let mut made = self.within.clone();
+        for part in folder
+            .strip_prefix(&self.within)
+            .unwrap_or(folder)
+            .components()
+        {
+            made.push(part);
+            match fs::create_dir(&made) {
+                Ok(()) => {}
+                Err(problem)
+                    if problem.kind() == std::io::ErrorKind::AlreadyExists && made.is_dir() => {}
+                Err(problem) if problem.kind() == std::io::ErrorKind::NotFound => {
+                    return Err(ServerError::Io(format!(
+                        "{}, which holds the board's folder, is gone, and nothing is made there \
+                         again: {}",
+                        self.within.display(),
+                        crate::project::GONE
+                    )));
+                }
+                Err(problem) => return Err(io("could not make", &made)(problem)),
+            }
+        }
+        Ok(())
     }
 
     /// How long a server that is starting, or that runs and does not answer, is waited for.
@@ -790,7 +828,10 @@ impl Home {
     /// log is to be replayed, for a caller starting apart ([`Home::starting_apart`]), is run on a
     /// thread of its own, the caller refused at once naming it. A start with no replay says it
     /// starts, in one line ([`Home::telling`]): it takes seconds, which would otherwise pass in
-    /// silence; a replay says its own.
+    /// silence; a replay says its own. SurrealDB makes every missing folder of its store's path, so
+    /// a board's folder removed while its server starts comes back, its repository's with it: a
+    /// start whose folder no longer holds the lock it took ([`Starters::here`]) gives up, its
+    /// server ended before it is recorded, and is refused saying [`crate::project::GONE`].
     fn start(&self, starters: &Starters) -> Result<Running, ServerError> {
         self.unheld()?;
         let old = self.dir.join(RECLAIM).join(OLD);
@@ -816,7 +857,22 @@ impl Home {
             ));
             self.snapshot_before_start();
         }
-        let running = self.spawn(&self.data(), &[])?;
+        let spawned = self.spawn(&self.data(), &[]);
+        if !starters.here() {
+            let ended = match &spawned {
+                Ok(running) => self.end(running.pid).err(),
+                Err(_) => None,
+            };
+            return Err(ServerError::Io(format!(
+                "the board's folder {} went while its server started, and is not served: {}{}",
+                self.dir.display(),
+                crate::project::GONE,
+                ended
+                    .map(|why| format!("; and then {why}"))
+                    .unwrap_or_default()
+            )));
+        }
+        let running = spawned?;
         if let Err(problem) = self.record(&running) {
             return Err(match self.end(running.pid) {
                 Ok(()) => problem,

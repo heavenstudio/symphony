@@ -127,6 +127,37 @@ pub fn at(root: &Path, machine: Option<&Path>) -> Result<Project, String> {
     found
 }
 
+/// The project whose folder is `root` ([`at`]), held to the repository whose common dir is
+/// `repository`, the one the Symphony found from that folder when it began to serve it: refused,
+/// saying [`GONE`], when the lookup finds another (a folder left without its `.git` leads it up to
+/// the checkout that holds the folder) or that one is a repository no more ([`is_repository`]). A
+/// reach takes the board in the common dir this checked, so a folder removed after the check leads
+/// it to no other repository's board.
+///
+/// # Errors
+///
+/// As [`at`], and when the folder no longer holds `repository`.
+pub fn held(root: &Path, machine: Option<&Path>, repository: &Path) -> Result<Project, String> {
+    let project = at(root, machine)?;
+    if project.place.common != repository || !is_repository(repository) {
+        return Err(format!(
+            "the project's folder {} no longer holds the repository it was served from, {}: \
+             {GONE}",
+            root.display(),
+            repository.display()
+        ));
+    }
+    Ok(project)
+}
+
+/// Whether the common dir `common` is a repository's still: it holds `HEAD`, which git keeps there
+/// at every moment. A `.git` removed and made again by a board's start under way, which makes only
+/// the board's own folders in it (SurrealDB makes every missing folder of its store's path), holds
+/// none.
+pub fn is_repository(common: &Path) -> bool {
+    common.join("HEAD").is_file()
+}
+
 /// The `[project] id` the file at `path` names, if it names one.
 fn file_id(path: &Path) -> Option<String> {
     let text = std::fs::read_to_string(path).ok()?;
