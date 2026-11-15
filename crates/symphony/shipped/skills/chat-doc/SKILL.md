@@ -40,14 +40,16 @@ native channel. No file watcher or agent monitor discovers these messages.
 ## What an event looks like
 
 ```
-OWNER /api/message scope= {"path":"docs/DECISIONS.md","slug":"example","text":"what would option 2 look like?"}
-OWNER /api/decision scope= {"path":"docs/DECISIONS.md","slug":"example","state":"rejected","note":"too small"}
-OWNER /api/comment scope= {"path":"docs/components/COMPONENTS.md","after_line":88,"text":"Names — why these?"}
-OWNER /api/ask scope= {"path":"docs/architecture/ARCHITECTURE.md","question":"why five bands and not three?"}
+OWNER /api/message at 2026-11-14 09:12 scope= {"path":"docs/DECISIONS.md","slug":"example","text":"what would option 2 look like?"}
+OWNER /api/decision at 2026-11-14 09:12 scope= {"path":"docs/DECISIONS.md","slug":"example","state":"rejected","note":"too small"}
+OWNER /api/comment at 2026-11-14 09:12 scope= {"path":"docs/components/COMPONENTS.md","after_line":88,"text":"Names — why these?"}
+OWNER /api/ask at 2026-11-14 09:12 scope= {"path":"docs/architecture/ARCHITECTURE.md","question":"why five bands and not three?"}
 Read: just symphony-ask --db 'STORE' show 12. Answer: just symphony-ask --db 'STORE' answer 12 TEXT --as HANDLE.
 CALLBACK delivery failed: ...
 ```
 
+- `at` is the minute the owner saved it. One saved while nobody heard chat
+  reaches the next recipient late: read it against what has happened since.
 - `/api/message` is a **chat message**: the owner pressed 💬 Send. It carries no
   verdict. It is conversation, not approval, and it does not change the card.
 - `approved`, `rejected`, `question`, `pending` are verdicts from the buttons,

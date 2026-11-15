@@ -114,7 +114,8 @@ label { display:block; } html:root :focus-visible { outline:2px solid var(--ring
 .entry-text :is(p, li, blockquote, h1, h2, h3, h4, h5, h6, dt, dd), .entry-text.literal, #task-send { max-width:80ch; }
 .task-body table { display:block; max-width:100%; overflow:auto; }
 .entry, .ghost-entry { --c:var(--muted-foreground); position:relative; padding:5px 10px; border-radius:var(--r-sm); line-height:1.5; overflow-wrap:anywhere; }
-.entry::before, .ghost-entry::before { content:"";position:absolute; left:-18px; top:12px; width:8px; height:8px; border-radius:50%; background:var(--c); box-shadow:0 0 0 3px var(--ring,var(--background)); }
+/* A dot stands clear of its line in the colour of the surface it is on: a card's sets --dot-halo. */
+.entry::before, .ghost-entry::before { content:"";position:absolute; left:-18px; top:12px; width:8px; height:8px; border-radius:50%; background:var(--c); box-shadow:0 0 0 3px var(--dot-halo,var(--background)); }
 #task-thread .entry::before, .ghost-entry::before { box-shadow:0 0 0 3px var(--background); }
 .entry img { max-width:min(100%,460px); vertical-align:top; margin:2px 4px 2px 0; border-radius:var(--r-sm); }
 .entry time { color:var(--muted-foreground); font-variant-numeric:tabular-nums; margin-right:6px; font-size:.92em; }

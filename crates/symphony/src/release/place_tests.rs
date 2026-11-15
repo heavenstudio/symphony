@@ -46,12 +46,8 @@ fn the_board_sweep_knows_the_checkouts_lock_and_how_long_its_build_is_kept() {
     // The sweep keeps the checkout this lock marks, and clears its build only once it is older
     // than the release run would keep it: both say the same, or the sweep removes what the release run
     // builds on.
-    use symphony_board::sweep::holder::{LEGACY_LOCK, RELEASE_BUILD_DAYS, RELEASE_LOCK};
+    use symphony_board::sweep::holder::{RELEASE_BUILD_DAYS, RELEASE_LOCK};
     assert_eq!(RELEASE_LOCK, LOCK_REASON);
-    assert_eq!(
-        LEGACY_LOCK, LEGACY_LOCK_REASON,
-        "and the one a build older than the rename left"
-    );
     assert_eq!(RELEASE_BUILD_DAYS, BUILD_KEPT_DAYS);
 }
 
@@ -413,156 +409,49 @@ fn a_checkout_differs_from_its_commit_by_head_and_by_every_change_outside_its_bu
     assert!(changed(&tree.path("nowhere"), &head, soon()).is_err());
 }
 
-/// What a build older than the rename left beside `asked` moved, as a run moves it once nothing
-/// works there.
-fn moved(
-    main: &Path,
-    common: &Path,
-    asked: &Path,
-    until: Bound<'_>,
-) -> Result<Vec<String>, String> {
-    legacy(main, common, asked)?.moved(main, common, until)
-}
-
-/// The checkout a build older than the rename made at `path`: a detached worktree of `head`
-/// locked with `reason`, marked as that build marked it when `mark`, with its build stamp and a
-/// build folder.
-fn old_checkout(main: &Path, common: &Path, path: &Path, reason: &str, mark: bool, head: &str) {
-    let at = path.to_string_lossy();
-    git_ok(
-        main,
-        &[
-            "worktree", "add", "-q", "--detach", "--lock", "--reason", reason, &at, head,
-        ],
-    );
-    let real = path.canonicalize().unwrap();
-    let admin = admin(common, &real).unwrap();
-    if mark {
-        fs::write(admin.join(LEGACY_MARK), format!("{}\n", real.display())).unwrap();
-    }
-    fs::write(admin.join(LEGACY_BUILT), format!("{NOW}\n")).unwrap();
-    fs::create_dir_all(path.join(".target/debug")).unwrap();
-    fs::write(path.join(".target/debug/kept"), "build\n").unwrap();
-}
-
+/// The checkout a build older than the rename makes at `nightly` beside the run's, locked and
+/// marked as that build did, with its build: the run makes its own beside it, named it is refused,
+/// and it stays as it is.
 #[test]
-fn the_checkout_an_older_build_made_moves_to_the_new_name_with_its_build() {
+fn the_checkout_an_older_build_makes_again_is_left_as_it_is() {
     let tree = Tree::new();
     let (main, common, head) = repo(&tree);
     let wt = main.parent().unwrap().join("wt");
     let (old, asked) = (wt.join("nightly"), wt.join("release"));
-    old_checkout(&main, &common, &old, LEGACY_LOCK_REASON, true, &head);
-
-    // What it moves, which the run looks in first, and nothing moved by looking.
-    let found = legacy(&main, &common, &asked).unwrap();
-    assert_eq!(found.trees(), [old.as_path()]);
-    assert!(old.exists() && !asked.exists());
-    let noted = moved(&main, &common, &asked, soon()).unwrap();
-    assert_eq!(
-        noted,
-        [format!(
-            "moved the release run's checkout from {} to {}, where a build older than the rename \
-             to `just release` made it",
-            old.display(),
-            asked.display()
-        )]
+    let reason = "the Symphony nightly's checkout (docs/RELEASES.md)";
+    let at = old.to_string_lossy();
+    git_ok(
+        &main,
+        &[
+            "worktree", "add", "-q", "--detach", "--lock", "--reason", reason, &at, &head,
+        ],
     );
-    // The checkout: moved by git with its build, locked with the new reason and marked again.
-    assert!(!old.exists());
-    assert_eq!(
-        fs::read_to_string(asked.join(".target/debug/kept")).unwrap(),
-        "build\n"
+    let theirs = admin(&common, &old).unwrap();
+    fs::write(
+        theirs.join("symphony-nightly"),
+        format!("{}\n", old.display()),
+    )
+    .unwrap();
+    fs::create_dir_all(old.join(".target/debug")).unwrap();
+    fs::write(old.join(".target/debug/kept"), "build\n").unwrap();
+
+    let mut ours = place(&main, &main, &common, &asked).unwrap();
+    assert!(ours.admin.is_none(), "nothing taken over");
+    ours.checkout(&main, &common, &head, soon(), NOW).unwrap();
+    assert!(asked.join("a.txt").exists() && !asked.join(".target").exists());
+    let said = place(&main, &main, &common, &old).unwrap_err();
+    assert!(
+        said.contains("(a worktree the release run did not lock)"),
+        "{said}"
     );
     let listed = git_ok(&main, &["worktree", "list", "--porcelain"]);
     assert!(
         listed.contains(&format!(
-            "worktree {}\nHEAD {head}\ndetached\nlocked {LOCK_REASON}",
-            asked.display()
+            "worktree {}\nHEAD {head}\ndetached\nlocked {reason}",
+            old.display()
         )),
         "{listed}"
     );
-    let admin = admin(&common, &asked).unwrap();
-    assert_eq!(
-        fs::read_to_string(admin.join(MARK)).unwrap(),
-        format!("{}\n", asked.display())
-    );
-    assert_eq!(
-        fs::read_to_string(admin.join(BUILT)).unwrap(),
-        format!("{NOW}\n")
-    );
-    assert!(!admin.join(LEGACY_MARK).exists() && !admin.join(LEGACY_BUILT).exists());
-    // The release run takes it as its own, and its build stays through the next checkout.
-    let mut place = place(&main, &main, &common, &asked).unwrap();
-    assert_eq!(place.admin.as_ref(), Some(&admin));
-    place.checkout(&main, &common, &head, soon(), NOW).unwrap();
-    assert!(asked.join(".target/debug/kept").exists());
-
-    // Once moved, nothing is left to move, or to look in.
-    assert_eq!(moved(&main, &common, &asked, soon()), Ok(Vec::new()));
-    assert!(legacy(&main, &common, &asked).unwrap().trees().is_empty());
-}
-
-#[test]
-fn what_an_older_build_did_not_make_or_cannot_move_is_left_as_it_is() {
-    let tree = Tree::new();
-    let (main, common, head) = repo(&tree);
-    let root = main.parent().unwrap().to_path_buf();
-    let still = |old: &Path, reason: &str| {
-        let listed = git_ok(&main, &["worktree", "list", "--porcelain"]);
-        assert!(
-            listed.contains(&format!(
-                "worktree {}\nHEAD {head}\ndetached\nlocked {reason}",
-                old.display()
-            )),
-            "{listed}"
-        );
-        assert!(old.join(".target/debug/kept").exists());
-    };
-    // Nothing there.
-    assert_eq!(
-        moved(&main, &common, &root.join("none/release"), soon()),
-        Ok(Vec::new())
-    );
-    // Locked by someone else.
-    let other = root.join("other/nightly");
-    old_checkout(&main, &common, &other, "on a USB disk", true, &head);
-    let asked = root.join("other/release");
-    assert_eq!(moved(&main, &common, &asked, soon()), Ok(Vec::new()));
-    still(&other, "on a USB disk");
-    assert!(!asked.exists());
-    // Locked with that build's reason but never marked.
-    let unmarked = root.join("unmarked/nightly");
-    old_checkout(&main, &common, &unmarked, LEGACY_LOCK_REASON, false, &head);
-    let asked = root.join("unmarked/release");
-    assert_eq!(moved(&main, &common, &asked, soon()), Ok(Vec::new()));
-    still(&unmarked, LEGACY_LOCK_REASON);
-    // That build's own, with a folder where it would go.
-    let blocked = root.join("blocked/nightly");
-    old_checkout(&main, &common, &blocked, LEGACY_LOCK_REASON, true, &head);
-    let asked = root.join("blocked/release");
-    fs::create_dir_all(&asked).unwrap();
-    assert!(
-        legacy(&main, &common, &asked).unwrap().trees().is_empty(),
-        "what stays is not looked in"
-    );
-    assert_eq!(
-        moved(&main, &common, &asked, soon()),
-        Ok(vec![format!(
-            "left {}, the checkout a build older than the rename to `just release` made: {} is \
-             in the way",
-            blocked.display(),
-            asked.display()
-        )])
-    );
-    still(&blocked, LEGACY_LOCK_REASON);
-    // Asked for by its old name, or through a link: nothing to move.
-    assert_eq!(moved(&main, &common, &blocked, soon()), Ok(Vec::new()));
-    let linked = root.join("linked");
-    fs::create_dir_all(&linked).unwrap();
-    symlink(&blocked, linked.join("nightly")).unwrap();
-    assert_eq!(
-        moved(&main, &common, &linked.join("release"), soon()),
-        Ok(Vec::new())
-    );
-    still(&blocked, LEGACY_LOCK_REASON);
+    assert!(old.join(".target/debug/kept").exists());
+    assert!(theirs.join("symphony-nightly").exists());
 }
