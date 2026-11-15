@@ -578,7 +578,9 @@ starts at the local branch `release-candidate` and merges it again before review
 moves when another red's fix lands; the same rule then holds with `release-candidate` in place of
 main: its closest targets run again at the new tip, and the evidence names it. Its evidence is
 the red check's failures run alone at its tip, the commands its task names. Main is merged only
-when its land conflicts, after an approve, and then the fresh approve the merged tip needs leaves
+when its land conflicts, after an approve, and then the approve, standing over a merge that
+settles documents alone or given afresh for the merged tip
+([TASKS](TASKS.md#the-default-landing)), leaves
 the candidate on the commit approved before the merge; a fix that needed no review has none, so
 its land then drops the candidate. One that merges main before any approve gives the candidate
 nothing it can take, and drops it.
