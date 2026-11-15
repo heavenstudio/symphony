@@ -187,7 +187,7 @@ pub(super) fn compare(name: &str, then: &Value, now: &Value) -> String {
     );
     let side = |label: &str, said_of: &dyn Fn(&Value) -> String| {
         format!(
-            "  {label:<24} then {:<32} now {}\n",
+            "  {label:<18} then {:<44} now {}\n",
             said_of(then),
             said_of(now)
         )

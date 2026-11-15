@@ -186,7 +186,7 @@ fn a_run_is_printed_beside_an_earlier_one_page_by_page() {
         ),
         "{said}"
     );
-    let side = |label: &str, then: &str| format!("  {label:<24} then {then:<32} now ");
+    let side = |label: &str, then: &str| format!("  {label:<18} then {then:<44} now ");
     assert!(
         said.contains(&side("at the start", "load 200 180 150")),
         "{said}"
