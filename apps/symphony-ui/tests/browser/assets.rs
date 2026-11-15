@@ -4,9 +4,9 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::OnceLock;
 
-/// One module's files, as the shell's manifest names them: a program kind's (src/split.rs) are the
-/// program's script and main module, which its kinds share, and its own chunk; a kind of the web
-/// client (apps/symphony-web) is its script and styles, with no wasm (empty here).
+/// One module's files, as the shell's manifest names them: the program's kind's (src/split.rs, the
+/// chat's) are the program's script and main module and its own chunk; a kind of the web client
+/// (apps/symphony-web, the menus' among them) is its script and styles, with no wasm (empty here).
 #[derive(Debug, serde::Deserialize)]
 pub(super) struct Module {
     pub script: String,

@@ -247,7 +247,8 @@ name sets it on the command after, saying why: `tasks run` gives its command the
 and marks back, and a land's children name the land (`TASKS_SESSION`, `TASKS_TASK`) so what its
 check builds is recorded for the task. Clippy holds it: the crate's `clippy.toml` refuses std's and
 `process_cwd`'s builders however they are spelled, and the release run's `tests/child_guard` tries
-the rule.
+the rule. A git is `sys::git()` (the Symphony's `children::git`), less `sys::GIT_VARS`, which a git
+hook hands what it runs, so it acts on its own folder's repository; only `commit.rs` keeps them.
 
 ### The database server is never killed
 

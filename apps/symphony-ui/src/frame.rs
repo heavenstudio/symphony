@@ -1,10 +1,10 @@
-//! What the chat's panel and the menus share of the page: the styles every page takes from the
+//! What the chat's panel shares of the page: the styles every page takes from the
 //! program's head, and the events the page's header (the web client's) and the panel tell each
 //! other by. The conversation, its state and the activity and pending views live in the panel
 //! module (`frame_panel.rs`), loaded on interaction or a toast.
 
 use dioxus::prelude::*;
-#[cfg(any(feature = "page-panel", feature = "page-overlay"))]
+#[cfg(feature = "page-panel")]
 use {
     crate::request::field,
     futures_channel::mpsc::unbounded,
@@ -101,7 +101,7 @@ pub(crate) fn use_asks_heard(
 // The interactive frame belongs to the persistent module; page teardown has nothing to save.
 pub(crate) fn save_session() {}
 
-#[cfg(any(feature = "page-panel", feature = "page-overlay"))]
+#[cfg(feature = "page-panel")]
 pub(super) fn snapshot(key: &str) -> JsValue {
     web_sys::window().map_or(JsValue::UNDEFINED, |w| field(w.as_ref(), key))
 }
@@ -115,7 +115,7 @@ pub(super) fn publish(event: &str) {
     }
 }
 
-#[cfg(any(feature = "page-panel", feature = "page-overlay"))]
+#[cfg(feature = "page-panel")]
 pub(super) fn use_revision(events: &'static [&'static str]) -> Signal<u64> {
     let mut revision = use_signal(|| 0_u64);
     let listener = use_hook(move || {

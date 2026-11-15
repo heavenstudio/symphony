@@ -1219,10 +1219,7 @@ fn replaced(
 ) -> Result<String, String> {
     let index = folder.join(format!(".regenerate-index.{}", std::process::id()));
     let indexed = |args: &[&str]| -> Result<String, String> {
-        let mut command = sys::command("git");
-        for name in GIT_VARS {
-            command.env_remove(name);
-        }
+        let mut command = sys::git();
         command
             .args(args)
             .current_dir(main)
