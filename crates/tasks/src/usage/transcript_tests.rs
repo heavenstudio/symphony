@@ -113,6 +113,88 @@ fn a_beat_reads_only_what_the_transcript_gained_and_counts_each_message_once() {
     );
 }
 
+/// The lines a fork inherits as Claude Code writes them: the parent's message `call_by`, its Agent
+/// call `toolu_fork`, and the result that answers it, which carries the fork's directive.
+fn forked_from(call_by: &str) -> String {
+    let call = json!({"type": "assistant", "message": {"id": call_by, "model": "claude-opus-5-5",
+        "content": [{"type": "tool_use", "id": "toolu_fork", "name": "Agent", "input": {}}],
+        "usage": {"input_tokens": 1, "output_tokens": 1}}});
+    let result = json!({"type": "user", "message": {"role": "user", "content": [
+        {"type": "tool_result", "tool_use_id": "toolu_fork", "content": "forked"},
+        {"type": "text", "text": "Your directive: triage group D"}]}});
+    format!("{call}\n{result}\n")
+}
+
+fn meta(transcript: &Path, text: &str) {
+    let name = transcript.file_name().unwrap().to_str().unwrap();
+    let name = name.strip_suffix(".jsonl").unwrap();
+    fs::write(transcript.with_file_name(format!("{name}.meta.json")), text).unwrap();
+}
+
+#[test]
+fn a_forks_inherited_history_is_passed_over_up_to_the_result_of_the_call_that_made_it() {
+    let folder = Folder::new("fork");
+    let (ledgers, transcript) = (folder.path("usage"), folder.path("agent-f1.jsonl"));
+    meta(
+        &transcript,
+        r#"{"agentType": "fork", "isFork": true, "toolUseId": "toolu_fork",
+            "parentAgentId": "p1"}"#,
+    );
+    // Its parent's history, under the parent's ids: the first beat reads it, and counts nothing.
+    append(
+        &transcript,
+        &format!("{}\n", assistant("p1", 5, 0, 0, 50, 5)),
+    );
+    assert_eq!(beat(&ledgers, "f1", &transcript, true), []);
+    let result = forked_from("p2");
+    let (call, answer) = result.split_at(result.find('\n').unwrap() + 1);
+    append(&transcript, call);
+    assert_eq!(beat(&ledgers, "f1", &transcript, true), []);
+    // The result that answers the parent's call ends it: what follows is the fork's own.
+    append(
+        &transcript,
+        &format!("{answer}{}\n", assistant("f1", 1, 10, 0, 100, 1)),
+    );
+    assert_eq!(
+        beat(&ledgers, "f1", &transcript, true),
+        [opus(tokens(1, 10, 0, 100, 1, 1))]
+    );
+    // A later result of a call of the same id is the fork's own line, counted as any other.
+    append(
+        &transcript,
+        &format!("{answer}{}\n", assistant("f2", 2, 0, 0, 200, 2)),
+    );
+    assert_eq!(
+        beat(&ledgers, "f1", &transcript, true),
+        [opus(tokens(2, 0, 0, 200, 2, 1))]
+    );
+}
+
+#[test]
+fn a_transcript_whose_meta_names_no_fork_or_cannot_be_read_is_read_whole() {
+    for (key, said) in [
+        (
+            "plain",
+            Some(r#"{"agentType": "general-purpose", "toolUseId": "toolu_fork"}"#),
+        ),
+        ("unnamed", Some(r#"{"isFork": true}"#)),
+        ("broken", Some("{")),
+        ("none", None),
+    ] {
+        let folder = Folder::new(&format!("meta-{key}"));
+        let (ledgers, transcript) = (folder.path("usage"), folder.path("agent-a1.jsonl"));
+        if let Some(said) = said {
+            meta(&transcript, said);
+        }
+        append(&transcript, &forked_from("p2"));
+        assert_eq!(
+            beat(&ledgers, "a1", &transcript, true),
+            [opus(tokens(1, 0, 0, 0, 1, 1))],
+            "{key}"
+        );
+    }
+}
+
 #[test]
 fn a_line_that_is_not_text_is_passed_over_and_what_follows_is_read() {
     let folder = Folder::new("bytes");
@@ -345,12 +427,32 @@ fn a_subagents_transcript_is_its_own_never_its_parents() {
 }
 
 #[test]
-fn a_new_ledger_prunes_those_left_a_week() {
+fn a_new_ledger_prunes_those_left_a_week_whose_transcript_is_gone() {
     let folder = Folder::new("prune");
     let ledgers = folder.path("usage");
     fs::create_dir_all(&ledgers).unwrap();
-    for name in ["old.json", "old.lock", "lone.lock", "new.json", "new.lock"] {
-        fs::write(ledgers.join(name), "{}").unwrap();
+    let (kept, gone) = (folder.path("kept.jsonl"), folder.path("gone.jsonl"));
+    append(&kept, &format!("{}\n", assistant("m1", 1, 0, 0, 10, 1)));
+    // Each as a beat left it: the transcript read to its end.
+    let naming = |transcript: &Path| {
+        serde_json::to_string(&Kept {
+            transcript: transcript.to_string_lossy().into_owned(),
+            offset: fs::metadata(transcript).map_or(0, |m| m.len()),
+            ..Kept::default()
+        })
+        .unwrap()
+    };
+    for (name, text) in [
+        ("old.json", naming(&gone)),
+        ("old.lock", String::new()),
+        ("resumed.json", naming(&kept)),
+        ("resumed.lock", String::new()),
+        ("broken.json", "{".into()),
+        ("lone.lock", String::new()),
+        ("new.json", naming(&gone)),
+        ("new.lock", String::new()),
+    ] {
+        fs::write(ledgers.join(name), text).unwrap();
     }
     let week = SystemTime::now() + PRUNE_AFTER;
     let fresh = |name: &str| {
@@ -367,5 +469,21 @@ fn a_new_ledger_prunes_those_left_a_week() {
         .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
         .collect();
     left.sort();
-    assert_eq!(left, ["new.json", "new.lock"]);
+    assert_eq!(
+        left,
+        [
+            "broken.json",
+            "new.json",
+            "new.lock",
+            "resumed.json",
+            "resumed.lock"
+        ],
+        "a week idle, only the ledger whose transcript is gone goes, with its lock"
+    );
+    // The session resumed after its week reads on from where its ledger stopped.
+    append(&kept, &format!("{}\n", assistant("m2", 2, 0, 0, 20, 2)));
+    assert_eq!(
+        beat(&ledgers, "resumed", &kept, true),
+        [opus(tokens(2, 0, 0, 20, 2, 1))]
+    );
 }

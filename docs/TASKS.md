@@ -2716,7 +2716,11 @@ by lifetime, `cache_creation.ephemeral_5m_input_tokens` and `ephemeral_1h_input_
 split leaves, or all of it with none, is the five-minute kind), `cache_read` and `output`, with
 the model calls counted as `calls`, by `message.model` and `usage.speed` (`standard`, or `fast`,
 priced apart). Claude Code writes a message's usage on each of its lines, so a message id counts
-once; a `<synthetic>` message is no call.
+once; a `<synthetic>` message is no call. A fork (a subagent whose `agent-ID.meta.json` beside
+its transcript says `"isFork": true`) begins its transcript with its parent's history, under the
+parent's message ids, which the parent's beats count: read from its start, it is passed over up
+to the tool result answering the parent's call that made the fork (the meta's `toolUseId`), and
+counted from there.
 
 The board adds what a beat read in the beat's own one transaction to the row of the handle bound
 to the key, the task and role it works then, the model, the speed and the round. The task is
@@ -2737,9 +2741,10 @@ long transcript met first is read over as many beats), and a line still being wr
 the next. A beat holds the key's `KEY.lock` while it reads and writes: a beat of the same key
 meanwhile reads nothing, and the next one reads what it left. A ledger that does not parse
 starts again at the transcript's end, so what cannot be read is lost, never counted twice; the
-ledger is replaced whole (written beside it, then renamed), and one nothing wrote to for 7 days is
-removed. Reading fails quietly: a transcript or ledger that cannot be read hands nothing, and
-the beat goes on.
+ledger is replaced whole (written beside it, then renamed). A ledger is removed only once nothing
+wrote to it for 7 days and the transcript it names is gone, so a session resumed after a week
+reads on from where it stopped; one that does not parse is kept. Reading fails quietly: a
+transcript or ledger that cannot be read hands nothing, and the beat goes on.
 
 What is not recorded:
 
@@ -2750,9 +2755,14 @@ What is not recorded:
 - **The last answer.** The beat runs at a tool call, so the reply after a session's last tool
   call is never read: replayed through the beats they would have had, a subagent's run of 242
   calls (46.7 MB of transcript) left the board 241 calls and 99.8 % of the transcript's tokens,
-  and one of 2,705 calls (75.1 MB) 2,704 and 99.95 %, the last reply's being the rest.
+  and one of 2,705 calls (75.1 MB) 2,704 and 99.95 %, the last reply's being the rest; a parent
+  and its four forks, short-lived, bound to one handle, 189 of 194 calls and 96.6 %.
 - A beat run through `just tasks beat` (its event one an agent wrote, not the hook's) reads no
   transcript.
+- **A beat that timed out after its write**, the other way round, is recorded twice: when its
+  board call outlasts the beat's 2 s wait (a loaded machine) after the server committed it, the
+  beat keeps what it read as not taken, and the next beat hands it again. A transaction retried
+  on a conflict is safe, as the conflict aborted it.
 
 `just tasks show SLUG` sums the task's rows, its subtasks' with them, under its stages line:
 
@@ -2772,6 +2782,13 @@ API](#the-agents-api)). A landing's closing line names the task's after the comm
 SLUG on main at SHA; 71.6k tokens in 6 calls (executor 51.5k, reviewer 20.1k; round 1 51.5k,
 round 2 20.1k)`), each amount with its unit, so no number in it reads as a commit. A copy of
 the board carries the rows (`Dump.usages`). The pages draw none of it yet.
+
+The table moves the board to schema 18, which a build on schema 17 reads unharmed (the
+Symphony, the shared server among them): it opens a board one schema ahead to read
+(`schema::decide`'s `Opened::Ahead`), and none of its reads or its dump names `usage`. As a
+writer (every `tasks` command, `list`, `show` and `agents` included) a 17 build is refused before
+any write. Its beat writes nothing either, so an agent whose hook runs a 17 build reads quiet
+while it works until that link is renewed.
 
 ## The timeline
 

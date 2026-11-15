@@ -16,9 +16,16 @@
 //! key holds `KEY.lock` while it reads, hands and keeps: a second beat of the same key meanwhile
 //! (two tool calls side by side) reads nothing, and the next beat after reads what it left.
 //!
+//! A fork (a subagent whose `agent-ID.meta.json` beside its transcript says `"isFork": true`)
+//! begins its transcript with its parent's history, under the parent's message ids, which the
+//! parent's own beats count: read from its start, a fork's transcript is passed over up to the
+//! tool result that answers the parent's call that made it (the meta's `toolUseId`), the last line
+//! it inherited, and counted from there.
+//!
 //! What cannot be read is never counted twice: a ledger that does not parse starts again at the
-//! transcript's end, so what it held is lost, not repeated. A ledger left 7 days is removed when a
-//! new one is made.
+//! transcript's end, so what it held is lost, not repeated, and is never removed. A ledger is
+//! removed, when a new one is made, only once nothing wrote to it for 7 days and the transcript it
+//! names is gone: a session resumed after a week reads on from where it stopped.
 
 use super::{Spent, Tokens, merged};
 use serde::{Deserialize, Serialize};
@@ -95,6 +102,9 @@ struct Kept {
     offset: u64,
     seen: Vec<String>,
     pending: Vec<Spent>,
+    /// A fork's: the parent's tool call whose result ends what the fork inherited, while the read
+    /// has not passed it.
+    inherited: Option<String>,
 }
 
 /// One beat's hold on a key's ledger: what it read, to hand the board, and where the next read
@@ -184,12 +194,16 @@ impl Ledger {
 
 /// The usage of each message `transcript` gained after `kept`'s offset, reading whole lines up to
 /// about [`READ_AT_MOST`] bytes; `kept` moves on past them. A transcript shorter than the offset
-/// is another file: it is read from its start.
+/// is another file: it is read from its start. Read from its start, a fork's passes over what it
+/// inherited ([`inherited_until`]).
 fn read(transcript: &Path, kept: &mut Kept) -> std::io::Result<Vec<Spent>> {
     let mut file = File::open(transcript)?;
     let len = file.metadata()?.len();
     if len < kept.offset {
         kept.offset = 0;
+    }
+    if kept.offset == 0 {
+        kept.inherited = inherited_until(transcript);
     }
     file.seek(SeekFrom::Start(kept.offset))?;
     let mut lines = BufReader::new(file);
@@ -206,6 +220,12 @@ fn read(transcript: &Path, kept: &mut Kept) -> std::io::Result<Vec<Spent>> {
         let took = u64::try_from(took).unwrap_or(u64::MAX);
         read += took;
         kept.offset += took;
+        if let Some(call) = &kept.inherited {
+            if answers(&line, call) {
+                kept.inherited = None;
+            }
+            continue;
+        }
         let Some((id, one)) = message(&line) else {
             continue;
         };
@@ -217,6 +237,45 @@ fn read(transcript: &Path, kept: &mut Kept) -> std::io::Result<Vec<Spent>> {
     let over = kept.seen.len().saturating_sub(SEEN);
     kept.seen.drain(..over);
     Ok(spent)
+}
+
+/// The parent's tool call whose result ends what `transcript` inherited, when it is a fork's: its
+/// `agent-ID.meta.json` says `"isFork": true` and names the call (`toolUseId`). None for any other
+/// transcript, or a meta that cannot be read, which is read whole.
+fn inherited_until(transcript: &Path) -> Option<String> {
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Meta {
+        is_fork: Option<bool>,
+        tool_use_id: Option<String>,
+    }
+    let name = transcript.file_name()?.to_str()?.strip_suffix(".jsonl")?;
+    let meta = fs::read(transcript.with_file_name(format!("{name}.meta.json"))).ok()?;
+    let meta: Meta = serde_json::from_slice(&meta).ok()?;
+    meta.is_fork
+        .filter(|fork| *fork)
+        .and(meta.tool_use_id)
+        .filter(|call| !call.is_empty())
+}
+
+/// Whether `line` is the tool result that answers `call`: the user line ending a fork's inheritance.
+fn answers(line: &[u8], call: &str) -> bool {
+    let Ok(text) = std::str::from_utf8(line) else {
+        return false;
+    };
+    if !text.contains(call) || !text.contains("\"tool_result\"") {
+        return false;
+    }
+    let Ok(line) = serde_json::from_str::<Value>(text) else {
+        return false;
+    };
+    let content = &line["message"]["content"];
+    line["type"] == "user"
+        && content.as_array().is_some_and(|blocks| {
+            blocks
+                .iter()
+                .any(|block| block["type"] == "tool_result" && block["tool_use_id"] == call)
+        })
 }
 
 /// One transcript line: an assistant message's id and usage, when it is one. A line that names
@@ -297,8 +356,10 @@ struct Creation {
     ephemeral_1h_input_tokens: Option<u64>,
 }
 
-/// Remove from `folder` each ledger, and its lock, nothing wrote to for [`PRUNE_AFTER`] by `now`;
-/// a lock with no ledger by its own age.
+/// Remove from `folder` each ledger, and its lock, nothing wrote to for [`PRUNE_AFTER`] by `now`
+/// whose transcript is gone, so no beat reads it again; a lock with no ledger by its own age. A
+/// ledger whose transcript is still there is kept however old (a session resumed reads on from it),
+/// and so is one that does not parse, which stands for the transcript's end.
 fn prune(folder: &Path, now: SystemTime) {
     let Ok(entries) = fs::read_dir(folder) else {
         return;
@@ -308,13 +369,24 @@ fn prune(folder: &Path, now: SystemTime) {
             .and_then(|m| m.modified())
             .is_ok_and(|at| now.duration_since(at).is_ok_and(|age| age >= PRUNE_AFTER))
     };
+    // The ledger parses and its transcript is not there: no beat will read it again.
+    let gone = |ledger: &Path| {
+        let kept = fs::read(ledger)
+            .ok()
+            .and_then(|bytes| serde_json::from_slice::<Kept>(&bytes).ok());
+        kept.is_some_and(|kept| {
+            !kept.transcript.is_empty()
+                && fs::symlink_metadata(&kept.transcript)
+                    .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound)
+        })
+    };
     for entry in entries.flatten() {
         let path = entry.path();
         let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
             continue;
         };
         if let Some(key) = name.strip_suffix(".json") {
-            if old(&path) {
+            if old(&path) && gone(&path) {
                 let _ = fs::remove_file(&path);
                 let _ = fs::remove_file(folder.join(format!("{key}.lock")));
             }

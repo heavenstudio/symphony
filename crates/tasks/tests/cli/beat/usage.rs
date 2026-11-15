@@ -95,6 +95,64 @@ fn a_subagents_beats_give_its_own_transcripts_tokens_once_from_its_binding_on() 
 }
 
 #[test]
+fn a_fork_bound_to_its_parents_handle_adds_only_its_own_calls_to_the_parents() {
+    let dir = scratch("beat-usage-fork");
+    let mut env = env();
+    env.vars.insert(
+        "TASKS_USAGE".into(),
+        dir.join("usage").to_string_lossy().into_owned(),
+    );
+    let h = ok(&env, &["register", "--kind", "worker"]);
+    ok(&env, &["--as", &h, "create", "sim/jump", "Jump"]);
+    ok(&env, &["--as", &h, "claim", "sim/jump"]);
+    let main = dir.join("s-1.jsonl");
+    let subagents = dir.join("s-1").join("subagents");
+    let (parent, fork) = (
+        subagents.join("agent-p1.jsonl"),
+        subagents.join("agent-f1.jsonl"),
+    );
+    // The parent's two calls, the second its Agent call that makes the fork.
+    let call = json!({"type": "assistant", "message": {"id": "p2", "model": "claude-opus-5-5",
+        "content": [{"type": "tool_use", "id": "toolu_fork", "name": "Agent", "input": {}}],
+        "usage": {"input_tokens": 2, "cache_creation_input_tokens": 20,
+                  "cache_read_input_tokens": 2000, "output_tokens": 4}}})
+    .to_string();
+    let answer = json!({"type": "user", "message": {"role": "user", "content": [
+        {"type": "tool_result", "tool_use_id": "toolu_fork", "content": "forked"},
+        {"type": "text", "text": "Your directive: triage group D"}]}})
+    .to_string();
+    append(&parent, &[assistant("p1", 1), call.clone()]);
+    // The fork's own transcript begins with what it inherited, under the parent's ids.
+    append(&fork, &[assistant("p1", 1), call, answer.clone()]);
+    append(&fork, &[assistant("f1", 4), assistant("f1", 4)]);
+    fs::write(
+        subagents.join("agent-f1.meta.json"),
+        r#"{"agentType": "fork", "isFork": true, "parentAgentId": "p1",
+            "toolUseId": "toolu_fork"}"#,
+    )
+    .unwrap();
+    let command = format!("just tasks show sim/jump --as {h}");
+    let at = |agent: &str| {
+        let mut event = bash(&command).agent(agent).0;
+        event["transcript_path"] = json!(main);
+        event
+    };
+    beat(&env, &at("p1"));
+    beat(&env, &at("f1"));
+    // Its own later call, and the parent's answer to it, each counted once.
+    append(&fork, &[assistant("f2", 8)]);
+    append(&parent, &[answer, assistant("p3", 16)]);
+    beat(&env, &at("f1"));
+    beat(&env, &at("p1"));
+    assert_eq!(
+        total(&env),
+        worth(1 + 2 + 4 + 8 + 16, 5),
+        "the distinct ids p1, p2, f1, f2 and p3, each once"
+    );
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn a_test_board_with_no_usage_folder_reads_no_transcript() {
     let dir = scratch("beat-no-usage");
     let env = env();
