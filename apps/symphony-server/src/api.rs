@@ -14,12 +14,14 @@ use crate::front::Shared;
 use crate::live::Hub;
 
 mod failure;
+mod feed_socket;
 pub(crate) mod reports;
 pub(crate) mod run_log;
 mod validated;
 mod warm;
 
 use failure::{task_failure, unavailable};
+use feed_socket::Said;
 pub(crate) use warm::{start, warm};
 
 /// Where a plugin's routes answer: `/x/<route>/<rest>`.
@@ -386,7 +388,7 @@ async fn read(shared: &Arc<Shared>, request: Request) -> Option<Response> {
         });
     }
     let response = match path {
-        "/api/feed" => feed(hub, scope, &request),
+        "/api/feed" => feed(hub, scope, request).await,
         "/api/tasks" | "/api/task-board" => {
             let search = query(&request, "q")
                 .unwrap_or_default()
@@ -1086,9 +1088,14 @@ fn events_since(
         .collect())
 }
 
-fn feed(hub: Arc<Hub>, scope: &str, request: &Request) -> Response {
+/// The feed from `?since=`: Server-Sent Events, or the same events on a WebSocket when the request
+/// asks to upgrade ([`feed_socket`]).
+async fn feed(hub: Arc<Hub>, scope: &str, request: Request) -> Response {
     use futures_util::StreamExt;
-    let Some(since) = query(request, "since").and_then(|v| v.parse::<u64>().ok()) else {
+    if let Some(refused) = feed_socket::refused(&request) {
+        return refused;
+    }
+    let Some(since) = query(&request, "since").and_then(|v| v.parse::<u64>().ok()) else {
         return error(
             StatusCode::BAD_REQUEST,
             "the feed needs ?since=VERSION from /api/board",
@@ -1101,8 +1108,8 @@ fn feed(hub: Arc<Hub>, scope: &str, request: &Request) -> Response {
     };
     let scope = scope.to_string();
     let document_filter = {
-        let path = query(request, "document").unwrap_or_default();
-        let keys = query(request, "sections")
+        let path = query(&request, "document").unwrap_or_default();
+        let keys = query(&request, "sections")
             .and_then(|keys| serde_json::from_str::<Vec<String>>(&keys).ok())
             .unwrap_or_default();
         (path, keys)
@@ -1116,14 +1123,7 @@ fn feed(hub: Arc<Hub>, scope: &str, request: &Request) -> Response {
                 return None;
             }
             let message = notices.borrow_and_update().clone();
-            Some((
-                Ok::<_, std::io::Error>(format!(
-                    "event: {}\ndata: {}\n\n",
-                    symphony_api::SERVER_EVENT,
-                    serde_json::to_string(&message).expect("a notice serializes")
-                )),
-                (notices, false),
-            ))
+            Some((Said::notice(&message), (notices, false)))
         });
     let stream = futures_util::stream::unfold(
         (
@@ -1139,11 +1139,10 @@ fn feed(hub: Arc<Hub>, scope: &str, request: &Request) -> Response {
             loop {
                 if let Some(event) = pending.pop_front() {
                     since = event.version;
-                    let item: Result<String, std::io::Error> = Ok(format!(
-                        "event: {}\nid: {since}\ndata: {}\n\n",
-                        symphony_api::FEED_EVENT,
-                        filtered_document_event(&event.json, &document_filter)
-                    ));
+                    let item = Said::delta(
+                        since,
+                        filtered_document_event(&event.json, &document_filter),
+                    );
                     deadline = tokio::time::Instant::now() + ping_after;
                     return Some((
                         item,
@@ -1166,9 +1165,7 @@ fn feed(hub: Arc<Hub>, scope: &str, request: &Request) -> Response {
                     Ok(Err(_)) => return None,
                     Err(_) => {
                         return Some((
-                            // Event::data("") writes no data field, which a browser never
-                            // dispatches. A blank data line is required for the named ping.
-                            Ok(format!("event: {}\ndata:\n\n", symphony_api::PING_EVENT)),
+                            Said::ping(),
                             (
                                 hub,
                                 scope,
@@ -1184,23 +1181,25 @@ fn feed(hub: Arc<Hub>, scope: &str, request: &Request) -> Response {
             }
         },
     );
+    // A terminal marker from the main subscription ends the whole feed. Notices must not keep an
+    // expired or removed subscription open without its normal pings.
+    let said = futures_util::stream::select(
+        stream
+            .map(Some)
+            .chain(futures_util::stream::once(std::future::ready(None))),
+        notices.map(Some),
+    )
+    .take_while(|event| std::future::ready(event.is_some()))
+    .filter_map(std::future::ready)
+    .take_until(async move {
+        let _ = draining.wait_for(|draining| *draining).await;
+    });
+    if feed_socket::asked(&request) {
+        return feed_socket::answer(request, said).await;
+    }
     let mut response = no_store((
         [(header::CONTENT_TYPE, "text/event-stream")],
-        Body::from_stream(
-            // A terminal marker from the main subscription closes the whole response. Notices
-            // must not keep an expired or removed subscription open without its normal pings.
-            futures_util::stream::select(
-                stream
-                    .map(Some)
-                    .chain(futures_util::stream::once(std::future::ready(None))),
-                notices.map(Some),
-            )
-            .take_while(|event| std::future::ready(event.is_some()))
-            .filter_map(std::future::ready)
-            .take_until(async move {
-                let _ = draining.wait_for(|draining| *draining).await;
-            }),
-        ),
+        Body::from_stream(said.map(|said| Ok::<_, std::io::Error>(said.sse()))),
     ));
     response
         .headers_mut()

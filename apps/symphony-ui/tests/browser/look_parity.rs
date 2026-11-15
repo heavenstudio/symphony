@@ -1,6 +1,6 @@
 //! Computed styles and real input against the release client. API fixtures supply content only;
 //! hover, focus, layout and component markup are all the production client and stylesheets.
-use super::{SHOWN, assets::module, chrome, common, dist};
+use super::{SHOWN, assets::module, chrome, common, dist, site};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Write};
@@ -597,12 +597,39 @@ impl ParitySite {
                         .and_then(|rest| rest.split_once('/'))
                         .map_or_else(|| path.to_string(), |(_, route)| format!("/{route}"));
                     if path == "/api/feed" {
-                        // A healthy stream preserves the document and focused editor during input.
-                        if out.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-store\r\n\r\n: open\n\n").is_err() { return; }
+                        // A healthy stream preserves the document and focused editor during input:
+                        // on a WebSocket for the web client's kinds, as events for the task pages.
+                        let mut key = None;
+                        loop {
+                            let mut header = String::new();
+                            if reader.read_line(&mut header).unwrap_or(0) == 0 {
+                                return;
+                            }
+                            let header = header.trim_end();
+                            if header.is_empty() {
+                                break;
+                            }
+                            if let Some((name, value)) = header.split_once(':')
+                                && name.trim().eq_ignore_ascii_case("sec-websocket-key")
+                            {
+                                key = Some(value.trim().to_string());
+                            }
+                        }
+                        let ping = site::Said::ping();
+                        let (head, ping) = match key {
+                            Some(key) => (site::socket_head(&key).into_bytes(), ping.frame()),
+                            None => (
+                                b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-store\r\n\r\n: open\n\n".to_vec(),
+                                ping.sse().into_bytes(),
+                            ),
+                        };
+                        if out.write_all(&head).is_err() {
+                            return;
+                        }
                         let mut pinged = Instant::now();
                         while !stop.load(Ordering::SeqCst) {
                             if pinged.elapsed() >= Duration::from_secs(1) {
-                                if out.write_all(b"event: ping\ndata:\n\n").is_err() {
+                                if out.write_all(&ping).is_err() {
                                     return;
                                 }
                                 pinged = Instant::now();

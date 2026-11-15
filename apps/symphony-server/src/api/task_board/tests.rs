@@ -309,6 +309,84 @@ async fn finished_window_is_applied_before_stage_counts_including_searches() {
     }
 }
 
+/// A task's subtasks (`parent=`, its page's Subtasks and its branch of the task groups) list its
+/// slices, its errands and an open instruction, never a finished instruction to do or review it;
+/// the task groups (`roots=`) hold no task whose subtasks are all such.
+#[tokio::test]
+async fn subtasks_and_task_groups_leave_out_finished_instructions_to_staff_their_task() {
+    let task = |slug: &str, status: &str, parent: Option<&str>, instruction: bool| {
+        serde_json::from_value(
+            json!({"slug":slug,"title":slug,"body":"brief","status":status,
+            "priority":2,"parent":parent,"created_by":"owner","created":0.0,"updated":0.0,
+            "links":[],"depends":[],"roles":[],"instruction":instruction}),
+        )
+        .unwrap()
+    };
+    let tasks = Tasks {
+        version: String::new(),
+        tasks: vec![
+            task("feature", "in_progress", None, false),
+            task("feature/slice", "done", Some("feature"), false),
+            task("feature/visual", "done", Some("feature"), true),
+            task("feature/work", "in_progress", Some("feature"), true),
+            task("feature/review", "done", Some("feature"), true),
+            task("feature/staff-review-1", "cancelled", Some("feature"), true),
+            task("staffed", "done", None, false),
+            task("staffed/work", "done", Some("staffed"), true),
+            task("staffed/review", "cancelled", Some("staffed"), true),
+            task("in-flight", "ready", None, false),
+            task("in-flight/work", "ready", Some("in-flight"), true),
+            task("alone", "ready", None, false),
+        ],
+        sessions: vec![],
+    };
+    let read = |query: &str| {
+        let request = Request::builder()
+            .uri(format!("/api/task-board?{query}&older=1"))
+            .body(())
+            .unwrap();
+        let response = project(
+            &request,
+            tasks.clone(),
+            "",
+            &BTreeMap::new(),
+            MachineWork::default(),
+            vec![],
+        );
+        async move {
+            let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+                .await
+                .unwrap();
+            let listing: TaskListing = serde_json::from_slice(&bytes).unwrap();
+            let total: usize = listing.counts.iter().map(|(_, n)| n).sum();
+            let slugs: Vec<_> = listing.tasks.into_iter().map(|t| t.slug).collect();
+            (slugs, total)
+        }
+    };
+    assert_eq!(
+        read("parent=feature").await,
+        (
+            vec![
+                "feature/slice".to_string(),
+                "feature/visual".into(),
+                "feature/work".into()
+            ],
+            3
+        )
+    );
+    assert_eq!(read("parent=staffed").await, (vec![], 0));
+    assert_eq!(
+        read("parent=in-flight").await,
+        (vec!["in-flight/work".to_string()], 1)
+    );
+    assert_eq!(
+        read("roots=1").await,
+        (vec!["feature".to_string(), "in-flight".into()], 2)
+    );
+    // The board's columns list top-level tasks, a staffed one among them, as before.
+    assert_eq!(read("status=done").await.0, vec!["staffed".to_string()]);
+}
+
 /// `work=0` leaves the machine's work out of a listing, which a page then reads from
 /// `/api/machine-work`, and nothing else: the stages and counts still place each task by it, so a
 /// listing's validator moves with its tasks and not with a recorder's heartbeat.
