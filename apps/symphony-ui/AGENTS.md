@@ -639,7 +639,17 @@ never the whole target, which the release run runs.
   one and starts the other as between two Dioxus kinds. Its
   `html[data-navigation]` is `loading` until the shell's navigation finishes,
   then `ready`, or `failed` if the page cannot load. It preserves a scroll made
-  after the new page mounts instead of applying its late top reset.
+  after the new page mounts instead of applying its late top reset. A scroll to the
+  element the address names, its own or a web kind's (`route.ts`), is held there while
+  the page draws around it (`land`): the sections a landing brings near draw after
+  it, often taller than their ghosts, and the browser's own scroll anchoring holds nothing
+  under a page's ghost (`.settle`). A landing is one hold for each navigation. It ends
+  when it goes quiet (nothing moved and nothing waiting or busy within reach for four
+  frames, or 1800 at most), at the reader's input that scrolls (a wheel, a touch that
+  moves, a press on the page's scrollbar, a scroll key; not a click, a tap, a selection
+  or another key) and at any scroll that moves the page and the element alike (find in
+  the page, a focus, a script). Only the next navigation lands again: a later call (a
+  section's read in, an outline read again) does nothing once it has ended.
   Compilation leaves `OUT/public` serving its last build;
   packaging assembles beside it and `symphony-build publish-client` atomically exchanges the
   complete directories (macOS/Linux). Failed builds leave the published client

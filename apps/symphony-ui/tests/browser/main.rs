@@ -25,6 +25,7 @@
 
 mod assets;
 mod binaries;
+mod board_place;
 mod board_search;
 mod board_status;
 mod cache_ahead;
@@ -37,6 +38,7 @@ mod chrome;
 mod common;
 mod components;
 mod document_cards;
+mod document_landing;
 mod feed_deltas;
 #[path = "../../../../tools/test-support/script_std.rs"]
 mod fixture_script;

@@ -160,7 +160,8 @@ fn suites<'a>(lines: impl Iterator<Item = &'a RunLine>) -> Vec<SuiteDay> {
     for suite in lines.filter_map(|line| line.suites.as_ref()).flatten() {
         let (runs, failed, times) = by_name.entry(&suite.name).or_default();
         *runs += 1;
-        *failed += u32::from(suite.failed > 0);
+        // One that ended with no result line passed nothing.
+        *failed += u32::from(suite.failed > 0 || suite.error);
         times.push(suite.s);
     }
     by_name
@@ -234,7 +235,7 @@ fn failures(run: &RunLine) -> HashSet<Test<'_>> {
 }
 
 /// Whether `test` passed in `run`: not among its failures, and the run green, or red with the
-/// test's binary among the ones it reported.
+/// test's binary among the ones it reported, and that one ended with its result line.
 fn passed(run: &RunLine, test: Test) -> bool {
     if failures(run).contains(&test) {
         return false;
@@ -247,7 +248,7 @@ fn passed(run: &RunLine, test: Test) -> bool {
                     .suites
                     .iter()
                     .flatten()
-                    .any(|reported| reported.name == suite)
+                    .any(|reported| reported.name == suite && !reported.error)
         }),
         _ => false,
     }
