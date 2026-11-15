@@ -147,10 +147,6 @@ label { display:block; } html:root :focus-visible { outline:2px solid var(--ring
    nested in it (a column's rows), nor a list item's marker when the slot is the item; inside
    one, layout containment puts the marker on a line of its own. */
 .viewport-slot:not(li, li > *, :has(.viewport-sentinel)) { content-visibility:auto; }
-/* A board row still waiting for its card skips its ghost's style and paint while off screen: a
-   column loaded to its end holds a thousand ghosts, each bar's shimmer restyled every frame. The
-   ghost is as tall as its min-height either way, and the sentinel beside it is not in it. */
-.board-row > .viewport-placeholder { content-visibility:auto; }
 /* A list item's paragraphs are lines of the list, tight or loose. */
 li > .viewport-slot > p { margin:0; }
 li > .viewport-slot > p + p { margin-top:1em; }

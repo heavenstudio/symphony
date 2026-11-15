@@ -612,7 +612,6 @@ export const BoardRow = memo(function BoardRow({ task, work, connected, layout }
   return (
     <NearViewport
       id={`row-${task.slug}`}
-      className="board-row"
       height={reserve[0]}
       ghost={<GhostCard card={reserve} />}
       eager={follows !== null}

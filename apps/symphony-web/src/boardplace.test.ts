@@ -11,6 +11,7 @@ import {
   ROWS,
   readerColumn,
   readerRows,
+  rowIn,
   rowOf,
   type Scroller,
   samePlace,
@@ -53,10 +54,15 @@ function element({ id = "", attributes = {}, box = {}, closest = {}, all = {} }:
 }
 
 const COLUMN = ".board-scroll .column[data-status]";
+/** What a row's column is found by. */
+const ITS_COLUMN = ".column[data-status]";
 const CARD = `.kanban ${ROWS}`;
 const FOCUSABLE = "a[href], button, summary, [tabindex]";
 const ROW_IDS = '[id^="row-"]';
 const rows = (status: string) => `.board-scroll .column[data-status="${status}"] ${ROWS}`;
+/** The card `STATUS-N` of the column `status` (`board`), named alone. */
+const cardOf = (status: string, n: number) =>
+  `.board-scroll .column[data-status="${status}"] [data-slug="${status}-${n}"]`;
 const rowsOf = (status: string) => `.column[data-status="${status}"] ${ROW_IDS}`;
 
 afterEach(() => {
@@ -97,12 +103,13 @@ describe("the reader's column", () => {
 /**
  * A board scrolled to show 0 to 900 sideways and 200 to 700 down, its columns at `columns`
  * (status, left, the tops of its cards, each card its row `row-STATUS-N`), the focus on `active`,
- * the pointer over `hovered`.
+ * the pointer over `hovered`, a mouse's (`mouse`) or a touch screen's last tap.
  */
 function board(
   columns: [string, number, number[]][],
   hovered: string | null = null,
   active: Element | null = null,
+  mouse = true,
 ) {
   const made = columns.map(([status, left, tops]) => {
     // A column is the closest column to itself.
@@ -111,7 +118,12 @@ function board(
     const column = element({ attributes, box: { left, right: left + 288 }, closest });
     closest[COLUMN] = column;
     const cards = tops.map((top, n) =>
-      element({ id: `row-${status}-${n}`, box: { top, left, right: left + 288 } }),
+      element({
+        id: `row-${status}-${n}`,
+        attributes: { "data-slug": `${status}-${n}` },
+        box: { top, left, right: left + 288 },
+        closest: { [ITS_COLUMN]: column },
+      }),
     );
     return { status, column, cards };
   });
@@ -131,26 +143,33 @@ function board(
     activeElement: active,
     querySelector: (selector: string) => (selector === ".board-scroll" ? scroller : null),
   });
+  vi.stubGlobal("matchMedia", (query: string) => ({
+    matches: query === "(hover: hover)" && mouse,
+  }));
+  vi.stubGlobal("innerHeight", 1000);
   return scroller;
 }
 
-describe("the rows a live update holds", () => {
-  it("are every card without a page or a board's scroller", () => {
+describe("the card a live update holds", () => {
+  it("is every card without a page or a board's scroller", () => {
     expect(readerRows()).toBe(ROWS);
     vi.stubGlobal("document", { activeElement: null, querySelector: () => null });
     expect(readerRows()).toBe(ROWS);
   });
 
-  it("are the cards of the column nearest the scroller's middle", () => {
+  it("is the first on the screen of the column nearest the scroller's middle, named alone", () => {
     board([
       ["concept", 0, [250]],
-      ["ready", 300, [180, 260]],
+      ["ready", 300, [180, 260, 300]],
       ["in_progress", 600, [300]],
     ]);
-    expect(readerRows()).toBe(rows("ready"));
+    expect(readerRows()).toBe(cardOf("ready", 1));
+    expect(cardOf("ready", 1)).toBe(
+      '.board-scroll .column[data-status="ready"] [data-slug="ready-1"]',
+    );
   });
 
-  it("are the cards of the column under the pointer, or holding the focus", () => {
+  it("is the first on the screen of the column under the pointer, or holding the focus", () => {
     board(
       [
         ["concept", 0, [250]],
@@ -158,7 +177,7 @@ describe("the rows a live update holds", () => {
       ],
       "concept",
     );
-    expect(readerRows()).toBe(rows("concept"));
+    expect(readerRows()).toBe(cardOf("concept", 0));
     const column = element({ attributes: { "data-status": "in_progress" } });
     board(
       [
@@ -169,19 +188,40 @@ describe("the rows a live update holds", () => {
       "concept",
       element({ closest: { [COLUMN]: column } }),
     );
-    expect(readerRows()).toBe(rows("in_progress"));
+    expect(readerRows()).toBe(cardOf("in_progress", 0));
   });
 
-  it("leave out a column scrolled away sideways", () => {
+  it("leaves out the column of a touch screen's last tap, wherever the reader swiped since", () => {
+    const columns: [string, number, number[]][] = [
+      ["concept", 0, [250]],
+      ["ready", 300, [260]],
+    ];
+    board(columns, "concept", null, false);
+    expect(readerRows()).toBe(cardOf("ready", 0));
+    // A browser that cannot say what its pointer is counts none.
+    board(columns, "concept");
+    vi.stubGlobal("matchMedia", undefined);
+    expect(readerRows()).toBe(cardOf("ready", 0));
+  });
+
+  it("leaves out a column scrolled away sideways", () => {
     // Only the first shows: the one past the scroller's right, nearer its middle, is not the reader's.
     board([
       ["concept", -200, [250]],
       ["ready", 950, [260]],
     ]);
-    expect(readerRows()).toBe(rows("concept"));
+    expect(readerRows()).toBe(cardOf("concept", 0));
   });
 
-  it("are every card when no card of the reader's column has its top on the scroller", () => {
+  it("is one in the window as well, where the shell's hold looks for it", () => {
+    board([["ready", 300, [180, 650]]]);
+    expect(readerRows()).toBe(cardOf("ready", 1));
+    // The window ends above the scroller's bottom: the card under it is not on the screen.
+    vi.stubGlobal("innerHeight", 600);
+    expect(readerRows()).toBe(ROWS);
+  });
+
+  it("is every card when no card of the reader's column has its top on the scroller", () => {
     board([
       ["concept", 0, [250]],
       ["ready", 300, [100, 700, 900]],
@@ -199,7 +239,7 @@ describe("the row the reader's place is kept by", () => {
       ["ready", 300, [150, 260.4, 400]],
       ["in_progress", 600, [300]],
     ]);
-    expect(anchorOf(scroller)).toEqual({ row: "ready-1", at: 60 });
+    expect(anchorOf(scroller)).toEqual({ row: "ready-1", column: "ready", at: 60 });
   });
 
   it("is any column's first row on the screen when the reader's has none there", () => {
@@ -208,17 +248,27 @@ describe("the row the reader's place is kept by", () => {
       ["ready", 300, [100, 800]],
       ["in_progress", 600, [300]],
     ]);
-    expect(anchorOf(scroller)).toEqual({ row: "concept-1", at: 30 });
+    expect(anchorOf(scroller)).toEqual({ row: "concept-1", column: "concept", at: 30 });
   });
 
-  it("is none on a board with no row on the screen", () => {
+  it("is none on a board with no row on the screen, or none in a column", () => {
     expect(anchorOf(board([["ready", 300, [100, 800]]]))).toBeNull();
     expect(anchorOf(board([]))).toBeNull();
+    const loose = element({ id: "row-w/a", box: { top: 300, left: 0, right: 288 } });
+    const scroller = element({
+      box: { top: 200, bottom: 700, left: 0, right: 900 },
+      all: { [ROW_IDS]: [loose] },
+    });
+    vi.stubGlobal("document", { activeElement: null });
+    expect(anchorOf(scroller)).toBeNull();
   });
 
-  it("is named for the shell's hold by its id, quoted", () => {
+  it("is named for the shell's hold by its id, quoted, in its column or anywhere", () => {
     expect(rowOf("w/a")).toBe('[id="row-w/a"]');
     expect(rowOf('w/"a\\')).toBe('[id="row-w/\\"a\\\\"]');
+    expect(rowIn('re"ady', "w/a")).toBe(
+      '.board-scroll .column[data-status="re\\"ady"] [id="row-w/a"]',
+    );
   });
 });
 
@@ -306,17 +356,21 @@ describe("the board's place in its history entry", () => {
       top: 0,
       page: 0,
     });
-    const kept = { ...place, row: "w/a", at: 40 };
+    const kept = { ...place, row: "w/a", column: "ready", at: 40 };
     expect(keptPlace({ board: kept })).toEqual(kept);
   });
 
-  it("is read without its row when the row or its height on the screen is not whole", () => {
+  it("is read without its row when the row, its column or its height on the screen is not whole", () => {
     for (const row of [
-      { row: "", at: 40 },
-      { row: 3, at: 40 },
-      { row: "w/a" },
-      { row: "w/a", at: -1 },
-      { row: "w/a", at: "40" },
+      { row: "", column: "ready", at: 40 },
+      { row: 3, column: "ready", at: 40 },
+      { row: "w/a", column: "ready" },
+      { row: "w/a", column: "ready", at: -1 },
+      { row: "w/a", column: "ready", at: "40" },
+      // A place an earlier build kept, its row's column not named.
+      { row: "w/a", at: 40 },
+      { row: "w/a", column: "", at: 40 },
+      { row: "w/a", column: 3, at: 40 },
     ]) {
       expect(keptPlace({ board: { ...place, ...row } })).toEqual(place);
     }
@@ -352,9 +406,16 @@ describe("the board's place in its history entry", () => {
 
   it("is the same only as one at the very same place", () => {
     expect(samePlace(place, { ...place })).toBe(true);
-    const kept = { ...place, row: "w/a", at: 40 };
+    const kept = { ...place, row: "w/a", column: "ready", at: 40 };
     expect(samePlace(kept, { ...kept })).toBe(true);
-    for (const other of [{ left: 301 }, { top: 1199 }, { page: 0 }, { row: "w/b" }, { at: 41 }]) {
+    for (const other of [
+      { left: 301 },
+      { top: 1199 },
+      { page: 0 },
+      { row: "w/b" },
+      { column: "design" },
+      { at: 41 },
+    ]) {
       expect(samePlace(kept, { ...kept, ...other })).toBe(false);
     }
     expect(samePlace(place, kept)).toBe(false);
@@ -435,31 +496,45 @@ describe("the board's place kept", () => {
   /** Rows of a column: each its slug and how far down the column it stands. */
   type Rows = [slug: string, offset: number][];
 
+  /** A place kept by Ready's row `w/b`, 50 px below the scroller's top, the scroller 250 down. */
+  const KEPT: Place = { left: 0, top: 250, page: 0, row: "w/b", column: "ready", at: 50 };
+
   /**
    * The board's scroller, its box 100 to 600 down and 0 to 900 sideways, showing one column,
    * Ready's, whose rows are `rows` (each its slug and how far down the column it stands), on the
-   * screen where the scroller's top puts them, and on the page (`getElementById`).
+   * screen where the scroller's top puts them, and on the page (`getElementById`); or, while
+   * `waiting`, none yet, its placeholder (`[data-pending]`) standing for them.
    */
-  function surface(rows: Rows = []): Scroller & { draw: (rows: Rows) => void } {
+  function surface(rows: Rows = [], waiting = false): Scroller & { draw: (rows: Rows) => void } {
     const box = { top: 100, bottom: 600, left: 0, right: 900 };
     const scroller = { scrollLeft: 0, scrollTop: 0 } as Scroller;
+    const inColumn: Record<string, Element[]> = {};
     const column = element({
       attributes: { "data-status": "ready" },
       box: { left: 0, right: 288 },
+      all: inColumn,
     });
-    const all: Record<string, Element[]> = { ".column[data-status]": [column] };
-    /** Draw Ready's rows as `rows`, in place of those it had. */
-    const draw = (rows: Rows) => {
+    const all: Record<string, Element[]> = {};
+    /** Draw Ready's rows as `rows`, in place of those it had, or its placeholder while `waits`. */
+    const draw = (rows: Rows, waits = false) => {
+      for (const selector of Object.keys(all)) delete all[selector];
+      all[".column[data-status]"] = [column];
+      all['.column[data-status="ready"]'] = [column];
       const made = rows.map(([slug, offset]) => {
         const top = box.top + offset;
         const edges = () => ({ top: top - scroller.scrollTop, left: 0, right: 288 });
-        return { id: `row-${slug}`, getBoundingClientRect: edges } as unknown as Element;
+        const closest = (selector: string) => (selector === ITS_COLUMN ? column : null);
+        const row = { id: `row-${slug}`, getBoundingClientRect: edges, closest };
+        all[rowIn("ready", slug)] = [row as unknown as Element];
+        return row as unknown as Element;
       });
       all[ROW_IDS] = made;
       all[rowsOf("ready")] = made;
+      inColumn[ROW_IDS] = made;
+      inColumn['[data-pending="true"]'] = waits ? [element()] : [];
       onPage = made;
     };
-    draw(rows);
+    draw(rows, waiting);
     return Object.assign(scroller, {
       draw,
       getBoundingClientRect: () => box,
@@ -502,11 +577,11 @@ describe("the board's place kept", () => {
     );
     scroller.scrollTop = 250;
     kept.keep();
-    expect(entry.state).toEqual({ board: { left: 0, top: 250, page: 0, row: "w/b", at: 50 } });
+    expect(entry.state).toEqual({ board: KEPT });
   });
 
   it("returns to its row where it stood when the rows above it are drawn at another height", () => {
-    entry.state = { board: { left: 0, top: 250, page: 0, row: "w/b", at: 50 } };
+    entry.state = { board: KEPT };
     // The row above is 40 px taller drawn again (its card, where a ghost stood).
     const { keeper: kept, scroller } = keeper(
       surface([
@@ -518,13 +593,13 @@ describe("the board's place kept", () => {
     expect(scroller.scrollTop).toBe(290);
     // There at once; the shell's hold keeps the row there while the rows near it draw.
     expect(frames).toEqual([]);
-    expect(held).toHaveBeenCalledExactlyOnceWith(rowOf("w/b"));
+    expect(held).toHaveBeenCalledExactlyOnceWith(rowIn("ready", "w/b"));
   });
 
-  it("returns to the scroller's top while its row is not on the page yet, then to its row", () => {
-    entry.state = { board: { left: 0, top: 250, page: 0, row: "w/b", at: 50 } };
+  it("returns to the scroller's top while its column draws its rows, then to its row", () => {
+    entry.state = { board: KEPT };
     // The board's first draw: its columns' rows not drawn yet.
-    const scroller = surface();
+    const scroller = surface([], true);
     const { keeper: kept } = keeper(scroller);
     kept.back();
     expect(scroller.scrollTop).toBe(250);
@@ -538,17 +613,56 @@ describe("the board's place kept", () => {
     expect(frame()).toBe(1);
     expect(scroller.scrollTop).toBe(290);
     expect(frames).toEqual([]);
-    expect(held).toHaveBeenCalledExactlyOnceWith(rowOf("w/b"));
+    expect(held).toHaveBeenCalledExactlyOnceWith(rowIn("ready", "w/b"));
   });
 
-  it("gives up at the scroller's top, holding nothing, when its row never comes", () => {
-    entry.state = { board: { left: 0, top: 250, page: 0, row: "w/b", at: 50 } };
-    const { keeper: kept, scroller } = keeper(surface([["w/a", 0]]));
+  it("gives up at the scroller's top, holding nothing, when its column never draws its rows", () => {
+    entry.state = { board: KEPT };
+    const { keeper: kept, scroller } = keeper(surface([], true));
     kept.back();
     let ran = 1;
     while (frame() > 0) ran += 1;
     expect(ran).toBe(RETURN_FRAMES);
     expect(scroller.scrollTop).toBe(250);
+    expect(held).not.toHaveBeenCalled();
+  });
+
+  it("returns to the scroller's top, holding nothing, when its row left its column", () => {
+    entry.state = { board: KEPT };
+    const scroller = surface([
+      ["w/a", 0],
+      ["w/c", 300],
+    ]);
+    // Its task moved on (claimed, or cancelled under the scroller): its row is elsewhere on the
+    // page, far down, and no place of the scroller's.
+    const moved = { id: "row-w/b", getBoundingClientRect: () => ({ top: 4000 }) };
+    onPage = [...onPage, moved as unknown as Element];
+    const { keeper: kept } = keeper(scroller);
+    kept.back();
+    expect(scroller.scrollTop).toBe(250);
+    expect(frames).toEqual([]);
+    expect(held).not.toHaveBeenCalled();
+  });
+
+  it("waits while its column draws, then returns to the scroller's top when its row is not in it", () => {
+    entry.state = { board: KEPT };
+    const scroller = surface([], true);
+    const { keeper: kept } = keeper(scroller);
+    kept.back();
+    expect(frames).toHaveLength(1);
+    scroller.draw([["w/a", 0]]);
+    expect(frame()).toBe(1);
+    expect(scroller.scrollTop).toBe(250);
+    expect(frames).toEqual([]);
+    expect(held).not.toHaveBeenCalled();
+  });
+
+  it("returns to the scroller's top when its column is not on the board", () => {
+    entry.state = { board: { ...KEPT, column: "design" } };
+    const { keeper: kept, scroller } = keeper(surface([["w/b", 300]]));
+    kept.back();
+    expect(scroller.scrollTop).toBe(250);
+    expect(frames).toEqual([]);
     expect(held).not.toHaveBeenCalled();
   });
 
@@ -580,7 +694,7 @@ describe("the board's place kept", () => {
   });
 
   it("goes on returning while its row cannot reach its place yet", () => {
-    entry.state = { board: { left: 0, top: 250, page: 0, row: "w/b", at: 50 } };
+    entry.state = { board: KEPT };
     const scroller = surface([["w/b", 340]]);
     // The scroller holds only 200 px of its rows yet, then all of them.
     let most = 200;
@@ -601,7 +715,7 @@ describe("the board's place kept", () => {
     frame();
     expect(top).toBe(290);
     expect(frames).toEqual([]);
-    expect(held).toHaveBeenCalledExactlyOnceWith(rowOf("w/b"));
+    expect(held).toHaveBeenCalledExactlyOnceWith(rowIn("ready", "w/b"));
   });
 
   it("is written at once before a link is followed, the rest's wait dropped", () => {

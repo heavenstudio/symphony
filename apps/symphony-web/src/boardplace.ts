@@ -43,6 +43,14 @@ function columnOf(node: Element | null | undefined): string | null {
 /** What of the board's scroller is read: its box and what is in it. */
 type Surface = Pick<Element, "getBoundingClientRect" | "querySelector" | "querySelectorAll">;
 
+/**
+ * Whether the pointer's place counts: a mouse's, which is where the reader is. A touch screen's
+ * pointer stays where it last tapped (`:hover` there), wherever the reader swiped since.
+ */
+function pointerCounts(): boolean {
+  return typeof matchMedia === "function" && matchMedia("(hover: hover)").matches;
+}
+
 /** The column the reader is in (`readerColumn`) of those the board's `scroller` shows. */
 function readerStatus(scroller: Surface): string | null {
   const box = scroller.getBoundingClientRect();
@@ -54,31 +62,39 @@ function readerStatus(scroller: Surface): string | null {
     .filter(([, left, right]) => right > box.left && left < box.right);
   return readerColumn(
     columnOf(document.activeElement),
-    columnOf(scroller.querySelector(".column[data-status]:hover")),
+    pointerCounts() ? columnOf(scroller.querySelector(".column[data-status]:hover")) : null,
     columns,
     (box.left + box.right) / 2,
   );
 }
 
-/** The first of what `selector` names in the board's `scroller` whose top is on it. */
-function firstOnScreen(scroller: Surface, selector: string): Element | undefined {
+/**
+ * The first of what `selector` names in the board's `scroller` whose top is on it, and in the
+ * window as well when `windowed`.
+ */
+function firstOnScreen(scroller: Surface, selector: string, windowed = false): Element | undefined {
   const box = scroller.getBoundingClientRect();
+  const top = windowed ? Math.max(box.top, 0) : box.top;
+  const bottom = windowed ? Math.min(box.bottom, innerHeight) : box.bottom;
   return [...scroller.querySelectorAll(selector)].find((node) => {
     const edges = node.getBoundingClientRect();
     return (
-      edges.top >= box.top &&
-      edges.top < box.bottom &&
-      edges.right > box.left &&
-      edges.left < box.right
+      edges.top >= top && edges.top < bottom && edges.right > box.left && edges.left < box.right
     );
   });
 }
 
+/** `value` quoted for a selector's attribute. */
+function quoted(value: string): string {
+  return `"${value.replace(/["\\]/g, "\\$&")}"`;
+}
+
 /**
- * The cards a live update holds in place (the shell's `reviewHoldPlace`): those of the column the
- * reader is in (`readerColumn`), so a card filed or moved in another column moves only that one,
- * and one filed above the reader in theirs moves none on their screen. Every card when the board
- * has no scroller, or no card of the reader's column has its top on it.
+ * The card a live update holds in place (the shell's `reviewHoldPlace`): the first of the column
+ * the reader is in (`readerColumn`) whose top is on the screen, so a card filed or moved in
+ * another column moves only that one, and one filed above the reader in theirs moves none on
+ * their screen. Named alone, so the hold looks at no other card to find it. Every card when the
+ * board has no scroller, or no card of the reader's column has its top on it.
  */
 export function readerRows(): string {
   if (typeof document === "undefined") return ROWS;
@@ -86,17 +102,19 @@ export function readerRows(): string {
   if (scroller === null) return ROWS;
   const status = readerStatus(scroller);
   if (status === null) return ROWS;
-  const rows = `.board-scroll .column[data-status="${status}"] ${ROWS}`;
-  return firstOnScreen(scroller, rows) === undefined ? ROWS : rows;
+  const column = `.board-scroll .column[data-status=${quoted(status)}]`;
+  const slug = firstOnScreen(scroller, `${column} ${ROWS}`, true)?.getAttribute("data-slug");
+  return typeof slug === "string" ? `${column} [data-slug=${quoted(slug)}]` : ROWS;
 }
 
 /** Every row of the board's columns, drawn or waiting for its card (`row-SLUG`). */
 const ROW_IDS = '[id^="row-"]';
 
-/** Where the reader's place on the board is kept by: a row on the screen, and how far below the
- * scroller's top its top stands, in whole px. */
+/** Where the reader's place on the board is kept by: a row on the screen, the column it stands
+ * in, and how far below the scroller's top its top stands, in whole px. */
 export interface Anchor {
   row: string;
+  column: string;
   at: number;
 }
 
@@ -111,16 +129,24 @@ export function anchorOf(scroller: Surface): Anchor | null {
   const row =
     (status === null
       ? undefined
-      : firstOnScreen(scroller, `.column[data-status="${status}"] ${ROW_IDS}`)) ??
+      : firstOnScreen(scroller, `.column[data-status=${quoted(status)}] ${ROW_IDS}`)) ??
     firstOnScreen(scroller, ROW_IDS);
-  if (row === undefined) return null;
+  const column = row?.closest(".column[data-status]")?.getAttribute("data-status");
+  if (row === undefined || column === null || column === undefined) return null;
   const at = row.getBoundingClientRect().top - scroller.getBoundingClientRect().top;
-  return { row: row.id.slice("row-".length), at: Math.round(at) };
+  return { row: row.id.slice("row-".length), column, at: Math.round(at) };
 }
 
-/** What the shell's hold (`reviewHoldPlace`) keeps in place: the row of the task `slug`. */
+/** The row of the task `slug` (`row-SLUG`), wherever it stands. */
 export function rowOf(slug: string): string {
-  return `[id="row-${slug.replace(/["\\]/g, "\\$&")}"]`;
+  return `[id=${quoted(`row-${slug}`)}]`;
+}
+
+/** The row of the task `slug` in the board's column `status` (`.column`, in its scroller), and in
+ * no other: a task moved since has its row in another column, or none. What the shell's hold
+ * (`reviewHoldPlace`) keeps in place once Back returned to that row. */
+export function rowIn(status: string, slug: string): string {
+  return `.board-scroll .column[data-status=${quoted(status)}] ${rowOf(slug)}`;
 }
 
 /** What in a card takes the focus, in the order Tab reaches it. */
@@ -166,13 +192,14 @@ export function takeFocus(slug: string, link: number): void {
 
 /**
  * Where the board is scrolled: its scroller's left and top and the window's top, in whole px, and
- * the row on the screen the place is kept by (`anchorOf`), when one is.
+ * the row on the screen the place is kept by and its column (`anchorOf`), when one is.
  */
 export interface Place {
   left: number;
   top: number;
   page: number;
   row?: string;
+  column?: string;
   at?: number;
 }
 
@@ -180,12 +207,13 @@ export interface Place {
 export function keptPlace(state: unknown): Place | null {
   const place = (state as { board?: unknown } | null)?.board as Record<string, unknown> | undefined;
   if (typeof place !== "object" || place === null) return null;
-  const { left, top, page, row, at } = place;
+  const { left, top, page, row, column, at } = place;
   const whole = (value: unknown): value is number =>
     typeof value === "number" && Number.isFinite(value) && value >= 0;
+  const named = (value: unknown): value is string => typeof value === "string" && value !== "";
   if (!whole(left) || !whole(top) || !whole(page)) return null;
-  return typeof row === "string" && row !== "" && whole(at)
-    ? { left, top, page, row, at }
+  return named(row) && named(column) && whole(at)
+    ? { left, top, page, row, column, at }
     : { left, top, page };
 }
 
@@ -203,6 +231,7 @@ export function samePlace(a: Place | null, b: Place | null): boolean {
     a.top === b.top &&
     a.page === b.page &&
     a.row === b.row &&
+    a.column === b.column &&
     a.at === b.at
   );
 }
@@ -310,11 +339,31 @@ export class PlaceKeeper {
   }
 
   /**
+   * The row `place` is kept by, if it is drawn in its column on the board's scroller, and whether
+   * to wait for it: while that column has not drawn its rows yet (the board's first draw holds
+   * none: each column draws them once near the screen). A task moved or gone since has its row in
+   * another column, one under the scroller among them, or none: the place is the scroller's
+   * offset then, never that row's.
+   */
+  private kept(place: Place): [row: Element | null, waits: boolean] {
+    if (place.row === undefined || place.column === undefined) return [null, false];
+    const row = this.scroller.querySelector(rowIn(place.column, place.row));
+    if (row !== null) return [row, false];
+    const column = this.scroller.querySelector(`.column[data-status=${quoted(place.column)}]`);
+    const drawing =
+      column !== null &&
+      column.querySelector(ROW_IDS) === null &&
+      column.querySelector('[data-pending="true"]') !== null;
+    return [null, drawing];
+  }
+
+  /**
    * Return to the place the entry keeps, if it keeps one: the scroller's at once and each frame
    * until it is there (its rows come in while it reads, the kept one among them), and the
    * window's once the shell's navigation is ready (it puts the window at its top before), for
    * RETURN_FRAMES at most; then the shell's hold keeps the row there while the rows near it draw
-   * their cards. The reader's own gesture ends it where they took over.
+   * their cards. A row no longer in its column holds nothing: the scroller's own place is the
+   * reader's. The reader's own gesture ends it where they took over.
    */
   back(): void {
     this.returning?.abort();
@@ -334,10 +383,10 @@ export class PlaceKeeper {
     const step = () => {
       if (returning.signal.aborted) return;
       this.across(place);
-      const row = place.row === undefined ? null : document.getElementById(`row-${place.row}`);
-      // The board's first draw holds no rows yet (each column draws them once near the screen):
-      // the place is its row's once the row is on the page, the scroller's top only until then.
-      const down = this.down(place, row) && (place.row === undefined || row !== null);
+      // Until the kept row's column draws its rows, the place is the scroller's top; then the
+      // row's, if the row is still in that column.
+      const [row, waits] = this.kept(place);
+      const down = this.down(place, row) && !waits;
       const ready = document.documentElement.dataset.navigation === "ready";
       if (ready && Math.round(scrollY) !== place.page) scrollTo(scrollX, place.page);
       const there =
@@ -347,7 +396,9 @@ export class PlaceKeeper {
         Math.round(scrollY) === place.page;
       if (there) {
         end();
-        if (row !== null && place.row !== undefined) holdPlace(rowOf(place.row));
+        if (row !== null && place.row !== undefined && place.column !== undefined) {
+          holdPlace(rowIn(place.column, place.row));
+        }
       } else if (++frames >= RETURN_FRAMES) end();
       else requestAnimationFrame(step);
     };
