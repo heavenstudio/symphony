@@ -363,7 +363,8 @@ fn flow(replayed: &[Replayed], top: bool, from: f64, to: f64, now: f64) -> Flow 
     flow
 }
 
-fn spread(values: Vec<f64>) -> Option<Spread> {
+/// The median and p90 of `values`, as a day file keeps a spread; none of none.
+pub(crate) fn spread(values: Vec<f64>) -> Option<Spread> {
     stages::stats::spread(values).map(|s| Spread {
         n: u32::try_from(s.n).unwrap_or(u32::MAX),
         median: s.median,
