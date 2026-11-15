@@ -56,9 +56,11 @@ fn a_change_of_settings_values_skips_review_for_the_settings_check_as_tests() {
     );
     for kept in [
         "a setting the Symphony does not read yet",
-        "a command the Symphony runs",
-        "[board] on_review and on_land",
-        "[stamps]",
+        "a command or a program the Symphony runs or that decides what lands",
+        "[project] cargo and default_branch",
+        "[plugins] crates and process",
+        "[verdicts], [land], [releases], [stamps]",
+        "[board] on_review, on_land, machine_work_reader and assessments",
     ] {
         assert!(review.applies.contains(kept), "{kept}: {}", review.applies);
     }

@@ -2229,9 +2229,14 @@ landing](#the-default-landing)).
   check ([PROJECT_FILE](PROJECT_FILE.md#the-settings-check)) recorded green as a test run at
   the tip, and by no other suite. So its assessment is `tests` alone and the land lands it on
   that run. `review` still applies to a setting the Symphony does not read yet or reads another
-  way, which is code, and to a value that is a command the Symphony runs or that decides what
-  lands: `[land]`, `[verdicts]` and `[releases]`, which `[land] check_paths` names, `[stamps]`,
-  `[board]`'s `on_review` and `on_land`, and `[plugins]`'s `process`. The `tests` reader takes
+  way, which is code, and to a value that is a command or a program the Symphony runs or that
+  decides what lands: `[project]`'s `cargo` (the command the server rebuilds itself with) and
+  `default_branch` (the branch tasks land on), `[plugins]`'s `crates` and `process` (the code
+  and the command that answer for the project), `[verdicts]`, `[land]` and `[releases]`, which
+  `[land] check_paths` names, `[stamps]`, and `[board]`'s `on_review`, `on_land`,
+  `machine_work_reader` (an executable the server runs) and `assessments` (where a project's
+  landing assessments are read). Every other key is a name, a number, a switch or a folder
+  nothing runs. The `tests` reader takes
   any green test run at the tip: that the run is the settings check is the assessment's reason
   and the thread's evidence.
 - **`just tasks stamps [SLUG]`** prints the catalogue, where it was read and each stamp's

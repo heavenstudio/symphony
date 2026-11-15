@@ -2,7 +2,7 @@
 name: assess-task
 description: Assess one task for the stamps its land needs, from the project's catalogue, its diff and its brief, independently of who filed, orchestrated or executed it. An assessor's whole prompt is `/assess-task SLUG HANDLE` (Codex `$assess-task SLUG HANDLE`), never /work or /review-task. Trigger on /assess-task SLUG or $assess-task SLUG.
 ---
-<!-- symphony-stamp: 311ef3426cdec306 files=SKILL.md -->
+<!-- symphony-stamp: e9f4281eff798ad0 files=SKILL.md -->
 
 # /assess-task SLUG HANDLE
 
@@ -39,9 +39,11 @@ catalogue's defaults beside them on any other tip. You judge nothing else: not t
      the tip stands in the reviewer's place, and the catalogue's `skips` says so, so no post of
      the owner's is needed to leave `review` out. It keeps `review` where the diff changes
      anything else: code (which settings exist or how one is read), a value that is a command
-     the Symphony runs or that decides what lands (`[land]`, `[verdicts]`, `[releases]`,
-     `[stamps]`, `[board]`'s `on_review` and `on_land`, `[plugins]`'s `process`; `CHECK PATHS`
-     names the first three), or words that say more than the new values.
+     or a program the Symphony runs or that decides what lands (`[project]`'s `cargo` and
+     `default_branch`, `[plugins]`'s `crates` and `process`, `[verdicts]`, `[land]`,
+     `[releases]`, `[stamps]`, `[board]`'s `on_review`, `on_land`, `machine_work_reader` and
+     `assessments`; `CHECK PATHS` names `[verdicts]`, `[land]` and `[releases]`), or words that
+     say more than the new values.
    - **What `tests` asks for.** Where you name `tests`, WHY names the run or runs that prove
      this change, the ones closest to what the diff changed (for a change of settings, the
      settings check alone), never a suite that has nothing to do with it.

@@ -69,9 +69,10 @@ assessed needs, is `review`, which is today's rule.
   a route, a shared component); a change to a test, a check, a budget or a run step, which is any
   path `[land] check_paths` names, since a loosened test is how a red turns green unfixed; a
   shipped skill or a rule every agent follows; a setting the Symphony does not read yet or reads
-  another way, which is code; a value of the project file that is a command the Symphony runs or
-  that decides what lands (`[land]`, `[verdicts]`, `[releases]`, `[stamps]`, `[board]`'s
-  `on_review` and `on_land`, `[plugins]`'s `process`); a change that does more than one thing, or
+  another way, which is code; a value of the project file that is a command or a program the
+  Symphony runs or that decides what lands (`[project]`'s `cargo` and `default_branch`,
+  `[plugins]`'s `crates` and `process`, `[verdicts]`, `[land]`, `[releases]`, `[stamps]`,
+  `[board]`'s `on_review`, `on_land`, `machine_work_reader` and `assessments`); a change that does more than one thing, or
   one the assessor cannot place.
 - **Skips:** documents alone (a design, a reference page, a record); the values the project file
   gives settings the Symphony already reads (a model, an agent, a limit, a count, a name),

@@ -204,9 +204,11 @@ words that repeat them and nothing else, lands on `just settings-check` green at
 project file read as the Symphony reads it and judged on its shape alone (every table and key
 known, each value of its type, each required value there; a model is any text, never one of a
 list), recorded as a test run, which is the `tests` stamp. Its assessor names `tests` alone, and
-no reviewer reads it. A setting the Symphony does not read yet is code, and `[land]`,
-`[verdicts]`, `[releases]`, `[stamps]`, `[board]`'s `on_review` and `on_land` and `[plugins]`'s
-`process` hold commands or decide what lands: those keep `review`
+no reviewer reads it. A setting the Symphony does not read yet is code, and `[project]`'s
+`cargo` and `default_branch`, `[plugins]`'s `crates` and `process`, `[verdicts]`, `[land]`,
+`[releases]`, `[stamps]` and `[board]`'s `on_review`, `on_land`, `machine_work_reader` and
+`assessments` hold commands or programs the Symphony runs, or decide what lands: those keep
+`review`
 ([TASKS](docs/TASKS.md#needed-stamps), [PROJECT_FILE](docs/PROJECT_FILE.md#the-settings-check)).
 
 ## Agent integration

@@ -73,10 +73,11 @@ const OWN: [Own; 4] = [
                   check, a budget or a run step, which is any path [land] check_paths names, since \
                   a loosened test is how a red turns green unfixed; a shipped skill or a rule every \
                   agent follows; a setting the Symphony does not read yet or reads another way, \
-                  which is code; a value of the project file that is a command the Symphony runs \
-                  or that decides what lands ([land], [verdicts], [releases], [stamps], [board] \
-                  on_review and on_land, [plugins] process); a change that does more than one \
-                  thing, or one the assessor cannot place",
+                  which is code; a value of the project file that is a command or a program the \
+                  Symphony runs or that decides what lands ([project] cargo and default_branch, \
+                  [plugins] crates and process, [verdicts], [land], [releases], [stamps], [board] \
+                  on_review, on_land, machine_work_reader and assessments); a change that does \
+                  more than one thing, or one the assessor cannot place",
         skips: "documents alone (a design, a reference page, a record); the values the project \
                 file gives settings the Symphony already reads (a model, an agent, a limit, a \
                 count, a name), written, changed or removed, with the guide's and the rules' \
