@@ -110,7 +110,7 @@ a boundary by the back door is named in findings 3, 8 and 9.
   exclusions and the repeated constants.
 - **Size.** A task: a move, no behaviour changes.
 
-### 4. Eight tenths of the board's dependencies serve a search mode nothing asks for
+### 4. Eight tenths of the board's dependencies serve a search mode nothing calls
 
 - **Evidence.** `cargo tree -p symphony-board -e normal,build --prefix none --no-dedupe | sort -u`
   lists 189 packages; with `--prune tract-onnx --prune tract-linalg --prune tokenizers` before the
@@ -353,5 +353,5 @@ So a later review does not read them again:
 
 Three findings need a decision before a task: whether main commits the built client or only a
 release does (finding 2), whether search by meaning is kept (finding 4), and whether the server's
-restart keeps handing its sockets over (1,600 lines of source and 3,800 of tests, where the clients
-already reconnect and a plain restart would do).
+restart keeps handing its sockets over (about 530 lines of source and 549 of tests, of the update's
+2,046 and 2,920, where the clients already reconnect and a plain restart would do).

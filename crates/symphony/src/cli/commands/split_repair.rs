@@ -21,10 +21,21 @@
 //! script it renamed, 1 when a check fails, and 2 when it cannot read what it is given; it writes
 //! nothing unless every check passed.
 //!
+//! `symphony-build split-repair --chunk MODULE` puts one chunk's segments in order, in place, as dx
+//! writes the split: `apps/symphony-ui/wasm-opt.sh` runs it on each module wasm-opt writes for dx,
+//! before dx names that module by its bytes. A chunk named by the splitter's order would be named
+//! otherwise on each build, and the script dx minifies names it: esbuild picks the script's short
+//! names by how often each character appears there, chunks' names among them, so the script itself
+//! would come out other bytes on some builds, which renaming it after dx cannot undo. A main
+//! module, the one that defines its memory, it leaves as it is, for the repair after dx to judge
+//! against the program. It exits 0 with a line on the module, 1 when the chunk's order could
+//! matter and 2 when it cannot read it, and writes nothing then.
+//!
 //! The two faults are dx's to fix: the reports for its tracker are kept with the evidence of
 //! `perf/client-shared-runtime/splitter-safe`. Once its splitter zeroes only bytes that no symbol
 //! the main module keeps lies over, and writes a chunk's segments in a fixed order, this command
-//! goes, with its call after `dx bundle --wasm-split` and its line in `symphony-build`'s listing.
+//! goes, with its call after `dx bundle --wasm-split`, `wasm-opt.sh` and the DX_HOME `bundle.sh`
+//! makes for it, and its line in `symphony-build`'s listing.
 #![forbid(unsafe_code)]
 
 mod constants;
@@ -37,7 +48,7 @@ use std::path::{Path, PathBuf};
 
 use sha2::{Digest, Sha256};
 
-const USAGE: &str = "usage: symphony-build split-repair PROGRAM PUBLIC";
+const USAGE: &str = "usage: symphony-build split-repair PROGRAM PUBLIC | --chunk MODULE";
 
 /// Why a run stops: an output it would not stand behind (exit 1), or input it cannot read (2).
 #[derive(Debug, PartialEq, Eq)]
@@ -57,11 +68,17 @@ impl Failure {
 }
 
 pub(super) fn main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
-    let [program, public] = args else {
-        let _ = writeln!(err, "{USAGE}");
-        return 2;
+    let done = match args {
+        [flag, module] if flag == "--chunk" => order_in_place(Path::new(module)),
+        [program, public] if !program.starts_with('-') => {
+            repair(Path::new(program), Path::new(public))
+        }
+        _ => {
+            let _ = writeln!(err, "{USAGE}");
+            return 2;
+        }
     };
-    match repair(Path::new(program), Path::new(public)) {
+    match done {
         Ok(report) => {
             let _ = out.write_all(report.as_bytes());
             0
@@ -255,6 +272,37 @@ fn repair(program: &Path, public: &Path) -> Result<String, Failure> {
             .map_err(|why| Failure::Input(format!("{}: {why}", path.display())))?;
     }
     Ok(report)
+}
+
+/// `--chunk MODULE`: the chunk at `module` with its segments in order, written back in place (a new
+/// file renamed over it) when that changed it; a main module left as it is. What it did, a line.
+fn order_in_place(module: &Path) -> Result<String, Failure> {
+    let bytes = read(module)?;
+    let what = module.display().to_string();
+    let defines = wasm::Module::read(&bytes)
+        .and_then(|module| module.defines_memory())
+        .map_err(|why| Failure::Input(format!("{what}: {why}")))?;
+    if defines {
+        return Ok(format!(
+            "main module {what}: left as it is, for the repair after dx\n"
+        ));
+    }
+    let ordered = order::order(&bytes).map_err(|why| why.of(&what))?;
+    if ordered.bytes != bytes {
+        let mut written = module.as_os_str().to_owned();
+        written.push(".ordered");
+        let written = PathBuf::from(written);
+        fs::write(&written, &ordered.bytes)
+            .and_then(|()| fs::rename(&written, module))
+            .map_err(|why| {
+                let _ = fs::remove_file(&written);
+                Failure::Input(format!("{what}: {why}"))
+            })?;
+    }
+    Ok(format!(
+        "chunk {what}: {} of its {} segments put in order, {} joined to the one before\n",
+        ordered.moved, ordered.segments, ordered.joined
+    ))
 }
 
 /// `OLD -> NEW`, or the name alone when it stays.

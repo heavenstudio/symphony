@@ -99,6 +99,14 @@ cannot keep installing after `--stop` returns.
 | `/api/pending` | Pending cards in document navigation order, then branch cards |
 | `/api/feed?since=…` | Server-Sent Events after the snapshot's version |
 
+Before any project the one server answers `/api/projects`, to loopback and this machine's tailnet
+names like every route of a project's: each project it serves, with its feed's version, the cards
+waiting on the owner and the first of them, why it is refused or its board unwell, and its task
+asks, beside the server's installation id and pin (`symphony_api::ProjectList`, what the desktop
+app reads). The task asks are the questions agents asked each person on open tasks that still wait
+on them, and the board's newest reviewer verdict; a project's feed sends them again each time they
+change, as the region `task-asks` (`src/live/task_asks.rs`).
+
 Every JSON read, these and the document reads and a plugin's JSON alike, is answered
 `no-store` with a weak `ETag`: the first 16 hex digits of the SHA-256 of the JSON it sends,
 before compression. A request whose `If-None-Match` names it is answered `304` with no body,

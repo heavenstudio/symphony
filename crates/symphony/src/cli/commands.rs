@@ -132,11 +132,13 @@ const BUILD_PLAIN: [(&str, &str, &str); 5] = [
     ),
     (
         "split-repair",
-        "usage: symphony-build split-repair PROGRAM PUBLIC",
+        "usage: symphony-build split-repair PROGRAM PUBLIC | --chunk MODULE",
         "PROGRAM is the program dx linked, with its relocations; PUBLIC the folder\n\
          dx bundle --wasm-split wrote. It writes back the merged constants the splitter\n\
          zeroed in the main module, puts each chunk's segments in a fixed order and\n\
-         names every module and script it changed by its bytes, in place.\n",
+         names every module and script it changed by its bytes, in place. --chunk puts\n\
+         the segments of MODULE, one wasm-opt wrote for dx, in that order before dx\n\
+         names it, and leaves a main module as it is, in place.\n",
     ),
 ];
 
@@ -602,7 +604,7 @@ mod tests {
             ),
             (
                 "split-repair",
-                "usage: symphony-build split-repair PROGRAM PUBLIC\n",
+                "usage: symphony-build split-repair PROGRAM PUBLIC | --chunk MODULE\n",
             ),
             (
                 "release-inputs",

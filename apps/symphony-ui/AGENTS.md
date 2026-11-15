@@ -53,7 +53,12 @@ never the whole target, which the release run runs.
   `symphony-build split-repair` puts right after dx
   (crates/symphony/src/cli/commands/split_repair.rs)
   and `assets/chunks.js` loads (`window.reviewChunk`), rejecting a chunk that does not load so
-  the shell's `gone` state, never a page left waiting, follows. The shell awaits a kind's chunk
+  the shell's `gone` state, never a page left waiting, follows. dx runs with a DX_HOME of
+  `bundle.sh`'s own under the held target, the machine's tools linked but for wasm-opt,
+  `wasm-opt.sh`, which puts each chunk's segments in order (`split-repair --chunk`) before dx
+  names it by its bytes: esbuild picks the short names of the script dx minifies by how often
+  each character appears in it, the chunks' names among them, so chunks named in the splitter's
+  hash-map order gave that script other bytes on some builds. The shell awaits a kind's chunk
   before it stops the page shown, which stays until the chunk is in, and under the shell's
   notice when it does not load. A chunk mounts its kind's root
   in the one instance (a `VirtualDom` per root, `module.rs`). The
@@ -107,16 +112,19 @@ never the whole target, which the release run runs.
   start again only after a stream held 30 s), fetches the board again (it
   replaces the one shown whatever its version) and opens a new stream from it;
   the board is live again once that stream opens. It never resumes by
-  `Last-Event-ID`. A page that goes away closes its stream: on
+  `Last-Event-ID`. The web client follows it on a WebSocket (`src/feed.ts`): an event stream
+  holds one of the browser's six connections to the server (HTTP/1.1) for as long as it is open,
+  and six tabs of one server on streams would leave a seventh none for its reads, where the
+  browser counts WebSockets apart (`tests/browser/tabs.rs`). A page that goes away closes its
+  stream: on
   `pagehide`, which every browser fires as a page is left, for good or into
   its back/forward cache, and on Chrome's `freeze` of a background tab. A kept
-  page's open stream would hold one of the browser's six connections to the
-  server (HTTP/1.1) for as long as it is kept, and the sixth full load in a tab
-  would wait for its reads behind streams that never end. Once back
+  page's open stream would hold its socket, and the server its subscription, for as long as it is
+  kept. Once back
   (`pageshow`, `resume`) it reads at once, with no wait, from a fresh board as
   after a lost stream: the server it left may have restarted meanwhile. Hiding
   alone (another tab in front) closes nothing: the home page notifies from the
-  background. Six live tabs of one server still take every connection. A board
+  background. A board
   or a `client` change naming another build than the
   page's own module script loads the page again, once per build
   (`reloadFor` in the web client's `src/state.ts`, remembered in `sessionStorage`).

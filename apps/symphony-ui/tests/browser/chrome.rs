@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use serde_json::{Value, json};
 
-pub use symphony_chrome::{Request, find};
+pub use symphony_chrome::{Request, WEB_SOCKET, find};
 
 /// The driver's failures, as this suite's assertion: the case fails naming what went wrong.
 trait Asserted<T> {
@@ -97,6 +97,16 @@ impl Chrome {
     /// One DevTools command; its result. Events read meanwhile are kept.
     pub fn call(&mut self, method: &str, params: Value) -> Value {
         self.0.call(method, params).asserted()
+    }
+
+    /// One DevTools command to the browser, not the page (`Target.createTarget`, say); its result.
+    pub fn browser_call(&mut self, method: &str, params: Value) -> Value {
+        self.0.browser_call(method, params).asserted()
+    }
+
+    /// One DevTools command on another tab's `session` (`Target.attachToTarget`'s); its result.
+    pub fn call_on(&mut self, session: &str, method: &str, params: Value) -> Value {
+        self.0.call_on(session, method, params).asserted()
     }
 
     /// Drain through a browser-scheduled observation marker.
