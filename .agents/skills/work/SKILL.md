@@ -2,7 +2,7 @@
 name: work
 description: Do one task from the board by its description alone, a stage at a time: start (claim it, then question it), build, and finish by the step the description names. An executor's whole prompt is `/work SLUG HANDLE` (Codex `$work SLUG HANDLE`); a reviewer's is the review-task skill's. Trigger on /work SLUG or $work SLUG.
 ---
-<!-- symphony-stamp: 772dca4d9dd902b1 files=SKILL.md,start.md,build.md,connected.md,finish.md,rare-endings.md -->
+<!-- symphony-stamp: 91477847232811a8 files=SKILL.md,start.md,build.md,connected.md,finish.md,rare-endings.md -->
 
 # /work SLUG HANDLE
 
