@@ -34,8 +34,8 @@ import {
   workOf,
 } from "./gates-model";
 import { NO_ANSWER } from "./request";
-import { aMachine, anOperation, aWork } from "./testing";
-import type { Gate, GatesSeen, MachineWork, TaskGates, WorkState } from "./wire";
+import { aMachine, anOperation, aRole, aTask, aWork } from "./testing";
+import type { Gate, GatesSeen, MachineWork, Role, TaskGates, WorkState } from "./wire";
 import { moment, parseMoment } from "./words";
 
 /** 2026-11-11 13:10 UTC, the day of every time in the fixture. */
@@ -114,10 +114,24 @@ describe("what a failed read says", () => {
   });
 });
 
+/** A task in `status`, held by `roles` and depending on `depends`. */
+const task = (status: string, roles: Role[] = [], depends: string[] = []) =>
+  aTask("tools/x", { status, roles, depends });
+
+/** What a task's gates hold of an unassessed task's stamps: review missing, the rest waived. */
+const stamped = answer([
+  gate({ name: "review", state: "missing", detail: "Not reviewed yet" }),
+  gate({ name: "check", state: "unknown" }),
+  gate({ name: "tests", state: "waived" }),
+]);
+
+/** `stamped` with a card the task posted waiting on the owner. */
+const asking = answer([...stamped.gates, gate({ name: "owner", state: "held" })]);
+
 describe("what the task waits on", () => {
-  it("names every missing or held gate in their order", () => {
+  it("in review, names every missing or held gate in their order", () => {
     const named = (states: [string, string][]) =>
-      waitsOn(answer(states.map(([name, state]) => gate({ name, state }))));
+      waitsOn(answer(states.map(([name, state]) => gate({ name, state }))), task("review"));
     expect(named([])).toBeNull();
     expect(
       named([
@@ -131,13 +145,13 @@ describe("what the task waits on", () => {
         ["certificate", "missing"],
         ["review", "met"],
       ]),
-    ).toEqual(["missing", ["certificate"]]);
+    ).toEqual({ tone: "gate-missing", names: ["certificate"] });
     expect(
       named([
         ["owner", "held"],
         ["certificate", "missing"],
       ]),
-    ).toEqual(["held", ["owner", "certificate"]]);
+    ).toEqual({ tone: "gate-held", names: ["owner", "certificate"] });
     expect(
       named([
         ["certificate", "missing"],
@@ -145,16 +159,107 @@ describe("what the task waits on", () => {
         ["owner", "held"],
         ["nightly", "met"],
       ]),
-    ).toEqual(["missing", ["certificate", "check", "owner"]]);
+    ).toEqual({ tone: "gate-missing", names: ["certificate", "check", "owner"] });
+    expect(
+      waitsOn(stamped, task("review", [aRole("reviewer", "rapid-badger")])),
+      "its reviewer is the review gate's byline, not the pill's",
+    ).toEqual({ tone: "gate-missing", names: ["review"] });
   });
 
-  it("takes the state of the first it waits on, whatever comes before it", () => {
+  it("in review, takes the state of the first it waits on, whatever comes before it", () => {
     const later = answer([
       gate({ name: "nightly", state: "met" }),
       gate({ name: "later", state: "expired" }),
       gate({ name: "owner", state: "held" }),
     ]);
-    expect(waitsOn(later)).toEqual(["held", ["owner"]]);
+    expect(waitsOn(later, task("review"))).toEqual({ tone: "gate-held", names: ["owner"] });
+  });
+
+  it("in progress, names its executor, not the review it has not reached", () => {
+    const working = task("in_progress", [
+      aRole("orchestrator", "silver-sparrow"),
+      aRole("executor", "dusky-plover"),
+    ]);
+    expect(waitsOn(stamped, working)).toEqual({
+      tone: "st-in_progress",
+      names: ["executor dusky-plover"],
+    });
+    expect(waitsOn(noGates(), working), "whatever its gates, even none: it is the stage's").toEqual(
+      { tone: "st-in_progress", names: ["executor dusky-plover"] },
+    );
+    expect(
+      waitsOn(stamped, task("in_progress", [aRole("executor", "a"), aRole("executor", "b")])),
+    ).toEqual({ tone: "st-in_progress", names: ["executor a", "executor b"] });
+    expect(
+      waitsOn(stamped, task("in_progress", [aRole("orchestrator", "silver-sparrow")])),
+      "nobody executes it: no executor to name, and no gate it waits on yet",
+    ).toBeNull();
+  });
+
+  it("in concept or design, names the executor working its stage", () => {
+    for (const status of ["concept", "design"]) {
+      expect(waitsOn(stamped, task(status, [aRole("executor", "ochre-crane")])), status).toEqual({
+        tone: `st-${status}`,
+        names: ["executor ochre-crane"],
+      });
+      expect(waitsOn(stamped, task(status)), `${status} with nobody`).toBeNull();
+    }
+  });
+
+  it("blocked, names every task it depends on", () => {
+    const blocked = task(
+      "blocked",
+      [aRole("executor", "umber-ibis")],
+      ["tools/board-postgresql", "tools/machine-runs-the-release"],
+    );
+    expect(waitsOn(stamped, blocked)).toEqual({
+      tone: "st-blocked",
+      names: ["tools/board-postgresql", "tools/machine-runs-the-release"],
+    });
+    expect(
+      waitsOn(stamped, task("blocked", [aRole("executor", "umber-ibis")])),
+      "blocked by hand: its thread says why, not its gates",
+    ).toBeNull();
+  });
+
+  it("before it starts, waits on nothing", () => {
+    for (const status of ["backlog", "ready"]) {
+      expect(waitsOn(stamped, task(status, [aRole("executor", "vivid-robin")])), status).toBeNull();
+    }
+  });
+
+  it("while open, names each held gate after who its status waits on", () => {
+    expect(waitsOn(asking, task("in_progress", [aRole("executor", "dusky-plover")]))).toEqual({
+      tone: "st-in_progress",
+      names: ["executor dusky-plover", "owner"],
+    });
+    expect(waitsOn(asking, task("blocked", [], ["tools/a"]))).toEqual({
+      tone: "st-blocked",
+      names: ["tools/a", "owner"],
+    });
+    expect(
+      waitsOn(asking, task("blocked")),
+      "a landing that holds it for the owner's approve",
+    ).toEqual({ tone: "gate-held", names: ["owner"] });
+    for (const status of ["backlog", "ready", "concept"]) {
+      expect(waitsOn(asking, task(status)), status).toEqual({
+        tone: "gate-held",
+        names: ["owner"],
+      });
+    }
+  });
+
+  it("done or cancelled, waits on nothing, whatever its gates say", () => {
+    const landed = answer([
+      gate({ name: "review", state: "missing", detail: "Landed with no review verdict" }),
+      gate({ name: "owner", state: "held" }),
+    ]);
+    for (const status of ["done", "cancelled"]) {
+      expect(
+        waitsOn(landed, task(status, [aRole("executor", "quiet-swift", "left")])),
+        status,
+      ).toBeNull();
+    }
   });
 });
 
