@@ -442,7 +442,7 @@ fn tables(f: &Fixture) -> Vec<String> {
     names
 }
 
-const BOARD_TABLES: [&str; 22] = [
+const BOARD_TABLES: [&str; 23] = [
     "ask",
     "barred_key",
     "callback_event",
@@ -465,6 +465,7 @@ const BOARD_TABLES: [&str; 22] = [
     "task_embedding_checkpoint",
     "task_embedding_source",
     "task_session",
+    "writer",
 ];
 
 #[test]

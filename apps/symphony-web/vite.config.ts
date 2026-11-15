@@ -2,9 +2,10 @@ import { defineConfig } from "vitest/config";
 
 // The web client's kinds, each an entry the shell imports by the name the shell's manifest gives it
 // (apps/symphony-ui/package.sh): `src/kinds/NAME.tsx` exports the kind's `run` and `stop`. The
-// overlay is no page's but the shell's persistent kind every page mounts beside its own.
+// menus (`overlay`) and the chat (`panel`) are no page's but the shell's persistent kinds every page
+// mounts beside its own.
 const PAGES = ["agents", "board", "docs", "queue", "reports", "review", "runs", "task"];
-const KINDS = [...PAGES, "overlay"].sort();
+const KINDS = [...PAGES, "overlay", "panel"].sort();
 
 export default defineConfig({
   // No public folder: the server serves the files package.sh publishes (the dev server's own
@@ -43,8 +44,18 @@ export default defineConfig({
         // frame), and every first visit pays for two files compressed apart (about 800 bytes).
         // The menus' entry imports that one chunk, which every page has loaded by the time the
         // shell warms or opens them.
+        //
+        // What a page keeps on the device and the board it follows stay the one chunk the pages
+        // that follow the board load (the device cache, cache.ts, with live.tsx). Reports keeps
+        // its windows through the same cache and follows no board; split by who imports each
+        // module, the cache would leave that chunk for a file of its own, and every page that
+        // follows the board would pay a file more for a page it is not. So Reports loads their
+        // chunk instead, the board's share of it unused.
         codeSplitting: {
-          groups: [{ name: "shared", minShareCount: PAGES.length }],
+          groups: [
+            { name: "shared", minShareCount: PAGES.length },
+            { name: "kept", test: /\/src\/(cache|live)\.tsx?$/ },
+          ],
         },
       },
     },

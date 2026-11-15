@@ -20,19 +20,15 @@ use std::io::{BufRead, BufReader, Lines, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStderr, Command, Stdio};
 
-/// The program's kind (src/split.rs), the chat, one build of it: the one kind dx builds.
-const PROGRAM: [&str; 1] = ["panel"];
-/// The program's chunks in the order of its split points' names: its kind's and the media layer's,
-/// which is no kind.
-const CHUNKS: [&str; 2] = ["media", "panel"];
-/// The web client's kinds, one Vite build of them all (the menus, `overlay`, among them), and
-/// whether each has a style sheet of its own (the task board's and the agents page's styles are
-/// the program's board.css, in the shared file).
-const WEB: [(&str, bool); 9] = [
+/// The web client's kinds, one Vite build of them all (the chat, `panel`, and the menus,
+/// `overlay`, among them), and whether each has a style sheet of its own (the task board's and the
+/// agents page's styles are board.css, in the shared file).
+const WEB: [(&str, bool); 10] = [
     ("agents", false),
     ("board", false),
     ("docs", true),
     ("overlay", true),
+    ("panel", true),
     ("queue", true),
     ("reports", true),
     ("review", true),
@@ -40,36 +36,32 @@ const WEB: [(&str, bool); 9] = [
     ("task", true),
 ];
 
-/// The stand-in dx: the first bundle's program build holds the intermediate folder until released.
-/// It writes the program's main module, a chunk for each of its kinds and their own styles.
+/// The stand-in dx: the first bundle's build of the shared stylesheets (src/main.rs, the one
+/// build dx makes) holds the intermediate folder until released. It writes the page that links
+/// the shared style in its head, and a script and a module, which draw nothing.
 const DX: &str = r#"#!/bin/bash
 set -euo pipefail
 while [ "$#" -gt 0 ]; do
     case "$1" in
         --out-dir) out="$2"; shift 2 ;;
-        --features) kind="${2#page-}"; shift 2 ;;
         *) shift ;;
     esac
 done
+kind=styles
 work="$CARGO_TARGET_DIR/dx/symphony-ui/release/web"
 mkdir -p "$work/public/assets"
 printf '%s' "$BUNDLE_ID-$kind" > "$work/owner"
-if [ "$BUNDLE_ID-$kind" = first-program ]; then
+if [ "$BUNDLE_ID-$kind" = first-styles ]; then
     echo 'fixture: first DX holds its intermediate files' >&2
     read -r release
     [ "$release" = release ]
     [ "$FIRST_EXIT" = 0 ] || exit "$FIRST_EXIT"
 fi
 [ "$(cat "$work/owner")" = "$BUNDLE_ID-$kind" ]
-printf '<script type="module" src="/assets/symphony-ui-%s.js"></script>\n' "$kind" > "$work/public/index.html"
+printf '<head><link rel="stylesheet" href="/./assets/frame-%s.css"></head><script type="module" src="/assets/symphony-ui-%s.js"></script>\n' "$kind" "$kind" > "$work/public/index.html"
 printf 'export default function init(){return Promise.resolve()} init({module_or_path:"/assets/symphony-ui_bg-%s.wasm"}).then(()=>{});/*%s*/\n' "$kind" "$BUNDLE_ID" > "$work/public/assets/symphony-ui-$kind.js"
 printf '\0asm\1\0\0\0%s-%s' "$BUNDLE_ID" "$kind" > "$work/public/assets/symphony-ui_bg-$kind.wasm"
-for chunk in 0_media 1_panel; do
-    printf '\0asm\1\0\0\0%s-%s' "$BUNDLE_ID" "$chunk" > "$work/public/assets/module_$chunk-$kind.wasm"
-done
-for own in style; do
-    printf '/*%s-%s*/body{}' "$BUNDLE_ID" "$own" > "$work/public/assets/$own-$kind.css"
-done
+printf '/*%s-frame*/body{}' "$BUNDLE_ID" > "$work/public/assets/frame-$kind.css"
 mkdir -p "$out"
 cp -R "$work/public" "$out/"
 "#;
@@ -84,7 +76,7 @@ out="$6"
 rm -rf "$out"
 mkdir -p "$out/.vite" "$out/assets"
 entries=""
-for kind in agents board docs overlay queue reports review runs task; do
+for kind in agents board docs overlay panel queue reports review runs task; do
     printf 'export{a as run,b as stop};/*%s*/\n' "$BUNDLE_ID" > "$out/assets/$kind-$BUNDLE_ID.js"
     css=""
     if [ "$kind" != board ] && [ "$kind" != agents ]; then
@@ -117,7 +109,6 @@ impl Fixture {
             "apps/symphony-ui/Dioxus.toml",
             "apps/symphony-ui/assets/shell.js",
             "apps/symphony-ui/assets/cache.js",
-            "apps/symphony-ui/assets/chunks.js",
             "apps/symphony-server/src/notices.css",
             "tools/check_lock.sh",
             "Cargo.toml",
@@ -211,10 +202,7 @@ impl Fixture {
             .next()
             .unwrap();
         let manifest: serde_json::Value = serde_json::from_str(manifest).unwrap();
-        assert_eq!(
-            manifest.as_object().unwrap().len(),
-            PROGRAM.len() + WEB.len()
-        );
+        assert_eq!(manifest.as_object().unwrap().len(), WEB.len());
         // The stage holds its build alone, and its builds.json names every file of it by its shell,
         // for publish-client to keep beside the builds published before it.
         let mut files: Vec<String> = fs::read_dir(public.join("assets"))
@@ -222,23 +210,15 @@ impl Fixture {
             .map(|entry| entry.unwrap().file_name().into_string().unwrap())
             .collect();
         files.sort();
-        // The program's script and main module, a chunk for its kind and the media layer's, and
-        // its own style sheet (the chat's CSS modules); each web kind's script and the style
-        // sheets of its own; and the shell.
+        // The shared stylesheet, this bundle's, and nothing else of the styles' build; each web
+        // kind's script and the style sheets of its own; and the shell.
         let styled = WEB.iter().filter(|(_, styled)| *styled).count();
-        assert_eq!(
-            files.len(),
-            2 + CHUNKS.len() + 1 + WEB.len() + styled + 1,
+        assert_eq!(files.len(), 1 + WEB.len() + styled + 1, "{files:?}");
+        assert!(
+            files
+                .iter()
+                .all(|name| !name.ends_with(".wasm") && !name.starts_with("symphony-ui-")),
             "{files:?}"
-        );
-        let media: Vec<_> = files
-            .iter()
-            .filter(|name| name.starts_with("module_0_media-"))
-            .collect();
-        assert_eq!(media.len(), 1, "{files:?}");
-        assert_eq!(
-            fs::read(public.join("assets").join(media[0])).unwrap(),
-            format!("\0asm\x01\0\0\0{id}-0_media").as_bytes()
         );
         let builds: serde_json::Value =
             serde_json::from_slice(&fs::read(public.join("builds.json")).unwrap()).unwrap();
@@ -252,7 +232,8 @@ impl Fixture {
         let read_asset = |url: &serde_json::Value| {
             fs::read(public.join(url.as_str().unwrap().trim_start_matches('/'))).unwrap()
         };
-        // A web kind is its script and its styles, this bundle's: no wasm.
+        let shared = format!("/*{id}-frame*/body{{}}\n").into_bytes();
+        // A web kind is its script and its styles, this bundle's: the shared one, then its own.
         for (kind, styled) in WEB {
             let entry = &manifest[kind];
             assert_eq!(
@@ -267,40 +248,8 @@ impl Fixture {
                 .map(read_asset)
                 .collect();
             let own = styled.then(|| format!("/*{id}-{kind}*/body{{}}").into_bytes());
-            assert_eq!(styles, own.into_iter().collect::<Vec<_>>(), "{kind}");
-        }
-        for (at, kind) in CHUNKS
-            .iter()
-            .enumerate()
-            .filter(|(_, kind)| PROGRAM.contains(kind))
-        {
-            let entry = &manifest[kind];
-            assert!(
-                String::from_utf8(read_asset(&entry["script"]))
-                    .unwrap()
-                    .contains(&format!("/*{id}*/")),
-                "{kind}"
-            );
-            assert_eq!(
-                read_asset(&entry["wasm"]),
-                format!("\0asm\x01\0\0\0{id}-program").as_bytes()
-            );
-            assert_eq!(
-                read_asset(&entry["chunk"]),
-                format!("\0asm\x01\0\0\0{id}-{at}_{kind}").as_bytes()
-            );
-            // It takes the chat's CSS modules, the program's own sheet.
-            let styles: Vec<_> = entry["styles"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .map(read_asset)
-                .collect();
-            assert_eq!(
-                styles,
-                [format!("/*{id}-style*/body{{}}").into_bytes()],
-                "{kind}"
-            );
+            let expected: Vec<_> = std::iter::once(shared.clone()).chain(own).collect();
+            assert_eq!(styles, expected, "{kind}");
         }
     }
 }
@@ -336,8 +285,6 @@ release-inputs)
         printf '%s\n' "$BUNDLE_ROOT"
     fi ;;
 publish-client) mv "$2" "$3" ;;
-# The repair itself has its own tests and the real build's: here its output is dx's as it is.
-split-repair) ;;
 *) exit 97 ;;
 esac
 "#,

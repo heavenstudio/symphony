@@ -54,6 +54,8 @@ pub fn bound(name: &str) -> Option<Value> {
         // The slot ledger's reads name their tasks and holds in an earlier statement.
         "slot_wanted" => json!([generated::thread()]),
         "slot_holds" => json!([[generated::thread(), NOW]]),
+        // The sessions a read shows, named by the roles an earlier statement read.
+        "shown_sessions" => json!([generated::writer()]),
         "prefix" | "pull_kept" => json!("pull-1"),
         _ => return None,
     })

@@ -48,8 +48,11 @@ and test work the agents view reports ([MACHINE_WORK](../../docs/MACHINE_WORK.md
 orchestrator the board gives, covered closes), `messages.rs` threads, inboxes and keyed posts,
 `asks.rs` the owner's asks ([TASKS](../../docs/TASKS.md#asks)), `sessions.rs` sessions and beats,
 `launches.rs` launch records and the session hold, `cap.rs` the slot cap's reads, `history.rs` the
-status lines the alarm replays, `copy.rs` the whole-board copy, `opening.rs` how a store opens by
-the schema rule, `transaction.rs` the schema guard every write starts with. `lib.rs`'s doc states
+status lines the alarm replays, `stamp.rs` what tells a task and its thread from the ones a reader
+read before, in one small read, `copy.rs` the whole-board copy, `opening.rs` how a store opens by
+the schema rule, `transaction.rs` the schema guard every write starts with, `writers.rs` the line
+each program that opens a board to write keeps, which `tasks migrate` reads before it moves one
+([TASKS](../../docs/TASKS.md#who-writes-a-board)). `lib.rs`'s doc states
 the rule of every write. `schema.rs` is the tables, the indexes, the version and its migration
 steps; `live.rs` which builds may move a project's live board, and `live/seen.rs` the highest schema
 it was seen at. `rpc.rs` (with `rpc/read.rs`) and `cbor.rs` are the client: SurrealDB's RPC in CBOR
@@ -203,6 +206,12 @@ keeps running against a newer board for a while, and a change keeps what it read
   names a task takes its test of whom to tell from `store/queued_lines.rs`;
 - a counter an older reader caches is retired where it refuses it, never removed (`counter:board` at
   the smallest signed integer, `schema::BOARD_MARKER`).
+- the `writer` table stays schemaless with no event, its line written without the schema guard, as
+  builds of other schemas write it and a line must move no marker; an opening reads its line in its
+  one read and never reads the store's `Clock` (a line's time is the machine's, so a test ages one
+  by moving its `seen` back by hand); and the Symphony, which opens its board to read, stays
+  uncounted: it takes a new schema only by its reload after the move, so counting it would refuse
+  every refresh's migrate (`store/writers.rs`; `tests/store/writers.rs`).
 
 ### Its contracts
 

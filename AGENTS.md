@@ -1,12 +1,12 @@
 # Symphony
 
 The app's workspace owns its server, its two web clients and its Mac app under `apps/` (the React
-one, `apps/symphony-web`, taking the pages over a kind at a time from the Dioxus one; the Mac app,
-`apps/symphony-desktop`, a thin shell over each server's own pages, `publish = false`, whose window
-crates no other package links), and the review library, its own build and release commands
-(`crates/symphony-build`), wire types, task board, working-directory scanner, headless Chrome
-driver and the tests' CPU meters and waits (`crates/test-time`, RULES.md
-`tests/no-test-fails-on-load`) under `crates/`.
+one, `apps/symphony-web`, which draws every page now, and the Dioxus one, whose build is the
+stylesheets every page shares; the Mac app, `apps/symphony-desktop`, a thin shell over each
+server's own pages, `publish = false`, whose window crates no other package links), and the review
+library, its own build and release commands (`crates/symphony-build`), wire types, task board,
+working-directory scanner, headless Chrome driver and the tests' CPU meters and waits
+(`crates/test-time`, RULES.md `tests/no-test-fails-on-load`) under `crates/`.
 The app's formats and operating contract live in [docs/](docs/README.md).
 A consuming project owns its landing policy and shared-service safeguards.
 
@@ -91,8 +91,9 @@ API alone, so neither the library every project links nor its `symphony` compile
 
 ### The client's distribution
 
-`just client-update` builds both clients (the Dioxus client's page modules and program, the React
-client's page kinds) and publishes their bundle, one shell and one `builds.json` under
+`just client-update` builds the client (the React client's kinds, over the stylesheets every page
+shares, which dx builds from the Dioxus package) and publishes its bundle, one shell and one
+`builds.json` under
 `apps/symphony-server/client/public/`, which the server package embeds at build time. A branch
 commits no distribution, whatever it changed: the regenerator a land starts rebuilds it from
 main's newest tip and lands it as a commit of its own ([TASKS](docs/TASKS.md#the-regenerator)),
@@ -223,6 +224,19 @@ and refuses, and the `Next:` it ends with, is the module doc of `crates/symphony
 recipe and hook runs the project's build linked at `.target/bin/NAME`, else the main checkout's
 link from a linked worktree, else NAME on PATH (`crates/symphony/src/builds.rs`), and builds
 nothing.
+
+**What an agent is told, and where.** An executor's whole prompt is `/work SLUG HANDLE`, a
+reviewer's `/review-task SLUG HANDLE` and an assessor's `/assess-task SLUG HANDLE`. What holds for
+every task here is standing and committed, so every orchestrator's agents work under the same
+words and a change to them is a commit: a rule in [RULES.md](RULES.md), guidance here, in a
+package's guide or in [CHECKS](docs/CHECKS.md), and what one role alone needs in `project.md`
+beside that role's installed skill (`.agents/skills/work/project.md`,
+`.agents/skills/review-task/project.md`), which the skill reads first. That page is the
+project's own: init writes and retires only the files a skill's stamp names, and never a file
+beside them. What is one task's alone (another task on the same files and who merges whose
+landing, a finding since the brief, a file to leave alone) goes in its brief or on its thread,
+never in a prompt, and an orchestrator keeps no standing brief of its own in a prompt or a
+scratch file: an instruction it writes a second time belongs in one of those places.
 
 The allow rules pass the board and reply recipes (`tasks`, `agent-send`, `symphony-status`,
 `symphony-reply`, `symphony-ask`) and `land` with no prompt, and not the two server recipes:

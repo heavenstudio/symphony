@@ -17,6 +17,7 @@ import {
   HIDDEN,
   hiddenSeries,
   linkedFigures,
+  openReports,
   type Page,
   parseGrain,
   paths,
@@ -26,12 +27,14 @@ import {
   rangeName,
   ranges,
   readReports,
+  reportsItem,
+  reportsWindow,
   SECTIONS,
   toggle,
 } from "./reports";
 import { Backoff } from "./state";
 import { asking, CASES, childrenOf, memoryStorage, reply, server } from "./testing";
-import type { Grain } from "./wire";
+import { CACHE_FORMAT, type Grain } from "./wire";
 
 const HOUR = 3_600;
 const DAY = 86_400;
@@ -631,6 +634,61 @@ describe("the page's view", () => {
     expect(html).toContain("chart-slot");
   });
 
+  it("marks a copy from this device and says it is checking, until a read answers", () => {
+    const now = new Date(2026, 10, 15, 16, 0);
+    const saved = new Date(2026, 10, 15, 14, 32).getTime();
+    const drawn = (device: number | null, shown: Page | null = page()) =>
+      renderToStaticMarkup(
+        <ReportsView
+          grain="day"
+          days={3}
+          page={shown}
+          device={device}
+          now={now}
+          onAsk={() => {}}
+        />,
+      );
+    let html = drawn(saved);
+    expect(html).toContain('data-ready="reports" data-cache="device"');
+    expect(html).toContain(
+      '<div class="stale page-notices notice-stack"><p class="pill wait device-notice" role="status">' +
+        "Shown from this device, saved 14:32. Checking for changes…</p></div>",
+    );
+    expect(html).toContain("chart-slot");
+    // Answered, a 304 or a new page: nothing says the device any more.
+    html = drawn(null);
+    expect(html).not.toContain("data-cache");
+    expect(html).not.toContain("device-notice");
+    // No copy drawn, nothing to mark: the ghost is no device's.
+    html = drawn(saved, null);
+    expect(html).not.toContain("data-cache");
+    expect(html).not.toContain("device-notice");
+  });
+
+  it("keeps a device's copy drawn under a failed read, said not reachable and tried again", () => {
+    const now = new Date(2026, 10, 15, 16, 0);
+    const saved = new Date(2026, 10, 14, 9, 5).getTime();
+    const html = renderToStaticMarkup(
+      <ReportsView
+        grain="day"
+        days={3}
+        page={page()}
+        error="The server could not be reached"
+        device={saved}
+        now={now}
+        onAsk={() => {}}
+      />,
+    );
+    expect(html).toContain('data-ready="reports" data-cache="device"');
+    expect(html).toContain("chart-slot");
+    expect(html).toContain(
+      'role="status">Not reachable: shown from this device, saved yesterday 09:05</p>',
+    );
+    expect(html).toContain(
+      'role="alert">The reports could not be read. The server could not be reached; check the connection. Trying again…</p>',
+    );
+  });
+
   it("writes its window and a failure each as one text, as the Dioxus page does", () => {
     // Text set as one run is shaped as one: the browser draws it as it drew the Dioxus page's.
     const drawn = ReportsView({
@@ -847,5 +905,174 @@ describe("the reports' read", () => {
     second.asked[0]?.answer(reply(503, {}));
     await second.done;
     expect(second.told).toEqual([]);
+  });
+});
+
+describe("a window opened", () => {
+  /** The shell's store, holding `kept` for every part, with what was asked of it. */
+  const stored = (kept: unknown) => {
+    const store = {
+      read: vi.fn(async () => kept),
+      keep: vi.fn(async () => undefined),
+      visit: vi.fn(async () => undefined),
+      forget: vi.fn(async () => undefined),
+    };
+    vi.stubGlobal("symphonyCache", store);
+    return store;
+  };
+
+  /** The window opened, its waits ending it at the `waits`th, and what the page was told. */
+  const open = (grain: Grain, days: number, waits: number, scope = "") => {
+    const asked = server();
+    const told: unknown[] = [];
+    const page = new AbortController();
+    let waited = 0;
+    const done = openReports(
+      reportsItem(scope),
+      grain,
+      days,
+      page.signal,
+      {
+        kept: (shown, saved) => told.push(["kept", shown.days, shown.buckets.length, saved]),
+        answered: (shown) => told.push(["answered", shown?.days ?? null]),
+        failed: (why) => told.push(["failed", why]),
+      },
+      async () => {
+        waited += 1;
+        if (waited === waits) page.abort();
+      },
+    );
+    return { asked, told, page, done };
+  };
+
+  it("draws the copy this device kept before any request, then asks naming its tag", async () => {
+    const store = stored({ value: { ...wire(), days: 14 }, etag: "r1", saved: 7 });
+    const { asked, told, done } = open("day", 14, 1);
+    await asking(asked, 1);
+    // The kept copy is told while the one request made is still unanswered.
+    expect(told).toEqual([["kept", 14, 3, 7]]);
+    expect(store.read).toHaveBeenCalledWith(CACHE_FORMAT, "", "reports:", "day:14");
+    expect(asked[0]?.url).toBe("/api/reports?grain=day&days=14");
+    expect(asked[0]?.named).toBe("r1");
+    // Unchanged: no body, the copy shown is current, and nothing is kept again.
+    asked[0]?.answer(new Response(null, { status: 304 }));
+    await done;
+    expect(told).toEqual([
+      ["kept", 14, 3, 7],
+      ["answered", null],
+    ]);
+    expect(store.keep).not.toHaveBeenCalled();
+    expect(asked).toHaveLength(1);
+  });
+
+  it("keeps each new answer in the window's part, and names its tag from then on", async () => {
+    const store = stored({ value: { ...wire(), days: 14 }, etag: "r1", saved: 7 });
+    const { asked, told, done } = open("day", 14, 2, "tree");
+    await asking(asked, 1);
+    const next = { ...wire(), days: 14, buckets: wire().buckets.slice(1) };
+    asked[0]?.answer(reply(200, next, "r2"));
+    await asking(asked, 2);
+    expect(asked[1]?.named).toBe("r2");
+    asked[1]?.answer(new Response(null, { status: 304 }));
+    await done;
+    expect(told).toEqual([
+      ["kept", 14, 3, 7],
+      ["answered", 14],
+      ["answered", null],
+    ]);
+    expect(store.keep).toHaveBeenCalledTimes(1);
+    const [format, project, id, kind, part, etag, value, size, ahead] = store.keep.mock
+      .calls[0] as unknown as unknown[];
+    expect([format, project, id, kind, part, etag, size, ahead]).toEqual([
+      CACHE_FORMAT,
+      "",
+      "reports:@tree/",
+      "reports",
+      "day:14",
+      "r2",
+      undefined,
+      false,
+    ]);
+    // What is kept is plain data the store can hold, each period as the server sent it, and
+    // reads back as the page it was drawn from.
+    expect(structuredClone(value)).toEqual(value);
+    expect((value as { buckets: unknown[] }).buckets).toEqual(next.buckets);
+    expect(readReports(value)).toEqual(readReports(next));
+  });
+
+  it("reads a window never kept whole, naming no tag, and keeps its answer", async () => {
+    const store = stored(null);
+    const { asked, told, done } = open("hour", 1, 1);
+    await asking(asked, 1);
+    expect(told).toEqual([]);
+    expect(asked[0]?.named).toBeNull();
+    asked[0]?.answer(reply(200, wire(), "r1"));
+    await done;
+    expect(told).toEqual([["answered", 3]]);
+    expect(store.keep).toHaveBeenCalledTimes(1);
+  });
+
+  it("reads whole, forgetting it, a copy kept in a form it cannot read", async () => {
+    const store = stored({ value: { grain: "month" }, etag: "old", saved: 7 });
+    const { asked, told, done } = open("hour", 1, 1);
+    await asking(asked, 1);
+    expect(told).toEqual([]);
+    expect(store.forget).toHaveBeenCalledWith(CACHE_FORMAT, "", "reports:");
+    expect(asked[0]?.named).toBeNull();
+    asked[0]?.answer(reply(503, {}));
+    await done;
+  });
+
+  it("leaves the kept copy shown when the read fails, and asks again with its tag", async () => {
+    const store = stored({ value: wire(), etag: "r1", saved: 7 });
+    const { asked, told, done } = open("day", 3, 2);
+    await asking(asked, 1);
+    asked[0]?.answer(reply(503, {}));
+    await asking(asked, 2);
+    expect(asked[1]?.named).toBe("r1");
+    asked[1]?.answer(new Response(null, { status: 304 }));
+    await done;
+    expect(told).toEqual([
+      ["kept", 3, 3, 7],
+      ["failed", "The server answered 503"],
+      ["answered", null],
+    ]);
+    expect(store.keep).not.toHaveBeenCalled();
+    expect(store.forget).not.toHaveBeenCalled();
+  });
+
+  it("works without the store: nothing drawn from it, the window read whole", async () => {
+    vi.stubGlobal("symphonyCache", undefined);
+    const { asked, told, done } = open("day", 3, 1);
+    await asking(asked, 1);
+    expect(asked[0]?.named).toBeNull();
+    asked[0]?.answer(reply(200, wire(), "r1"));
+    await done;
+    expect(told).toEqual([["answered", 3]]);
+  });
+
+  it("draws and asks nothing once the page that opened it is gone", async () => {
+    let give: (kept: unknown) => void = () => {};
+    vi.stubGlobal("symphonyCache", {
+      read: () =>
+        new Promise((resolve) => {
+          give = resolve;
+        }),
+    });
+    const { asked, told, page, done } = open("day", 3, 1);
+    page.abort();
+    give({ value: wire(), etag: "r1", saved: 7 });
+    await done;
+    expect(told).toEqual([]);
+    expect(asked).toHaveLength(0);
+  });
+});
+
+describe("the reports' item", () => {
+  it("is its checkout's, outside the caps, a part a window", () => {
+    expect(reportsItem("")).toEqual({ kind: "reports", id: "reports:", pinned: false });
+    expect(reportsItem("proposal~x").id).toBe("reports:@proposal~x/");
+    expect(reportsWindow("hour", 1)).toBe("hour:1");
+    expect(reportsWindow("day", 14)).not.toBe(reportsWindow("day", 1));
   });
 });

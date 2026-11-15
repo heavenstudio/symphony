@@ -66,11 +66,22 @@ full suite).
 4. Follow the project's integration and dependency policy before starting. Honor
    explicit stacking and source-availability rules in the task. Coordinate file
    ownership and record actual conflicts on the thread.
-5. Assign disjoint files and complete briefs. Put repeated instructions in skills.
-   Register a worker handle and give it only $work SLUG HANDLE (Claude: /work SLUG
-   HANDLE), a reviewer's handle only $review-task SLUG HANDLE (Claude: /review-task
-   SLUG HANDLE), on the task itself: its brief and thread are their assignment, with
-   no work or review subtask, and what more they need goes on the thread. The work
+5. Assign disjoint files and complete briefs. Register a worker handle and give it
+   only $work SLUG HANDLE (Claude: /work SLUG HANDLE), a reviewer's handle only
+   $review-task SLUG HANDLE (Claude: /review-task SLUG HANDLE), on the task itself:
+   its brief and thread are their assignment, with no work or review subtask. An
+   instruction has one of two places. What holds for every task of the project is
+   standing: it goes in the project's guides and rules, or, for one role alone, in
+   project.md beside that role's skill (the work, review-task or assess-task folder
+   under .agents/skills, a file of the project's own that init never writes),
+   committed, so a change to it is seen and every orchestrator's agents work under
+   the same words; never in a prompt, and never in a file outside the repository.
+   What is this task's alone goes in its brief or on its thread (--to @executor,
+   --to @reviewer): another task touching the same files and who merges whose
+   landing, a finding since the brief was written, the tip to review, a file to
+   leave alone. Beside its one line a prompt carries only what is this task's and
+   the agent needs before it can read the thread, such as a handle to take in
+   place of one refused. An instruction you write a second time is standing. The work
    skill owns claiming, milestones and finishing, the review-task skill the reviewer's
    role on the task and the verdict. A later review round resumes the same reviewer
    with the new tip, never another reviewer; resumed, it is still a fresh reviewer

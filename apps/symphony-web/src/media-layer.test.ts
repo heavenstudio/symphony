@@ -6,6 +6,7 @@ import {
   photo,
   pictureSet,
   pressed,
+  type Reach,
   scaleFrame,
   scan,
   startMedia,
@@ -813,6 +814,95 @@ describe("the media layer", () => {
     layer.abort();
     startMedia("review-pictures", layer.signal);
     expect([resized, mutated]).toEqual([[], []]);
+  });
+});
+
+describe("a layer of the chat's pictures alone", () => {
+  const CHAT: Reach = { pictures: "#quick-sheet .quick-message img", views: false };
+  const message = (...pictures: FakeElement[]) =>
+    h("article", { class: "quick-message" }, ...pictures);
+  const chat = (...messages: FakeElement[]) =>
+    h("aside", { id: "quick-sheet" }, h("div", { class: "quick-thread" }, ...messages));
+
+  it("readies and opens the chat's pictures, the conversation's as one set", () => {
+    const [a, b] = [h("img", { src: "/a.png", alt: "A" }), h("img", { src: "/b.png", alt: "B" })];
+    const onPage = h("img", { src: "/page.png" });
+    const doc = page(h("main", {}, onPage), chat(message(a), message(b)));
+    observers();
+    const asked = overlay();
+    startMedia("panel-pictures", new AbortController().signal, CHAT);
+    expect([a.getAttribute("role"), b.getAttribute("role")]).toEqual(["button", "button"]);
+    expect(onPage.hasAttribute("data-zoom-ready")).toBe(false);
+    fire(doc, "click", b, { button: 0 });
+    fire(doc, "click", onPage, { button: 0 });
+    expect(shown(asked)).toEqual([
+      {
+        kind: "picture",
+        owner: "panel-pictures",
+        at: 1,
+        photos: [
+          { src: "/a.png", caption: "A" },
+          { src: "/b.png", caption: "B" },
+        ],
+      },
+    ]);
+  });
+
+  it("leaves the page's frames, viewers, view buttons and folds to the page's own layer", () => {
+    const stage = h("div", { class: "mockup-frame" }, h("iframe"));
+    const viewer = h("div", { class: "viewer-stage", "data-viewer-script": "/static/v.js" });
+    const settle = vi.fn();
+    const element = Object.assign(h("orbit-view"), { settle });
+    const button = h("button", { "data-viewer-set": "zoom=2", "data-viewer-call": "settle" });
+    const fold = h("details", { open: "" });
+    const doc = page(
+      h(
+        "main",
+        {},
+        stage,
+        viewer,
+        h(
+          "figure",
+          { class: "media-viewer" },
+          h("div", { class: "viewer-stage" }, element),
+          button,
+        ),
+        fold,
+      ),
+    );
+    const { resized } = observers();
+    overlay();
+    const layer = new AbortController();
+    startMedia("panel-pictures", layer.signal, CHAT);
+    fire(doc, "click", button, { button: 0 });
+    fire(doc, "toggle", fold);
+    expect(stage.hasAttribute("data-media-observed")).toBe(false);
+    expect(resized[0]?.observed.size).toBe(0);
+    expect(doc.head.children).toEqual([]);
+    expect(settle).not.toHaveBeenCalled();
+    expect(element.hasAttribute("zoom")).toBe(false);
+    expect(fold.hasAttribute("data-busy")).toBe(false);
+    stage.setAttribute("data-media-observed", "true");
+    layer.abort();
+    expect(stage.getAttribute("data-media-observed")).toBe("true");
+  });
+
+  it("closes its viewer on the backdrop and moves it by the viewer's keys", () => {
+    const [a, b] = [h("img", { src: "/a.png" }), h("img", { src: "/b.png" })];
+    const lightbox = h("div", { id: "media-lightbox", "data-state": "closed" });
+    const doc = page(lightbox, chat(message(a, b)));
+    observers();
+    const asked = overlay();
+    startMedia("panel-pictures", new AbortController().signal, CHAT);
+    fire(doc, "keydown", a, { key: "Enter", repeat: false });
+    lightbox.setAttribute("data-state", "open");
+    fire(doc, "keydown", a, { key: "ArrowRight", repeat: false });
+    fire(doc, "click", lightbox, { button: 0 });
+    expect(shown(asked).map((request) => [request.kind, request.at])).toEqual([
+      ["picture", 0],
+      ["picture", 1],
+      ["close", undefined],
+    ]);
   });
 });
 
