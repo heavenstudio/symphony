@@ -59,6 +59,7 @@ mod owner_save;
 mod panel_open;
 mod persistent;
 mod phone;
+mod phone_board;
 mod polish;
 mod preload;
 mod projects;

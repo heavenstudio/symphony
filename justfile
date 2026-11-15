@@ -42,6 +42,12 @@ client-wire:
 test-rs *ARGS:
     @{{record}} --pipeline test test "just test-rs $*" tools/cargo.sh test --locked "$@"
 
+# The settings check (`symphony settings-check`, docs/PROJECT_FILE.md): symphony.toml read as the
+# Symphony reads it and judged on its shape alone, recorded as a test run, which is what a change
+# of settings' values lands by in a reviewer's place (docs/TASKS.md, "Needed stamps").
+settings-check:
+    @{{record}} --pipeline settings test "just settings-check" tools/rs-bin.sh symphony settings-check
+
 symphony-ui-dist OUT="build/symphony-ui" KIND="all" OPT="z":
     #!/usr/bin/env bash
     set -euo pipefail

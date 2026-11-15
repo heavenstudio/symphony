@@ -271,6 +271,7 @@ fn help_is_the_usage_on_stdout_and_exit_zero() {
             "usage: symphony docs-audit [-h] [--root ROOT] [--check]",
         ),
         ("blocks", "usage: symphony blocks [--root ROOT]"),
+        ("settings-check", "usage: symphony settings-check [DIR]"),
         (
             "triage",
             "usage: symphony triage [-h] [--root ROOT] {stats,queue} [n]",
@@ -323,13 +324,14 @@ fn the_retired_verdict_tasks_command_is_unknown_and_names_what_turns_them_into_a
 }
 
 /// The commands the binary lists: the Symphony's own, which a test build holds with no plugin.
-const COMMANDS: [&str; 13] = [
+const COMMANDS: [&str; 14] = [
     "status",
     "reply",
     "ask",
     "triage",
     "verdict-asks",
     "docs-audit",
+    "settings-check",
     "blocks",
     "shot",
     "attach",
@@ -351,6 +353,7 @@ fn the_build_only_commands_are_unknown_to_the_shipped_binary() {
         "size-budget",
         "crates-check",
         "split-repair",
+        "synced",
         "release",
         "nightly",
     ] {
