@@ -19,6 +19,7 @@ import {
   keepShape,
   keepsWatching,
   MORE,
+  NO_TREE,
   PAGE,
   ROW,
   readTree,
@@ -27,12 +28,16 @@ import {
   rememberCards,
   rowCard,
   sameRow,
+  searched,
   statusLabel,
   TaskBoard,
   type TaskBoardProps,
   TaskColumn,
+  type Tree,
+  TreeReads,
   titleLines,
   UnreadBoard,
+  windowChosen,
   windowOf,
   withMachineStages,
 } from "./board";
@@ -546,11 +551,106 @@ describe("a board drawn again", () => {
   });
 });
 
+describe("a card a live update moves to another column", () => {
+  const a = aTask("w/a");
+  const row = () =>
+    renderToStaticMarkup(
+      <BoardRow {...{ task: a, work: NO_WORK, connected: true, layout: layoutAt(1280) }} />,
+    );
+  /** The focus on a link of the board's card of `slug`, in its old row, still on the page. */
+  const focusOn = (slug: string) => {
+    const card = { getAttribute: () => slug, querySelectorAll: () => [] };
+    vi.stubGlobal("document", {
+      activeElement: {
+        closest: (selector: string) => (selector.endsWith("[data-slug]") ? card : null),
+      },
+    });
+  };
+
+  it("draws its card in its new row at once while the focus is in it, a ghost otherwise", () => {
+    expect(row()).toContain('class="viewport-placeholder"');
+    focusOn("w/b");
+    expect(row()).toContain('class="viewport-placeholder"');
+    focusOn("w/a");
+    const html = row();
+    expect(html).not.toContain("viewport-placeholder");
+    expect(html).toContain('<div class="taskcard p2" data-slug="w/a">');
+  });
+
+  it("draws its new column's rows at once, that column not yet near the screen", () => {
+    const column = () =>
+      renderToStaticMarkup(
+        <TaskColumn
+          status="in_progress"
+          work={NO_WORK}
+          connected
+          tasks={[aTask("w/b", { status: "in_progress" }), aTask("w/a", { status: "in_progress" })]}
+          count={2}
+          query=""
+          days={1}
+          onLoad={() => {}}
+          refreshed={0}
+        />,
+      );
+    expect(columnRows(column())).toEqual([]);
+    focusOn("w/c");
+    expect(columnRows(column())).toEqual([]);
+    focusOn("w/a");
+    const html = column();
+    expect(columnRows(html)).toEqual(["w/b", "w/a"]);
+    // Only the focused card's row draws its card; the other is its ghost until it is near.
+    expect(html.match(/class="taskcard /g)).toHaveLength(1);
+  });
+});
+
 describe("the Finished tasks field", () => {
   it("names a week by its 7, and the last 24 hours by anything else", () => {
     expect(windowOf("7")).toBe(7);
     expect(windowOf("1")).toBe(1);
     expect(windowOf("")).toBe(1);
+  });
+
+  it("reads the board in the window chosen, under the search typed, the same window again too", () => {
+    const onFilter = vi.fn();
+    let filters = { search: "", days: 1 };
+    filters = windowChosen(filters, "7", onFilter);
+    expect(filters).toEqual({ search: "", days: 7 });
+    expect(onFilter).toHaveBeenLastCalledWith("", 7);
+    filters = searched(filters, "slow", onFilter);
+    filters = windowChosen(filters, "7", onFilter);
+    expect(filters).toEqual({ search: "slow", days: 7 });
+    expect(onFilter).toHaveBeenLastCalledWith("slow", 7);
+    filters = windowChosen(filters, "1", onFilter);
+    expect(filters).toEqual({ search: "slow", days: 1 });
+    expect(onFilter).toHaveBeenLastCalledWith("slow", 1);
+    expect(onFilter).toHaveBeenCalledTimes(4);
+  });
+});
+
+describe("the search", () => {
+  it("reads the board under each key's search, in the window chosen", () => {
+    const onFilter = vi.fn();
+    let filters = { search: "", days: 7 };
+    filters = searched(filters, "s", onFilter);
+    expect(filters).toEqual({ search: "s", days: 7 });
+    expect(onFilter).toHaveBeenLastCalledWith("s", 7);
+    filters = searched(filters, "sl", onFilter);
+    expect(onFilter).toHaveBeenLastCalledWith("sl", 7);
+    // Cleared, the board is read with no search: a search A, then B, then A again, is three.
+    filters = searched(filters, "", onFilter);
+    expect(filters).toEqual({ search: "", days: 7 });
+    expect(onFilter.mock.calls).toEqual([
+      ["s", 7],
+      ["sl", 7],
+      ["", 7],
+    ]);
+  });
+
+  it("leaves the filters it was given as they were", () => {
+    const filters = { search: "a", days: 1 };
+    searched(filters, "b", () => {});
+    windowChosen(filters, "7", () => {});
+    expect(filters).toEqual({ search: "a", days: 1 });
   });
 });
 
@@ -706,6 +806,137 @@ describe("the task groups", () => {
 
   it("open on their toggle, closed, and draw nothing of their tree until opened", () => {
     expect(board({})).not.toContain("Load more task groups");
+  });
+
+  /** A part's reads, its mount and its own signal, and what it shows after each change. */
+  function part(parent: string | null = null) {
+    const mount = new AbortController();
+    const own = new AbortController();
+    const shown: Tree[] = [];
+    let tree = NO_TREE;
+    const reads = new TreeReads("", parent, mount.signal, (change) => {
+      tree = change(tree);
+      shown.push(tree);
+    });
+    return { reads, mount, own, shown };
+  }
+  const listing = (slugs: string[], total: number, next: string | null = null) => ({
+    tasks: slugs.map((slug) => aTask(slug)),
+    counts: [["ready", total]],
+    next,
+  });
+
+  it("read nothing before their part is drawn", async () => {
+    const asked = server();
+    const { reads, shown } = part();
+    await reads.load(false);
+    expect(asked).toHaveLength(0);
+    expect(shown).toHaveLength(0);
+  });
+
+  it("read the first page, then each next one from where the last left, each task once", async () => {
+    const asked = server();
+    const { reads, own, shown } = part("w/a");
+    reads.open(own.signal);
+    const first = reads.load(false);
+    await asking(asked, 1);
+    expect(asked[0]?.url).toBe("/api/task-board?parent=w%2Fa&older=1");
+    expect(asked[0]?.signal?.aborted).toBe(false);
+    asked[0]?.answer(reply(200, listing(["w/a/1", "w/a/2"], 3, "w/a/2")));
+    await first;
+    expect(shown.at(-1)).toEqual({ rows: [aTask("w/a/1"), aTask("w/a/2")], total: 3, trouble: "" });
+    const more = reads.load(true);
+    await asking(asked, 2);
+    expect(asked[1]?.url).toBe("/api/task-board?parent=w%2Fa&older=1&cursor=w%2Fa%2F2");
+    asked[1]?.answer(reply(200, listing(["w/a/2", "w/a/3"], 3)));
+    await more;
+    expect(shown.at(-1)?.rows.map((task) => task.slug)).toEqual(["w/a/1", "w/a/2", "w/a/3"]);
+    // The last page named none after it: the next read starts again from the top.
+    const again = reads.load(true);
+    await asking(asked, 3);
+    expect(asked[2]?.url).toBe("/api/task-board?parent=w%2Fa&older=1");
+    asked[2]?.answer(reply(200, listing(["w/a/1"], 1)));
+    await again;
+    // The first page again replaces what was shown.
+    const top = reads.load(false);
+    await asking(asked, 4);
+    expect(asked[3]?.url).toBe("/api/task-board?parent=w%2Fa&older=1");
+    asked[3]?.answer(reply(200, listing(["w/a/9"], 1)));
+    await top;
+    expect(shown.at(-1)).toEqual({ rows: [aTask("w/a/9")], total: 1, trouble: "" });
+  });
+
+  it("keep what they showed when a read fails, saying why, and keep its place for the next", async () => {
+    const asked = server();
+    const { reads, own, shown } = part();
+    reads.open(own.signal);
+    const first = reads.load(false);
+    await asking(asked, 1);
+    expect(asked[0]?.url).toBe("/api/task-board?roots=1&older=1");
+    asked[0]?.answer(reply(200, listing(["r/a"], 2, "r/a")));
+    await first;
+    const failed = reads.load(true);
+    await asking(asked, 2);
+    asked[1]?.answer(reply(503, { error: "the board is down" }));
+    await failed;
+    expect(shown.at(-1)?.rows).toEqual([aTask("r/a")]);
+    expect(shown.at(-1)?.trouble).toContain("the board is down");
+    // A retry of the next page asks from where the last page left.
+    const retry = reads.load(true);
+    await asking(asked, 3);
+    expect(asked[2]?.url).toBe("/api/task-board?roots=1&older=1&cursor=r%2Fa");
+    asked[2]?.answer(reply(200, listing(["r/b"], 2)));
+    await retry;
+    expect(shown.at(-1)).toEqual({ rows: [aTask("r/a"), aTask("r/b")], total: 2, trouble: "" });
+  });
+
+  it("drop an answer that comes once their part is gone, or their kind is stopped", async () => {
+    const asked = server();
+    const gone = part();
+    gone.reads.open(gone.own.signal);
+    const late = gone.reads.load(false);
+    await asking(asked, 1);
+    gone.own.abort();
+    expect(asked[0]?.signal?.aborted).toBe(true);
+    asked[0]?.answer(reply(200, listing(["r/a"], 1)));
+    await late;
+    expect(gone.shown).toHaveLength(0);
+    // Nor does a part that is gone read again.
+    await gone.reads.load(false);
+    expect(asked).toHaveLength(1);
+    const stopped = part();
+    stopped.reads.open(stopped.own.signal);
+    const after = stopped.reads.load(false);
+    await asking(asked, 2);
+    stopped.mount.abort();
+    asked[1]?.answer(reply(200, listing(["r/a"], 1)));
+    await after;
+    expect(stopped.shown).toHaveLength(0);
+    await stopped.reads.load(true);
+    expect(asked).toHaveLength(2);
+  });
+
+  it("read under the part's newest signal once it is drawn again", async () => {
+    const asked = server();
+    const { reads, own, shown } = part();
+    reads.open(own.signal);
+    own.abort();
+    const again = new AbortController();
+    reads.open(again.signal);
+    const read = reads.load(false);
+    await asking(asked, 1);
+    expect(asked[0]?.signal?.aborted).toBe(false);
+    asked[0]?.answer(reply(200, listing(["r/a"], 1)));
+    await read;
+    expect(shown).toHaveLength(1);
+    // That signal ending gives its read up on the wire.
+    const next = reads.load(true);
+    await asking(asked, 2);
+    again.abort();
+    expect(asked[1]?.signal?.aborted).toBe(true);
+    asked[1]?.answer(reply(200, listing(["r/b"], 2)));
+    await next;
+    expect(shown).toHaveLength(1);
   });
 });
 

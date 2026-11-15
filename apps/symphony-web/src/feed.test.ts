@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { type Heard, heard, Inbox, sleep } from "./feed";
+import { type Heard, heard, Inbox, message, sleep, socketAddress } from "./feed";
+import { feeds, say } from "./testing";
 import { FEED_EVENT, PING_EVENT, SERVER_EVENT } from "./wire";
 
 describe("what one event of the stream says", () => {
@@ -17,6 +18,53 @@ describe("what one event of the stream says", () => {
     ["a notice that does not parse", SERVER_EVENT, "x"],
   ])("is lost for %s", (_, type, data) => {
     expect(heard(type, data)).toEqual({ kind: "lost" });
+  });
+});
+
+describe("what one message of the socket says", () => {
+  it("is its event, named before its first line feed, with the data after it", () => {
+    expect(message(`${FEED_EVENT}\n{"version":3}`)).toEqual({
+      kind: "delta",
+      value: { version: 3 },
+    });
+    expect(message(`${PING_EVENT}\n`)).toEqual({ kind: "ping" });
+    expect(message(`${SERVER_EVENT}\n"Rebuilt"`)).toEqual({ kind: "server", message: "Rebuilt" });
+    // The data is the rest, line feeds and all: JSON may span lines.
+    expect(message(`${FEED_EVENT}\n{\n"version":\n4}`)).toEqual({
+      kind: "delta",
+      value: { version: 4 },
+    });
+  });
+
+  it.each([
+    ["no line feed", FEED_EVENT],
+    ["an empty message", ""],
+    ["an event of no name", '\n{"version":3}'],
+    ["an event it does not know", 'later\n{"version":3}'],
+    ["a change that does not parse", `${FEED_EVENT}\n{`],
+    ["binary data", new ArrayBuffer(3)],
+    ["no data", undefined],
+  ])("is lost for %s", (_, data) => {
+    expect(message(data)).toEqual({ kind: "lost" });
+  });
+});
+
+describe("the socket's address", () => {
+  it.each([
+    ["http://127.0.0.1:8765/api/feed?since=3", "ws://127.0.0.1:8765/api/feed?since=3"],
+    [
+      "https://machine.tail.ts.net/@p/api/feed?since=3",
+      "wss://machine.tail.ts.net/@p/api/feed?since=3",
+    ],
+    ["http://[::1]:9/api/feed?since=0&document=", "ws://[::1]:9/api/feed?since=0&document="],
+  ])("of %s is %s", (page, socket) => {
+    expect(socketAddress(new URL(page))).toBe(socket);
+  });
+
+  it("leaves the page's address as it was", () => {
+    const page = new URL("http://127.0.0.1/api/feed");
+    socketAddress(page);
+    expect(page.protocol).toBe("http:");
   });
 });
 
@@ -86,47 +134,88 @@ describe("a sleep", () => {
 });
 
 describe("the feed's stream", () => {
-  /** The EventSource the feed opened, as a fake that the test makes speak. */
-  class FakeSource extends EventTarget {
-    static opened: FakeSource[] = [];
-    closed = false;
-    constructor(readonly url: string) {
-      super();
-      FakeSource.opened.push(this);
-    }
-    close() {
-      this.closed = true;
-    }
-  }
-  const page = new EventTarget();
-  const doc = new EventTarget();
+  // A page of its own each test, as each imports the module afresh, with listeners of its own.
+  let page: EventTarget;
+  let doc: EventTarget;
+  let opened: ReturnType<typeof feeds>;
 
   beforeEach(() => {
-    FakeSource.opened = [];
     vi.resetModules();
-    vi.stubGlobal("EventSource", FakeSource);
+    page = new EventTarget();
+    doc = new EventTarget();
+    opened = feeds("http://127.0.0.1:1/queue");
     vi.stubGlobal("window", page);
-    vi.stubGlobal("location", { href: "http://127.0.0.1:1/queue" });
     vi.stubGlobal("document", Object.assign(doc, { getElementById: () => null }));
   });
   afterEach(() => vi.unstubAllGlobals());
 
-  it("opens on the project's feed and hands on what it says", async () => {
+  it("opens a socket on the project's feed and hands on what it says", async () => {
     const { openFeed } = await import("./feed");
     const said: Heard[] = [];
     const close = openFeed("/api/feed?since=3", (one) => said.push(one));
-    const [source] = FakeSource.opened;
-    expect(source?.url).toBe("http://127.0.0.1:1/api/feed?since=3");
-    source?.dispatchEvent(new Event("open"));
-    source?.dispatchEvent(new MessageEvent(FEED_EVENT, { data: '{"version":4}' }));
-    source?.dispatchEvent(new Event("error"));
+    const [socket] = opened;
+    expect(socket?.url).toBe("ws://127.0.0.1:1/api/feed?since=3");
+    socket?.source.dispatchEvent(new Event("open"));
+    say(socket?.source, SERVER_EVENT, '"Serving"');
+    say(socket?.source, FEED_EVENT, '{"version":4}');
+    say(socket?.source, PING_EVENT, "");
     expect(said).toEqual([
       { kind: "open" },
+      { kind: "server", message: "Serving" },
       { kind: "delta", value: { version: 4 } },
-      { kind: "lost" },
+      { kind: "ping" },
     ]);
     close?.();
-    expect(source?.closed).toBe(true);
+    expect(socket?.closed).toBe(1);
+    // A socket tells of its close after it is closed: the feed it was says nothing more.
+    socket?.source.dispatchEvent(new Event("close"));
+    say(socket?.source, FEED_EVENT, '{"version":5}');
+    expect(said).toHaveLength(4);
+  });
+
+  it.each([
+    ["fails", ["error", "close"]],
+    ["is closed by the server", ["close"]],
+  ])("is lost once when its socket %s", async (_, events) => {
+    const { openFeed } = await import("./feed");
+    const said: Heard[] = [];
+    openFeed("/api/feed?since=3", (one) => said.push(one));
+    const socket = opened[0]?.source;
+    socket?.dispatchEvent(new Event("open"));
+    for (const name of events) socket?.dispatchEvent(new Event(name));
+    say(socket, FEED_EVENT, '{"version":4}');
+    expect(said).toEqual([{ kind: "open" }, { kind: "lost" }]);
+  });
+
+  it("is lost at a message it cannot read, and hears nothing after it", async () => {
+    const { openFeed } = await import("./feed");
+    const said: Heard[] = [];
+    openFeed("/api/feed?since=3", (one) => said.push(one));
+    const socket = opened[0]?.source;
+    socket?.dispatchEvent(new MessageEvent("message", { data: '{"version":4}' }));
+    say(socket, FEED_EVENT, '{"version":5}');
+    socket?.dispatchEvent(new Event("close"));
+    expect(said).toEqual([{ kind: "lost" }]);
+  });
+
+  it("opens on the page's secure address as a secure socket", async () => {
+    vi.stubGlobal("location", { href: "https://machine.tail.ts.net/queue" });
+    const { openFeed } = await import("./feed");
+    openFeed("/api/feed?since=0", () => {});
+    expect(opened[0]?.url).toBe("wss://machine.tail.ts.net/api/feed?since=0");
+  });
+
+  it("is none when the browser cannot open the socket", async () => {
+    vi.stubGlobal(
+      "WebSocket",
+      class {
+        constructor() {
+          throw new SyntaxError("refused");
+        }
+      },
+    );
+    const { openFeed } = await import("./feed");
+    expect(openFeed("/api/feed?since=0", () => {})).toBeNull();
   });
 
   it("closes as the page goes away, and opens none until it is back", async () => {
@@ -134,7 +223,9 @@ describe("the feed's stream", () => {
     const said: Heard[] = [];
     openFeed("/api/feed", (one) => said.push(one));
     page.dispatchEvent(new Event("pagehide"));
-    expect(FakeSource.opened[0]?.closed).toBe(true);
+    expect(opened[0]?.closed).toBe(1);
+    // Its close, told after, is no loss: the page went away.
+    opened[0]?.source.dispatchEvent(new Event("close"));
     expect(said).toEqual([{ kind: "away" }]);
     expect(isAway()).toBe(true);
     expect(openFeed("/api/feed", () => {})).toBeNull();
@@ -144,5 +235,28 @@ describe("the feed's stream", () => {
     expect(isAway()).toBe(true);
     doc.dispatchEvent(new Event("resume"));
     expect(isAway()).toBe(false);
+  });
+
+  it("is not told of the page going away once it was closed", async () => {
+    const { isAway, openFeed } = await import("./feed");
+    const said: Heard[] = [];
+    const close = openFeed("/api/feed", (one) => said.push(one));
+    close?.();
+    doc.dispatchEvent(new Event("freeze"));
+    expect(said).toEqual([]);
+    expect(opened[0]?.closed).toBe(1);
+    expect(isAway()).toBe(true);
+    doc.dispatchEvent(new Event("resume"));
+  });
+
+  it("is not told of the page going away once it was lost, though the page is away", async () => {
+    const { isAway, openFeed } = await import("./feed");
+    const said: Heard[] = [];
+    openFeed("/api/feed", (one) => said.push(one));
+    opened[0]?.source.dispatchEvent(new Event("error"));
+    page.dispatchEvent(new Event("pagehide"));
+    expect(said).toEqual([{ kind: "lost" }]);
+    expect(isAway()).toBe(true);
+    page.dispatchEvent(new Event("pageshow"));
   });
 });
