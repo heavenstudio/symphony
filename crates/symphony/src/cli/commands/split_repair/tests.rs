@@ -1134,10 +1134,7 @@ fn a_chunk_s_touching_segments_are_joined_in_place_and_its_data_count_follows() 
         format!("chunk {path}: 2 of its 2 segments put in order, 1 joined to the one before\n")
     );
     let ordered = std::fs::read(&path).unwrap();
-    assert_eq!(
-        segments_of(&ordered, wasm::DATA),
-        [active(0x400, b"ok@{}")]
-    );
+    assert_eq!(segments_of(&ordered, wasm::DATA), [active(0x400, b"ok@{}")]);
     assert_eq!(data_count(&ordered), 1);
 }
 

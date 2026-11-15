@@ -634,7 +634,10 @@ cp "$input" "$out"
     // dx ran with bundle.sh's DX_HOME, in the target it holds, with the machine's other tools.
     let home = fs::read_to_string(said.join("program.dx-home")).unwrap();
     let home = Path::new(home.trim_end());
-    assert!(home.starts_with(&target) && home.ends_with("dx-home"), "{home:?}");
+    assert!(
+        home.starts_with(&target) && home.ends_with("dx-home"),
+        "{home:?}"
+    );
     assert_eq!(
         fs::read_to_string(said.join("program.dx-tools")).unwrap(),
         format!(
@@ -642,7 +645,10 @@ cp "$input" "$out"
             bindgen_version()
         )
     );
-    for tool in ["esbuild-fixture", &format!("wasm-bindgen-{}", bindgen_version())] {
+    for tool in [
+        "esbuild-fixture",
+        &format!("wasm-bindgen-{}", bindgen_version()),
+    ] {
         assert_eq!(
             fs::read_link(home.join("tools").join(tool)).unwrap(),
             machine.join("tools").join(tool)
