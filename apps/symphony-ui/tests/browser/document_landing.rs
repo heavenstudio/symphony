@@ -611,7 +611,7 @@ fn reader(reading: Reading) -> Option<Chrome> {
 
 /// True once the page has moved to `path` and scrolled the element `id` names (its ghost's, while
 /// its section is read) to the page's scroll padding.
-fn landed_on(path: &str, id: &str) -> String {
+pub(crate) fn landed_on(path: &str, id: &str) -> String {
     format!(
         "(() => {{ const line = document.getElementById({id});
         return location.pathname === {path} && document.documentElement.dataset.navigation === 'ready'
@@ -731,24 +731,8 @@ fn read_while_drawn(
             );
         }
         Reading::Swiped => {
-            // A finger drawn 500 px up the screen, in steps, and lifted.
-            let x = width / 2;
-            let from = height * 3 / 4;
-            let point = |y: u32| json!([{"x": x, "y": y}]);
-            page.call(
-                "Input.dispatchTouchEvent",
-                json!({"type": "touchStart", "touchPoints": point(from)}),
-            );
-            for step in 1..=10 {
-                page.call(
-                    "Input.dispatchTouchEvent",
-                    json!({"type": "touchMove", "touchPoints": point(from - step * 50)}),
-                );
-            }
-            page.call(
-                "Input.dispatchTouchEvent",
-                json!({"type": "touchEnd", "touchPoints": []}),
-            );
+            // A finger drawn 500 px up the screen and lifted at rest: no fling carries the reader on.
+            crate::swipe(page, width / 2, height * 3 / 4, 500);
         }
         Reading::Typing => {
             let at = page.eval(&format!(
