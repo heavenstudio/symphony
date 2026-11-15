@@ -76,6 +76,10 @@ describe("the agents page's reads", () => {
       ["tasks", [{ slug: "w/a", role: "executor" }]],
       ["following", null],
       ["following", "2"],
+      // A `usize`: none below zero, none with a fraction, none past what a double holds whole.
+      ["following", -1],
+      ["following", 2.5],
+      ["following", 2 ** 53],
       ["chat", "yes"],
       ["in_process", 1],
       ["last_tool_call", "now"],
@@ -83,6 +87,8 @@ describe("the agents page's reads", () => {
       ["state_detail", { recipe: "test-rs", phase: "running", since: "1" }],
       ["last_message", { slug: "w/a", ts: "2", text: "Built." }],
       ["slots", { open: 3 }],
+      ["slots", { open: -1, cap: 8 }],
+      ["slots", { open: 3, cap: 8.5 }],
       ["go", { url: "https://example.com" }],
       ["go", { handle: "birch", pane: 2 }],
     ] as [string, unknown][]) {
@@ -96,6 +102,9 @@ describe("the agents page's reads", () => {
       url: null,
       pane: null,
     });
+    // The counts' edges serde takes.
+    const edges = { following: 0, slots: { open: 0, cap: Number.MAX_SAFE_INTEGER } };
+    expect(readAgent({ ...whole, ...edges })).toMatchObject(edges);
   });
 
   it("refuse a page or a view without what the page draws", () => {
@@ -110,6 +119,8 @@ describe("the agents page's reads", () => {
       { ...page, tasks: null },
       { ...page, tasks: [{ slug: "w/a" }] },
       { ...page, total: "2" },
+      { ...page, total: -1 },
+      { ...page, total: 1.5 },
       { ...page, next: 1 },
       { ...page, local: "yes" },
       null,
