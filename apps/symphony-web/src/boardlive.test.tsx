@@ -633,6 +633,17 @@ describe("a column of the live board", () => {
     expect(d.error).toBe("The server answered 503. Trying again…");
   });
 
+  it("answered, leaves what the board says of its own state", async () => {
+    const { board, d } = opened({ [column("ready")]: listing(ready, [["ready", 2]]) });
+    void board.column("ready", false, "", 1);
+    board.heard(event(["tasks-status", { available: false, slow: false }]));
+    const notice = statusNotice(false, false);
+    expect(d.error).toBe(notice);
+    await pass(250);
+    expect(d.tasks).toEqual(ready);
+    expect(d.error).toBe(notice);
+  });
+
   it("stops trying a failed first page once a newer read of it, another view or the page's end replaces it", async () => {
     const newer = live();
     newer.d.waiting = false;

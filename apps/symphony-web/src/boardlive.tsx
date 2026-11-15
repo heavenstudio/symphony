@@ -289,6 +289,9 @@ export class LiveBoard {
   kept: Promise<void> = Promise.resolve();
   /** A refresh a feed event asked for is under way. */
   private pending = false;
+  /** What a failed read last had the page say (`d.error`): a column's answer takes that away, and
+   * never the board's own notice of its state. */
+  private said = "";
   /** How many times the reader pressed Retry, which the board's loop waits on. */
   readonly retry = { current: 0 };
   /** A column's read, one function for the page's life: a column drawn again for it would be. */
@@ -432,6 +435,7 @@ export class LiveBoard {
     this.freshen((f) => failed(f, part));
     if (shown(this.fresh) === null) {
       this.d.error = why;
+      this.said = why;
       this.host.redraw();
     }
   }
@@ -680,7 +684,7 @@ export class LiveBoard {
       }
       this.freshen((f) => answered(f, part));
       // What a failed read said goes once none fails any more.
-      if (this.fresh.failing.length === 0) d.error = "";
+      if (this.fresh.failing.length === 0 && d.error === this.said) d.error = "";
       const queued = !more && hasNext && d.pendingMore.includes(status);
       d.pendingMore = d.pendingMore.filter((one) => one !== status);
       this.host.redraw();
