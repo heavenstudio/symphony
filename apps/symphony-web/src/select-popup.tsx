@@ -3,9 +3,10 @@
 // (dioxus-primitives `select`), mounted afresh on each opening. The list takes the focus; the
 // arrows, Home and End move it among the options, round the list, and typing moves it to the
 // option nearest what was typed (`typeahead.ts`); Enter or Space chooses the focused option, as a
-// press released on the option it went down on does; Escape, or the focus leaving the list,
-// closes it. It is drawn beside its field's trigger (`popup-position.ts`), whose page gives the
-// trigger its focus back.
+// press released on the option it went down on does (a finger's or a pen's on its click, so the
+// click lands on the option and nothing under it, `choosesOnClick`); Escape, or the focus leaving
+// the list, closes it. It is drawn beside its field's trigger (`popup-position.ts`), whose page
+// gives the trigger its focus back.
 
 import { type KeyboardEvent, type PointerEvent, useEffect, useRef, useState } from "react";
 import { anchor } from "./popup-position";
@@ -38,6 +39,15 @@ export function tapped(down: [number, number], up: [number, number], touch: bool
   return dx * dx + dy * dy <= 25;
 }
 
+/** Whether a tap of `pointerType` chooses on the option's own click rather than at its release:
+ * a finger's or a pen's tap sends its click after the release, aimed where the option was, and a
+ * popup closed at the release left it to land on whatever lay under the option (the Add task
+ * form's Send, which sent the form). A mouse's click goes to no element once the popup that held
+ * its press is gone. */
+export function choosesOnClick(pointerType: string): boolean {
+  return pointerType === "touch" || pointerType === "pen";
+}
+
 /** The list hidden until it is placed: measured before it is first painted. */
 const HIDDEN = { position: "fixed", visibility: "hidden" } as const;
 
@@ -62,6 +72,8 @@ export function SelectPopup({ id, label, value, options, onChange, onClose }: Se
   const search = useRef({ typed: "", timer: 0, keyboard: new Keyboard() });
   // The option a pointer went down on, and where: only a release on that same option chooses.
   const down = useRef<{ key: string; at: [number, number] } | null>(null);
+  // The option a finger's or a pen's tap chose, waiting for the tap's own click (`choosesOnClick`).
+  const tap = useRef<string | null>(null);
 
   // Placed beside the trigger now and as the page or the viewport moves, until it closes.
   useEffect(() => anchor(id, popup), [id, popup]);
@@ -125,6 +137,7 @@ export function SelectPopup({ id, label, value, options, onChange, onClose }: Se
     if (event.button !== 0) return;
     event.preventDefault();
     down.current = { key: pressed, at: [event.clientX, event.clientY] };
+    tap.current = null;
   };
   const release = (event: PointerEvent<HTMLDivElement>, chosen: string) => {
     if (event.button !== 0) return;
@@ -132,8 +145,15 @@ export function SelectPopup({ id, label, value, options, onChange, onClose }: Se
     down.current = null;
     if (from?.key !== chosen) return;
     if (tapped(from.at, [event.clientX, event.clientY], event.pointerType === "touch")) {
-      choose(chosen);
+      if (choosesOnClick(event.pointerType)) tap.current = chosen;
+      else choose(chosen);
     }
+  };
+  // The click of the tap that chose `clicked`; any other click, a script's among them, is nothing.
+  const clicked = (clicked: string) => {
+    if (tap.current !== clicked) return;
+    tap.current = null;
+    choose(clicked);
   };
 
   return (
@@ -155,6 +175,7 @@ export function SelectPopup({ id, label, value, options, onChange, onClose }: Se
         }}
       >
         {options.map(([key, text], index) => (
+          // biome-ignore lint/a11y/useKeyWithClickEvents: the click only ends a finger's or a pen's tap; the keyboard chooses with Enter or Space on the list (`onKeyDown`).
           <div
             key={key}
             role="option"
@@ -166,6 +187,7 @@ export function SelectPopup({ id, label, value, options, onChange, onClose }: Se
             className="dx-select-option"
             onPointerDown={(event) => press(event, key)}
             onPointerUp={(event) => release(event, key)}
+            onClick={() => clicked(key)}
             onPointerCancel={() => {
               down.current = null;
             }}

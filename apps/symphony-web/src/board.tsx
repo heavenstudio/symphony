@@ -14,6 +14,7 @@ import {
   useState,
 } from "react";
 import { focusedLink, focusedSlug, takeFocus, useKeptPlace } from "./boardplace";
+import { useOneColumnASwipe } from "./boardswipe";
 import { Button } from "./button";
 import { type Layout, layoutAt, rowHeight } from "./cardheight";
 import { sleep } from "./feed";
@@ -35,6 +36,24 @@ import { freshnessWord, PIPELINE, phaseLabels, taskStage } from "./work";
  * (`rowHeight`), near the median of a live board's cards (142 px).
  */
 export const ROW = 139;
+/** The typical card ROW stands for, as `rowHeight` reads it. */
+const TYPICAL: Parameters<typeof rowHeight>[0] = {
+  slug: "bulk/ready-1",
+  title: "Ready task number 1 in a long column",
+  priority: 3,
+  parent: null,
+  links: ["docs/DECISIONS.md"],
+  roles: [
+    { handle: "quiet-plover", role: "orchestrator", since: 0, expires: null, health: "live" },
+  ],
+};
+
+/** What a row whose card is not known yet reserves in `layout`: the typical card as it draws there,
+ * ROW in a desk's column and a narrow window's, less in a phone's wider one, where its title takes
+ * one line. */
+export function rowGuess(layout: Layout): number {
+  return rowHeight(TYPICAL, [], layout);
+}
 /** The rows of a column's page, as the server pages it, and the height of Load more under it. */
 export const PAGE = 30;
 export const MORE = 40;
@@ -91,17 +110,18 @@ function unstaffed(status: string): boolean {
 }
 
 /** The card in the place `slot` of the column `status`: as `kept` has it, else as tall as the
- * typical card ROW stands for, with its row of linked documents and, unless no agent has taken
- * the column's tasks up, its row of roles. */
-export function card(kept: Kept[], slot: number, status: string): Kept {
-  return kept[slot] ?? [ROW, unstaffed(status) ? 1 : 2];
+ * typical card ROW stands for (`guess`, as it draws in the board's layout), with its row of
+ * linked documents and, unless no agent has taken the column's tasks up, its row of roles. */
+export function card(kept: Kept[], slot: number, status: string, guess = ROW): Kept {
+  return kept[slot] ?? [guess, unstaffed(status) ? 1 : 2];
 }
 
 /** What a column of `count` tasks takes before its first page is in: a card for each row of the
- * page (PAGE at most), and the Load more button when they are more than a page. */
-export function firstPageHeight(count: number, kept: Kept[]): number {
+ * page (PAGE at most), as `kept` has it or `guess`, and the Load more button when they are more
+ * than a page. */
+export function firstPageHeight(count: number, kept: Kept[], guess = ROW): number {
   const cards = range(Math.min(count, PAGE)).reduce(
-    (sum, slot) => sum + (kept[slot]?.[0] ?? ROW),
+    (sum, slot) => sum + (kept[slot]?.[0] ?? guess),
     0,
   );
   return count > PAGE ? cards + MORE : cards;
@@ -153,6 +173,12 @@ export function keepRows(rows: Kept[], saved: Kept[]): Kept[] | null {
  * row still waiting lies within the sentinel's reach of the screen, or KEEP_MS has passed. */
 export function keepsWatching(drawn: boolean, near: boolean, waited: number): boolean {
   return !drawn && near && waited < KEEP_MS;
+}
+
+/** The layout the board's cards are drawn in, in this window: its width, and the page's inside the
+ * room a scrollbar takes (none on a phone). */
+export function layoutNow(): Layout {
+  return layoutAt(innerWidth, globalThis.document?.documentElement?.clientWidth || innerWidth);
 }
 
 /** The cards this browser kept for the column `status` in a window as wide as this one. */
@@ -266,7 +292,17 @@ export function GhostCard({ card }: { card: Kept }) {
 /** A column of the board's ghost: a bar for its heading, a card for each of its `count` tasks (a
  * page's at most, as `cards` kept them) and Load more's room past a page; Build and Test's lines
  * of text where they hold none. */
-function GhostColumn({ status, count, cards }: { status: string; count: number; cards: Kept[] }) {
+function GhostColumn({
+  status,
+  count,
+  cards,
+  guess,
+}: {
+  status: string;
+  count: number;
+  cards: Kept[];
+  guess: number;
+}) {
   // The rail's say of why it is one, then its link; Build's Machine context; the line an empty
   // Build or Test column shows.
   const lines =
@@ -290,7 +326,7 @@ function GhostColumn({ status, count, cards }: { status: string; count: number; 
       )}
       <div>
         {range(Math.min(count, PAGE)).map((slot) => (
-          <GhostCard key={slot} card={card(cards, slot, status)} />
+          <GhostCard key={slot} card={card(cards, slot, status, guess)} />
         ))}
         {count > PAGE && <div style={{ height: `${MORE}px` }} />}
       </div>
@@ -301,11 +337,22 @@ function GhostColumn({ status, count, cards }: { status: string; count: number; 
 /** The task board before its first read: its filters and, in the `shape` it last had, its columns
  * with a card for each task they held, each as this browser last drew it. */
 export function GhostBoard({ shape }: { shape: [string, number][] }) {
+  const guess = rowGuess(layoutNow());
   const column = ([status, count]: [string, number]) => (
-    <GhostColumn key={status} status={status} count={count} cards={keptCards(status)} />
+    <GhostColumn
+      key={status}
+      status={status}
+      count={count}
+      cards={keptCards(status)}
+      guess={guess}
+    />
   );
   return (
     <>
+      {/* A phone's button for the search and the filters (board.css), shut as the board opens. */}
+      <span className="ghost-field ghost-filters-toggle">
+        <span className="bone" style={width("16ch")} />
+      </span>
       <div className="row filters">
         <div>
           Search tasks and messages
@@ -671,7 +718,8 @@ export const TaskColumn = memo(function TaskColumn({
   const [visible, setVisible] = useState(false);
   // The layout a row's reserve is worked out for and the cards kept, read once: a window resized
   // later only misjudges rows still waiting.
-  const [layout] = useState(() => layoutAt(innerWidth));
+  const [layout] = useState(layoutNow);
+  const [guess] = useState(() => rowGuess(layout));
   const [kept] = useState(() => keptCards(status));
   // Complete totals make empty-column reads unnecessary. Retained rows still refresh so a
   // reconnect can remove stale cards, and a newly populated column must request its page.
@@ -689,7 +737,7 @@ export const TaskColumn = memo(function TaskColumn({
   // Keep unloaded columns in place while their first page is fetched: a card's box for each row of
   // the page, each as tall as this browser last drew the row in its place, and the Load more
   // button a column of more than a page will show.
-  const reserved = firstPageHeight(count, kept);
+  const reserved = firstPageHeight(count, kept, guess);
   const reading = count > 0 && tasks.length === 0;
   // Once its cards are drawn on the board as it opens, their heights for the next visit.
   const shown = tasks.length;
@@ -702,7 +750,7 @@ export const TaskColumn = memo(function TaskColumn({
     return () => controller.abort();
   }, [shown, status]);
   const ghosts = range(Math.min(count, PAGE)).map((slot) => (
-    <GhostCard key={slot} card={card(kept, slot, status)} />
+    <GhostCard key={slot} card={card(kept, slot, status, guess)} />
   ));
   // A column not near the screen yet draws its rows at once when one of them is the new place of
   // the card holding the focus (`BoardRow`), as a phone's column beside the one shown is.
@@ -835,10 +883,14 @@ export function TaskBoard({
   const { search, days } = filters;
   const [selected, setSelected] = useState("");
   const [subtree, setSubtree] = useState(false);
+  // On a phone the search and the filters show only while their button is pressed (board.css); a
+  // desk shows them always, and no button.
+  const [filtering, setFiltering] = useState(false);
   const pipeline = selected === "" || (PIPELINE as readonly string[]).includes(selected);
   // Back to the board draws it where the reader left it.
   const scroller = useRef<HTMLDivElement>(null);
   useKeptPlace(scroller, pipeline);
+  useOneColumnASwipe(scroller, pipeline);
   const named = statuses.length === 0 ? counts.map(([status]) => status) : statuses;
   // With no machine reporting this project's work, nothing can place a task in Build or Test: one
   // narrow rail says so once, where two empty columns would each repeat it.
@@ -882,7 +934,16 @@ export function TaskBoard({
   );
   return (
     <>
-      <div className="row filters">
+      <Button
+        type="button"
+        className="board-filters-toggle"
+        aria-expanded={filtering}
+        aria-controls="board-filters"
+        onClick={() => setFiltering(!filtering)}
+      >
+        Search and filters
+      </Button>
+      <div id="board-filters" className="row filters" data-open={filtering}>
         <label>
           {"Search tasks and messages "}
           <input
