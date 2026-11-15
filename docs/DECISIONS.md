@@ -7,28 +7,6 @@ their dated history work is in [REVIEW](REVIEW.md).
 <!-- register:start -->
 ## Needs your decision
 
-### The shared server
-
-- [ ] **server-socket-hand-over** — When the shared server takes a new build (the checkout it is built from changed, as a release's refresh changes it, or a newer build was started), the new server gets ready while the old one keeps answering, then takes over the old one's open port. Pages never meet a server that is down, and a new build that fails to start leaves the old one serving. Should it keep this hand-over, or simply stop and start again? A: keep it. B: a plain restart: the old server stops and the new one starts on the port; the watch for a new build and the build itself stay as they are. Recommended: A. Approve and say A or B in the note, or comment. [[analysis/code-review-2026-11#Choices that are the owner's]]
-  [2026-11-15 03:46] agent — Posted for the board task `docs/code-review-owner-choices`, from the codebase review.
-
-    **What you would notice under B**, at each switch:
-    - The port is closed until the new server listens, then its pages wait while it warms up: 0.9 to 47 s over the 25 warm-ups in its log (one a project) across 13 server starts, 6.3 s at the median.
-    - Open pages say "Reconnecting: the board may be out of date" and try again after 1 s, then 2, 4 and on up to 30 s. A page opened then fails to load or waits; a save fails and keeps its draft.
-    - A new build that compiles but fails to start leaves no server until someone starts one, and the refresh's wait for it ends unanswered.
-
-    Under A, open pages lose their live feed for about a second and take it again from the new server, warmed up already, and a failed start is said on the old server's notice while it keeps serving. Under both, the build itself (10 s to 21 minutes in the log) runs while the old server answers.
-
-    **How often.** The server's log holds 10 hand-overs since 2026-11-11, none failed. Once, at 10:34:21 UTC on 2026-11-12, the new server (pid 42043) began to stop 22 ms after it took over, the log not saying why; it had stopped by 10:34:27, and the next server answered at 10:35:14. That was a stop, not a failed hand-over. A release's refresh makes a hand-over each time it moves the consuming project's pin.
-
-    **What the refresh depends on.** The server's own reload: it sees the new `Cargo.lock` of the checkout it is built from, builds and switches. The refresh then waits up to 20 minutes for another process to answer on the port (`crates/symphony/src/release/refresh.rs`). Under B that still holds, as long as the new server runs as a new process rather than in the old one's place, which keeps its process number.
-
-    **The lines.** The server's whole update is 2,046 lines of source and 2,920 of tests (`wc -l` of the server's `src/reload.rs`, `src/reload/stamp.rs`, `src/reload/source_event.rs` and `src/host.rs` with the library's `src/reload.rs`; and of the server's `src/reload/tests.rs`, `src/host_tests.rs` and `tests/after_reload.rs` with the library's `src/reload/build_tests.rs`). B keeps the watch, the stamp and the build. It removes the hand-over itself, about 530 lines of source (`sed -n '23,415p;619,651p' apps/symphony-server/src/reload.rs` gives 426 of them, `src/host.rs` 78, the hand-off signal and the old server's drain in `src/front.rs` the rest) and 549 of tests (lines 353 to 592 of `src/reload/tests.rs`, 1007 to 1230 of `tests/after_reload.rs`, and `src/host_tests.rs`), and needs a stop and a start of its own, with their tests, not written.
-
-    **Why A.** It works, and B saves about a quarter of the update's lines for a gap of seconds at every switch and no server at all after a build that fails to start.
-
-    **Earlier verdicts checked.** No card asks about the hand-over. **server-framework** (A, keep Axum) counted the server's own listener, which the hand-over relies on, in the cost of moving off Axum, and noted that Axum's next version will need the drain checked; it did not ask whether to keep the hand-over.
-
 ### Delivery to projects
 
 - [ ] **live-board-schema-moves** — Two approved tasks each move Symphony's own board (this repository's, in its git common dir) from schema 17 to 18, and both are held unlanded on that: `tasks/board-writer-record` (approved at 6394e33a) and `tools/board-token-usage` (approved at 71f05a84). The shared server on port 8765 runs release-2026-11-13.2, schema 17, and from the first land until it is refreshed you cannot write this board from the app. When may the board move? A: now, `tasks/board-writer-record` to 18 at once and `tools/board-token-usage`, renumbered to 19, only after the server is refreshed. B: only once the refresh works again and no release candidate is open, then `tasks/board-writer-record` lands in a quiet moment and `just release` is run by hand at once, on main's tip, which is then its merge commit, so the app's writes are out until that commit is released; `tools/board-token-usage` follows the same way at 19. C: not yet, both stay held. Recommended: B. Approve and say A, B or C in the note, or comment.
@@ -69,6 +47,29 @@ their dated history work is in [REVIEW](REVIEW.md).
   [2026-11-13 20:43] agent · auto-approved — A: the owner, 2026-11-13, in the terminal: "contract-tool-route reads like it should be auto triaged". The card's own evidence leaves A standing: both tools exist to check what the machine does (the card you will see, whether the machine would hold a land), and under B the project's copies "keep passing while the machine does otherwise, until someone copies again", so they would stop checking it. Symphony adds the two commands (one that draws a single card, one that answers the landing's checks for a branch) and keeps their output, and status's and triage's, stable; its side is filed on the board now. Any verdict here overrides this.
 
 ## Waiting on an agent
+
+### The shared server
+
+- [x] **server-socket-hand-over** — When the shared server takes a new build (the checkout it is built from changed, as a release's refresh changes it, or a newer build was started), the new server gets ready while the old one keeps answering, then takes over the old one's open port. Pages never meet a server that is down, and a new build that fails to start leaves the old one serving. Should it keep this hand-over, or simply stop and start again? A: keep it. B: a plain restart: the old server stops and the new one starts on the port; the watch for a new build and the build itself stay as they are. Recommended: A. Approve and say A or B in the note, or comment. [[analysis/code-review-2026-11#Choices that are the owner's]]
+  [2026-11-15 03:46] agent — Posted for the board task `docs/code-review-owner-choices`, from the codebase review.
+
+    **What you would notice under B**, at each switch:
+    - The port is closed until the new server listens, then its pages wait while it warms up: 0.9 to 47 s over the 25 warm-ups in its log (one a project) across 13 server starts, 6.3 s at the median.
+    - Open pages say "Reconnecting: the board may be out of date" and try again after 1 s, then 2, 4 and on up to 30 s. A page opened then fails to load or waits; a save fails and keeps its draft.
+    - A new build that compiles but fails to start leaves no server until someone starts one, and the refresh's wait for it ends unanswered.
+
+    Under A, open pages lose their live feed for about a second and take it again from the new server, warmed up already, and a failed start is said on the old server's notice while it keeps serving. Under both, the build itself (10 s to 21 minutes in the log) runs while the old server answers.
+
+    **How often.** The server's log holds 10 hand-overs since 2026-11-11, none failed. Once, at 10:34:21 UTC on 2026-11-12, the new server (pid 42043) began to stop 22 ms after it took over, the log not saying why; it had stopped by 10:34:27, and the next server answered at 10:35:14. That was a stop, not a failed hand-over. A release's refresh makes a hand-over each time it moves the consuming project's pin.
+
+    **What the refresh depends on.** The server's own reload: it sees the new `Cargo.lock` of the checkout it is built from, builds and switches. The refresh then waits up to 20 minutes for another process to answer on the port (`crates/symphony/src/release/refresh.rs`). Under B that still holds, as long as the new server runs as a new process rather than in the old one's place, which keeps its process number.
+
+    **The lines.** The server's whole update is 2,046 lines of source and 2,920 of tests (`wc -l` of the server's `src/reload.rs`, `src/reload/stamp.rs`, `src/reload/source_event.rs` and `src/host.rs` with the library's `src/reload.rs`; and of the server's `src/reload/tests.rs`, `src/host_tests.rs` and `tests/after_reload.rs` with the library's `src/reload/build_tests.rs`). B keeps the watch, the stamp and the build. It removes the hand-over itself, about 530 lines of source (`sed -n '23,415p;619,651p' apps/symphony-server/src/reload.rs` gives 426 of them, `src/host.rs` 78, the hand-off signal and the old server's drain in `src/front.rs` the rest) and 549 of tests (lines 353 to 592 of `src/reload/tests.rs`, 1007 to 1230 of `tests/after_reload.rs`, and `src/host_tests.rs`), and needs a stop and a start of its own, with their tests, not written.
+
+    **Why A.** It works, and B saves about a quarter of the update's lines for a gap of seconds at every switch and no server at all after a build that fails to start.
+
+    **Earlier verdicts checked.** No card asks about the hand-over. **server-framework** (A, keep Axum) counted the server's own listener, which the hand-over relies on, in the cost of moving off Axum, and noted that Axum's next version will need the drain checked; it did not ask whether to keep the hand-over.
+  [2026-11-15 06:48] owner · approved — A
 
 ### Board
 
