@@ -1,11 +1,11 @@
 # Symphony
 
-The app's workspace owns its server and its two web clients under `apps/` (the React one,
-`apps/symphony-web`, which draws every page now, and the Dioxus one, whose build is the
-stylesheets every page shares), and the review
-library, wire types, task board, working-directory scanner, headless Chrome driver and
-the tests' CPU meters and waits (`crates/test-time`, RULES.md `tests/no-test-fails-on-load`)
-under `crates/`.
+The app's workspace owns its server, its two web clients and its Mac app under `apps/` (the React
+one, `apps/symphony-web`, which draws every page now, and the Dioxus one, whose build is the
+stylesheets every page shares; the Mac app, `apps/symphony-desktop`, a thin shell over each
+server's own pages, `publish = false`, whose window crates no other package links), and the review
+library, wire types, task board, working-directory scanner, headless Chrome driver and the tests'
+CPU meters and waits (`crates/test-time`, RULES.md `tests/no-test-fails-on-load`) under `crates/`.
 The app's formats and operating contract live in [docs/](docs/README.md).
 A consuming project owns its landing policy and shared-service safeguards.
 
@@ -20,7 +20,7 @@ consume these libraries through an immutable Git dependency pin. The plugin kit,
 the product (the library as `symphony-app`, its library still `symphony`, the board as
 `symphony-board`, the server, the Chrome driver as `symphony-chrome` and the wire types,
 `symphony-api`) are made to be published on crates.io as well, each by its version; the client's
-sources and the tests' time keep `publish = false`
+sources, the Mac app and the tests' time keep `publish = false`
 ([RELEASES](docs/RELEASES.md#packages-on-cratesio)).
 
 ### Where each part is said
@@ -52,8 +52,9 @@ sources and the tests' time keep `publish = false`
   [CHECKS](docs/CHECKS.md); releases are [RELEASES](docs/RELEASES.md).
 
 Read [the client guide](apps/symphony-ui/AGENTS.md), [the React client's
-guide](apps/symphony-web/AGENTS.md) and [the board guide](crates/tasks/AGENTS.md) before editing
-those packages. A consuming project applies its own Rust, review and resource policy.
+guide](apps/symphony-web/AGENTS.md), [the Mac app's guide](apps/symphony-desktop/AGENTS.md) and
+[the board guide](crates/tasks/AGENTS.md) before editing those packages. A consuming project
+applies its own Rust, review and resource policy.
 Never run a shared-service restart as a test: use a private port and scratch board.
 
 ### Building and testing
