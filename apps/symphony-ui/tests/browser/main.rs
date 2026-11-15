@@ -83,17 +83,17 @@ use serde_json::json;
 use site::Site;
 
 /// Home's first visit: lowered from the owner's 300,000 to 125,000 when home moved to the web
-/// client, and to 115,000 once the chat moved and no kind was left to move (112,403 bytes on the
+/// client, and to 115,000 once the chat moved and no kind was left to move (112,551 bytes on the
 /// fixture then); never raised.
 const HOME_FIRST_VISIT_BYTES: f64 = 115_000.0;
 /// The task board's first-visit cap (`/tasks`): lowered from the owner's 300,000 to 150,000 when
 /// the board moved to the React client, and to 125,000 once the chat moved and no kind was left
-/// to move (120,629 bytes on the fixture then); never raised.
+/// to move (121,492 bytes on the fixture then); never raised.
 const TASKS_FIRST_VISIT_BYTES: f64 = 125_000.0;
 /// A task's page's first-visit cap (`/task/SLUG`), its timeline loaded after it and reported
 /// beside it: lowered from the owner's 300,000 to 160,000 when the page moved to the React client
 /// (546,351 bytes on main's Dioxus build at f56bde5), and to 145,000 once the chat moved and no
-/// kind was left to move (142,011 bytes on the fixture then); never raised.
+/// kind was left to move (142,175 bytes on the fixture then); never raised.
 const TASK_FIRST_VISIT_BYTES: f64 = 145_000.0;
 const RETURN_VISIT_BYTES: f64 = 20_000.0;
 /// How long a page may take to show the board at all before a test gives up on it.
