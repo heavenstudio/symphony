@@ -133,6 +133,8 @@ fn only_on_a_fast_fix_may_who_requested_it_take_the_reviewers_role() {
         );
         let task = f.store.take_role("fix/regex", who, "reviewer").unwrap();
         assert!(task.holders("reviewer").contains(&who.as_str()), "{who}");
+        // One reviewer at a time: it lets the role go for the next.
+        f.store.release("fix/regex", who, Some("reviewer")).unwrap();
     }
     assert!(
         f.store

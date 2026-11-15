@@ -198,7 +198,7 @@ fn a_task_pages_role_chips_take_their_holders_health_from_its_session() {
 }
 
 /// An agent the agents page lists, `handle` at `health`.
-fn agent(handle: &str, health: &str) -> Value {
+pub(super) fn agent(handle: &str, health: &str) -> Value {
     json!({"handle":handle,"kind":"worker","model":"","parent":null,"task":null,"role":null,"tasks":[],
         "worktree":"","branch":"","agent":null,"session_id":null,"pane":null,"callback":null,"chat":false,
         "state":"working","state_detail":null,"health":health,"last_tool_call":null,"last_message":null})
@@ -213,7 +213,7 @@ fn held(slug: &str, title: &str, status: &str, roles: &[(&str, &str)]) -> Value 
 }
 
 /// An answer of `/api/agent-page`: its whole list, `agents`, beside `tasks`.
-fn agent_page(agents: &[Value], tasks: &[Value]) -> Value {
+pub(super) fn agent_page(agents: &[Value], tasks: &[Value]) -> Value {
     json!({"view":{"generated":1.0,"probes":{"panes":"ok","slots":"ok"},"agents":agents},
         "tasks":tasks,"total":agents.len(),"next":null})
 }

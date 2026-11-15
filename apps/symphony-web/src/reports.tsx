@@ -911,13 +911,7 @@ function Report({ page: whole, hidden, onToggle }: ReportProps) {
           </div>
         ))}
       </dl>
-      {shownAxis.marks.length > 0 && (
-        <ul className="reports-marks" aria-label="Settings changes in the window">
-          {shownAxis.marks.map(([, at, text]) => (
-            <li key={text}>{`${shownAxis.periods[at]}: settings changed, ${text}`}</li>
-          ))}
-        </ul>
-      )}
+      {shownAxis.marks.length > 0 && <SettingsChanges axis={shownAxis} />}
       {drawn &&
         charts(page, hidden).map(([heading, section]) => (
           <section key={heading} className="reports-section" aria-label={heading}>
@@ -948,6 +942,32 @@ function Report({ page: whole, hidden, onToggle }: ReportProps) {
           </section>
         ))}
     </>
+  );
+}
+
+/** How many settings changes the page lists before it folds the rest under a disclosure. */
+const MARKS_SHOWN = 3;
+
+/**
+ * The window's settings changes, newest first: the newest MARKS_SHOWN, a line each while the rest
+ * are folded behind "N more settings changes" (reports.css), so a window of many still shows its
+ * first chart on a phone's first screen.
+ */
+function SettingsChanges({ axis: { marks, periods } }: { axis: Axis }) {
+  const newest = marks
+    .toReversed()
+    .map(([, at, text]) => <li key={text}>{`${periods[at]}: settings changed, ${text}`}</li>);
+  const folded = newest.length - MARKS_SHOWN;
+  return (
+    <div className="reports-marks">
+      <ul aria-label="Settings changes in the window">{newest.slice(0, MARKS_SHOWN)}</ul>
+      {folded > 0 && (
+        <details>
+          <summary>{`${folded} more settings ${folded === 1 ? "change" : "changes"}`}</summary>
+          <ul>{newest.slice(MARKS_SHOWN)}</ul>
+        </details>
+      )}
+    </div>
   );
 }
 

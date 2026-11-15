@@ -513,9 +513,15 @@ never the whole target, which the release run runs.
   `NearViewport` takes its `ghost`, else draws the lines of text its height holds
   (`viewport::Skeleton`, `lines_for`), and a picture still to come is its box, filled. Bars
   take the theme's `--skeleton` colour, shimmering in `--skeleton-shine` only under
-  `prefers-reduced-motion: no-preference`. A page says once that it loads (one `role=status`
-  line, the gates' outline under `aria-hidden` on a task's ghost) and is `aria-busy` while
-  its ghost shows, as a column reading its first page and a `Settle` not yet settled are.
+  `prefers-reduced-motion: no-preference`, and only in a ghost that waits for its read (a page's
+  `Settle` cover, a column reading its first page, a section, a thread): a `NearViewport`
+  placeholder waits only to come within its sentinel's reach, where its content takes its place,
+  so its bars are still (`.viewport-placeholder` in `board.css`). Chrome runs an animation off the
+  screen every frame, under `content-visibility` too, so a page at rest animates nothing
+  (`tests/browser/skeleton.rs` counts `document.getAnimations()`). A page says once that it
+  loads (one `role=status` line, the gates' outline under `aria-hidden` on a task's ghost) and is
+  `aria-busy` while its ghost shows, as a column reading its first page and a `Settle` not yet
+  settled are.
   A ghost uses its own classes, never the real ones, so a test's selector never finds it;
   the one placeholder it shares is a task's gates' outline, the section's own until its
   answer, which `GhostTask` draws for the room this browser kept (`task_gates::GhostGates`).
