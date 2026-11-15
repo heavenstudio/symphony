@@ -215,6 +215,7 @@ both kinds, to copy after `--`:
 | a task's page, its gates and its timeline | `task_page` `task_panel` `task_priority` `task_gates::` `timeline::` `owner_controls::` `owner_save::` `cache_tasks::` `cache_ahead` `feed_deltas::` `notice_layout::` `landmarks::` `layout_shift::` `skeleton::` `header::` `look_parity::` `restored::` `components::` `program::` `polish::` `projects::` `budget` `preload::` |
 | the agents page (`/agents`) | `machine_work` `the_agents_page` `header::` `look_parity::` `the_chat_opened_on` `polish::` `projects::` `budget` |
 | the reports page (`/reports`) | `reports::` `header::` `polish::` `projects::` `budget` |
+| the runs page (`/runs`) | `runs::` `header::` `polish::` `projects::` `preload::` `budget` |
 | document and folder pages | `document` `docs_index` `owner_` `cache_ahead` `cache_pages::` `restored::` `landmarks::` `skeleton::` `layout_shift::` `look_parity::` `polish::` `projects::` `budget` |
 | the header, on every page | `header::` `floating_controls::` `panel_open::` `program::` `polish::` `projects::` |
 | shared controls (select, menu, button, tooltip, theme) | `components::` `select` `theme` `polish::` |
