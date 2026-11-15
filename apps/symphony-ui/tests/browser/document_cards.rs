@@ -1,9 +1,9 @@
 //! A card on a document page, read in the release client: its verdict form fits a phone's card,
 //! its history keeps an agent's paragraphs, its buttons rank by what the owner does next, with
-//! Escape closing the editor and Later and its Undo keeping the focus on their button, a link's
-//! excerpt opens beside the link's own button, callouts are
-//! as wide as cards, a comment's colour its own, and a folded card opened by a click draws the
-//! picture in its history.
+//! Escape closing the editor and Later and its Undo keeping the focus on their button, its focus
+//! ring is the page's and not the card's colour, a link's excerpt opens beside the link's own
+//! button and fills even opened below a short window's fold, callouts are as wide as cards, a
+//! comment's colour its own, and a folded card opened by a click draws the picture in its history.
 use super::components::key;
 use super::{SHOWN, chrome, chrome::Chrome, common, dist, focus_on, site::Site};
 use serde_json::{Value, json};
@@ -397,8 +397,9 @@ fn document_card_escape_closes_the_editor_and_returns_focus_to_its_opener() {
 }
 
 /// A card's Later and its Undo, pressed from the keyboard in its editor, keep the focus on their
-/// button while the server saves and once the card's new state is drawn: Undo Later after Later,
-/// Later after Undo. The server names no card next, so the reader stays on this one.
+/// button while the server saves, where a second press posts nothing, and once the card's new state
+/// is drawn: Undo Later after Later, Later after Undo. The server names no card next, so the reader
+/// stays on this one.
 #[test]
 fn document_card_later_and_undo_keep_the_focus_on_their_button() {
     let site = probe_site();
@@ -439,6 +440,8 @@ fn document_card_later_and_undo_keep_the_focus_on_their_button() {
             page.wait_for(&crate::drawn_disabled(later), SHOWN),
             "it looks as a disabled button does while it saves"
         );
+        // Pressed again while it saves: a second post would show in the count of them below.
+        key(&mut page, pressed.0, pressed.1, pressed.2);
         site.set_json("/api/postponed", &postponed);
         site.hold_route("/api/postpone", false);
         assert!(
@@ -465,6 +468,112 @@ fn document_card_later_and_undo_keep_the_focus_on_their_button() {
         .map(|(_, body)| body["action"].clone())
         .collect();
     assert_eq!(actions, [json!("later"), json!("undo")]);
+}
+
+/// Focus the button `selector` names from the keyboard, as a reader reaches it: Shift+Tab from it
+/// and Tab back. A focus a script gives after a click shows no ring (`:focus-visible`).
+fn tab_to(page: &mut Chrome, selector: &str) {
+    page.eval(&format!(
+        "document.querySelector({}).focus()",
+        json!(selector)
+    ));
+    for (kind, modifiers) in [("keyDown", 8), ("keyUp", 8), ("keyDown", 0), ("keyUp", 0)] {
+        page.call(
+            "Input.dispatchKeyEvent",
+            json!({"type":kind,"key":"Tab","code":"Tab","windowsVirtualKeyCode":9,"modifiers":modifiers}),
+        );
+    }
+}
+
+/// The ring the button `selector` names shows once the keyboard has focused it: whether it holds
+/// the focus and shows it, the outline's style and colour, and the colour of the card it is in (its
+/// text's, `.decision`), if any. A button's colours, its outline's among them, change by a
+/// transition (`.dx-button`'s), so they are read once its transitions have ended.
+fn focus_ring(page: &mut Chrome, selector: &str) -> Value {
+    tab_to(page, selector);
+    assert!(
+        page.wait_for(
+            &format!(
+                "document.querySelector({}).getAnimations().length === 0",
+                json!(selector)
+            ),
+            SHOWN
+        ),
+        "{selector}'s transitions end"
+    );
+    page.eval(&format!(
+        r#"(button => {{
+        const style = getComputedStyle(button), card = button.closest('.doc-card')?.querySelector('.decision');
+        return {{shown: document.activeElement === button && button.matches(':focus-visible'),
+            outline: style.outlineStyle, ring: style.outlineColor, card: card ? getComputedStyle(card).backgroundColor : null}};
+    }})(document.querySelector({}))"#,
+        json!(selector)
+    ))
+}
+
+/// The keyboard's focus ring inside a card is the page's, in light and dark: on a button of the
+/// card's text, the card's own button and a button of its editor, never the card's colour, which its
+/// thread's dots take to stand clear of their line.
+#[test]
+fn document_card_focus_ring_is_the_pages_not_the_cards_colour() {
+    let site = probe_site();
+    let Some(mut page) = chrome() else { return };
+    viewport(&mut page, 1280, 900);
+    page.open(&site.url(&format!("/{DOC}")));
+    open_editor(&mut page, "alpha");
+    let card = "[data-doc-key=\"card:alpha\"]";
+    assert!(
+        page.wait_for(
+            &format!(
+                "document.querySelector({}) !== null",
+                json!(format!("{card} .history .entry"))
+            ),
+            SHOWN
+        ),
+        "the card's thread is drawn"
+    );
+    for mode in ["light", "dark"] {
+        scheme(&mut page, mode);
+        // A paragraph's + comment, outside any card: the page's ring.
+        let page_ring = focus_ring(&mut page, "[data-doc-key=\"intro\"] > .add");
+        assert_eq!(
+            [
+                &page_ring["shown"],
+                &page_ring["outline"],
+                &page_ring["card"]
+            ],
+            [&json!(true), &json!("solid"), &Value::Null],
+            "{mode}: a button outside any card shows the page's ring: {page_ring}"
+        );
+        for button in [
+            format!("{card} .section-prose .show-link"),
+            format!("{card} .doc-actions button"),
+            format!("{card} .verdict-choices .postpone-controls button"),
+        ] {
+            let look = focus_ring(&mut page, &button);
+            assert_eq!(
+                [&look["shown"], &look["outline"], &look["ring"]],
+                [&json!(true), &json!("solid"), &page_ring["ring"]],
+                "{mode}: {button} shows the page's ring when focused: {look}"
+            );
+            assert_ne!(
+                look["ring"], look["card"],
+                "{mode}: {button}'s ring is not its card's colour: {look}"
+            );
+        }
+        let halo = page.eval(&format!(
+            "[getComputedStyle(document.querySelector({}), '::before').boxShadow, getComputedStyle(document.querySelector({})).backgroundColor]",
+            json!(format!("{card} .history .entry")),
+            json!(format!("{card} .decision"))
+        ));
+        assert!(
+            halo[0]
+                .as_str()
+                .zip(halo[1].as_str())
+                .is_some_and(|(shadow, colour)| shadow.starts_with(colour)),
+            "{mode}: the thread's dots stand clear of their line in the card's colour: {halo}"
+        );
+    }
 }
 
 /// The card `alpha`'s show button and its excerpt: the button's label and state, the gap between
@@ -558,6 +667,63 @@ fn document_card_link_opens_its_excerpt_beside_its_button_and_closes_it_again() 
         [&closed["label"], &closed["expanded"]],
         [&json!("▸ show"), &json!("false")],
         "{closed}"
+    );
+}
+
+/// Where the card `alpha`'s open excerpt is: the page's scroll, whether its box's top is below the
+/// window, and how many of its regions still wait to come near the screen.
+const EXCERPT_PLACE: &str = r#"(() => {
+    const box = document.querySelector('[data-doc-key="card:alpha"] .excerpt-box');
+    return {scrollY, below: box.getBoundingClientRect().top >= innerHeight,
+        waiting: box.querySelectorAll('[data-pending=true]').length};
+})()"#;
+
+/// On a short window (a laptop's browser, a phone) the owner opens a card's excerpt from a button at
+/// the window's bottom edge, its box opening below the screen: the excerpt fills without being
+/// scrolled to. Its box scrolls, and so clipped the look-ahead of the parts of it that waited to
+/// come near the screen (the copied card's history, the list item): opening it is the ask.
+#[test]
+fn document_card_excerpt_opened_below_a_short_windows_fold_fills_without_a_scroll() {
+    let site = probe_site();
+    let Some(mut page) = chrome() else { return };
+    viewport(&mut page, 756, 469);
+    // Room above the card, so its button can sit at the window's bottom edge.
+    page.call("Page.addScriptToEvaluateOnNewDocument", json!({"source":
+        "const observer = new MutationObserver(() => { if (document.head) { const style = document.createElement('style'); style.textContent = '[data-doc-key=\"intro\"] { margin-bottom: 900px }'; document.head.append(style); observer.disconnect(); } }); observer.observe(document, {childList: true, subtree: true});"
+    }));
+    page.open(&site.url(&format!("/{DOC}#alpha")));
+    let show = "[data-doc-key=\"card:alpha\"] .section-prose .show-link";
+    assert!(
+        page.wait_for(&crate::visible(show), SHOWN),
+        "the card alpha is drawn"
+    );
+    page.eval(&format!(
+        "(() => {{ const show = document.querySelector({0}); scrollBy(0, Math.ceil(show.getBoundingClientRect().bottom - innerHeight)); show.click(); }})()",
+        json!(show)
+    ));
+    assert!(
+        page.wait_for(
+            "document.querySelector('[data-doc-key=\"card:alpha\"] .excerpt-box h2') !== null",
+            SHOWN
+        ),
+        "the excerpt is read"
+    );
+    let opened = page.eval(EXCERPT_PLACE);
+    assert_eq!(
+        opened["below"],
+        json!(true),
+        "the excerpt's box opens below the window, so the case tests a box off screen: {opened}"
+    );
+    assert!(
+        page.wait_for(&format!("{PARAGRAPHS}.pairs === 4"), SHOWN),
+        "the excerpt draws its copied history and list item where it opened, below the window: {} {}",
+        page.eval(PARAGRAPHS),
+        page.eval(EXCERPT_PLACE)
+    );
+    assert_eq!(
+        page.eval(EXCERPT_PLACE),
+        json!({"scrollY": opened["scrollY"], "below": true, "waiting": 0}),
+        "it filled with nothing scrolled and nothing left waiting in it"
     );
 }
 

@@ -646,7 +646,8 @@ form.verdict {
 /* ---- Decision cards: the state as the left edge and a pill; the thread as a timeline. ---- */
 .decision {
   --edge: var(--pending);
-  --ring: var(--card);
+  /* Its thread's dots stand clear of their line on the card (board.css `.entry::before`). */
+  --dot-halo: var(--card);
   position: relative;
   background: var(--card);
   border: 1px solid var(--border);
@@ -919,7 +920,7 @@ ul.open li {
 /* The live section owns the card edge, thread and editor as one surface. */
 .doc-card {
   --edge: var(--pending);
-  --ring: var(--card);
+  --dot-halo: var(--card);
   border: 1px solid var(--border);
   border-left: 4px solid var(--edge);
   border-radius: var(--r-md);

@@ -9,11 +9,11 @@
 //! (killed, or the machine stopped) is recorded as interrupted by the next run that goes
 //! ([`recover`]), and its logs stay with it.
 //!
-//! A build older than the rename to `just release` kept all of it in `symphony/nightly/`
-//! ([`legacy`]) and wrote records of version 1, whose kinds were `nightly` and, for an out-of-cycle
-//! release, `release`. Until a run moves that folder, it is the one read ([`kept`]); the first run
-//! of a build that knows the new name takes its lock and renames it, still holding the lock
-//! ([`lock`]); and a record of version 1 reads as today's ([`renamed`]).
+//! A build older than the rename to `just release` kept all of it in `symphony/nightly/`, which
+//! the first run of a build that knew the new name moved here, and wrote records of version 1,
+//! whose kinds were `nightly` and, for an out-of-cycle release, `release`: a record of version 1
+//! reads as today's ([`renamed`]). That folder, if anything makes it again, is neither read nor
+//! moved.
 
 use std::fs::{self, File, OpenOptions, TryLockError};
 use std::path::{Path, PathBuf};
@@ -43,7 +43,8 @@ const SO_FAR: &str = "run.json";
 /// release`, whose kinds are `release`, `out-of-cycle` and `refresh`. Version 1 said `nightly` for
 /// `release` and `release` for `out-of-cycle` ([`renamed`]).
 pub(crate) const VERSION: u32 = 2;
-/// The folder's name in `symphony/` before the rename, which a build older than it still uses.
+/// The folder's name in `symphony/` before the rename, under which a record of version 1 names its
+/// logs.
 const LEGACY: &str = "nightly";
 /// The lock one run at a time holds, in the folder.
 const LOCK: &str = "run.lock";
@@ -215,7 +216,7 @@ fn kind_of(old: &str) -> &str {
 
 /// `run`, read from `folder`, as this build records it: a record of version 1, which a build older
 /// than the rename wrote, takes today's kind, and each log it names under that build's folder
-/// ([`legacy`]) is named where it is now, under `folder`, which a run moved it to.
+/// (`symphony/nightly/`) is named where it is now, under `folder`, which a run moved it to.
 pub(crate) fn renamed(mut run: Run, folder: &Path) -> Run {
     if run.version >= VERSION {
         return run;
@@ -275,24 +276,6 @@ pub(crate) fn folder(common: &Path) -> PathBuf {
     common.join("symphony").join("release")
 }
 
-/// The folder a build older than the rename kept all of it in, `symphony/nightly/` in `common`.
-pub(crate) fn legacy(common: &Path) -> PathBuf {
-    common.join("symphony").join(LEGACY)
-}
-
-/// The folder the runs of `common` are recorded in now: [`legacy`] while it is a folder and no run
-/// has made [`folder`], else [`folder`]. Reading moves nothing.
-pub(crate) fn kept(common: &Path) -> PathBuf {
-    let legacy = legacy(common);
-    let new = folder(common);
-    let left = fs::symlink_metadata(&legacy).is_ok_and(|meta| meta.is_dir());
-    if left && fs::symlink_metadata(&new).is_err() {
-        legacy
-    } else {
-        new
-    }
-}
-
 /// The run's lock, open: the folder the run records in, where it is, and whether it was taken.
 ///
 /// Taken, it lets go of the lock itself as it drops: a `flock` belongs to the open file, and a child
@@ -305,8 +288,6 @@ pub(crate) struct Lock {
     pub(crate) file: File,
     /// Taken; held by another run (`WouldBlock`); or the attempt failed.
     pub(crate) taken: Result<(), TryLockError>,
-    /// What the move of the folder a build older than the rename left said, when this moved it.
-    pub(crate) moved: Option<String>,
 }
 
 impl Drop for Lock {
@@ -318,107 +299,25 @@ impl Drop for Lock {
 }
 
 /// Open the lock of the runs of `common` and try to take it, without waiting: in [`folder`], made
-/// when missing. While a build older than the rename left its folder ([`kept`] is [`legacy`]),
-/// that folder's lock is the one tried, so no such build's run and this one run at once; taken,
-/// the folder is renamed to [`folder`] with the lock still held, since the lock is the open file's
-/// and not its name, and a run that opens it later at either name meets it held. One that cannot
-/// be renamed is recorded in where it is, which is said. Held by another run, the folder is the one
-/// that run holds the lock in. What is done is decided once the lock is taken, by where the file
-/// taken is then ([`legacy_lock`]), so two first runs at once never both move the folder or run.
+/// when missing.
 pub(crate) fn lock(common: &Path) -> Result<Lock, String> {
-    let (old, new) = (legacy(common), folder(common));
-    if kept(common) == old
-        && let Some(lock) = legacy_lock(&old, &new)?
-    {
-        return Ok(lock);
-    }
-    fs::create_dir_all(&new).map_err(|e| crate::text::os_error(&e, &new))?;
-    let path = new.join(LOCK);
-    let file = open_lock(&path)?;
-    let taken = file.try_lock();
-    Ok(Lock {
-        folder: new,
-        path,
-        file,
-        taken,
-        moved: None,
-    })
-}
-
-/// The lock file at `path`, opened for taking and made when missing, but never its folder.
-fn open_lock(path: &Path) -> Result<File, String> {
-    OpenOptions::new()
+    let folder = folder(common);
+    fs::create_dir_all(&folder).map_err(|e| crate::text::os_error(&e, &folder))?;
+    let path = folder.join(LOCK);
+    let file = OpenOptions::new()
         .read(true)
         .write(true)
         .create(true)
         .truncate(false)
-        .open(path)
-        .map_err(|e| crate::text::os_error(&e, path))
-}
-
-/// [`lock`] in `old`, the folder a build older than the rename left, opened where it is and never
-/// made, `new` being where it goes: none when it is gone from both before this took it (another
-/// run moved it meanwhile), and [`lock`] then opens it in `new`.
-fn legacy_lock(old: &Path, new: &Path) -> Result<Option<Lock>, String> {
-    let path = old.join(LOCK);
-    let file = match open_lock(&path) {
-        Ok(file) => file,
-        Err(_) if fs::symlink_metadata(old).is_err() => return Ok(None),
-        Err(error) => return Err(error),
-    };
+        .open(&path)
+        .map_err(|e| crate::text::os_error(&e, &path))?;
     let taken = file.try_lock();
-    Ok(settled(file, taken, old, new))
-}
-
-/// What the lock `file`, opened in `old` and tried (`taken`), holds once tried: the folder its file
-/// is in now, as another run that took it first may have moved it to `new` and let it go since this
-/// opened it; taken in `old`, that folder moved to `new` ([`lock`]). None when its file is in
-/// neither.
-fn settled(file: File, taken: Result<(), TryLockError>, old: &Path, new: &Path) -> Option<Lock> {
-    use std::os::unix::fs::MetadataExt as _;
-    let opened = file.metadata().ok()?;
-    let is = |folder: &Path| {
-        fs::metadata(folder.join(LOCK))
-            .is_ok_and(|meta| meta.dev() == opened.dev() && meta.ino() == opened.ino())
-    };
-    let at = if is(new) {
-        new
-    } else if is(old) {
-        old
-    } else {
-        return None;
-    };
-    let mut lock = Lock {
-        folder: at.to_path_buf(),
-        path: at.join(LOCK),
+    Ok(Lock {
+        folder,
+        path,
         file,
         taken,
-        moved: None,
-    };
-    if at == new || lock.taken.is_err() {
-        return Some(lock);
-    }
-    match fs::rename(old, new) {
-        Ok(()) => {
-            lock.moved = Some(format!(
-                "moved the release run's records from {} to {}, where a build older than the \
-                 rename to `just release` kept them",
-                old.display(),
-                new.display()
-            ));
-            lock.path = new.join(LOCK);
-            lock.folder = new.to_path_buf();
-        }
-        Err(e) => {
-            lock.moved = Some(format!(
-                "cannot move the release run's records from {} to {}, so they stay there: {}",
-                old.display(),
-                new.display(),
-                crate::text::os_error(&e, old)
-            ));
-        }
-    }
-    Some(lock)
+    })
 }
 
 /// Where the run `id`'s check logs go in `folder`.
@@ -1601,130 +1500,49 @@ mod tests {
         );
     }
 
-    #[test]
-    fn the_records_are_read_where_an_older_build_left_them_until_a_run_moves_them() {
-        let tree = Tree::new();
-        let common = tree.path("git");
-        assert_eq!(kept(&common), folder(&common), "none yet");
-        tree.write("git/symphony/nightly/runs/a.json", "{}");
-        assert_eq!(kept(&common), legacy(&common));
-        assert_eq!(legacy(&common), tree.path("git/symphony/nightly"));
-        fs::create_dir_all(folder(&common)).unwrap();
-        assert_eq!(kept(&common), folder(&common), "both: the new one");
-        let other = tree.path("other");
-        tree.write("other/symphony/nightly", "a file, not a folder");
-        assert_eq!(kept(&other), folder(&other));
-    }
-
     /// Whether another open of the lock at `path` finds it held.
     fn busy(path: &Path) -> bool {
         let file = File::options().read(true).write(true).open(path).unwrap();
         matches!(file.try_lock(), Err(TryLockError::WouldBlock))
     }
 
+    /// The folder a build older than the rename kept the runs in, made again and its lock held by
+    /// that build's run: the lock is this build's own folder's, and the old folder is neither read
+    /// nor moved.
     #[test]
-    fn the_first_lock_moves_an_older_builds_records_and_holds_them_through_the_move() {
+    fn the_folder_an_older_build_makes_again_is_neither_read_nor_moved() {
         let tree = Tree::new();
         let common = tree.path("git");
-        tree.write("git/symphony/nightly/runs/a.json", "{}");
-        tree.write("git/symphony/nightly/logs/a/verify.log", "log");
+        let old = tree.path("git/symphony/nightly");
+        tree.write(
+            "git/symphony/nightly/runs/old.json",
+            &old_record("old", "nightly", &old),
+        );
         tree.write("git/symphony/nightly/run.lock", "");
-        // Opened under the old name before the move, as a run of an older build would have.
-        let before = File::options()
+        let theirs = File::options()
             .read(true)
             .write(true)
-            .open(tree.path("git/symphony/nightly/run.lock"))
+            .open(old.join(LOCK))
             .unwrap();
+        theirs.try_lock().unwrap();
 
-        let first = lock(&common).unwrap();
-        assert!(first.taken.is_ok());
-        assert_eq!(first.folder, folder(&common));
-        assert_eq!(first.path, folder(&common).join("run.lock"));
+        let ours = lock(&common).unwrap();
+        assert!(
+            ours.taken.is_ok(),
+            "an older build's lock holds no run here"
+        );
         assert_eq!(
-            first.moved.as_deref(),
-            Some(
-                format!(
-                    "moved the release run's records from {} to {}, where a build older than the \
-                     rename to `just release` kept them",
-                    legacy(&common).display(),
-                    folder(&common).display()
-                )
-                .as_str()
+            (ours.folder.as_path(), ours.path.as_path()),
+            (
+                folder(&common).as_path(),
+                folder(&common).join(LOCK).as_path()
             )
         );
-        assert!(!legacy(&common).exists());
-        assert_eq!(tree.read("git/symphony/release/logs/a/verify.log"), "log");
-        assert!(
-            busy(&first.path),
-            "held at the new name, opened after the move"
-        );
-        assert!(
-            matches!(before.try_lock(), Err(TryLockError::WouldBlock)),
-            "held for whoever opened it at the old name"
-        );
-        let second = lock(&common).unwrap();
-        assert!(matches!(second.taken, Err(TryLockError::WouldBlock)));
-        assert_eq!(
-            (second.folder.as_path(), second.moved.as_deref()),
-            (folder(&common).as_path(), None)
-        );
-        drop(first);
-        let third = lock(&common).unwrap();
-        assert!(third.taken.is_ok() && third.moved.is_none());
-        assert_eq!(third.folder, folder(&common));
-    }
-
-    #[test]
-    fn a_run_of_an_older_build_holding_its_lock_keeps_its_records_where_they_are() {
-        let tree = Tree::new();
-        let common = tree.path("git");
-        tree.write("git/symphony/nightly/running.json", "{}");
-        let held = File::options()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(false)
-            .open(legacy(&common).join("run.lock"))
-            .unwrap();
-        held.try_lock().unwrap();
-        let tried = lock(&common).unwrap();
-        assert!(matches!(tried.taken, Err(TryLockError::WouldBlock)));
-        assert_eq!(tried.folder, legacy(&common), "where its holder says so");
-        assert!(tried.moved.is_none());
-        assert!(!folder(&common).exists(), "nothing moved");
-        drop(tried);
-        // Let go as the run's own lock lets go, by itself: a close alone leaves it held by any child
-        // another test's thread forked meanwhile, until that child's exec.
-        held.unlock().unwrap();
-        drop(held);
-        let mut fresh = lock(&common).unwrap();
-        assert!(fresh.taken.is_ok());
-        assert_eq!(fresh.folder, folder(&common));
-        assert!(fresh.moved.take().is_some());
-    }
-
-    #[test]
-    fn a_folder_that_cannot_be_moved_is_recorded_in_where_it_is() {
-        use std::os::unix::fs::PermissionsExt as _;
-        let tree = Tree::new();
-        let common = tree.path("git");
-        tree.write("git/symphony/nightly/runs/a.json", "{}");
-        let parent = tree.path("git/symphony");
-        fs::set_permissions(&parent, fs::Permissions::from_mode(0o555)).unwrap();
-        let tried = lock(&common);
-        fs::set_permissions(&parent, fs::Permissions::from_mode(0o755)).unwrap();
-        let tried = tried.unwrap();
-        assert!(tried.taken.is_ok());
-        assert_eq!(tried.folder, legacy(&common));
-        assert!(
-            (tried.moved.as_deref().unwrap()).starts_with(&format!(
-                "cannot move the release run's records from {} to {}, so they stay there: ",
-                legacy(&common).display(),
-                folder(&common).display()
-            )),
-            "{:?}",
-            tried.moved
-        );
+        assert!(busy(&ours.path));
+        assert!(read(&ours.folder).is_empty(), "its records are not read");
+        assert!(old.join("runs/old.json").exists(), "nor moved");
+        assert!(!folder(&common).join("runs").exists());
+        theirs.unlock().unwrap();
     }
 
     /// A child another thread spawns, caught between its fork and its exec: it holds a copy of
@@ -1820,22 +1638,5 @@ mod tests {
             "the run's lock, let go, is still held by a child forked while it was held"
         );
         drop(child);
-    }
-
-    #[test]
-    fn a_lock_whose_file_is_gone_from_both_folders_holds_neither() {
-        let tree = Tree::new();
-        let common = tree.path("git");
-        let (old, new) = (legacy(&common), folder(&common));
-        tree.write("git/symphony/nightly/run.lock", "");
-        let file = File::options()
-            .read(true)
-            .write(true)
-            .open(old.join("run.lock"))
-            .unwrap();
-        fs::remove_file(old.join("run.lock")).unwrap();
-        let tried = file.try_lock();
-        assert!(settled(file, tried, &old, &new).is_none());
-        assert!(!new.exists(), "nothing moved");
     }
 }
