@@ -257,6 +257,45 @@ fn the_task_boards_own_scrollbar_ends_above_the_dock() {
     }
 }
 
+/// Whether the task board's scroller is as tall as it may be, whether the "+" stands over the
+/// right end of its foot, where its horizontal scrollbar ends, whether that foot is above the
+/// "+"'s top, and whether a click there, a pixel above the foot and clear of its rounded corner
+/// (`--r-lg`, 14 px), reaches the scroller.
+const BOARD_FOOT_BARE: &str = "(() => {const board=document.querySelector('.board-scroll'), box=board.getBoundingClientRect(), open=document.querySelector('#quick-open').getBoundingClientRect();\
+    const end=document.elementFromPoint(Math.min(box.right, open.right) - 20, box.bottom - 1);\
+    return {capped: board.scrollHeight > board.clientHeight, under: open.left < box.right && open.right > box.left,\
+        abovePlus: box.bottom <= open.top + 0.5, reached: board.contains(end)};})()";
+
+/// With nothing pending no dock draws, and the "+" sits alone in the window's corner: the task
+/// board's scroller, as tall as its columns let it be, still ends above it, so the end of its
+/// own horizontal scrollbar is never under the "+" (app/board-scroll-and-focus-followups), on a
+/// phone, a desk or a tall window.
+#[test]
+fn the_task_boards_own_scrollbar_ends_above_the_chat_button_with_no_dock() {
+    let site = site();
+    site.set_json("/api/task-board", &super::polish::thirty_ready());
+    let Some(mut page) = chrome() else { return };
+    for (width, height) in [(390, 844), (1280, 800), (1440, 900), (1500, 1700)] {
+        viewport(&mut page, width, height);
+        page.open(&site.url("/tasks"));
+        assert!(page.wait_for(
+            "document.querySelector('#quick-open') !== null && document.querySelector('.board-scroll .taskcard') !== null && document.documentElement.dataset.navigation === 'ready'",
+            SHOWN
+        ));
+        settle(&mut page);
+        assert_eq!(
+            page.eval(BARE),
+            json!({"bar":false,"pending":false,"corner":true}),
+            "at {width}px x {height}px no dock draws"
+        );
+        assert_eq!(
+            page.eval(BOARD_FOOT_BARE),
+            json!({"capped":true,"under":true,"abovePlus":true,"reached":true}),
+            "at {width}px x {height}px the board's foot is above the \"+\""
+        );
+    }
+}
+
 #[test]
 fn a_documents_contents_pill_sits_in_the_dock_and_in_the_page_on_a_phone() {
     let site = site();

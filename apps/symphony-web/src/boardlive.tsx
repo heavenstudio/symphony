@@ -15,6 +15,7 @@ import {
   TaskBoard,
   UnreadBoard,
 } from "./board";
+import { readerRows } from "./boardplace";
 import {
   answered,
   BOARD,
@@ -800,7 +801,7 @@ export class LiveBoard {
       d.pendingMore = [];
     }
     if (changed || refresh) {
-      holdPlace("[data-slug]");
+      holdPlace(readerRows());
       this.host.redraw();
     }
     return refresh;

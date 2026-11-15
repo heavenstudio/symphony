@@ -26,6 +26,7 @@
 mod agents;
 mod assets;
 mod binaries;
+mod board_place;
 mod board_search;
 mod board_status;
 mod cache_ahead;
