@@ -2,7 +2,7 @@ import { isValidElement, type KeyboardEvent, type ReactElement, type ReactNode }
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import FIXTURE from "../../../crates/symphony-api/fixtures/task-timeline.json";
-import { Failure, NO_ANSWER as SLOW } from "./request";
+import { Failure, NO_ANSWER as POST_UNANSWERED } from "./request";
 import {
   afterRead,
   drawnClass,
@@ -29,6 +29,7 @@ import {
   whenShown,
 } from "./timeline";
 import { lanes, readTimeline, stops } from "./timeline-layout";
+import { NOT_IN_TIME } from "./trouble";
 import type { TaskTimeline } from "./wire";
 
 // React's effects stood in for, as no DOM runs here: each effect a hook sets is kept to be run by
@@ -391,7 +392,7 @@ describe("the timeline's host", () => {
   it("a failed read with nothing shown says why in the box, with its Try again", () => {
     const retry = vi.fn();
     expect(renderToStaticMarkup(<TimelineFailed error="Failed to fetch" retry={retry} />)).toBe(
-      '<div class="tl-drawn tl-failed"><p class="tl-note">The timeline could not be read: Failed to fetch. <button class="dx-button" data-style="outline" data-size="default" type="button">Try again</button></p></div>',
+      '<div class="tl-drawn tl-failed"><p class="tl-note">The timeline could not be read: Failed to fetch. Trying again in a minute. <button class="dx-button" data-style="outline" data-size="default" type="button">Try again</button></p></div>',
     );
     const [button] = elements(
       TimelineFailed({ error: "", retry }),
@@ -474,7 +475,10 @@ describe("the timeline's reads", () => {
     expect(
       readFailed(Failure.refused(503, "Not ready (the server answered 503)", "Not ready.")),
     ).toBe("Not ready.");
-    expect(readFailed(new Failure("uncertain", SLOW))).toBe(NO_ANSWER);
+    expect(readFailed(new Failure("uncertain", NOT_IN_TIME))).toBe(NO_ANSWER);
+    expect(NO_ANSWER).toBe("the server did not answer in time");
+    // A post's words are no read's: said as they came.
+    expect(readFailed(new Failure("uncertain", POST_UNANSWERED))).toBe(POST_UNANSWERED);
     expect(readFailed(new TypeError("Failed to fetch"))).toBe("Failed to fetch");
     expect(readFailed("offline")).toBe("offline");
   });

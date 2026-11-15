@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FRESH, opened, PAGE, THREAD, waits } from "./cache";
 import type { FrameRefresh } from "./frame";
+import { ANSWER_MS } from "./request";
 import {
   boardNotice,
   emptyTask,
@@ -14,6 +15,7 @@ import {
   withEntries,
 } from "./task-live";
 import { aRole, aTask, aWork, CASES, memoryStorage } from "./testing";
+import { NOT_IN_TIME } from "./trouble";
 import { BOARD_PATH, type Task, type TaskChange, type TaskEntry, type TaskPage } from "./wire";
 import { NO_WORK } from "./work";
 
@@ -431,6 +433,85 @@ describe("a task's page read", () => {
     again.settle(answer(503));
     await moving;
     expect(other.d.error).toBe("");
+  });
+});
+
+describe("a task's page read with nothing from this device", () => {
+  it("tries a read with no answer in time again by itself, longer each time, until it answers", async () => {
+    let unanswered = 2;
+    const { task, d, asked } = live((url) =>
+      url === PAGE_URL && unanswered-- > 0
+        ? new Promise<Response>(() => {})
+        : answer(200, aPage(), '"p1"'),
+    );
+    const loading = task.load();
+    await pass(ANSWER_MS);
+    await loading;
+    // Said in a read's words, never a write's, and asked again by itself.
+    expect(d.error).toBe(NOT_IN_TIME);
+    expect(task.drawn()).toBe(false);
+    expect(asked).toHaveLength(1);
+    await pass(999);
+    expect(asked).toHaveLength(1);
+    await pass(1);
+    expect(asked).toHaveLength(2);
+    await pass(ANSWER_MS);
+    expect(d.error).toBe(NOT_IN_TIME);
+    await pass(1_999);
+    expect(asked).toHaveLength(2);
+    await pass(1);
+    expect(asked).toHaveLength(3);
+    expect(task.drawn()).toBe(true);
+    expect(d.error).toBe("");
+    await pass(60_000);
+    expect(asked).toHaveLength(3);
+  });
+
+  it("tries a read the server refused again, as one with no answer", async () => {
+    let refused = 1;
+    const { task, d, asked } = live(() =>
+      refused-- > 0 ? answer(503) : answer(200, aPage(), '"p1"'),
+    );
+    await task.load();
+    expect(d.error).toBe("The server answered 503");
+    await pass(1_000);
+    expect(asked).toHaveLength(2);
+    expect(task.drawn()).toBe(true);
+  });
+
+  it("reads nothing again of a task the server does not have", async () => {
+    const { task, d, asked } = live(() => answer(404));
+    await task.load();
+    expect(d.missing).toBe("w/a");
+    await pass(60_000);
+    expect(asked).toHaveLength(1);
+  });
+
+  it("takes a read given up as the page leaves for no failure, and tries nothing again", async () => {
+    const reads: ReturnType<typeof live>[] = [];
+    const leaving = live(() => {
+      const signal = reads[0]?.given.at(-1)?.[1];
+      return new Promise<Response>((_, refuse) =>
+        signal?.addEventListener("abort", () => refuse(new DOMException("gone", "AbortError"))),
+      );
+    });
+    reads.push(leaving);
+    const loading = leaving.task.load();
+    await pass();
+    leaving.page.abort();
+    await loading;
+    expect(leaving.d.error).toBe("");
+    expect(leaving.task.fresh.failing).toEqual([]);
+    await pass(60_000);
+    expect(leaving.asked).toHaveLength(1);
+  });
+
+  it("stops trying the route it left once it moves to another task", async () => {
+    const { task, asked } = live((url) => (url === PAGE_URL ? answer(503) : answer(404)));
+    await task.load();
+    task.slug = "w/b";
+    await pass(60_000);
+    expect(urls(asked)).toEqual([PAGE_URL]);
   });
 });
 

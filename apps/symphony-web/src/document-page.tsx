@@ -197,7 +197,11 @@ export function DocumentPage({ path, scope, embedded = false }: DocumentPageProp
     }
   } else if (trouble !== null && !embedded) {
     body = (
-      <Trouble title="The document could not be loaded" text={failedRead(trouble)} retry={retry} />
+      <Trouble
+        title="The document could not be loaded"
+        text={failedRead(trouble, true)}
+        retry={retry}
+      />
     );
   } else if (trouble === null || (embedded && notice === null)) {
     body = (
@@ -886,7 +890,11 @@ export function FolderPage({ path, scope }: { path: string; scope: string }) {
     );
   } else if (page.error !== null) {
     body = (
-      <Trouble title="The folder could not be loaded" text={failedRead(page.error)} retry={retry} />
+      <Trouble
+        title="The folder could not be loaded"
+        text={failedRead(page.error, true)}
+        retry={retry}
+      />
     );
   } else {
     body = <p role="status">Loading folder…</p>;

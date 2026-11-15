@@ -643,9 +643,10 @@ fn trouble(page: &mut Chrome) -> Value {
         headings:document.querySelectorAll('h1').length};})()")
 }
 
-/// Clicks the trouble block's Retry and waits for `shown`.
+/// Clicks the trouble block's Retry and waits for `shown`. The page reads again by itself too: a
+/// read of its own may have drawn it already.
 fn retry(page: &mut Chrome, shown: &str) {
-    page.eval("document.querySelector('.trouble button').click()");
+    page.eval("document.querySelector('.trouble button')?.click()");
     assert!(
         page.wait_for(shown, SHOWN),
         "Retry did not bring the page back: {}",
@@ -729,13 +730,14 @@ fn a_missing_document_says_so_and_a_failed_read_says_it_failed_with_a_retry() {
             json!(""),
             "{route}: the block says it once"
         );
-        site.fail_route(read, false);
         // No answer at all: the server could not be reached, and only then is the connection named.
+        // Dropped before the error ends, so the page's own next read meets no answering route.
         site.drop_route(read, true);
+        site.fail_route(read, false);
         page.eval("document.querySelector('.trouble button').click()");
         assert!(
             page.wait_for(
-                "document.querySelector('.trouble p')?.textContent.startsWith('The server could not be reached. Check the connection and try again.')",
+                "document.querySelector('.trouble p')?.textContent === 'The server could not be reached; check the connection. Trying again…'",
                 SHOWN
             ),
             "{route}: {}",
@@ -749,6 +751,54 @@ fn a_missing_document_says_so_and_a_failed_read_says_it_failed_with_a_retry() {
         site.drop_route(read, false);
         retry(&mut page, shown);
     }
+}
+
+/// A task page whose first read of its task gets no answer within the limit (`symphonyAnswerMs`, a
+/// page global that shortens the 15 s for this test) says so in a read's words and that it is
+/// trying again, and tries again by itself: once the server answers, the task is drawn with no
+/// click.
+#[test]
+fn a_task_read_with_no_answer_in_time_says_it_is_trying_again_and_draws_with_no_click() {
+    const READ: &str = "/api/task-page";
+    let site = site();
+    let Some(mut page) = chrome() else { return };
+    page.call(
+        "Page.addScriptToEvaluateOnNewDocument",
+        json!({"source": "window.symphonyAnswerMs = 5000;"}),
+    );
+    site.hold_route(READ, true);
+    page.open(&site.url("/task/visual/in-progress"));
+    let said = page.wait_for(
+        "document.querySelector('.trouble h1')?.textContent === 'The task could not be loaded'",
+        SHOWN,
+    );
+    let failed = page.eval("(() => {const block=document.querySelector('.trouble');return {text:block?.querySelector('p')?.textContent ?? null,\
+        retry:block?.querySelector('button')?.textContent ?? null};})()");
+    let asked = |site: &Site| site.requests().iter().filter(|path| *path == READ).count();
+    // Asked again by itself while the server still holds its reads.
+    let again = test_time::until_true("the page asking for its task again", STALL, || {
+        asked(&site) >= 2
+    });
+    site.hold_route(READ, false);
+    assert!(
+        said,
+        "no trouble block: {}",
+        page.eval("document.body.innerText")
+    );
+    assert_eq!(
+        failed,
+        json!({"text": "The server did not answer in time. Trying again…", "retry": "Retry"}),
+        "a read's words, never a write's, and its Retry kept"
+    );
+    again.unwrap_or_else(|stall| panic!("{stall}: asked {} times", asked(&site)));
+    assert!(
+        page.wait_for(
+            "document.querySelector('article.task') !== null && document.querySelector('.trouble') === null",
+            SHOWN
+        ),
+        "the task was not drawn by itself: {}",
+        page.eval("document.body.innerText")
+    );
 }
 
 /// What the page's notice stack says, its server notice aside.

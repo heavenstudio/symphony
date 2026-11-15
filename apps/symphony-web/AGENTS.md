@@ -91,6 +91,15 @@ draws, each of its type, and nothing else, so a field a newer server adds, or on
 the page does not draw, changes nothing, as the Dioxus client's serde reads skip
 unknown fields. A read the guard refuses is a failed read, said and retried as any other. A feed
 event of a region or kind the page does not know is not its own, and is left alone.
+
+A failed read is said in one sentence (`failed`, `src/trouble.tsx`), in a read's words: one that
+got no answer in time fails with `NOT_IN_TIME`, never a post's `NO_ANSWER`, which asks the reader
+to check before sending again, as a post the server may have acted on does. A page that tries the
+read again by itself says "Trying again…" (`failed(why, true)`), and one with nothing drawn yet
+does try it again, on the feed's waits (`tryAgain`, `src/state.ts`: 1 s doubling to 30 s), until
+it is answered, the server has no such thing (a 404), a newer read starts or the page leaves; its
+Retry stays, to try at once. The limit a request waits for is `ANSWER_MS`, 15 s, which a page's
+`symphonyAnswerMs` shortens for a browser test of a read held past it.
 `JSON.parse` costs no code per field, so a field the page does not draw, a task's plugins' board
 fields among them, costs it nothing to receive: its types say what the server sends, and its
 guards read what it draws.
@@ -248,7 +257,7 @@ it (its files count in the regenerator's key, as every file of this package does
 feed of its own: it reads the window this device last chose (`reports-grain`, `reports-days`
 through `storage.ts`), else the last 24 hours by the hour (`FIRST_WINDOW`), at once, on each
 choice and every five minutes with the last answer's tag (`followReports`, under its effect's
-own signal). The periods are read by path as the server writes them (`Bucket`): a source with no
+own signal), a read that failed sooner, on the feed's waits. The periods are read by path as the server writes them (`Bucket`): a source with no
 record of a period is none there, a count by status that leaves out its zeros a zero. Four
 figures sit over five sections of charts, one column on a phone and two from 960 px. Each figure
 links to the chart it sums up (`#chart-done`…) while the charts are drawn. A chart's id is an
