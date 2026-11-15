@@ -10,6 +10,7 @@ mod crates_check;
 mod release_inputs;
 mod size_budget;
 mod split_repair;
+mod synced;
 
 /// Its name, as its usage and its refusals say it.
 const NAME: &str = "symphony-build";
@@ -25,7 +26,7 @@ const HEAD: &str = "usage: symphony-build COMMAND [ARGS]...\n\n\
 const LISTED: &str = "`symphony-build help`";
 
 /// Its commands, in the order its usage names them, each with what it does.
-const COMMANDS: [(&str, &str); 6] = [
+const COMMANDS: [(&str, &str); 7] = [
     (
         "publish-client",
         "publish a built client into the server's embedded copy",
@@ -45,6 +46,10 @@ const COMMANDS: [(&str, &str); 6] = [
     (
         "split-repair",
         "repair dx's --wasm-split output: safe, same bytes each build",
+    ),
+    (
+        "synced",
+        "time each page from its open to synced on a returning browser",
     ),
     (
         "release",
@@ -107,6 +112,7 @@ pub(crate) fn main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) ->
         Some("size-budget") => size_budget::main(rest, out, err),
         Some("crates-check") => crates_check::main(rest, out, err),
         Some("split-repair") => split_repair::main(rest, out, err),
+        Some("synced") => synced::main(rest, out, err),
         Some("release") => crate::release::main(rest, out, err),
         Some(name) => {
             let _ = writeln!(err, "{}", unknown(name));
@@ -286,6 +292,7 @@ mod tests {
                 "size-budget",
                 "crates-check",
                 "split-repair",
+                "synced",
                 "release",
             ]
         );
@@ -404,6 +411,19 @@ mod tests {
             "{err}"
         );
         assert!(err.contains("\nsymphony-build release: error: "), "{err}");
+        let (code, out, err) = built(&["synced", "--frobnicate"]);
+        assert_eq!((code, out.as_str()), (2, ""));
+        assert!(
+            err.starts_with("usage: symphony-build synced [-h] BASE "),
+            "{err}"
+        );
+        assert!(err.contains("\nsymphony-build synced: error: "), "{err}");
+        let (code, out, err) = built(&["help", "synced"]);
+        assert_eq!((code, err.as_str()), (0, ""));
+        assert!(
+            out.starts_with("usage: symphony-build synced [-h] BASE "),
+            "{out}"
+        );
         // A command of the shipped binary's, and the release run's name before the rename, which
         // nothing here runs any more.
         for name in ["status", "nightly"] {
