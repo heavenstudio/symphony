@@ -29,6 +29,7 @@ import {
   rowCard,
   sameRow,
   searched,
+  stageCounts,
   statusLabel,
   TaskBoard,
   type TaskBoardProps,
@@ -93,7 +94,6 @@ const board = (props: Partial<TaskBoardProps>) =>
       signoff={[]}
       counts={[]}
       statuses={[]}
-      answered={new Set()}
       refreshed={0}
       onFilter={() => {}}
       onLoad={() => {}}
@@ -172,28 +172,29 @@ describe("the board's columns", () => {
     expect(columnRows(draw())).toEqual(["w/b"]);
   });
 
-  // The counts count a task waiting on the owner in its stage; the board draws it in the sign-off
-  // lane. A stage whose every task waits there holds none once its page is in, and waits no more.
-  it("draw a stage whose every task waits on the owner as empty once its page answered", () => {
+  // The server counts a task waiting on the owner in its stage; the board draws it in the lane, so
+  // the stage's column counts, outlines and loads more of the rest alone.
+  it("count a stage less its tasks drawn in the owner's sign-off lane", () => {
     vi.stubGlobal("location", { hash: "#column-review" });
-    const tasks = [aTask("w/a", { status: "review" })];
-    const draw = (answered: string[]) =>
-      board({
-        tasks,
-        signoff: ["w/a"],
-        statuses: ["review"],
-        counts: [["review", 1]],
-        answered: new Set(answered),
-      });
     const review = (html: string) => html.slice(html.indexOf('data-status="review"'));
-    const reading = review(draw(["signoff"]));
+    const draw = (tasks: Task[], count: number) =>
+      review(board({ tasks, signoff: ["w/a"], statuses: ["review"], counts: [["review", count]] }));
+    // Its one task in the lane: nothing to wait for, nothing to hold.
+    const none = draw([aTask("w/a", { status: "review" })], 1);
+    expect(none).toContain('data-status="review" aria-busy="false"');
+    expect(none).toContain('review <span class="count">0</span>');
+    expect(none).not.toContain("ghost-card");
+    expect(columnRows(none)).toEqual([]);
+    // Until that task is read, it is a task of the stage's still to come.
+    const reading = draw([], 1);
     expect(reading).toContain('data-status="review" aria-busy="true"');
+    expect(reading).toContain('review <span class="count">1</span>');
     expect(reading).toContain('data-pending="true"><div class="ghost-card"');
-    const answered = review(draw(["signoff", "review"]));
-    expect(answered).toContain('data-status="review" aria-busy="false"');
-    expect(answered).toContain('review <span class="count">1</span>');
-    expect(answered).not.toContain("ghost-card");
-    expect(columnRows(answered)).toEqual([]);
+    // One of its two in the lane: the other is all it holds, and there is no more to load.
+    const split = draw([aTask("w/a", { status: "review" }), aTask("w/b", { status: "review" })], 2);
+    expect(split).toContain('review <span class="count">1</span>');
+    expect(columnRows(split)).toEqual(["w/b"]);
+    expect(split).not.toContain("Load more tasks");
   });
 
   it("are the pipeline's in a scroller the keyboard reaches, the rest after it", () => {
@@ -463,7 +464,6 @@ describe("a column", () => {
         connected={false}
         tasks={[]}
         count={0}
-        answered={false}
         query=""
         days={1}
         onLoad={() => {}}
@@ -490,27 +490,6 @@ describe("a column", () => {
     html = column({ status: "review" });
     expect(html).toContain('aria-busy="false"');
     expect(html).not.toContain("ghost-card");
-  });
-
-  // Counted and holding none, a column waits for its first page; once that answered, whatever it
-  // held (the counts older than the answer, its tasks drawn elsewhere), it waits no more.
-  it("whose first page answered waits for nothing, though counted and holding no task", () => {
-    vi.stubGlobal("location", { hash: "#column-ready" });
-    const waiting = column({ count: 2 });
-    expect(waiting).toContain('aria-busy="true"');
-    expect(waiting).toContain('data-pending="true"');
-    const answered = column({ count: 2, answered: true });
-    expect(answered).toContain('aria-busy="false"');
-    expect(answered).toContain('<span class="count">2</span>');
-    expect(answered).not.toContain("ghost-card");
-    expect(answered).not.toContain('data-pending="true"');
-    expect(answered).not.toContain("Load more tasks");
-    // A column of tasks shows them whether or not its first page has answered.
-    for (const first of [false, true]) {
-      const shown = column({ count: 1, tasks: [aTask("w/a")], answered: first });
-      expect(shown).toContain('aria-busy="false"');
-      expect(shown).toContain('id="row-w/a"');
-    }
   });
 
   it("draws the cards this browser kept for it in a window as wide", () => {
@@ -633,7 +612,6 @@ describe("a card a live update moves to another column", () => {
           connected
           tasks={[aTask("w/b", { status: "in_progress" }), aTask("w/a", { status: "in_progress" })]}
           count={2}
-          answered
           query=""
           days={1}
           onLoad={() => {}}
@@ -1055,6 +1033,42 @@ describe("the board's shape", () => {
       "cancelled",
     ]);
     expect(fallback.every(([, count]) => count === 1)).toBe(true);
+  });
+});
+
+describe("the stages' counts the board draws", () => {
+  const stage = (task: Task) => task.status;
+
+  // Each stage less its tasks in the sign-off lane, the others as the server counted them, and
+  // none below nothing where the lane holds a task the counts placed in another stage.
+  it("are the server's less each stage's tasks in the sign-off lane", () => {
+    const counts: [string, number][] = [
+      ["ready", 3],
+      ["review", 2],
+      ["done", 0],
+    ];
+    const lane = [
+      aTask("w/a", { status: "review" }),
+      aTask("w/b", { status: "review" }),
+      aTask("w/c", { status: "ready" }),
+      aTask("w/d", { status: "done" }),
+    ];
+    expect(stageCounts(counts, lane, stage)).toEqual([
+      ["ready", 2],
+      ["review", 0],
+      ["done", 0],
+    ]);
+    expect(stageCounts(counts, lane.slice(2, 3), stage)).toEqual([
+      ["ready", 2],
+      ["review", 2],
+      ["done", 0],
+    ]);
+  });
+
+  // An empty lane leaves the counts as they are, the same list, so nothing draws again for it.
+  it("are the server's own with the lane empty", () => {
+    const counts: [string, number][] = [["ready", 3]];
+    expect(stageCounts(counts, [], stage)).toBe(counts);
   });
 });
 

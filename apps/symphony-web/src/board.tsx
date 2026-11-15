@@ -197,6 +197,23 @@ export function boardShape(
   return shape;
 }
 
+/**
+ * Each of `counts` less its tasks the board draws in the sign-off lane (`lane`, each in the stage
+ * `stage` gives it): the server counts a task waiting on the owner in its stage, so the stage's
+ * column holds, outlines and loads more of the rest alone.
+ */
+export function stageCounts(
+  counts: [string, number][],
+  lane: readonly Task[],
+  stage: (task: Task) => string,
+): [string, number][] {
+  if (lane.length === 0) return counts;
+  return counts.map(([status, count]) => [
+    status,
+    Math.max(0, count - lane.filter((task) => stage(task) === status).length),
+  ]);
+}
+
 /** The board's shape for a browser that kept none: the pipeline and the columns off it, a task in
  * each. */
 function defaultShape(): [string, number][] {
@@ -632,8 +649,6 @@ export interface ColumnProps {
   connected: boolean;
   tasks: Task[];
   count: number;
-  /** Its first page answered in the view the page reads: it waits for nothing more. */
-  answered: boolean;
   query: string;
   days: number;
   onLoad: OnLoad;
@@ -648,7 +663,6 @@ export const TaskColumn = memo(function TaskColumn({
   connected,
   tasks,
   count,
-  answered,
   query,
   days,
   onLoad,
@@ -676,9 +690,7 @@ export const TaskColumn = memo(function TaskColumn({
   // the page, each as tall as this browser last drew the row in its place, and the Load more
   // button a column of more than a page will show.
   const reserved = firstPageHeight(count, kept);
-  // Counted, holding none, and its first page not in yet: once it answers, the column draws what
-  // the board places in it, even nothing, as a stage whose tasks all wait on the owner's sign-off.
-  const reading = count > 0 && tasks.length === 0 && !answered;
+  const reading = count > 0 && tasks.length === 0;
   // Once its cards are drawn on the board as it opens, their heights for the next visit.
   const shown = tasks.length;
   const keeps = useRef({ query, days });
@@ -801,8 +813,6 @@ export interface TaskBoardProps {
   signoff: string[];
   counts: [string, number][];
   statuses: string[];
-  /** The columns whose first page answered in the view the page reads. */
-  answered: ReadonlySet<string>;
   refreshed: number;
   onFilter: Filter;
   onLoad: OnLoad;
@@ -817,7 +827,6 @@ export function TaskBoard({
   signoff,
   counts,
   statuses,
-  answered,
   refreshed,
   onFilter,
   onLoad,
@@ -851,6 +860,12 @@ export function TaskBoard({
     return byColumn(filtered, place, kept.current);
   }, [tasks, search, selected, work, connected, signoff]);
   kept.current = columns;
+  // A stage's tasks waiting on the owner are drawn in the sign-off lane: its column counts the rest.
+  const lane = columns.get("signoff") ?? NONE;
+  const placed = useMemo(
+    () => stageCounts(counts, lane, (task) => taskStage(work, task, connected)),
+    [counts, lane, work, connected],
+  );
   const column = (status: string) => (
     <TaskColumn
       key={status}
@@ -858,8 +873,7 @@ export function TaskBoard({
       work={work}
       connected={connected}
       tasks={columns.get(status) ?? NONE}
-      count={counts.find(([one]) => one === status)?.[1] ?? 0}
-      answered={answered.has(status)}
+      count={placed.find(([one]) => one === status)?.[1] ?? 0}
       query={search}
       days={days}
       onLoad={onLoad}
@@ -914,7 +928,6 @@ export function TaskBoard({
             connected={connected}
             tasks={columns.get("signoff") ?? NONE}
             count={signoff.length}
-            answered={answered.has("signoff")}
             query={search}
             days={days}
             onLoad={onLoad}

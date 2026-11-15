@@ -2,7 +2,6 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { byColumn, SHAPE } from "./board";
 import {
-  answeredColumns,
   type BoardHost,
   emptyBoard,
   LiveBoard,
@@ -441,6 +440,32 @@ describe("the live board's counts", () => {
     await board.machineWork();
     expect(localStorage.getItem(SHAPE)).toBe("ready 2\nbuild-test 0");
   });
+
+  // The counts count a task waiting on the owner in its stage, and the board draws it in the
+  // sign-off lane: once a column's first page brings it, the next visit's ghost outlines no box
+  // for it in its stage.
+  it("keep each stage's count less its tasks in the sign-off lane, once a page brings them", async () => {
+    const counts: [string, number][] = [
+      ["ready", 1],
+      ["review", 2],
+    ];
+    const more = { statuses: ["ready", "review"], signoff: ["w/a"] };
+    const review = [aTask("w/a", { status: "review" }), aTask("w/b", { status: "review" })];
+    const { board, d } = live((url) => {
+      if (url === "/api/machine-work") return answer(200, NO_WORK);
+      return answer(200, listing(url === column("review") ? review : [], counts, more));
+    });
+    await board.counts();
+    await board.machineWork();
+    expect(localStorage.getItem(SHAPE)).toBe("signoff 1\nready 1\nbuild-test 0\nreview 2");
+    d.waiting = false;
+    void board.column("ready", false, "", 1);
+    await pass(250);
+    expect(localStorage.getItem(SHAPE)).toBe("signoff 1\nready 1\nbuild-test 0\nreview 2");
+    void board.column("review", false, "", 1);
+    await pass(250);
+    expect(localStorage.getItem(SHAPE)).toBe("signoff 1\nready 1\nbuild-test 0\nreview 1");
+  });
 });
 
 describe("the live board's machine work", () => {
@@ -576,33 +601,6 @@ describe("a column of the live board", () => {
     held.settle(answer(200, listing(ready)));
     await pass();
     expect(d.tasks).toEqual([]);
-    expect(answeredColumns(d)).toEqual(new Set());
-  });
-
-  // A first page that brings none of the tasks counted (the counts read before it, its tasks
-  // drawn in the owner's sign-off lane) still ends the column's wait, in that view.
-  it("is answered by its first page, even one with none of the tasks counted, in its view alone", async () => {
-    const { board, d } = opened({
-      [column("review")]: listing([aTask("w/a", { status: "review" })], [["review", 1]], {
-        signoff: ["w/a"],
-      }),
-      [column("ready")]: listing([aTask("w/b")], [["ready", 2]], { next: "w/b" }),
-      [column("ready", "&cursor=w%2Fb")]: listing([aTask("w/c")], [["ready", 2]]),
-    });
-    expect(answeredColumns(d)).toEqual(new Set());
-    void board.column("review", false, "", 1);
-    // Failed: Done is not answered.
-    void board.column("done", false, "", 1);
-    await pass(250);
-    expect(answeredColumns(d)).toEqual(new Set(["review"]));
-    void board.column("ready", false, "", 1);
-    await pass(250);
-    void board.column("ready", true, "", 1);
-    await pass(250);
-    expect(answeredColumns(d)).toEqual(new Set(["review", "ready"]));
-    // A new search or window is a new view: every column waits for its first page in it again.
-    void board.filter("lamp", 1);
-    expect(answeredColumns(d)).toEqual(new Set());
   });
 
   it("replaces only its own stage's tasks with its first page", async () => {

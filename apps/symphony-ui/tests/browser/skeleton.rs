@@ -389,18 +389,16 @@ fn the_board_s_next_ghost_draws_the_columns_it_last_read_with_a_card_for_each_ta
 #[test]
 fn a_column_still_reading_its_tasks_draws_a_card_box_for_each_it_will_hold() {
     let site = site();
-    // Fourteen tasks counted and none read yet: the column reads its first page, which is held, so
-    // it stays as it was drawn while it reads.
+    // Fourteen tasks counted and none read yet: the column reads its first page, which never
+    // brings any here, so it stays as it was drawn while it reads.
     site.set_json(
         "/api/task-board",
         &json!({"tasks": [], "statuses": ["ready"], "counts": [["ready", 14]], "signoff": [], "next": null}),
     );
-    site.hold_route(&column_read("ready"), true);
     let Some(mut browser) = open(&site, "/tasks", 1280, 900) else {
         return;
     };
     let column = ".column[data-status=ready]";
-    asked(&mut browser, &site, &column_read("ready"));
     assert!(
         browser.wait_for(
             &format!("document.querySelector('{column} [data-pending=true] .ghost-card') !== null"),
@@ -428,36 +426,15 @@ fn a_column_still_reading_its_tasks_draws_a_card_box_for_each_it_will_hold() {
             "reserved": 139, "bars": 5, "colour": "rgba(127, 127, 127, 0.14)"}),
         "a typical card's box per task counted, no agent's yet: a bar for its slug, its title's lines and its row of links, and no Load more while the first page is read"
     );
-    site.hold_route(&column_read("ready"), false);
-}
-
-/// The default view's read of the first page of the column `status`, as the board asks for it.
-fn column_read(status: &str) -> String {
-    format!("/api/task-board?q=&status={status}&days=1&activity=1&work=0")
-}
-
-/// Wait until the page has asked the stand-in for `target`, pumping its events between looks.
-fn asked(browser: &mut Chrome, site: &Site, target: &str) {
-    if let Err(stall) = test_time::until_true(
-        format!("the page asking for {target}"),
-        super::STALL,
-        || {
-            site.targets().iter().any(|asked| asked == target) || {
-                browser.pump(std::time::Duration::from_millis(25));
-                false
-            }
-        },
-    ) {
-        panic!("{stall}: {:?}", site.targets());
-    }
 }
 
 /// The counts count a task waiting on the owner's sign-off in its stage, as the server does, and
-/// the board draws it in the sign-off lane: a stage whose every task waits there holds none once
-/// its first page is in. It waits no more then: no ghost, no shimmer, not busy, its count as the
-/// server counts it (app/board-column-with-an-empty-answer-stops-loading).
+/// the board draws it in the sign-off lane: a stage counts the rest. One whose every task waits
+/// there holds none and waits for none once its first page is in (no ghost, no shimmer, not busy);
+/// one with part of its tasks there counts the cards it holds, with no Load more of the others
+/// (app/board-column-with-an-empty-answer-stops-loading).
 #[test]
-fn a_column_whose_first_page_answered_waits_no_more_though_its_tasks_are_drawn_elsewhere() {
+fn a_stage_counts_none_of_its_tasks_drawn_in_the_sign_off_lane() {
     let site = site();
     let task = |slug: &str, status: &str| {
         json!({"slug": slug, "title": format!("The task {slug}"), "body": "", "status": status,
@@ -466,42 +443,59 @@ fn a_column_whose_first_page_answered_waits_no_more_though_its_tasks_are_drawn_e
     };
     site.set_json(
         "/api/task-board",
-        &json!({"tasks": [task("probe/ready", "ready"), task("probe/asks", "review")],
-            "statuses": ["ready", "review"], "counts": [["ready", 1], ["review", 1]],
-            "signoff": ["probe/asks"], "next": null}),
+        &json!({"tasks": [task("probe/asks", "review"), task("probe/half-asks", "in_progress"),
+                task("probe/half-plain", "in_progress")],
+            "statuses": ["in_progress", "review"], "counts": [["in_progress", 2], ["review", 1]],
+            "signoff": ["probe/asks", "probe/half-asks"], "next": null}),
     );
     let Some(mut browser) = open(&site, "/tasks", 1280, 900) else {
         return;
     };
-    let review = column_read("review");
-    if let Err(stall) = test_time::until_true("Review's first page answered", super::STALL, || {
-        site.answers("/api/task-board")
-            .iter()
-            .any(|answer| answer.target == review && answer.status == 200)
-            || {
+    let reads = [column_read("in_progress"), column_read("review")];
+    if let Err(stall) =
+        test_time::until_true("both stages' first pages answered", super::STALL, || {
+            let answers = site.answers("/api/task-board");
+            reads.iter().all(|read| {
+                answers
+                    .iter()
+                    .any(|answer| &answer.target == read && answer.status == 200)
+            }) || {
                 browser.pump(std::time::Duration::from_millis(25));
                 false
             }
-    }) {
+        })
+    {
         panic!("{stall}: {:?}", site.targets());
     }
-    let shows = "(() => { const c = document.querySelector('.column[data-status=review]');
-        return {busy: c.getAttribute('aria-busy'), ghosts: c.querySelectorAll('.ghost-card').length,
-            cards: c.querySelectorAll('.taskcard').length, count: c.querySelector('h2 .count').textContent,
-            shimmer: document.getAnimations().filter(a => a.animationName === 'shimmer' && c.contains(a.effect?.target)).length,
-            lane: [...document.querySelectorAll('.column[data-status=signoff] .taskcard')].map(card => card.dataset.slug)}; })()";
-    let waits_no_more =
-        format!("(s => s.busy === 'false' && s.ghosts === 0 && s.lane.length === 1)({shows})");
+    let shows = "(() => { const at = status => { const c = document.querySelector(`.column[data-status=${status}]`);
+            return {busy: c.getAttribute('aria-busy'), ghosts: c.querySelectorAll('.ghost-card').length,
+                cards: [...c.querySelectorAll('.taskcard')].map(card => card.dataset.slug),
+                count: c.querySelector('h2 .count').textContent,
+                more: [...c.querySelectorAll('button')].some(button => button.textContent.includes('Load more')),
+                shimmer: document.getAnimations().filter(a => a.animationName === 'shimmer' && c.contains(a.effect?.target)).length}; };
+        return {in_progress: at('in_progress'), review: at('review'), lane: at('signoff').cards}; })()";
+    let settled = format!(
+        "(s => s.review.busy === 'false' && s.in_progress.busy === 'false' && s.lane.length === 2
+            && s.in_progress.cards.length === 1)({shows})"
+    );
     assert!(
-        browser.wait_for(&waits_no_more, SHOWN),
-        "Review kept waiting once its first page answered, its one task in the sign-off lane: {}",
+        browser.wait_for(&settled, SHOWN),
+        "a stage kept waiting once its first page answered, its tasks in the sign-off lane: {}",
         browser.eval(shows)
     );
     assert_eq!(
         browser.eval(shows),
-        json!({"busy": "false", "ghosts": 0, "cards": 0, "count": "1", "shimmer": 0, "lane": ["probe/asks"]}),
-        "Review draws none of its one task, which the sign-off lane holds, and its count as the server counts it"
+        json!({
+            "in_progress": {"busy": "false", "ghosts": 0, "cards": ["probe/half-plain"], "count": "1", "more": false, "shimmer": 0},
+            "review": {"busy": "false", "ghosts": 0, "cards": [], "count": "0", "more": false, "shimmer": 0},
+            "lane": ["probe/asks", "probe/half-asks"]}),
+        "each stage counts the cards it holds, its tasks in the sign-off lane left out: no ghost, no Load more"
     );
+}
+
+/// The default view's read of the first page of the column `status`, as the board asks for it.
+fn column_read(status: &str) -> String {
+    format!("/api/task-board?q=&status={status}&days=1&activity=1&work=0")
 }
 
 /// What a page animates: the shimmer animations that run (`document.getAnimations()`), and the
