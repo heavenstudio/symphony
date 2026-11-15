@@ -6,9 +6,9 @@ use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 #[test]
 fn a_source_edit_whose_event_is_lost_still_starts_a_build_within_a_period() {
@@ -918,81 +918,111 @@ fn installs_a_replacement_that_ends(folder: &Path, home: &Path) -> String {
     )
 }
 
+/// The reload's clock in a test's hands: it stands where the test sets it, starts at a whole
+/// minute of wall time, so a notice names the minute each wait ends, and counts its reads.
+struct Clock {
+    start: (Instant, SystemTime),
+    now: Arc<Mutex<(Instant, SystemTime)>>,
+    reads: Arc<AtomicUsize>,
+}
+
+impl Clock {
+    fn new() -> Self {
+        let start = (
+            Instant::now(),
+            UNIX_EPOCH + Duration::from_secs(1_800_000_000),
+        );
+        Self {
+            start,
+            now: Arc::new(Mutex::new(start)),
+            reads: Arc::default(),
+        }
+    }
+
+    /// A retry whose waits run by this clock.
+    fn retry(&self) -> Retry {
+        let (now, reads) = (self.now.clone(), self.reads.clone());
+        Retry::timed_by(move || {
+            reads.fetch_add(1, Ordering::SeqCst);
+            *now.lock().unwrap()
+        })
+    }
+
+    /// The clock set to `by` past its start.
+    fn set(&self, by: Duration) {
+        *self.now.lock().unwrap() = (self.start.0 + by, self.start.1 + by);
+    }
+
+    /// The clock [set](Self::set) to `by` past its start, and two of the reload's reads of it
+    /// after that: the check that read it first has ended, whatever it did. The reload reads it
+    /// at each check of a version whose failure waits, so not once a try ends in none.
+    fn at(&self, by: Duration) {
+        self.set(by);
+        let read = self.reads.load(Ordering::SeqCst);
+        test_time::until_true("two checks at the time set", stall(), || {
+            self.reads.load(Ordering::SeqCst) >= read + 2
+        })
+        .unwrap();
+    }
+
+    /// The minute `by` past the clock's start, as a notice names it.
+    fn minute(&self, by: Duration) -> String {
+        let seconds = (self.start.1 + by)
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        symphony::clock::stamp_at(libc::time_t::try_from(seconds).unwrap())
+    }
+}
+
+const MINUTE: Duration = Duration::from_secs(60);
+
+/// What the notice says of every failed update before its reason.
+const FAILED: &str = "Symphony server update failed; the previous server is still serving.";
+
+/// How many replacements the case's builds installed have started.
+fn started(server: &Reloading) -> usize {
+    std::fs::read_to_string(server.folder().join("started"))
+        .map(|text| text.lines().count())
+        .unwrap_or_default()
+}
+
 /// A version whose hand-over failed is built and handed over again once the wait after its failure
 /// is over on the reload's clock, a test's here, and not before; its second failure waits longer.
 /// The notice says each time when it is tried again. A source change is built at once, whatever
 /// that wait.
 #[test]
 fn a_version_whose_hand_over_failed_is_tried_again_after_a_wait_that_grows() {
-    use std::sync::atomic::AtomicUsize;
-    use std::time::{SystemTime, UNIX_EPOCH};
     let server = Reloading::new(installs_a_replacement_that_ends);
-    // A whole minute of wall time, so the notice names the minute each wait ends.
-    let start = (
-        Instant::now(),
-        UNIX_EPOCH + Duration::from_secs(1_800_000_000),
-    );
-    let now = Arc::new(Mutex::new(start));
-    let reads = Arc::new(AtomicUsize::new(0));
-    let clock = {
-        let (now, reads) = (now.clone(), reads.clone());
-        move || {
-            reads.fetch_add(1, Ordering::SeqCst);
-            *now.lock().unwrap()
-        }
-    };
-    let minute = Duration::from_secs(60);
-    // The reload's clock set to `by` past the start, and two of its reads after that: the check
-    // that read it first has ended, whatever it did.
-    let at = |by: Duration| {
-        *now.lock().unwrap() = (start.0 + by, start.1 + by);
-        let read = reads.load(Ordering::SeqCst);
-        test_time::until_true("two checks at the time set", stall(), || {
-            reads.load(Ordering::SeqCst) >= read + 2
-        })
-        .unwrap();
-    };
-    let started = || {
-        std::fs::read_to_string(server.folder().join("started"))
-            .map(|text| text.lines().count())
-            .unwrap_or_default()
-    };
-    let notice = |again: Duration| {
-        let seconds = (start.1 + again)
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
-        format!(
-            "Symphony server update failed; the previous server is still serving. replacement did \
-             not become ready: it ended. It tries this version again at about {}.",
-            symphony::clock::stamp_at(libc::time_t::try_from(seconds).unwrap())
-        )
-    };
+    let clock = Clock::new();
     // The `tries`th build and hand-over have failed, and the notice says the next is due `again`
     // past the start.
     let failed = |tries: usize, again: Duration| {
-        let said = notice(again);
+        let said = format!(
+            "{FAILED} replacement did not become ready: it ended. It tries this version again at \
+             about {}.",
+            clock.minute(again)
+        );
         test_time::until(format!("failure {tries} on the notice"), stall(), || {
-            (server.notice() == said).then(|| (server.builds().len(), started()))
+            (server.notice() == said).then(|| (server.builds().len(), started(&server)))
         })
         .unwrap()
     };
-    let worker =
-        server.retrying::<notify::NullWatcher>(server.setup(false), Retry::timed_by(clock));
+    let worker = server.retrying::<notify::NullWatcher>(server.setup(false), clock.retry());
     // The start's first read builds the sources, an unstamped install's, and hands over: that fails.
-    assert_eq!(failed(1, 5 * minute), (1, 1));
-    at(5 * minute - Duration::from_secs(1));
+    assert_eq!(failed(1, 5 * MINUTE), (1, 1));
+    clock.at(5 * MINUTE - Duration::from_secs(1));
     assert_eq!(
-        (server.builds().len(), started()),
+        (server.builds().len(), started(&server)),
         (1, 1),
         "not before 5 min"
     );
-    at(5 * minute);
-    assert_eq!(failed(2, 15 * minute), (2, 2), "tried again at 5 min");
+    clock.at(5 * MINUTE);
+    assert_eq!(failed(2, 15 * MINUTE), (2, 2), "tried again at 5 min");
     // Nine minutes after the second failure, where a wait as long as the first's would be over.
-    at(14 * minute);
+    clock.at(14 * MINUTE);
     assert_eq!(
-        (server.builds().len(), started()),
+        (server.builds().len(), started(&server)),
         (2, 2),
         "10 min this time"
     );
@@ -1004,10 +1034,175 @@ fn a_version_whose_hand_over_failed_is_tried_again_after_a_wait_that_grows() {
     assert_ne!(symphony::reload::fingerprint(&server.root).unwrap(), before);
     // The clock stands where the failed version's wait is not over, and the new version's first
     // failure waits the first wait again.
-    assert_eq!(failed(3, 19 * minute), (3, 3), "a source change at once");
+    assert_eq!(failed(3, 19 * MINUTE), (3, 3), "a source change at once");
     server.stop(worker);
     let builds = server.builds();
     assert!(builds.iter().all(|build| build == &builds[0]), "{builds:?}");
+}
+
+/// A build that fails leaves the notice its reason and when that version is built again, the
+/// reason ending where the next sentence starts: a build that said nothing leaves no separator
+/// there, and a diagnostic that ends a sentence no second full stop.
+#[test]
+fn a_failed_builds_notice_ends_its_reason_before_saying_when_it_is_tried_again() {
+    // The first build says nothing; each later one says a diagnostic that ends a sentence.
+    let server = Reloading::new(|folder, _| {
+        format!(
+            "printf '%s\\n' \"$*\" >> '{builds}'\nif [ -e '{said}' ]; then echo 'error: no such \
+             crate.' >&2; else : > '{said}'; fi\nexit 1\n",
+            builds = folder.join("builds").display(),
+            said = folder.join("said").display(),
+        )
+    });
+    let clock = Clock::new();
+    let notice = |before: &str| {
+        test_time::until("a failed build on the notice", stall(), || {
+            Some(server.notice()).filter(|notice| notice != before)
+        })
+        .unwrap()
+    };
+    let worker = server.retrying::<notify::NullWatcher>(server.setup(false), clock.retry());
+    let first = notice("");
+    assert_eq!(
+        first,
+        format!(
+            "{FAILED} symphony-server build exit status: 1. It tries this version again at about \
+             {}.",
+            clock.minute(5 * MINUTE)
+        )
+    );
+    clock.at(5 * MINUTE);
+    assert_eq!(
+        notice(&first),
+        format!(
+            "{FAILED} symphony-server build exit status: 1: error: no such crate. It tries this \
+             version again at about {}.",
+            clock.minute(15 * MINUTE)
+        )
+    );
+    assert_eq!(server.builds().len(), 2);
+    assert!(!server.shared.stopping(), "still serving");
+    server.stop(worker);
+}
+
+/// A build whose sources cannot be read once it has ended is dropped, as one of sources that
+/// changed under it is; when they read as that version again, it is built again once the wait
+/// after a failure is over on the reload's clock, and not before.
+#[test]
+fn a_build_dropped_for_sources_unread_after_it_is_tried_again_after_the_wait() {
+    // The first build leaves the checkout on another branch, where its sources are not read; every
+    // build installs the running image's bytes again, so one that is not dropped is kept.
+    let server = Reloading::new(|folder, home| {
+        format!(
+            "{}[ -e '{aside}' ] || {{ git symbolic-ref HEAD refs/heads/aside && : > '{aside}'; }}\n",
+            reinstalls(folder, home),
+            aside = folder.join("aside").display(),
+        )
+    });
+    let version = symphony::reload::fingerprint(&server.root).unwrap();
+    // A watched folder of no crate: the worker lets it go at the first check after it went.
+    let marker = server.root.join("crates");
+    std::fs::create_dir(&marker).unwrap();
+    let clock = Clock::new();
+    let worker = server.retrying::<Seeing>(server.setup(false), clock.retry());
+    test_time::until_true("the first build, off main", stall(), || {
+        server.folder().join("aside").is_file()
+    })
+    .unwrap();
+    std::fs::remove_dir(&marker).unwrap();
+    test_time::until_true("a check after the first build", stall(), || {
+        seen(false, &marker)
+    })
+    .unwrap();
+    assert_eq!(server.stamp(), None, "the build's result was dropped");
+    assert!(symphony::reload::fingerprint(&server.root).is_err());
+    git(&server.root, &["symbolic-ref", "HEAD", "refs/heads/main"]);
+    assert_eq!(symphony::reload::fingerprint(&server.root).unwrap(), version);
+    clock.at(5 * MINUTE - Duration::from_secs(1));
+    assert_eq!(server.builds().len(), 1, "not before 5 min");
+    // Its try is kept, a failure no more, so the clock is read no further.
+    clock.set(5 * MINUTE);
+    let stamp = test_time::until("the version's second build, kept", stall(), || {
+        server.stamp()
+    })
+    .unwrap();
+    assert_eq!(stamp["source"], version);
+    assert_eq!(server.builds().len(), 2);
+    assert_eq!(server.notice(), "", "a dropped build is no failed update");
+    server.stop(worker);
+}
+
+/// A hand-over a starter asked for that fails says why on the notice, and names no retry: the
+/// starter asks again. One that fails while a retry of the sources' own failed update waits keeps
+/// that retry's time on the notice, and the retry still comes when it said.
+#[test]
+fn a_starters_failed_hand_over_keeps_a_waiting_retrys_time_on_the_notice() {
+    let server = Reloading::new(installs_a_replacement_that_ends);
+    symphony::machine::Registry {
+        projects: vec![symphony::machine::Entry {
+            id: "project".into(),
+            name: "project".into(),
+            root: server.root.clone(),
+            manifest: None,
+            plugins: Vec::new(),
+            pin: 1,
+            schema: 1,
+        }],
+    }
+    .write(&server.home)
+    .unwrap();
+    // A starter's request to hand over to a build that ends before it is ready.
+    let ask = || {
+        crate::host::Handover {
+            exe: server.folder().join("replacement"),
+            root: server.root.clone(),
+            install: server.home.clone(),
+        }
+        .ask(&server.home)
+        .unwrap();
+        server.shared.handover.store(true, Ordering::SeqCst);
+    };
+    let notice = |before: &str| {
+        test_time::until("a failed hand-over on the notice", stall(), || {
+            Some(server.notice()).filter(|notice| notice != before)
+        })
+        .unwrap()
+    };
+    let clock = Clock::new();
+    // A stamped start builds nothing, so no retry waits when the starter first asks.
+    let worker = server.retrying::<notify::NullWatcher>(server.setup(true), clock.retry());
+    ask();
+    let asked = format!("{FAILED} replacement did not become ready: it ended");
+    assert_eq!(notice(""), asked);
+    assert_eq!((server.builds().len(), started(&server)), (0, 1));
+
+    server.tree.write(
+        "main/symphony/apps/symphony-server/src/main.rs",
+        "fn main() { /* changed */ }\n",
+    );
+    let failed = format!(
+        "{asked}. It tries this version again at about {}.",
+        clock.minute(5 * MINUTE)
+    );
+    assert_eq!(notice(&asked), failed);
+    ask();
+    let kept = format!(
+        "{asked}. The version whose update failed before is tried again at about {}.",
+        clock.minute(5 * MINUTE)
+    );
+    assert_eq!(notice(&failed), kept);
+    assert_eq!((server.builds().len(), started(&server)), (1, 3));
+    // The retry comes at the time both notices named.
+    clock.at(5 * MINUTE);
+    assert_eq!(
+        notice(&kept),
+        format!(
+            "{asked}. It tries this version again at about {}.",
+            clock.minute(15 * MINUTE)
+        )
+    );
+    assert_eq!((server.builds().len(), started(&server)), (2, 4));
+    server.stop(worker);
 }
 
 /// A watcher that delivers nothing and keeps each folder it is asked to watch (`true`) or no
