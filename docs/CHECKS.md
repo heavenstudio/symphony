@@ -568,7 +568,11 @@ post names the commands and the tip (RULES.md `workflow/no-second-build-in-revie
 stands on evidence of work already done, so nothing is built twice to land once.
 
 **The executor runs at the tip it asks review for.** A run made before the last commit is of
-another commit: the executor runs it again at the tip, and no reviewer does it in its place.
+another commit: the executor runs it again at the tip, and no reviewer does it in its place. A
+command that cannot pass as typed is recorded red like any other, and no green run of another
+command answers it: only a new commit clears it, so a filter goes after `--`
+(`just test-rs -p PACKAGE --test TARGET -- FILTER FILTER`), as [step 3](#picking-the-focused-set)
+writes it.
 
 **The reviewer takes a green recorded run at the tip as run.** It reads the diff against the
 record and judges whether those runs cover the change. It builds or runs only what the record
