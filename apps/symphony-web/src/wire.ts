@@ -465,11 +465,11 @@ export type RunLine = {
    */
   log_bytes?: number | null;
   /**
-   * Per test binary (`tools/run-suites`).
+   * Per test binary its log names, on an end line; absent when it names none.
    */
   suites?: Array<Suite> | null;
   /**
-   * The tests that failed (`tools/run-suites`).
+   * The tests that failed, beside `suites`: empty when none did.
    */
   failed?: Array<FailedTest> | null;
 };
@@ -477,6 +477,10 @@ export type RunLine = {
 export type End = "green" | "red" | "timed_out" | "interrupted" | "incomplete";
 
 export type Suite = {
+  /**
+   * Cargo's words for it, the executable's hash cut: `unittests src/lib.rs (symphony_board)`,
+   * `tests/cli.rs (cli)`, `Doc-tests symphony_board`.
+   */
   name: string;
   passed: number;
   failed: number;
@@ -485,6 +489,11 @@ export type Suite = {
    * Its time, in seconds.
    */
   s: number;
+  /**
+   * Whether it ended with no result line (it crashed, or its run was stopped first): never a
+   * pass, its counts and time those of the results it said, none.
+   */
+  error?: boolean;
 };
 
 export type FailedTest = {

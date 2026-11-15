@@ -84,7 +84,8 @@ const optionalNumber = optional(isNumber);
 function isSuite(value: unknown): value is Suite {
   return (
     isText(field(value, "name")) &&
-    ["passed", "failed", "ignored", "s"].every((key) => isNumber(field(value, key)))
+    ["passed", "failed", "ignored", "s"].every((key) => isNumber(field(value, key))) &&
+    optional((error) => typeof error === "boolean")(field(value, "error"))
   );
 }
 
@@ -1151,7 +1152,12 @@ export function RunView({
             <tbody>
               {suites.map(([key, suite]) => (
                 <tr key={key}>
-                  <th scope="row">{suite.name}</th>
+                  <th scope="row">
+                    {suite.name}
+                    {suite.error === true && (
+                      <span className="run-suite-error"> ended with no result</span>
+                    )}
+                  </th>
                   <td>{suite.passed}</td>
                   <td>{suite.failed}</td>
                   <td>{suite.ignored}</td>

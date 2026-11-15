@@ -173,6 +173,9 @@ describe("a run's line", () => {
     expect(isRunLine({ ...line, dirty: "yes" })).toBe(false);
     expect(isRunLine({ ...line, cpu_partial: 1 })).toBe(false);
     expect(isRunLine({ ...line, suites: [{ name: "a" }] })).toBe(false);
+    const crashed = { name: "a", passed: 0, failed: 0, ignored: 0, s: 1, error: true };
+    expect(isRunLine({ ...line, suites: [crashed] })).toBe(true);
+    expect(isRunLine({ ...line, suites: [{ ...crashed, error: "yes" }] })).toBe(false);
     expect(isRunLine({ ...line, failed: "t" })).toBe(false);
     expect(isRunLine({ ...line, failed: [{ name: "t" }] })).toBe(false);
     const { label: _, ...unlabelled } = line;
@@ -953,6 +956,15 @@ describe("a run's page", () => {
     const html = view({ page: { run: own, steps, unread: [] } });
     expect(html).toContain('<th scope="row">own</th>');
     expect(html).not.toContain('<th scope="row">symphony</th>');
+  });
+
+  it("says a binary that ended with no result line ended so, never as a pass", () => {
+    const crashed = { name: "cli", passed: 3, failed: 0, ignored: 0, s: 4, error: true };
+    const html = view({ page: { run: { ...run, suites: [crashed] }, steps, unread: [] } });
+    expect(html).toContain(
+      '<th scope="row">cli<span class="run-suite-error"> ended with no result</span></th>',
+    );
+    expect(view()).not.toContain("ended with no result");
   });
 });
 

@@ -374,6 +374,10 @@
 .run-suites th[scope="row"] {
   overflow-wrap: anywhere;
 }
+/* A binary that crashed or was stopped before its result: never a pass. */
+.run-suite-error {
+  color: var(--dislike);
+}
 
 /* The log: what part of it shows, then its text, wrapped, the page scrolling past it. */
 .run-log {

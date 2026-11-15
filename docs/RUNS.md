@@ -304,10 +304,10 @@ project's runs on the server that serves it:
   machine's work has its id, else as started ([Start and end](#start-and-end)).
 - **A run** (`/runs?run=ID`, a step's too): its facts, its steps (and theirs) in
   order, each with its time as a bar on the run's span, the tests its lines failed
-  with the line each failed on, its suites' counts, and its log. The log shows its last
-  64 KiB, with the output before it 1 MiB at a time on demand. While the run or a step
-  of it has not ended, the run is read again every 5 s and its log is read on from
-  where it stopped.
+  with the line each failed on, its suites' counts (a binary that ended with no result
+  line saying so), and its log. The log shows its last 64 KiB, with the output before it
+  1 MiB at a time on demand. While the run or a step of it has not ended, the run is
+  read again every 5 s and its log is read on from where it stopped.
 
 `GET /api/runs` (`symphony_api::RUNS_PATH`) answers a `symphony_api::RunsPage`: up to
 50 runs (`RUNS_PAGE`), steps left out, each run once as `fold` keeps it, newest asked
