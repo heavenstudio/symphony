@@ -152,7 +152,8 @@ export interface Asks {
   recipient: string | null;
 }
 
-const isAsk = shaped({
+/** One ask of `/api/asks`, as the asks' panel and the chat read it. */
+export const isAsk = shaped({
   id: isInteger,
   anchor: isText,
   quote: isText,

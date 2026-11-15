@@ -4,7 +4,7 @@ import { defineConfig } from "vitest/config";
 // (apps/symphony-ui/package.sh): `src/kinds/NAME.tsx` exports the kind's `run` and `stop`. The
 // overlay is no page's but the shell's persistent kind every page mounts beside its own.
 const PAGES = ["agents", "board", "docs", "queue", "reports", "review", "task"];
-const KINDS = [...PAGES, "overlay"].sort();
+const KINDS = [...PAGES, "overlay", "panel"].sort();
 
 export default defineConfig({
   // No public folder: the server serves the files package.sh publishes (the dev server's own

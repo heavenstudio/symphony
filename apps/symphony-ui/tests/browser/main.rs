@@ -6,8 +6,8 @@
 //! docs/engineering/analysis/python-zero.md ("Today's app, measured for mobile").
 //! - a first visit loads at most 125 KB gzipped to `/`, 150 KB to `/tasks` and 160 KB to a task's
 //!   page (each lowered from the owner's 300 KB as its page moved to the React client),
-//!   everything the page needs (shell, JS glue, wasm or the React client's scripts, CSS, API data,
-//!   the feed's head and messages), each independently.
+//!   everything the page needs (shell, the React client's scripts, CSS, API data, the feed's head
+//!   and messages), each independently.
 //!   The feed's keep-alive pings, which keep arriving while the page is open, are reported
 //!   beside the total. Deferred page kinds and the whole build are reported separately; a
 //!   visit pays for the resources it actually loads;
@@ -56,10 +56,10 @@ mod owner_controls;
 mod owner_note;
 mod owner_save;
 mod panel_open;
+mod persistent;
 mod phone;
 mod polish;
 mod preload;
-mod program;
 mod projects;
 mod reports;
 mod restored;
@@ -288,15 +288,11 @@ fn entry_pages_fit_the_first_visit_budget_and_deferred_kinds_are_reported() {
                 && !r.from_cache),
             "{path} did not fetch its {kind} module: {requests:#?}"
         );
-        // A kind of the web client (apps/symphony-web) is its script alone.
-        if !assets::web(dist(), kind) {
-            assert!(
-                requests
-                    .iter()
-                    .any(|r| r.url.ends_with(".wasm") && r.bytes > 0.0 && !r.from_cache),
-                "{path} fetched no WASM: {requests:#?}"
-            );
-        }
+        // A kind is its script and the chunks it imports: no page fetches wasm.
+        assert!(
+            requests.iter().all(|r| !r.url.ends_with(".wasm")),
+            "{path} fetched wasm: {requests:#?}"
+        );
         let bytes = needed_bytes(&requests);
         eprintln!(
             "{path} first visit: {bytes} bytes; the feed's keep-alive pings beside it: {} bytes; \

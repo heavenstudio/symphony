@@ -32,12 +32,13 @@ dist)
 clippy)
     bash "$here/wasm-fresh.sh"
     cd "$here/../.."
-    # Every shipped configuration must compile on its own: the program (src/split.rs). The union of
-    # page features hides unused imports and missing cfg branches, and compiles none of the
-    # program's split points.
-    for kind in program; do
+    # Each configuration must compile on its own: the shared stylesheets' build (src/main.rs,
+    # `web` alone), and the program's (src/split.rs), which no build makes since the chat moved to
+    # the web client. The union of page features hides unused imports and missing cfg branches, and
+    # compiles none of the program's split points.
+    for features in web web,page-program; do
         "${CARGO:-cargo}" clippy -p symphony-ui --target wasm32-unknown-unknown --lib --bins --locked \
-            --no-default-features --features "web,page-$kind" -- -D warnings
+            --no-default-features --features "$features" -- -D warnings
     done
     "${CARGO:-cargo}" clippy -p symphony-ui --target wasm32-unknown-unknown --bin symphony-ui-dev --locked \
         --no-default-features --features web,devtools -- -D warnings

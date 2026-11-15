@@ -8,11 +8,7 @@
 
 use serde_json::json;
 
-use super::{
-    SHOWN, STALL,
-    assets::{module, web},
-    chrome, common, dist, site,
-};
+use super::{SHOWN, STALL, assets::module, chrome, common, dist, site};
 
 /// Each kind of the web client, the page that shows it and what the page draws once it is in (a
 /// task's page, the stand-in having no page of its task, says so once it has asked for it).
@@ -33,7 +29,6 @@ const KINDS: [(&str, &str, &str); 7] = [
 #[test]
 fn a_web_kind_s_first_visit_asks_for_the_chunks_its_entry_imports_while_the_entry_is_held() {
     for (kind, path, ready) in KINDS {
-        assert!(web(dist(), kind), "{kind} is a web kind");
         let entry = module(dist(), kind).script;
         let source = std::fs::read_to_string(dist().join(entry.trim_start_matches('/')))
             .expect("the kind's entry");

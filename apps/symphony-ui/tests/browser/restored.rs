@@ -441,14 +441,8 @@ fn restored_mockups_keep_opaque_origins_in_frames_full_size_and_svg_hops() {
             SHOWN
         ));
         assert_eq!(browser.eval("location.pathname"), json!("/docs/PROBE.md"));
-        // The documents' module came from the root's assets: its main module while the documents
-        // were a Dioxus kind, its script alone since they are the web client's.
-        let docs = super::assets::module(dist(), "docs");
-        let module = if docs.wasm.is_empty() {
-            docs.script
-        } else {
-            docs.wasm
-        };
+        // The documents' module, its script, came from the root's assets.
+        let module = super::assets::module(dist(), "docs").script;
         assert!(
             browser
                 .requests()
