@@ -496,6 +496,10 @@ export type Agent = {
   task: string | null;
   role: string | null;
   tasks: Array<HeldTask>;
+  /**
+   * How many open tasks it orchestrates, which `tasks` leaves out: its Following list's count.
+   */
+  following: number;
   worktree: string;
   branch: string;
   agent: string | null;

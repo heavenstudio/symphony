@@ -1106,6 +1106,7 @@ rest of its document is the board's.
    "handle": "amber-heron", "kind": "worker", "model": "sonnet", "parent": "cobalt-otter",
    "task": "sim/jump", "role": "executor",           # the task it works now (an open one first)
    "tasks": [{"slug": "sim/jump", "role": "executor", "status": "in_progress"}],
+   "following": 0,                                   # the open tasks it orchestrates
    "worktree": "/…/lamp-works-wt/sim-jump", "branch": "sim/jump",   # where it really works
    "agent": "claude", "session_id": "9aa0…", "pane": "t5",
    "callback": "uds:/tmp/cc-socks/1234.sock", "chat": false,
@@ -1127,6 +1128,9 @@ question), `idle`, or `gone` (no terminal and no sign of life). An agent running
 `running_test` and `health: live`, never `lost`; so does a subagent whose worktree holds a live process, and one whose
 processes cannot be listed reads `health: unknown`. `last_tool_call` is the time of the last tool call of the agent
 (`null` before the first): the monitor's 20 s beat and board commands do not move it.
+`tasks` lists every task the agent holds a role on but those it orchestrates, and `following` counts
+the open ones it orchestrates (neither done nor cancelled), the count of its Following list on the
+agents page, which reads those tasks a page at a time.
 `callback` is the native address (`uds:` or `codex:`), or `null` for an inbox-only
 session; `chat` says whether this session is the current chat recipient, including
 an orchestrator fallback. `slots` is, under a project cap ([Slots](#slots)), the

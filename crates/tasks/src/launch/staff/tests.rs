@@ -120,6 +120,7 @@ fn idle(handle: &str, kind: &str, worktree: &str) -> agents::Agent {
         task: None,
         role: None,
         tasks: Vec::new(),
+        following: 0,
         worktree: worktree.into(),
         branch: String::new(),
         agent: Some("codex".into()),

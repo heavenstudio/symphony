@@ -11,7 +11,6 @@ import {
   Followed,
   finished,
   followedTasks,
-  followingCount,
   followingLabel,
   happening,
   held,
@@ -242,8 +241,7 @@ export interface AgentLinesProps extends Omit<AgentRowProps, "scope"> {
 
 /** An agent's row as it stands. */
 export function AgentLines({ agent, local, tasks, work, following }: AgentLinesProps) {
-  const { handle } = agent;
-  const count = followingCount(agent);
+  const { handle, following: count } = agent;
   const holding = held(tasks, handle);
   const done = finished(holding);
   const followed = followedTasks(following.rows, tasks, handle);
