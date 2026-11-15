@@ -17,6 +17,7 @@ export const RUN_PATH = "/api/run";
 export const RUN_LOG_PATH = "/api/run-log";
 export const RUN_LOG_TAIL = 65536;
 export const RUN_LOG_MOST = 1048576;
+export const RUNS_DAYS = 14;
 export const VERSION_HEADER = "symphony-version";
 export const VERDICT_TASKS = "verdicts/";
 export const UPLOAD_PATH = "/api/upload";

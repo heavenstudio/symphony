@@ -16,7 +16,7 @@ import {
   useState,
 } from "react";
 import { Button } from "./button";
-import { sleep } from "./feed";
+import { sleep, whenShown } from "./feed";
 import { useMount } from "./mount";
 import { href } from "./project";
 import { Failure, getIf, getJson, said } from "./request";
@@ -31,6 +31,7 @@ import {
   RUN_LOG_PATH,
   RUN_LOG_TAIL,
   RUN_PATH,
+  RUNS_DAYS,
   RUNS_PATH,
   type RunLine,
   type RunLog,
@@ -356,14 +357,15 @@ export function runHref(run: string): string {
 }
 
 /**
- * The list once its first page is read again: that page, then the older runs already shown below
- * its last, so a reader's Load more stays; a fresh page with none is the list.
+ * The list once its first page is read again: that page, then the runs already shown from its
+ * last's time on down, those queued in the same second as its last among them (a tie the page cut
+ * through), so a reader's Load more stays; a fresh page with none is the list.
  */
 export function merged(fresh: RunLine[], shown: RunLine[]): RunLine[] {
   const last = fresh.at(-1);
   if (last === undefined) return fresh;
   const listed = new Set(fresh.map((line) => line.run));
-  return [...fresh, ...shown.filter((line) => line.queued < last.queued && !listed.has(line.run))];
+  return [...fresh, ...shown.filter((line) => line.queued <= last.queued && !listed.has(line.run))];
 }
 
 /** A step drawn on its run's span: how deep it ran, where its bar starts and how wide it is. */
@@ -574,7 +576,9 @@ function RunRow({ line, shown, at }: { line: RunLine; shown: Result; at: number 
       <a className="run-row" href={runHref(line.run)} data-run={line.run} data-result={shown}>
         <Mark shown={shown} />
         <span className="run-pipeline">{line.pipeline}</span>
-        <span className="run-label">{line.label}</span>
+        <span className="run-label" title={line.label}>
+          {line.label}
+        </span>
         <span className="run-where">{where.join(" · ")}</span>
         <span className="run-who">{line.trigger}</span>
         <span className="run-time">{time === null ? "" : duration(time)}</span>
@@ -710,7 +714,7 @@ export function ListView({ list, error, running, at, loadingMore, onMore }: List
         </details>
       )}
       {list.runs.length === 0 ? (
-        <p className="runs-quiet">No run in the last 14 days matches.</p>
+        <p className="runs-quiet">{`No run in the last ${RUNS_DAYS} days matches.`}</p>
       ) : (
         <ol className="runs-rows">
           {list.runs.map((line) => (
@@ -727,8 +731,17 @@ export function ListView({ list, error, running, at, loadingMore, onMore }: List
   );
 }
 
-/** A wait between two reads: `sleep`, or a test's own. */
+/** A wait between two reads: `pause`, or a test's own. */
 export type Wait = (ms: number, signal: AbortSignal) => Promise<void>;
+
+/**
+ * The wait between two reads: `ms`, then on only once the page is shown, so a tab behind another
+ * reads nothing and reads at once when it is in front again; at once when `signal` ends.
+ */
+export async function pause(ms: number, signal: AbortSignal): Promise<void> {
+  await sleep(ms, signal);
+  await whenShown(signal);
+}
 
 /** What a read that keeps reading tells its page. */
 export interface Told<T> {
@@ -748,11 +761,14 @@ const isMissing = (error: unknown) => error instanceof Failure && error.kind ===
 /** The machine work the board reads (`MachineWork` on the wire), what runs now. */
 export const MACHINE_WORK_PATH = "/api/machine-work";
 
-/** Reads what runs now at once and then every NOW_MS (through `wait`), until `signal` ends it. */
+/**
+ * Reads what runs now at once and then every NOW_MS while the page is shown (through `wait`),
+ * until `signal` ends it.
+ */
 export async function followNow(
   signal: AbortSignal,
   told: Told<Now>,
-  wait: Wait = sleep,
+  wait: Wait = pause,
 ): Promise<void> {
   while (!signal.aborted) {
     try {
@@ -769,15 +785,15 @@ export async function followNow(
 }
 
 /**
- * Reads the first page of the runs `filters` take at once and then every LIST_MS (through `wait`),
- * naming the last answer's tag so a list no day file changed under answers `304`, until `signal`
- * ends it.
+ * Reads the first page of the runs `filters` take at once and then every LIST_MS while the page is
+ * shown (through `wait`), naming the last answer's tag so a list no day file changed under answers
+ * `304`, until `signal` ends it.
  */
 export async function followList(
   filters: Filters,
   signal: AbortSignal,
   told: Told<RunsAnswer>,
-  wait: Wait = sleep,
+  wait: Wait = pause,
 ): Promise<void> {
   const url = listUrl(filters);
   let etag = "";
@@ -949,6 +965,8 @@ export interface RunViewProps {
   page: RunPage;
   log: ShownLog | null;
   logError: string | null;
+  /** The server keeps no log of the run (its read answered 404). */
+  logMissing: boolean;
   running: ReadonlySet<string>;
   at: number;
   loadingEarlier: boolean;
@@ -966,19 +984,32 @@ function Fact({ name, value }: { name: string; value: string | null | undefined 
   );
 }
 
-/** The log as it stands: none kept, not read, nothing yet, or its text with what came before. */
+/**
+ * The log as it stands: none kept, kept no more (or not yet written), not read, nothing yet, or its
+ * text with what came before.
+ */
 function LogView({
   page,
   log,
   logError,
+  logMissing,
   loadingEarlier,
   onEarlier,
-}: Pick<RunViewProps, "page" | "log" | "logError" | "loadingEarlier" | "onEarlier">) {
+}: Pick<
+  RunViewProps,
+  "page" | "log" | "logError" | "logMissing" | "loadingEarlier" | "onEarlier"
+>) {
   let body: ReactNode;
   if (page.run.log === undefined || page.run.log === null) {
     body = (
       <p className="runs-quiet">
         No log was kept: its command wrote to a terminal, where its output stayed.
+      </p>
+    );
+  } else if (log === null && logMissing) {
+    body = (
+      <p className="runs-quiet">
+        {ended(page) ? "This run's log is no longer kept." : "Its log is not written yet."}
       </p>
     );
   } else if (log === null) {
@@ -1020,6 +1051,7 @@ export function RunView({
   page,
   log,
   logError,
+  logMissing,
   running,
   at,
   loadingEarlier,
@@ -1070,9 +1102,14 @@ export function RunView({
           }
         />
         <Fact name="Asked for" value={when(run.queued)} />
+        {/* A line with no end that the machine does not run says when it started, not a run. */}
         <Fact
-          name={run.ended === null ? "Running for" : "Took"}
-          value={time === null ? null : duration(time)}
+          name={run.ended !== null ? "Took" : shown === "running" ? "Running for" : "Started"}
+          value={
+            time === null
+              ? null
+              : `${duration(time)}${shown === "started" ? " ago, no end written" : ""}`
+          }
         />
         <Fact name="CPU" value={cpu(run)} />
         <Fact
@@ -1172,6 +1209,7 @@ export function RunView({
         page={page}
         log={log}
         logError={logError}
+        logMissing={logMissing}
         loadingEarlier={loadingEarlier}
         onEarlier={onEarlier}
       />
@@ -1185,6 +1223,8 @@ export interface RunTold extends Told<RunPage> {
   log(log: ShownLog): void;
   /** Its log's read failed, said for the page; the run's own reads go on. */
   logFailed(why: string): void;
+  /** The server keeps no log of it (a 404): gone with its days, or not written yet. */
+  logMissing(): void;
 }
 
 /** Whether `page`'s run and every step of it have ended: nothing it shows changes after. */
@@ -1193,17 +1233,18 @@ export function ended(page: RunPage): boolean {
 }
 
 /**
- * Reads the run `id` at once and then every NOW_MS (through `wait`), naming the last answer's tag,
- * and its log on from what is shown (`shown`) after each read; it stops once the run and its steps
- * have ended and their log is read, once the server has no such run, or once `signal` ends it. A
- * log now shorter than what is shown, written again, is read again from its tail.
+ * Reads the run `id` at once and then every NOW_MS while the page is shown (through `wait`),
+ * naming the last answer's tag, and its log on from what is shown (`shown`) after each read; it
+ * stops once the run and its steps have ended and their log is read or the server keeps none, once
+ * the server has no such run, or once `signal` ends it. A log now shorter than what is shown,
+ * written again, is read again from its tail.
  */
 export async function followRun(
   id: string,
   shown: () => ShownLog | null,
   signal: AbortSignal,
   told: RunTold,
-  wait: Wait = sleep,
+  wait: Wait = pause,
 ): Promise<void> {
   const url = `${RUN_PATH}?run=${encodeURIComponent(id)}`;
   let etag = "";
@@ -1240,8 +1281,13 @@ export async function followRun(
         told.log(appended(log, part));
       } catch (error) {
         if (signal.aborted) return;
-        told.logFailed(failure(error));
-        logRead = false;
+        // A log the server keeps no more is read to its end: an ended run's follow stops on it.
+        if (isMissing(error)) {
+          told.logMissing();
+        } else {
+          told.logFailed(failure(error));
+          logRead = false;
+        }
       }
     }
     if (last !== null && ended(last) && logRead) return;
@@ -1267,6 +1313,7 @@ function RunScreen({ id, running, at }: { id: string; running: ReadonlySet<strin
   const [error, setError] = useState<string | null>(null);
   const [log, setLog] = useState<ShownLog | null>(null);
   const [logError, setLogError] = useState<string | null>(null);
+  const [logMissing, setLogMissing] = useState(false);
   const [loadingEarlier, setLoadingEarlier] = useState(false);
   const shownLog = useRef<ShownLog | null>(null);
   const [asked, setAsked] = useState(0);
@@ -1286,8 +1333,13 @@ function RunScreen({ id, running, at }: { id: string; running: ReadonlySet<strin
         shownLog.current = next;
         setLog(next);
         setLogError(null);
+        setLogMissing(false);
       },
       logFailed: setLogError,
+      logMissing() {
+        setLogError(null);
+        setLogMissing(true);
+      },
     });
     return () => controller.abort();
   }, [id, asked]);
@@ -1317,7 +1369,7 @@ function RunScreen({ id, running, at }: { id: string; running: ReadonlySet<strin
       <div className="runs run-page" data-ready="missing">
         <Trouble
           title="No such run"
-          text={`${missing} A run is kept 14 days on this page.`}
+          text={`${missing} A run is kept ${RUNS_DAYS} days on this page.`}
           back={["/runs", "Every run"]}
         />
       </div>
@@ -1347,6 +1399,7 @@ function RunScreen({ id, running, at }: { id: string; running: ReadonlySet<strin
       page={page}
       log={log}
       logError={logError}
+      logMissing={logMissing}
       running={running}
       at={at}
       loadingEarlier={loadingEarlier}

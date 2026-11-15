@@ -108,6 +108,7 @@ fn constants() -> String {
         ("RUN_LOG_PATH", text(api::RUN_LOG_PATH)),
         ("RUN_LOG_TAIL", api::RUN_LOG_TAIL.to_string()),
         ("RUN_LOG_MOST", api::RUN_LOG_MOST.to_string()),
+        ("RUNS_DAYS", api::RUNS_DAYS.to_string()),
         ("VERSION_HEADER", text(api::VERSION_HEADER)),
         ("VERDICT_TASKS", text(api::VERDICT_TASKS)),
         ("UPLOAD_PATH", text(api::UPLOAD_PATH)),

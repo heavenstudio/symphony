@@ -266,9 +266,11 @@ filters kept as a query through `storage.ts` (`runs-filters`) and Load more (`re
 the mount's signal. A run is `/runs?run=ID`, the same kind: the shell's move within it says
 `review:navigate`, and the page reads `location.search` again. Its read (`followRun`) goes on
 every 5 s while the run or a step of it has not ended, reading its log on from what is shown
-(`appended`), and from its tail again once the log is shorter than that. The output before it
+(`appended`), and from its tail again once the log is shorter than that; a log the server keeps
+no more (`404`) ends an ended run's read and is said quietly. The output before it
 (`readEarlier`) goes in front (`prepended`). Each reader takes its effect's signal, and each
-wait between reads is a parameter, so `runs.test.tsx` runs them with no timer. Nothing is kept
+wait between reads is a parameter (`pause` by default: its time, then on only once the page is
+shown, `whenShown` in `feed.ts`), so `runs.test.tsx` runs them with no timer. Nothing is kept
 on the device but the filters. The steps are bars on the run's span drawn as boxes
 (`stepBars`), with no chart; Trends, a chart of the roll-up, will share `chart.tsx` with
 Reports. Times are in UTC.

@@ -1,7 +1,8 @@
 //! The Runs page's reads over fixture day files: the asks read from the query; the list newest
 //! first, each run once across the days its lines are in, its steps left out, its filters and its
-//! pages, reading no further back than a full page needs; what is not read named; a run opened on
-//! its steps in order; and the routes refusing a bad ask before any hub and answering through one.
+//! pages, reading no further back than a full page needs; what is not read named; each file's fold
+//! kept between reads until the file changes, for the window's days alone; a run opened on its
+//! steps in order; and the routes refusing a bad ask before any hub and answering through one.
 
 use super::*;
 use crate::testing::Tree;
@@ -179,7 +180,7 @@ fn the_list_is_each_run_once_newest_first_without_its_steps() {
         // A line a writer that died cut short, then an empty one.
         "{\"schema\":1,\"run\":\"ff\n\n",
     );
-    let page = page(&runs, &Filters::default(), NOW);
+    let page = page(&Index::default(), &runs, &Filters::default(), NOW);
     assert_eq!(names(&page), ["d", "c", "a", "b"]);
     assert_eq!(page.runs[0].end, Some(End::Red));
     assert_eq!(page.runs[0].ended, red.started.map(|at| at + 10.0));
@@ -220,6 +221,7 @@ fn the_filters_take_a_pipeline_an_end_a_task_and_a_branch_whole() {
     write_day(&runs, TODAY, &lines, "");
     let ask = |pipeline, end, task, branch| {
         names(&page(
+            &Index::default(),
             &runs,
             &asked(pipeline, end, task, branch, None).unwrap(),
             NOW,
@@ -245,6 +247,7 @@ fn the_filters_take_a_pipeline_an_end_a_task_and_a_branch_whole() {
         "a pipeline no run names matches none"
     );
     let named = page(
+        &Index::default(),
         &runs,
         &asked(Some("verify"), None, None, None, None).unwrap(),
         NOW,
@@ -257,20 +260,22 @@ fn the_filters_take_a_pipeline_an_end_a_task_and_a_branch_whole() {
 }
 
 #[test]
-fn a_full_page_reads_no_older_day_and_the_next_page_starts_before_its_last_run() {
+fn a_full_page_reads_no_older_day_and_the_next_page_starts_at_its_last_run() {
     let tree = Tree::new();
     let runs = tree.path("runs");
     let count = u32::try_from(RUNS_PAGE).unwrap() + 5;
     let today: Vec<RunLine> = (0..count)
         .map(|n| {
-            let line = start(&format!("1{n:03}"), "test", TODAY + 60.0 * f64::from(n));
+            // The fifth and sixth were asked for in the same second: the page's cut falls between.
+            let at = if n == 4 { 5 } else { n };
+            let line = start(&format!("1{n:03}"), "test", TODAY + 60.0 * f64::from(at));
             ended(&line, End::Green, 5.0)
         })
         .collect();
     write_day(&runs, TODAY, &today, "");
     // Yesterday's file is no regular file: read, it would be named as not read.
     std::fs::create_dir_all(runs.join(format!("{}.jsonl", run_day(TODAY - DAY)))).unwrap();
-    let first = page(&runs, &Filters::default(), NOW);
+    let first = page(&Index::default(), &runs, &Filters::default(), NOW);
     assert_eq!(first.runs.len(), RUNS_PAGE);
     assert!(first.more);
     assert_eq!(
@@ -279,8 +284,10 @@ fn a_full_page_reads_no_older_day_and_the_next_page_starts_before_its_last_run()
         "a page today's file fills reads no other"
     );
     assert_eq!(first.runs[0].run, id(&format!("1{:03}", RUNS_PAGE + 4)));
+    assert_eq!(names(&first).last().unwrap(), "1004");
     let before = first.runs.last().unwrap().queued;
     let next = page(
+        &Index::default(),
         &runs,
         &Filters {
             before: Some(before),
@@ -288,7 +295,11 @@ fn a_full_page_reads_no_older_day_and_the_next_page_starts_before_its_last_run()
         },
         NOW,
     );
-    assert_eq!(names(&next), ["1004", "1003", "1002", "1001", "1000"]);
+    assert_eq!(
+        names(&next),
+        ["1004", "1005", "1003", "1002", "1001", "1000"],
+        "the next page holds its last run again and the one asked for in the same second"
+    );
     assert!(!next.more);
     assert_eq!(
         next.unread.len(),
@@ -323,7 +334,7 @@ fn a_day_file_not_read_is_named_and_days_past_the_window_are_never_read() {
         &[start("8", "test", TODAY - f64::from(RUNS_DAYS) * DAY)],
         "",
     );
-    let page = page(&runs, &Filters::default(), NOW);
+    let page = page(&Index::default(), &runs, &Filters::default(), NOW);
     assert_eq!(
         names(&page),
         ["1", "9"],
@@ -331,13 +342,94 @@ fn a_day_file_not_read_is_named_and_days_past_the_window_are_never_read() {
     );
     assert_eq!(page.unread.len(), 1, "{:?}", page.unread);
     assert!(
-        page.unread[0].starts_with(&format!("{}", runs.join("2026-11-14.jsonl").display())),
+        page.unread[0].starts_with("2026-11-14.jsonl: "),
+        "a file not read is named by its name alone: {:?}",
+        page.unread
+    );
+    assert!(
+        !page.unread[0].contains(&runs.display().to_string()),
         "{:?}",
         page.unread
     );
     // A folder with no day files has no runs.
-    let empty = super::page(&tree.path("none"), &Filters::default(), NOW);
+    let empty = super::page(&Index::default(), &tree.path("none"), &Filters::default(), NOW);
     assert_eq!(empty, RunsPage::default());
+}
+
+#[test]
+fn a_day_file_is_parsed_again_only_once_its_length_or_modification_time_changed() {
+    let tree = Tree::new();
+    let runs = tree.path("runs");
+    let index = Index::default();
+    write_day(&runs, TODAY, &[start("1", "test", TODAY + 5.0)], "");
+    let path = day_path(&runs, TODAY);
+    let written = std::fs::metadata(&path).unwrap().modified().unwrap();
+    let all = Filters::default();
+    assert_eq!(names(&page(&index, &runs, &all, NOW)), ["1"]);
+    // Bytes of the same length under the same modification time are not parsed again: the fold
+    // kept answers, where an index of its own parses them.
+    write_day(&runs, TODAY, &[start("2", "test", TODAY + 5.0)], "");
+    let file = std::fs::File::options().write(true).open(&path).unwrap();
+    file.set_modified(written).unwrap();
+    assert_eq!(names(&page(&index, &runs, &all, NOW)), ["1"]);
+    assert_eq!(names(&page(&Index::default(), &runs, &all, NOW)), ["2"]);
+    // A line appended is read, by the list and by a run's page alike.
+    write_day(
+        &runs,
+        TODAY,
+        &[
+            start("2", "test", TODAY + 5.0),
+            start("3", "test", TODAY + 9.0),
+        ],
+        "",
+    );
+    assert_eq!(names(&page(&index, &runs, &all, NOW)), ["3", "2"]);
+    assert!(run(&index, &runs, &id("3"), NOW).is_ok());
+    // The same length written again later is read again too.
+    write_day(
+        &runs,
+        TODAY,
+        &[
+            start("2", "test", TODAY + 5.0),
+            start("4", "test", TODAY + 9.0),
+        ],
+        "",
+    );
+    let file = std::fs::File::options().write(true).open(&path).unwrap();
+    file.set_modified(written + std::time::Duration::from_secs(1))
+        .unwrap();
+    assert_eq!(names(&page(&index, &runs, &all, NOW)), ["4", "2"]);
+    assert_eq!(index.len(), 1);
+}
+
+#[test]
+fn the_index_keeps_the_window_s_days_alone_and_nothing_of_a_file_gone_or_refused() {
+    let tree = Tree::new();
+    let runs = tree.path("runs");
+    let index = Index::default();
+    let oldest = TODAY - f64::from(RUNS_DAYS - 1) * DAY;
+    write_day(&runs, TODAY, &[start("1", "test", TODAY + 5.0)], "");
+    write_day(&runs, TODAY - DAY, &[start("2", "test", TODAY - DAY)], "");
+    write_day(&runs, oldest, &[start("3", "test", oldest)], "");
+    // A pipeline no run names reads every day of the window.
+    let none = Filters {
+        pipeline: Some("none".into()),
+        ..Filters::default()
+    };
+    assert!(page(&index, &runs, &none, NOW).runs.is_empty());
+    assert_eq!(index.len(), 3, "a day with no file keeps nothing");
+    // A day later the oldest is past the window.
+    let later = NOW + DAY;
+    assert!(page(&index, &runs, &none, later).runs.is_empty());
+    assert_eq!(index.len(), 2);
+    // A file gone, or one that is no longer a regular file, is no longer kept.
+    std::fs::remove_file(day_path(&runs, TODAY - DAY)).unwrap();
+    let today = day_path(&runs, TODAY);
+    std::fs::remove_file(&today).unwrap();
+    std::fs::create_dir(&today).unwrap();
+    let read = page(&index, &runs, &none, later);
+    assert_eq!(read.unread.len(), 1, "{:?}", read.unread);
+    assert_eq!(index.len(), 0);
 }
 
 #[test]
@@ -372,7 +464,7 @@ fn a_run_opens_on_its_steps_each_after_the_one_it_ran_inside() {
         ],
         "",
     );
-    let opened = run(&runs, &id("a"), NOW).unwrap();
+    let opened = run(&Index::default(), &runs, &id("a"), NOW).unwrap();
     assert_eq!(opened.run, verify, "a run still running is its start line");
     assert_eq!(
         opened
@@ -389,11 +481,11 @@ fn a_run_opens_on_its_steps_each_after_the_one_it_ran_inside() {
         "a step that failed two tests names them"
     );
     // A step opens on its own steps, its parent left out.
-    let step = run(&runs, &id("b"), NOW).unwrap();
+    let step = run(&Index::default(), &runs, &id("b"), NOW).unwrap();
     assert_eq!(step.run.parent, Some(id("a")));
     assert_eq!(step.steps.len(), 1);
     assert_eq!(
-        run(&runs, &id("7"), NOW).unwrap_err(),
+        run(&Index::default(), &runs, &id("7"), NOW).unwrap_err(),
         format!("no run {} in the last 14 days' files", id("7"))
     );
 }
@@ -403,7 +495,7 @@ fn a_loop_of_parents_takes_each_step_once() {
     let one = step_of(start("b", "verify", TODAY), "c", "one");
     let two = step_of(start("c", "verify", TODAY + 1.0), "b", "two");
     let top = step_of(start("d", "verify", TODAY + 2.0), "a", "top");
-    let steps = [one.clone(), two.clone(), top.clone()];
+    let steps = [one.clone(), two.clone(), top.clone()].map(Arc::new);
     assert_eq!(under(&id("a"), &steps), [top]);
     assert_eq!(
         under(&id("b"), &steps),
@@ -519,5 +611,16 @@ async fn a_project_that_keeps_no_runs_where_the_server_reads_says_so() {
     assert_eq!(
         answer_run(&hub, "a").unwrap_err().0,
         StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        answer_run(&hub, &id("A")).unwrap_err(),
+        (
+            StatusCode::BAD_REQUEST,
+            format!(
+                "run is a run's id, 32 lower-case hex digits, not {:?}",
+                id("A")
+            )
+        ),
+        "the recorder writes no capitals"
     );
 }

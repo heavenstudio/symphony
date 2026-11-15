@@ -148,8 +148,14 @@
 .run-label {
   grid-area: label;
   font-weight: 600;
-  overflow-wrap: anywhere;
   min-width: 0;
+}
+/* A run is one line of its list, a long label cut short with an ellipsis: its page says it all. */
+.run-row .run-label,
+.runs-op .run-label {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 .run-where {
   grid-area: where;
@@ -238,6 +244,7 @@
 }
 .run-head .run-label {
   font-weight: 400;
+  overflow-wrap: anywhere;
 }
 .run-facts {
   display: grid;

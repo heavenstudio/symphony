@@ -41,13 +41,15 @@ fn ended(mut line: Value, end: &str, seconds: f64) -> Value {
     line
 }
 
+/// The red run's label, longer than a line of the list on a desk.
+const LONG_LABEL: &str = "just test-rs -p symphony-ui --test browser -- runs:: header:: preload:: \
+     a_missing_or_failed_page_says_which entry_pages_fit_the_first_visit_budget \
+     a_first_visit_and_a_return_visit_fit_their_budgets";
+
 /// The red run the list opens on, two steps under it, the second failing two tests.
 fn red() -> Value {
     ended(
-        line(
-            30,
-            &json!({"cpu_s": 140.0, "label": "just test-rs -p symphony-app --lib"}),
-        ),
+        line(30, &json!({"cpu_s": 140.0, "label": LONG_LABEL})),
         "red",
         150.0,
     )
@@ -171,6 +173,17 @@ const LAID_OUT: &str = "(() => {
     };
 })()";
 
+/// How the runs' labels are drawn, in the list and on a run's page: on how many lines each is, and
+/// whether it is cut short (wider than its box), with the run's page's text.
+const LABELS: &str = "(() => {
+    const lines = (e) => { const range = document.createRange(); range.selectNodeContents(e); return new Set([...range.getClientRects()].map(r => Math.round(r.top))).size; };
+    const drawn = (e) => ({lines: lines(e), cut: e.scrollWidth > e.clientWidth});
+    const head = document.querySelector('.run-head .run-label');
+    return head === null
+        ? [...document.querySelectorAll('.run-row .run-label')].map(drawn)
+        : {wraps: lines(head) > 1, cut: head.scrollWidth > head.clientWidth, text: head.textContent};
+})()";
+
 /// A click on the first element `selector` names, as a person's.
 fn click(chrome: &mut Chrome, selector: &str) {
     assert_eq!(
@@ -204,6 +217,12 @@ fn the_runs_page_fits_a_desk_and_a_phone_and_opens_a_run_on_its_steps_failures_a
             json!({"overflow": 0, "rows": ["running", "red", "green"], "now": ["running", "queued"], "count": "1 running · 1 queued"}),
             "{width}: the list a line a run, the newest running as the machine's work says, within the screen"
         );
+        let line = |cut| json!({"lines": 1, "cut": cut});
+        assert_eq!(
+            chrome.eval(LABELS),
+            json!([line(false), line(true), line(false)]),
+            "{width}: each run's label on one line, the long one cut short"
+        );
         assert!(
             chrome.wait_for(
                 "document.querySelector('.runs-now')?.textContent.includes('desk · up to date') === true",
@@ -225,6 +244,11 @@ fn the_runs_page_fits_a_desk_and_a_phone_and_opens_a_run_on_its_steps_failures_a
             json!({"times": [true, true], "scroll": 0, "lines": [1, 1], "error": "ended with no result"}),
             "{width}: each step's time on its name's line, each binary's name whole on one line, the \
              one that ended with no result saying so, and its table never scrolling across"
+        );
+        assert_eq!(
+            chrome.eval(LABELS),
+            json!({"wraps": phone, "cut": false, "text": LONG_LABEL}),
+            "{width}: the run's page says its label whole, on more lines on a phone"
         );
         click(&mut chrome, ".run-log .dx-button");
         assert!(

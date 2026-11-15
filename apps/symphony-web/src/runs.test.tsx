@@ -29,6 +29,7 @@ import {
   NowView,
   nextLogUrl,
   parseFilters,
+  pause,
   prepended,
   RunsPage,
   type RunTold,
@@ -145,6 +146,7 @@ function telling<T>(): { told: unknown[]; check: Told<T> } {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.useRealTimers();
 });
 
 describe("a run's line", () => {
@@ -374,6 +376,14 @@ describe("the list", () => {
       merged(fresh, [aLine(25), aLine(20), aLine(10), aLine(5)]).map((line) => line.queued),
     ).toEqual([TODAY + 30, TODAY + 20, TODAY + 10, TODAY + 5]);
     expect(merged([], [aLine(1)])).toEqual([]);
+    // A run asked for in the same second as the page's last, which the page cut through, stays.
+    const tied = aLine(21, { queued: TODAY + 20 });
+    expect(merged(fresh, [aLine(30), aLine(20), tied, aLine(10)]).map((line) => line.run)).toEqual([
+      id(30),
+      id(20),
+      id(21),
+      id(10),
+    ]);
   });
 
   it("keeps Load more and what was not read while older runs stay, else takes the page's", () => {
@@ -522,6 +532,55 @@ describe("a run's log", () => {
   });
 });
 
+describe("the wait between reads", () => {
+  /** A page whose visibility a test sets, and says changed. */
+  function aPage(hidden: boolean) {
+    const events = new EventTarget();
+    const page = {
+      hidden,
+      addEventListener: events.addEventListener.bind(events),
+      removeEventListener: events.removeEventListener.bind(events),
+      shows() {
+        page.hidden = false;
+        events.dispatchEvent(new Event("visibilitychange"));
+      },
+    };
+    vi.stubGlobal("document", page);
+    return page;
+  }
+
+  it("is its time while the page is shown, then on only once a hidden page shows", async () => {
+    vi.useFakeTimers();
+    const page = aPage(false);
+    const reading = new AbortController();
+    const over: string[] = [];
+    const shown = pause(NOW_MS, reading.signal).then(() => over.push("shown"));
+    await vi.advanceTimersByTimeAsync(NOW_MS - 1);
+    expect(over).toEqual([]);
+    await vi.advanceTimersByTimeAsync(1);
+    await shown;
+    // Hidden, no time is enough: it goes on as the page shows again.
+    page.hidden = true;
+    const hidden = pause(NOW_MS, reading.signal).then(() => over.push("hidden"));
+    await vi.advanceTimersByTimeAsync(NOW_MS * 100);
+    expect(over).toEqual(["shown"]);
+    page.shows();
+    await hidden;
+    expect(over).toEqual(["shown", "hidden"]);
+  });
+
+  it("ends at once with its signal, hidden or not", async () => {
+    vi.useFakeTimers();
+    aPage(true);
+    const leaving = new AbortController();
+    const waiting = pause(NOW_MS, leaving.signal);
+    await vi.advanceTimersByTimeAsync(NOW_MS);
+    leaving.abort();
+    await waiting;
+    await pause(NOW_MS, leaving.signal);
+  });
+});
+
 describe("the reads", () => {
   it("read what runs now at once and on its timer, saying a failure and going on", async () => {
     const asked = server();
@@ -634,6 +693,7 @@ describe("a run's read", () => {
         told.push(["log", next.text]);
       },
       logFailed: (why) => told.push(["log failed", why]),
+      logMissing: () => told.push(["log missing"]),
     };
     const done = followRun(id(1), () => log, page.signal, check, wait);
     return { asked, told, waited, done };
@@ -717,6 +777,27 @@ describe("a run's read", () => {
     await quiet.done;
     expect(quiet.told).toEqual([["answered", id(1)]]);
     expect(quiet.asked).toHaveLength(1);
+  });
+
+  it("stops on an ended run whose log the server keeps no more, and reads on a running one's", async () => {
+    const gone = follow(5);
+    await asking(gone.asked, 1);
+    gone.asked[0]?.answer(reply(200, over, "r"));
+    await asking(gone.asked, 2);
+    gone.asked[1]?.answer(reply(404, { error: "no log of the run" }));
+    await gone.done;
+    expect(gone.told).toEqual([["answered", id(1)], ["log missing"]]);
+    expect(gone.asked).toHaveLength(2);
+    expect(gone.waited).toEqual([]);
+    // A running run's log not written yet is read again on the timer.
+    const early = follow(1);
+    await asking(early.asked, 1);
+    early.asked[0]?.answer(reply(200, running, "r"));
+    await asking(early.asked, 2);
+    early.asked[1]?.answer(reply(404, { error: "no log of the run" }));
+    await early.done;
+    expect(early.told).toEqual([["answered", id(1)], ["log missing"]]);
+    expect(early.waited).toEqual([NOW_MS]);
   });
 
   it("goes on after a failed read, and stops at once once the page is gone", async () => {
@@ -894,6 +975,7 @@ describe("a run's page", () => {
         page={{ run, steps, unread: [] }}
         log={{ size: 2_000_000, from: 1_900_000, to: 2_000_000, text: "the tail" }}
         logError={null}
+        logMissing={false}
         running={new Set()}
         at={TODAY + 500}
         loadingEarlier={false}
@@ -935,6 +1017,10 @@ describe("a run's page", () => {
     expect(html).toContain("The run it is a step of");
     expect(html).toContain("<dt>Running for</dt><dd>8 min 15 s</dd>");
     expect(html).toContain("<dt>Exit</dt><dd>signal 15</dd>");
+    // With no end and nothing running it, it says when it started.
+    expect(view({ page: { run: step, steps: [], unread: [] } })).toContain(
+      "<dt>Started</dt><dd>8 min 15 s ago, no end written</dd>",
+    );
     expect(html).not.toContain("Steps");
     expect(html).not.toContain("failed test");
     expect(html).toContain("No log was kept");
@@ -943,6 +1029,13 @@ describe("a run's page", () => {
   it("says where its log stands: being read, not read, empty, whole, or reading earlier", () => {
     expect(view({ log: null })).toContain("Reading the log…");
     expect(view({ log: null, logError: "Gone." })).toContain("The log could not be read: Gone.");
+    const kept = view({ log: null, logMissing: true });
+    expect(kept).toContain('<p class="runs-quiet">This run&#x27;s log is no longer kept.</p>');
+    expect(kept).not.toContain('role="alert"');
+    const going = { run: aLine(1, { log: "logs/x.log" }), steps: [], unread: [] };
+    expect(view({ page: going, log: null, logMissing: true })).toContain(
+      "Its log is not written yet.",
+    );
     expect(view({ log: { size: 0, from: 0, to: 0, text: "" } })).toContain(
       "Nothing written to the log yet.",
     );

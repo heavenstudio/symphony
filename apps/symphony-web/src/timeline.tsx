@@ -22,7 +22,7 @@ import {
   useState,
 } from "react";
 import { Button } from "./button";
-import { sleep } from "./feed";
+import { sleep, whenShown } from "./feed";
 import { scoped } from "./project";
 import { Failure, getIf, NO_ANSWER as SLOW, said } from "./request";
 import { currentRoute } from "./route";
@@ -158,24 +158,6 @@ export function afterRead(held: Held, read: Read, clock: number): Held {
     };
   }
   return showing ? held : { ...held, shown: { error: read.error } };
-}
-
-/** Once the page is shown: at once if it is, else at the first change of visibility that shows
- * it, or once `signal` ends. */
-export function whenShown(signal: AbortSignal): Promise<void> {
-  return new Promise((resolve) => {
-    if (typeof document === "undefined" || !document.hidden || signal.aborted) return resolve();
-    const heard = () => {
-      if (!document.hidden) done();
-    };
-    const done = () => {
-      document.removeEventListener("visibilitychange", heard);
-      signal.removeEventListener("abort", done);
-      resolve();
-    };
-    document.addEventListener("visibilitychange", heard);
-    signal.addEventListener("abort", done);
-  });
 }
 
 /**
