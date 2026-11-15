@@ -187,6 +187,43 @@ pub fn project_problems(root: &Path) -> Vec<String> {
     }
 }
 
+/// `symphony settings-check [DIR]`, the settings check: the project file at DIR (the current
+/// folder) read as the Symphony reads it ([`crate::project::Project::load`]), judged on its shape
+/// alone. A table or key the Symphony does not know, a value of the wrong type or a required value
+/// left out is named on `err`, exit 1; a file that loads is said on `out`, exit 0. It judges no
+/// name against a list (a model, an agent's or a recipe's name is any text) and, unlike the lint,
+/// reads no plugin this build holds and no document. More than one folder is exit 2.
+pub fn settings(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
+    const USAGE: &str = "usage: symphony settings-check [DIR]";
+    let root = match args {
+        [] => Path::new("."),
+        [dir] if !dir.starts_with('-') => Path::new(dir),
+        _ => {
+            return crate::cli::refuse(
+                err,
+                USAGE,
+                "settings-check",
+                &format!("unrecognized arguments: {}", args.join(" ")),
+            );
+        }
+    };
+    match crate::project::Project::load(root) {
+        Ok(_) => {
+            let _ = writeln!(
+                out,
+                "✔ {}: every table and key is a setting the Symphony knows, each value of its type",
+                crate::project::FILE
+            );
+            0
+        }
+        Err(problem) => {
+            let _ = writeln!(err, "{problem}");
+            let _ = writeln!(err, "✖ the project file is refused.");
+            1
+        }
+    }
+}
+
 /// `symphony status --lint`: the project file, card slugs in prose, the plugins' prose rules and
 /// their document checks, each finding named on `err`; exit 1 on any, 2 when the docs cannot be
 /// read.

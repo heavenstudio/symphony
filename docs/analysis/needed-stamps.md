@@ -54,7 +54,9 @@ assessed needs, is `review`, which is today's rule.
   and test command it ran is green, and one test run at least is among them.
 - **Applies:** any change to code, scripts, recipes, build settings, or a file a test reads (a
   fixture, a shipped skill whose install is tested). The tests closest to a change are what proves
-  it works.
+  it works. A change of the values the project file gives its settings, which the settings check
+  proves alone (`symphony settings-check`, recorded as a test run: every table and key known, each
+  value of its type, no name judged against a list), with no other suite.
 - **Skips:** documents and guides alone; pictures and other files nothing tests; a hotfix whose
   break no test shows in the time it has, its tests coming with its postmortem.
 
@@ -66,9 +68,16 @@ assessed needs, is `review`, which is today's rule.
   reads (a store, a schema, a board command, the landing, a launcher, a hook, a recipe, a wire type,
   a route, a shared component); a change to a test, a check, a budget or a run step, which is any
   path `[land] check_paths` names, since a loosened test is how a red turns green unfixed; a
-  shipped skill or a rule every agent follows; a change that does more than one thing, or one the
-  assessor cannot place.
-- **Skips:** documents alone (a design, a reference page, a record); a fix of a few lines that
+  shipped skill or a rule every agent follows; a setting the Symphony does not read yet or reads
+  another way, which is code; a value of the project file that is a command the Symphony runs or
+  that decides what lands (`[land]`, `[verdicts]`, `[releases]`, `[stamps]`, `[board]`'s
+  `on_review` and `on_land`, `[plugins]`'s `process`); a change that does more than one thing, or
+  one the assessor cannot place.
+- **Skips:** documents alone (a design, a reference page, a record); the values the project file
+  gives settings the Symphony already reads (a model, an agent, a limit, a count, a name),
+  written, changed or removed, with the guide's and the rules' words that repeat those values and
+  nothing else: the settings check green at the tip stands in the reviewer's place, as `tests`; a
+  fix of a few lines that
   leaves the failing test its task names unchanged; a hotfix restoring
   something wholly broken, read afterwards as its postmortem.
 
@@ -166,6 +175,7 @@ information the land does not read.
 | A hotfix: the server's pages fail to load, a one-line fix | none | Restoring what everyone uses comes first; a reviewer reads it afterwards, as its postmortem. With a failing test that shows the break, `tests`. |
 | A release red: a test fails, the fix is in code and the test unchanged | `tests` | The fix leaves its test alone. The stamp asks that the task's test runs at the tip are green, not that the red's own test is among them ([left out](#left-out)). |
 | The same red, its fix changing the test | `tests`, `review` | The test is a check path: a loosened test needs a reader that did not ask for it. |
+| A role's model changed in the project file, with the guide's words for it | `tests` | Values of settings the Symphony already reads: the settings check green at the tip, and no reviewer. |
 | A board command's refusal reworded | `tests`, `review` | A board command every agent runs. |
 | A row added to the home queue | `tests`, `review`, `pictures` | A page's look and the client's tests. |
 | A new page the owner asked to see before it lands | `tests`, `review`, `pictures`, `owner` | The owner asked. |

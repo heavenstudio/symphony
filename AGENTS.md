@@ -196,6 +196,17 @@ its brief asks: it is the release run's (`just release`), on main's tip in a cle
 this folder (`../symphony-wt/release`), which tags a green tip as a release
 ([RELEASES](docs/RELEASES.md)).
 
+**A change of settings needs no reviewer.** A change of the values `symphony.toml` gives settings
+the Symphony already reads (a role's model, a limit, a count), with this guide's or the rules'
+words that repeat them and nothing else, lands on `just settings-check` green at its tip: the
+project file read as the Symphony reads it and judged on its shape alone (every table and key
+known, each value of its type, each required value there; a model is any text, never one of a
+list), recorded as a test run, which is the `tests` stamp. Its assessor names `tests` alone, and
+no reviewer reads it. A setting the Symphony does not read yet is code, and `[land]`,
+`[verdicts]`, `[releases]`, `[stamps]`, `[board]`'s `on_review` and `on_land` and `[plugins]`'s
+`process` hold commands or decide what lands: those keep `review`
+([TASKS](docs/TASKS.md#needed-stamps), [PROJECT_FILE](docs/PROJECT_FILE.md#the-settings-check)).
+
 ## Agent integration
 
 `symphony init --root ROOT` installs in a project the nine generic skills and their Claude links,

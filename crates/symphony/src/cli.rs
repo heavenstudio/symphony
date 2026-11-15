@@ -97,6 +97,7 @@ pub fn main_in(
         Some("reply") => reply_in(&args[1..], env, out, err),
         Some("serve") => serve_main(input, out),
         Some("docs-audit") => crate::docs_audit::main(&args[1..], out, err),
+        Some("settings-check") => lint::settings(&args[1..], out, err),
         Some("blocks") => crate::blocks::main(&args[1..], out, err),
         Some("triage") => triage_main(&args[1..], out, err),
         Some("verdict-asks") => verdict_asks_main(&args[1..], out, err),

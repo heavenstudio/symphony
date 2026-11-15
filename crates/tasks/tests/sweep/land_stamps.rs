@@ -564,3 +564,57 @@ fn a_task_no_assessment_read_lands_as_before_stamps() {
     assert!(!said.contains("it needs"), "nothing new is said: {said}");
     assert_landed(&r, SLUG, &tip, result);
 }
+
+/// A change of settings' values, as a role's model changed in the project file with the guide's
+/// words that repeat it: none of it a path `[land] check_paths` names, so its assessment names
+/// `tests` alone, and it lands on the settings check's recorded green run at its tip with no
+/// reviewer's approve, refused until that run is there. A branch changing a command the land runs
+/// is one the check paths name, which keeps `review`.
+#[test]
+fn a_change_of_settings_values_lands_on_the_settings_check_green_at_its_tip_with_no_reviewer() {
+    use symphony_board::land::check_paths;
+    let r = Repo::new();
+    let land = "[land]\ncheck = false\n";
+    let was = format!("[agents]\nlaunch = {{ default = \"claude\", model = \"opus\" }}\n\n{land}");
+    project_file(&r, &was);
+    write(&r.root, "AGENTS.md", "Executors run on Opus.\n");
+    git(&r.root, &["add", "AGENTS.md"]);
+    git(&r.root, &["commit", "-qm", "the guide"]);
+    let slug = "tools/roles-run-on-fable";
+    let is = format!(
+        "[agents]\nlaunch = {{ default = \"claude\", model = \"fable\" }}\n\n\
+         [agents.models]\nassessor = \"fable\"\n\n{land}"
+    );
+    let files = [
+        ("symphony.toml", is.as_str()),
+        ("AGENTS.md", "Executors run on Fable.\n"),
+    ];
+    let (staff, tip) = in_review(&r, slug, &files);
+    let touched = |tip: &str| check_paths::touched(&r.root, "main", tip, &check_paths::defaults());
+    assert_eq!(touched(&tip), Ok(Vec::new()), "no test, check or command");
+    assess(&r, slug, &staff.assessor, &["tests"], &tip);
+    let before = head(&r.root, "main");
+    let (_, result) = landed_by(&r, slug, &staff.orch);
+    let refused = result.unwrap_err();
+    assert!(
+        refused.contains("what it needs: tests (No build or test recorded for it at "),
+        "{refused}"
+    );
+    assert_eq!(head(&r.root, "main"), before, "nothing merged");
+    ran(&r, slug, &tip, "just settings-check", Phase::Test, 0);
+    let (said, result) = landed_by(&r, slug, &staff.orch);
+    assert!(said.contains("it needs tests at "), "{said}");
+    assert!(!said.contains("approved by"), "{said}");
+    assert_landed(&r, slug, &tip, result);
+    let approves = (r.board.store.thread(slug).unwrap().iter())
+        .filter(|post| post.kind == "verdict" && post.text.starts_with("approve"))
+        .count();
+    assert_eq!(approves, 0, "no reviewer read it");
+    // A value that is a command the land runs is no plain setting: the check paths name it.
+    let commands = is.replace(
+        land,
+        "[land]\ncheck = false\ngenerators = []\npush = false\n",
+    );
+    let (_, tip) = in_review(&r, "tools/land-command", &[("symphony.toml", &commands)]);
+    assert_eq!(touched(&tip), Ok(vec!["symphony.toml [land]".to_string()]));
+}

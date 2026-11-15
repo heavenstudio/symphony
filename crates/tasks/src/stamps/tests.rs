@@ -30,6 +30,40 @@ fn with_no_stamps_written_the_catalogue_is_the_symphonys_four_review_needed_by_d
     assert!(own.stamps[1].applies.contains("[land] check_paths"));
 }
 
+/// A change of settings' values is held to the settings check and no reviewer: `review` skips it,
+/// `tests` names the check that proves it, and `review` still applies to a setting that is code
+/// or a command.
+#[test]
+fn a_change_of_settings_values_skips_review_for_the_settings_check_as_tests() {
+    let own = Catalogue::symphony();
+    let (tests, review) = (&own.stamps[0], &own.stamps[1]);
+    assert_eq!((tests.name, review.name), ("tests", "review"));
+    assert!(
+        tests.applies.contains("`symphony settings-check`"),
+        "{}",
+        tests.applies
+    );
+    assert!(
+        tests.applies.contains("no name judged against a list"),
+        "{}",
+        tests.applies
+    );
+    assert!(
+        (review.skips).contains("the values the project file gives settings the Symphony already")
+            && review.skips.contains("the settings check green at the tip"),
+        "{}",
+        review.skips
+    );
+    for kept in [
+        "a setting the Symphony does not read yet",
+        "a command the Symphony runs",
+        "[board] on_review and on_land",
+        "[stamps]",
+    ] {
+        assert!(review.applies.contains(kept), "{kept}: {}", review.applies);
+    }
+}
+
 #[test]
 fn a_project_writes_its_whole_list_each_key_left_out_the_symphonys_own() {
     let text = "\
