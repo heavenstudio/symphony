@@ -280,11 +280,13 @@ Sizes are the raw JSON of each read, measured on the private server.
 | queue | `/api/queue` | | 0.6 KB with one card waiting; it grows with the owner's queue |
 | task | its `/api/task-page` and its newest thread page, for the 30 tasks opened last | older thread pages, the landing offer (`/api/task-offer`), agents, subtasks' further pages, the brief's later chunks (`/api/task-brief`) | `perf/panel-first-open`: 9 KB page, 32 KB thread |
 | document | its outline, and the section bodies it drew, each under its `hash` (a card's with its thread's hash, which the outline names), for the 20 documents visited most; a project's entrypoint page, its folder and its intro, pinned | versions, diffs, asks, other folders | this register: 6 KB outline, 78 KB of bodies if read to the end; the consuming project's register: 56 KB outline, 464 KB of bodies |
+| reports | `/api/reports`, each window the page drew (the grain and its days) a part of one item | | this board: 4 to 24 KB a window by the day or the week, 43, 86 and 141 KB by the hour; all nine windows 337 KB |
 | header | nothing | `/api/activity`, `/api/pending`, a document's `/api/postponed`: 14 KB together, and the activity toasts compare against what the page last read (`apps/symphony-web/src/state.ts`, `keepsPanelBaseline`) | |
 
 **Caps.** At most 8 MB a project: 2 MB for tasks, 6 MB for documents, and the board and queue
 outside both, at well under 100 KB here (each column's first read is one page, so a larger board
-does not grow it much). At most 32 MB for the origin, which the projects of the one
+does not grow it much). The reports are outside both as well: nine windows at most, the largest
+bounded by its 168 hours, a third of a megabyte in all here. At most 32 MB for the origin, which the projects of the one
 server share. An entry not used for 14 days goes; over a cap, the least recently used entry of that
 kind goes first. A task is kept once opened, or read ahead from a page linking to it, which ranks
 below every opened one ([Read ahead](#read-ahead)). At the sizes above, 30
