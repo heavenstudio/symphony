@@ -31,19 +31,21 @@ const KINDS: [&str; 1] = ["program"];
 /// here, in order: the CSS of the chunks its entry imports (the media layer's, which brings the
 /// media sheet, for the three kinds that show media), then its entry's own. The task board and the
 /// agents page have none: their styles (assets/board.css) are the program's, in the shared file.
-const WEB: [(&str, &[&str]); 8] = [
+/// The overlay, the menus every page mounts, is no page's but the shell's persistent kind.
+const WEB: [(&str, &[&str]); 9] = [
     ("agents", &[]),
     ("board", &[]),
     ("docs", &["media-layer", "docs"]),
+    ("overlay", &["overlay"]),
     ("queue", &["queue"]),
     ("reports", &["reports"]),
     ("review", &["media-layer"]),
     ("runs", &["runs"]),
     ("task", &["media-layer", "task"]),
 ];
-/// The program's chunks (src/split.rs), in the order of its split points' names: the chat's and the
-/// menus' (each a kind), and the media layer's ([`MEDIA`]).
-const PROGRAM: [&str; 3] = ["media", "overlay", "panel"];
+/// The program's chunks (src/split.rs), in the order of its split points' names: the chat's (its
+/// kind) and the media layer's ([`MEDIA`]).
+const PROGRAM: [&str; 2] = ["media", "panel"];
 /// The program's chunk that is no kind, which the shell's manifest never names.
 const MEDIA: &str = "media";
 
@@ -228,7 +230,7 @@ if [ "$kind" = program ]; then
     printf '\0asm\1\0\0\0\5\3\1\0\1\13\11\1\0\101\200\10\13\2%s' "${PROGRAM_DATA:-ok}" > "$assets/symphony-ui_bg-dxh0.wasm"
     {
         printf 'export default function init(){return Promise.resolve()} init({module_or_path:"/assets/symphony-ui_bg-dxh0.wasm"}).then(()=>{});\n'
-        for chunk in chunk_0_split module_0_media module_1_overlay module_2_panel; do
+        for chunk in chunk_0_split module_0_media module_1_panel; do
             printf '\0asm\1\0\0\0' > "$assets/$chunk-dxh1.wasm"
             printf 'makeLoad("/./assets/%s-dxh1.wasm");\n' "$chunk"
         done
@@ -469,11 +471,8 @@ fn cargo_symphony_ui_dist_bundles_into_out_as_named_from_where_it_runs() {
         "the program's script ends with its chunk loader, through the minifier: {program}"
     );
     assert!(
-        program.contains(
-            "globalThis.reviewModuleReady_panel=globalThis.reviewModuleReady_overlay=\
-             init({module_or_path:"
-        ),
-        "every program kind is ready when its one initializer is: {program}"
+        program.contains("globalThis.reviewModuleReady_panel=init({module_or_path:"),
+        "the program's kind is ready when its one initializer is: {program}"
     );
     let published: Vec<_> = fs::read_dir(out.join("public/assets"))
         .unwrap()
@@ -517,7 +516,7 @@ fn cargo_symphony_ui_dist_bundles_into_out_as_named_from_where_it_runs() {
     assert!(
         published
             .iter()
-            .any(|name| name.starts_with("module_1_overlay-")),
+            .any(|name| name.starts_with("module_1_panel-")),
         "{published:?}"
     );
 }

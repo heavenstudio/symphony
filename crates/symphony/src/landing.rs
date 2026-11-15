@@ -12,7 +12,8 @@ pub const RETRY_LAND: &str = "retry just land";
 pub use symphony_board::land::DIRTY_MAIN;
 
 fn git(root: &Path, args: &[&str]) -> Option<Vec<u8>> {
-    let done = symphony_board::sys::output(command("git").args(args).current_dir(root)).ok()?;
+    let done =
+        symphony_board::sys::output(crate::children::git().args(args).current_dir(root)).ok()?;
     done.status.success().then_some(done.stdout)
 }
 
@@ -33,7 +34,7 @@ pub fn owner_lines_left(root: &Path) -> Vec<String> {
     // This is another agent's checkout, unlike the generators' private worktrees. A diff may
     // refresh its index despite GIT_OPTIONAL_LOCKS, so disable that refresh explicitly.
     let diff = symphony_board::sys::output(
-        command("git")
+        crate::children::git()
             .env("GIT_OPTIONAL_LOCKS", "0")
             .args(["-c", "diff.autoRefreshIndex=false"])
             .args(["diff", "-U0", "HEAD", "--"])
@@ -96,7 +97,7 @@ impl PrivateWorktree {
         };
         let _held = WORKTREES.lock().unwrap_or_else(|e| e.into_inner());
         let done = symphony_board::sys::output(
-            command("git")
+            crate::children::git()
                 .args(["worktree", "add", "--detach"])
                 .arg(&held.path)
                 .arg(rev)
@@ -153,7 +154,7 @@ impl Drop for PrivateWorktree {
         }
         let _held = WORKTREES.lock().unwrap_or_else(|e| e.into_inner());
         let _ = symphony_board::sys::output(
-            command("git")
+            crate::children::git()
                 .args(["worktree", "remove", "--force"])
                 .arg(&self.path)
                 .current_dir(&self.root),
