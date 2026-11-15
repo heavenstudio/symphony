@@ -233,10 +233,30 @@ async fn rows_reads_a_page_as_long_as_it_asks_and_never_shorter_than_one() {
     }
     let past_the_end = listing_of(&records, "status=ready&rows=500").await;
     assert_eq!(slugs(&past_the_end), ready);
+    // However large, `rows` is bounded by the column, as `all=1` is: from its start, from an
+    // offset (whose end saturates) and after a cursor. A number past the largest a `usize` holds
+    // is none it can read: a page.
+    let all = listing_of(&records, "status=ready&all=1").await;
+    assert_eq!(slugs(&all), ready);
+    let most = usize::MAX;
+    let largest = listing_of(&records, &format!("status=ready&rows={most}")).await;
+    assert_eq!(slugs(&largest), slugs(&all));
+    assert_eq!(largest.next, all.next);
+    assert_eq!(total(&largest, "ready"), 70);
+    let from_offset = listing_of(&records, &format!("status=ready&offset=60&rows={most}")).await;
+    assert_eq!(slugs(&from_offset), ready[60..]);
+    let first = listing_of(&records, "status=ready").await;
+    let after_cursor = listing_of(
+        &records,
+        &format!("status=ready&cursor={}&rows={most}", cursor(&first)),
+    )
+    .await;
+    assert_eq!(slugs(&after_cursor), ready[30..]);
+    let unreadable = listing_of(&records, &format!("status=ready&rows={most}0")).await;
+    assert_eq!(slugs(&unreadable), ready[..30]);
     // A page further on is as long as `rows` too, by an offset as by a cursor.
     let offset = listing_of(&records, "status=ready&offset=10&rows=40").await;
     assert_eq!(slugs(&offset), ready[10..50]);
-    let first = listing_of(&records, "status=ready").await;
     let further = listing_of(
         &records,
         &format!("status=ready&cursor={}&rows=35", cursor(&first)),
