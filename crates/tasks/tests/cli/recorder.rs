@@ -749,29 +749,37 @@ fn a_command_keeps_the_descriptors_ignored_signals_and_signal_mask_its_caller_ha
     const HANDED: libc::c_int = 5;
     let case = Case::new();
     let folders = Folders::new("recorder-inherited");
+    // A run's own: its stdout and stderr go through its recorder, and nothing else does.
+    let piped = Folders::new("recorder-inherited-run");
     let passed = folders.dir.join("passed");
     let script =
         format!("echo through >&{HANDED}; kill -HUP $$; kill -INT $$; kill -USR1 $$; echo alive");
-    let run = |wrapped: bool| {
+    let run = |wrapped: Option<&Folders>| {
         let file = fs::File::create(&passed).unwrap();
-        let mut command = if wrapped {
+        let mut command = if let Some(folders) = wrapped {
             let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_tasks"));
+            command.args(["run", "--phase", "test"]);
+            if std::ptr::eq(folders, &piped) {
+                command
+                    .args(["--pipeline", "test"])
+                    .env(RUNS_VAR, folders.dir.join("runs"));
+            } else {
+                command.env_remove(RUNS_VAR);
+            }
             command
-                .args(["run", "--phase", "test", "--"])
+                .args(["--", "sh"])
                 .envs(&case.env.vars)
                 .env(SCALE_VAR, SCALE)
                 .env("TASKS_WORK", &folders.work)
                 .env("SYMPHONY_MACHINE_DIR", &folders.machine)
                 .env_remove("TASKS_SESSION")
                 .env_remove(TASK_VAR)
-                .env_remove(recorded::PARENT_VAR);
+                .env_remove(recorded::PARENT_VAR)
+                .env_remove(recorded::PIPELINE_VAR);
             command
         } else {
             std::process::Command::new("sh")
         };
-        if wrapped {
-            command.arg("sh");
-        }
         command
             .args(["-c", script.as_str()])
             .current_dir(&folders.dir);
@@ -806,7 +814,7 @@ fn a_command_keeps_the_descriptors_ignored_signals_and_signal_mask_its_caller_ha
         (done, fs::read_to_string(&passed).unwrap())
     };
     // The shell itself keeps them: what the command must find through the recorder too.
-    let (direct, through) = run(false);
+    let (direct, through) = run(None);
     assert_eq!(
         (
             direct.status.code(),
@@ -816,17 +824,29 @@ fn a_command_keeps_the_descriptors_ignored_signals_and_signal_mask_its_caller_ha
         (Some(0), &b"alive\n"[..], "through\n"),
         "{direct:?}"
     );
-    let (wrapped, through) = run(true);
+    for recorded in [&folders, &piped] {
+        let (wrapped, through) = run(Some(recorded));
+        assert_eq!(
+            (
+                wrapped.status.code(),
+                wrapped.stdout.as_slice(),
+                through.as_str()
+            ),
+            (Some(0), &b"alive\n"[..], "through\n"),
+            "{wrapped:?}"
+        );
+        assert_eq!(recorded.once(Step::Finished).exit_code, Some(0));
+    }
+    // Only the run kept its output.
+    let [line] = symphony_api::fold(day_lines(&piped.work, &piped.dir.join("runs"), 1))
+        .try_into()
+        .unwrap();
+    let log = line.log.expect("a run's log");
     assert_eq!(
-        (
-            wrapped.status.code(),
-            wrapped.stdout.as_slice(),
-            through.as_str()
-        ),
-        (Some(0), &b"alive\n"[..], "through\n"),
-        "{wrapped:?}"
+        fs::read(piped.dir.join("runs").join(log)).unwrap(),
+        b"alive\n"
     );
-    assert_eq!(folders.once(Step::Finished).exit_code, Some(0));
+    assert!(!folders.dir.join("runs").exists());
 }
 
 #[test]
@@ -2142,7 +2162,7 @@ fn the_runs_doc_names_each_field_a_written_line_holds_in_its_order_and_each_end(
         .flat_map(|row| quoted(row.split('|').nth(1).unwrap()))
         .collect();
     let mut every = keys(example);
-    every.extend(["log", "log_bytes", "suites", "failed"].map(String::from));
+    every.extend(["suites", "failed"].map(String::from));
     assert_eq!(fields, every);
     // Each end a line can say, as it says it.
     let ends = |end: End| match end {
@@ -2373,4 +2393,132 @@ fn a_run_whose_recorder_died_is_ended_incomplete_by_the_next_recorders_sweep() {
     assert!(lost.ended.is_some());
     fs::write(&release, "").unwrap();
     assert!(started.wait().unwrap().success());
+}
+
+/// A shell function a run's script calls as `upto TEXT`: once its own log (`$SYMPHONY_RUNS`, its
+/// operation `$TASKS_RUN_PARENT`) holds TEXT, so what it writes next is read after it; a backstop
+/// only a stall reaches lets it go on.
+const UPTO: &str = "set -- \"$SYMPHONY_RUNS\"/logs/*/\"$TASKS_RUN_PARENT\".log; log=$1; \
+                    upto() { i=0; until grep -q \"$1\" \"$log\" || [ $i -ge 3000 ]; do \
+                    sleep 0.01; i=$((i+1)); done; }; ";
+
+#[test]
+fn a_runs_streams_reach_its_caller_as_written_and_its_log_keeps_them_plain_in_order() {
+    let case = Case::new();
+    let folders = Folders::new("recorder-run-log");
+    let repo = repository(&folders.dir.join("repo"));
+    let runs = folders.dir.join("runs");
+    // A day folder of logs older than 14 days goes at the next line.
+    fs::create_dir_all(runs.join("logs/2000-01-01")).unwrap();
+    let script = format!(
+        "{UPTO}printf '\\033[1;32mgreen\\033[0m one\\n'; upto 'green one'; \
+         printf 'two \\033]0;a title\\007on stderr\\n' >&2; upto 'two on stderr'; \
+         printf 'three\\n'; exit 4"
+    );
+    let done = output(
+        pipeline_command(
+            &case,
+            &folders,
+            (&repo, &runs),
+            ("test", "just test-rs"),
+            &script,
+        )
+        .stdin(Stdio::null()),
+    )
+    .unwrap();
+    // The caller gets each stream's bytes as the command wrote them, escapes and all.
+    assert_eq!(done.status.code(), Some(4), "{done:?}");
+    assert_eq!(done.stdout, b"\x1b[1;32mgreen\x1b[0m one\nthree\n");
+    assert_eq!(done.stderr, b"two \x1b]0;a title\x07on stderr\n");
+    let lines = day_lines(&folders.work, &runs, 1);
+    let [start, end] = [&lines[0], &lines[1]];
+    let log = format!("logs/{}/{}.log", symphony_api::run_day(end.queued), end.run);
+    assert_eq!(
+        (start.log.as_deref(), start.log_bytes),
+        (Some(log.as_str()), None),
+        "a start line names the log a run that runs writes"
+    );
+    let kept = fs::read(runs.join(&log)).unwrap();
+    assert_eq!(kept, b"green one\ntwo on stderr\nthree\n");
+    assert_eq!(
+        (end.log.as_deref(), end.log_bytes),
+        (Some(log.as_str()), Some(kept.len() as u64))
+    );
+    assert!(
+        !runs.join("logs/2000-01-01").exists(),
+        "an old day of logs stayed"
+    );
+}
+
+#[test]
+fn a_steps_log_is_its_own_and_its_runs_log_holds_it_too() {
+    let case = Case::new();
+    let folders = Folders::new("recorder-run-log-step");
+    let repo = repository(&folders.dir.join("repo"));
+    let runs = folders.dir.join("runs");
+    let tasks_binary = env!("CARGO_BIN_EXE_tasks");
+    let script = format!(
+        "echo before; '{tasks_binary}' run --phase build --step lint -- sh -c 'echo inside'; \
+         echo after"
+    );
+    let label = ("verify", "just verify");
+    assert!(pipeline_run(&case, &folders, (&repo, &runs), label, &script).success());
+    let lines = symphony_api::fold(day_lines(&folders.work, &runs, 2));
+    let read = |line: &RunLine| {
+        let log = line
+            .log
+            .as_deref()
+            .unwrap_or_else(|| panic!("no log: {line:?}"));
+        let text = fs::read_to_string(runs.join(log)).unwrap();
+        assert_eq!(line.log_bytes, Some(text.len() as u64), "{line:?}");
+        text
+    };
+    let step = lines.iter().find(|line| line.step.is_some()).unwrap();
+    assert_eq!(read(step), "inside\n");
+    // The step's output reaches its run's log through the step's recorder, so it may come after
+    // what the run writes once the step's command ended.
+    let run = lines.iter().find(|line| line.step.is_none()).unwrap();
+    let mut words: Vec<String> = read(run).lines().map(str::to_owned).collect();
+    words.sort_unstable();
+    assert_eq!(words, ["after", "before", "inside"]);
+    assert_ne!(run.log, step.log);
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn what_a_process_a_run_left_writes_after_its_command_ended_still_reaches_its_caller_and_log() {
+    // Elsewhere the recorder is its command's parent, and its caller waits for it to drain.
+    use std::io::Read as _;
+    let case = Case::new();
+    let folders = Folders::new("recorder-run-log-left");
+    let repo = repository(&folders.dir.join("repo"));
+    let runs = folders.dir.join("runs");
+    let release = folders.dir.join("release");
+    let script = format!(
+        "(while [ ! -e '{}' ]; do sleep 0.02; done; echo late) & echo now",
+        release.display()
+    );
+    let mut started = pipeline_command(&case, &folders, (&repo, &runs), ("test", "t"), &script)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut stdout = started.stdout.take().unwrap();
+    // The process its caller waits for is the command's, which ended with the other still running.
+    assert!(started.wait().unwrap().success());
+    fs::write(&release, "").unwrap();
+    let mut said = String::new();
+    stdout.read_to_string(&mut said).unwrap();
+    assert_eq!(said, "now\nlate\n");
+    let [end] = symphony_api::fold(day_lines(&folders.work, &runs, 1))
+        .try_into()
+        .unwrap();
+    let log = runs.join(end.log.unwrap());
+    assert_eq!(
+        end.log_bytes,
+        Some(9),
+        "both streams ended within the drain"
+    );
+    assert_eq!(fs::read_to_string(log).unwrap(), "now\nlate\n");
 }

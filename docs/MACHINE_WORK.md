@@ -109,6 +109,9 @@ A recorded command that is a run of a pipeline, or a step of one, also writes a 
 to the project's day files when it starts and when it ends ([RUNS](RUNS.md)):
 `--pipeline` names a run's, `--step` a step's inside a run. `--commit` and `--branch`
 name the commit it checks when that is not its checkout's (a review command's tip).
+Its stdout and stderr are the one exception to the descriptors above: each is a pipe its
+recorder reads, copying what comes on to the caller's stream and, plain, into the run's
+log ([RUNS](RUNS.md#logs)), so COMMAND sees no terminal there.
 
 **Where.** The work folder is `symphony/tasks/work/` in the git common dir of the working
 directory, so every worktree of a repository records where its Symphony reads;
@@ -119,9 +122,10 @@ records nothing.
 **A test's waits.** `TASKS_RUN_WAIT_SCALE=N`, a whole number from 1 to 60, makes each
 wait the machine's speed meets N times as long: the 1 s COMMAND waits to hear its
 recorder watches it, the 1 s the board is asked its task (below), the 0.6 s git is
-asked a run's tree, and, for a recorder apart from its command, the 5 s it waits for an
-earlier run it may repeat to end and the 2 s it waits for the day files' lock
-([RUNS](RUNS.md)). So a loaded machine never decides what a test's run records. It is taken only where the board the run reaches is on a database other
+asked a run's tree, the 1 s a run's recorder waits for its command's streams to end
+before its end line says what its log holds, and, for a recorder apart from its
+command, the 5 s it waits for an earlier run it may repeat to end and the 2 s it waits
+for the day files' lock ([RUNS](RUNS.md)). So a loaded machine never decides what a test's run records. It is taken only where the board the run reaches is on a database other
 than the live board's `tasks` (a test's `TASKS_DATABASE`, or `--database NAME`), which the
 board never takes for a live one either. A server `TASKS_SERVER` names is reached whether
 or not it answers, so a database of a test's own there takes it, on one that refuses
