@@ -1,3 +1,4 @@
+import { createServer, type ViteDevServer } from "vite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   BASE,
@@ -5,7 +6,6 @@ import {
   devConfig,
   devManifest,
   devShell,
-  kindsOf,
   origin,
   PROXIED,
   readManifest,
@@ -140,25 +140,6 @@ describe("the server the dev server reads", () => {
   });
 });
 
-describe("the kinds the dev server serves", () => {
-  it("are vite.config.ts's entries, by name, from the package's folder", () => {
-    expect(
-      kindsOf({
-        queue: "src/kinds/queue.tsx",
-        docs: "./src/kinds/docs.tsx",
-        x: "/src/kinds/x.tsx",
-      }),
-    ).toEqual({ queue: "src/kinds/queue.tsx", docs: "src/kinds/docs.tsx", x: "src/kinds/x.tsx" });
-  });
-
-  it("are none Vite could name otherwise", () => {
-    for (const input of ["src/kinds/queue.tsx", ["src/kinds/queue.tsx"], null, undefined]) {
-      expect(() => kindsOf(input)).toThrow("vite.config.ts names no kinds");
-    }
-    expect(() => kindsOf({ queue: 1 })).toThrow("the kind queue's entry is not a path");
-  });
-});
-
 describe("a built shell's manifest", () => {
   it("is its first line's", () => {
     expect(readManifest(BUILT)).toEqual(SERVED);
@@ -202,15 +183,11 @@ describe("the dev server's manifest", () => {
     });
   });
 
-  it("is refused when the server's kinds share no first stylesheet", () => {
-    const apart = { ...SERVED, queue: { ...SERVED.queue, styles: ["/assets/other.css"] } };
-    const bare = { ...SERVED, queue: { script: "/assets/queue.js" } };
-    const empty = { ...SERVED, queue: { ...SERVED.queue, styles: [] } };
-    for (const served of [apart, bare, empty, {}]) {
-      expect(() => devManifest(served, KINDS, BASE)).toThrow(
-        "the server's page kinds share no stylesheet",
-      );
-    }
+  it("gives the checkout's kinds no shared stylesheet when the server's build has no kind", () => {
+    expect(devManifest({}, KINDS, BASE)).toEqual({
+      board: { script: "/@symphony-web/src/kinds/board.tsx", imports: [], styles: [] },
+      queue: { script: "/@symphony-web/src/kinds/queue.tsx", imports: [], styles: [] },
+    });
   });
 });
 
@@ -480,6 +457,7 @@ describe("the dev server's settings", () => {
           host: "127.0.0.1",
           port: 5173,
           strictPort: true,
+          cors: false,
           proxy: { [PROXIED]: { target: "http://127.0.0.1:4321", changeOrigin: false } },
           fs: { allow: [".", "../symphony-ui/assets"] },
         },
@@ -504,4 +482,73 @@ describe("the dev server's settings", () => {
       expect(proxied.test(url), url).toBe(false);
     }
   });
+});
+
+/** This package's folder, the dev server's root. */
+const ROOT = decodeURIComponent(new URL("..", import.meta.url).pathname).replace(/\/$/, "");
+
+/** Where `server` listens, once it does. */
+function address(server: ViteDevServer): string {
+  const [url] = server.resolvedUrls?.local ?? [];
+  if (url === undefined) throw new Error("the server listens nowhere");
+  return new URL(url).origin;
+}
+
+/** A stand-in for the Symphony server: every request answered with `body`, and no CORS header. */
+async function symphony(body: string): Promise<ViteDevServer> {
+  const server = await createServer({
+    configFile: false,
+    root: ROOT,
+    appType: "custom",
+    logLevel: "silent",
+    server: { host: "127.0.0.1", port: 0, cors: false, watch: null, ws: false },
+    plugins: [
+      {
+        name: "symphony",
+        configureServer: (served) => {
+          served.middlewares.use((_request, response) => response.end(body));
+        },
+      },
+    ],
+  });
+  return server.listen();
+}
+
+describe("the dev server, to a page of another origin", () => {
+  // Two servers started and three requests: the time is a backstop only a stall reaches.
+  it("answers as the server would, letting it read nothing, Vite's files or the server's", async () => {
+    const served = await symphony("the server's answer");
+    let dev: ViteDevServer | undefined;
+    try {
+      const settings = devConfig(
+        ROOT,
+        { server: Number(new URL(address(served)).port), port: 0 },
+        [],
+      );
+      dev = await createServer({
+        ...settings,
+        configFile: false,
+        logLevel: "silent",
+        server: { ...settings.server, watch: null },
+      });
+      const at = address(await dev.listen());
+      const foreign = { Origin: "http://localhost:5173" };
+      const proxied = await fetch(`${at}/api/front`, { headers: foreign });
+      expect(await proxied.text()).toBe("the server's answer");
+      expect(proxied.headers.get("access-control-allow-origin")).toBeNull();
+      const own = await fetch(`${at}${BASE}src/dev-server.ts`, { headers: foreign });
+      expect(own.status).toBe(200);
+      expect(own.headers.get("access-control-allow-origin")).toBeNull();
+      // A preflight is the server's to answer (it allows none), never Vite's.
+      const preflight = await fetch(`${at}/api/comment`, {
+        method: "OPTIONS",
+        headers: { ...foreign, "Access-Control-Request-Method": "POST" },
+      });
+      expect(await preflight.text()).toBe("the server's answer");
+      expect(preflight.headers.get("access-control-allow-origin")).toBeNull();
+    } finally {
+      await dev?.close();
+      await served.close();
+    }
+  }, 60_000);
 });

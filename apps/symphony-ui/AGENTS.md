@@ -746,8 +746,8 @@ never the whole target, which the release run runs.
   the CLI to a version with [Dioxus #5843](https://github.com/DioxusLabs/dioxus/pull/5843)
   is an owner decision; no patched CLI is installed here.
   The development runtime draws the Dioxus kinds alone: the web client's pages (`/`, `/queue`,
-  `/reports`, `/tasks`, `/docs/` and the documents) are no part of it, and at their routes it
-  draws its frame over "Page unavailable".
+  `/reports`, `/tasks`, `/agents`, `/docs/` and the documents) are no part of it, and at their
+  routes it draws its frame over "Page unavailable".
 - **Platforms.** Every platform hook goes through `platform::Platform`; the
   desktop slice adds its implementation and a `desktop` feature. The projects
   of the machine's one server share its origin, so every key the browser

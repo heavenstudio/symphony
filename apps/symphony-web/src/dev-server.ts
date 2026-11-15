@@ -80,23 +80,10 @@ export async function unreadable(served: string, wait = 5000): Promise<string | 
   }
 }
 
-/**
- * The kinds vite.config.ts builds, each by the entry it names (`src/kinds/NAME.tsx`), from the
- * input of Vite's resolved build.
- */
-export function kindsOf(input: unknown): Record<string, string> {
-  if (typeof input !== "object" || input === null || Array.isArray(input)) {
-    throw new Error("vite.config.ts names no kinds: its build's input is no object of entries");
-  }
-  const kinds: Record<string, string> = {};
-  for (const [kind, entry] of Object.entries(input)) {
-    if (typeof entry !== "string") throw new Error(`the kind ${kind}'s entry is not a path`);
-    kinds[kind] = entry.replace(/^\.?\//, "");
-  }
-  return kinds;
-}
+/** A kind's files in a shell's manifest: package.sh puts the shared stylesheet first in `styles`. */
+type Files = Record<string, unknown> & { styles: string[] };
 
-type Manifest = Record<string, Record<string, unknown>>;
+type Manifest = Record<string, Files>;
 
 /** The kinds' manifest a built shell holds on its first line (package.sh). */
 export function readManifest(shell: string): Manifest {
@@ -130,23 +117,15 @@ export function devManifest(
   kinds: Record<string, string>,
   base: string,
 ): Manifest {
-  const firsts = new Set(Object.values(served).map((files) => firstStyle(files)));
-  const [shared] = firsts;
-  if (firsts.size !== 1 || typeof shared !== "string") {
-    throw new Error("the server's page kinds share no stylesheet first in their styles");
-  }
+  const shared = Object.values(served)[0]?.styles.slice(0, 1) ?? [];
   const manifest: Manifest = {};
   for (const [kind, files] of Object.entries(served)) {
     if (files.wasm !== undefined) manifest[kind] = files;
   }
   for (const [kind, entry] of Object.entries(kinds)) {
-    manifest[kind] = { script: `${base}${entry}`, imports: [], styles: [shared] };
+    manifest[kind] = { script: `${base}${entry}`, imports: [], styles: shared };
   }
   return manifest;
-}
-
-function firstStyle(files: Record<string, unknown>): unknown {
-  return Array.isArray(files.styles) ? files.styles[0] : undefined;
 }
 
 /**
@@ -262,7 +241,8 @@ export function shellPlugin(served: string, sources: Sources): Plugin {
   return {
     name: "symphony-dev-shell",
     configResolved(config) {
-      kinds = kindsOf(config.build.rolldownOptions.input);
+      // vite.config.ts names each kind's entry, `src/kinds/NAME.tsx`.
+      kinds = config.build.rolldownOptions.input as Record<string, string>;
     },
     configureServer(server) {
       const watched = [sources.cache, sources.shell];
@@ -279,7 +259,10 @@ export function shellPlugin(served: string, sources: Sources): Plugin {
  * The dev server's settings over vite.config.ts in `root`: Vite's files under [`BASE`], on the
  * loopback address alone (it hands what it proxies to the server as this machine's), at `port`,
  * every request outside them proxied to the server with its Host and Origin unchanged (so a save
- * meets the server's origin check as on the server itself), and the shell from `plugins`.
+ * meets the server's origin check as on the server itself), and the shell from `plugins`. No CORS
+ * header of Vite's (its default lets a page on any loopback port read every answer, the server's
+ * too): the dev page and all it loads are of its own origin, and another's reads through it no
+ * more than from the server.
  */
 export function devConfig(root: string, args: DevArgs, plugins: Plugin[]): InlineConfig {
   return {
@@ -292,6 +275,7 @@ export function devConfig(root: string, args: DevArgs, plugins: Plugin[]): Inlin
       host: "127.0.0.1",
       port: args.port,
       strictPort: true,
+      cors: false,
       proxy: { [PROXIED]: { target: origin(args.server), changeOrigin: false } },
       fs: { allow: [".", ...OUTSIDE] },
     },
