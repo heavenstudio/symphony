@@ -749,6 +749,7 @@ export class LiveTask {
       answer = await getIf(
         this.url(`/api/task-page?slug=${encodeURIComponent(slug)}`),
         copy?.[0] ?? "",
+        this.signal,
       );
     } catch (error) {
       if (error instanceof Failure && error.kind === "missing") return null;
@@ -826,7 +827,7 @@ export class LiveTask {
 
   /** The thread's newest page, `path`, read fresh: the page and the tag and body to keep. */
   private async readNewest(path: string): Promise<[TaskHistory, Fresh]> {
-    const answer = await getIf(this.url(path), "");
+    const answer = await getIf(this.url(path), "", this.signal);
     if (answer.same) throw new Error("The server answered 304 to a plain read");
     const page = readHistory(answer.value);
     if (page === null) throw new Error("The task's thread is not readable");
@@ -846,6 +847,7 @@ export class LiveTask {
       const answer = await getIf(
         this.url(`/api/task-history?slug=${encodeURIComponent(selected)}`),
         d.threadTag,
+        this.signal,
       );
       if (answer.same) read = null;
       else {

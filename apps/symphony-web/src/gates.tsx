@@ -125,7 +125,8 @@ export class GatesReader {
     this.running?.abort();
     const reading = new AbortController();
     this.running = reading;
-    const answer = await readGates(this.slug, reading.signal);
+    // Given up by a newer read, the section's stop, or the kind's mount ending.
+    const answer = await readGates(this.slug, AbortSignal.any([reading.signal, this.mount]));
     if (reading.signal.aborted || this.mount.aborted) return;
     this.running = null;
     this.show(answer);

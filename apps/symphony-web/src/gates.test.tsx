@@ -691,6 +691,7 @@ describe("the section's reads", () => {
     const late = unmounted.read();
     await asking(asked, 2);
     mount.abort();
+    expect(asked[1]?.signal?.aborted, "the mount's end gives the request up").toBe(true);
     asked[1]?.answer(reply(200, fixture));
     await late;
     expect(shownGates).toEqual([]);

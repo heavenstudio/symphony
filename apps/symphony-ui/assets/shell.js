@@ -336,7 +336,7 @@ window.reviewSettled = settled;
 // of them answered) and the
 // browser is idle, the persistent modules' files go into the HTTP cache at the lowest priority,
 // nothing evaluated, so a first open waits on no network: the chat's first (the program's script
-// and main module, which a task page has in already, and its chunk), then, once its chunk (or its
+// and main module, which /agents has in already, and its chunk), then, once its chunk (or its
 // own load, if a click came first) is in, the menus', so no two share a slow link. A browser asking
 // to save data, or a 2g link, skips it; the first open then fetches them. A browser without idle
 // callbacks warms them at once; one without prefetch (Safari) ignores it.

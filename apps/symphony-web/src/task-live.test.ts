@@ -1134,7 +1134,10 @@ describe("the board under a task's page", () => {
       ["/api/task-offer", false],
     ]);
     page.abort();
-    expect(reads().every(([, aborted]) => aborted === true), JSON.stringify(reads())).toBe(true);
+    expect(
+      reads().every(([, aborted]) => aborted === true),
+      JSON.stringify(reads()),
+    ).toBe(true);
   });
 
   it("reads nothing once stopped", async () => {

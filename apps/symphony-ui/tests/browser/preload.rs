@@ -12,13 +12,15 @@ use super::{
     chrome, common, dist, site,
 };
 
-/// Each kind of the web client, the page that shows it and what the page draws once it is in.
-const KINDS: [(&str, &str, &str); 5] = [
+/// Each kind of the web client, the page that shows it and what the page draws once it is in (a
+/// task's page, the stand-in having no page of its task, says so once it has asked for it).
+const KINDS: [(&str, &str, &str); 6] = [
     ("review", "/", ".hero-title"),
     ("board", "/tasks", "[data-slug='tools/example']"),
     ("docs", "/docs/", "[data-ready=folder]"),
     ("queue", "/queue", "[data-ready=queue]"),
     ("reports", "/reports", "[data-ready=reports]"),
+    ("task", "/task/tools/example", ".task-page[data-ready=missing]"),
 ];
 
 #[test]

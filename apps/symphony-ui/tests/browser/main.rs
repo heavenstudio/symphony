@@ -207,7 +207,7 @@ fn entry_pages_fit_the_first_visit_budget_and_deferred_kinds_are_reported() {
         ("/docs/", "docs", "[data-ready=folder]", None),
         ("/queue", "queue", "[data-ready=queue]", None),
         ("/reports", "reports", "[data-ready=reports]", None),
-        ("/task/visual/in-progress", "program", "article.task", None),
+        ("/task/visual/in-progress", "task", "article.task", None),
         ("/docs/look-parity.md", "docs", ".doc-card", None),
     ] {
         let Some(mut chrome) = chrome() else { return };
@@ -220,12 +220,13 @@ fn entry_pages_fit_the_first_visit_budget_and_deferred_kinds_are_reported() {
             "{path} did not show {ready}: {:?}",
             chrome.eval("document.body.innerText")
         );
-        // A task page's timeline is the program's chunk of its own, loaded into its box once the
-        // page has drawn and is idle: reported beside the first visit, which never waits for it.
+        // A task page's timeline is a chunk of its own (apps/symphony-web/src/timeline.tsx), loaded
+        // into its box once the page has drawn and is idle: reported beside the first visit, which
+        // never waits for it.
         if path.starts_with("/task/") {
             assert!(
                 chrome.wait_for(
-                    "window.reviewTimelineReady === true && document.querySelector('.tl-drawn') !== null",
+                    "document.getElementById('timeline-root') !== null && document.querySelector('.tl-drawn') !== null",
                     SHOWN
                 ),
                 "{path} drew no timeline"
@@ -316,18 +317,10 @@ fn entry_pages_fit_the_first_visit_budget_and_deferred_kinds_are_reported() {
     }
 }
 
-/// Whether `request` is the task timeline's: its chunk, the style sheets of its own (not those the
-/// task page loads already) or its read. Its script and main module are the task page's own, the
-/// program's.
+/// Whether `request` is the task timeline's: its chunk, which its box imports once the page is
+/// idle and which carries its style, or its read. The chunk is no kind, so the shell's manifest
+/// never names it: it is the published `timeline-HASH.js` beside the kinds' scripts.
 fn timeline_file(request: &chrome::Request) -> bool {
-    static TIMELINE: std::sync::OnceLock<(assets::Module, Vec<String>)> =
-        std::sync::OnceLock::new();
-    let (module, page) = TIMELINE.get_or_init(|| {
-        (
-            assets::module(dist(), "timeline"),
-            assets::module(dist(), "tasks").styles,
-        )
-    });
     let path = request
         .url
         .split_once("://")
@@ -335,11 +328,9 @@ fn timeline_file(request: &chrome::Request) -> bool {
             rest.find('/').map_or("", |at| &rest[at..])
         });
     path.starts_with(symphony_api::TASK_TIMELINE_PATH)
-        || path == module.chunk()
-        || module
-            .styles
-            .iter()
-            .any(|style| style == path && !page.contains(style))
+        || path
+            .strip_prefix("/assets/timeline-")
+            .is_some_and(|rest| rest.ends_with(".js") && !rest.contains('/'))
 }
 
 /// Include styles and API replies still in flight when the view first appeared. A live feed
@@ -568,7 +559,7 @@ fn same_kind_navigation_resets_scroll_clamped_by_the_new_page() {
         ));
         chrome.eval(
             r#"
-            const mount = document.getElementById('review-root-tasks');
+            const mount = document.getElementById('review-root-task');
             mount.style.minHeight = '6000px';
             scrollTo(0,5000);
             addEventListener('review:navigate', () => {
