@@ -26,7 +26,7 @@ const TABS: [(&str, &str); 7] = [
 
 /// Run in each tab before its page: the feed's events its sockets hear, by name, and the
 /// notifications the page shows, the owner having allowed them.
-const HEARD: &str = r"(() => {
+pub(super) const HEARD: &str = r"(() => {
   window.__heard = {};
   const heard = (name) => { window.__heard[name] = (window.__heard[name] ?? 0) + 1; };
   const Socket = window.WebSocket;
@@ -55,7 +55,7 @@ text: document.body ? document.body.innerText.slice(0, 600) : ''})";
 const BACKSTOP: Duration = test_time::backstop(Duration::from_secs(30));
 
 /// One of the tabs behind the one the test drives: its target and the session it is driven on.
-struct Tab {
+pub(super) struct Tab {
     path: &'static str,
     target: String,
     session: String,
@@ -66,6 +66,17 @@ impl Tab {
     /// the next one opened. A page drawn behind others would differ from one in front (the task
     /// board draws a card once it comes into view, which a hidden tab never reports).
     fn open(chrome: &mut Chrome, site: &Site, path: &'static str) -> Tab {
+        Tab::running(chrome, site, path, &[HEARD])
+    }
+
+    /// [`Tab::open`] with `scripts` run before its page, in their order, in place of [`HEARD`]
+    /// alone.
+    pub(super) fn running(
+        chrome: &mut Chrome,
+        site: &Site,
+        path: &'static str,
+        scripts: &[&str],
+    ) -> Tab {
         let made = chrome.browser_call("Target.createTarget", json!({ "url": "about:blank" }));
         let target = made["targetId"]
             .as_str()
@@ -80,11 +91,13 @@ impl Tab {
             .expect("a tab's session")
             .to_owned();
         chrome.call_on(&session, "Page.enable", json!({}));
-        chrome.call_on(
-            &session,
-            "Page.addScriptToEvaluateOnNewDocument",
-            json!({ "source": HEARD }),
-        );
+        for script in scripts {
+            chrome.call_on(
+                &session,
+                "Page.addScriptToEvaluateOnNewDocument",
+                json!({ "source": script }),
+            );
+        }
         chrome.call_on(&session, "Page.bringToFront", json!({}));
         chrome.call_on(&session, "Page.navigate", json!({ "url": site.url(path) }));
         Tab {
@@ -95,7 +108,7 @@ impl Tab {
     }
 
     /// `expression`'s value in the tab.
-    fn eval(&self, chrome: &mut Chrome, expression: &str) -> Value {
+    pub(super) fn eval(&self, chrome: &mut Chrome, expression: &str) -> Value {
         chrome.call_on(
             &self.session,
             "Runtime.evaluate",
@@ -104,8 +117,18 @@ impl Tab {
             .clone()
     }
 
+    /// The value the promise `expression` makes in the tab settles to.
+    pub(super) fn eval_promise(&self, chrome: &mut Chrome, expression: &str) -> Value {
+        chrome.call_on(
+            &self.session,
+            "Runtime.evaluate",
+            json!({ "expression": expression, "returnByValue": true, "awaitPromise": true }),
+        )["result"]["value"]
+            .clone()
+    }
+
     /// Wait until `expression` is true in the tab; `what` names it.
-    fn until(&self, chrome: &mut Chrome, what: &str, expression: &str) {
+    pub(super) fn until(&self, chrome: &mut Chrome, what: &str, expression: &str) {
         test_time::until_true(format!("{} {what}", self.path), BACKSTOP, || {
             self.eval(chrome, expression) == json!(true)
         })
@@ -130,7 +153,7 @@ fn site_for_every_page() -> Site {
 }
 
 /// Wait until the stand-in holds `streams` feed streams open, `sockets` of them on a WebSocket.
-fn holding(site: &Site, streams: usize, sockets: usize) {
+pub(super) fn holding(site: &Site, streams: usize, sockets: usize) {
     test_time::until_true(
         format!("{streams} feed streams, {sockets} on a WebSocket"),
         BACKSTOP,
@@ -150,7 +173,7 @@ fn holding(site: &Site, streams: usize, sockets: usize) {
 /// home page in the background tells them of. Its version, the cards then waiting and the event,
 /// written by hand, as a change names its region before its data (a `json!` object sorts its
 /// keys).
-fn more_waiting() -> (u64, u64, String) {
+pub(super) fn more_waiting() -> (u64, u64, String) {
     let board: Value = serde_json::from_str(&common::fixture("board.json")).unwrap();
     let version = board["version"].as_u64().unwrap() + 1;
     let waiting = board["counts"]["waiting"].as_u64().unwrap() + 1;
