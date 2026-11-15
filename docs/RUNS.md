@@ -19,8 +19,8 @@ pipeline (`SYMPHONY_RUN_PIPELINE`); it removes the pipeline for any other, so a
 
 | Pipeline | What runs it in this repository |
 | --- | --- |
-| `verify` | the `verify` recipe; its steps `lint` (the `lint-rs` recipe), `client-check` (the `client-check` recipe), `size-check` (the `size-check` recipe), `docs-audit` (the docs audit), `crates-check` (the `crates-check` recipe) and `tests` (its workspace tests), each run whatever the ones before it did |
-| `lint` | the `lint-rs` recipe, or a Cargo `clippy` run by itself |
+| `verify` | the `verify` recipe; its steps `lint` (the `lint-rs` recipe, with its own step `client-lint`, the `client-lint` recipe it runs last), `client-check` (the `client-check` recipe), `size-check` (the `size-check` recipe), `docs-audit` (the docs audit), `crates-check` (the `crates-check` recipe) and `tests` (its workspace tests), each run whatever the ones before it did |
+| `lint` | the `lint-rs` recipe, with its step `client-lint` (the `client-lint` recipe, which it runs last); the `client-lint` recipe by itself; or a Cargo `clippy` run by itself |
 | `test` | the `test-rs` recipe, or a Cargo `test`, `nextest` or `bench` run by itself |
 | `client` | the `client-update` or `client-check` recipe, or a client build run by itself |
 | `size` | the `size-check` recipe ([CHECKS](CHECKS.md#size-budgets)) |
