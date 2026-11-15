@@ -74,6 +74,12 @@ never the whole target, which the release run runs.
   in a folder private to the user, the same path in every checkout and common dir:
   `dx-path.sh` keeps there a hard link of the installed dx (a copy across volumes),
   replaced whole when it is not that file or its bytes (`tests/tools.rs`).
+  The Rust build runs in a release snapshot under `/private/tmp` (`symphony-build release-inputs`,
+  `crates/symphony/src/cli/commands/release_inputs.rs`), named by the bytes of what the client's
+  build reads alone, so a change anywhere else needs no new distribution: the locked component
+  source copied without changing its version or features, the caller's compiler flags, wrappers
+  and resource settings kept, its configuration patches and lock accounting made in that private
+  copy alone.
   A new tree's folder starts from a seed
   another tree made, its wasm32 builds among it. The wrapper clears workspace
   crates from every seeded target/profile and records that cleanup for
