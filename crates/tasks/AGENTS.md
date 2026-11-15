@@ -64,6 +64,9 @@ lead ([the root guide](../../AGENTS.md#agent-integration)), and `launch/bounds.r
 the board starts for one may run. `tools/rs-bin.sh` runs a board binary from a linked worktree on
 the live board as the main checkout's build, of what that checkout holds, committed or not, in its
 target folder; its comments and `tests/launcher.rs` say which runs count as the live board's.
+A reach whose project's folder or repository is gone never walks up to the board above it, and no
+start makes a board's folders at or above its common dir again (`project::held`, `Home::make`;
+[TASKS](../../docs/TASKS.md#board-health)).
 
 ### Callbacks, delivery and PULL
 

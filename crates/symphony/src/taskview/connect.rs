@@ -23,6 +23,15 @@ pub fn connect(root: &Path) -> Result<symphony_board::Store, String> {
     connect_in(root, crate::children::board_env())
 }
 
+/// [`connect`], held to the repository whose common dir is `repository`, the one the Symphony
+/// found from `root` when it began to serve that folder ([`connect_held_in`]).
+pub fn connect_held(
+    root: &Path,
+    repository: Option<&Path>,
+) -> Result<symphony_board::Store, String> {
+    connect_held_in(root, repository, crate::children::board_env())
+}
+
 /// [`connect`] to a board whose server is running, never starting one: for a read that can go
 /// without the board, as the branch scan's [`crate::branches::branch_cards`] does.
 pub fn connect_running(root: &Path) -> Result<symphony_board::Store, String> {
@@ -45,12 +54,25 @@ pub fn connect_in(
     open(root, env, symphony_board::cli::board)
 }
 
+/// [`connect_in`], refused, as a folder that is gone, when the board's lookup from `root` finds
+/// another repository than `repository` ([`symphony_board::cli::held_board`]): a folder left without
+/// its `.git` leads it up to the checkout that holds the folder, whose board it never starts.
+pub fn connect_held_in(
+    root: &Path,
+    repository: Option<&Path>,
+    env: symphony_board::cli::Env,
+) -> Result<symphony_board::Store, String> {
+    open(root, env, |env| {
+        symphony_board::cli::held_board(env, repository)
+    })
+}
+
 /// The board `reach` finds for the project at `root` under `env`, opened to read as [`connect_in`]
 /// says.
 fn open(
     root: &Path,
     mut env: symphony_board::cli::Env,
-    reach: fn(&symphony_board::cli::Env) -> Result<symphony_board::cli::Reached, String>,
+    reach: impl FnOnce(&symphony_board::cli::Env) -> Result<symphony_board::cli::Reached, String>,
 ) -> Result<symphony_board::Store, String> {
     env.cwd = root.to_path_buf();
     // A read-only web request is never a board session or a launcher.
