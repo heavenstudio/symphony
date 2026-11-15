@@ -417,6 +417,13 @@ impl Site {
         self.shared.lock().unwrap().feeds.len()
     }
 
+    /// How many feed streams were opened so far, closed since or not: while no feed fails or ends
+    /// on opening, each one [`Site::feed_requests`] counts once it is open, and so in reach of
+    /// [`Site::drop_feeds`].
+    pub fn opened_feeds(&self) -> usize {
+        self.shared.lock().unwrap().opened_feeds as usize
+    }
+
     /// How many times the feed was asked for, answered or not.
     pub fn feed_requests(&self) -> usize {
         let shared = self.shared.lock().unwrap();

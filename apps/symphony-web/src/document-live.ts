@@ -576,6 +576,10 @@ const QUIET_MS = 12_500;
 /**
  * Follow the document's feed from the page's cursor, for the sections it wants (opened again when
  * it wants others), until the stream is lost or the page goes away. How it ended.
+ *
+ * Only its first open tells the frame the stream opened, which reads the asks, the chat and the
+ * metadata again: one the page opened again itself names the cursor of the last event it heard,
+ * from which the server sends every event after it (or refuses, a loss), so it missed nothing.
  */
 async function followDocument(page: DocumentLive, signal: AbortSignal): Promise<Ended> {
   let openedAt: number | null = null;
@@ -597,7 +601,7 @@ async function followDocument(page: DocumentLive, signal: AbortSignal): Promise<
         }
         lastWord = Date.now();
         if (said.kind === "open") {
-          page.frame.connected();
+          if (openedAt === null) page.frame.connected();
           openedAt ??= lastWord;
           page.stale = false;
           page.trouble = null;
