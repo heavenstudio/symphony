@@ -1,9 +1,10 @@
 //! A run's log (docs/RUNS.md, *Logs*): what the command of a run, or of a step of one, wrote on its
-//! stdout and stderr, as its recorder ([`crate::cli::recorder`]) read them, each copied on to where
-//! it went as it came ([`Copying`]) and, without its terminal escape codes ([`Plain`]), into one
-//! file: `logs/YYYY-MM-DD/RUN.log` in the day files' folder ([`crate::runs`]), the UTC day it was
-//! asked for. Day folders more than [`KEPT_DAYS`] days old go as the day files' own do, under their
-//! lock ([`prune`]); [`read`] answers part of one for the Symphony's read
+//! stdout and stderr, without its terminal escape codes ([`Plain`]), in one file:
+//! `logs/YYYY-MM-DD/RUN.log` in the day files' folder ([`crate::runs`]), the UTC day it was asked
+//! for. Its recorder ([`crate::cli::recorder`]) reads piped streams as they come, copying each on to
+//! where it went ([`Copying`]), or what a caller's regular files gained once the command ended
+//! ([`Files`]). Day folders more than [`KEPT_DAYS`] days old go as the day files' own do, under
+//! their lock ([`prune`]); [`read`] answers part of one for the Symphony's read
 //! ([`symphony_api::RUN_LOG_PATH`]).
 
 use crate::cli::machine_work::recorded;
@@ -12,9 +13,9 @@ use std::io::{self, Read as _, Write as _};
 use std::os::fd::AsRawFd as _;
 use std::os::unix::fs::{FileExt as _, OpenOptionsExt as _};
 use std::path::Path;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 use symphony_api::{RUN_LOG_MOST, RunLog, run_day};
 
@@ -221,6 +222,162 @@ fn copy(mut streams: Vec<Stream>, mut log: File, written: &AtomicU64) {
         for at in ended.into_iter().rev() {
             streams.remove(at);
             plain.remove(at);
+        }
+    }
+}
+
+/// The regular files a caller handed a run's command as its stdout and stderr, which the command
+/// writes as it would unrecorded, each opened again to read and marked where it ended when the run
+/// started: what the command added past that mark is copied into the run's log once it ended
+/// ([`Files::copy`]).
+#[derive(Debug)]
+pub struct Files(Vec<(File, u64)>);
+
+impl Files {
+    /// Those of `streams` (copies of the caller's stdout and stderr) that are regular files, a file
+    /// both name taken once, each marked at its length now; one that cannot be opened again to read
+    /// is left out.
+    pub fn mark(streams: impl IntoIterator<Item = File>) -> Files {
+        use std::os::unix::fs::MetadataExt as _;
+        let mut files: Vec<(File, u64, (u64, u64))> = Vec::new();
+        for stream in streams {
+            let Ok(meta) = stream.metadata() else {
+                continue;
+            };
+            let identity = (meta.dev(), meta.ino());
+            if !meta.file_type().is_file() || files.iter().any(|(.., seen)| *seen == identity) {
+                continue;
+            }
+            let reader = reopened(&stream).ok().filter(|reader| {
+                reader
+                    .metadata()
+                    .is_ok_and(|read| (read.dev(), read.ino()) == identity)
+            });
+            if let Some(reader) = reader {
+                files.push((reader, meta.len(), identity));
+            }
+        }
+        Files(
+            files
+                .into_iter()
+                .map(|(file, mark, _)| (file, mark))
+                .collect(),
+        )
+    }
+
+    /// What each file holds past its mark now, plain, appended to `log`, one file after the other:
+    /// the bytes written. A file shorter than its mark gives nothing.
+    pub fn copy(&self, mut log: &File) -> u64 {
+        let mut buffer = vec![0; CHUNK];
+        let mut text = Vec::with_capacity(CHUNK);
+        let mut written = 0;
+        for (file, mark) in &self.0 {
+            let end = file.metadata().map_or(0, |meta| meta.len());
+            let mut plain = Plain::default();
+            let mut at = *mark;
+            while at < end {
+                let want = usize::try_from(end - at).map_or(CHUNK, |left| left.min(CHUNK));
+                let read = match file.read_at(&mut buffer[..want], at) {
+                    Ok(0) | Err(_) => break,
+                    Ok(read) => read,
+                };
+                at += read as u64;
+                text.clear();
+                plain.strip(&buffer[..read], &mut text);
+                if log.write_all(&text).is_err() {
+                    return written;
+                }
+                written += text.len() as u64;
+            }
+        }
+        written
+    }
+}
+
+/// A caller's [`Files`] and the log they are copied into, once, by whichever asks first
+/// ([`Ending::copy`]): on macOS the recorder's thread that sees the command end, as it does, so a
+/// caller that writes to its file again at once (its next command's `>` cutting it) seldom comes
+/// first.
+#[derive(Debug)]
+pub struct Ending {
+    files: Files,
+    log: File,
+    written: OnceLock<u64>,
+}
+
+impl Ending {
+    pub fn new(files: Files, log: File) -> Ending {
+        Ending {
+            files,
+            log,
+            written: OnceLock::new(),
+        }
+    }
+
+    /// The bytes the log holds: the files' copy the first time, what that copy wrote after, a
+    /// caller at the same time waiting for it.
+    pub fn copy(&self) -> u64 {
+        *self.written.get_or_init(|| self.files.copy(&self.log))
+    }
+}
+
+/// `file` opened again, to read: a caller's stream is most often open to write alone.
+fn reopened(file: &File) -> io::Result<File> {
+    #[cfg(target_os = "macos")]
+    let path = {
+        use std::os::unix::ffi::OsStringExt as _;
+        let mut path = vec![0_u8; usize::try_from(libc::PATH_MAX).unwrap_or(1024)];
+        // SAFETY: F_GETPATH writes at most PATH_MAX bytes, a NUL among them, into `path`.
+        if unsafe { libc::fcntl(file.as_raw_fd(), libc::F_GETPATH, path.as_mut_ptr()) } == -1 {
+            return Err(io::Error::last_os_error());
+        }
+        let length = path
+            .iter()
+            .position(|&byte| byte == 0)
+            .unwrap_or(path.len());
+        path.truncate(length);
+        std::path::PathBuf::from(std::ffi::OsString::from_vec(path))
+    };
+    #[cfg(not(target_os = "macos"))]
+    let path = std::path::PathBuf::from(format!("/proc/self/fd/{}", file.as_raw_fd()));
+    OpenOptions::new().read(true).open(path)
+}
+
+/// Where a run's log is written from: its command's streams copied as they come ([`Copying`]), or
+/// its caller's files once its command ended ([`Ending`]).
+#[derive(Debug)]
+pub enum Source {
+    Copying(Copying),
+    Files(Arc<Ending>),
+}
+
+impl Source {
+    /// The caller's files a source copies from, `files` and `log`.
+    pub fn files(files: Files, log: File) -> Source {
+        Source::Files(Arc::new(Ending::new(files, log)))
+    }
+
+    /// The bytes its log holds once its command ended: a copy's once its streams ended or `within`
+    /// passed, the files' once what they gained is copied.
+    pub fn ended(&self, within: Duration) -> u64 {
+        match self {
+            Source::Copying(copying) => copying.drained(within),
+            Source::Files(ending) => ending.copy(),
+        }
+    }
+
+    /// Its files' copy, for the thread that sees its command end to make.
+    pub fn ending(&self) -> Option<Arc<Ending>> {
+        match self {
+            Source::Copying(_) => None,
+            Source::Files(ending) => Some(Arc::clone(ending)),
+        }
+    }
+
+    /// Once a copy's streams ended.
+    pub fn join(self) {
+        if let Source::Copying(copying) = self {
+            copying.join();
         }
     }
 }

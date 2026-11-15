@@ -1,6 +1,7 @@
 //! A run's log: its plain text whatever the reads cut, the copy of a command's streams on to where
-//! they went and into the log in the order read, a reader gone or a writer kept, and the read of
-//! part of one, only of a regular file in a day folder of the logs.
+//! they went and into the log in the order read, a reader gone or a writer kept, the copy of what
+//! a caller's files gained, and the read of part of one, only of a regular file in a day folder of
+//! the logs.
 
 use super::*;
 use std::path::PathBuf;
@@ -258,6 +259,113 @@ fn a_caller_that_cannot_take_more_yet_is_waited_for_and_a_log_that_fails_stops_o
         "the caller missed or repeated bytes"
     );
     assert_eq!(fs::read(dir.join(&name)).unwrap(), b"");
+    fs::remove_dir_all(&dir).unwrap();
+}
+
+/// `path` made holding `holds`, and a handle on it that only writes, at its end: as a caller's
+/// `>>` hands it.
+fn appended(path: &Path, holds: &[u8]) -> File {
+    fs::write(path, holds).unwrap();
+    OpenOptions::new().append(true).open(path).unwrap()
+}
+
+#[test]
+fn a_callers_files_are_read_again_from_where_they_ended_a_file_both_streams_name_once() {
+    let dir = scratch("files");
+    let name = name(&run('a'), NOW);
+    let log = create(&dir, &name).unwrap();
+    // `>>both 2>&1`: two handles, open to write alone, on one file that held a line already.
+    let mut out = appended(&dir.join("both"), b"before\n");
+    let mut err = out.try_clone().unwrap();
+    let files = Files::mark([out.try_clone().unwrap(), err.try_clone().unwrap()]);
+    out.write_all(b"\x1b[1;32mone\x1b[0m\n").unwrap();
+    err.write_all(b"two \x1b]0;a title\x07on stderr\n").unwrap();
+    out.write_all(b"three\n").unwrap();
+    // The caller's file holds what was written, escapes and all; the log what the command added,
+    // plain, once.
+    assert_eq!(files.copy(&log), 24);
+    assert_eq!(
+        fs::read(dir.join("both")).unwrap(),
+        b"before\n\x1b[1;32mone\x1b[0m\ntwo \x1b]0;a title\x07on stderr\nthree\n"
+    );
+    assert_eq!(
+        fs::read(dir.join(&name)).unwrap(),
+        b"one\ntwo on stderr\nthree\n"
+    );
+    fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn a_callers_files_are_copied_once_by_whichever_asks_first_and_what_comes_after_is_not() {
+    let dir = scratch("files-once");
+    let name = name(&run('a'), NOW);
+    let log = create(&dir, &name).unwrap();
+    let mut out = appended(&dir.join("out"), b"");
+    let source = Source::files(Files::mark([out.try_clone().unwrap()]), log);
+    let ending = source.ending().expect("a source of files has an ending");
+    out.write_all(b"ran\n").unwrap();
+    // The thread that saw the command end copies; the record's ask waits for that copy.
+    let seen = std::thread::spawn(move || ending.copy());
+    assert_eq!(source.ended(Duration::ZERO), 4);
+    assert_eq!(seen.join().unwrap(), 4);
+    // Its caller's next writes, after it ended, are its caller's.
+    out.write_all(b"next\n").unwrap();
+    assert_eq!(source.ended(Duration::ZERO), 4);
+    source.join();
+    assert_eq!(fs::read(dir.join(&name)).unwrap(), b"ran\n");
+    // Streams copied as they come have no such ending.
+    let ((from, writer), (_reader, to)) = (pipe(), pipe());
+    let other = create(&dir, &super::name(&run('b'), NOW)).unwrap();
+    let copying = Source::Copying(Copying::start(vec![Stream { from, to }], other).unwrap());
+    assert!(copying.ending().is_none());
+    drop(writer);
+    copying.join();
+    fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn two_files_are_read_in_turn_each_from_its_own_mark_and_plain_on_its_own() {
+    let dir = scratch("files-two");
+    let name = name(&run('a'), NOW);
+    let log = create(&dir, &name).unwrap();
+    let mut out = appended(&dir.join("out"), b"old out\n");
+    let mut err = appended(&dir.join("err"), b"");
+    let files = Files::mark([out.try_clone().unwrap(), err.try_clone().unwrap()]);
+    // Written the other way about, and an escape cut at one file's end never takes the other's.
+    err.write_all(b"first on stderr\n").unwrap();
+    out.write_all(b"on stdout \x1b[3").unwrap();
+    assert_eq!(files.copy(&log), 26);
+    assert_eq!(
+        fs::read(dir.join(&name)).unwrap(),
+        b"on stdout first on stderr\n"
+    );
+    fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn what_is_no_regular_file_is_left_out_and_a_file_cut_short_or_a_log_that_fails_gives_nothing() {
+    let dir = scratch("files-none");
+    let name = name(&run('a'), NOW);
+    let log = create(&dir, &name).unwrap();
+    // A pipe and `/dev/null` are no files to read again.
+    let (_reader, mut piped) = pipe();
+    let null = OpenOptions::new().write(true).open("/dev/null").unwrap();
+    let none = Files::mark([piped.try_clone().unwrap(), null]);
+    piped.write_all(b"piped\n").unwrap();
+    assert_eq!(none.copy(&log), 0);
+    // A file its caller cut below its mark since gives nothing, whatever it holds now.
+    let mut cut = appended(&dir.join("cut"), b"0123456789\n");
+    let shrunk = Files::mark([cut.try_clone().unwrap()]);
+    cut.set_len(0).unwrap();
+    cut.write_all(b"short\n").unwrap();
+    assert_eq!(shrunk.copy(&log), 0);
+    assert_eq!(fs::read(dir.join(&name)).unwrap(), b"");
+    // A log that refuses its writes counts nothing.
+    let mut grown = appended(&dir.join("grown"), b"");
+    let files = Files::mark([grown.try_clone().unwrap()]);
+    grown.write_all(b"lost\n").unwrap();
+    let refusing = File::open(dir.join(&name)).unwrap();
+    assert_eq!(files.copy(&refusing), 0);
     fs::remove_dir_all(&dir).unwrap();
 }
 

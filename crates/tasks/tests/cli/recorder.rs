@@ -2552,10 +2552,130 @@ fn what_a_process_a_run_left_writes_after_its_command_ended_still_reaches_its_ca
         .try_into()
         .unwrap();
     let log = runs.join(end.log.unwrap());
+    // The drain's wait is the product's DRAIN at the tests' scale: a log short of the late line
+    // stalled past it, which a loaded machine alone reaches.
     assert_eq!(
         end.log_bytes,
         Some(9),
-        "both streams ended within the drain"
+        "stalled: the stream the left process held did not end within the drain (DRAIN, 1 s, at \
+         scale {SCALE}) after the release; {}",
+        test_time::Load::now()
     );
     assert_eq!(fs::read_to_string(log).unwrap(), "now\nlate\n");
+}
+
+/// [`pipeline_command`] run with its stdout and stderr the files `out` and `err` (one file twice,
+/// as `>f 2>&1` hands it, or two): its status, as soon as its caller has it.
+fn filed_run(command: &mut Command, out: &fs::File, err: &fs::File) -> std::process::ExitStatus {
+    command
+        .stdin(Stdio::null())
+        .stdout(out.try_clone().unwrap())
+        .stderr(err.try_clone().unwrap())
+        .spawn()
+        .unwrap()
+        .wait()
+        .unwrap()
+}
+
+#[test]
+fn a_caller_that_reads_its_file_the_moment_it_has_the_status_finds_its_last_bytes_and_the_log_them()
+{
+    // The release run's `"$@" >"$log" 2>&1; tail "$log"`, and an agent's tool call: no pipe stands
+    // between the command and its caller's file, so its bytes are there before its status is.
+    let case = Case::new();
+    let folders = Folders::new("recorder-run-log-file");
+    let repo = repository(&folders.dir.join("repo"));
+    let runs = folders.dir.join("runs");
+    let script = "printf '\\033[1m%2000s\\033[0m\\n' x; printf 'on stderr\\n' >&2; echo END";
+    let times = 10;
+    let mut read = Vec::new();
+    for time in 0..times {
+        let path = folders.dir.join(format!("both-{time}"));
+        let both = fs::File::create(&path).unwrap();
+        let mut command = pipeline_command(&case, &folders, (&repo, &runs), ("test", "t"), script);
+        let status = filed_run(&mut command, &both, &both);
+        let text = fs::read(&path).unwrap();
+        assert!(status.success(), "{status:?}");
+        assert!(
+            text.ends_with(b"on stderr\nEND\n"),
+            "run {time} of {times}: its caller read its file with the status and missed its end: \
+             {} bytes, ending {:?}",
+            text.len(),
+            String::from_utf8_lossy(&text[text.len().saturating_sub(40)..])
+        );
+        read.push(text);
+    }
+    // Each run's log holds what its command added to the one file both streams name, once, plain.
+    let plain = format!("{:>2000}\non stderr\nEND\n", "x");
+    let lines = symphony_api::fold(day_lines(&folders.work, &runs, times));
+    for (line, text) in lines.iter().zip(&read) {
+        assert_eq!(
+            text.as_slice(),
+            format!("\x1b[1m{:>2000}\x1b[0m\non stderr\nEND\n", "x").as_bytes()
+        );
+        let log = line
+            .log
+            .as_deref()
+            .unwrap_or_else(|| panic!("no log: {line:?}"));
+        assert_eq!(
+            fs::read_to_string(runs.join(log)).unwrap(),
+            plain,
+            "{line:?}"
+        );
+        assert_eq!(line.log_bytes, Some(plain.len() as u64), "{line:?}");
+    }
+}
+
+#[test]
+fn a_file_callers_log_holds_what_the_run_added_to_each_of_its_files_in_turn_and_its_steps_own() {
+    let case = Case::new();
+    let folders = Folders::new("recorder-run-log-files");
+    let repo = repository(&folders.dir.join("repo"));
+    let runs = folders.dir.join("runs");
+    // `>>out 2>err`: a file that held a line already, and another.
+    let (out_path, err_path) = (folders.dir.join("out"), folders.dir.join("err"));
+    fs::write(&out_path, "before\n").unwrap();
+    let out = fs::OpenOptions::new().append(true).open(&out_path).unwrap();
+    let err = fs::File::create(&err_path).unwrap();
+    // The step last: on macOS its recorder reads where the files end once it saw its command end,
+    // so what the run wrote after it at once could be in its log too (docs/RUNS.md, *Logs*).
+    let tasks_binary = env!("CARGO_BIN_EXE_tasks");
+    let script = format!(
+        "printf '\\033[32mout one\\033[0m\\n'; printf 'err one\\n' >&2; echo out two; \
+         '{tasks_binary}' run --phase build --step lint -- sh -c 'echo inside; echo inside err >&2'"
+    );
+    let mut command = pipeline_command(&case, &folders, (&repo, &runs), ("verify", "v"), &script);
+    assert!(filed_run(&mut command, &out, &err).success());
+    // The caller's files hold what the command wrote, escapes and all, after what they held.
+    assert_eq!(
+        fs::read(&out_path).unwrap(),
+        b"before\n\x1b[32mout one\x1b[0m\nout two\ninside\n"
+    );
+    assert_eq!(fs::read(&err_path).unwrap(), b"err one\ninside err\n");
+    let lines = day_lines(&folders.work, &runs, 2);
+    let start = lines
+        .iter()
+        .find(|line| line.step.is_none() && line.end.is_none())
+        .unwrap();
+    let read = |line: &RunLine| {
+        let log = line
+            .log
+            .as_deref()
+            .unwrap_or_else(|| panic!("no log: {line:?}"));
+        let text = fs::read_to_string(runs.join(log)).unwrap();
+        assert_eq!(line.log_bytes, Some(text.len() as u64), "{line:?}");
+        text
+    };
+    let folded = symphony_api::fold(lines.clone());
+    let run = folded.iter().find(|line| line.step.is_none()).unwrap();
+    // Its start line names the log, which holds nothing until its command ended.
+    assert_eq!(
+        (start.log.as_deref(), start.log_bytes),
+        (run.log.as_deref(), None)
+    );
+    assert_eq!(read(run), "out one\nout two\ninside\nerr one\ninside err\n");
+    // The step's caller is the run's files: its log is what it added to them.
+    let step = folded.iter().find(|line| line.step.is_some()).unwrap();
+    assert_eq!(read(step), "inside\ninside err\n");
+    assert_ne!(run.log, step.log);
 }

@@ -74,8 +74,9 @@ with none that answers within 2 s, `TASKS_RECORDER=off`, inside a recorded run o
 tree without `tools/record.sh` it is exec'd as it is. On macOS the recorder becomes
 the build it records and watches it from a process of its own, so descriptors, the
 signal mask, ignored signals and a kill reach the build as they would without it, but
-for a run's or step's stdout and stderr when neither of the caller's is a terminal:
-pipes it copies on as they come and, escape codes stripped, into the run's log
+for a run's or step's stdout and stderr when neither of the caller's is a terminal or a
+file: pipes it copies on as they come and, escape codes stripped, into the run's log;
+from a caller's file it copies what the build added there once it ended
 ([RUNS](docs/RUNS.md#logs)). It uses this folder's `.target/`
 unless `CARGO_TARGET_DIR` names another. In a linked worktree it makes a missing target
 folder first as a copy-on-write clone of the main checkout's `.target/debug`, less the

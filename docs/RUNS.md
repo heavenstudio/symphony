@@ -126,35 +126,57 @@ a file longer than 16 MiB its last 16 MiB.
 
 ## Logs
 
-A run's or a step's command writes its stdout and stderr to pipes its recorder reads.
-The recorder copies each read on to where that stream went before, as it came, and
-into the run's log without terminal escape codes: `logs/YYYY-MM-DD/RUN.log` in the
-day files' folder, the UTC day the run was asked for, its `run` the operation's id. So
-the caller sees the same bytes, though the command writes to pipes. A run whose
-caller's stdout or stderr is a terminal (a person at it) keeps the caller's streams as
-they are, its colours and progress unchanged, and writes no log, its lines naming none,
-as any other recorded command does; agents, the release run and anything piped get the
-log.
+A run's or a step's log is what its command wrote on its stdout and stderr, without
+terminal escape codes: `logs/YYYY-MM-DD/RUN.log` in the day files' folder, the UTC day
+the run was asked for, its `run` the operation's id. How its recorder reads it follows
+what the caller handed the command, and the caller sees the same bytes whichever it is:
+
+- **A terminal** (a person at it), on stdout or stderr: the command keeps the caller's
+  streams as they are, its colours and progress unchanged, and the run writes no log,
+  its lines naming none, as any other recorded command does.
+- **A regular file**: an agent's tool call, which hands its command files; each step
+  of the release run, which `tools/verify.sh` runs as `"$@" >"$log" 2>&1` into a log
+  file of its own that it keeps; the board's `[board] on_review` and `on_land`
+  commands, into theirs. The command keeps the caller's streams here too, nothing
+  between it and its file, so its last bytes are there before its status reaches the
+  caller, and a recorder that dies costs the record and the log alone. The recorder
+  marks where each file ends as the run starts, and once the command ended copies what
+  each gained past its mark into the log: a file both streams name (`>f 2>&1`) once,
+  two files one after the other, a stream that is no file not at all. Until then the
+  log is empty, the caller's file being where a running run is read. What anything
+  else wrote to the file meanwhile is in the log too, and on macOS, where the recorder
+  reads the file as soon as it sees the command end, so may what the caller wrote at
+  once after it be. A file its caller cut below its mark gives nothing.
+- **Anything else** (a pipe, a socket, `/dev/null`): the command writes to pipes its
+  recorder reads, which copies each read on to where that stream went before, as it
+  came, and into the log. A recorder that dies while its command runs leaves those
+  pipes with no reader: the command's next write ends it by SIGPIPE (exit 141), as a
+  pipeline's command whose reader went.
+
+Of a log kept either way:
 
 - **Plain.** The log holds what the command wrote less ECMA-48's escapes: its control
   sequences (`ESC [`, parameters, a final byte), its strings (`ESC ]`, `ESC P`,
   `ESC X`, `ESC ^`, `ESC _`, to `ESC \` or BEL; a string never ended stops at its
   line's end) and its other escapes, wherever a read cuts one. Text, UTF-8 and the
   other control characters (a carriage return among them) stay.
-- **Order.** stdout and stderr go into the one log in the order the recorder read
-  them. A program buffers its stdout in a pipe, so lines it wrote close together may
-  come in another order than at a terminal. A step has a log of its own, and its
-  output reaches its run's log too, through the step's recorder: it may come there
-  after what the run wrote once the step's command ended.
-- **Size.** The start line names the log (`log`), so the log of a run that still
-  runs can be read. The end line names it with what it held then (`log_bytes`): once
-  both streams ended, or 1 s after the command did when a process it left still holds
-  one. What that process writes later is still copied on, and into the log. On macOS
-  the recorder copies until both streams end; where it is its command's parent (Linux,
-  a caller's process) the caller gets its status after those 1 s at most: `tasks run`
+- **Order.** From one file, the order the command wrote it; from two, stdout's then
+  stderr's. From pipes, stdout and stderr go into the one log in the order the
+  recorder read them: a program buffers its stdout in a pipe, so lines it wrote close
+  together may come in another order than at a terminal. A step has a log of its own,
+  and its output reaches its run's log too: from a file where the step wrote it, from
+  pipes through the step's recorder, so it may come after what the run wrote once the
+  step's command ended.
+- **Size.** The start line names the log (`log`). The end line names it with what it
+  held then (`log_bytes`): from files once the copy is done, so what a process the
+  command left writes later stays in the caller's file alone; from pipes once both
+  streams ended, or 1 s after the command did when a process it left still holds one.
+  What that process writes later is still copied on, and into the log. On macOS the
+  recorder copies until both streams end; where it is its command's parent (Linux, a
+  caller's process) the caller gets its status after those 1 s at most: `tasks run`
   then ends, so a process still writing finds its stream closed, while in a caller's
   process the copy goes on until the streams end.
-- **A reader that went.** A stream whose caller's end can no longer be written (a
+- **A reader that went.** A pipe whose caller's end can no longer be written (a
   `| head` that exited) is read no more, so the command's next write there fails as
   it would have; the other stream is still copied and logged.
 - **Kept** 14 days: a day folder of logs more than 14 days old goes with the day files'
@@ -208,7 +230,7 @@ one that sees only the day files shows it as started, not as running.
 | `cpu_s` | CPU seconds, to the millisecond, once it ended (above) |
 | `cpu_partial` | beside `cpu_s`: `true` when known short, `false` when the recorder saw no loss, absent when it does not watch for one (above) |
 | `rerun_of` | the run it repeats (above) |
-| `log` | its log in the day files' folder ([Logs](#logs)), on its start line too; absent when its streams were not copied (its caller at a terminal) |
+| `log` | its log in the day files' folder ([Logs](#logs)), on its start line too; absent when it keeps none (its caller at a terminal) |
 | `log_bytes` | on its end line, the bytes its log held then; absent from the end line a sweep writes for a recorder that died |
 | `suites`, `failed` | left out until `tools/run-suites` fills them |
 
