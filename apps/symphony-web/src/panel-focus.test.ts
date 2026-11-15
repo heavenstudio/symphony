@@ -91,6 +91,58 @@ describe("the focus moved into a sheet", () => {
     await expect(never).resolves.toBeUndefined();
   });
 
+  it("leaves the focus where the reader put it in the sheet, before a try or between two", async () => {
+    vi.useFakeTimers();
+    const { page } = stubbed();
+    const field = new Spot(page);
+    page.found.set("#field", [field]);
+    const tab = new Spot(page, ["#quick-sheet"]);
+    page.activeElement = tab;
+    const before = focusFirst(["#field"], "#quick-sheet");
+    await vi.advanceTimersByTimeAsync(0);
+    await before;
+    expect(page.activeElement).toBe(tab);
+    expect(field.focused).toBe(0);
+
+    page.activeElement = null;
+    const between = focusFirst(["#late"], "#quick-sheet");
+    await vi.advanceTimersByTimeAsync(100);
+    page.activeElement = tab;
+    const late = new Spot(page);
+    page.found.set("#late", [late]);
+    await vi.advanceTimersByTimeAsync(20);
+    await between;
+    expect(page.activeElement).toBe(tab);
+    expect(late.focused).toBe(0);
+  });
+
+  it("takes the focus from the shell's stand-in for the sheet, and from outside it", async () => {
+    vi.useFakeTimers();
+    for (const from of [["#quick-sheet", "#panel-loading"], ["#quick-open"]]) {
+      const { page } = stubbed();
+      const field = new Spot(page);
+      page.found.set("#field", [field]);
+      page.activeElement = new Spot(page, from);
+      const done = focusFirst(["#field"], "#quick-sheet");
+      await vi.advanceTimersByTimeAsync(0);
+      await done;
+      expect(page.activeElement, from.join()).toBe(field);
+    }
+  });
+
+  it("moves into the sheet it opened, not where the reader already is in it", async () => {
+    vi.useFakeTimers();
+    const { page } = stubbed({ reviewPanelFocus: "activity" });
+    const close = new Spot(page);
+    page.found.set("#close", [close]);
+    const link = new Spot(page, ["#activity-panel"]);
+    page.activeElement = link;
+    takeFocus("activity", ["#close"]);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(page.activeElement).toBe(link);
+    expect(close.focused).toBe(0);
+  });
+
   it("moves only when the sheet's opener asked for it, and once", async () => {
     vi.useFakeTimers();
     const { page, window } = stubbed({ reviewPanelFocus: "activity" });
