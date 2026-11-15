@@ -6,8 +6,9 @@ use super::{Hub, Json, Request, Response, StatusCode, error, no_store, query};
 /// the display stages of work a machine builds or tests.
 const SELECTABLE: [&str; 3] = ["signoff", "build", "test"];
 
-/// The tasks a listing's page holds. The board's client reserves a page's rows of a column while
-/// it loads (`PAGE` in `apps/symphony-web/src/board.tsx`), so the two change together.
+/// The tasks a listing's page holds, unless its `rows` asks for more. The board's client reserves
+/// a page's rows of a column while it loads (`PAGE` in `apps/symphony-web/src/board.tsx`), so the
+/// two change together.
 const PAGE: usize = 30;
 
 /// A listing's `status`, when it names one: a board status or one of [`SELECTABLE`].
@@ -58,6 +59,11 @@ fn project(
     let offset = query(request, "offset")
         .and_then(|v| v.parse::<usize>().ok())
         .unwrap_or(0);
+    // `rows`: a page as long as the rows a column already shows, read again by the board's live
+    // refresh so the pages it loaded stay; never shorter than a page.
+    let page = query(request, "rows")
+        .and_then(|v| v.parse::<usize>().ok())
+        .map_or(PAGE, |rows| rows.max(PAGE));
     let cursor = match query(request, "cursor")
         .map(|text| serde_json::from_str::<(String, i64, f64, String)>(&text))
         .transpose()
@@ -208,9 +214,9 @@ fn project(
             && after
             && (all
                 || if cursor.is_some() {
-                    index < PAGE
+                    index < page
                 } else {
-                    (offset..offset.saturating_add(PAGE)).contains(&index)
+                    (offset..offset.saturating_add(page)).contains(&index)
                 })
     });
     for task in &mut tasks.tasks {
