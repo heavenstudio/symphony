@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { appPath, linkable, webAddress } from "./links";
+import { CASES } from "./testing";
 
 /**
  * Addresses that would run script, read data in place or leave for another host while looking like
@@ -83,6 +84,12 @@ const UNLINKABLE = [
 ];
 
 describe("a web address", () => {
+  it("is linked as the Rust links it", () => {
+    expect(CASES.webAddress.length).toBeGreaterThan(20);
+    for (const [url, linked] of CASES.webAddress)
+      expect([url, webAddress(url)]).toEqual([url, linked]);
+  });
+
   it("is http or https naming a host with no space or control character", () => {
     for (const linked of [
       "https://claude.ai/code/session_01abc",

@@ -298,15 +298,17 @@ export function GhostTask({ slug }: { slug: string }) {
   );
 }
 
-/** The task's role chips, each with its holder's Go to session control. */
+/** The task's role chips, each with its holder's Go to session control, under `scope`'s board. */
 export function RoleChips({
   roles,
   sessions,
   local,
+  scope,
 }: {
   roles: Role[];
   sessions: Record<string, SessionGo>;
   local: boolean;
+  scope: string;
 }) {
   return (
     <span className="chips">
@@ -317,7 +319,12 @@ export function RoleChips({
           title={`${role.role} is ${role.health}`}
         >
           {`${role.role} ${role.handle}`}
-          <GoToSession handle={role.handle} go={sessions[role.handle]} local={local} />
+          <GoToSession
+            handle={role.handle}
+            go={sessions[role.handle] ?? null}
+            local={local}
+            scope={scope}
+          />
         </span>
       ))}
     </span>
@@ -698,6 +705,8 @@ function OfferLoader({ onOffer }: { onOffer: () => void }) {
 
 export interface TaskDetailProps {
   page: Page;
+  /** The checkout the route names (`""`, the main one), whose sessions the role chips go to. */
+  scope: string;
   work: MachineWork;
   /** Whether the feed is open and nothing shown came from this device: the machines' own work is
    * read as disconnected otherwise. */
@@ -720,6 +729,7 @@ export interface TaskDetailProps {
 /** A task's page as its read stands. */
 export function TaskDetail({
   page,
+  scope,
   work,
   connected,
   tasks,
@@ -787,7 +797,7 @@ export function TaskDetail({
             </li>
           ))}
         </ul>
-        <RoleChips roles={task.roles} sessions={page.sessions} local={page.local} />
+        <RoleChips roles={task.roles} sessions={page.sessions} local={page.local} scope={scope} />
         <WorkPhases work={work} slug={slug} connected={connected} />
       </div>
       <TaskGatesPanel
@@ -879,6 +889,7 @@ export function LiveTaskPage({ live, connected }: { live: LiveTask; connected: b
         <TaskDetail
           key={slug}
           page={page}
+          scope={live.scope}
           work={page.machine_work}
           connected={connected}
           tasks={page.children}

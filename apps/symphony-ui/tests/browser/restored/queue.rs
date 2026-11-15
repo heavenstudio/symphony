@@ -1,6 +1,10 @@
 //! The restored queue page: a stylesheet that fails leaves the page before it and is tried again,
-//! and the queue's counts, order, scope, anchors and refresh keep the owner's reading position.
-use crate::{SHOWN, chrome, common, dist, site::Site, texts, wait_for_board, wait_for_feed};
+//! the queue's counts, order, scope, anchors and refresh keep the owner's reading position, and a
+//! card's Later and Undo keep the keyboard's focus.
+use crate::{
+    SHOWN, chrome, chrome::Chrome, common, components::key, dist, focus_on, site::Site, texts,
+    wait_for_board, wait_for_feed,
+};
 use serde_json::{Value, json};
 
 fn queue_fixture() -> Value {
@@ -202,6 +206,164 @@ fn the_feeds_client_event_naming_another_build_loads_the_queue_again_once() {
         (2, json!(true)),
         "the queue loaded again for a build it had loaded for already"
     );
+}
+
+/// The card `slug` of docs/PROBE.md waiting on the owner, `postponed` or not.
+fn waiting(slug: &str, postponed: bool) -> Value {
+    let mut board: Value = serde_json::from_str(&common::fixture("board.json")).unwrap();
+    let mut card = board["next"][0].take();
+    card["slug"] = json!(slug);
+    card["title"] = json!(slug);
+    card["doc"] = json!("docs/PROBE.md");
+    card["postponed"] = json!(postponed);
+    card
+}
+
+/// What waits on the owner is `cards`, and nothing else waits.
+fn waiting_on_you(cards: &[Value]) -> Value {
+    json!({"waiting":cards,"spot_check":[],"agent":[],"branches":[]})
+}
+
+/// Press `pressed` (a key, its code and its key code) on the button `button` while the server holds
+/// its post: the focus stays on it while it saves, and on the button that replaces it, saying
+/// `label`, once the server has answered and, as the server does, its feed's event `version` has
+/// made the queue read `after`.
+fn press_keeping_focus(
+    site: &Site,
+    browser: &mut Chrome,
+    button: &str,
+    pressed: (&str, &str, u16),
+    (after, version): (&Value, u64),
+    label: &str,
+) {
+    browser.eval(&format!(
+        "document.querySelector({}).focus()",
+        json!(button)
+    ));
+    site.hold_route("/api/postpone", true);
+    key(browser, pressed.0, pressed.1, pressed.2);
+    assert!(
+        browser.wait_for(
+            &format!(
+                "document.querySelector({})?.textContent === 'Saving…'",
+                json!(button)
+            ),
+            SHOWN
+        ),
+        "{} says it saves",
+        pressed.0
+    );
+    assert_eq!(
+        focus_on(browser, button),
+        json!(true),
+        "the focus stays on the button while it saves"
+    );
+    assert!(
+        browser.wait_for(&crate::drawn_disabled(button), SHOWN),
+        "it looks as a disabled button does while it saves"
+    );
+    site.set_json("/api/queue", after);
+    site.hold_route("/api/postpone", false);
+    site.push(
+        version,
+        &json!({"version":version,"changes":[{"region":"queue-item-order","data":{"key":"docs/PROBE.md#alpha","after":null}}]}).to_string(),
+    );
+    assert!(
+        browser.wait_for(
+            &format!(
+                "document.querySelector({})?.textContent === {}",
+                json!(button),
+                json!(label)
+            ),
+            SHOWN
+        ),
+        "the card's button says {label} once the server answered"
+    );
+}
+
+/// Later and its Undo, pressed from the keyboard, keep the focus on the card's button: while the
+/// server saves, and once the card's new state is drawn, on Undo Later after Later and on Later
+/// after Undo, its row moved back before the others. Later here is the only card's, so the server
+/// names none next and the reader stays; with another card waiting they go to its document.
+#[test]
+fn later_and_undo_keep_the_focus_on_the_cards_button() {
+    let site = Site::start(dist(), &common::fixture("board.json"));
+    site.set_json("/api/queue", &waiting_on_you(&[waiting("alpha", false)]));
+    site.set_json(
+        "/api/postpone",
+        &json!({"ok":true,"changed":true,"next":null}),
+    );
+    let Some(mut browser) = chrome() else { return };
+    browser.open(&site.url("/queue"));
+    let button = "[data-card=\"docs/PROBE.md#alpha\"] .postpone-controls button";
+    assert!(
+        browser.wait_for(&crate::visible(button), SHOWN),
+        "the card's Later shows"
+    );
+    wait_for_feed(&site).expect("the queue never followed the feed");
+    press_keeping_focus(
+        &site,
+        &mut browser,
+        button,
+        ("Enter", "Enter", 13),
+        (&waiting_on_you(&[waiting("alpha", true)]), 4183),
+        "Undo Later",
+    );
+    assert_eq!(
+        focus_on(&mut browser, button),
+        json!(true),
+        "after Later, the focus is on its Undo"
+    );
+
+    // Two more cards come, before the one postponed: its Undo puts it back first.
+    site.set_json(
+        "/api/queue",
+        &waiting_on_you(&[
+            waiting("bravo", false),
+            waiting("charlie", false),
+            waiting("alpha", true),
+        ]),
+    );
+    site.push(
+        4184,
+        &json!({"version":4184,"changes":[{"region":"queue-item","data":{"key":"fixture","removed":true}}]}).to_string(),
+    );
+    let order = "[...document.querySelectorAll('#you li[data-card]')].map(row => row.dataset.card.split('#').pop()).join(' ')";
+    assert!(
+        browser.wait_for(&format!("{order} === 'bravo charlie alpha'"), SHOWN),
+        "the queue shows the cards that came"
+    );
+    press_keeping_focus(
+        &site,
+        &mut browser,
+        button,
+        (" ", "Space", 32),
+        (
+            &waiting_on_you(&[
+                waiting("alpha", false),
+                waiting("bravo", false),
+                waiting("charlie", false),
+            ]),
+            4185,
+        ),
+        "Later",
+    );
+    assert!(
+        browser.wait_for(&format!("{order} === 'alpha bravo charlie'"), SHOWN),
+        "Undo puts the card back before the others"
+    );
+    assert_eq!(
+        focus_on(&mut browser, button),
+        json!(true),
+        "after Undo, the focus is on Later, its row moved"
+    );
+    let actions: Vec<_> = site
+        .posts()
+        .into_iter()
+        .filter(|(path, body)| path == "/api/postpone" && body["slug"] == "alpha")
+        .map(|(_, body)| body["action"].clone())
+        .collect();
+    assert_eq!(actions, [json!("later"), json!("undo")]);
 }
 
 #[test]

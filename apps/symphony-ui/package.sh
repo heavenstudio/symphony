@@ -32,10 +32,11 @@ if [ -z "$esbuild" ] || [ "$(printf '%s\n' "$esbuild" | wc -l | tr -d ' ')" != 1
     echo "symphony-ui: expected one esbuild under $DX_HOME/tools, found: ${esbuild:-none}" >&2
     exit 2
 fi
-# The program's kinds (src/split.rs): one script and main module for all of them, and a chunk each.
-program_kinds=(tasks panel overlay)
+# The program's kinds (src/split.rs), the chat and the menus every page mounts, which no page kind
+# is: one script and main module for both, and a chunk each.
+program_kinds=(panel overlay)
 # Its chunks: the kinds' and the media layer's, which no kind is (the shell's manifest never names
-# it) and a kind's page loads once it shows media.
+# it) and the chat loads once it shows media.
 program_chunks=("${program_kinds[@]}" media)
 # Whether the wasm module $1 holds custom sections alone (a name and its bytes, never code, data or
 # a table entry): past its 8-byte header, each section is its id, its size in LEB128 and its bytes.
@@ -148,11 +149,13 @@ done
 # The stylesheets every kind loads are one shared file, in their order, first in each kind's list:
 # a first visit asks for it once instead of once per file, and every kind still caches the same
 # one. A kind's own stylesheets follow it, the order a visit from another kind already loads them in.
-# The pictures' styles (`media-`) stay out of it, though every program kind loads them: the web
-# client's kinds take the shared file and their own, home, the documents and a task's page with
-# their own copy of them (their media layer's), and the queue, Reports and the task board, which
-# show no picture, with none.
-shared="$(jq -c '[to_entries[] | .value.styles] | reduce .[1:][] as $other (.[0]; map(select(. as $style | any($other[]; . == $style)))) | map(select(contains("/media-") | not))' <<< "$manifest")"
+# It is the stylesheets the program's page links in its head, in the order the program's list names
+# them: the chat's and the menus' own (`style-`) stay out of it, as no page kind draws them before
+# the chat or a menu opens, and so do the pictures' (`media-`), though both program kinds load
+# them: the web client's kinds take the shared file and their own, home, the documents and a task's
+# page with their own copy of them (their media layer's), and the queue, Reports, the task board
+# and the agents page, which show no picture, with none.
+shared="$(jq -c --argjson others "$others" 'map(select(. as $style | ($others | index($style)) != null) | select(contains("/media-") | not))' <<< "$styles")"
 if [ "$(jq length <<< "$shared")" -gt 1 ]; then
     jq -r --arg prefix "$prefix/assets/" '.[] | ltrimstr($prefix)' <<< "$shared" | while IFS= read -r name; do
         cat "$stage/assets/$name"
@@ -228,4 +231,4 @@ if [ -n "${2:-}" ]; then
 else
     "$here/../../tools/rs-bin.sh" symphony-build publish-client "$stage" "$out/public"
 fi
-echo "symphony-ui: the web client's kinds (home, the queue, Reports, the task board, the documents, a task's page) as its own build, the program of the agents page, the chat and the menus as a main module and a chunk each, with the media layer's, one SPA shell: $out/public" >&2
+echo "symphony-ui: the web client's kinds (home, the queue, Reports, the task board, the agents page, the documents, a task's page) as its own build, the program of the chat and the menus as a main module and a chunk each, with the media layer's, one SPA shell: $out/public" >&2

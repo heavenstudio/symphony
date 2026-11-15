@@ -1,13 +1,14 @@
-//! The program (src/split.rs): `/agents`, the chat and the menus share one script and main
-//! module, each kind with a chunk of its own. A move between its pages fetches the page's chunk
-//! alone, never the script or the main module again. The media layer is a chunk of its own, which a
-//! page fetches only once it shows media: the board's chat, once its thread shows a mockup, here. A
-//! page of the web client's takes its pictures up with its own layer and opens them in the
-//! program's picture viewer, fetching no media chunk. The page shown before stays until the chunk
-//! is in; a chunk that does not load ends in the shell's `gone` state (assets/shell.js) with that
-//! page under its notice, never an empty page or one left waiting. A media layer that does not load
-//! leaves its page shown under a notice whose retry loads it, or loads the page again when its build
-//! is gone.
+//! The program (src/split.rs): the chat and the menus every page mounts over the web client's pages
+//! share one script and main module, each with a chunk of its own. The chat opened on one page and
+//! then on another fetches the program and its chunk once. The media layer is a chunk of its own,
+//! which the chat fetches only once its thread shows media: a mockup, here. A page of the web
+//! client's takes its pictures up with its own layer and opens them in the program's picture
+//! viewer, fetching no media chunk. A chat whose chunk is held keeps the page shown, its sheet
+//! loading over it; one whose chunk does not load says so with its retry, the page under its
+//! notice, or loads the page again when its build is gone. A media layer that does not load leaves
+//! its page shown under a notice whose retry loads it, or loads the page again when its build is
+//! gone. The web client's own kinds keep the same: preload.rs (a move into a kind keeps the page
+//! before shown while its entry is held) and main.rs (a page whose module does not load).
 
 use serde_json::json;
 
@@ -86,53 +87,82 @@ fn loads(site: &Site, path: &str) -> usize {
 /// The board, as the program's tests wait for it.
 const BOARD: &str = "[data-slug='tools/example']";
 
+/// The chat, drawn and up: its sheet open and its composer in it, the loading sheet gone.
+const CHAT_UP: &str = "window.reviewPanelReady === true && document.querySelector('#quick-root #quick-sheet')?.hidden === false && document.querySelector('#quick-root #quick-sheet #quick-text') !== null && document.getElementById('panel-loading') === null";
+
+/// Open the chat from the header's `+` and wait until it is up.
+#[track_caller]
+fn open_chat(chrome: &mut Chrome) {
+    chrome.eval("document.querySelector('#quick-open').click()");
+    assert!(
+        chrome.wait_for(CHAT_UP, SHOWN),
+        "the chat never comes up: {:?}",
+        chrome.eval("document.body.innerHTML.slice(-2000)")
+    );
+}
+
 #[test]
-fn a_move_between_the_program_s_pages_fetches_the_page_s_chunk_and_never_the_program_again() {
+fn the_chat_opened_on_one_page_and_then_on_another_fetches_the_program_and_its_chunk_once() {
     let site = site();
     let Some(mut chrome) = chrome() else { return };
-    // Each chunk is fetched by what shows it: no idle prefetch has the chat's in already.
+    // Each file is fetched by what shows it: no idle prefetch has the chat's in already.
     chrome.save_data();
-    let (agents, chat) = (module(dist(), "tasks"), module(dist(), "panel"));
+    let (chat, menus) = (module(dist(), "panel"), module(dist(), "overlay"));
     assert_eq!(
+        (&menus.script, &menus.wasm),
         (&chat.script, &chat.wasm),
-        (&agents.script, &agents.wasm),
-        "/agents and the chat are one program"
+        "the chat and the menus are one program"
     );
-    let files = [&agents.script, &agents.wasm, agents.chunk(), chat.chunk()];
+    let files = [&chat.script, &chat.wasm, chat.chunk(), menus.chunk()];
     chrome.open(&site.url("/tasks"));
     shows(&mut chrome, BOARD);
     assert_eq!(
-        asks(&site, &files[2..]),
-        [0, 0],
-        "the board is a module of its own"
+        asks(&site, &files),
+        [0, 0, 0, 0],
+        "the board is a module of its own, and nothing of the program comes before the chat"
     );
-    follow(&mut chrome, "/agents");
-    shows(&mut chrome, ".agents");
+    open_chat(&mut chrome);
     assert_eq!(
         asks(&site, &files),
         [1, 1, 1, 0],
-        "/agents: the program's script and main module, and its page's chunk"
+        "the chat: the program's script and main module, and its chunk"
     );
-    chrome.eval("document.querySelector('#quick-open').click()");
+    // Closed, as a reader closes it, from within.
+    assert!(chrome.wait_for(
+        "document.querySelector('#quick-sheet')?.contains(document.activeElement) === true",
+        SHOWN
+    ));
+    super::components::key(&mut chrome, "Escape", "Escape", 27);
     assert!(
-        chrome.wait_for("window.reviewPanelReady === true", SHOWN),
-        "the chat never loaded"
+        chrome.wait_for(
+            "document.querySelector('#quick-root #quick-sheet')?.hidden !== false",
+            SHOWN
+        ),
+        "Escape leaves the chat open"
     );
-    assert_eq!(
-        asks(&site, &files),
-        [1, 1, 1, 1],
-        "the chat: its chunk alone"
-    );
-    // Away to pages of other modules (Reports and a task's, the web client's) and back.
-    follow(&mut chrome, "/reports");
-    shows(&mut chrome, "[data-ready=reports]");
+    // On a task's page, the web client's, the chat opens again from what the board's had in.
     follow(&mut chrome, "/task/visual/in-progress");
     shows(&mut chrome, "article.task");
-    follow(&mut chrome, "/agents");
-    shows(&mut chrome, ".agents");
+    open_chat(&mut chrome);
     assert_eq!(
         asks(&site, &files),
-        [1, 1, 1, 1],
+        [1, 1, 1, 0],
+        "the chat on a task's page: nothing fetched again"
+    );
+    // Away to pages of other modules (Reports and the agents page) and back, the chat open.
+    follow(&mut chrome, "/reports");
+    shows(&mut chrome, "[data-ready=reports]");
+    follow(&mut chrome, "/agents");
+    shows(&mut chrome, ".agents");
+    follow(&mut chrome, "/task/visual/in-progress");
+    shows(&mut chrome, "article.task");
+    assert!(
+        drawn(&mut chrome, "#quick-root #quick-sheet"),
+        "the chat closed"
+    );
+    assert_eq!(
+        asks(&site, &files),
+        [1, 1, 1, 0],
         "back to the pages it has: nothing fetched again"
     );
 }
@@ -338,40 +368,51 @@ fn a_media_layer_whose_build_is_gone_loads_the_page_again() {
 }
 
 #[test]
-fn a_move_into_a_program_page_keeps_the_page_before_shown_until_its_chunk_is_in() {
+fn a_chat_whose_chunk_is_held_keeps_the_page_shown_and_its_sheet_loading_until_it_is_in() {
     let site = site();
     let Some(mut chrome) = chrome() else { return };
+    // The first open fetches the chat; no idle prefetch has it in the cache already.
+    chrome.save_data();
     chrome.open(&site.url("/tasks"));
     shows(&mut chrome, BOARD);
     // Each kind the program's loader is asked for, in turn, as the program's script installs it.
     chrome.eval(
         "(() => { let loader; Object.defineProperty(globalThis, 'reviewChunk', { configurable: true, get: () => loader, set: load => { loader = kind => { (window.__asked ||= []).push(kind); return load(kind); }; } }); })()",
     );
-    let chunk = module(dist(), "tasks").chunk().clone();
+    let chunk = module(dist(), "panel").chunk().clone();
     site.hold_route(&chunk, true);
-    follow(&mut chrome, "/agents");
-    // Asked for /agents' chunk, which is held, the move waits on it alone: the board stays shown,
-    // its header with it, until the chunk is in.
+    chrome.eval("document.querySelector('#quick-open').click()");
+    // Asked for the chat's chunk, which is held, the chat waits on it alone: the board stays shown
+    // and usable, its header with it, and the chat's sheet says it loads.
     assert!(
-        chrome.wait_for("window.__asked?.includes('tasks') === true", SHOWN),
-        "/agents' chunk is never asked for: {:?}",
+        chrome.wait_for("window.__asked?.includes('panel') === true", SHOWN),
+        "the chat's chunk is never asked for: {:?}",
         chrome.eval("window.__asked")
     );
     assert_eq!(
         chrome.eval("document.documentElement.dataset.navigation"),
-        json!("loading")
+        json!("ready"),
+        "the page waits on the chat"
+    );
+    assert!(drawn(&mut chrome, BOARD), "the board is hidden");
+    assert!(drawn(&mut chrome, ".app-header"), "the header is gone");
+    assert!(
+        drawn(&mut chrome, "#panel-loading #quick-sheet"),
+        "the chat's sheet does not say it loads"
+    );
+    assert_eq!(
+        chrome.eval("window.reviewPanelReady === true"),
+        json!(false)
+    );
+    site.hold_route(&chunk, false);
+    assert!(
+        chrome.wait_for(CHAT_UP, SHOWN),
+        "the chat never comes up once its chunk is in: {:?}",
+        chrome.eval("document.body.innerHTML.slice(-2000)")
     );
     assert!(
         drawn(&mut chrome, BOARD),
-        "the board is hidden before /agents can draw"
-    );
-    assert!(drawn(&mut chrome, ".app-header"), "the header is gone");
-    assert!(!drawn(&mut chrome, ".agents"));
-    site.hold_route(&chunk, false);
-    shows(&mut chrome, ".agents");
-    assert!(
-        !drawn(&mut chrome, BOARD),
-        "the board is hidden once /agents draws"
+        "the board is hidden once the chat is up"
     );
 }
 
@@ -384,65 +425,24 @@ fn shell(chrome: &mut Chrome) -> String {
         .to_owned()
 }
 
-#[test]
-fn a_page_whose_chunk_does_not_load_ends_in_the_gone_state_never_left_waiting() {
-    let site = site();
-    let Some(mut chrome) = chrome() else { return };
-    chrome.open(&site.url("/reports"));
-    shows(&mut chrome, "[data-ready=reports]");
-    chrome.eval("window.__kept = true");
-    let shell = shell(&mut chrome);
-    // Its build still served, a chunk that does not load is said, and the page stays.
-    site.retire(module(dist(), "tasks").chunk());
-    follow(&mut chrome, "/agents");
-    assert!(
-        chrome.wait_for(
-            "document.documentElement.dataset.navigation === 'failed'",
-            SHOWN
-        ),
-        "the move is left waiting: {:?}",
-        chrome.eval("document.documentElement.dataset.navigation")
-    );
-    assert_eq!(
-        chrome.eval("document.querySelector('#module-error[role=alert]')?.textContent"),
-        json!("This page could not be loaded. Retry")
-    );
-    assert_eq!(chrome.eval("window.__kept === true"), json!(true));
-    assert_eq!(loads(&site, "/agents"), 0, "{:?}", site.requests());
-    // What it leaves on screen: the reports and their header, under the notice.
-    assert!(
-        drawn(&mut chrome, "[data-ready=reports]"),
-        "the reports are hidden under the notice"
-    );
-    assert!(drawn(&mut chrome, ".app-header"), "the header is gone");
-    assert!(!drawn(&mut chrome, ".agents"));
-    // Its build gone from the server, the page loads again, onto the build served now.
-    site.retire(&shell);
-    chrome.eval("document.querySelector('#module-error button').click()");
-    if let Err(stall) =
-        test_time::until_true("a page whose chunk is gone loaded again", STALL, || {
-            loads(&site, "/agents") >= 1
-        })
-    {
-        panic!("{stall}: {:?}", site.requests());
-    }
-}
+/// The chat's notice when it does not load.
+const CHAT_FAILED: &str = "document.querySelector('#panel-error[role=alert]') !== null && document.getElementById('panel-loading') === null";
 
 #[test]
-fn a_chat_whose_chunk_does_not_load_says_so_with_its_retry() {
+fn a_chat_whose_chunk_does_not_load_says_so_with_its_retry_and_leaves_the_page_shown() {
     let site = site();
     let Some(mut chrome) = chrome() else { return };
     // The first open fetches the chat; no idle prefetch has it in the cache already.
     chrome.save_data();
     chrome.open(&site.url("/"));
     super::wait_for_board(&mut chrome);
-    site.retire(module(dist(), "panel").chunk());
+    chrome.eval("window.__kept = true");
+    let chunk = module(dist(), "panel").chunk().clone();
+    // Its build still served, the chat's chunk does not load: the page stays, and says so.
+    site.retire(&chunk);
     chrome.eval("document.querySelector('#quick-open').click()");
     assert!(
-        chrome.wait_for(
-            "document.querySelector('#panel-error[role=alert]') !== null && document.getElementById('panel-loading') === null",
-            SHOWN
-        ),
+        chrome.wait_for(CHAT_FAILED, SHOWN),
         "the chat is left loading: {:?}",
         chrome.eval("document.body.innerHTML.slice(-2000)")
     );
@@ -454,4 +454,43 @@ fn a_chat_whose_chunk_does_not_load_says_so_with_its_retry() {
         chrome.eval("window.reviewPanelReady === true"),
         json!(false)
     );
+    // What it leaves on screen: the page and its header, under the notice.
+    assert_eq!(chrome.eval("window.__kept === true"), json!(true));
+    assert!(drawn(&mut chrome, ".hero-title"), "the page is hidden");
+    assert!(drawn(&mut chrome, ".app-header"), "the header is gone");
+    // A later load works: the retry asks for the chunk again, and the chat comes up.
+    site.restore(&chunk);
+    chrome.eval("document.querySelector('#panel-error button').click()");
+    assert!(
+        chrome.wait_for(
+            "window.reviewPanelReady === true && document.getElementById('panel-error') === null",
+            SHOWN
+        ),
+        "the retry never loads the chat: {:?}",
+        site.requests()
+    );
+    assert_eq!(asks(&site, &[&chunk]), [2], "{:?}", site.requests());
+    assert_eq!(chrome.eval("window.__kept === true"), json!(true));
+}
+
+#[test]
+fn a_chat_whose_build_is_gone_loads_the_page_again() {
+    let site = site();
+    let Some(mut chrome) = chrome() else { return };
+    chrome.save_data();
+    chrome.open(&site.url("/"));
+    super::wait_for_board(&mut chrome);
+    assert_eq!(loads(&site, "/"), 1, "{:?}", site.requests());
+    // Its build gone from the server, the chat's chunk with it: the chat opened, the page loads
+    // again, onto the build served now, and says nothing of a chat that could not load.
+    site.retire(module(dist(), "panel").chunk());
+    site.retire(&shell(&mut chrome));
+    chrome.eval("document.querySelector('#quick-open').click()");
+    if let Err(stall) =
+        test_time::until_true("a page whose chat is gone loaded again", STALL, || {
+            loads(&site, "/") >= 2
+        })
+    {
+        panic!("{stall}: {:?}", site.requests());
+    }
 }

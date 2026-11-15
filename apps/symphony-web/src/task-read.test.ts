@@ -6,7 +6,6 @@ import {
   readHistory,
   readMessage,
   readOffer,
-  readScreen,
   readSessionGo,
   readTaskPage,
 } from "./task-read";
@@ -214,14 +213,5 @@ describe("the landing a task offers", () => {
   it("is none without its words or with a payload that is no text", () => {
     expect(readOffer({ action: "land", label: "Land it" })).toBeNull();
     expect(readOffer({ action: "land", label: "x", branch: "b", payload: {} })).toBeNull();
-  });
-});
-
-describe("a session's screen", () => {
-  it("is whose pane, its text and when it was read", () => {
-    const screen = { handle: "amber", pane: "t7", text: "$ ls", read_at: 1 };
-    expect(readScreen(screen)).toEqual(screen);
-    expect(readScreen({ ...screen, read_at: "now" })).toBeNull();
-    expect(readScreen({ ...screen, text: null })).toBeNull();
   });
 });

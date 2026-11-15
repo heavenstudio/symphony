@@ -492,6 +492,22 @@ describe("a task's page opened", () => {
     expect(store.forget).toHaveBeenCalled();
   });
 
+  it("reads nothing more of the device's copy, nor forgets it, once the page stopped while it was read", async () => {
+    const { task, d, store, page } = live(undefined, {
+      "task:w/a page": PAGE_KEPT,
+      // A thread this client cannot read, which a read would forget.
+      "task:w/a thread": { ...THREAD_KEPT, value: { entries: "none" } },
+    });
+    store.read.mockImplementationOnce(async () => {
+      page.abort();
+      return PAGE_KEPT;
+    });
+    await task.opened();
+    expect(store.read.mock.calls.map((call) => call[3])).toEqual([PAGE]);
+    expect(store.forget).not.toHaveBeenCalled();
+    expect(d.page).toBeNull();
+  });
+
   it("then checks the page and the thread at once, a 304 confirming each", async () => {
     const { task, d, asked } = live(() => answer(304), {
       "task:w/a page": PAGE_KEPT,

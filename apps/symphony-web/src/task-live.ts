@@ -31,7 +31,7 @@ import type { FrameRefresh } from "./frame";
 import { type BoardRun, keepBoard, type PageBoard } from "./live";
 import { scoped } from "./project";
 import { Failure, getIf, getJson, said } from "./request";
-import { field, list } from "./shared";
+import { field, holdPlace, list } from "./shared";
 import { Backoff } from "./state";
 import { holderHealth, merge, readItemChange, readListing, readTaskChange } from "./task";
 import { heardEntry, readHistory, readOffer, readTaskPage } from "./task-read";
@@ -288,11 +288,6 @@ export function readChanges(value: unknown): Change[] | null {
   return read;
 }
 
-/** A live update about to be drawn keeps what the reader looks at in place (shell.js). */
-function holdPlace(rows: string): void {
-  (window as { reviewHoldPlace?: (rows: string) => void }).reviewHoldPlace?.(rows);
-}
-
 /** What the live task changes on the page that draws it. */
 export interface TaskHost {
   /** The data changed: draw it again. */
@@ -476,7 +471,8 @@ export class LiveTask {
     const item = this.item(selected);
     visitLater(item);
     const page = await readKept(item, PAGE, readTaskPage);
-    if (page === null) return;
+    // Stopped or moved on while the store answered: nothing more is read of it, nor forgotten.
+    if (page === null || !this.current(selected)) return;
     const thread = await readKept(item, THREAD, readHistory);
     if (!this.current(selected) || this.drawn() || page.value.task.slug !== selected) return;
     const { d } = this;

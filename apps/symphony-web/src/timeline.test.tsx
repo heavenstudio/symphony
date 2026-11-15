@@ -2,6 +2,7 @@ import { isValidElement, type KeyboardEvent, type ReactElement, type ReactNode }
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import FIXTURE from "../../../crates/symphony-api/fixtures/task-timeline.json";
+import { Failure, NO_ANSWER as SLOW } from "./request";
 import {
   afterRead,
   drawnClass,
@@ -13,6 +14,7 @@ import {
   NOT_A_TIMELINE,
   NOTHING_HELD,
   putStyle,
+  readFailed,
   readOnce,
   type Stops,
   settle,
@@ -417,7 +419,7 @@ describe("the timeline's host", () => {
 });
 
 describe("the timeline's reads", () => {
-  it("asks for the task's timeline under the page's project and the checkout its route names", () => {
+  it("asks for the task's timeline under the checkout its route names", () => {
     aPage();
     expect(timelineUrl("tools/x y")).toBe("/api/task-timeline?slug=tools%2Fx%20y");
     vi.stubGlobal("location", { pathname: "/@feature-x/task/tools/x" });
@@ -430,6 +432,8 @@ describe("the timeline's reads", () => {
     const signal = new AbortController().signal;
     const first = readOnce("tools/x", null, signal);
     expect(asked[0]?.init.headers).toBeUndefined();
+    // Past the browser's own cache, as every read the page checks.
+    expect(asked[0]?.init.cache).toBe("no-store");
     asked[0]?.answer(reply(200, FIXTURE, '"v1"'));
     expect(await first).toEqual({ fresh: pictures(), tag: '"v1"' });
     const again = readOnce("tools/x", '"v1"', signal);
@@ -464,6 +468,15 @@ describe("the timeline's reads", () => {
     const thrown = readOnce("tools/x", null, signal);
     asked.at(-1)?.refuse("offline");
     expect(await thrown).toEqual({ error: "offline" });
+  });
+
+  it("says a failure in the server's or the browser's own words, a slow one in its own", () => {
+    expect(
+      readFailed(Failure.refused(503, "Not ready (the server answered 503)", "Not ready.")),
+    ).toBe("Not ready.");
+    expect(readFailed(new Failure("uncertain", SLOW))).toBe(NO_ANSWER);
+    expect(readFailed(new TypeError("Failed to fetch"))).toBe("Failed to fetch");
+    expect(readFailed("offline")).toBe("offline");
   });
 
   it("gives up a read with no answer in fifteen seconds, and one its page left", async () => {

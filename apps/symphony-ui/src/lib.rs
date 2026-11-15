@@ -1,12 +1,12 @@
-//! The Symphony's Dioxus client: the pages the web client (apps/symphony-web) does not draw yet,
-//! drawn from the server's JSON API (crates/symphony-api) and kept current by its feed of deltas.
+//! The Symphony's Dioxus client: the chat, its activity and Appearance panels, and the menus (a
+//! select's popup and the picture viewer) that every page mounts over the web client's
+//! (apps/symphony-web), which draws every page. They read the server's JSON API
+//! (crates/symphony-api) themselves.
 //!
-//! - [`state`]: following the feed, pure: the waits after a lost feed, another build loaded.
-//! - [`words`]: the board's words and times.
-//! - [`cache`]: what a page drew, kept on the device by the shell's store (`assets/cache.js`).
+//! - [`state`]: what the panel makes of what the page heard, pure: its toasts, the asks' news.
 //! - [`platform`]: the one trait every platform hook goes behind (a link opened outside,
 //!   storage), so the browser and the desktop window run the same app.
-//! - `live` (wasm only): the fetch and the feed.
+//! - `live` (wasm only): the program's waits and marks.
 
 #![cfg_attr(not(feature = "page-program"), forbid(unsafe_code))]
 // The program's split points (`split`) are the one place that calls across a chunk's boundary.
@@ -22,32 +22,26 @@ mod split;
 pub mod attach;
 #[cfg(any(not(target_arch = "wasm32"), feature = "page-panel"))]
 pub mod block_view;
-pub mod cache;
 pub mod components;
 pub mod doc_components;
+/// The browser's event attributes and visibility latch: no control of the native build takes one.
+#[cfg(any(target_arch = "wasm32", test))]
 pub(crate) mod entry_events;
-/// The machines' build and test work, as the agents page draws it.
-#[cfg(any(not(target_arch = "wasm32"), feature = "page-tasks"))]
-pub(crate) mod machine_work;
 pub mod media;
 pub mod platform;
 pub mod project;
 pub mod state;
 #[cfg(any(target_arch = "wasm32", test))]
 mod task_save;
-pub mod tasks;
 pub mod theme;
 pub mod trouble;
 pub mod viewer;
 pub mod viewport;
-pub mod words;
 
 #[cfg(target_arch = "wasm32")]
 pub mod navigation;
 #[cfg(target_arch = "wasm32")]
 pub mod request;
-#[cfg(target_arch = "wasm32")]
-pub mod task_live;
 
 #[cfg(target_arch = "wasm32")]
 pub mod live;

@@ -29,9 +29,10 @@ const KINDS: [&str; 1] = ["program"];
 /// The web client's kinds (apps/symphony-web), which bundle.sh builds with Vite, the real one: a
 /// kind is its script, with no wasm, and its styles, the shared stylesheet and then those named
 /// here, in order: the CSS of the chunks its entry imports (the media layer's, which brings the
-/// media sheet, for the three kinds that show media), then its entry's own. The task board has
-/// none: its styles (assets/board.css) are the program's, in the shared file.
-const WEB: [(&str, &[&str]); 6] = [
+/// media sheet, for the three kinds that show media), then its entry's own. The task board and the
+/// agents page have none: their styles (assets/board.css) are the program's, in the shared file.
+const WEB: [(&str, &[&str]); 7] = [
+    ("agents", &[]),
     ("board", &[]),
     ("docs", &["media-layer", "docs"]),
     ("queue", &["queue"]),
@@ -39,9 +40,9 @@ const WEB: [(&str, &[&str]); 6] = [
     ("review", &["media-layer"]),
     ("task", &["media-layer", "task"]),
 ];
-/// The program's chunks (src/split.rs), in the order of its split points' names: a kind's each, and
-/// the media layer's ([`MEDIA`]).
-const PROGRAM: [&str; 4] = ["media", "overlay", "panel", "tasks"];
+/// The program's chunks (src/split.rs), in the order of its split points' names: the chat's and the
+/// menus' (each a kind), and the media layer's ([`MEDIA`]).
+const PROGRAM: [&str; 3] = ["media", "overlay", "panel"];
 /// The program's chunk that is no kind, which the shell's manifest never names.
 const MEDIA: &str = "media";
 
@@ -226,7 +227,7 @@ if [ "$kind" = program ]; then
     printf '\0asm\1\0\0\0\5\3\1\0\1\13\11\1\0\101\200\10\13\2%s' "${PROGRAM_DATA:-ok}" > "$assets/symphony-ui_bg-dxh0.wasm"
     {
         printf 'export default function init(){return Promise.resolve()} init({module_or_path:"/assets/symphony-ui_bg-dxh0.wasm"}).then(()=>{});\n'
-        for chunk in chunk_0_split module_0_media module_1_overlay module_2_panel module_3_tasks; do
+        for chunk in chunk_0_split module_0_media module_1_overlay module_2_panel; do
             printf '\0asm\1\0\0\0' > "$assets/$chunk-dxh1.wasm"
             printf 'makeLoad("/./assets/%s-dxh1.wasm");\n' "$chunk"
         done
@@ -359,7 +360,7 @@ fn cargo_symphony_ui_dist_bundles_into_out_as_named_from_where_it_runs() {
         "the rest of the shell is the client cache's store (assets/cache.js), then \
          assets/shell.js, through the minifier: {body}"
     );
-    let shared = manifest["tasks"]["styles"][0].as_str().unwrap();
+    let shared = manifest["panel"]["styles"][0].as_str().unwrap();
     assert!(
         shared.starts_with("/assets/shared-") && shared.ends_with(".css"),
         "{shared}"
@@ -431,8 +432,8 @@ fn cargo_symphony_ui_dist_bundles_into_out_as_named_from_where_it_runs() {
     }
     // The program's kinds: its one script and main module, which split-repair named by their bytes,
     // and a chunk each, preloaded beside them.
-    let script = manifest["tasks"]["script"].as_str().unwrap();
-    let wasm = manifest["tasks"]["wasm"].as_str().unwrap();
+    let script = manifest["panel"]["script"].as_str().unwrap();
+    let wasm = manifest["panel"]["wasm"].as_str().unwrap();
     assert!(script.starts_with("/assets/program-"), "{script}");
     assert!(
         wasm.starts_with("/assets/symphony-ui_bg-") && !wasm.contains("dxh"),
@@ -449,8 +450,8 @@ fn cargo_symphony_ui_dist_bundles_into_out_as_named_from_where_it_runs() {
     );
     assert!(
         program.contains(
-            "globalThis.reviewModuleReady_tasks=globalThis.reviewModuleReady_panel=\
-             globalThis.reviewModuleReady_overlay=init({module_or_path:"
+            "globalThis.reviewModuleReady_panel=globalThis.reviewModuleReady_overlay=\
+             init({module_or_path:"
         ),
         "every program kind is ready when its one initializer is: {program}"
     );
@@ -482,13 +483,9 @@ fn cargo_symphony_ui_dist_bundles_into_out_as_named_from_where_it_runs() {
         assert_eq!(manifest[kind]["script"], script, "{kind}");
         assert_eq!(manifest[kind]["wasm"], wasm, "{kind}");
         // Every program kind takes the styles its page links in its head, then its own.
-        let own = match *kind {
-            "panel" | "overlay" => vec!["/assets/style-program.css"],
-            _ => vec![],
-        };
         assert_eq!(
             manifest[kind]["styles"],
-            serde_json::json!([vec![shared], own].concat()),
+            serde_json::json!([shared, "/assets/style-program.css"]),
             "{kind}"
         );
     }

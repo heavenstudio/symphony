@@ -2,10 +2,11 @@ import { defineConfig } from "vitest/config";
 
 // The web client's page kinds, each an entry the shell imports by the name the shell's manifest
 // gives it (apps/symphony-ui/package.sh): `src/kinds/NAME.tsx` exports the kind's `run` and `stop`.
-const KINDS = ["board", "docs", "queue", "reports", "review", "task"];
+const KINDS = ["agents", "board", "docs", "queue", "reports", "review", "task"];
 
 export default defineConfig({
-  // No dev server and no public folder: the server serves the files package.sh publishes.
+  // No public folder: the server serves the files package.sh publishes (the dev server's own
+  // settings, src/dev-server.ts, go over these).
   publicDir: false,
   // No `.env` file is read, so none can change the bytes (its NODE_ENV would make React's
   // development build). The build's own NODE_ENV is production, set by its script (package.json).

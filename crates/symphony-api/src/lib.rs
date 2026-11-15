@@ -50,6 +50,7 @@ mod project;
 pub mod report_page;
 pub mod reports;
 mod runs;
+pub mod runs_rollup;
 mod task_queries;
 mod task_stage;
 pub mod timeline;
@@ -62,6 +63,7 @@ pub use reports::{REPORT_SCHEMA, ReportDay, ReportHour, report_file};
 pub use runs::{
     End, FailedTest, PIPELINES, RUN_SCHEMA, RunLine, Suite, TRIGGERS, fold, run_day, run_name,
 };
+pub use runs_rollup::{RUNS_DAY_SCHEMA, RUNS_ROLLUP, RunsDay};
 pub use task_queries::{
     TaskKind, TaskStatus, slug_order, subtasks, tasks, tasks_in_progress, tasks_in_review,
     tasks_in_status,
@@ -599,6 +601,7 @@ pub struct TaskHistory {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct AgentPage {
     pub view: Agents,
     pub tasks: Vec<Task>,

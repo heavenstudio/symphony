@@ -41,14 +41,15 @@ never the whole target, which the release run runs.
   `-Oz` (`Dioxus.toml`). `KIND` defaults to `all`: independently compile the
   program, the one kind dx builds since every other moved to the React client, build the React
   client's kinds (`web`: one Vite build of `apps/symphony-web`, home, the queue, Reports, the
-  documents, the task board and a task's page, [its guide](../symphony-web/AGENTS.md)),
+  documents, the task board, the agents page and a task's page, [its
+  guide](../symphony-web/AGENTS.md)),
   then assemble their content-hashed assets with `package.sh`, which refuses a kind both
   clients build. Naming a kind (`program` among
   them) rebuilds it against the other kinds already in that output folder. The program
   (`page-program`, `src/split.rs`; [its card](../../docs/DECISIONS.md#client-shared-runtime)) is one
-  `dx bundle --wasm-split` of `/agents` (the kind `tasks`), the chat and the menus: one
+  `dx bundle --wasm-split` of the chat and the menus every page mounts, no page kind: one
   script and main module, and a chunk for each and one for the media
-  layer (no kind: a page of the program loads it once it shows media, Media below), which
+  layer (no kind: the chat loads it once it shows media, Media below), which
   `symphony-build split-repair` puts right after dx
   (crates/symphony/src/cli/commands/split_repair.rs)
   and `assets/chunks.js` loads (`window.reviewChunk`), rejecting a chunk that does not load so
@@ -95,7 +96,8 @@ never the whole target, which the release run runs.
   otherwise looks for there, and `SYMPHONY_UI_DIST` naming the checkout's
   `build/shipped-client/public` by its absolute path tests the client
   `just client-update` built, building none.
-- **The feed.** The client keeps `crates/symphony-api`'s feed contract. A stream
+- **The feed.** The web client's pages follow `crates/symphony-api`'s feed contract (its
+  `src/feed.ts` and `src/live.tsx`; this client follows no feed). A stream
   is lost when it errs, when it says nothing (not even the server's ping) for
   two and a half of the board's `ping_ms` (at most 5 s, so 12.5 s: the owner
   reads the board from a phone over the tailnet, where a stream goes silent
@@ -105,7 +107,7 @@ never the whole target, which the release run runs.
   start again only after a stream held 30 s), fetches the board again (it
   replaces the one shown whatever its version) and opens a new stream from it;
   the board is live again once that stream opens. It never resumes by
-  `Last-Event-ID`. A page that goes away closes its stream (`live/feed.rs`): on
+  `Last-Event-ID`. A page that goes away closes its stream: on
   `pagehide`, which every browser fires as a page is left, for good or into
   its back/forward cache, and on Chrome's `freeze` of a background tab. A kept
   page's open stream would hold one of the browser's six connections to the
@@ -117,17 +119,17 @@ never the whole target, which the release run runs.
   background. Six live tabs of one server still take every connection. A board
   or a `client` change naming another build than the
   page's own module script loads the page again, once per build
-  (`state::reload_for`, remembered in `sessionStorage`).
+  (`reloadFor` in the web client's `src/state.ts`, remembered in `sessionStorage`).
 - **Cache.** What a page drew is kept on the device so a return visit draws at once
   ([the client cache](../../docs/analysis/client-cache.md)). The store is `assets/cache.js`
   (`window.symphonyCache`), which `package.sh` puts first in the shell's one script: every page
   kind shares it and no kind's wasm carries IndexedDB bindings. It adds 1,433 bytes to each
-  kind's first visit and none to a return. `src/cache.rs` reaches it (the React client's
-  `src/cache.ts` and `src/cache-document.ts` the same store): an
+  kind's first visit and none to a return. The React client's `src/cache.ts` and
+  `src/cache-document.ts` reach it (this client keeps nothing there): an
   `Item` is what a visit opens (`board(scope)`, `task(scope, slug)`, `document(path,
   entrypoint)`) and goes whole; its parts are the reads its page drew, each kept with the
   server's tag (`ETag`) and the time it was kept (`Kept`, never later than the page's clock).
-  One IndexedDB database for the origin, keyed by project. `cache::visit` once per page open
+  One IndexedDB database for the origin, keyed by project. A visit (`visitLater`) once per page open
   counts a visit: one, halving every three days; a visited page's first keep counts that visit
   too, so its item ranks the same whichever of the two comes first. Each project keeps 30 tasks
   in 2 MB and 20 documents in 6 MB, 8 MB in all; the board's reads are outside them, and the
@@ -138,7 +140,7 @@ never the whole target, which the release run runs.
   opened task always enters), the least and least lately visited document, and over the
   origin's cap the item used longest ago. Every call names `symphony_api::CACHE_FORMAT`: a store
   of another format is cleared when it opens, a part kept under another is a miss, and a value
-  this client cannot read is forgotten (`cache::read`). Without IndexedDB, or in the development
+  the page cannot read is forgotten (`readKept`). Without IndexedDB, or in the development
   runtime, which has no shell, every read misses and nothing is kept. A database that does not
   open within 500 ms leaves the calls until it opens without the cache; the pages after it,
   which the shell changes without a reload, use it once it opens. A page that goes away
@@ -155,8 +157,9 @@ never the whole target, which the release run runs.
   `Item::board(scope)` before the server answers, then check it. `/api/board` (part `board`) is
   drawn and still read fresh, with no tag, since its `version` starts the feed; nothing else is
   read before it. Every other kept read then goes at once with `If-None-Match` naming the kept
-  copy's tag and `cache: "no-store"` (`request::get_if`): a `304` is the copy, a `200` replaces it
-  on the page and on the device. The queue keeps `/api/queue` (`queue`, `cache::board::QUEUE`). The task board keeps its
+  copy's tag and `cache: "no-store"` (`getIf`, the React client's `src/request.ts`): a `304` is the
+  copy, a `200` replaces it on the page and on the device. The queue keeps `/api/queue` (`queue`,
+  `QUEUE` in `src/cache.ts`). The task board keeps its
   default view only (no search, the last 24 hours, stages by the machine's activity): the counts
   (`counts`), each column's first page (`column:STATUS`) and the machine's work (`work`), never a
   search, another window or a Load more page; a column drawn from the device is checked at once,
@@ -164,12 +167,12 @@ never the whole target, which the release run runs.
   Build and Test work as before and leaves that work out of the body, whose heartbeats would
   otherwise change every listing's tag; the work is read apart (`/api/machine-work`) and followed
   by the feed. The header's reads are never kept. A check that fails is asked again, waiting
-  longer each time (`state::Backoff`), until it answers: the counts, each column drawn from the
+  longer each time (`Backoff`, the React client's `src/state.ts`), until it answers: the counts, each column drawn from the
   device and the work (`LiveBoard.check` in the React client's `src/boardlive.tsx`), the queue
   (its `src/queue.tsx`); the feed's `machine-work`
   event, which carries the whole work, answers for the work's read. Once every column drawn from
   the device has answered, a task it drew that no fresh answer (a column, a feed `task` event)
-  listed is dropped, whichever stage the work places it in by then. `cache::Freshness` says what
+  listed is dropped, whichever stage the work places it in by then. `Freshness` (`src/cache.ts`) says what
   a page drawn from the device shows: `main[data-feed=stale][data-cache=device]` and the notice
   "Shown from this device, saved 14:32. Checking for changes…" (the oldest copy drawn), "Not
   reachable: …" while a read fails and the feed is not open, cleared once every drawn read has
@@ -186,8 +189,8 @@ never the whole target, which the release run runs.
   the feed replays what changed after the board's version. The landing offer, the gates and the
   timeline, which it never keeps, it reads at once. A task the server no longer has (`404`) says so and
   is forgotten. Never kept: earlier thread pages, the landing offer (`/api/task-offer`, read on
-  every visit), the agents, the subtasks' further pages and the brief's later chunks. `/agents`
-  draws nothing from the device.
+  every visit), the subtasks' further pages and the brief's later chunks. `/agents`, the React
+  client's, draws nothing from the device.
   The documents are the React client's since they moved ([its guide](../symphony-web/AGENTS.md)),
   which keeps them in the same store under the same names, so a copy kept by either reads back
   on the other. A document keeps `documentItem(path, false)` (`src/cache-document.ts` there): its
@@ -208,8 +211,8 @@ never the whole target, which the release run runs.
   server's tag leaving out its intro's cursor) and its intro's outline and bodies in the one item,
   so it outlives the documents visited once. No other folder page is kept. A document the server no
   longer has says so and is forgotten. Never kept: versions, diffs, asks and the history.
-  `STALE` (the React client's `src/shared.ts`; this client's `cache::STALE` is read by no page
-  since a task's page moved), which `PageNotices` sets while that notice or the reconnecting one
+  `STALE` (the React client's `src/shared.ts`), which `PageNotices` (its `src/live.tsx`) sets
+  while that notice or the reconnecting one
   shows, holds the owner's actions (verdicts, messages, comments, questions, priority, cancel,
   landing, Later):
   disabled, saying "Checking…"; drafts stay editable. `tests/browser/cache_pages.rs`,
@@ -353,17 +356,22 @@ never the whole target, which the release run runs.
   bytes of the shell on the wire, for the same requests, a kind's chunks asked for with its entry
   rather than once it has come: `/` takes 111,667 (from 111,515), `/tasks` 116,371 (from
   116,202), `/queue` 107,113 (from 106,958), `/reports` 107,396 (from 107,244), `/docs/` and a
-  document 136,723 and 138,340 (from 136,566 and 138,183), the returns within a byte. A task's
-  page's move to the React client (`app/client-moves-to-react/task-page`, against main's build at
-  f56bde5) takes its first visit to 140,089 bytes (from 546,351) and gives it a cap of 160,000: its
-  entry (16,823 on the wire) and sheet (1,460), the chunk the web kinds share and the pieces it
-  shares with the board and the documents, where the program's WASM, glue and the task pages'
-  chunk were; its timeline, a chunk of the web client's, takes 12,787 after it (from 56,385), its
-  return 2,241 (from 2,240). `/agents`, the program's kind alone in its chunk now, takes 339,033
-  (from 545,758). Home takes 111,613 (from 111,653), `/queue` 107,056 (from 107,099) and
-  `/reports` 107,271 (from 107,382); `/tasks` takes 117,228 (from 116,357), `/docs/` and a
-  document 137,815 and 139,432 (from 136,709 and 138,868), the code they share with a task's page
-  in chunks of its own. Each
+  document 136,723 and 138,340 (from 136,566 and 138,183), the returns within a byte. The agents
+  page's move to the React client (`app/client-moves-to-react/agents-page`, against main's build
+  at f56bde5) takes `/agents` to 113,775 bytes (from 545,758): its entry (7,324 on the wire), the
+  chunk the six web kinds share (76,404), the board's feed and keep (3,530) and the chunk it
+  shares with the task board (4,734: the card, the task readers, the machine work's phases and the
+  read journal, `journal.ts`), where the program's script, main module and the task pages' chunk
+  were. `/tasks` takes 117,463 (from 116,357), its entry 9,066 (from 12,794) with that chunk
+  apart, which costs it the compression of one file and the names the two pass; a task page
+  takes 512,598 (from 546,351), the task pages' chunk without the agents' code; every other page
+  stays within 120 bytes of main's. A task's page's move to the React client
+  (`app/client-moves-to-react/task-page`, against main's build at f56bde5) takes its first visit
+  to 140,089 bytes (from 546,351) and gives it a cap of 160,000: its entry (16,823 on the wire)
+  and sheet (1,460), the chunk the web kinds share and the pieces it shares with the board and the
+  documents, where the program's WASM, glue and the task pages' chunk were; its timeline, a chunk
+  of the web client's, takes 12,787 after it (from 56,385), its return 2,241 (from 2,240). No page
+  is the program's after both: the chat and the menus are all it builds. Each
   module pays for its own compiled framework, the program once for all its kinds;
   later visits reuse cached imports. The home budget test
   is independent of the canonical-entry test, which gives every kind a fresh
@@ -418,16 +426,14 @@ never the whole target, which the release run runs.
   its timeline) are the React client's, the fifth and sixth page kinds it took over: this client
   builds none of them. `src/board.tsx` draws the board's
   columns and groups, `src/boardlive.tsx` owns its summary-only counts, columns and deltas, and
-  its card is `src/taskcard.tsx`, as the agents page's will be; a task's page is
-  `src/task-page.tsx` over `src/task-live.ts`, its gates `src/gates.tsx`, its timeline
-  `src/timeline.tsx` in its box `src/timeline-slot.tsx` ([its
+  its card is `src/taskcard.tsx`; the agents page (`/agents`) is the seventh, `src/agents.tsx`
+  over `src/agents-live.ts`, its cards the board's ([its guide](../symphony-web/AGENTS.md)); a
+  task's page is `src/task-page.tsx` over `src/task-live.ts`, its gates `src/gates.tsx`, its
+  timeline `src/timeline.tsx` in its box `src/timeline-slot.tsx` ([its
   guide](../symphony-web/AGENTS.md#a-tasks-page); the gates' and the timeline's contract,
-  [TASKS](../../docs/TASKS.md#gates) and [the timeline](../../docs/TASKS.md#the-timeline)).
-  `tasks.rs` draws the agents page's cards (`TaskRow`) and keeps the task state the program
-  shares. `task_detail.rs` and `task_live.rs` own the agents page (`/agents`, the program's kind
-  `tasks`), compiled only into the program. In the program alone (`/agents`, the chat and the
-  menus, which share its runtime), a read dropped before its answer aborts its fetch
-  (`request.rs`, `page-tasks`, which `page-program` turns on); a post never does. The board fetches counts
+  [TASKS](../../docs/TASKS.md#gates) and [the timeline](../../docs/TASKS.md#the-timeline)). In
+  the program (the chat and the menus, which share its runtime), a read dropped before its answer
+  aborts its fetch (`request.rs`, `page-program`); a post never does. The board fetches counts
   first, then nearby column pages; finished work defaults to 24 hours, with
   a week switch and older paging. A feed event that changes what a view lists (a task, a message
   while searching, the counts) reads the counts again 750 ms on, then the columns; the machine's
@@ -436,8 +442,7 @@ never the whole target, which the release run runs.
   version, `BoardData.view` in `src/boardlive.tsx`) or a newer read of the same part, never for an event
   that came while it was read: the events since are replayed onto it, and the refresh reads again
   (app/board-search-slow-to-fill: a loaded machine's work, every second, kept a search's columns
-  grey for 5 to 60 s; `tests/browser/board_search.rs` counts a search's reads). The agents page
-  reads its agents a page at a time (`task_live::more_agents`). Composer drafts are local to
+  grey for 5 to 60 s; `tests/browser/board_search.rs` counts a search's reads). Composer drafts are local to
   their keyed component and saved through `Platform`, never replaced by a
   snapshot. Dioxus compares keys only in a list and ignores a `key` anywhere
   else, so a read or a view that must start afresh is the one item of a
@@ -532,7 +537,8 @@ never the whole target, which the release run runs.
   with nothing drawn yet (a board not made, say) is said in place of the board's ghost, which
   would wait for ever, in the read's words with a retry (`UnreadBoard`); the page reads
   again by itself too. A live update that adds or
-  removes a row calls `viewport::hold_place(ROWS)` (the shell's `reviewHoldPlace`) before it
+  removes a row calls `holdPlace(ROWS)` (the React client's `src/shared.ts`, the shell's
+  `reviewHoldPlace`) before it
   sets its data: once the reader has scrolled the box around what they read or the page, the
   focused field, else the first of ROWS on the screen, stays where it was while the update
   and any placeholder within the sentinel's reach draw, until the reader's own scroll, click
@@ -684,7 +690,14 @@ never the whole target, which the release run runs.
   (`dioxus_ssr::render_element(rsx! { BlocksView { blocks } })`), pure state
   in plain Rust, and `tests/browser/` drives headless Chrome over its DevTools
   protocol against the release build, served as the server serves it.
-- **Development.** `just symphony-ui-dev [PORT]` starts an owned loopback API and
+- **Development.** The web client's pages are Vite's dev server's (`just symphony-ui-dev SERVER
+  [PORT]`, [its guide](../symphony-web/AGENTS.md#the-dev-server)), over a server of the
+  developer's own whose build serves the program's kinds. This client's dx front door
+  (`apps/symphony-server/src/development.rs`) stays for the consuming project, whose host's own
+  `symphony-ui-dev` calls `development::main` (`apps/symphony-server/tests/consumer_api.rs`) and
+  whose recipe runs `cargo symphony-ui dev` from a Symphony checkout: it leaves with this client,
+  under a consumer release plan. Here it runs as `PATH="$PWD/apps/symphony-ui/bin:$PATH"
+  tools/cargo.sh symphony-ui dev [PORT]` (`dev.sh`), which starts an owned loopback API and
   dx 0.7.10 with `serve --web --open false --interactive false`.
   PORT defaults to 0 (an available port); 8765 is refused. Use the printed front
   door URL, which forwards APIs, saves, media and SSE to that checkout's API and
@@ -698,25 +711,19 @@ never the whole target, which the release run runs.
   for releases.
   Only DX gets `CARGO_INCREMENTAL=1` (the workspace's normal dev profile disables
   it), opt-level 1, no debug info and panic=abort on its `wasm-dev` profile.
-  The `devtools` feature is opt-in and enables every page kind in the dev binary.
-  `src/dev.rs` mounts the client library directly. RSX and CSS update in place;
-  Rust logic edits incrementally rebuild the module. Its page reload, or a
-  reconnect, waits while a form, draft or open
-  details/dialog is engaged. The API's release hash does not reload this dev
-  page. Changes to dependencies, feature sets or static initializers need a
+  The `devtools` feature is opt-in and enables the chat's and the menus' kinds in the dev
+  binary. `src/dev.rs` mounts the client library directly. RSX and CSS update in place;
+  Rust logic edits incrementally rebuild the module. The API's release hash does not reload
+  this dev page. Changes to dependencies, feature sets or static initializers need a
   restart. The release shell, hashed page-kind builds and shared server never
   start this development runtime. Subsecond remains disabled: dx 0.7.10's
   hot-patch parser cannot read wasm-bindgen 0.2.129's exception tags. Updating
   the CLI to a version with [Dioxus #5843](https://github.com/DioxusLabs/dioxus/pull/5843)
   is an owner decision; no patched CLI is installed here.
   The development runtime draws the Dioxus kinds alone: the web client's pages (`/`, `/queue`,
-  `/reports`, `/docs/` and the documents, `/tasks` and a task's page) are no part of it, and at
-  their routes it draws its frame over "Page unavailable".
-  Such a page is tried on the built distribution, with no hot reload: once a whole
-  `just symphony-ui-dist` has built `build/symphony-ui`, `just symphony-ui-dist build/symphony-ui
-  web` builds the web kinds again alone, and a private server (`just symphony --port 0`) serves
-  them with `SYMPHONY_UI_DIST` naming `build/symphony-ui/public`, until the board's
-  `app/client-moves-to-react/dev-server` gives the web client Vite's dev server.
+  `/reports`, `/tasks`, `/agents`, `/docs/` and the documents, a task's page) are no part of it:
+  it draws the chat and the menus alone. The web client's dev server serves those pages with hot
+  reload ([its guide](../symphony-web/AGENTS.md), `just symphony-ui-dev`).
 - **Platforms.** Every platform hook goes through `platform::Platform`; the
   desktop slice adds its implementation and a `desktop` feature. The projects
   of the machine's one server share its origin, so every key the browser
@@ -774,7 +781,9 @@ never the whole target, which the release run runs.
   with `format=blocks`, no rendered HTML on that path.
   A document's questions and the `+` sheet's chat read again when the page's feed
   says so (the chat by `frame::use_asks_heard`): its `asks` region names a moved thread (by id
-  and document path) or a new chat recipient, or a stream opens again. The page
+  and document path) or a new chat recipient, or a stream opens, first or after a loss. A
+  document page that opens its stream again for other sections, from the cursor of the last
+  event it heard, missed nothing, and reads nothing again (`followDocument`). The page
   module forwards that region to every module as a `review:asks` event; a read
   that fails tries again every 3 s until one answers, and none polls. A document's
   question read the next one replaces aborts its fetch (`getJson`'s signal): a fetch whose

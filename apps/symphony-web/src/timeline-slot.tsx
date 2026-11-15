@@ -114,7 +114,8 @@ interface Shell {
 }
 
 let host: Host | null = null;
-let importing = false;
+/** The import on its way, until it has come, failed or been given up. */
+let attempt: Promise<void> | null = null;
 /** The boxes waiting for the chunk, each told once it has come. */
 const waiting = new Set<(host: Host) => void>();
 
@@ -123,37 +124,48 @@ export function loadedHost(): Host | null {
   return host;
 }
 
+/** No box waits any more: the page that asked has stopped, and the chunk is not fetched for it. */
+const LEFT = Symbol("no box waits");
+
 /**
  * Import the timeline's chunk, unless it has come or is on its way: once the page has settled
- * (`settle`, the shell's `reviewSettled` when it has one), at once for a retry. Each box waiting
- * is told when it comes. One that does not come is said with its retry while a box still waits
- * for it (the page loads again when its build is gone), and the next box asks again.
+ * (`settle`, the shell's `reviewSettled` when it has one), at once for a retry, and only while a
+ * box still waits for it then (a page that stopped meanwhile fetches nothing). Each box waiting is
+ * told when it comes. One that does not come is said with its retry while a box still waits for
+ * it, after the shell has said whether the page's build is gone (the page then loads again), and
+ * the next box asks again. The attempt, which ends once all that is done (the one on its way, when
+ * one is).
  */
-export function importTimeline(settle = true): void {
-  if (host !== null || importing) return;
-  importing = true;
+export function importTimeline(settle = true): Promise<void> {
+  if (host !== null) return Promise.resolve();
+  if (attempt !== null) return attempt;
   const settled = snapshot("reviewSettled");
   const ready = new Promise<void>((resolve) =>
     settle && typeof settled === "function" ? settled(resolve) : resolve(),
   );
-  ready
-    .then(() => import("./timeline"))
+  attempt = ready
     .then(
-      (chunk) => {
-        importing = false;
-        host = chunk.TimelineHost;
+      async (): Promise<Host | typeof LEFT> =>
+        waiting.size === 0 ? LEFT : (await import("./timeline")).TimelineHost,
+    )
+    .then(
+      (loaded) => {
+        attempt = null;
+        if (loaded === LEFT) return;
+        host = loaded;
         document.getElementById(FAILURE)?.remove();
-        for (const told of [...waiting]) told(chunk.TimelineHost);
+        for (const told of [...waiting]) told(loaded);
       },
       async (error: unknown) => {
-        importing = false;
+        attempt = null;
         if (waiting.size === 0) return;
         const shell = snapshot("reviewShell") as Shell | undefined;
-        if (await shell?.gone()) return;
+        if ((await shell?.gone()) || waiting.size === 0) return;
         console.error(SAID, error);
-        shell?.alarm(FAILURE, SAID, RETRY, () => importTimeline(false));
+        shell?.alarm(FAILURE, SAID, RETRY, () => void importTimeline(false));
       },
     );
+  return attempt;
 }
 
 /** Tell `told` when the chunk has come, at once if it has (a box drawn before it came that asks
@@ -164,7 +176,7 @@ export function whenImported(told: (host: Host) => void): () => void {
     return () => {};
   }
   waiting.add(told);
-  importTimeline();
+  void importTimeline();
   return () => {
     waiting.delete(told);
   };

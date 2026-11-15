@@ -1,370 +1,274 @@
-/* biome-ignore-all lint/correctness/useHookAtTopLevel: the hooks mocked here answer for a control
- * called outside a render, and call React's own only while React renders. */
-import { isValidElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { afterEach, describe, expect, it, type Mock, vi } from "vitest";
-import { focusSaid, GoToSession, sessionControl, viaParent } from "./session";
-import { RoleChips } from "./task-page";
-import { aRole, CASES, reply, server } from "./testing";
-import type { AgentScreen, SessionGo } from "./wire";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  focus,
+  type Going,
+  GoToSession,
+  press,
+  readScreen,
+  type SessionControl,
+  SessionView,
+  screen,
+  sessionControl,
+  viaParent,
+  whiteSpace,
+} from "./session";
+import { asking, CASES, reply, server } from "./testing";
+import type { AgentScreen } from "./wire";
 
-/** The states the next hooks give, in the order a draw asks for them, each with its setter. */
-const hooks = vi.hoisted(() => ({
-  states: [] as unknown[],
-  setters: [] as Mock[],
-  signal: null as AbortSignal | null,
-}));
+const SCREEN: AgentScreen = { handle: "amber", pane: "w1:p2", text: "$ just test-rs", read_at: 4 };
 
-vi.mock("react", async (original) => {
-  const actual = await original<typeof import("react")>();
-  return {
-    ...actual,
-    useState: (initial: unknown) => {
-      if (hooks.states.length === 0) return actual.useState(initial);
-      const set = vi.fn();
-      hooks.setters.push(set);
-      return [hooks.states.shift(), set];
-    },
-  };
-});
+/** A control as the cases write it: `{kind: target}`. */
+function written(control: SessionControl | null): Record<string, string> | null {
+  if (control === null) return null;
+  return control.kind === "link" ? { link: control.url } : { [control.kind]: control.pane };
+}
 
-vi.mock("./mount", async (original) => {
-  const actual = await original<typeof import("./mount")>();
-  return { ...actual, useMount: () => hooks.signal ?? actual.useMount() };
-});
-
-afterEach(() => {
-  vi.unstubAllGlobals();
-  hooks.states = [];
-  hooks.setters = [];
-  hooks.signal = null;
-});
-
-const go = (handle: string, url: string | null, pane: string | null): SessionGo => ({
-  handle,
-  url,
-  pane,
-});
-
-/** `cobalt-otter`'s control going by `to`, on a page asked here when `local`. */
-const control = (to: SessionGo | null, local: boolean) =>
-  renderToStaticMarkup(<GoToSession handle="cobalt-otter" go={to} local={local} />);
-
-describe("a session's control", () => {
-  it("links a web address, from this machine and any other", () => {
-    for (const local of [true, false]) {
-      const html = control(go("cobalt-otter", "https://claude.ai/code/session_01abc", null), local);
-      expect(html).toContain(
-        '<a class="go-session-link" href="https://claude.ai/code/session_01abc" target="_blank" rel="noopener noreferrer">Go to session</a>',
-      );
-      expect(html).not.toContain("<button");
+describe("a space as Rust trims one", () => {
+  it("is one `char::is_whitespace` names, and no other", () => {
+    const spaces = [0x09, 0x0d, 0x20, 0x85, 0xa0, 0x1680, 0x2000, 0x200a, 0x2028, 0x2029];
+    for (const code of [...spaces, 0x202f, 0x205f, 0x3000]) {
+      expect([code, whiteSpace(code)]).toEqual([code, true]);
     }
-  });
-
-  it("focuses a pane on this machine and shows its screen on another", () => {
-    const paned = go("cobalt-otter", null, "t7");
-    const here = control(paned, true);
-    expect(here).toContain('data-go="focus"');
-    expect(here).toContain('title="Shows t7 in the Herdr app on this machine"');
-    expect(here).toMatch(/>Go to session<\/button>/);
-    const phone = control(paned, false);
-    expect(phone).toContain('data-go="screen"');
-    expect(phone).toContain("screen, read only");
-    expect(phone).not.toContain("Herdr app");
-  });
-
-  it("with both, focuses the pane here and follows the address from elsewhere", () => {
-    const both = go("cobalt-otter", "https://h/x", "t7");
-    expect(control(both, true)).toContain('data-go="focus"');
-    expect(control(both, false)).toContain('href="https://h/x"');
-  });
-
-  it("is none with nothing known", () => {
-    for (const local of [true, false]) {
-      expect(control(go("cobalt-otter", null, null), local)).toBe("");
-      expect(control(null, local)).toBe("");
-    }
-    expect(renderToStaticMarkup(<GoToSession handle="x" go={undefined} local />)).toBe("");
-  });
-
-  it("never links an address that is no web address", () => {
-    for (const bad of [
-      "javascript:alert(1)",
-      "JAVASCRIPT:alert(document.cookie)",
-      "data:text/html,x",
-      "/api/agent-focus",
-      " https://h/x",
-    ]) {
-      for (const local of [true, false]) {
-        expect(control(go("cobalt-otter", bad, null), local), bad).toBe("");
-      }
-      // With a pane beside it, the pane is the way in, here and from a phone.
-      const here = control(go("cobalt-otter", bad, "t7"), true);
-      expect(here).toContain('data-go="focus"');
-      const phone = control(go("cobalt-otter", bad, "t7"), false);
-      expect(phone).toContain('data-go="screen"');
-      for (const html of [here, phone]) {
-        expect(html, bad).not.toContain("<a");
-        expect(html, bad).not.toContain("href");
-      }
-    }
-  });
-
-  it("of a subagent goes to its parent's session and says so", () => {
-    const html = control(go("orch-handle", null, "t1"), true);
-    expect(html).toContain('data-go="focus"');
-    expect(html).toContain('<span class="go-session-via">in orch-handle&#x27;s session</span>');
-    expect(control(go("cobalt-otter", null, "t1"), true)).not.toContain("go-session-via");
-  });
-
-  it("is the one the Rust gives for each way in", () => {
-    const named = (said: ReturnType<typeof sessionControl>) =>
-      said === null ? null : [said.kind, said.kind === "link" ? said.url : said.pane];
-    for (const [to, local, expected] of CASES.sessions.control) {
-      expect(named(sessionControl(to, local)), JSON.stringify([to, local])).toEqual(expected);
-    }
-    for (const [to, handle, expected] of CASES.sessions.via) {
-      expect(viaParent(to, handle), JSON.stringify([to, handle])).toBe(expected);
+    for (const code of [0x00, 0x08, 0x0e, 0x1c, 0x1f, 0x7f, 0x84, 0x9f, 0x180e, 0x200b, 0xfeff]) {
+      expect([code, whiteSpace(code)]).toEqual([code, false]);
     }
   });
 });
 
-describe("what a focus answered", () => {
-  it("is the server's words, else that it said none", () => {
-    expect(focusSaid({ said: "Shown in t7" })).toBe("Shown in t7");
-    expect(focusSaid({ said: 3 })).toBe("The server's answer has no words");
-    expect(focusSaid(null)).toBe("The server's answer has no words");
+describe("the Go to session control", () => {
+  it("is the one the Rust gives each way in, here and on another machine", () => {
+    expect(CASES.sessionControl.length).toBeGreaterThan(10);
+    for (const [go, local, control, parent] of CASES.sessionControl) {
+      expect([go, local, written(sessionControl(go, local))]).toEqual([go, local, control]);
+      expect(viaParent(go, "amber")).toBe(parent);
+    }
   });
 });
 
-describe("a task's role chips", () => {
-  const sessions = {
-    amber: go("amber", null, "t7"),
-    sub: go("orch", "https://claude.ai/code/s1", null),
-  };
-  const roles = [
-    aRole("executor", "amber"),
-    aRole("reviewer", "sub"),
-    aRole("orchestrator", "bare"),
-  ];
-
-  /** The chip of `name` in `html`, to the next chip. */
-  const chip = (html: string, name: string) => {
-    const at = html.indexOf(`>${name}`);
-    expect(at, `${name}: ${html}`).toBeGreaterThanOrEqual(0);
-    const end = html.indexOf('</span><span class="chip', at);
-    return html.slice(at, end < 0 ? html.length : end);
-  };
-
-  it("each carry their holder's control", () => {
-    const html = renderToStaticMarkup(<RoleChips roles={roles} sessions={sessions} local />);
-    expect(chip(html, "executor amber")).toContain('data-go="focus"');
-    const sub = chip(html, "reviewer sub");
-    expect(sub).toContain('href="https://claude.ai/code/s1"');
-    expect(sub).toContain("go-session-via");
-    expect(chip(html, "orchestrator bare")).not.toContain("Go to session");
-    expect(html).toContain('<span class="chip health-live" title="executor is live">');
-  });
-
-  it("show a pane's screen from another machine", () => {
-    const phone = renderToStaticMarkup(
-      <RoleChips roles={roles} sessions={sessions} local={false} />,
-    );
-    expect(phone).toContain('data-go="screen"');
-    expect(phone).not.toContain('data-go="focus"');
+describe("a screen read", () => {
+  it("is read whole, or not at all", () => {
+    expect(readScreen(CASES.samples.agentScreen)).toEqual(SCREEN);
+    expect(readScreen({ ...SCREEN, read_at: "4" })).toBeNull();
+    expect(readScreen({ handle: "amber", pane: "w1:p2", read_at: 4 })).toBeNull();
+    expect(readScreen({ ...SCREEN, pane: null })).toBeNull();
+    expect(readScreen({ ...SCREEN, handle: 1 })).toBeNull();
+    expect(readScreen(null)).toBeNull();
   });
 });
 
-describe("a session's control clicked", () => {
-  const paned = go("cobalt-otter", null, "t7");
-  const screen: AgentScreen = {
-    handle: "cobalt-otter",
-    pane: "t7",
-    text: "$ cargo test",
-    read_at: 1,
-  };
+describe("a focus", () => {
+  afterEach(() => vi.unstubAllGlobals());
 
-  /** The buttons `node` draws, each by its words. */
-  const buttons = (node: ReactNode): Map<string, () => void> => {
-    const found = new Map<string, () => void>();
-    const walk = (each: ReactNode): void => {
-      if (Array.isArray(each)) {
-        for (const one of each) walk(one);
-        return;
-      }
-      if (!isValidElement<{ onClick?: () => void; children?: ReactNode }>(each)) return;
-      const { onClick, children } = each.props;
-      if (typeof onClick === "function" && typeof children === "string") {
-        found.set(children, onClick);
-      }
-      walk(children);
-    };
-    walk(node);
-    return found;
-  };
-
-  /**
-   * `cobalt-otter`'s control going by `to`, drawn with its words, busy and screen as given, under
-   * `mount`: the setter of each, in that order, and its buttons.
-   */
-  const drawn = (
-    to: SessionGo,
-    local: boolean,
-    mount: AbortController,
-    state: { words?: string; busy?: boolean; screen?: AgentScreen | null } = {},
-  ) => {
-    hooks.signal = mount.signal;
-    hooks.setters = [];
-    hooks.states = [state.words ?? "", state.busy ?? false, state.screen ?? null];
-    const element = GoToSession({ handle: "cobalt-otter", go: to, local });
-    const [words, busy, shown] = hooks.setters as [Mock, Mock, Mock];
-    return { words, busy, shown, buttons: buttons(element) };
-  };
-
-  /** Until `response`'s body is read, then the turn after it: what awaited it has gone on. */
-  const read = async (response: Response) => {
-    await vi.waitFor(() => expect(response.bodyUsed).toBe(true));
-    await new Promise((done) => setTimeout(done, 0));
-  };
-
-  /** The server, its answers held, under a task's page. */
-  const page = () => {
-    vi.stubGlobal("location", { pathname: "/task/visual/in-progress" });
-    return server();
-  };
-
-  it("here posts the focus for its handle and says what the server answered", async () => {
-    const asked = page();
-    const control = drawn(paned, true, new AbortController());
-    control.buttons.get("Go to session")?.();
-    expect(control.busy.mock.calls).toEqual([[true]]);
-    expect(control.words.mock.calls).toEqual([[""]]);
-    expect(asked.map((one) => [one.url, one.body])).toEqual([
-      ["/api/agent-focus", { handle: "cobalt-otter" }],
-    ]);
-    const answer = reply(200, { said: "Shown in t7" });
-    asked[0]?.answer(answer);
-    await read(answer);
-    expect(control.words.mock.calls).toEqual([[""], ["Shown in t7"]]);
-    expect(control.busy.mock.calls).toEqual([[true], [false]]);
+  it("posts the handle under the checkout's scope and says what the server did", async () => {
+    const asked = server();
+    const done = focus("amber", "wt");
+    await asking(asked, 1);
+    expect(asked[0]?.url).toBe("/@wt/api/agent-focus");
+    expect(asked[0]?.body).toEqual({ handle: "amber" });
+    asked[0]?.answer(reply(200, CASES.samples.agentFocus));
+    expect(await done).toBe("Shown in the Herdr app");
   });
 
-  it("here says why a focus failed, and is ready again", async () => {
-    const asked = page();
-    const control = drawn(paned, true, new AbortController());
-    control.buttons.get("Go to session")?.();
-    const answer = reply(409, { error: "No Herdr app answers" });
-    asked[0]?.answer(answer);
-    await read(answer);
-    expect(control.words.mock.calls).toEqual([[""], ["No Herdr app answers"]]);
-    expect(control.busy.mock.calls).toEqual([[true], [false]]);
+  it("says what failed: the server's words, or an answer without what it said", async () => {
+    const asked = server();
+    const refused = focus("amber", "");
+    await asking(asked, 1);
+    expect(asked[0]?.url).toBe("/api/agent-focus");
+    asked[0]?.answer(reply(403, { error: "Only on the server's machine" }));
+    expect(await refused).toBe("Only on the server's machine");
+    const bare = focus("amber", "");
+    await asking(asked, 2);
+    asked[1]?.answer(reply(200, { said: 1 }));
+    expect(await bare).toBe("missing field `said`");
+  });
+});
+
+describe("a screen", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("reads the handle's pane, the handle encoded, under the checkout's scope", async () => {
+    const asked = server();
+    const done = screen("a b&c", "wt", new AbortController().signal);
+    await asking(asked, 1);
+    expect(asked[0]?.url).toBe("/@wt/api/agent-screen?handle=a%20b%26c");
+    asked[0]?.answer(reply(200, CASES.samples.agentScreen));
+    expect(await done).toEqual(SCREEN);
   });
 
-  it("does nothing more once its page is gone, whatever the focus answered", async () => {
-    const asked = page();
+  it("says why it is not shown: an unreadable answer, or the server's refusal", async () => {
+    const asked = server();
+    const unreadable = screen("amber", "", new AbortController().signal);
+    await asking(asked, 1);
+    asked[0]?.answer(reply(200, { pane: "w1:p2" }));
+    expect(await unreadable).toBe("The screen is not readable");
+    const refused = screen("amber", "", new AbortController().signal);
+    await asking(asked, 2);
+    asked[1]?.answer(reply(404, { error: "No such pane" }));
+    expect(await refused).toContain("No such pane");
+  });
+
+  it("is given up on the wire once its signal ends", async () => {
+    const asked = server();
     const mount = new AbortController();
-    const control = drawn(paned, true, mount);
-    control.buttons.get("Go to session")?.();
+    const done = screen("amber", "", mount.signal);
+    await asking(asked, 1);
+    expect(asked[0]?.signal?.aborted).toBe(false);
     mount.abort();
-    const answer = reply(200, { said: "Shown in t7" });
-    asked[0]?.answer(answer);
-    await read(answer);
-    expect(control.words.mock.calls).toEqual([[""]]);
-    expect(control.busy.mock.calls).toEqual([[true]]);
+    expect(asked[0]?.signal?.aborted).toBe(true);
+    asked[0]?.answer(reply(200, CASES.samples.agentScreen));
+    await done;
+  });
+});
+
+/** What a press showed, in order. */
+function going(): [Going, unknown[][]] {
+  const shown: unknown[][] = [];
+  return [
+    {
+      busy: (busy) => shown.push(["busy", busy]),
+      said: (text) => shown.push(["said", text]),
+      screen: (read) => shown.push(["screen", read]),
+    },
+    shown,
+  ];
+}
+
+describe("a press of Go to session", () => {
+  afterEach(() => vi.unstubAllGlobals());
+  const live = () => new AbortController().signal;
+
+  it("does nothing while one is on its way, nor for a link the browser follows", async () => {
+    const asked = server();
+    const [shows, shown] = going();
+    await press({ kind: "focus", pane: "p" }, "amber", "", true, live(), shows);
+    await press({ kind: "link", url: "https://h" }, "amber", "", false, live(), shows);
+    expect(asked).toHaveLength(0);
+    expect(shown).toEqual([]);
   });
 
-  it("asks nothing while busy", () => {
-    const asked = page();
-    for (const local of [true, false]) {
-      const control = drawn(paned, local, new AbortController(), { busy: true });
-      control.buttons.get("Go to session")?.();
-      expect([control.words.mock.calls, control.busy.mock.calls], `${local}`).toEqual([[], []]);
-    }
-    expect(asked).toEqual([]);
+  it("focuses the pane, busy until the server says what it did", async () => {
+    const asked = server();
+    const [shows, shown] = going();
+    const done = press({ kind: "focus", pane: "w1:p2" }, "amber", "", false, live(), shows);
+    await asking(asked, 1);
+    expect(shown).toEqual([
+      ["busy", true],
+      ["said", ""],
+    ]);
+    asked[0]?.answer(reply(200, CASES.samples.agentFocus));
+    await done;
+    expect(shown.slice(2)).toEqual([
+      ["said", "Shown in the Herdr app"],
+      ["busy", false],
+    ]);
   });
 
-  it("elsewhere reads the pane's screen and shows it, read only", async () => {
-    const asked = page();
-    const control = drawn(paned, false, new AbortController());
-    control.buttons.get("Go to session")?.();
-    expect(asked.map((one) => one.url)).toEqual(["/api/agent-screen?handle=cobalt-otter"]);
-    const answer = reply(200, screen);
-    asked[0]?.answer(answer);
-    await read(answer);
-    expect(control.shown.mock.calls).toEqual([[screen]]);
-    expect(control.words.mock.calls).toEqual([[""]]);
-    expect(control.busy.mock.calls).toEqual([[true], [false]]);
+  it("shows the screen read, or says what failed and keeps the one shown", async () => {
+    const asked = server();
+    const [shows, shown] = going();
+    const read = press({ kind: "screen", pane: "w1:p2" }, "amber", "", false, live(), shows);
+    await asking(asked, 1);
+    asked[0]?.answer(reply(200, CASES.samples.agentScreen));
+    await read;
+    expect(shown).toEqual([
+      ["busy", true],
+      ["said", ""],
+      ["screen", SCREEN],
+      ["busy", false],
+    ]);
+    shown.length = 0;
+    const failed = press({ kind: "screen", pane: "w1:p2" }, "amber", "", false, live(), shows);
+    await asking(asked, 2);
+    asked[1]?.answer(reply(500, { error: "hc is away" }));
+    await failed;
+    expect(shown).toEqual([
+      ["busy", true],
+      ["said", ""],
+      ["said", "hc is away (the server answered 500)"],
+      ["busy", false],
+    ]);
   });
 
-  it("names the handle a screen is asked for as a query's value", () => {
-    const asked = page();
-    hooks.signal = new AbortController().signal;
-    hooks.states = ["", false, null];
-    const element = GoToSession({ handle: "a&b c", go: go("a&b c", null, "t7"), local: false });
-    buttons(element).get("Go to session")?.();
-    expect(asked.map((one) => one.url)).toEqual(["/api/agent-screen?handle=a%26b%20c"]);
-  });
-
-  it("says a screen it cannot read, or why the read failed", async () => {
-    for (const [answer, words] of [
-      [reply(200, { ...screen, read_at: "now" }), "The session's screen is not readable"],
-      [reply(200, { handle: "cobalt-otter", pane: "t7" }), "The session's screen is not readable"],
-      [reply(404, { error: "No pane t7" }), "No pane t7 (the server answered 404)"],
-    ] as const) {
-      const asked = page();
-      const control = drawn(paned, false, new AbortController());
-      control.buttons.get("Go to session")?.();
-      asked[0]?.answer(answer);
-      await read(answer);
-      expect(control.words.mock.calls, words).toEqual([[""], [words]]);
-      expect(control.shown).not.toHaveBeenCalled();
-      expect(control.busy.mock.calls).toEqual([[true], [false]]);
-    }
-  });
-
-  it("shows nothing once its page is gone, read or failed", async () => {
-    for (const [status, body] of [
-      [200, screen],
-      [500, { error: "down" }],
-    ] as const) {
-      const asked = page();
+  it("shows nothing more once the page is gone while the server answered", async () => {
+    const asked = server();
+    for (const control of [
+      { kind: "focus", pane: "w1:p2" },
+      { kind: "screen", pane: "w1:p2" },
+    ] as SessionControl[]) {
+      const [shows, shown] = going();
       const mount = new AbortController();
-      const control = drawn(paned, false, mount);
-      control.buttons.get("Go to session")?.();
-      // The page goes while the read is out, and its answer still comes: nothing is shown or said.
+      const done = press(control, "amber", "", false, mount.signal, shows);
+      await asking(asked, control.kind === "focus" ? 1 : 2);
       mount.abort();
-      const answer = reply(status, body);
-      asked[0]?.answer(answer);
-      await read(answer);
-      expect([control.shown.mock.calls, control.words.mock.calls], `${status}`).toEqual([
-        [],
-        [[""]],
+      asked.at(-1)?.answer(reply(200, CASES.samples.agentScreen));
+      await done;
+      expect(shown).toEqual([
+        ["busy", true],
+        ["said", ""],
       ]);
-      expect(control.busy.mock.calls).toEqual([[true]]);
     }
   });
+});
 
-  it("with a screen shown reads it again or closes it", () => {
-    const asked = page();
-    const control = drawn(paned, false, new AbortController(), { screen });
-    expect([...control.buttons.keys()]).toEqual(["Read the screen again", "Close"]);
-    control.buttons.get("Close")?.();
-    expect(control.shown.mock.calls).toEqual([[null]]);
-    expect(asked).toEqual([]);
-    control.buttons.get("Read the screen again")?.();
-    expect(asked.map((one) => one.url)).toEqual(["/api/agent-screen?handle=cobalt-otter"]);
+describe("the control drawn", () => {
+  const view = (control: SessionControl, fields: Partial<Parameters<typeof SessionView>[0]> = {}) =>
+    renderToStaticMarkup(
+      <SessionView
+        control={control}
+        parent={null}
+        busy={false}
+        told=""
+        screen={null}
+        onPress={() => {}}
+        onClose={() => {}}
+        {...fields}
+      />,
+    );
+
+  it("links a web address in a tab of its own", () => {
+    expect(view({ kind: "link", url: "https://example.com/s" })).toBe(
+      '<span class="go-session" data-go="link"><a class="go-session-link" href="https://example.com/s" target="_blank" rel="noopener noreferrer">Go to session</a></span>',
+    );
   });
 
-  it("draws its words and the screen it was given", () => {
-    vi.stubGlobal("location", { pathname: "/task/visual/in-progress" });
-    hooks.signal = new AbortController().signal;
-    hooks.states = ["No pane t7", false, screen];
-    const html = renderToStaticMarkup(
-      GoToSession({ handle: "cobalt-otter", go: paned, local: false }),
+  it("is a button that says what it shows, held while it is on its way", () => {
+    const focused = view({ kind: "focus", pane: "w1:p2" }, { busy: true });
+    expect(focused).toContain('data-go="focus"');
+    expect(focused).toContain('title="Shows w1:p2 in the Herdr app on this machine"');
+    expect(focused).toMatch(/<button[^>]*disabled=""[^>]*>Go to session<\/button>/);
+    const screened = view({ kind: "screen", pane: "w1:p2" });
+    expect(screened).toContain(`title="Shows w1:p2&#x27;s screen, read only"`);
+    expect(screened).not.toContain("disabled");
+    expect(screened).toContain('data-size="xs"');
+  });
+
+  it("says whose session it goes to, and what the server said", () => {
+    const via = view({ kind: "link", url: "https://h" }, { parent: "birch", told: "Shown" });
+    expect(via).toContain('<span class="go-session-via">in birch&#x27;s session</span>');
+    expect(via).toContain('<span role="status">Shown</span>');
+    expect(view({ kind: "link", url: "https://h" })).not.toContain("role=");
+  });
+
+  it("shows the screen read, read only, to read again or close", () => {
+    const shown = view({ kind: "screen", pane: "w1:p2" }, { screen: SCREEN });
+    expect(shown).toContain(">Read the screen again</button>");
+    expect(shown).toContain(
+      '<span class="session-screen" role="region" aria-label="w1:p2 in amber&#x27;s session, read only"><pre>$ just test-rs</pre>',
     );
-    expect(html).toContain('<span role="status">No pane t7</span>');
-    expect(html).toContain(
-      '<span class="session-screen" role="region" aria-label="t7 in cobalt-otter&#x27;s session, read only"><pre>$ cargo test</pre>',
+    expect(shown).toContain(">Close</button></span></span>");
+    const focused = view({ kind: "focus", pane: "w1:p2" }, { screen: SCREEN });
+    expect(focused).toContain(">Go to session</button>");
+  });
+
+  it("is none where nothing is known of the session, or it has no way in", () => {
+    const go = (go: Parameters<typeof GoToSession>[0]["go"]) =>
+      renderToStaticMarkup(<GoToSession handle="amber" go={go} local={false} scope="" />);
+    expect(go(null)).toBe("");
+    expect(go({ handle: "amber", url: "javascript:alert(1)", pane: null })).toBe("");
+    expect(go({ handle: "birch", url: null, pane: "w1:p2" })).toContain(
+      '<span class="go-session-via">in birch&#x27;s session</span>',
     );
+    expect(go({ handle: "amber", url: null, pane: "w1:p2" })).toContain('data-go="screen"');
   });
 });

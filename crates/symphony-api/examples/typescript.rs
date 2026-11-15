@@ -140,109 +140,133 @@ fn constants() -> String {
 fn declarations() -> Vec<Declared> {
     // JSON numbers are read by the browser as doubles whatever their Rust width.
     let cfg = Config::new().with_large_int("number");
-    vec![
-        declared::<api::ProjectView>(&cfg),
-        declared::<api::NavItem>(&cfg),
-        declared::<api::Board>(&cfg),
-        declared::<api::Card>(&cfg),
-        declared::<api::Picture>(&cfg),
-        declared::<api::Counts>(&cfg),
-        declared::<api::TaskCounts>(&cfg),
-        declared::<api::Progress>(&cfg),
-        declared::<api::Region>(&cfg),
-        declared::<api::ProgressBar>(&cfg),
-        declared::<api::Delta>(&cfg),
-        declared::<api::Change>(&cfg),
-        declared::<api::Queue>(&cfg),
-        declared::<api::QueueItem>(&cfg),
-        declared::<api::Activity>(&cfg),
-        declared::<api::ActivityItem>(&cfg),
-        declared::<api::Pending>(&cfg),
-        declared::<api::PendingItem>(&cfg),
-        // Reports'.
-        declared::<api::Grain>(&cfg),
-        declared::<api::report_page::ReportMark>(&cfg),
-        // The task board's, its tasks and the machines' work.
-        declared::<api::TaskListing>(&cfg),
-        declared::<api::Task>(&cfg),
-        declared::<api::Role>(&cfg),
-        declared::<api::FieldValue>(&cfg),
-        declared::<api::TaskChange>(&cfg),
-        declared::<api::TaskFields>(&cfg),
-        declared::<api::MachineWork>(&cfg),
-        declared::<api::MachineObservation>(&cfg),
-        declared::<api::WorkOperation>(&cfg),
-        declared::<api::WorkCounts>(&cfg),
-        declared::<api::WorkGuidance>(&cfg),
-        declared::<api::WorkFreshness>(&cfg),
-        declared::<api::WorkKind>(&cfg),
-        declared::<api::WorkState>(&cfg),
-        // The blocks a plugin renders to, and what they hold.
-        declared::<api::Block>(&cfg),
-        declared::<api::Span>(&cfg),
-        declared::<api::LinkTarget>(&cfg),
-        declared::<api::Presentation>(&cfg),
-        declared::<api::Image>(&cfg),
-        declared::<api::Cell>(&cfg),
-        declared::<api::Verdict>(&cfg),
-        declared::<api::ThreadEntry>(&cfg),
-        declared::<api::CardState>(&cfg),
-        declared::<api::CardGroup>(&cfg),
-        declared::<api::ThreadAuthor>(&cfg),
-        declared::<api::CalloutKind>(&cfg),
-        declared::<api::FigureSize>(&cfg),
-        declared::<api::ContainerKind>(&cfg),
-        declared::<api::InlineKind>(&cfg),
-        declared::<api::VectorShape>(&cfg),
-        declared::<api::VectorKind>(&cfg),
-        declared::<api::Media>(&cfg),
-        declared::<api::GalleryItem>(&cfg),
-        declared::<api::Viewer>(&cfg),
-        declared::<api::View>(&cfg),
-        // A document's and a folder's pages: their reads, the feed's changes and the asks.
-        declared::<api::Document>(&cfg),
-        declared::<api::DocumentComparison>(&cfg),
-        declared::<api::DocumentOutline>(&cfg),
-        declared::<api::DocumentSections>(&cfg),
-        declared::<api::Crumb>(&cfg),
-        declared::<api::Heading>(&cfg),
-        declared::<api::Fragment>(&cfg),
-        declared::<api::Section>(&cfg),
-        declared::<api::Difference>(&cfg),
-        declared::<api::SectionComparison>(&cfg),
-        declared::<api::DocumentCard>(&cfg),
-        declared::<api::DocumentTask>(&cfg),
-        declared::<api::Folder>(&cfg),
-        declared::<api::FolderEntry>(&cfg),
-        declared::<api::DocumentChange>(&cfg),
-        declared::<api::SectionPosition>(&cfg),
-        declared::<api::ItemChange<api::DocumentCard>>(&cfg),
-        declared::<api::Version>(&cfg),
-        declared::<api::DocumentDiff>(&cfg),
-        declared::<api::Ask>(&cfg),
-        declared::<api::AskAnswer>(&cfg),
-        declared::<api::AskMessage>(&cfg),
-        // A file attached to a post.
-        declared::<api::Upload>(&cfg),
+    [
+        board_declarations(&cfg),
+        document_declarations(&cfg),
+        task_declarations(&cfg),
     ]
     .into_iter()
-    .chain(task_declarations(&cfg))
+    .flatten()
     .collect()
+}
+
+/// The types the frame, the feed, the queue, Reports, the task board and the agents page read.
+fn board_declarations(cfg: &Config) -> Vec<Declared> {
+    vec![
+        declared::<api::ProjectView>(cfg),
+        declared::<api::NavItem>(cfg),
+        declared::<api::Board>(cfg),
+        declared::<api::Card>(cfg),
+        declared::<api::Picture>(cfg),
+        declared::<api::Counts>(cfg),
+        declared::<api::TaskCounts>(cfg),
+        declared::<api::Progress>(cfg),
+        declared::<api::Region>(cfg),
+        declared::<api::ProgressBar>(cfg),
+        declared::<api::Delta>(cfg),
+        declared::<api::Change>(cfg),
+        declared::<api::Queue>(cfg),
+        declared::<api::QueueItem>(cfg),
+        declared::<api::Activity>(cfg),
+        declared::<api::ActivityItem>(cfg),
+        declared::<api::Pending>(cfg),
+        declared::<api::PendingItem>(cfg),
+        // Reports'.
+        declared::<api::Grain>(cfg),
+        declared::<api::report_page::ReportMark>(cfg),
+        // The task board's, its tasks and the machines' work.
+        declared::<api::TaskListing>(cfg),
+        declared::<api::Task>(cfg),
+        declared::<api::Role>(cfg),
+        declared::<api::FieldValue>(cfg),
+        declared::<api::TaskChange>(cfg),
+        declared::<api::TaskFields>(cfg),
+        declared::<api::MachineWork>(cfg),
+        declared::<api::MachineObservation>(cfg),
+        declared::<api::WorkOperation>(cfg),
+        declared::<api::WorkCounts>(cfg),
+        declared::<api::WorkGuidance>(cfg),
+        declared::<api::WorkFreshness>(cfg),
+        declared::<api::WorkKind>(cfg),
+        declared::<api::WorkState>(cfg),
+        // The agents page's: its agents, the tasks they hold and where Go to session goes.
+        declared::<api::AgentPage>(cfg),
+        declared::<api::Agents>(cfg),
+        declared::<api::Agent>(cfg),
+        declared::<api::HeldTask>(cfg),
+        declared::<api::AgentRun>(cfg),
+        declared::<api::AgentSaid>(cfg),
+        declared::<api::AgentSlots>(cfg),
+        declared::<api::SessionGo>(cfg),
+        declared::<api::AgentFocus>(cfg),
+        declared::<api::AgentScreen>(cfg),
+    ]
+}
+
+/// The blocks a plugin renders to, and the documents', the asks' and the uploads' types.
+fn document_declarations(cfg: &Config) -> Vec<Declared> {
+    vec![
+        // The blocks a plugin renders to, and what they hold.
+        declared::<api::Block>(cfg),
+        declared::<api::Span>(cfg),
+        declared::<api::LinkTarget>(cfg),
+        declared::<api::Presentation>(cfg),
+        declared::<api::Image>(cfg),
+        declared::<api::Cell>(cfg),
+        declared::<api::Verdict>(cfg),
+        declared::<api::ThreadEntry>(cfg),
+        declared::<api::CardState>(cfg),
+        declared::<api::CardGroup>(cfg),
+        declared::<api::ThreadAuthor>(cfg),
+        declared::<api::CalloutKind>(cfg),
+        declared::<api::FigureSize>(cfg),
+        declared::<api::ContainerKind>(cfg),
+        declared::<api::InlineKind>(cfg),
+        declared::<api::VectorShape>(cfg),
+        declared::<api::VectorKind>(cfg),
+        declared::<api::Media>(cfg),
+        declared::<api::GalleryItem>(cfg),
+        declared::<api::Viewer>(cfg),
+        declared::<api::View>(cfg),
+        // A document's and a folder's pages: their reads, the feed's changes and the asks.
+        declared::<api::Document>(cfg),
+        declared::<api::DocumentComparison>(cfg),
+        declared::<api::DocumentOutline>(cfg),
+        declared::<api::DocumentSections>(cfg),
+        declared::<api::Crumb>(cfg),
+        declared::<api::Heading>(cfg),
+        declared::<api::Fragment>(cfg),
+        declared::<api::Section>(cfg),
+        declared::<api::Difference>(cfg),
+        declared::<api::SectionComparison>(cfg),
+        declared::<api::DocumentCard>(cfg),
+        declared::<api::DocumentTask>(cfg),
+        declared::<api::Folder>(cfg),
+        declared::<api::FolderEntry>(cfg),
+        declared::<api::DocumentChange>(cfg),
+        declared::<api::SectionPosition>(cfg),
+        declared::<api::ItemChange<api::DocumentCard>>(cfg),
+        declared::<api::Version>(cfg),
+        declared::<api::DocumentDiff>(cfg),
+        declared::<api::Ask>(cfg),
+        declared::<api::AskAnswer>(cfg),
+        declared::<api::AskMessage>(cfg),
+        // A file attached to a post.
+        declared::<api::Upload>(cfg),
+    ]
 }
 
 /// The types a task's page reads, after the others in wire.ts.
 fn task_declarations(cfg: &Config) -> Vec<Declared> {
     vec![
-        // A task's page: its brief, thread, landing offer, gates and its holders' sessions.
+        // A task's page: its brief, thread, landing offer and gates (its holders' sessions are the
+        // agents page's types).
         declared::<api::TaskPage>(cfg),
         declared::<api::TaskEntry>(cfg),
         declared::<api::Message>(cfg),
         declared::<api::TaskHistory>(cfg),
         declared::<api::TaskBrief>(cfg),
         declared::<api::TaskOffer>(cfg),
-        declared::<api::SessionGo>(cfg),
-        declared::<api::AgentFocus>(cfg),
-        declared::<api::AgentScreen>(cfg),
         declared::<api::TaskGates>(cfg),
         declared::<api::Gate>(cfg),
         declared::<api::GatePast>(cfg),
@@ -381,13 +405,88 @@ fn cases() -> Result<Value, String> {
     cases["stages"] = stages();
     cases["grains"] = grains.into();
     cases["fileAddress"] = addresses.into();
+    cases["webAddress"] = web_addresses();
+    cases["sessionControl"] = session_controls();
     cases["elementHtml"] = elements();
     cases["encoded"] = encodings();
     cases["decode"] = decodings();
-    cases["sessions"] = sessions();
     cases["samples"] = samples();
     cases["carried"] = carried()?;
     Ok(cases)
+}
+
+/// Whether [`api::web_address`] lets a page link each of a set of addresses: http and https in
+/// any case with a host, and nothing with a space, a control character or another scheme.
+fn web_addresses() -> Value {
+    [
+        "https://example.com/s/1",
+        "http://example.com",
+        "HTTPS://Example.com?x#y",
+        "HtTp://h/",
+        "https://",
+        "https:///path",
+        "https://?q",
+        "https://#f",
+        "https://h ost/",
+        "https://h/\tx",
+        "https://h/\u{7f}",
+        "https://h/\u{a0}",
+        "https://h/\u{2028}",
+        "https://h/\u{85}",
+        "https://h/\u{3000}",
+        "https://h/\u{feff}",
+        "https://h/\u{200b}",
+        "https://h/\u{1c}",
+        "https://h/\u{9f}",
+        "https://h\u{202f}/",
+        "https://h:8080/x",
+        "javascript:alert(1)",
+        "ftp://h/",
+        "//h/",
+        "http:/h",
+        "https:h",
+        "",
+        "\u{e9}://h",
+        "http\u{15b}://h",
+        "http\u{17f}://h",
+    ]
+    .iter()
+    .map(|url| json!([url, api::web_address(url)]))
+    .collect()
+}
+
+/// The Go to session control [`api::SessionGo::control`] gives a page on the server's machine
+/// (`local`) and one elsewhere, for a set of ways in, and whether each goes through another
+/// session than `amber`'s ([`api::SessionGo::via_parent`]): the control as `{kind: target}`, or
+/// none.
+fn session_controls() -> Value {
+    let go = |handle: &str, url: Option<&str>, pane: Option<&str>| api::SessionGo {
+        handle: handle.into(),
+        url: url.map(Into::into),
+        pane: pane.map(Into::into),
+    };
+    let ways = [
+        go("amber", Some("https://example.com/s"), Some("w1:p2")),
+        go("amber", Some("https://example.com/s"), None),
+        go("amber", None, Some("w1:p2")),
+        go("amber", None, None),
+        go("amber", Some("javascript:alert(1)"), Some("w1:p2")),
+        go("amber", Some("javascript:alert(1)"), None),
+        go("amber", Some(""), Some("")),
+        go("birch", Some("http://h"), None),
+    ];
+    ways.iter()
+        .flat_map(|way| {
+            [true, false].map(|local| {
+                let control = way.control(local).map(|control| match control {
+                    api::SessionControl::Focus(pane) => json!({"focus": pane}),
+                    api::SessionControl::Link(url) => json!({"link": url}),
+                    api::SessionControl::Screen(pane) => json!({"screen": pane}),
+                });
+                json!([way, local, control, way.via_parent("amber")])
+            })
+        })
+        .collect()
 }
 
 /// What [`api::Viewer::element_html`] writes for a file under a set of viewers: their element, the
@@ -476,58 +575,6 @@ fn decodings() -> Value {
     .iter()
     .map(|value| json!([value, api::View::decode(value)]))
     .collect()
-}
-
-/// What [`api::SessionGo::control`] gives a session's ways in, on a page asked from the server's
-/// machine and from another: a pane focused, an address linked (one that is a web address alone)
-/// or a screen shown, by its kind and its pane or address; and whether
-/// [`api::SessionGo::via_parent`] goes to another session than the agent's own.
-fn sessions() -> Value {
-    let go = |handle: &str, url: Option<&str>, pane: Option<&str>| api::SessionGo {
-        handle: handle.into(),
-        url: url.map(str::to_string),
-        pane: pane.map(str::to_string),
-    };
-    let ways = [
-        go("cobalt-otter", Some("https://claude.ai/code/s1"), None),
-        go("cobalt-otter", None, Some("t7")),
-        go("cobalt-otter", Some("https://h/x"), Some("t7")),
-        go("cobalt-otter", None, None),
-        go("cobalt-otter", Some("javascript:alert(1)"), None),
-        go("cobalt-otter", Some("JAVASCRIPT:alert(1)"), Some("t7")),
-        go("cobalt-otter", Some(" https://h/x"), Some("t7")),
-        go("cobalt-otter", Some("HTTP://H"), None),
-        go("cobalt-otter", Some("https://"), None),
-        go("cobalt-otter", Some("https://h/\u{2028}x"), None),
-        go("cobalt-otter", Some("https://h/\u{a0}x"), None),
-        go("cobalt-otter", Some(""), Some("")),
-    ];
-    let control: Vec<Value> = ways
-        .iter()
-        .flat_map(|way| {
-            [true, false].map(|local| {
-                let said = way.control(local).map(|control| match control {
-                    api::SessionControl::Focus(pane) => json!(["focus", pane]),
-                    api::SessionControl::Link(url) => json!(["link", url]),
-                    api::SessionControl::Screen(pane) => json!(["screen", pane]),
-                });
-                json!([way, local, said])
-            })
-        })
-        .collect();
-    let via: Vec<Value> = [
-        ("cobalt-otter", "cobalt-otter"),
-        ("orch", "cobalt-otter"),
-        ("a", "A"),
-        ("", ""),
-    ]
-    .iter()
-    .map(|(going, handle)| {
-        let way = go(going, None, Some("t1"));
-        json!([way, handle, way.via_parent(handle)])
-    })
-    .collect();
-    json!({"control": control, "via": via})
 }
 
 /// The Rust the web client carries in TypeScript, each function by its file, its name and the
@@ -663,8 +710,8 @@ fn carried() -> Result<Value, String> {
                 API_MACHINE_WORK => include_str!("../src/machine_work.rs"),
                 API_TASK_STAGE => include_str!("../src/task_stage.rs"),
                 API_REPORT_PAGE => include_str!("../src/report_page.rs"),
-                BLOCKS_MEDIA => include_str!("../../symphony-blocks/src/media.rs"),
                 API_AGENTS => include_str!("../src/agents.rs"),
+                BLOCKS_MEDIA => include_str!("../../symphony-blocks/src/media.rs"),
                 API_LINKS => include_str!("../src/links.rs"),
                 API_GATES => include_str!("../src/gates.rs"),
                 BLOCKS_GATES => include_str!("../../symphony-blocks/src/gates.rs"),
@@ -1174,6 +1221,7 @@ fn samples() -> Value {
     samples.insert("emptyQueue".into(), json!(api::Queue::default()));
     samples.insert("board".into(), json!(board));
     samples.extend(task_board_samples());
+    samples.extend(agents_samples());
     samples.insert("reports".into(), json!(reports()));
     samples.insert("emptyReports".into(), json!(api::ReportsPage::default()));
     samples.insert("blocks".into(), json!(blocks()));
@@ -1264,6 +1312,149 @@ fn task_board_samples() -> Vec<(String, Value)> {
     .into_iter()
     .map(|(name, value)| (name.to_owned(), value))
     .collect()
+}
+
+/// The agents page's reads, as [`samples`] holds them: its page with every field and with none it
+/// can leave empty, an agent the feed changes, one with nothing known of it, the probes, a focus
+/// and a screen.
+fn agents_samples() -> Vec<(String, Value)> {
+    let agent = sampled_agent();
+    let bare = bare_agent();
+    let probes = api::AgentProbes {
+        panes: "ok".into(),
+        slots: "unavailable".into(),
+    };
+    let page = api::AgentPage {
+        view: api::Agents {
+            machine_work: work(vec![operation("alpha", "b", "w/a", "build", "running")]),
+            generated: 3.0,
+            probes: probes.clone(),
+            agents: vec![agent.clone(), bare.clone()],
+        },
+        tasks: vec![task("w/a", "in_progress", None)],
+        total: 2,
+        next: Some("birch".into()),
+        local: true,
+    };
+    let empty = api::AgentPage {
+        view: api::Agents {
+            machine_work: api::MachineWork::default(),
+            generated: 0.0,
+            probes: probes.clone(),
+            agents: Vec::new(),
+        },
+        tasks: Vec::new(),
+        total: 0,
+        next: None,
+        local: false,
+    };
+    [
+        ("agentPage", json!(page)),
+        ("emptyAgentPage", json!(empty)),
+        (
+            "agentChange",
+            json!(api::ItemChange {
+                key: "amber".into(),
+                value: Some(agent),
+                removed: false,
+            }),
+        ),
+        ("bareAgent", json!(bare)),
+        ("agentProbes", json!(probes)),
+        (
+            "agentFocus",
+            json!(api::AgentFocus {
+                said: "Shown in the Herdr app".into(),
+            }),
+        ),
+        (
+            "agentScreen",
+            json!(api::AgentScreen {
+                handle: "amber".into(),
+                pane: "w1:p2".into(),
+                text: "$ just test-rs".into(),
+                read_at: 4.0,
+            }),
+        ),
+    ]
+    .into_iter()
+    .map(|(name, value)| (name.to_owned(), value))
+    .collect()
+}
+
+/// An agent with every field the agents page reads set: a subagent of `birch` holding `w/a`,
+/// running a test, gone to through its parent's session.
+fn sampled_agent() -> api::Agent {
+    api::Agent {
+        handle: "amber".into(),
+        kind: "worker".into(),
+        model: "a model".into(),
+        parent: Some("birch".into()),
+        task: Some("w/a".into()),
+        role: Some("executor".into()),
+        tasks: vec![api::HeldTask {
+            slug: "w/a".into(),
+            role: "executor".into(),
+            status: "in_progress".into(),
+        }],
+        worktree: "/tmp/w/a".into(),
+        branch: "w/a".into(),
+        agent: Some("claude".into()),
+        session_id: Some("s1".into()),
+        pane: Some("w1:p2".into()),
+        callback: Some("unix:/tmp/amber.sock".into()),
+        chat: true,
+        state: "working".into(),
+        state_detail: Some(api::AgentRun {
+            recipe: "test-rs".into(),
+            phase: "running".into(),
+            since: Some(1.0),
+        }),
+        health: "live".into(),
+        last_tool_call: Some(2.0),
+        last_message: Some(api::AgentSaid {
+            slug: "w/a".into(),
+            ts: 2.0,
+            text: "Built.".into(),
+        }),
+        slots: Some(api::AgentSlots { open: 3, cap: 8 }),
+        session_url: Some("https://example.com/s".into()),
+        in_process: true,
+        go: Some(api::SessionGo {
+            handle: "birch".into(),
+            url: Some("https://example.com/s".into()),
+            pane: Some("w1:p2".into()),
+        }),
+    }
+}
+
+/// An agent with nothing known of it but its handle and its health.
+fn bare_agent() -> api::Agent {
+    api::Agent {
+        handle: "birch".into(),
+        kind: String::new(),
+        model: String::new(),
+        parent: None,
+        task: None,
+        role: None,
+        tasks: Vec::new(),
+        worktree: String::new(),
+        branch: String::new(),
+        agent: None,
+        session_id: None,
+        pane: None,
+        callback: None,
+        chat: false,
+        state: String::new(),
+        state_detail: None,
+        health: "lost".into(),
+        last_tool_call: None,
+        last_message: None,
+        slots: None,
+        session_url: None,
+        in_process: false,
+        go: None,
+    }
 }
 
 /// A value of each read a document's or a folder's page checks, as the server writes it: every

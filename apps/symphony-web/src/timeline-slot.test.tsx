@@ -71,6 +71,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.doUnmock("./timeline");
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
@@ -228,13 +229,17 @@ describe("the timeline's chunk", () => {
     const second = vi.fn();
     slot.whenImported(first);
     slot.whenImported(second);
-    // One import for every box, asked once the page has settled.
+    // One import for every box, asked once the page has settled: however long that takes, with the
+    // chunk itself at hand, nothing is told before.
     expect(settled).toHaveLength(1);
-    await new Promise((done) => setTimeout(done, 20));
-    expect(first).not.toHaveBeenCalled();
-    settled[0]?.();
-    await vi.waitFor(() => expect(first).toHaveBeenCalledTimes(1));
     const { TimelineHost } = await import("./timeline");
+    vi.useFakeTimers();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(first).not.toHaveBeenCalled();
+    expect(slot.loadedHost()).toBeNull();
+    settled[0]?.();
+    await slot.importTimeline();
+    expect(first).toHaveBeenCalledTimes(1);
     expect(first).toHaveBeenCalledWith(TimelineHost);
     expect(second).toHaveBeenCalledWith(TimelineHost);
     expect(slot.loadedHost()).toBe(TimelineHost);
@@ -290,7 +295,7 @@ describe("the timeline's chunk", () => {
     expect(settled).toHaveLength(1);
   });
 
-  it("a chunk that does not come says nothing where the page's build is gone, or no box waits", async () => {
+  it("a chunk that does not come says nothing where the page's build is gone", async () => {
     const alarm = vi.fn();
     const gone = vi.fn(async () => true);
     aPage({ reviewShell: { gone, alarm } });
@@ -299,17 +304,57 @@ describe("the timeline's chunk", () => {
       throw new Error("The chunk is gone");
     });
     const slot = await aSlot();
-    const leave = slot.whenImported(vi.fn());
-    await vi.waitFor(() => expect(gone).toHaveBeenCalledTimes(1));
+    slot.whenImported(vi.fn());
+    await slot.importTimeline();
+    expect(gone).toHaveBeenCalledTimes(1);
     // The page loads again onto its new build: no notice.
     expect(alarm).not.toHaveBeenCalled();
     expect(failure).not.toHaveBeenCalled();
+  });
+
+  it("is not fetched for a box that left before the page settled, and the next box asks again", async () => {
+    const settled: (() => void)[] = [];
+    aPage({ reviewSettled: (then: () => void) => settled.push(then) });
+    const chunk = vi.fn(() => ({ TimelineHost: DrawnHost }));
+    vi.doMock("./timeline", chunk);
+    const slot = await aSlot();
+    const left = vi.fn();
+    slot.whenImported(left)();
+    const attempt = slot.importTimeline();
+    settled[0]?.();
+    await attempt;
+    // The page stopped before it settled: nothing fetched, nobody told.
+    expect(chunk).not.toHaveBeenCalled();
+    expect(left).not.toHaveBeenCalled();
+    expect(slot.loadedHost()).toBeNull();
+    // The next box's page settles in its turn, and its box is told.
+    const next = vi.fn();
+    slot.whenImported(next);
+    expect(settled).toHaveLength(2);
+    settled[1]?.();
+    await slot.importTimeline();
+    expect(chunk).toHaveBeenCalledTimes(1);
+    expect(next).toHaveBeenCalledWith(DrawnHost);
+  });
+
+  it("a chunk that does not come says nothing once its box left while the shell said whether the build is gone", async () => {
+    let answer: (gone: boolean) => void = () => {};
+    const gone = vi.fn(() => new Promise<boolean>((said) => (answer = said)));
+    const alarm = vi.fn();
+    aPage({ reviewShell: { gone, alarm } });
+    const failure = vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.doMock("./timeline", () => {
+      throw new Error("The chunk is gone");
+    });
+    const slot = await aSlot();
+    const leave = slot.whenImported(vi.fn());
+    const attempt = slot.importTimeline();
+    await vi.waitFor(() => expect(gone).toHaveBeenCalledTimes(1));
     leave();
-    // The next box asks again; when it left before the failure, no box waits and none hears it.
-    slot.whenImported(vi.fn())();
-    await new Promise((done) => setTimeout(done, 20));
-    expect(gone).toHaveBeenCalledTimes(1);
+    answer(false);
+    await attempt;
     expect(alarm).not.toHaveBeenCalled();
+    expect(failure).not.toHaveBeenCalled();
   });
 
   it("a chunk that does not come in a page with no shell is said on the console alone", async () => {

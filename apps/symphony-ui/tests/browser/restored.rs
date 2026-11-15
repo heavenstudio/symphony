@@ -1491,3 +1491,146 @@ fn restored_ask_feed_and_navigation_preserve_drafts_while_rendering_typed_answer
         json!(["Question draft", "Follow-up draft"])
     );
 }
+
+/// A script true once the document page has read every section it mounted, and no placeholder's
+/// sentinel (600 px around it) is left on the screen to mount another: what it wants is what it
+/// holds, and nothing a scroll brought near is still due.
+const SETTLED: &str = "document.querySelector('.section-loading') === null && [...document.querySelectorAll('.viewport-sentinel')].every(sentinel => { const box = sentinel.getBoundingClientRect(); return box.bottom <= 0 || box.top >= innerHeight })";
+
+/// A long document reopens its stream for the sections each scroll brings near the screen, from
+/// the cursor of the last event it heard, from which the server sends every event after it: such
+/// a reopen missed nothing, and reads no question, chat or activity again. A stream lost is read
+/// again from the outline, and its open reads each of them once more.
+#[test]
+fn a_document_s_own_stream_reopens_while_scrolling_read_no_ask_or_chat_until_a_loss() {
+    const QUESTIONS: &str = "/api/asks?format=blocks&path=docs%2FLONG.md";
+    const CHAT: &str = "/api/ask?format=blocks&id=7";
+    let site = Site::start(dist(), &common::fixture("board.json"));
+    let sections: Vec<Value> = (0..40)
+        .map(|at| {
+            let blocks: Vec<Value> = (0..6)
+                .map(|line| paragraph(&format!("Section {at}, passage {line}: a long document is read a screen at a time.")))
+                .collect();
+            json!({"start": at * 10 + 1, "end": at * 10 + 9, "key": format!("s{at}"), "hash": format!("h{at}"), "part": null, "blocks": blocks})
+        })
+        .collect();
+    site.set_document(&json!({"version":4182,"path":"docs/LONG.md","title":"Long","waiting":[],"crumbs":[],"headings":[],"sections":sections,"cards":[],"threads":{},"tasks":[]}));
+    let ask = json!({"id":7,"path":"docs/LONG.md","anchor":"","quote":"","question":"Question","asked":1.0,"answers":[],"status":"open","updated":1.0,"messages":[{"seq":1,"kind":"question","by":"owner","text":"A typed question","at":1.0,"blocks":[paragraph("A typed question")]}]});
+    site.set_json("/api/asks", &json!({"asks":[ask],"recipient":"fixture"}));
+    site.set_json("/api/ask", &json!({"ask":ask,"recipient":"fixture"}));
+    site.set_json("/api/postponed", &json!([]));
+    let Some(mut browser) = chrome() else { return };
+    // The chat's draft names thread 7, and the page's news of the asks is kept from its start.
+    browser.call(
+        "Page.addScriptToEvaluateOnNewDocument",
+        json!({"source":"localStorage.setItem('review-quick-draft',JSON.stringify({open:false,task:false,ask:7}));window.asksNews=[];addEventListener('review:asks',event=>asksNews.push(event.moved))"}),
+    );
+    browser.open(&site.url("/docs/LONG.md"));
+    assert!(
+        browser.wait_for(
+            "document.querySelector('[data-ready=document] [data-doc-key=s0] p') !== null && document.querySelector('main > .document-page')?.dataset.feed === 'live' && asksNews.includes(true)",
+            SHOWN
+        ),
+        "{}",
+        browser.eval("document.body.innerText.slice(0, 2000)")
+    );
+    browser.eval("document.querySelector('#quick-open').click()");
+    assert!(
+        browser.wait_for(
+            "[...document.querySelectorAll('#quick-sheet .quick-message p:not(.by)')].some(p => p.textContent === 'A typed question')",
+            SHOWN
+        ),
+        "the chat opens on its thread: {}",
+        browser.eval("document.getElementById('quick-sheet')?.innerText ?? null")
+    );
+    // The questions, at the document's end, are read once they come near the screen.
+    browser.eval("document.querySelector('.asks-shell').scrollIntoView({block:'center'})");
+    assert!(browser.wait_for(
+        &format!("document.getElementById('ask-7') !== null && {SETTLED}"),
+        SHOWN
+    ));
+    // Each scroll up to a section not drawn yet draws it and the sections beside it, and opens the
+    // stream again for exactly the sections the page then holds.
+    for at in [30, 22, 14, 8] {
+        let before = site.feed_requests();
+        browser.eval(&format!(
+            "document.getElementById('L{}').scrollIntoView({{block:'start'}})",
+            at * 10 + 1
+        ));
+        assert!(
+            browser.wait_for(
+                &format!("document.querySelector('[data-doc-key=s{at}] p') !== null && {SETTLED}"),
+                SHOWN
+            ),
+            "s{at}: {}",
+            browser.eval("document.body.innerText.slice(0, 2000)")
+        );
+        test_time::until(format!("the stream opened again for s{at}"), super::STALL, || {
+            let held: Vec<String> = serde_json::from_value(browser.eval(
+                "[...document.querySelectorAll('[data-doc-key]')].map(section => section.dataset.docKey).sort()",
+            ))
+            .unwrap();
+            let mut subscribed: Vec<String> = site
+                .targets()
+                .iter()
+                .rfind(|target| target.starts_with(symphony_api::FEED_PATH))
+                .and_then(|target| super::site::query(target, "sections"))
+                .and_then(|keys| serde_json::from_str(&keys).ok())
+                .unwrap_or_default();
+            subscribed.sort();
+            let asked = site.feed_requests();
+            (asked > before
+                && site.opened_feeds() == asked
+                && held.contains(&format!("s{at}"))
+                && subscribed == held)
+                .then_some(())
+        })
+        .unwrap_or_else(|stall| panic!("{stall}: {:?}", site.targets()));
+    }
+    let asked = |path: &str| {
+        site.targets()
+            .iter()
+            .filter(|target| target.starts_with(path))
+            .count()
+    };
+    let reads = || {
+        [
+            asked(QUESTIONS),
+            asked(CHAT),
+            site.requests()
+                .iter()
+                .filter(|path| *path == "/api/activity")
+                .count(),
+        ]
+    };
+    // A stream lost: the page reads the outline again and follows the feed from it, and the
+    // stream's open reads the questions, the chat and the activity once more.
+    site.drop_feeds();
+    let after = test_time::until(
+        "the stream lost, opened again and read after",
+        super::STALL,
+        || {
+            let after = reads();
+            let news = browser.eval("asksNews.filter(moved => moved === true).length");
+            (after.iter().all(|count| *count >= 2) && news.as_u64() >= Some(2)).then_some(after)
+        },
+    )
+    .unwrap_or_else(|stall| {
+        panic!(
+            "{stall}: reads {:?}, news {}",
+            reads(),
+            browser.eval("JSON.stringify(asksNews)")
+        )
+    });
+    assert_eq!(
+        after,
+        [2, 2, 2],
+        "the questions, the chat and the activity were each read once before the loss and once after it, never for a stream the page opened again: {:?}",
+        site.targets()
+    );
+    assert_eq!(
+        browser.eval("asksNews.filter(moved => moved === true).length"),
+        json!(2),
+        "the stream's first open and the one after the loss alone told the readers to read"
+    );
+}

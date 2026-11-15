@@ -72,8 +72,9 @@ fn ModuleRoot() -> Element {
     return rsx! { if shown() { crate::frame::PanelApp {} } };
     #[cfg(all(feature = "page-overlay", not(feature = "page-panel")))]
     return rsx! { if shown() { crate::components::deferred::OverlayApp {} } };
+    // No page kind is left without the chat or the menus: every page is the web client's.
     #[cfg(not(any(feature = "page-panel", feature = "page-overlay")))]
-    rsx! { if shown() { crate::live::App {} } }
+    rsx! {}
 }
 
 /// The shell caches imports for the document's lifetime. Each module's callbacks and empty
@@ -86,8 +87,6 @@ pub(crate) fn kind() -> &'static str {
         "panel"
     } else if cfg!(feature = "page-overlay") {
         "overlay"
-    } else if cfg!(feature = "page-tasks") {
-        "tasks"
     } else {
         "review"
     }
@@ -95,6 +94,7 @@ pub(crate) fn kind() -> &'static str {
 
 #[cfg(not(feature = "page-program"))]
 pub fn install() {
+    crate::frame::keep_styles();
     let kind = kind();
     let start = Closure::<dyn FnMut() -> js_sys::Promise>::new(|| change(true));
     let stop = Closure::<dyn FnMut() -> js_sys::Promise>::new(|| change(false));
@@ -223,13 +223,13 @@ mod program {
             return rsx! {};
         }
         match chunk {
-            Chunk::Tasks => rsx! { crate::live::App {} },
             Chunk::Panel => rsx! { crate::split::PanelPart {} },
             Chunk::Overlay => rsx! { crate::split::OverlayPart {} },
         }
     }
 
     pub fn install() {
+        crate::frame::keep_styles();
         for chunk in Chunk::ALL {
             let start = Closure::<dyn FnMut() -> js_sys::Promise>::new(move || run(chunk));
             let stop = Closure::<dyn FnMut() -> js_sys::Promise>::new(move || change(chunk, false));

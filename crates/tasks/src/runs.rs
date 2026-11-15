@@ -15,6 +15,8 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 use symphony_api::{End, RUN_SCHEMA, RunLine, run_day};
 
+pub mod rollup;
+
 /// The day files' folder in the git common dir: in the one folder of Symphony's there (DECISIONS:
 /// symphony-own-names).
 pub const FOLDER: &str = crate::folders::RUNS;

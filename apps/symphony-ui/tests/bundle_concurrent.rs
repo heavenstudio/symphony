@@ -20,19 +20,23 @@ use std::io::{BufRead, BufReader, Lines, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStderr, Command, Stdio};
 
-/// The program's kinds (src/split.rs), one build of it: the one kind dx builds.
-const PROGRAM: [&str; 3] = ["tasks", "panel", "overlay"];
+/// The program's kinds (src/split.rs), the chat and the menus, one build of it: the one kind dx
+/// builds.
+const PROGRAM: [&str; 2] = ["panel", "overlay"];
 /// The program's chunks in the order of its split points' names: its kinds' and the media layer's,
 /// which is no kind.
-const CHUNKS: [&str; 4] = ["media", "overlay", "panel", "tasks"];
+const CHUNKS: [&str; 3] = ["media", "overlay", "panel"];
 /// The web client's kinds, one Vite build of them all, and whether each has a style sheet of its
-/// own (the task board's styles are the program's board.css, in the shared file).
-const WEB: [(&str, bool); 5] = [
+/// own (the task board's and the agents page's styles are the program's board.css, in the shared
+/// file).
+const WEB: [(&str, bool); 7] = [
+    ("agents", false),
     ("board", false),
     ("docs", true),
     ("queue", true),
     ("reports", true),
     ("review", true),
+    ("task", true),
 ];
 
 /// The stand-in dx: the first bundle's program build holds the intermediate folder until released.
@@ -59,7 +63,7 @@ fi
 printf '<script type="module" src="/assets/symphony-ui-%s.js"></script>\n' "$kind" > "$work/public/index.html"
 printf 'export default function init(){return Promise.resolve()} init({module_or_path:"/assets/symphony-ui_bg-%s.wasm"}).then(()=>{});/*%s*/\n' "$kind" "$BUNDLE_ID" > "$work/public/assets/symphony-ui-$kind.js"
 printf '\0asm\1\0\0\0%s-%s' "$BUNDLE_ID" "$kind" > "$work/public/assets/symphony-ui_bg-$kind.wasm"
-for chunk in 0_media 1_overlay 2_panel 3_tasks; do
+for chunk in 0_media 1_overlay 2_panel; do
     printf '\0asm\1\0\0\0%s-%s' "$BUNDLE_ID" "$chunk" > "$work/public/assets/module_$chunk-$kind.wasm"
 done
 for own in style; do
@@ -71,7 +75,7 @@ cp -R "$work/public" "$out/"
 
 /// The stand-in web client's build, which bundle.sh runs as `bash apps/symphony-web/npm.sh run
 /// --silent build -- --outDir OUT --emptyOutDir`: each kind's script, the style sheet of each kind
-/// but the task board, and Vite's manifest naming them.
+/// but the task board and the agents page, and Vite's manifest naming them.
 const WEB_BUILD: &str = r#"#!/bin/bash
 set -euo pipefail
 [ "$*" = "run --silent build -- --outDir $6 --emptyOutDir" ]
@@ -79,10 +83,10 @@ out="$6"
 rm -rf "$out"
 mkdir -p "$out/.vite" "$out/assets"
 entries=""
-for kind in board docs queue reports review; do
+for kind in agents board docs queue reports review task; do
     printf 'export{a as run,b as stop};/*%s*/\n' "$BUNDLE_ID" > "$out/assets/$kind-$BUNDLE_ID.js"
     css=""
-    if [ "$kind" != board ]; then
+    if [ "$kind" != board ] && [ "$kind" != agents ]; then
         printf '/*%s-%s*/body{}' "$BUNDLE_ID" "$kind" > "$out/assets/$kind-$BUNDLE_ID.css"
         css="$(printf ',"css":["assets/%s-%s.css"]' "$kind" "$BUNDLE_ID")"
     fi
@@ -284,10 +288,7 @@ impl Fixture {
                 read_asset(&entry["chunk"]),
                 format!("\0asm\x01\0\0\0{id}-{at}_{kind}").as_bytes()
             );
-            let own = match *kind {
-                "panel" | "overlay" => Some("style"),
-                _ => None,
-            };
+            // Each takes the chat's and the menus' CSS modules, the program's own sheet.
             let styles: Vec<_> = entry["styles"]
                 .as_array()
                 .unwrap()
@@ -296,9 +297,7 @@ impl Fixture {
                 .collect();
             assert_eq!(
                 styles,
-                own.map(|own| format!("/*{id}-{own}*/body{{}}").into_bytes())
-                    .into_iter()
-                    .collect::<Vec<_>>(),
+                [format!("/*{id}-style*/body{{}}").into_bytes()],
                 "{kind}"
             );
         }

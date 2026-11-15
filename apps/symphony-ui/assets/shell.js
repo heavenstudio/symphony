@@ -105,9 +105,10 @@ async function initialize(kind) {
         else await window[`reviewModuleReady_${kind}`];
         failed.delete(kind);
     } catch (error) { failed.add(kind); throw error; }
-    // A program kind draws nothing before its chunk is in: awaited here, the page shown before stays
-    // until then, and a chunk that does not load rejects while it still shows (chunks.js forgets the
-    // failure, so a retry fetches it again). The kind's `run` then finds the chunk in.
+    // A program kind (the chat, the menus) draws nothing before its chunk is in: awaited here, the
+    // page and the loading sheet stay until then, and a chunk that does not load rejects while they
+    // still show (chunks.js forgets the failure, so a retry fetches it again). The kind's `run` then
+    // finds the chunk in.
     if (spec.chunk) await window.reviewChunk(kind);
     return window[`reviewModule_${kind}`];
 }
@@ -336,7 +337,7 @@ window.reviewSettled = settled;
 // of them answered) and the
 // browser is idle, the persistent modules' files go into the HTTP cache at the lowest priority,
 // nothing evaluated, so a first open waits on no network: the chat's first (the program's script
-// and main module, which /agents has in already, and its chunk), then, once its chunk (or its
+// and main module, and its chunk), then, once its chunk (or its
 // own load, if a click came first) is in, the menus', so no two share a slow link. A browser asking
 // to save data, or a 2g link, skips it; the first open then fetches them. A browser without idle
 // callbacks warms them at once; one without prefetch (Safari) ignores it.
@@ -450,8 +451,7 @@ function route(path) {
     const clean = path.replace(/\/$/, "");
     if (clean === "tasks" || clean === "task") return "board";
     if (path.startsWith("task/")) return "task";
-    if (clean === "agents") return "tasks";
-    if (clean === "queue" || clean === "reports") return clean;
+    if (clean === "queue" || clean === "reports" || clean === "agents") return clean;
     const view = project();
     const pages = (view.nav || []).map(item => item.href.replace(/^\/+|\/+$/g, "")).filter(Boolean);
     if (pages.includes(clean)) return "docs";

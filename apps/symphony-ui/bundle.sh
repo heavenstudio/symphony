@@ -119,12 +119,12 @@ rm -rf "$target/dx/symphony-ui/release/web"
 mkdir -p "$out"
 out="$(cd "$out" && pwd)" # named from here, and dx runs from the crate
 cd "$here"
-# The program, /agents with the chat and the menus, is one program that dx's splitter cuts into a
-# main module and a chunk for each (src/split.rs), and `symphony-build split-repair` makes that
-# output safe and repeatable, from the program dx linked, before anything is packaged; a failed
+# The program, the chat and the menus every page mounts, is one program that dx's splitter cuts
+# into a main module and a chunk for each (src/split.rs), and `symphony-build split-repair` makes
+# that output safe and repeatable, from the program dx linked, before anything is packaged; a failed
 # repair fails the build. The web client's kinds (home, the queue, Reports, the task board, the
-# documents, a task's page) are one Vite build, `web`. All assets are content hashed;
-# identical files from separate kinds share one URL and one browser-cache entry.
+# agents page, the documents, a task's page) are one Vite build, `web`. All assets are content
+# hashed; identical files from separate kinds share one URL and one browser-cache entry.
 for kind in "${kinds[@]}"; do
     module="$out/.modules/$kind"
     # The web client's kinds, one Vite build, which no path or clock enters.

@@ -6,10 +6,11 @@ whole, feature for feature, in one landing, and its Dioxus sources leave in the 
 review queue (`/queue`) is the first kind it serves, Reports (`/reports`) the second, home
 (`/`, the kind `review`) the third, the documents (`/docs/`, each document, folder and HTML
 document an entrypoint serves, the kind `docs`) the fourth, the task board (`/tasks`, the kind
-`board`) the fifth and a task's page with its timeline (`/task/SLUG`, the kind `task`) the sixth;
-every other page (`/agents`) is still the Dioxus client's, the program's. The board's task card is
-a component of its own (`src/taskcard.tsx`), which the agents page draws once it moves, and whose
-status words and machine work a task's page draws too. Like that
+`board`) the fifth, the agents page (`/agents`, the kind `agents`) the sixth and a task's page with
+its timeline (`/task/SLUG`, the kind `task`) the seventh: no page is left the Dioxus program's,
+which keeps the chat, the menus and the media layer every page mounts. The board's task card is a
+component of its own (`src/taskcard.tsx`), which the agents page draws too, and whose status words
+and machine work a task's page draws. Like that
 client it reads the server's JSON API and never runs server code or inserts server-rendered HTML.
 
 **Where a UI improvement is built.** A UI improvement (a new control, a redesign, a change of
@@ -25,9 +26,11 @@ of Node and of every package, npm being the one the pinned Node ships, moved tog
 lockfile written again, in a task of their own.
 
 - **Node and npm.** `.node-version` pins Node, which `tools/node.sh` runs as rustup runs the
-  pinned Rust: the `node` on PATH when it is that version, else fnm's copy (installed once), else
-  it refuses, naming the version. npm is the one that Node ships, held to its version by
-  `package.json`'s `engines` under `.npmrc`'s `engine-strict`. `npm.sh ARGS` runs npm here on
+  pinned Rust: the `node` on PATH when it is that version, else fnm's copy (installed once), its
+  folder put first on PATH, else it refuses, naming the version; the command takes the script's
+  process, no fnm between (`fnm exec` passes no SIGTERM on), so a signal reaches it. npm is the
+  one that Node ships, held to its version by `package.json`'s `engines` under `.npmrc`'s
+  `engine-strict`. `npm.sh ARGS` runs npm here on
   that Node after `npm ci` from the committed `package-lock.json` whenever `node_modules` was not
   installed from those very bytes, offline after the first fetch (`--prefer-offline`), two runs in
   one checkout taking turns (`tools/check_lock.sh`). `.npmrc` saves exact versions, runs no
@@ -40,8 +43,9 @@ lockfile written again, in a task of their own.
   nothing: Vite strips the types. `skipLibCheck` leaves the packages' own declarations unchecked,
   which name Node's types this package does not take.
 - **Vite** builds the kinds (`vite.config.ts`): one entry per kind, `src/kinds/NAME.tsx`, named in
-  `KINDS`; JSX by Vite's own transform, so no React plugin; no dev server, no public folder and
-  no module preload of Vite's, as the Symphony's server and shell serve and load the files.
+  `KINDS`; JSX by Vite's own transform, so no React plugin; no public folder and no module
+  preload of Vite's, as the Symphony's server and shell serve and load the files. Its dev server
+  is a developer's alone ([The dev server](#the-dev-server)).
 - **Biome** lints and formats (`biome.json`: its recommended rules with the React and test
   domains on, the formatter at two spaces and 100 columns). It was chosen over ESLint with
   typescript-eslint, whose TypeScript support ends below the TypeScript this package pins, and it
@@ -164,11 +168,12 @@ Styles are the existing sheets, used as they are: the project's `theme.css`, inl
 server, the shared sheet of the Dioxus build (the frame, the components, the board's rules), whose
 class names this client's markup uses, and the kind's own sheet, imported by its module
 (`src/queue.css`, `src/docs.css`). The Dioxus client's media sheet,
-`apps/symphony-ui/assets/media.css`, which the shared sheet leaves out and the program's pages
-load as well, is the media layer's, imported by `media-layer.ts`, so home, the documents and a
-task's page take it as one file under the layer's name. The task board has no sheet of its own: its rules are
-the shared sheet's (`apps/symphony-ui/assets/board.css`), whose task card rules the agents page's
-cards use too. A component drawn by a Dioxus component library keeps its markup and class
+`apps/symphony-ui/assets/media.css`, which the shared sheet leaves out and the program's media
+layer loads as well, is the media layer's, imported by `media-layer.ts`, so home, the documents and
+a task's page take it as one file under the layer's name. The task board and the agents page have
+no sheet of their own: their rules are the shared sheet's (`apps/symphony-ui/assets/board.css`),
+whose task card rules the agents page's cards use too. A component drawn by a Dioxus component
+library keeps its markup and class
 (`button.tsx` draws the shared Button's `dx-button`).
 
 Blocks are drawn as the Dioxus client draws them (`blocks.tsx`, `media.tsx`) but in two ways React
@@ -178,6 +183,38 @@ a declaration after a comment. As the Dioxus interpreter writes a style, a prope
 already had and the written style does not set (a centred container's `text-align`) is kept. A
 `javascript:` address in an href or a src is replaced by React 19 with one that throws, where the
 Dioxus client writes it as given: a difference in the safe direction, kept.
+
+## The dev server
+
+`just symphony-ui-dev SERVER [PORT]` shows this client's kinds as their sources stand, with no
+client build, the page loaded again on each save: Vite's own dev server (`dev.js`, the Node around
+`src/dev-server.ts`), on the loopback address alone at PORT (0, the default, for any), over a
+Symphony server of the developer's own on port SERVER, which `just symphony --port 0` starts and
+prints (`--root DIR` another project's). It refuses 8765, the shared server's, as either port, and
+starts nothing: Ctrl-C, or a kill of the recipe's process, ends it. Every request but those for
+Vite's own files (under `/@symphony-web/`) goes to that server through Vite's proxy, its Host and
+Origin as the browser sent them, so a save meets the server's origin check as on the server itself:
+the pages, the API, the feed and the files of the Dioxus program's kinds. It sends no CORS header
+(`cors: false`, where Vite's default lets a page on any loopback port read every answer), so a page
+of another origin reads through it no more than from the server. What it makes itself is the page's
+shell script: this checkout's shell (`apps/symphony-ui/assets/cache.js` and `shell.js`,
+unminified) with Vite's client first, the program's kinds as the server's build names them, and
+each of `KINDS` as its entry under Vite with the server's shared stylesheet, each kind's own styles
+kept before the project's theme as the built shell keeps them. So a kind added on a branch, or a
+change to the shell, shows with no build too. A save to a kind's module or to the shell's sources
+loads the page again, a style sheet's change applies in place, and an error in a module is drawn
+over the page.
+
+A reload, not React's Fast Refresh (`@vitejs/plugin-react`): that would be a dependency more and
+one more script put in a page Vite does not serve, and it keeps a component's state only across an
+edit to a module that exports components alone, which few of these do, and most pages here draw
+again at once from the device's cache and keep their drafts on every input. What only a build
+makes it does not show: the shared stylesheet and the program's kinds are the server's build's (an edit to the
+Dioxus client's sheets, `board.css` among them, shows once `just symphony-ui-dist` has built them
+and the server serves that build, `SYMPHONY_UI_DIST` naming its `public/` for another project),
+React is its development build, and the bytes are no build's. No build, regenerator or check runs
+it (its files count in the regenerator's key, as every file of this package does);
+`src/dev-server.test.ts` holds what it does.
 
 ## Reports
 
@@ -203,6 +240,24 @@ series take `--chart-1` to `--chart-5` (`src/reports.css`), set at no specificit
 own win, with their own steps in the dark. Charts below the screen mount through
 `NearViewport`. Hours are labelled in UTC.
 
+## The agents page
+
+`src/agents.tsx` draws `/agents`, the kind `agents`, under the board it follows (`keepBoard`,
+`live.tsx`): its probes, the tasks happening now as the board's cards, the machines' build and
+test context, who is connected and, read when their list opens, the lost agents. Each agent's row
+says what is known of it, its Go to session control (`session.tsx`, which the task page's role
+chips will share), its builds and tests, how to reach it, what it works on, the open tasks it
+orchestrates (its Following list, `Followed`, read a page at a time once opened) and the five it
+finished last. `src/agents-live.ts` holds its reads, guarded as serde reads them (a field a server
+leaves out reads as serde's default), its rules and the page kept live (`LiveAgents`): the first
+page of `/api/agent-page` once the board is read, then each feed event applied where it lands; one
+that brings in a task the page lists no record of (`agentsPageTakes`, the server's rule) or says
+the board is back reads the first page again, merged into what is drawn, both cursors and the
+lost agents kept, and the events heard during a read are replayed onto its answer (`ReadCursor`,
+`src/journal.ts`, the board's as well and no other kind's, so they alone carry it). It keeps
+nothing on the device. Its text orders and trims as Rust's does (`textOrder` by UTF-8
+bytes, `whiteSpace` for `trim`), so its lists and lines are the Dioxus page's.
+
 ## The documents
 
 The kind `docs` (`src/kinds/docs.tsx`) draws every page an entrypoint serves: a document, a
@@ -216,9 +271,12 @@ sections near the screen read and kept, and the document's feed followed. A sect
 not change draws nothing again, and typed words live outside the page's markup: a section's
 editor (`editor.tsx`: a card's verdict under its tap, a message, a comment), a question and its
 follow-ups (`asks.tsx`), each draft saved on this device on every input with its files
-(`attach.tsx`, the same rows the Dioxus composers keep). A card's Later is the queue's
-(`postpone.tsx`), the related tasks and a branch's differences are `related.tsx`'s. Its own
-styles are `src/docs.css`, the Dioxus client's documents sheet moved here.
+(`attach.tsx`, the same rows the Dioxus composers keep). A link's excerpt, once opened, draws its
+blocks whole at once (`ExcerptBody` under `AtOnce`, `viewport.tsx`), no part of it waiting to come
+near the screen: opening it asked for them, and its box, which scrolls, would clip the sentinel's
+look-ahead, leaving a box opened below the screen empty until it was scrolled to. A card's Later
+is the queue's (`postpone.tsx`), the related tasks and a branch's differences are `related.tsx`'s.
+Its own styles are `src/docs.css`, the Dioxus client's documents sheet moved here.
 
 ## A task's page
 

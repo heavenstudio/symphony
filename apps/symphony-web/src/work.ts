@@ -5,7 +5,8 @@
 // `taskStage`, `placesAlike`, `canPlace`, `conflicts` and `isFor` carry crates/symphony-api's own
 // (task_stage.rs, machine_work.rs), held to the Rust by the cases it writes (wire.cases.json,
 // work.test.ts). The phases carry the Dioxus client's (apps/symphony-ui/src/machine_work.rs), held
-// by the browser tests.
+// by the browser tests; a machine's occupancy and the work a lost feed shows are the agents page's
+// (agents-live.ts).
 
 import { field } from "./shared";
 import type {
@@ -249,11 +250,33 @@ export function freshnessWord(freshness: WorkFreshness): string {
 }
 
 /**
+ * Whose builds and tests a view shows: a task's (its own and its subtasks'), an agent's, a
+ * machine's, or every operation no machine vouches for (`unassigned`).
+ */
+export type Scope = { task: string } | { agent: string } | { machine: string } | "unassigned";
+
+/** Whether `operation` is `scope`'s. */
+function inScope(scope: Scope, operation: WorkOperation): boolean {
+  if (scope === "unassigned") return true;
+  if ("task" in scope) return isFor(operation, scope.task);
+  if ("agent" in scope) return operation.handle === scope.agent;
+  return operation.machine_id === scope.machine;
+}
+
+/**
  * The builds and tests of `slug`'s task, its own and its subtasks', in the order the machines
  * report them: one per operation a machine vouches for (a second report of it marks it
  * conflicting when it says otherwise), each it does not vouch for apart.
  */
 export function phases(work: MachineWork, slug: string): Phase[] {
+  return scopedPhases(work, { task: slug });
+}
+
+/**
+ * The builds and tests of `scope`, as `phases` finds a task's; the unassigned scope's are only the
+ * operations no machine vouches for.
+ */
+export function scopedPhases(work: MachineWork, scope: Scope): Phase[] {
   const found: Phase[] = [];
   const append = (
     operation: WorkOperation,
@@ -261,7 +284,7 @@ export function phases(work: MachineWork, slug: string): Phase[] {
     freshness: WorkFreshness,
     proven: boolean,
   ) => {
-    if (!isFor(operation, slug) || (operation.kind !== "build" && operation.kind !== "test")) {
+    if (!inScope(scope, operation) || (operation.kind !== "build" && operation.kind !== "test")) {
       return;
     }
     if (proven && operation.operation_id !== null && operation.operation_id !== undefined) {
@@ -278,7 +301,7 @@ export function phases(work: MachineWork, slug: string): Phase[] {
     }
     found.push({ operation, machine, freshness, proven });
   };
-  for (const machine of work.machines) {
+  for (const machine of scope === "unassigned" ? [] : work.machines) {
     for (const operation of machine.operations) {
       if (operation.machine_id !== machine.machine_id) {
         append(operation, "Machine unknown", "conflict", false);
@@ -304,7 +327,12 @@ export function phaseLabel(phase: Phase): string {
 
 /** The phases `slug`'s card shows: a machine's own read as disconnected while the feed is. */
 export function shownPhases(work: MachineWork, slug: string, connected: boolean): Phase[] {
-  const rows = phases(work, slug);
+  return shownScoped(work, { task: slug }, connected);
+}
+
+/** The phases `scope` shows, as `shownPhases` shows a task's. */
+export function shownScoped(work: MachineWork, scope: Scope, connected: boolean): Phase[] {
+  const rows = scopedPhases(work, scope);
   return connected
     ? rows
     : rows.map((row) => (row.proven ? { ...row, freshness: "disconnected" } : row));

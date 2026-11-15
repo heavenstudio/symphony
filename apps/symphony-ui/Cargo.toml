@@ -114,18 +114,18 @@ web-sys = { version = "0.3", features = [
 # One feature per platform: dx turns on the one it builds for. The desktop window's feature comes with
 # its slice (tools/python-zero/desktop), with its platform hooks (src/platform.rs).
 [features]
-default = ["web", "page-tasks", "overlays"]
+default = ["web", "overlays"]
 web = ["dioxus/web"]
-page-tasks = []
 page-panel = ["overlays"]
 # The overlay host alone: a select's popup and the picture viewer, for every other module.
 page-overlay = ["overlays"]
-# The program: /agents, the chat and the menus as one program that `dx bundle --wasm-split` cuts into
-# a main module and a chunk for each (src/split.rs, bundle.sh). Its kinds share one runtime.
-page-program = ["page-tasks", "page-panel", "page-overlay"]
+# The program: the chat and the menus every page mounts, as one program that `dx bundle --wasm-split`
+# cuts into a main module and a chunk for each, and one for the media layer (src/split.rs,
+# bundle.sh). Its kinds share one runtime.
+page-program = ["page-panel", "page-overlay"]
 overlays = ["dep:dioxus-primitives", "dep:dioxus-icons"]
 # Opt-in only: the release bundles never enable the development runtime or devtools.
-devtools = ["dioxus/devtools", "page-tasks", "page-panel", "page-overlay"]
+devtools = ["dioxus/devtools", "page-panel", "page-overlay"]
 # The size probes' bins (probes/), for `cargo symphony-ui size` only.
 size-probe = []
 

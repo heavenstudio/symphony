@@ -5,7 +5,8 @@
 //
 // It reads `/api/task-timeline` when it mounts, again when the task changes (its `revision`) or
 // Try again is pressed, and each `every` seconds while the task is open and the page shown, asking
-// with the validator of the last answer so an unchanged timeline is a `304`. On a phone the box
+// through `getIf` (request.ts) with its box's signal and the validator of the last answer, so an
+// unchanged timeline is a `304`. On a phone the box
 // keeps the height the page gave it: the latest steps that fit show, a read that adds a step moves
 // nothing outside it, and "Show all" lets it grow. Wide (from 900 px, where the lanes replace the
 // list) it grows to hold every lane, with no "Show all".
@@ -22,10 +23,9 @@ import {
 } from "react";
 import { Button } from "./button";
 import { sleep } from "./feed";
-import { here, project, scoped } from "./project";
-import { ANSWER_MS, inTime, said } from "./request";
+import { scoped } from "./project";
+import { Failure, getIf, NO_ANSWER as SLOW, said } from "./request";
 import { currentRoute } from "./route";
-import { field } from "./shared";
 import STYLE from "./timeline.css?inline";
 import {
   type Bar,
@@ -99,60 +99,39 @@ export const NOTHING_HELD: Held = { shown: null, kept: { tag: null, at: [0, 0] }
 /** A read of the timeline: a new answer and its validator, the one kept (`304`), or why it failed. */
 export type Read = { fresh: TaskTimeline; tag: string | null } | { same: true } | { error: string };
 
-/** The address of `slug`'s timeline, under the page's project and the checkout its route names. */
+/** The address of `slug`'s timeline under the checkout its route names, as `getIf` asks it (under
+ * the page's project). */
 export function timelineUrl(slug: string): string {
-  const path = `${TASK_TIMELINE_PATH}?slug=${encodeURIComponent(slug)}`;
-  return here(project(), scoped(currentRoute().scope, path));
-}
-
-/** What `response` answered: the one kept, a new timeline, or the server's own words of why not. */
-async function answered(response: Response): Promise<Read> {
-  if (response.status === 304) return { same: true };
-  const tag = response.headers.get("ETag");
-  let body: { value: unknown } | { refused: unknown };
-  try {
-    body = { value: await response.json() };
-  } catch (error) {
-    body = { refused: error };
-  }
-  if (!response.ok) {
-    const error = "value" in body ? field(body.value, "error") : undefined;
-    return { error: typeof error === "string" ? error : `the server answered ${response.status}` };
-  }
-  if ("refused" in body) return { error: said(body.refused) };
-  const timeline = readTimeline(body.value);
-  return timeline === null ? { error: NOT_A_TIMELINE } : { fresh: timeline, tag };
+  return scoped(currentRoute().scope, `${TASK_TIMELINE_PATH}?slug=${encodeURIComponent(slug)}`);
 }
 
 /**
- * `slug`'s timeline, asked with `tag`, the last answer's validator, when there is one. A read that
- * has no answer in ANSWER_MS fails, and one `signal` ends is given up on the wire.
+ * A failed read in the timeline's own sentence's words, as the Dioxus timeline said them: the
+ * server's of a refusal (its status where it gave none), the browser's of a fetch or a body that
+ * failed (its message, never its stack), or that no answer came in time.
+ */
+export function readFailed(failure: unknown): string {
+  if (!(failure instanceof Failure)) return said(failure);
+  return failure.text === SLOW ? NO_ANSWER : failure.own;
+}
+
+/**
+ * `slug`'s timeline, asked through `getIf` with `tag`, the last answer's validator, when there is
+ * one: a read that has no answer in ANSWER_MS fails, and one `signal` ends is given up on the wire.
  */
 export async function readOnce(
   slug: string,
   tag: string | null,
   signal: AbortSignal,
 ): Promise<Read> {
-  const controller = new AbortController();
-  const giveUp = () => controller.abort();
-  if (signal.aborted) giveUp();
-  signal.addEventListener("abort", giveUp, { once: true });
-  const init: RequestInit = { signal: controller.signal };
-  if (tag !== null) init.headers = { "If-None-Match": tag };
   try {
-    const read = await inTime(
-      fetch(timelineUrl(slug), init).then((response) => answered(response)),
-      ANSWER_MS,
-    );
-    if (read !== null) return read.value;
-    controller.abort();
-    return { error: NO_ANSWER };
-  } catch (error) {
-    // A JavaScript error's message ("Failed to fetch" for a fetch the network refused), never its
-    // stack.
-    return { error: said(error) };
-  } finally {
-    signal.removeEventListener("abort", giveUp);
+    const answer = await getIf(timelineUrl(slug), tag ?? "", signal);
+    if (answer.same) return { same: true };
+    const timeline = readTimeline(answer.value);
+    if (timeline === null) return { error: NOT_A_TIMELINE };
+    return { fresh: timeline, tag: answer.etag === "" ? null : answer.etag };
+  } catch (failure) {
+    return { error: readFailed(failure) };
   }
 }
 

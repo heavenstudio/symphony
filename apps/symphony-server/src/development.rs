@@ -165,7 +165,7 @@ fn start_child(
 /// Called only by the dedicated symphony-ui-dev binary, under the cargo wrapper.
 pub fn main(args: &[String]) -> Result<(), String> {
     let [root, dx, port] = args else {
-        return Err("usage: symphony-ui-dev ROOT DX PORT (just symphony-ui-dev PORT)".into());
+        return Err("usage: symphony-ui-dev ROOT DX PORT (cargo symphony-ui dev PORT)".into());
     };
     let port: u16 = port.parse().map_err(|e| format!("port {port}: {e}"))?;
     if port == crate::home::DEFAULT_PORT {

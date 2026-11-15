@@ -1,15 +1,14 @@
 // What a task's page reads, as this client reads it: the page (`/api/task-page`), its thread's pages
 // (`/api/task-history`), a message the feed brings, the rest of a long brief (`/api/task-brief`),
-// the landing it offers (`/api/task-offer`) and what an agent's session answers (its screen, its
-// focus). Each guard takes what serde would take of the same JSON, and is none for what it would
-// refuse: a field it defaults when absent defaults here too.
+// the landing it offers (`/api/task-offer`) and the ways into its holders' sessions (a session's
+// screen is read by session.tsx). Each guard takes what serde would take of the same JSON, and is
+// none for what it would refuse: a field it defaults when absent defaults here too.
 
 import { readBlocks } from "./blocks-read";
 import { readGatesSeen } from "./gates-model";
 import { field } from "./shared";
 import { readTask } from "./task";
 import type {
-  AgentScreen,
   Message,
   SessionGo,
   Task,
@@ -196,19 +195,6 @@ export function readOffer(value: unknown): TaskOffer | null {
         label: field(value, "label") as string,
         branch: field(value, "branch") as string,
         payload: (payload as string | undefined) ?? null,
-      }
-    : null;
-}
-
-/** A session's screen, read only, or none. */
-export function readScreen(value: unknown): AgentScreen | null {
-  return ["handle", "pane", "text"].every((key) => isText(field(value, key))) &&
-    typeof field(value, "read_at") === "number"
-    ? {
-        handle: field(value, "handle") as string,
-        pane: field(value, "pane") as string,
-        text: field(value, "text") as string,
-        read_at: field(value, "read_at") as number,
       }
     : null;
 }

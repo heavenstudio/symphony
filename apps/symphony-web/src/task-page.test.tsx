@@ -18,6 +18,7 @@ import {
   LiveTaskPage,
   NOTHING_READ,
   OwnerControls,
+  RoleChips,
   recipients,
   TaskDetail,
   type TaskDetailProps,
@@ -83,6 +84,7 @@ function detail(props: Partial<TaskDetailProps> = {}, region = "") {
   return html(
     <TaskDetail
       page={page}
+      scope=""
       work={NO_WORK}
       connected
       tasks={[]}
@@ -521,5 +523,46 @@ describe("the route's task as its read stands", () => {
     expect(html(<TaskPageView live={shown} stale={false} freshness={FRESH} />)).toContain(
       "Loading task…",
     );
+  });
+});
+
+describe("a task's role chips", () => {
+  const go = (handle: string, url: string | null, pane: string | null) => ({ handle, url, pane });
+  const sessions = {
+    amber: go("amber", null, "t7"),
+    sub: go("orch", "https://claude.ai/code/s1", null),
+  };
+  const roles = [
+    aRole("executor", "amber"),
+    aRole("reviewer", "sub"),
+    aRole("orchestrator", "bare"),
+  ];
+
+  /** The chip of `name` in `html`, to the next chip. */
+  const chip = (html: string, name: string) => {
+    const at = html.indexOf(`>${name}`);
+    expect(at, `${name}: ${html}`).toBeGreaterThanOrEqual(0);
+    const end = html.indexOf('</span><span class="chip', at);
+    return html.slice(at, end < 0 ? html.length : end);
+  };
+
+  it("each carry their holder's control", () => {
+    const html = renderToStaticMarkup(
+      <RoleChips roles={roles} sessions={sessions} local scope="" />,
+    );
+    expect(chip(html, "executor amber")).toContain('data-go="focus"');
+    const sub = chip(html, "reviewer sub");
+    expect(sub).toContain('href="https://claude.ai/code/s1"');
+    expect(sub).toContain("go-session-via");
+    expect(chip(html, "orchestrator bare")).not.toContain("Go to session");
+    expect(html).toContain('<span class="chip health-live" title="executor is live">');
+  });
+
+  it("show a pane's screen from another machine", () => {
+    const phone = renderToStaticMarkup(
+      <RoleChips roles={roles} sessions={sessions} local={false} scope="wt" />,
+    );
+    expect(phone).toContain('data-go="screen"');
+    expect(phone).not.toContain('data-go="focus"');
   });
 });
