@@ -142,9 +142,10 @@ can read (below), and `.claude/settings.json` denies Edit there as well.
 launch takes and `just tasks limits` prints with where each came from
 ([TASKS](docs/TASKS.md#limits-and-models)). Until this file names them (it waits for the
 machine to run a build that reads the table), the orchestrator may run on the most capable
-model, for diagnosis and design, and executors and reviewers run on Opus, as `[agents] launch`
-says for a board launch. An Agent launch passes the model `just tasks limits` names for the
-role, `model: "opus"` today (a subagent otherwise inherits its orchestrator's model). A
+model, for diagnosis and design, and executors, reviewers and assessors run on Fable, as
+`[agents] launch` and the table's `assessor` say for a board launch. An Agent launch passes the
+model `just tasks limits` names for the role, `model: "fable"` today (a subagent otherwise
+inherits its orchestrator's model). A
 resumed agent keeps the model it started on. The work-in-progress limits are settings the same
 way, in `[limits]`.
 
