@@ -30,6 +30,75 @@ their dated history work is in [REVIEW](REVIEW.md).
 
     **What it leaves for later:** the home page shows the hour's greeting and each card's age, so its picture needs the shot taken at a fixed time; that is built when its spec is written. The other thirteen specs, one paragraph each, and the ranked gaps are in the linked review.
 
+### Delivery to projects
+
+- [ ] **client-distribution-on-main** — Each land that changes the web client is followed by a background run that commits a fresh build of the client to main. Those builds are 85 % of what git holds for main's history and grow about 27 MiB a day, which every clone and every consuming project's pin downloads. Nothing on the pages changes under any option. Should main keep committing the built client? A: no; only a release commits the client, the one it verified, on a commit of its own under its tag, and a checkout that needs pages builds its own. B: yes, but once a release: the release run commits it, no land does. C: yes, after every land that changes it, as today. None of them shrinks the history already there: that takes rewriting it, a choice of its own. Recommended: A. Approve and say A, B or C in the note, or comment. [[analysis/code-review-2026-11#2. The built client is committed, and is 85 % of the repository]]
+  [2026-11-15 03:46] agent — Posted for the board task `docs/code-review-owner-choices`, from the codebase review.
+
+    **Today**, read at main `771aab9e` with the review's command (in its finding): git holds 157.6 MiB for main's history, 134.1 MiB of it the client under `apps/symphony-server/client/public`, first committed on 2026-11-10. 92 of main's commits only regenerate it, 17 to 39 a day; in the tree it is 110 files, 6.3 MB.
+
+    **A, only a release:**
+    - *A pin* is a release tag already and takes the client under its tag, as now. A pin to a commit of main would build a server with no pages, so it is no longer possible.
+    - *The regenerator:* no land starts it. Its 1,674 lines (`crates/tasks/src/land/regenerate.rs`) and 1,962 of tests can go, with the waits a pin and a release make for it, the rule that a branch never commits the client, the land keeping main's side of it and a release candidate's fix committing its own. No other project on this machine uses it. Its check of the documents on main's tip after each round goes too; the docs audit still runs at each task's tip and in the release run.
+    - *A release:* the run builds the client in its own checkout, as its client check does today, commits it on top of the tip it verified and tags that commit, which main never holds.
+    - *A clone:* the tree holds no client, but a clone fetches every release tag, so it gets one client a release. The five releases so far hold 563 different client files, 82 MiB before git compresses them, against 5,936 files and 917 MiB for main's whole history: about a tenth. A pin fetches its own release's alone.
+    - *A checkout that serves pages* (an agent's server of its own, for pictures) builds the client first, as a task already does for its tests. While the Dioxus client remains, that build takes minutes rather than the React client's seconds.
+
+    **B, once a release.** The release run makes the client before it verifies, and no land does. Growth falls about as under A, but onto main, so each pin fetches every release's client. Between releases main's client is older than its sources, so a pin to a commit of main waits for the next release. The regenerator stays, started by the release.
+
+    **C, as today.** About 27 MiB a day, some 0.8 GiB more in a month at this pace.
+
+    **Why A.** It is the one option that takes a build off every land and the client out of main, and it is where the release design you approved already goes: a release's client as a part of its own, beside a server with no client in it. Its cost is a task or two (the release's commit and tag, the regenerator's removal, the guides), cheapest once the Dioxus client is gone and the client is one quick build.
+
+    **Earlier verdicts checked.** **symphony-update-command** (B, projects follow release tags) already makes every pin a release, which A relies on. **pin-waits-for-current-client** (A) keeps a pin to a commit of main off a client older than its sources; A leaves such a pin no client and B makes it wait longer, so neither changes that choice. **release-delivery** (C) ships a release's client beside the server once `symphony update` is built; it does not say whether main commits one before then. **pictures-in-every-clone** (F) commits the documents' pictures, not the client. None of them answers this card.
+
+### Board
+
+- [ ] **board-search-by-meaning** — The board can find tasks by what they mean as well as by their words, with a small language model that runs on this machine. Nothing asks for it: the board page searches by words, no skill or document names it but the board's own guide and help, and the consuming project's tools never call it. It costs 153 of the 189 packages the board is built from, a 133 MB download for each project, and a pass every minute on the server for each project. What becomes of it? A: delete it; the board searches by words alone. B: move it into a program of its own, as an approved branch already does that never landed: the board and the server build without the model, and search by meaning works where that program is built. C: keep it in the board behind a build switch that is off by default. D: keep it as it is. Recommended: A. Approve and say A, B, C or D in the note, or comment. [[analysis/code-review-2026-11#4. Eight tenths of the board's dependencies serve a search mode nothing asks for]]
+  [2026-11-15 03:46] agent — Posted for the board task `docs/code-review-owner-choices`, from the codebase review.
+
+    **Who uses it**, read today. `just tasks search` searches by words unless `--mode vector`, `hybrid` or `exact` is given (`crates/tasks/src/cli/search.rs`). The board page's search is by words (`apps/symphony-server/src/api.rs`, `store.search`). Of the shipped skills and the documents only the board's guide (`crates/tasks/AGENTS.md`) names those modes, and of the consuming project's tracked files only one analysis. Whether an agent has typed them is not known: the board records no search.
+
+    **What it costs:**
+    - *Packages:* `cargo tree -p symphony-board -e normal,build --prefix none --no-dedupe | sort -u` lists 189, and 36 with `--prune tract-onnx --prune tract-linalg --prune tokenizers` before the sort. Every build of the board, the server, `symphony` and `agent-send` compiles them.
+    - *The model:* 133 MB in each project's `symphony/models/`, in its git common dir; two copies on this machine.
+    - *The server's pass:* 3,578 passes in its log since 2026-11-11, 2.5 hours in all, 1.2 s at the median; one that embeds changed tasks takes about 30 s to 2 minutes at low priority. Its CPU is not measured.
+    - *Bytes:* the release run's build of `tasks` at hand is 20,337,280; without the model it is not measured today. On B's branch, as its thread measured on 2026-11-12, `tasks` went from 23,830,752 to 8,102,880 bytes with the model's program at 16,641,552, and a cold build of `tasks` from 769 to 183 s of CPU.
+
+    **A, delete it.** The three modes, `tasks embed`, the server's pass, the download and the three packages go: about 1,250 lines of source (`crates/tasks/src/embedding.rs` less its tests, `store/embeddings.rs`, `cli/embedding.rs`, half of `cli/search.rs`, the server's `front/embeddings.rs`), about 800 of tests and two benchmarks. The model's tables can stay in the board's schema, unused, so no board need move to a new schema for it. B's branch is dropped.
+
+    **B, a program of its own.** `tasks-embed` holds the model, and `tasks embed` and a search by meaning start it. Where it is not built, those searches say what to build, and searching by words is unchanged. The branch (`perf/embedding-in-its-own-binary`, approved by its reviewer at `c7142edd` on 2026-11-12) adds about 3,500 lines and is 691 commits behind main, so it is merged again and reviewed again before it lands.
+
+    **C, a build switch.** One package as now; the default build leaves the model out, and the modes say which build has it. The build with the model has its tests to run somewhere too, in the release run at least.
+
+    **D, as today.** Nothing changes.
+
+    **Why A.** Nothing calls it, and deleting it is smaller than either way of keeping it. B's branch shows how it would come back, as a program of its own, if search by meaning is wanted later.
+
+    **Earlier verdicts checked.** No card here asks about search by meaning. In the consuming project's register, before this repository was split from it, the board's database card (2026-10-06) offered search by meaning under both databases, and your approval chose the database, not whether search by meaning stays. Your words of 2026-11-12, "we should really have separate crates that have lower binary sizes", are what B's task was filed on: A, B and C each meet them and D does not, so they do not choose among the first three.
+
+### The shared server
+
+- [ ] **server-socket-hand-over** — When the shared server takes a new build (the checkout it is built from changed, as a release's refresh changes it, or a newer build was started), the new server gets ready while the old one keeps answering, then takes over the old one's open port. Pages never meet a server that is down, and a new build that fails to start leaves the old one serving. Should it keep this hand-over, or simply stop and start again? A: keep it. B: a plain restart: the old server stops and the new one starts on the port; the watch for a new build and the build itself stay as they are. Recommended: A. Approve and say A or B in the note, or comment. [[analysis/code-review-2026-11#Choices that are the owner's]]
+  [2026-11-15 03:46] agent — Posted for the board task `docs/code-review-owner-choices`, from the codebase review.
+
+    **What you would notice under B**, at each switch:
+    - The port is closed until the new server listens, then its pages wait while it warms up: 0.9 to 47 s over the 25 starts in its log, 6.3 s at the median.
+    - Open pages say "Reconnecting: the board may be out of date" and try again after 1 s, then 2, 4 and on up to 30 s. A page opened then fails to load or waits; a save fails and keeps its draft.
+    - A new build that compiles but fails to start leaves no server until someone starts one, and the refresh's wait for it ends unanswered.
+
+    Under A, open pages lose their live feed for about a second and take it again from the new server, warmed up already, and a failed start is said on the old server's notice while it keeps serving. Under both, the build itself (10 s to 21 minutes in the log) runs while the old server answers.
+
+    **How often.** The server's log holds 10 hand-overs since 2026-11-11, none failed. A release's refresh makes one each time it moves the consuming project's pin.
+
+    **What the refresh depends on.** The server's own reload: it sees the new `Cargo.lock` of the checkout it is built from, builds and switches. The refresh then waits up to 20 minutes for another process to answer on the port (`crates/symphony/src/release/refresh.rs`). Under B that still holds, as long as the new server runs as a new process rather than in the old one's place, which keeps its process number.
+
+    **The lines.** The server's whole update is 2,046 lines of source and 2,920 of tests (`wc -l` of the server's `src/reload.rs`, `src/reload/stamp.rs`, `src/reload/source_event.rs` and `src/host.rs` with the library's `src/reload.rs`; and of the server's `src/reload/tests.rs`, `src/host_tests.rs` and `tests/after_reload.rs` with the library's `src/reload/build_tests.rs`). B keeps the watch, the stamp and the build. It removes the hand-over itself, about 530 lines of source (`sed -n '23,415p;619,651p' apps/symphony-server/src/reload.rs` gives 426 of them, `src/host.rs` 78, the hand-off signal and the old server's drain in `src/front.rs` the rest) and 549 of tests (lines 353 to 592 of `src/reload/tests.rs`, 1007 to 1230 of `tests/after_reload.rs`, and `src/host_tests.rs`), and needs a stop and a start of its own, with their tests, not written.
+
+    **Why A.** It works, and B saves about a quarter of the update's lines for a gap of seconds at every switch and no server at all after a build that fails to start.
+
+    **Earlier verdicts checked.** No card asks about the hand-over. **server-framework** (A, keep Axum) counted the server's own listener, which the hand-over relies on, in the cost of moving off Axum, and noted that Axum's next version will need the drain checked; it did not ask whether to keep the hand-over.
+
 ## Auto-approved: spot-check
 
 ### Releases
