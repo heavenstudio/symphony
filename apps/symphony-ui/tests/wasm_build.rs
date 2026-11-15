@@ -32,7 +32,7 @@ const KINDS: [&str; 1] = ["program"];
 /// media sheet, for the three kinds that show media), then its entry's own. The task board and the
 /// agents page have none: their styles (assets/board.css) are the program's, in the shared file.
 /// The overlay, the menus every page mounts, is no page's but the shell's persistent kind.
-const WEB: [(&str, &[&str]); 8] = [
+const WEB: [(&str, &[&str]); 9] = [
     ("agents", &[]),
     ("board", &[]),
     ("docs", &["media-layer", "docs"]),
@@ -40,6 +40,7 @@ const WEB: [(&str, &[&str]); 8] = [
     ("queue", &["queue"]),
     ("reports", &["reports"]),
     ("review", &["media-layer"]),
+    ("runs", &["runs"]),
     ("task", &["media-layer", "task"]),
 ];
 /// The program's chunks (src/split.rs), in the order of its split points' names: the chat's (its
