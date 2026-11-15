@@ -53,6 +53,7 @@ pub(crate) mod unanswered;
 mod waits;
 mod work;
 mod write;
+mod writers;
 
 use beside::Beside;
 use write::{ACT, WRITE};
@@ -78,6 +79,7 @@ pub use work::{
     PULLABLE, ROLES, RunPlace, STATUSES, Unfresh, approved, can_transition, covered_by,
     covered_line, landing,
 };
+pub use writers::{Program, Writer};
 
 type Clock = Box<dyn Fn() -> f64 + Send + Sync>;
 type Probe = Box<dyn Fn(i64) -> bool + Send + Sync>;
