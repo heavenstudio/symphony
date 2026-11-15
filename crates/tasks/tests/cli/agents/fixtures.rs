@@ -5,7 +5,7 @@ use serde_json::{Value, json};
 use symphony_board::NewSession;
 use symphony_board::cli::agents::Run;
 
-pub(super) const AGENT_KEYS: [&str; 22] = [
+pub(super) const AGENT_KEYS: [&str; 23] = [
     "handle",
     "kind",
     "model",
@@ -28,6 +28,7 @@ pub(super) const AGENT_KEYS: [&str; 22] = [
     "slots",
     "session_url",
     "in_process",
+    "tokens",
 ];
 
 pub(super) fn local_session(kind: &str) -> NewSession {

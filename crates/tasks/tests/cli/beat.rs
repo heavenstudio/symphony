@@ -178,6 +178,7 @@ impl Event {
 }
 
 mod place;
+mod usage;
 
 /// Beat command health and session updates.
 mod beats {

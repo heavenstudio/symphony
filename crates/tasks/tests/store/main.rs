@@ -65,5 +65,6 @@ mod slow_builds;
 mod start;
 mod subtask_roles;
 mod tree;
+mod usage;
 mod verdict;
 mod waits;

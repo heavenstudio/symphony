@@ -11,6 +11,7 @@ use crate::orchestration;
 use crate::rows::SessionRow;
 use crate::stages::{EVERY_ROLE, RELEASED};
 use crate::sys::Boottime;
+use crate::usage::Spent;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, HashSet};
@@ -210,9 +211,10 @@ RETURN NONE;";
 /// The session bound to `$agent` is seen, and its busy mark kept, moved or cleared. `boot_order`
 /// keeps the known watermark even when `last_boot` is unreadable; retired boot ids prevent a
 /// delayed sample from moving it back across a reboot. No arrival order proves sample order across
-/// an unreadable call, so `boot_uncertain` lasts for the checkout stay.
+/// an unreadable call, so `boot_uncertain` lasts for the checkout stay. Its answer is the handle,
+/// after the tokens the beat hands, if it hands any ([`super::spending::SPEND`]).
 const BEAT: &str = "
-LET $s = (SELECT handle, busy_until, busy_call FROM session WHERE agent = $agent AND left_at = NONE LIMIT 1)[0];
+LET $s = (SELECT handle, kind, busy_until, busy_call FROM session WHERE agent = $agent AND left_at = NONE LIMIT 1)[0];
 LET $mark = IF $s = NONE { NONE }
     ELSE IF $busy_for != NONE AND ($s.busy_until = NONE OR $now + $busy_for >= $s.busy_until) {
         { until: $now + $busy_for, call: $call } }
@@ -244,7 +246,7 @@ IF $s != NONE AND $bound.in_process = true {
         };
     };
 };
-RETURN $s.handle;";
+";
 
 impl Store {
     /// The handles of new sessions come from `pick`.
@@ -426,12 +428,33 @@ IF type::record('session', $handle).agent != $agent {{ THROW 'stale' }};
         place: Option<(&str, &str)>,
         boot: Option<&Boottime>,
     ) -> Result<Option<String>, Error> {
+        self.agent_beat_spending(agent, beat, place, boot, &[])
+    }
+
+    /// [`Store::agent_beat_in`], adding `spent`, the tokens the agent's model calls took since its
+    /// last beat, to the handle bound to it, in the same transaction: on the row of the task and
+    /// role it works now, the model, the speed and the task's round ([`crate::usage`]). With no
+    /// handle bound, nothing is added; the answer, the handle, says whether it was.
+    pub fn agent_beat_spending(
+        &self,
+        agent: &str,
+        beat: &Beat,
+        place: Option<(&str, &str)>,
+        boot: Option<&Boottime>,
+        spent: &[Spent],
+    ) -> Result<Option<String>, Error> {
         let place = place.map(|(worktree, branch)| json!({"worktree": worktree, "branch": branch}));
-        let vars = json!({
+        let mut vars = json!({
             "agent": agent, "now": (self.clock)(), "busy_for": beat.busy_for, "call": beat.call,
             "ended": beat.ended, "place": place, "boot": boot,
         });
-        self.retrying(|| self.transact(BEAT, vars.clone()))
+        let body = if spent.is_empty() {
+            format!("{BEAT}RETURN $s.handle;")
+        } else {
+            super::spending::vars(&mut vars, spent);
+            format!("{BEAT}{}RETURN $s.handle;", super::spending::SPEND)
+        };
+        self.retrying(|| self.transact(&body, vars.clone()))
     }
 
     /// Take an existing handle back (a re-armed monitor), keeping every role it holds.

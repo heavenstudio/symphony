@@ -1,0 +1,225 @@
+//! The tokens a beat hands the board ([`symphony_board::usage`]): added in the beat's own
+//! transaction to the handle bound to its key, on the task and role that handle works then and the
+//! task's round, and read back by task and by session.
+
+use crate::common::{Fixture, NOW, Seed};
+use symphony_board::Beat;
+use symphony_board::rows::UsageRow;
+use symphony_board::usage::{Spent, Tally, Tokens};
+
+/// `n` calls' worth on Opus at the standard speed: `n` of each kind, `n * 1000` read from the cache.
+fn opus(n: u64) -> Spent {
+    at("claude-opus-5-5", "standard", n)
+}
+
+fn at(model: &str, speed: &str, n: u64) -> Spent {
+    Spent {
+        model: model.into(),
+        speed: speed.into(),
+        tokens: tokens(n),
+    }
+}
+
+fn tokens(n: u64) -> Tokens {
+    Tokens {
+        input: n,
+        cache_write_5m: n,
+        cache_write_1h: n,
+        cache_read: n * 1000,
+        output: n,
+        calls: n,
+    }
+}
+
+/// A tool call of agent key `agent`, handing `spent`: the handle it beat for.
+fn beat(f: &Fixture, agent: &str, spent: &[Spent]) -> Option<String> {
+    f.advance(1.0);
+    f.store
+        .agent_beat_spending(agent, &Beat::default(), None, None, spent)
+        .unwrap()
+}
+
+/// `sim/jump` in progress: `ochre-owl` orchestrates, `amber-heron` executes it through key `exec`,
+/// `brisk-finch` is the reviewer to be, beating through key `rev`.
+fn working() -> Fixture {
+    let f = Fixture::new(
+        Seed::default()
+            .session("ochre-owl")
+            .session("amber-heron")
+            .session("brisk-finch")
+            .task("sim/jump", "in_progress")
+            .role("sim/jump", "ochre-owl", "orchestrator")
+            .role("sim/jump", "amber-heron", "executor"),
+    );
+    assert!(f.store.bind_agent("exec", "amber-heron", false).unwrap());
+    assert!(f.store.bind_agent("rev", "brisk-finch", false).unwrap());
+    f
+}
+
+fn rounds(tally: &Tally) -> Vec<(i64, Tokens)> {
+    tally.rounds.clone()
+}
+
+fn sum(parts: &[u64]) -> Tokens {
+    let mut all = Tokens::default();
+    for n in parts {
+        all.add(&tokens(*n));
+    }
+    all
+}
+
+#[test]
+fn a_task_worked_over_two_rounds_reads_each_rounds_cost_back() {
+    let f = working();
+    assert_eq!(beat(&f, "exec", &[opus(1)]).as_deref(), Some("amber-heron"));
+    f.store.move_to("sim/jump", "review", "amber-heron").unwrap();
+    f.store
+        .take_role("sim/jump", "brisk-finch", "reviewer")
+        .unwrap();
+    // The review of the first round's work is the work after the first move to review: round 2.
+    beat(&f, "rev", &[opus(2)]);
+    f.store
+        .verdict("sim/jump", "brisk-finch", "changes", "the jump overshoots")
+        .unwrap();
+    beat(&f, "exec", &[opus(4)]);
+    f.store.move_to("sim/jump", "review", "amber-heron").unwrap();
+    beat(&f, "rev", &[opus(8)]);
+    let rows = f.store.spent_on(&["sim/jump"]).unwrap();
+    let tally = Tally::of(&rows);
+    assert_eq!(
+        rounds(&tally),
+        [(1, sum(&[1])), (2, sum(&[2, 4])), (3, sum(&[8]))]
+    );
+    assert_eq!(
+        tally.roles,
+        [
+            ("executor".to_string(), sum(&[1, 4])),
+            ("reviewer".to_string(), sum(&[2, 8]))
+        ]
+    );
+    assert_eq!(tally.total, sum(&[1, 2, 4, 8]));
+    let first = rows
+        .iter()
+        .find(|r| (r.handle.as_str(), r.round) == ("amber-heron", 1))
+        .unwrap();
+    assert_eq!(
+        first,
+        &UsageRow {
+            handle: "amber-heron".into(),
+            slug: "sim/jump".into(),
+            role: "executor".into(),
+            model: "claude-opus-5-5".into(),
+            speed: "standard".into(),
+            round: 1,
+            input: 1,
+            cache_write_5m: 1,
+            cache_write_1h: 1,
+            cache_read: 1000,
+            output: 1,
+            calls: 1,
+            first: NOW + 1.0,
+            last: NOW + 1.0,
+        }
+    );
+}
+
+#[test]
+fn beats_of_one_round_add_up_on_one_row_per_model_and_speed() {
+    let f = working();
+    beat(&f, "exec", &[opus(1), at("claude-opus-5-5", "fast", 3)]);
+    beat(&f, "exec", &[opus(2)]);
+    beat(&f, "exec", &[]);
+    let rows = f.store.spent_on(&["sim/jump"]).unwrap();
+    let kept: Vec<(&str, Tokens, f64, f64)> = rows
+        .iter()
+        .map(|r| (r.speed.as_str(), r.tokens(), r.first, r.last))
+        .collect();
+    assert_eq!(
+        kept,
+        [
+            ("fast", tokens(3), NOW + 1.0, NOW + 1.0),
+            ("standard", sum(&[1, 2]), NOW + 1.0, NOW + 2.0)
+        ]
+    );
+}
+
+#[test]
+fn a_session_working_no_task_spends_on_none_in_its_kind_and_an_unbound_key_on_nobody() {
+    let f = working();
+    // Orchestrating is no task's work: its calls go to no task, in the session's kind.
+    assert!(f.store.bind_agent("owl", "ochre-owl", false).unwrap());
+    assert_eq!(beat(&f, "owl", &[opus(5)]).as_deref(), Some("ochre-owl"));
+    let idle = f.session("chat");
+    assert!(f.store.bind_agent("idle", &idle, false).unwrap());
+    beat(&f, "idle", &[opus(6)]);
+    assert_eq!(beat(&f, "nobody", &[opus(7)]), None);
+    let none = f.store.spent_on(&[""]).unwrap();
+    let mut said: Vec<(&str, &str, i64)> = (none.iter())
+        .map(|r| (r.handle.as_str(), r.role.as_str(), r.round))
+        .collect();
+    said.sort_unstable();
+    let mut expected = [("ochre-owl", "worker", 0), (idle.as_str(), "chat", 0)];
+    expected.sort_unstable();
+    assert_eq!(said, expected);
+    assert!(f.store.spent_on(&["sim/jump"]).unwrap().is_empty());
+    let by = f
+        .store
+        .spent_by(&["ochre-owl", "amber-heron", "nobody"])
+        .unwrap();
+    assert_eq!(
+        by.into_iter().collect::<Vec<_>>(),
+        [("ochre-owl".to_string(), tokens(5))]
+    );
+}
+
+/// Where one beat of `amber-heron`, holding `roles`, spends: the task and role.
+fn spends_on(roles: &[(&str, &str, &str)]) -> Vec<(String, String)> {
+    let mut seed = Seed::default().session("amber-heron");
+    for (slug, status, role) in roles {
+        seed = seed.task(slug, status);
+        seed = if *role == "reserved" {
+            seed.reserved(slug, "amber-heron", Some(NOW + 3600.0))
+        } else {
+            seed.role(slug, "amber-heron", role)
+        };
+    }
+    let f = Fixture::new(seed);
+    assert!(f.store.bind_agent("k", "amber-heron", false).unwrap());
+    beat(&f, "k", &[opus(1)]);
+    let slugs: Vec<&str> = std::iter::once("")
+        .chain(roles.iter().map(|(slug, _, _)| *slug))
+        .collect();
+    (f.store.spent_on(&slugs).unwrap().into_iter())
+        .map(|r| (r.slug, r.role))
+        .collect()
+}
+
+#[test]
+fn an_open_tasks_execution_comes_before_its_review_before_a_reservation_and_a_finished_task_never() {
+    let on = |slug: &str, role: &str| vec![(slug.to_string(), role.to_string())];
+    let done = ("sim/done", "done", "executor");
+    let review = ("sim/a", "review", "reviewer");
+    let reserved = ("sim/c", "ready", "reserved");
+    assert_eq!(
+        spends_on(&[done, review, ("sim/b", "review", "executor"), reserved]),
+        on("sim/b", "executor"),
+        "an executor waiting on its review still works its task"
+    );
+    assert_eq!(spends_on(&[done, reserved, review]), on("sim/a", "reviewer"));
+    assert_eq!(spends_on(&[done, reserved]), on("sim/c", "reserved"));
+    assert_eq!(spends_on(&[done]), on("", "worker"));
+}
+
+#[test]
+fn a_copy_carries_the_rows_and_the_dump_reads_them_back() {
+    let f = working();
+    beat(&f, "exec", &[opus(3)]);
+    let dump = f.store.dump().unwrap();
+    assert_eq!(dump.usages.len(), 1);
+    let again = Fixture::new(Seed { dump: dump.clone() });
+    assert_eq!(again.store.dump().unwrap().usages, dump.usages);
+    assert_eq!(
+        again.store.spent_on(&["sim/jump"]).unwrap(),
+        f.store.spent_on(&["sim/jump"]).unwrap()
+    );
+}

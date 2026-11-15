@@ -744,12 +744,19 @@ fn show(store: &Store, c: &mut Context) -> Result<(), Stop> {
         updated: task.updated,
     };
     let stages = stages::stages(facts, &lines, store.now());
+    // The task's tokens, its subtasks' with them.
+    let slugs: Vec<&str> = std::iter::once(slug.as_str())
+        .chain(children.iter().map(|child| child.slug.as_str()))
+        .collect();
+    let spent = store.spent_on(&slugs)?;
+    let tally = crate::usage::Tally::of(&spent);
     if c.parsed.flag("json") {
         let json = Py::obj(vec![
             ("task", shape::task(&task)),
             ("thread", shape::messages(&thread)),
             ("children", shape::tasks(&children)),
             ("stages", shape::stages(&stages)),
+            ("tokens", tally.json(&spent)),
         ]);
         c.say(&pyjson::dumps(&json));
         return Ok(());
@@ -789,6 +796,9 @@ fn show(store: &Store, c: &mut Context) -> Result<(), Stop> {
         }
     }
     c.say(&format!("  {}", stages::summary_line(&stages)));
+    for line in tally.lines() {
+        c.say(&format!("  {line}"));
+    }
     if !children.is_empty() {
         c.say("  subtasks:");
         let width = children

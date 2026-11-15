@@ -181,6 +181,7 @@ fn declarations() -> Vec<Declared> {
         declared::<api::AgentRun>(&cfg),
         declared::<api::AgentSaid>(&cfg),
         declared::<api::AgentSlots>(&cfg),
+        declared::<api::AgentTokens>(&cfg),
         declared::<api::SessionGo>(&cfg),
         declared::<api::AgentFocus>(&cfg),
         declared::<api::AgentScreen>(&cfg),
@@ -1325,6 +1326,14 @@ fn sampled_agent() -> api::Agent {
             url: Some("https://example.com/s".into()),
             pane: Some("w1:p2".into()),
         }),
+        tokens: Some(api::AgentTokens {
+            input: 12,
+            cache_write_5m: 3_400,
+            cache_write_1h: 560,
+            cache_read: 78_900,
+            output: 1_200,
+            calls: 7,
+        }),
     }
 }
 
@@ -1354,6 +1363,7 @@ fn bare_agent() -> api::Agent {
         session_url: None,
         in_process: false,
         go: None,
+        tokens: None,
     }
 }
 

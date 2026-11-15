@@ -4,11 +4,15 @@
 //! nothing, as [`beat_event`] says). It runs around
 //! every tool call of every session in the repository, so it prints nothing, never fails, never
 //! starts the board's server and waits on it at most `WAIT`: any trouble, and the call goes on.
+//! Each beat hands the board the tokens the session's own transcript gained since the key's last
+//! beat ([`crate::usage::transcript`]), read only for the hook's own event.
 
 use super::Env;
 use crate::git::common_dir;
 use crate::server::FOLDER;
 use crate::sys::Boottime;
+use crate::usage::Spent;
+use crate::usage::transcript::{self, Ledger};
 use crate::{Beat, Error, Store};
 use serde_json::{Map, Value};
 use std::path::{Path, PathBuf};
@@ -211,24 +215,26 @@ fn truthy(value: Option<&Value>) -> bool {
 /// what it left running once it goes quiet, and which of what runs there began while it was there.
 /// Only with `bind` does a board command in the call bind its key: not for a beat run through `just
 /// tasks`, whose event an agent wrote, not its own tool call ([`crate::launch::may_bind`]).
-/// The key, and whether a full session is bound by it now (None for a subagent's, or an event with
-/// no key).
+/// `spent`, the tokens the session's model calls took since its last beat, is added to the handle
+/// bound to the key in the beat's one transaction ([`Store::agent_beat_spending`]).
+/// What came of it ([`Beaten`]); none for an event with no key.
 pub fn beat_event(
     store: &Store,
     event: &Map<String, Value>,
     boot: Option<&Boottime>,
     bind: bool,
-) -> Result<Option<(String, bool)>, Error> {
-    let by_agent = truthy(event.get("agent_id"));
-    let key = if by_agent {
-        event.get("agent_id")
-    } else {
-        event.get("session_id").filter(|v| truthy(Some(v)))
-    };
-    let Some(agent) = key.and_then(Value::as_str) else {
+    spent: &[Spent],
+) -> Result<Option<Beaten>, Error> {
+    let Some((agent, by_agent)) = key_of(event) else {
         return Ok(None);
     };
-    let full = |bound: Option<String>| (!by_agent).then(|| (agent.to_string(), bound.is_some()));
+    let full = |bound: Option<String>| {
+        Some(Beaten {
+            key: agent.to_string(),
+            full: !by_agent,
+            handle: bound,
+        })
+    };
     // A subagent's checkout is where its own calls run, which its session (registered where its
     // orchestrator ran `register`) does not say: each of its calls says it again, so one that moved
     // is looked for where it went.
@@ -248,11 +254,12 @@ pub fn beat_event(
         .and_then(Value::as_object)
         .unwrap_or(&empty);
     if event.get("tool_name").and_then(Value::as_str) != Some("Bash") {
-        return Ok(full(store.agent_beat_in(
+        return Ok(full(store.agent_beat_spending(
             agent,
             &Beat::default(),
             place,
             boot,
+            spent,
         )?));
     }
     let command = tool.get("command").and_then(Value::as_str).unwrap_or("");
@@ -283,7 +290,46 @@ pub fn beat_event(
             ended: false,
         }
     };
-    Ok(full(store.agent_beat_in(agent, &beat, place, boot)?))
+    Ok(full(store.agent_beat_spending(
+        agent, &beat, place, boot, spent,
+    )?))
+}
+
+/// What one beat came to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Beaten {
+    /// The key it beat by: the agent id of a subagent, else the full session's id.
+    pub key: String,
+    /// The key is a full session's, which the bound keys' folder lists while it is bound.
+    pub full: bool,
+    /// The handle bound to the key, which the beat beat for and gave the tokens to; none when
+    /// nobody is.
+    pub handle: Option<String>,
+}
+
+/// The key `event` beats by, and whether it is a subagent's: its `agent_id`, else its `session_id`.
+fn key_of(event: &Map<String, Value>) -> Option<(&str, bool)> {
+    let by_agent = truthy(event.get("agent_id"));
+    let key = if by_agent {
+        event.get("agent_id")
+    } else {
+        event.get("session_id").filter(|v| truthy(Some(v)))
+    };
+    key.and_then(Value::as_str).map(|key| (key, by_agent))
+}
+
+/// The usage folder of the board `env` reaches from `cwd` ([`crate::usage::transcript`]):
+/// `TASKS_USAGE`; for a board `TASKS_SERVER` names (a test's) without it, none; else
+/// `symphony/tasks/usage/` in the git common dir of `cwd`, beside the bound keys.
+pub(crate) fn usage_folder(env: &Env, cwd: &Path) -> Option<PathBuf> {
+    if let Some(folder) = env.var("TASKS_USAGE").filter(|folder| !folder.is_empty()) {
+        return Some(folder.into());
+    }
+    if env.var("TASKS_SERVER").is_some() {
+        return None;
+    }
+    let common = common_dir(cwd).ok()?;
+    Some(common.join(FOLDER).join(transcript::FOLDER))
 }
 
 /// The bound keys' folder (the heartbeat hook's `keys_folder`): `TASKS_KEYS`; for a board
@@ -347,8 +393,22 @@ pub fn run(input: &mut dyn std::io::Read, env: &Env) -> i32 {
         let store = super::open_beating(reached, &super::Clock::of(env).ok()?).ok()?;
         let boot = super::boot_clock(env);
         let bind = env.var(crate::confine::MARKER).is_none();
-        let (key, bound) = beat_event(&store, event, boot.as_ref(), bind).ok()??;
-        mark(&keys_folder(env, &cwd)?, &key, bound);
+        // Only the hook's own event reads a transcript: one an agent wrote names any file.
+        let ledger = key_of(event)
+            .filter(|_| bind)
+            .zip(transcript::of_event(event))
+            .zip(usage_folder(env, &cwd))
+            .and_then(|(((key, _), path), folder)| Ledger::open(&folder, key, &path));
+        let spent = ledger.as_ref().map_or(&[][..], Ledger::spent);
+        let beaten = beat_event(&store, event, boot.as_ref(), bind, spent);
+        let recorded = matches!(&beaten, Ok(Some(Beaten { handle: Some(_), .. })));
+        if let Some(ledger) = ledger {
+            ledger.close(recorded);
+        }
+        let beaten = beaten.ok()??;
+        if beaten.full {
+            mark(&keys_folder(env, &cwd)?, &beaten.key, beaten.handle.is_some());
+        }
         Some(())
     })();
     0

@@ -4,7 +4,9 @@
 //! `message:[slug, id]`, `delivery:[message, handle]`, `barred_key:⟨key⟩`, `task_session:[slug, handle]`,
 //! `delivery_key:[slug, key]` (the message a keyed post made once on a thread, `Store::say_keyed`),
 //! `ask:⟨sid⟩` (what the owner said that waits on an agent's answer, `Store::open_ask`, numbered by
-//! `counter:ask`; never a SQLite table).
+//! `counter:ask`; never a SQLite table), `usage:[handle, slug, role, model, speed, round]` (the
+//! tokens a session's beats added up, `crate::usage`; never a SQLite table either, and with no
+//! event, as a beat moves the marker by its session's revision already).
 //! A message is keyed by its task first so a thread is one range of keys: an index on `slug` would do
 //! the same, but makes a transaction inserting many messages (the copy's) cost more than linearly
 //! (15k messages: 22 CPU-s with it, 2 without, measured on 3.3.0).
@@ -78,7 +80,7 @@
 /// as it was. Changing one (a field's type, an assertion, an index) also needs `DEFINE … OVERWRITE`
 /// for it. Protocol changes can require a wider version step and retirement of old read tokens:
 /// an already-open store does not repeat its opening check.
-pub const VERSION: i64 = 17;
+pub const VERSION: i64 = 18;
 
 /// Structural mutations plus all committed session changes, including deletions and re-creations.
 /// The separate structural record keeps the retired legacy scalar outside this identity.
@@ -454,6 +456,24 @@ DEFINE INDEX IF NOT EXISTS ask_sid ON ask FIELDS sid UNIQUE;
 DEFINE INDEX IF NOT EXISTS ask_open ON ask FIELDS open, asked, sid;
 DEFINE INDEX IF NOT EXISTS ask_about ON ask FIELDS about, open;
 DEFINE INDEX IF NOT EXISTS ask_answered ON ask FIELDS answered;
+
+DEFINE TABLE IF NOT EXISTS usage SCHEMAFULL;
+DEFINE FIELD IF NOT EXISTS handle ON usage TYPE string;
+DEFINE FIELD IF NOT EXISTS slug ON usage TYPE string;
+DEFINE FIELD IF NOT EXISTS role ON usage TYPE string;
+DEFINE FIELD IF NOT EXISTS model ON usage TYPE string;
+DEFINE FIELD IF NOT EXISTS speed ON usage TYPE string;
+DEFINE FIELD IF NOT EXISTS round ON usage TYPE int;
+DEFINE FIELD IF NOT EXISTS input ON usage TYPE int;
+DEFINE FIELD IF NOT EXISTS cache_write_5m ON usage TYPE int;
+DEFINE FIELD IF NOT EXISTS cache_write_1h ON usage TYPE int;
+DEFINE FIELD IF NOT EXISTS cache_read ON usage TYPE int;
+DEFINE FIELD IF NOT EXISTS output ON usage TYPE int;
+DEFINE FIELD IF NOT EXISTS calls ON usage TYPE int;
+DEFINE FIELD IF NOT EXISTS first ON usage TYPE float;
+DEFINE FIELD IF NOT EXISTS last ON usage TYPE float;
+DEFINE INDEX IF NOT EXISTS usage_slug ON usage FIELDS slug;
+DEFINE INDEX IF NOT EXISTS usage_handle ON usage FIELDS handle;
 
 DEFINE EVENT OVERWRITE board_changed ON task WHEN $before != $after THEN { IF record::exists(counter:board_structure) { UPDATE counter:board_structure SET last = (last ?? 0) + 1 RETURN NONE; } ELSE { CREATE counter:board_structure SET last = 1 RETURN NONE; }; };
 DEFINE EVENT OVERWRITE board_changed ON session WHEN $before != $after THEN {

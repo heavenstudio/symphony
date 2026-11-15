@@ -22,6 +22,7 @@ fn agent(handle: &str) -> Agent {
         last_tool_call: None,
         last_message: None,
         slots: None,
+        tokens: None,
         session_url: None,
         in_process: false,
         go: None,

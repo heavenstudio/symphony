@@ -251,6 +251,57 @@ fn a_web_address_and_a_subagent_binding_are_in_the_view() {
 }
 
 #[test]
+fn an_agents_tokens_are_what_its_session_spent_all_told_and_null_before_any() {
+    use symphony_board::usage::{Spent, Tokens};
+    let c = Case::new();
+    let worker = c.worker();
+    let sub = c.f.session_with(local_session("worker"));
+    assert!(c.f.store.bind_agent("agent-sub", &sub, false).unwrap());
+    let spent = |model: &str, n: u64| Spent {
+        model: model.into(),
+        speed: "standard".into(),
+        tokens: Tokens {
+            input: n,
+            cache_write_5m: 10 * n,
+            cache_write_1h: 0,
+            cache_read: 100 * n,
+            output: 2 * n,
+            calls: 1,
+        },
+    };
+    for (model, n) in [("claude-opus-5-5", 1), ("claude-haiku-4-5", 2)] {
+        c.f.store
+            .agent_beat_spending("agent-sub", &Beat::default(), None, None, &[spent(model, n)])
+            .unwrap();
+    }
+    let view = c.view();
+    assert_eq!(
+        found(&view, &sub).tokens,
+        Some(Tokens {
+            input: 3,
+            cache_write_5m: 30,
+            cache_write_1h: 0,
+            cache_read: 300,
+            output: 6,
+            calls: 2,
+        })
+    );
+    let json = parsed(&view);
+    let by = |handle: &str| {
+        (json["agents"].as_array().unwrap().iter())
+            .find(|a| a["handle"] == handle)
+            .cloned()
+            .unwrap()
+    };
+    assert_eq!(
+        by(&sub)["tokens"],
+        json!({"input": 3, "cache_write_5m": 30, "cache_write_1h": 0, "cache_read": 300,
+               "output": 6, "calls": 2})
+    );
+    assert_eq!(by(&worker)["tokens"], Value::Null);
+}
+
+#[test]
 fn under_a_cap_an_orchestrator_shows_its_open_tasks_against_it_and_a_worker_shows_none() {
     let c = Case::new();
     c.f.store

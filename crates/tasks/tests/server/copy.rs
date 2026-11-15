@@ -121,6 +121,7 @@ fn quarter_board() -> Dump {
         task_sessions,
         delivery_keys: Vec::new(),
         asks: Vec::new(),
+        usages: Vec::new(),
     }
 }
 

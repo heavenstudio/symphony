@@ -440,6 +440,11 @@ copy carries the asks and their counter, and their event moves the board's marke
 opens in the write that queues its chat event (`Store::owner_save`, once per journal key), and a
 task's in the write of the owner's message (`say_asking`; `ON_THREAD` in every post answers it
 for a session with a role on the task or the one the owner's line went to).
+The tokens agents' model calls take (`usage.rs`, `store/spending.rs`, schema 18) are the `usage`
+table, one row per handle, task, role, model, speed and round, which a beat adds to in its own
+transaction (`Store::agent_beat_spending`; `agent_beat_in` and `Beat` stay as consumers call
+them), with no event of its own: the beat moves its session's revision already. What a key's beats read of its transcript is kept beside the bound keys,
+never in the database (`usage/transcript.rs`). The copy carries the rows ([TASKS](../../docs/TASKS.md#where-the-tokens-go)).
 Restore prompts re-register the resumed process's callback first.
 Neither channel checks nor delivery fabricate tool calls.
 Outbox rows are indexed by handle
