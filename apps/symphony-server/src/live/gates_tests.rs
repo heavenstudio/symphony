@@ -895,3 +895,112 @@ fn a_landed_tasks_stamps_stand_on_the_tip_its_land_merged_once_the_sweep_removed
     );
     shared.stop();
 }
+
+#[test]
+fn the_sign_off_lane_follows_a_plugins_owner_gate_kept_for_the_task_as_it_is_now() {
+    let tree = Tree::new();
+    let root = shelf_project(&tree, &["tools/x", "tools/y"]);
+    std::fs::write(
+        root.join(shelf::GATES),
+        json!({
+            "tools/x": {"gates": [{"name": "owner", "state": "held", "by": "owner",
+                                   "detail": "Waits on the owner's tier sign-off"}]},
+            "tools/y": {"gates": [{"name": "owner", "state": "met", "by": "owner",
+                                   "detail": "Signed off"}]},
+        })
+        .to_string(),
+    )
+    .unwrap();
+    // tools/y posted a card that waits on the owner, so the Symphony's own rule lifts it alone.
+    let seed = Seed::default()
+        .session("worker")
+        .task("tools/x", "in_progress")
+        .role("tools/x", "worker", "executor")
+        .task("tools/y", "in_progress")
+        .role("tools/y", "worker", "executor")
+        .link("tools/y", "doc", "docs/TOPIC.md");
+    let f = Fixture::new(said(
+        seed,
+        (1, "msg"),
+        "tools/y",
+        "worker",
+        "Please answer initial-card.",
+    ));
+    let (shared, ask) = served(&root, hub(&root, &f, BACKSTOP));
+    let hub = shared.api.get().unwrap();
+    let lane = || hub.task_signoff.lock().unwrap().clone();
+    assert_eq!(lane(), ["tools/y"], "nothing kept yet: the Symphony's rule");
+    assert!(calls(&root).is_empty(), "the lane asks the plugin nothing");
+
+    // The pages ask the plugin; the lane reads what came back at the next look, the board unchanged.
+    for slug in ["tools/x", "tools/y"] {
+        let (status, answer) = ask(&format!("/api/task-gates?slug={slug}"));
+        assert_eq!(status, StatusCode::OK, "{slug}: {answer}");
+    }
+    observe(hub, &f.store, &[]);
+    assert_eq!(
+        lane(),
+        ["tools/x"],
+        "the plugin's owner gate in the Symphony's place: held lifts tools/x, met leaves tools/y"
+    );
+
+    // In review, neither has an answer kept for it as it is now: the card rule decides again, so
+    // tools/y, whose card still waits, is back and tools/x, which posted none, is out.
+    for slug in ["tools/x", "tools/y"] {
+        f.store.move_to(slug, "review", "worker").unwrap();
+    }
+    observe(hub, &f.store, &[]);
+    assert_eq!(lane(), ["tools/y"]);
+    assert_eq!(calls(&root).len(), 2, "asked by the pages alone");
+    shared.stop();
+}
+
+#[test]
+fn a_plugins_owner_gate_for_one_task_never_hides_another_tasks_card_from_the_lane() {
+    let tree = Tree::new();
+    let root = shelf_project(&tree, &["tools/x", "tools/z"]);
+    // The plugin holds tools/x for the owner and says nothing of tools/z, whose card waits.
+    std::fs::write(
+        root.join(shelf::GATES),
+        json!({"tools/x": {"gates": [{"name": "owner", "state": "held", "by": "owner",
+                                      "detail": "Waits on the owner's tier sign-off"}]}})
+        .to_string(),
+    )
+    .unwrap();
+    let seed = Seed::default()
+        .session("worker")
+        .task("tools/x", "in_progress")
+        .role("tools/x", "worker", "executor")
+        .task("tools/z", "in_progress")
+        .role("tools/z", "worker", "executor")
+        .link("tools/z", "doc", "docs/TOPIC.md");
+    let f = Fixture::new(said(
+        seed,
+        (1, "msg"),
+        "tools/z",
+        "worker",
+        "Please answer initial-card.",
+    ));
+    let (shared, ask) = served(&root, hub(&root, &f, BACKSTOP));
+    let hub = shared.api.get().unwrap();
+    let lane = || hub.task_signoff.lock().unwrap().clone();
+    assert_eq!(lane(), ["tools/z"], "before any read: its card");
+    let read = |slug: &str| {
+        let (status, answer) = ask(&format!("/api/task-gates?slug={slug}"));
+        assert_eq!(status, StatusCode::OK, "{slug}: {answer}");
+        observe(hub, &f.store, &[]);
+    };
+    read("tools/x");
+    assert_eq!(
+        lane(),
+        ["tools/x", "tools/z"],
+        "tools/x's page alone: the plugin's owner for tools/x leaves tools/z's card standing"
+    );
+    read("tools/z");
+    assert_eq!(
+        lane(),
+        ["tools/x", "tools/z"],
+        "tools/z's page too: the plugin's answer has no owner gate for it"
+    );
+    shared.stop();
+}
