@@ -19,6 +19,9 @@ pub struct ReportTask {
     pub instruction: bool,
     /// Whether its filer marked it red ([`crate::red::marked`]).
     pub marked_red: bool,
+    /// The commits a red's body names it came between ([`crate::red::between`]); none for a task
+    /// not marked red, whose body is not read.
+    pub between: Option<String>,
     /// Every line of its thread, once each and in the order written (by its key): a `system` line
     /// whole, a `verdict` cut to the words that name it, and a post (`msg`) with no text, its sender
     /// and time alone.
@@ -37,11 +40,12 @@ pub struct ReportRead {
 /// since then is one of them), and those with a line since then: a landing writes its verdict on a
 /// closed task without writing the task, so an approve before the window and its landing in it are
 /// read (the lines by `message_ts`). Each one's thread is read by its own range of keys: a
-/// verdict's text only for its first words, a post's not at all. Nothing is written.
+/// verdict's text only for its first words, a post's not at all. A body is read only for a task
+/// marked red, for the commits it names. Nothing is written.
 pub(crate) const READ: &str = "
 LET $spoken = array::distinct((SELECT VALUE slug FROM message WHERE ts >= $since));
 LET $tasks = (SELECT sid, slug, status, created, updated, parent, instruction,
-        fields._board.red AS red FROM task
+        fields._board.red AS red, IF fields._board.red { body } ELSE { NONE } AS body FROM task
     WHERE status NOT IN ['done', 'cancelled'] OR updated >= $since OR slug IN $spoken
     ORDER BY sid);
 RETURN {
@@ -79,6 +83,11 @@ fn taken_apart(answer: &Value) -> Option<ReportRead> {
         for line in thread.as_array()? {
             lines.push(line_of(line)?);
         }
+        let marked_red = task.get("red").is_some_and(|red| !red.is_null());
+        let body = task
+            .get("body")
+            .and_then(Value::as_str)
+            .filter(|_| marked_red);
         read.tasks.push(ReportTask {
             slug: text(task, "slug")?,
             status: text(task, "status")?,
@@ -86,7 +95,8 @@ fn taken_apart(answer: &Value) -> Option<ReportRead> {
             updated: number(task, "updated")?,
             parent: text(task, "parent"),
             instruction: task.get("instruction").and_then(Value::as_bool) == Some(true),
-            marked_red: task.get("red").is_some_and(|red| !red.is_null()),
+            marked_red,
+            between: body.and_then(crate::red::between).map(str::to_owned),
             lines,
         });
     }
@@ -126,6 +136,7 @@ mod tests {
                 parent: None,
                 instruction: false,
                 marked_red: false,
+                between: None,
                 lines: vec![Line {
                     id: 3,
                     kind: "system".into(),
@@ -147,6 +158,31 @@ mod tests {
             !read.tasks[0].marked_red,
             "a red cleared to null marks nothing"
         );
+        let named = "Red.\n\nbetween: 0123456..89abcde\nkey: verify";
+        let red_body = json!({"slug": "a", "status": "ready", "created": 1.0, "updated": 2.0,
+            "red": "release", "body": named});
+        let read = taken_apart(&json!({"tasks": [red_body], "lines": [[]]})).unwrap();
+        assert_eq!(read.tasks[0].between.as_deref(), Some("0123456..89abcde"));
+        for (task, why) in [
+            (
+                json!({"slug": "a", "status": "ready", "created": 1.0, "updated": 2.0,
+                    "body": named}),
+                "a body of a task not marked red",
+            ),
+            (
+                json!({"slug": "a", "status": "ready", "created": 1.0, "updated": 2.0,
+                    "red": "release"}),
+                "a red with no body",
+            ),
+            (
+                json!({"slug": "a", "status": "ready", "created": 1.0, "updated": 2.0,
+                    "red": "release", "body": "Red.\nkey: verify"}),
+                "a red whose body names no commits",
+            ),
+        ] {
+            let read = taken_apart(&json!({"tasks": [task], "lines": [[]]})).unwrap();
+            assert_eq!(read.tasks[0].between, None, "{why}");
+        }
         for (bad, why) in [
             (
                 json!({"tasks": [task], "lines": []}),
