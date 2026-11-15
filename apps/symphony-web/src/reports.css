@@ -83,11 +83,17 @@
   overflow-wrap: anywhere;
 }
 .reports-marks {
+  font-size: var(--fs-sm);
+  color: var(--muted-foreground);
+}
+.reports-marks ul {
   margin: 0;
   padding: 0;
   list-style: none;
-  font-size: var(--fs-sm);
-  color: var(--muted-foreground);
+}
+.reports-marks summary {
+  margin-top: 4px;
+  cursor: pointer;
 }
 .reports-marks li::before {
   content: "";

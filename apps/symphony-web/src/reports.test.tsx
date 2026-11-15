@@ -628,14 +628,42 @@ describe("the page's view", () => {
     expect(html).toContain('data-ready="reports"');
     expect(html).toContain('<dt><a href="#chart-done">Done</a></dt><dd class="value">7</dd>');
     expect(html).toContain(
-      '<ul class="reports-marks" aria-label="Settings changes in the window">',
+      '<div class="reports-marks"><ul aria-label="Settings changes in the window"><li>Mon 9 Nov: ' +
+        "settings changed, settings: land without the check (4f1c0a9b2d3e)</li></ul></div>",
     );
-    expect(html).toContain("Mon 9 Nov: settings changed, settings: land without the check");
     // Each chart mounts once it comes near the screen, its ghost in its place until then.
     expect(html.match(/class="viewport-slot chart-slot"/g)).toHaveLength(14);
     expect(html).toContain('<section class="reports-section" aria-label="Board health"><h2>');
     expect(html).not.toContain("No roll-up yet");
     expect(html).not.toContain("not read");
+  });
+
+  it("lists the settings changes newest first, folding all but the newest three", () => {
+    // `count` changes on Monday, the `n`th at `n + 1` o'clock, oldest first as the server sends them.
+    const changes = (count: number) =>
+      view(
+        read({
+          ...wire(),
+          marks: Array.from({ length: count }, (_, n) => ({
+            at: MONDAY + (n + 1) * HOUR,
+            commit: `c${n}`,
+            subject: `change ${n}`,
+          })),
+        }),
+      );
+    const items = (...ns: number[]) =>
+      ns.map((n) => `<li>Mon 9 Nov: settings changed, change ${n} (c${n})</li>`).join("");
+    const list = '<div class="reports-marks"><ul aria-label="Settings changes in the window">';
+    expect(changes(3)).toContain(`${list}${items(2, 1, 0)}</ul></div>`);
+    expect(changes(4)).toContain(
+      `${list}${items(3, 2, 1)}</ul><details><summary>1 more settings change</summary>` +
+        `<ul>${items(0)}</ul></details></div>`,
+    );
+    expect(changes(10)).toContain(
+      `${list}${items(9, 8, 7)}</ul><details><summary>7 more settings changes</summary>` +
+        `<ul>${items(6, 5, 4, 3, 2, 1, 0)}</ul></details></div>`,
+    );
+    expect(changes(0)).not.toContain("reports-marks");
   });
 
   it("is busy while the window asked for is not the one shown", () => {
