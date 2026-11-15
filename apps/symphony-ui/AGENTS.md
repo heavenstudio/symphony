@@ -53,7 +53,12 @@ never the whole target, which the release run runs.
   `symphony-build split-repair` puts right after dx
   (crates/symphony/src/cli/commands/split_repair.rs)
   and `assets/chunks.js` loads (`window.reviewChunk`), rejecting a chunk that does not load so
-  the shell's `gone` state, never a page left waiting, follows. The shell awaits a kind's chunk
+  the shell's `gone` state, never a page left waiting, follows. dx runs with a DX_HOME of
+  `bundle.sh`'s own under the held target, the machine's tools linked but for wasm-opt,
+  `wasm-opt.sh`, which puts each chunk's segments in order (`split-repair --chunk`) before dx
+  names it by its bytes: esbuild picks the short names of the script dx minifies by how often
+  each character appears in it, the chunks' names among them, so chunks named in the splitter's
+  hash-map order gave that script other bytes on some builds. The shell awaits a kind's chunk
   before it stops the page shown, which stays until the chunk is in, and under the shell's
   notice when it does not load. A chunk mounts its kind's root
   in the one instance (a `VirtualDom` per root, `module.rs`). The
