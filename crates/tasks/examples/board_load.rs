@@ -6,7 +6,7 @@
 //!     cargo run -p symphony-board --example board_load -- --home DIR --surreal BIN --tasks BIN \
 //!         [--database load] [--dump FILE] [--sessions 30] [--calls 40] [--seed 1]
 //!
-//! DIR is a scratch place ([`scratch`]) that exists; the board is kept in `DIR/board`, which a
+//! DIR is a scratch place ([`scratch`]) that exists, its links followed; the board is kept in `DIR/board`, which a
 //! run leaves there (a second run on it starts from the first's rows, so a comparison gives each
 //! run a folder of its own). `--dump` copies a board there first, as `tasks-copy --board --out`
 //! writes one. It refuses the live database's name and never reaches the live board.
@@ -209,7 +209,12 @@ struct Options {
 impl Options {
     fn parse(args: &[String]) -> Result<Options, String> {
         let needed = |name: &str| arg(args, name).ok_or(format!("{name} is required"));
-        let home = PathBuf::from(needed("--home")?);
+        // Where the folder is, its links followed: one under the temporary folder that leads
+        // elsewhere is elsewhere.
+        let named = needed("--home")?;
+        let home = Path::new(named)
+            .canonicalize()
+            .map_err(|why| format!("--home {named} does not exist: {why}"))?;
         if !scratch(&home) {
             return Err(format!(
                 "--home {} is not a scratch place: the temporary folder, or a checkout's artifacts/",
@@ -280,7 +285,9 @@ struct Runner {
     tasks: PathBuf,
     /// The whole environment of each command ([`Runner::vars`]).
     vars: BTreeMap<String, String>,
-    /// The folder the commands run in: no repository, an empty process table and no home.
+    /// The folder the commands run in, `run` in the run's home, with an empty process table. Under
+    /// the temporary folder it is in no repository; under a checkout's `artifacts/` it is in that
+    /// checkout, whose board no command reaches: each names the run's server and database.
     folder: PathBuf,
 }
 
@@ -523,14 +530,20 @@ fn failures(ran: &[Ran]) -> Vec<Value> {
 }
 
 /// The server's resident memory in MiB: as the run found it, right after its start (`opened`),
-/// the samples' median and peak, and once every command had ended.
+/// the samples' median, once every command had ended (`after`), and the peak: the highest of
+/// every reading, the first and the last among them, as a server that gives nothing back is at
+/// its highest when the run ends, after the last sample.
 fn memory(opened: Option<f64>, samples: &[f64], after: Option<f64>) -> Value {
     let mut sorted = samples.to_vec();
     sorted.sort_by(f64::total_cmp);
+    let peak = (samples.iter().copied())
+        .chain(opened)
+        .chain(after)
+        .max_by(f64::total_cmp);
     json!({
         "opened": opened.map(rounded),
         "median": quantile(&sorted, 0.5).map(rounded),
-        "peak": quantile(&sorted, 1.0).map(rounded),
+        "peak": peak.map(rounded),
         "after": after.map(rounded),
         "samples": sorted.len(),
     })
@@ -758,8 +771,15 @@ mod tests {
 
     #[test]
     fn the_options_refuse_the_live_database_and_a_folder_that_is_no_scratch_place() {
-        let home = std::env::temp_dir().join("board-load-options");
-        let home = home.to_str().unwrap();
+        let made = std::env::temp_dir().join(format!("board-load-options-{}", std::process::id()));
+        std::fs::create_dir_all(&made).unwrap();
+        let home = made.to_str().unwrap();
+        // A link in a scratch place to a folder that is none is refused as that folder is.
+        let link = made.join("elsewhere");
+        std::os::unix::fs::symlink("/usr", &link).unwrap();
+        let linked = strings(&["--home", link.to_str().unwrap(), "--surreal", "/s"]);
+        let refused = Options::parse(&linked).unwrap_err();
+        assert!(refused.contains("/usr is not a scratch place"), "{refused}");
         let given = |more: &[&str]| {
             let mut args = strings(&["--home", home, "--surreal", "/s", "--tasks", "/t"]);
             args.extend(strings(more));
@@ -802,13 +822,15 @@ mod tests {
         assert!(
             Options::parse(&elsewhere)
                 .unwrap_err()
-                .contains("not a scratch place")
+                .starts_with("--home /Users/nobody/board does not exist")
         );
         let missing = strings(&["--home", home, "--tasks", "/t"]);
         assert_eq!(
             Options::parse(&missing).unwrap_err(),
             "--surreal is required"
         );
+        assert_eq!(given(&[]).unwrap().home, made.canonicalize().unwrap());
+        std::fs::remove_dir_all(&made).unwrap();
     }
 
     fn ran(kind: Kind, wall: u64, cpu: u64, failed: Option<&str>) -> Ran {
@@ -861,6 +883,19 @@ mod tests {
                 "after": null, "samples": 3})
         );
         assert_eq!(memory(None, &[], None)["peak"], Value::Null);
+        // The last reading is above every sample: it is the peak, and no sample's median.
+        let grew = memory(Some(72.0), &[127.2, 189.3], Some(198.1));
+        assert_eq!(
+            (&grew["peak"], &grew["after"]),
+            (&json!(198.1), &json!(198.1))
+        );
+        assert_eq!(
+            (&grew["median"], &grew["samples"]),
+            (&json!(127.2), &json!(2))
+        );
+        // And so is the first, of a server that gave memory back.
+        assert_eq!(memory(Some(90.0), &[80.0], Some(70.0))["peak"], 90.0);
+        assert_eq!(memory(None, &[], Some(61.0))["peak"], 61.0);
     }
 
     #[test]

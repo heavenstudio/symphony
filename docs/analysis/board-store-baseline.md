@@ -3,11 +3,8 @@
 What the task board costs on SurrealDB today, written down so that the same measurement on
 PostgreSQL can be read beside it once the store has moved. "Measured 2026-11-15" marks this
 machine that day: an Apple M3 Max (Mac15,8), 16 cores, 64 GB, macOS 26.6.2, its disk 89% full,
-shared with other agents' builds and tests at a one-minute load of 111 to 141 while the first
+shared with other agents' builds and tests at a one-minute load of 111 to 149 while the first
 five runs were made and 213 to 256 for the rest.
-
-The ask: before the migration happens, good data about the performance of SurrealDB, written
-down, so that PostgreSQL's can be compared with it after the migration finishes.
 
 The store was chosen on a comparison made in the consuming project, on its board and with a bench
 of its own that sent ported statements to five engines. Those numbers stay where they are. This
@@ -23,7 +20,7 @@ back to back, all sessions at once.
 
 | run | sessions × calls | commands | writes | failed | wall | writes a second | `tasks` CPU | server CPU | server memory: opened, median, peak | store grew |
 |---|---|---|---|---|---|---|---|---|---|---|
-| one session | 1 × 120 | 300 | 279 | 0 | 13.1 s | 21.2 | 4.6 s | 2.3 s | 72, 127, 189 MiB | 3.5 MB |
+| one session | 1 × 120 | 300 | 279 | 0 | 13.1 s | 21.2 | 4.6 s | 2.3 s | 72, 127, 198 MiB | 3.5 MB |
 | ten | 10 × 40 | 1,000 | 928 | 0 | 12.5 s | 74.1 | 16.6 s | 8.3 s | 73, 263, 296 MiB | 3.9 MB |
 | thirty, first | 30 × 40 | 3,000 | 2,787 | 0 | 24.8 s | 112.2 | 53.8 s | 30.3 s | 73, 380, 422 MiB | 11.9 MB |
 | thirty, second | 30 × 40 | 3,000 | 2,787 | 0 | 24.1 s | 115.8 | 52.8 s | 26.7 s | 72, 390, 407 MiB | 16.2 MB |
@@ -39,9 +36,10 @@ The third run of thirty was made last, with the example as committed, at a load 
   The three runs of thirty lie within 13% of each other.
 - **The `tasks` process takes more than the server**: 15 to 18 ms a command on this board. A
   `pull` takes 0.4 to 0.5 s of its own CPU, a `list` 90 ms, a `show` 50 ms, a beat 7 ms.
-- **The server opens in 72 MiB and holds what its requests took**: 189 MiB after one session's
-  300 commands, 296 after ten sessions, 407 to 432 after thirty. It gave none back while it ran
-  (the last reading is the peak in every run). Thirty sessions at this board's size stay under
+- **The server opens in 72 MiB and holds what its requests took**: 198 MiB after one session's
+  300 commands, 296 after ten sessions, 407 to 432 after thirty. It gave none back while it ran:
+  the reading once the last command had ended is the highest of every run. The peak is the
+  highest of every reading, that last one among them. Thirty sessions at this board's size stay under
   512 MiB; the run does not show where the growth stops.
 - **The store grows 12 to 17 MB for 3,000 commands** on a board of 55 MB, and 4 MB on an empty
   one.
@@ -77,20 +75,20 @@ each, the CPU of the `tasks` process and of the server for it:
 
 | command | `tasks` CPU | server CPU | bound on their sum |
 |---|---|---|---|
-| `say`, dispatched to 100 recipients | 6.8 s | 2.4 s | 20 s |
+| `say`, dispatched to 100 recipients | 6.9 s | 2.4 s | 20 s |
 | `claim`, dispatched to 100 recipients | 7.2 s | 2.7 s | 24 s |
-| `inbox` | 72 ms | 136 ms | 1 s |
+| `inbox` | 70 ms | 136 ms | 1 s |
 | the first look of `wait`, the whole digest | 8.4 s | 4.0 s | 45 s |
 | a later look of `wait` | 0.7 s | 0.3 s | 3 s |
 | `api tasks` | 77 ms | 36 ms | 0.5 s |
 | `api sessions` | 112 ms | 30 ms | 0.5 s |
-| `api inbox` | 52 ms | 98 ms | 0.5 s |
-| `api get` | 68 ms | 34 ms | 0.5 s |
+| `api inbox` | 51 ms | 98 ms | 0.5 s |
+| `api get` | 68 ms | 36 ms | 0.5 s |
 | `api last_messages` | 58 ms | 30 ms | 0.5 s |
-| `api landings_posted` | 7 ms | 20 ms | 0.5 s |
+| `api landings_posted` | 7 ms | 22 ms | 0.5 s |
 | `api to_owner` | 7 ms | 20 ms | 0.5 s |
 | `api thread` | 8 ms | 2 ms | 0.5 s |
-| `api ever_executed` | 7 ms | 4 ms | 0.5 s |
+| `api ever_executed` | 7 ms | 6 ms | 0.5 s |
 
 The copy of that board took 19.8 s of the server's CPU. These are the release run's bounds, kept
 as they are; a store that replaces this one runs the same target, whose plan checks read
@@ -105,7 +103,11 @@ the method in full:
   the main checkout's build), copied into a scratch board in a temporary folder. The scratch
   board's server is started by `server::Home`, the code that starts the live one, so it runs the
   pinned SurrealDB under the board's own storage settings; it is stopped and started again after
-  the copy, so a run finds it as a board's server is after a restart.
+  the copy, so a run finds it as a board's server is after a restart. The export is 11,669,727
+  bytes, SHA-256 `9e81247f9d0a21976a95d94db4a5b0c693e38b2ead69af5b314af703728b70f2`. It is board
+  text, so the repository does not carry it: it is among the task's artifacts
+  (`tools/board-postgresql/board-export-2026-11-15.json`), which the sweep sets aside in the main
+  checkout's artifacts folder and nothing removes.
 - **The work.** Each session makes its tool calls back to back. A tool call beats twice through
   the hook (busy before it, ended after), and every other one also runs one board command: `inbox`
   30 in a hundred, `say` 20 (280 characters to `@orchestrator`), `show` 15, its own task's claim,
@@ -130,14 +132,18 @@ and the three runs of thirty, the last at twice the load of the others, agree to
 
 ## Reading it beside another store
 
+- **Both stores are run the same day, from one export and one build.** These figures are the
+  record of what the board cost at this size on this day, not one side of a later table: by the
+  time another store answers, the board has grown and the `tasks` binary has changed, and that
+  binary is two thirds of the CPU measured here (53 s of 82 for thirty sessions). The comparison
+  is the meter run on SurrealDB and on the other store back to back, each on a copy of one export
+  taken that day, with one build of `tasks`, `--seed 1` and the sessions and calls of the table.
+  The export kept from these runs replays them where a build still reads it.
 - **Compare the counts and the CPU; read the walls with the load.** The failures, the server's
   CPU, the `tasks` CPU and the memory are the work, which a loaded machine does not multiply. The
   walls and the writes a second are what the work took on a machine at a load of 111 to 241 on
   16 cores: another run moves them (the median beat took 89 ms in one run of thirty and 45 in the
   next) and moves the rest little.
-- **The same seed, the same sizes, the same build profile.** A run on another store is `--seed 1`
-  with the sessions and calls of the table, on a copy of the same export, with the `tasks` binary
-  built as this one was.
 - **A server that answers from several processes** is counted with every process under it. Their
   resident memory counts the pages they share once each, so such a server reads higher here than
   it holds, and the CPU of a process that ended before the run did is not in the server's

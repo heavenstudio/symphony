@@ -383,6 +383,9 @@ on the same board. `tests/child_guard` is a nested build, the release run's alon
 dump. `examples/board_load.rs` is the store's meter: a fixed amount of the agents' work (beats and
 the board commands they run, as the `tasks` binary) on a scratch board whose server `server::Home`
 starts, reporting each command's cost and the server's CPU, memory and bytes; a change of the
-store, its settings or its engine runs it before and after, and the numbers it is compared with
-are [the store's baseline](../../docs/analysis/board-store-baseline.md). Which tests a change runs, and the evidence its kind asks for:
+store, its settings or its engine runs it on both sides the same day, from one export and one
+build of `tasks`, and what the store cost before any such change is
+[the store's baseline](../../docs/analysis/board-store-baseline.md). An example's tests run only
+when named: `just test-rs -p symphony-board --example board_load`. Which tests a change runs, and
+the evidence its kind asks for:
 [CHECKS](../../docs/CHECKS.md#picking-the-focused-set).
