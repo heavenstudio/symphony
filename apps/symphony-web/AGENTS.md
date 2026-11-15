@@ -225,8 +225,10 @@ choice and every five minutes with the last answer's tag (`followReports`, under
 own signal). The periods are read by path as the server writes them (`Bucket`): a source with no
 record of a period is none there, a count by status that leaves out its zeros a zero. Four
 figures sit over five sections of charts, one column on a phone and two from 960 px. Each figure
-links to the chart it sums up (`#chart-done`…) while the charts are drawn. A chart not mounted yet
-holds that id in its ghost.
+links to the chart it sums up (`#chart-done`…) while the charts are drawn. A chart's id is an
+anchor of its `NearViewport`, held in its ghost until it mounts; the chart an address names mounts at
+once and is landed as a document's part is (the shell's `land`, once a navigation), so a fresh
+load's charts, which come after the shell looked for it, land too.
 `src/chart.tsx` draws each chart by hand, with no charting library: bars as boxes over a column
 a period, lines as one SVG whose strokes keep their width, both on one axis with its unit; a
 period no file recorded is hatched and its line broken, never a zero. Each entry of a chart's
