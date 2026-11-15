@@ -50,9 +50,13 @@ Unadmitted sockets receive 503, then close their write side and drain input to E
 existing five-second shutdown grace, so unread request bytes cannot reset away the response.
 Clients that send nothing or leave a header incomplete cannot hold the old process indefinitely;
 admitted request bodies drain normally.
-The startup lock serializes publication with starters and stops. A build failure is logged once
-per source fingerprint and sent to open clients as the feed's named `server` event containing a
-JSON string; a fresh stream receives the current notice too. Editing the sources retries the build.
+The startup lock serializes publication with starters and stops. A failed update, its build or
+its hand-over, is logged and sent to open clients as the feed's named `server` event containing a
+JSON string; a fresh stream receives the current notice too. The notice says when that source
+fingerprint is built and handed over again: 5 min after its first failure, the wait doubling with
+each failure of it in a row up to 1 h (`src/reload/retry.rs`), on either clock, so the machine
+never stays on the old build for want of a retry. Editing the sources builds the new fingerprint
+at its first check, whatever that wait.
 Only the main checkout on branch `main` is followed; foreground servers do not reload.
 Shared installation and live rebuilds both use Cargo's release profile. The debug
 server exceeded the idle CPU budget on the normal board; the release build keeps

@@ -13,11 +13,20 @@ const RED: &str = "UPDATE type::record('task', $slug) SET fields._board.red = $r
 /// A fast fix's mark, the risk its filer recorded, written with the task ([`crate::fast_fix`]).
 const FAST_FIX: &str =
     "UPDATE type::record('task', $slug) SET fields._board.fast_fix = $fast_fix RETURN NONE;";
+/// The arm a task is filed on, written with the task ([`crate::arm`]).
+const ARM: &str = "UPDATE type::record('task', $slug) SET fields._board.arm = $arm RETURN NONE;";
 
 impl Store {
     /// A new task, on the record. `assignee`: a session reserved without a lapse.
     pub fn create(&self, new: &NewTask) -> Result<Task, Error> {
-        self.create_with_receipt(new, None)
+        self.create_with_receipt(new, None, None)
+    }
+
+    /// [`Store::create`], the task filed on `arm` ([`crate::arm`]): the label is written with the
+    /// task, in its one transaction, and no write changes it after.
+    pub fn create_in_arm(&self, new: &NewTask, arm: &str) -> Result<Task, Error> {
+        let arm = crate::arm::named(arm).map_err(refused)?;
+        self.create_with_receipt(new, None, Some(arm))
     }
 
     /// Create an owner's task with an opaque save receipt in the task's private fields.
@@ -33,7 +42,7 @@ impl Store {
                 repr(&new.by)
             )));
         }
-        let made = self.create_with_receipt(new, Some(receipt))?;
+        let made = self.create_with_receipt(new, Some(receipt), None)?;
         match self.give_filed(&made.slug, OWNER, None) {
             Ok(_) => Ok(self.get(&made.slug).unwrap_or(made)),
             Err(error) => {
@@ -43,7 +52,12 @@ impl Store {
         }
     }
 
-    fn create_with_receipt(&self, new: &NewTask, receipt: Option<&str>) -> Result<Task, Error> {
+    fn create_with_receipt(
+        &self,
+        new: &NewTask,
+        receipt: Option<&str>,
+        arm: Option<&str>,
+    ) -> Result<Task, Error> {
         if !plain_slug(&new.slug) {
             return Err(refused(format!(
                 "slug {} must look like area/short-name (lowercase, digits, dashes)",
@@ -110,8 +124,9 @@ impl Store {
             String::new()
         };
         let fast = if fast_fix.is_some() { FAST_FIX } else { "" };
+        let arm_mark = if arm.is_some() { ARM } else { "" };
         let body = format!(
-            "{act}{CREATE}\n{stamp}\n{marked}\n{fast}\n{}\n{}",
+            "{act}{CREATE}\n{stamp}\n{marked}\n{fast}\n{arm_mark}\n{}\n{}",
             logged("$slug", "$actor", "'system'", "$said", "NONE"),
             block_cancelled_dependencies(false)
         );
@@ -122,7 +137,7 @@ impl Store {
                 "slug": new.slug, "title": title, "body": new.body, "status": new.status,
                 "priority": new.priority, "parent": parent, "instruction": new.instruction,
                 "needed": needed, "links": links, "assignee": new.assignee, "said": said,
-                "owner_save": receipt, "red": red, "fast_fix": fast_fix,
+                "owner_save": receipt, "red": red, "fast_fix": fast_fix, "arm": arm,
                 "taken": format!("{REFUSED}task {} already exists", new.slug),
                 "unassignable": new.assignee.as_ref()
                     .map(|a| format!("{REFUSED}no session {} to assign it to", repr(a))),
