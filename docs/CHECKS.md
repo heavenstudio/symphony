@@ -80,6 +80,13 @@ a measurement before and after.
   change was likely to break, updated where they pinned what changed, and green
   ([by page](#the-browser-target-by-page)); and `just client-update` for the pictures, its
   distribution not committed.
+- **A page made faster** (a change meant to shorten a page's open to synced, in the client or the
+  server): `tools/rs-bin.sh symphony-build synced BASE PAGE…` against a server of the task's own
+  on a scratch board, before the change and after it, on the same machine under its working load,
+  and the comparison the second run prints beside the first (each run is kept in the project's
+  artifacts folder, `synced/`, with the load, CPU busy and memory it ran under) posted on the
+  thread. A test holds work that must not come back (a second full read, a render a check did not
+  need) by its count, never a time ([time in tests](#time-in-tests)).
 - **A schema or launcher change** (the board's schema and its migration, `tools/rs-bin.sh`,
   `tools/cargo.sh`, the justfile, `symphony init`, the hooks): a mistake here stops every agent,
   so it asks the most: the migration run from the previous schema on a scratch board (the board's
