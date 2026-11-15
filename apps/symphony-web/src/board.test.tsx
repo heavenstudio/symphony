@@ -18,6 +18,7 @@ import {
   keepRows,
   keepShape,
   keepsWatching,
+  layoutNow,
   MORE,
   NO_TREE,
   PAGE,
@@ -27,8 +28,10 @@ import {
   recallShape,
   rememberCards,
   rowCard,
+  rowGuess,
   sameRow,
   searched,
+  stageCounts,
   statusLabel,
   TaskBoard,
   type TaskBoardProps,
@@ -171,6 +174,31 @@ describe("the board's columns", () => {
     expect(columnRows(draw())).toEqual(["w/b"]);
   });
 
+  // The server counts a task waiting on the owner in its stage; the board draws it in the lane, so
+  // the stage's column counts, outlines and loads more of the rest alone.
+  it("count a stage less its tasks drawn in the owner's sign-off lane", () => {
+    vi.stubGlobal("location", { hash: "#column-review" });
+    const review = (html: string) => html.slice(html.indexOf('data-status="review"'));
+    const draw = (tasks: Task[], count: number) =>
+      review(board({ tasks, signoff: ["w/a"], statuses: ["review"], counts: [["review", count]] }));
+    // Its one task in the lane: nothing to wait for, nothing to hold.
+    const none = draw([aTask("w/a", { status: "review" })], 1);
+    expect(none).toContain('data-status="review" aria-busy="false"');
+    expect(none).toContain('review <span class="count">0</span>');
+    expect(none).not.toContain("ghost-card");
+    expect(columnRows(none)).toEqual([]);
+    // Until that task is read, it is a task of the stage's still to come.
+    const reading = draw([], 1);
+    expect(reading).toContain('data-status="review" aria-busy="true"');
+    expect(reading).toContain('review <span class="count">1</span>');
+    expect(reading).toContain('data-pending="true"><div class="ghost-card"');
+    // One of its two in the lane: the other is all it holds, and there is no more to load.
+    const split = draw([aTask("w/a", { status: "review" }), aTask("w/b", { status: "review" })], 2);
+    expect(split).toContain('review <span class="count">1</span>');
+    expect(columnRows(split)).toEqual(["w/b"]);
+    expect(split).not.toContain("Load more tasks");
+  });
+
   it("are the pipeline's in a scroller the keyboard reaches, the rest after it", () => {
     const html = board({ statuses: LIFECYCLE });
     expect(html).toContain(
@@ -228,6 +256,20 @@ describe("the board's columns", () => {
     expect(html).toContain('aria-expanded="false" aria-controls="task-groups"');
     expect(html).toContain("Show task groups");
     expect(html).not.toContain('id="task-groups"');
+  });
+
+  // The button a phone shows them behind (board.css draws it on a phone alone, and the filters
+  // there only while it is pressed), shut as the board opens, before the filters it opens.
+  it("keep the search and the filters behind a phone's button, shut", () => {
+    const html = board({ statuses: LIFECYCLE });
+    const toggle =
+      '<button class="dx-button board-filters-toggle" data-style="outline" data-size="default" type="button" aria-expanded="false" aria-controls="board-filters">Search and filters</button>';
+    expect(html).toContain(toggle);
+    expect(html).toContain('<div id="board-filters" class="row filters" data-open="false">');
+    expect(html.indexOf(toggle)).toBeLessThan(html.indexOf('id="board-filters"'));
+    expect(html.indexOf('id="board-filters"')).toBeLessThan(
+      html.indexOf("Search tasks and messages"),
+    );
   });
 
   it("are filtered by status and by the window of finished tasks", () => {
@@ -314,6 +356,20 @@ describe("a column's reserve", () => {
     expect(firstPageHeight(2, kept)).toBe(134 + 113);
     expect(firstPageHeight(5, kept)).toBe(134 + 113 + 192 + 2 * ROW);
     expect(firstPageHeight(31, kept)).toBe(134 + 113 + 192 + 27 * ROW + MORE);
+    // The guess as the board's layout draws the typical card.
+    expect(card(kept, 3, "review", 119)).toEqual([119, 2]);
+    expect(card(kept, 0, "review", 119)).toEqual([134, 1]);
+    expect(firstPageHeight(5, kept, 119)).toBe(134 + 113 + 192 + 2 * 119);
+    expect(firstPageHeight(31, [], 119)).toBe(30 * 119 + MORE);
+  });
+
+  // The typical card draws at ROW in a desk's column and a narrow window's, its title on two
+  // lines; a phone's column is wider, and its title takes one.
+  it("guesses the typical card as the layout draws it", () => {
+    expect(rowGuess(layoutAt(1280))).toBe(ROW);
+    expect(rowGuess(layoutAt(700))).toBe(ROW);
+    expect(rowGuess(layoutAt(390))).toBe(119);
+    expect(rowGuess(layoutAt(600))).toBe(119);
   });
 
   // A row waiting to be drawn holds the height its own card will draw at, chips among it: a row of
@@ -328,15 +384,15 @@ describe("a column's reserve", () => {
     ]);
     const phases = phaseLabels(building, "load/ready-1", true);
     expect(phases).toHaveLength(1);
-    for (const layout of ["desk", "phone"] as const) {
+    for (const layout of [layoutAt(1280), layoutAt(390)]) {
       expect(rowCard(both, building, true, layout)).toEqual([rowHeight(both, phases, layout), 3]);
       expect(rowCard(bare, NO_WORK, true, layout)).toEqual([rowHeight(bare, [], layout), 0]);
       expect(rowCard(linked, NO_WORK, true, layout)).toEqual([rowHeight(linked, [], layout), 1]);
       expect(rowCard(staffed, NO_WORK, true, layout)).toEqual([rowHeight(staffed, [], layout), 1]);
       expect(rowCard(both, NO_WORK, true, layout)).toEqual([rowHeight(both, [], layout), 2]);
     }
-    expect(rowCard(staffed, NO_WORK, true, "desk")[0]).toBeGreaterThan(
-      rowCard(bare, NO_WORK, true, "desk")[0],
+    expect(rowCard(staffed, NO_WORK, true, layoutAt(1280))[0]).toBeGreaterThan(
+      rowCard(bare, NO_WORK, true, layoutAt(1280))[0],
     );
   });
 });
@@ -525,6 +581,10 @@ describe("a board drawn again", () => {
     const row = { task: a, work: NO_WORK, connected: true, layout };
     expect(sameRow(row, { ...row })).toBe(true);
     expect(sameRow(row, { ...row, layout: layoutAt(400) })).toBe(false);
+    // Two phones as wide draw alike; a wider one's column is wider.
+    const phone = { ...row, layout: layoutAt(390) };
+    expect(sameRow(phone, { ...row, layout: layoutAt(390) })).toBe(true);
+    expect(sameRow(phone, { ...row, layout: layoutAt(430) })).toBe(false);
     expect(sameRow(row, { ...row, task: { ...a } })).toBe(false);
     expect(sameRow(row, { ...row, connected: false })).toBe(false);
     // Another machine's work that leaves this card's phases as they were draws nothing again.
@@ -536,6 +596,25 @@ describe("a board drawn again", () => {
       aMachine("alpha", [anOperation("alpha", "b", "build", "running", { task: "w/a" })]),
     ]);
     expect(sameRow(row, { ...row, work: here })).toBe(false);
+  });
+
+  // The window's width chooses a desk's, a narrow window's or a phone's columns; a phone's is the
+  // page inside the room a scrollbar takes, none on most phones.
+  it("is laid out for the window it is drawn in", () => {
+    expect(layoutNow()).toBe(layoutAt(1280));
+    vi.stubGlobal("innerWidth", 390);
+    expect(layoutNow()).toBe(layoutAt(390));
+    vi.stubGlobal("document", { documentElement: { clientWidth: 390 } });
+    expect(layoutNow()).toBe(layoutAt(390));
+    vi.stubGlobal("innerWidth", 500);
+    vi.stubGlobal("document", { documentElement: { clientWidth: 485 } });
+    expect(layoutNow()).toBe(layoutAt(500, 485));
+    expect(layoutNow()).not.toBe(layoutAt(500));
+    // A page a stand-in drew with no root element, or none measured yet, is the window's.
+    vi.stubGlobal("document", { getElementById: () => null });
+    expect(layoutNow()).toBe(layoutAt(500));
+    vi.stubGlobal("document", { documentElement: { clientWidth: 0 } });
+    expect(layoutNow()).toBe(layoutAt(500));
   });
 
   it("is memoized: a row by `sameRow`, a column by what it is given", () => {
@@ -763,17 +842,18 @@ describe("a column's keep for the next visit", () => {
 describe("the task groups", () => {
   it("read a page of the roots, or of a task's subtasks from where the last left", async () => {
     const asked = server();
-    const roots = readTree("", null, null);
+    const stays = new AbortController().signal;
+    const roots = readTree("", null, null, stays);
     await asking(asked, 1);
     expect(asked[0]?.url).toBe("/api/task-board?roots=1&older=1");
     asked[0]?.answer(reply(200, { tasks: [aTask("w")], counts: [["ready", 2]], next: "w" }));
     expect(await roots).toMatchObject({ tasks: [aTask("w")], next: "w" });
-    const children = readTree("wt", "w/a b", "w/a 1");
+    const children = readTree("wt", "w/a b", "w/a 1", stays);
     await asking(asked, 2);
     expect(asked[1]?.url).toBe("/@wt/api/task-board?parent=w%2Fa%20b&older=1&cursor=w%2Fa%201");
     asked[1]?.answer(reply(200, { tasks: "none" }));
     expect(await children).toBe("The task board's answer is not a listing");
-    const failed = readTree("", null, null);
+    const failed = readTree("", null, null, stays);
     await asking(asked, 3);
     asked[2]?.answer(reply(503, { error: "down" }));
     expect(await failed).toContain("down");
@@ -1009,6 +1089,42 @@ describe("the board's shape", () => {
   });
 });
 
+describe("the stages' counts the board draws", () => {
+  const stage = (task: Task) => task.status;
+
+  // Each stage less its tasks in the sign-off lane, the others as the server counted them, and
+  // none below nothing where the lane holds a task the counts placed in another stage.
+  it("are the server's less each stage's tasks in the sign-off lane", () => {
+    const counts: [string, number][] = [
+      ["ready", 3],
+      ["review", 2],
+      ["done", 0],
+    ];
+    const lane = [
+      aTask("w/a", { status: "review" }),
+      aTask("w/b", { status: "review" }),
+      aTask("w/c", { status: "ready" }),
+      aTask("w/d", { status: "done" }),
+    ];
+    expect(stageCounts(counts, lane, stage)).toEqual([
+      ["ready", 2],
+      ["review", 0],
+      ["done", 0],
+    ]);
+    expect(stageCounts(counts, lane.slice(2, 3), stage)).toEqual([
+      ["ready", 2],
+      ["review", 2],
+      ["done", 0],
+    ]);
+  });
+
+  // An empty lane leaves the counts as they are, the same list, so nothing draws again for it.
+  it("are the server's own with the lane empty", () => {
+    const counts: [string, number][] = [["ready", 3]];
+    expect(stageCounts(counts, [], stage)).toBe(counts);
+  });
+});
+
 describe("the board's ghost", () => {
   const ghost = (shape: [string, number][]) => renderToStaticMarkup(<GhostBoard shape={shape} />);
 
@@ -1054,6 +1170,16 @@ describe("the board's ghost", () => {
     expect(html).not.toContain('role="status"');
   });
 
+  // As the board opens: a phone's button, which board.css draws there alone, and the filters it
+  // keeps shut there.
+  it("draws a phone's button for the search and the filters before them, shut", () => {
+    const html = ghost(recallShape(null));
+    const toggle = html.indexOf('class="ghost-field ghost-filters-toggle"');
+    expect(toggle).toBeGreaterThanOrEqual(0);
+    expect(toggle).toBeLessThan(html.indexOf('class="row filters"'));
+    expect(html).not.toContain("data-open");
+  });
+
   it("draws the rail's reasons and link where no machine reported", () => {
     const html = ghost([["build-test", 0]]);
     const rail = html.slice(html.indexOf('data-for="build-test"'));
@@ -1074,8 +1200,17 @@ describe("the board's ghost", () => {
       (m[1] ?? "").split(/\s+/),
     );
     expect(classes).toContain("ghost-kanban");
+    expect(classes).toContain("ghost-filters-toggle");
     expect(html).not.toContain("data-status");
-    for (const real of ["kanban", "pipeline", "board-scroll", "offline", "column", "taskcard"]) {
+    for (const real of [
+      "kanban",
+      "pipeline",
+      "board-scroll",
+      "offline",
+      "column",
+      "taskcard",
+      "board-filters-toggle",
+    ]) {
       expect(classes, real).not.toContain(real);
     }
   });
@@ -1092,14 +1227,15 @@ describe("a board whose first read failed", () => {
       />,
     );
     expect(html).toMatch(
-      /^<section class="trouble card unread-board" role="status"><h2>The task board could not be read<\/h2><p>the task board cannot be reached: the alpha board is not made yet, and a reader never makes a board: nothing was read or written; `just tasks list` in alpha makes it \(the server answered 503\)\.<\/p>/,
+      /^<section class="trouble card unread-board" role="status"><h2>The task board could not be read<\/h2><p>the task board cannot be reached: the alpha board is not made yet, and a reader never makes a board: nothing was read or written; `just tasks list` in alpha makes it \(the server answered 503\)\. Trying again…<\/p>/,
     );
     expect(html).toMatch(/>Retry<\/button>/);
     for (const drawn of ["ghost-", "kanban", "bone"]) expect(html).not.toContain(drawn);
-    // A server out of reach sends the reader to the connection, as every page does.
+    // A server out of reach sends the reader to the connection, as every page does, and the board
+    // is read again by itself.
     html = renderToStaticMarkup(<UnreadBoard why={UNREACHABLE} retry={() => {}} />);
     expect(html).toContain(
-      "<p>The server could not be reached. Check the connection and try again.</p>",
+      "<p>The server could not be reached; check the connection. Trying again…</p>",
     );
   });
 });

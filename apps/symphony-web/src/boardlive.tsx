@@ -10,8 +10,10 @@ import {
   GhostBoard,
   keepShape,
   type OnLoad,
+  PAGE,
   recallShape,
   SHAPE,
+  stageCounts,
   TaskBoard,
   UnreadBoard,
 } from "./board";
@@ -47,6 +49,7 @@ import { Backoff } from "./state";
 import { load, save } from "./storage";
 import {
   holderHealth,
+  isTask,
   merge,
   readItemChange,
   readListing,
@@ -99,6 +102,10 @@ export interface BoardData {
   /** The copy of each of the default view's reads the page holds, by its part of the board's item
    * (`counts`, `column:ready`): the next read of it names the copy's tag, and a `304` is that copy. */
   copies: Map<string, Copy>;
+  /** The last answer of each column's long read (`rows`, `readColumn`), by its part: the next long
+   * read of the column names its tag, and a `304` is that answer. Held on the page alone, never on
+   * the device. */
+  long: Map<string, Copy>;
   /** The columns drawn from this device's cache the server has not answered yet. */
   drawn: string[];
   /** Each column checked once the board's version was read, by the generation it was checked at:
@@ -141,6 +148,7 @@ export function emptyBoard(): BoardData {
     view: 0,
     journal: { version: 0, events: [], readers: new Map() },
     copies: new Map(),
+    long: new Map(),
     drawn: [],
     checked: new Map(),
     waiting: true,
@@ -259,7 +267,8 @@ export function withListed(
 export interface BoardHost {
   /** The data changed: draw it again. */
   redraw(): void;
-  /** The board was read again: each column shown reads its first page again. */
+  /** The board was read again: each column shown reads its first page again, as long as the rows
+   * it shows (`readColumn`). */
   refresh(): void;
   /** What the page shows from this device changed. */
   freshness(f: Freshness): void;
@@ -468,16 +477,19 @@ export class LiveBoard {
   }
 
   /**
-   * Keep the default view's columns and counts as the server answered them, for the next first
-   * visit's ghost (SHAPE): once both the counts and the machines' work that places its build and
-   * test columns are in, whichever comes last, and again at each answer of the counts.
+   * Keep the default view's columns and counts as the board draws them, for the next first visit's
+   * ghost (SHAPE): once both the counts and the machines' work that places its build and test
+   * columns are in, whichever comes last, and again at each answer of the counts or of a column's
+   * first page, which may bring the sign-off lane's tasks that their stages do not draw.
    */
   rememberShape(): void {
     const { d } = this;
     if (d.counted === 0 || d.worked === 0 || !keptView(d.query, d.days, d.connected ? 1 : 0)) {
       return;
     }
-    const shape = boardShape(d.counts, d.statuses, d.signoff.length, d.work.machines.length > 0);
+    const lane = d.tasks.filter((task) => isTask(task) && d.signoff.includes(task.slug));
+    const counts = stageCounts(d.counts, lane, (task) => taskStage(d.work, task, d.connected));
+    const shape = boardShape(counts, d.statuses, d.signoff.length, d.work.machines.length > 0);
     save(SHAPE, keepShape(shape));
   }
 
@@ -585,9 +597,24 @@ export class LiveBoard {
     }
   }
 
+  /** The rows the board draws in `status`'s column: its tasks the stages place there. */
+  shownRows(status: string): number {
+    const { d } = this;
+    return d.tasks.filter((task) => isTask(task) && taskStage(d.work, task, d.connected) === status)
+      .length;
+  }
+
   /**
    * Read a page of `status`'s column, unless a later read of it or another view supersedes it
-   * (`view`, `version`: the read's). Whether the page shows the server's answer.
+   * (`view`, `version`: the read's). Whether the page shows the server's answer. A first page read
+   * again is as long as the rows the column shows, when they are more than a page (the server's
+   * `rows`): it replaces them with the same rows as they stand now, so the pages Load more brought
+   * stay, the reader's place among them with them, and the next page starts after them. Such a read
+   * is no first page this device keeps: it names the tag of the column's last long answer, which
+   * the page holds (`long`), and a `304` is that answer, so a refresh that changed nothing in the
+   * column transfers no body. While a search is active the feed's new tasks are not added to the
+   * column (`merge`'s `task` case), so the refresh reads as many rows as it showed before a filing
+   * that matches the search: the column stands one row short of its count until Load more.
    */
   async readColumn(
     status: string,
@@ -603,16 +630,20 @@ export class LiveBoard {
     if (!current()) return false;
     const part = columnPart(status);
     const activity = d.connected ? 1 : 0;
-    const kept = !more && keptView(query, days, activity);
+    const rows = more ? 0 : this.shownRows(status);
+    const long = rows > PAGE;
+    const kept = !more && !long && keptView(query, days, activity);
+    const copy = kept ? d.copies.get(part) : long ? d.long.get(part) : undefined;
     const cursor = more ? (d.cursors.get(status) ?? null) : null;
     const since = new ReadCursor(d.journal);
     try {
       const after = cursor === null ? "" : `&cursor=${encodeURIComponent(cursor)}`;
-      const path = `/api/task-board?q=${encodeURIComponent(query)}&status=${status}&days=${days}${after}&activity=${activity}&work=0`;
+      const length = long ? `&rows=${rows}` : "";
+      const path = `/api/task-board?q=${encodeURIComponent(query)}&status=${status}&days=${days}${after}${length}&activity=${activity}&work=0`;
       let read: Awaited<ReturnType<LiveBoard["readListing"]>> | null = null;
       let why = "";
       try {
-        read = await this.readListing(path, kept ? d.copies.get(part) : undefined);
+        read = await this.readListing(path, copy);
       } catch (error) {
         why = said(error);
       }
@@ -623,6 +654,7 @@ export class LiveBoard {
       }
       const [list, fresh] = read;
       if (kept) this.keep(part, list, fresh);
+      else if (long && fresh !== null) d.long.set(part, { etag: fresh.etag, list });
       d.fromDevice = d.fromDevice.filter((slug) => !list.tasks.some((task) => task.slug === slug));
       const hasNext = this.showColumn(status, more, list);
       this.replay(since);
@@ -636,6 +668,7 @@ export class LiveBoard {
           d.fromDevice = [];
           d.tasks = d.tasks.filter((task) => !left.includes(task.slug));
         }
+        this.rememberShape();
         this.freshen((f) => answered(f, part));
       }
       const queued = !more && hasNext && d.pendingMore.includes(status);

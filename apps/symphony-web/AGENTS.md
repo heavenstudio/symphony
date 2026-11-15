@@ -8,7 +8,10 @@ review queue (`/queue`) is the first kind it serves, Reports (`/reports`) the se
 document an entrypoint serves, the kind `docs`) the fourth, the task board (`/tasks`, the kind
 `board`) the fifth, the agents page (`/agents`, the kind `agents`) the sixth and a task's page with
 its timeline (`/task/SLUG`, the kind `task`) the seventh: no page is left the Dioxus program's,
-which keeps the chat, the menus and the media layer every page mounts. The board's task card is a
+which keeps the chat and its media layer, mounted beside every page. The menus (a select's popup
+and the picture viewer, the persistent kind `overlay`) are the eighth, mounted beside every page as
+well. Runs (`/runs`, the kind `runs`) was built here from the start, with no Dioxus page before
+it. The board's task card is a
 component of its own (`src/taskcard.tsx`), which the agents page draws too, and whose status words
 and machine work a task's page draws. Like that
 client it reads the server's JSON API and never runs server code or inserts server-rendered HTML.
@@ -83,7 +86,7 @@ string, a character or a comment cuts it short (the reader's tests, which `just 
 `just test-rs -p symphony-api --features typescript --example typescript`). TypeScript that carries the Dioxus client's own Rust
 (`apps/symphony-ui`), not this crate's, is held by the browser parity tests alone.
 
-A read is checked where it arrives (`readQueue`, `readPageBoard`, `readReports`,
+A read is checked where it arrives (`readQueue`, `readPageBoard`, `readReports`, `readRunsPage`,
 `document-read.ts`, of the checks `blocks-read.ts` exports): a guard checks the fields the page
 draws, each of its type, and nothing else, so a field a newer server adds, or one it drops that
 the page does not draw, changes nothing, as the Dioxus client's serde reads skip
@@ -92,6 +95,16 @@ event of a region or kind the page does not know is not its own, and is left alo
 `JSON.parse` costs no code per field, so a field the page does not draw, a task's plugins' board
 fields among them, costs it nothing to receive: its types say what the server sends, and its
 guards read what it draws.
+
+A failed read is said in one sentence (`failed`, `src/trouble.tsx`), in a read's words: one that
+got no answer in time fails with `NOT_IN_TIME`, never a post's `NO_ANSWER`, which asks the reader
+to check before sending again, as a post the server may have acted on does. A page that tries the
+read again by itself says "Trying again…" (`failed(why, true)`), and one with nothing drawn yet
+does try it again, on the feed's waits (`tryAgain`, `src/state.ts`: 1 s doubling to 30 s), until
+it is answered, the server has no such thing (a 404), a newer read starts or the page leaves; its
+Retry stays, to try at once. A 404 said as missing and a read a click asks for (Load more) say no
+"Trying again…". The limit a request waits for is `ANSWER_MS`, 15 s, which a page's
+`symphonyAnswerMs` shortens for a browser test of a read held past it.
 
 The feed is followed on a WebSocket (`feed.ts`): the events the server sends any other request of
 the feed's as Server-Sent Events, each one message, its name, a line feed and its data (the feed
@@ -138,7 +151,10 @@ entry exports `run`, which mounts the kind in `#review-root-NAME` and draws it b
 and `stop`, which aborts the kind's mount and unmounts it, its feed and reads with it. What the
 kinds share (React, the frame) Vite puts in a chunk their entries import, named after one of its
 modules, so a first visit takes the kind's entry and that chunk, and a move between two kinds of
-this client the target's entry alone. The shell asks for the chunks an entry imports beside it, a
+this client the target's entry alone. What every page kind imports stays that one chunk
+(`codeSplitting` in `vite.config.ts`), which the menus' entry imports too, though they use only
+part of it: split by who imports each module, it would be two files every first visit takes,
+compressed apart. The shell asks for the chunks an entry imports beside it, a
 module preload each (`imports` in its manifest, which `package.sh` reads from Vite's), so a first
 visit fetches them with the entry rather than once the entry has come and been read: a round trip
 fewer, which a phone over the tailnet pays.
@@ -155,12 +171,20 @@ to keep in), and it opens every IndexedDB transaction: this client opens none of
 
 A move between a kind of this client and a Dioxus kind stops one and runs the other as between
 two Dioxus kinds; a move within a kind is the shell's `review:navigate`, which `route.ts` follows. The header, the panel's `+` and bell
-and the feed are drawn here as the Dioxus frame draws them; the panel, its sheets and the overlay
-stay the Dioxus program's kinds, which the shell mounts beside any page. A page that shows media
+and the feed are drawn here as the Dioxus frame draws them; the panel and its sheets stay the
+Dioxus program's kind, which the shell mounts beside any page.
+
+The menus are this client's persistent kind `overlay` (`src/kinds/overlay.tsx`, `src/overlay.tsx`),
+which the shell mounts in `#overlay-root` on the first select or picture and keeps beside every
+page after: a select's popup (`select-popup.tsx`, the primitives' listbox, placed by
+`popup-position.ts` and matched as typed by `typeahead.ts`) and the picture viewer
+(`picture-viewer.tsx`, the primitives' dialog with its focus trap). A request is data, never a
+component: the shell's `reviewOverlay({kind, owner, …, callback})`, which a select field of either
+client and the media layer send alike, answered through its callback (a select by the value chosen
+or none, the viewer by the step asked, 0 to close) and closed by its owner. A page that shows media
 mounts the media layer (`media-layer.ts`) before it: started by the first media it shows, it scales
 the mockups' frames, loads a viewer's script, runs the views' buttons and opens a picture in the
-overlay's picture viewer, which it reaches through the shell's `reviewOverlay` as the Dioxus
-pages do, all of it ending with the kind's mount: one runtime for both kinds. A document's
+menus' picture viewer, all of it ending with the kind's mount. A document's
 contents watch (`contents.ts`: the outline folded on its own while a drawn table is wider than its
 box, unless the reader chose) is no part of it: it runs from the mount of a body that has the
 outline to its unmount, under the signal of that body's own effect (`DocumentBody`).
@@ -176,7 +200,9 @@ box with the value it last saw, and so misses a value a script set before firing
 Styles are the existing sheets, used as they are: the project's `theme.css`, inlined by the
 server, the shared sheet of the Dioxus build (the frame, the components, the board's rules), whose
 class names this client's markup uses, and the kind's own sheet, imported by its module
-(`src/queue.css`, `src/docs.css`). The Dioxus client's media sheet,
+(`src/queue.css`, `src/docs.css`; the menus' `src/overlay.css`: the popup's and the dialog's rules
+as the components' sheets wrote them, their CSS-module suffixes gone, and the picture viewer's,
+moved there from the media sheet). The Dioxus client's media sheet,
 `apps/symphony-ui/assets/media.css`, which the shared sheet leaves out and the program's media
 layer loads as well, is the media layer's, imported by `media-layer.ts`, so home, the documents and
 a task's page take it as one file under the layer's name. The task board and the agents page have
@@ -204,12 +230,13 @@ starts nothing: Ctrl-C, or a kill of the recipe's process, ends it. Every reques
 Vite's own files (under `/@symphony-web/`) goes to that server through Vite's proxy, its Host and
 Origin as the browser sent them, so a save meets the server's origin check as on the server itself:
 the pages, the API, the feed (its WebSocket's upgrade too, `ws`) and the files of the Dioxus
-program's kinds. It sends no CORS header
+program's kind. It sends no CORS header
 (`cors: false`, where Vite's default lets a page on any loopback port read every answer), so a page
 of another origin reads through it no more than from the server. What it makes itself is the page's
 shell script: this checkout's shell (`apps/symphony-ui/assets/cache.js` and `shell.js`,
-unminified) with Vite's client first, the program's kinds as the server's build names them, and
-each of `KINDS` as its entry under Vite with the server's shared stylesheet, each kind's own styles
+unminified) with Vite's client first, the program's kind (the chat) as the server's build names
+it, and each of `KINDS` as its entry under Vite (one an older build has as the program's, the
+menus, among them) with the server's shared stylesheet, each kind's own styles
 kept before the project's theme as the built shell keeps them. So a kind added on a branch, or a
 change to the shell, shows with no build too. A save to a kind's module or to the shell's sources
 loads the page again, a style sheet's change applies in place, and an error in a module is drawn
@@ -219,7 +246,7 @@ A reload, not React's Fast Refresh (`@vitejs/plugin-react`): that would be a dep
 one more script put in a page Vite does not serve, and it keeps a component's state only across an
 edit to a module that exports components alone, which few of these do, and most pages here draw
 again at once from the device's cache and keep their drafts on every input. What only a build
-makes it does not show: the shared stylesheet and the program's kinds are the server's build's (an edit to the
+makes it does not show: the shared stylesheet and the program's kind are the server's build's (an edit to the
 Dioxus client's sheets, `board.css` among them, shows once `just symphony-ui-dist` has built them
 and the server serves that build, `SYMPHONY_UI_DIST` naming its `public/` for another project),
 React is its development build, and the bytes are no build's. No build, regenerator or check runs
@@ -232,13 +259,16 @@ it (its files count in the regenerator's key, as every file of this package does
 feed of its own: it reads the window this device last chose (`reports-grain`, `reports-days`
 through `storage.ts`), else the last 24 hours by the hour (`FIRST_WINDOW`), at once, on each
 choice and every five minutes with the last answer's tag (`followReports`, under its effect's
-own signal). The periods are read by path as the server writes them (`Bucket`): a source with no
-record of a period is none there, a count by status that leaves out its zeros a zero. Four
+own signal), a read that failed sooner, on the feed's waits. The periods are read by path as the
+server writes them (`Bucket`): a source with no record of a period is none there, a count by
+status that leaves out its zeros a zero. Four
 figures sit over five sections of charts, one column on a phone and two from 960 px. Each figure
 links to the chart it sums up (`#chart-done`…) while the charts are drawn. A chart's id is an
 anchor of its `NearViewport`, held in its ghost until it mounts; the chart an address names mounts at
 once and is landed as a document's part is (the shell's `land`, once a navigation), so a fresh
-load's charts, which come after the shell looked for it, land too.
+load's charts, which come after the shell looked for it, land too, until the reader chooses a
+window: a first answer that drew no chart (nothing recorded, a failed read) started no landing,
+and the window chosen after it lands none (`lands`, `NearViewport`).
 `src/chart.tsx` draws each chart by hand, with no charting library: bars as boxes over a column
 a period, lines as one SVG whose strokes keep their width, both on one axis with its unit; a
 period no file recorded is hatched and its line broken, never a zero. Each entry of a chart's
@@ -253,6 +283,26 @@ Dioxus page wrote them, a tie rounded to the even digit as Rust's `{:.N}` does (
 series take `--chart-1` to `--chart-5` (`src/reports.css`), set at no specificity so a theme's
 own win, with their own steps in the dark. Charts below the screen mount through
 `NearViewport`. Hours are labelled in UTC.
+
+## Runs
+
+`src/runs.tsx` draws `/runs`, the kind `runs`, in the frame, with no feed of its own
+([RUNS](../../docs/RUNS.md#the-runs-page)). Now is the machine work (`/api/machine-work`,
+`followNow`, every 5 s), read by a guard of the fields it draws (`readNow`) rather than
+`work.ts`, which only the board's kinds import, so this page splits no shared chunk. The list is
+`/api/runs` (`followList`, its first page every 15 s with the last answer's tag), with its
+filters kept as a query through `storage.ts` (`runs-filters`) and Load more (`readOlder`) under
+the mount's signal. A run is `/runs?run=ID`, the same kind: the shell's move within it says
+`review:navigate`, and the page reads `location.search` again. Its read (`followRun`) goes on
+every 5 s while the run or a step of it has not ended, reading its log on from what is shown
+(`appended`), and from its tail again once the log is shorter than that; a log the server keeps
+no more (`404`) ends an ended run's read and is said quietly. The output before it
+(`readEarlier`) goes in front (`prepended`). Each reader takes its effect's signal, and each
+wait between reads is a parameter (`pause` by default: its time, then on only once the page is
+shown, `whenShown` in `feed.ts`), so `runs.test.tsx` runs them with no timer. Nothing is kept
+on the device but the filters. The steps are bars on the run's span drawn as boxes
+(`stepBars`), with no chart; Trends, a chart of the roll-up, will share `chart.tsx` with
+Reports. Times are in UTC.
 
 ## The agents page
 
@@ -291,7 +341,19 @@ blocks whole at once (`ExcerptBody` under `AtOnce`, `viewport.tsx`), no part of 
 near the screen: opening it asked for them, and its box, which scrolls, would clip the sentinel's
 look-ahead, leaving a box opened below the screen empty until it was scrolled to. A card's Later
 is the queue's (`postpone.tsx`), the related tasks and a branch's differences are `related.tsx`'s.
-Its own styles are `src/docs.css`, the Dioxus client's documents sheet moved here.
+Its own styles are `src/docs.css`, the Dioxus client's documents sheet moved here. Once a landing
+has ended, the browser's own scroll anchoring holds the reader's place while the sections around
+it draw, and a change to a margin of the part being read (or to any box around what Chrome
+anchors on, a focused field first) stops it for that frame, so everything drawn above lands on the
+reader. The spacing that stands in for the margins one card's sections collapsed therefore reads a
+neighbour not drawn yet as what it will draw as, by its part's classes (`partForm`, `document.ts`):
+an open card by the outline's cards, and how its prose opens and closes by the kinds of its first
+and last blocks, which the outline carries for each section (`ends`,
+`symphony_api::Section::ends_of`). A section in an outline kept from before it carried them reads
+as opening and closing with no listed block, so its neighbour may move once as it draws, until
+the next read replaces that copy
+(`tests/browser/document_landing.rs` reads a paragraph, a list, a table, the intro and a card
+beside code, a quote, a mockup, a picture, a heading, a table and a title, on a desk and a phone).
 
 ## A task's page
 

@@ -73,9 +73,13 @@ describe("an agent's row", () => {
     );
   });
 
-  it("shows its open tasks against the cap on an orchestrator's, and none without one", () => {
-    expect(row(agent({ slots: { open: 3, cap: 8 } }))).toContain("<p>open tasks: 3 of 8</p>");
-    expect(row(agent())).not.toContain("open tasks:");
+  it("shows the slots it holds against its cap on an orchestrator's, and none without one", () => {
+    // Its slots, as PULL names them: the tasks it is building, not the open tasks it follows.
+    const html = row(agent({ slots: { open: 3, cap: 8 }, following: 32 }));
+    expect(html).toContain("<p>slots: 3 of 8</p>");
+    expect(html).toContain("Following 32 open tasks");
+    expect(html).not.toContain("open tasks:");
+    expect(row(agent())).not.toContain("slots:");
   });
 
   it("says how to reach it: by its callback, or on a task while it has none", () => {
@@ -206,7 +210,7 @@ describe("an agent's row", () => {
       const html = row(agent(), { work: shown });
       expect(html.match(/data-work-kind=/g)?.length ?? 0).toBe(expected.length);
       for (const label of expected) expect(html).toContain(label);
-      expect(html).not.toContain("open tasks:");
+      expect(html).not.toContain("slots:");
     }
   });
 
@@ -395,7 +399,9 @@ describe("the agents page", () => {
       /^<main data-ready="failed" data-feed="live"><section class="trouble card"/,
     );
     expect(html).toContain("<h1>The board could not be loaded</h1>");
-    expect(html).toContain("It is also tried again on its own.");
+    expect(html).toContain(
+      "<p>The server could not be reached; check the connection. Trying again…</p>",
+    );
   });
 
   it("loads the agents once the board is read", () => {
@@ -411,6 +417,8 @@ describe("the agents page", () => {
       '<div class="task-page" data-ready="failed"><section class="trouble card"',
     );
     expect(html).toContain("<h1>The agents could not be loaded</h1>");
+    // The page reads them again by itself, and says so.
+    expect(html).toContain("<p>Busy (the server answered 503). Trying again…</p>");
     expect(html).not.toContain('role="alert"');
   });
 

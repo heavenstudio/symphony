@@ -6,6 +6,9 @@
 mod commands;
 mod publish;
 
+/// A built client published over the one served, keeping the builds published before it: what
+/// `symphony-build publish-client` (crates/symphony-build) runs.
+pub use publish::publish_keeping;
 pub(crate) use publish::{BUILDS, publish_client};
 
 use std::collections::BTreeMap;
@@ -58,6 +61,9 @@ options:
 
 /// `symphony COMMAND ARGS…`: the whole command line without the program name. Its exit code. A
 /// command the Symphony does not have is run by the first plugin this process holds that adds it.
+/// A host binary that calls this runs `symphony_chrome::leash_main()` first, as `bin/symphony.rs`
+/// does: `shot` leashes its Chrome by running the program again, and without it a shot fails
+/// before Chrome is ready, its leash exited.
 pub fn main(
     args: &[String],
     input: &mut dyn BufRead,
@@ -94,6 +100,7 @@ pub fn main_in(
         Some("reply") => reply_in(&args[1..], env, out, err),
         Some("serve") => serve_main(input, out),
         Some("docs-audit") => crate::docs_audit::main(&args[1..], out, err),
+        Some("settings-check") => lint::settings(&args[1..], out, err),
         Some("blocks") => crate::blocks::main(&args[1..], out, err),
         Some("triage") => triage_main(&args[1..], out, err),
         Some("verdict-asks") => verdict_asks_main(&args[1..], out, err),
@@ -103,15 +110,6 @@ pub fn main_in(
         Some(other) => commands::plugin(other, &args[1..], out, err),
         None => commands::usage(symphony, err),
     }
-}
-
-/// `symphony-build COMMAND ARGS…` (`tools/rs-bin.sh symphony-build`): the commands only this
-/// repository's own build and release run use (publishing a built client, the client's release
-/// inputs, the size budgets, the splitter's repair and the release run), the whole command line
-/// without the program name. Its exit code. No project is given that binary, and [`main`] reaches
-/// none of them, so neither the shipped `symphony` nor a host that calls [`main`] links them.
-pub fn build_main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
-    commands::build(args, out, err)
 }
 
 /// The command line's reading, a refusal of it as argparse words one, and the answer to

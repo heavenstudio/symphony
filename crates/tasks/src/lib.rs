@@ -34,6 +34,7 @@
 extern crate self as symphony_board;
 
 pub mod alarm;
+pub mod arm;
 
 #[cfg(test)]
 #[path = "../tests/store/common.rs"]

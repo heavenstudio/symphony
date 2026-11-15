@@ -125,7 +125,7 @@ around it.
 ### `workflow/claude-first-agents`
 
 Executors and reviewers are Claude on the model `just tasks limits` names for their role, from
-`[agents.models]`, Opus until it names another ([AGENTS.md](AGENTS.md#this-repository-as-its-own-project)),
+`[agents.models]`, Fable until it names another ([AGENTS.md](AGENTS.md#this-repository-as-its-own-project)),
 started as an in-process subagent (an Agent launch with `isolation: worktree`, its branch named
 for the task's slug) or a headless `claude -p`; a terminal of its own (`just tasks launch SLUG`)
 only when the work needs one. *A terminal keeps its memory until it is closed.*
@@ -332,10 +332,10 @@ a session is a rule here, guidance in an AGENTS.md, a skill, a doc or a board ta
 where every agent sees it. In a Claude Code session the memory guard (`symphony hook memory-guard`,
 which `symphony init` installs in `.claude/settings.json`) refuses a write tool's path there, or in
 Codex's `~/.codex/memories/`, and a shell command that names either folder and writes. It reads the
-command as text: the write shapes it knows are listed in [AGENTS.md](AGENTS.md#agent-integration),
-others pass, and so does a write through a link made before. A Codex session runs no Claude hook,
-so nothing guards it, its own `~/.codex/memories/` included. `.claude/settings.json` also denies
-Edit there.
+command as text: the write shapes it knows, and those it misses, are its module doc's
+(`crates/symphony/src/hook/memory_guard.rs`), others pass, and so does a write through a link made
+before. A Codex session runs no Claude hook, so nothing guards it, its own `~/.codex/memories/`
+included. `.claude/settings.json` also denies Edit there.
 
 ### `tools/parallel-by-default`
 

@@ -22,8 +22,9 @@ import {
 import { sleep } from "./feed";
 import { getIf, said } from "./request";
 import { field } from "./shared";
+import { Backoff } from "./state";
 import { load, save } from "./storage";
-import { ready } from "./trouble";
+import { failed, ready } from "./trouble";
 import { NearViewport } from "./viewport";
 import { type Grain, REPORTS_PATH, type ReportMark } from "./wire";
 
@@ -771,6 +772,8 @@ export interface ReportsViewProps {
   onAsk: (grain: Grain, days: number) => void;
   /** Takes the key of the series a legend's button hides or shows again. */
   onToggle?: (key: string) => void;
+  /** Whether the chart the address names lands as its window draws: until the reader chooses one. */
+  lands?: boolean;
 }
 
 /**
@@ -785,6 +788,7 @@ export function ReportsView({
   hidden = [],
   onAsk,
   onToggle,
+  lands = true,
 }: ReportsViewProps) {
   const busy = page === null || page.grain !== grain || page.days !== days;
   return (
@@ -804,7 +808,7 @@ export function ReportsView({
       </header>
       {error !== null && (
         <p className="reports-error" role="alert">
-          {`The reports could not be read: ${error}`}
+          {`The reports could not be read. ${failed(error, true)}`}
         </p>
       )}
       {page === null ? (
@@ -816,6 +820,7 @@ export function ReportsView({
           page={page}
           hidden={hidden}
           onToggle={onToggle}
+          lands={lands}
         />
       )}
     </div>
@@ -870,6 +875,7 @@ interface ReportProps {
   page: Page;
   hidden: string[];
   onToggle: ((key: string) => void) | undefined;
+  lands: boolean;
 }
 
 /**
@@ -880,9 +886,11 @@ interface ReportProps {
  * drawn yet finds its place, and a slot the address names mounts at once and lands its chart
  * (`NearViewport`, the shell's `reviewLand`), as a document's part does: on a fresh load, whose
  * charts come after the shell has looked for the address, too. The shell lands once a navigation,
- * so a new window or the hourly slide, which mount every chart again, moves no one.
+ * so a new window or the hourly slide, which mount every chart again, moves no one. Nor does the
+ * first window to draw charts once the reader chose it (`lands` false), when the first answer
+ * drew none (nothing recorded, a failed read) and no landing started.
  */
-function Report({ page: whole, hidden, onToggle }: ReportProps) {
+function Report({ page: whole, hidden, onToggle, lands }: ReportProps) {
   const [tapped, setTapped] = useState<number | null>(null);
   const page = fromFirstRecord(whole);
   const shownAxis = axis(page);
@@ -928,6 +936,7 @@ function Report({ page: whole, hidden, onToggle }: ReportProps) {
                   height={330}
                   className="chart-slot"
                   anchors={[`chart-${chart.id}`]}
+                  lands={lands}
                   ghost={<GhostChart />}
                 >
                   <ChartCard
@@ -1044,7 +1053,7 @@ export interface ReportsCheck {
 /**
  * Reads the window (`grain`, `days`) at once and then every EVERY_MS (through `wait`), naming the
  * tag of the copy shown (`etag`) so an hour no file changed in answers `304`, until `signal` ends
- * it.
+ * it. A read that failed is tried again sooner, after Backoff's waits (1 s, doubling to 30 s).
  */
 export async function followReports(
   grain: Grain,
@@ -1055,7 +1064,9 @@ export async function followReports(
   wait: (ms: number, signal: AbortSignal) => Promise<void> = sleep,
 ): Promise<void> {
   const url = `${REPORTS_PATH}?grain=${grain}&days=${days}`;
+  let backoff = new Backoff();
   while (!signal.aborted) {
+    let next = EVERY_MS;
     try {
       const answer = await getIf(url, etag(), signal);
       if (signal.aborted) return;
@@ -1066,11 +1077,13 @@ export async function followReports(
         if (read === null) throw new Error("The reports' answer is not a report");
         check.answered(read, answer.etag);
       }
+      backoff = new Backoff();
     } catch (failure) {
       if (signal.aborted) return;
       check.failed(said(failure));
+      next = backoff.after(0);
     }
-    await wait(EVERY_MS, signal);
+    await wait(next, signal);
   }
 }
 
@@ -1087,7 +1100,8 @@ export function ReportsPage() {
   const [page, setPage] = useState<Page | null>(null);
   const [error, setError] = useState<string | null>(null);
   const etag = useRef("");
-  // Each choice reads again, the same window too, as a choice of it does.
+  // Each choice reads again, the same window too, as a choice of it does. Once the reader has made
+  // one, the address lands no chart.
   const [asked, setAsked] = useState(0);
   useEffect(() => {
     void asked;
@@ -1112,6 +1126,7 @@ export function ReportsPage() {
         page={page}
         error={error}
         hidden={hidden}
+        lands={asked === 0}
         onAsk={(nextGrain, nextDays) => {
           save("reports-grain", nextGrain);
           save("reports-days", String(nextDays));

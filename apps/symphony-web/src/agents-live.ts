@@ -12,6 +12,7 @@ import { scoped } from "./project";
 import { getJson, said } from "./request";
 import { whiteSpace } from "./session";
 import { field, holdPlace, list as items } from "./shared";
+import { tryAgain } from "./state";
 import {
   byPriority,
   holderHealth,
@@ -47,6 +48,12 @@ const UNREADABLE = "The agents page's answer is not readable";
 
 const isText = (value: unknown): value is string => typeof value === "string";
 const isNumber = (value: unknown): value is number => typeof value === "number";
+/**
+ * A number as serde reads one into a `usize`, as far as a double holds it: blocks-read.ts's
+ * `isCount`, which this page's chunks do not carry.
+ */
+const isCount = (value: unknown): value is number =>
+  Number.isSafeInteger(value) && (value as number) >= 0;
 /** As serde reads an `Option`: absent and `null` are none. */
 const absent = (value: unknown) => value === undefined || value === null;
 const optionalText = (value: unknown) => absent(value) || isText(value);
@@ -109,7 +116,7 @@ function readSaid(value: unknown): AgentSaid | null {
 
 function readSlots(value: unknown): AgentSlots | null {
   const [open, cap] = ["open", "cap"].map((key) => field(value, key));
-  return isNumber(open) && isNumber(cap) ? { open, cap } : null;
+  return isCount(open) && isCount(cap) ? { open, cap } : null;
 }
 
 function readGo(value: unknown): SessionGo | null {
@@ -150,7 +157,7 @@ export function readAgent(value: unknown): Agent | null {
   const following = field(value, "following");
   const [chat, inProcess] = [field(value, "chat"), field(value, "in_process")];
   if (held.some((one) => one === null) || !(absent(lastTool) || isNumber(lastTool))) return null;
-  if (!(following === undefined || isNumber(following))) return null;
+  if (!(following === undefined || isCount(following))) return null;
   if (!optionalFlag(chat) || !optionalFlag(inProcess)) return null;
   const run = optional(field(value, "state_detail"), readRun);
   const message = optional(field(value, "last_message"), readSaid);
@@ -206,7 +213,7 @@ export function readAgentPage(value: unknown): AgentPageRead | null {
   const total = field(value, "total");
   const next = field(value, "next");
   const local = field(value, "local");
-  if (view === null || !Array.isArray(tasks) || !isNumber(total) || !optionalText(next)) {
+  if (view === null || !Array.isArray(tasks) || !isCount(total) || !optionalText(next)) {
     return null;
   }
   if (!optionalFlag(local)) return null;
@@ -507,6 +514,8 @@ export class LiveAgents {
   /** A read of the first page again is under way, and another was asked for meanwhile. */
   private reading = false;
   private again = false;
+  /** The board reads so far: each starts the first page's reads anew (`first`). */
+  private round = 0;
   /** The next page of the connected agents, or of the lost ones: one function for the page's life. */
   readonly more = (lost: boolean): void => {
     void this.next(lost);
@@ -538,7 +547,7 @@ export class LiveAgents {
       views: {
         // The page keeps nothing on this device.
         freshen: () => {},
-        read: () => this.load(),
+        read: () => this.first(),
         heard: (value) => this.heard(value),
         frame,
       },
@@ -553,6 +562,19 @@ export class LiveAgents {
     } catch (failure) {
       return said(failure);
     }
+  }
+
+  /**
+   * The board was read: read the first page afresh and, while the page has no agents to show (the
+   * read failed), again, waiting longer after each failure (`tryAgain`), until it has them, the
+   * next board read starts again or the page stops. Settles once the first read is done.
+   */
+  async first(): Promise<void> {
+    this.round += 1;
+    const round = this.round;
+    await this.load();
+    const unanswered = () => this.round === round && this.d.view === null;
+    void tryAgain(unanswered, () => this.load(), this.signal);
   }
 
   /** Read the first page afresh: the agents, the tasks, the counts and both cursors as it says. */

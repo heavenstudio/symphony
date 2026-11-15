@@ -50,9 +50,13 @@ Unadmitted sockets receive 503, then close their write side and drain input to E
 existing five-second shutdown grace, so unread request bytes cannot reset away the response.
 Clients that send nothing or leave a header incomplete cannot hold the old process indefinitely;
 admitted request bodies drain normally.
-The startup lock serializes publication with starters and stops. A build failure is logged once
-per source fingerprint and sent to open clients as a named `server` SSE event containing a JSON
-string; a fresh stream receives the current notice too. Editing the sources retries the build.
+The startup lock serializes publication with starters and stops. A failed update, its build or
+its hand-over, is logged and sent to open clients as the feed's named `server` event containing a
+JSON string; a fresh stream receives the current notice too. The notice says when that source
+fingerprint is built and handed over again: 5 min after its first failure, the wait doubling with
+each failure of it in a row up to 1 h (`src/reload/retry.rs`), on either clock, so the machine
+never stays on the old build for want of a retry. Editing the sources builds the new fingerprint
+at its first check, whatever that wait.
 Only the main checkout on branch `main` is followed; foreground servers do not reload.
 Shared installation and live rebuilds both use Cargo's release profile. The debug
 server exceeded the idle CPU budget on the normal board; the release build keeps
@@ -97,7 +101,7 @@ cannot keep installing after `--stop` returns.
 | `/api/run-log?run=…&tail=…` | Part of a run's log (`RunLog`): its last 64 KiB by default, its last `tail` bytes, or `from=…&to=…` a range, at most 1 MiB; only a regular file in a day folder of the project's `logs/`, never the board (`src/api/run_log.rs`, [RUNS](../../docs/RUNS.md#logs)) |
 | `/api/activity` | Latest forty document and owner-addressed task entries |
 | `/api/pending` | Pending cards in document navigation order, then branch cards |
-| `/api/feed?since=…` | Server-Sent Events after the snapshot's version |
+| `/api/feed?since=…` | The feed after the snapshot's version: a WebSocket to a request that asks to upgrade, Server-Sent Events to any other (`src/api/feed_socket.rs`; both forms are `symphony_api`'s feed contract) |
 
 Before any project the one server answers `/api/projects`, to loopback and this machine's tailnet
 names like every route of a project's: each project it serves, with its feed's version, the cards
@@ -172,7 +176,7 @@ gzips, up to 16 MiB (about eight builds of every page's files), and drops the
 least recently asked-for past that, gzipping it again should it be asked for
 again (`src/api/client/gzipped.rs`). A file gzip cannot shrink goes as it is, as
 do PNG and WOFF2 files. Gzip is the one encoding offered: `br` and `zstd` get
-the file as it is. SSE is never compressed or buffered. A changed shell script path
+the file as it is. The feed is never compressed or buffered. A changed shell script path
 emits a `client` region, which the existing client uses to reload once per build.
 
 Only the shared server started with `--home`, holding the server lease, drains
@@ -183,9 +187,10 @@ scratch database for a preview, and set `ASKS_DB` to a private path when exercis
 ask or chat writes, which still use that store. Leaving the journal alone is
 simpler than creating a second preview journal with its own delivery lifecycle.
 
-Every SSE delta has an increasing `id` and a single JSON line containing
-`version` and `changes`. The existing board regions are `card`, `queue` (only
-the five visible cards), `counts`, `progress` and `client`. Additional list
+Every delta's data is a single JSON line containing `version` and `changes`; as a
+Server-Sent Event it has an increasing `id` too, and on the WebSocket none (how each
+form says an event: `symphony_api`'s feed contract). The existing board regions are
+`card`, `queue` (only the five visible cards), `counts`, `progress` and `client`. Additional list
 regions use keyed upserts/removals (`ItemChange<T>`); their `-order` events
 move one key after another (`OrderChange`). They are `queue-item`,
 `spot-check`, `agent-queue`, `pending`, `activity`, `task`,
@@ -210,7 +215,10 @@ ask thread with a message the hub has not announced yet (`threads`, each `id` an
 document's questions read their thread again only then, and once after a
 reconnect, instead of polling. The hub compares the asks file's size and time each
 board interval and reads it only when they changed; `/api/ask` and `/api/asks` take
-the chat recipient from the hub's last board read. `branches` names the branches of the
+the chat recipient from the hub's last board read. `task-asks` is what the task
+board asks of each person, the questions waiting on them and the newest reviewer
+verdict, sent each time it changes, for the desktop app (`src/live/task_asks.rs`):
+no page reads it. `branches` names the branches of the
 project's repository whose tip moved, as the watcher saw their refs change: an open task page
 reads its gates again when the branch they were answered for is among them. Unknown regions
 are ignored by the current board client.
@@ -223,7 +231,11 @@ open stream, so the client fetches a fresh snapshot. `Last-Event-ID` is not a
 resume mechanism across server starts. Named `ping` events follow the client
 contract: at most five seconds of silence.
 
-Worktree index locks and reflogs do not invalidate document snapshots. Text and
+Worktree index locks and reflogs do not invalidate document snapshots. A page follows each
+document a visit read, and a refresh renders those again only once the page's own files changed
+(main's: a file below its documents' folders or what its plugins watch, a lost event, or its
+project file edited, whether its settings still load or not): a ref, a worktree's record or a
+branch's edit renders none of main's but one whose cards or linking tasks moved. Text and
 parsed registers reuse unchanged files, checking inode, size, modification and
 change times so atomic replacement and a restored mtime still invalidate them.
 Schema validators are reused by schema contents. Unchanged feed lists skip diff
@@ -243,11 +255,14 @@ sequenced board snapshot also supplies the board and agents views. Unchanged raw
 That snapshot also names the tasks that link a document or a folder's introduction, and the
 work beside each agent on the agents page, so those reads read no board; while the board cannot be
 read, the agents views answer unavailable, as its tasks do. The task page's reads (`task-page`, `task-offer`,
-`task-history`, `task-brief`, `task-thread`) share one store of the board, opened by the
-first and kept until the board fails a read on it, so no read finds the board's server and
-asks `ps` and `lsof` about it again. A document renders without the lock the board, the feed and
-the project list read under, which it takes only to place its copy in its page; renders take
-turns, each from its read of the file to that placement, so the copy kept is the last read.
+`task-history`, `task-brief`, `task-thread`) and the task board's search share one store of the
+board, opened by the first and kept until the board fails a read on it, so no read finds the
+board's server and asks `ps` and `lsof` about it again. A document renders without the lock the
+board, the feed and the project list read under, which it takes only to place its copy in its
+page. Renders run side by side, a visit's on tokio's blocking pool, which bounds how many run at
+once, so a reader's waits on no refresh's; a copy is placed only over one whose read began before
+its own, so the copy kept is the last read begun, and a visit's first read of a document begun
+before a refresh that renders anew reads again, as that refresh rendered only what was followed.
 
 A cold server publishes its document hub and URL, then activates the first board
 read in the hub's owned worker. Data reads activate and await that first result; an unavailable board
@@ -282,7 +297,9 @@ action is a board action of the project's plugins, named by the offer it answers
 (`TaskOffer`: the action, its label, the branch and the payload it hands back);
 an action no plugin of the project offers is a 404, and one the action refuses
 says and moves nothing on the board.
-Writes require an allowed Host and, when supplied, the app's exact Origin.
+Writes require an allowed Host and, when supplied, the app's exact Origin. So does the feed's
+WebSocket upgrade, as a page of any site may open a WebSocket and read what it says: its Origin
+must be the server's own page (`src/api/feed_socket.rs`).
 One register lock covers read, edit, no-loss validation, write and tap
 deduplication across all worktrees. Asks share the existing `ASKS_DB` store.
 

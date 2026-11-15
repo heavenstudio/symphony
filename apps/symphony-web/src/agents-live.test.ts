@@ -76,6 +76,10 @@ describe("the agents page's reads", () => {
       ["tasks", [{ slug: "w/a", role: "executor" }]],
       ["following", null],
       ["following", "2"],
+      // A `usize`: none below zero, none with a fraction, none past what a double holds whole.
+      ["following", -1],
+      ["following", 2.5],
+      ["following", 2 ** 53],
       ["chat", "yes"],
       ["in_process", 1],
       ["last_tool_call", "now"],
@@ -83,6 +87,8 @@ describe("the agents page's reads", () => {
       ["state_detail", { recipe: "test-rs", phase: "running", since: "1" }],
       ["last_message", { slug: "w/a", ts: "2", text: "Built." }],
       ["slots", { open: 3 }],
+      ["slots", { open: -1, cap: 8 }],
+      ["slots", { open: 3, cap: 8.5 }],
       ["go", { url: "https://example.com" }],
       ["go", { handle: "birch", pane: 2 }],
     ] as [string, unknown][]) {
@@ -96,6 +102,9 @@ describe("the agents page's reads", () => {
       url: null,
       pane: null,
     });
+    // The counts' edges serde takes.
+    const edges = { following: 0, slots: { open: 0, cap: Number.MAX_SAFE_INTEGER } };
+    expect(readAgent({ ...whole, ...edges })).toMatchObject(edges);
   });
 
   it("refuse a page or a view without what the page draws", () => {
@@ -110,6 +119,8 @@ describe("the agents page's reads", () => {
       { ...page, tasks: null },
       { ...page, tasks: [{ slug: "w/a" }] },
       { ...page, total: "2" },
+      { ...page, total: -1 },
+      { ...page, total: 1.5 },
       { ...page, next: 1 },
       { ...page, local: "yes" },
       null,
@@ -480,6 +491,10 @@ afterEach(() => {
 
 /** Lets `ms` pass, and what it settles run. */
 const pass = (ms = 0) => vi.advanceTimersByTimeAsync(ms);
+/** Ends the waits pending now (a retry's), and runs what they start. */
+const waitEnds = () => vi.runOnlyPendingTimersAsync();
+/** Runs every wait to its end, and those they start, until none is left: nothing tries again. */
+const settled = () => vi.runAllTimersAsync();
 
 describe("the agents' first read", () => {
   it("draws the page as the server answers it, both cursors as it says", async () => {
@@ -531,6 +546,39 @@ describe("the agents' first read", () => {
     await agents.load();
     expect(d.view).toBeNull();
     expect(host.redraw).not.toHaveBeenCalled();
+  });
+});
+
+describe("the agents' first read after the board's", () => {
+  it("is tried again by itself while it fails, until it answers", async () => {
+    let refused = 2;
+    const { agents, d, asked } = live(() =>
+      refused-- > 0 ? answer(503) : answer(200, SAMPLES.agentPage),
+    );
+    await agents.first();
+    expect(d.error).toBe("The server answered 503");
+    expect(asked).toHaveLength(1);
+    await waitEnds();
+    expect(asked).toHaveLength(2);
+    await waitEnds();
+    expect(asked).toHaveLength(3);
+    expect(d.view?.agents).toHaveLength(2);
+    expect(d.error).toBe("");
+    await settled();
+    expect(asked).toHaveLength(3);
+  });
+
+  it("stops trying once the next board read starts it again, or the page is gone", async () => {
+    const { agents, asked, page } = live(() => answer(503));
+    await agents.first();
+    await agents.first();
+    expect(asked).toHaveLength(2);
+    await waitEnds();
+    // The newer read's retry alone: the first one's stopped.
+    expect(asked).toHaveLength(3);
+    page.abort();
+    await settled();
+    expect(asked).toHaveLength(3);
   });
 });
 

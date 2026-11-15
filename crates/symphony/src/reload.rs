@@ -61,16 +61,8 @@ impl Drop for BuildProcess {
 }
 
 fn git(root: &Path, args: &[&str]) -> Result<String, String> {
-    let done = symphony_board::sys::output(
-        crate::children::command("git")
-            .args(args)
-            .current_dir(root)
-            .env_remove("GIT_DIR")
-            .env_remove("GIT_WORK_TREE")
-            .env_remove("GIT_INDEX_FILE")
-            .env_remove("GIT_COMMON_DIR"),
-    )
-    .map_err(|e| e.to_string())?;
+    let done = symphony_board::sys::output(crate::children::git().args(args).current_dir(root))
+        .map_err(|e| e.to_string())?;
     if !done.status.success() {
         return Err(String::from_utf8_lossy(&done.stderr).trim().into());
     }

@@ -1,16 +1,19 @@
 //! Where the reader is on the task board (the React client's `src/boardplace.ts`), kept through
 //! what moves it (app/board-scroll-and-focus-followups): a card the feed files above the reader,
 //! in their column or another, moves nothing on their screen, wherever a touch screen's last tap
-//! left the pointer; a focused card the feed moves to another column keeps the focus, on the same
-//! link; and Back from a task draws the board where the reader left it, sideways, down its
-//! columns and down the page, the card it kept moved or gone meanwhile or not. Each waits on what
-//! the page shows, never on a pause.
+//! left the pointer, and deep in a column Load more brought to its end, where the refresh after
+//! each filing keeps every row (app/board-keeps-its-place-deep-in-a-loaded-column), and one that
+//! changed nothing there transfers no body
+//! (app/deep-column-refresh-answers-304-when-unchanged); a focused card the feed moves to another
+//! column keeps the focus, on the same link; and Back from a task draws the board where the reader
+//! left it, sideways, down its columns and down the page, the card it kept moved or gone meanwhile
+//! or not. Each waits on what the page shows or the answers the stand-in sent, never on a pause.
 
 use serde_json::{Value, json};
 
 use crate::chrome::Chrome;
 use crate::site::Site;
-use crate::{SHOWN, chrome, dist, wait_for_feed};
+use crate::{SHOWN, STALL, chrome, dist, wait_for_feed};
 
 /// The board's version, from which the page follows the feed: the fixture's.
 fn version() -> u64 {
@@ -265,12 +268,363 @@ fn a_task_filed_above_the_reader_moves_nothing_in_their_column() {
     }
 }
 
+/// The tasks of a column's page, as the server pages it (`PAGE` in the server's
+/// `src/api/task_board.rs`).
+const PAGE: usize = 30;
+
+/// The address of a read of Ready's rows, `extra` naming its cursor or its length.
+fn ready_target(extra: &str) -> String {
+    format!("/api/task-board?q=&status=ready&days=1{extra}&activity=1&work=0")
+}
+
+/// `rows` as a listing's page, counted over all of `board`, its cursor `next`.
+fn page_of(rows: &[Value], board: &[Value], next: Option<String>) -> Value {
+    let mut page = listing(board);
+    page["tasks"] = json!(rows);
+    page["next"] = json!(next);
+    page
+}
+
+/// Serve `board`, all of it in Ready and in its order, as the server pages it: the counts, Ready's
+/// first page and each page after it at the cursor the one before named, and every row of it in
+/// one page as long as the board asks (`rows`), as a refresh reads a column loaded to its end
+/// again.
+fn serve_ready(site: &Site, board: &[Value]) {
+    site.set_json("/api/task-board", &page_of(&[], board, None));
+    for (at, rows) in board.chunks(PAGE).enumerate() {
+        let start = at * PAGE;
+        let cursor = if at == 0 {
+            String::new()
+        } else {
+            format!("&cursor=p{start}")
+        };
+        let next = Some(format!("p{}", start + rows.len()));
+        site.set_json(&ready_target(&cursor), &page_of(rows, board, next));
+    }
+    let all = Some(format!("p{}", board.len()));
+    site.set_json(
+        &ready_target(&format!("&rows={}", board.len())),
+        &page_of(board, board, all),
+    );
+}
+
+/// How many rows Ready draws, whether their cards drew or not.
+const READY_ROWS: &str =
+    "document.querySelectorAll('.board-scroll .column[data-status=ready] [id^=\"row-\"]').length";
+
+/// Press Ready's Load more.
+const LOAD_MORE: &str = "[...document.querySelectorAll('.column[data-status=ready] button')]
+    .find(button => button.textContent === 'Load more tasks').click()";
+
+/// A task of Ready with a title that never wraps, so a new one leaves its card's height as it was.
+fn short(slug: &str, priority: u8, title: &str) -> Value {
+    let mut task = task(slug, "ready", priority, json!([]));
+    task["title"] = json!(title);
+    task
+}
+
+/// A reader deep in a long column that Load more brought to its end stays on the card they read
+/// when the feed files a task above them in it, then one below. The refresh after each filing reads
+/// all the column's rows again, as many as it shows (the listing's `rows`), never its first page
+/// alone, which would drop the rest and the reader's place with them. Each refresh's answer
+/// carries a new title for the column's first card, so the test waits until the page has drawn it.
+#[test]
+fn a_refresh_keeps_every_row_of_a_column_loaded_to_its_end_and_the_reader_on_their_card() {
+    let mut board: Vec<Value> = (1..=100)
+        .map(|n| short(&format!("deep/ready-{n:03}"), 2, &format!("Ready {n:03}")))
+        .collect();
+    let site = Site::start(dist(), &crate::common::fixture("board.json"));
+    serve_ready(&site, &board);
+    let Some(mut page) = chrome() else { return };
+    open(&mut page, &site, 1280, 800);
+    for shown in [60, 90, 100] {
+        page.eval(LOAD_MORE);
+        assert!(
+            page.wait_for(&format!("{READY_ROWS} === {shown}"), SHOWN),
+            "Load more never took Ready to {shown} rows: it draws {}",
+            page.eval(READY_ROWS)
+        );
+    }
+    let middle = page.eval(
+        "(() => { const board = document.querySelector('.board-scroll');
+            return Math.round((board.scrollHeight - board.clientHeight) / 2); })()",
+    );
+    let middle = u32::try_from(middle.as_u64().expect("the scroller's middle")).unwrap();
+    scroll_board(&mut page, "ready", middle);
+    let reading = page.eval(&first_on_screen("ready"));
+    let row: usize = reading[0]
+        .as_str()
+        .and_then(|slug| slug.strip_prefix("deep/ready-"))
+        .and_then(|n| n.parse().ok())
+        .unwrap_or(0);
+    assert!(
+        row > PAGE + PAGE / 2,
+        "the setup puts the reader in Ready's middle, past its first page: {reading}"
+    );
+    // The pointer over a card of Ready on the screen: Ready is the reader's column.
+    let card = page.eval(
+        "(() => { const box = document.querySelector('.board-scroll').getBoundingClientRect();
+            const card = [...document.querySelectorAll('.column[data-status=ready] .taskcard')].find(card => {
+                const r = card.getBoundingClientRect(); return r.top > box.top && r.bottom < box.bottom; });
+            const r = card.getBoundingClientRect(); return [r.left + 20, r.top + 20]; })()",
+    );
+    page.call(
+        "Input.dispatchMouseEvent",
+        json!({"type":"mouseMoved","x":card[0],"y":card[1]}),
+    );
+    let mut version = version();
+    for (round, (slug, priority)) in [("deep/filed-above", 0), ("deep/filed-below", 3)]
+        .into_iter()
+        .enumerate()
+    {
+        let before = page.eval(&first_on_screen("ready"));
+        let top = scroll_top(&mut page);
+        let filed = short(slug, priority, "Filed");
+        if priority == 0 {
+            board.insert(0, filed.clone());
+        } else {
+            board.push(filed.clone());
+        }
+        let mark = format!("Ready 001 · {}", round + 1);
+        for task in &mut board {
+            if task["slug"] == "deep/ready-001" {
+                task["title"] = json!(mark);
+            }
+        }
+        serve_ready(&site, &board);
+        version += 1;
+        site.push(
+            version,
+            &json!({"version":version,"changes":[
+                {"region":"task","data":{"key":slug,"value":filed}},
+                {"region":"task-counts","data":{}}]})
+            .to_string(),
+        );
+        let read_again = format!(
+            "document.querySelector('[data-slug=\"deep/ready-001\"] .taskcard-title')?.textContent === {}",
+            json!(mark)
+        );
+        assert!(
+            page.wait_for(&read_again, SHOWN),
+            "{slug}: the refresh after it never drew; Ready draws {} rows",
+            page.eval(READY_ROWS)
+        );
+        page.eval(STILL);
+        assert!(
+            page.wait_for("window.boardStill >= 10", SHOWN),
+            "{slug}: the cards on the screen never stood still"
+        );
+        assert_eq!(
+            page.eval(READY_ROWS),
+            json!(board.len()),
+            "{slug}: the refresh left Ready with only some of its rows"
+        );
+        assert_eq!(
+            page.eval(&filed_and_held(slug, "ready", &before)),
+            json!(true),
+            "{slug}: Ready's first card on the screen went from {before} to {}",
+            page.eval(&first_on_screen("ready"))
+        );
+        let now = scroll_top(&mut page);
+        if priority == 0 {
+            assert!(
+                now > top + 40.0,
+                "{slug} filed above scrolled the board from {top} to {now}"
+            );
+        } else {
+            assert!(
+                (now - top).abs() <= 1.0,
+                "{slug} filed below scrolled the board from {top} to {now}"
+            );
+        }
+    }
+    // Every read the refreshes made of Ready asked for all its rows.
+    let refreshes: Vec<String> = site
+        .answers("/api/task-board")
+        .into_iter()
+        .map(|answer| answer.target)
+        .filter(|target| target.contains("&rows="))
+        .collect();
+    assert_eq!(
+        refreshes,
+        [ready_target("&rows=101"), ready_target("&rows=102")],
+        "the refreshes' reads of Ready"
+    );
+}
+
+/// Wait until `done`, the page let run meanwhile; a stall past the backstop fails naming `what`.
+fn until(page: &mut Chrome, site: &Site, what: &str, mut done: impl FnMut(&Site) -> bool) {
+    if let Err(stall) = test_time::until_true(what, STALL, || {
+        done(site) || {
+            page.pump(std::time::Duration::from_millis(25));
+            false
+        }
+    }) {
+        panic!("{stall}: {:#?}", site.answers("/api/task-board"));
+    }
+}
+
+/// Each read of `target` Chrome saw finish since the page opened, in order: its status and the
+/// bytes of body it received (`Network.dataReceived`, decoded), none for an answer with no body.
+fn received(page: &mut Chrome, target: &str) -> Vec<(i64, f64)> {
+    let sent = page.wait_for_protocol_events("Network.requestWillBeSent", 0, SHOWN);
+    let heads = page.wait_for_protocol_events("Network.responseReceived", 0, SHOWN);
+    let data = page.wait_for_protocol_events("Network.dataReceived", 0, SHOWN);
+    let finished = page.wait_for_protocol_events("Network.loadingFinished", 0, SHOWN);
+    sent.iter()
+        .filter(|event| {
+            event["request"]["url"]
+                .as_str()
+                .is_some_and(|url| url.ends_with(target))
+        })
+        .map(|event| &event["requestId"])
+        .filter(|id| finished.iter().any(|done| done["requestId"] == **id))
+        .map(|id| {
+            let status = heads
+                .iter()
+                .find(|head| head["requestId"] == *id)
+                .and_then(|head| head["response"]["status"].as_i64())
+                .unwrap_or_default();
+            let body = data
+                .iter()
+                .filter(|chunk| chunk["requestId"] == *id)
+                .filter_map(|chunk| chunk["dataLength"].as_f64())
+                .sum();
+            (status, body)
+        })
+        .collect()
+}
+
+/// A refresh that changed nothing in a column Load more brought past its first page transfers no
+/// body: its read of every row the column shows (the listing's `rows`) names the tag of the last
+/// such answer, which the page holds, and the server's `304` is that answer, every row still
+/// drawn. The column's first such read holds no tag yet and pays the read, as one after a change
+/// in the column does. Each step waits on the answers the stand-in sent and what the page draws.
+#[test]
+fn a_refresh_that_changed_nothing_in_a_deep_column_transfers_no_body() {
+    let mut board: Vec<Value> = (1..=60)
+        .map(|n| short(&format!("deep/ready-{n:03}"), 2, &format!("Ready {n:03}")))
+        .collect();
+    let site = Site::start(dist(), &crate::common::fixture("board.json"));
+    serve_ready(&site, &board);
+    let Some(mut page) = chrome() else { return };
+    open(&mut page, &site, 1280, 800);
+    page.eval(LOAD_MORE);
+    assert!(
+        page.wait_for(&format!("{READY_ROWS} === 60"), SHOWN),
+        "Load more never took Ready to 60 rows: it draws {}",
+        page.eval(READY_ROWS)
+    );
+    let long = ready_target("&rows=60");
+    let reads = |site: &Site| -> Vec<(Option<String>, u16)> {
+        site.answers("/api/task-board")
+            .into_iter()
+            .filter(|answer| answer.target == long)
+            .map(|answer| (answer.named, answer.status))
+            .collect()
+    };
+    let mut version = version();
+    let mut refresh = |site: &Site| {
+        version += 1;
+        site.push(
+            version,
+            &json!({"version":version,"changes":[{"region":"task-counts","data":{}}]}).to_string(),
+        );
+    };
+    // The first refresh: the column's first long read names no tag.
+    refresh(&site);
+    until(
+        &mut page,
+        &site,
+        "the first refresh's read of Ready",
+        |site| reads(site).len() == 1,
+    );
+    assert_eq!(
+        reads(&site),
+        [(None, 200)],
+        "the first refresh's read of Ready"
+    );
+    // Nothing changed in Ready: the next refresh's read names the first's tag and is answered
+    // `304`, which Chrome saw carry no body, where the first carried the column.
+    refresh(&site);
+    until(
+        &mut page,
+        &site,
+        "the unchanged refresh's read of Ready",
+        |site| reads(site).len() == 2,
+    );
+    let named = reads(&site)[1].0.clone();
+    assert!(
+        named.is_some(),
+        "the unchanged refresh named no tag: {:?}",
+        reads(&site)
+    );
+    assert_eq!(reads(&site)[1].1, 304, "{:?}", reads(&site));
+    let mut seen = Vec::new();
+    if let Err(stall) =
+        test_time::until_true("Chrome seeing Ready's long reads finish", STALL, || {
+            seen = received(&mut page, &long);
+            seen.len() == 2 || {
+                page.pump(std::time::Duration::from_millis(25));
+                false
+            }
+        })
+    {
+        panic!("{stall}: {seen:?}");
+    }
+    assert_eq!(seen[0].0, 200, "{seen:?}");
+    assert!(
+        seen[0].1 > 0.0,
+        "the first long read carried no body: {seen:?}"
+    );
+    assert_eq!(
+        seen[1],
+        (304, 0.0),
+        "the unchanged refresh transferred a body: {seen:?}"
+    );
+    page.eval(STILL);
+    assert!(
+        page.wait_for("window.boardStill >= 10", SHOWN),
+        "the cards on the screen never stood still after the 304"
+    );
+    assert_eq!(
+        page.eval(READY_ROWS),
+        json!(60),
+        "the 304 left Ready with only some of its rows"
+    );
+    // A card of Ready changed: the refresh names the same tag, and the server's whole answer is
+    // drawn.
+    for task in &mut board {
+        if task["slug"] == "deep/ready-001" {
+            task["title"] = json!("Ready 001 · changed");
+        }
+    }
+    serve_ready(&site, &board);
+    refresh(&site);
+    assert!(
+        page.wait_for(
+            "document.querySelector('[data-slug=\"deep/ready-001\"] .taskcard-title')?.textContent === 'Ready 001 · changed'",
+            SHOWN
+        ),
+        "the refresh after a change in Ready never drew it: {:?}",
+        reads(&site)
+    );
+    assert_eq!(
+        reads(&site),
+        [(None, 200), (named.clone(), 304), (named, 200)],
+        "Ready's long reads"
+    );
+    assert_eq!(page.eval(READY_ROWS), json!(60));
+}
+
 /// Whether the pointer is over In progress.
 const TAPPED: &str = "document.querySelector('.column[data-status=in_progress]:hover') !== null";
 
 /// On a touch screen the pointer stays where the reader last tapped, not where they are: on a
-/// phone, a tap on a card of In progress, a swipe back to Ready, In progress still peeking in
-/// beside it under the tap, and a task filed at Ready's top moves nothing of Ready on the screen.
+/// narrow one, whose columns stand side by side (a phone's show one at a time), a tap on a card of
+/// In progress, a swipe back to Ready in the middle of the board, Design before it and In progress
+/// still peeking in beside it under the tap, and a task filed at Ready's top moves nothing of Ready
+/// on the screen.
 #[test]
 fn a_touch_screens_last_tap_leaves_the_readers_column_in_place() {
     let mut board = tasks();
@@ -289,7 +643,7 @@ fn a_touch_screens_last_tap_leaves_the_readers_column_in_place() {
         "Emulation.setTouchEmulationEnabled",
         json!({"enabled":true,"maxTouchPoints":5}),
     );
-    open(&mut page, &served, 390, 844);
+    open(&mut page, &served, 700, 1000);
     assert_eq!(
         page.eval("matchMedia('(hover: none)').matches"),
         json!(true),
@@ -316,15 +670,17 @@ fn a_touch_screens_last_tap_leaves_the_readers_column_in_place() {
         page.wait_for(TAPPED, SHOWN),
         "the tap never left the pointer over In progress"
     );
-    scroll_board(&mut page, "ready", 900);
-    // In progress peeks in beside Ready, the pointer still over it where the reader tapped.
-    let peeks = "(() => { const box = document.querySelector('.board-scroll').getBoundingClientRect();
+    scroll_board(&mut page, "design", 900);
+    // Ready across the board's middle, In progress peeking in beside it, the pointer still over it
+    // where the reader tapped.
+    let peeks = "(() => { const box = document.querySelector('.board-scroll').getBoundingClientRect(), middle = (box.left + box.right) / 2;
         const r = document.querySelector('.column[data-status=in_progress]').getBoundingClientRect();
-        return r.left < box.right && r.right > box.left; })()";
+        const ready = document.querySelector('.column[data-status=ready]').getBoundingClientRect();
+        return r.left < box.right && r.right > box.left && ready.left < middle && ready.right > middle; })()";
     assert_eq!(
         page.eval(&format!("{TAPPED} && {peeks}")),
         json!(true),
-        "the setup swipes to Ready, In progress beside it under the tap"
+        "the setup swipes back to Ready in the board's middle, In progress beside it under the tap"
     );
     let slug = "place/filed-after-a-tap";
     let before = page.eval(&first_on_screen("ready"));

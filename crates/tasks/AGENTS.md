@@ -64,6 +64,9 @@ lead ([the root guide](../../AGENTS.md#agent-integration)), and `launch/bounds.r
 the board starts for one may run. `tools/rs-bin.sh` runs a board binary from a linked worktree on
 the live board as the main checkout's build, of what that checkout holds, committed or not, in its
 target folder; its comments and `tests/launcher.rs` say which runs count as the live board's.
+A reach whose project's folder or repository is gone never walks up to the board above it, and no
+start makes a board's folders at or above its common dir again (`project::held`, `Home::make`;
+[TASKS](../../docs/TASKS.md#board-health)).
 
 ### Callbacks, delivery and PULL
 
@@ -112,7 +115,8 @@ changes ([TASKS](../../docs/TASKS.md#limits-and-models)); `alarm.rs` and `alarm/
 alarm, `cli/pull/pipeline.rs` as PULL says it ([TASKS](../../docs/TASKS.md#the-pipeline-alarm));
 `store/work/moves.rs` a move that names where it goes from; `health.rs` a session's health, derived
 and never stored; `stages.rs` where a task's time went
-([TASKS](../../docs/TASKS.md#where-the-time-goes)); `reports.rs` the board's part of the day files.
+([TASKS](../../docs/TASKS.md#where-the-time-goes)), `arm.rs` the arm a task is filed on, which
+`stats` groups by; `reports.rs` the board's part of the day files.
 
 ### The database server
 
@@ -244,7 +248,8 @@ name sets it on the command after, saying why: `tasks run` gives its command the
 and marks back, and a land's children name the land (`TASKS_SESSION`, `TASKS_TASK`) so what its
 check builds is recorded for the task. Clippy holds it: the crate's `clippy.toml` refuses std's and
 `process_cwd`'s builders however they are spelled, and the release run's `tests/child_guard` tries
-the rule.
+the rule. A git is `sys::git()` (the Symphony's `children::git`), less `sys::GIT_VARS`, which a git
+hook hands what it runs, so it acts on its own folder's repository; only `commit.rs` keeps them.
 
 ### The database server is never killed
 

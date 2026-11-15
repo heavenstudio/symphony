@@ -23,6 +23,7 @@
 //! Without Chrome on the machine the browser tests say so and pass: the one capability a test
 //! may lack. The build is made once per run of this binary, into `build/symphony-ui/` of the tree.
 
+mod agents;
 mod assets;
 mod binaries;
 mod board_place;
@@ -37,6 +38,7 @@ mod chrome;
 #[path = "../common/mod.rs"]
 mod common;
 mod components;
+mod desktop_stub;
 mod document_cards;
 mod document_landing;
 mod feed_deltas;
@@ -56,6 +58,7 @@ mod owner_note;
 mod owner_save;
 mod panel_open;
 mod phone;
+mod phone_board;
 mod polish;
 mod preload;
 mod program;
@@ -63,6 +66,7 @@ mod projects;
 mod reports;
 mod restored;
 mod run_records;
+mod runs;
 mod server_notices;
 mod shot;
 mod site;
@@ -236,6 +240,7 @@ fn entry_pages_fit_the_first_visit_budget_and_deferred_kinds_are_reported() {
         ("/docs/", "docs", "[data-ready=folder]", None),
         ("/queue", "queue", "[data-ready=queue]", None),
         ("/reports", "reports", "[data-ready=reports]", None),
+        ("/runs", "runs", "[data-ready=runs]", None),
         (
             "/task/visual/in-progress",
             "task",

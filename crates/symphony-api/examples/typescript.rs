@@ -103,6 +103,12 @@ fn constants() -> String {
         ("BOARD_CARDS", api::BOARD_CARDS.to_string()),
         ("FILE_QUERY", text(api::FILE_QUERY)),
         ("REPORTS_PATH", text(api::REPORTS_PATH)),
+        ("RUNS_PATH", text(api::RUNS_PATH)),
+        ("RUN_PATH", text(api::RUN_PATH)),
+        ("RUN_LOG_PATH", text(api::RUN_LOG_PATH)),
+        ("RUN_LOG_TAIL", api::RUN_LOG_TAIL.to_string()),
+        ("RUN_LOG_MOST", api::RUN_LOG_MOST.to_string()),
+        ("RUNS_DAYS", api::RUNS_DAYS.to_string()),
         ("VERSION_HEADER", text(api::VERSION_HEADER)),
         ("VERDICT_TASKS", text(api::VERDICT_TASKS)),
         ("UPLOAD_PATH", text(api::UPLOAD_PATH)),
@@ -129,6 +135,7 @@ fn constants() -> String {
         "DOCS": api::page_names::DOCS,
         "BOARD": api::page_names::BOARD,
         "REPORTS": api::page_names::REPORTS,
+        "RUNS": api::page_names::RUNS,
         "AGENTS": api::page_names::AGENTS,
         "PROJECTS": api::page_names::PROJECTS,
     });
@@ -174,6 +181,14 @@ fn board_declarations(cfg: &Config) -> Vec<Declared> {
         // Reports'.
         declared::<api::Grain>(cfg),
         declared::<api::report_page::ReportMark>(cfg),
+        // The Runs page's.
+        declared::<api::RunsPage>(cfg),
+        declared::<api::RunPage>(cfg),
+        declared::<api::RunLine>(cfg),
+        declared::<api::End>(cfg),
+        declared::<api::Suite>(cfg),
+        declared::<api::FailedTest>(cfg),
+        declared::<api::RunLog>(cfg),
         // The task board's, its tasks and the machines' work.
         declared::<api::TaskListing>(cfg),
         declared::<api::Task>(cfg),
@@ -1546,6 +1561,7 @@ mod document_sample {
             html: String::new(),
             media: Vec::new(),
             comparison,
+            ends: Some(["paragraph".into(), "paragraph".into()]),
         }
     }
 

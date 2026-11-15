@@ -1,16 +1,28 @@
 // The browser's JSON transport, under the page's project's base: reads, reads of what this device
 // kept (naming its tag), and posts. A read's failure is what a page says in place of what it could
-// not show (trouble.tsx): the server's own error with its status, or that the server could not be
-// reached. A post's keeps the server's words alone, beside the draft it kept.
+// not show (trouble.tsx): the server's own error with its status, that the server could not be
+// reached, or that it did not answer in time. A post's keeps the server's words alone, beside the
+// draft it kept.
 
 import { here, project } from "./project";
-import { answered as refusedRead, UNREACHABLE } from "./trouble";
+import { NOT_IN_TIME, answered as refusedRead, UNREACHABLE } from "./trouble";
 import { VERSION_HEADER } from "./wire";
 
 /** How long a request waits for the server's response, and then again for its body. */
 export const ANSWER_MS = 15_000;
-/** What a request fails with when no answer came in time. */
+/** What a post fails with when no answer came in time: the server may have acted on it. A read
+ * fails with trouble.tsx's NOT_IN_TIME. */
 export const NO_ANSWER = "✖ no answer from the server; check before sending again";
+
+/**
+ * How long a request waits: ANSWER_MS, unless the page names another (`symphonyAnswerMs`, a
+ * positive number of ms a browser test's script sets, so a read held past the limit is tested
+ * without waiting 15 s).
+ */
+export function answerMs(): number {
+  const named = (globalThis as { symphonyAnswerMs?: unknown }).symphonyAnswerMs;
+  return typeof named === "number" && named > 0 ? named : ANSWER_MS;
+}
 
 /** How a request failed: refused for good, unknown (the server may have acted), or missing. */
 export type FailureKind = "known" | "uncertain" | "missing";
@@ -73,8 +85,10 @@ function marker(post: boolean, url: string): (phase: string) => void {
 
 /**
  * One request: a POST of `payload`, else a GET naming `etag` when one is given (a kept read). Its
- * answer, and the headers it came with. The request is given up once `signal` ends, as when no
- * answer comes in time.
+ * answer, and the headers it came with. The request is given up once `signal` ends, its fetch
+ * failing with an `AbortError`, and when no answer comes in time, with a `TimeoutError`: the
+ * shell's count of the page's reads (assets/shell.js) takes the second as a read that got no
+ * answer, and the first as none.
  */
 async function exchange(
   url: string,
@@ -124,15 +138,16 @@ async function exchanged(
   );
   let response: { value: Response } | null;
   try {
-    response = await inTime(fetched, ANSWER_MS);
+    response = await inTime(fetched, answerMs());
   } catch (error) {
     mark("failed");
     throw new Failure("uncertain", reading ? UNREACHABLE : String(error), said(error));
   }
   if (response === null) {
-    controller.abort();
+    const late = reading ? NOT_IN_TIME : NO_ANSWER;
+    controller.abort(new DOMException(late, "TimeoutError"));
     mark("no-answer");
-    throw new Failure("uncertain", NO_ANSWER);
+    throw new Failure("uncertain", late);
   }
   mark("fetched");
   return [await answer(response.value, reading, mark), response.value.headers];
@@ -157,7 +172,7 @@ async function answer(
   let body: { value: unknown } | null;
   let unreadable: unknown;
   try {
-    body = await inTime(parsing, ANSWER_MS);
+    body = await inTime(parsing, answerMs());
   } catch (error) {
     body = null;
     unreadable = error ?? "unreadable";
@@ -178,14 +193,14 @@ async function answer(
   }
   if (body === null) {
     mark("no-answer");
-    throw new Failure("uncertain", NO_ANSWER);
+    throw new Failure("uncertain", reading ? NOT_IN_TIME : NO_ANSWER);
   }
   mark("ok");
   return { same: false, value: body.value, etag };
 }
 
 /** A read: its body as the browser parsed it. Given up, its request with it, once `signal` ends. */
-export async function getJson(url: string, signal?: AbortSignal): Promise<unknown> {
+export async function getJson(url: string, signal: AbortSignal): Promise<unknown> {
   const [answered] = await exchange(url, undefined, undefined, signal);
   if (answered.same) throw new Failure("uncertain", "The server answered 304 to a plain read");
   return answered.value;
@@ -195,7 +210,7 @@ export async function getJson(url: string, signal?: AbortSignal): Promise<unknow
  * A read of something this device kept: it names the kept copy's tag (`If-None-Match`, when there
  * is one) and goes past the browser's cache. Given up, its request with it, once `signal` ends.
  */
-export async function getIf(url: string, etag: string, signal?: AbortSignal): Promise<Answer> {
+export async function getIf(url: string, etag: string, signal: AbortSignal): Promise<Answer> {
   return (await exchange(url, undefined, etag, signal))[0];
 }
 
@@ -224,7 +239,7 @@ export function cursorOf(header: string | null): number | null {
 export async function getDocument(
   url: string,
   etag: string,
-  signal?: AbortSignal,
+  signal: AbortSignal,
 ): Promise<DocumentAnswer | null> {
   try {
     const [answer, headers] = await exchange(url, undefined, etag, signal);

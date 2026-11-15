@@ -18,17 +18,20 @@ const failed = new Set();
 const preloaded = new Set();
 // The page's own reads in flight (its modules' wasm, its data) and when the last one answered:
 // the idle warm-up waits until none has been in flight for half a second, and after a read that
-// got no answer (its time ran out, the link dropped), until one does.
+// got no answer (its time ran out, the link dropped), until one does. A read the page gave up (an
+// `AbortError`) is neither: the web client's reads whose time ran out fail with a `TimeoutError`
+// (apps/symphony-web/src/request.ts).
 let reads = 0, answered = 0;
 const read = window.fetch;
 window.fetch = (...args) => (reads++, read(...args).then(
     response => (answered = Date.now(), response),
-    error => { answered = Infinity; throw error; },
+    error => { if (error?.name !== "AbortError") answered = Infinity; throw error; },
 ).finally(() => reads--));
 
 // The modules every page kind shares, each loaded once on its first use and kept mounted: the
-// chat and activity panel, and the overlay host that draws a select's popup or the picture
-// viewer for any module (components/deferred.rs). A select never waits on the chat's module.
+// chat and activity panel (the program's), and the overlay host that draws a select's popup or the
+// picture viewer for any module (the web client's, apps/symphony-web/src/overlay.tsx). A select
+// never waits on the chat's module.
 // Each has its root, its ready flag (`reviewPanelReady`, `reviewOverlayReady`) and event
 // (`review:panel-ready`...), and its failure notice (`#panel-error`...) with a retry.
 const PERSISTENT = {
@@ -105,7 +108,7 @@ async function initialize(kind) {
         else await window[`reviewModuleReady_${kind}`];
         failed.delete(kind);
     } catch (error) { failed.add(kind); throw error; }
-    // A program kind (the chat, the menus) draws nothing before its chunk is in: awaited here, the
+    // A program kind (the chat) draws nothing before its chunk is in: awaited here, the
     // page and the loading sheet stay until then, and a chunk that does not load rejects while they
     // still show (chunks.js forgets the failure, so a retry fetches it again). The kind's `run` then
     // finds the chunk in.
@@ -453,10 +456,11 @@ window.reviewSettled = settled;
 // of them answered) and the
 // browser is idle, the persistent modules' files go into the HTTP cache at the lowest priority,
 // nothing evaluated, so a first open waits on no network: the chat's first (the program's script
-// and main module, and its chunk), then, once its chunk (or its
-// own load, if a click came first) is in, the menus', so no two share a slow link. A browser asking
-// to save data, or a 2g link, skips it; the first open then fetches them. A browser without idle
-// callbacks warms them at once; one without prefetch (Safari) ignores it.
+// and main module, and its chunk), then, once its chunk (or its own load, if a click came first)
+// is in, the menus' (the web client's script, the chunks it imports that the page has not, and its
+// styles), so no two share a slow link. A browser asking to save data, or a 2g link, skips it; the
+// first open then fetches them. A browser without idle callbacks warms them at once; one without
+// prefetch (Safari) ignores it.
 let warmed = false;
 function warm() {
     const link = navigator.connection, kinds = Object.keys(PERSISTENT);
@@ -467,11 +471,11 @@ function warm() {
         const kind = kinds.shift();
         if (!kind) return;
         if (persistent.has(kind)) return persistent.get(kind).then(next);
-        const { script, wasm, styles, chunk } = modules[kind];
-        for (const href of [wasm, script, chunk, ...styles]) {
-            if (!document.querySelector(`link[href="${href}"]`)) document.head.insertAdjacentHTML("beforeend", `<link rel="prefetch" href="${href}">`);
+        const { script, wasm, styles, chunk, imports = [] } = modules[kind];
+        for (const href of [wasm, script, chunk, ...imports, ...styles]) {
+            if (href && !document.querySelector(`link[href="${href}"]`)) document.head.insertAdjacentHTML("beforeend", `<link rel="prefetch" href="${href}">`);
         }
-        const last = document.querySelector(`link[rel=prefetch][href="${chunk}"]`);
+        const last = document.querySelector(`link[rel=prefetch][href="${chunk || script}"]`);
         if (last) last.onload = last.onerror = next; else next();
     }, { timeout: 5000 });
 }
@@ -523,7 +527,7 @@ function ahead(generation, tries = 60) {
 
 // The routes the Symphony answers itself, symphony_api::SYMPHONY_ROUTES word for word (a test
 // keeps them equal): they win over every entrypoint.
-const SYMPHONY_ROUTES = ["tasks", "task", "agents", "queue", "reports", "api", "assets", "static", "thumb", "x", "artifacts/uploads", "app", "doc", "history", "diff", "wasm", "_dioxus", "favicon.ico"];
+const SYMPHONY_ROUTES = ["tasks", "task", "agents", "queue", "reports", "runs", "api", "assets", "static", "thumb", "x", "artifacts/uploads", "app", "doc", "history", "diff", "wasm", "_dioxus", "favicon.ico"];
 
 function within(route, path) {
     return route === "" || path === route || path.startsWith(`${route}/`);
@@ -567,7 +571,7 @@ function route(path) {
     const clean = path.replace(/\/$/, "");
     if (clean === "tasks" || clean === "task") return "board";
     if (path.startsWith("task/")) return "task";
-    if (clean === "queue" || clean === "reports" || clean === "agents") return clean;
+    if (clean === "queue" || clean === "reports" || clean === "runs" || clean === "agents") return clean;
     const view = project();
     const pages = (view.nav || []).map(item => item.href.replace(/^\/+|\/+$/g, "")).filter(Boolean);
     if (pages.includes(clean)) return "docs";

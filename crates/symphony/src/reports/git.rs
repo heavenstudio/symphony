@@ -126,16 +126,8 @@ fn pathspecs(excluded: &[String]) -> Vec<String> {
 /// `git log` in the repository at `root` of `revs`, `args` before them and `paths` after them,
 /// every argument handed over as one list.
 fn log(root: &Path, args: &[&str], revs: &[String], paths: &[String]) -> Result<String, String> {
-    let mut git = crate::children::command("git");
     // The repository is the one at `root`, whatever the server was started from.
-    for name in [
-        "GIT_DIR",
-        "GIT_WORK_TREE",
-        "GIT_COMMON_DIR",
-        "GIT_NAMESPACE",
-    ] {
-        git.env_remove(name);
-    }
+    let mut git = crate::children::git();
     let mut argv = vec![
         "-c",
         "core.quotePath=false",
@@ -300,11 +292,22 @@ pub fn reached(read: &Read) -> Vec<Reached> {
         .collect()
 }
 
+/// The landing a merge's subject says, by its slug: the land's own merge ("Merge branch 'SLUG'"),
+/// or git's for one made by hand on that branch ("Merge branch 'SLUG' into BRANCH"). A merge of
+/// the default branch `branch` itself ("Merge branch 'main' into SLUG": a task catching up, which
+/// reached the line), of another repository's branch ("… of URL") or of a remote-tracking branch
+/// is none. The release run's cadence counts landings by it (`symphony-build release`).
+pub fn landing_slug<'a>(subject: &'a str, branch: &str) -> Option<&'a str> {
+    let rest = subject.strip_prefix("Merge branch '")?;
+    let (slug, after) = rest.split_once('\'')?;
+    let lands = !slug.is_empty() && slug != branch;
+    (lands && (after.is_empty() || after.starts_with(" into "))).then_some(slug)
+}
+
 /// The tasks that landed on `branch` in `range` (`GOOD..BAD`, the commits a red came between,
 /// [`symphony_board::red::between`]), newest first: each merge on the line of first parents from
-/// `BAD` back to `GOOD` that the land made, by the slug it landed, as the release cadence counts
-/// landings ([`crate::release::cadence::landed`]). A commit the repository does not hold is the
-/// error.
+/// `BAD` back to `GOOD` that the land made, by the slug it landed ([`landing_slug`]), as the
+/// release cadence counts landings. A commit the repository does not hold is the error.
 pub fn landed(root: &Path, branch: &str, range: &str) -> Result<Vec<String>, String> {
     let merges = log(
         root,
@@ -314,7 +317,7 @@ pub fn landed(root: &Path, branch: &str, range: &str) -> Result<Vec<String>, Str
     )?;
     Ok(parse(&merges)
         .iter()
-        .filter_map(|merge| crate::release::cadence::landed(&merge.subject, branch))
+        .filter_map(|merge| landing_slug(&merge.subject, branch))
         .map(str::to_string)
         .collect())
 }

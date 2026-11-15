@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { Button } from "./button";
-import { answered, failed, ready, Trouble, UNREACHABLE } from "./trouble";
+import { answered, failed, NOT_IN_TIME, ready, TRYING, Trouble, UNREACHABLE } from "./trouble";
 
 describe("a read the server answered with an error", () => {
   it("says the server's words, then its status", () => {
@@ -20,6 +20,31 @@ describe("a read that did not finish", () => {
       "No such card (the server answered 400).",
     );
     expect(failed(" ")).toBe("The read did not finish. Try again.");
+  });
+
+  it("says a page tries it again by itself, and then asks nothing of the reader", () => {
+    expect(failed(NOT_IN_TIME, true)).toBe("The server did not answer in time. Trying again…");
+    expect(failed(UNREACHABLE, true)).toBe(
+      "The server could not be reached; check the connection. Trying again…",
+    );
+    expect(failed("Busy (the server answered 503).", true)).toBe(
+      "Busy (the server answered 503). Trying again…",
+    );
+    expect(failed(" ", true)).toBe("The read did not finish. Trying again…");
+    // A reason that ends in an ellipsis of its own ends once.
+    expect(failed("The task board is unavailable. Reconnecting…", true)).toBe(
+      "The task board is unavailable. Reconnecting. Trying again…",
+    );
+    for (const why of [NOT_IN_TIME, UNREACHABLE, "Busy", ""]) {
+      const said = failed(why, true);
+      expect(said.endsWith(TRYING), said).toBe(true);
+      expect(said.toLowerCase(), said).not.toContain("try again");
+    }
+  });
+
+  it("says a read got no answer in a read's words, never a write's", () => {
+    expect(failed(NOT_IN_TIME)).toBe("The server did not answer in time.");
+    expect(NOT_IN_TIME).not.toContain("sending");
   });
 });
 

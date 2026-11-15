@@ -1128,13 +1128,17 @@ export function legendStates(drawn: Lanes): GateState[] {
 
 // The reads.
 
+/** When a read that failed with nothing shown is tried again (`nextRead`: TIMELINE_EVERY, a
+ * minute), as the timeline's sentence says it. */
+export const AGAIN = "Trying again in a minute.";
+
 /** What a read that failed says, from the reason it failed for: its first line, the way the gates
- * and a page that did not load say theirs. */
+ * and a page that did not load say theirs, and when it is tried again. */
 export function failed(why: string): string {
   const first = trimmed(why.split("\n")[0] ?? "").replace(/\.+$/, "");
   return first === ""
-    ? "The timeline could not be read."
-    : `The timeline could not be read: ${first}.`;
+    ? `The timeline could not be read. ${AGAIN}`
+    : `The timeline could not be read: ${first}. ${AGAIN}`;
 }
 
 /** What the timeline's place shows: nothing yet, a timeline, or why its read failed. */

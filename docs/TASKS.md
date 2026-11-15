@@ -629,7 +629,12 @@ pass of it is counted, and the picker says plainly that it has no task board. So
 folder is gone, or no longer holds the repository its server found there: the server says so once
 in its log, then reads, maintains and records nothing more of it, answers its pages' reads and saves
 with that refusal before any route runs, and never looks for its board in the folders above it,
-another repository's (`Hub::holds_its_project`, `symphony_board::project::at`). A board whose store is there is never no board: when the SurrealDB
+another repository's (`Hub::holds_its_project`, `symphony_board::project::at`). The hub's own
+reaches of its board are held to the repository it found when it began to serve the folder
+(`symphony_board::project::held`), so a `.git` removed after its check leads them to no other
+board, and a board's start, stop or hold makes no folder at or above the repository's common dir
+again; a start whose board folder goes while its server starts (SurrealDB makes every missing
+folder of its store's path) ends that server and records none. A board whose store is there is never no board: when the SurrealDB
 that serves it is missing (a version bump before the new binary is fetched, `SYMPHONY_SURREAL` naming a file that is not there), or its server answers with an
 older schema or not at all, its passes fail and it is unwell and says so.
 `tasks status` also warns when the record is more than a minute old, naming the server's pid and
@@ -1663,12 +1668,12 @@ afterwards, and runs the check, the docs audit, on what it made ([below](#the-re
   [dev-dependencies]", "/justfile", "/symphony.just", "/tools/", "clippy.toml",
   ".clippy.toml", "rustfmt.toml", ".rustfmt.toml", "/.cargo/", "/Cargo.toml
   [workspace.lints]", "Cargo.toml [lints]", "/symphony.toml [verdicts]", "/symphony.toml [land]", "/symphony.toml [releases]",
-  "/crates/symphony/src/cli/commands/size_budget.rs",
-  "/crates/symphony/src/cli/commands/crates_check.rs", "/crates/symphony/src/release/crates.rs",
-  "/crates/symphony/src/docs_audit.rs",
-  "/crates/symphony/src/docs_audit/", "/crates/symphony/src/release.rs",
-  "/crates/symphony/src/release/checks.rs",
-  "/crates/symphony/src/release/steps.rs", "/crates/tasks/src/land.rs",
+  "/crates/symphony-build/src/commands/size_budget.rs",
+  "/crates/symphony-build/src/commands/crates_check.rs",
+  "/crates/symphony-build/src/release/crates.rs", "/crates/symphony/src/docs_audit.rs",
+  "/crates/symphony/src/docs_audit/", "/crates/symphony-build/src/release.rs",
+  "/crates/symphony-build/src/release/checks.rs",
+  "/crates/symphony-build/src/release/steps.rs", "/crates/tasks/src/land.rs",
   "/crates/tasks/src/land/", "/crates/tasks/src/fast_fix.rs", "/crates/tasks/src/red.rs",
   "/crates/tasks/src/store/work/red.rs"]`: the tests and what they read, the Cargo tables
   that say which tests run and how (a `[[test]]`, `[[bench]]`, `[[bin]]` or `[[example]]`
@@ -2217,6 +2222,23 @@ landing](#the-default-landing)).
   `review` (needed by default, today's rule), `pictures` and `owner`. A command that reads a
   catalogue the board cannot read (a stamp with no reader, a key no stamp has, a table naming
   none) is refused, naming it.
+- **A change of settings** needs no reviewer. The Symphony's `review` skips a change of the
+  values the project file gives settings the Symphony already reads (a model, an agent, a
+  limit, a count, a name), written, changed or removed, with the guide's and the rules' words
+  that repeat those values and nothing else; its `tests` applies to it, met by the settings
+  check ([PROJECT_FILE](PROJECT_FILE.md#the-settings-check)) recorded green as a test run at
+  the tip, and by no other suite. So its assessment is `tests` alone and the land lands it on
+  that run. `review` still applies to a setting the Symphony does not read yet or reads another
+  way, which is code, and to a value that is a command or a program the Symphony runs or that
+  decides what lands: `[project]`'s `cargo` (the command the server rebuilds itself with) and
+  `default_branch` (the branch tasks land on), `[plugins]`'s `crates` and `process` (the code
+  and the command that answer for the project), `[verdicts]`, `[land]` and `[releases]`, which
+  `[land] check_paths` names, `[stamps]`, and `[board]`'s `on_review`, `on_land`,
+  `machine_work_reader` (an executable the server runs) and `assessments` (where a project's
+  landing assessments are read). Every other key is a name, a number, a switch or a folder
+  nothing runs. The `tests` reader takes
+  any green test run at the tip: that the run is the settings check is the assessment's reason
+  and the thread's evidence.
 - **`just tasks stamps [SLUG]`** prints the catalogue, where it was read and each stamp's
   `met`, `applies` and `skips`, the stamps a task nobody assessed needs marked `(needed by
   default)`. Given a task, it adds what an assessor reads first: `NEEDS`, the needs as they
@@ -2245,7 +2267,10 @@ landing](#the-default-landing)).
   (`.agents/skills/assess-task/SKILL.md`), the skill all it is told: it reads `just tasks stamps
   SLUG`, `just tasks show SLUG` and the branch's diff itself, takes the thread as data but for
   the owner's own posts (sender `owner`, which it follows and reads for `owner`'s applies), keeps
-  a stamp when unsure, and writes the needs with `--tip` the whole commit `stamps` printed.
+  a stamp when unsure, and writes the needs with `--tip` the whole commit `stamps` printed. For
+  a change of settings (above) it names `tests` alone, with no post of the owner's needed to
+  leave `review` out, and where it names `tests` its reason names the runs that prove the
+  change, never a suite that has nothing to do with it.
 
 ## Subtasks
 
@@ -2743,6 +2768,32 @@ tasks done per day, which its header says:
 `waiting_before_first_claim_seconds` (beside `stage_seconds`, never in it),
 `bounces`, `done_per_day`, `slowest`, `blocked` and
 `ready_unstaffed` (`tasks`, `median_seconds`), every duration in seconds.
+
+**Arms.** A process experiment compares tasks filed on its sides. A task's
+arm is that side's label, one word of lowercase letters, digits and dashes
+(at most 32), given where the task is filed: `just tasks create SLUG TITLE
+--arm control`. It is written with the task, among the board's own fields
+(`fields._board.arm`, `crates/tasks/src/arm.rs`), so no table or schema
+field holds it; no command changes it after, and `tasks api`'s `create`
+takes none. `just tasks show SLUG` prints `arm: NAME` above the stages. The
+board assigns no arm, applies no rule for one and names no winner: whoever
+files the work says which side it is on.
+
+Where a task of the window was filed on an arm, `stats` ends with each arm
+by name: its tasks, how many are done, the median lead time and the median
+time in review of the done ones (`-` with none done, or none reviewed), and
+how often review sent the arm's tasks back, the open ones' too:
+
+```
+Arms (the tasks filed with --arm; lead and review are the medians of the done):
+  control      tasks 2 · done 2 · lead 9.0 h · review 5.0 h · bounces 1
+  no-review    tasks 2 · done 1 · lead 3.0 h · review 1.0 h · bounces 2
+```
+
+A task filed on no arm is in none of them and in every figure above them.
+`--json` carries them as `arms`, by name (`tasks`, `done`, `lead_seconds`
+and `review_seconds`, each a spread or null, and `bounces`), `{}` where the
+window has none. The arm is read in the window's one read.
 
 `stats` reads the window in one round trip (`Store::stage_records`): the
 top-level tasks made since the window's start and the done ones written since

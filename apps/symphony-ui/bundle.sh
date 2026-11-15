@@ -119,12 +119,36 @@ rm -rf "$target/dx/symphony-ui/release/web"
 mkdir -p "$out"
 out="$(cd "$out" && pwd)" # named from here, and dx runs from the crate
 cd "$here"
-# The program, the chat and the menus every page mounts, is one program that dx's splitter cuts
-# into a main module and a chunk for each (src/split.rs), and `symphony-build split-repair` makes
-# that output safe and repeatable, from the program dx linked, before anything is packaged; a failed
-# repair fails the build. The web client's kinds (home, the queue, Reports, the task board, the
-# agents page, the documents, a task's page) are one Vite build, `web`. All assets are content
-# hashed; identical files from separate kinds share one URL and one browser-cache entry.
+# dx names each module of the program's split by its bytes as soon as its wasm-opt has written it,
+# before split-repair puts a chunk's segments in order, and esbuild picks the short names of the
+# script dx minifies by how often each character appears in it, the chunks' names among them: so
+# dx runs with a DX_HOME of its own, under the held target, the machine's tools linked but for its
+# wasm-opt (binaryen 129, dx 0.7.10's), which is wasm-opt.sh, putting each chunk in order once the
+# real one has written it (split-repair --chunk). Until dx has fetched that wasm-opt (its first
+# bundle on a machine) it runs with the machine's DX_HOME, and fetches it there.
+dx_home="$DX_HOME"
+wasm_opt="$DX_HOME/tools/binaryen-129/bin/wasm-opt"
+if [ -x "$wasm_opt" ]; then
+    dx_home="$target/dx-home"
+    rm -rf "$dx_home"
+    mkdir -p "$dx_home/tools/binaryen-129/bin"
+    for entry in "$DX_HOME"/* "$DX_HOME"/tools/*; do
+        case "${entry#"$DX_HOME"/}" in
+            tools | tools/binaryen-129) continue ;;
+        esac
+        if [ -e "$entry" ]; then
+            ln -s "$entry" "$dx_home/${entry#"$DX_HOME"/}"
+        fi
+    done
+    ln -s "$here/wasm-opt.sh" "$dx_home/tools/binaryen-129/bin/wasm-opt"
+fi
+# The program, the chat every page mounts, is one program that dx's splitter cuts into a main
+# module and a chunk for it and one for the media layer (src/split.rs), and `symphony-build
+# split-repair` makes that output safe and repeatable, from the program dx linked, before anything
+# is packaged; a failed repair fails the build. The web client's kinds (home, the queue, Reports,
+# Runs, the task board, the agents page, the documents, a task's page, and the menus every page
+# mounts) are one Vite build, `web`. All assets are content hashed; identical files from separate
+# kinds share one URL and one browser-cache entry.
 for kind in "${kinds[@]}"; do
     module="$out/.modules/$kind"
     # The web client's kinds, one Vite build, which no path or clock enters.
@@ -139,7 +163,8 @@ for kind in "${kinds[@]}"; do
     if [ "$kind" = program ]; then
         flags+=(--wasm-split)
     fi
-    "$dx" bundle --web --bin symphony-ui --release --locked --no-default-features "${flags[@]}" \
+    DX_HOME="$dx_home" SYMPHONY_WASM_OPT="$wasm_opt" SYMPHONY_SPLIT_REPAIR="$publisher" \
+        "$dx" bundle --web --bin symphony-ui --release --locked --no-default-features "${flags[@]}" \
         --out-dir "$module" >&2
     if [ "$kind" = program ]; then
         "$publisher" split-repair "$target/wasm32-unknown-unknown/wasm-release/symphony-ui.wasm" \

@@ -40,3 +40,51 @@ fn a_long_cards_line_ends_at_a_word_with_an_ellipsis_and_a_short_one_whole() {
     );
     assert_eq!(texts[1], "A short card.", "plain words, whole");
 }
+
+/// Each section carries the kinds of its first and last blocks into the outline, which reads no
+/// bodies, so a page spaces a section not read yet as it will draw: the title, a paragraph, code, a
+/// quote, a list and a card each by what they draw.
+#[test]
+fn the_outline_names_each_sections_first_and_last_blocks() {
+    let tree = Tree::new();
+    tree.write(
+        "docs/R.md",
+        "# R\n\nThe intro.\n\n## Lamps\n\nWarm white.\n\n```sh\nlamp on\n```\n\n> Said once.\n\n- \
+         one\n- two\n\n<!-- register:start -->\n## Open\n\n- [ ] **tile** — Pick the tile.\n<!-- \
+         register:end -->\n",
+    );
+    let render = Render::new(&tree.root);
+    let doc = document(&render, "docs/R.md", "", &[]).unwrap();
+    let ends: Vec<(String, Option<[String; 2]>)> = outline(doc)
+        .document
+        .sections
+        .into_iter()
+        .map(|section| {
+            assert!(section.blocks.is_empty(), "the outline reads no bodies");
+            (section.key, section.ends)
+        })
+        .collect();
+    let has = |first: &str, last: &str| {
+        ends.iter()
+            .any(|(_, ends)| ends.as_ref().is_some_and(|[a, b]| a == first && b == last))
+    };
+    for (first, last) in [
+        ("heading-1", "heading-1"),
+        ("paragraph", "paragraph"),
+        ("code", "code"),
+        ("quote", "quote"),
+        ("list", "list"),
+    ] {
+        assert!(has(first, last), "{first} to {last}: {ends:?}");
+    }
+    let card = ends.iter().find(|(key, _)| key == "card:tile");
+    assert_eq!(
+        card.and_then(|(_, ends)| ends.clone()),
+        Some(["card".to_string(), "card".to_string()]),
+        "{ends:?}"
+    );
+    // The register's closing comment is a section of its own that draws nothing.
+    let (last, nothing) = ends.split_last().unwrap();
+    assert_eq!(last.1, None, "{ends:?}");
+    assert!(nothing.iter().all(|(_, ends)| ends.is_some()), "{ends:?}");
+}

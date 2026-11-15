@@ -105,7 +105,11 @@ describe("a feed event home reads", () => {
     ]);
     const other = {
       version: 9,
-      changes: [{ region: "asks", data: { threads: [] } }, { region: "tasks" }],
+      changes: [
+        { region: "asks", data: { threads: [] } },
+        { region: "task-asks", data: { questions: { owner: 1 }, verdicts: {} } },
+        { region: "tasks" },
+      ],
     };
     expect(readDelta(other)).toEqual({ version: 9, changes: [] });
   });

@@ -87,7 +87,7 @@ impl Context<'_> {
 
     /// `git ARGS` in the working directory: its output, or "" if it fails.
     fn git(&self, args: &[&str]) -> String {
-        sys::output(sys::command("git").args(args).current_dir(&self.env.cwd))
+        sys::output(sys::git().args(args).current_dir(&self.env.cwd))
             .ok()
             .filter(|done| done.status.success())
             .map(|done| String::from_utf8_lossy(&done.stdout).trim().to_string())
@@ -657,7 +657,10 @@ fn create(store: &Store, c: &mut Context) -> Result<(), Stop> {
         // No task is filed as a fast fix any more: what it needs to land is its assessor's.
         fast_fix: None,
     };
-    let t = store.create(&new)?;
+    let t = match p.get("arm") {
+        Some(arm) => store.create_in_arm(&new, arm)?,
+        None => store.create(&new)?,
+    };
     // Every open task has an orchestrator: the filer when it is one, else the board gives it. One
     // line says who, or that it waits for one that stays, where any orchestrator is on the board.
     let role = match store.give_filed(&t.slug, &new.by, for_orchestrator.as_deref()) {
@@ -797,6 +800,9 @@ fn show(store: &Store, c: &mut Context) -> Result<(), Stop> {
         if !items.is_empty() {
             c.say(&format!("  {label}: {}", items.join(", ")));
         }
+    }
+    if let Some(arm) = task.arm() {
+        c.say(&format!("  arm: {arm}"));
     }
     c.say(&format!("  {}", stages::summary_line(&stages)));
     if !children.is_empty() {

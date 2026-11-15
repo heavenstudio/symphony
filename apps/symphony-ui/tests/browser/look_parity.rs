@@ -597,8 +597,8 @@ impl ParitySite {
                         .and_then(|rest| rest.split_once('/'))
                         .map_or_else(|| path.to_string(), |(_, route)| format!("/{route}"));
                     if path == "/api/feed" {
-                        // A healthy stream preserves the document and focused editor during input:
-                        // on a WebSocket for the web client's kinds, as events for the task pages.
+                        // A healthy stream preserves the document and focused editor during input,
+                        // on the WebSocket every page follows the feed on.
                         let mut key = None;
                         loop {
                             let mut header = String::new();
@@ -615,15 +615,9 @@ impl ParitySite {
                                 key = Some(value.trim().to_string());
                             }
                         }
-                        let ping = site::Said::ping();
-                        let (head, ping) = match key {
-                            Some(key) => (site::socket_head(&key).into_bytes(), ping.frame()),
-                            None => (
-                                b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-store\r\n\r\n: open\n\n".to_vec(),
-                                ping.sse().into_bytes(),
-                            ),
-                        };
-                        if out.write_all(&head).is_err() {
+                        let Some(key) = key else { return };
+                        let ping = site::Said::ping().frame();
+                        if out.write_all(site::socket_head(&key).as_bytes()).is_err() {
                             return;
                         }
                         let mut pinged = Instant::now();

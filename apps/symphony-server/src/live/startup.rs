@@ -2,7 +2,7 @@
 //! is announced or a data request needs it, run in the hub's owned worker, awaited by data reads,
 //! released by stop.
 
-use super::{Hub, measured, run};
+use super::{Hub, measured, repository_of, run};
 use crate::backstop::Sweep;
 use notify::Watcher;
 use std::collections::BTreeSet;
@@ -19,13 +19,15 @@ impl Hub {
         embedded_ui: bool,
         drain_chat: bool,
     ) -> Result<Arc<Self>, String> {
+        // The worker's reach is held to the repository the hub holds its folder to, as it is made.
+        let held = repository_of(root);
         Self::start_watching::<notify::RecommendedWatcher>(
             root,
             ui_dist,
             embedded_ui,
             drain_chat,
             crate::backstop::PERIOD,
-            taskview::connect,
+            move |root| taskview::connect_held(root, held.as_deref()),
         )
     }
 

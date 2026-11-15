@@ -744,6 +744,61 @@ fn the_board_lives_in_the_common_dir_served_by_the_pinned_surreal() {
     assert_eq!(Home::in_common(common, Some(named)).surreal(), named);
 }
 
+/// A board in a repository's common dir makes its folders there, `symphony/` and its own, and
+/// never the common dir or a folder above it: a project's folder removed under a start, a stop or a
+/// hold on its way is not made again, and each is refused as a project with no board.
+#[test]
+fn a_board_whose_common_dir_is_gone_makes_none_of_its_folders_again() {
+    let s = Scratch::new("common-gone");
+    let project = s.dir.join("project");
+    let common = project.join(".git");
+    std::fs::create_dir_all(&common).unwrap();
+    let home = Home::in_common(&common, Some(s.surreal()));
+    assert_eq!(home.stop().unwrap(), None);
+    assert!(home.dir().is_dir(), "its folders made in the common dir");
+
+    std::fs::remove_dir_all(&project).unwrap();
+    for (what, refused) in [
+        ("a start", home.ensure().err()),
+        ("a stop", home.stop().err()),
+        ("a hold", home.hold("x", "its project went").err()),
+    ] {
+        let why = refused
+            .unwrap_or_else(|| panic!("{what} went on"))
+            .to_string();
+        assert!(symphony_board::board_health::absent(&why), "{what}: {why}");
+        assert!(!exists(&project), "{what} made the project's folder again");
+    }
+}
+
+/// SurrealDB makes every missing folder of its store's path, so a board's folder removed while its
+/// server starts comes back: here a stand-in removes it as SurrealDB begins, before that opens its
+/// store. The start gives up on that folder: its server is ended before it is recorded, no server
+/// runs on the data, and the start is refused as a project with no board.
+#[test]
+fn a_start_whose_folder_goes_while_its_server_starts_ends_that_server_and_records_none() {
+    let s = Scratch::new("folder-goes");
+    let board = s.dir.join("board");
+    let removing = stand_in(
+        &s,
+        &format!(
+            "rm -rf '{}'\nexec '{}' \"$@\"",
+            board.display(),
+            s.surreal().display()
+        ),
+    );
+    let home = Home::new(&board, &removing).patience(PATIENCE);
+    let why = home.ensure().unwrap_err().to_string();
+    assert_eq!(starts(&s), 1);
+    assert!(symphony_board::board_health::absent(&why), "{why}");
+    assert!(
+        exists(&board.join("data")),
+        "the stand-in's SurrealDB made its store again"
+    );
+    assert_eq!(home.recorded(), None);
+    assert_eq!(home.serving(), None, "a server runs on the data");
+}
+
 #[test]
 fn the_version_is_the_one_tools_surreal_sh_fetches() {
     let script = std::fs::read_to_string(concat!(

@@ -30,8 +30,9 @@ serde_json.workspace = true
 symphony-api = { path = "../symphony-api", version = "=0.1.0" }
 # The Chrome and the leash's variable by their own names, the old ones still read.
 symphony-env = { path = "../symphony-env", version = "1.0.0" }
-# The DevTools socket, plain ws:// to the loopback: no TLS, no async runtime.
-tungstenite = { version = "0.30", default-features = false, features = ["handshake"] }
+# The DevTools socket, plain ws:// to the loopback: no TLS, no async runtime. The version axum's
+# `ws` builds, so the server, which links both, links one: they move together.
+tungstenite = { version = "0.29", default-features = false, features = ["handshake"] }
 
 [dev-dependencies]
 # The tests' own waits (`test_time::backstop`) keep the driver's backstop rule: one test ties the two.

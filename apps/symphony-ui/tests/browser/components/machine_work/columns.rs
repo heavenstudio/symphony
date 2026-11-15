@@ -61,9 +61,21 @@ fn ready(chrome: &mut crate::Chrome) {
     chrome.eval("document.fonts.ready.then(()=>new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r))))");
 }
 
+/// Build's and Test's first cards, each column brought onto the board's screen in turn, as a phone
+/// shows one at a time.
 fn activity(chrome: &mut crate::Chrome) {
-    reveal(chrome, "build");
-    assert!(chrome.wait_for("document.querySelector('[data-status=build] [data-slug=\"feature/build-00\"]') !== null && document.querySelector('[data-status=test] [data-slug=\"feature/test-00\"]') !== null", SHOWN));
+    for (status, slug) in [("build", "feature/build-00"), ("test", "feature/test-00")] {
+        reveal(chrome, status);
+        assert!(
+            chrome.wait_for(
+                &format!(
+                    "document.querySelector('[data-status={status}] [data-slug=\"{slug}\"]') !== null"
+                ),
+                SHOWN
+            ),
+            "{status} never drew {slug}"
+        );
+    }
 }
 
 /// The Status filter's options as its open popup draws them, each one's text, the popup closed
@@ -359,8 +371,11 @@ fn full_task_build_test_columns_keep_counts_readable_cards_and_owned_keyboard_to
         json!(true)
     );
     assert_eq!(
-        chrome.eval("document.querySelector('.pipeline .column').getBoundingClientRect().width"),
-        json!(280)
+        chrome.eval(
+            "Math.round(document.querySelector('.pipeline .column').getBoundingClientRect().width)"
+        ),
+        chrome.eval("Math.round(document.querySelector('.board-scroll').clientWidth)"),
+        "a phone's column is as wide as the board's scroller"
     );
     screenshot(&mut chrome, "board-mobile-activity");
     let coverage = chrome.call("CSS.stopRuleUsageTracking", json!({}));

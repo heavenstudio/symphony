@@ -440,6 +440,32 @@ describe("the live board's counts", () => {
     await board.machineWork();
     expect(localStorage.getItem(SHAPE)).toBe("ready 2\nbuild-test 0");
   });
+
+  // The counts count a task waiting on the owner in its stage, and the board draws it in the
+  // sign-off lane: once a column's first page brings it, the next visit's ghost outlines no box
+  // for it in its stage.
+  it("keep each stage's count less its tasks in the sign-off lane, once a page brings them", async () => {
+    const counts: [string, number][] = [
+      ["ready", 1],
+      ["review", 2],
+    ];
+    const more = { statuses: ["ready", "review"], signoff: ["w/a"] };
+    const review = [aTask("w/a", { status: "review" }), aTask("w/b", { status: "review" })];
+    const { board, d } = live((url) => {
+      if (url === "/api/machine-work") return answer(200, NO_WORK);
+      return answer(200, listing(url === column("review") ? review : [], counts, more));
+    });
+    await board.counts();
+    await board.machineWork();
+    expect(localStorage.getItem(SHAPE)).toBe("signoff 1\nready 1\nbuild-test 0\nreview 2");
+    d.waiting = false;
+    void board.column("ready", false, "", 1);
+    await pass(250);
+    expect(localStorage.getItem(SHAPE)).toBe("signoff 1\nready 1\nbuild-test 0\nreview 2");
+    void board.column("review", false, "", 1);
+    await pass(250);
+    expect(localStorage.getItem(SHAPE)).toBe("signoff 1\nready 1\nbuild-test 0\nreview 1");
+  });
 });
 
 describe("the live board's machine work", () => {
@@ -610,6 +636,231 @@ describe("a column of the live board", () => {
     await pass();
     expect(d.signoff).toEqual(["w/a"]);
     expect(d.journal.events).toEqual([]);
+  });
+
+  /** `count` ready tasks, `w/r-1` on. */
+  const readyRows = (count: number, from = 1) =>
+    Array.from({ length: count }, (_, at) => aTask(`w/r-${from + at}`));
+
+  it("read again past its first page asks for every row it shows, and keeps them", async () => {
+    const shown = readyRows(45);
+    const filed = aTask("w/filed", { priority: 0 });
+    const { board, d, asked, store } = opened({
+      [column("ready", "&rows=46")]: listing([filed, ...readyRows(45)], [["ready", 46]], {
+        next: "w/r-45",
+      }),
+    });
+    // Two pages and a half loaded, a task filed by the feed, a card of another column.
+    const review = aTask("w/review", { status: "review" });
+    d.tasks = [...shown, review, filed];
+    d.copies.set("column:ready", { etag: '"first"', list: listing(readyRows(30)) });
+    void board.column("ready", false, "", 1);
+    await pass(250);
+    // One read of them all, the column's first long one, which names no tag and is not kept on
+    // the device.
+    expect(asked).toEqual([[column("ready", "&rows=46"), ""]]);
+    expect(store.keep).not.toHaveBeenCalled();
+    expect(d.copies.get("column:ready")?.etag).toBe('"first"');
+    // Every row stands, each the object the board held, and Load more goes on after the last.
+    expect(d.tasks).toHaveLength(47);
+    expect(d.tasks[0]).toBe(review);
+    shown.forEach((task, at) => {
+      expect(d.tasks[at + 2]).toBe(task);
+    });
+    expect(d.tasks[1]).toBe(filed);
+    expect(d.cursors.get("ready")).toBe("w/r-45");
+  });
+
+  it("read again past its first page names its last long answer's tag, and a 304 is that answer", async () => {
+    const answered = listing(readyRows(46), [["ready", 50]], { next: "w/r-46" });
+    // What the server holds for the read, and its tag.
+    let served = { tag: '"long-1"', list: answered };
+    const { board, d, asked, store, host } = live((url, etag) => {
+      if (url !== column("ready", "&rows=46")) return answer(404);
+      return etag === served.tag ? answer(304) : answer(200, served.list, served.tag);
+    });
+    d.waiting = false;
+    d.tasks = readyRows(46);
+    d.copies.set("column:ready", { etag: '"first"', list: listing(readyRows(30)) });
+    const refresh = async () => {
+      void board.column("ready", false, "", 1);
+      await pass(250);
+    };
+    await refresh();
+    expect(d.long.get("column:ready")).toEqual({ etag: '"long-1"', list: answered });
+    const drawn = d.tasks;
+    host.redraw.mockClear();
+    // Nothing changed in the column: the next refresh names the tag, and the 304 draws the
+    // answer the page holds, each card the object it was.
+    await refresh();
+    expect(asked).toEqual([
+      [column("ready", "&rows=46"), ""],
+      [column("ready", "&rows=46"), '"long-1"'],
+    ]);
+    expect(d.tasks).toHaveLength(46);
+    d.tasks.forEach((task, at) => {
+      expect(task).toBe(drawn[at]);
+    });
+    expect(d.cursors.get("ready")).toBe("w/r-46");
+    expect(d.counts).toEqual([["ready", 50]]);
+    expect(host.redraw).toHaveBeenCalled();
+    expect(board.fresh.failing).toEqual([]);
+    // Neither read is kept on the device, nor touches the first page it keeps.
+    expect(store.keep).not.toHaveBeenCalled();
+    expect(d.copies.get("column:ready")?.etag).toBe('"first"');
+    // A card of the column changed: the server answers the whole read, which replaces the one held.
+    const retitled = listing(
+      [aTask("w/r-1", { title: "Retitled" }), ...readyRows(45, 2)],
+      [["ready", 50]],
+      { next: "w/r-46" },
+    );
+    served = { tag: '"long-2"', list: retitled };
+    await refresh();
+    expect(asked.at(-1)).toEqual([column("ready", "&rows=46"), '"long-1"']);
+    expect(d.tasks[0]?.title).toBe("Retitled");
+    expect(d.long.get("column:ready")).toEqual({ etag: '"long-2"', list: retitled });
+    await refresh();
+    expect(asked.at(-1)).toEqual([column("ready", "&rows=46"), '"long-2"']);
+    expect(d.tasks[0]?.title).toBe("Retitled");
+  });
+
+  it("holds a long answer under a search too, and names it on no page-long read", async () => {
+    const searched = (more: string) =>
+      `/api/task-board?q=w&status=ready&days=1${more}&activity=1&work=0`;
+    const { board, d, asked } = live((url) =>
+      url === searched("&rows=31")
+        ? answer(200, listing(readyRows(31), [["ready", 31]]), '"found"')
+        : answer(200, listing(readyRows(30), [["ready", 30]]), '"page"'),
+    );
+    d.waiting = false;
+    d.query = "w";
+    d.tasks = readyRows(31);
+    d.long.set("column:ready", { etag: '"long"', list: listing(readyRows(31)) });
+    void board.column("ready", false, "w", 1);
+    await pass(250);
+    // A search's long read names the tag held, whichever view it came from: the server answers
+    // `304` only to the same bytes.
+    expect(asked).toEqual([[searched("&rows=31"), '"long"']]);
+    expect(d.long.get("column:ready")?.etag).toBe('"found"');
+    // A page or less: the search's first page names no tag, the default view's its device copy.
+    d.tasks = readyRows(30);
+    void board.column("ready", false, "w", 1);
+    await pass(250);
+    d.query = "";
+    d.copies.set("column:ready", { etag: '"first"', list: listing(readyRows(30)) });
+    void board.column("ready", false, "", 1);
+    await pass(250);
+    expect(asked.slice(1)).toEqual([
+      [searched(""), ""],
+      [column("ready"), '"first"'],
+    ]);
+    expect(d.long.get("column:ready")?.etag).toBe('"found"');
+  });
+
+  it("keeps the long answer it held when a long read fails or a newer view replaces it", async () => {
+    const held = later<Response>();
+    let failing = true;
+    const { board, d, asked } = live(() =>
+      failing ? answer(500, { error: "unavailable" }) : held.promise,
+    );
+    d.waiting = false;
+    d.tasks = readyRows(31);
+    const kept = { etag: '"long"', list: listing(readyRows(31)) };
+    d.long.set("column:ready", kept);
+    void board.column("ready", false, "", 1);
+    await pass(250);
+    expect(board.fresh.failing).toEqual(["column:ready"]);
+    expect(d.long.get("column:ready")).toBe(kept);
+    failing = false;
+    void board.column("ready", false, "", 1);
+    await pass(250);
+    d.view += 1;
+    held.settle(answer(200, listing(readyRows(31, 2)), '"dropped"'));
+    await pass();
+    expect(asked.map(([, etag]) => etag)).toEqual(['"long"', '"long"']);
+    expect(d.long.get("column:ready")).toBe(kept);
+  });
+
+  it("counts the rows it shows: its own stage's tasks as the stages place them, no subtask", async () => {
+    const { board, d, asked } = opened({});
+    const progress = (count: number) =>
+      Array.from({ length: count }, (_, at) => aTask(`w/p-${at + 1}`, { status: "in_progress" }));
+    d.tasks = [
+      ...readyRows(31),
+      aTask("w/sub", { parent: "w/r-1" }),
+      aTask("w/review", { status: "review" }),
+      ...progress(33),
+    ];
+    // The machine builds one task in progress: the board draws it in Build.
+    d.work = building("w/p-33");
+    expect(board.shownRows("ready")).toBe(31);
+    expect(board.shownRows("in_progress")).toBe(32);
+    expect(board.shownRows("build")).toBe(1);
+    expect(board.shownRows("review")).toBe(1);
+    expect(board.shownRows("done")).toBe(0);
+    void board.column("in_progress", false, "", 1);
+    await pass(250);
+    expect(urls(asked)).toEqual([column("in_progress", "&rows=32")]);
+    // With the feed lost, the stages are the tasks' statuses alone.
+    d.connected = false;
+    expect(board.shownRows("in_progress")).toBe(33);
+    expect(board.shownRows("build")).toBe(0);
+  });
+
+  it("showing a page or less reads its first page as the device keeps it, its copy named", async () => {
+    const page = listing(readyRows(30), [["ready", 30]]);
+    const { board, d, asked, store } = opened({ [column("ready")]: page });
+    d.tasks = readyRows(30);
+    d.copies.set("column:ready", { etag: '"first"', list: page });
+    void board.column("ready", false, "", 1);
+    await pass(250);
+    expect(asked).toEqual([[column("ready"), '"first"']]);
+    expect(store.keep).toHaveBeenCalled();
+  });
+
+  it("asks Load more for its next page alone, however many rows it shows", async () => {
+    const { board, d, asked } = opened({
+      [column("ready", "&cursor=w%2Fr-45")]: listing(readyRows(5, 46), [["ready", 50]]),
+    });
+    d.tasks = readyRows(45);
+    d.cursors.set("ready", "w/r-45");
+    void board.column("ready", true, "", 1);
+    await pass(250);
+    expect(urls(asked)).toEqual([column("ready", "&cursor=w%2Fr-45")]);
+    expect(d.tasks).toHaveLength(50);
+  });
+
+  it("loaded past its first page keeps its rows over a feed event's refresh", async () => {
+    const pages: Record<string, unknown> = {
+      [column("ready")]: listing(readyRows(30), [["ready", 40]], { next: "w/r-30" }),
+      [column("ready", "&cursor=w%2Fr-30")]: listing(readyRows(10, 31), [["ready", 40]], {
+        next: "w/r-40",
+      }),
+    };
+    const { board, d, asked } = opened(pages);
+    void board.column("ready", false, "", 1);
+    await pass(250);
+    void board.column("ready", true, "", 1);
+    await pass(250);
+    expect(d.tasks).toHaveLength(40);
+    // A task filed at the column's top: the feed adds it, its counts ask for a refresh, and the
+    // refresh reads every row again.
+    const filed = aTask("w/filed", { priority: 0 });
+    expect(
+      board.apply(event(["task", { key: "w/filed", value: filed }], ["task-counts", {}])),
+    ).toBe(true);
+    expect(d.cursors.has("ready")).toBe(false);
+    pages[column("ready", "&rows=41")] = listing([filed, ...readyRows(40)], [["ready", 41]], {
+      next: "w/r-40",
+    });
+    void board.column("ready", false, "", 1);
+    await pass(250);
+    expect(urls(asked).at(-1)).toBe(column("ready", "&rows=41"));
+    expect(d.tasks.map((task) => task.slug)).toEqual([
+      "w/filed",
+      ...readyRows(40).map((task) => task.slug),
+    ]);
+    expect(d.cursors.get("ready")).toBe("w/r-40");
   });
 });
 

@@ -1,8 +1,10 @@
 import { defineConfig } from "vitest/config";
 
-// The web client's page kinds, each an entry the shell imports by the name the shell's manifest
-// gives it (apps/symphony-ui/package.sh): `src/kinds/NAME.tsx` exports the kind's `run` and `stop`.
-const KINDS = ["agents", "board", "docs", "queue", "reports", "review", "task"];
+// The web client's kinds, each an entry the shell imports by the name the shell's manifest gives it
+// (apps/symphony-ui/package.sh): `src/kinds/NAME.tsx` exports the kind's `run` and `stop`. The
+// overlay is no page's but the shell's persistent kind every page mounts beside its own.
+const PAGES = ["agents", "board", "docs", "queue", "reports", "review", "runs", "task"];
+const KINDS = [...PAGES, "overlay"].sort();
 
 export default defineConfig({
   // No public folder: the server serves the files package.sh publishes (the dev server's own
@@ -36,6 +38,14 @@ export default defineConfig({
         chunkFileNames: (chunk) =>
           chunk.isDynamicEntry ? "assets/[name]-[hash:16].js" : "assets/shared-[hash:16].js",
         assetFileNames: "assets/[name]-[hash:16][extname]",
+        // What every page kind imports is one chunk. Left to itself, Rolldown splits it by who
+        // imports each module, the menus' share (React, the mount) from the pages' alone (the
+        // frame), and every first visit pays for two files compressed apart (about 800 bytes).
+        // The menus' entry imports that one chunk, which every page has loaded by the time the
+        // shell warms or opens them.
+        codeSplitting: {
+          groups: [{ name: "shared", minShareCount: PAGES.length }],
+        },
       },
     },
   },
