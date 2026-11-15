@@ -162,8 +162,8 @@ to keep in), and it opens every IndexedDB transaction: this client opens none of
 
 A move between two kinds stops one and runs the other; a move within a kind is the shell's
 `review:navigate`, which `route.ts` follows. The header, the panel's `+` and bell and the feed are
-drawn here as the Dioxus frame drew them; the panel and its sheets are this client's persistent
-kind `panel` ([The panel](#the-panel)), which the shell mounts beside any page.
+the frame's (`src/frame.tsx`), which every page kind draws; the panel and its sheets are this
+client's persistent kind `panel` ([The panel](#the-panel)), which the shell mounts beside any page.
 
 The menus are this client's persistent kind `overlay` (`src/kinds/overlay.tsx`, `src/overlay.tsx`),
 which the shell mounts in `#overlay-root` on the first select or picture and keeps beside every
@@ -377,9 +377,9 @@ and the two speak through the window, as the frame and the shell do: the snapsho
 `reviewPanelOpener`, `reviewActivitySnapshot`, `reviewPendingSnapshot`, `reviewFrameError`,
 `reviewKnownIds`, `reviewPreviousIds`) and their events (`review:quick`, `review:activity`,
 `review:appearance`, `review:frame`, `review:frame-seen`, `review:activity-arrived`,
-`review:asks`). What it keeps in the browser is under the keys the Dioxus panel used
-(`review-quick-draft`, `docs-review-seen`, `studio.cssVars`), so a reader's draft, what they saw
-and their theme stay. Its media layer (`reachOf`) takes the chat's pictures up on every page,
+`review:asks`). What it keeps in the browser is under its keys (`review-quick-draft`,
+`docs-review-seen`, `studio.cssVars`), the ones a reader's draft, what they saw and their theme are
+already kept under, so all three stay. Its media layer (`reachOf`) takes the chat's pictures up on every page,
 each opening in the menus' viewer, and on the task board and the agents page, which mount none of
 their own, the page's media too.
 

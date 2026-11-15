@@ -50,8 +50,8 @@ never the whole target, which the release run runs.
   head: the frame's, the controls' theme, the board's and the controls every page draws), each
   minified and named by its bytes by dx, joined in the order of their names into one
   `shared-<hash>.css` first in every kind's styles; the script and wasm dx builds beside them are
-  published nowhere. This package's components, which no build makes since the chat moved, stay
-  in the tree until they retire with dx (the board task
+  published nowhere. This package's components, which no build makes, stay in the tree until
+  they retire with dx (the board task
   `app/client-moves-to-react/retire-the-dioxus-client`): clippy lints them for wasm32 with and
   without `page-program` (`cargo symphony-ui clippy`), and their host tests run.
   Without `--debug-symbols false` dx 0.7 emits 260 KB of
@@ -305,10 +305,10 @@ never the whole target, which the release run runs.
   records the local adaptations and stylesheet hashes. Buttons, text fields,
   the selects' closed fields and the conversation tabs use them (a select's popup and the picture
   dialog are the React client's menus, `apps/symphony-web/src/overlay.tsx`). The header's
-  Appearance button opens a panel of the deferred module (`#appearance-panel`,
-  as the bell opens activity's) whose theme menu imports a shadcn/tweakcn registry JSON file's
-  `cssVars.theme`, `cssVars.light` and `cssVars.dark`, including fonts and radius.
-  `theme.rs` validates token declarations; the shell restores their saved CSS
+  Appearance button opens the panel's `#appearance-panel` (the React client's
+  `src/appearance.tsx`, as the bell opens activity's), whose theme menu imports a shadcn/tweakcn
+  registry JSON file's `cssVars.theme`, `cssVars.light` and `cssVars.dark`, including fonts and
+  radius. Its `src/theme.ts` validates token declarations; the shell restores their saved CSS
   before mounting a page. Status tokens such as `like`, `question` and `live`
   keep their defaults unless the imported file sets them. UI colours use the
   canonical shadcn token names; `dx-components-theme.css` maps those names to
@@ -679,7 +679,7 @@ never the whole target, which the release run runs.
   A document's questions and follow-ups are the React client's (`asks.tsx`), which reads them
   with `format=blocks`, no rendered HTML on that path.
   A document's questions and the `+` sheet's chat read again when the page's feed
-  says so (the chat by `frame::use_asks_heard`): its `asks` region names a moved thread (by id
+  says so (the chat by `concernsThread`, `apps/symphony-web/src/panel-model.ts`): its `asks` region names a moved thread (by id
   and document path) or a new chat recipient, or a stream opens, first or after a loss. A
   document page that opens its stream again for other sections, from the cursor of the last
   event it heard, missed nothing, and reads nothing again (`followDocument`). The page
