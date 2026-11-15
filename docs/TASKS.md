@@ -122,9 +122,9 @@ that `just tasks migrate` must not be run, and where the recovery is described
 Nothing else reads the record: `just tasks schema` reports what it says (exit 1 while the board
 went back), `just tasks snapshot` opens no board, nor do `just tasks database`, its hold and its
 release (the hold is step 2 of [the recovery](#a-board-that-went-back), so it stops a board that
-went back as any other), and a raw read (`search_bench`'s) opens no store. Otherwise the store
-adds the version it found to the record when it is higher, and the one it migrated to. A scratch
-board keeps no record, nor does a server an address names that is no project's board server.
+went back as any other). Otherwise the store adds the version it found to the record when it is
+higher, and the one it migrated to. A scratch board keeps no record, nor does a server an address
+names that is no project's board server.
 Builds from before the record neither read nor write it: the protection holds for a project only
 once each of its readers and writers runs a build that carries it, the main checkout's
 `.target/bin/tasks`, the shared Symphony server and a consuming project's host.

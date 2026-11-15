@@ -452,18 +452,14 @@ async fn the_one_server_sweeps_every_project_it_serves_each_in_its_own_record() 
             .clone()
     });
     assert!(Arc::ptr_eq(&alpha, &started.shared));
-    assert_eq!(
-        beta.maintaining(),
-        2,
-        "its sweep and its embedding catch-up"
-    );
+    assert_eq!(beta.maintaining(), 1, "its sweep");
     let calls =
         |id: &str| std::fs::read_to_string(tree.path(&format!("{id}/calls"))).unwrap_or_default();
     let looked = [alpha.clone(), beta.clone()];
     let (alpha_calls, beta_calls) = (tree.path("alpha/calls"), tree.path("beta/calls"));
     tokio::task::spawn_blocking(move || {
         test_time::until_true(
-            "each project swept and caught up, each in its own record",
+            "each project swept, each in its own record",
             test_time::backstop(Duration::from_secs(20)),
             || {
                 looked.iter().all(|shared| {
@@ -474,7 +470,6 @@ async fn the_one_server_sweeps_every_project_it_serves_each_in_its_own_record() 
                 }) && [&alpha_calls, &beta_calls].iter().all(|calls| {
                     let calls = std::fs::read_to_string(calls).unwrap_or_default();
                     calls.lines().any(|call| call == "reap")
-                        && calls.lines().any(|call| call == "embed")
                 })
             },
         )
@@ -484,9 +479,7 @@ async fn the_one_server_sweeps_every_project_it_serves_each_in_its_own_record() 
     .unwrap();
     for id in ["alpha", "beta"] {
         assert!(
-            calls(id)
-                .lines()
-                .all(|call| call == "reap" || call == "embed"),
+            calls(id).lines().all(|call| call == "reap"),
             "{id}: {}",
             calls(id)
         );

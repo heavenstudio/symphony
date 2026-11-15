@@ -131,22 +131,16 @@ release and reclaim takes, `ending.rs` the asks to end, `apart.rs` a start off a
 servers](../../docs/TASKS.md#stuck-servers) and [a board that went
 back](../../docs/TASKS.md#a-board-that-went-back).
 
-### Search and embeddings
+### Search
 
-`store/search.rs` and `cli/search.rs` are `tasks search`; `embedding.rs` the local model and its
-chunks, `store/embeddings.rs` and `cli/embedding.rs` the catch-up `tasks embed`, which the shared
-server runs as maintenance (`apps/symphony-server/src/front/embeddings.rs`). Normal writes and
-keyword search do no inference, and board text never enters a network request. The tests use the
-`Embedder` seam with deterministic vectors (`tests/store/embeddings.rs`), needing no model or
-network. `examples/search_bench.rs` (`--database NAME --out DIR`, run through
-`tools/cargo.sh run --release`) copies a board only into the named scratch database and measures
-catch-up and the queries; `examples/embedding_cpu.rs` measures inference CPU on a frozen snapshot
-with no database. Neither estimates the database's CPU from the client's.
-
-Search by meaning is to be deleted, and the board searches by words alone
-([its card](../../docs/DECISIONS.md#board-search-by-meaning)): the board task
-`tools/board-search-by-words-alone` removes the model, the three modes, `tasks embed` and the
-server's pass. Until it lands, build nothing on any of them.
+`store/search.rs` and `cli/search.rs` are `tasks search`: by words alone, ranked by SurrealDB's
+full-text indexes over titles, briefs, slugs and threads, with no inference and no network request.
+The board had a search by meaning, deleted
+([its card](../../docs/DECISIONS.md#board-search-by-meaning)): the tables it wrote (`task_chunk`,
+`task_embedding_source`, `task_embedding_checkpoint`) keep their definitions in `schema.rs`, since
+removing one is a schema move, and nothing here writes or reads them but the whole-board copy, which
+empties them. A board that holds their rows opens and searches as any other
+(`tests/cli/search.rs`).
 
 ### Children
 

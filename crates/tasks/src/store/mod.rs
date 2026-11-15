@@ -30,7 +30,6 @@ mod cap;
 mod copy;
 mod depends;
 mod dispatcher;
-mod embeddings;
 mod fields;
 mod history;
 mod kept;
@@ -62,7 +61,6 @@ pub use asks::{ASK_KINDS, Ask, LATE_SECONDS, NewAsk};
 pub use callbacks::{Callback, ChatSeat, Presence};
 /// Every statement the cap on an orchestrator's open tasks sends: the plan test's to plan.
 pub use cap::STATEMENTS as SLOT_READS;
-pub use embeddings::{EmbeddingStats, VectorHit, VectorSearchProfile};
 pub use launches::NewLaunch;
 pub use messages::reviewer_verdict;
 pub use opening::Opening;
