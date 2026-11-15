@@ -256,21 +256,21 @@ never the whole target, which the release run runs.
   the owner's choice, as the caps are.
   Other page kinds are reported separately for review.
   On the fixture (`entry_pages_fit_the_first_visit_budget_and_deferred_kinds_are_reported` prints
-  each page's requests) a first visit to `/` takes 112,297 bytes, `/tasks` 120,521, `/agents`
-  115,350, `/queue` 107,903, `/reports` 108,321, `/runs` 106,563, `/docs/` 138,993, a document
-  140,654 and a task's page 141,961, and a return that finds what it kept unchanged 2,031, 2,442,
-  2,307, 2,272, 765, 984, 574, 1,677 and 2,285. A first visit to a kind is its entry and its
+  each page's requests) a first visit to `/` takes 112,403 bytes, `/tasks` 120,629, `/agents`
+  115,443, `/queue` 108,027, `/reports` 108,501, `/runs` 106,704, `/docs/` 138,853, a document
+  140,514 and a task's page 142,011, and a return that finds what it kept unchanged 2,030, 2,441,
+  2,306, 2,271, 765, 984, 574, 1,677 and 2,284. A first visit to a kind is its entry and its
   sheets, the chunk every kind shares (React and the frame) and the pieces it shares with some of
   the others (the board's feed and keep; the card and the task readers of the board and the agents
   page; the media layer's chunk and sheet, home's, the documents', a task's page's and the chat's),
   beside the HTML, the shell and the page's reads; a move to another kind takes its entry and the
   pieces no kind before it took (`tests/browser/preload.rs`). A task's page's timeline, a chunk of
-  its own, comes once the page has drawn and is idle: 12,353 bytes after its first visit. The
+  its own, comes once the page has drawn and is idle: 12,356 bytes after its first visit. The
   reads ahead start only once the page's own reads have answered (`cache_ahead.rs`) and go marked
   as prefetches, so the budget counts them outside the first visit, with the warmed modules
   (`prefetched_bytes`). Once a page has its data and is idle, the shell warms the chat's files
   (its entry, the chunks it imports and its sheets the page has not) and then the menus' (the
-  same of theirs): 28,395 bytes outside home's first visit, and neither the chat's first open nor
+  same of theirs): 27,376 bytes outside home's first visit, and neither the chat's first open nor
   the menus' transfers anything more. Later visits reuse cached imports. The home budget test
   is independent of the canonical-entry test, which gives every kind a fresh
   browser profile and reports the complete published output.
