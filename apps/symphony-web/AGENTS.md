@@ -362,7 +362,8 @@ follows the route from task to task within the kind (`review:navigate`) and keep
 Dioxus program's page did. `src/task-live.ts` holds what it reads and follows (`LiveTask`, on
 `live.tsx`'s `keepBoard`): the page and the thread's newest page kept on this device
 (`taskItem`) and drawn at once on a return, each checked with its copy's tag once the board's
-version is read and asked again until it answers; the rest of the thread, the subtasks and the
+version is read and asked again until it answers, the feed opened beside those checks and never
+after them (its `views.read` gives the board's loop nothing to wait for); the rest of the thread, the subtasks and the
 landing the task offers read when the page asks; each feed event applied as one change, the page
 read again only when its brief, status or subtasks moved, those reads one after another
 (`refreshAfter`), and the events heard while a read was out replayed onto its answer. Its guards

@@ -7,6 +7,10 @@
 // it draws them at once (`opened`) and, once the board's version is read, asks whether each changed
 // (`load`), a `304` confirming the copy and a `200` replacing it on the page and on the device
 // (docs/analysis/client-cache.md).
+//
+// The feed opens beside those reads, not after them: its cursor is the board's version, read before
+// any of them is asked, so each answer is at that version or after it, and an event heard before an
+// answer is applied again onto it (`replay`).
 
 import {
   answered,
@@ -390,7 +394,11 @@ export class LiveTask {
       retry: this.retry,
       views: {
         freshen: (change) => this.freshen(change),
-        read: () => this.read(),
+        // Nothing for the board's loop to wait for: the feed opens at the board's answer, beside
+        // the page's and the thread's reads, whose answers take what it said meanwhile (`replay`).
+        read: () => {
+          void this.read();
+        },
         heard: (value) => this.heard(value),
         frame,
       },
@@ -400,7 +408,8 @@ export class LiveTask {
   /** Why the board's last read failed, while nothing is drawn: said in place of the page. */
   trouble: string | null = null;
 
-  /** The board's version was read: what the page drew is checked, and the rest read. */
+  /** The board's version was read: what the page drew is checked, and the rest read, while the
+   * board's loop opens the feed. */
   async read(): Promise<void> {
     await this.kept;
     if (this.signal.aborted) return;
