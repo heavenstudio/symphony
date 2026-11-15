@@ -154,7 +154,9 @@ modules, so a first visit takes the kind's entry and that chunk, and a move betw
 this client the target's entry alone. What every page kind imports stays that one chunk
 (`codeSplitting` in `vite.config.ts`), which the menus' entry imports too, though they use only
 part of it: split by who imports each module, it would be two files every first visit takes,
-compressed apart. The shell asks for the chunks an entry imports beside it, a
+compressed apart. The device cache and the board's live half (`cache.ts`, `live.tsx`) stay one
+chunk the same way, which Reports loads for the cache alone: split by importer, the cache would
+be a file more on every page that follows the board. The shell asks for the chunks an entry imports beside it, a
 module preload each (`imports` in its manifest, which `package.sh` reads from Vite's), so a first
 visit fetches them with the entry rather than once the entry has come and been read: a round trip
 fewer, which a phone over the tailnet pays.
@@ -259,9 +261,15 @@ it (its files count in the regenerator's key, as every file of this package does
 feed of its own: it reads the window this device last chose (`reports-grain`, `reports-days`
 through `storage.ts`), else the last 24 hours by the hour (`FIRST_WINDOW`), at once, on each
 choice and every five minutes with the last answer's tag (`followReports`, under its effect's
-own signal), a read that failed sooner, on the feed's waits. The periods are read by path as the
-server writes them (`Bucket`): a source with no record of a period is none there, a count by
-status that leaves out its zeros a zero. Four
+own signal), a read that failed sooner, on the feed's waits. Each window's last answer is kept on
+this device (`openReports`: the item `reports` of its checkout, a part a window, whole, as the
+largest is some 140 KB and all nine a third of a megabyte; outside the caps as the board's reads
+are) and drawn at once on a return or when its window is chosen again, marked `data-cache=device`
+and said in the other pages' words in the shared sheet's notice stack until a read answers: a
+`304` for a window no roll-up changed, or a new answer, drawn and kept in its place. A read that
+fails leaves the kept copy drawn, said not reachable, under the failed read's own line. The
+periods are read by path as the server writes them (`Bucket`): a source with no record of a period
+is none there, a count by status that leaves out its zeros a zero. Four
 figures sit over five sections of charts, one column on a phone and two from 960 px. Each figure
 links to the chart it sums up (`#chart-done`…) while the charts are drawn. A chart's id is an
 anchor of its `NearViewport`, held in its ghost until it mounts; the chart an address names mounts at

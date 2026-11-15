@@ -16,7 +16,7 @@ function ReportsApp() {
   return (
     <Frame route={route}>
       {/* Each scope's reports are a page of its own: its window, its read and what it hid. */}
-      <ReportsPage key={route.scope} />
+      <ReportsPage key={route.scope} scope={route.scope} />
     </Frame>
   );
 }
