@@ -5,7 +5,9 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use sha2::{Digest, Sha256};
-use symphony_api::{ActivityItem, Message, Role, Session, Task, TaskCounts, Tasks};
+use symphony_api::{
+    ActivityItem, Message, Role, Session, Task, TaskAsks, TaskCounts, TaskVerdict, Tasks,
+};
 
 use crate::{clock, dashboard, render::Render};
 
@@ -50,6 +52,61 @@ pub fn counts(board: &Tasks) -> TaskCounts {
         in_progress: dashboard::count(symphony_api::tasks_in_progress(&board.tasks).count()),
         in_review: dashboard::count(symphony_api::tasks_in_review(&board.tasks).count()),
         agents_live: dashboard::count(board.sessions.iter().filter(|s| s.health == "live").count()),
+    }
+}
+
+/// The people the board's questions and verdicts are for ([`symphony_api::TaskAsks`]): the owner
+/// alone until Symphony has users. One added is a name in those maps, never a field.
+pub const PEOPLE: [&str; 1] = ["owner"];
+
+/// The slugs of `tasks` that are not done or cancelled: those whose questions can still wait.
+pub fn open(tasks: &[Task]) -> Vec<String> {
+    tasks
+        .iter()
+        .filter(|task| !task.is_finished())
+        .map(|task| task.slug.clone())
+        .collect()
+}
+
+/// The questions still waiting on each of [`PEOPLE`] on the tasks `open` names
+/// ([`symphony_board::Store::questions_waiting`]), by person, a person with none at 0.
+pub fn questions(
+    store: &symphony_board::Store,
+    open: &[String],
+) -> Result<BTreeMap<String, u32>, symphony_board::Error> {
+    PEOPLE
+        .iter()
+        .map(|person| {
+            let waiting = store.questions_waiting(person, open)?;
+            Ok(((*person).to_string(), dashboard::count(waiting.len())))
+        })
+        .collect()
+}
+
+/// `message` on the wire, when it is a reviewer's verdict ([`symphony_board::reviewer_verdict`]).
+pub fn verdict(message: &symphony_board::Message) -> Option<TaskVerdict> {
+    Some(TaskVerdict {
+        verdict: symphony_board::reviewer_verdict(message)?.to_string(),
+        id: message.id,
+        task: message.slug.clone(),
+        reviewer: message.sender.clone(),
+        at: message.ts,
+    })
+}
+
+/// What the board asks of each of [`PEOPLE`]: the `questions` waiting on them, and the newest
+/// `verdict`, news for each.
+pub fn asks(questions: BTreeMap<String, u32>, verdict: Option<&TaskVerdict>) -> TaskAsks {
+    TaskAsks {
+        questions,
+        verdicts: verdict
+            .map(|verdict| {
+                PEOPLE
+                    .iter()
+                    .map(|person| ((*person).to_string(), verdict.clone()))
+                    .collect()
+            })
+            .unwrap_or_default(),
     }
 }
 

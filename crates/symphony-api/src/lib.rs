@@ -32,8 +32,9 @@
 //! A field added later is `#[serde(default)]`, and a region a client does not know yet reads as
 //! [`Change::Other`], which it ignores: the server and an open client may be one build apart.
 //!
-//! The server's own route, [`FRONT_PATH`], answers a [`Front`]: the one server in front of the app,
-//! as its starters and the agents see it.
+//! The server's own routes answer before any project's: [`FRONT_PATH`] a [`Front`], the one server
+//! in front of the app, as its starters and the agents see it, and [`PROJECTS_PATH`] a
+//! [`ProjectList`], the projects it serves as the desktop app reads them ([`listing`]).
 
 #![forbid(unsafe_code)]
 
@@ -45,6 +46,7 @@ mod agents;
 pub mod gates;
 pub mod health;
 mod links;
+pub mod listing;
 mod machine_work;
 mod project;
 pub mod report_page;
@@ -58,6 +60,7 @@ pub use agent_activity::{AGENT_ACTIVITY_SCHEMA, AgentHour, AgentLine};
 pub use gates::{Gate, GatePast, GateState, GatesSeen, TASK_GATES_PATH, TaskGates};
 pub use health::{HEALTH_SCHEMA, HealthHour, HourPasses, HourRequests, HourSlowest, HourWrites};
 pub use links::{app_path, linkable};
+pub use listing::{ListedCard, ListedProject, PROJECTS_PATH, ProjectList, TaskAsks, TaskVerdict};
 pub use report_page::{Grain, REPORTS_PATH, ReportBucket, ReportsPage};
 pub use reports::{REPORT_SCHEMA, ReportDay, ReportHour, report_file};
 pub use runs::{
@@ -278,7 +281,7 @@ pub struct Progress {
 }
 
 /// One event of the feed: what changed since the version before.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct Delta {
     /// The version after this change: the next `since`.
@@ -289,7 +292,7 @@ pub struct Delta {
 
 /// A region of the board that moved, with its new data: `{"region": "...", "data": ...}`, the
 /// region first (as the server writes it).
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 #[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[serde(tag = "region", content = "data", rename_all = "kebab-case")]
 pub enum Change {
@@ -303,6 +306,10 @@ pub enum Change {
     Client {
         build: String,
     },
+    /// What the task board asks of each person, as it is from now on: sent each time it changes,
+    /// for the desktop app ([`listing`]). The web client reads none, so its wire types leave it out.
+    #[cfg_attr(feature = "typescript", ts(skip))]
+    TaskAsks(TaskAsks),
     /// A region this client does not know yet; it is ignored. Never sent, so the web client's wire
     /// types leave it out: it reads a region it does not know as any `{region, data}`.
     #[serde(skip_serializing)]
@@ -354,6 +361,7 @@ impl<'de> serde::de::Visitor<'de> for ChangeVisitor {
                         "client" => Change::Client {
                             build: map.next_value::<Build>()?.build,
                         },
+                        "task-asks" => Change::TaskAsks(map.next_value()?),
                         _ => {
                             map.next_value::<IgnoredAny>()?;
                             Change::Other
@@ -374,7 +382,7 @@ impl<'de> serde::de::Visitor<'de> for ChangeVisitor {
     }
 }
 
-const KNOWN_REGIONS: [&str; 5] = ["card", "queue", "counts", "progress", "client"];
+const KNOWN_REGIONS: [&str; 6] = ["card", "queue", "counts", "progress", "client", "task-asks"];
 
 #[expect(
     clippy::trivially_copy_pass_by_ref,

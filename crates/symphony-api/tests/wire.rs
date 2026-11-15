@@ -11,6 +11,8 @@ mod cache_format;
 mod first_part;
 #[path = "wire/fixture.rs"]
 mod fixture;
+#[path = "wire/listing.rs"]
+mod listing;
 #[path = "wire/machine_work.rs"]
 mod machine_work;
 #[path = "wire/reader_tests.rs"]
@@ -225,6 +227,7 @@ fn every_region_of_a_delta_reads_and_writes_back_as_the_same_json() {
             Change::Counts(_) => "counts",
             Change::Progress(_) => "progress",
             Change::Client { .. } => "client",
+            Change::TaskAsks(_) => "task-asks",
             Change::Other => "other",
         })
         .collect();

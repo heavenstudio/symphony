@@ -160,6 +160,9 @@ pub(crate) struct Hub {
     repository: Option<PathBuf>,
     signoff_pending: Mutex<Option<Pending>>,
     task_activity: Mutex<Option<(i64, Vec<symphony_api::ActivityItem>)>>,
+    /// What the task board asks of each person beyond the cards ([`task_asks`]). Taken after
+    /// `pages` where both are held, never before.
+    task_asks: Mutex<task_asks::Asked>,
     worker: Mutex<Option<std::thread::JoinHandle<()>>>,
     /// The board's health over the last hour: the clock's dispatch passes, the idle sweeps and
     /// every request this process sent the board ([`symphony_board::board_health`]).
@@ -312,6 +315,7 @@ impl Hub {
             repository: symphony_board::project::locate_quick(root).map(|place| place.common),
             signoff_pending: Mutex::new(None),
             task_activity: Mutex::new(None),
+            task_asks: Mutex::default(),
             worker: Mutex::new(None),
             health: symphony_board::board_health::Recorder::default(),
             agent_activity: Mutex::new(None),
@@ -1170,6 +1174,8 @@ impl Hub {
             }
             cached.as_ref().expect("activity was read").1.clone()
         };
+        // Read before anything moves, so a failed read leaves the cursor where it was.
+        let asks = measured("task asks", || self.read_asks(store, latest, &next.tasks))?;
         let mut held = self.tasks.lock().unwrap_or_else(|e| e.into_inner());
         let mut changed = Vec::new();
         let pending = self
@@ -1205,15 +1211,16 @@ impl Hub {
             .latest_message
             .lock()
             .unwrap_or_else(|e| e.into_inner());
+        let mut lines = Vec::new();
         if let Some(since) = *cursor
             && since < latest
         {
             let render = symphony::render::Render::new(&self.root);
-            for message in store
+            lines = store
                 .messages_after(since, latest)
-                .map_err(|e| e.to_string())?
-            {
-                let record = taskview::message(&message);
+                .map_err(|e| e.to_string())?;
+            for message in &lines {
+                let record = taskview::message(message);
                 let mut data = json!(record);
                 let entry = taskview::entry(&record, &render);
                 data["blocks"] = json!(entry.blocks);
@@ -1223,6 +1230,9 @@ impl Hub {
         }
         *cursor = Some(latest);
         drop(cursor);
+        if let Some(change) = self.apply_asks(asks, &lines) {
+            changed.push(change);
+        }
         // A failed read keeps the recipient known before; it is no change.
         if let Ok(recipient) = store.chat_recipient()
             && let Some(change) = self.chat_read(recipient)
@@ -1928,6 +1938,7 @@ mod machine_work;
 mod owner_asks;
 mod reports;
 mod startup;
+mod task_asks;
 
 #[cfg(test)]
 mod owner_asks_tests;

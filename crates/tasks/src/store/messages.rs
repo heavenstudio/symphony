@@ -14,6 +14,21 @@ use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::LazyLock;
 
+/// The verdict a reviewer's line gives, `approve` or `changes`: a verdict line whose text is that
+/// word alone or before its `: text`, as `just tasks verdict` writes it. A landing's line and a
+/// subtask's `done:` give none. [`Store::newest_verdict`] reads by the same rule.
+pub fn reviewer_verdict(message: &Message) -> Option<&'static str> {
+    if message.kind != "verdict" {
+        return None;
+    }
+    ["approve", "changes"].into_iter().find(|verdict| {
+        message
+            .text
+            .strip_prefix(verdict)
+            .is_some_and(|rest| rest.is_empty() || rest.starts_with(':'))
+    })
+}
+
 /// The kinds of message that reach an inbox; `system` is the record only.
 pub const DELIVERED: [&str; 2] = ["msg", "verdict"];
 
@@ -582,6 +597,37 @@ RETURN NONE;"
         Ok(rows.into_iter().map(message).collect())
     }
 
+    /// The questions to `person` (the owner, today) that still wait on them on the tasks `open`
+    /// names, oldest first: lines of kind `msg` to `person` from anyone else that no post of
+    /// `person`'s on the same thread follows, the rule by which the owner's activity list says
+    /// "answered". Read by the recipient's index, then each line's own thread from it on by key, as
+    /// [`Store::landings_posted`] reads its landings.
+    pub fn questions_waiting(&self, person: &str, open: &[String]) -> Result<Vec<Message>, Error> {
+        if open.is_empty() {
+            return Ok(Vec::new());
+        }
+        let read = "
+LET $asked = (SELECT * OMIT id FROM message
+    WHERE recipient = $person AND kind = 'msg' AND sender != $person AND slug IN $open ORDER BY sid ASC);
+RETURN $asked.filter(|$line| (SELECT VALUE sid FROM message:[$line.slug, $line.sid]>..[$line.slug, ..]
+    WHERE sender = $person LIMIT 1) = []);";
+        let rows: Vec<MessageRow> =
+            self.retrying(|| self.transact(read, json!({"person": person, "open": open})))?;
+        Ok(rows.into_iter().map(message).collect())
+    }
+
+    /// The newest reviewer's verdict on the board ([`reviewer_verdict`]), none on a board with none.
+    /// It reads the lines from the newest back to that verdict, every line of a board with none, so
+    /// a reader reads it once and follows the lines after it ([`Store::messages_after`]).
+    pub fn newest_verdict(&self) -> Result<Option<Message>, Error> {
+        let read = "RETURN SELECT * OMIT id FROM message WHERE kind = 'verdict'
+    AND (text = 'approve' OR string::starts_with(text, 'approve:')
+        OR text = 'changes' OR string::starts_with(text, 'changes:'))
+    ORDER BY sid DESC LIMIT 1;";
+        let rows: Vec<MessageRow> = self.retrying(|| self.transact(read, json!({})))?;
+        Ok(rows.into_iter().next().map(message))
+    }
+
     /// New messages in creation order, for the Symphony server's shared delta feed. The cursor is
     /// the snapshot's latest_message, so two writes between reads are both delivered.
     pub fn messages_after(&self, since: i64, through: i64) -> Result<Vec<Message>, Error> {
@@ -648,6 +694,28 @@ mod tests {
 
     fn heard_text(sender: &str, kind: &str, text: &str, unowned: bool) -> String {
         heard(said(sender, kind, text), unowned.then_some(UNOWNED)).text
+    }
+
+    #[test]
+    fn a_reviewers_verdict_is_its_word_alone_or_before_its_text_on_a_verdict_line() {
+        for (kind, text, verdict) in [
+            ("verdict", "approve", Some("approve")),
+            ("verdict", "approve: good at 4b5e7b0", Some("approve")),
+            ("verdict", "changes", Some("changes")),
+            ("verdict", "changes: the hash moved", Some("changes")),
+            ("verdict", "approved: fine", None),
+            ("verdict", "changesets differ", None),
+            ("verdict", "done: integrated in 3e0c661", None),
+            ("verdict", "landed tools/x on main at 3e0c661", None),
+            ("msg", "approve: said as a message", None),
+            ("system", "approve", None),
+        ] {
+            assert_eq!(
+                reviewer_verdict(&said("slate-wren", kind, text)),
+                verdict,
+                "{kind}: {text}"
+            );
+        }
     }
 
     #[test]

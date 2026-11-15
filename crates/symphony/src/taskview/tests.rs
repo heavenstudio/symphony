@@ -44,6 +44,77 @@ fn project_task_counts_exclude_children_and_grandchildren() {
 }
 
 #[test]
+fn a_questions_task_is_open_until_it_is_done_or_cancelled() {
+    let task = |slug: &str, status: &str| Task {
+        slug: slug.into(),
+        title: slug.into(),
+        body: String::new(),
+        status: status.into(),
+        priority: 2,
+        parent: None,
+        created_by: "owner".into(),
+        created: 0.0,
+        updated: 0.0,
+        links: Vec::new(),
+        depends: Vec::new(),
+        roles: Vec::new(),
+        instruction: false,
+        fields: BTreeMap::new(),
+    };
+    let tasks: Vec<Task> = [
+        ("a", "backlog"),
+        ("b", "in_progress"),
+        ("c", "done"),
+        ("d", "review"),
+        ("e", "cancelled"),
+        ("f", "blocked"),
+    ]
+    .iter()
+    .map(|(slug, status)| task(slug, status))
+    .collect();
+    assert_eq!(open(&tasks), ["a", "b", "d", "f"]);
+    assert_eq!(open(&[]), Vec::<String>::new());
+}
+
+#[test]
+fn a_reviewers_verdict_is_news_for_every_person_and_any_other_line_is_none() {
+    let line = |kind: &str, text: &str| symphony_board::Message {
+        id: 6240,
+        slug: "tools/x".into(),
+        sender: "slate-wren".into(),
+        recipient: Some("@executor".into()),
+        kind: kind.into(),
+        text: text.into(),
+        ts: 1_763_213_045.25,
+    };
+    let given = verdict(&line("verdict", "changes: the hash moved")).unwrap();
+    assert_eq!(
+        given,
+        TaskVerdict {
+            id: 6240,
+            task: "tools/x".into(),
+            verdict: "changes".into(),
+            reviewer: "slate-wren".into(),
+            at: 1_763_213_045.25,
+        }
+    );
+    assert_eq!(verdict(&line("verdict", "done: integrated")), None);
+    assert_eq!(verdict(&line("msg", "approve")), None);
+    let questions = BTreeMap::from([("owner".to_string(), 2)]);
+    let asked = asks(questions.clone(), Some(&given));
+    assert_eq!(asked.questions, questions);
+    assert_eq!(
+        asked.verdicts.keys().collect::<Vec<_>>(),
+        PEOPLE.iter().collect::<Vec<_>>()
+    );
+    assert_eq!(asked.verdicts["owner"], given);
+    assert!(
+        asks(questions, None).verdicts.is_empty(),
+        "no verdict yet, none for anyone"
+    );
+}
+
+#[test]
 fn a_brief_within_the_limit_is_its_whole_reply() {
     let tree = Tree::new();
     let render = Render::new(&tree.root);
