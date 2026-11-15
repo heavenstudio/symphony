@@ -2,7 +2,7 @@
 name: tasks
 description: Join the shared task board and register a native callback so messages reach this session directly. Pull, claim, review or orchestrate tasks and answer on their threads. Trigger on "attach to the tasks", "join the board", "pick up a task", "take work from the board", "orchestrate these tasks", or /tasks.
 ---
-<!-- symphony-stamp: dd3d789c0512b46c files=SKILL.md -->
+<!-- symphony-stamp: d582f101095939a6 files=SKILL.md -->
 
 # Work from the task board
 
@@ -236,11 +236,14 @@ Pull work from the board, don't only wait for events: [task-orchestrator](../tas
    handle. For a terminal run `just tasks launch SLUG --kind K` (a reviewer:
    `--role reviewer` too). Launch registers the handle, reserves the task (a
    reviewer takes the reviewer role on it instead), starts that agent in its
-   own terminal and worktree, and records its session on the task.
+   own terminal and worktree, and records its session on the task; a
+   reviewer launch resumes the task's recorded reviewer instead, and is
+   refused while that one still runs.
    A later review round goes to the same reviewer: post the new tip on the
    thread `--to @reviewer` and resume it (`SendMessage` to a subagent,
-   `claude -p --resume SESSION-ID`, `just tasks restore SLUG HANDLE` for a
-   closed terminal), never another reviewer or a review subtask. Resumed, it is
+   `claude -p --resume SESSION-ID`, `just tasks launch SLUG --role reviewer`
+   or `just tasks restore SLUG HANDLE` for a closed terminal), never another
+   reviewer or a review subtask. Resumed, it is
    still a fresh reviewer for the land. Only when it cannot be resumed (no
    conversation recorded, a Codex thread that never arrived, a reviewer that left)
    does another reviewer take the role on the task.

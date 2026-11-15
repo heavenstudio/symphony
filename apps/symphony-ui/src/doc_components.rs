@@ -1,6 +1,6 @@
-//! The blocks' semantic components, which `block_view` draws the task pages' and the panel's blocks
-//! with (the documents' page is the web client's, apps/symphony-web). Their markup comes with the
-//! client; the API supplies content and state.
+//! The blocks' semantic components, which `block_view` draws the panel's blocks with (the
+//! documents' and a task's page are the web client's, apps/symphony-web). Their markup comes with
+//! the client; the API supplies content and state.
 
 use dioxus::prelude::*;
 

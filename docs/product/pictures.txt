@@ -1,0 +1,8 @@
+# The product specs' pictures, one page a line: NAME WIDTHS PATH [STEPS]. tools/product-pictures.sh
+# takes each from the fixture project (tools/product-pictures/fixture) at the widths a document
+# shows it at: WIDTHS is `phone` (pictures/NAME-phone.png), `wide` (pictures/NAME-wide.png) or
+# `both`. STEPS are options of `symphony shot`, with no spaces inside one.
+
+queue both /queue
+queue-topic wide /queue --click [data-category=design]
+register wide /docs/DECISIONS.md

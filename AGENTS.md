@@ -170,8 +170,12 @@ binaries' size budgets ([CHECKS](docs/CHECKS.md#size-budgets)), the docs audit, 
 workspace's native/headless browser tests locally, each step whatever the ones before it did and
 with a log of its own (`tools/verify.sh`): the release run's full verification, never a
 task's gate ([CHECKS](docs/CHECKS.md#the-release-run)). Local acceptance requires a working
-Chrome executable and the React client's pinned Node (on PATH, or fnm to fetch it once:
+Chrome executable (installed, or named with `SYMPHONY_CHROME`, so a missing browser cannot pass as
+acceptance not run) and the React client's pinned Node (on PATH, or fnm to fetch it once:
 `tools/node.sh`); the consuming project's game, display and gate binaries are not prerequisites.
+The toolchain pin includes the wasm target. The client build needs Git, Bash, jq, curl and a C/C++
+build toolchain, and native board fixtures need lsof. A Linux build host makes the release
+snapshots' parent folder first (`sudo install -d -m 1777 /private/tmp`).
 This repository has no hosted GitHub CI requirement.
 
 Native board fixtures use the fixture source-root function to find

@@ -108,6 +108,10 @@ fn constants() -> String {
         ("UPLOAD_PATH", text(api::UPLOAD_PATH)),
         ("UPLOAD_MAX_BYTES", api::UPLOAD_MAX_BYTES.to_string()),
         ("UPLOAD_ACCEPT", text(api::UPLOAD_ACCEPT)),
+        ("TASK_ACTION_ROUTE", text(api::TASK_ACTION_ROUTE)),
+        ("TASK_GATES_PATH", text(api::TASK_GATES_PATH)),
+        ("TASK_TIMELINE_PATH", text(api::TASK_TIMELINE_PATH)),
+        ("TIMELINE_EVERY", api::timeline::TIMELINE_EVERY.to_string()),
         ("AGENT_FOCUS_PATH", text(api::AGENT_FOCUS_PATH)),
         ("AGENT_SCREEN_PATH", text(api::AGENT_SCREEN_PATH)),
     ];
@@ -136,101 +140,149 @@ fn constants() -> String {
 fn declarations() -> Vec<Declared> {
     // JSON numbers are read by the browser as doubles whatever their Rust width.
     let cfg = Config::new().with_large_int("number");
+    [
+        board_declarations(&cfg),
+        document_declarations(&cfg),
+        task_declarations(&cfg),
+    ]
+    .into_iter()
+    .flatten()
+    .collect()
+}
+
+/// The types the frame, the feed, the queue, Reports, the task board and the agents page read.
+fn board_declarations(cfg: &Config) -> Vec<Declared> {
     vec![
-        declared::<api::ProjectView>(&cfg),
-        declared::<api::NavItem>(&cfg),
-        declared::<api::Board>(&cfg),
-        declared::<api::Card>(&cfg),
-        declared::<api::Picture>(&cfg),
-        declared::<api::Counts>(&cfg),
-        declared::<api::TaskCounts>(&cfg),
-        declared::<api::Progress>(&cfg),
-        declared::<api::Region>(&cfg),
-        declared::<api::ProgressBar>(&cfg),
-        declared::<api::Delta>(&cfg),
-        declared::<api::Change>(&cfg),
-        declared::<api::Queue>(&cfg),
-        declared::<api::QueueItem>(&cfg),
-        declared::<api::Activity>(&cfg),
-        declared::<api::ActivityItem>(&cfg),
-        declared::<api::Pending>(&cfg),
-        declared::<api::PendingItem>(&cfg),
+        declared::<api::ProjectView>(cfg),
+        declared::<api::NavItem>(cfg),
+        declared::<api::Board>(cfg),
+        declared::<api::Card>(cfg),
+        declared::<api::Picture>(cfg),
+        declared::<api::Counts>(cfg),
+        declared::<api::TaskCounts>(cfg),
+        declared::<api::Progress>(cfg),
+        declared::<api::Region>(cfg),
+        declared::<api::ProgressBar>(cfg),
+        declared::<api::Delta>(cfg),
+        declared::<api::Change>(cfg),
+        declared::<api::Queue>(cfg),
+        declared::<api::QueueItem>(cfg),
+        declared::<api::Activity>(cfg),
+        declared::<api::ActivityItem>(cfg),
+        declared::<api::Pending>(cfg),
+        declared::<api::PendingItem>(cfg),
         // Reports'.
-        declared::<api::Grain>(&cfg),
-        declared::<api::report_page::ReportMark>(&cfg),
+        declared::<api::Grain>(cfg),
+        declared::<api::report_page::ReportMark>(cfg),
         // The task board's, its tasks and the machines' work.
-        declared::<api::TaskListing>(&cfg),
-        declared::<api::Task>(&cfg),
-        declared::<api::Role>(&cfg),
-        declared::<api::FieldValue>(&cfg),
-        declared::<api::TaskChange>(&cfg),
-        declared::<api::TaskFields>(&cfg),
-        declared::<api::MachineWork>(&cfg),
-        declared::<api::MachineObservation>(&cfg),
-        declared::<api::WorkOperation>(&cfg),
-        declared::<api::WorkCounts>(&cfg),
-        declared::<api::WorkGuidance>(&cfg),
-        declared::<api::WorkFreshness>(&cfg),
-        declared::<api::WorkKind>(&cfg),
-        declared::<api::WorkState>(&cfg),
+        declared::<api::TaskListing>(cfg),
+        declared::<api::Task>(cfg),
+        declared::<api::Role>(cfg),
+        declared::<api::FieldValue>(cfg),
+        declared::<api::TaskChange>(cfg),
+        declared::<api::TaskFields>(cfg),
+        declared::<api::MachineWork>(cfg),
+        declared::<api::MachineObservation>(cfg),
+        declared::<api::WorkOperation>(cfg),
+        declared::<api::WorkCounts>(cfg),
+        declared::<api::WorkGuidance>(cfg),
+        declared::<api::WorkFreshness>(cfg),
+        declared::<api::WorkKind>(cfg),
+        declared::<api::WorkState>(cfg),
         // The agents page's: its agents, the tasks they hold and where Go to session goes.
-        declared::<api::AgentPage>(&cfg),
-        declared::<api::Agents>(&cfg),
-        declared::<api::Agent>(&cfg),
-        declared::<api::HeldTask>(&cfg),
-        declared::<api::AgentRun>(&cfg),
-        declared::<api::AgentSaid>(&cfg),
-        declared::<api::AgentSlots>(&cfg),
-        declared::<api::SessionGo>(&cfg),
-        declared::<api::AgentFocus>(&cfg),
-        declared::<api::AgentScreen>(&cfg),
+        declared::<api::AgentPage>(cfg),
+        declared::<api::Agents>(cfg),
+        declared::<api::Agent>(cfg),
+        declared::<api::HeldTask>(cfg),
+        declared::<api::AgentRun>(cfg),
+        declared::<api::AgentSaid>(cfg),
+        declared::<api::AgentSlots>(cfg),
+        declared::<api::SessionGo>(cfg),
+        declared::<api::AgentFocus>(cfg),
+        declared::<api::AgentScreen>(cfg),
+    ]
+}
+
+/// The blocks a plugin renders to, and the documents', the asks' and the uploads' types.
+fn document_declarations(cfg: &Config) -> Vec<Declared> {
+    vec![
         // The blocks a plugin renders to, and what they hold.
-        declared::<api::Block>(&cfg),
-        declared::<api::Span>(&cfg),
-        declared::<api::LinkTarget>(&cfg),
-        declared::<api::Presentation>(&cfg),
-        declared::<api::Image>(&cfg),
-        declared::<api::Cell>(&cfg),
-        declared::<api::Verdict>(&cfg),
-        declared::<api::ThreadEntry>(&cfg),
-        declared::<api::CardState>(&cfg),
-        declared::<api::CardGroup>(&cfg),
-        declared::<api::ThreadAuthor>(&cfg),
-        declared::<api::CalloutKind>(&cfg),
-        declared::<api::FigureSize>(&cfg),
-        declared::<api::ContainerKind>(&cfg),
-        declared::<api::InlineKind>(&cfg),
-        declared::<api::VectorShape>(&cfg),
-        declared::<api::VectorKind>(&cfg),
-        declared::<api::Media>(&cfg),
-        declared::<api::GalleryItem>(&cfg),
-        declared::<api::Viewer>(&cfg),
-        declared::<api::View>(&cfg),
+        declared::<api::Block>(cfg),
+        declared::<api::Span>(cfg),
+        declared::<api::LinkTarget>(cfg),
+        declared::<api::Presentation>(cfg),
+        declared::<api::Image>(cfg),
+        declared::<api::Cell>(cfg),
+        declared::<api::Verdict>(cfg),
+        declared::<api::ThreadEntry>(cfg),
+        declared::<api::CardState>(cfg),
+        declared::<api::CardGroup>(cfg),
+        declared::<api::ThreadAuthor>(cfg),
+        declared::<api::CalloutKind>(cfg),
+        declared::<api::FigureSize>(cfg),
+        declared::<api::ContainerKind>(cfg),
+        declared::<api::InlineKind>(cfg),
+        declared::<api::VectorShape>(cfg),
+        declared::<api::VectorKind>(cfg),
+        declared::<api::Media>(cfg),
+        declared::<api::GalleryItem>(cfg),
+        declared::<api::Viewer>(cfg),
+        declared::<api::View>(cfg),
         // A document's and a folder's pages: their reads, the feed's changes and the asks.
-        declared::<api::Document>(&cfg),
-        declared::<api::DocumentComparison>(&cfg),
-        declared::<api::DocumentOutline>(&cfg),
-        declared::<api::DocumentSections>(&cfg),
-        declared::<api::Crumb>(&cfg),
-        declared::<api::Heading>(&cfg),
-        declared::<api::Fragment>(&cfg),
-        declared::<api::Section>(&cfg),
-        declared::<api::Difference>(&cfg),
-        declared::<api::SectionComparison>(&cfg),
-        declared::<api::DocumentCard>(&cfg),
-        declared::<api::DocumentTask>(&cfg),
-        declared::<api::Folder>(&cfg),
-        declared::<api::FolderEntry>(&cfg),
-        declared::<api::DocumentChange>(&cfg),
-        declared::<api::SectionPosition>(&cfg),
-        declared::<api::ItemChange<api::DocumentCard>>(&cfg),
-        declared::<api::Version>(&cfg),
-        declared::<api::DocumentDiff>(&cfg),
-        declared::<api::Ask>(&cfg),
-        declared::<api::AskAnswer>(&cfg),
-        declared::<api::AskMessage>(&cfg),
+        declared::<api::Document>(cfg),
+        declared::<api::DocumentComparison>(cfg),
+        declared::<api::DocumentOutline>(cfg),
+        declared::<api::DocumentSections>(cfg),
+        declared::<api::Crumb>(cfg),
+        declared::<api::Heading>(cfg),
+        declared::<api::Fragment>(cfg),
+        declared::<api::Section>(cfg),
+        declared::<api::Difference>(cfg),
+        declared::<api::SectionComparison>(cfg),
+        declared::<api::DocumentCard>(cfg),
+        declared::<api::DocumentTask>(cfg),
+        declared::<api::Folder>(cfg),
+        declared::<api::FolderEntry>(cfg),
+        declared::<api::DocumentChange>(cfg),
+        declared::<api::SectionPosition>(cfg),
+        declared::<api::ItemChange<api::DocumentCard>>(cfg),
+        declared::<api::Version>(cfg),
+        declared::<api::DocumentDiff>(cfg),
+        declared::<api::Ask>(cfg),
+        declared::<api::AskAnswer>(cfg),
+        declared::<api::AskMessage>(cfg),
         // A file attached to a post.
-        declared::<api::Upload>(&cfg),
+        declared::<api::Upload>(cfg),
+    ]
+}
+
+/// The types a task's page reads, after the others in wire.ts.
+fn task_declarations(cfg: &Config) -> Vec<Declared> {
+    vec![
+        // A task's page: its brief, thread, landing offer and gates (its holders' sessions are the
+        // agents page's types).
+        declared::<api::TaskPage>(cfg),
+        declared::<api::TaskEntry>(cfg),
+        declared::<api::Message>(cfg),
+        declared::<api::TaskHistory>(cfg),
+        declared::<api::TaskBrief>(cfg),
+        declared::<api::TaskOffer>(cfg),
+        declared::<api::TaskGates>(cfg),
+        declared::<api::Gate>(cfg),
+        declared::<api::GatePast>(cfg),
+        declared::<api::GateState>(cfg),
+        declared::<api::GatesSeen>(cfg),
+        // Its timeline.
+        declared::<api::TaskTimeline>(cfg),
+        declared::<api::timeline::Offset>(cfg),
+        declared::<api::timeline::Stage>(cfg),
+        declared::<api::timeline::Claim>(cfg),
+        declared::<api::timeline::Round>(cfg),
+        declared::<api::timeline::Verdict>(cfg),
+        declared::<api::timeline::Run>(cfg),
+        declared::<api::timeline::RunResult>(cfg),
+        declared::<api::timeline::GateLane>(cfg),
+        declared::<api::timeline::GateSpan>(cfg),
     ]
 }
 
@@ -582,15 +634,55 @@ const CARRIED: &[(&str, &str, &str)] = &[
     (BLOCKS_MEDIA, "is_name", "isName, src/media.tsx"),
     (BLOCKS_MEDIA, "is_element", "isElement, src/media.tsx"),
     (BLOCKS_MEDIA, "escape", "escapeText, src/media.tsx"),
-    (API_AGENTS, "web_address", "webAddress, src/session.tsx"),
-    (API_AGENTS, "control", "sessionControl, src/session.tsx"),
-    (API_AGENTS, "via_parent", "sessionControl, src/session.tsx"),
     (API_REPORT_PAGE, "parse", "parseGrain, src/reports.tsx"),
     (
         API_REPORT_PAGE,
         "default_days",
         "defaultDays, src/reports.tsx",
     ),
+    (API_AGENTS, "web_address", "webAddress, src/links.ts"),
+    (API_AGENTS, "control", "sessionControl, src/session.tsx"),
+    (API_AGENTS, "via_parent", "viaParent, src/session.tsx"),
+    (API_LINKS, "app_path", "appPath, src/links.ts"),
+    (API_LINKS, "linkable", "linkable, src/links.ts"),
+    (API_GATES, "count", "countOf, src/gates-model.ts"),
+    (API_GATES, "waiting", "waitingGates, src/gates-model.ts"),
+    (API_GATES, "seen", "seenOf, src/gates-model.ts"),
+    (
+        BLOCKS_GATES,
+        "unsaid_commit",
+        "unsaidCommit, src/gates-model.ts",
+    ),
+    (BLOCKS_GATES, "signed", "signed, src/gates-model.ts"),
+    (BLOCKS_GATES, "waits", "waits, src/gates-model.ts"),
+    (
+        API_TIMELINE,
+        "offset_at",
+        "offsetAt, src/timeline-layout.ts",
+    ),
+    (
+        API_TIMELINE,
+        "every_seconds",
+        "everySeconds, src/timeline-layout.ts",
+    ),
+    (API_TIMELINE, "end", "timelineEnd, src/timeline-layout.ts"),
+    (
+        API_TIMELINE,
+        "machine_seconds",
+        "machineSeconds, src/timeline-layout.ts",
+    ),
+    (
+        API_TIMELINE,
+        "queued_seconds",
+        "queuedSeconds, src/timeline-layout.ts",
+    ),
+    (
+        API_TIMELINE,
+        "seconds",
+        "stageSeconds, src/timeline-layout.ts",
+    ),
+    (API_TIMELINE, "waited", "waited, src/timeline-layout.ts"),
+    (API_TIMELINE, "ran", "ran, src/timeline-layout.ts"),
 ];
 
 /// The files [`CARRIED`] names, by their path in the repository.
@@ -600,8 +692,12 @@ const API_TASK_QUERIES: &str = "crates/symphony-api/src/task_queries.rs";
 const API_MACHINE_WORK: &str = "crates/symphony-api/src/machine_work.rs";
 const API_TASK_STAGE: &str = "crates/symphony-api/src/task_stage.rs";
 const API_REPORT_PAGE: &str = "crates/symphony-api/src/report_page.rs";
-const API_AGENTS: &str = "crates/symphony-api/src/agents.rs";
 const BLOCKS_MEDIA: &str = "crates/symphony-blocks/src/media.rs";
+const API_AGENTS: &str = "crates/symphony-api/src/agents.rs";
+const API_LINKS: &str = "crates/symphony-api/src/links.rs";
+const API_GATES: &str = "crates/symphony-api/src/gates.rs";
+const BLOCKS_GATES: &str = "crates/symphony-blocks/src/gates.rs";
+const API_TIMELINE: &str = "crates/symphony-api/src/timeline.rs";
 
 /// Each of [`CARRIED`]: its name, the TypeScript that carries it, and its source, line by line.
 fn carried() -> Result<Value, String> {
@@ -616,6 +712,10 @@ fn carried() -> Result<Value, String> {
                 API_REPORT_PAGE => include_str!("../src/report_page.rs"),
                 API_AGENTS => include_str!("../src/agents.rs"),
                 BLOCKS_MEDIA => include_str!("../../symphony-blocks/src/media.rs"),
+                API_LINKS => include_str!("../src/links.rs"),
+                API_GATES => include_str!("../src/gates.rs"),
+                BLOCKS_GATES => include_str!("../../symphony-blocks/src/gates.rs"),
+                API_TIMELINE => include_str!("../src/timeline.rs"),
                 _ => include_str!("../src/lib.rs"),
             };
             Ok(json!({
@@ -1297,6 +1397,7 @@ fn sampled_agent() -> api::Agent {
             role: "executor".into(),
             status: "in_progress".into(),
         }],
+        following: 2,
         worktree: "/tmp/w/a".into(),
         branch: "w/a".into(),
         agent: Some("claude".into()),
@@ -1338,6 +1439,7 @@ fn bare_agent() -> api::Agent {
         task: None,
         role: None,
         tasks: Vec::new(),
+        following: 0,
         worktree: String::new(),
         branch: String::new(),
         agent: None,

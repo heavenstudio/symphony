@@ -12,19 +12,19 @@ fn all_options_visible(page: &mut crate::Chrome) {
 /// A script true once the task page has nothing left to draw and is scrolled to its true bottom.
 /// Its end moves until then: the gates' answer, the thread's, a read's failure in the page's
 /// notices, the timeline's, each comes when it comes, after the composer may already show
-/// (`viewport::Settle` lets it out after three seconds whatever is still reading). So the page has
-/// drawn its data and is idle (the shell loads a task's timeline only then, and its answer is
-/// drawn), nothing on it is busy reading or waits for its read, its feed not stale; each look
-/// scrolls to the bottom again.
+/// (`Settle` lets it out after three seconds whatever is still reading). So the page has drawn its
+/// data and is idle (its timeline's box loads the timeline only then, and its answer is drawn),
+/// nothing on it is busy reading or waits for its read, its feed not stale; each look scrolls to
+/// the bottom again.
 const AT_REST_AT_THE_BOTTOM: &str = "(() => {
     scrollTo(0, document.documentElement.scrollHeight);
-    return window.reviewTimelineReady === true && document.querySelector('#timeline .tl-drawn') !== null
+    return document.getElementById('timeline-root') !== null && document.querySelector('#timeline .tl-drawn') !== null
         && document.querySelector('[aria-busy=true], [data-pending=true], main[data-feed=stale]') === null
         && scrollY + innerHeight >= document.documentElement.scrollHeight - 1;
 })()";
 
 /// What [`AT_REST_AT_THE_BOTTOM`] reads, for a failure to say.
-const AT_REST: &str = "({timeline: [window.reviewTimelineReady ?? null, document.querySelector('#timeline .tl-drawn') !== null],
+const AT_REST: &str = "({timeline: [document.getElementById('timeline-root') !== null, document.querySelector('#timeline .tl-drawn') !== null],
     busy: [...document.querySelectorAll('[aria-busy=true], [data-pending=true]')].map(e => e.id || e.className || e.tagName),
     feed: document.querySelector('main')?.dataset.feed ?? null,
     scroll: scrollY, height: innerHeight, page: document.documentElement.scrollHeight})";

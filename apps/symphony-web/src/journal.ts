@@ -1,6 +1,6 @@
 // What a page that reads the board's lists while its feed runs keeps of the feed meanwhile: the task
 // board's and the agents page's, so no other kind carries it. An answer read while events came is
-// drawn with them replayed onto it, and a live update keeps what the reader looks at in place.
+// drawn with them replayed onto it.
 
 /**
  * The feed's events since a read began, for each read still out: an answer read meanwhile is drawn
@@ -45,9 +45,4 @@ export class ReadCursor {
     const oldest = Math.min(...journal.readers.keys());
     journal.events = journal.events.filter(([version]) => version > oldest);
   }
-}
-
-/** A live update about to be drawn keeps what the reader looks at in place (shell.js). */
-export function holdPlace(rows: string): void {
-  (window as { reviewHoldPlace?: (rows: string) => void }).reviewHoldPlace?.(rows);
 }
