@@ -43,6 +43,12 @@ const CLEANUP_CPU: Duration = Duration::from_secs(1);
 /// wait well past its allowance, neither of which may end it.
 const BACKSTOP_TIMES: u32 = 6;
 const BACKSTOP_FLOOR: Duration = Duration::from_secs(120);
+/// The longest a launch waits on the wall for Chrome to open DevTools, by the rule every wait here
+/// keeps: [`BACKSTOP_TIMES`] its CPU allowance ([`PROTOCOL_CPU`]), six minutes. Chrome opens
+/// DevTools on about half a second of its group's CPU, in under a second on a quiet machine, which
+/// a loaded machine's fair share stretches to tens of seconds: only a Chrome that stalled, alive and
+/// spending next to nothing, reaches it.
+const LAUNCH_BACKSTOP: Duration = PROTOCOL_CPU.saturating_mul(BACKSTOP_TIMES);
 /// A probe of the page under test unanswered this long goes again, so no reply lost to a
 /// navigation leaves the page's turns uncounted.
 const PROBE_AGAIN: Duration = Duration::from_secs(1);
@@ -686,23 +692,31 @@ impl Owner {
         })
     }
 
-    fn snapshot(&self) -> std::io::Result<Vec<process::Member>> {
-        let group = std::fs::read_to_string(self.profile.join("browser.pid"))
+    /// The browser's process id, which leads its group, once its leash has recorded it.
+    fn browser(&self) -> Option<u32> {
+        std::fs::read_to_string(self.profile.join("browser.pid"))
             .ok()
             .filter(|text| text.ends_with('\n'))
             .and_then(|text| text.trim().parse::<u32>().ok())
             .filter(|pid| *pid > 0)
-            .unwrap_or(self.leash.id());
-        process::members(group)
     }
 
-    /// Success comes only from the handshake; exit and CPU exhaustion report broken startup.
+    fn snapshot(&self) -> std::io::Result<Vec<process::Member>> {
+        process::members(self.browser().unwrap_or(self.leash.id()))
+    }
+
+    /// Success comes only from the handshake. The leash's exit (which the browser's own exit
+    /// makes), `cpu` of the group's CPU spent, or the wall-clock `backstop` reached first by a
+    /// browser alive that neither answered nor spent its CPU (a stall) fails it, saying what was
+    /// seen.
     fn ready<T>(
         &mut self,
         what: &str,
         cpu: Duration,
+        backstop: Duration,
         mut handshake: impl FnMut(&Path) -> Option<T>,
     ) -> std::io::Result<T> {
+        let started = Instant::now();
         let mut budget = process::Budget::new(cpu, &self.snapshot()?);
         loop {
             if let Some(value) = handshake(&self.profile) {
@@ -713,10 +727,38 @@ impl Owner {
                     "Chrome's leash exited {status} before {what}"
                 )));
             }
-            if budget.exhausted(&self.snapshot()?) {
+            let browser = self.browser();
+            let members = process::members(browser.unwrap_or(self.leash.id()))?;
+            if budget.exhausted(&members) {
                 return Err(std::io::Error::new(
                     ErrorKind::TimedOut,
                     format!("Chrome spent {:?} CPU without {what}", budget.used()),
+                ));
+            }
+            let waited = started.elapsed();
+            if waited >= backstop {
+                let watched = match browser {
+                    Some(pid) => format!(
+                        "Chrome (pid {pid}) has {} alive in its group, which",
+                        match members.len() {
+                            1 => "1 process".to_string(),
+                            alive => format!("{alive} processes"),
+                        }
+                    ),
+                    None => format!(
+                        "its leash (pid {}) had not recorded Chrome's pid, and",
+                        self.leash.id()
+                    ),
+                };
+                return Err(std::io::Error::new(
+                    ErrorKind::TimedOut,
+                    format!(
+                        "Chrome stalled before {what}: {watched} spent {:?} CPU in the wait, \
+                         and the launch's wall-clock backstop of {backstop:.1?} ran out after \
+                         {waited:.1?}; {}",
+                        budget.used(),
+                        load_said(load_average())
+                    ),
                 ));
             }
             std::thread::sleep(POLL);
@@ -887,6 +929,25 @@ impl Drop for Owner {
     }
 }
 
+/// The machine's load average over 1, 5 and 15 minutes, as `getloadavg` reads it.
+fn load_average() -> Option<[f64; 3]> {
+    let mut load = [0.0f64; 3];
+    // SAFETY: writes at most three doubles into `load`, which holds three.
+    let read = unsafe { libc::getloadavg(load.as_mut_ptr(), 3) };
+    (read == 3).then_some(load)
+}
+
+/// A load average as a stall's error says it, in the words of the tests' own stalls
+/// (`test_time::Load`).
+fn load_said(load: Option<[f64; 3]>) -> String {
+    match load {
+        Some([one, five, fifteen]) => {
+            format!("load average {one:.2} {five:.2} {fifteen:.2} over 1, 5 and 15 minutes")
+        }
+        None => "no load average to read".into(),
+    }
+}
+
 /// The launcher's output reader may die before its leash. Diagnostics must never interrupt cleanup.
 fn leash_report(message: fmt::Arguments<'_>) {
     use std::io::Write;
@@ -1022,11 +1083,23 @@ pub const PHONE: (u32, u32, u32) = (390, 844, 3);
 
 impl Chrome {
     /// Chrome at `binary`, on a new profile, under a leash `leash` starts, with one blank page
-    /// attached and its page and network events on.
+    /// attached and its page and network events on. A Chrome that exits first, spends a minute of
+    /// CPU without opening DevTools, or stalls, alive and opening none, for six minutes on the wall,
+    /// fails its launch with an error saying which.
     pub fn launch(binary: &str, leash: &Leash) -> Result<Chrome> {
+        Self::launch_within(binary, leash, LAUNCH_BACKSTOP)
+    }
+
+    /// [`Chrome::launch`], waiting at most `backstop` on the wall for Chrome to open DevTools.
+    fn launch_within(binary: &str, leash: &Leash, backstop: Duration) -> Result<Chrome> {
         let mut owner = Owner::launch(binary, leash)?;
         let (port, path) = owner
-            .ready("DevTools port readiness", PROTOCOL_CPU, devtools_endpoint)
+            .ready(
+                "DevTools port readiness",
+                PROTOCOL_CPU,
+                backstop,
+                devtools_endpoint,
+            )
             .map_err(|error| {
                 Error::new(format!(
                     "Chrome DevTools readiness: {error}; {}",
