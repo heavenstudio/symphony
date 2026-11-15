@@ -312,7 +312,10 @@ async fn read(shared: &Arc<Shared>, request: Request) -> Option<Response> {
     }
     if path == symphony_api::RUN_PATH {
         let Some(run) = query(&request, "run").filter(|run| !run.is_empty()) else {
-            return Some(error(StatusCode::BAD_REQUEST, "run is required: a run's id"));
+            return Some(error(
+                StatusCode::BAD_REQUEST,
+                "run is required: a run's id",
+            ));
         };
         let Some(hub) = shared.api.get().cloned() else {
             return Some(error(
