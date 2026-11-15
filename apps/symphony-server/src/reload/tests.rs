@@ -1117,7 +1117,10 @@ fn a_build_dropped_for_sources_unread_after_it_is_tried_again_after_the_wait() {
     assert_eq!(server.stamp(), None, "the build's result was dropped");
     assert!(symphony::reload::fingerprint(&server.root).is_err());
     git(&server.root, &["symbolic-ref", "HEAD", "refs/heads/main"]);
-    assert_eq!(symphony::reload::fingerprint(&server.root).unwrap(), version);
+    assert_eq!(
+        symphony::reload::fingerprint(&server.root).unwrap(),
+        version
+    );
     clock.at(5 * MINUTE - Duration::from_secs(1));
     assert_eq!(server.builds().len(), 1, "not before 5 min");
     // Its try is kept, a failure no more, so the clock is read no further.
