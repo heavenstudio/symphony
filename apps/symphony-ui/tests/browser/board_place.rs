@@ -99,7 +99,7 @@ fn open(page: &mut Chrome, site: &Site, width: u32, height: u32) {
     page.open(&site.url("/tasks"));
     assert!(
         page.wait_for(
-            "document.querySelector('main[data-feed=live] .board-scroll .column[data-status=ready] .taskcard') !== null && document.documentElement.dataset.navigation === 'ready'",
+            "document.querySelector('main[data-feed=live] .board-scroll .taskcard') !== null && document.documentElement.dataset.navigation === 'ready'",
             SHOWN
         ),
         "{width}px: the board never drew live: {}",
@@ -110,18 +110,24 @@ fn open(page: &mut Chrome, site: &Site, width: u32, height: u32) {
     }
 }
 
-/// True once no row within its sentinel's reach of what the board's scroller shows (600 px above
-/// and below) still waits for its card: what is near the screen is drawn, and stays as it is.
-const SETTLED: &str = "(() => {
-    const box = document.querySelector('.board-scroll').getBoundingClientRect();
-    return ![...document.querySelectorAll('.board-scroll .board-row [data-pending=true]')].some(row => {
-        const r = row.getBoundingClientRect();
-        return r.bottom > box.top - 600 && r.top < box.bottom + 600 && r.right > box.left && r.left < box.right;
+/// What the board's scroller shows inside its scrollbars, its place, and what in it still waits
+/// to draw (a column's rows, a row's card) within its sentinel's reach (600 px above and below,
+/// `.viewport-sentinel`) of what it shows: each one's id and box. A pixel short of the reach,
+/// which a sentinel's edge meets or not as the layout rounds.
+const WAITING: &str = "(() => {
+    const board = document.querySelector('.board-scroll'), box = board.getBoundingClientRect();
+    const top = box.top + board.clientTop, left = box.left + board.clientLeft;
+    const bottom = top + board.clientHeight, right = left + board.clientWidth;
+    const near = [...board.querySelectorAll('[data-pending=true]')].flatMap(part => {
+        const r = part.getBoundingClientRect();
+        return r.bottom > top - 599 && r.top < bottom + 599 && r.right > left && r.left < right
+            ? [[part.closest('[id]')?.id ?? part.closest('.column')?.dataset.status, Math.round(r.top), Math.round(r.bottom), Math.round(r.left), Math.round(r.right)]] : [];
     });
+    return {width: innerWidth, shows: [top, bottom, left, right], left: board.scrollLeft, top: board.scrollTop, near};
 })()";
 
 /// The board's scroller at `top`, sideways where the column `status` starts (a place it snaps
-/// to), once its rows near the screen are drawn.
+/// to), once what is near what it shows is drawn (`WAITING`), and stays as it is.
 fn scroll_board(page: &mut Chrome, status: &str, top: u32) {
     page.eval(&format!(
         "(() => {{ const board = document.querySelector('.board-scroll'), column = document.querySelector('.column[data-status={status}]');
@@ -129,21 +135,33 @@ fn scroll_board(page: &mut Chrome, status: &str, top: u32) {
             board.scrollTop = {top}; }})()"
     ));
     assert!(
-        page.wait_for(SETTLED, SHOWN),
-        "the rows near the screen never drew: {}",
+        page.wait_for(&format!("{WAITING}.near.length === 0"), SHOWN),
+        "what is near the screen never drew: {}",
         page.eval(WAITING)
+    );
+    // A card the browser draws only near the screen (`content-visibility`, board.css) takes its
+    // own height a frame or two after its row came in: the board stands once ten frames in a row
+    // move no card on the screen.
+    page.eval(STILL);
+    assert!(
+        page.wait_for("window.boardStill >= 10", SHOWN),
+        "the cards on the screen never stood still"
     );
 }
 
-/// The board's scroller's box, its place, and each row near it still waiting: its id and box.
-const WAITING: &str = "(() => {
-    const board = document.querySelector('.board-scroll'), box = board.getBoundingClientRect();
-    const near = [...document.querySelectorAll('.board-scroll .board-row [data-pending=true]')].flatMap(row => {
-        const r = row.getBoundingClientRect();
-        return r.bottom > box.top - 600 && r.top < box.bottom + 600 && r.right > box.left && r.left < box.right
-            ? [[row.closest('.board-row').id, Math.round(r.top), Math.round(r.bottom), Math.round(r.left), Math.round(r.right)]] : [];
-    });
-    return {width: innerWidth, box: [box.top, box.bottom, box.left, box.right], left: board.scrollLeft, top: board.scrollTop, near};
+/// Count the frames in a row in which no card on the board's scroller moved, in `boardStill`,
+/// up to ten.
+const STILL: &str = "(() => {
+    const cards = () => { const box = document.querySelector('.board-scroll').getBoundingClientRect();
+        return JSON.stringify([...document.querySelectorAll('.board-scroll .taskcard')].flatMap(card => {
+            const r = card.getBoundingClientRect();
+            return r.bottom > box.top && r.top < box.bottom && r.right > box.left && r.left < box.right ? [[card.dataset.slug, r.top, r.left]] : [];
+        })); };
+    window.boardStill = 0;
+    let last = cards();
+    const frame = () => { const now = cards(); window.boardStill = now === last ? window.boardStill + 1 : 0; last = now;
+        if (window.boardStill < 10) requestAnimationFrame(frame); };
+    requestAnimationFrame(frame);
 })()";
 
 /// The first card of the column `status` whose top is on the board's scroller: its slug and how
@@ -316,9 +334,11 @@ const PLACE: &str = "(() => { const board = document.querySelector('.board-scrol
     return board ? [Math.round(board.scrollLeft), Math.round(scrollY), FIRST] : null; })()";
 
 /// Back from a task opened from its card in Ready draws the board where the reader left it: its
-/// scroller sideways, Ready's first card on the screen where it stood (the rows above it drawn
-/// again, as ghosts or cards, at whatever height), and the window down the page; on a desk, the
-/// board scrolled to Design, Ready beside it, and on a phone, where Ready fills its width.
+/// scroller sideways, Ready's first card on the screen where it stood (the board drawn again
+/// with no rows, then each column's as ghosts, then cards, at whatever height), and the window
+/// down the page. On a desk the board is scrolled to Design, Ready beside it: Design's two cards
+/// end above the screen, where the browser would snap a sideways scroll to another column. On a
+/// phone Ready fills its width.
 #[test]
 fn back_from_a_task_draws_the_board_where_the_reader_left_it() {
     let place = PLACE.replace("FIRST", &first_on_screen("ready"));

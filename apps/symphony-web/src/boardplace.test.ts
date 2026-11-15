@@ -372,6 +372,8 @@ describe("the board's place kept", () => {
   /** The board's rows on the page. */
   let onPage: Element[];
   const replaced = vi.fn();
+  /** The shell's hold (`reviewHoldPlace`). */
+  const held = vi.fn();
 
   beforeEach(() => {
     listeners = [];
@@ -379,6 +381,8 @@ describe("the board's place kept", () => {
     entry = { state: null };
     navigation = "ready";
     replaced.mockClear();
+    held.mockClear();
+    vi.stubGlobal("window", { reviewHoldPlace: held });
     vi.useFakeTimers();
     vi.stubGlobal("location", { pathname: "/tasks", href: "http://here/tasks" });
     vi.stubGlobal("history", {
@@ -428,30 +432,36 @@ describe("the board's place kept", () => {
     }
   }
 
+  /** Rows of a column: each its slug and how far down the column it stands. */
+  type Rows = [slug: string, offset: number][];
+
   /**
    * The board's scroller, its box 100 to 600 down and 0 to 900 sideways, showing one column,
    * Ready's, whose rows are `rows` (each its slug and how far down the column it stands), on the
    * screen where the scroller's top puts them, and on the page (`getElementById`).
    */
-  function surface(rows: [slug: string, offset: number][] = []): Scroller {
+  function surface(rows: Rows = []): Scroller & { draw: (rows: Rows) => void } {
     const box = { top: 100, bottom: 600, left: 0, right: 900 };
     const scroller = { scrollLeft: 0, scrollTop: 0 } as Scroller;
-    const made = rows.map(([slug, offset]) => {
-      const top = box.top + offset;
-      const edges = () => ({ top: top - scroller.scrollTop, left: 0, right: 288 });
-      return { id: `row-${slug}`, getBoundingClientRect: edges } as unknown as Element;
-    });
-    onPage = made;
     const column = element({
       attributes: { "data-status": "ready" },
       box: { left: 0, right: 288 },
     });
-    const all: Record<string, Element[]> = {
-      ".column[data-status]": [column],
-      [ROW_IDS]: made,
-      [rowsOf("ready")]: made,
+    const all: Record<string, Element[]> = { ".column[data-status]": [column] };
+    /** Draw Ready's rows as `rows`, in place of those it had. */
+    const draw = (rows: Rows) => {
+      const made = rows.map(([slug, offset]) => {
+        const top = box.top + offset;
+        const edges = () => ({ top: top - scroller.scrollTop, left: 0, right: 288 });
+        return { id: `row-${slug}`, getBoundingClientRect: edges } as unknown as Element;
+      });
+      all[ROW_IDS] = made;
+      all[rowsOf("ready")] = made;
+      onPage = made;
     };
+    draw(rows);
     return Object.assign(scroller, {
+      draw,
       getBoundingClientRect: () => box,
       querySelectorAll: (selector: string) => all[selector] ?? [],
       querySelector: (selector: string) => all[selector]?.[0] ?? null,
@@ -496,8 +506,6 @@ describe("the board's place kept", () => {
   });
 
   it("returns to its row where it stood when the rows above it are drawn at another height", () => {
-    const held = vi.fn();
-    vi.stubGlobal("reviewHoldPlace", held);
     entry.state = { board: { left: 0, top: 250, page: 0, row: "w/b", at: 50 } };
     // The row above is 40 px taller drawn again (its card, where a ghost stood).
     const { keeper: kept, scroller } = keeper(
@@ -513,15 +521,62 @@ describe("the board's place kept", () => {
     expect(held).toHaveBeenCalledExactlyOnceWith(rowOf("w/b"));
   });
 
-  it("returns to the scroller's top, holding nothing, while its row is not on the page", () => {
-    const held = vi.fn();
-    vi.stubGlobal("reviewHoldPlace", held);
+  it("returns to the scroller's top while its row is not on the page yet, then to its row", () => {
+    entry.state = { board: { left: 0, top: 250, page: 0, row: "w/b", at: 50 } };
+    // The board's first draw: its columns' rows not drawn yet.
+    const scroller = surface();
+    const { keeper: kept } = keeper(scroller);
+    kept.back();
+    expect(scroller.scrollTop).toBe(250);
+    expect(frames).toHaveLength(1);
+    expect(held).not.toHaveBeenCalled();
+    // Its column draws its rows, the ones above taller than they were.
+    scroller.draw([
+      ["w/a", 0],
+      ["w/b", 340],
+    ]);
+    expect(frame()).toBe(1);
+    expect(scroller.scrollTop).toBe(290);
+    expect(frames).toEqual([]);
+    expect(held).toHaveBeenCalledExactlyOnceWith(rowOf("w/b"));
+  });
+
+  it("gives up at the scroller's top, holding nothing, when its row never comes", () => {
     entry.state = { board: { left: 0, top: 250, page: 0, row: "w/b", at: 50 } };
     const { keeper: kept, scroller } = keeper(surface([["w/a", 0]]));
     kept.back();
+    let ran = 1;
+    while (frame() > 0) ran += 1;
+    expect(ran).toBe(RETURN_FRAMES);
     expect(scroller.scrollTop).toBe(250);
-    expect(frames).toEqual([]);
     expect(held).not.toHaveBeenCalled();
+  });
+
+  it("goes sideways at the columns' tops, where each snaps, and only when not there", () => {
+    entry.state = { board: { left: 300, top: 900, page: 0 } };
+    const scroller = surface();
+    // Where the scroller stood down its columns each time it went sideways.
+    const across: number[] = [];
+    let left = 0;
+    Object.defineProperty(scroller, "scrollLeft", {
+      get: () => left,
+      set: (to: number) => {
+        across.push(scroller.scrollTop);
+        left = to;
+      },
+    });
+    scroller.scrollTop = 600;
+    navigation = "loading";
+    const { keeper: kept } = keeper(scroller);
+    kept.back();
+    expect([left, scroller.scrollTop]).toEqual([300, 900]);
+    // Already there sideways: the frames after go only down.
+    scroller.scrollTop = 0;
+    navigation = "ready";
+    frame();
+    expect(across).toEqual([0]);
+    expect([left, scroller.scrollTop]).toEqual([300, 900]);
+    expect(frames).toEqual([]);
   });
 
   it("goes on returning while its row cannot reach its place yet", () => {
@@ -542,9 +597,11 @@ describe("the board's place kept", () => {
     expect(frame()).toBe(1);
     expect(frames).toHaveLength(1);
     most = 1000;
+    expect(held).not.toHaveBeenCalled();
     frame();
     expect(top).toBe(290);
     expect(frames).toEqual([]);
+    expect(held).toHaveBeenCalledExactlyOnceWith(rowOf("w/b"));
   });
 
   it("is written at once before a link is followed, the rest's wait dropped", () => {

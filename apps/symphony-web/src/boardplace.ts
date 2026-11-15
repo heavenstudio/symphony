@@ -4,6 +4,7 @@
 // history entry, which Back draws the board at again. What draws the board is board.tsx's.
 
 import { type RefObject, useLayoutEffect, useRef } from "react";
+import { holdPlace } from "./journal";
 import { useMount } from "./mount";
 
 /** Every card of the board: what a live update holds in place when no column is the reader's. */
@@ -120,11 +121,6 @@ export function anchorOf(scroller: Surface): Anchor | null {
 /** What the shell's hold (`reviewHoldPlace`) keeps in place: the row of the task `slug`. */
 export function rowOf(slug: string): string {
   return `[id="row-${slug.replace(/["\\]/g, "\\$&")}"]`;
-}
-
-/** Hold what `rows` names in place while the board draws around it (shell.js). */
-function holdPlace(rows: string): void {
-  (globalThis as { reviewHoldPlace?: (rows: string) => void }).reviewHoldPlace?.(rows);
 }
 
 /** What in a card takes the focus, in the order Tab reaches it. */
@@ -282,6 +278,22 @@ export class PlaceKeeper {
   };
 
   /**
+   * Scroll the board sideways to `place`, if it is not there. Its scroller snaps a sideways scroll
+   * to a column's start (board.css), and the browser snaps only to a column that shows in the
+   * scroller's height: down the board a short column has ended above the screen, and a scroll to
+   * it would snap to another. So it goes sideways at the columns' tops, where each shows, and
+   * back down, in one go the screen never draws between.
+   */
+  private across(place: Place): void {
+    const { scroller } = this;
+    if (Math.round(scroller.scrollLeft) === place.left) return;
+    const down = scroller.scrollTop;
+    scroller.scrollTop = 0;
+    scroller.scrollLeft = place.left;
+    scroller.scrollTop = down;
+  }
+
+  /**
    * Scroll the board down to `place`: its row (`row`, if on the page) back where it stood on the
    * screen, else the scroller's top. Whether it is there.
    */
@@ -299,10 +311,10 @@ export class PlaceKeeper {
 
   /**
    * Return to the place the entry keeps, if it keeps one: the scroller's at once and each frame
-   * until it is there (its rows come in while it reads), and the window's once the shell's
-   * navigation is ready (it puts the window at its top before), for RETURN_FRAMES at most; then
-   * the shell's hold keeps the row there while the rows near it draw their cards. The reader's
-   * own gesture ends it where they took over.
+   * until it is there (its rows come in while it reads, the kept one among them), and the
+   * window's once the shell's navigation is ready (it puts the window at its top before), for
+   * RETURN_FRAMES at most; then the shell's hold keeps the row there while the rows near it draw
+   * their cards. The reader's own gesture ends it where they took over.
    */
   back(): void {
     this.returning?.abort();
@@ -321,9 +333,11 @@ export class PlaceKeeper {
     let frames = 0;
     const step = () => {
       if (returning.signal.aborted) return;
-      this.scroller.scrollLeft = place.left;
+      this.across(place);
       const row = place.row === undefined ? null : document.getElementById(`row-${place.row}`);
-      const down = this.down(place, row);
+      // The board's first draw holds no rows yet (each column draws them once near the screen):
+      // the place is its row's once the row is on the page, the scroller's top only until then.
+      const down = this.down(place, row) && (place.row === undefined || row !== null);
       const ready = document.documentElement.dataset.navigation === "ready";
       if (ready && Math.round(scrollY) !== place.page) scrollTo(scrollX, place.page);
       const there =
