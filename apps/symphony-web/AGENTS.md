@@ -199,13 +199,14 @@ again, a style sheet's change applies in place, and an error in a module is draw
 
 A reload, not React's Fast Refresh (`@vitejs/plugin-react`): that would be a dependency more and
 one more script put in a page Vite does not serve, and it keeps a component's state only across an
-edit to a module that exports components alone, which few of these do; a page here draws again at
-once from the device's cache, and keeps its drafts on every input. What only a build makes it does
+edit to a module that exports components alone, which few of these do, and most pages here draw
+again at once from the device's cache and keep their drafts on every input. What only a build makes it does
 not show: the shared stylesheet and the program's kinds are the server's build's (an edit to the
 Dioxus client's sheets, `board.css` among them, shows once `just symphony-ui-dist` has built them
 and the server serves that build, `SYMPHONY_UI_DIST` naming its `public/` for another project),
-React is its development build, and the bytes are no build's. It is no part of a build, the
-regenerator or a check; `src/dev-server.test.ts` holds what it does.
+React is its development build, and the bytes are no build's. No build, regenerator or check runs
+it (its files count in the regenerator's key, as every file of this package does);
+`src/dev-server.test.ts` holds what it does.
 
 ## Reports
 
