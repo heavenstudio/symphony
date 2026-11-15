@@ -533,10 +533,11 @@ hours of any span sum to that span's figure (a day, a week, a local day):
 - **Waits**, each counted in the hour it ended:
   - approved to landed: the approve the landing went by, to the landing;
   - in review to a reviewer: a move into review, to the first session that joins the task as its
-    reviewer or claims a review subtask of it while it is in review; where a reviewer held it at
-    the move (a re-review whose reviewer kept the role, the usual case), to the first line since
-    the move of a session holding the role, up to the verdict that ends the stretch; and no wait
-    at all when none came before the task left review;
+    reviewer or claims a review subtask of it while it is in review, and no wait at all when none
+    came before the task left review: so a re-review whose reviewer kept the role, the usual case,
+    has none, as the board's lines cannot tell when that reviewer came back (its first line is its
+    verdict, which would make the wait the review itself), and this wait is the first round's
+    staffing;
   - a `changes` verdict to its executor resuming: the first claim of the task after it, or a post,
     move or verdict by a session holding its executor role then, its release left out (board lines
     alone: an executor that works without a word reads as resumed at its move to review);

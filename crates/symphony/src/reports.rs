@@ -129,19 +129,20 @@ fn cards(mut docs: Vec<Doc>, branch_cards: &[BranchCard], plugins: &Plugins) -> 
         let card = docs[page].decisions.iter().position(|c| c.slug == slug)?;
         Some((page, card))
     };
-    let mains: Vec<&BranchCard> = branch_cards
+    // Each branch card main has too, with main's page's place, which stands through the merge: it
+    // takes cards out of pages and adds pages after them, never taking a page out.
+    let mains: Vec<(&BranchCard, usize)> = branch_cards
         .iter()
-        .filter(|b| !b.on_main && place(&docs, &b.doc, &b.card.slug).is_some())
+        .filter(|b| !b.on_main)
+        .filter_map(|b| Some((b, place(&docs, &b.doc, &b.card.slug)?.0)))
         .collect();
     crate::dashboard::merge_decisions(&mut docs, branch_cards, plugins);
-    for branch in mains {
+    for (branch, main) in mains {
         let Some((page, card)) = place(&docs, &branch.path(), &branch.card.slug) else {
             continue; // no proposal: main's copy says it all, or closed the card after it
         };
         let card = docs[page].decisions.remove(card);
-        if let Some(main) = docs.iter_mut().find(|doc| doc.path == branch.doc) {
-            main.decisions.push(card);
-        }
+        docs[main].decisions.push(card);
     }
     docs
 }
