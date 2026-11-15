@@ -351,10 +351,9 @@ fn the_comment_dropdown_keeps_the_approved_component_geometry_and_action_row() {
         json!({"width":1280,"height":900,"deviceScaleFactor":1,"mobile":false}),
     );
     browser.open(&site.url(&format!("/{DOC}")));
-    assert!(browser.wait_for(
-        "document.querySelector('.doc-section > .add') !== null",
-        SHOWN
-    ));
+    // As a reader would, once the control shows: under the document's ghost (`Settle`) the editor
+    // it opens takes no focus, and nothing focuses it again once the ghost lifts.
+    assert!(browser.wait_for(&crate::visible(".doc-section > .add"), SHOWN));
     browser.eval("document.querySelector('.doc-section > .add').click()");
     assert!(browser.wait_for(
         "document.querySelector('form.comment:not([hidden]) .dx-select-trigger') !== null",
@@ -765,18 +764,24 @@ fn history_pictures_keep_their_original_caps_outside_the_inner_decision() {
             "document.querySelector('.doc-card .history img') !== null",
             SHOWN
         ));
-        browser.eval(
-            "document.querySelector('.doc-card .history img').scrollIntoView({block:'center'})",
-        );
-        assert!(browser.wait_for(
-            // DocumentPicture holds the waiting picture until its visibility latch fires, and
-            // that is already complete; wait for revelation as well as load completion.
-            &format!(
-                "(() => {{ const image=document.querySelector('.doc-card .history img'); return image.getAttribute('src') !== {} && image.complete; }})()",
-                json!(symphony_ui::media::WAITING)
+        assert!(
+            browser.wait_for(
+                // DocumentPicture holds the waiting picture until its visibility latch fires, and
+                // that is already complete; wait for revelation as well as load completion. The
+                // picture is brought to the middle of the screen at each look while it still
+                // waits: a scroll made in the task that revealed its history entry is laid out
+                // with the history's slot at its remembered height (it took `content-visibility:
+                // auto` in that task), and Chrome's scroll anchoring then moves the view by the
+                // slot's growth once the next frame lays it out whole, leaving the picture above
+                // the screen, where its latch never fires.
+                &format!(
+                    "(() => {{ const image=document.querySelector('.doc-card .history img'); if (image.getAttribute('src') === {}) {{ image.scrollIntoView({{block:'center'}}); return false; }} return image.complete; }})()",
+                    json!(symphony_ui::media::WAITING)
+                ),
+                SHOWN
             ),
-            SHOWN
-        ));
+            "the history picture shows once it is on the screen"
+        );
         assert_eq!(
             browser.eval("document.querySelector('.doc-card .history img').naturalWidth"),
             json!(600)
