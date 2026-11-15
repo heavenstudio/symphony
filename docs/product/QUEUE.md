@@ -2,8 +2,7 @@
 
 The queue is the one list of every card that waits on the owner, in the order to answer them, at
 `/<project>/queue`. It is for the owner, who decides there what to read next and never has to
-search the documents for what is open. An agent reads the same list with `just symphony-status
---open`.
+search the documents for what is open.
 
 ![The queue, wide](pictures/queue-wide.png)
 
@@ -24,23 +23,25 @@ Three groups, always in this order, each with its count in its heading.
 | --- | --- | --- |
 | Waiting on you | a card not answered yet, a card whose agent asks the owner a question, and a card the owner commented on that an agent has answered since | its rank, its first sentence, its document and why it ranks there, **Later** |
 | Auto-approved: spot-check | a card approved on the owner's earlier words | its first sentence, its mark, the basis it was approved on |
-| Waiting on the agent | a card the owner had the last word on, and each open comment in a document | its first sentence or the comment's title, its mark, the owner's last line |
+| Waiting on the agent | a card the owner had the last word on, and each open comment in a document | its first sentence or the comment's title, its mark, the card's last line or the comment's document |
 
-A card an agent posted on a branch that has not landed is in the same list, with a tag naming its
-task.
+A card an agent posted on a branch that has not landed is in the same groups: among those waiting
+on the owner with a tag naming its task, in the other two with its branch's name.
 
 ## Order
 
 Cards waiting on the owner are ranked from 1. The folders under `docs/` are taken in turn, one
 card from each, and inside a folder the oldest card comes first, so no topic waits behind
 another's backlog. A document directly in `docs/` counts as the topic `docs`. The home page's
-*Next up* and the **next** button of the bar at the foot of every page follow the same order.
+*Next up* follows the same order. The **prev** and **next** buttons of the bar at the foot of
+every page do not: they walk the documents in the index's order and each document's waiting cards
+from its top.
 
 ## Topics
 
 ![The queue with one topic chosen, wide](pictures/queue-topic-wide.png)
 
-The chips above the first group are **All** and one per topic, each with its count; the counts add
+The chips under the first group's heading are **All** and one per topic, each with its count; the counts add
 up to the group's. Choosing a topic shows its cards alone, ranked again from 1, under a line that
 says how many of the total are shown. The choice is kept on this device, for this project. The
 other two groups are never filtered.
@@ -49,8 +50,9 @@ other two groups are never filtered.
 
 **Later** moves a card after the rest of its topic and opens the next card. The card keeps its
 mark, its lines and its place in the count; its button becomes **Undo Later**, which puts it back.
-It returns to its own place by itself once the owner has opened every other card of its group, or
-after three days. Answering the card, or a new line from the owner on it, ends its Later. The order
+It returns to its own place by itself once the owner has opened every card of its kind (not
+answered yet, or answered by an agent) that was waiting when it was put off and was not put off
+itself, or after three days. Answering the card, or a new line from the owner on it, ends its Later. The order
 is the owner's, not the device's: a card put off on the phone is put off on the laptop.
 
 ## States
@@ -77,8 +79,8 @@ wraps beside its rank, and **Later** stays under each card.
 - Two cards of one topic posted in the same minute keep the order the triage gave them.
 - Several cards put off in one topic return in the order they were put off, after the topic's
   other cards.
-- A card of the same name on main and on a branch are two cards for Later: putting one off leaves
-  the other where it is.
+- A card a branch proposes under a name main's register also has is a card of its own for Later:
+  putting one off leaves the other where it is.
 - A branch's card whose pictures are not yet on disk in its worktree is not listed until they are.
 - When the file that keeps the order cannot be read, the queue is shown in its plain order with
   nothing put off; the file is left as it is.

@@ -163,7 +163,7 @@ fixture project, and `symphony shot` takes each listed page on a phone and wide.
 - Taken twice, each picture came out byte for byte the same. So staleness needs no checker: after
   a retake, git lists the pictures that changed.
 - A wide picture is about 100,000 bytes and a phone picture, at 3 pixels a point, about 280,000.
-  Fourteen specs of three pages each would be about 16 MB committed, and each retake of a changed
+  Fourteen specs showing three wide pictures and one phone picture each would be about 8 MB committed (16 MB with both widths of every page, so a line names the widths a document shows), and each retake of a changed
   page adds its new bytes to history.
 - The home page did not repeat: its greeting follows the hour and its card says "waiting 39 d".
   Such a page needs the shot taken at a fixed time before it is pictured. That is the one piece of

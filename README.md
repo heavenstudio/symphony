@@ -6,8 +6,8 @@ decide and comment in one web app, on a laptop or a phone, and every decision is
 project's own Markdown and git history. It runs on your machine, serves every project you
 register from one server, and keeps everything in the repository.
 
-It is for one person, or a small team, directing several agent sessions (Claude Code, Codex) on
-the same repository at once.
+It is for one person directing several agent sessions (Claude Code, Codex) on the same repository
+at once.
 
 ![The review queue: every card waiting on you, in the order to answer them](docs/product/pictures/queue-wide.png)
 

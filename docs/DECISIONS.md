@@ -17,9 +17,16 @@ their dated history work is in [REVIEW](REVIEW.md).
     **What approving sets:**
 
     - **One page, one document**, under `docs/product/`, with the same parts in the same order ([the form](product/README.md#the-form-of-a-spec)). No source file, route or wire type in it: those stay in the reference documents, which a spec links.
-    - **Pictures are taken, never pasted.** `tools/product-pictures.sh` takes every listed page on a phone and wide from a small fixture project, on a server of its own. Taken twice, a picture comes out byte for byte the same, so after a retake git lists the ones that went stale. No checker is added.
+    - **Pictures are taken, never pasted.** `tools/product-pictures.sh` takes every listed page, on a phone, wide or both as a spec shows it, from a small fixture project, on a server of its own. Taken twice on one Chrome, a picture comes out byte for byte the same, so after a retake git lists the ones that went stale. No checker is added.
     - **The task that changes a page retakes its pictures**, as its after pictures.
-    - **Cost:** about 0.1 MB a wide picture and 0.3 MB a phone picture, committed beside the specs as documents' pictures already are: about 16 MB for the whole set.
+
+    **Cost:**
+
+    - About 0.1 MB a wide picture and 0.3 MB a phone picture, committed beside the specs as documents' pictures already are. At three wide and one phone picture a spec, the whole set is about 8 MB.
+    - Each retake commits the changed pictures again, into every clone's history: about 0.1 to 0.4 MB for each picture of the page that changed.
+    - A Chrome update, or other fonts, can redraw every picture with no page changed. Git then shows the whole set as stale, and one retake commits the whole set again, about 8 MB.
+
+    **Earlier verdicts checked:** your approval of **pictures-in-every-clone** ("agreed with F") decides where these pictures live, committed beside the documents that show them, so that is not asked. It says nothing of what a product spec holds or how its pictures are made and kept current, and no other verdict does: that is this card.
 
     **What it leaves for later:** the home page shows the hour's greeting and each card's age, so its picture needs the shot taken at a fixed time; that is built when its spec is written. The other thirteen specs, one paragraph each, and the ranked gaps are in the linked review.
 

@@ -9,6 +9,9 @@ of it.
 
 ## The form of a spec
 
+This form and the pictures' rule below are a proposal that waits on the owner
+([its card](../DECISIONS.md#product-spec-form)).
+
 A spec is short enough to read on a phone in a few minutes, and has these parts in this order.
 A part with nothing to say is left out.
 
@@ -31,16 +34,19 @@ address, and no wire type.
 A spec's pictures are taken, never drawn or pasted: `tools/product-pictures.sh` starts a server of
 its own over the fixture project (`tools/product-pictures/fixture`, a made-up recipe site with a
 few cards in three folders), takes every line of [pictures.txt](pictures.txt) with `symphony shot`
-on a phone (390x844) and wide (1280x800), in the light scheme, and writes
+on a phone (390x844), wide (1280x800) or both, as the line says, in the light scheme, and writes
 `pictures/NAME-phone.png` and `pictures/NAME-wide.png`. It reaches no shared server and no board,
 and stops the server it started.
 
-- **A new picture** is a line in `pictures.txt`: its name, the page's path and, for a state that
-  takes a press to reach, the steps of `symphony shot` that reach it (`--click`, `--type`,
-  `--key`). A state the fixture lacks is added to the fixture.
+- **A new picture** is a line in `pictures.txt`: its name, the widths a document shows it at, the
+  page's path and, for a state that takes a press to reach, the steps of `symphony shot` that
+  reach it (`--click`, `--type`, `--key`). A state the fixture lacks is added to the fixture. Only
+  a picture a document shows is taken and committed.
 - **One command retakes them all**, or those named: `tools/product-pictures.sh queue`.
 - **A retake that changes nothing writes the same bytes**, so after one, `git status docs/product`
-  lists exactly the pictures that had gone stale.
+  lists exactly the pictures that had gone stale. That holds on one Chrome and one set of fonts: a
+  Chrome update can redraw every picture with no page changed, and the whole set is then retaken
+  and committed once.
 - **A task that changes how a page looks retakes its pictures** and commits them with the change:
   they are the after pictures its evidence shows ([CHECKS](../CHECKS.md#evidence-by-kind-of-change)).
 - **They are committed beside the specs**, so a clone and GitHub show them. A wide picture is

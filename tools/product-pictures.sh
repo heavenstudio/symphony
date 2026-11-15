@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Retakes the product specs' pictures (docs/product/README.md, "Pictures"): every line of
-# docs/product/pictures.txt, on a phone and wide, from a server of its own over a copy of the
+# docs/product/pictures.txt, at the widths it names, from a server of its own over a copy of the
 # fixture project (tools/product-pictures/fixture), with a machine folder of its own. It touches
 # no shared server and no board, and ends the one server it started.
 #
@@ -59,15 +59,26 @@ if [ -z "$base" ]; then
 fi
 
 taken=0
-while read -r name path steps; do
+while read -r name widths path steps; do
     case "$name" in '' | '#'*) continue ;; esac
     if [ "$#" -gt 0 ]; then
         case " $* " in *" $name "*) ;; *) continue ;; esac
     fi
-    # shellcheck disable=SC2086 # a line's steps are shot's own options, split on spaces
-    "$shot" shot "$base$path" --out "$out/$name-phone.png" --phone --scheme light --timeout 60 $steps
-    # shellcheck disable=SC2086
-    "$shot" shot "$base$path" --out "$out/$name-wide.png" --size 1280x800 --scheme light --timeout 60 $steps
+    case "$widths" in
+    phone | wide | both) ;;
+    *)
+        echo "product-pictures: $name: widths are phone, wide or both, not '$widths'" >&2
+        exit 1
+        ;;
+    esac
+    if [ "$widths" != wide ]; then
+        # shellcheck disable=SC2086 # a line's steps are shot's own options, split on spaces
+        "$shot" shot "$base$path" --out "$out/$name-phone.png" --phone --scheme light --timeout 60 $steps
+    fi
+    if [ "$widths" != phone ]; then
+        # shellcheck disable=SC2086
+        "$shot" shot "$base$path" --out "$out/$name-wide.png" --size 1280x800 --scheme light --timeout 60 $steps
+    fi
     taken=$((taken + 1))
 done <"$list"
 
@@ -75,4 +86,4 @@ if [ "$taken" -eq 0 ]; then
     echo "product-pictures: no line of $list is named ${*:-at all}" >&2
     exit 1
 fi
-echo "product-pictures: $taken pages retaken, on a phone and wide, in $out"
+echo "product-pictures: $taken pages retaken in $out"
