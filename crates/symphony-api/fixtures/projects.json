@@ -1,0 +1,53 @@
+{
+  "installation": "0f3a9c51d2e84b6aa7c3e19b5d20c4f8",
+  "pin": 1,
+  "projects": [
+    {
+      "id": "lamps",
+      "name": "Lamp Works",
+      "refused": null,
+      "unwell": null,
+      "version": 4182,
+      "waiting": 36,
+      "next": {
+        "title": "North · pendant picture",
+        "href": "/lamps/docs/lamps/north.md#north-pendant-picture"
+      },
+      "asks": {
+        "questions": {"owner": 2},
+        "verdicts": {
+          "owner": {
+            "id": 6240,
+            "task": "lamps/north-pendant",
+            "verdict": "changes",
+            "reviewer": "slate-wren",
+            "at": 1763213045.25
+          }
+        }
+      }
+    },
+    {
+      "id": "orbit",
+      "name": "Orbit",
+      "refused": null,
+      "unwell": "The task board is unwell: its callback dispatch is failing, so agents may not hear from it. Run “just tasks status” to see why.",
+      "version": 12,
+      "waiting": 0,
+      "next": null,
+      "asks": {
+        "questions": {"owner": 0},
+        "verdicts": {}
+      }
+    },
+    {
+      "id": "notes",
+      "name": "Notes",
+      "refused": "this Symphony lacks the plugin notes-index, which notes names: run `just symphony` in notes's checkout, whose build holds them",
+      "unwell": null,
+      "version": null,
+      "waiting": null,
+      "next": null,
+      "asks": null
+    }
+  ]
+}
