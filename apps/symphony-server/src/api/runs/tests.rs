@@ -352,7 +352,12 @@ fn a_day_file_not_read_is_named_and_days_past_the_window_are_never_read() {
         page.unread
     );
     // A folder with no day files has no runs.
-    let empty = super::page(&Index::default(), &tree.path("none"), &Filters::default(), NOW);
+    let empty = super::page(
+        &Index::default(),
+        &tree.path("none"),
+        &Filters::default(),
+        NOW,
+    );
     assert_eq!(empty, RunsPage::default());
 }
 

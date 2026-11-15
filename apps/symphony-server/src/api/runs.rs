@@ -174,7 +174,10 @@ pub(crate) fn asked(
 /// Whether `run` names a run: 32 lower-case hex digits, as the recorder writes an operation's id
 /// (the day files hold no other, so an id in capitals would find none).
 fn is_run(run: &str) -> bool {
-    run.len() == 32 && run.bytes().all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+    run.len() == 32
+        && run
+            .bytes()
+            .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
 }
 
 /// The start of the UTC day `at` falls in.

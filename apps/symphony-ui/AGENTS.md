@@ -269,16 +269,17 @@ never the whole target, which the release run runs.
   the owner's choice, as the caps are.
   Other page kinds are reported separately for review.
   On the fixture (`entry_pages_fit_the_first_visit_budget_and_deferred_kinds_are_reported` prints
-  each page's requests) a first visit to `/` takes 112,577 bytes, `/tasks` 120,489, `/agents`
-  115,526, `/queue` 108,096, `/reports` 108,512, `/docs/` 138,845, a document 140,506 and a task's
-  page 142,260, and a return that finds what it kept unchanged 2,031, 2,442, 2,307, 2,272, 765,
-  574, 1,677 and 2,285. A first visit to a kind of the web client is its entry and its sheets, the
-  chunk every kind shares (React and the frame) and the pieces it shares with some of the others
+  each page's requests) a first visit to `/` takes 112,776 bytes, `/tasks` 120,677, `/agents`
+  115,724, `/queue` 108,285, `/reports` 108,696, `/runs` 106,957, `/docs/` 139,013, a document
+  140,674 and a task's page 142,451, and a return that finds what it kept unchanged 2,031, 2,442,
+  2,307, 2,272, 765, 984, 574, 1,677 and 2,285. A first visit to a kind of the web client is its
+  entry and its sheets, the chunk every kind shares (React and the frame) and the pieces it shares
+  with some of the others
   (the board's feed and keep; the card and the task readers of the board and the agents page; the
   media layer's chunk and sheet, home's, the documents' and a task's page's), beside the HTML, the
   shell and the page's reads; a move to another kind takes its entry and the pieces no kind
   before it took (`tests/browser/preload.rs`). A task's page's timeline, a chunk of its own, comes
-  once the page has drawn and is idle: 12,431 bytes after its first visit. The reads ahead start
+  once the page has drawn and is idle: 12,355 bytes after its first visit. The reads ahead start
   only once the page's own reads have answered (`cache_ahead.rs`) and go marked as prefetches, so
   the budget counts them outside the first visit, with the warmed modules (`prefetched_bytes`).
   Once a page has its data and is idle, the shell warms the chat's and the menus' files, the
