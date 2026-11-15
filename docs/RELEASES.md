@@ -731,8 +731,11 @@ A step moves what it can and nothing more:
   Its own reload (`apps/symphony-server/src/reload.rs`) fingerprints the checkout it serves, its
   `Cargo.lock` and sources: once that changes it builds and installs a new server
   (`crates/symphony/src/reload.rs`, `cargo install --force --root` into its install folder) and
-  hands its sockets to it by exec, a build that fails leaving the previous one serving and saying
-  why on its notice. A build that installs the very bytes the serving one runs, with no client to
+  hands its sockets to it by exec. A build or a hand-over that fails leaves the previous one
+  serving and says on its notice why, and when it tries that version again: 5 minutes after its
+  first failure, the wait doubling with each failure of it in a row up to an hour, so a hand-over
+  that failed under load is tried again though the sources do not change again. A build that
+  installs the very bytes the serving one runs, with no client to
   publish, hands over to nothing: the serving server stamps the install as that build's and keeps
   serving. When this refresh moved that checkout's main and a server built from it
   answered before the move, the run waits, 20 minutes at most, until another process answers for
