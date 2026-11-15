@@ -525,6 +525,24 @@ export function partEdges(sections: readonly Section[], index: number): [boolean
   ];
 }
 
+/** Whether a card is settled: resolved or rejected, folded under its summary. */
+export const isSettled = (card: DocumentCard | null): boolean =>
+  card !== null && (card.group === "resolved" || card.group === "rejected");
+
+/**
+ * The class of what a section's part draws as, read from the outline: an open card's box
+ * (`doc-part-card`), prose (`doc-part-prose`), or neither (a settled card's fold, a section
+ * drawn with its difference from main), which takes no part in the spacing between parts.
+ * docs.css spaces parts as one card's sections collapsed their margins, by the neighbour's
+ * form; a neighbour not drawn yet counts as its form, so drawing it changes no margin of the
+ * part being read, and the browser's scroll anchoring keeps the reader's place.
+ */
+export function partForm(section: Section, card: DocumentCard | null): string {
+  if (section.comparison != null) return "";
+  if (card === null) return " doc-part-prose";
+  return isSettled(card) ? "" : " doc-part-card";
+}
+
 /**
  * What a folder's page says it holds, in the pill under its title: the documents the server
  * counts, which leave out a history folder's pages, then those its listing shows beyond them, so

@@ -9,13 +9,15 @@
 //! before the reads are held. A reader who scrolls away during the landing, by a wheel or a
 //! script, is left there when the reads land; one who clicks, taps or presses a key that scrolls
 //! nothing keeps the card held; and once the landing has gone quiet, nothing lands it again, not a
-//! change to the document above the card after a script's scroll.
+//! change to the document above the card after a script's scroll. Once the reader's own scroll
+//! ended the landing, the browser's scroll anchoring keeps what they read in place while the
+//! sections above still draw, a field typed in on a phone among it.
 
 use serde_json::{Map, Value, json};
 
 use crate::chrome::Chrome;
 use crate::site::Site;
-use crate::{NO_STORE, SHOWN, common, dist};
+use crate::{NO_STORE, SHOWN, STALL, common, dist};
 
 const LANDING: &str = "docs/landing.md";
 const FROM: &str = "docs/from.md";
@@ -483,4 +485,235 @@ fn once_a_landing_went_quiet_a_change_above_the_card_after_a_script_s_scroll_lan
         (number(&later, "line") - number(&later, "padding")).abs() > 100.0,
         "the card is not brought back to the scroll padding: left {left}, later {later}"
     );
+}
+
+/// Holds every IntersectionObserver's callbacks until `window.observe()`: what comes near the
+/// screen is drawn only then, so the page's first read is the addressed card's alone, and the
+/// sections near it are read after it, when the test lets them come.
+const OBSERVE_LATER: &str = "(() => { const Observer = window.IntersectionObserver, queued = []; let open = false;
+    window.observe = () => { open = true; queued.splice(0).forEach(run => run()); return true; };
+    window.IntersectionObserver = class extends Observer { constructor(callback, options) {
+        super((entries, observer) => open ? callback(entries, observer) : queued.push(() => callback(entries, observer)), options); } }; })();";
+
+/// The landing document with the fifth card's thread taller than a phone's screen (two pictures),
+/// so the card's field, under its thread, is below the screen when the card lands.
+fn tall_thread() -> Value {
+    let mut document = landing();
+    document["threads"]["five"] = json!({"blocks": [{"type": "thread", "entries": [{"who": "agent",
+        "timestamp": "2026-11-14 10:00", "verdict": null, "blocks": [
+            paragraph(vec![text("Posted, with its evidence.")]), paragraph(vec![picture()]), paragraph(vec![picture()])]}]}]});
+    document
+}
+
+/// The page's reads of sections so far, each by the keys it asked for.
+fn section_reads(site: &Site) -> Vec<Vec<String>> {
+    site.targets()
+        .iter()
+        .filter(|target| target.starts_with("/api/section"))
+        .map(|target| crate::site::asked_keys(target))
+        .collect()
+}
+
+/// Waits, the page let run meanwhile, until the page has asked for `count` reads of sections, and
+/// says them; a stall past the backstop fails, naming them.
+#[track_caller]
+fn reads_asked(page: &mut Chrome, site: &Site, count: usize) -> Vec<Vec<String>> {
+    let asked = test_time::until_true(format!("{count} reads of sections"), STALL, || {
+        section_reads(site).len() >= count || {
+            page.pump(std::time::Duration::from_millis(25));
+            false
+        }
+    });
+    if let Err(stall) = asked {
+        panic!("{stall}: {:?}", section_reads(site));
+    }
+    section_reads(site)
+}
+
+/// Where what the reader reads (`window.reading`) is: its box's top and bottom, how far down the
+/// document its top is, the window's height and the page's scroll.
+const READ: &str = "(() => { const box = window.reading.getBoundingClientRect();
+    return {top: box.top, bottom: box.bottom, down: box.top + scrollY, height: innerHeight, y: scrollY}; })()";
+
+/// True once what the reader reads has held still for ten frames, with nothing near the screen
+/// still to draw when `drawn` (a reserved box or a ghost within its sentinel's 600 px); false after
+/// sixty frames without that, for the wait to look again.
+fn held(drawn: bool) -> String {
+    format!(
+        "new Promise(done => {{
+        let last = null, still = 0, frames = 0;
+        const near = box => {{ const r = box.getBoundingClientRect(); return r.bottom > -600 && r.top < innerHeight + 600; }};
+        const look = () => {{
+            const now = window.reading.isConnected ? `${{window.reading.getBoundingClientRect().top}} ${{scrollY}}` : null;
+            const waiting = {drawn} && [...document.querySelectorAll('[data-pending=true]')].some(near);
+            still = now !== null && now === last && !waiting ? still + 1 : 0;
+            last = now;
+            if (still >= 10) return done(true);
+            if (++frames >= 60) return done(false);
+            requestAnimationFrame(look);
+        }};
+        requestAnimationFrame(look);
+    }})"
+    )
+}
+
+/// What the reader does once the card has landed that ends the landing: scrolls on down the card
+/// by a wheel on a desk, or, on a phone, taps the card's words and types in the field that opens,
+/// the page's scroll to the field ending the landing.
+#[derive(Clone, Copy, Debug)]
+enum Reading {
+    Wheeled,
+    Typing,
+}
+
+/// The browser's own scroll anchoring keeps the reader's place while the sections above draw: the
+/// spacing between the document's parts (docs.css) counts a neighbour not drawn yet as what it
+/// draws as, so no margin of the card being read changes as they draw, which would stop the
+/// anchoring for that frame. Before, the card's own margin changed as the cards beside it drew,
+/// and the page drew them under the reader: a wheel left the card at 863 px instead of -439, and a
+/// phone's field typed in went from 409 px to 1285 px, off an 844 px screen.
+#[test]
+fn a_reader_who_ended_a_landing_stays_on_what_they_read_while_the_sections_above_draw() {
+    let site = site();
+    site.set_document(&tall_thread());
+    for reading in [Reading::Wheeled, Reading::Typing] {
+        let typing = matches!(reading, Reading::Typing);
+        let (width, height) = if typing { (390, 844) } else { (1280, 900) };
+        let Some(mut page) = browser(width, height) else {
+            return;
+        };
+        if typing {
+            page.call(
+                "Emulation.setTouchEmulationEnabled",
+                json!({"enabled": true, "maxTouchPoints": 1}),
+            );
+        }
+        page.call(
+            "Page.addScriptToEvaluateOnNewDocument",
+            json!({ "source": OBSERVE_LATER }),
+        );
+        let asked = section_reads(&site).len();
+        site.hold_route("/api/section", true);
+        page.open(&site.url(&format!("/{LANDING}#five")));
+        assert!(
+            page.wait_for(LANDED, SHOWN),
+            "{reading:?}: the page scrolls to the card's ghost first: {}",
+            page.eval(PLACE)
+        );
+        let first = reads_asked(&mut page, &site, asked + 1);
+        assert_eq!(
+            first[asked..],
+            [vec!["card:five".to_owned()]],
+            "{reading:?}: the card's own read comes first, alone"
+        );
+        site.hold_route("/api/section", false);
+        assert!(
+            page.wait_for(
+                &format!("document.getElementById('five')?.closest('.doc-card') != null && {LANDED}"),
+                SHOWN
+            ),
+            "{reading:?}: the card draws at the scroll padding: {}",
+            page.eval(PLACE)
+        );
+        // The sections near the card come near, and their read is held.
+        site.hold_route("/api/section", true);
+        page.eval("window.observe()");
+        let near = reads_asked(&mut page, &site, asked + 2);
+        assert!(
+            near[asked + 1].iter().any(|key| key == "card:four"),
+            "{reading:?}: the cards above the card are read after it: {near:?}"
+        );
+        assert!(
+            page.wait_for(&lifted(), SHOWN),
+            "{reading:?}: the page's ghost lifts with the card at the scroll padding: {}",
+            page.eval(PLACE)
+        );
+        page.eval(TWO_FRAMES);
+        let landed = page.eval(PLACE);
+        let y = landed["y"].as_f64().unwrap_or(f64::NAN);
+        match reading {
+            Reading::Wheeled => {
+                page.call(
+                    "Input.dispatchMouseEvent",
+                    json!({"type": "mouseWheel", "x": width / 2, "y": height / 2, "deltaX": 0, "deltaY": 500}),
+                );
+                assert!(
+                    page.wait_for(&format!("scrollY > {y} + 250"), SHOWN),
+                    "{reading:?}: the reader scrolls down the card: {}",
+                    page.eval(PLACE)
+                );
+                page.eval(
+                    "window.reading = document.elementFromPoint(innerWidth / 2, innerHeight * 0.4); true",
+                );
+            }
+            Reading::Typing => {
+                let at = page.eval(
+                    "(() => { const words = document.getElementById('five').closest('.doc-card').querySelector('.section-prose p').getBoundingClientRect();
+                        return [words.left + 20, words.top + words.height / 2]; })()",
+                );
+                let point = json!({"x": at[0], "y": at[1]});
+                page.call(
+                    "Input.dispatchTouchEvent",
+                    json!({"type": "touchStart", "touchPoints": [point]}),
+                );
+                page.call(
+                    "Input.dispatchTouchEvent",
+                    json!({"type": "touchEnd", "touchPoints": []}),
+                );
+                assert!(
+                    page.wait_for("document.activeElement?.matches('textarea') === true", SHOWN),
+                    "{reading:?}: the tap opens the card's editor, its field taking the focus: {}",
+                    page.eval("document.activeElement?.outerHTML.slice(0, 200)")
+                );
+                page.call("Input.insertText", json!({"text": "Keep every lamp"}));
+                assert!(
+                    page.wait_for("document.activeElement.value === 'Keep every lamp'", SHOWN),
+                    "{reading:?}: the reader types in the field"
+                );
+                page.eval("window.reading = document.activeElement; true");
+            }
+        }
+        assert!(
+            page.wait_for(&held(false), SHOWN),
+            "{reading:?}: what the reader reads holds still while the reads are held: {}",
+            page.eval(READ)
+        );
+        let before = page.eval(READ);
+        let number = |place: &Value, key: &str| place[key].as_f64().unwrap_or(f64::NAN);
+        let on_screen = |place: &Value| {
+            number(place, "top") >= 0.0 && number(place, "bottom") <= number(place, "height")
+        };
+        assert!(
+            number(&before, "y") - y > 100.0 && (!typing || on_screen(&before)),
+            "{reading:?}: the reader's own scroll moved the page from the landing (to the field, on the screen): landed {landed}, then {before}"
+        );
+        page.eval(COUNT_SCROLLS);
+        site.hold_route("/api/section", false);
+        assert!(
+            page.wait_for(&held(true), SHOWN),
+            "{reading:?}: the sections near the screen draw and the page holds still: {}",
+            page.eval(READ)
+        );
+        let after = page.eval(READ);
+        eprintln!("READING {reading:?}: landed {landed}, before {before}, after {after}");
+        // What drew above the reader after they left the landing: a page that did not hold them
+        // would show what they read that much lower.
+        assert!(
+            number(&after, "down") - number(&before, "down") > 300.0,
+            "{reading:?}: the sections above draw after the reader's scroll, taller than their ghosts: before {before}, after {after}"
+        );
+        assert_eq!(
+            page.eval("window.pageScrolls"),
+            json!(0),
+            "{reading:?}: the browser holds the reader's place, not a scroll of the page's: before {before}, after {after}"
+        );
+        assert!(
+            (number(&after, "top") - number(&before, "top")).abs() <= 3.0,
+            "{reading:?}: what the reader reads stays where it was, within a few px: before {before}, after {after}"
+        );
+        assert!(
+            !typing || on_screen(&after),
+            "{reading:?}: the field typed in stays on the screen: before {before}, after {after}"
+        );
+    }
 }

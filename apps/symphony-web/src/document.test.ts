@@ -11,8 +11,10 @@ import {
   folderPill,
   fragment,
   held,
+  isSettled,
   ownerLines,
   partEdges,
+  partForm,
   put,
   refresh,
   related,
@@ -744,6 +746,30 @@ describe("a register's parts", () => {
     expect(partEdges([], 0)).toEqual([false, false]);
     expect(partEdges(sections, Number.MAX_SAFE_INTEGER)).toEqual([false, false]);
     expect(partEdges(sections, -1)).toEqual([false, false]);
+  });
+
+  it("are known by their form before their bodies are read", () => {
+    const outline = { ...section("card:a", ""), blocks: [] };
+    const grouped = (group: string) => ({ ...card("a", "proposed", "A"), group });
+    for (const group of ["decide", "confirm", "proposed", ""]) {
+      expect(isSettled(grouped(group))).toBe(false);
+      expect(partForm(outline, grouped(group))).toBe(" doc-part-card");
+    }
+    for (const group of ["resolved", "rejected"]) {
+      expect(isSettled(grouped(group))).toBe(true);
+      expect(partForm(outline, grouped(group))).toBe("");
+    }
+    expect(isSettled(null)).toBe(false);
+    expect(partForm(section("p", ""), null)).toBe(" doc-part-prose");
+    // A card whose slug the document's cards do not name is drawn as prose.
+    expect(partForm(outline, null)).toBe(" doc-part-prose");
+    // A section drawn with its difference from main sits in a frame of its own.
+    for (const kind of ["added", "changed", "removed"] as const) {
+      const differs = { ...outline, comparison: { kind } };
+      expect(partForm(differs, null)).toBe("");
+      expect(partForm(differs, grouped("decide"))).toBe("");
+    }
+    expect(partForm({ ...outline, comparison: null }, grouped("decide"))).toBe(" doc-part-card");
   });
 });
 
