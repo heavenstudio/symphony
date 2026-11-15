@@ -215,8 +215,9 @@ leaves out reads as serde's default), its rules and the page kept live (`LiveAge
 page of `/api/agent-page` once the board is read, then each feed event applied where it lands; one
 that brings in a task the page lists no record of (`agentsPageTakes`, the server's rule) or says
 the board is back reads the first page again, merged into what is drawn, both cursors and the
-lost agents kept, and the events heard during a read are replayed onto its answer (`ReadCursor`).
-It keeps nothing on the device. Its text orders and trims as Rust's does (`textOrder` by UTF-8
+lost agents kept, and the events heard during a read are replayed onto its answer (`ReadCursor`,
+`src/journal.ts`, the board's as well and no other kind's, so they alone carry it). It keeps
+nothing on the device. Its text orders and trims as Rust's does (`textOrder` by UTF-8
 bytes, `whiteSpace` for `trim`), so its lists and lines are the Dioxus page's.
 
 ## The documents

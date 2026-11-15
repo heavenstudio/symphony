@@ -6,14 +6,8 @@
 // brings a task in, or the board back, reads the first page again, merged into what is drawn.
 
 import type { FrameRefresh } from "./frame";
-import {
-  type BoardRun,
-  holdPlace,
-  type Journal,
-  keepBoard,
-  type PageBoard,
-  ReadCursor,
-} from "./live";
+import { holdPlace, type Journal, ReadCursor } from "./journal";
+import { type BoardRun, keepBoard, type PageBoard } from "./live";
 import { scoped } from "./project";
 import { getJson, said } from "./request";
 import { whiteSpace } from "./session";
@@ -35,6 +29,7 @@ import type {
   AgentSlots,
   HeldTask,
   ItemChange,
+  MachineObservation,
   MachineWork,
   Role,
   SessionGo,
@@ -43,7 +38,7 @@ import type {
   TaskFields,
 } from "./wire";
 import { plural, statusNotice } from "./words";
-import { NO_WORK, readWork } from "./work";
+import { freshnessWord, NO_WORK, readWork } from "./work";
 
 /** Where the page reads its agents, a page of them at a time. */
 export const AGENT_PAGE_PATH = "/api/agent-page";
@@ -304,6 +299,42 @@ export function followedTasks(rows: Task[], tasks: Task[], handle: string): Task
     }
   }
   return followed.sort(byPriority);
+}
+
+/**
+ * The machines' work as the page shows it while its feed is lost (`connected` false): every machine
+ * disconnected and its counts unknown, its operations as last observed. A broken feed cannot keep
+ * a claim of current capacity.
+ */
+export function connection(work: MachineWork, connected: boolean): MachineWork {
+  if (connected) return work;
+  return {
+    ...work,
+    machines: work.machines.map((machine) => ({
+      ...machine,
+      freshness: "disconnected",
+      counts: null,
+    })),
+  };
+}
+
+/**
+ * What a machine's row says of its occupancy: its counts, only from a fresh and complete report
+ * that has them; else that it is unknown, and how sure its report is.
+ */
+export function occupancy(machine: MachineObservation): string {
+  const counts = machine.counts;
+  if (
+    machine.complete &&
+    machine.freshness === "fresh" &&
+    counts !== null &&
+    counts !== undefined
+  ) {
+    return `Builds: ${counts.running_builds} running, ${counts.queued_builds} queued · Tests: ${counts.running_tests} running, ${counts.queued_tests} queued`;
+  }
+  const observed =
+    !machine.complete && machine.freshness === "fresh" ? "incomplete" : machine.freshness;
+  return `Occupancy unknown · ${freshnessWord(observed)}`;
 }
 
 /** The page's tasks `handle` holds a role on, each with the first role it holds there. */

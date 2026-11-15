@@ -126,6 +126,18 @@ describe("a screen", () => {
     asked[1]?.answer(reply(404, { error: "No such pane" }));
     expect(await refused).toContain("No such pane");
   });
+
+  it("is given up on the wire once its signal ends", async () => {
+    const asked = server();
+    const mount = new AbortController();
+    const done = screen("amber", "", mount.signal);
+    await asking(asked, 1);
+    expect(asked[0]?.signal?.aborted).toBe(false);
+    mount.abort();
+    expect(asked[0]?.signal?.aborted).toBe(true);
+    asked[0]?.answer(reply(200, CASES.samples.agentScreen));
+    await done;
+  });
 });
 
 /** What a press showed, in order. */

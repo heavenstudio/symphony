@@ -349,7 +349,16 @@ never the whole target, which the release run runs.
   bytes of the shell on the wire, for the same requests, a kind's chunks asked for with its entry
   rather than once it has come: `/` takes 111,667 (from 111,515), `/tasks` 116,371 (from
   116,202), `/queue` 107,113 (from 106,958), `/reports` 107,396 (from 107,244), `/docs/` and a
-  document 136,723 and 138,340 (from 136,566 and 138,183), the returns within a byte. Each
+  document 136,723 and 138,340 (from 136,566 and 138,183), the returns within a byte. The agents
+  page's move to the React client (`app/client-moves-to-react/agents-page`, against main's build
+  at f56bde5) takes `/agents` to 113,775 bytes (from 545,758): its entry (7,324 on the wire), the
+  chunk the six web kinds share (76,404), the board's feed and keep (3,530) and the chunk it
+  shares with the task board (4,734: the card, the task readers, the machine work's phases and the
+  read journal, `journal.ts`), where the program's script, main module and the task pages' chunk
+  were. `/tasks` takes 117,463 (from 116,357), its entry 9,066 (from 12,794) with that chunk
+  apart, which costs it the compression of one file and the names the two pass; a task page
+  takes 512,598 (from 546,351), the task pages' chunk without the agents' code; every other page
+  stays within 120 bytes of main's. Each
   module pays for its own compiled framework, the program once for all its kinds;
   later visits reuse cached imports. The home budget test
   is independent of the canonical-entry test, which gives every kind a fresh

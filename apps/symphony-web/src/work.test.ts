@@ -1,13 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { aMachine, anOperation, aWork, CASES } from "./testing";
-import type { MachineObservation, MachineWork } from "./wire";
+import type { MachineWork } from "./wire";
 import {
-  connection,
   drawsAlike,
   freshnessWord,
   isFor,
   NO_WORK,
-  occupancy,
   phaseLabel,
   phaseLabels,
   phases,
@@ -366,52 +364,5 @@ describe("an agent's, a machine's and the unassigned phases", () => {
     expect(shownScoped(work, "unassigned", false).map((row) => row.freshness)).toEqual(
       Array(4).fill("unknown"),
     );
-  });
-});
-
-describe("a machine's occupancy", () => {
-  it("is its counts only from a fresh and complete report that has them", () => {
-    const machine = aMachine("alpha", []);
-    expect(occupancy(machine)).toBe("Builds: 0 running, 0 queued · Tests: 0 running, 0 queued");
-    const counts = { running_builds: 1, queued_builds: 2, running_tests: 3, queued_tests: 4 };
-    expect(occupancy({ ...machine, counts })).toBe(
-      "Builds: 1 running, 2 queued · Tests: 3 running, 4 queued",
-    );
-    for (const freshness of [
-      "stale",
-      "disconnected",
-      "incomplete",
-      "conflict",
-      "unknown",
-    ] as const) {
-      expect(occupancy({ ...machine, freshness })).toBe(
-        `Occupancy unknown · ${freshnessWord(freshness)}`,
-      );
-    }
-    expect(occupancy({ ...machine, complete: false })).toBe(
-      "Occupancy unknown · partial inventory",
-    );
-    expect(occupancy({ ...machine, complete: false, freshness: "stale" })).toBe(
-      "Occupancy unknown · stale",
-    );
-    expect(occupancy({ ...machine, counts: null })).toBe("Occupancy unknown · fresh");
-  });
-});
-
-describe("the machines' work while the feed is lost", () => {
-  it("claims no capacity, and keeps the exact phases last observed", () => {
-    const work = aWork([aMachine("alpha", [anOperation("alpha", "test", "test", "running")])]);
-    expect(connection(work, true)).toBe(work);
-    const lost = connection(work, false);
-    expect(lost.machines[0]?.freshness).toBe("disconnected");
-    expect(lost.machines[0]?.counts).toBeNull();
-    expect(lost.machines[0]?.operations).toBe(work.machines[0]?.operations);
-    expect(work.machines[0]?.freshness).toBe("fresh");
-    expect(occupancy(lost.machines[0] as MachineObservation)).toBe(
-      "Occupancy unknown · disconnected",
-    );
-    expect(scopedPhases(lost, { agent: "worker-a" }).map(phaseLabel)).toEqual([
-      "Observed Test running · alpha · disconnected",
-    ]);
   });
 });

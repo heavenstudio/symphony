@@ -4,8 +4,9 @@
 //
 // `taskStage`, `placesAlike`, `canPlace`, `conflicts` and `isFor` carry crates/symphony-api's own
 // (task_stage.rs, machine_work.rs), held to the Rust by the cases it writes (wire.cases.json,
-// work.test.ts). The phases, a machine's occupancy and the work a lost feed shows carry the Dioxus
-// client's (apps/symphony-ui/src/machine_work.rs), held by the browser tests.
+// work.test.ts). The phases carry the Dioxus client's (apps/symphony-ui/src/machine_work.rs), held
+// by the browser tests; a machine's occupancy and the work a lost feed shows are the agents page's
+// (agents-live.ts).
 
 import { field } from "./shared";
 import type {
@@ -335,42 +336,6 @@ export function shownScoped(work: MachineWork, scope: Scope, connected: boolean)
   return connected
     ? rows
     : rows.map((row) => (row.proven ? { ...row, freshness: "disconnected" } : row));
-}
-
-/**
- * The machines' work as a page shows it while its feed is lost (`connected` false): every machine
- * disconnected and its counts unknown, its operations as last observed. A broken feed cannot keep
- * a claim of current capacity.
- */
-export function connection(work: MachineWork, connected: boolean): MachineWork {
-  if (connected) return work;
-  return {
-    ...work,
-    machines: work.machines.map((machine) => ({
-      ...machine,
-      freshness: "disconnected",
-      counts: null,
-    })),
-  };
-}
-
-/**
- * What a machine's row says of its occupancy: its counts, only from a fresh and complete report
- * that has them; else that it is unknown, and how sure its report is.
- */
-export function occupancy(machine: MachineObservation): string {
-  const counts = machine.counts;
-  if (
-    machine.complete &&
-    machine.freshness === "fresh" &&
-    counts !== null &&
-    counts !== undefined
-  ) {
-    return `Builds: ${counts.running_builds} running, ${counts.queued_builds} queued · Tests: ${counts.running_tests} running, ${counts.queued_tests} queued`;
-  }
-  const observed =
-    !machine.complete && machine.freshness === "fresh" ? "incomplete" : machine.freshness;
-  return `Occupancy unknown · ${freshnessWord(observed)}`;
 }
 
 /** Whether two lists of phases draw the same chips: each the same words, look and title. */

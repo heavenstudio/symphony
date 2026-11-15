@@ -37,16 +37,8 @@ import {
 } from "./cache";
 import { sleep } from "./feed";
 import { type FrameRefresh, useFrame } from "./frame";
-import {
-  type BoardRun,
-  flushReload,
-  holdPlace,
-  type Journal,
-  keepBoard,
-  type PageBoard,
-  PageNotices,
-  ReadCursor,
-} from "./live";
+import { holdPlace, type Journal, ReadCursor } from "./journal";
+import { type BoardRun, flushReload, keepBoard, type PageBoard, PageNotices } from "./live";
 import { href, scoped } from "./project";
 import { getIf, getJson, said } from "./request";
 import { field, list as items } from "./shared";

@@ -12,6 +12,7 @@ import {
 import {
   type AgentPageRead,
   type AgentsRead,
+  connection,
   Followed,
   LiveAgents,
   readAgentPage,
@@ -30,7 +31,7 @@ import {
   reading,
 } from "./testing";
 import type { Agent, HeldTask, MachineWork, Task } from "./wire";
-import { connection, NO_WORK } from "./work";
+import { NO_WORK } from "./work";
 
 afterEach(() => vi.unstubAllGlobals());
 

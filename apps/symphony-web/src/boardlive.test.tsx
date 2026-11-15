@@ -12,7 +12,7 @@ import {
   upsert,
   withListed,
 } from "./boardlive";
-import { ReadCursor } from "./live";
+import { ReadCursor } from "./journal";
 import { aMachine, anOperation, aTask, aWork, CASES, memoryStorage } from "./testing";
 import type { MachineWork, Task, TaskListing } from "./wire";
 import { statusNotice } from "./words";

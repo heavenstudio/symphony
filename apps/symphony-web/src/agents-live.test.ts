@@ -6,6 +6,7 @@ import {
   agentLine,
   agentsPageTakes,
   connectedAgents,
+  connection,
   Followed,
   finished,
   followedTasks,
@@ -16,6 +17,7 @@ import {
   LiveAgents,
   lostAgents,
   meta,
+  occupancy,
   put,
   readAgent,
   readAgentChange,
@@ -27,8 +29,8 @@ import {
   workingOn,
 } from "./agents-live";
 import { aMachine, anAgent, anOperation, aRole, aTask, aWork, CASES } from "./testing";
-import type { Agent, Task } from "./wire";
-import { NO_WORK } from "./work";
+import type { Agent, MachineObservation, Task } from "./wire";
+import { freshnessWord, NO_WORK, phaseLabel, scopedPhases } from "./work";
 
 const SAMPLES = CASES.samples;
 
@@ -241,6 +243,53 @@ describe("what an agent follows", () => {
     expect(slugs(page(1, 23))).toEqual(expected(upTo(23)));
     expect(slugs([...page(1, 23), ...page(24, 36)])).toEqual(expected(upTo(36)));
     expect(slugs([])).toEqual(expected([5]));
+  });
+});
+
+describe("a machine's occupancy", () => {
+  it("is its counts only from a fresh and complete report that has them", () => {
+    const machine = aMachine("alpha", []);
+    expect(occupancy(machine)).toBe("Builds: 0 running, 0 queued · Tests: 0 running, 0 queued");
+    const counts = { running_builds: 1, queued_builds: 2, running_tests: 3, queued_tests: 4 };
+    expect(occupancy({ ...machine, counts })).toBe(
+      "Builds: 1 running, 2 queued · Tests: 3 running, 4 queued",
+    );
+    for (const freshness of [
+      "stale",
+      "disconnected",
+      "incomplete",
+      "conflict",
+      "unknown",
+    ] as const) {
+      expect(occupancy({ ...machine, freshness })).toBe(
+        `Occupancy unknown · ${freshnessWord(freshness)}`,
+      );
+    }
+    expect(occupancy({ ...machine, complete: false })).toBe(
+      "Occupancy unknown · partial inventory",
+    );
+    expect(occupancy({ ...machine, complete: false, freshness: "stale" })).toBe(
+      "Occupancy unknown · stale",
+    );
+    expect(occupancy({ ...machine, counts: null })).toBe("Occupancy unknown · fresh");
+  });
+});
+
+describe("the machines' work while the feed is lost", () => {
+  it("claims no capacity, and keeps the exact phases last observed", () => {
+    const work = aWork([aMachine("alpha", [anOperation("alpha", "test", "test", "running")])]);
+    expect(connection(work, true)).toBe(work);
+    const lost = connection(work, false);
+    expect(lost.machines[0]?.freshness).toBe("disconnected");
+    expect(lost.machines[0]?.counts).toBeNull();
+    expect(lost.machines[0]?.operations).toBe(work.machines[0]?.operations);
+    expect(work.machines[0]?.freshness).toBe("fresh");
+    expect(occupancy(lost.machines[0] as MachineObservation)).toBe(
+      "Occupancy unknown · disconnected",
+    );
+    expect(scopedPhases(lost, { agent: "worker-a" }).map(phaseLabel)).toEqual([
+      "Observed Test running · alpha · disconnected",
+    ]);
   });
 });
 
@@ -838,6 +887,43 @@ describe("an agent's Following list", () => {
     page.abort();
     await following.load(false);
     expect(following.rows).toEqual([]);
+    expect(redraw).not.toHaveBeenCalled();
+  });
+});
+
+describe("the agents page's requests", () => {
+  it("are given up on the wire once the page ends, and change nothing", async () => {
+    const { agents, d, host, page } = live();
+    const redraw = vi.fn();
+    const following = new Followed("amber", "", page.signal, redraw);
+    const signals: AbortSignal[] = [];
+    // As the browser's: a fetch whose signal ends refuses.
+    vi.stubGlobal(
+      "fetch",
+      (_url: string, init?: RequestInit) =>
+        new Promise<Response>((_answer, refuse) => {
+          const signal = init?.signal;
+          if (!signal) return;
+          signals.push(signal);
+          signal.addEventListener("abort", () => refuse(new DOMException("aborted", "AbortError")));
+        }),
+    );
+    d.view = PAGE.view;
+    d.agentCursor = "birch";
+    const reads = [agents.load(), agents.next(true), agents.next(false), following.load(false)];
+    expect(signals.map((signal) => signal.aborted)).toEqual([false, false, false, false]);
+    page.abort();
+    expect(signals.map((signal) => signal.aborted)).toEqual([true, true, true, true]);
+    await Promise.all(reads);
+    expect(d).toMatchObject({
+      view: PAGE.view,
+      agentCursor: "birch",
+      lostLoaded: false,
+      error: "",
+    });
+    expect(following.rows).toEqual([]);
+    expect(following.trouble).toBe("");
+    expect(host.redraw).not.toHaveBeenCalled();
     expect(redraw).not.toHaveBeenCalled();
   });
 });

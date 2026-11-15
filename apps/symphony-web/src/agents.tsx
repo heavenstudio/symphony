@@ -7,6 +7,7 @@ import {
   type AgentsRead,
   agentLine,
   connectedAgents,
+  connection,
   Followed,
   finished,
   followedTasks,
@@ -16,6 +17,7 @@ import {
   held,
   LiveAgents,
   lostAgents,
+  occupancy,
   workingOn,
 } from "./agents-live";
 import { Button } from "./button";
@@ -30,7 +32,7 @@ import { PhaseChips, statusWords, TaskCard } from "./taskcard";
 import { failed, ready, Trouble } from "./trouble";
 import { NearViewport, Skeleton } from "./viewport";
 import type { Agent, MachineObservation, MachineWork, Task, WorkGuidance } from "./wire";
-import { connection, occupancy, shownScoped } from "./work";
+import { shownScoped } from "./work";
 
 /** The agents page, under the board it follows. */
 export function AgentsPage({ scope }: { scope: string }) {
