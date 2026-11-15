@@ -229,15 +229,23 @@ fn on_a_wide_screen_the_charts_are_two_columns_and_dark_takes_its_own_colours() 
 const CHANGED: [u32; 10] = [10, 10, 11, 11, 11, 11, 11, 11, 12, 12];
 
 /// [`fortnight`] with the ten settings changes of [`CHANGED`], oldest first as the server sends
-/// them, the `n`th at `n + 1` o'clock, each subject as long as a merge's.
+/// them, the `n`th at `n + 1` o'clock, each subject as long as a merge's; the oldest names a
+/// 64-character hash, a word no line of a phone holds.
 fn changed_often() -> Value {
     let mut page = fortnight();
     page["marks"] = (0_u32..)
         .zip(CHANGED)
         .map(|(n, day)| {
+            let subject = if n == 0 {
+                format!(
+                    "Pin the board's SurrealDB at {}",
+                    "0123456789abcdef".repeat(4)
+                )
+            } else {
+                format!("Merge branch 'tools/settings-change-{n}': the board's limits and models")
+            };
             json!({"at": FROM + f64::from(day) * DAY + 3600.0 * f64::from(n + 1),
-                "commit": format!("{n}f1c0a9b2d3e"),
-                "subject": format!("Merge branch 'tools/settings-change-{n}': the board's limits and models")})
+                "commit": format!("{n}f1c0a9b2d3e"), "subject": subject})
         })
         .collect();
     page
@@ -261,9 +269,10 @@ fn on_a_phone_a_window_s_many_settings_changes_fold_and_the_first_chart_shows_on
         first["top"].as_i64().unwrap() < first["screen"].as_i64().unwrap(),
         "the first chart starts on the first screen: {first}"
     );
-    // The list's words read as drawn (`textContent`), and whether the folded ones show (a closed
-    // `details` keeps its content's boxes, hidden: `checkVisibility`).
-    let marks = "(() => { const m = document.querySelector('.reports-marks'); const d = m.querySelector('details'); return {listed: [...m.querySelectorAll(':scope > ul > li')].map(li => li.textContent), more: d?.querySelector('summary').textContent ?? null, open: d?.open ?? null, folded: d ? [...d.querySelectorAll('li')].map(li => li.textContent.split(':')[0]) : null, drawn: d ? d.querySelector('ul').checkVisibility() : null, overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth}; })()";
+    // The list's words read as drawn (`textContent`), whether the newest show whole or cut to a
+    // line, and whether the folded ones show (a closed `details` keeps its content's boxes,
+    // hidden: `checkVisibility`).
+    let marks = "(() => { const m = document.querySelector('.reports-marks'); const d = m.querySelector('details'); const newest = [...m.querySelectorAll(':scope > ul > li')]; return {listed: newest.map(li => li.textContent), whole: newest.every(li => li.scrollWidth <= li.clientWidth), more: d?.querySelector('summary').textContent ?? null, open: d?.open ?? null, folded: d ? [...d.querySelectorAll('li')].map(li => li.textContent.split(':')[0]) : null, drawn: d ? d.querySelector('ul').checkVisibility() : null, overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth}; })()";
     let mark = |n: usize, day: &str| {
         format!(
             "{day}: settings changed, Merge branch 'tools/settings-change-{n}': the board's limits and models ({n}f1c0a9b2d3e)"
@@ -281,9 +290,10 @@ fn on_a_phone_a_window_s_many_settings_changes_fold_and_the_first_chart_shows_on
     assert_eq!(
         chrome.eval(marks),
         json!({"listed": [mark(9, "Thu 14 Jan"), mark(8, "Thu 14 Jan"), mark(7, "Wed 13 Jan")],
-            "more": "7 more settings changes", "open": false, "folded": folded, "drawn": false,
-            "overflow": 0}),
-        "the newest three, newest first, and the other seven, newest first, folded"
+            "whole": false, "more": "7 more settings changes", "open": false, "folded": folded,
+            "drawn": false, "overflow": 0}),
+        "the newest three, newest first and cut to a line each, and the other seven, newest \
+         first, folded"
     );
     chrome.eval("document.querySelector('.reports-marks summary').click()");
     assert!(
@@ -294,10 +304,12 @@ fn on_a_phone_a_window_s_many_settings_changes_fold_and_the_first_chart_shows_on
         "the disclosure opens on the other seven: {}",
         chrome.eval(marks)
     );
+    let opened = chrome.eval(marks);
     assert_eq!(
-        chrome.eval("document.documentElement.scrollWidth - document.documentElement.clientWidth"),
-        json!(0),
-        "the opened list keeps within the phone's width"
+        (&opened["whole"], &opened["overflow"]),
+        (&json!(true), &json!(0)),
+        "opened, every change shows whole, the newest three too, within the phone's width, the \
+         hash's line broken: {opened}"
     );
     // The period with six says each of them when tapped.
     tap(&mut chrome, usize::try_from(CHANGED[2]).unwrap());

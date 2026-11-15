@@ -86,15 +86,17 @@
   min-width: 0;
   font-size: var(--fs-sm);
   color: var(--muted-foreground);
+  overflow-wrap: anywhere;
 }
 .reports-marks ul {
   margin: 0;
   padding: 0;
   list-style: none;
 }
-/* The newest, one line each, so a crowded window's first chart still starts on a phone's first
-   screen: each whole is in the page's text and in its period's readout. */
-.reports-marks > ul > li {
+/* The newest, one line each while the rest are folded, so a crowded window's first chart still
+   starts on a phone's first screen; opening the fold shows every change whole, and a list with
+   no fold is never cut. */
+.reports-marks:has(> details:not([open])) > ul > li {
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
