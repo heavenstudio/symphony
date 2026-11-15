@@ -234,8 +234,9 @@ never the whole target, which the release run runs.
   a 20 KB return-visit budget (`tests/browser/`, restored after the port;
   both the owner's, the first-visit cap raised by the owner to 300 KB, and
   never loosened by an agent). Home's first visit, the web client's since it moved, is held
-  to 125,000 bytes (`HOME_FIRST_VISIT_BYTES`) and the task board's, the same way, to 150,000
-  (`TASKS_FIRST_VISIT_BYTES`), each lowered by its move, never raised. A visit counts each response the page loaded at what Chrome's
+  to 125,000 bytes (`HOME_FIRST_VISIT_BYTES`), the task board's, the same way, to 150,000
+  (`TASKS_FIRST_VISIT_BYTES`) and a task's page's to 160,000 (`TASK_FIRST_VISIT_BYTES`), each
+  lowered by its move, never raised. A visit counts each response the page loaded at what Chrome's
   network events say it took on the wire, gzip body and response head: the
   HTML, the shell, the module's glue and WASM, the style sheets, API replies
   (refusals too) and the live feed's head and content messages, as the page
@@ -352,7 +353,17 @@ never the whole target, which the release run runs.
   bytes of the shell on the wire, for the same requests, a kind's chunks asked for with its entry
   rather than once it has come: `/` takes 111,667 (from 111,515), `/tasks` 116,371 (from
   116,202), `/queue` 107,113 (from 106,958), `/reports` 107,396 (from 107,244), `/docs/` and a
-  document 136,723 and 138,340 (from 136,566 and 138,183), the returns within a byte. Each
+  document 136,723 and 138,340 (from 136,566 and 138,183), the returns within a byte. A task's
+  page's move to the React client (`app/client-moves-to-react/task-page`, against main's build at
+  f56bde5) takes its first visit to 140,089 bytes (from 546,351) and gives it a cap of 160,000: its
+  entry (16,823 on the wire) and sheet (1,460), the chunk the web kinds share and the pieces it
+  shares with the board and the documents, where the program's WASM, glue and the task pages'
+  chunk were; its timeline, a chunk of the web client's, takes 12,787 after it (from 56,385), its
+  return 2,241 (from 2,240). `/agents`, the program's kind alone in its chunk now, takes 339,033
+  (from 545,758). Home takes 111,613 (from 111,653), `/queue` 107,056 (from 107,099) and
+  `/reports` 107,271 (from 107,382); `/tasks` takes 117,228 (from 116,357), `/docs/` and a
+  document 137,815 and 139,432 (from 136,709 and 138,868), the code they share with a task's page
+  in chunks of its own. Each
   module pays for its own compiled framework, the program once for all its kinds;
   later visits reuse cached imports. The home budget test
   is independent of the canonical-entry test, which gives every kind a fresh

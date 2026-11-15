@@ -4,8 +4,8 @@
 //! The budgets are the owner's (tools/python-zero/ui-board), and a miss is reported, never
 //! loosened. They are absolute; the measurement they were set against is in
 //! docs/engineering/analysis/python-zero.md ("Today's app, measured for mobile").
-//! - a first visit loads at most 125 KB gzipped to `/` and 150 KB to `/tasks` (each lowered from
-//!   the owner's 300 KB as its page moved to the React client),
+//! - a first visit loads at most 125 KB gzipped to `/`, 150 KB to `/tasks` and 160 KB to a task's
+//!   page (each lowered from the owner's 300 KB as its page moved to the React client),
 //!   everything the page needs (shell, JS glue, wasm or the React client's scripts, CSS, API data,
 //!   the feed's head and messages), each independently.
 //!   The feed's keep-alive pings, which keep arriving while the page is open, are reported
@@ -82,6 +82,11 @@ const HOME_FIRST_VISIT_BYTES: f64 = 125_000.0;
 /// moved to the React client: 116,215 bytes on the fixture then, beside home, Reports, the queue
 /// and the documents, the rest room for the code the kinds moving after it share with it.
 const TASKS_FIRST_VISIT_BYTES: f64 = 150_000.0;
+/// A task's page's first-visit cap (`/task/SLUG`), its timeline loaded after it and reported
+/// beside it: lowered from the owner's 300,000 once the page moved to the React client, 140,089
+/// bytes on the fixture then (546,351 on main's Dioxus build at f56bde5), with room for the code
+/// the kinds moving after it share with it.
+const TASK_FIRST_VISIT_BYTES: f64 = 160_000.0;
 const RETURN_VISIT_BYTES: f64 = 20_000.0;
 /// How long a page may take to show the board at all before a test gives up on it.
 const SHOWN: Duration = Duration::from_secs(30);
@@ -207,7 +212,12 @@ fn entry_pages_fit_the_first_visit_budget_and_deferred_kinds_are_reported() {
         ("/docs/", "docs", "[data-ready=folder]", None),
         ("/queue", "queue", "[data-ready=queue]", None),
         ("/reports", "reports", "[data-ready=reports]", None),
-        ("/task/visual/in-progress", "task", "article.task", None),
+        (
+            "/task/visual/in-progress",
+            "task",
+            "article.task",
+            Some(TASK_FIRST_VISIT_BYTES),
+        ),
         ("/docs/look-parity.md", "docs", ".doc-card", None),
     ] {
         let Some(mut chrome) = chrome() else { return };
