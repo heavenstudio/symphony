@@ -48,6 +48,7 @@ their dated history work is in [REVIEW](REVIEW.md).
     3. Nix based - interesting for microvm post start install
 
     And those can be documented to be further explored later. For now however, a computer based install using whatever is available should be setup, by having an agent do it and add settings to connect to the symphony.toml settings
+  [2026-11-15 12:33] owner · approved — Ah, and do use the latest version locally in homebrew, update it if needed.
 
 ### The built client
 
