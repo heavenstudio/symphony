@@ -500,7 +500,8 @@ never the whole target, which the release run runs.
   `postpone_live.rs`, the `page-docs` feature) left with them. What follows is the page's
   contract, which the React page keeps, its code named there.
   `document-live.ts` reads `/api/document?view=outline`: section keys,
-  source positions and anchors, with short card summaries. `NearViewport`
+  source positions and anchors, the kinds of each section's first and last blocks (`ends`), with
+  short card summaries. `NearViewport`
   mounts each block once near the screen; a collapsed
   card requests its body only when opened. Mounted blocks request their bodies
   and threads together from `/api/section?format=blocks&keys=JSON_LIST`. Excerpts
