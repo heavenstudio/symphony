@@ -93,8 +93,9 @@ const WORKSPACE_INPUTS: [&str; 5] = [
     "apps/symphony-server/src/notices.css",
 ];
 
-/// The sources of the split repair, a file and a folder: `bundle.sh` runs it on the program's
-/// chunks, so what it writes is the client's bytes too, and a change to it builds a new client.
+/// The sources of the split repair (`symphony-build split-repair`), a file and a folder, which
+/// leave the snapshot with the Dioxus client's sources: no build runs it, and a change to them
+/// builds a new client all the same.
 const SPLIT_REPAIR: [&str; 2] = [
     "crates/symphony/src/cli/commands/split_repair.rs",
     "crates/symphony/src/cli/commands/split_repair",

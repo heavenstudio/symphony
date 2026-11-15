@@ -5,9 +5,9 @@
 #
 # NAME is a size probe, a bin in this folder (floor_dioxus, floor_websys), bundled as bundle.sh
 # bundles a page kind (dx, the wasm-release profile, wasm-opt -Oz, --debug-symbols false) with the
-# `size-probe` feature. No page kind is built on its own since the last one moved to the web client:
-# the program (src/split.rs) is a main module and chunks, which the canonical-entry browser test
-# reports. Each goes into OUT/NAME/. For each it prints
+# `size-probe` feature. No kind is built by dx: every page and the modules every page mounts are the
+# web client's, whose sizes the canonical-entry browser test reports. Each goes into OUT/NAME/. For
+# each it prints
 # the shipped WASM's and JS glue's gzip -6 bytes and writes OUT/NAME-named.wasm: cargo's linked
 # module without its DWARF, then the release's wasm-bindgen and wasm-opt -Oz with the same feature
 # flags, keeping the name section (`--debuginfo` in place of the release's strip). Then:

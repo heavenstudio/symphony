@@ -71,9 +71,9 @@ fn a_modules_exports_are_read_from_its_clause() {
 }
 
 /// The shipped distribution is the regenerator's, made after a land from main's sources (a branch
-/// commits none): every page kind it names has its script and, for a kind of the Dioxus client, its
-/// wasm and, for a kind of the program (apps/symphony-ui/src/split.rs), its chunk; a kind of the web
-/// client (apps/symphony-web) is a script that exports its `run` and `stop`.
+/// commits none), so it may be older than this tree: every kind it names has its script; a kind of
+/// the web client (apps/symphony-web) is a script that exports its `run` and `stop`, and a kind dx
+/// built, in a distribution made while the chat was the Dioxus program's, has its wasm and chunk.
 #[test]
 fn shipped_shell_references_its_real_modules_and_valid_wasm() {
     let shell =
@@ -102,8 +102,7 @@ fn shipped_shell_references_its_real_modules_and_valid_wasm() {
         .map(String::as_str)
         .collect();
     keys.sort_unstable();
-    // The program's kinds and the web client's that the committed build and the one regenerated
-    // from this tree both have: no page is the program's any more.
+    // The kinds the committed build and the one regenerated from this tree both have.
     for kind in ["board", "docs", "overlay", "panel", "queue", "review"] {
         assert!(keys.contains(&kind), "no {kind} in {keys:?}");
     }

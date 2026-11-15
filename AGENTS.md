@@ -1,7 +1,8 @@
 # Symphony
 
 The app's workspace owns its server and its two web clients under `apps/` (the React one,
-`apps/symphony-web`, taking the pages over a kind at a time from the Dioxus one), and the review
+`apps/symphony-web`, which draws every page now, and the Dioxus one, whose build is the
+stylesheets every page shares), and the review
 library, wire types, task board, working-directory scanner, headless Chrome driver and
 the tests' CPU meters and waits (`crates/test-time`, RULES.md `tests/no-test-fails-on-load`)
 under `crates/`.
@@ -86,8 +87,9 @@ commands only this repository's own build and release run use, and is never ship
 
 ### The client's distribution
 
-`just client-update` builds both clients (the Dioxus client's page modules and program, the React
-client's page kinds) and publishes their bundle, one shell and one `builds.json` under
+`just client-update` builds the client (the React client's kinds, over the stylesheets every page
+shares, which dx builds from the Dioxus package) and publishes its bundle, one shell and one
+`builds.json` under
 `apps/symphony-server/client/public/`, which the server package embeds at build time. A branch
 commits no distribution, whatever it changed: the regenerator a land starts rebuilds it from
 main's newest tip and lands it as a commit of its own ([TASKS](docs/TASKS.md#the-regenerator)),

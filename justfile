@@ -102,7 +102,7 @@ release *ARGS:
 agent-send *ARGS:
     @tools/rs-bin.sh agent-send "$@"
 
-# Rebuild the real modules and the program and refuse drift from the client embedded at this pin.
+# Rebuild the client's kinds and its shared stylesheet and refuse drift from the client embedded at this pin.
 client-check OUT="build/verified-client":
     @{{record}} --pipeline client --step client-check build "just client-check" just --justfile {{quote(justfile())}} _client-check {{quote(OUT)}}
 
