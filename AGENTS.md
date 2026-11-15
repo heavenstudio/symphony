@@ -1,12 +1,12 @@
 # Symphony
 
 The app's workspace owns its server, its two web clients and its Mac app under `apps/` (the React
-one, `apps/symphony-web`, taking the pages over a kind at a time from the Dioxus one; the Mac app,
-`apps/symphony-desktop`, a thin shell over each server's own pages, `publish = false`, whose window
-crates no other package links), and the review library, its own build and release commands
-(`crates/symphony-build`), wire types, task board, working-directory scanner, headless Chrome
-driver and the tests' CPU meters and waits (`crates/test-time`, RULES.md
-`tests/no-test-fails-on-load`) under `crates/`.
+one, `apps/symphony-web`, which draws every page now, and the Dioxus one, whose build is the
+stylesheets every page shares; the Mac app, `apps/symphony-desktop`, a thin shell over each
+server's own pages, `publish = false`, whose window crates no other package links), and the review
+library, its own build and release commands (`crates/symphony-build`), wire types, task board,
+working-directory scanner, headless Chrome driver and the tests' CPU meters and waits
+(`crates/test-time`, RULES.md `tests/no-test-fails-on-load`) under `crates/`.
 The app's formats and operating contract live in [docs/](docs/README.md).
 A consuming project owns its landing policy and shared-service safeguards.
 
@@ -91,8 +91,9 @@ API alone, so neither the library every project links nor its `symphony` compile
 
 ### The client's distribution
 
-`just client-update` builds both clients (the Dioxus client's page modules and program, the React
-client's page kinds) and publishes their bundle, one shell and one `builds.json` under
+`just client-update` builds the client (the React client's kinds, over the stylesheets every page
+shares, which dx builds from the Dioxus package) and publishes its bundle, one shell and one
+`builds.json` under
 `apps/symphony-server/client/public/`, which the server package embeds at build time. A branch
 commits no distribution, whatever it changed: the regenerator a land starts rebuilds it from
 main's newest tip and lands it as a commit of its own ([TASKS](docs/TASKS.md#the-regenerator)),

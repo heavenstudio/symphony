@@ -114,6 +114,10 @@ fn constants() -> String {
         ("UPLOAD_PATH", text(api::UPLOAD_PATH)),
         ("UPLOAD_MAX_BYTES", api::UPLOAD_MAX_BYTES.to_string()),
         ("UPLOAD_ACCEPT", text(api::UPLOAD_ACCEPT)),
+        (
+            "QUICK_TASK_TITLE_MAX",
+            api::QUICK_TASK_TITLE_MAX.to_string(),
+        ),
         ("TASK_ACTION_ROUTE", text(api::TASK_ACTION_ROUTE)),
         ("TASK_GATES_PATH", text(api::TASK_GATES_PATH)),
         ("TASK_TIMELINE_PATH", text(api::TASK_TIMELINE_PATH)),

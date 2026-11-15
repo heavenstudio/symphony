@@ -1,24 +1,18 @@
-//! The program (src/split.rs): the chat every page mounts over the web client's pages is its script
-//! and main module, with a chunk of its own; the menus every page mounts are the web client's
-//! (`overlay`). The chat opened on one page and then on another fetches the program and its chunk
-//! once, and none of the menus'. The media layer is a chunk of its own, which the chat fetches only
-//! once its thread shows media: a mockup, here. A page of the web client's takes its pictures up
-//! with its own layer and opens them in the menus' picture viewer, fetching no media chunk. A chat whose chunk is held keeps the page shown, its sheet
-//! loading over it; one whose chunk does not load says so with its retry, the page under its
-//! notice, or loads the page again when its build is gone. A media layer that does not load leaves
-//! its page shown under a notice whose retry loads it, or loads the page again when its build is
-//! gone. The web client's own kinds keep the same: preload.rs (a move into a kind keeps the page
-//! before shown while its entry is held) and main.rs (a page whose module does not load).
+//! The modules every page mounts over its own, the web client's persistent kinds: the chat
+//! (`panel`, apps/symphony-web/src/panel.tsx) and the menus (`overlay`). The chat opened on one page
+//! and then on another fetches its script, the chunks it imports and its styles once, and none of
+//! the menus'. A page takes its own pictures up with its own layer, fetching nothing of the chat's,
+//! and the chat's pictures open in the menus' viewer on every page (#6183). A chat whose script is
+//! held keeps the page shown, its sheet loading over it; one whose script does not load says so with
+//! its retry, the page under its notice, or loads the page again when its build is gone. A media
+//! layer is in the chunks of the chat and of each page that shows media, so it loads, or fails, with
+//! them: no file of its own (panel_open.rs). The other kinds keep the same: preload.rs (a move into
+//! a kind keeps the page before shown while its entry is held) and main.rs (a page whose module
+//! does not load).
 
 use serde_json::json;
 
-use super::{
-    SHOWN, STALL, Site,
-    assets::{media_chunk, module},
-    chrome,
-    chrome::Chrome,
-    common, dist,
-};
+use super::{SHOWN, STALL, Site, assets::module, chrome, chrome::Chrome, common, dist};
 
 /// The stand-in with what a task page reads.
 fn site() -> Site {
@@ -84,7 +78,7 @@ fn loads(site: &Site, path: &str) -> usize {
         .count()
 }
 
-/// The board, as the program's tests wait for it.
+/// The board, as these tests wait for it.
 const BOARD: &str = "[data-slug='tools/example']";
 
 /// The chat, drawn and up: its sheet open and its composer in it, the loading sheet gone.
@@ -102,29 +96,31 @@ fn open_chat(chrome: &mut Chrome) {
 }
 
 #[test]
-fn the_chat_opened_on_one_page_and_then_on_another_fetches_the_program_and_its_chunk_once() {
+fn the_chat_opened_on_one_page_and_then_on_another_fetches_its_files_once() {
     let site = site();
     let Some(mut chrome) = chrome() else { return };
     // Each file is fetched by what shows it: no idle prefetch has the chat's in already.
     chrome.save_data();
     let (chat, menus) = (module(dist(), "panel"), module(dist(), "overlay"));
-    assert!(
-        menus.wasm.is_empty() && menus.chunk.is_none(),
-        "the menus are the web client's, none of the program's"
-    );
-    let files = [&chat.script, &chat.wasm, chat.chunk(), &menus.script];
+    // The chat's script, the chunks it imports (those the board shares with it the board's load
+    // fetched) and its styles (the shared sheet the board's).
+    let files: Vec<&String> = std::iter::once(&chat.script)
+        .chain(&chat.imports)
+        .chain(&chat.styles)
+        .collect();
+    let once = vec![1; files.len()];
     chrome.open(&site.url("/tasks"));
     shows(&mut chrome, BOARD);
     assert_eq!(
-        asks(&site, &files),
-        [0, 0, 0, 0],
-        "the board is a module of its own, and nothing of the program comes before the chat"
+        asks(&site, &[&chat.script, &menus.script]),
+        [0, 0],
+        "the board is a module of its own, and the chat's script comes with the chat"
     );
     open_chat(&mut chrome);
     assert_eq!(
         asks(&site, &files),
-        [1, 1, 1, 0],
-        "the chat: the program's script and main module, and its chunk"
+        once,
+        "the chat: its script, its chunks and its styles, each once: {files:?}"
     );
     // Closed, as a reader closes it, from within.
     assert!(chrome.wait_for(
@@ -139,13 +135,13 @@ fn the_chat_opened_on_one_page_and_then_on_another_fetches_the_program_and_its_c
         ),
         "Escape leaves the chat open"
     );
-    // On a task's page, the web client's, the chat opens again from what the board's had in.
+    // On a task's page the chat opens again from what the board's had in.
     follow(&mut chrome, "/task/visual/in-progress");
     shows(&mut chrome, "article.task");
     open_chat(&mut chrome);
     assert_eq!(
         asks(&site, &files),
-        [1, 1, 1, 0],
+        once,
         "the chat on a task's page: nothing fetched again"
     );
     // Away to pages of other modules (Reports and the agents page) and back, the chat open.
@@ -161,15 +157,18 @@ fn the_chat_opened_on_one_page_and_then_on_another_fetches_the_program_and_its_c
     );
     assert_eq!(
         asks(&site, &files),
-        [1, 1, 1, 0],
+        once,
         "back to the pages it has: nothing fetched again"
+    );
+    assert_eq!(
+        asks(&site, &[&menus.script]),
+        [0],
+        "nothing the chat did needed the menus"
     );
 }
 
-/// How many times the stand-in was asked for the media layer's chunk ([`media_chunk`]).
-pub(super) fn media_asked(site: &Site) -> usize {
-    asks(site, &[&media_chunk(dist())])[0]
-}
+/// A picture of 200 by 200 pixels.
+const PICTURE: &[u8] = br#"<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200"/>"#;
 
 /// The stand-in with a task whose brief is a picture, `/near.svg`, below the page's head.
 fn picture_site() -> Site {
@@ -177,34 +176,19 @@ fn picture_site() -> Site {
     let mut page = super::look_parity::responses()["/api/task-page"].clone();
     page["blocks"] = json!([{"type":"image","image":{"src":"/near.svg","alt":"near","presentation":{"attributes":{"width":"200","height":"200"}}}}]);
     site.set_json("/api/task-page", &page);
-    site.set_file(
-        "/near.svg",
-        br#"<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200"/>"#.to_vec(),
-        "image/svg+xml",
-    );
+    site.set_file("/near.svg", PICTURE.to_vec(), "image/svg+xml");
     site
 }
 
-/// A task's page is the web client's: its own media layer takes the brief's picture up, which
-/// opens in the menus' picture viewer, and the program's media layer is never fetched, with a
-/// picture or without one.
+/// A task's page takes the brief's picture up with its own media layer, which opens it in the
+/// menus' picture viewer: nothing of the chat's is fetched for it.
 #[test]
 fn a_web_page_takes_its_pictures_up_itself_and_opens_them_in_the_menus_viewer() {
-    let site = site();
-    {
-        let Some(mut chrome) = chrome() else { return };
-        chrome.open(&site.url("/task/visual/in-progress"));
-        shows(&mut chrome, "article.task");
-        // The timeline comes once the page has drawn its data and is idle.
-        assert!(chrome.wait_for(
-            "document.getElementById('timeline-root') !== null && document.querySelector('.tl-drawn') !== null",
-            SHOWN
-        ));
-        assert_eq!(media_asked(&site), 0, "{:?}", site.requests());
-    }
-    // The same task, its brief now a picture, in a browser of its own.
     let site = picture_site();
     let Some(mut chrome) = chrome() else { return };
+    // No idle prefetch fetches the chat's files: only what the page shows asks for its files.
+    chrome.save_data();
+    let chat = module(dist(), "panel");
     chrome.open(&site.url("/task/visual/in-progress"));
     shows(&mut chrome, "article.task");
     chrome.eval("document.querySelector('main img[alt=near]').scrollIntoView({block:'center'})");
@@ -226,168 +210,104 @@ fn a_web_page_takes_its_pictures_up_itself_and_opens_them_in_the_menus_viewer() 
         "the picture never opens in the viewer: {:?}",
         chrome.eval("document.getElementById('media-lightbox')?.outerHTML")
     );
-    assert_eq!(media_asked(&site), 0, "{:?}", site.requests());
+    assert_eq!(asks(&site, &[&chat.script]), [0], "{:?}", site.requests());
 }
 
-/// The stand-in with the chat's thread, ask 7, showing a mockup, `/mockup.html`.
-fn mockup_site() -> Site {
+/// The chat's thread, ask 7, opened by the page's draft, its answer a picture, `/chat.svg`.
+fn chat_picture_site(chrome: &mut Chrome) -> Site {
     let site = site();
-    let mut thread = super::panel_open::chat(&["First question", "A mockup"]);
-    thread["ask"]["messages"][1]["blocks"] =
-        json!([{"type":"media","media":{"kind":"mockup","src":"/mockup.html","label":"Mockup"}}]);
+    let mut thread = super::panel_open::chat(&["First question", "A picture"]);
+    thread["ask"]["messages"][1]["blocks"] = json!([{"type":"image","image":{"src":"/chat.svg","alt":"chat picture","presentation":{"attributes":{"width":"200","height":"200"}}}}]);
     site.set_json("/api/ask", &thread);
-    site.set_file(
-        "/mockup.html",
-        b"<!doctype html><title>Mockup</title>".to_vec(),
-        "text/html",
-    );
-    site
-}
-
-/// Open the board, its chat's draft on ask 7, and mark the page (`__kept`, which a load of the
-/// page again drops).
-fn open_board(chrome: &mut Chrome, site: &Site) {
+    site.set_file("/chat.svg", PICTURE.to_vec(), "image/svg+xml");
     chrome.call(
         "Page.addScriptToEvaluateOnNewDocument",
         json!({"source": "localStorage.setItem('review-quick-draft', JSON.stringify({open: false, task: false, ask: 7}));"}),
     );
-    chrome.open(&site.url("/tasks"));
-    shows(chrome, BOARD);
-    chrome.eval("window.__kept = true");
+    site
 }
 
-/// Open the chat and scroll its thread's mockup into view, as a reader would: it shows, which asks
-/// for the media layer.
-fn show_mockup(chrome: &mut Chrome) {
-    chrome.eval("document.querySelector('#quick-open').click()");
-    assert!(
-        chrome.wait_for(
-            "document.querySelector('#quick-root .mockup-shell') !== null",
-            SHOWN
-        ),
-        "the chat's thread is never drawn: {}",
-        chrome.eval("document.getElementById('quick-sheet')?.innerText ?? null")
-    );
-    chrome.eval(
-        "document.querySelector('#quick-root .mockup-shell').scrollIntoView({block:'center'})",
-    );
-}
-
-/// The media layer took the mockup up: it scales the mockup's frame once its chunk is in.
-const TAKEN_UP: &str = "document.querySelector('#quick-root .mockup-frame iframe')?.getAttribute('style')?.includes('transform:scale(') === true";
-
-/// The media layer's notice, up.
-const NOTICE: &str = "document.querySelector('#media-error[role=alert]') !== null";
+/// The chat's picture.
+const CHAT_PICTURE: &str = "#quick-root #quick-sheet .quick-message img[alt='chat picture']";
 
 #[test]
-fn a_media_layer_whose_chunk_does_not_load_says_so_and_its_retry_loads_it() {
-    let site = mockup_site();
-    let media = media_chunk(dist());
-    // Its build still served, the media layer's chunk does not load: the page stays, and says so.
-    site.retire(&media);
+fn a_chat_picture_opens_in_the_viewer_on_every_page() {
     let Some(mut chrome) = chrome() else { return };
-    open_board(&mut chrome, &site);
-    show_mockup(&mut chrome);
-    assert!(
-        chrome.wait_for(NOTICE, SHOWN),
-        "a media layer that does not load is silent: {:?}",
-        site.requests()
-    );
-    assert_eq!(
-        chrome.eval("document.querySelector('#media-error')?.textContent"),
-        json!("Media could not be loaded. Retry loading media")
-    );
-    assert_eq!(chrome.eval("window.__kept === true"), json!(true));
-    assert!(drawn(&mut chrome, BOARD), "the board is gone");
-    assert!(
-        drawn(&mut chrome, "#quick-root .mockup-shell"),
-        "the mockup is gone"
-    );
-    assert_eq!(chrome.eval(TAKEN_UP), json!(false));
-    assert_eq!(media_asked(&site), 1, "{:?}", site.requests());
-    // A later load works: the retry shows the media again, which asks for the chunk again.
-    site.restore(&media);
-    chrome.eval("document.querySelector('#media-error button').click()");
-    assert!(
-        chrome.wait_for(TAKEN_UP, SHOWN),
-        "the retry never loads the media layer: {:?}",
-        site.requests()
-    );
-    assert_eq!(media_asked(&site), 2, "{:?}", site.requests());
-    assert_eq!(
-        chrome.eval("document.getElementById('media-error') === null && window.__kept === true"),
-        json!(true),
-        "the notice stays up, or the page was loaded again"
-    );
-}
-
-/// The media layer's notice comes down once the page moves on, as the shell's own notice of a page
-/// that did not load does: the page it named is no longer shown.
-#[test]
-fn a_media_notice_comes_down_once_the_page_moves_on() {
-    let site = mockup_site();
-    site.retire(&media_chunk(dist()));
-    let Some(mut chrome) = chrome() else { return };
-    open_board(&mut chrome, &site);
-    show_mockup(&mut chrome);
-    assert!(
-        chrome.wait_for(NOTICE, SHOWN),
-        "a media layer that does not load is silent: {:?}",
-        site.requests()
-    );
-    // To a page that shows no media of its own (the chat's goes with the board's layer).
-    follow(&mut chrome, "/reports");
-    shows(&mut chrome, "[data-ready=reports]");
-    assert_eq!(
-        chrome.eval("document.getElementById('media-error') === null && window.__kept === true"),
-        json!(true),
-        "the notice stays up on the reports, or the page was loaded again"
-    );
-}
-
-#[test]
-fn a_media_layer_whose_build_is_gone_loads_the_page_again() {
-    let site = mockup_site();
-    let Some(mut chrome) = chrome() else { return };
-    open_board(&mut chrome, &site);
-    assert_eq!(loads(&site, "/tasks"), 1, "{:?}", site.requests());
-    // Its build gone from the server, the media layer's chunk with it: once the mockup shows, the
-    // page loads again, onto the build served now.
-    site.retire(&media_chunk(dist()));
-    site.retire(&shell(&mut chrome));
-    show_mockup(&mut chrome);
-    if let Err(stall) =
-        test_time::until_true("a page whose media is gone loaded again", STALL, || {
-            loads(&site, "/tasks") >= 2
-        })
-    {
-        panic!("{stall}: {:?}", site.requests());
+    let site = chat_picture_site(&mut chrome);
+    chrome.open(&site.url("/"));
+    super::wait_for_board(&mut chrome);
+    open_chat(&mut chrome);
+    // Pages with a media layer of their own (home, a task's page) and without one (the board, the
+    // agents page, Reports, the queue), the chat open over each.
+    for (path, ready) in [
+        ("/", ".hero-title"),
+        ("/tasks", BOARD),
+        ("/reports", "[data-ready=reports]"),
+        ("/task/visual/in-progress", "article.task"),
+        ("/agents", ".agents"),
+        ("/queue", "[data-ready=queue]"),
+    ] {
+        if path != "/" {
+            follow(&mut chrome, path);
+            shows(&mut chrome, ready);
+        }
+        // Scrolled to in the thread, as a reader would: the picture loads as it comes into view.
+        chrome.eval(&format!(
+            "document.querySelector({}).scrollIntoView({{block:'center'}})",
+            json!(CHAT_PICTURE)
+        ));
+        assert!(
+            chrome.wait_for(
+                &format!(
+                    "document.querySelector({})?.naturalWidth === 200",
+                    json!(format!("{CHAT_PICTURE}[data-zoom-ready]"))
+                ),
+                SHOWN
+            ),
+            "{path}: the chat's picture is never taken up: {:?}",
+            chrome.eval(&format!(
+                "document.querySelector({})?.outerHTML ?? document.getElementById('quick-sheet')?.innerText ?? null",
+                json!(CHAT_PICTURE)
+            ))
+        );
+        chrome.eval(&format!(
+            "document.querySelector({}).click()",
+            json!(CHAT_PICTURE)
+        ));
+        assert!(
+            chrome.wait_for(
+                "document.querySelector('#media-lightbox[data-state=open] img')?.getAttribute('src') === '/chat.svg'",
+                SHOWN
+            ),
+            "{path}: the chat's picture never opens in the viewer: {:?}",
+            chrome.eval("document.getElementById('media-lightbox')?.outerHTML ?? null")
+        );
+        chrome.eval("document.querySelector('#media-lightbox .lightbox-controls button').click()");
+        assert!(
+            chrome.wait_for("document.getElementById('media-lightbox') === null", SHOWN),
+            "{path}: the viewer never closes"
+        );
+        assert!(
+            drawn(&mut chrome, "#quick-root #quick-sheet"),
+            "{path}: closing the viewer closed the chat"
+        );
     }
-    assert_eq!(media_asked(&site), 1, "{:?}", site.requests());
 }
 
 #[test]
-fn a_chat_whose_chunk_is_held_keeps_the_page_shown_and_its_sheet_loading_until_it_is_in() {
+fn a_chat_whose_script_is_held_keeps_the_page_shown_and_its_sheet_loading_until_it_is_in() {
     let site = site();
     let Some(mut chrome) = chrome() else { return };
     // The first open fetches the chat; no idle prefetch has it in the cache already.
     chrome.save_data();
     chrome.open(&site.url("/tasks"));
     shows(&mut chrome, BOARD);
-    // Each kind the program's loader is asked for, in turn, as the program's script installs it.
-    chrome.eval(
-        "(() => { let loader; Object.defineProperty(globalThis, 'reviewChunk', { configurable: true, get: () => loader, set: load => { loader = kind => { (window.__asked ||= []).push(kind); return load(kind); }; } }); })()",
-    );
-    let chunk = module(dist(), "panel").chunk().clone();
-    site.hold_route(&chunk, true);
+    let script = module(dist(), "panel").script;
+    site.hold_route(&script, true);
     chrome.eval("document.querySelector('#quick-open').click()");
-    // Asked for the chat's chunk, which is held, the chat waits on it alone: the board stays shown
+    // Asked for the chat's script, which is held, the chat waits on it alone: the board stays shown
     // and usable, its header with it, and the chat's sheet says it loads.
-    assert!(
-        chrome.wait_for("window.__asked?.includes('panel') === true", SHOWN),
-        "the chat's chunk is never asked for: {:?}",
-        chrome.eval("window.__asked")
-    );
+    super::panel_open::asked(&mut chrome, &site, &script, 1);
     assert_eq!(
         chrome.eval("document.documentElement.dataset.navigation"),
         json!("ready"),
@@ -403,10 +323,10 @@ fn a_chat_whose_chunk_is_held_keeps_the_page_shown_and_its_sheet_loading_until_i
         chrome.eval("window.reviewPanelReady === true"),
         json!(false)
     );
-    site.hold_route(&chunk, false);
+    site.hold_route(&script, false);
     assert!(
         chrome.wait_for(CHAT_UP, SHOWN),
-        "the chat never comes up once its chunk is in: {:?}",
+        "the chat never comes up once its script is in: {:?}",
         chrome.eval("document.body.innerHTML.slice(-2000)")
     );
     assert!(
@@ -428,7 +348,7 @@ fn shell(chrome: &mut Chrome) -> String {
 const CHAT_FAILED: &str = "document.querySelector('#panel-error[role=alert]') !== null && document.getElementById('panel-loading') === null";
 
 #[test]
-fn a_chat_whose_chunk_does_not_load_says_so_with_its_retry_and_leaves_the_page_shown() {
+fn a_chat_whose_script_does_not_load_says_so_with_its_retry_and_leaves_the_page_shown() {
     let site = site();
     let Some(mut chrome) = chrome() else { return };
     // The first open fetches the chat; no idle prefetch has it in the cache already.
@@ -436,9 +356,9 @@ fn a_chat_whose_chunk_does_not_load_says_so_with_its_retry_and_leaves_the_page_s
     chrome.open(&site.url("/"));
     super::wait_for_board(&mut chrome);
     chrome.eval("window.__kept = true");
-    let chunk = module(dist(), "panel").chunk().clone();
-    // Its build still served, the chat's chunk does not load: the page stays, and says so.
-    site.retire(&chunk);
+    let script = module(dist(), "panel").script;
+    // Its build still served, the chat's script does not load: the page stays, and says so.
+    site.retire(&script);
     chrome.eval("document.querySelector('#quick-open').click()");
     assert!(
         chrome.wait_for(CHAT_FAILED, SHOWN),
@@ -457,8 +377,8 @@ fn a_chat_whose_chunk_does_not_load_says_so_with_its_retry_and_leaves_the_page_s
     assert_eq!(chrome.eval("window.__kept === true"), json!(true));
     assert!(drawn(&mut chrome, ".hero-title"), "the page is hidden");
     assert!(drawn(&mut chrome, ".app-header"), "the header is gone");
-    // A later load works: the retry asks for the chunk again, and the chat comes up.
-    site.restore(&chunk);
+    // A later load works: the retry asks for the script again, and the chat comes up.
+    site.restore(&script);
     chrome.eval("document.querySelector('#panel-error button').click()");
     assert!(
         chrome.wait_for(
@@ -468,7 +388,7 @@ fn a_chat_whose_chunk_does_not_load_says_so_with_its_retry_and_leaves_the_page_s
         "the retry never loads the chat: {:?}",
         site.requests()
     );
-    assert_eq!(asks(&site, &[&chunk]), [2], "{:?}", site.requests());
+    assert_eq!(asks(&site, &[&script]), [2], "{:?}", site.requests());
     assert_eq!(chrome.eval("window.__kept === true"), json!(true));
 }
 
@@ -480,9 +400,9 @@ fn a_chat_whose_build_is_gone_loads_the_page_again() {
     chrome.open(&site.url("/"));
     super::wait_for_board(&mut chrome);
     assert_eq!(loads(&site, "/"), 1, "{:?}", site.requests());
-    // Its build gone from the server, the chat's chunk with it: the chat opened, the page loads
+    // Its build gone from the server, the chat's script with it: the chat opened, the page loads
     // again, onto the build served now, and says nothing of a chat that could not load.
-    site.retire(module(dist(), "panel").chunk());
+    site.retire(&module(dist(), "panel").script);
     site.retire(&shell(&mut chrome));
     chrome.eval("document.querySelector('#quick-open').click()");
     if let Err(stall) =
