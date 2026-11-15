@@ -308,7 +308,11 @@ fn every_query_a_write_a_recipient_or_a_tick_sends_is_planned_on_an_index() {
     // reads: a store's own read, through the relay. The newest verdict it reads once, at its
     // start, is no tick's, and is not planned here.
     let reader = symphony_board::Store::unchecked(
-        Client::new(&relay.addr, symphony_board::NAMESPACE, crate::board::DATABASE),
+        Client::new(
+            &relay.addr,
+            symphony_board::NAMESPACE,
+            crate::board::DATABASE,
+        ),
         Box::new(|| NOW),
         Box::new(|_| false),
         &symphony_board::sys::hostname(),
