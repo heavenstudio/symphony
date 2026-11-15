@@ -351,6 +351,7 @@ fn the_build_only_commands_are_unknown_to_the_shipped_binary() {
         "size-budget",
         "crates-check",
         "split-repair",
+        "synced",
         "release",
         "nightly",
     ] {

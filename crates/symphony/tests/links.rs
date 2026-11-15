@@ -64,8 +64,8 @@ fn the_binary_links_no_schema_validator() {
     );
 }
 
-/// `publish-client`, `release-inputs`, `size-budget`, `crates-check`, `split-repair` and `release`
-/// are `symphony-build`'s (`symphony::cli::build_main`), which no project is given
+/// `publish-client`, `release-inputs`, `size-budget`, `crates-check`, `split-repair`, `synced` and
+/// `release` are `symphony-build`'s (`symphony::cli::build_main`), which no project is given
 /// (`init::BUILDS`), so neither this binary nor a consuming project's host, which runs
 /// `symphony::cli::main`, links them. Each is looked for by the prefix of its refusals, a text of
 /// its own module; the `symphony-build` binary, which runs them, holds each, and so shows the text
@@ -80,6 +80,7 @@ fn the_binary_links_none_of_the_build_only_commands() {
         "size-budget",
         "crates-check",
         "split-repair",
+        "synced",
         "release",
     ] {
         let said = format!("symphony-build {command}: ");

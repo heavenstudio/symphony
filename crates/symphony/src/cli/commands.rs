@@ -14,6 +14,7 @@ mod release_inputs;
 mod shot;
 mod size_budget;
 mod split_repair;
+mod synced;
 
 /// The Symphony's own commands, in the order its usage names them, each with what it does.
 const OWN: [(&str, &str); 13] = [
@@ -76,7 +77,7 @@ const PLAIN: [(&str, &str, &str); 3] = [
 
 /// The commands only this repository's own build and release run use, `symphony-build`'s, in the
 /// order its usage names them, each with what it does.
-const BUILD: [(&str, &str); 6] = [
+const BUILD: [(&str, &str); 7] = [
     (
         "publish-client",
         "publish a built client into the server's embedded copy",
@@ -96,6 +97,10 @@ const BUILD: [(&str, &str); 6] = [
     (
         "split-repair",
         "repair dx's --wasm-split output: safe, same bytes each build",
+    ),
+    (
+        "synced",
+        "time each page from its open to synced on a returning browser",
     ),
     (
         "release",
@@ -265,6 +270,7 @@ pub(super) fn build(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -
         Some("size-budget") => size_budget::main(rest, out, err),
         Some("crates-check") => crates_check::main(rest, out, err),
         Some("split-repair") => split_repair::main(rest, out, err),
+        Some("synced") => synced::main(rest, out, err),
         Some("release") => crate::release::main(rest, out, err),
         Some(name) => refuse_unknown(&SYMPHONY_BUILD, name, &[], err),
         None => usage(&SYMPHONY_BUILD, err),
@@ -462,6 +468,7 @@ mod tests {
             "size-budget",
             "crates-check",
             "split-repair",
+            "synced",
             "release",
         ];
         assert_eq!(build, every);

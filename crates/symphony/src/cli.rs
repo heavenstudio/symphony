@@ -110,7 +110,7 @@ pub fn main_in(
 
 /// `symphony-build COMMAND ARGS…` (`tools/rs-bin.sh symphony-build`): the commands only this
 /// repository's own build and release run use (publishing a built client, the client's release
-/// inputs, the size budgets, the splitter's repair and the release run), the whole command line
+/// inputs, the size budgets, the splitter's repair, the pages' time to synced and the release run), the whole command line
 /// without the program name. Its exit code. No project is given that binary, and [`main`] reaches
 /// none of them, so neither the shipped `symphony` nor a host that calls [`main`] links them.
 pub fn build_main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
