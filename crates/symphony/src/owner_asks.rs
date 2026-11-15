@@ -375,7 +375,7 @@ pub fn reply_place(file: &Path) -> Option<(PathBuf, String, String)> {
             .to_string()
     };
     let rel = file.strip_prefix(&top).ok()?.to_string_lossy().into_owned();
-    let route = crate::project::Project::of(&top).route(&rel).unwrap_or(rel);
+    let route = crate::project::Project::route_in(&top, &rel).unwrap_or(rel);
     Some((top, tree, route))
 }
 

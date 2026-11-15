@@ -7,14 +7,14 @@ use crate::launch::{Defaults, root_of};
 pub const USAGE: &str = r#"usage: just tasks launch [-h] [--as ACTOR] [--model MODEL]
                          [--kind {codex,claude}] [--role {executor,reviewer}]
                          [--branch BRANCH | --detached] [--worktree WORKTREE]
-                         [--tab TAB] [--prompt PROMPT]
+                         [--tab TAB] [--prompt PROMPT] [--beside WHY]
                          slug
 "#;
 
 pub const HELP: &str = r#"usage: just tasks launch [-h] [--as ACTOR] [--model MODEL]
                          [--kind {codex,claude}] [--role {executor,reviewer}]
                          [--branch BRANCH | --detached] [--worktree WORKTREE]
-                         [--tab TAB] [--prompt PROMPT]
+                         [--tab TAB] [--prompt PROMPT] [--beside WHY]
                          slug
 
 Start an agent on a task in an hc terminal of its own, its first message
@@ -49,6 +49,7 @@ options:
   --prompt PROMPT       text sent after /work SLUG HANDLE (or /review-task);
                         refused through just tasks: say it on the task's
                         thread
+  --beside WHY          a reviewer's: why it joins beside one still there
 "#;
 
 /// [`HELP`] as `launch --help` prints it in `env`: then what a bare launch starts there, from the

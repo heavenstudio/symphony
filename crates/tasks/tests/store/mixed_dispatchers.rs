@@ -256,7 +256,7 @@ fn an_older_dispatcher_between_newer_ones_repeats_no_line_and_widens_none() {
             joined = fixture.session("reviewer");
             fixture
                 .store
-                .take_role("scratch/a", &joined, "reviewer")
+                .take_role_beside("scratch/a", &joined, "reviewer", Some("a second look"))
                 .unwrap();
         }
         rounds.push(heard(&fixture, &worker, &ears).remove(0));

@@ -25,6 +25,7 @@ fn folders(tree: &Tree) -> Folders {
         reports: Ok(tree.path("reports")),
         agents: Ok(tree.path("agents")),
         health: Ok(tree.path("health")),
+        runs: Some(tree.path("runs")),
     }
 }
 
