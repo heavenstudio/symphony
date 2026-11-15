@@ -26,6 +26,7 @@ pub const TIMELINE_EVERY: u32 = 60;
 
 /// `GET /api/task-timeline?slug=SLUG`.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct TaskTimeline {
     pub slug: String,
     /// When the server answered: where whatever still goes on ends. The answer's validator leaves
@@ -118,6 +119,7 @@ impl TaskTimeline {
 
 /// The server's local clock from `from` on: `seconds` ahead of UTC.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct Offset {
     pub from: f64,
     pub seconds: i64,
@@ -125,6 +127,7 @@ pub struct Offset {
 
 /// One stretch of the task in one status.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct Stage {
     /// A board status: `ready`, `in_progress`, `review`, `blocked`, `done`…
     pub status: String,
@@ -152,6 +155,7 @@ impl Stage {
 
 /// An executor's time on the task while it was in progress.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct Claim {
     pub by: String,
     pub from: f64,
@@ -162,6 +166,7 @@ pub struct Claim {
 
 /// One review round: from the task going to review to its verdict.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct Round {
     /// Its number, from 1 (`round` on the wire).
     #[serde(rename = "round")]
@@ -186,6 +191,8 @@ pub struct Round {
 /// A review round's verdict.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
+#[cfg_attr(feature = "typescript", ts(rename = "RoundVerdict"))]
 pub enum Verdict {
     Approved,
     Changes,
@@ -206,6 +213,7 @@ impl Verdict {
 
 /// A build or test the board's recorder kept for the task.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct Run {
     /// `build` or `test`.
     pub phase: String,
@@ -245,6 +253,7 @@ impl Run {
 /// Where a run is, or how it ended.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub enum RunResult {
     /// Recorded, its command not started yet.
     #[default]
@@ -278,6 +287,7 @@ impl RunResult {
 
 /// One gate's states over time.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct GateLane {
     pub name: String,
     /// Oldest first, each lasting until the next began, the last one until the timeline's end.
@@ -287,6 +297,7 @@ pub struct GateLane {
 
 /// A state a gate took, and when.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct GateSpan {
     pub state: GateState,
     /// When it took it; a state taken before the task was made, or at a time its answerer does not

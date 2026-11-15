@@ -1,5 +1,14 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { field, list, publish, remember, snapshot, store, useWindowEvents } from "./shared";
+import {
+  field,
+  holdPlace,
+  list,
+  publish,
+  remember,
+  snapshot,
+  store,
+  useWindowEvents,
+} from "./shared";
 
 // React's hooks and `flushSync` stood in for, as no DOM runs here: each effect a hook sets is
 // kept to be run by its test, and each draw says whether it came within `flushSync`.
@@ -58,6 +67,15 @@ describe("what the page shares with the shell", () => {
     page.addEventListener("review:frame", heard);
     publish("review:frame");
     expect(heard).toHaveBeenCalledTimes(1);
+  });
+
+  it("asks the shell to hold the reader's place, and nothing where no shell is", () => {
+    vi.stubGlobal("window", {});
+    expect(() => holdPlace("[data-slug]")).not.toThrow();
+    const held = vi.fn();
+    vi.stubGlobal("window", { reviewHoldPlace: held });
+    holdPlace("[data-slug]");
+    expect(held).toHaveBeenCalledExactlyOnceWith("[data-slug]");
   });
 
   it("draws a part again within the event, on each event it names and on no other", () => {

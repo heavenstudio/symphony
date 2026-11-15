@@ -1,10 +1,12 @@
-//! Development only: all page kinds in one runtime, using the same client library as releases.
-//! DX updates RSX in place and incrementally rebuilds Rust logic; dev.js gates the resulting reload.
+//! Development only: the program's kinds, the chat and the menus, in one runtime, using the same
+//! client library as releases. DX updates RSX in place and incrementally rebuilds Rust logic; dev.js
+//! gates the resulting reload. The pages are the web client's, whose own dev server serves them
+//! (apps/symphony-web/AGENTS.md, "The dev server").
 
 #![forbid(unsafe_code)]
 
 #[cfg(target_arch = "wasm32")]
-use symphony_ui::{components, frame, live, navigation};
+use symphony_ui::{components, frame, navigation};
 
 fn main() {
     #[cfg(target_arch = "wasm32")]
@@ -19,6 +21,7 @@ fn main() {
         route.forget();
         // Install the reload gate before Dioxus opens its devtools WebSocket.
         let _ = js_sys::eval(include_str!("../assets/dev.js"));
+        frame::keep_styles();
         dioxus::web::launch::launch_cfg(Development, dioxus::web::Config::default());
     }
 }
@@ -28,7 +31,6 @@ fn main() {
 fn Development() -> dioxus::prelude::Element {
     use dioxus::prelude::*;
     rsx! {
-        live::App {}
         frame::PanelApp {}
         components::OverlayApp {}
     }

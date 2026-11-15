@@ -6,12 +6,12 @@
 // brings a task in, or the board back, reads the first page again, merged into what is drawn.
 
 import type { FrameRefresh } from "./frame";
-import { holdPlace, type Journal, ReadCursor } from "./journal";
+import { type Journal, ReadCursor } from "./journal";
 import { type BoardRun, keepBoard, type PageBoard } from "./live";
 import { scoped } from "./project";
 import { getJson, said } from "./request";
 import { whiteSpace } from "./session";
-import { field, list as items } from "./shared";
+import { field, holdPlace, list as items } from "./shared";
 import {
   byPriority,
   holderHealth,
@@ -137,8 +137,8 @@ const OPTIONAL_TEXTS = [
 
 /**
  * An agent as the page reads it, or none for a value serde would refuse: what a server from before
- * a field's time leaves out reads as serde's default (no callback, no chat, no slots, no address,
- * not in process, no way in).
+ * a field's time leaves out reads as serde's default (following nothing, no callback, no chat, no
+ * slots, no address, not in process, no way in).
  */
 export function readAgent(value: unknown): Agent | null {
   if (!TEXTS.every((key) => isText(field(value, key)))) return null;
@@ -147,8 +147,10 @@ export function readAgent(value: unknown): Agent | null {
   if (!Array.isArray(tasks)) return null;
   const held = tasks.map(readHeld);
   const lastTool = field(value, "last_tool_call");
+  const following = field(value, "following");
   const [chat, inProcess] = [field(value, "chat"), field(value, "in_process")];
   if (held.some((one) => one === null) || !(absent(lastTool) || isNumber(lastTool))) return null;
+  if (!(following === undefined || isNumber(following))) return null;
   if (!optionalFlag(chat) || !optionalFlag(inProcess)) return null;
   const run = optional(field(value, "state_detail"), readRun);
   const message = optional(field(value, "last_message"), readSaid);
@@ -170,6 +172,7 @@ export function readAgent(value: unknown): Agent | null {
     callback: text("callback"),
     session_url: text("session_url"),
     tasks: held as HeldTask[],
+    following: (following as number | undefined) ?? 0,
     chat: chat === true,
     in_process: inProcess === true,
     state_detail: run,
@@ -265,12 +268,6 @@ export function agentLine(agent: Agent): string {
 }
 
 const finishedStatus = (status: string) => status === "done" || status === "cancelled";
-
-/** How many open tasks an agent orchestrates, as it says it holds them. */
-export function followingCount(agent: Agent): number {
-  return agent.tasks.filter((task) => !finishedStatus(task.status) && task.role === "orchestrator")
-    .length;
-}
 
 /** The disclosure of the open tasks an agent orchestrates, counted in words. */
 export function followingLabel(count: number): string {

@@ -10,9 +10,7 @@ import {
   SessionView,
   screen,
   sessionControl,
-  spaceOrControl,
   viaParent,
-  webAddress,
   whiteSpace,
 } from "./session";
 import { asking, CASES, reply, server } from "./testing";
@@ -26,14 +24,8 @@ function written(control: SessionControl | null): Record<string, string> | null 
   return control.kind === "link" ? { link: control.url } : { [control.kind]: control.pane };
 }
 
-describe("a session's web address", () => {
-  it("is linked as the Rust links it", () => {
-    expect(CASES.webAddress.length).toBeGreaterThan(20);
-    for (const [url, linked] of CASES.webAddress)
-      expect([url, webAddress(url)]).toEqual([url, linked]);
-  });
-
-  it("knows the spaces Rust's `char::is_whitespace` names, and no other", () => {
+describe("a space as Rust trims one", () => {
+  it("is one `char::is_whitespace` names, and no other", () => {
     const spaces = [0x09, 0x0d, 0x20, 0x85, 0xa0, 0x1680, 0x2000, 0x200a, 0x2028, 0x2029];
     for (const code of [...spaces, 0x202f, 0x205f, 0x3000]) {
       expect([code, whiteSpace(code)]).toEqual([code, true]);
@@ -41,17 +33,6 @@ describe("a session's web address", () => {
     for (const code of [0x00, 0x08, 0x0e, 0x1c, 0x1f, 0x7f, 0x84, 0x9f, 0x180e, 0x200b, 0xfeff]) {
       expect([code, whiteSpace(code)]).toEqual([code, false]);
     }
-  });
-
-  it("holds no space or control character Rust names, at each end of their ranges", () => {
-    const named = [0x00, 0x09, 0x1f, 0x20, 0x7f, 0x85, 0x9f, 0xa0, 0x1680, 0x2000, 0x200a];
-    const more = [0x2028, 0x2029, 0x202f, 0x205f, 0x3000];
-    for (const code of [...named, ...more])
-      expect([code, spaceOrControl(code)]).toEqual([code, true]);
-    const others = [
-      0x21, 0x7e, 0xa1, 0x167f, 0x1681, 0x1fff, 0x200b, 0x2027, 0x202a, 0xd800, 0xfeff,
-    ];
-    for (const code of others) expect([code, spaceOrControl(code)]).toEqual([code, false]);
   });
 });
 

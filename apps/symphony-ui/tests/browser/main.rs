@@ -4,8 +4,8 @@
 //! The budgets are the owner's (tools/python-zero/ui-board), and a miss is reported, never
 //! loosened. They are absolute; the measurement they were set against is in
 //! docs/engineering/analysis/python-zero.md ("Today's app, measured for mobile").
-//! - a first visit loads at most 125 KB gzipped to `/` and 150 KB to `/tasks` (each lowered from
-//!   the owner's 300 KB as its page moved to the React client),
+//! - a first visit loads at most 125 KB gzipped to `/`, 150 KB to `/tasks` and 160 KB to a task's
+//!   page (each lowered from the owner's 300 KB as its page moved to the React client),
 //!   everything the page needs (shell, JS glue, wasm or the React client's scripts, CSS, API data,
 //!   the feed's head and messages), each independently.
 //!   The feed's keep-alive pings, which keep arriving while the page is open, are reported
@@ -82,6 +82,11 @@ const HOME_FIRST_VISIT_BYTES: f64 = 125_000.0;
 /// moved to the React client: 116,215 bytes on the fixture then, beside home, Reports, the queue
 /// and the documents, the rest room for the code the kinds moving after it share with it.
 const TASKS_FIRST_VISIT_BYTES: f64 = 150_000.0;
+/// A task's page's first-visit cap (`/task/SLUG`), its timeline loaded after it and reported
+/// beside it: lowered from the owner's 300,000 once the page moved to the React client, 140,089
+/// bytes on the fixture then (546,351 on main's Dioxus build at f56bde5), with room for the code
+/// the kinds moving after it share with it.
+const TASK_FIRST_VISIT_BYTES: f64 = 160_000.0;
 const RETURN_VISIT_BYTES: f64 = 20_000.0;
 /// How long a page may take to show the board at all before a test gives up on it.
 const SHOWN: Duration = Duration::from_secs(30);
@@ -228,7 +233,12 @@ fn entry_pages_fit_the_first_visit_budget_and_deferred_kinds_are_reported() {
         ("/docs/", "docs", "[data-ready=folder]", None),
         ("/queue", "queue", "[data-ready=queue]", None),
         ("/reports", "reports", "[data-ready=reports]", None),
-        ("/task/visual/in-progress", "program", "article.task", None),
+        (
+            "/task/visual/in-progress",
+            "task",
+            "article.task",
+            Some(TASK_FIRST_VISIT_BYTES),
+        ),
         ("/docs/look-parity.md", "docs", ".doc-card", None),
     ] {
         let Some(mut chrome) = chrome() else { return };
@@ -241,12 +251,13 @@ fn entry_pages_fit_the_first_visit_budget_and_deferred_kinds_are_reported() {
             "{path} did not show {ready}: {:?}",
             chrome.eval("document.body.innerText")
         );
-        // A task page's timeline is the program's chunk of its own, loaded into its box once the
-        // page has drawn and is idle: reported beside the first visit, which never waits for it.
+        // A task page's timeline is a chunk of its own (apps/symphony-web/src/timeline.tsx), loaded
+        // into its box once the page has drawn and is idle: reported beside the first visit, which
+        // never waits for it.
         if path.starts_with("/task/") {
             assert!(
                 chrome.wait_for(
-                    "window.reviewTimelineReady === true && document.querySelector('.tl-drawn') !== null",
+                    "document.getElementById('timeline-root') !== null && document.querySelector('.tl-drawn') !== null",
                     SHOWN
                 ),
                 "{path} drew no timeline"
@@ -337,18 +348,10 @@ fn entry_pages_fit_the_first_visit_budget_and_deferred_kinds_are_reported() {
     }
 }
 
-/// Whether `request` is the task timeline's: its chunk, the style sheets of its own (not those the
-/// task page loads already) or its read. Its script and main module are the task page's own, the
-/// program's.
+/// Whether `request` is the task timeline's: its chunk, which its box imports once the page is
+/// idle and which carries its style, or its read. The chunk is no kind, so the shell's manifest
+/// never names it: it is the published `timeline-HASH.js` beside the kinds' scripts.
 fn timeline_file(request: &chrome::Request) -> bool {
-    static TIMELINE: std::sync::OnceLock<(assets::Module, Vec<String>)> =
-        std::sync::OnceLock::new();
-    let (module, page) = TIMELINE.get_or_init(|| {
-        (
-            assets::module(dist(), "timeline"),
-            assets::module(dist(), "tasks").styles,
-        )
-    });
     let path = request
         .url
         .split_once("://")
@@ -356,11 +359,9 @@ fn timeline_file(request: &chrome::Request) -> bool {
             rest.find('/').map_or("", |at| &rest[at..])
         });
     path.starts_with(symphony_api::TASK_TIMELINE_PATH)
-        || path == module.chunk()
-        || module
-            .styles
-            .iter()
-            .any(|style| style == path && !page.contains(style))
+        || path
+            .strip_prefix("/assets/timeline-")
+            .is_some_and(|rest| rest.ends_with(".js") && !rest.contains('/'))
 }
 
 /// Include styles and API replies still in flight when the view first appeared. A live feed
@@ -591,7 +592,7 @@ fn same_kind_navigation_resets_scroll_clamped_by_the_new_page() {
     ));
     chrome.eval(
         r#"
-        const mount = document.getElementById('review-root-tasks');
+        const mount = document.getElementById('review-root-task');
         mount.style.minHeight = '6000px';
         scrollTo(0,5000);
         addEventListener('review:navigate', () => {
@@ -810,6 +811,16 @@ fn a_page_whose_build_is_gone_loads_again_once_and_one_still_served_says_the_fai
     );
     assert_eq!(chrome.eval("window.__kept === true"), json!(true));
     assert_eq!(loads(&site), 0, "{:?}", site.requests());
+    // What it leaves on screen: the page before and its header, under the notice, never an empty
+    // page or the board half drawn.
+    assert_eq!(
+        chrome.eval(
+            "['.hero-title', '.app-header'].every(selector => document.querySelector(selector)?.getClientRects().length > 0) && document.querySelector('.kanban') === null"
+        ),
+        json!(true),
+        "the page before is hidden under the notice: {:?}",
+        chrome.eval("document.body.innerText.slice(0, 2000)")
+    );
     // Its build gone from the server, the page loads again, onto the build served now.
     site.retire(&shell);
     chrome.eval("document.querySelector('#module-error button').click()");
@@ -1178,11 +1189,12 @@ fn tasks_and_their_controls_work_without_a_visibility_observer() {
 }
 
 /// A task the server sends with its plugins' board fields draws on the board as one without them
-/// does, whatever their values: the client draws no field, so it reads none (the feature
-/// `skip-board-fields` of `symphony_api`), not even a value the fields' own reader refuses (a
-/// boolean: `symphony_blocks::FieldValue` is a number or text). That is the client's to accept:
-/// a page one build behind a server whose plugins write a new kind of value still draws the
-/// board, where a reader of the fields would lose the whole listing to the one value.
+/// does, whatever their values: the board draws no field, so its guard (`readTask` in the web
+/// client's `task.ts`) checks only what a card draws and leaves the fields as `JSON.parse` read
+/// them, not even refusing a value the fields' own reader refuses (a boolean:
+/// `symphony_blocks::FieldValue` is a number or text). That is the client's to accept: a page one
+/// build behind a server whose plugins write a new kind of value still draws the board, where a
+/// reader of the fields would lose the whole listing to the one value.
 #[test]
 fn a_task_with_plugin_board_fields_draws_on_the_board() {
     let site = site();

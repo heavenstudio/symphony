@@ -1,12 +1,12 @@
-//! The Symphony's Dioxus client: the pages the web client (apps/symphony-web) does not draw yet,
-//! drawn from the server's JSON API (crates/symphony-api) and kept current by its feed of deltas.
+//! The Symphony's Dioxus client: the chat, its activity and Appearance panels, and the menus (a
+//! select's popup and the picture viewer) that every page mounts over the web client's
+//! (apps/symphony-web), which draws every page. They read the server's JSON API
+//! (crates/symphony-api) themselves.
 //!
-//! - [`state`]: following the feed, pure: the waits after a lost feed, another build loaded.
-//! - [`words`]: the board's words and times.
-//! - [`cache`]: what a page drew, kept on the device by the shell's store (`assets/cache.js`).
+//! - [`state`]: what the panel makes of what the page heard, pure: its toasts, the asks' news.
 //! - [`platform`]: the one trait every platform hook goes behind (a link opened outside,
 //!   storage), so the browser and the desktop window run the same app.
-//! - `live` (wasm only): the fetch and the feed.
+//! - `live` (wasm only): the program's waits and marks.
 
 #![cfg_attr(not(feature = "page-program"), forbid(unsafe_code))]
 // The program's split points (`split`) are the one place that calls across a chunk's boundary.
@@ -17,54 +17,31 @@
 #[allow(unsafe_code)]
 mod split;
 
-#[cfg(any(
-    not(target_arch = "wasm32"),
-    feature = "page-tasks",
-    feature = "page-panel"
-))]
+/// Files attached in the `+` sheet's composers, which the chat's kind alone (`page-panel`) draws.
+#[cfg(any(not(target_arch = "wasm32"), feature = "page-panel"))]
 pub mod attach;
-#[cfg(any(
-    not(target_arch = "wasm32"),
-    feature = "page-tasks",
-    feature = "page-panel"
-))]
+#[cfg(any(not(target_arch = "wasm32"), feature = "page-panel"))]
 pub mod block_view;
-pub mod cache;
 pub mod components;
 pub mod doc_components;
+/// The browser's event attributes and visibility latch: no control of the native build takes one.
+#[cfg(any(target_arch = "wasm32", test))]
 pub(crate) mod entry_events;
-/// The machines' build and test work, as the task page draws it.
-#[cfg(any(not(target_arch = "wasm32"), feature = "page-tasks"))]
-pub(crate) mod machine_work;
 pub mod media;
 pub mod platform;
 pub mod project;
 pub mod state;
 #[cfg(any(target_arch = "wasm32", test))]
 mod task_save;
-/// A task's timeline, the page kind `timeline` of its own, loaded into the task page's box.
-#[cfg(any(not(target_arch = "wasm32"), feature = "page-timeline"))]
-pub mod task_timeline;
-pub mod tasks;
 pub mod theme;
-/// The task page's box for its timeline, in the task kind; the timeline module keeps its heights.
-#[cfg(any(
-    not(target_arch = "wasm32"),
-    feature = "page-tasks",
-    feature = "page-timeline"
-))]
-pub mod timeline_slot;
 pub mod trouble;
 pub mod viewer;
 pub mod viewport;
-pub mod words;
 
 #[cfg(target_arch = "wasm32")]
 pub mod navigation;
 #[cfg(target_arch = "wasm32")]
 pub mod request;
-#[cfg(target_arch = "wasm32")]
-pub mod task_live;
 
 #[cfg(target_arch = "wasm32")]
 pub mod live;

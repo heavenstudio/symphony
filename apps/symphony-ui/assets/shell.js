@@ -30,13 +30,10 @@ window.fetch = (...args) => (reads++, read(...args).then(
 // chat and activity panel, and the overlay host that draws a select's popup or the picture
 // viewer for any module (components/deferred.rs). A select never waits on the chat's module.
 // Each has its root, its ready flag (`reviewPanelReady`, `reviewOverlayReady`) and event
-// (`review:panel-ready`...), and its failure notice (`#panel-error`...) with a retry. The task
-// timeline's (task_timeline.rs) is one too, but cold: never warmed, it is loaded only for a task
-// page that asks for it, and its root goes in that page's box.
+// (`review:panel-ready`...), and its failure notice (`#panel-error`...) with a retry.
 const PERSISTENT = {
     panel: { root: "quick-root", ready: "reviewPanelReady", said: "Conversation could not be loaded. ", retry: "Retry loading conversation" },
     overlay: { root: "overlay-root", ready: "reviewOverlayReady", said: "Menus and pictures could not be loaded. ", retry: "Retry loading menus" },
-    timeline: { root: "timeline-root", ready: "reviewTimelineReady", said: "The timeline could not be loaded. ", retry: "Retry loading the timeline", cold: true },
 };
 const persistent = new Map();
 
@@ -108,20 +105,20 @@ async function initialize(kind) {
         else await window[`reviewModuleReady_${kind}`];
         failed.delete(kind);
     } catch (error) { failed.add(kind); throw error; }
-    // A program kind draws nothing before its chunk is in: awaited here, the page shown before stays
-    // until then, and a chunk that does not load rejects while it still shows (chunks.js forgets the
-    // failure, so a retry fetches it again). The kind's `run` then finds the chunk in.
+    // A program kind (the chat, the menus) draws nothing before its chunk is in: awaited here, the
+    // page and the loading sheet stay until then, and a chunk that does not load rejects while they
+    // still show (chunks.js forgets the failure, so a retry fetches it again). The kind's `run` then
+    // finds the chunk in.
     if (spec.chunk) await window.reviewChunk(kind);
     return window[`reviewModule_${kind}`];
 }
 
 // Every module's Dioxus hears a bubbling event at its root and gives it to the element of its own
 // that bears the number in the `data-dioxus-id` nearest the event's target; each module counts
-// those numbers on its own. A root inside another's (the timeline's, in a task page's box) would
-// have its events taken by the outer module too, for whatever element of its own bears the same
-// number (the timeline's Show all and the page's +). So what listens on a module's root hears only
-// the events of that module's own part of the page, the ones whose nearest module root on their
-// path is that root.
+// those numbers on its own. A root inside another's would have its events taken by the outer module
+// too, for whatever element of its own bears the same number. So what listens on a module's root
+// hears only the events of that module's own part of the page, the ones whose nearest module root
+// on their path is that root.
 // Nothing is stopped: the inner module hears the event at its own root, and the document and the
 // window after, as before.
 const moduleRoots = new WeakSet();
@@ -331,52 +328,22 @@ function settled(then) {
     }, { timeout: 5000 });
 }
 
-// A task page's box asks for its task's timeline (timeline_slot.rs: owner, slug, revision), and
-// says when it is gone (`kind: "close"`). Boxes are numbered as they mount, so an ask from a box
-// older than the one held, or from one that has closed, came late and is dropped. The timeline's
-// root sits in the box of the task asked for, else hidden at the body's end, kept for the next box:
-// held here, as a box the page takes down takes the root out of the document with it.
-let timelineRoot, timelineClosed = 0;
-function placeTimeline() {
-    const root = timelineRoot ||= mountFor("timeline");
-    const request = window.reviewTimelineRequest, slot = request && document.getElementById("timeline-slot");
-    if (slot && slot.dataset.slug === request.slug) {
-        if (root.parentElement !== slot) slot.append(root);
-        root.hidden = false;
-    } else {
-        root.hidden = true;
-        if (root.parentElement !== document.body) document.body.append(root);
-    }
-}
-window.reviewTimeline = request => {
-    const held = window.reviewTimelineRequest;
-    if (request.kind === "close") {
-        timelineClosed = Math.max(timelineClosed, request.owner);
-        if (held?.owner !== request.owner) return;
-        window.reviewTimelineRequest = null;
-    } else if (request.owner <= timelineClosed || request.owner < (held?.owner ?? 0)) return;
-    else window.reviewTimelineRequest = request;
-    placeTimeline();
-    if (!window.reviewTimelineRequest) return dispatchEvent(new Event("review:timeline"));
-    const load = () => {
-        const loading = ensure("timeline");
-        placeTimeline();
-        loading.then(() => { placeTimeline(); dispatchEvent(new Event("review:timeline")); });
-    };
-    if (persistent.has("timeline")) load(); else settled(load);
-};
+// A task page's timeline box loads the timeline's chunk once the page has drawn its data and the
+// browser is idle (apps/symphony-web/src/timeline-slot.tsx), as a persistent module's files are
+// warmed: the page's own reads first.
+window.reviewSettled = settled;
 
 // Once the first page has drawn its data (none of its reads in flight for half a second, the last
 // of them answered) and the
 // browser is idle, the persistent modules' files go into the HTTP cache at the lowest priority,
 // nothing evaluated, so a first open waits on no network: the chat's first (the program's script
-// and main module, which a task page has in already, and its chunk), then, once its chunk (or its
+// and main module, and its chunk), then, once its chunk (or its
 // own load, if a click came first) is in, the menus', so no two share a slow link. A browser asking
 // to save data, or a 2g link, skips it; the first open then fetches them. A browser without idle
 // callbacks warms them at once; one without prefetch (Safari) ignores it.
 let warmed = false;
 function warm() {
-    const link = navigator.connection, kinds = Object.keys(PERSISTENT).filter(kind => !PERSISTENT[kind].cold);
+    const link = navigator.connection, kinds = Object.keys(PERSISTENT);
     if (warmed || link?.saveData || /2g/.test(link?.effectiveType)) return;
     warmed = true;
     (window.requestIdleCallback || setTimeout)(function next() {
@@ -421,7 +388,7 @@ function ahead(generation, tries = 60) {
             if (path.startsWith("@")) continue;
             path = path.replace(/^doc\//, "");
             const api = name => `${base}/api/${name}`, encoded = encodeURIComponent;
-            if (kind === "tasks" && /^task\/./.test(path)) {
+            if (kind === "task" && /^task\/./.test(path)) {
                 const slug = path.slice(5).replace(/\/$/, "");
                 items.set(`task:${slug}`, ["task", [["page", api(`task-page?slug=${encoded(slug)}`)], ["thread", api(`task-history?slug=${encoded(slug)}`)]]]);
             } else if (kind === "docs" && path.endsWith(".md")) {
@@ -483,7 +450,7 @@ function route(path) {
     path = path.replace(/^doc\//, "");
     const clean = path.replace(/\/$/, "");
     if (clean === "tasks" || clean === "task") return "board";
-    if (path.startsWith("task/")) return "tasks";
+    if (path.startsWith("task/")) return "task";
     if (clean === "queue" || clean === "reports" || clean === "agents") return clean;
     const view = project();
     const pages = (view.nav || []).map(item => item.href.replace(/^\/+|\/+$/g, "")).filter(Boolean);

@@ -803,6 +803,42 @@ fn a_restore_says_each_session_it_reopened() {
 }
 
 #[test]
+fn a_reviewer_launch_says_it_resumed_the_tasks_recorded_reviewer() {
+    let p = Terminals::new("resumed");
+    let orch = p.orchestrator();
+    let given = p.dir.display().to_string();
+    let review = [
+        "launch", "sim/jump", "--role", "reviewer", "--kind", "claude",
+    ];
+    let launched = p.as_(&orch, &[&review[..], &["--worktree", &given]].concat());
+    assert_eq!((launched.code, launched.err.as_str()), (0, ""));
+    let board = p.board();
+    let [s] = <[_; 1]>::try_from(board.task_sessions("sim/jump").unwrap()).unwrap();
+    board
+        .close_task_session("sim/jump", &s.handle, "idle", "r")
+        .unwrap();
+    p.set_state({
+        let mut state = p.state();
+        state["terminals"] = json!([]);
+        state
+    });
+    let ran = p.as_(&orch, &review);
+    let [again] = <[_; 1]>::try_from(board.task_sessions("sim/jump").unwrap()).unwrap();
+    assert_eq!(
+        (ran.code, ran.out, ran.err.as_str()),
+        (
+            0,
+            format!(
+                "resumed {}, sim/jump's recorded reviewer: pane {}, agent session {}, worktree \
+                 {given}\n",
+                s.handle, again.pane, s.claude_session
+            ),
+            ""
+        )
+    );
+}
+
+#[test]
 fn a_herdr_pane_record_is_closed_by_cleanup_and_restored_into_an_hc_terminal() {
     let p = Terminals::new("herdr-record");
     let orch = p.orchestrator();
