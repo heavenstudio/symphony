@@ -137,21 +137,3 @@ pub fn scroll_anchor() {
         element.scroll_into_view();
     }
 }
-
-/// Whether the reader is busy on the page (a field, an open form or list): a new build waits.
-#[cfg(any(feature = "page-tasks", feature = "page-panel"))]
-pub(crate) fn engaged() -> bool {
-    web_sys::window()
-        .and_then(|w| w.document())
-        .is_some_and(|doc| {
-            doc.query_selector(
-                "[data-busy=true], .section-prose details[open], .history details[open], [role=listbox][data-state=open]",
-            )
-            .ok()
-            .flatten()
-            .is_some()
-                || doc.active_element().is_some_and(|active| {
-                    active.matches("input, textarea, select, button[aria-haspopup=listbox], [role=listbox], [role=option]").unwrap_or(false)
-                })
-        })
-}

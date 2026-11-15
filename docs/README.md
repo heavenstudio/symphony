@@ -1,5 +1,7 @@
 # Symphony documentation
 
+- [Product specs](product/README.md) — what each page of the app is for and how it behaves, with
+  pictures; the form of a spec and how its pictures are taken.
 - [The project file](PROJECT_FILE.md) — `symphony.toml`: every table and key a project can set,
   with its default.
 - [Decision register](DECISIONS.md) — Symphony's own product and engineering decisions, one card

@@ -20,15 +20,16 @@ use std::io::{BufRead, BufReader, Lines, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStderr, Command, Stdio};
 
-/// The program's kinds (src/split.rs), one build of it: the one kind dx builds.
-const PROGRAM: [&str; 4] = ["tasks", "panel", "overlay", "timeline"];
+/// The program's kinds (src/split.rs), the chat and the menus, one build of it: the one kind dx
+/// builds.
+const PROGRAM: [&str; 2] = ["panel", "overlay"];
 /// The program's chunks in the order of its split points' names: its kinds' and the media layer's,
 /// which is no kind.
-const CHUNKS: [&str; 5] = ["media", "overlay", "panel", "tasks", "timeline"];
+const CHUNKS: [&str; 3] = ["media", "overlay", "panel"];
 /// The web client's kinds, one Vite build of them all, and whether each has a style sheet of its
 /// own (the task board's and the agents page's styles are the program's board.css, in the shared
 /// file).
-const WEB: [(&str, bool); 7] = [
+const WEB: [(&str, bool); 8] = [
     ("agents", false),
     ("board", false),
     ("docs", true),
@@ -36,6 +37,7 @@ const WEB: [(&str, bool); 7] = [
     ("reports", true),
     ("review", true),
     ("runs", true),
+    ("task", true),
 ];
 
 /// The stand-in dx: the first bundle's program build holds the intermediate folder until released.
@@ -62,10 +64,10 @@ fi
 printf '<script type="module" src="/assets/symphony-ui-%s.js"></script>\n' "$kind" > "$work/public/index.html"
 printf 'export default function init(){return Promise.resolve()} init({module_or_path:"/assets/symphony-ui_bg-%s.wasm"}).then(()=>{});/*%s*/\n' "$kind" "$BUNDLE_ID" > "$work/public/assets/symphony-ui-$kind.js"
 printf '\0asm\1\0\0\0%s-%s' "$BUNDLE_ID" "$kind" > "$work/public/assets/symphony-ui_bg-$kind.wasm"
-for chunk in 0_media 1_overlay 2_panel 3_tasks 4_timeline; do
+for chunk in 0_media 1_overlay 2_panel; do
     printf '\0asm\1\0\0\0%s-%s' "$BUNDLE_ID" "$chunk" > "$work/public/assets/module_$chunk-$kind.wasm"
 done
-for own in task-timeline style; do
+for own in style; do
     printf '/*%s-%s*/body{}' "$BUNDLE_ID" "$own" > "$work/public/assets/$own-$kind.css"
 done
 mkdir -p "$out"
@@ -82,7 +84,7 @@ out="$6"
 rm -rf "$out"
 mkdir -p "$out/.vite" "$out/assets"
 entries=""
-for kind in agents board docs queue reports review runs; do
+for kind in agents board docs queue reports review runs task; do
     printf 'export{a as run,b as stop};/*%s*/\n' "$BUNDLE_ID" > "$out/assets/$kind-$BUNDLE_ID.js"
     css=""
     if [ "$kind" != board ] && [ "$kind" != agents ]; then
@@ -221,12 +223,12 @@ impl Fixture {
             .collect();
         files.sort();
         // The program's script and main module, a chunk for each of its kinds and the media
-        // layer's, and its two own style sheets; each web kind's script and the style sheets of
-        // its own; and the shell.
+        // layer's, and its own style sheet (the chat's and the menus' CSS modules); each web
+        // kind's script and the style sheets of its own; and the shell.
         let styled = WEB.iter().filter(|(_, styled)| *styled).count();
         assert_eq!(
             files.len(),
-            2 + CHUNKS.len() + 2 + WEB.len() + styled + 1,
+            2 + CHUNKS.len() + 1 + WEB.len() + styled + 1,
             "{files:?}"
         );
         let media: Vec<_> = files
@@ -287,11 +289,7 @@ impl Fixture {
                 read_asset(&entry["chunk"]),
                 format!("\0asm\x01\0\0\0{id}-{at}_{kind}").as_bytes()
             );
-            let own = match *kind {
-                "timeline" => Some("task-timeline"),
-                "panel" | "overlay" => Some("style"),
-                _ => None,
-            };
+            // Each takes the chat's and the menus' CSS modules, the program's own sheet.
             let styles: Vec<_> = entry["styles"]
                 .as_array()
                 .unwrap()
@@ -300,9 +298,7 @@ impl Fixture {
                 .collect();
             assert_eq!(
                 styles,
-                own.map(|own| format!("/*{id}-{own}*/body{{}}").into_bytes())
-                    .into_iter()
-                    .collect::<Vec<_>>(),
+                [format!("/*{id}-style*/body{{}}").into_bytes()],
                 "{kind}"
             );
         }

@@ -588,7 +588,7 @@ is why F commits only what a document shows, which is meant to last, past decisi
   for any other kind.
   - It is the line the owner's uploads already post, and the app already draws it in an agent's
     thread post, which is drawn from its Markdown (`crates/symphony/src/uploads.rs`, `reference`;
-    `apps/symphony-ui/src/task_detail.rs`, `TaskMessage`).
+    `apps/symphony-web/src/task-page.tsx`, `TaskMessage`).
   - A name by content never depends on where the bytes are kept.
 - **The 14 posts that name a worktree's path stay dead text.**
   - Those paths are plain text in the posts, not links, so nothing the server serves could answer

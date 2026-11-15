@@ -405,7 +405,7 @@ Reading an inbox does not answer it. The periodic reap command reserves one dura
 attempt per handle/post and resumes the recorded conversation only after the hc terminal inventory
 confirms its absence; it never starts a fresh conversation. An unsuccessful attempt remains
 flagged for manual action.
-A reviewer launched on an instruction child resumes that child's recorded conversation when the
+A reviewer recorded on an instruction child resumes that child's recorded conversation when the
 unanswered post is on its parent; a departed reviewer explicitly named by handle still receives it.
 An unanswered post keeps a terminal immediately, including through descendant sessions, for as
 long as it waits. A role on open work keeps it until its agent has sat idle at its prompt
@@ -782,7 +782,14 @@ runs the toolchain's clippy over a probe crate that reads the same file. `port.r
 Its sole config is `tools/task_staff.json` in the calling checkout, disabled by
 default; its pass lock is in the common `symphony/tasks/`. Its idle reviewer pick (`idle_for`)
 holds the verdict's rule, `Held::unfresh`, so it never hands a review to a session the
-board would refuse. A launch, the CLI's and staffing's, starts
+board would refuse, and makes no pick for a task with a recorded reviewer to resume, asking the
+launch's own `reviewer_to_resume` (`job_for`), so a dry run and the pass agree.
+A reviewer launch, the CLI's and staffing's, goes back to the task's recorded reviewer
+(`src/launch/restore.rs`, `reviewer_to_resume`): the newest that never said `leave` with a
+conversation is resumed as `restore` resumes it, the launch refused while a recorded reviewer still
+runs in a terminal, and a new one starts only where none can be resumed, or beside it with
+`--beside WHY` (`take_role_beside`, a refusal naming the launch's own flag); on an instruction
+subtask it is refused. A launch, the CLI's and staffing's, starts
 the agent, model and effort `[agents] launch` in the main checkout's `symphony.toml` names, on
 the model `[agents.models]` names for its role (`src/launch/defaults.rs`, `Defaults::resolve_as`;
 the assessor's, unwritten, the smallest its agent offers, `defaults::smallest`: Claude's `haiku`),

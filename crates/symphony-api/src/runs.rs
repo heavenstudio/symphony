@@ -82,19 +82,25 @@ impl End {
     }
 }
 
-/// One test binary's results, as `tools/run-suites` reads them.
+/// One test binary's results, as its run's log says them (docs/RUNS.md, *Tests*).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct Suite {
+    /// Cargo's words for it, the executable's hash cut: `unittests src/lib.rs (symphony_board)`,
+    /// `tests/cli.rs (cli)`, `Doc-tests symphony_board`.
     pub name: String,
     pub passed: u32,
     pub failed: u32,
     pub ignored: u32,
     /// Its time, in seconds.
     pub s: f64,
+    /// Whether it ended with no result line (it crashed, or its run was stopped first): never a
+    /// pass, its counts and time those of the results it said, none.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub error: bool,
 }
 
-/// A test that failed, as `tools/run-suites` reads it.
+/// A test that failed, as its run's log says it (docs/RUNS.md, *Tests*).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct FailedTest {
@@ -165,10 +171,10 @@ pub struct RunLine {
     /// The bytes its log held as its end line was written.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub log_bytes: Option<u64>,
-    /// Per test binary (`tools/run-suites`).
+    /// Per test binary its log names, on an end line; absent when it names none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub suites: Option<Vec<Suite>>,
-    /// The tests that failed (`tools/run-suites`).
+    /// The tests that failed, beside `suites`: empty when none did.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub failed: Option<Vec<FailedTest>>,
 }
@@ -455,7 +461,16 @@ mod tests {
         ]);
         let read: RunLine = serde_json::from_value(value).unwrap();
         assert_eq!(read.rerun_of, None);
-        assert_eq!(read.suites.unwrap()[0].failed, 1);
+        let suites = read.suites.unwrap();
+        assert_eq!((suites[0].failed, suites[0].error), (1, false));
+        // A suite's error is said only when it had one.
+        let mut suite = suites[0].clone();
+        let text = serde_json::to_string(&suite).unwrap();
+        assert!(!text.contains("error"), "{text}");
+        suite.error = true;
+        let text = serde_json::to_string(&suite).unwrap();
+        assert!(text.ends_with(",\"error\":true}"), "{text}");
+        assert_eq!(serde_json::from_str::<Suite>(&text).unwrap(), suite);
     }
 
     #[test]

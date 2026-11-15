@@ -180,8 +180,8 @@ li > .viewport-slot > p + p { margin-top:1em; }
 .ghost-head .ghost-controls { margin-left:auto; }
 /* The role chips are a row of their own, as tall as a chip. */
 .ghost-head > .ghost-pill { display:block; width:fit-content; }
-/* A task's timeline box, as tall as its own will be (src/timeline_slot.rs, whose sheet the page
-   has only once the box is in). */
+/* A task's timeline box, as tall as its own will be (apps/symphony-web/src/timeline-slot.tsx, whose
+   sheet the page has only once the box is in). */
 .ghost-tl > .ghost-heading { margin-bottom:.2em; } .ghost-tl-box { height:var(--tl-narrow); box-sizing:border-box; overflow:hidden; display:flex; flex-direction:column; gap:var(--sp-3); }
 @media (min-width: 900px) { .ghost-tl-box { height:var(--tl-wide); } }
 .ghost-tl-box > div { display:flex; gap:var(--sp-3); }

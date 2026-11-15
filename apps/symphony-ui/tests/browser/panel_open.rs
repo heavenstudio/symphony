@@ -616,7 +616,7 @@ fn escape_closes_a_loading_sheet_and_gives_the_focus_back_to_its_opener() {
 }
 
 /// The chat's reply for ask 7, its messages saying `texts`.
-fn chat(texts: &[&str]) -> Value {
+pub(super) fn chat(texts: &[&str]) -> Value {
     let messages: Vec<_> = texts
         .iter()
         .enumerate()

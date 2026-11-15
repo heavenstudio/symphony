@@ -2,7 +2,8 @@
 //! that entry imports together: the shell preloads them beside the entry (`imports` in its
 //! manifest, assets/shell.js `initialize`), so React and the frame do not wait for the entry to
 //! come and be read first, a round trip a phone over a tailnet pays. The entry's import then
-//! takes each preloaded chunk: no chunk is asked for twice.
+//! takes each preloaded chunk: no chunk is asked for twice. A move into a kind keeps the page
+//! before shown, its header with it, until the kind's entry is in.
 
 use serde_json::json;
 
@@ -12,8 +13,9 @@ use super::{
     chrome, common, dist, site,
 };
 
-/// Each kind of the web client, the page that shows it and what the page draws once it is in.
-const KINDS: [(&str, &str, &str); 7] = [
+/// Each kind of the web client, the page that shows it and what the page draws once it is in (a
+/// task's page, the stand-in having no page of its task, says so once it has asked for it).
+const KINDS: [(&str, &str, &str); 8] = [
     ("review", "/", ".hero-title"),
     ("board", "/tasks", "[data-slug='tools/example']"),
     ("agents", "/agents", "[data-ready=agents]"),
@@ -21,6 +23,11 @@ const KINDS: [(&str, &str, &str); 7] = [
     ("queue", "/queue", "[data-ready=queue]"),
     ("reports", "/reports", "[data-ready=reports]"),
     ("runs", "/runs", "[data-ready=runs]"),
+    (
+        "task",
+        "/task/tools/example",
+        ".task-page[data-ready=missing]",
+    ),
 ];
 
 #[test]
@@ -65,4 +72,72 @@ fn a_web_kind_s_first_visit_asks_for_the_chunks_its_entry_imports_while_the_entr
             );
         }
     }
+}
+
+/// Whether an element `selector` names is drawn, none of its parents hidden.
+fn drawn(chrome: &mut super::chrome::Chrome, selector: &str) -> bool {
+    chrome.eval(&format!(
+        "[...document.querySelectorAll({})].some(element => element.getClientRects().length > 0)",
+        json!(selector)
+    )) == json!(true)
+}
+
+#[test]
+fn a_move_into_a_web_kind_keeps_the_page_before_shown_until_its_entry_is_in() {
+    let (path, ready) = ("/task/tools/example", ".task-page[data-ready=missing]");
+    let board = "[data-slug='tools/example']";
+    let entry = module(dist(), "task").script;
+    let site = site();
+    let Some(mut chrome) = chrome() else { return };
+    // No read ahead has the task's entry in already.
+    chrome.save_data();
+    chrome.open(&site.url("/tasks"));
+    assert!(
+        chrome.wait_for(
+            &format!(
+                "document.querySelector({}) !== null && document.documentElement.dataset.navigation === 'ready'",
+                json!(board)
+            ),
+            SHOWN
+        ),
+        "the board is never shown"
+    );
+    site.hold_route(&entry, true);
+    chrome.eval(&format!(
+        "(() => {{ const link = document.createElement('a'); link.href = {}; document.body.append(link); link.click(); link.remove(); }})()",
+        json!(path)
+    ));
+    // Asked for the task's entry, which is held, the move waits on it alone: the board stays shown,
+    // its header with it, until the entry is in.
+    if let Err(stall) = test_time::until_true("the task's entry asked for", STALL, || {
+        site.requests().contains(&entry)
+    }) {
+        panic!("{stall}: {entry} of {:#?}", site.requests());
+    }
+    assert_eq!(
+        chrome.eval("document.documentElement.dataset.navigation"),
+        json!("loading")
+    );
+    assert!(
+        drawn(&mut chrome, board),
+        "the board is hidden before the task's page can draw"
+    );
+    assert!(drawn(&mut chrome, ".app-header"), "the header is gone");
+    assert!(!drawn(&mut chrome, ".task-page"));
+    site.hold_route(&entry, false);
+    assert!(
+        chrome.wait_for(
+            &format!(
+                "document.querySelector({}) !== null && document.documentElement.dataset.navigation === 'ready'",
+                json!(ready)
+            ),
+            SHOWN
+        ),
+        "{path} did not show {ready}: {:?}",
+        chrome.eval("document.body.innerText")
+    );
+    assert!(
+        !drawn(&mut chrome, board),
+        "the board is hidden once the task's page draws"
+    );
 }

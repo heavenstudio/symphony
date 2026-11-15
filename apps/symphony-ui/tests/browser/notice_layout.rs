@@ -88,6 +88,74 @@ fn the_notice_reserve_keeps_one_page_end_across_the_phone_breakpoint() {
     );
 }
 
+/// Where the page stands at its end: whether it is scrolled to its end, the page's height, the
+/// scroll, and whether the composer's Send clears the notices' reserve under it.
+const PAGE_END: &str = r#"(() => {
+    const reserve = document.querySelector('.page-notice-reserve').getBoundingClientRect();
+    const send = document.querySelector('#task-send button[type=submit]').getBoundingClientRect();
+    return {
+        atEnd: scrollY === Math.max(0, document.documentElement.scrollHeight - innerHeight),
+        height: document.documentElement.scrollHeight,
+        scroll: scrollY,
+        clear: send.bottom <= reserve.top,
+    };
+})()"#;
+
+// The task page on a phone's narrowest width (#5559): its stale notice, drawn while the feed is
+// lost, goes once the feed is back, and the page's end stays where it was: the reserve under the
+// composer keeps its height, so the scroll is never clamped. Each step waits on what it shows.
+#[test]
+fn at_320_px_a_task_pages_stale_notice_going_live_keeps_the_reserve_under_the_composer() {
+    let site = site();
+    let responses = look_parity::responses();
+    for path in ["/api/task-page", "/api/task-history"] {
+        site.set_json(path, &responses[path]);
+    }
+    let Some(mut chrome) = chrome() else { return };
+    chrome.call(
+        "Emulation.setDeviceMetricsOverride",
+        json!({"width":320,"height":900,"deviceScaleFactor":1,"mobile":false}),
+    );
+    chrome.open(&site.url("/task/visual/in-progress"));
+    assert!(
+        chrome.wait_for(
+            "document.querySelector('main[data-feed=live] #task-thread .entry') !== null && document.querySelector('#task-send button[type=submit]') !== null",
+            SHOWN
+        ),
+        "the task page never drew its thread and composer: {}",
+        chrome.eval("document.body.innerText")
+    );
+    wait_for_feed(&site).expect("the page never followed the feed");
+    site.fail_feeds(usize::MAX);
+    site.drop_feeds();
+    assert!(chrome.wait_for(
+        "document.querySelector('main')?.dataset.feed === 'stale' && document.querySelector('.page-notices:not([hidden]) [role=status]') !== null",
+        SHOWN
+    ));
+    chrome.eval("scrollTo(0,document.documentElement.scrollHeight); new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))");
+    let stale = chrome.eval(PAGE_END);
+    assert_eq!(
+        (&stale["atEnd"], &stale["clear"]),
+        (&json!(true), &json!(true)),
+        "at the page end the composer clears the stale notice's reserve: {stale}"
+    );
+    site.fail_feeds(0);
+    assert!(
+        chrome.wait_for(
+            "document.querySelector('main')?.dataset.feed === 'live' && document.querySelector('.page-notices')?.hidden === true",
+            SHOWN
+        ),
+        "the stale notice must go once the feed is back: {}",
+        chrome.eval("document.body.innerText")
+    );
+    chrome.eval("new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))");
+    assert_eq!(
+        chrome.eval(PAGE_END),
+        stale,
+        "the notice going keeps the page end and its reserve, and never clamps the scroll"
+    );
+}
+
 // A task page's failed fetch (here its owner offer) is a page notice, as the board's is: an
 // alert in the page's flow would shrink the page when the reconnect's reload clears it.
 #[test]

@@ -35,6 +35,7 @@ pub const OWNER: &str = "owner";
 
 /// `GET /api/task-gates?slug=SLUG`: what the task needs to land, at its branch's tip.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct TaskGates {
     pub slug: String,
     /// The branch the gates were answered for: the task's recorded branch.
@@ -72,6 +73,7 @@ impl TaskGates {
 /// when to draw ([`Gate::signed`]): what a page holds room for before it reads the gates again
 /// ([`TaskGates::seen`]).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct GatesSeen {
     pub count: usize,
     #[serde(default)]

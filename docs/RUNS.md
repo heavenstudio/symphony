@@ -190,6 +190,45 @@ text. A `run` that is not 32 hex digits is refused (400); a log that is not ther
 no regular file in a day folder of `logs/` (a link, a FIFO), is none (404). It reads the
 project's day files' folder alone, never the board.
 
+## Tests
+
+A run's or a step's end line says what its log says of its tests, read once as the
+line is written (`crates/tasks/src/runs/suites.rs`), when its log holds what
+`log_bytes` says. Stable libtest writes no machine-readable report (`--format json`
+is nightly's), so the recorder reads cargo's and libtest's words:
+
+- `     Running unittests src/lib.rs (…/deps/NAME-HASH)`, `     Running tests/a.rs
+  (…)` and `   Doc-tests NAME` start a test binary. Its name in `suites` is those words
+  with the executable's folder and hash cut: `unittests src/lib.rs (symphony_board)`,
+  `tests/cli.rs (cli)`, `Doc-tests symphony_board`, the same whichever build or
+  checkout ran it. Two binaries of one name (two packages' `tests/links.rs`) are one
+  suite, their counts and times added.
+- `test result: ok. 8 passed; 0 failed; 1 ignored; …; finished in 0.41s` gives its
+  `passed`, `failed`, `ignored` and `s`, added up where it says several (merged
+  doc-tests say two); doc-tests' `s` is what `all doctests ran in` says, their build
+  with them. A sum stays at its most (a count at 4294967295, a time at the largest
+  finite seconds), so the line always reads back.
+- `failures:`, once the binary said a test failed (`test NAME ... FAILED`), starts
+  libtest's report of the failed tests, each one's output under
+  `---- NAME stdout ----`, then their names under `failures:` again. Each named is in
+  `failed` with its binary (`suite`) and `line`: the first line of what its panic said
+  (`panicked at FILE:LINE:COL` when it said nothing), else the first its output holds,
+  else empty, 240 characters at most. Passing tests are counted, never listed.
+
+A binary with no result line before the next one starts or the log ends, one that
+crashed or whose run was stopped, has `"error": true`: never a pass, its counts those
+of the results it said. What a failed test printed starts and ends no binary, and a
+report it printed ends none: the list that ends the real one names the test whose
+output comes first. Anything else in the log is passed over, and the command's output
+is never changed. A log that names no test binary (a lint's, a build's) leaves both
+fields out, and so do a run with no log (its caller at a terminal), a start line and
+the end line a sweep writes for a recorder that died.
+
+The order is the log's ([Logs](#logs)). From one file, as an agent's tool call and the
+release run's steps hand it, it is cargo's. From two files stdout's results come before
+stderr's lines naming the binaries, so a log with a result before any binary started
+gives neither field. From pipes a line may come late, so a binary may be named by
+another's line there.
 ## Start and end
 
 A run or a step writes a **start line** when its command starts (`end`, `ended`,
@@ -232,7 +271,7 @@ one that sees only the day files shows it as started, not as running.
 | `rerun_of` | the run it repeats (above) |
 | `log` | its log in the day files' folder ([Logs](#logs)), on its start line too; absent when it keeps none (its caller at a terminal) |
 | `log_bytes` | on its end line, the bytes its log held then; absent from the end line a sweep writes for a recorder that died |
-| `suites`, `failed` | left out until `tools/run-suites` fills them |
+| `suites`, `failed` | on an end line, each test binary its log names and the tests that failed ([Tests](#tests)); absent when it names none |
 
 `end` reads its command's end: exit 0 is `green`; exit 124 (what `timeout` exits
 with), `SIGALRM`, `SIGXCPU` or `SIGVTALRM` is `timed_out`; `SIGHUP`, `SIGINT`,
@@ -241,10 +280,11 @@ is read as a shell reports a command signal N ended (128 + N); any other exit or
 signal is `red`; a command that never started, or whose end is not known, is
 `incomplete`.
 
-An end line of the workspace tests of a verify, a step, recorded on macOS:
+An end line of the workspace tests of a verify, a step, recorded on macOS, two of its
+suites shown:
 
 ```json
-{"schema":1,"run":"8a21…","parent":"5f0c…","project":"symphony","machine":"9e1d…","pipeline":"verify","step":"tests","label":"tests","task":"tools/run-record","handle":"ember-osprey","trigger":"ember-osprey","branch":"tools/run-record","commit":"7ad7…","tree":"c41b…","dirty":false,"queued":1794400090.1,"started":1794400090.2,"ended":1794400412.9,"end":"red","exit":101,"signal":null,"cpu_s":1873.412,"cpu_partial":false,"rerun_of":"77e0…","log":"logs/2026-11-11/8a21….log","log_bytes":48211}
+{"schema":1,"run":"8a21…","parent":"5f0c…","project":"symphony","machine":"9e1d…","pipeline":"verify","step":"tests","label":"tests","task":"tools/run-record","handle":"ember-osprey","trigger":"ember-osprey","branch":"tools/run-record","commit":"7ad7…","tree":"c41b…","dirty":false,"queued":1794400090.1,"started":1794400090.2,"ended":1794400412.9,"end":"red","exit":101,"signal":null,"cpu_s":1873.412,"cpu_partial":false,"rerun_of":"77e0…","log":"logs/2026-11-11/8a21….log","log_bytes":48211,"suites":[{"name":"unittests src/lib.rs (symphony_board)","passed":935,"failed":0,"ignored":0,"s":41.2},{"name":"tests/cli/main.rs (cli)","passed":642,"failed":1,"ignored":0,"s":301.52}],"failed":[{"suite":"tests/cli/main.rs (cli)","name":"recorder::a_run_says_how_it_ended","line":"assertion `left == right` failed"}]}
 ```
 
 ## The Runs page
@@ -301,13 +341,13 @@ A day's figures come from the runs that ended in it, each run once (`fold`):
   green, red and timed out), and the median and p90 of their time from start to
   end. Only runs count here, not their steps.
 - **Per suite:** each test binary a line reports (`suites`): its runs, those in
-  which a test of it failed, and the median and p90 of its time. A run whose steps
+  which a test of it failed or it had an error, and the median and p90 of its time. A run whose steps
   report their tests counts them by the steps alone. `slowest` names the ten
   slowest by median; a suite's trend is its line in each day's file.
 - **Flaky tests,** over the day and the 13 before it: a test that failed in one
   run and passed in another of the same pipeline, step, label and tree, both
   clean, as a rerun is matched. A test passed in a run that ended green, or red
-  with the test's binary in its `suites` and the test not in its `failed`. Each
+  with the test's binary in its `suites`, with no error, and the test not in its `failed`. Each
   flaky test counts its `flaky` runs (failed on a tree it passed on) and its `red`
   runs (failed on a tree it never passed on). A test failed on a changed or dirty
   tree is never flaky.
@@ -317,7 +357,8 @@ A day's figures come from the runs that ended in it, each run once (`fold`):
 
 There is no queue wait, as nothing queues for the recorder. There are no landings
 apart from the `landing` pipeline's own figures, from whichever project records
-one. Suites and flaky tests stay empty until a line carries `suites` and `failed`.
+one. Suites and flaky tests come from the lines that carry `suites` and `failed`
+([Tests](#tests)): none from a run its caller ran at a terminal.
 
 A day file that is there but cannot be read, or is not a regular file, writes no
 roll-up that hour, and each one stays as the last hour left it. A line that does
