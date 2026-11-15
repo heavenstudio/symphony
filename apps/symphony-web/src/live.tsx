@@ -101,8 +101,9 @@ export function flushReload(): void {
   }
 }
 
-function mark(name: string): void {
-  performance.mark(name);
+/** Mark that the board is drawn (`board-ready`), as a page that follows it does once it is read. */
+export function markBoardReady(): void {
+  performance.mark(READY_MARK);
 }
 
 /** Waits `ms` before a read is tried again, or less once the reader presses Retry. */
@@ -316,7 +317,7 @@ export function BoardPage<B extends PageBoard = PageBoard>({
   }, [scope, kept, frame]);
   const onPage = drawnBoard !== null;
   useEffect(() => {
-    if (onPage) mark(READY_MARK);
+    if (onPage) markBoardReady();
   }, [onPage]);
   const device = shown(freshness);
   return (

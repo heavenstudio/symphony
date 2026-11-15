@@ -2467,6 +2467,86 @@
     ["/docs/a.html?#x", "/docs/a.html?&raw#x"],
     ["", "?raw"]
   ],
+  "webAddress": [
+    ["https://example.com/s/1", true],
+    ["http://example.com", true],
+    ["HTTPS://Example.com?x#y", true],
+    ["HtTp://h/", true],
+    ["https://", false],
+    ["https:///path", false],
+    ["https://?q", false],
+    ["https://#f", false],
+    ["https://h ost/", false],
+    ["https://h/\tx", false],
+    ["https://h/", false],
+    ["https://h/ ", false],
+    ["https://h/ ", false],
+    ["https://h/", false],
+    ["https://h/　", false],
+    ["https://h/﻿", true],
+    ["https://h/​", true],
+    ["https://h/\u001c", false],
+    ["https://h/", false],
+    ["https://h /", false],
+    ["https://h:8080/x", true],
+    ["javascript:alert(1)", false],
+    ["ftp://h/", false],
+    ["//h/", false],
+    ["http:/h", false],
+    ["https:h", false],
+    ["", false],
+    ["é://h", false],
+    ["httpś://h", false],
+    ["httpſ://h", false]
+  ],
+  "sessionControl": [
+    [
+      { "handle": "amber", "url": "https://example.com/s", "pane": "w1:p2" },
+      true,
+      { "focus": "w1:p2" },
+      false
+    ],
+    [
+      { "handle": "amber", "url": "https://example.com/s", "pane": "w1:p2" },
+      false,
+      { "link": "https://example.com/s" },
+      false
+    ],
+    [
+      { "handle": "amber", "url": "https://example.com/s", "pane": null },
+      true,
+      { "link": "https://example.com/s" },
+      false
+    ],
+    [
+      { "handle": "amber", "url": "https://example.com/s", "pane": null },
+      false,
+      { "link": "https://example.com/s" },
+      false
+    ],
+    [{ "handle": "amber", "url": null, "pane": "w1:p2" }, true, { "focus": "w1:p2" }, false],
+    [{ "handle": "amber", "url": null, "pane": "w1:p2" }, false, { "screen": "w1:p2" }, false],
+    [{ "handle": "amber", "url": null, "pane": null }, true, null, false],
+    [{ "handle": "amber", "url": null, "pane": null }, false, null, false],
+    [
+      { "handle": "amber", "url": "javascript:alert(1)", "pane": "w1:p2" },
+      true,
+      { "focus": "w1:p2" },
+      false
+    ],
+    [
+      { "handle": "amber", "url": "javascript:alert(1)", "pane": "w1:p2" },
+      false,
+      { "screen": "w1:p2" },
+      false
+    ],
+    [{ "handle": "amber", "url": "javascript:alert(1)", "pane": null }, true, null, false],
+    [{ "handle": "amber", "url": "javascript:alert(1)", "pane": null }, false, null, false],
+    [{ "handle": "amber", "url": "", "pane": "" }, true, { "focus": "" }, false],
+    [{ "handle": "amber", "url": "", "pane": "" }, false, { "screen": "" }, false],
+    [{ "handle": "birch", "url": "http://h", "pane": null }, true, { "link": "http://h" }, true],
+    [{ "handle": "birch", "url": "http://h", "pane": null }, false, { "link": "http://h" }, true]
+  ],
   "elementHtml": [
     [
       {
@@ -2950,6 +3030,199 @@
       }
     },
     "taskRemoved": { "key": "w/a", "removed": true },
+    "agentPage": {
+      "view": {
+        "machine_work": {
+          "freshness": "fresh",
+          "machines": [
+            {
+              "machine_id": "alpha",
+              "label": "alpha",
+              "producer_id": "fixture",
+              "sequence": 1,
+              "age_ms": 0,
+              "freshness": "fresh",
+              "complete": true,
+              "reason": "",
+              "counts": null,
+              "operations": [
+                {
+                  "machine_id": "alpha",
+                  "operation_id": "b",
+                  "parent_id": null,
+                  "handle": "amber",
+                  "task": "w/a",
+                  "checkout": "/opaque",
+                  "recipe": "fixture",
+                  "kind": "build",
+                  "state": "running",
+                  "resource": "run_slot",
+                  "reason": "",
+                  "phase_since": null
+                }
+              ]
+            }
+          ],
+          "unassigned": [],
+          "guidance": {}
+        },
+        "generated": 3.0,
+        "probes": { "panes": "ok", "herdr": "ok", "slots": "unavailable" },
+        "agents": [
+          {
+            "handle": "amber",
+            "kind": "worker",
+            "model": "a model",
+            "parent": "birch",
+            "task": "w/a",
+            "role": "executor",
+            "tasks": [{ "slug": "w/a", "role": "executor", "status": "in_progress" }],
+            "worktree": "/tmp/w/a",
+            "branch": "w/a",
+            "agent": "claude",
+            "session_id": "s1",
+            "pane": "w1:p2",
+            "callback": "unix:/tmp/amber.sock",
+            "chat": true,
+            "state": "working",
+            "state_detail": { "recipe": "test-rs", "phase": "running", "since": 1.0 },
+            "health": "live",
+            "last_tool_call": 2.0,
+            "last_message": { "slug": "w/a", "ts": 2.0, "text": "Built." },
+            "slots": { "open": 3, "cap": 8 },
+            "session_url": "https://example.com/s",
+            "in_process": true,
+            "go": { "handle": "birch", "url": "https://example.com/s", "pane": "w1:p2" }
+          },
+          {
+            "handle": "birch",
+            "kind": "",
+            "model": "",
+            "parent": null,
+            "task": null,
+            "role": null,
+            "tasks": [],
+            "worktree": "",
+            "branch": "",
+            "agent": null,
+            "session_id": null,
+            "pane": null,
+            "callback": null,
+            "chat": false,
+            "state": "",
+            "state_detail": null,
+            "health": "lost",
+            "last_tool_call": null,
+            "last_message": null,
+            "slots": null,
+            "session_url": null,
+            "in_process": false,
+            "go": null
+          }
+        ]
+      },
+      "tasks": [
+        {
+          "slug": "w/a",
+          "title": "A task",
+          "body": "",
+          "status": "in_progress",
+          "priority": 2,
+          "parent": null,
+          "created_by": "owner",
+          "created": 1.0,
+          "updated": 2.0,
+          "links": ["docs/A.md"],
+          "depends": [],
+          "roles": [
+            {
+              "handle": "amber",
+              "role": "executor",
+              "since": 1.0,
+              "expires": null,
+              "health": "live"
+            }
+          ],
+          "instruction": false
+        }
+      ],
+      "total": 2,
+      "next": "birch",
+      "local": true
+    },
+    "emptyAgentPage": {
+      "view": {
+        "machine_work": {
+          "freshness": "unknown",
+          "machines": [],
+          "unassigned": [],
+          "guidance": {}
+        },
+        "generated": 0.0,
+        "probes": { "panes": "ok", "herdr": "ok", "slots": "unavailable" },
+        "agents": []
+      },
+      "tasks": [],
+      "total": 0,
+      "next": null,
+      "local": false
+    },
+    "agentChange": {
+      "key": "amber",
+      "value": {
+        "handle": "amber",
+        "kind": "worker",
+        "model": "a model",
+        "parent": "birch",
+        "task": "w/a",
+        "role": "executor",
+        "tasks": [{ "slug": "w/a", "role": "executor", "status": "in_progress" }],
+        "worktree": "/tmp/w/a",
+        "branch": "w/a",
+        "agent": "claude",
+        "session_id": "s1",
+        "pane": "w1:p2",
+        "callback": "unix:/tmp/amber.sock",
+        "chat": true,
+        "state": "working",
+        "state_detail": { "recipe": "test-rs", "phase": "running", "since": 1.0 },
+        "health": "live",
+        "last_tool_call": 2.0,
+        "last_message": { "slug": "w/a", "ts": 2.0, "text": "Built." },
+        "slots": { "open": 3, "cap": 8 },
+        "session_url": "https://example.com/s",
+        "in_process": true,
+        "go": { "handle": "birch", "url": "https://example.com/s", "pane": "w1:p2" }
+      }
+    },
+    "bareAgent": {
+      "handle": "birch",
+      "kind": "",
+      "model": "",
+      "parent": null,
+      "task": null,
+      "role": null,
+      "tasks": [],
+      "worktree": "",
+      "branch": "",
+      "agent": null,
+      "session_id": null,
+      "pane": null,
+      "callback": null,
+      "chat": false,
+      "state": "",
+      "state_detail": null,
+      "health": "lost",
+      "last_tool_call": null,
+      "last_message": null,
+      "slots": null,
+      "session_url": null,
+      "in_process": false,
+      "go": null
+    },
+    "agentProbes": { "panes": "ok", "herdr": "ok", "slots": "unavailable" },
+    "agentFocus": { "said": "Shown in the Herdr app" },
+    "agentScreen": { "handle": "amber", "pane": "w1:p2", "text": "$ just test-rs", "read_at": 4.0 },
     "reports": {
       "grain": "day",
       "days": 1,
@@ -4560,6 +4833,51 @@
         "    }",
         "    out",
         "}"
+      ]
+    },
+    {
+      "rust": "crates/symphony-api/src/agents.rs web_address",
+      "typescript": "webAddress, src/session.tsx",
+      "source": [
+        "pub fn web_address(url: &str) -> bool {",
+        "    let after = |scheme: &str| {",
+        "        url.get(..scheme.len())",
+        "            .filter(|start| start.eq_ignore_ascii_case(scheme))",
+        "            .and_then(|_| url.get(scheme.len()..))",
+        "    };",
+        "    let Some(rest) = [\"https://\", \"http://\"].into_iter().find_map(after) else {",
+        "        return false;",
+        "    };",
+        "    !url.chars().any(|c| c.is_whitespace() || c.is_control())",
+        "        && rest",
+        "            .split(['/', '?', '#'])",
+        "            .next()",
+        "            .is_some_and(|host| !host.is_empty())",
+        "}"
+      ]
+    },
+    {
+      "rust": "crates/symphony-api/src/agents.rs control",
+      "typescript": "sessionControl, src/session.tsx",
+      "source": [
+        "    pub fn control(&self, local: bool) -> Option<SessionControl<'_>> {",
+        "        let url = self.url.as_deref().filter(|url| web_address(url));",
+        "        match (&self.pane, url) {",
+        "            (Some(pane), _) if local => Some(SessionControl::Focus(pane)),",
+        "            (_, Some(url)) => Some(SessionControl::Link(url)),",
+        "            (Some(pane), None) => Some(SessionControl::Screen(pane)),",
+        "            (None, None) => None,",
+        "        }",
+        "    }"
+      ]
+    },
+    {
+      "rust": "crates/symphony-api/src/agents.rs via_parent",
+      "typescript": "sessionControl, src/session.tsx",
+      "source": [
+        "    pub fn via_parent(&self, handle: &str) -> bool {",
+        "        self.handle != handle",
+        "    }"
       ]
     },
     {

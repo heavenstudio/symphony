@@ -5,10 +5,11 @@ the Dioxus client ([its guide](../symphony-ui/AGENTS.md)) a page kind at a time:
 whole, feature for feature, in one landing, and its Dioxus sources leave in the same commit. The
 review queue (`/queue`) is the first kind it serves, Reports (`/reports`) the second, home
 (`/`, the kind `review`) the third, the documents (`/docs/`, each document, folder and HTML
-document an entrypoint serves, the kind `docs`) the fourth and the task board (`/tasks`, `/task/`
-being the Dioxus program's) the fifth; every other page is still the Dioxus client's, the program's.
-The board's task card is a component of its own (`src/taskcard.tsx`), which the agents page and the
-task page draw once they move. Like that
+document an entrypoint serves, the kind `docs`) the fourth, the task board (`/tasks`, `/task/`
+being the Dioxus program's) the fifth and the agents page (`/agents`, the kind `agents`) the sixth;
+every other page is still the Dioxus client's, the program's. The board's task card is a component
+of its own (`src/taskcard.tsx`), which the agents page draws too, and the task page will once it
+moves. Like that
 client it reads the server's JSON API and never runs server code or inserts server-rendered HTML.
 
 **Where a UI improvement is built.** A UI improvement (a new control, a redesign, a change of
@@ -166,9 +167,8 @@ class names this client's markup uses, and the kind's own sheet, imported by its
 (`src/queue.css`, `src/docs.css`). The Dioxus client's media sheet,
 `apps/symphony-ui/assets/media.css`, which the shared sheet leaves out and the program's task
 pages load as well, is the media layer's, imported by `media-layer.ts`, so home and the documents
-take it as one file under the layer's name. The task board has no sheet of its own: its rules are
-the shared sheet's (`apps/symphony-ui/assets/board.css`), whose task card rules the agents page's
-cards use too. A component drawn by a Dioxus component library keeps its markup and class
+take it as one file under the layer's name. The task board and the agents page have no sheet of
+their own: their rules are the shared sheet's (`apps/symphony-ui/assets/board.css`). A component drawn by a Dioxus component library keeps its markup and class
 (`button.tsx` draws the shared Button's `dx-button`).
 
 Blocks are drawn as the Dioxus client draws them (`blocks.tsx`, `media.tsx`) but in two ways React
@@ -231,6 +231,24 @@ Dioxus page wrote them, a tie rounded to the even digit as Rust's `{:.N}` does (
 series take `--chart-1` to `--chart-5` (`src/reports.css`), set at no specificity so a theme's
 own win, with their own steps in the dark. Charts below the screen mount through
 `NearViewport`. Hours are labelled in UTC.
+
+## The agents page
+
+`src/agents.tsx` draws `/agents`, the kind `agents`, under the board it follows (`keepBoard`,
+`live.tsx`): its probes, the tasks happening now as the board's cards, the machines' build and
+test context, who is connected and, read when their list opens, the lost agents. Each agent's row
+says what is known of it, its Go to session control (`session.tsx`, which the task page's role
+chips will share), its builds and tests, how to reach it, what it works on, the open tasks it
+orchestrates (its Following list, `Followed`, read a page at a time once opened) and the five it
+finished last. `src/agents-live.ts` holds its reads, guarded as serde reads them (a field a server
+leaves out reads as serde's default), its rules and the page kept live (`LiveAgents`): the first
+page of `/api/agent-page` once the board is read, then each feed event applied where it lands; one
+that brings in a task the page lists no record of (`agentsPageTakes`, the server's rule) or says
+the board is back reads the first page again, merged into what is drawn, both cursors and the
+lost agents kept, and the events heard during a read are replayed onto its answer (`ReadCursor`,
+`src/journal.ts`, the board's as well and no other kind's, so they alone carry it). It keeps
+nothing on the device. Its text orders and trims as Rust's does (`textOrder` by UTF-8
+bytes, `whiteSpace` for `trim`), so its lists and lines are the Dioxus page's.
 
 ## The documents
 
