@@ -236,6 +236,19 @@ if [ "$kind" = program ]; then
     } > "$assets/symphony-ui-dxh2.js"
     printf '\0\12\11producers' >> "$assets/chunk_0_split-dxh1.wasm"
     if [ -n "${PROGRAM_SHARED:-}" ]; then printf '\1\1\0' >> "$assets/chunk_0_split-dxh1.wasm"; fi
+    # The DX_HOME it ran with, and its tools. Where that holds wasm-opt, the media chunk as the
+    # splitter writes it (two data segments, out of order) and the main module go through it as dx
+    # runs it, and the chunk is what it wrote, which dx would name by its bytes.
+    printf '%s\n' "${DX_HOME:-}" > "$capture/$kind.dx-home"
+    wasm_opt="${DX_HOME:-}/tools/binaryen-129/bin/wasm-opt"
+    if [ -x "$wasm_opt" ]; then
+        ls "$DX_HOME/tools" > "$capture/$kind.dx-tools"
+        printf '\0asm\1\0\0\0\13\15\2\0\101\20\13\1b\0\101\0\13\1a' > "$capture/media.split"
+        "$wasm_opt" "$capture/media.split" -Oz -o "$capture/media.opt" --strip-debug
+        cp "$capture/media.opt" "$assets/module_0_media-dxh1.wasm"
+        cp "$assets/symphony-ui_bg-dxh0.wasm" "$capture/main.split"
+        "$wasm_opt" "$capture/main.split" -Oz -o "$capture/main.opt" --strip-debug
+    fi
     # The page links its static-head styles, as dx's does: the two every kind takes, never a CSS
     # module's (`style-`) or PROGRAM_STYLE, one no kind takes, when a case asks for it.
     {
@@ -306,6 +319,12 @@ fn cargo_symphony_ui_dist_bundles_into_out_as_named_from_where_it_runs() {
         .expect("run cargo-symphony-ui");
     succeeded(&done, "cargo symphony-ui dist");
     ran_from(&said, &stand);
+    // A machine whose DX_HOME holds no wasm-opt yet: dx runs with that DX_HOME, to fetch it there.
+    assert_eq!(
+        fs::read_to_string(said.join("program.dx-home")).unwrap(),
+        format!("{}\n", common.join("symphony/tools/dx-home").display())
+    );
+    assert!(!said.join("program.dx-tools").exists());
     let out = scratch.0.join("build/ui");
     for kind in KINDS {
         let said = fs::read_to_string(said.join(kind)).expect("dx never built this kind");
@@ -567,6 +586,115 @@ fn a_program_style_no_kind_takes_fails_the_package_and_publishes_nothing() {
         "{said}"
     );
     assert!(!public.exists());
+}
+
+/// Where the machine's DX_HOME holds wasm-opt, dx runs with a DX_HOME of bundle.sh's own, under the
+/// held target: the machine's tools linked, but for wasm-opt, wasm-opt.sh, which runs the machine's
+/// and then puts what it wrote of a chunk in order (`split-repair --chunk`) before dx names it by
+/// its bytes, and leaves a main module as it wrote it.
+#[test]
+fn dx_s_wasm_opt_puts_each_chunk_in_order_before_dx_names_it() {
+    let scratch = Scratch::new("wasm-build-wasm-opt");
+    let common = scratch.0.join("common");
+    let said = scratch.0.join("dx-said");
+    stand_in_tools(&common, &said);
+    let machine = common.join("symphony/tools/dx-home");
+    let calls_file = scratch.0.join("wasm-opt-said");
+    // The machine's wasm-opt: it says how it was called, and writes the module it is given (dx names
+    // it first) to its `-o` path.
+    executable(
+        &machine.join("tools/binaryen-129/bin/wasm-opt"),
+        &r#"#!/bin/bash
+set -euo pipefail
+printf '%s\n' "$*" >> __CALLS__
+input="$1"
+while [ "$#" -gt 0 ]; do
+    if [ "$1" = -o ]; then out="$2"; fi
+    shift
+done
+cp "$input" "$out"
+"#
+        .replace(
+            "__CALLS__",
+            &format!("'{}'", calls_file.to_string_lossy().replace('\'', "'\\''")),
+        ),
+    );
+    let stand = client_tools(&scratch);
+    let target = common.join("symphony/tools/target");
+    let done = cargo_symphony_ui(&["dist", "build/ui"])
+        .current_dir(&scratch.0)
+        .env("SYMPHONY_GIT_COMMON_DIR", &common)
+        .env("CARGO_TARGET_DIR", &target)
+        .env("SYMPHONY_CLIENT_TOOLS", &stand)
+        .output()
+        .expect("run cargo-symphony-ui");
+    succeeded(&done, "cargo symphony-ui dist");
+
+    // dx ran with bundle.sh's DX_HOME, in the target it holds, with the machine's other tools.
+    let home = fs::read_to_string(said.join("program.dx-home")).unwrap();
+    let home = Path::new(home.trim_end());
+    assert!(
+        home.starts_with(&target) && home.ends_with("dx-home"),
+        "{home:?}"
+    );
+    assert_eq!(
+        fs::read_to_string(said.join("program.dx-tools")).unwrap(),
+        format!(
+            "binaryen-129\nesbuild-fixture\nwasm-bindgen-{}\n",
+            bindgen_version()
+        )
+    );
+    for tool in [
+        "esbuild-fixture",
+        &format!("wasm-bindgen-{}", bindgen_version()),
+    ] {
+        assert_eq!(
+            fs::read_link(home.join("tools").join(tool)).unwrap(),
+            machine.join("tools").join(tool)
+        );
+    }
+    // The machine's wasm-opt ran on each module as dx called it.
+    let calls: Vec<String> = fs::read_to_string(&calls_file)
+        .unwrap()
+        .lines()
+        .map(str::to_owned)
+        .collect();
+    let called = |module: &str| {
+        format!(
+            "{} -Oz -o {} --strip-debug",
+            said.join(format!("{module}.split")).display(),
+            said.join(format!("{module}.opt")).display()
+        )
+    };
+    assert_eq!(calls, [called("media"), called("main")]);
+    // What dx names: the chunk's two segments in the order of their addresses; the main module as
+    // wasm-opt wrote it.
+    let ordered = b"\0asm\x01\0\0\0\x0b\x0d\x02\0\x41\0\x0b\x01a\0\x41\x10\x0b\x01b";
+    assert_ne!(fs::read(said.join("media.split")).unwrap(), ordered);
+    assert_eq!(fs::read(said.join("media.opt")).unwrap(), ordered);
+    assert_eq!(
+        fs::read(said.join("main.opt")).unwrap(),
+        fs::read(said.join("main.split")).unwrap()
+    );
+    // And so the chunk published, in order already when the repair after dx reads it.
+    let published = scratch.0.join("build/ui/public/assets");
+    let media: Vec<_> = fs::read_dir(&published)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| {
+            path.file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with("module_0_media-")
+        })
+        .collect();
+    assert_eq!(media.len(), 1, "{media:?}");
+    assert_eq!(fs::read(&media[0]).unwrap(), ordered);
+    let stderr = String::from_utf8_lossy(&done.stderr);
+    assert!(
+        stderr.contains("0 of its 2 segments put in order, 0 joined to the one before"),
+        "{stderr}"
+    );
 }
 
 /// The lines a stand-in that records its arguments wrote, one call per line.

@@ -18,12 +18,14 @@ const failed = new Set();
 const preloaded = new Set();
 // The page's own reads in flight (its modules' wasm, its data) and when the last one answered:
 // the idle warm-up waits until none has been in flight for half a second, and after a read that
-// got no answer (its time ran out, the link dropped), until one does.
+// got no answer (its time ran out, the link dropped), until one does. A read the page gave up (an
+// `AbortError`) is neither: the web client's reads whose time ran out fail with a `TimeoutError`
+// (apps/symphony-web/src/request.ts).
 let reads = 0, answered = 0;
 const read = window.fetch;
 window.fetch = (...args) => (reads++, read(...args).then(
     response => (answered = Date.now(), response),
-    error => { answered = Infinity; throw error; },
+    error => { if (error?.name !== "AbortError") answered = Infinity; throw error; },
 ).finally(() => reads--));
 
 // The modules every page kind shares, each loaded once on its first use and kept mounted: the

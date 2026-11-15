@@ -524,6 +524,52 @@ fn a_read_with_no_answer_holds_the_warm_up_until_one_answers() {
     );
 }
 
+#[test]
+fn a_read_the_page_gave_up_holds_no_warm_up() {
+    let site = site();
+    let Some(mut browser) = chrome() else { return };
+    // A read the page gives up, as a page does by its signal, ends after every other read has
+    // answered: no read answers after it, so a warm-up that took it for a read with no answer
+    // would wait for ever.
+    browser.call(
+        "Page.addScriptToEvaluateOnNewDocument",
+        json!({ "source": READS }),
+    );
+    site.hold_route("/api/given-up", true);
+    site.hold_route("/api/task-board", true);
+    tasks_reading_columns(&mut browser, &site);
+    browser.eval(
+        "window.__giveUp = new AbortController(); \
+         fetch('/api/given-up', { signal: window.__giveUp.signal }).catch(() => {}); true",
+    );
+    site.hold_route("/api/task-board", false);
+    assert!(browser.wait_for(
+        "document.querySelector('[data-slug=\"tools/example\"]') !== null",
+        SHOWN
+    ));
+    reads_until(
+        &mut browser,
+        "every read but the one to be given up ended",
+        "[...window.__reads.values()].every(path => path === '/api/given-up')",
+    );
+    browser.eval("window.__giveUp.abort()");
+    reads_until(
+        &mut browser,
+        "the read given up ended",
+        "window.__reads.size === 0",
+    );
+    assert_eq!(
+        browser.eval("JSON.stringify(window.__ended.at(-1))"),
+        json!(r#"["/api/given-up",false]"#),
+        "the read given up ended last"
+    );
+    assert!(
+        browser.wait_for(PREFETCHING, SHOWN),
+        "the warm-up waits on a read the page gave up: the reads ended {}",
+        browser.eval("JSON.stringify(window.__ended)")
+    );
+}
+
 /// A page at desktop width, where an open chat hides `+`, that keeps the data it is given and
 /// whose panel's script is held, so a sheet the keyboard opens stays loading; `opener` focused.
 fn desktop_loading(opener: &str) -> Option<(super::Site, Chrome, super::assets::Module)> {

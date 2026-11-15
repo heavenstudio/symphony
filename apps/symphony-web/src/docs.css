@@ -209,6 +209,8 @@
   grid-column: 1 / -1;
 }
 .doc-part {
+  /* A history's dots in the prose stand clear of their line on the card (board.css `.entry::before`). */
+  --dot-halo: var(--card);
   padding: 0 32px;
   border-left: 1px solid var(--border);
   border-right: 1px solid var(--border);
