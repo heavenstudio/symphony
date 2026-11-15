@@ -1,6 +1,6 @@
 //! What a refresh renders again of the documents a page follows: every one once the page's own
-//! files changed or the project's settings began or ceased to load, else only one whose cards or
-//! linking tasks moved. A ref, a worktree's record, a branch's edit or a scan with no file renders
+//! files changed or the project's settings were edited, else only one whose cards or linking tasks
+//! moved. A ref, a worktree's record, a branch's edit or a scan with no file renders
 //! none of main's.
 
 use super::Hub;
@@ -91,7 +91,7 @@ fn a_refresh_for_no_file_of_mains_renders_none_of_its_documents_and_one_for_any_
 }
 
 #[test]
-fn a_change_in_whether_the_projects_settings_load_renders_mains_documents_again() {
+fn an_edit_to_the_projects_settings_loading_or_not_renders_mains_documents_again() {
     let tree = Tree::new();
     let root = repository(&tree);
     let hub = following(&tree, &root);
@@ -104,10 +104,27 @@ fn a_change_in_whether_the_projects_settings_load_renders_mains_documents_again(
     read(&hub);
     assert!(
         kept_says(&hub, "", "docs/OTHER.md", "The first words."),
-        "settings that still load ask for no render"
+        "settings left as they were ask for no render"
     );
 
+    // An entrypoint added: the settings still load, and its documents' links and routes are
+    // others.
+    tree.write("main/notes/README.md", "# Notes\n");
+    std::fs::write(
+        root.join(symphony::project::FILE),
+        "[[entrypoints]]\nurl = \"/docs/\"\nfolder = \"docs\"\n\n[[entrypoints]]\nurl = \"/notes/\"\nfolder = \"notes\"\n",
+    )
+    .unwrap();
+    assert_eq!(symphony::project::Project::problem(&root), None);
+    hub.tell_project();
+    read(&hub);
+    assert!(kept_says(&hub, "", "docs/OTHER.md", "The later words."));
+
     // Served with the defaults from now on: its renderers are others.
+    tree.write(
+        "main/docs/OTHER.md",
+        "# Other\n\nWords under the defaults.\n",
+    );
     std::fs::write(
         root.join(symphony::project::FILE),
         "[[entrypoints]]\nurl = \"/docs/\"\nfolder = \"docs\"\ntypes = [\"none\"]\n",
@@ -115,7 +132,12 @@ fn a_change_in_whether_the_projects_settings_load_renders_mains_documents_again(
     .unwrap();
     hub.tell_project();
     read(&hub);
-    assert!(kept_says(&hub, "", "docs/OTHER.md", "The later words."));
+    assert!(kept_says(
+        &hub,
+        "",
+        "docs/OTHER.md",
+        "Words under the defaults."
+    ));
 }
 
 #[test]

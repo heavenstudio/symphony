@@ -28,9 +28,39 @@ pub(crate) struct Notices {
     health: String,
     /// The disk running low ([`Low::notice`]).
     disk: String,
+    /// The project file as the hub last found it ([`stamp`]): an edit to it renders main's
+    /// documents again, whether the settings still load or not ([`Hub::tell_project`]).
+    project_file: Stamp,
+}
+
+/// A file's inode, size, modification and change times, or none while there is no file: a write,
+/// a move or a copy over it changes one of them.
+type Stamp = Option<(u64, u64, i64, i64, i64, i64)>;
+
+/// What [`Stamp`] says of the file at `path` now.
+fn stamp(path: &Path) -> Stamp {
+    use std::os::unix::fs::MetadataExt;
+    std::fs::metadata(path).ok().map(|file| {
+        (
+            file.ino(),
+            file.size(),
+            file.mtime(),
+            file.mtime_nsec(),
+            file.ctime(),
+            file.ctime_nsec(),
+        )
+    })
 }
 
 impl Notices {
+    /// Nothing said yet, the project file at `root` as the hub finds it at its start.
+    pub(crate) fn of(root: &Path) -> Self {
+        Self {
+            project_file: stamp(&root.join(symphony::project::FILE)),
+            ..Self::default()
+        }
+    }
+
     /// The notice the pages show: each part that says something, the update's first.
     fn said(&self) -> String {
         [
@@ -105,21 +135,27 @@ impl Hub {
     /// ([`symphony::project::Project::problem`]). A change asks the loop to read the documents
     /// again, as one a plugin's process makes comes with no file event; once they load, what the
     /// defaults' read left of the plugins' watches is forgotten, so that read warms them as it
-    /// would a project's first, with no file they watch changed.
+    /// would a project's first, with no file they watch changed. An edit to the project file that
+    /// still loads (an entrypoint added, a plugin chosen) asks for that read too.
     pub(crate) fn tell_project(&self) {
+        let file = stamp(&self.root.join(symphony::project::FILE));
         let said = symphony::project::Project::problem(&self.root)
             .map(|why| project(&why))
             .unwrap_or_default();
         let mut notices = self.notices.lock().unwrap_or_else(PoisonError::into_inner);
-        if notices.project == said {
+        let edited = std::mem::replace(&mut notices.project_file, file) != file;
+        if notices.project != said {
+            let loads = said.is_empty();
+            notices.project = said;
+            self.server_notice.send_replace(notices.said());
+            drop(notices);
+            if loads {
+                self.forget_watched(&self.root);
+            }
+        } else if !edited {
             return;
-        }
-        let loads = said.is_empty();
-        notices.project = said;
-        self.server_notice.send_replace(notices.said());
-        drop(notices);
-        if loads {
-            self.forget_watched(&self.root);
+        } else {
+            drop(notices);
         }
         // Its settings render its documents: the read renders them again, as after a lost event.
         self.dirty

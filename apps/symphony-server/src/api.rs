@@ -457,11 +457,13 @@ async fn read(shared: &Arc<Shared>, request: Request) -> Option<Response> {
                 match tokio::task::spawn_blocking(move || {
                     // On the store the task pages' reads share, never a board opened anew.
                     let store = reading.reader()?;
-                    let hits = store.search(&needle).map_err(|error| error.to_string());
-                    if hits.is_err() {
+                    let hits = store.search(&needle);
+                    // Dropped only where the board failed the read, as the task pages drop it: a
+                    // query the search refuses (too long, too many terms) sent none.
+                    if matches!(hits, Err(symphony_board::Error::Db(_))) {
                         reading.reader_failed(&store);
                     }
-                    hits
+                    hits.map_err(|error| error.to_string())
                 })
                 .await
                 {

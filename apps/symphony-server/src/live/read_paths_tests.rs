@@ -1,9 +1,11 @@
 //! What a page's read costs the hub: a document's render holds no lock the board, the feed and the
 //! project list read under, waits on no refresh's renders, and still publishes what it finds
-//! before handing out its version, the copy kept being the one whose read began last; a
-//! document, folder or agents read reads no board; the task pages' reads and the task board's
-//! search share one store of the board; a document read ahead (`view=first`) is neither followed
-//! nor published.
+//! before handing out its version, the copy kept being the one whose read began last, and a first
+//! read that a refresh rendering anew began after reads again once, then is left to the next
+//! refresh; a document, folder or agents read
+//! reads no board; the task pages' reads and the task board's search share one store of the board,
+//! dropped only once the board failed a read; a document read ahead (`view=first`) is neither
+//! followed nor published.
 
 use super::Hub;
 use crate::front::{Shared, router};
@@ -11,7 +13,7 @@ use crate::gate::Gate;
 use crate::testing::{
     Tree,
     board::{Fixture, HOST, NOW, Seed},
-    repository,
+    git, repository,
 };
 use axum::body::{Body, to_bytes};
 use axum::extract::connect_info::MockConnectInfo;
@@ -253,6 +255,210 @@ fn a_document_read_waits_on_no_refreshs_renders_and_the_copy_whose_read_began_la
             .iter()
             .all(|event| !event.json.contains("held.png")),
         "the refresh published the copy it read before the reader's"
+    );
+}
+
+/// A first read of main's `rel` held in its read of the FIFO `picture` while `meanwhile` runs,
+/// then let go: whether `meanwhile` ended while the read was held, and what the read handed out.
+fn first_read_across(
+    hub: &Hub,
+    rel: &str,
+    picture: &Path,
+    meanwhile: impl FnOnce() + Send,
+) -> (bool, symphony_api::Document) {
+    fifo(picture);
+    // Each wait is on its event; only a stall reaches this backstop.
+    let backstop = test_time::backstop(Duration::from_secs(60));
+    std::thread::scope(|scope| {
+        let reading = scope.spawn(|| hub.document("", rel));
+        let mut opened =
+            test_time::until("the read to read the picture", backstop, || writer(picture)).unwrap();
+        let during = scope.spawn(meanwhile);
+        let ended_while_held =
+            test_time::until_true("the refresh to end", backstop, || during.is_finished()).is_ok()
+                && !reading.is_finished();
+        opened.write_all(&PNG).unwrap();
+        drop(opened);
+        test_time::until_true("the read to end", backstop, || {
+            if let Some(mut again) = writer(picture) {
+                let _ = again.write_all(&PNG);
+            }
+            reading.is_finished() && during.is_finished()
+        })
+        .unwrap();
+        during.join().unwrap();
+        (ended_while_held, reading.join().unwrap().unwrap())
+    })
+}
+
+/// Whether `doc`, as the wire carries it, says `words` anywhere: a card's line among them.
+fn holds(doc: &symphony_api::Document, words: &str) -> bool {
+    serde_json::to_string(doc).unwrap().contains(words)
+}
+
+#[test]
+fn a_first_read_begun_before_its_file_changed_and_placed_after_that_refresh_reads_again() {
+    let tree = Tree::new();
+    let root = repository(&tree);
+    tree.write("main/docs/SLOW.md", "# Slow\n\n![Held](held.png)\n");
+    let hub = Hub::new(&root, &root.join("build/client"));
+    hub.refresh_page("", &root).unwrap();
+    // The edit's refresh lists the documents the page follows while the first read is out: this
+    // one is not among them yet.
+    let (refreshed_while_held, read) =
+        first_read_across(&hub, "docs/SLOW.md", &root.join("docs/held.png"), || {
+            tree.write("main/docs/SLOW.md", "# Slow\n\nThe later words.\n");
+            hub.refresh_docs(Some(&BTreeSet::from([root.join("docs/SLOW.md")])))
+                .unwrap();
+        });
+    assert!(refreshed_while_held, "the refresh waited on the first read");
+    assert!(
+        says(&read, "The later words."),
+        "the first read handed out the copy it read before the edit"
+    );
+    // What the loop runs next for anything but main's files renders none of main's documents.
+    hub.refresh_docs(Some(&BTreeSet::from(
+        [root.join(".git/refs/heads/tools/x")],
+    )))
+    .unwrap();
+    assert!(
+        says(
+            &hub.pages.read().unwrap()[""].documents["docs/SLOW.md"],
+            "The later words."
+        ),
+        "the page follows the copy read before the edit"
+    );
+}
+
+#[test]
+fn a_first_read_behind_a_second_refresh_that_renders_anew_is_placed_and_left_to_the_next_refresh() {
+    let tree = Tree::new();
+    let root = repository(&tree);
+    tree.write("main/docs/SLOW.md", "# Slow\n\n![Held](held.png)\n");
+    let hub = Hub::new(&root, &root.join("build/client"));
+    hub.refresh_page("", &root).unwrap();
+    let (first, second) = (root.join("docs/held.png"), root.join("docs/again.png"));
+    fifo(&first);
+    fifo(&second);
+    // Each wait is on its event; only a stall reaches this backstop.
+    let backstop = test_time::backstop(Duration::from_secs(60));
+    let edit = |words: &str, picture: &str| {
+        tree.write(
+            "main/docs/SLOW.md",
+            &format!("# Slow\n\n{words}\n\n{picture}"),
+        );
+        hub.refresh_docs(Some(&BTreeSet::from([root.join("docs/SLOW.md")])))
+            .unwrap();
+    };
+    // A picture let go answers every later read of it too.
+    let answer = |pictures: &[&Path]| {
+        for picture in pictures {
+            if let Some(mut again) = writer(picture) {
+                let _ = again.write_all(&PNG);
+            }
+        }
+    };
+    // Each refresh renders anew while a read of the document is out: the first read, then the one
+    // it reads again, which the first edit sent to the other picture.
+    let (held, read) = std::thread::scope(|scope| {
+        let reading = scope.spawn(|| hub.document("", "docs/SLOW.md"));
+        let mut held = Vec::new();
+        let mut let_go: Vec<&Path> = Vec::new();
+        for (picture, words, next) in [
+            (&first, "The second words.", "![Again](again.png)\n"),
+            (&second, "The third words.", ""),
+        ] {
+            let mut opened = test_time::until("the read to read the picture", backstop, || {
+                answer(&let_go);
+                writer(picture)
+            })
+            .unwrap();
+            edit(words, next);
+            held.push(!reading.is_finished());
+            opened.write_all(&PNG).unwrap();
+            let_go.push(picture);
+        }
+        test_time::until_true("the read to end", backstop, || {
+            answer(&let_go);
+            reading.is_finished()
+        })
+        .unwrap();
+        (held, reading.join().unwrap().unwrap())
+    });
+    assert_eq!(held, [true, true], "a refresh waited on the read");
+    assert!(
+        says(&read, "The second words."),
+        "the read read once again, and no more"
+    );
+    assert!(
+        hub.rescan.swap(false, Ordering::SeqCst),
+        "the loop is asked for the refresh that renders it"
+    );
+    // What the loop runs next, though no file of main's changed since, renders it.
+    hub.refresh_docs(Some(&BTreeSet::new())).unwrap();
+    let pages = hub.pages.read().unwrap();
+    assert!(says(
+        &pages[""].documents["docs/SLOW.md"],
+        "The third words."
+    ));
+    let published = pages[""].history.back().map(|event| event.json.clone());
+    assert!(
+        published
+            .as_deref()
+            .is_some_and(|json| json.contains("The third words.")),
+        "{published:?}"
+    );
+}
+
+#[test]
+fn a_first_read_begun_before_its_one_card_moved_and_placed_after_that_refresh_reads_again() {
+    let tree = Tree::new();
+    let root = repository(&tree);
+    let register = |lines: &str| {
+        format!(
+            "# Topic\n\n![Held](held.png)\n\n<!-- register:start -->\n- [ ] **initial-card** — Initial question.\n{lines}<!-- register:end -->\n"
+        )
+    };
+    tree.write("main/docs/TOPIC.md", &register(""));
+    git(&root, &["commit", "-qam", "Register the fixture decisions"]);
+    let branch = tree.path("proposal");
+    git(
+        &root,
+        &[
+            "worktree",
+            "add",
+            "-b",
+            "design/policy",
+            branch.to_str().unwrap(),
+        ],
+    );
+    let hub = Hub::new(&root, &root.join("build/client"));
+    hub.refresh_docs(None).unwrap();
+    let answer = "The branch's answer.";
+    // The branch posts a line on main's card while the first read, which took main's one cards
+    // before them, is out: the refresh moves the card with no file of main's changed.
+    let (refreshed_while_held, read) =
+        first_read_across(&hub, "docs/TOPIC.md", &root.join("docs/held.png"), || {
+            tree.write(
+                "proposal/docs/TOPIC.md",
+                &register(&format!("  [2026-11-11 10:00] agent — {answer}\n")),
+            );
+            git(&branch, &["commit", "-qam", "Answer on the branch"]);
+            let branch = branch.canonicalize().unwrap();
+            hub.refresh_docs(Some(&BTreeSet::from([branch.join("docs/TOPIC.md")])))
+                .unwrap();
+        });
+    assert!(refreshed_while_held, "the refresh waited on the first read");
+    assert!(
+        holds(&read, answer),
+        "the first read handed out the card it read before the branch's line"
+    );
+    assert!(
+        holds(
+            &hub.pages.read().unwrap()[""].documents["docs/TOPIC.md"],
+            answer
+        ),
+        "the page follows the card read before the branch's line"
     );
 }
 
@@ -631,7 +837,8 @@ fn listed(board: &serde_json::Value) -> Vec<String> {
 }
 
 #[test]
-fn a_task_board_search_reads_on_the_store_the_task_pages_share_and_drops_one_that_failed() {
+fn a_task_board_search_reads_on_the_store_the_task_pages_share_and_drops_it_only_when_the_board_failed()
+ {
     let tree = Tree::new();
     let root = repository(&tree);
     let f = Fixture::new(
@@ -668,13 +875,21 @@ fn a_task_board_search_reads_on_the_store_the_task_pages_share_and_drops_one_tha
         assert_eq!(status, StatusCode::OK, "{body}");
         assert_eq!(listed(&body), ["tools/open"]);
     }
+    // A query the search refuses sends the board nothing: the store stays.
+    let long = (0..40)
+        .map(|n| format!("w{n}"))
+        .collect::<Vec<_>>()
+        .join("+");
+    let (status, body) = ask(&format!("/api/task-board?q={long}"));
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    assert!(body.to_string().contains("at most 32 terms"), "{body}");
     let (status, body) = ask("/api/task-page?slug=tools/open");
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(
         connects.load(Ordering::SeqCst),
         2,
-        "the store a failed search read on is opened anew once, then every search and task page \
-         read shares it"
+        "the store a failed search read on is opened anew once, then every search, refused or \
+         not, and task page read shares it"
     );
     shared.stop();
 }
