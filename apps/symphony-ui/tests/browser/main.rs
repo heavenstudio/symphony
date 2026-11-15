@@ -4,8 +4,8 @@
 //! The budgets are the owner's (tools/python-zero/ui-board), and a miss is reported, never
 //! loosened. They are absolute; the measurement they were set against is in
 //! docs/engineering/analysis/python-zero.md ("Today's app, measured for mobile").
-//! - a first visit loads at most 125 KB gzipped to `/`, 150 KB to `/tasks` and 160 KB to a task's
-//!   page (each lowered from the owner's 300 KB as its page moved to the React client),
+//! - a first visit loads at most 115 KB gzipped to `/`, 125 KB to `/tasks` and 145 KB to a task's
+//!   page (each lowered from the owner's 300 KB as the pages and the chat moved to React),
 //!   everything the page needs (shell, the React client's scripts, CSS, API data, the feed's head
 //!   and messages), each independently.
 //!   The feed's keep-alive pings, which keep arriving while the page is open, are reported
@@ -80,18 +80,19 @@ use chrome::Chrome;
 use serde_json::json;
 use site::Site;
 
-/// Home's first visit, the web client's since it moved (108,315 bytes on the fixture then), with
-/// modest room: lowered from the owner's 300,000 by that move, never raised.
-const HOME_FIRST_VISIT_BYTES: f64 = 125_000.0;
-/// The task board's first-visit cap (`/tasks`), lowered from the owner's 300,000 once the board
-/// moved to the React client: 116,215 bytes on the fixture then, beside home, Reports, the queue
-/// and the documents, the rest room for the code the kinds moving after it share with it.
-const TASKS_FIRST_VISIT_BYTES: f64 = 150_000.0;
+/// Home's first visit: lowered from the owner's 300,000 to 125,000 when home moved to the web
+/// client, and to 115,000 once the chat moved and no kind was left to move (112,297 bytes on the
+/// fixture then); never raised.
+const HOME_FIRST_VISIT_BYTES: f64 = 115_000.0;
+/// The task board's first-visit cap (`/tasks`): lowered from the owner's 300,000 to 150,000 when
+/// the board moved to the React client, and to 125,000 once the chat moved and no kind was left
+/// to move (120,430 bytes on the fixture then); never raised.
+const TASKS_FIRST_VISIT_BYTES: f64 = 125_000.0;
 /// A task's page's first-visit cap (`/task/SLUG`), its timeline loaded after it and reported
-/// beside it: lowered from the owner's 300,000 once the page moved to the React client, 140,089
-/// bytes on the fixture then (546,351 on main's Dioxus build at f56bde5), with room for the code
-/// the kinds moving after it share with it.
-const TASK_FIRST_VISIT_BYTES: f64 = 160_000.0;
+/// beside it: lowered from the owner's 300,000 to 160,000 when the page moved to the React client
+/// (546,351 bytes on main's Dioxus build at f56bde5), and to 145,000 once the chat moved and no
+/// kind was left to move (141,961 bytes on the fixture then); never raised.
+const TASK_FIRST_VISIT_BYTES: f64 = 145_000.0;
 const RETURN_VISIT_BYTES: f64 = 20_000.0;
 /// How long a page may take to show the board at all before a test gives up on it.
 const SHOWN: Duration = Duration::from_secs(30);

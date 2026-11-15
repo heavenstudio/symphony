@@ -211,12 +211,13 @@ both kinds, to copy after `--`:
 | the home queue (`/`) | `queue` `polish::` `projects::` `budget` `phone::` |
 | the queue page (`/queue`) | `queue` `cache_pages::` `landmarks::` `skeleton::` `header::` `look_parity::` `postponed_labels` `later_advances` `restored_mockups` `reconnect_pills` `polish::` `projects::` `budget` |
 | the tasks board (`/tasks`) and its cards | `board` `task_columns` `task_controls` `tasks_and` `a_revealed_column` `owner_` `machine_work` `run_records::` `cache_pages::` `kept_pages::` `landmarks::` `layout_shift::` `skeleton::` `feed_deltas::` `header::` `look_parity::` `restored::` `components::` `polish::` `shot::` `projects::` `budget` |
-| a task's page, its gates and its timeline | `task_page` `task_panel` `task_priority` `task_gates::` `timeline::` `owner_controls::` `owner_save::` `cache_tasks::` `cache_ahead` `feed_deltas::` `notice_layout::` `landmarks::` `layout_shift::` `skeleton::` `header::` `look_parity::` `restored::` `components::` `program::` `polish::` `projects::` `budget` `preload::` |
+| a task's page, its gates and its timeline | `task_page` `task_panel` `task_priority` `task_gates::` `timeline::` `owner_controls::` `owner_save::` `cache_tasks::` `cache_ahead` `feed_deltas::` `notice_layout::` `landmarks::` `layout_shift::` `skeleton::` `header::` `look_parity::` `restored::` `components::` `persistent::` `polish::` `projects::` `budget` `preload::` |
 | the agents page (`/agents`) | `machine_work` `the_agents_page` `header::` `look_parity::` `the_chat_opened_on` `polish::` `projects::` `budget` |
 | the reports page (`/reports`) | `reports::` `header::` `polish::` `projects::` `budget` |
 | the runs page (`/runs`) | `runs::` `header::` `polish::` `projects::` `preload::` `budget` |
 | document and folder pages | `document` `docs_index` `owner_` `cache_ahead` `cache_pages::` `restored::` `landmarks::` `skeleton::` `layout_shift::` `look_parity::` `polish::` `projects::` `budget` |
-| the header, on every page | `header::` `floating_controls::` `panel_open::` `program::` `polish::` `projects::` |
+| the header, on every page | `header::` `floating_controls::` `panel_open::` `persistent::` `polish::` `projects::` |
+| the panel (the chat, add task, the activity list, Appearance, toasts, the pending bar) | `panel_open::` `persistent::` `header::` `floating_controls::` `components::` `look_parity::` `server_notices::` `notice_layout::` `polish::` `projects::` `budget` |
 | shared controls (select, menu, button, tooltip, theme) | `components::` `select` `theme` `polish::` |
 | the project switch and a project's look | `projects::` |
 | the feed and its stream | `feed` `stream` |
