@@ -329,7 +329,7 @@ pub fn tree_and_dirty(
 ) -> (Option<String>, Option<bool>) {
     let deadline = Instant::now() + within;
     let git = |args: &[&str]| {
-        let said = said_by(sys::command("git").arg("-C").arg(cwd).args(args), deadline)?;
+        let said = said_by(sys::git().arg("-C").arg(cwd).args(args), deadline)?;
         Some(String::from_utf8_lossy(&said).into_owned())
     };
     let tree = git(&[

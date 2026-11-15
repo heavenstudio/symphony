@@ -74,16 +74,8 @@ pub fn tree_id(top: &Path, trees: &[Worktree]) -> Option<String> {
 /// Read through [`symphony_board::sys::output`]: a child spawned meanwhile never holds it open.
 fn git(dir: &Path, args: &[&str]) -> Result<String, String> {
     let done = crate::cli::startup(&format!("repository {}", args.join(" ")), || {
-        symphony_board::sys::output(
-            symphony::children::command("git")
-                .args(args)
-                .current_dir(dir)
-                .env_remove("GIT_DIR")
-                .env_remove("GIT_WORK_TREE")
-                .env_remove("GIT_INDEX_FILE")
-                .env_remove("GIT_COMMON_DIR"),
-        )
-        .map_err(|e| format!("git {}: {e}", args.join(" ")))
+        symphony_board::sys::output(symphony::children::git().args(args).current_dir(dir))
+            .map_err(|e| format!("git {}: {e}", args.join(" ")))
     })?;
     if !done.status.success() {
         return Err(format!(
