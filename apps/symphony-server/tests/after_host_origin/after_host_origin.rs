@@ -725,17 +725,19 @@ printf '%s\n' '{"Self":{"DNSName":"review-fixture.tail.test.","TailscaleIPs":["f
         }
     }
 
-    /// The status the feed's WebSocket handshake gets under `host` and `origin`: `101` when the
-    /// feed is on its socket, which is then dropped.
-    pub fn socket(&self, host: &str, origin: Option<&str>) -> u16 {
+    /// The status the feed's WebSocket handshake gets under `host` and `origin`, each sent only
+    /// when named: `101` when the feed is on its socket, which is then dropped.
+    pub fn socket(&self, host: Option<&str>, origin: Option<&str>) -> u16 {
         let board = self.request("GET", "/api/board", Some(&self.host()), None, &Value::Null);
         assert_eq!(board.status, 200, "{board:?}");
         let version = board.json()["version"].as_u64().unwrap();
         let mut request = format!(
-            "GET /api/feed?since={version} HTTP/1.1\r\nHost: {host}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n"
+            "GET /api/feed?since={version} HTTP/1.1\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n"
         );
-        if let Some(origin) = origin {
-            request.push_str(&format!("Origin: {origin}\r\n"));
+        for (name, value) in [("Host", host), ("Origin", origin)] {
+            if let Some(value) = value {
+                request.push_str(&format!("{name}: {value}\r\n"));
+            }
         }
         request.push_str("\r\n");
         let mut stream = TcpStream::connect_timeout(&self.address, BACKSTOP).unwrap();
@@ -748,7 +750,7 @@ printf '%s\n' '{"Self":{"DNSName":"review-fixture.tail.test.","TailscaleIPs":["f
             assert_eq!(
                 stream.read(&mut byte).unwrap(),
                 1,
-                "the handshake under {host} {origin:?} closed: {}",
+                "the handshake under {host:?} {origin:?} closed: {}",
                 String::from_utf8_lossy(&head)
             );
             head.push(byte[0]);
