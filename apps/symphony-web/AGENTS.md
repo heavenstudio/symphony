@@ -39,8 +39,9 @@ lockfile written again, in a task of their own.
   nothing: Vite strips the types. `skipLibCheck` leaves the packages' own declarations unchecked,
   which name Node's types this package does not take.
 - **Vite** builds the kinds (`vite.config.ts`): one entry per kind, `src/kinds/NAME.tsx`, named in
-  `KINDS`; JSX by Vite's own transform, so no React plugin; no dev server, no public folder and
-  no module preload of Vite's, as the Symphony's server and shell serve and load the files.
+  `KINDS`; JSX by Vite's own transform, so no React plugin; no public folder and no module
+  preload of Vite's, as the Symphony's server and shell serve and load the files. Its dev server
+  is a developer's alone ([The dev server](#the-dev-server)).
 - **Biome** lints and formats (`biome.json`: its recommended rules with the React and test
   domains on, the formatter at two spaces and 100 columns). It was chosen over ESLint with
   typescript-eslint, whose TypeScript support ends below the TypeScript this package pins, and it
@@ -177,6 +178,34 @@ a declaration after a comment. As the Dioxus interpreter writes a style, a prope
 already had and the written style does not set (a centred container's `text-align`) is kept. A
 `javascript:` address in an href or a src is replaced by React 19 with one that throws, where the
 Dioxus client writes it as given: a difference in the safe direction, kept.
+
+## The dev server
+
+`just symphony-ui-dev SERVER [PORT]` shows this client's kinds as their sources stand, with no
+client build, the page loaded again on each save: Vite's own dev server (`dev.js`, the Node around
+`src/dev-server.ts`), on the loopback address alone at PORT (0, the default, for any), over a
+Symphony server of the developer's own on port SERVER, which `just symphony --port 0` starts and
+prints (`--root DIR` another project's). It refuses 8765, the shared server's, as either port, and
+starts nothing: Ctrl-C ends it. Every request but those for Vite's own files (under
+`/@symphony-web/`) goes to that server through Vite's proxy, its Host and Origin as the browser sent
+them, so a save meets the server's origin check as on the server itself: the pages, the API, the
+feed and the files of the Dioxus program's kinds. What it makes itself is the page's shell script:
+this checkout's shell (`apps/symphony-ui/assets/cache.js` and `shell.js`, unminified) with Vite's
+client first, the program's kinds as the server's build names them, and each of `KINDS` as its
+entry under Vite with the server's shared stylesheet, each kind's own styles kept before the
+project's theme as the built shell keeps them. So a kind added on a branch, or a change to the
+shell, shows with no build too. A save to a kind's module or to the shell's sources loads the page
+again, a style sheet's change applies in place, and an error in a module is drawn over the page.
+
+A reload, not React's Fast Refresh (`@vitejs/plugin-react`): that would be a dependency more and
+one more script put in a page Vite does not serve, and it keeps a component's state only across an
+edit to a module that exports components alone, which few of these do; a page here draws again at
+once from the device's cache, and keeps its drafts on every input. What only a build makes it does
+not show: the shared stylesheet and the program's kinds are the server's build's (an edit to the
+Dioxus client's sheets, `board.css` among them, shows once `just symphony-ui-dist` has built them
+and the server serves that build, `SYMPHONY_UI_DIST` naming its `public/` for another project),
+React is its development build, and the bytes are no build's. It is no part of a build, the
+regenerator or a check; `src/dev-server.test.ts` holds what it does.
 
 ## Reports
 
