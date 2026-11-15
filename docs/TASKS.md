@@ -2749,6 +2749,32 @@ tasks done per day, which its header says:
 `bounces`, `done_per_day`, `slowest`, `blocked` and
 `ready_unstaffed` (`tasks`, `median_seconds`), every duration in seconds.
 
+**Arms.** A process experiment compares tasks filed on its sides. A task's
+arm is that side's label, one word of lowercase letters, digits and dashes
+(at most 32), given where the task is filed: `just tasks create SLUG TITLE
+--arm control`. It is written with the task, among the board's own fields
+(`fields._board.arm`, `crates/tasks/src/arm.rs`), so no table or schema
+field holds it; no command changes it after, and `tasks api`'s `create`
+takes none. `just tasks show SLUG` prints `arm: NAME` above the stages. The
+board assigns no arm, applies no rule for one and names no winner: whoever
+files the work says which side it is on.
+
+Where a task of the window was filed on an arm, `stats` ends with each arm
+by name: its tasks, how many are done, the median lead time and the median
+time in review of the done ones (`-` with none done, or none reviewed), and
+how often review sent the arm's tasks back, the open ones' too:
+
+```
+Arms (the tasks filed with --arm; lead and review are the medians of the done):
+  control      tasks 2 · done 2 · lead 9.0 h · review 5.0 h · bounces 1
+  no-review    tasks 2 · done 1 · lead 3.0 h · review 1.0 h · bounces 2
+```
+
+A task filed on no arm is in none of them and in every figure above them.
+`--json` carries them as `arms`, by name (`tasks`, `done`, `lead_seconds`
+and `review_seconds`, each a spread or null, and `bounces`), `{}` where the
+window has none. The arm is read in the window's one read.
+
 `stats` reads the window in one round trip (`Store::stage_records`): the
 top-level tasks made since the window's start and the done ones written since
 (a task closed in the window is one of them), who executes them, and each one's thread
