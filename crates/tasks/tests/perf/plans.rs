@@ -1,10 +1,10 @@
-//! The plan check. The commands of every per-write, per-recipient and per-tick path run on the
-//! generated board through the recording relay ([`crate::proxy`]); each statement their requests
-//! hold that reads rows under a condition ([`crate::sql`]: every `SELECT`, nested ones too, and
-//! each `UPDATE` or `DELETE` of a table under a `WHERE` read as the `SELECT` of the rows it would
-//! change, the server planning only a `SELECT`) is planned by the server (`EXPLAIN`) with the
-//! request's own variables, and a variable an earlier statement of the request set given a value
-//! of its kind ([`bound`]). The relay sees only what a client sends, so what the schema's events
+//! The plan check. The commands of every per-write, per-recipient and per-tick path, and a store's
+//! own read for a tick's read no command makes, run on the generated board through the recording
+//! relay ([`crate::proxy`]); each statement their requests hold that reads rows under a condition
+//! ([`crate::sql`]: every `SELECT`, nested ones too, and each `UPDATE` or `DELETE` of a table
+//! under a `WHERE` read as the `SELECT` of the rows it would change, the server planning only a
+//! `SELECT`) is planned by the server (`EXPLAIN`) with the request's own variables, and a variable
+//! an earlier statement of the request set given a value of its kind ([`bound`]). The relay sees only what a client sends, so what the schema's events
 //! run in the write that fires them is planned from the schema itself ([`crate::sql::events`]),
 //! `$before` and `$after` a message of the board's. The check fails on what [`crate::findings`]
 //! finds in a plan: a filtered scan of message, delivery, role, session or callback_state, or a
@@ -170,6 +170,10 @@ fn plan_all(client: &Client, requests: &[Request]) -> BTreeMap<String, Planned> 
 /// hold once the check's commands made a give.
 const GIVE_FENCE: &str = "type::record('task', $g.slug)";
 
+/// The two reads of [`symphony_board::Store::questions_waiting`]: the questions to a person, by the
+/// recipient's index, and each one's thread after it, by its range.
+const QUESTIONS: [&str; 2] = ["WHERE recipient = $person", "WHERE sender = $person"];
+
 /// A new top-level task nobody orchestrates on `board`, named for `which` and this run, filed by the
 /// owner as a plain create, which gives none: the next reader of the whole board that gives (`tasks
 /// dispatch`, a look of `tasks wait`) gives it, whatever the board's other tasks are, and however
@@ -299,6 +303,18 @@ fn every_query_a_write_a_recipient_or_a_tick_sends_is_planned_on_an_index() {
         assert_eq!(ran.code, 0, "{call}: {}", ran.err);
         assert!(ran.out.contains("\"ok\""), "{call}: {}", ran.out);
     }
+    // The questions waiting on each person, which the Symphony's hub counts again each time the
+    // board's lines or its open tasks moved (`symphony::taskview::questions`) and no api call
+    // reads: a store's own read, through the relay. The newest verdict it reads once, at its
+    // start, is no tick's, and is not planned here.
+    let reader = symphony_board::Store::unchecked(
+        Client::new(&relay.addr, symphony_board::NAMESPACE, crate::board::DATABASE),
+        Box::new(|| NOW),
+        Box::new(|_| false),
+        &symphony_board::sys::hostname(),
+    );
+    let open = [thread.clone(), generated::slug(generated::TASKS - 1)];
+    reader.questions_waiting("owner", &open).unwrap();
     let to_first = gave(&board, &first);
     // Another orchestrator's look makes it one that stays, holding fewer than the live one, as a
     // test before this one may have made the waiter: the next give may go to it. Its look is not
@@ -328,6 +344,12 @@ fn every_query_a_write_a_recipient_or_a_tick_sends_is_planned_on_an_index() {
             .any(|statement| statement.contains(GIVE_FENCE)),
         "the requests hold the give pass's fence"
     );
+    for read in QUESTIONS {
+        assert!(
+            planned.keys().any(|statement| statement.contains(read)),
+            "the requests hold the questions' read {read:?}"
+        );
+    }
     let failed = failures(&planned);
     let unread = unread(&board.client(), &requests, statements);
     eprintln!(

@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 #[path = "../../../tasks/tests/store/common.rs"]
 #[expect(
     dead_code,
-    reason = "the page's reads and the agents view's need only the store fixture's server and seed"
+    reason = "the page's reads, the agents view's and the activity's need only the store fixture's server and seed"
 )]
 pub(super) mod store_fixture;
 
