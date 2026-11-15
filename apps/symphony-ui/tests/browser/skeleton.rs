@@ -305,7 +305,7 @@ fn a_board_whose_first_read_fails_says_why_in_place_of_its_ghost_until_a_read_an
     assert_eq!(
         shown,
         json!({"heading": "The task board could not be read",
-            "why": "Board snapshot unavailable (the server answered 500).", "retry": "Retry",
+            "why": "Board snapshot unavailable (the server answered 500). Trying again…", "retry": "Retry",
             "ghost": false, "status": ["trouble card unread-board"], "alerts": 0, "busy": "false"}),
         "the block stands in the ghost's place, says the read's error once, and the page is not busy"
     );

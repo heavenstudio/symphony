@@ -452,11 +452,18 @@ async fn read(shared: &Arc<Shared>, request: Request) -> Option<Response> {
                 .trim()
                 .to_lowercase();
             let scores = if path == "/api/task-board" && !search.is_empty() {
-                let root = hub.root.clone();
+                let reading = hub.clone();
                 let needle = search.clone();
                 match tokio::task::spawn_blocking(move || {
-                    let store = symphony::taskview::connect(&root)?;
-                    store.search(&needle).map_err(|error| error.to_string())
+                    // On the store the task pages' reads share, never a board opened anew.
+                    let store = reading.reader()?;
+                    let hits = store.search(&needle);
+                    // Dropped only where the board failed the read, as the task pages drop it: a
+                    // query the search refuses (too long, too many terms) sent none.
+                    if matches!(hits, Err(symphony_board::Error::Db(_))) {
+                        reading.reader_failed(&store);
+                    }
+                    hits.map_err(|error| error.to_string())
                 })
                 .await
                 {

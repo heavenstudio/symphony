@@ -3,9 +3,10 @@
 The app's workspace owns its server, its two web clients and its Mac app under `apps/` (the React
 one, `apps/symphony-web`, taking the pages over a kind at a time from the Dioxus one; the Mac app,
 `apps/symphony-desktop`, a thin shell over each server's own pages, `publish = false`, whose window
-crates no other package links), and the review library, wire types, task board,
-working-directory scanner, headless Chrome driver and the tests' CPU meters and waits
-(`crates/test-time`, RULES.md `tests/no-test-fails-on-load`) under `crates/`.
+crates no other package links), and the review library, its own build and release commands
+(`crates/symphony-build`), wire types, task board, working-directory scanner, headless Chrome
+driver and the tests' CPU meters and waits (`crates/test-time`, RULES.md
+`tests/no-test-fails-on-load`) under `crates/`.
 The app's formats and operating contract live in [docs/](docs/README.md).
 A consuming project owns its landing policy and shared-service safeguards.
 
@@ -20,8 +21,8 @@ consume these libraries through an immutable Git dependency pin. The plugin kit,
 the product (the library as `symphony-app`, its library still `symphony`, the board as
 `symphony-board`, the server, the Chrome driver as `symphony-chrome` and the wire types,
 `symphony-api`) are made to be published on crates.io as well, each by its version; the client's
-sources, the Mac app and the tests' time keep `publish = false`
-([RELEASES](docs/RELEASES.md#packages-on-cratesio)).
+sources, the Mac app, the build and release commands (`symphony-build`) and the tests' time keep
+`publish = false` ([RELEASES](docs/RELEASES.md#packages-on-cratesio)).
 
 ### Where each part is said
 
@@ -82,8 +83,10 @@ building, and `--link NAME` builds and points `.target/bin/NAME` at it. A board 
 linked worktree against the live board runs the main checkout's launcher instead, and the live
 board moves its schema forward only for a build of the schema source the default branch commits
 ([TASKS](docs/TASKS.md#where-it-lives), `crates/tasks/src/live.rs`): a branch's own build of the
-board runs on a scratch board. `symphony-build` (`tools/rs-bin.sh symphony-build`) holds the
-commands only this repository's own build and release run use, and is never shipped or installed
+board runs on a scratch board. `symphony-build` (`tools/rs-bin.sh symphony-build`, a package of
+its own, `crates/symphony-build`) holds the commands only this repository's own build and release
+run use, and is never shipped, installed or published: it reads the library through its public
+API alone, so neither the library every project links nor its `symphony` compiles any of it
 ([CHECKS](docs/CHECKS.md#size-budgets)).
 
 ### The client's distribution
@@ -194,6 +197,19 @@ what each kind of change shows: [CHECKS](docs/CHECKS.md)). No task runs `just ve
 its brief asks: it is the release run's (`just release`), on main's tip in a clean checkout outside
 this folder (`../symphony-wt/release`), which tags a green tip as a release
 ([RELEASES](docs/RELEASES.md)).
+
+**A change of settings needs no reviewer.** A change of the values `symphony.toml` gives settings
+the Symphony already reads (a role's model, a limit, a count), with this guide's or the rules'
+words that repeat them and nothing else, lands on `just settings-check` green at its tip: the
+project file read as the Symphony reads it and judged on its shape alone (every table and key
+known, each value of its type, each required value there; a model is any text, never one of a
+list), recorded as a test run, which is the `tests` stamp. Its assessor names `tests` alone, and
+no reviewer reads it. A setting the Symphony does not read yet is code, and `[project]`'s
+`cargo` and `default_branch`, `[plugins]`'s `crates` and `process`, `[verdicts]`, `[land]`,
+`[releases]`, `[stamps]` and `[board]`'s `on_review`, `on_land`, `machine_work_reader` and
+`assessments` hold commands or programs the Symphony runs, or decide what lands: those keep
+`review`
+([TASKS](docs/TASKS.md#needed-stamps), [PROJECT_FILE](docs/PROJECT_FILE.md#the-settings-check)).
 
 ## Agent integration
 

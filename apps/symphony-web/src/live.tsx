@@ -332,7 +332,7 @@ export function BoardPage<B extends PageBoard = PageBoard>({
         ) : trouble !== null ? (
           <Trouble
             title="The board could not be loaded"
-            text={`${failedRead(trouble)} It is also tried again on its own.`}
+            text={failedRead(trouble, true)}
             retry={() => {
               retry.current += 1;
             }}

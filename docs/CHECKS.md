@@ -34,7 +34,8 @@ catalogue (`just tasks stamps`): `tests` (its recorded test runs green at the ti
 `pictures`, `owner`; a task no assessment has read needs `review` alone. The land lands it once
 every stamp it needs stands on its tip, and refuses naming who gives a missing one ([the default
 landing](TASKS.md#the-default-landing)). A change to a test or a check (`[land] check_paths`)
-keeps `review`, since a loosened test or check is how a red turns green unfixed.
+keeps `review`, since a loosened test or check is how a red turns green unfixed. A change of
+settings' values needs `tests` alone, the settings check ([by kind](#evidence-by-kind-of-change)).
 
 Where review is needed, a reviewer runs the same focused tests itself, never the suite, reads the
 diff against the evidence and judges whether it is good enough for the change's risk. Evidence
@@ -121,6 +122,11 @@ a measurement before and after.
   shape. For a shipped skill,
   `just symphony-cli init --root .` run so the installed copies and their stamps are current, and
   the shipped skills' tests (`just test-rs -p symphony-app --lib init`). It runs no other test.
+- **A change of settings** (values of `symphony.toml` for settings the Symphony already reads,
+  with the guide's or the rules' words that repeat them): `just settings-check` at the tip, the
+  project file's shape alone ([PROJECT_FILE](PROJECT_FILE.md#the-settings-check)), recorded as
+  a test run, which is its `tests` stamp, and the doc checks above for the words. It runs no
+  other test and takes no reviewer ([TASKS](TASKS.md#needed-stamps)).
 
 ### The recipes a text names
 
@@ -334,12 +340,12 @@ target that failed.
 
 The lanes share no port or store: every server, store and browser a test starts takes a port the
 system picks and a folder of its own. The one test writing the build folder (`wasm_build`, which
-links `symphony-build` there again) runs in the rest with every `symphony-app` target and
-`standalone`, which copies that folder. The browser lane writes it too when `SYMPHONY_UI_DIST`
-names no client: its own client build (`cargo symphony-ui dist`, whose `bundle.sh` runs
-`tools/rs-bin.sh --build symphony-build`) can link `symphony-build` there again while the rest runs
-it. Verify names the client its client check built, so only a verify whose client check built none
-leaves it to the browser lane. The binaries a test would build for itself under its case's clock
+links `symphony-build` there again) runs in the rest with every `symphony-build` and
+`symphony-app` target and `standalone`, which copies that folder. The browser lane writes it too
+when `SYMPHONY_UI_DIST` names no client: its own client build (`cargo symphony-ui dist`, whose
+`bundle.sh` runs `tools/rs-bin.sh --build symphony-build`) can link `symphony-build` there again
+while the rest runs it. Verify names the client its client check built, so only a verify whose
+client check built none leaves it to the browser lane. The binaries a test would build for itself under its case's clock
 are the build's own, named by `SYMPHONY_TEST_TASKS_BINARY` and `SYMPHONY_TEST_BINARIES` (a target
 run alone builds them as before).
 

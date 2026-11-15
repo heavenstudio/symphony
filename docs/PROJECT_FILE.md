@@ -25,6 +25,22 @@ and `theme.rs`, a generator's in `crates/tasks/src/land.rs` and a stamp's in
 `crates/symphony/tests/project/reference.rs`, fails on a key this page lacks or one the code does
 not have.
 
+## The settings check
+
+`symphony settings-check [DIR]` (`just symphony-cli settings-check`) reads the project file of DIR,
+the current folder by default, as the Symphony loads it, and judges its shape alone: a table or
+key the Symphony does not know, a value of the wrong type (a number where a text is read) and a
+required value left out (an entrypoint's `url` or `folder`) are each named on stderr, exit 1; a
+file that loads is exit 0. It judges no name against a list: a model, an agent or a recipe is any
+text, so a model nobody has heard of passes. Unlike the lint it reads no document and asks no
+build which plugins it holds.
+
+A change of the values a project file gives settings the Symphony already reads lands on this
+check green at its tip, recorded as a test run, with no reviewer
+([TASKS](TASKS.md#needed-stamps)). This repository records it with `just settings-check`; a
+project records it through its own build wrapper
+([MACHINE_WORK](MACHINE_WORK.md#recording-builds-and-tests)).
+
 ## `[project]`
 
 | Key | Default | What it sets |
