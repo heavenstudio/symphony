@@ -262,3 +262,62 @@ export function pendingTargets(
     null;
   return [prev, next];
 }
+
+/** A key as the pending bar hears it: which, and the modifiers held with it. */
+export interface StepKey {
+  key: string;
+  altKey: boolean;
+  ctrlKey: boolean;
+  metaKey: boolean;
+  shiftKey: boolean;
+}
+
+/**
+ * The pending card a key steps to: `[` the one before, `]` the one after (`targets`), pressed
+ * alone and outside a field or an open menu (`typing`); none for any other key.
+ */
+export function pendingStep(
+  event: StepKey,
+  typing: boolean,
+  targets: readonly [PendingItem | null, PendingItem | null],
+): PendingItem | null {
+  if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey || typing) return null;
+  return event.key === "[" ? targets[0] : event.key === "]" ? targets[1] : null;
+}
+
+/**
+ * What the frame's read (`review:frame`) tells the panel: the reason it failed (`error`), else
+ * nothing while either list does not read, else the items and cards to draw, their ids (the
+ * baseline the next read's arrivals are told by), the seen ids to keep (the items themselves on a
+ * device that kept none, `first`), and the arrivals to toast: the items not in the last read's
+ * `known` ids and not read (none before a baseline).
+ */
+export type FrameNews =
+  | { trouble: string }
+  | null
+  | {
+      items: ActivityItem[];
+      cards: Pending;
+      ids: string[];
+      seen: string[];
+      first: boolean;
+      added: ActivityItem[];
+    };
+
+export function frameNews(
+  error: unknown,
+  activity: unknown,
+  pending: unknown,
+  known: readonly string[] | null,
+  seen: readonly string[] | null,
+): FrameNews {
+  if (typeof error === "string") return { trouble: error };
+  const items = readActivity(activity);
+  const cards = readPending(pending);
+  if (items === null || cards === null) return null;
+  const ids = readIds(items.map((item) => item.id)) ?? [];
+  const kept = seen === null ? ids : [...seen];
+  const added =
+    known === null ? [] : items.filter((item) => !known.includes(item.id) && !isRead(item, kept));
+  return { items, cards, ids, seen: kept, first: seen === null, added };
+}

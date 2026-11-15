@@ -52,9 +52,9 @@ const QUICK_FIRST = [
 ];
 
 /** How long a conversation's failed read waits before it is tried again, in ms. */
-const RETRY_MS = 3_000;
+export const RETRY_MS = 3_000;
 /** How long a task save still being checked waits before it is asked again, in ms. */
-const CHECK_MS = 1_000;
+export const CHECK_MS = 1_000;
 
 const TABS = ["chat", "task"];
 const PRIORITIES: [string, string][] = [0, 1, 2, 3, 4].map((priority) => [
@@ -121,7 +121,7 @@ export function useDraft(): [Draft, ChangeDraft] {
 }
 
 /** A task save's request identity: 16 random bytes, in hex. */
-function requestIdentity(): string {
+export function requestIdentity(): string {
   const bytes = crypto.getRandomValues(new Uint8Array(16));
   return [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
@@ -131,13 +131,196 @@ export function priorityOf(priority: string): number {
   return /^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/.test(priority) ? Number(priority) : 2;
 }
 
-/** The address's fragment without its `#`, decoded; empty for one that does not decode. */
-function fragment(): string {
+/** An address's fragment (`hash`) without its `#`, decoded; empty for one that does not decode. */
+export function fragmentOf(hash: string): string {
   try {
-    return decodeURIComponent(location.hash.replace(/^#+/, ""));
+    return decodeURIComponent(hash.replace(/^#+/, ""));
   } catch {
     return "";
   }
+}
+
+/** Where the reader is: the address's path, fragment and whole, as `location` has them. */
+export interface At {
+  pathname: string;
+  hash: string;
+  href: string;
+}
+
+/** Whether the form has something to send and nothing holds it: a title for a task, a message or a
+ * file for the chat, no send out and no file still being read. */
+export function canSend(
+  draft: Draft,
+  sending: boolean,
+  attach: { busy: boolean; empty: boolean },
+): boolean {
+  if (sending || attach.busy) return false;
+  return draft.task ? trimmed(draft.title) !== "" : trimmed(draft.text) !== "" || !attach.empty;
+}
+
+/** The page a task's save names: the one its first send named (a reload sends the same request),
+ * else a document's own address and anchor, else the page's path in its project and anchor. */
+export function taskPage(sent: Draft, route: Route, at: At): string {
+  if (sent.request_page !== "") return sent.request_page;
+  return route.document && !route.folder
+    ? scoped(route.scope, `/${route.path}${at.hash}`)
+    : `${strip(project(), at.pathname)}${at.hash}`;
+}
+
+/** A new conversation's post (`/api/ask`), before its files are added to the question: about a
+ * document by its path, else about the project's readme with the page the chat was sent from. */
+export function askOf(route: Route, text: string, at: At) {
+  const document = route.document && !route.folder;
+  return {
+    path: document ? route.path : readmeRoute(project()),
+    question: document ? text : `${text}\n\n(sent from ${at.href})`,
+    anchor: fragmentOf(at.hash),
+  };
+}
+
+/** What a send that went through changes in the draft as it stands now (`now`), from the server's
+ * answer (`value`) on the page of `scope`: a task's fields emptied; a reply's text; a new
+ * conversation's text, its id and scope taken up. */
+export function afterSent(now: Draft, value: unknown, scope: string): Partial<Draft> {
+  if (now.task) {
+    return { text: "", title: "", slug: "", request: "", request_page: "", request_scope: "" };
+  }
+  if (now.ask !== 0) return { text: "" };
+  const id = field(value, "id");
+  return { text: "", ask: typeof id === "number" ? Math.trunc(id) : 0, ask_scope: scope };
+}
+
+/**
+ * The conversation at `url` (`/api/ask?format=blocks&id=`), read until one read answers, each
+ * failure said to `shown.trouble` and tried again `RETRY_MS` later; the read drawn and the trouble
+ * cleared once it does. Nothing is shown once `signal` ended.
+ */
+export async function readThread(
+  url: string,
+  signal: AbortSignal,
+  shown: { thread: (read: AskReply) => void; trouble: (why: string | null) => void },
+): Promise<void> {
+  while (!signal.aborted) {
+    try {
+      const read = readAskReply(await getJson(url, signal));
+      if (signal.aborted) return;
+      if (read === null) throw new Error("The server's conversation could not be read");
+      shown.thread(read);
+      shown.trouble(null);
+      return;
+    } catch (failure) {
+      if (signal.aborted) return;
+      shown.trouble(said(failure));
+    }
+    await sleep(RETRY_MS, signal);
+  }
+}
+
+/**
+ * A task's save (`/api/quick-task` at `url`), asked again each `CHECK_MS` while the server is still
+ * checking it or its answer was uncertain, each reason said to `checking`: the slug it was saved
+ * under, or none once `signal` ended. Any other failure is thrown.
+ */
+export async function saveTask(
+  url: string,
+  fields: Record<string, unknown>,
+  signal: AbortSignal,
+  checking: (why: string) => void,
+): Promise<string | null> {
+  while (!signal.aborted) {
+    try {
+      const outcome = saveOutcome(await post(url, fields));
+      if ("saved" in outcome) return outcome.saved;
+      if (signal.aborted) break;
+      checking(outcome.checking);
+    } catch (failure) {
+      if (!(failure instanceof Failure) || failure.kind !== "uncertain") throw failure;
+      if (signal.aborted) break;
+      checking(failure.text);
+    }
+    await sleep(CHECK_MS, signal);
+  }
+  return null;
+}
+
+export interface QuickThreadProps {
+  draft: Draft;
+  /** The conversation the draft names, once read; none before. */
+  shown: AskReply | null;
+  /** Why the conversation's last read failed, or none. */
+  readError: string | null;
+  /** Why a task's save is still being checked, or none. */
+  checking: string | null;
+  /** The slug the last task was saved under, or none. */
+  created: string | null;
+}
+
+/**
+ * The sheet's thread: on the chat's tab the conversation, its ghost while it is read, or the
+ * invitation to ask; on the Add task tab what the last save came to, and with nothing to say it is
+ * quiet and takes no room, so the form sits under the tabs.
+ */
+export function QuickThread({ draft, shown, readError, checking, created }: QuickThreadProps) {
+  const quiet =
+    draft.task &&
+    readError === null &&
+    checking === null &&
+    draft.request === "" &&
+    created === null;
+  return (
+    <div className={quiet ? "quick-thread quiet" : "quick-thread"} aria-live="polite">
+      {readError !== null && (
+        <p role="status">{`Conversation could not be refreshed: ${readError}`}</p>
+      )}
+      {!draft.task ? (
+        draft.ask > 0 ? (
+          shown !== null ? (
+            <>
+              {shown.ask.messages.map((message) => (
+                <article className="quick-message" key={message.seq}>
+                  <p className="by">{message.by}</p>
+                  <BlocksView blocks={message.blocks ?? []} />
+                </article>
+              ))}
+              {(shown.recipient !== null || shown.ask.status !== "answered") && (
+                <p className="muted">
+                  {shown.recipient !== null
+                    ? `Chat goes to ${shown.recipient}.`
+                    : "Nobody is registered to receive chat; your message is queued."}
+                </p>
+              )}
+            </>
+          ) : (
+            <>
+              <span className="status-text" role="status">
+                Loading conversation…
+              </span>
+              {[0, 1].map((ghost) => (
+                <div key={ghost} className="ghost-message">
+                  <div className="by">
+                    <span className="bone" style={{ "--w": "9ch" } as CSSProperties} />
+                  </div>
+                  <Skeleton lines={2} />
+                </div>
+              ))}
+            </>
+          )
+        ) : (
+          <p className="muted">Ask about this page.</p>
+        )
+      ) : checking !== null ? (
+        <p role="status">{`Checking save… ${checking}`}</p>
+      ) : draft.request !== "" ? (
+        <p role="status">Check the previous save to continue; your text is kept.</p>
+      ) : created !== null ? (
+        <p role="status">
+          {"✓ Task "}
+          <a href={href(`/task/${created}`)}>{created}</a>
+          {" created"}
+        </p>
+      ) : null}
+    </div>
+  );
 }
 
 export interface QuickPanelProps {
@@ -185,23 +368,10 @@ export function QuickPanel({ route, draft, change }: QuickPanelProps) {
     void heard;
     if (!open || task || ask === 0) return;
     const reading = new AbortController();
-    const url = scoped(scope, `/api/ask?format=blocks&id=${ask}`);
-    void (async () => {
-      while (!reading.signal.aborted) {
-        try {
-          const read = readAskReply(await getJson(url, reading.signal));
-          if (reading.signal.aborted) return;
-          if (read === null) throw new Error("The server's conversation could not be read");
-          setThread(read);
-          setReadError(null);
-          return;
-        } catch (failure) {
-          if (reading.signal.aborted) return;
-          setReadError(said(failure));
-        }
-        await sleep(RETRY_MS, reading.signal);
-      }
-    })();
+    void readThread(scoped(scope, `/api/ask?format=blocks&id=${ask}`), reading.signal, {
+      thread: setThread,
+      trouble: setReadError,
+    });
     return () => reading.abort();
   }, [open, task, ask, scope, revision, heard]);
 
@@ -209,39 +379,23 @@ export function QuickPanel({ route, draft, change }: QuickPanelProps) {
    * the conversation, or a new conversation about the page. */
   const deliver = async (sent: Draft): Promise<unknown> => {
     if (sent.task) {
-      // A document's task keeps the page's own address and its anchor.
-      const page =
-        sent.request_page !== ""
-          ? sent.request_page
-          : route.document && !route.folder
-            ? scoped(route.scope, `/${route.path}${location.hash}`)
-            : `${strip(project(), location.pathname)}${location.hash}`;
+      const page = taskPage(sent, route, location);
       // A reload sends the same request, for the same page.
       change(() => ({ request_page: page }));
-      const url = scoped(sent.request_scope, "/api/quick-task");
-      const fields = {
-        request: sent.request,
-        title: sent.title,
-        body: attach.compose(sent.text),
-        slug: sent.slug,
-        priority: priorityOf(sent.priority),
-        page,
-      };
-      // Asked again until the server knows the outcome, or the panel's mount ends.
-      while (!mount.aborted) {
-        try {
-          const outcome = saveOutcome(await post(url, fields));
-          if ("saved" in outcome) return { slug: outcome.saved };
-          if (mount.aborted) break;
-          setChecking(outcome.checking);
-        } catch (failure) {
-          if (!(failure instanceof Failure) || failure.kind !== "uncertain") throw failure;
-          if (mount.aborted) break;
-          setChecking(failure.text);
-        }
-        await sleep(CHECK_MS, mount);
-      }
-      return null;
+      const slug = await saveTask(
+        scoped(sent.request_scope, "/api/quick-task"),
+        {
+          request: sent.request,
+          title: sent.title,
+          body: attach.compose(sent.text),
+          slug: sent.slug,
+          priority: priorityOf(sent.priority),
+          page,
+        },
+        mount,
+        setChecking,
+      );
+      return slug === null ? null : { slug };
     }
     if (sent.ask > 0) {
       return post(scoped(sent.ask_scope, "/api/ask-reply"), {
@@ -249,26 +403,16 @@ export function QuickPanel({ route, draft, change }: QuickPanelProps) {
         text: attach.compose(sent.text),
       });
     }
-    const document = route.document && !route.folder;
+    const ask = askOf(route, sent.text, location);
     return post(scoped(route.scope, "/api/ask"), {
-      path: document ? route.path : readmeRoute(project()),
-      question: attach.compose(
-        document ? sent.text : `${sent.text}\n\n(sent from ${location.href})`,
-      ),
-      anchor: fragment(),
+      ...ask,
+      question: attach.compose(ask.question),
     });
   };
 
   const send = (event: FormEvent) => {
     event.preventDefault();
-    if (
-      sending ||
-      attach.busy ||
-      (!draft.task && trimmed(draft.text) === "" && attach.empty) ||
-      (draft.task && trimmed(draft.title) === "")
-    ) {
-      return;
-    }
+    if (!canSend(draft, sending, attach)) return;
     if (draft.task && titleLength(draft.title) > QUICK_TASK_TITLE_MAX) {
       setError(`Use at most ${QUICK_TASK_TITLE_MAX} characters for the task title`);
       return;
@@ -300,23 +444,7 @@ export function QuickPanel({ route, draft, change }: QuickPanelProps) {
         let saved = false;
         change((now) => {
           saved = now.task;
-          if (now.task) {
-            return {
-              text: "",
-              title: "",
-              slug: "",
-              request: "",
-              request_page: "",
-              request_scope: "",
-            };
-          }
-          if (now.ask !== 0) return { text: "" };
-          const id = field(value, "id");
-          return {
-            text: "",
-            ask: typeof id === "number" ? Math.trunc(id) : 0,
-            ask_scope: route.scope,
-          };
+          return afterSent(now, value, route.scope);
         });
         if (saved) {
           const slug = field(value, "slug");
@@ -334,69 +462,16 @@ export function QuickPanel({ route, draft, change }: QuickPanelProps) {
   };
 
   const busy = sending || draft.request !== "";
-  // The Add task tab is a form: its thread holds only what the last save came to, and with nothing
-  // to say it is quiet and takes no room, so the form sits under the tabs.
-  const quiet =
-    draft.task &&
-    readError === null &&
-    checking === null &&
-    draft.request === "" &&
-    created === null;
   const shown = thread !== null && thread.ask.id === draft.ask ? thread : null;
   const content = (
     <>
-      <div className={quiet ? "quick-thread quiet" : "quick-thread"} aria-live="polite">
-        {readError !== null && (
-          <p role="status">{`Conversation could not be refreshed: ${readError}`}</p>
-        )}
-        {!draft.task ? (
-          draft.ask > 0 ? (
-            shown !== null ? (
-              <>
-                {shown.ask.messages.map((message) => (
-                  <article className="quick-message" key={message.seq}>
-                    <p className="by">{message.by}</p>
-                    <BlocksView blocks={message.blocks ?? []} />
-                  </article>
-                ))}
-                {(shown.recipient !== null || shown.ask.status !== "answered") && (
-                  <p className="muted">
-                    {shown.recipient !== null
-                      ? `Chat goes to ${shown.recipient}.`
-                      : "Nobody is registered to receive chat; your message is queued."}
-                  </p>
-                )}
-              </>
-            ) : (
-              <>
-                <span className="status-text" role="status">
-                  Loading conversation…
-                </span>
-                {[0, 1].map((ghost) => (
-                  <div key={ghost} className="ghost-message">
-                    <div className="by">
-                      <span className="bone" style={{ "--w": "9ch" } as CSSProperties} />
-                    </div>
-                    <Skeleton lines={2} />
-                  </div>
-                ))}
-              </>
-            )
-          ) : (
-            <p className="muted">Ask about this page.</p>
-          )
-        ) : checking !== null ? (
-          <p role="status">{`Checking save… ${checking}`}</p>
-        ) : draft.request !== "" ? (
-          <p role="status">Check the previous save to continue; your text is kept.</p>
-        ) : created !== null ? (
-          <p role="status">
-            {"✓ Task "}
-            <a href={href(`/task/${created}`)}>{created}</a>
-            {" created"}
-          </p>
-        ) : null}
-      </div>
+      <QuickThread
+        draft={draft}
+        shown={shown}
+        readError={readError}
+        checking={checking}
+        created={created}
+      />
       {/* Out of the thread, so a conversation that lands never moves it. */}
       {!draft.task && draft.ask > 0 && (
         <div className="quick-restart">
@@ -466,15 +541,7 @@ export function QuickPanel({ route, draft, change }: QuickPanelProps) {
         )}
         <AttachControls attach={attach} disabled={busy} />
         {error !== null && <p role="alert">{error}</p>}
-        <Button
-          type="submit"
-          disabled={
-            sending ||
-            attach.busy ||
-            (!draft.task && trimmed(draft.text) === "" && attach.empty) ||
-            (draft.task && trimmed(draft.title) === "")
-          }
-        >
+        <Button type="submit" disabled={!canSend(draft, sending, attach)}>
           {sending ? "Sending…" : draft.request !== "" ? "Check save" : "Send"}
         </Button>
       </form>

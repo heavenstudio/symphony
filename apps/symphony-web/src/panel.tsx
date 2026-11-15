@@ -15,8 +15,10 @@ import {
   type Draft,
   dismiss,
   expire,
+  frameNews,
   isRead,
   NO_TOASTS,
+  pendingStep,
   pendingTargets,
   readActivity,
   readIds,
@@ -123,38 +125,35 @@ function FrameExtras({ route, draft, change }: ExtrasProps) {
   useEffect(() => {
     const timers = new Set<ReturnType<typeof setTimeout>>();
     const refresh = () => {
-      const why = snapshot("reviewFrameError");
-      if (typeof why === "string") {
-        setTrouble(why);
+      const news = frameNews(
+        snapshot("reviewFrameError"),
+        snapshot("reviewActivitySnapshot"),
+        snapshot("reviewPendingSnapshot"),
+        known.current,
+        seen.current,
+      );
+      if (news === null) return;
+      if ("trouble" in news) {
+        setTrouble(news.trouble);
         return;
       }
-      const items = readActivity(snapshot("reviewActivitySnapshot"));
-      const cards = readPending(snapshot("reviewPendingSnapshot"));
-      if (items === null || cards === null) return;
-      const ids = readIds(items.map((item) => item.id)) ?? [];
-      if (seen.current === null) {
-        seen.current = ids;
-        setSeenIds(ids);
-        saveSeen(ids);
+      if (news.first) {
+        seen.current = news.seen;
+        setSeenIds(news.seen);
+        saveSeen(news.seen);
       }
-      const previous = known.current;
-      if (previous !== null) {
-        const added = items.filter(
-          (item) => !previous.includes(item.id) && !isRead(item, seen.current),
-        );
-        if (added.length > 0) {
-          const next = arrive(shownToasts.current, added);
-          toast(next);
-          const timer = setTimeout(() => {
-            timers.delete(timer);
-            toast(expire(shownToasts.current, next.batches));
-          }, TOAST_MS);
-          timers.add(timer);
-        }
+      if (news.added.length > 0) {
+        const next = arrive(shownToasts.current, news.added);
+        toast(next);
+        const timer = setTimeout(() => {
+          timers.delete(timer);
+          toast(expire(shownToasts.current, next.batches));
+        }, TOAST_MS);
+        timers.add(timer);
       }
-      known.current = ids;
-      setActivity(items);
-      setPending(cards);
+      known.current = news.ids;
+      setActivity(news.items);
+      setPending(news.cards);
       setTrouble(null);
     };
     refresh();
@@ -168,59 +167,95 @@ function FrameExtras({ route, draft, change }: ExtrasProps) {
   return (
     <>
       {panel && (
-        <aside id="activity-panel" aria-label="Recent activity">
-          <div className="panel-heading">
-            <h2>Recent activity</h2>
-            <Button
-              type="button"
-              aria-label="Close activity"
-              onClick={() => {
-                showActivity(false);
-                returnFocus("#bell");
-              }}
-            >
-              ×
-            </Button>
-          </div>
-          {trouble !== null && <p role="status">{`Activity could not be refreshed: ${trouble}`}</p>}
-          {activity.length === 0 && <p className="muted">No recent activity.</p>}
-          <ul>
-            {activity.map((item) => (
-              <li key={item.id} className={isRead(item, seenIds) ? "" : "unread"}>
-                <a
-                  href={href(item.href)}
-                  onClick={() => {
-                    markSeen(item.id);
-                    showActivity(false);
-                  }}
-                >
-                  {`${item.kind} · ${item.slug}`}
-                </a>
-                <div className="meta">{`${item.path} · ${item.ts}`}</div>
-                <div className="excerpt">{item.text}</div>
-              </li>
-            ))}
-          </ul>
-        </aside>
+        <ActivityList
+          activity={activity}
+          seen={seenIds}
+          trouble={trouble}
+          close={() => {
+            showActivity(false);
+            returnFocus("#bell");
+          }}
+          opened={(id) => {
+            markSeen(id);
+            showActivity(false);
+          }}
+        />
       )}
-      <div id="toasts" aria-live="polite">
-        {toasts.shown.map(([, item]) => (
-          <div className="pop" key={item.id}>
-            <a href={href(item.href)} onClick={() => markSeen(item.id)}>
-              {`${item.kind} · ${item.slug}`}
-            </a>
-            <Button
-              type="button"
-              aria-label="Dismiss notification"
-              onClick={() => toast(dismiss(shownToasts.current, item.id))}
-            >
-              ×
-            </Button>
-          </div>
-        ))}
-      </div>
+      <ToastList
+        toasts={toasts}
+        opened={markSeen}
+        dismissed={(id) => toast(dismiss(shownToasts.current, id))}
+      />
       <PendingControls route={route} pending={pending} />
     </>
+  );
+}
+
+export interface ActivityListProps {
+  activity: readonly ActivityItem[];
+  /** The ids this device has seen; none before its first read. */
+  seen: readonly string[] | null;
+  /** Why the frame's last read failed, or none. */
+  trouble: string | null;
+  close: () => void;
+  /** An item's link followed, by its id. */
+  opened: (id: string) => void;
+}
+
+/** The open activity list (`#activity-panel`): each item, the unread marked, and its trouble. */
+export function ActivityList({ activity, seen, trouble, close, opened }: ActivityListProps) {
+  return (
+    <aside id="activity-panel" aria-label="Recent activity">
+      <div className="panel-heading">
+        <h2>Recent activity</h2>
+        <Button type="button" aria-label="Close activity" onClick={close}>
+          ×
+        </Button>
+      </div>
+      {trouble !== null && <p role="status">{`Activity could not be refreshed: ${trouble}`}</p>}
+      {activity.length === 0 && <p className="muted">No recent activity.</p>}
+      <ul>
+        {activity.map((item) => (
+          <li key={item.id} className={isRead(item, seen) ? "" : "unread"}>
+            <a href={href(item.href)} onClick={() => opened(item.id)}>
+              {`${item.kind} · ${item.slug}`}
+            </a>
+            <div className="meta">{`${item.path} · ${item.ts}`}</div>
+            <div className="excerpt">{item.text}</div>
+          </li>
+        ))}
+      </ul>
+    </aside>
+  );
+}
+
+export interface ToastListProps {
+  toasts: Toasts;
+  /** A toast's link followed, by its item's id. */
+  opened: (id: string) => void;
+  /** A toast's × pressed, by its item's id. */
+  dismissed: (id: string) => void;
+}
+
+/** The toasts up (`#toasts`), each a link to its item and its dismiss button. */
+export function ToastList({ toasts, opened, dismissed }: ToastListProps) {
+  return (
+    <div id="toasts" aria-live="polite">
+      {toasts.shown.map(([, item]) => (
+        <div className="pop" key={item.id}>
+          <a href={href(item.href)} onClick={() => opened(item.id)}>
+            {`${item.kind} · ${item.slug}`}
+          </a>
+          <Button
+            type="button"
+            aria-label="Dismiss notification"
+            onClick={() => dismissed(item.id)}
+          >
+            ×
+          </Button>
+        </div>
+      ))}
+    </div>
   );
 }
 
@@ -271,10 +306,8 @@ function PendingControls({ route, pending }: { route: Route; pending: Pending })
   }, [route, pending]);
   useEffect(() => {
     const keyed = (event: KeyboardEvent) => {
-      if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
-      if (event.target instanceof Element && event.target.closest(KEYS_TAKEN)) return;
-      const target =
-        event.key === "[" ? latest.current[0] : event.key === "]" ? latest.current[1] : null;
+      const typing = event.target instanceof Element && event.target.closest(KEYS_TAKEN) !== null;
+      const target = pendingStep(event, typing, latest.current);
       if (target === null) return;
       event.preventDefault();
       goPending(target);
@@ -283,7 +316,17 @@ function PendingControls({ route, pending }: { route: Route; pending: Pending })
     return () => removeEventListener("keydown", keyed);
   }, []);
   if (pending.items.length === 0) return null;
-  const [prev, next] = targets;
+  return <PendingBar targets={targets} go={goPending} />;
+}
+
+export interface PendingBarProps {
+  /** The cards `← prev` and `next →` go to, none where there is none. */
+  targets: readonly [PendingItem | null, PendingItem | null];
+  go: (item: PendingItem) => void;
+}
+
+/** The pending bar's steps and `↑ top`, a step with nowhere to go disabled. */
+export function PendingBar({ targets: [prev, next], go }: PendingBarProps) {
   return (
     <nav className="pending-nav frame-pending" aria-label="Cards waiting on you">
       <Button
@@ -291,7 +334,7 @@ function PendingControls({ route, pending }: { route: Route; pending: Pending })
         data-pending-action="prev"
         disabled={prev === null}
         title="Previous pending decision ([)"
-        onClick={() => prev !== null && goPending(prev)}
+        onClick={() => prev !== null && go(prev)}
       >
         ← prev
       </Button>
@@ -300,7 +343,7 @@ function PendingControls({ route, pending }: { route: Route; pending: Pending })
         data-pending-action="next"
         disabled={next === null}
         title="Next pending decision (])"
-        onClick={() => next !== null && goPending(next)}
+        onClick={() => next !== null && go(next)}
       >
         next →
       </Button>

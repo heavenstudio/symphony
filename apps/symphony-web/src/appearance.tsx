@@ -23,6 +23,27 @@ export function themeOf(text: string): string {
   return stylesheet(vars);
 }
 
+/** The project's look on this device made by a theme file's text (`install`), and what the status
+ * line says of it: applied, or why not. */
+export function applyTheme(text: string): { applied: boolean; status: string } {
+  try {
+    install(themeOf(text));
+    return { applied: true, status: "Theme applied." };
+  } catch (failure) {
+    return { applied: false, status: said(failure) };
+  }
+}
+
+/** The project's default look back on this device, and what the status line says of it. */
+export function restoreDefault(): string {
+  try {
+    install("");
+    return "Default theme restored.";
+  } catch (failure) {
+    return said(failure);
+  }
+}
+
 /** The two things a device can do to the project's look: import a shadcn theme, or go back to the
  * default. */
 export function ThemeMenu() {
@@ -39,14 +60,7 @@ export function ThemeMenu() {
         <Button
           type="button"
           data-theme-action="default"
-          onClick={() => {
-            try {
-              install("");
-              setStatus("Default theme restored.");
-            } catch (failure) {
-              setStatus(said(failure));
-            }
-          }}
+          onClick={() => setStatus(restoreDefault())}
         >
           Default theme
         </Button>
@@ -64,15 +78,17 @@ export function ThemeMenu() {
               const file = event.target.files?.[0];
               if (!file) return;
               void (async () => {
+                let text: string;
                 try {
-                  const text = await file.text();
-                  if (mount.aborted) return;
-                  install(themeOf(text));
-                  setStatus("Theme applied.");
-                  setImporting(false);
+                  text = await file.text();
                 } catch (failure) {
                   if (!mount.aborted) setStatus(said(failure));
+                  return;
                 }
+                if (mount.aborted) return;
+                const outcome = applyTheme(text);
+                setStatus(outcome.status);
+                if (outcome.applied) setImporting(false);
               })();
             }}
           />
@@ -83,7 +99,8 @@ export function ThemeMenu() {
   );
 }
 
-function closeAppearance(): void {
+/** The Appearance panel closed, said to the frame, and the focus given back to its button. */
+export function closeAppearance(): void {
   remember("reviewAppearanceOpen", false);
   publish("review:appearance");
   document.querySelector<HTMLElement>("#appearance")?.focus();

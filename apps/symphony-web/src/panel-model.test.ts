@@ -5,9 +5,11 @@ import {
   concernsThread,
   dismiss,
   expire,
+  frameNews,
   isRead,
   NEW_DRAFT,
   NO_TOASTS,
+  pendingStep,
   pendingTargets,
   readActivity,
   readAskReply,
@@ -322,5 +324,67 @@ describe("the pending bar's steps", () => {
     expect(prev?.slug).toBe("x1");
     const [none, next] = pendingTargets("docs/X.md", loose, tops({ x1: 200 }), "", 800);
     expect([none, next?.slug]).toEqual([null, "x1"]);
+  });
+});
+
+describe("a key on the pending bar's page", () => {
+  const before: PendingItem = { path: "docs/A.md", slug: "a1", href: "/docs/A.md#a1" };
+  const after: PendingItem = { path: "docs/A.md", slug: "a2", href: "/docs/A.md#a2" };
+  const key = (name: string, held: Partial<Record<string, boolean>> = {}) => ({
+    key: name,
+    altKey: false,
+    ctrlKey: false,
+    metaKey: false,
+    shiftKey: false,
+    ...held,
+  });
+
+  it("steps back with [ and on with ], pressed alone", () => {
+    expect(pendingStep(key("["), false, [before, after])).toBe(before);
+    expect(pendingStep(key("]"), false, [before, after])).toBe(after);
+    expect(pendingStep(key("]"), false, [before, null])).toBeNull();
+  });
+
+  it("takes no other key, none held with a modifier, and none typed in a field", () => {
+    expect(pendingStep(key("a"), false, [before, after])).toBeNull();
+    for (const held of ["altKey", "ctrlKey", "metaKey", "shiftKey"]) {
+      expect(pendingStep(key("[", { [held]: true }), false, [before, after]), held).toBeNull();
+    }
+    expect(pendingStep(key("["), true, [before, after])).toBeNull();
+  });
+});
+
+describe("the frame's read, as the panel hears it", () => {
+  const cards: Pending = { items: [], docs: [] };
+  const read = (...items: ActivityItem[]) => ({ items });
+
+  it("is the frame's trouble while its read failed", () => {
+    expect(frameNews("offline", read(activity("a")), cards, null, null)).toEqual({
+      trouble: "offline",
+    });
+  });
+
+  it("is nothing while either list does not read", () => {
+    expect(frameNews(undefined, { items: "none" }, cards, null, null)).toBeNull();
+    expect(frameNews(undefined, read(), { items: [] }, null, null)).toBeNull();
+  });
+
+  it("on a device that saw nothing yet, takes every item as seen and toasts none", () => {
+    const news = frameNews(undefined, read(activity("b"), activity("a")), cards, [], null);
+    expect(news).toEqual({
+      items: [activity("b"), activity("a")],
+      cards,
+      ids: ["a", "b"],
+      seen: ["a", "b"],
+      first: true,
+      added: [],
+    });
+  });
+
+  it("toasts the unread items the last read did not hold, and none before a baseline", () => {
+    const items = [activity("a"), activity("b"), activity("c"), activity("d", { answered: true })];
+    const news = frameNews(undefined, read(...items), cards, ["a"], ["c"]);
+    expect(news).toMatchObject({ seen: ["c"], first: false, added: [activity("b")] });
+    expect(frameNews(undefined, read(...items), cards, null, ["c"])).toMatchObject({ added: [] });
   });
 });
