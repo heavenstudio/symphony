@@ -385,7 +385,7 @@ export async function readTree(
   scope: string,
   parent: string | null,
   cursor: string | null,
-  signal?: AbortSignal,
+  signal: AbortSignal,
 ): Promise<TaskListing | string> {
   const after = cursor === null ? "" : `&cursor=${encodeURIComponent(cursor)}`;
   const selection = parent === null ? "roots=1" : `parent=${encodeURIComponent(parent)}`;
@@ -425,9 +425,10 @@ function useTree(scope: string, parent: string | null): [Tree, (more: boolean) =
     return () => controller.abort();
   }, []);
   const load = (more: boolean) => {
-    const signal = alive.current;
-    void readTree(scope, parent, more ? cursor.current : null, signal ?? undefined).then((read) => {
-      if (signal?.aborted !== false || mount.aborted) return;
+    // The part's own signal, or the kind's before the part's effect has set it.
+    const signal = alive.current ?? mount;
+    void readTree(scope, parent, more ? cursor.current : null, signal).then((read) => {
+      if (signal.aborted || mount.aborted) return;
       if (typeof read !== "string") cursor.current = read.next ?? null;
       setTree((shown) => grownTree(shown, read, more));
     });

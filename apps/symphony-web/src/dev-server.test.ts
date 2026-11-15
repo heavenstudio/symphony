@@ -515,7 +515,8 @@ async function symphony(body: string): Promise<ViteDevServer> {
 }
 
 describe("the dev server, to a page of another origin", () => {
-  // Two servers started and three requests: the time is a backstop only a stall reaches.
+  // Two servers started and three requests: the time is a backstop only a stall reaches, of two
+  // minutes, the least docs/CHECKS.md ("Time in tests") gives one.
   it("answers as the server would, letting it read nothing, Vite's files or the server's", async () => {
     const served = await symphony("the server's answer");
     let dev: ViteDevServer | undefined;
@@ -550,5 +551,5 @@ describe("the dev server, to a page of another origin", () => {
       await dev?.close();
       await served.close();
     }
-  }, 60_000);
+  }, 120_000);
 });

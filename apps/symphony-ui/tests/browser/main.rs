@@ -23,6 +23,7 @@
 //! Without Chrome on the machine the browser tests say so and pass: the one capability a test
 //! may lack. The build is made once per run of this binary, into `build/symphony-ui/` of the tree.
 
+mod agents;
 mod assets;
 mod binaries;
 mod board_search;

@@ -663,17 +663,18 @@ describe("a column's keep for the next visit", () => {
 describe("the task groups", () => {
   it("read a page of the roots, or of a task's subtasks from where the last left", async () => {
     const asked = server();
-    const roots = readTree("", null, null);
+    const stays = new AbortController().signal;
+    const roots = readTree("", null, null, stays);
     await asking(asked, 1);
     expect(asked[0]?.url).toBe("/api/task-board?roots=1&older=1");
     asked[0]?.answer(reply(200, { tasks: [aTask("w")], counts: [["ready", 2]], next: "w" }));
     expect(await roots).toMatchObject({ tasks: [aTask("w")], next: "w" });
-    const children = readTree("wt", "w/a b", "w/a 1");
+    const children = readTree("wt", "w/a b", "w/a 1", stays);
     await asking(asked, 2);
     expect(asked[1]?.url).toBe("/@wt/api/task-board?parent=w%2Fa%20b&older=1&cursor=w%2Fa%201");
     asked[1]?.answer(reply(200, { tasks: "none" }));
     expect(await children).toBe("The task board's answer is not a listing");
-    const failed = readTree("", null, null);
+    const failed = readTree("", null, null, stays);
     await asking(asked, 3);
     asked[2]?.answer(reply(503, { error: "down" }));
     expect(await failed).toContain("down");
