@@ -34,7 +34,8 @@ catalogue (`just tasks stamps`): `tests` (its recorded test runs green at the ti
 `pictures`, `owner`; a task no assessment has read needs `review` alone. The land lands it once
 every stamp it needs stands on its tip, and refuses naming who gives a missing one ([the default
 landing](TASKS.md#the-default-landing)). A change to a test or a check (`[land] check_paths`)
-keeps `review`, since a loosened test or check is how a red turns green unfixed.
+keeps `review`, since a loosened test or check is how a red turns green unfixed. A change of
+settings' values needs `tests` alone, the settings check ([by kind](#evidence-by-kind-of-change)).
 
 Where review is needed, a reviewer runs the same focused tests itself, never the suite, reads the
 diff against the evidence and judges whether it is good enough for the change's risk. Evidence
@@ -80,6 +81,15 @@ a measurement before and after.
   change was likely to break, updated where they pinned what changed, and green
   ([by page](#the-browser-target-by-page)); and `just client-update` for the pictures, its
   distribution not committed.
+- **A page made faster** (a change meant to shorten a page's open to synced, in the client or the
+  server): `tools/rs-bin.sh symphony-build synced BASE PAGE…` against a server of the task's own
+  on a scratch board, before the change and after it, on the same machine under its working load,
+  and the comparison the second run prints beside the first, which it names with `--against RUN`
+  (the name the first printed: each run is kept in the checkout's artifacts folder, `synced/`,
+  with the load, CPU busy and memory it ran under, and a server rebuilt on `--port 0` answers at
+  another address), posted on the thread. A test holds work that must not come back (a second
+  full read, a render a check did not need) by its count, never a time
+  ([time in tests](#time-in-tests)).
 - **A schema or launcher change** (the board's schema and its migration, `tools/rs-bin.sh`,
   `tools/cargo.sh`, the justfile, `symphony init`, the hooks): a mistake here stops every agent,
   so it asks the most: the migration run from the previous schema on a scratch board (the board's
@@ -121,6 +131,11 @@ a measurement before and after.
   shape. For a shipped skill,
   `just symphony-cli init --root .` run so the installed copies and their stamps are current, and
   the shipped skills' tests (`just test-rs -p symphony-app --lib init`). It runs no other test.
+- **A change of settings** (values of `symphony.toml` for settings the Symphony already reads,
+  with the guide's or the rules' words that repeat them): `just settings-check` at the tip, the
+  project file's shape alone ([PROJECT_FILE](PROJECT_FILE.md#the-settings-check)), recorded as
+  a test run, which is its `tests` stamp, and the doc checks above for the words. It runs no
+  other test and takes no reviewer ([TASKS](TASKS.md#needed-stamps)).
 
 ### The recipes a text names
 

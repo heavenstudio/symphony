@@ -6375,6 +6375,7 @@ dependencies = [
  "symphony-app",
  "symphony-args",
  "symphony-board",
+ "symphony-chrome",
  "symphony-env",
  "symphony-plugin",
  "test-time",

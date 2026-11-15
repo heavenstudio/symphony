@@ -18,7 +18,23 @@ pub struct Row {
     pub created: f64,
     /// Whether a session holds its executor role.
     pub executing: bool,
+    /// The arm it was filed on ([`crate::arm`]).
+    pub arm: Option<String>,
     pub stages: Stages,
+}
+
+/// The window's tasks filed on one arm ([`crate::arm`]).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Arm {
+    pub name: String,
+    pub tasks: usize,
+    pub done: usize,
+    /// Creation to close of its done tasks.
+    pub lead: Option<Spread>,
+    /// The time in review of its done tasks that were reviewed.
+    pub review: Option<Spread>,
+    /// How often review sent its tasks back, all of them together: its rework rounds.
+    pub bounces: u32,
 }
 
 /// How a set of durations spreads, in seconds.
@@ -69,6 +85,39 @@ pub struct Summary {
     pub blocked: Waiting,
     /// Ready, with no executor.
     pub unstaffed: Waiting,
+    /// Each arm a task of the window was filed on, by name; a task filed on none is in none.
+    pub arms: Vec<Arm>,
+}
+
+/// The rows filed on each arm, by name.
+fn arms(rows: &[Row]) -> Vec<Arm> {
+    let mut by_arm: BTreeMap<&str, Vec<&Row>> = BTreeMap::new();
+    for row in rows {
+        if let Some(arm) = &row.arm {
+            by_arm.entry(arm).or_default().push(row);
+        }
+    }
+    (by_arm.into_iter())
+        .map(|(name, rows)| {
+            let done = || rows.iter().filter(|r| r.status == "done");
+            Arm {
+                name: name.into(),
+                tasks: rows.len(),
+                done: done().count(),
+                lead: spread(
+                    done()
+                        .filter_map(|r| r.stages.lead_seconds(r.created))
+                        .collect(),
+                ),
+                review: spread(
+                    done()
+                        .filter_map(|r| r.stages.stage("review").map(|s| s.seconds))
+                        .collect(),
+                ),
+                bounces: rows.iter().map(|r| r.stages.bounces).sum(),
+            }
+        })
+        .collect()
 }
 
 /// The value `fraction` of the way through `sorted`, between its neighbours where it falls
@@ -198,5 +247,6 @@ pub fn summarize(
                 .map(age)
                 .collect(),
         ),
+        arms: arms(rows),
     }
 }

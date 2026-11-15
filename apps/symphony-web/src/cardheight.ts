@@ -2,15 +2,18 @@
 // the row waiting for it holds the place it will take and a column neither grows nor shrinks as
 // its rows come in.
 //
-// It follows board.css's card in a column. The card's text is 244 px wide in a desk's 288 px
-// column and 236 px in a phone's 280 px (`max-width: 760px`), 3 px less behind the wider left
-// border of a p0 or p1. Its borders, padding and margins take 40 px; each line its slug, its title
-// and, for a subtask, its parent wrap to takes 20.3 px (14 px at 1.45); then come the rows its chips
-// wrap to, 4 px apart: its build and test phases when it has any, 6 px below the title, then its
-// link chips and its role chips. A role chip keeps to one line (21.2 px); a phase chip (19.2 px a
-// line) and a link chip (15.2 px a line) wrap inside themselves when wider than the card. Text is
-// measured in Helvetica's widths, the face `--font-sans` comes to where the browser has no system
-// face of its own to give it, and the card breaks it as `overflow-wrap:anywhere` does.
+// It follows board.css's card in a column. The card's text is its column's width less 44 px (the
+// column's and its own borders and padding): 244 px in a desk's 288 px column, 236 px in a narrow
+// window's 280 px (`max-width: 760px`), and on a phone (`max-width: 600px`), whose one column on
+// the screen is as wide as the board, the page's width less 16 px each side and those 44: 314 px
+// on a 390 px phone. It is 3 px less behind the wider left border of a p0 or p1. Its borders, padding and margins take 40 px; each line its slug, its
+// title and, for a subtask, its parent wrap to takes 20.3 px (14 px at 1.45); then come the rows
+// its chips wrap to, 4 px apart: its build and test phases when it has any, 6 px below the title,
+// then its link chips and its role chips. A role chip keeps to one line (21.2 px); a phase chip
+// (19.2 px a line) and a link chip (15.2 px a line) wrap inside themselves when wider than the
+// card. Text is measured in Helvetica's widths, the face `--font-sans` comes to where the browser
+// has no system face of its own to give it, and the card breaks it as `overflow-wrap:anywhere`
+// does.
 
 import type { Task } from "./wire";
 
@@ -38,18 +41,28 @@ export const ROLE: Chip = { size: 120, beside: 290, line: 192, wraps: false };
 /** A phase chip: drawn as a role chip is, but wrapping its words. */
 export const PHASE: Chip = { ...ROLE, wraps: true };
 
-/** The board's layout, which sets how wide a card's text runs: a phone's at 760 px or less. */
-export type Layout = "desk" | "phone";
+/** The board's layout: how wide a card's text runs in its column, in tenths of a pixel. */
+export type Layout = number;
 
-/** The layout of a window `width` px wide. */
-export function layoutAt(width: number): Layout {
-  return width <= 760 ? "phone" : "desk";
+/** A card's text in a desk's 288 px column, and in a narrow window's 280 px. */
+const DESK = 2440;
+const NARROW = 2360;
+/** What a phone's page takes of its width beside a card's text, in px: its own padding, 16 px each
+ * side, and the column's and the card's borders and padding. */
+const PHONE_BESIDE = 76;
+
+/** The layout of a window `width` px wide whose page is `room` px wide inside a scrollbar's room
+ * (as wide as the window where the scrollbar takes none, as on a phone): a desk's at more than 760
+ * px, a narrow window's at more than 600, else a phone's, whose one column on the screen is as
+ * wide as the board. */
+export function layoutAt(width: number, room = width): Layout {
+  if (width > 760) return DESK;
+  return width > 600 ? NARROW : Math.max(room - PHONE_BESIDE, 0) * 10;
 }
 
 /** How wide a card's text runs in `layout`, in tenths of a pixel, for a task of `priority`. */
 export function textWidth(layout: Layout, priority: number): number {
-  const column = layout === "desk" ? 2440 : 2360;
-  return priority === 0 || priority === 1 ? column - 30 : column;
+  return priority === 0 || priority === 1 ? layout - 30 : layout;
 }
 
 /** The faces a card's text is set in: the slug's, the parent's and the chips', the title's. */
