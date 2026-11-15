@@ -339,21 +339,31 @@ fn alone(ran: &Ran, night: &Night<'_>) -> String {
     let each = super::rerun::arguments(&log.targets);
     let place = format!("in a checkout of {}", short(night.commit));
     if each.is_empty() && log.targets.iter().any(|failed| !failed.gone.is_empty()) {
-        let went = match &log.went {
-            Some(super::rerun::Went::While(header, selected)) => format!(
-                "the target they went while, {}",
-                selected.as_ref().map_or_else(
-                    || format!("which `{header}` names"),
-                    |args| format!("`{args}`")
-                )
+        let (went, after) = match &log.went {
+            Some(super::rerun::Went::While(header, selected)) => (
+                format!(
+                    "the target they went while, {}",
+                    selected.as_ref().map_or_else(
+                        || format!("which `{header}` names"),
+                        |args| format!("`{args}`")
+                    )
+                ),
+                "it",
             ),
-            _ => "its build".into(),
+            // No one target: any of the lanes, run side by side, may have removed them.
+            Some(super::rerun::Went::Lanes(..)) => (
+                "each of the lanes they went while, alone and one after another, by the targets \
+                 the log names for it (`just test-rs --workspace TARGETS`)"
+                    .into(),
+                "each",
+            ),
+            _ => ("its build".into(), "it"),
         };
         return format!(
             "Rerun alone (RULES.md `tests/rerun-the-failure-alone`): none of its failures is a \
              test's to rerun, as each failed target found files of its build gone (above). What \
              removes them shows in a run of {went}, {place}, with a look at its build folder \
-             after it."
+             after {after}."
         );
     }
     if each.is_empty() {
@@ -2274,6 +2284,34 @@ mod tests {
             "{}",
             environment(&unbuilt)
         );
+        // Gone while the tests' lanes ran side by side: no one target is named or rerun, but each
+        // of those lanes alone, never the target before them in the log's order (another lane's).
+        let lanes = Ran {
+            command: "tools/test-lanes.sh".into(),
+            log: tree.write(
+                "lanes-gone.log",
+                include_str!("fixtures/tests-lanes-gone.log"),
+            ),
+            ..ran("verify/tests", 101)
+        };
+        assert_eq!(
+            alone(&lanes, &night(&[])),
+            "Rerun alone (RULES.md `tests/rerun-the-failure-alone`): none of its failures is a \
+             test's to rerun, as each failed target found files of its build gone (above). What \
+             removes them shows in a run of each of the lanes they went while, alone and one after \
+             another, by the targets the log names for it (`just test-rs --workspace TARGETS`), in \
+             a checkout of cafe01234567, with a look at its build folder after each."
+        );
+        let said = environment(&lanes);
+        assert!(
+            said.contains(
+                "They went while the tests' 4 lanes ran side by side, all at once (`sweep`, \
+                 `browser`, `rest` and `doc`): what removed them ran then, a test of any of those \
+                 lanes or something it started"
+            ),
+            "{said}"
+        );
+        assert!(!said.contains("tests/browser"), "{said}");
         // A check whose targets failed by themselves says nothing of the environment.
         assert_eq!(environment(&ran("verify", 101)), "");
     }

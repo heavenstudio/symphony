@@ -39,6 +39,15 @@ export function deviceNotice(saved: string, unreachable: boolean): string {
     : `Shown from this device, saved ${saved}. Checking for changes…`;
 }
 
+/** What a page says of the task board's own state: nothing unless it is unavailable; that it is
+ * slow when it is, else that it is unavailable. */
+export function statusNotice(available: boolean | undefined, slow: boolean): string {
+  if (available !== false) return "";
+  return slow
+    ? "The task board is slow to answer. Retrying…"
+    : "The task board is unavailable. Reconnecting…";
+}
+
 /** `noun`, with an s unless there is one. */
 export function plural(count: number, noun: string): string {
   return count === 1 ? noun : `${noun}s`;

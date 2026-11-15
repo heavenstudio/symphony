@@ -29,9 +29,10 @@ const KINDS: [&str; 1] = ["program"];
 /// The web client's kinds (apps/symphony-web), which bundle.sh builds with Vite, the real one: a
 /// kind is its script, with no wasm, and its styles, the shared stylesheet and then those named
 /// here, in order: the CSS of the chunks its entry imports (the media layer's, which brings the
-/// media sheet, for the two kinds that show media), then its entry's own. The task board has none:
-/// its styles (assets/board.css) are the program's, in the shared file.
-const WEB: [(&str, &[&str]); 5] = [
+/// media sheet, for the two kinds that show media), then its entry's own. The task board and the
+/// agents page have none: their styles (assets/board.css) are the program's, in the shared file.
+const WEB: [(&str, &[&str]); 6] = [
+    ("agents", &[]),
     ("board", &[]),
     ("docs", &["media-layer", "docs"]),
     ("queue", &["queue"]),

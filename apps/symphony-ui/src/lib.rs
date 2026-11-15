@@ -33,7 +33,7 @@ pub mod cache;
 pub mod components;
 pub mod doc_components;
 pub(crate) mod entry_events;
-/// The machines' build and test work, as the agents page and the task page draw it.
+/// The machines' build and test work, as the task page draws it.
 #[cfg(any(not(target_arch = "wasm32"), feature = "page-tasks"))]
 pub(crate) mod machine_work;
 pub mod media;

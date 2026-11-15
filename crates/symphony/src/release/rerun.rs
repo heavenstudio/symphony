@@ -16,7 +16,10 @@
 //! build script's output: cargo's `could not execute process … (never executed)` for a missing
 //! file, rustc's `extern location for … does not exist` and `couldn't find file` in an `OUT_DIR`)
 //! and named no failed test failed for its build folder, not for a test of its own: it is no
-//! failure to rerun, and the log says while which target the files went ([`Went`]).
+//! failure to rerun, and the log says while which target the files went ([`Went`]), or, in a run
+//! of the tests' lanes side by side (`tools/test-lanes.sh`, whose lines before any lane starts name
+//! each lane's log), while which lanes: their outputs follow one another in the log, but they ran
+//! at the same time, so the target before in the log's order is no target that ran before.
 
 use std::fs::File;
 use std::io::{BufRead, BufReader};
@@ -36,7 +39,8 @@ pub(crate) struct Failed {
 }
 
 /// When the files a check's targets found gone went: while its build ran, before any target ran,
-/// or while a target ran, the last one cargo started before the first that found one gone.
+/// while a target ran, the last one cargo started before the first that found one gone, or while
+/// the tests' lanes ran side by side.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Went {
     Building,
@@ -44,6 +48,62 @@ pub(crate) enum Went {
     /// a`), and the arguments that select it, when the log says its package: its own failure, or
     /// the failed targets on either side of it, of one package.
     While(String, Option<String>),
+    /// The lanes the tests' runner said it ran (`tools/test-lanes.sh`), by name in its order, and
+    /// how many it said run at once, more than one: found gone after its lines naming them, so
+    /// while they ran, any of them and in no order the log can tell.
+    Lanes(Vec<String>, usize),
+}
+
+/// What the tests' runner says before any lane starts: how many lanes run at once, and the log of
+/// each, by whose name the lane is named.
+#[derive(Default)]
+struct Lanes {
+    /// How many run at once, once its first line said it.
+    at_once: Option<usize>,
+    /// Each lane's name, in its order.
+    names: Vec<String>,
+    /// Whether the line read last was one of its lines, so the next may name a lane.
+    listing: bool,
+}
+
+impl Lanes {
+    /// Reads `line` as the runner's, when it is: its first line only before any target started
+    /// (`started`), so a test printing one is not taken, then each lane's line right after it.
+    fn read(&mut self, line: &str, started: bool) -> bool {
+        if self.listing
+            && let Some(name) = lane(line)
+        {
+            self.names.push(name);
+            return true;
+        }
+        self.listing = false;
+        if self.at_once.is_none() && !started {
+            self.at_once = at_once(line);
+            self.listing = self.at_once.is_some();
+        }
+        self.listing
+    }
+
+    /// Whether the lanes said ran side by side: more than one, more than one at once. Lanes run
+    /// one at a time ran one after another in the order their outputs follow in the log.
+    fn side_by_side(&self) -> bool {
+        self.at_once.is_some_and(|at_once| at_once > 1) && self.names.len() > 1
+    }
+}
+
+/// How many lanes the tests' runner says run at once: N of `test-lanes: lanes run at most N at
+/// once (…), …`.
+fn at_once(line: &str) -> Option<usize> {
+    let rest = line.strip_prefix("test-lanes: lanes run at most ")?;
+    rest.split_once(" at once")?.0.parse().ok()
+}
+
+/// The lane the tests' runner's line names: NAME of `test-lanes:     …/NAME.log (TARGETS)`.
+fn lane(line: &str) -> Option<String> {
+    let rest = line.strip_prefix("test-lanes:    ")?;
+    let (log, targets) = rest.trim_start().rsplit_once(" (")?;
+    let name = Path::new(log).file_name()?.to_str()?.strip_suffix(".log")?;
+    (!name.is_empty() && targets.ends_with(')')).then(|| name.to_string())
 }
 
 /// What a red check's log says failed.
@@ -83,9 +143,10 @@ pub(crate) fn read(log: &Path) -> Log {
     let mut segment = Segment::default();
     // The segment before the current one, and where the files gone were first found: in the
     // segment after which one (with where the one that found them starts), none before any
-    // target started.
+    // target started, or while lanes ran side by side.
     let mut previous: Option<(String, usize)> = None;
-    let mut first_gone: Option<Option<(String, usize, usize)>> = None;
+    let mut first_gone: Option<First> = None;
+    let mut lanes = Lanes::default();
     let mut line = Vec::new();
     loop {
         line.clear();
@@ -95,6 +156,10 @@ pub(crate) fn read(log: &Path) -> Log {
         }
         let text = String::from_utf8_lossy(&line);
         let text = text.trim_end_matches(['\n', '\r']);
+        let started = segment.header.is_some() || !found.targets.is_empty();
+        if lanes.read(text, started) {
+            continue;
+        }
         if let Some(name) = failed_test(text) {
             if !tests.contains(&name) {
                 tests.push(name);
@@ -126,20 +191,36 @@ pub(crate) fn read(log: &Path) -> Log {
                 let after = (segment.header.is_some())
                     .then(|| previous.clone())
                     .flatten()
-                    .map(|(header, from)| (header, from, segment.from));
-                first_gone = Some(after);
+                    .map(|(header, from)| First::After(header, from, segment.from));
+                first_gone = Some(if lanes.side_by_side() {
+                    First::Beside
+                } else {
+                    after.unwrap_or(First::Building)
+                });
             }
         }
     }
     close(&mut found, &segment);
-    found.went = first_gone.map(|after| match after {
-        None => Went::Building,
-        Some((header, from, until)) => {
+    found.went = first_gone.map(|first| match first {
+        First::Building => Went::Building,
+        First::After(header, from, until) => {
             let args = selected(&found.targets, &header, from, until);
             Went::While(header, args)
         }
+        First::Beside => Went::Lanes(lanes.names, lanes.at_once.unwrap_or_default()),
     });
     found
+}
+
+/// Where a log first says files of its build gone.
+enum First {
+    /// Before any target started, or in the first one cargo started.
+    Building,
+    /// In the segment after the one cargo's line `.0` starts, whose failures start at `.1`, the
+    /// one that found them gone at `.2`.
+    After(String, usize, usize),
+    /// After the tests' runner said its lanes, run side by side.
+    Beside,
 }
 
 /// The files `segment` found gone given to each failure said in it that named no failed test.
@@ -664,6 +745,137 @@ error: doctest failed, to rerun pass `-p p --doc`
             failed_in(text),
             [target("-p p --doc", &["src/lib.rs - f (line 1)"])]
         );
+    }
+
+    /// tools/test-lanes.sh's run whose `rest` lane found its targets' executables gone, and whose
+    /// `doc` lane a library its doctests link: the target before them in the log's order is the
+    /// `browser` lane's, which ran beside them, not before.
+    const LANES_GONE: &str = include_str!("fixtures/tests-lanes-gone.log");
+
+    fn names(lanes: &[&str]) -> Vec<String> {
+        lanes.iter().map(|lane| (*lane).to_string()).collect()
+    }
+
+    #[test]
+    fn files_found_gone_while_lanes_ran_side_by_side_went_while_those_lanes_ran() {
+        let log = read_in(LANES_GONE);
+        let deps = "/work/symphony-wt/release/.target/debug/deps";
+        assert_eq!(
+            log.targets,
+            [
+                gone_from(
+                    "-p symphony-app --test after_commit",
+                    &[&format!("{deps}/after_commit-4d5e6f708192a3b4")]
+                ),
+                gone_from(
+                    "-p symphony-app --test standalone",
+                    &[&format!("{deps}/standalone-5e6f708192a3b4c5")]
+                ),
+                gone_from(
+                    "-p symphony-app --doc",
+                    &[&format!("{deps}/libserde_json-ca7c.rlib")]
+                ),
+            ]
+        );
+        assert_eq!(
+            log.went,
+            Some(Went::Lanes(names(&["sweep", "browser", "rest", "doc"]), 8)),
+            "never the browser lane's target, before them in the log's order"
+        );
+        assert_eq!(arguments(&log.targets), Vec::<String>::new());
+
+        // Lanes run one at a time ran one after another in the log's order: read as a run without
+        // lanes, by the target cargo started last before the first that found one gone.
+        let one_at_a_time = LANES_GONE.replace(
+            "lanes run at most 8 at once (16 processors online)",
+            "lanes run at most 1 at once (no number of processors online)",
+        );
+        assert_ne!(one_at_a_time, LANES_GONE);
+        let browser = "Running tests/browser/main.rs (.target/debug/deps/browser-5e6f7a8b9c0d1e2f)";
+        assert_eq!(
+            read_in(&one_at_a_time).went,
+            Some(Went::While(browser.into(), None))
+        );
+        // So did the targets of a run whose runner said one lane.
+        let one_lane = "test-lanes: lanes run at most 8 at once (16 processors online), each \
+                        writing its log as it runs:
+test-lanes:     /l/rest.log (--test a --test b)
+     Running tests/a.rs (.target/debug/deps/a-01)
+test t ... ok
+     Running tests/b.rs (.target/debug/deps/b-02)
+error: test failed, to rerun pass `-p p --test b`
+
+Caused by:
+  could not execute process `/t/debug/deps/b-02` (never executed)
+
+Caused by:
+  No such file or directory (os error 2)
+";
+        let a = "Running tests/a.rs (.target/debug/deps/a-01)";
+        assert_eq!(read_in(one_lane).went, Some(Went::While(a.into(), None)));
+        // The runner's lines said by a test, after a target started, are not the run's.
+        let printed = format!(
+            "     {a}\n{}",
+            one_lane.replace(
+                "test-lanes:     /l/rest.log (--test a --test b)\n     Running tests/a.rs \
+                 (.target/debug/deps/a-01)\n",
+                "test-lanes:     /l/a.log (--test a)\ntest-lanes:     /l/b.log (--test b)\n",
+            )
+        );
+        assert!(printed.starts_with(&format!("     {a}\ntest-lanes: lanes run at most 8")));
+        assert_eq!(read_in(&printed).went, Some(Went::While(a.into(), None)));
+        // Files gone before the runner said its lanes went while it built.
+        let building = format!(
+            "error: extern location for a does not exist: /t/debug/deps/liba-1.rlib\n{LANES_GONE}"
+        );
+        assert_eq!(read_in(&building).went, Some(Went::Building));
+    }
+
+    #[test]
+    fn the_runners_lines_name_each_lane_by_its_log_and_how_many_run_at_once() {
+        for (line, at) in [
+            (
+                "test-lanes: lanes run at most 8 at once (16 processors online), each writing its \
+                 log as it runs:",
+                Some(8),
+            ),
+            (
+                "test-lanes: lanes run at most 1 at once (no number)",
+                Some(1),
+            ),
+            ("test-lanes: lanes run at most many at once", None),
+            ("test-lanes: lanes run at most 8", None),
+            ("  test-lanes: lanes run at most 8 at once", None),
+        ] {
+            assert_eq!(at_once(line), at, "{line}");
+        }
+        for (line, name) in [
+            (
+                "test-lanes:     /l/7/tests-lanes/perf.log (--test perf)",
+                Some("perf"),
+            ),
+            (
+                "test-lanes:     /work/a b (c)/tests-lanes/rest.log (--test a --test b)",
+                Some("rest"),
+            ),
+            (
+                "test-lanes:     build/test-lanes/doc.log (--doc)",
+                Some("doc"),
+            ),
+            ("test-lanes:     /l/perf.txt (--test perf)", None),
+            ("test-lanes:     /l/.log (--test perf)", None),
+            ("test-lanes:     /l/perf.log", None),
+            (
+                "test-lanes: the lane perf ended before it could say how",
+                None,
+            ),
+            (
+                "test-lanes: interrupted (exit 130): a lane it cut short ended there",
+                None,
+            ),
+        ] {
+            assert_eq!(lane(line).as_deref(), name, "{line}");
+        }
     }
 
     #[test]
