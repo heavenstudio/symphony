@@ -51,8 +51,8 @@ existing five-second shutdown grace, so unread request bytes cannot reset away t
 Clients that send nothing or leave a header incomplete cannot hold the old process indefinitely;
 admitted request bodies drain normally.
 The startup lock serializes publication with starters and stops. A build failure is logged once
-per source fingerprint and sent to open clients as a named `server` SSE event containing a JSON
-string; a fresh stream receives the current notice too. Editing the sources retries the build.
+per source fingerprint and sent to open clients as the feed's named `server` event containing a
+JSON string; a fresh stream receives the current notice too. Editing the sources retries the build.
 Only the main checkout on branch `main` is followed; foreground servers do not reload.
 Shared installation and live rebuilds both use Cargo's release profile. The debug
 server exceeded the idle CPU budget on the normal board; the release build keeps
@@ -97,7 +97,7 @@ cannot keep installing after `--stop` returns.
 | `/api/run-log?run=…&tail=…` | Part of a run's log (`RunLog`): its last 64 KiB by default, its last `tail` bytes, or `from=…&to=…` a range, at most 1 MiB; only a regular file in a day folder of the project's `logs/`, never the board (`src/api/run_log.rs`, [RUNS](../../docs/RUNS.md#logs)) |
 | `/api/activity` | Latest forty document and owner-addressed task entries |
 | `/api/pending` | Pending cards in document navigation order, then branch cards |
-| `/api/feed?since=…` | Server-Sent Events after the snapshot's version |
+| `/api/feed?since=…` | The feed after the snapshot's version: a WebSocket to a request that asks to upgrade, Server-Sent Events to any other (`src/api/feed_socket.rs`; both forms are `symphony_api`'s feed contract) |
 
 Before any project the one server answers `/api/projects`, to loopback and this machine's tailnet
 names like every route of a project's: each project it serves, with its feed's version, the cards
@@ -172,7 +172,7 @@ gzips, up to 16 MiB (about eight builds of every page's files), and drops the
 least recently asked-for past that, gzipping it again should it be asked for
 again (`src/api/client/gzipped.rs`). A file gzip cannot shrink goes as it is, as
 do PNG and WOFF2 files. Gzip is the one encoding offered: `br` and `zstd` get
-the file as it is. SSE is never compressed or buffered. A changed shell script path
+the file as it is. The feed is never compressed or buffered. A changed shell script path
 emits a `client` region, which the existing client uses to reload once per build.
 
 Only the shared server started with `--home`, holding the server lease, drains
@@ -183,9 +183,10 @@ scratch database for a preview, and set `ASKS_DB` to a private path when exercis
 ask or chat writes, which still use that store. Leaving the journal alone is
 simpler than creating a second preview journal with its own delivery lifecycle.
 
-Every SSE delta has an increasing `id` and a single JSON line containing
-`version` and `changes`. The existing board regions are `card`, `queue` (only
-the five visible cards), `counts`, `progress` and `client`. Additional list
+Every delta's data is a single JSON line containing `version` and `changes`; as a
+Server-Sent Event it has an increasing `id` too, and on the WebSocket none (how each
+form says an event: `symphony_api`'s feed contract). The existing board regions are
+`card`, `queue` (only the five visible cards), `counts`, `progress` and `client`. Additional list
 regions use keyed upserts/removals (`ItemChange<T>`); their `-order` events
 move one key after another (`OrderChange`). They are `queue-item`,
 `spot-check`, `agent-queue`, `pending`, `activity`, `task`,
@@ -210,7 +211,10 @@ ask thread with a message the hub has not announced yet (`threads`, each `id` an
 document's questions read their thread again only then, and once after a
 reconnect, instead of polling. The hub compares the asks file's size and time each
 board interval and reads it only when they changed; `/api/ask` and `/api/asks` take
-the chat recipient from the hub's last board read. `branches` names the branches of the
+the chat recipient from the hub's last board read. `task-asks` is what the task
+board asks of each person, the questions waiting on them and the newest reviewer
+verdict, sent each time it changes, for the desktop app (`src/live/task_asks.rs`):
+no page reads it. `branches` names the branches of the
 project's repository whose tip moved, as the watcher saw their refs change: an open task page
 reads its gates again when the branch they were answered for is among them. Unknown regions
 are ignored by the current board client.
@@ -282,7 +286,9 @@ action is a board action of the project's plugins, named by the offer it answers
 (`TaskOffer`: the action, its label, the branch and the payload it hands back);
 an action no plugin of the project offers is a 404, and one the action refuses
 says and moves nothing on the board.
-Writes require an allowed Host and, when supplied, the app's exact Origin.
+Writes require an allowed Host and, when supplied, the app's exact Origin. So does the feed's
+WebSocket upgrade, as a page of any site may open a WebSocket and read what it says: its Origin
+must be the server's own page (`src/api/feed_socket.rs`).
 One register lock covers read, edit, no-loss validation, write and tap
 deduplication across all worktrees. Asks share the existing `ASKS_DB` store.
 

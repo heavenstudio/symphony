@@ -771,6 +771,8 @@ export interface ReportsViewProps {
   onAsk: (grain: Grain, days: number) => void;
   /** Takes the key of the series a legend's button hides or shows again. */
   onToggle?: (key: string) => void;
+  /** Whether the chart the address names lands as its window draws: until the reader chooses one. */
+  lands?: boolean;
 }
 
 /**
@@ -785,6 +787,7 @@ export function ReportsView({
   hidden = [],
   onAsk,
   onToggle,
+  lands = true,
 }: ReportsViewProps) {
   const busy = page === null || page.grain !== grain || page.days !== days;
   return (
@@ -816,6 +819,7 @@ export function ReportsView({
           page={page}
           hidden={hidden}
           onToggle={onToggle}
+          lands={lands}
         />
       )}
     </div>
@@ -870,6 +874,7 @@ interface ReportProps {
   page: Page;
   hidden: string[];
   onToggle: ((key: string) => void) | undefined;
+  lands: boolean;
 }
 
 /**
@@ -880,9 +885,11 @@ interface ReportProps {
  * drawn yet finds its place, and a slot the address names mounts at once and lands its chart
  * (`NearViewport`, the shell's `reviewLand`), as a document's part does: on a fresh load, whose
  * charts come after the shell has looked for the address, too. The shell lands once a navigation,
- * so a new window or the hourly slide, which mount every chart again, moves no one.
+ * so a new window or the hourly slide, which mount every chart again, moves no one. Nor does the
+ * first window to draw charts once the reader chose it (`lands` false), when the first answer
+ * drew none (nothing recorded, a failed read) and no landing started.
  */
-function Report({ page: whole, hidden, onToggle }: ReportProps) {
+function Report({ page: whole, hidden, onToggle, lands }: ReportProps) {
   const [tapped, setTapped] = useState<number | null>(null);
   const page = fromFirstRecord(whole);
   const shownAxis = axis(page);
@@ -928,6 +935,7 @@ function Report({ page: whole, hidden, onToggle }: ReportProps) {
                   height={330}
                   className="chart-slot"
                   anchors={[`chart-${chart.id}`]}
+                  lands={lands}
                   ghost={<GhostChart />}
                 >
                   <ChartCard
@@ -1087,7 +1095,8 @@ export function ReportsPage() {
   const [page, setPage] = useState<Page | null>(null);
   const [error, setError] = useState<string | null>(null);
   const etag = useRef("");
-  // Each choice reads again, the same window too, as a choice of it does.
+  // Each choice reads again, the same window too, as a choice of it does. Once the reader has made
+  // one, the address lands no chart.
   const [asked, setAsked] = useState(0);
   useEffect(() => {
     void asked;
@@ -1112,6 +1121,7 @@ export function ReportsPage() {
         page={page}
         error={error}
         hidden={hidden}
+        lands={asked === 0}
         onAsk={(nextGrain, nextDays) => {
           save("reports-grain", nextGrain);
           save("reports-days", String(nextDays));

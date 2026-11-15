@@ -254,7 +254,9 @@ figures sit over five sections of charts, one column on a phone and two from 960
 links to the chart it sums up (`#chart-done`…) while the charts are drawn. A chart's id is an
 anchor of its `NearViewport`, held in its ghost until it mounts; the chart an address names mounts at
 once and is landed as a document's part is (the shell's `land`, once a navigation), so a fresh
-load's charts, which come after the shell looked for it, land too.
+load's charts, which come after the shell looked for it, land too, until the reader chooses a
+window: a first answer that drew no chart (nothing recorded, a failed read) started no landing,
+and the window chosen after it lands none (`lands`, `NearViewport`).
 `src/chart.tsx` draws each chart by hand, with no charting library: bars as boxes over a column
 a period, lines as one SVG whose strokes keep their width, both on one axis with its unit; a
 period no file recorded is hatched and its line broken, never a zero. Each entry of a chart's
