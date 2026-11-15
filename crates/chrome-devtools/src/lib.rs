@@ -349,11 +349,14 @@ pub struct Request {
     pub status: i64,
     /// Bytes on the wire, headers included: the finished total, or what arrived so far. An open
     /// event stream counts its response head and the body the page has read: Chrome reports a
-    /// stream's transfer size one chunk late, so its last message would wait for the next one.
+    /// stream's transfer size one chunk late, so its last message would wait for the next one. A
+    /// WebSocket ([`WEB_SOCKET`]) counts its handshake's answer and every frame it received.
     pub bytes: f64,
+    /// It finished: its answer arrived whole, or a WebSocket closed.
     pub finished: bool,
     /// The keep-alive pings an event stream delivered, each named by Chrome's
-    /// `Network.eventSourceMessageReceived`; their bytes are in `bytes`.
+    /// `Network.eventSourceMessageReceived`, or a WebSocket, each a frame whose message is named
+    /// a ping; their bytes are in `bytes`.
     pub pings: usize,
     /// Why it failed (`net::ERR_…`), when it did; such a request never finishes.
     pub failed: Option<String>,
@@ -378,6 +381,54 @@ pub struct Request {
     /// A speculative `<link rel=prefetch>` (its `Purpose` or `Sec-Purpose` header says so): a
     /// later use's, warmed at idle, not the page's own.
     pub prefetch: bool,
+}
+
+/// The [`Request::kind`] of a WebSocket, as Chrome names the resource type.
+pub const WEB_SOCKET: &str = "WebSocket";
+
+impl Request {
+    /// Whether it is a stream its page holds open for as long as it follows it, an event stream or
+    /// a WebSocket: one never finished while open.
+    pub fn streams(&self) -> bool {
+        self.kind == "EventSource" || self.kind == WEB_SOCKET
+    }
+}
+
+/// The bytes of a WebSocket's handshake answer (a DevTools `WebSocketResponse`): its head as sent,
+/// or, when Chrome gives no text of it, its status line and headers as they are written.
+fn handshake_bytes(response: &Value) -> f64 {
+    if let Some(head) = response["headersText"].as_str() {
+        return head.len() as f64;
+    }
+    let status = format!(
+        "HTTP/1.1 {} {}\r\n",
+        response["status"].as_i64().unwrap_or(0),
+        response["statusText"].as_str().unwrap_or("")
+    );
+    let headers: usize = response["headers"]
+        .as_object()
+        .into_iter()
+        .flatten()
+        .flat_map(|(name, values)| {
+            // Chrome joins a header sent more than once with line feeds.
+            let values = values.as_str().unwrap_or("");
+            values
+                .split('\n')
+                .map(move |value| name.len() + value.len() + 4)
+        })
+        .sum();
+    (status.len() + headers + 2) as f64
+}
+
+/// The bytes of a frame from a server carrying `payload` bytes: unmasked, with the shortest length
+/// field that holds it (RFC 6455, 5.2).
+fn frame_bytes(payload: usize) -> f64 {
+    let head = match payload {
+        0..=125 => 2,
+        126..=65_535 => 4,
+        _ => 10,
+    };
+    (head + payload) as f64
 }
 
 /// Whether request `headers` (a DevTools header object) name a prefetch.
@@ -1396,6 +1447,12 @@ impl Chrome {
         self.session_call(method, params, self.session.clone())
     }
 
+    /// One DevTools command on another target's `session`, as `Target.attachToTarget` with
+    /// `flatten` names it (another tab's, say); its result. Events read meanwhile are kept.
+    pub fn call_on(&mut self, session: &str, method: &str, params: Value) -> Result<Value> {
+        self.session_call(method, params, Some(session.to_owned()))
+    }
+
     fn session_call(
         &mut self,
         method: &str,
@@ -1717,6 +1774,27 @@ fn requests(events: &[Value], frame: Option<&str>) -> Vec<Request> {
             {
                 request.pings += 1;
             }
+            // A WebSocket is told of apart from requests: made, its handshake answered, then each
+            // frame it received, the feed's events among them, each one message whose name comes
+            // first (`symphony_api`'s feed contract).
+            "Network.webSocketCreated" => {
+                request.url = params["url"].as_str().unwrap_or("").to_string();
+                request.kind = WEB_SOCKET.to_string();
+            }
+            "Network.webSocketHandshakeResponseReceived" => {
+                let response = &params["response"];
+                request.status = response["status"].as_i64().unwrap_or(0);
+                request.bytes += handshake_bytes(response);
+            }
+            "Network.webSocketFrameReceived" => {
+                let payload = params["response"]["payloadData"].as_str().unwrap_or("");
+                request.bytes += frame_bytes(payload.len());
+                if payload.split_once('\n').map(|(name, _)| name) == Some(symphony_api::PING_EVENT)
+                {
+                    request.pings += 1;
+                }
+            }
+            "Network.webSocketClosed" => request.finished = true,
             "Network.loadingFinished" => {
                 request.bytes = params["encodedDataLength"]
                     .as_f64()

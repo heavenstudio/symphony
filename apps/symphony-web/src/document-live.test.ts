@@ -20,7 +20,7 @@ import {
   took,
   vanished,
 } from "./document-live";
-import { CASES, reply } from "./testing";
+import { CASES, feeds as pageFeeds, reply, say } from "./testing";
 import type { Document, DocumentCard, DocumentOutline, Folder, Section } from "./wire";
 import { CACHE_FORMAT, FEED_EVENT, VERSION_HEADER } from "./wire";
 
@@ -775,26 +775,8 @@ describe("the bodies a page read", () => {
   });
 });
 
-/** The page's EventSource, each stream it opens kept in order: where, and how often closed. */
-function feeds() {
-  const opened: { url: string; closed: number; source: EventTarget }[] = [];
-  vi.stubGlobal("location", { href: "http://127.0.0.1/docs/DECISIONS.md" });
-  vi.stubGlobal(
-    "EventSource",
-    class extends EventTarget {
-      private readonly stream: (typeof opened)[number];
-      constructor(url: string) {
-        super();
-        this.stream = { url, closed: 0, source: this };
-        opened.push(this.stream);
-      }
-      close() {
-        this.stream.closed += 1;
-      }
-    },
-  );
-  return opened;
-}
+/** The page's WebSocket, each stream it opens kept in order: where, and how often closed. */
+const feeds = () => pageFeeds("http://127.0.0.1/docs/DECISIONS.md");
 
 describe("a document page's loops", () => {
   it("read the outline, follow the feed from its cursor, and read the bodies near the screen", async () => {
@@ -809,7 +791,7 @@ describe("a document page's loops", () => {
     asked[0]?.answer(answered(200, OUTLINE_NOW, '"o1"', 7));
     await askedFor(opened, 1);
     expect(opened[0]?.url).toBe(
-      "http://127.0.0.1/api/feed?since=7&document=docs%2FDECISIONS.md&sections=%5B%5D",
+      "ws://127.0.0.1/api/feed?since=7&document=docs%2FDECISIONS.md&sections=%5B%5D",
     );
     opened[0]?.source.dispatchEvent(new Event("open"));
     await vi.waitFor(() => expect(page.stale).toBe(false));
@@ -857,9 +839,7 @@ describe("a document page's loops", () => {
       /** The stream `at` opens, then says the event `version`, which moves no region. */
       const says = async (at: number, version: number) => {
         opened[at]?.source.dispatchEvent(new Event("open"));
-        opened[at]?.source.dispatchEvent(
-          new MessageEvent(FEED_EVENT, { data: JSON.stringify({ version, changes: [] }) }),
-        );
+        say(opened[at]?.source, FEED_EVENT, JSON.stringify({ version, changes: [] }));
         await vi.advanceTimersByTimeAsync(0);
         expect(page.cursor).toBe(version);
       };
@@ -913,7 +893,7 @@ describe("a document page's loops", () => {
     await askedFor(opened, 1);
     opened[0]?.source.dispatchEvent(new Event("open"));
     await vi.waitFor(() => expect(page.stale).toBe(false));
-    opened[0]?.source.dispatchEvent(new MessageEvent("delta", { data: '{"version":"x"}' }));
+    say(opened[0]?.source, FEED_EVENT, '{"version":"x"}');
     await vi.waitFor(() => expect(page.stale).toBe(true));
     expect(opened[0]?.closed).toBe(1);
     left.abort();

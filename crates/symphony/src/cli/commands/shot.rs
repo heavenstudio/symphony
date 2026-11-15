@@ -1920,11 +1920,14 @@ requestAnimationFrame(() => requestAnimationFrame(() => resolve(true)))))";
 const LAYOUT: &str = "({scroll_width: document.documentElement.scrollWidth, \
 viewport_width: document.documentElement.clientWidth})";
 
-/// The protocol events that change a page's traffic: a request starting, finishing or failing.
-const TRAFFIC: [&str; 3] = [
+/// The protocol events that change a page's traffic: a request starting, finishing or failing, and
+/// a WebSocket, which Chrome tells of apart, made or closed.
+const TRAFFIC: [&str; 5] = [
     "Network.requestWillBeSent",
     "Network.loadingFinished",
     "Network.loadingFailed",
+    "Network.webSocketCreated",
+    "Network.webSocketClosed",
 ];
 
 /// Since when the page's traffic has been unchanged: the last request starting, finishing or
@@ -2044,9 +2047,7 @@ fn waiting(state: &Value, requests: &[Request]) -> Vec<String> {
     }
     let pending: Vec<&Request> = requests
         .iter()
-        .filter(|request| {
-            !request.finished && request.failed.is_none() && request.kind != "EventSource"
-        })
+        .filter(|request| !request.finished && request.failed.is_none() && !request.streams())
         .collect();
     let own: Vec<&str> = pending
         .iter()

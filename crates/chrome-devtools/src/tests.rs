@@ -3594,6 +3594,89 @@ fn an_open_stream_counts_its_head_and_every_chunk_read_and_names_its_pings() {
 }
 
 #[test]
+fn a_websocket_counts_its_handshake_and_every_frame_and_names_its_pings() {
+    let event = |method: &str, params: Value| json!({"method": method, "params": params});
+    let frame = |id: &str, payload: &str| {
+        event(
+            "Network.webSocketFrameReceived",
+            json!({"requestId": id, "response": {"opcode": 1, "mask": false, "payloadData": payload}}),
+        )
+    };
+    let delta = format!(
+        "{}\n{{\"version\":{}}}",
+        symphony_api::FEED_EVENT,
+        "9".repeat(200)
+    );
+    let ping = format!("{}\n", symphony_api::PING_EVENT);
+    let events = [
+        event(
+            "Network.webSocketCreated",
+            json!({"requestId": "feed", "url": "ws://h/api/feed?since=3"}),
+        ),
+        event(
+            "Network.webSocketWillSendHandshakeRequest",
+            json!({"requestId": "feed", "request": {"headers": {}}}),
+        ),
+        event(
+            "Network.webSocketHandshakeResponseReceived",
+            json!({"requestId": "feed", "response": {"status": 101, "statusText": "Switching Protocols", "headersText": "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n\r\n"}}),
+        ),
+        frame(
+            "feed",
+            &format!("{}\n\"Serving\"", symphony_api::SERVER_EVENT),
+        ),
+        frame("feed", &ping),
+        frame("feed", &delta),
+        frame("feed", &ping),
+        // Another, told no text of its head, which is closed.
+        event(
+            "Network.webSocketCreated",
+            json!({"requestId": "gone", "url": "ws://h/api/feed?since=4"}),
+        ),
+        event(
+            "Network.webSocketHandshakeResponseReceived",
+            json!({"requestId": "gone", "response": {"status": 101, "statusText": "Switching Protocols", "headers": {"Upgrade": "websocket", "Vary": "a\nb"}}}),
+        ),
+        frame("gone", &"x".repeat(70_000)),
+        event("Network.webSocketClosed", json!({"requestId": "gone"})),
+    ];
+    let requests = crate::requests(&events, None);
+    let [feed, gone] = requests.as_slice() else {
+        panic!("two sockets: {requests:#?}")
+    };
+    let head = "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n\r\n".len();
+    // A frame's head is 2 bytes up to 125 bytes of payload, 4 up to 65,535, 10 beyond.
+    let frames = (2 + 16) + 2 * (2 + ping.len()) + (4 + delta.len());
+    assert_eq!(
+        (
+            feed.url.as_str(),
+            feed.kind.as_str(),
+            feed.status,
+            feed.bytes,
+            feed.pings,
+            feed.finished
+        ),
+        (
+            "ws://h/api/feed?since=3",
+            crate::WEB_SOCKET,
+            101,
+            (head + frames) as f64,
+            2,
+            false
+        )
+    );
+    // Its status line, each header (a repeated one on each of its lines) and the blank line.
+    let head = "HTTP/1.1 101 Switching Protocols\r\n".len()
+        + "Upgrade: websocket\r\n".len()
+        + "Vary: a\r\nVary: b\r\n".len()
+        + 2;
+    assert_eq!(
+        (gone.bytes, gone.pings, gone.finished),
+        ((head + 10 + 70_000) as f64, 0, true)
+    );
+}
+
+#[test]
 fn a_page_that_cannot_load_fails_navigate_naming_why_but_still_opens() {
     let Some(binary) = find() else {
         eprintln!("no Chrome: real browser capability unavailable");

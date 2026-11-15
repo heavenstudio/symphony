@@ -724,6 +724,47 @@ printf '%s\n' '{"Self":{"DNSName":"review-fixture.tail.test.","TailscaleIPs":["f
             body: body.into(),
         }
     }
+
+    /// The status the feed's WebSocket handshake gets under `host` and `origin`: `101` when the
+    /// feed is on its socket, which is then dropped.
+    pub fn socket(&self, host: &str, origin: Option<&str>) -> u16 {
+        let board = self.request("GET", "/api/board", Some(&self.host()), None, &Value::Null);
+        assert_eq!(board.status, 200, "{board:?}");
+        let version = board.json()["version"].as_u64().unwrap();
+        let mut request = format!(
+            "GET /api/feed?since={version} HTTP/1.1\r\nHost: {host}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n"
+        );
+        if let Some(origin) = origin {
+            request.push_str(&format!("Origin: {origin}\r\n"));
+        }
+        request.push_str("\r\n");
+        let mut stream = TcpStream::connect_timeout(&self.address, BACKSTOP).unwrap();
+        stream.set_read_timeout(Some(BACKSTOP)).unwrap();
+        stream.write_all(request.as_bytes()).unwrap();
+        // Only the head: a refusal keeps the connection alive, and a socket says on and on.
+        let mut head = Vec::new();
+        let mut byte = [0_u8];
+        while !head.ends_with(b"\r\n\r\n") {
+            assert_eq!(
+                stream.read(&mut byte).unwrap(),
+                1,
+                "the handshake under {host} {origin:?} closed: {}",
+                String::from_utf8_lossy(&head)
+            );
+            head.push(byte[0]);
+        }
+        let head = String::from_utf8(head).unwrap();
+        let status = head.split_whitespace().nth(1).unwrap().parse().unwrap();
+        if status == 101 {
+            // The accept key of RFC 6455's own example: the handshake is the feed's socket's.
+            assert!(
+                head.to_ascii_lowercase()
+                    .contains("sec-websocket-accept: s3pplmbitxaq9kygzzhzrbk+xoo="),
+                "{head}"
+            );
+        }
+        status
+    }
 }
 
 pub struct Feed(std::io::BufReader<TcpStream>);
