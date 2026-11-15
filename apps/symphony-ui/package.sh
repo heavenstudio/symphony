@@ -232,4 +232,4 @@ if [ -n "${2:-}" ]; then
 else
     "$here/../../tools/rs-bin.sh" symphony-build publish-client "$stage" "$out/public"
 fi
-echo "symphony-ui: the web client's kinds (home, the queue, Reports, the task board, the agents page, the documents, a task's page, the menus) as its own build, the program of the chat as a main module and a chunk, with the media layer's, one SPA shell: $out/public" >&2
+echo "symphony-ui: the web client's kinds (home, the queue, Reports, Runs, the task board, the agents page, the documents, a task's page, the menus) as its own build, the program of the chat as a main module and a chunk, with the media layer's, one SPA shell: $out/public" >&2

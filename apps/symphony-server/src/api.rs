@@ -17,6 +17,7 @@ mod failure;
 mod feed_socket;
 pub(crate) mod reports;
 pub(crate) mod run_log;
+pub(crate) mod runs;
 mod validated;
 mod warm;
 
@@ -59,6 +60,8 @@ pub(crate) const READS: &[&str] = &[
     "/api/health",
     symphony_api::REPORTS_PATH,
     symphony_api::RUN_LOG_PATH,
+    symphony_api::RUNS_PATH,
+    symphony_api::RUN_PATH,
 ];
 
 type Request = axum::http::Request<()>;
@@ -275,6 +278,60 @@ async fn read(shared: &Arc<Shared>, request: Request) -> Option<Response> {
                 Err(e) => error(
                     StatusCode::INTERNAL_SERVER_ERROR,
                     format!("the log could not be read: {e}"),
+                ),
+            },
+        );
+    }
+    // The runs are the project's day files alone, the board never read.
+    if path == symphony_api::RUNS_PATH {
+        let asked = runs::asked(
+            query(&request, "pipeline").as_deref(),
+            query(&request, "end").as_deref(),
+            query(&request, "task").as_deref(),
+            query(&request, "branch").as_deref(),
+            query(&request, "before").as_deref(),
+        );
+        let filters = match asked {
+            Ok(filters) => filters,
+            Err(why) => return Some(error(StatusCode::BAD_REQUEST, why)),
+        };
+        let Some(hub) = shared.api.get().cloned() else {
+            return Some(error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "the Symphony server is starting",
+            ));
+        };
+        return Some(
+            match tokio::task::spawn_blocking(move || runs::answer(&hub, &filters)).await {
+                Ok(Ok(page)) => no_store(Json(page)),
+                Ok(Err((status, why))) => error(status, why),
+                Err(e) => error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("the runs could not be read: {e}"),
+                ),
+            },
+        );
+    }
+    if path == symphony_api::RUN_PATH {
+        let Some(run) = query(&request, "run").filter(|run| !run.is_empty()) else {
+            return Some(error(
+                StatusCode::BAD_REQUEST,
+                "run is required: a run's id",
+            ));
+        };
+        let Some(hub) = shared.api.get().cloned() else {
+            return Some(error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "the Symphony server is starting",
+            ));
+        };
+        return Some(
+            match tokio::task::spawn_blocking(move || runs::answer_run(&hub, &run)).await {
+                Ok(Ok(page)) => no_store(Json(page)),
+                Ok(Err((status, why))) => error(status, why),
+                Err(e) => error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("the run could not be read: {e}"),
                 ),
             },
         );
@@ -1330,7 +1387,7 @@ pub(crate) fn client_page(project: &symphony_api::ProjectView, path: &str) -> bo
     // `/task` with no slug is the board, as the shell's routes read it.
     matches!(
         page,
-        "" | "/tasks" | "/task" | "/agents" | "/queue" | "/reports"
+        "" | "/tasks" | "/task" | "/agents" | "/queue" | "/reports" | "/runs"
     ) || project
         .nav
         .iter()

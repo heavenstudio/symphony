@@ -176,6 +176,8 @@ pub(crate) struct Hub {
     /// Where the Reports page reads the project's day files ([`crate::api::reports::Folders`]),
     /// found at its first read: the folders the shared server's writers find, or a test's.
     pub(crate) report_folders: OnceLock<crate::api::reports::Folders>,
+    /// What the Runs page's reads keep of its day files between them ([`crate::api::runs::Index`]).
+    pub(crate) runs_index: crate::api::runs::Index,
     /// When they are recorded: its server generation's gate ([`symphony_board::recording`]), the
     /// one `health` and the roll-up's writes of the day files ([`reports`]) keep to as well, given
     /// as the hub starts ([`Hub::gate_recorders`]); none records nothing.
@@ -332,6 +334,7 @@ impl Hub {
             health: symphony_board::board_health::Recorder::default(),
             agent_activity: Mutex::new(None),
             report_folders: OnceLock::new(),
+            runs_index: crate::api::runs::Index::default(),
             recording_gate: OnceLock::new(),
             notices: Mutex::new(health::Notices::default()),
             replaying: Mutex::new(None),
