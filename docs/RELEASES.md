@@ -367,7 +367,11 @@ shipped `symphony` does not carry ([CHECKS](CHECKS.md#size-budgets)):
      last recipe its log says failed other than `verify` and a private one (`_NAME`), its tests'
      a target at a time, else says its last lines name the step. Any other check's is its own
      command;
-   - the commits since the last green run (`git log --oneline LAST_GREEN..TIP`).
+   - the commits since the last green run (`git log --oneline LAST_GREEN..TIP`), and the same
+     range on a line of its own by the two commits' full names, `between: LAST_GREEN..TIP`
+     (`symphony_board::red::BETWEEN`), from which the Reports roll-up lists the landings the red
+     may trace back to ([the day files](analysis/reports-and-monitoring.md#the-day-files)). With
+     no green run on record the range starts at the release before; with neither there is none.
 
    **A test red on load** is discarded: a rerun neither fails nor passes on the machine's load
    (RULES.md `tests/no-test-fails-on-load`). A test that fails a run, or the release candidate's

@@ -427,6 +427,9 @@ fn reds(replayed: &[Replayed], start: f64, until: f64) -> Vec<Red> {
                 status: task
                     .holding(until)
                     .map_or_else(|| task.task.status.clone(), |s| s.status.clone()),
+                between: task.task.between.clone(),
+                // The landings in that range are git's to say: the roll-up's.
+                landed: None,
             })
         })
         .collect()
