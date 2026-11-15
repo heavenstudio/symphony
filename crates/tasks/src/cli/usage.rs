@@ -464,6 +464,9 @@ counts each top-level task done now once, on the day of its last close in
 this machine's time zone, whenever it was made: one approved again after its
 landing sent it back counts once, one cancelled or reopened since counts
 none. The Reports page's Tasks done counts the same tasks, by UTC day.
+Where tasks of the window were filed on an arm (`create --arm`), each arm's
+tasks, how many are done, their median lead and review time, and how often
+review sent the arm's work back.
 
 options:
   -h, --help  show this help message and exit
@@ -523,6 +526,7 @@ options:
                          [--stage {backlog,concept,design,ready}] [--backlog]
                          [--parent PARENT] [--for ASSIGNEE] [--instruction]
                          [--depends DEPENDS] [--link LINK] [--no-role]
+                         [--arm ARM]
                          slug title
 "#,
         r#"usage: just tasks create [-h] [--as ACTOR] [--body BODY]
@@ -530,6 +534,7 @@ options:
                          [--stage {backlog,concept,design,ready}] [--backlog]
                          [--parent PARENT] [--for ASSIGNEE] [--instruction]
                          [--depends DEPENDS] [--link LINK] [--no-role]
+                         [--arm ARM]
                          slug title
 
 positional arguments:
@@ -563,6 +568,10 @@ options:
                         role, and the board gives any other filer's task an
                         orchestrator, unless one holds the task it is filed
                         under
+  --arm ARM             the side of a process experiment it is filed on, one
+                        lowercase word such as control: `show` prints it and
+                        `stats` gives each arm's figures; nothing changes it
+                        after
 "#,
     ),
     (

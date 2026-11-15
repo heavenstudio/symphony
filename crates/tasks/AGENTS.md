@@ -115,7 +115,8 @@ changes ([TASKS](../../docs/TASKS.md#limits-and-models)); `alarm.rs` and `alarm/
 alarm, `cli/pull/pipeline.rs` as PULL says it ([TASKS](../../docs/TASKS.md#the-pipeline-alarm));
 `store/work/moves.rs` a move that names where it goes from; `health.rs` a session's health, derived
 and never stored; `stages.rs` where a task's time went
-([TASKS](../../docs/TASKS.md#where-the-time-goes)); `reports.rs` the board's part of the day files.
+([TASKS](../../docs/TASKS.md#where-the-time-goes)), `arm.rs` the arm a task is filed on, which
+`stats` groups by; `reports.rs` the board's part of the day files.
 
 ### The database server
 

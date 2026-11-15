@@ -665,6 +665,164 @@ fn the_api_says_when_each_task_named_took_its_status_and_refuses_one_no_task_has
     );
 }
 
+/// A board whose orchestrator filed two tasks on the arm `control`, two on `no-review`, one on
+/// `later` and one on none, `START` on. `control`: `exp/a1` approved after 8 hours, 4 of them in
+/// review over two rounds, and `exp/a2` after 10, 6 in review. `no-review`: `exp/b1` approved
+/// after 3 hours, 1 in review, and `exp/b2` sent back twice and still in progress. `exp/c1`, on
+/// `later`, and `exp/plain` were never claimed.
+fn experiment() -> Case {
+    let c = Case::new();
+    let t = |hours: f64| at(&c, START, hours);
+    let (orch, exe, rev) = (
+        t(0.0).register("orchestrator"),
+        t(0.0).register("worker"),
+        t(0.0).register("reviewer"),
+    );
+    for (slug, arm) in [
+        ("exp/a1", "control"),
+        ("exp/b1", "no-review"),
+        ("exp/a2", "control"),
+        ("exp/b2", "no-review"),
+        ("exp/c1", "later"),
+    ] {
+        t(0.0).ok(&orch, &["create", slug, "Work", "--arm", arm]);
+    }
+    t(0.0).ok(&orch, &["create", "exp/plain", "Work"]);
+    let review = |hours: f64, slug: &str| {
+        t(hours).ok(&exe, &["move", slug, "review"]);
+    };
+    let verdict = |hours: f64, slug: &str, verdict: &str| {
+        t(hours).ok(&rev, &["verdict", slug, verdict, "read"]);
+    };
+    for (hours, slug) in [
+        (1.0, "exp/a1"),
+        (2.0, "exp/a2"),
+        (1.0, "exp/b1"),
+        (1.0, "exp/b2"),
+    ] {
+        t(hours).ok(&exe, &["claim", slug]);
+    }
+    review(3.0, "exp/a1");
+    t(3.0).ok(&rev, &["role", "exp/a1", "reviewer"]);
+    verdict(5.0, "exp/a1", "changes");
+    review(6.0, "exp/a1");
+    verdict(8.0, "exp/a1", "approve");
+    review(4.0, "exp/a2");
+    t(4.0).ok(&rev, &["role", "exp/a2", "reviewer"]);
+    verdict(10.0, "exp/a2", "approve");
+    review(2.0, "exp/b1");
+    t(2.0).ok(&rev, &["role", "exp/b1", "reviewer"]);
+    verdict(3.0, "exp/b1", "approve");
+    review(4.0, "exp/b2");
+    t(4.0).ok(&rev, &["role", "exp/b2", "reviewer"]);
+    verdict(5.0, "exp/b2", "changes");
+    review(6.0, "exp/b2");
+    verdict(7.0, "exp/b2", "changes");
+    c
+}
+
+#[test]
+fn stats_gives_each_arms_tasks_done_lead_review_and_bounces() {
+    let later = at(&experiment(), START, 12.0);
+    let said = later.ok("", &["stats", "--days", "1"]);
+    assert!(
+        said.ends_with(
+            "\nArms (the tasks filed with --arm; lead and review are the medians of the done):
+  control      tasks 2 · done 2 · lead 9.0 h · review 5.0 h · bounces 1
+  later        tasks 1 · done 0 · lead - · review - · bounces 0
+  no-review    tasks 2 · done 1 · lead 3.0 h · review 1.0 h · bounces 2
+"
+        ),
+        "{said}"
+    );
+    // The window's own figures count every task, the one on no arm too.
+    assert!(
+        said.starts_with("Stats: 6 top-level tasks made in the last 1 days;"),
+        "{said}"
+    );
+    let json: Value =
+        serde_json::from_str(&later.ok("", &["stats", "--days", "1", "--json"])).unwrap();
+    let spread = |tasks: u64, hours: f64| json!({"tasks": tasks, "median": hours * H, "p75": hours * H, "p90": hours * H});
+    assert_eq!(
+        json["arms"]["no-review"],
+        json!({
+            "tasks": 2, "done": 1, "lead_seconds": spread(1, 3.0),
+            "review_seconds": spread(1, 1.0), "bounces": 2,
+        })
+    );
+    assert_eq!(
+        json["arms"]["later"],
+        json!({"tasks": 1, "done": 0, "lead_seconds": null, "review_seconds": null, "bounces": 0})
+    );
+    let control = &json["arms"]["control"];
+    assert_eq!(
+        (&control["tasks"], &control["done"], &control["bounces"]),
+        (&json!(2), &json!(2), &json!(1))
+    );
+    assert_eq!(control["lead_seconds"]["median"], json!(9.0 * H));
+    assert_eq!(control["review_seconds"]["median"], json!(5.0 * H));
+    let names: Vec<&String> = json["arms"].as_object().unwrap().keys().collect();
+    assert_eq!(names, ["control", "later", "no-review"]);
+}
+
+#[test]
+fn a_board_with_no_arm_says_nothing_of_arms() {
+    let later = at(&pipeline(), START, 48.0);
+    assert!(!later.ok("", &["stats", "--days", "3"]).contains("Arms"));
+    let json: Value =
+        serde_json::from_str(&later.ok("", &["stats", "--days", "3", "--json"])).unwrap();
+    assert_eq!(json["arms"], json!({}));
+}
+
+#[test]
+fn a_task_shows_the_arm_it_was_filed_on_and_keeps_it() {
+    let c = experiment();
+    let shown = c.ok("", &["show", "exp/a1"]);
+    assert!(shown.contains("\n  arm: control\n  Stages: "), "{shown}");
+    assert!(!c.ok("", &["show", "exp/plain"]).contains("arm:"));
+    let store = c.store();
+    assert_eq!(store.get("exp/b2").unwrap().arm(), Some("no-review"));
+    assert_eq!(store.get("exp/plain").unwrap().arm(), None);
+    // The window's read carries it, in the order the tasks were made.
+    let arms: Vec<Option<String>> = (store.stage_records(START).unwrap().into_iter())
+        .map(|record| record.arm)
+        .collect();
+    let arm = |name: &str| Some(name.to_string());
+    assert_eq!(
+        arms,
+        [
+            arm("control"),
+            arm("no-review"),
+            arm("control"),
+            arm("no-review"),
+            arm("later"),
+            None
+        ]
+    );
+}
+
+#[test]
+fn an_arm_that_is_no_plain_word_files_nothing() {
+    let c = Case::new();
+    let orch = c.register("orchestrator");
+    for arm in ["", "Control", "two words", "-x", &"x".repeat(33)] {
+        let ran = c.run_as(
+            &orch,
+            &["create", "exp/bad", "Work", &format!("--arm={arm}")],
+            "",
+        );
+        assert_eq!(ran.code, 1, "{arm}: {}", ran.err);
+        assert!(
+            ran.err.contains("an arm is one word of lowercase letters"),
+            "{}",
+            ran.err
+        );
+    }
+    assert!(c.store().get("exp/bad").is_err());
+    c.ok(&orch, &["create", "exp/good", "Work", "--arm", "b2"]);
+    assert_eq!(c.store().get("exp/good").unwrap().arm(), Some("b2"));
+}
+
 /// `list --json --all` on a board of `tasks` tasks, through a relay that keeps each request: what
 /// it printed and the requests it sent.
 fn listed_measured(tasks: usize) -> (String, Vec<proxy::Request>) {
