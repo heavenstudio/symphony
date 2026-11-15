@@ -270,9 +270,9 @@ never the whole target, which the release run runs.
   the owner's choice, as the caps are.
   Other page kinds are reported separately for review.
   On the fixture (`entry_pages_fit_the_first_visit_budget_and_deferred_kinds_are_reported` prints
-  each page's requests) a first visit to `/` takes 112,732 bytes, `/tasks` 120,913, `/agents`
-  115,854, `/queue` 108,428, `/reports` 108,921, `/runs` 107,122, `/docs/` 138,979, a document
-  140,640 and a task's page 142,329, and a return that finds what it kept unchanged 2,031, 2,442,
+  each page's requests) a first visit to `/` takes 112,745 bytes, `/tasks` 121,052, `/agents`
+  115,867, `/queue` 108,441, `/reports` 108,933, `/runs` 107,134, `/docs/` 138,991, a document
+  140,652 and a task's page 142,342, and a return that finds what it kept unchanged 2,031, 2,442,
   2,307, 2,113, 765, 984, 574, 1,806 and 2,285. A first visit to a kind of the web client is its entry and its sheets, the
   chunk every kind shares (React and the frame) and the pieces it shares with some of the others
   (the board's feed and keep; the card and the task readers of the board and the agents page; the
