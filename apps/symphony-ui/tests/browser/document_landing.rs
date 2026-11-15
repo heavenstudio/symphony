@@ -609,7 +609,9 @@ fn a_reader_who_ended_a_landing_stays_on_what_they_read_while_the_sections_above
         site.hold_route("/api/section", false);
         assert!(
             page.wait_for(
-                &format!("document.getElementById('five')?.closest('.doc-card') != null && {LANDED}"),
+                &format!(
+                    "document.getElementById('five')?.closest('.doc-card') != null && {LANDED}"
+                ),
                 SHOWN
             ),
             "{reading:?}: the card draws at the scroll padding: {}",
@@ -661,7 +663,10 @@ fn a_reader_who_ended_a_landing_stays_on_what_they_read_while_the_sections_above
                     json!({"type": "touchEnd", "touchPoints": []}),
                 );
                 assert!(
-                    page.wait_for("document.activeElement?.matches('textarea') === true", SHOWN),
+                    page.wait_for(
+                        "document.activeElement?.matches('textarea') === true",
+                        SHOWN
+                    ),
                     "{reading:?}: the tap opens the card's editor, its field taking the focus: {}",
                     page.eval("document.activeElement?.outerHTML.slice(0, 200)")
                 );
