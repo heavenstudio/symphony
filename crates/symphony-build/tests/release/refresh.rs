@@ -236,8 +236,7 @@ fn cargo_home(fixture: &Fixture) -> String {
 /// seen at, never one put back from a newer schema. Its home and the server that runs it.
 fn board_at(consumer: &Path, schema: i64) -> (Home, Running) {
     let common = consumer.join(".git");
-    let board =
-        Home::new(&common.join("symphony/tasks"), &super::board::surreal()).supervised(true);
+    let board = Home::in_common(&common, Some(&super::board::surreal())).supervised(true);
     let running = board.ensure().unwrap();
     older_board(Client::new(&running.addr, "sf", "tasks"), schema, NOW)
         .create(&NewTask::new(

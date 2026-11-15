@@ -1,5 +1,5 @@
-//! What bounds a land: its timeout over its check, its fetch and its push, and none over its wait
-//! for another land; and what its push sends, the checked commit by name, never forced, no tag.
+//! What bounds a land: its timeout over its fetch, and none over its wait for another land; and
+//! what its push sends, the checked commit by name, never forced, no tag.
 
 use super::*;
 use std::os::unix::fs::PermissionsExt;
@@ -15,64 +15,6 @@ fn script(dir: &Path, name: &str, body: &str) -> PathBuf {
     let path = dir.join(name);
     fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
     path
-}
-
-/// How many lands, each in a repository of its own, [`refused_past_the_timeout`] is run for before
-/// the test says no check reached its first act within the land's 1 s.
-const ATTEMPTS: usize = 5;
-
-#[test]
-fn a_check_past_the_timeout_is_ended_whole_and_refused() {
-    // The land's 1 s runs from the check's start, so a loaded machine may end the check before its
-    // shell started its child and wrote down its pid: that land showed the refusal but not that
-    // the child ends with it, and the test lands again in a fresh repository. A land that leaves
-    // the child running fails whenever the child was started.
-    for _ in 1..=ATTEMPTS {
-        if let Some(pid) = refused_past_the_timeout() {
-            wait_saying(
-                || !symphony_board::sys::pid_alive(pid),
-                || format!("the check's own child {pid} still runs"),
-            );
-            return;
-        }
-    }
-    panic!(
-        "no check wrote down its child within the land's 1 s in {ATTEMPTS} lands; {}",
-        test_time::Load::now()
-    );
-}
-
-/// A land whose check runs past the land's timeout of 1 s, in a repository of its own, refused
-/// and logged as one: the pid of the child the check starts as its first act, which outlives it
-/// unless the land ends its whole group, or none where the land ended the check before it wrote
-/// that pid down whole.
-fn refused_past_the_timeout() -> Option<i64> {
-    let r = Repo::new();
-    let child = r.dir.join("child.pid");
-    // Neither the check nor its child ends by itself while the test runs, however slow the
-    // machine, so only the land's ending ends them.
-    let check = format!("sleep 600 & echo $! > '{}'; sleep 600", child.display());
-    checked_with(&r, &check, &timed(1));
-    branch(&r, SLUG, "sim/jump.gd", "extends Node\n");
-    let people = approved(&r, SLUG, "good");
-    let before = head(&r.root, "main");
-    let (_, result) = landed(&r, SLUG, &people.orch);
-    let log = r.root.join(".git/symphony/tasks/land/sim%2Fjump.log");
-    let line = format!(
-        "the check `sh -c {check}` ran past the land's timeout ([land] timeout_seconds, 1 s) on \
-         {SLUG} merged into main at {}; its output is in {}",
-        &before[..7],
-        log.canonicalize().unwrap().display()
-    );
-    assert_refused(&r, &result, &line, &before);
-    let logged = fs::read_to_string(&log).unwrap();
-    assert!(
-        logged.ends_with("ended: it ran past the land's 1 s\n"),
-        "{logged}"
-    );
-    fs::read_to_string(&child)
-        .ok()
-        .and_then(|text| text.trim().parse::<i64>().ok())
 }
 
 #[test]

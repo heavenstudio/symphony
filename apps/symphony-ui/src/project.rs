@@ -37,6 +37,7 @@ pub fn header_links(view: &ProjectView, path: &str, document: bool) -> Vec<Heade
         document && plugin.is_none(),
         path == "tasks" || path.starts_with("task/"),
         path == "reports",
+        path == "runs",
         path == "agents",
     ];
     view.own_pages()
@@ -280,6 +281,7 @@ mod tests {
                 "Docs /docs/",
                 "Board /tasks",
                 "Reports /reports",
+                "Runs /runs",
                 "Agents /agents",
                 "▤ shelf /shelf",
                 "◇ maps /maps/"
@@ -299,6 +301,7 @@ mod tests {
             ("tasks", false, "Board"),
             ("task/app/header-names", false, "Board"),
             ("reports", false, "Reports"),
+            ("runs", false, "Runs"),
             ("agents", false, "Agents"),
             // A plugin's page shows a document, yet it is the plugin's link that is lit.
             ("docs/SHELF.md", true, "▤ shelf"),
@@ -319,6 +322,7 @@ mod tests {
             "queue",
             "tasks",
             "reports",
+            "runs",
             "agents",
             "docs",
             "docs/",
