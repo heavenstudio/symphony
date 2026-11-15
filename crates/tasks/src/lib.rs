@@ -93,6 +93,7 @@ pub use store::{
     PIPELINE, PULLABLE, Pick, Presence, ROLES, ReportRead, ReportTask, Role, SLOT_READS, STATUSES,
     SearchHit, Session, StageRecord, Store, Task, UNANSWERED_WAIT, UNANSWERED_WAIT_VAR, Unfresh,
     VectorHit, VectorSearchProfile, approved, can_transition, covered_by, covered_line, landing,
+    reviewer_verdict,
 };
 
 /// The board schema this build reads and writes: the one server serves no project whose

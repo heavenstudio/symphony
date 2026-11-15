@@ -190,13 +190,13 @@ fn lifted() -> String {
 }
 
 /// Counts the page's own scrolls from now on, by an element or the window (`window.pageScrolls`).
-const COUNT_SCROLLS: &str = "(() => { window.pageScrolls = 0;
+pub(crate) const COUNT_SCROLLS: &str = "(() => { window.pageScrolls = 0;
     const count = (owner, name) => { const own = owner[name]; owner[name] = function (...args) { window.pageScrolls += 1; return own.apply(this, args); }; };
     count(Element.prototype, 'scrollIntoView'); count(Element.prototype, 'scrollTo'); count(Element.prototype, 'scrollBy');
     count(window, 'scrollTo'); count(window, 'scrollBy'); count(window, 'scroll'); return true; })()";
 
 /// Two frames from now: a hold running sees what happened before it.
-const TWO_FRAMES: &str =
+pub(crate) const TWO_FRAMES: &str =
     "new Promise(done => requestAnimationFrame(() => requestAnimationFrame(() => done(true))))";
 
 /// A browser of its own, `width` by `height`, whose device keeps no copy of what it reads.

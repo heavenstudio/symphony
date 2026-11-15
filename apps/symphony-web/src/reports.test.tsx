@@ -578,6 +578,20 @@ describe("a figure's link", () => {
     expect(nothing).not.toContain("href=");
     expect(view(read({ ...unrecorded(wire()), first: null }))).not.toContain("href=");
   });
+
+  it("is the address of a chart drawn at once, which the shell then lands, the rest to come", () => {
+    vi.stubGlobal("location", { hash: "#chart-decisions" });
+    const html = view(page());
+    // The chart the address names is drawn as the report is, wherever it is on the page.
+    expect(html).toMatch(/<figure class="chart" id="chart-decisions" aria-labelledby=/);
+    expect(html.match(/id="chart-decisions"/g)).toHaveLength(1);
+    // Every other chart is its ghost until it comes near the screen, its id held there.
+    expect(html.match(/<figure class="chart"/g)).toHaveLength(1);
+    expect(html).toContain('<span id="chart-done"></span><div class="ghost-chart"');
+    // An address that names no chart draws none at once.
+    vi.stubGlobal("location", { hash: "#flow" });
+    expect(view(page())).not.toContain('<figure class="chart"');
+  });
 });
 
 describe("the page's view", () => {
