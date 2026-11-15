@@ -17,7 +17,9 @@
 pub mod decisions;
 pub mod git;
 
+use crate::board::Doc;
 use crate::branches::BranchCard;
+use crate::plugins::Plugins;
 use std::path::Path;
 use symphony_api::reports::GitRead;
 use symphony_board::ReportRead;
@@ -77,11 +79,8 @@ pub fn roll_up(
     if let Err(why) = &commits {
         rolled.problems.push(format!("git: {why}"));
     }
-    let plugins = crate::plugins::Plugins::of(root);
-    let docs = crate::board::documents(root).map(|mut docs| {
-        crate::dashboard::merge_decisions(&mut docs, branch_cards, &plugins);
-        docs
-    });
+    let plugins = Plugins::of(root);
+    let docs = crate::board::documents(root).map(|docs| cards(docs, branch_cards, &plugins));
     if let Err(why) = &docs {
         rolled.problems.push(format!("documents: {why}"));
     }
@@ -117,6 +116,34 @@ pub fn roll_up(
         rolled.written.push(day.day);
     }
     Ok(rolled)
+}
+
+/// The cards of `docs` with the live branches' (`branch_cards`) laid on them as the owner's queue
+/// lays them ([`crate::dashboard::merge_decisions`]), each under its own page: a branch's copy of
+/// one of main's cards goes back under main's page, so the day file names it by the card's page,
+/// and only a card main has not got is named by the branch's.
+fn cards(mut docs: Vec<Doc>, branch_cards: &[BranchCard], plugins: &Plugins) -> Vec<Doc> {
+    // Where the card `slug` is in the page `path`: the page's place and the card's in it.
+    let place = |docs: &[Doc], path: &str, slug: &str| {
+        let page = docs.iter().position(|doc| doc.path == path)?;
+        let card = docs[page].decisions.iter().position(|c| c.slug == slug)?;
+        Some((page, card))
+    };
+    let mains: Vec<&BranchCard> = branch_cards
+        .iter()
+        .filter(|b| !b.on_main && place(&docs, &b.doc, &b.card.slug).is_some())
+        .collect();
+    crate::dashboard::merge_decisions(&mut docs, branch_cards, plugins);
+    for branch in mains {
+        let Some((page, card)) = place(&docs, &branch.path(), &branch.card.slug) else {
+            continue; // no proposal: main's copy says it all, or closed the card after it
+        };
+        let card = docs[page].decisions.remove(card);
+        if let Some(main) = docs.iter_mut().find(|doc| doc.path == branch.doc) {
+            main.decisions.push(card);
+        }
+    }
+    docs
 }
 
 #[cfg(test)]

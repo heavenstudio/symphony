@@ -222,8 +222,22 @@ fn a_day_under_way_counts_each_figure_of_the_fixture_hour_by_hour() {
     assert_eq!(
         waits(&hour(3).waits.review_to_reviewer),
         [("sim/a", 0.5), ("sim/b", 0.0)],
-        "a reviewer already on the task when it moved staffs it at once"
+        "a reviewer joining in the move's second staffs it at once"
     );
+    for hour in [7, 9] {
+        assert!(
+            day.hours[hour].waits.review_to_reviewer.is_empty(),
+            "the reviewer kept the role, so the move back is not its line: hour {hour}"
+        );
+    }
+    for hour in [8, 10] {
+        assert_eq!(
+            waits(&day.hours[hour].waits.review_to_reviewer),
+            [("sim/b", 1.0)],
+            "back in review an hour before its reviewer's verdict, its first line since: hour \
+             {hour}"
+        );
+    }
     assert_eq!(hour(4).top.entered, counts(&[("done", 1)]));
     assert_eq!(hour(4).landed, 1);
     assert_eq!(waits(&hour(4).waits.approved_to_landed), [("sim/a", 0.5)]);
@@ -438,6 +452,61 @@ fn a_review_with_no_reviewer_by_its_end_is_no_wait_and_a_reopened_task_enters_re
         (day.hours[2].top.done, day.top.lead),
         (Some(0), None),
         "in review again, it is no task done: no close to count or to time"
+    );
+}
+
+/// Back in review with its reviewer still holding the role, a task is staffed by that reviewer's
+/// first line since the move (a post here), not by the move; its lines before the move, its lines
+/// once it let the role go and the executor's lines count for nothing. A reviewer that joins first
+/// staffs it by its join, and a stretch its reviewer never writes in is no wait yet.
+#[test]
+fn a_re_review_whose_reviewer_kept_the_role_waits_to_its_first_line_since_the_move() {
+    let kept = |slug: &str, thread: Thread| {
+        let status = if slug == "sim/post" { "done" } else { "review" };
+        let updated = (thread.0.last().unwrap().ts - D) / H;
+        task(slug, 0.0, status, updated, thread)
+    };
+    let base = || {
+        Thread::default()
+            .made(0.0, "o")
+            .claim(0.0, "e")
+            .moved(1.0, "e", "in_progress", "review")
+            .joined(1.0, "r")
+            .verdict(2.0, "r", "changes: no")
+            .post(2.5, "r")
+            .moved(3.0, "e", "in_progress", "review")
+            .post(3.25, "e")
+    };
+    let read = ReportRead {
+        tasks: vec![
+            kept(
+                "sim/post",
+                base().post(4.5, "r").verdict(5.0, "r", "approve"),
+            ),
+            kept("sim/other", base().joined(4.0, "r2").post(4.5, "r")),
+            kept("sim/silent", base()),
+            kept(
+                "sim/left",
+                base()
+                    .line("system", 3.5, "r", "r released reviewer (released)")
+                    .post(4.5, "r"),
+            ),
+        ],
+    };
+    let day = day("sim", D, at(6.0), at(6.0), &read);
+    let staffed: Vec<(usize, &str, f64)> = (day.hours.iter().enumerate())
+        .flat_map(|(n, hour)| {
+            waits(&hour.waits.review_to_reviewer)
+                .into_iter()
+                .map(move |(slug, hours)| (n, slug, hours))
+        })
+        .filter(|(n, _, _)| *n >= 2)
+        .collect();
+    assert_eq!(
+        staffed,
+        [(4, "sim/post", 1.5), (4, "sim/other", 1.0)],
+        "the kept reviewer's post at 04:30; a new reviewer's join at 04:00 before it; none for \
+         the silent one, nor for the one whose reviewer let the role go"
     );
 }
 

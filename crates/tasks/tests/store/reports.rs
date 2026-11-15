@@ -248,10 +248,10 @@ fn the_day_file_of_the_board_counts_its_bounces_reds_verdicts_landings_and_waits
             ("sim/a".to_string(), 0.5),
             ("sim/b".to_string(), 0.5),
             ("tests/main-red-1".to_string(), 0.5),
-            ("sim/b".to_string(), 0.0),
-            ("sim/b".to_string(), 0.0),
+            ("sim/b".to_string(), 1.0),
         ],
-        "sim/b's review subtask claimed half an hour in, its reviewer on it since"
+        "sim/b's review subtask claimed half an hour in; back in review, its reviewer's changes \
+         an hour after the first move back and no line of its yet since the second"
     );
     assert!(day.top.lead.is_some_and(|lead| lead.n == 2));
     assert!(!day.closed && day.until < start + DAY);

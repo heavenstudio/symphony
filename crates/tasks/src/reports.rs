@@ -277,7 +277,14 @@ fn happened(replayed: &[Replayed], hours: &mut [ReportHour], start: f64, until: 
                 hold.role == "reviewer" && hold.from <= from && hold.to.is_none_or(|t| t > from)
             });
             let staffed = if held {
-                Some(from)
+                // A reviewer kept the role from a round before: the first line since the move of
+                // a session holding it, up to the verdict that ends the stretch.
+                lines
+                    .iter()
+                    .map(|line| (line, task.at(line)))
+                    .filter(|(_, at)| from <= *at && *at <= to)
+                    .find(|(line, at)| task.held_by(&line.sender, "reviewer", *at))
+                    .map(|(_, at)| at)
             } else {
                 let joined = task
                     .holds

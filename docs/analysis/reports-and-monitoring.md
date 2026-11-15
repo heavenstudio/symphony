@@ -529,9 +529,10 @@ hours of any span sum to that span's figure (a day, a week, a local day):
 - **Waits**, each counted in the hour it ended:
   - approved to landed: the approve the landing went by, to the landing;
   - in review to a reviewer: a move into review, to the first session that joins the task as its
-    reviewer or claims a review subtask of it while it is in review; zero when a reviewer already
-    held it (so a re-review whose reviewer kept the role, the usual case, reads zero: this wait is
-    the first round's staffing), and no wait at all when none came before the task left review;
+    reviewer or claims a review subtask of it while it is in review, or to the first line since
+    the move, up to the verdict that ends the stretch, of a session holding its reviewer role then
+    (a re-review whose reviewer kept the role, the usual case, waits until that reviewer writes),
+    and no wait at all when none came before the task left review;
   - a `changes` verdict to its executor resuming: the first claim of the task after it, or a post,
     move or verdict by a session holding its executor role then, its release left out (board lines
     alone: an executor that works without a word reads as resumed at its move to review);
@@ -571,8 +572,9 @@ those groups is counted in the hour of its minute, by whose it is and what it sa
 agent posts already out of the queue, `resolved` say, never asked the owner and is counted nowhere,
 unless it was posted auto-approved. A card waits since the line that last put it in the queue: its
 posting, an agent's answer to the owner's comment, or an agent's question. A card is named by its
-page, `docs/DECISIONS.md` for main's and `@BRANCH/docs/DECISIONS.md` for one a live branch posted;
-once its branch lands, main holds the same lines.
+page, `docs/DECISIONS.md` for main's, a live branch's copy of one of main's cards included, and
+`@BRANCH/docs/DECISIONS.md` for one only a live branch posted; once its branch lands, main holds
+the same lines.
 
 What the register's history can tell: which line took a card out of the queue, whose it was, its
 verdict word and its minute. What it cannot tell yet:
