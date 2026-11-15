@@ -34,7 +34,8 @@ fn with_no_package_the_symphony_defaults_stand_and_only_the_project_rides_in() {
     let tree = project("");
     let page = page(SHELL, &tree.root, "", "");
     assert!(page.contains("<title>Lantern</title>"), "{page}");
-    assert!(page.contains("<link rel=\"icon\" href=\"data:,\">"));
+    assert!(!page.contains(NO_ICON), "{page}");
+    assert!(page.contains(&crate::mark::links("")), "{page}");
     assert!(
         !page.contains(THEME_MARK),
         "no theme element without a package: {page}"
@@ -46,6 +47,11 @@ fn with_no_package_the_symphony_defaults_stand_and_only_the_project_rides_in() {
     let view = view(&page);
     assert_eq!(view.base, "");
     assert_eq!(view.name, "Lantern");
+    assert_eq!(
+        (view.wordmark.as_str(), view.mark.as_str()),
+        ("", ""),
+        "the header opens with the Symphony's mark and wordmark"
+    );
     assert_eq!(view.guide, "", "no review guide, no link to one");
     tree.write("docs/REVIEW.md", "# Review\n");
     assert_eq!(
@@ -55,6 +61,7 @@ fn with_no_package_the_symphony_defaults_stand_and_only_the_project_rides_in() {
     );
     let shell = page
         .replace(&Project::element(&view), "")
+        .replace(&crate::mark::links(""), NO_ICON)
         .replace("Lantern", "Symphony");
     assert_eq!(shell, SHELL, "nothing else of the shell changes");
 }
@@ -76,6 +83,16 @@ fn a_package_names_the_tab_and_sets_icon_tokens_stylesheet_and_layouts_under_the
     assert!(
         page.contains("<link rel=\"icon\" href=\"/lantern/look/icon.svg?v="),
         "{page}"
+    );
+    assert!(
+        !page.contains("data:image/svg+xml") && !page.contains("apple-touch-icon"),
+        "none of the Symphony's icons beside the theme's: {page}"
+    );
+    let named = view(&page);
+    assert_eq!(
+        (named.wordmark.as_str(), named.mark.as_str()),
+        ("Lantern <Works>", "look/icon.svg"),
+        "the header opens with the theme's own"
     );
     let tokens = format!("<style {THEME_MARK}>:root{{--primary:#a33;}}\n</style>");
     let sheet = "<link rel=\"stylesheet\" href=\"/lantern/look/look.css?v=";
@@ -124,10 +141,7 @@ fn each_part_of_a_package_is_absent_on_its_own() {
         let tree = project(theme);
         let page = page(SHELL, &tree.root, "", "");
         assert!(!page.contains(absent), "{theme}: {page}");
-        assert!(
-            page.contains("<link rel=\"icon\" href=\"data:,\">"),
-            "{theme}"
-        );
+        assert!(page.contains(&crate::mark::links("")), "{theme}");
     }
 }
 

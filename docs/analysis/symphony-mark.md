@@ -2,10 +2,12 @@
 
 Four options for the mark and the wordmark Symphony's default look carries. The mark is C, the
 fermata, with its serif wordmark ([its card](../DECISIONS.md#symphony-mark)); the board task
-`app/symphony-mark-is-the-fermata` builds it. Each option is two files here: `X-icon.svg`, the tab's
-and the home screen's icon, a tile in the default theme's primary colour with the mark on it, its
-light and dark colours chosen inside the file; and `X-mark.svg`, the bare mark, which the header
+`app/symphony-mark-is-the-fermata` builds it. Each option was two files: an icon, the tab's
+and the home screen's, a tile in the default theme's primary colour with the mark on it, its
+light and dark colours chosen inside the file; and the bare mark, which the header
 draws in the page's own `--primary` token, so it follows light and dark and a project's colours.
+The fermata's two are the server's (`apps/symphony-server/src/mark/icon.svg` and `mark.svg`); the
+other options' are not kept.
 
 The pictures are a scratch project on a private server (port 0, a temporary machine folder), named
 Symphony, with each option set as its theme: `[theme] icon` for the tab, and a stylesheet that puts
@@ -15,7 +17,9 @@ headless browser shows no tab strip, so the tab is drawn beside the page from th
 at 2× as a Retina screen draws a 16 px icon. Taken with `just symphony-cli shot` on 2026-11-15 from
 main at 3f3d9186.
 
-## Where the name and the icon appear today
+## Where the name and the icon appeared before the mark
+
+On main at 3f3d9186, when the options were drawn:
 
 - **The tab's title** is the project's name: its theme's, else `[project] name`. This repository's
   pages say "Symphony", and so does the machine's project list.
@@ -63,7 +67,7 @@ px, the header 97 px tall, as it is today).
 
 ## What applying the choice touches
 
-What the board task `app/symphony-mark-is-the-fermata` builds, with `c-icon.svg` and `c-mark.svg`:
+What the board task `app/symphony-mark-is-the-fermata` builds, with the fermata's icon and mark:
 
 - **The default icon.** The icon file is the Symphony's own, embedded in the server: the
   icon of a project with no icon of its own, on its pages (in place of the shell's empty link) and

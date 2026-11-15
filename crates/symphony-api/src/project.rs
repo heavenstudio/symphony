@@ -33,6 +33,15 @@ pub struct ProjectView {
     /// draws and every request it sends lies under it ([`ProjectView::here`]).
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub base: String,
+    /// The name the header opens with in place of the Symphony's wordmark: the theme package's,
+    /// once the project's theme has a name or an icon of its own. Empty is the Symphony's.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub wordmark: String,
+    /// The icon the header opens with in place of the Symphony's mark: the theme package's own,
+    /// its file project-relative with no slash first, served under the base. Empty is the
+    /// Symphony's.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub mark: String,
 }
 
 impl ProjectView {

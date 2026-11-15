@@ -431,6 +431,11 @@ async fn dispatch(
     if let Some(plain) = respelled(&served, &path) {
         return redirect(&plain, request.uri());
     }
+    // The address's own icon, asked for by no project's page (a file opened raw, the address
+    // itself), is the Symphony's, never the started project's.
+    if path == "/favicon.ico" && referred(request.headers(), &served).is_none() {
+        return crate::mark::answer(request.uri().query());
+    }
     // A path of today is its project's only when that project answers it: a first segment no
     // project holds and no route of the Symphony's or that project's is a project id mistyped.
     let Some(owner) = referred(request.headers(), &served)

@@ -1,7 +1,8 @@
 //! A project's look: its theme package. A plugin provides one through its `Theme` seam, chosen by
 //! `[theme] package`, and the project file sets any part over it (`[theme]`: a name, an icon, a
 //! stylesheet, `[theme.tokens]` and `[theme.layouts]`). A project with neither has the Symphony's
-//! defaults: its own name, no icon, no tokens, no stylesheet, every region's default layout.
+//! defaults: its own name in the tab, the Symphony's mark (the fermata) as its icon and the
+//! Symphony's wordmark in its header, no tokens, no stylesheet, every region's default layout.
 //!
 //! The server serves the tokens as `/<id>/theme.css` with an ETag and inlines the same text into
 //! the head of every page it serves, so the first paint is right; the stylesheets follow it, and
@@ -29,9 +30,12 @@ pub const LAYOUTS: &[(&str, &[&str])] = &[
 pub struct Package {
     /// The plugin package it starts from, when a selected plugin provides the one the file names.
     pub package: Option<String>,
-    /// The name of the header and the tab.
+    /// The name of the tab: the theme's own, else the project's. The header shows it too once
+    /// the theme has a name or an icon of its own ([`Package::wordmark`]).
     pub name: String,
-    /// The icon of the header and the tab, project-relative.
+    /// Whether the theme gave the name: the plugin's package or the file's `[theme] name`.
+    pub named: bool,
+    /// The icon of the header and the tab, project-relative. None is the Symphony's mark.
     pub icon: Option<String>,
     /// Token names (`primary`, `background`, `font-sans`, …) and their CSS values.
     pub tokens: BTreeMap<String, String>,
@@ -57,6 +61,7 @@ impl Package {
             package.package = Some(wanted.clone());
             if !theme.name.trim().is_empty() {
                 package.name = theme.name;
+                package.named = true;
             }
             package.icon = theme.icon;
             package.tokens = theme
@@ -73,6 +78,7 @@ impl Package {
         }
         if let Some(name) = &file.name {
             package.name.clone_from(name);
+            package.named = true;
         }
         if file.icon.is_some() {
             package.icon.clone_from(&file.icon);
@@ -84,6 +90,21 @@ impl Package {
             .layouts
             .retain(|region, variant| default_of(region) != Some(variant.as_str()));
         package
+    }
+
+    /// The name the header opens with in place of the Symphony's wordmark: the package's, once
+    /// the theme has a name or an icon of its own, so an icon never stands beside the Symphony's
+    /// name. None is the Symphony's wordmark, the look of a project whose theme has neither.
+    pub fn wordmark(&self) -> Option<&str> {
+        (self.named || self.icon.is_some()).then_some(self.name.as_str())
+    }
+
+    /// The icon the header opens with in place of the Symphony's mark: the package's own, with no
+    /// slash first, as it is put under the project's base. Empty is the Symphony's mark.
+    pub fn mark(&self) -> &str {
+        self.icon
+            .as_deref()
+            .map_or("", |icon| icon.trim_start_matches('/'))
     }
 
     /// The tokens as CSS, `/<id>/theme.css`: one `:root` rule declaring `--NAME` for each, or

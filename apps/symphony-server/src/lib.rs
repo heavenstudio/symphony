@@ -20,6 +20,7 @@ pub mod gate;
 pub mod home;
 pub mod host;
 mod live;
+mod mark;
 pub mod log;
 mod media_files;
 mod pages;

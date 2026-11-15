@@ -13,13 +13,16 @@ import {
   useState,
 } from "react";
 import { Button } from "./button";
-import { crumbs, headerLinks, href, project, scoped } from "./project";
+import { crumbs, headerLinks, here, href, project, scoped } from "./project";
 import { getJson, said } from "./request";
 import type { Route } from "./route";
 import { field, list, publish, remember, snapshot, useWindowEvents } from "./shared";
 import { keepsPanelBaseline, MetadataReads } from "./state";
 import { load, save } from "./storage";
-import { PAGE_NAMES } from "./wire";
+import { PAGE_NAMES, type ProjectView } from "./wire";
+
+/** The Symphony's wordmark. */
+const SYMPHONY = "Symphony";
 
 /** What a page's feed tells the frame: read the metadata again, or what moved. */
 export interface FrameRefresh {
@@ -242,6 +245,37 @@ function BellIcon() {
   );
 }
 
+/** The fermata, the Symphony's mark, as the server's own pages draw it (`mark/mark.svg`). */
+function Mark() {
+  return (
+    <svg className="app-mark" viewBox="4.5 9.5 23 14.4" aria-hidden="true">
+      <path d="M5 21A11 11 0 0 1 27 21H24.6A8.6 7.2 0 0 0 7.4 21Z" />
+      <circle cx="16" cy="19.6" r="2.9" />
+    </svg>
+  );
+}
+
+/**
+ * What the header opens with: the Symphony's mark and wordmark, or in the place of each the icon
+ * and the name the project's theme has of its own (`ProjectView`'s `mark` and `wordmark`, which
+ * the server decides). It is no link: Home and Projects are beside it, and the keyboard's first
+ * stop stays the first of them.
+ */
+function Brand({ view }: { view: ProjectView }) {
+  const mark = view.mark ?? "";
+  const name = view.wordmark ?? "";
+  return (
+    <span className="app-brand">
+      {mark === "" ? <Mark /> : <img className="app-mark" src={here(view, `/${mark}`)} alt="" />}
+      {name === "" ? (
+        <span className="app-wordmark">{SYMPHONY}</span>
+      ) : (
+        <span className="app-name">{name}</span>
+      )}
+    </span>
+  );
+}
+
 /** The Symphony's own pages, which stay the global view's on a branch's document. */
 const GLOBAL = ["/", "/queue", "/tasks", "/reports", "/runs", "/agents"];
 
@@ -266,6 +300,7 @@ export function Frame({ route, children }: FrameProps) {
       <RefreshedContext.Provider value={refreshed}>
         <div className={open ? "app-frame quick-expanded" : "app-frame"}>
           <header className="app-header" id="top">
+            <Brand view={view} />
             {(view.base ?? "") !== "" && (
               <a href="/" data-native="true" className="project-switch">
                 {PAGE_NAMES.PROJECTS}

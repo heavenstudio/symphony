@@ -68,6 +68,51 @@ fn each_part_the_file_sets_is_taken_and_each_it_leaves_is_the_default() {
     }
 }
 
+/// Which mark and name a project's header opens with: the Symphony's wordmark only where its
+/// theme has neither a name nor an icon of its own, and the Symphony's mark wherever it has no
+/// icon, as the project's view carries them.
+#[test]
+fn a_header_is_the_symphonys_until_the_theme_has_a_name_or_an_icon_of_its_own() {
+    for (theme, wordmark, mark) in [
+        ("", None, ""),
+        ("[theme.tokens]\nprimary = \"red\"\n", None, ""),
+        ("[theme]\nstylesheet = \"s.css\"\n", None, ""),
+        ("[theme.layouts]\nheader = \"compact\"\n", None, ""),
+        // A package no plugin provides names nothing.
+        ("[theme]\npackage = \"nowhere\"\n", None, ""),
+        // A name alone keeps the Symphony's mark beside it.
+        ("[theme]\nname = \"Shown\"\n", Some("Shown"), ""),
+        // A theme may name itself as its project is named: the name is still its own.
+        ("[theme]\nname = \"Plain\"\n", Some("Plain"), ""),
+        // An icon alone stands beside the project's name, never the Symphony's.
+        ("[theme]\nicon = \"look/i.svg\"\n", Some("Plain"), "look/i.svg"),
+        (
+            "[theme]\nname = \"Shown\"\nicon = \"look/i.svg\"\n",
+            Some("Shown"),
+            "look/i.svg",
+        ),
+    ] {
+        let (_tree, project) = project(&format!("[project]\nname = \"Plain\"\n{theme}"));
+        let package = Package::of(&project);
+        assert_eq!(package.wordmark(), wordmark, "{theme}");
+        let view = project.view();
+        assert_eq!(view.wordmark, wordmark.unwrap_or_default(), "{theme}");
+        assert_eq!(view.mark, mark, "{theme}");
+        // The tab's name is the package's either way.
+        assert_eq!(view.name, wordmark.unwrap_or("Plain"), "{theme}");
+    }
+    // A plugin's package names its icon as it likes: the header's has no slash first, as the
+    // client puts it under the project's base.
+    let plugins = Package {
+        name: "Every".into(),
+        icon: Some("/look/i.svg".into()),
+        ..Package::default()
+    };
+    assert_eq!(plugins.mark(), "look/i.svg");
+    assert_eq!(plugins.wordmark(), Some("Every"));
+    assert_eq!(Package::default().mark(), "");
+}
+
 #[test]
 fn a_package_no_plugin_provides_is_the_defaults_and_named_by_the_lint() {
     let (_tree, project) = project("[theme]\npackage = \"nowhere\"\nicon = \"i.svg\"\n");

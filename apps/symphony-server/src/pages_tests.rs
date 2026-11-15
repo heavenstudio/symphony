@@ -15,6 +15,13 @@ fn lantern(theme: &str) -> Tree {
     tree
 }
 
+/// What a header in the Symphony's own look opens with: its mark and its wordmark.
+const SYMPHONYS: &str = "<span class=\"app-brand\"><svg \
+                         xmlns=\"http://www.w3.org/2000/svg\" class=\"app-mark\" viewBox=\"4.5 9.5 \
+                         23 14.4\" aria-hidden=\"true\"><path d=\"M5 21A11 11 0 0 1 27 21H24.6A8.6 \
+                         7.2 0 0 0 7.4 21Z\"/><circle cx=\"16\" cy=\"19.6\" r=\"2.9\"/></svg><span \
+                         class=\"app-wordmark\">Symphony</span></span>";
+
 async fn body(response: Response) -> String {
     let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
         .await
@@ -64,18 +71,25 @@ fn a_machine_page_wears_the_client_frame_and_the_symphony_icon() {
         "{page}"
     );
     assert!(!page.contains("href=\"data:,\""), "{page}");
-    assert!(page.contains(&format!("<link rel=\"icon\" href=\"{ICON}\">")));
+    // Its icons are the Symphony's: the tab's inline, the home screen's at the address's own.
+    assert!(page.contains(&crate::mark::links("")), "{page}");
+    assert!(
+        page.contains("<link rel=\"apple-touch-icon\" href=\"/favicon.ico?size=180\">"),
+        "{page}"
+    );
     assert!(page.contains("--background:#fbfaf7"), "the client's tokens");
     assert!(page.contains(".app-header {"), "the client's frame");
     assert!(page.contains(".projects li {"), "the pages' own styles");
     assert_eq!(page.matches(&format!("id=\"{NOTICE_STYLE}\"")).count(), 1);
-    // A miss leads back to the list, unlit, and its crumb says what it is.
+    assert!(page.contains(".app-brand .app-wordmark {"), "the mark's rules");
+    // The header opens with the Symphony's mark and wordmark; a miss leads back to the list,
+    // unlit, and its crumb says what it is.
     assert!(
-        page.contains(
-            "<header class=\"app-header\" id=\"top\"><nav class=\"app-pages\" \
+        page.contains(&format!(
+            "<header class=\"app-header\" id=\"top\">{SYMPHONYS}<nav class=\"app-pages\" \
              aria-label=\"Pages\"><a href=\"/\">Projects</a></nav><nav class=\"crumbs\" \
              aria-label=\"Breadcrumbs\"><span>not found</span></nav></header>"
-        ),
+        )),
         "{page}"
     );
     assert_eq!(notice_of(&page), "");
@@ -87,11 +101,11 @@ fn a_machine_page_wears_the_client_frame_and_the_symphony_icon() {
 fn the_machine_list_lights_its_one_page_and_has_no_crumb() {
     let page = machine("Symphony", "", "", "<ul class=\"projects\"></ul>");
     assert!(
-        page.contains(
-            "<header class=\"app-header\" id=\"top\"><nav class=\"app-pages\" \
+        page.contains(&format!(
+            "<header class=\"app-header\" id=\"top\">{SYMPHONYS}<nav class=\"app-pages\" \
              aria-label=\"Pages\"><a href=\"/\" class=\"active\" \
              aria-current=\"page\">Projects</a></nav></header>"
-        ),
+        )),
         "{page}"
     );
     assert!(!page.contains("class=\"crumbs\""), "{page}");
@@ -111,17 +125,23 @@ fn a_project_page_takes_its_theme_and_the_header_its_client_pages_draw_under_its
         "{page}"
     );
     assert!(page.contains("href=\"/lantern/look/icon.svg?v="), "{page}");
-    assert!(!page.contains(ICON), "the theme's icon wins: {page}");
+    assert!(
+        !page.contains("data:image/svg+xml") && !page.contains("apple-touch-icon"),
+        "the theme's icon wins, and the Symphony's is on no home screen for it: {page}"
+    );
     assert!(page.contains("--primary:#a33;"), "{page}");
     let theme = page.find("--primary:#a33;").unwrap();
     assert!(
         page.find("--primary:#2f5d9e").unwrap() < theme,
         "the theme's tokens come after the client's: {page}"
     );
-    // The switch, then the client's own pages in its order and with its names, under the base.
+    // The theme's own icon and name, then the switch, then the client's own pages in its order
+    // and with its names, under the base.
     assert!(
         page.contains(
-            "<header class=\"app-header\" id=\"top\"><a href=\"/\" \
+            "<header class=\"app-header\" id=\"top\"><span class=\"app-brand\"><img \
+             class=\"app-mark\" src=\"/lantern/look/icon.svg\" alt=\"\"><span \
+             class=\"app-name\">Lantern &lt;Works&gt;</span></span><a href=\"/\" \
              class=\"project-switch\">Projects</a><nav class=\"app-pages\" \
              aria-label=\"Pages\"><a href=\"/lantern/\">Home</a><a \
              href=\"/lantern/queue\">Queue</a><a href=\"/lantern/docs/\">Docs</a><a \
@@ -139,15 +159,26 @@ fn a_project_page_takes_its_theme_and_the_header_its_client_pages_draw_under_its
     assert!(!page.contains("class=\"project-switch\""), "{page}");
     assert!(!page.contains(">Projects<"), "{page}");
     assert!(
-        page.contains("<header class=\"app-header\" id=\"top\"><nav class=\"app-pages\""),
+        page.contains(&format!(
+            "<header class=\"app-header\" id=\"top\">{SYMPHONYS}<nav class=\"app-pages\""
+        )),
         "{page}"
     );
     assert!(page.contains("<a href=\"/tasks\">Board</a>"), "{page}");
-    assert!(page.contains(&format!("<link rel=\"icon\" href=\"{ICON}\">")));
+    assert!(page.contains(&crate::mark::links("")), "{page}");
     assert!(
         page.contains("<title>Not found · Lantern</title>"),
         "{page}"
     );
+    // A theme that names itself and has no icon keeps the Symphony's mark beside its name, and
+    // the Symphony's icons, under its base.
+    let named = lantern("[theme]\nname = \"Works\"\n");
+    let page = project(&named.root, "/lantern", "Not found", "not found", "");
+    assert!(
+        page.contains("</svg><span class=\"app-name\">Works</span></span>"),
+        "{page}"
+    );
+    assert!(page.contains(&crate::mark::links("/lantern")), "{page}");
 }
 
 #[tokio::test]

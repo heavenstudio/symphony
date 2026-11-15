@@ -172,7 +172,11 @@ to keep in), and it opens every IndexedDB transaction: this client opens none of
 A move between a kind of this client and a Dioxus kind stops one and runs the other as between
 two Dioxus kinds; a move within a kind is the shell's `review:navigate`, which `route.ts` follows. The header, the panel's `+` and bell
 and the feed are drawn here as the Dioxus frame draws them; the panel and its sheets stay the
-Dioxus program's kind, which the shell mounts beside any page.
+Dioxus program's kind, which the shell mounts beside any page. The header opens with the
+Symphony's mark, the fermata, and its wordmark, or in the place of each the icon and the name the
+project's theme has of its own (`ProjectView`'s `mark` and `wordmark`, which the server decides),
+as the server's own pages open theirs (`apps/symphony-server/src/mark.rs`, whose tests hold the two
+marks alike); it is no link, so the keyboard's first stop stays the project switch.
 
 The menus are this client's persistent kind `overlay` (`src/kinds/overlay.tsx`, `src/overlay.tsx`),
 which the shell mounts in `#overlay-root` on the first select or picture and keeps beside every
