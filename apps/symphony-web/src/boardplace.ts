@@ -309,9 +309,10 @@ export class PlaceKeeper {
   /**
    * Scroll the board sideways to `place`, if it is not there. Its scroller snaps a sideways scroll
    * to a column's start (board.css), and the browser snaps only to a column that shows in the
-   * scroller's height: down the board a short column has ended above the screen, and a scroll to
-   * it would snap to another. So it goes sideways at the columns' tops, where each shows, and
-   * back down, in one go the screen never draws between.
+   * scroller's height: wider than a phone, down the board a short column has ended above the
+   * screen, and a scroll to it would snap to another (a phone's columns stand as tall as the
+   * longest, each showing at any depth). So it goes sideways at the columns' tops, where each
+   * shows, and back down, in one go the screen never draws between.
    */
   private across(place: Place): void {
     const { scroller } = this;

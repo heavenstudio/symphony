@@ -160,8 +160,8 @@ fn a_recorded_test_run_moves_its_task_to_test_and_back_and_a_reviewers_stays_in_
     ));
     assert_eq!(
         chrome.eval(rail),
-        json!(136),
-        "the phone's 280px columns leave the rail narrow"
+        chrome.eval("Math.round(document.querySelector('.board-scroll').clientWidth)"),
+        "a phone's one column at a time, the rail as wide as the others"
     );
     assert_eq!(
         chrome.eval("document.documentElement.scrollWidth <= innerWidth"),
