@@ -1,7 +1,8 @@
 //! What keeps working across the rename of `nightly` to `release`: a brief's `--release COMMIT`
-//! hears the flag's new name; the first run moves the records, the checkout and its build from
-//! their old names, reads the old records as release runs, and writes to and closes the reds the
-//! old series still holds open.
+//! hears the flag's new name; a record of version 1, where the first run of a build that knew the
+//! new name moved it, reads as a release run, and the reds the old series still holds open are
+//! written to and closed. What a build older than the rename makes again under the old names, the
+//! records' folder and the checkout, is left as it is.
 
 use std::fs;
 
@@ -29,119 +30,15 @@ fn the_old_flag_is_refused_naming_the_new_one_and_runs_nothing() {
     assert!(!fixture.worktree().exists());
 }
 
-/// The checkout a build older than the rename made at `wt/nightly`, locked and marked as it did,
-/// with a build: its path.
-fn old_checkout(fixture: &Fixture) -> std::path::PathBuf {
+/// A record of a red run of the fixture's first commit, as a build older than the rename wrote it
+/// (version 1, its log named under `symphony/nightly/`), and its log, both where the first run of a
+/// build that knew the new name moved them; and `filed`, the red it filed.
+fn old_record(fixture: &Fixture, filed: &str) {
     let first = git(&fixture.main, &["rev-parse", "HEAD"]);
-    let old_tree = fixture.root.join("wt/nightly");
-    git(
-        &fixture.main,
-        &[
-            "worktree",
-            "add",
-            "-q",
-            "--detach",
-            "--lock",
-            "--reason",
-            "the Symphony nightly's checkout (docs/RELEASES.md)",
-            &old_tree.to_string_lossy(),
-            &first,
-        ],
-    );
-    fs::write(
-        fixture.main.join(".git/worktrees/nightly/symphony-nightly"),
-        format!("{}\n", old_tree.display()),
-    )
-    .unwrap();
-    fs::create_dir_all(old_tree.join(".target/debug")).unwrap();
-    fs::write(old_tree.join(".target/debug/kept"), "build\n").unwrap();
-    old_tree
-}
-
-#[test]
-fn a_process_in_what_an_older_build_left_keeps_it_where_it_is_and_stops_the_run() {
-    let fixture = Fixture::new();
-    let old_tree = old_checkout(&fixture);
-    let mut shell = std::process::Command::new("sleep")
-        .arg("120")
-        .current_dir(&old_tree)
-        .spawn()
-        .unwrap();
-    let (code, out, err) = fixture.release_at(NOW, &["--check", CHECK]);
-    let _ = shell.kill();
-    let _ = shell.wait();
-    assert_eq!(code, 1, "{out}{err}");
-    assert!(
-        err.contains(&format!(
-            "{} is in use by process {} (sleep), working there: nothing is checked while a \
-             process is in the run's folders; end it, or move it out of that folder",
-            old_tree.display(),
-            shell.id()
-        )),
-        "{err}"
-    );
-    assert!(!out.contains("moved the release run's checkout"), "{out}");
-    assert!(!out.contains("release: verify"), "nothing checked: {out}");
-    assert!(old_tree.join(".target/debug/kept").exists() && !fixture.worktree().exists());
-    let listed = git(&fixture.main, &["worktree", "list", "--porcelain"]);
-    assert!(
-        listed.contains("locked the Symphony nightly's checkout (docs/RELEASES.md)"),
-        "still that build's: {listed}"
-    );
-    assert_eq!(
-        fixture.reds().keys().collect::<Vec<_>>(),
-        ["tests/release-red-run"],
-        "a stop the owner clears"
-    );
-
-    // Gone, the next run moves it and gets through.
-    let out = fixture.night(NOW + 60.0, 0);
-    assert!(
-        out.contains(&format!(
-            "release: moved the release run's checkout from {} to {}",
-            old_tree.display(),
-            fixture.worktree().display()
-        )),
-        "{out}"
-    );
-    assert!(
-        out.contains("release: closed tests/release-red-run"),
-        "{out}"
-    );
-    assert!(!old_tree.exists());
-}
-
-#[test]
-fn the_first_run_moves_what_an_older_build_left_and_reads_its_runs_and_reds_as_its_own() {
-    let fixture = Fixture::new();
-    let first = git(&fixture.main, &["rev-parse", "HEAD"]);
-    let common = fixture.main.join(".git");
-    let old_store = common.join("symphony/nightly");
-    let old_tree = fixture.root.join("wt/nightly");
-    // The checkout a build older than the rename made, locked and marked as it did, with a build.
-    git(
-        &fixture.main,
-        &[
-            "worktree",
-            "add",
-            "-q",
-            "--detach",
-            "--lock",
-            "--reason",
-            "the Symphony nightly's checkout (docs/RELEASES.md)",
-            &old_tree.to_string_lossy(),
-            &first,
-        ],
-    );
-    fs::write(
-        common.join("worktrees/nightly/symphony-nightly"),
-        format!("{}\n", old_tree.display()),
-    )
-    .unwrap();
-    fs::create_dir_all(old_tree.join(".target/debug")).unwrap();
-    fs::write(old_tree.join(".target/debug/kept"), "build\n").unwrap();
-    // Its record of a red run of the first commit, with its log, and that red open on the board.
-    let log = old_store.join("logs/old/verify.log");
+    let named = fixture
+        .main
+        .join(".git/symphony/nightly/logs/old/verify.log");
+    let log = fixture.records().join("logs/old/verify.log");
     fs::create_dir_all(log.parent().unwrap()).unwrap();
     fs::write(&log, "red\n").unwrap();
     let record = serde_json::json!({
@@ -159,25 +56,33 @@ fn the_first_run_moves_what_an_older_build_left_and_reads_its_runs_and_reds_as_i
             "exit_code": 1,
             "signal": null,
             "seconds": 1.0,
-            "log": log,
+            "log": named,
         }],
-        "board": {"filed": ["tests/nightly-red-verify"]},
+        "board": {"filed": [filed]},
         "remote": "origin",
     });
-    fs::create_dir_all(old_store.join("runs")).unwrap();
-    fs::write(old_store.join("runs/old.json"), record.to_string()).unwrap();
+    fs::create_dir_all(fixture.records().join("runs")).unwrap();
+    fs::write(fixture.records().join("runs/old.json"), record.to_string()).unwrap();
+}
+
+#[test]
+fn an_older_builds_record_reads_as_a_release_run_and_its_open_red_is_closed_by_a_green() {
+    let fixture = Fixture::new();
+    let old_red = "tests/nightly-red-verify";
+    old_record(&fixture, old_red);
     let store = fixture.store();
     let filer = store
         .register(&NewSession::new("filer"))
         .unwrap()
         .row
         .handle;
-    let old_red = NewTask {
-        priority: 0,
-        red: Some("nightly".into()),
-        ..NewTask::new("tests/nightly-red-verify", "Nightly red: verify", &filer)
-    };
-    store.create(&old_red).unwrap();
+    store
+        .create(&NewTask {
+            priority: 0,
+            red: Some("nightly".into()),
+            ..NewTask::new(old_red, "Nightly red: verify", &filer)
+        })
+        .unwrap();
     let status_of = |slug: &str| {
         (store.tasks(None).unwrap().into_iter())
             .find(|task| task.slug == slug)
@@ -185,72 +90,107 @@ fn the_first_run_moves_what_an_older_build_left_and_reads_its_runs_and_reds_as_i
             .status
     };
 
-    // Read where that build left it, as a release run, and nothing moved by reading.
     let status = fixture.run(NOW, &["--status"], 0);
     assert!(
-        status.contains("last run: red, ")
-            && status.contains("; red tasks: tests/nightly-red-verify\n"),
+        status.contains("last run: red, ") && status.contains(&format!("; red tasks: {old_red}\n")),
         "{status}"
     );
-    assert!(old_store.join("runs/old.json").exists());
-    assert!(!fixture.records().exists(), "reading moves nothing");
 
-    // The first run moves the records and the checkout; red again, its red is the old task's.
+    // Red again, its red is the old task's, and nothing is filed beside it.
     fixture.land("red", Some("planted"), "a change that turns the check red");
     let out = fixture.night(NOW + 60.0, 1);
     assert!(
-        out.contains(&format!(
-            "release: moved the release run's records from {} to {}, where a build older than the \
-             rename to `just release` kept them\n",
-            old_store.display(),
-            fixture.records().display()
-        )),
-        "{out}"
-    );
-    assert!(
-        out.contains(&format!(
-            "release: moved the release run's checkout from {} to {}, where a build older than \
-             the rename to `just release` made it\n",
-            old_tree.display(),
-            fixture.worktree().display()
-        )),
-        "{out}"
-    );
-    assert!(
-        out.contains("release: updated tests/nightly-red-verify\n"),
+        out.contains(&format!("release: updated {old_red}\n")),
         "{out}"
     );
     assert!(fixture.reds().is_empty(), "nothing filed beside it: {out}");
-    assert!(!old_store.exists() && !old_tree.exists());
-    assert_eq!(
-        fs::read_to_string(fixture.records().join("logs/old/verify.log")).unwrap(),
-        "red\n"
-    );
-    assert_eq!(
-        fs::read_to_string(fixture.worktree().join(".target/debug/kept")).unwrap(),
-        "build\n",
-        "its build moved with it"
-    );
-    let listed = git(&fixture.main, &["worktree", "list", "--porcelain"]);
-    assert!(
-        listed.contains(&format!(
-            "worktree {}\nHEAD {}\ndetached\nlocked the Symphony release run's checkout \
-             (docs/RELEASES.md)",
-            fixture.worktree().display(),
-            git(&fixture.main, &["rev-parse", "HEAD"])
-        )),
-        "{listed}"
-    );
     assert_eq!(fixture.runs().len(), 2);
 
-    // Green: the old red closes, and nothing is moved again.
+    // Green: the old red closes.
     fixture.land("red", None, "the fix");
     let out = fixture.night(NOW + 120.0, 0);
     assert!(
-        out.contains("release: closed tests/nightly-red-verify\n"),
+        out.contains(&format!("release: closed {old_red}\n")),
         "{out}"
     );
-    assert!(!out.contains("release: moved"), "moved once: {out}");
-    assert_eq!(status_of("tests/nightly-red-verify"), "cancelled");
+    assert_eq!(status_of(old_red), "cancelled");
     assert!(fixture.reds().is_empty());
+}
+
+#[test]
+fn what_an_older_build_makes_again_under_the_old_names_is_left_as_it_is() {
+    let fixture = Fixture::new();
+    let first = git(&fixture.main, &["rev-parse", "HEAD"]);
+    let common = fixture.main.join(".git");
+    // Its records' folder, holding a record and the word of a run.
+    let old_store = common.join("symphony/nightly");
+    fs::create_dir_all(old_store.join("runs")).unwrap();
+    fs::write(old_store.join("runs/stray.json"), "{}\n").unwrap();
+    fs::write(old_store.join("running.json"), "{}\n").unwrap();
+    // Its checkout, locked and marked as it did, with a build and a process working in it.
+    let old_tree = fixture.root.join("wt/nightly");
+    let reason = "the Symphony nightly's checkout (docs/RELEASES.md)";
+    git(
+        &fixture.main,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "--detach",
+            "--lock",
+            "--reason",
+            reason,
+            &old_tree.to_string_lossy(),
+            &first,
+        ],
+    );
+    fs::write(
+        common.join("worktrees/nightly/symphony-nightly"),
+        format!("{}\n", old_tree.display()),
+    )
+    .unwrap();
+    fs::create_dir_all(old_tree.join(".target/debug")).unwrap();
+    fs::write(old_tree.join(".target/debug/kept"), "build\n").unwrap();
+    let mut working = std::process::Command::new("sleep")
+        .arg("120")
+        .current_dir(&old_tree)
+        .spawn()
+        .unwrap();
+
+    let ran = fixture.release_at(NOW, &["--check", CHECK]);
+    let _ = working.kill();
+    let _ = working.wait();
+    let (code, out, err) = ran;
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(
+        out.contains("release: verify"),
+        "checked in its own checkout: {out}"
+    );
+    assert!(
+        !out.contains("release: moved") && !err.contains("in use"),
+        "{out}{err}"
+    );
+    assert_eq!(fixture.runs().len(), 1, "recorded in its own folder alone");
+    assert_eq!(fixture.runs()[0]["result"], "green");
+    assert!(fixture.worktree().join(".git").exists());
+
+    assert_eq!(
+        fs::read_to_string(old_store.join("runs/stray.json")).unwrap(),
+        "{}\n"
+    );
+    assert!(old_store.join("running.json").exists());
+    assert!(
+        !old_store.join("run.lock").exists(),
+        "its lock is not taken"
+    );
+    assert_eq!(
+        fs::read_to_string(old_tree.join(".target/debug/kept")).unwrap(),
+        "build\n"
+    );
+    let listed = git(&fixture.main, &["worktree", "list", "--porcelain"]);
+    assert!(
+        listed.contains(&format!("detached\nlocked {reason}")),
+        "still that build's: {listed}"
+    );
+    assert!(fixture.reds().is_empty(), "nothing stopped the run");
 }
