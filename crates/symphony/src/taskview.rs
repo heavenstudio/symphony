@@ -160,8 +160,26 @@ fn brief_part(
     (typed_blocks(fragment, render), next)
 }
 
+/// Whether the subtask `slug`, with its instruction flag and status, is listed under its parent: on
+/// the task page's Subtasks, in their count and in the board's Task groups
+/// (`apps/symphony-server/src/api/task_board.rs`). Slices and errands are, and so is every open
+/// subtask. A finished instruction to do or to review the parent itself (`PARENT/work`,
+/// `PARENT/review`, the staffing pass's `PARENT/staff-review-N`) is not: the guidance filed those
+/// before a task's executor and reviewer worked on the task itself, its verdicts stand on the
+/// parent's thread, and the parent is the row. Open, it shows where its agent is at work.
+pub fn listed_under_parent(slug: &str, instruction: bool, status: &str) -> bool {
+    let name = slug.rsplit('/').next().unwrap_or(slug);
+    let staffs_parent = name == "work"
+        || name == "review"
+        || name
+            .strip_prefix("staff-review-")
+            .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()));
+    !(instruction && staffs_parent && ["done", "cancelled"].contains(&status))
+}
+
 /// The page of `record`, already read by the caller. Children are counted from the rows right under
-/// it: reading every descendant would load the whole board for a number.
+/// it, those [`listed_under_parent`]: reading every descendant would load the whole board for a
+/// number.
 pub fn page(
     store: &symphony_board::Store,
     record: &symphony_board::Task,
@@ -178,7 +196,9 @@ pub fn page(
         children_count: store
             .children(&record.slug)
             .map_err(|e| e.to_string())?
-            .len(),
+            .iter()
+            .filter(|child| listed_under_parent(&child.slug, child.instruction, &child.status))
+            .count(),
         brief_omitted: record.body.len() - brief_next,
         brief_next,
         brief_revision: digest(record.body.as_bytes()),

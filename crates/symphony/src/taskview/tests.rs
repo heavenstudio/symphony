@@ -43,6 +43,58 @@ fn project_task_counts_exclude_children_and_grandchildren() {
     );
 }
 
+/// Under its parent, a finished instruction to do or review the parent is no row of its own; a
+/// slice, an errand and any open subtask are.
+#[test]
+fn only_a_finished_instruction_to_work_on_or_review_its_parent_is_left_out_under_it() {
+    let staffing = [
+        "feature/work",
+        "feature/review",
+        "feature/staff-review-1",
+        "feature/staff-review-12",
+        "feature/part/work",
+        "work",
+    ];
+    for slug in staffing {
+        for finished in ["done", "cancelled"] {
+            assert!(
+                !listed_under_parent(slug, true, finished),
+                "{slug} {finished}"
+            );
+        }
+        for open in [
+            "concept",
+            "design",
+            "backlog",
+            "ready",
+            "in_progress",
+            "review",
+            "blocked",
+        ] {
+            assert!(listed_under_parent(slug, true, open), "{slug} {open}");
+        }
+        // A slice of that name is work on the parent's branch, listed whatever its status.
+        assert!(listed_under_parent(slug, false, "done"), "slice {slug}");
+    }
+    let errands = [
+        "feature/visual",
+        "feature/merge-main",
+        "feature/review-merge",
+        "feature/rework",
+        "feature/work-2",
+        "feature/reviews",
+        "feature/staff-review-",
+        "feature/staff-review-x",
+        "feature/staff-review-2b",
+        "feature/work/notes",
+    ];
+    for slug in errands {
+        for status in ["done", "cancelled", "ready"] {
+            assert!(listed_under_parent(slug, true, status), "{slug} {status}");
+        }
+    }
+}
+
 #[test]
 fn a_brief_within_the_limit_is_its_whole_reply() {
     let tree = Tree::new();
