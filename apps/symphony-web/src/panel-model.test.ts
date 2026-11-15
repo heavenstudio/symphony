@@ -245,6 +245,28 @@ describe("the chat's conversation", () => {
     expect(readAskReply({})).toBeNull();
     expect(readAskReply(null)).toBeNull();
   });
+
+  it("checks the fields the chat draws, each of its type, and no other", () => {
+    const { anchor: _, quote: __, ...drawn } = ask;
+    expect(readAskReply({ ask: drawn })).toEqual({ ask: drawn, recipient: null });
+    const later = { ...ask, anchor: 3, answers: "none" };
+    expect(readAskReply({ ask: later })).toEqual({ ask: later, recipient: null });
+    expect(readAskReply({ ask: { ...ask, id: -3 } })?.ask.id).toBe(-3);
+    const message = ask.messages[0];
+    for (const wrong of [
+      { ...ask, id: 1.5 },
+      { ...ask, id: 2 ** 53 },
+      { ...ask, status: undefined },
+      { ...ask, status: 1 },
+      { ...ask, messages: [{ ...message, seq: "1" }] },
+      { ...ask, messages: [{ ...message, by: undefined }] },
+      { ...ask, messages: [{ ...message, blocks: [{ type: "x" }] }] },
+    ]) {
+      expect(readAskReply({ ask: wrong }), JSON.stringify(wrong)).toBeNull();
+    }
+    const { blocks: ___, ...bare } = message as typeof message & { blocks?: unknown };
+    expect(readAskReply({ ask: { ...ask, messages: [bare] } })?.ask.messages).toEqual([bare]);
+  });
 });
 
 describe("the pending bar's steps", () => {

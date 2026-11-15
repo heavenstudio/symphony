@@ -2,8 +2,17 @@
 // news makes its conversation read again on, what a task save's reply says, the draft the frame and
 // the panel share, and which pending cards the bar's steps go to.
 
-import { absentOr, isFlag, isRecord, isText, listOf, maybe, shaped } from "./blocks-read";
-import { isAsk } from "./document-read";
+import {
+  absentOr,
+  type Check,
+  isBlocks,
+  isFlag,
+  isRecord,
+  isText,
+  listOf,
+  maybe,
+  shaped,
+} from "./blocks-read";
 import { Failure } from "./request";
 import { field, list } from "./shared";
 import type { ActivityItem, Ask, Pending, PendingItem } from "./wire";
@@ -57,17 +66,33 @@ export function readIds(value: unknown): string[] | null {
   return [...new Set(value as string[])].sort(codePointOrder);
 }
 
+/** What the chat draws of an ask: which it is, whether it is answered, and its messages. */
+export type ChatAsk = Pick<Ask, "id" | "status" | "messages">;
+
 /** What the chat draws of `/api/ask?format=blocks&id=`: the conversation, and whom chat goes to. */
 export interface AskReply {
-  ask: Ask;
+  ask: ChatAsk;
   recipient: string | null;
 }
 
+/** A Rust `i64`, read from a safe integer alone. */
+const isInteger: Check = (value) => Number.isSafeInteger(value);
+/**
+ * The fields of an ask the chat draws, each of its type, and nothing else: the chat's own check, so
+ * the panel imports none of the documents' readers (`document-read.ts`), whose chunk it would
+ * otherwise share with the documents' pages alone.
+ */
+const isChatAsk = shaped({
+  id: isInteger,
+  status: isText,
+  messages: listOf(shaped({ seq: isInteger, by: isText, blocks: absentOr(isBlocks) })),
+});
+
 /** `/api/ask`'s answer read, or none for one the chat cannot draw. */
 export function readAskReply(value: unknown): AskReply | null {
-  if (!isRecord(value) || !isAsk(value.ask) || !maybe(isText)(value.recipient)) return null;
+  if (!isRecord(value) || !isChatAsk(value.ask) || !maybe(isText)(value.recipient)) return null;
   const recipient = typeof value.recipient === "string" ? value.recipient : null;
-  return { ask: value.ask as Ask, recipient };
+  return { ask: value.ask as ChatAsk, recipient };
 }
 
 /** How long a batch of activity toasts stays up unless dismissed, in ms. */
