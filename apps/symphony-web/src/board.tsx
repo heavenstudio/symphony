@@ -14,6 +14,7 @@ import {
   useState,
 } from "react";
 import { focusedLink, focusedSlug, takeFocus, useKeptPlace } from "./boardplace";
+import { useOneColumnASwipe } from "./boardswipe";
 import { Button } from "./button";
 import { type Layout, layoutAt, rowHeight } from "./cardheight";
 import { sleep } from "./feed";
@@ -872,6 +873,7 @@ export function TaskBoard({
   // Back to the board draws it where the reader left it.
   const scroller = useRef<HTMLDivElement>(null);
   useKeptPlace(scroller, pipeline);
+  useOneColumnASwipe(scroller, pipeline);
   const named = statuses.length === 0 ? counts.map(([status]) => status) : statuses;
   // With no machine reporting this project's work, nothing can place a task in Build or Test: one
   // narrow rail says so once, where two empty columns would each repeat it.

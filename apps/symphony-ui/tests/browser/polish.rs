@@ -1316,14 +1316,15 @@ fn the_tasks_filters_read_apart_and_a_chosen_status_moves_nothing() {
                 (&before["status"], &before["finished"]),
                 "{width}px, {option}: choosing a status moved the filters: {before} then {after}"
             );
-            // Backlog stands in the row under the pipeline, as narrow on a phone.
+            // A phone's In progress is the board's scroller's width exactly; Backlog stands in the
+            // row under the pipeline, as narrow on a phone.
             let column = if phone && status == "in_progress" {
-                "document.querySelector('.board-scroll').clientWidth"
+                "=== document.querySelector('.board-scroll').clientWidth"
             } else {
-                "288"
+                "<= 288"
             };
             assert_eq!(
-                page.eval(&format!("Math.round(document.querySelector('.column[data-status={status}]').getBoundingClientRect().width) <= {column}")),
+                page.eval(&format!("Math.round(document.querySelector('.column[data-status={status}]').getBoundingClientRect().width) {column}")),
                 json!(true),
                 "{width}px, {option}: a status filtered alone is a column's width"
             );

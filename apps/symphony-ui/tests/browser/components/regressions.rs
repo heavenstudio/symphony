@@ -182,11 +182,12 @@ const OVER_SEND: &str = "(() => { const send = document.querySelector('#quick-sh
     list.style.pointerEvents = '';
     return over ?? null; })()";
 
-/// A tap that chooses an option clicks nothing under it. The popup chooses on the press's
-/// `pointerup` and closes, and the click the browser sends after it is aimed where the option
-/// was: on a phone the Add task form's p1 stood over its Send, so a tap choosing p1 sent the form.
-/// Chosen by a tap, the option over Send leaves the form unsent with its title, and a tap on Send
-/// afterwards sends it at that priority.
+/// A tap that chooses an option clicks nothing under it. The click the browser sends after a tap
+/// is aimed where the option was, so a popup (`apps/symphony-web/src/select-popup.tsx`) that chose
+/// at the tap's `pointerup` and closed let it land on what lay under the option: on a phone the
+/// Add task form's p1 stood over its Send, so a tap choosing p1 sent the form. Chosen by a tap, the
+/// option over Send leaves the form unsent with its title, and a tap on Send afterwards sends it at
+/// that priority.
 #[test]
 fn a_tap_that_chooses_a_priority_over_send_sends_nothing() {
     let site = site();
