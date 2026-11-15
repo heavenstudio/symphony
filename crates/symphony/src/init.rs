@@ -1062,7 +1062,7 @@ fn unmade_board(root: &Path, named: Option<&Path>) -> bool {
 /// then the other ones [`RUNS`] names. These are the binaries the workspace delivers, each held to
 /// a size budget (`symphony-build size-budget`, docs/CHECKS.md "Size budgets"). The workspace's
 /// `symphony-build`, the commands only its own build and release run use, is none of them.
-pub(crate) const BUILDS: [&str; 4] = ["symphony", "tasks", "agent-send", "symphony-server"];
+pub const BUILDS: [&str; 4] = ["symphony", "tasks", "agent-send", "symphony-server"];
 
 /// What runs the build `name`: the hooks that do, then each recipe of [`RUNS`] that does but those
 /// the project's justfile has of its own (`own`), which replace the Symphony's.

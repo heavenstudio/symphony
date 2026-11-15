@@ -45,6 +45,8 @@ const DIFFERENCES: Record<Difference, true> = { added: true, changed: true, remo
 const isCrumb = shaped({ name: isText, href: maybe(isText) });
 const isHeading = shaped({ level: isByte, anchor: isText, text: isText });
 const isFragment = shaped({ blocks: isBlocks });
+/** A Rust `[String; 2]`: two texts, no more and no fewer. */
+const isEnds: Check = (value) => isTexts(value) && (value as unknown[]).length === 2;
 const isSection = shaped({
   start: isSize,
   end: isSize,
@@ -53,6 +55,7 @@ const isSection = shaped({
   part: maybe(isSize),
   blocks: isBlocks,
   comparison: maybe(shaped({ kind: oneOf(DIFFERENCES), before: absentOr(isBlocks) })),
+  ends: maybe(isEnds),
 });
 const isCard = shaped({ slug: isText, state: isText, text: isText, group: isText, open: isFlag });
 const isTask = shaped({ slug: isText, title: isText, status: isText });

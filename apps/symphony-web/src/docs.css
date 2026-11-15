@@ -325,36 +325,45 @@
   font-size: var(--fs-md);
   margin: 1.4em 0 0.4em;
 }
-/* Adjacent lazy slots cannot collapse prose margins as sections in the original card did. */
-.doc-part:not(:has(form.comment:not([hidden]))):has(
-    > .doc-card,
-    > .doc-section > .section-prose > :is(h2, h3, h4, p, ul, ol, table, .callout):last-child
+/* Adjacent lazy slots cannot collapse prose margins as sections in the original card did. A
+ * neighbour not drawn yet ([data-pending]) counts as what it will draw as, by its part's classes
+ * from the outline (partForm, document.ts): an open card, and how its prose opens and closes. A
+ * margin of the part being read that changed as its neighbour drew would stop the browser's scroll
+ * anchoring for that frame, and the sections drawn above with it would push the reader down. */
+.doc-part:not(:has(form.comment:not([hidden]))):is(
+    .doc-part-card,
+    .doc-part-closes:has(> [data-pending]),
+    :has(> .doc-section > .section-prose > :is(h2, h3, h4, p, ul, ol, table, .callout):last-child)
   )
   + .doc-part:not(.doc-part-start)
   > .doc-section
   > .section-prose
   > :is(p, ul, ol, table, .callout):first-child,
-.doc-part:not(:has(form.comment:not([hidden]))):has(
-    > .doc-card,
-    > .doc-section > .section-prose > :is(h2, h3, h4, p, ul, ol, table, .callout):last-child
+.doc-part:not(:has(form.comment:not([hidden]))):is(
+    .doc-part-card,
+    .doc-part-closes:has(> [data-pending]),
+    :has(> .doc-section > .section-prose > :is(h2, h3, h4, p, ul, ol, table, .callout):last-child)
   )
   + .doc-part:not(.doc-part-start)
   > .doc-card {
   margin-top: 0;
 }
 .doc-part:not(.doc-part-end):not(:has(form.comment:not([hidden]))):has(
-    + .doc-part:not(.doc-part-start) > .doc-section > .section-prose > :is(p, ul, ol):first-child
+    + .doc-part:not(.doc-part-start) > .doc-section > .section-prose > :is(p, ul, ol):first-child,
+    + .doc-part-opens-text:not(.doc-part-start) > [data-pending]
   )
   .section-prose
   > :is(h2, h3, h4, table, .callout):last-child,
 .doc-part:not(.doc-part-end):not(:has(form.comment:not([hidden]))):has(
-    + .doc-part:not(.doc-part-start) > .doc-section > .section-prose > :is(p, ul, ol):first-child
+    + .doc-part:not(.doc-part-start) > .doc-section > .section-prose > :is(p, ul, ol):first-child,
+    + .doc-part-opens-text:not(.doc-part-start) > [data-pending]
   )
   > .doc-card {
   margin-bottom: 16px;
 }
 .doc-part:not(.doc-part-end):not(:has(form.comment:not([hidden]))):has(
-    + .doc-part:not(.doc-part-start) > .doc-card,
+    + .doc-part-card:not(.doc-part-start),
+    + .doc-part-opens-box:not(.doc-part-start) > [data-pending],
     + .doc-part:not(.doc-part-start)
       > .doc-section
       > .section-prose

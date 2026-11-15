@@ -26,13 +26,12 @@ import {
   visitLater,
   waits,
 } from "./cache";
-import { sleep } from "./feed";
 import type { FrameRefresh } from "./frame";
 import { type BoardRun, keepBoard, type PageBoard } from "./live";
 import { scoped } from "./project";
 import { Failure, getIf, getJson, said } from "./request";
 import { field, holdPlace, list } from "./shared";
-import { Backoff } from "./state";
+import { tryAgain } from "./state";
 import { holderHealth, merge, readItemChange, readListing, readTaskChange } from "./task";
 import { heardEntry, readHistory, readOffer, readTaskPage } from "./task-read";
 import type {
@@ -495,24 +494,24 @@ export class LiveTask {
   }
 
   /**
-   * Read with `read` and, while the page still shows this device's copy of `part` unanswered,
-   * again, waiting longer after each failure, until it is answered, the route changes or a newer
+   * Read with `read` and, while the page still waits for `part` (`unanswered`), again, waiting
+   * longer after each failure (`tryAgain`), until it is answered, the route changes or a newer
    * check starts (`round`). Settles once the first read is done.
    */
   private async answer(part: string, round: number, read: () => Promise<void>): Promise<void> {
     const selected = this.slug;
-    const current = () =>
-      this.current(selected) && this.d.round === round && waits(this.fresh, part);
+    const current = () => this.current(selected) && this.d.round === round && this.unanswered(part);
     await read();
-    if (!current()) return;
-    void (async () => {
-      const backoff = new Backoff();
-      while (current()) {
-        await sleep(backoff.after(0), this.signal);
-        if (!current()) return;
-        await read();
-      }
-    })();
+    void tryAgain(current, read, this.signal);
+  }
+
+  /**
+   * Whether the page still waits for `part`'s answer: it shows this device's copy unanswered, or,
+   * for the page, it shows none and the server did not say it has no such task (its read failed).
+   */
+  private unanswered(part: string): boolean {
+    if (waits(this.fresh, part)) return true;
+    return part === PAGE && !this.drawn() && this.d.missing !== this.slug;
   }
 
   /** Keep the branch the gates of `slug` were answered for: the moved branches the feed names are

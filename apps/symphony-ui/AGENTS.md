@@ -66,7 +66,7 @@ never the whole target, which the release run runs.
   `dx-path.sh` keeps there a hard link of the installed dx (a copy across volumes),
   replaced whole when it is not that file or its bytes (`tests/tools.rs`).
   The Rust build runs in a release snapshot under `/private/tmp` (`symphony-build release-inputs`,
-  `crates/symphony/src/cli/commands/release_inputs.rs`), named by the bytes of what the client's
+  `crates/symphony-build/src/commands/release_inputs.rs`), named by the bytes of what the client's
   build reads alone, so a change anywhere else needs no new distribution: the locked component
   source copied without changing its version or features, the caller's compiler flags, wrappers
   and resource settings kept, its configuration patches and lock accounting made in that private
@@ -473,7 +473,8 @@ never the whole target, which the release run runs.
   `postpone_live.rs`, the `page-docs` feature) left with them. What follows is the page's
   contract, which the React page keeps, its code named there.
   `document-live.ts` reads `/api/document?view=outline`: section keys,
-  source positions and anchors, with short card summaries. `NearViewport`
+  source positions and anchors, the kinds of each section's first and last blocks (`ends`), with
+  short card summaries. `NearViewport`
   mounts each block once near the screen; a collapsed
   card requests its body only when opened. Mounted blocks request their bodies
   and threads together from `/api/section?format=blocks&keys=JSON_LIST`. Excerpts

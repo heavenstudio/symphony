@@ -745,7 +745,7 @@ fn server_notices_survive_loading_and_failed_document_and_folder_routes() {
         site.hold_route(api, false);
         assert!(
             browser.wait_for(
-                "document.querySelector('.document-page[data-ready=failed] .trouble p')?.textContent==='Board snapshot unavailable (the server answered 500).'",
+                "document.querySelector('.document-page[data-ready=failed] .trouble p')?.textContent==='Board snapshot unavailable (the server answered 500). Trying again…'",
                 SHOWN
             ),
             "{path}: the initial fetch must really fail: {}",

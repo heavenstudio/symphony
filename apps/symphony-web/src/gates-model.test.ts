@@ -35,6 +35,7 @@ import {
 } from "./gates-model";
 import { NO_ANSWER } from "./request";
 import { aMachine, anOperation, aRole, aTask, aWork } from "./testing";
+import { NOT_IN_TIME } from "./trouble";
 import type { Gate, GatesSeen, MachineWork, Role, TaskGates, WorkState } from "./wire";
 import { moment, parseMoment } from "./words";
 
@@ -71,7 +72,9 @@ describe("the section's state from a read", () => {
   });
 
   it("says a read the server never answered took too long, and any other failure why", () => {
-    expect(gatesOf({ failed: NO_ANSWER })).toEqual({ kind: "slow" });
+    expect(gatesOf({ failed: NOT_IN_TIME })).toEqual({ kind: "slow" });
+    // A post's words are no read's.
+    expect(gatesOf({ failed: NO_ANSWER })).toEqual({ kind: "failed", why: NO_ANSWER });
     expect(gatesOf({ failed: "The server answered 500." })).toEqual({
       kind: "failed",
       why: "The server answered 500.",
