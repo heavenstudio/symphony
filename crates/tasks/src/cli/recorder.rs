@@ -38,12 +38,14 @@
 //! record is written once the board answered or the wait ran out.
 //!
 //! Nothing it records reaches the command's streams: a record it cannot write leaves the command
-//! running as it would unrecorded. A run's or a step's stdout and stderr are the one exception to
-//! the streams it hands on: each a pipe its recorder reads, copying what comes on to the caller's
-//! stream and, plain, into the run's log ([`crate::run_logs`]), which its lines name; the end line
-//! its size once both streams ended, or [`DRAIN`] after the command did. On macOS the pipes are made
-//! before its recorder is forked, which says whether it copies them, and the command takes them as
-//! its stdout and stderr only once it did; elsewhere the command is its child on them.
+//! running as it would unrecorded. A run's or a step's stdout and stderr, where neither its caller
+//! handed it is a terminal ([`copies`]), are the one exception to the streams it hands on: each a
+//! pipe its recorder reads, copying what comes on to the caller's stream and, plain, into the run's
+//! log ([`crate::run_logs`]), which its lines name; the end line its size once both streams ended,
+//! or [`DRAIN`] after the command did. At a terminal the command keeps the caller's streams and the
+//! run keeps no log. On macOS the pipes are made before its recorder is forked, which says whether
+//! it copies them, and the command takes them as its stdout and stderr only once it did; elsewhere
+//! the command is its child on them.
 //!
 //! It says something only of a command line it cannot read (2) and of a command that cannot start
 //! (127, or 126, as a shell says them). `tasks run --probe` answers [`PROBE`]: what a wrapper asks
@@ -454,6 +456,26 @@ fn unstarted(error: &io::Error) -> i32 {
     }
 }
 
+/// Whether a command's stdout and stderr go through its recorder and into its log, by whether it is
+/// a run or a step (`run`) and whether the stdout and stderr its caller handed it are each a
+/// terminal: only with neither, so a person at a terminal sees the command exactly as it would run
+/// unrecorded, its colours and its progress, and the run keeps no log.
+fn copies(run: bool, terminals: [bool; 2]) -> bool {
+    run && terminals == [false, false]
+}
+
+/// Whether this process's stdout and stderr are each a terminal.
+fn terminals() -> [bool; 2] {
+    // SAFETY: isatty only asks what a descriptor of this process's is.
+    [1, 2].map(|fd| unsafe { libc::isatty(fd) } == 1)
+}
+
+/// Whether `asked`'s streams are copied into its log in `env`, as [`copies`] decides for this
+/// process's own.
+fn teed(asked: &Asked, env: &Env) -> bool {
+    copies(role(asked, env).is_some(), terminals())
+}
+
 /// This process's stdout and stderr, each a descriptor of its own, close-on-exec: where the streams
 /// of a run's command are copied on to, as they went before. None when either is closed.
 fn originals() -> io::Result<[fs::File; 2]> {
@@ -477,8 +499,8 @@ fn child(asked: &Asked, env: &Env, err: &mut dyn Write, process: bool) -> i32 {
     let queued_at = crate::store::now();
     let waits = Waits::of(env);
     // A run's or a step's streams go through pipes its recorder copies on to this process's own and
-    // into its log, when this process's own can be written.
-    let originals = role(asked, env).and_then(|_| originals().ok());
+    // into its log, when neither of this process's own is a terminal and both can be written.
+    let originals = teed(asked, env).then(originals).and_then(Result::ok);
     // Its lease, and a run's tree and whether its checkout is clean, and its log, before its command
     // starts.
     let mut prepared =
@@ -1168,7 +1190,7 @@ fn settled(folder: &Path, ours: &str, same: crate::runs::Same, before: f64, with
 #[cfg(target_os = "macos")]
 mod supervised {
     use super::{
-        Asked, BEAT, Cpu, Prepared, Recording, SAMPLE, Waits, cpu_seconds, role, unstarted,
+        Asked, BEAT, Cpu, Prepared, Recording, SAMPLE, Waits, cpu_seconds, role, teed, unstarted,
     };
     use crate::cli::Env;
     use crate::cli::machine_work::recorded;
@@ -1205,8 +1227,8 @@ mod supervised {
         let mut argv: Vec<*const libc::c_char> = words.iter().map(|word| word.as_ptr()).collect();
         argv.push(std::ptr::null());
         // A run's or a step's streams go through pipes its recorder copies on and keeps, once it
-        // says it does.
-        let tee = role(asked, env).and_then(|_| Tee::new().ok());
+        // says it does, when neither of its caller's is a terminal.
+        let tee = teed(asked, env).then(Tee::new).and_then(Result::ok);
         if let Ok(id) = recorded::new_id()
             && let Some(teed) = watched(asked, env, (&id, queued_at), waits, tee.as_ref())
         {
@@ -2111,6 +2133,20 @@ mod tests {
 
     fn args(words: &[&str]) -> Vec<OsString> {
         words.iter().map(OsString::from).collect()
+    }
+
+    #[test]
+    fn a_runs_streams_go_into_its_log_only_where_neither_its_caller_handed_it_is_a_terminal() {
+        // An agent's run, the release run's, anything piped: copied and kept.
+        assert!(copies(true, [false, false]));
+        // A person at a terminal, on either stream: the command keeps the caller's own.
+        for terminals in [[true, false], [false, true], [true, true]] {
+            assert!(!copies(true, terminals), "{terminals:?}");
+        }
+        // An operation that is no run keeps its caller's streams whatever they are.
+        for terminals in [[false, false], [true, true]] {
+            assert!(!copies(false, terminals), "{terminals:?}");
+        }
     }
 
     #[test]

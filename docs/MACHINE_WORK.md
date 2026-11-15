@@ -109,9 +109,10 @@ A recorded command that is a run of a pipeline, or a step of one, also writes a 
 to the project's day files when it starts and when it ends ([RUNS](RUNS.md)):
 `--pipeline` names a run's, `--step` a step's inside a run. `--commit` and `--branch`
 name the commit it checks when that is not its checkout's (a review command's tip).
-Its stdout and stderr are the one exception to the descriptors above: each is a pipe its
-recorder reads, copying what comes on to the caller's stream and, plain, into the run's
-log ([RUNS](RUNS.md#logs)), so COMMAND sees no terminal there.
+Its stdout and stderr are the one exception to the descriptors above, unless the caller's
+stdout or stderr is a terminal: each is a pipe its recorder reads, copying what comes on to
+the caller's stream and, plain, into the run's log ([RUNS](RUNS.md#logs)). At a terminal
+COMMAND keeps the caller's streams and the run keeps no log.
 
 **Where.** The work folder is `symphony/tasks/work/` in the git common dir of the working
 directory, so every worktree of a repository records where its Symphony reads;

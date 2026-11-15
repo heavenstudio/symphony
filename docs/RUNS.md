@@ -130,9 +130,11 @@ A run's or a step's command writes its stdout and stderr to pipes its recorder r
 The recorder copies each read on to where that stream went before, as it came, and
 into the run's log without terminal escape codes: `logs/YYYY-MM-DD/RUN.log` in the
 day files' folder, the UTC day the run was asked for, its `run` the operation's id. So
-the caller sees the same bytes, but the command sees no terminal: a program that
-colours or draws progress only at a terminal does neither under a run. Any other
-recorded command keeps the caller's streams as they are, and writes no log.
+the caller sees the same bytes, though the command writes to pipes. A run whose
+caller's stdout or stderr is a terminal (a person at it) keeps the caller's streams as
+they are, its colours and progress unchanged, and writes no log, its lines naming none,
+as any other recorded command does; agents, the release run and anything piped get the
+log.
 
 - **Plain.** The log holds what the command wrote less ECMA-48's escapes: its control
   sequences (`ESC [`, parameters, a final byte), its strings (`ESC ]`, `ESC P`,
@@ -206,7 +208,7 @@ one that sees only the day files shows it as started, not as running.
 | `cpu_s` | CPU seconds, to the millisecond, once it ended (above) |
 | `cpu_partial` | beside `cpu_s`: `true` when known short, `false` when the recorder saw no loss, absent when it does not watch for one (above) |
 | `rerun_of` | the run it repeats (above) |
-| `log` | its log in the day files' folder ([Logs](#logs)), on its start line too; absent when its streams were not copied |
+| `log` | its log in the day files' folder ([Logs](#logs)), on its start line too; absent when its streams were not copied (its caller at a terminal) |
 | `log_bytes` | on its end line, the bytes its log held then; absent from the end line a sweep writes for a recorder that died |
 | `suites`, `failed` | left out until `tools/run-suites` fills them |
 
