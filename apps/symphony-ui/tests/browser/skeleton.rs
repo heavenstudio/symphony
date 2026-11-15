@@ -428,6 +428,76 @@ fn a_column_still_reading_its_tasks_draws_a_card_box_for_each_it_will_hold() {
     );
 }
 
+/// The counts count a task waiting on the owner's sign-off in its stage, as the server does, and
+/// the board draws it in the sign-off lane: a stage counts the rest. One whose every task waits
+/// there holds none and waits for none once its first page is in (no ghost, no shimmer, not busy);
+/// one with part of its tasks there counts the cards it holds, with no Load more of the others
+/// (app/board-column-with-an-empty-answer-stops-loading).
+#[test]
+fn a_stage_counts_none_of_its_tasks_drawn_in_the_sign_off_lane() {
+    let site = site();
+    let task = |slug: &str, status: &str| {
+        json!({"slug": slug, "title": format!("The task {slug}"), "body": "", "status": status,
+            "priority": 2, "parent": null, "created_by": "owner", "created": 0.0, "updated": 0.0,
+            "links": [], "depends": [], "roles": [], "instruction": false})
+    };
+    site.set_json(
+        "/api/task-board",
+        &json!({"tasks": [task("probe/asks", "review"), task("probe/half-asks", "in_progress"),
+                task("probe/half-plain", "in_progress")],
+            "statuses": ["in_progress", "review"], "counts": [["in_progress", 2], ["review", 1]],
+            "signoff": ["probe/asks", "probe/half-asks"], "next": null}),
+    );
+    let Some(mut browser) = open(&site, "/tasks", 1280, 900) else {
+        return;
+    };
+    let reads = [column_read("in_progress"), column_read("review")];
+    if let Err(stall) =
+        test_time::until_true("both stages' first pages answered", super::STALL, || {
+            let answers = site.answers("/api/task-board");
+            reads.iter().all(|read| {
+                answers
+                    .iter()
+                    .any(|answer| &answer.target == read && answer.status == 200)
+            }) || {
+                browser.pump(std::time::Duration::from_millis(25));
+                false
+            }
+        })
+    {
+        panic!("{stall}: {:?}", site.targets());
+    }
+    let shows = "(() => { const at = status => { const c = document.querySelector(`.column[data-status=${status}]`);
+            return {busy: c.getAttribute('aria-busy'), ghosts: c.querySelectorAll('.ghost-card').length,
+                cards: [...c.querySelectorAll('.taskcard')].map(card => card.dataset.slug),
+                count: c.querySelector('h2 .count').textContent,
+                more: [...c.querySelectorAll('button')].some(button => button.textContent.includes('Load more')),
+                shimmer: document.getAnimations().filter(a => a.animationName === 'shimmer' && c.contains(a.effect?.target)).length}; };
+        return {in_progress: at('in_progress'), review: at('review'), lane: at('signoff').cards}; })()";
+    let settled = format!(
+        "(s => s.review.busy === 'false' && s.in_progress.busy === 'false' && s.lane.length === 2
+            && s.in_progress.cards.length === 1)({shows})"
+    );
+    assert!(
+        browser.wait_for(&settled, SHOWN),
+        "a stage kept waiting once its first page answered, its tasks in the sign-off lane: {}",
+        browser.eval(shows)
+    );
+    assert_eq!(
+        browser.eval(shows),
+        json!({
+            "in_progress": {"busy": "false", "ghosts": 0, "cards": ["probe/half-plain"], "count": "1", "more": false, "shimmer": 0},
+            "review": {"busy": "false", "ghosts": 0, "cards": [], "count": "0", "more": false, "shimmer": 0},
+            "lane": ["probe/asks", "probe/half-asks"]}),
+        "each stage counts the cards it holds, its tasks in the sign-off lane left out: no ghost, no Load more"
+    );
+}
+
+/// The default view's read of the first page of the column `status`, as the board asks for it.
+fn column_read(status: &str) -> String {
+    format!("/api/task-board?q=&status={status}&days=1&activity=1&work=0")
+}
+
 /// What a page animates: the shimmer animations that run (`document.getAnimations()`), and the
 /// bars its placeholders hold, the parts not yet within reach of the screen.
 const ANIMATED: &str = "(() => ({running: document.getAnimations().filter(a => a.animationName === 'shimmer' && a.playState === 'running').length,
