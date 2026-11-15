@@ -352,7 +352,9 @@ never the whole target, which the release run runs.
   aborts its fetch (`request.rs`, `page-program`); a post never does. The board fetches counts
   first, then nearby column pages; finished work defaults to 24 hours, with
   a week switch and older paging. A feed event that changes what a view lists (a task, a message
-  while searching, the counts) reads the counts again 750 ms on, then the columns; the machine's
+  while searching, the counts) reads the counts again 750 ms on, then the columns, each its first
+  page as long as the rows it shows (the listing's `rows`), so the pages Load more brought, and the
+  reader's place deep in them, stay (`tests/browser/board_place.rs`); the machine's
   work does only when it puts a task in another stage (`MachineWork::places_alike`), not at each
   heartbeat. An answer is dropped only for another view (search, window, connection, board
   version, `BoardData.view` in `src/boardlive.tsx`) or a newer read of the same part, never for an event
