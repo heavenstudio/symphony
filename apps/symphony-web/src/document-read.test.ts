@@ -65,6 +65,10 @@ describe("a document's reads", () => {
     ["a block it does not know", ["document", "sections", 0, "blocks", 0], { type: "marquee" }],
     ["a difference it does not know", ["document", "sections", 0, "comparison", "kind"], "moved"],
     ["a difference's before of no blocks", ["document", "sections", 0, "comparison", "before"], 1],
+    ["a section's ends of one block", ["document", "sections", 0, "ends"], ["paragraph"]],
+    ["a section's ends of three", ["document", "sections", 0, "ends"], ["list", "code", "list"]],
+    ["a section's ends that are no texts", ["document", "sections", 0, "ends"], [1, 2]],
+    ["a section's ends that are no list", ["document", "sections", 0, "ends"], "paragraph"],
     ["a card that is not open or shut", ["document", "cards", 0, "open"], "yes"],
     ["a thread that is no fragment", ["document", "threads", "lamp-colour"], null],
     ["a task with no status", ["document", "tasks", 0, "status"], undefined],
@@ -81,6 +85,10 @@ describe("a document's reads", () => {
       null,
     );
     expect(readOutline(edited(outline, ["document", "crumbs", 0, "href"], null))).not.toBeNull();
+    // A section's ends, null or absent as in an outline kept from before the server named them.
+    expect(readOutline(edited(outline, ["document", "sections", 0, "ends"], null))).not.toBeNull();
+    const kept = edited(outline, ["document", "sections", 0, "ends"], undefined);
+    expect(readOutline(kept)).toEqual(kept);
   });
 
   it.each([

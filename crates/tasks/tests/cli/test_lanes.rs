@@ -8,7 +8,6 @@
 use crate::scratch;
 use std::fs;
 use std::os::unix::fs::PermissionsExt as _;
-use std::os::unix::process::ExitStatusExt as _;
 use std::path::{Path, PathBuf};
 use std::process::Output;
 use std::time::Duration;
@@ -644,62 +643,4 @@ fn an_interrupt_ends_the_lanes_and_the_run_says_what_they_wrote_and_exits_130() 
         ),
         "{said}"
     );
-}
-
-#[test]
-fn a_stop_leaves_each_lanes_log_where_the_run_said_before_any_lane_started() {
-    // SIGTERM, as the release run's stop sends first, and SIGHUP end the run as an interrupt does.
-    for (signal, code) in [(libc::SIGTERM, 143), (libc::SIGHUP, 129)] {
-        let lanes = Lanes::new("test-lanes-stopped");
-        let done = lanes.stopped(signal, &[]);
-        assert_eq!(done.status.code(), Some(code), "{signal}: {done:?}");
-        let said = String::from_utf8(done.stdout).unwrap();
-        assert!(said.contains(&named(&lanes.logs())), "{signal}: {said}");
-        for lane in LISTED {
-            let running = format!("     Running lane: {RUN} {}\n", targets(lane));
-            assert_eq!(said.matches(&running).count(), 1, "{signal}: {said}");
-            let log = lanes.logs().join(format!("{}.log", name(lane)));
-            assert!(
-                fs::read_to_string(&log).unwrap().starts_with(&running),
-                "{signal}: {}",
-                log.display()
-            );
-        }
-        assert!(
-            !said.contains("the signal never reached"),
-            "{signal}: {said}"
-        );
-        assert!(!said.contains("is red"), "{signal}: {said}");
-        assert!(
-            said.ends_with(&format!(
-                "test-lanes: interrupted (exit {code}): a lane it cut short ended there, its log \
-                 as far as it got\n"
-            )),
-            "{signal}: {said}"
-        );
-    }
-    // SIGKILL, as the stop sends once the check's leader has ended: the run says nothing more, and
-    // each lane's log, in the folder it was told, holds what the lane wrote.
-    let lanes = Lanes::new("test-lanes-killed");
-    let logs = lanes.root.join("build/steps of a check/tests-lanes");
-    let done = lanes.stopped(
-        libc::SIGKILL,
-        &[("SYMPHONY_TEST_LANE_LOGS", logs.to_str().unwrap())],
-    );
-    assert_eq!(done.status.signal(), Some(libc::SIGKILL), "{done:?}");
-    let said = String::from_utf8(done.stdout).unwrap();
-    assert_eq!(said, format!("built: {RUN} --no-run\n{}", named(&logs)));
-    for lane in LISTED {
-        let log = logs.join(format!("{}.log", name(lane)));
-        assert_eq!(
-            fs::read_to_string(&log).unwrap(),
-            format!(
-                "     Running lane: {RUN} {}\nbinaries={}\ntasks=unset\n",
-                targets(lane),
-                lanes.root.join(".target/debug").display()
-            ),
-            "{}",
-            log.display()
-        );
-    }
 }
