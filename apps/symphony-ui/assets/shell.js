@@ -261,22 +261,49 @@ window.reviewOverlay = request => {
     ensure("overlay").then(() => dispatchEvent(new Event("review:overlay")));
 };
 
+// The box that scrolls around `node`: its nearest ancestor that scrolls, or none for the page.
+function scrollerOf(node) {
+    while ((node = node.parentElement) && !(node.scrollHeight > node.clientHeight && /auto|scroll/.test(getComputedStyle(node).overflowY)));
+    return node;
+}
+
+// Whether `r` meets the window, cut to `clip` (a scroller's box) when there is one, and 600 px
+// above and below it.
+function reaches(r, clip) {
+    return r.bottom > r.top && r.right > r.left
+        && r.bottom > Math.max(0, clip?.top ?? 0) - 600 && r.top < Math.min(innerHeight, clip?.bottom ?? innerHeight) + 600
+        && r.right > Math.max(0, clip?.left ?? 0) && r.left < Math.min(innerWidth, clip?.right ?? innerWidth);
+}
+
+// Whether a reserved box waits to draw within its sentinel's reach: 600 px above and below what
+// its own scroller shows of the window (`.viewport-sentinel`, as `viewport::waits_near` decides),
+// for a box past it never draws.
+function pendingNear() {
+    return [...document.querySelectorAll("[data-pending=true]")].some(box => {
+        const r = box.getBoundingClientRect();
+        return reaches(r) && reaches(r, scrollerOf(box)?.getBoundingClientRect());
+    });
+}
+
+// Call `stop` on the reader's own scroll, click or key (typing in a field aside); what it returns
+// stops listening.
+function onGesture(stop) {
+    const gestures = ["wheel", "touchstart", "mousedown", "keydown"];
+    const gesture = event => { if (event.type !== "keydown" || !event.target.matches?.("input, textarea, select, [contenteditable]")) stop(); };
+    gestures.forEach(kind => addEventListener(kind, gesture, true));
+    return () => gestures.forEach(kind => removeEventListener(kind, gesture, true));
+}
+
 // A live update about to be drawn keeps what the reader looks at in place: the focused field on
 // the screen, else the first of `rows` on it. Only where the reader has scrolled: the box that
 // scrolls around it once it is off its top, else the page once it is. One at its top shows
 // what lands at the top. Each frame the box and then the page scroll by however far it moved, until
-// four pass with nothing moved and no reserved box waiting to draw within its sentinel's reach:
-// 600 px above and below what its own scroller shows of the window (`.viewport-sentinel`, as
-// `viewport::waits_near` decides), for a box past it never draws. However many frames that takes, as
-// on a slow phone, and 1800 at most (half a minute at sixty a second; a hidden tab draws none), a
-// backstop only a box that never draws reaches. A move the box and the page cannot take back (one
-// at its end) counts as nothing moved once it stays. The reader's own scroll, click or key (typing
-// in a field aside) ends the hold.
+// four pass with nothing moved and no reserved box waiting to draw within its sentinel's reach
+// (`pendingNear`). However many frames that takes, as on a slow phone, and 1800 at most (half a
+// minute at sixty a second; a hidden tab draws none), a backstop only a box that never draws
+// reaches. A move the box and the page cannot take back (one at its end) counts as nothing moved
+// once it stays. The reader's own scroll, click or key ends the hold.
 window.reviewHoldPlace = rows => {
-    const scrollerOf = node => {
-        while ((node = node.parentElement) && !(node.scrollHeight > node.clientHeight && /auto|scroll/.test(getComputedStyle(node).overflowY)));
-        return node;
-    };
     const shows = node => {
         const top = node.getBoundingClientRect().top, box = scrollerOf(node)?.getBoundingClientRect();
         return top >= 0 && top < innerHeight && (!box || (top >= box.top && top < box.bottom));
@@ -286,18 +313,9 @@ window.reviewHoldPlace = rows => {
     if (!anchor) return;
     const scroller = scrollerOf(anchor), page = scrollY > 0;
     if (scroller ? scroller.scrollTop <= 0 : !page) return;
-    const top = anchor.getBoundingClientRect().top, gestures = ["wheel", "touchstart", "mousedown", "keydown"];
+    const top = anchor.getBoundingClientRect().top;
     let stopped = false, frame = 0, quiet = 0, stuck = 0;
-    const gesture = event => { if (event.type !== "keydown" || !event.target.matches?.("input, textarea, select, [contenteditable]")) stopped = true; };
-    // Whether `r` meets the window, cut to `clip` (a scroller's box) when there is one, and 600 px
-    // above and below it.
-    const reaches = (r, clip) => r.bottom > r.top && r.right > r.left
-        && r.bottom > Math.max(0, clip?.top ?? 0) - 600 && r.top < Math.min(innerHeight, clip?.bottom ?? innerHeight) + 600
-        && r.right > Math.max(0, clip?.left ?? 0) && r.left < Math.min(innerWidth, clip?.right ?? innerWidth);
-    const near = () => [...document.querySelectorAll("[data-pending=true]")].some(box => {
-        const r = box.getBoundingClientRect();
-        return reaches(r) && reaches(r, scrollerOf(box)?.getBoundingClientRect());
-    });
+    const listening = onGesture(() => { stopped = true; });
     const hold = () => {
         if (!stopped && anchor.isConnected) {
             const moved = anchor.getBoundingClientRect().top - top;
@@ -312,15 +330,64 @@ window.reviewHoldPlace = rows => {
                 scrollBy(0, left);
                 left -= scrollY - before;
             }
-            quiet = Math.abs(moved - stuck) >= 0.5 || near() ? 0 : quiet + 1;
+            quiet = Math.abs(moved - stuck) >= 0.5 || pendingNear() ? 0 : quiet + 1;
             stuck = left;
             if (quiet < 4 && ++frame < 1800) return requestAnimationFrame(hold);
         }
-        gestures.forEach(kind => removeEventListener(kind, gesture, true));
+        listening();
     };
-    gestures.forEach(kind => addEventListener(kind, gesture, true));
     requestAnimationFrame(hold);
 };
+
+// The id the address's fragment names, decoded: empty for none, null for one that does not decode.
+function addressed() {
+    try { return decodeURIComponent(location.hash.slice(1)); } catch { return null; }
+}
+
+// A landing on the element the address names, held: wherever the page scrolls it into view
+// (`scrollAnchor`, here and in the web client's route.ts: at the page's scroll padding, just below
+// the header), it stays while the page draws around it. Each frame it is scrolled into view again
+// once something drawn moved it, or the page's length changed (one at the page's end may go higher
+// now), until four frames pass with nothing moved, no reserved box waiting within its sentinel's
+// reach (`pendingNear`) and no region still busy (`aria-busy`: a ghost not lifted, a read not in),
+// or 1800 at most, a backstop as `reviewHoldPlace`'s. The browser's own scroll anchoring holds
+// none of this while the page is under its ghost (`.settle`, hidden), and the sections that draw
+// above a card once the landing brings them near grow it by their pictures. It ends at the
+// reader's own scroll, click or key, at a scroll that moved the page and the element alike (a
+// script's, not a draw's: the browser's own pull back at the page's end aside), at the next landing
+// and once the address is another. One landing is held at a time.
+let landing = 0;
+function holdAnchor() {
+    const id = addressed(), held = ++landing, href = location.href;
+    let target = id && document.getElementById(id);
+    if (!target) return;
+    let stopped = false, frame = 0, quiet = 0;
+    const listening = onGesture(() => { stopped = true; });
+    const root = document.documentElement;
+    // Where the hold left things: the element's top, the page's scroll and its scroller's, and the
+    // page's length.
+    const place = () => [target.getBoundingClientRect().top, scrollY, scrollerOf(target)?.scrollTop ?? 0, root.scrollHeight];
+    let [top, y, inner, length] = place();
+    const hold = () => {
+        target = document.getElementById(id);
+        if (!stopped && held === landing && location.href === href && target) {
+            const [now, nowY, nowInner, nowLength] = place();
+            const scrolled = nowY - y + nowInner - inner;
+            const pulledBack = nowY < y && nowY >= nowLength - root.clientHeight - 1;
+            if (Math.abs(scrolled) < 0.5 || pulledBack || Math.abs(now - top + scrolled) >= 1) {
+                if (Math.abs(now - top) >= 0.5 || nowLength !== length) target.scrollIntoView();
+                const after = target.getBoundingClientRect().top;
+                const moved = Math.abs(now - top) >= 0.5 || Math.abs(after - top) >= 0.5;
+                [top, y, inner, length] = place();
+                quiet = moved || pendingNear() || document.querySelector("[aria-busy=true]") ? 0 : quiet + 1;
+                if (quiet < 4 && ++frame < 1800) return requestAnimationFrame(hold);
+            }
+        }
+        listening();
+    };
+    requestAnimationFrame(hold);
+}
+window.reviewHoldAnchor = holdAnchor;
 
 // `then`, once the page has drawn its data (none of its reads in flight for half a second, the
 // last of them answered) and the browser is idle.
@@ -502,8 +569,8 @@ function route(path) {
 }
 
 function scrollAnchor(preserveScroll) {
-    let id;
-    try { id = decodeURIComponent(location.hash.slice(1)); } catch { return; }
+    const id = addressed();
+    if (id === null) return;
     if (!id) { if (!preserveScroll) scrollTo(0, 0); return; }
     const target = document.getElementById(id);
     if (!target) return;
@@ -511,6 +578,7 @@ function scrollAnchor(preserveScroll) {
         if (parent instanceof HTMLDetailsElement) parent.open = true;
     }
     target.scrollIntoView();
+    holdAnchor();
 }
 
 async function show(generation, scroll) {

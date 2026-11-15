@@ -93,7 +93,9 @@ export function useAnchor(): string {
 }
 
 /**
- * Bring the element the address's fragment names into view, opening every `details` around it.
+ * Bring the element the address's fragment names into view, opening every `details` around it, and
+ * have the shell hold it there while the page draws around it (`reviewHoldAnchor`,
+ * assets/shell.js): a section drawn above it once the scroll brings it near would push it down.
  * Without a fragment it does nothing: the shell owns the guarded top reset, and a late load must
  * not undo a scroll made since.
  */
@@ -106,6 +108,7 @@ export function scrollAnchor(): void {
     if (node instanceof HTMLDetailsElement) node.open = true;
   }
   element.scrollIntoView();
+  (globalThis as { reviewHoldAnchor?: () => void }).reviewHoldAnchor?.();
 }
 
 /**

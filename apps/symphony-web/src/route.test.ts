@@ -96,6 +96,34 @@ describe("the page's route and its address", () => {
     expect(element.scrollIntoView).toHaveBeenCalledTimes(1);
   });
 
+  it("has the shell hold the element it brought into view, and nothing it did not", () => {
+    const steps: string[] = [];
+    const element = {
+      parentElement: null,
+      scrollIntoView: () => steps.push("scrolled"),
+    };
+    vi.stubGlobal("HTMLDetailsElement", class {});
+    vi.stubGlobal("reviewHoldAnchor", () => steps.push("held"));
+    vi.stubGlobal("document", { getElementById: (id: string) => (id === "you" ? element : null) });
+    vi.stubGlobal("location", { hash: "#you" });
+    scrollAnchor();
+    expect(steps).toEqual(["scrolled", "held"]);
+    for (const hash of ["#gone", ""]) {
+      vi.stubGlobal("location", { hash });
+      scrollAnchor();
+    }
+    expect(steps).toEqual(["scrolled", "held"]);
+  });
+
+  it("scrolls on its own where no shell holds the landing", () => {
+    const element = { parentElement: null, scrollIntoView: vi.fn() };
+    vi.stubGlobal("HTMLDetailsElement", class {});
+    vi.stubGlobal("document", { getElementById: () => element });
+    vi.stubGlobal("location", { hash: "#you" });
+    expect(() => scrollAnchor()).not.toThrow();
+    expect(element.scrollIntoView).toHaveBeenCalledTimes(1);
+  });
+
   it("says the reader is engaged by a busy region or a field with the focus", () => {
     const page = (busy: boolean, field: boolean) => ({
       querySelector: () => (busy ? {} : null),
