@@ -36,7 +36,8 @@ const card = (
 const task = (title: string, parent: string | null, links: string[], roles: [string, string][]) =>
   card("bulk/ready-1", 3, title, parent, links, roles);
 
-const desk = (one: Card) => rowHeight(one, [], "desk");
+const DESK = layoutAt(1280);
+const desk = (one: Card) => rowHeight(one, [], DESK);
 
 describe("a card's lines", () => {
   // Measured in a 1280 px window: 238 px of "A task whose title is long enough to" fits a line,
@@ -135,15 +136,16 @@ describe("a card's height", () => {
   // A card with build and test phases has their row above its links, 6 px below the title.
   it("gives its phases a row of their own", () => {
     const short = task("Short", null, [], []);
-    const phases = (labels: string[]) => rowHeight(short, labels, "desk");
+    const phases = (labels: string[]) => rowHeight(short, labels, DESK);
     expect(phases([])).toBe(81);
     expect(phases(["Build running · alpha"])).toBe(81 + 6 + 21);
     // Phases of 147 and 144 px do not share a 244 px row.
     expect(phases(["Build running · alpha", "Test queued · alpha"])).toBe(81 + 6 + 21 + 4 + 21);
   });
 
-  // Cards from this repository's own board, drawn by the client in headless Chrome at 1280 and
-  // 390 px, with the heights they drew at. (The machine is renamed.)
+  // Cards from this repository's own board, drawn by the client in headless Chrome at 1280 px and
+  // in a 280 px column (a narrow window's, and a 390 px phone's before its column took the board's
+  // width), with the heights they drew at. (The machine is renamed.)
   it("reserves what the live board drew", () => {
     const observed = "Observed Build running · build-host-mini.local · partial inventory";
     const cards: [Card, string[], [number, number]][] = [
@@ -233,9 +235,10 @@ describe("a card's height", () => {
       ],
     ];
     for (const [one, phases, drew] of cards) {
-      expect([rowHeight(one, phases, "desk"), rowHeight(one, phases, "phone")], one.slug).toEqual(
-        drew,
-      );
+      expect(
+        [rowHeight(one, phases, DESK), rowHeight(one, phases, layoutAt(700))],
+        one.slug,
+      ).toEqual(drew);
     }
   });
 });
@@ -284,17 +287,40 @@ describe("a card's chips", () => {
 });
 
 describe("a card's layout", () => {
-  // A window of 760 px or less draws the phone's narrower columns, and a p0 or p1 card's text is
-  // 3 px narrower than another's, behind its wider left border.
+  // A window wider than 760 px draws a desk's 288 px columns, whatever its width; one of 601 to
+  // 760 px a narrow window's 280 px; one of 600 px or less a phone's one column as wide as the
+  // board, the page's width less 16 px each side; and a card's text is 44 px narrower than its
+  // column. A p0 or p1 card's text is 3 px narrower than another's, behind its wider left border.
   it("and its priority set how wide its text runs", () => {
-    expect(layoutAt(390)).toBe("phone");
-    expect(layoutAt(760)).toBe("phone");
-    expect(layoutAt(761)).toBe("desk");
-    expect(layoutAt(1280)).toBe("desk");
-    expect(textWidth("desk", 2)).toBe(2440);
-    expect(textWidth("desk", 1)).toBe(2410);
-    expect(textWidth("desk", 0)).toBe(2410);
-    expect(textWidth("phone", 3)).toBe(2360);
-    expect(textWidth("phone", 0)).toBe(2330);
+    expect(layoutAt(761)).toBe(2440);
+    expect(layoutAt(1280)).toBe(2440);
+    expect(layoutAt(1280, 1265)).toBe(2440);
+    expect(layoutAt(760)).toBe(2360);
+    expect(layoutAt(601)).toBe(2360);
+    expect(layoutAt(760, 745)).toBe(2360);
+    expect(layoutAt(600)).toBe(5240);
+    expect(layoutAt(390)).toBe(3140);
+    expect(layoutAt(312)).toBe(2360);
+    // The page inside a scrollbar's room, which most phones' takes none of.
+    expect(layoutAt(600, 585)).toBe(5090);
+    // A window narrower than what stands beside the text leaves it none.
+    expect(layoutAt(60)).toBe(0);
+    expect(textWidth(layoutAt(1280), 2)).toBe(2440);
+    expect(textWidth(layoutAt(1280), 1)).toBe(2410);
+    expect(textWidth(layoutAt(1280), 0)).toBe(2410);
+    expect(textWidth(layoutAt(390), 3)).toBe(3140);
+    expect(textWidth(layoutAt(390), 0)).toBe(3110);
+  });
+
+  // The same card takes fewer lines in a wider phone's column.
+  it("on a phone follows the window's width", () => {
+    const long = task(
+      "A title long enough to wrap onto more lines in a narrow phone's column than in a wide one's, and on again to show it, as a long title on the live board does",
+      null,
+      [],
+      [],
+    );
+    expect(rowHeight(long, [], layoutAt(320))).toBeGreaterThan(rowHeight(long, [], layoutAt(390)));
+    expect(rowHeight(long, [], layoutAt(390))).toBeGreaterThan(rowHeight(long, [], layoutAt(600)));
   });
 });

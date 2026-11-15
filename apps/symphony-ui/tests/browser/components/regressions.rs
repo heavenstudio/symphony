@@ -172,6 +172,101 @@ fn select_options_stay_visible_at_panel_and_page_bottom_on_desktop_short_window_
     }
 }
 
+/// The option of the open popup that stands over the Add task form's Send, the popup let through
+/// to find what lies under it: its text and middle, or null.
+const OVER_SEND: &str = "(() => { const send = document.querySelector('#quick-sheet form button[type=submit]'), list = document.querySelector('[role=listbox]');
+    list.style.pointerEvents = 'none';
+    const over = [...list.querySelectorAll('[role=option]')].map(option => { const r = option.getBoundingClientRect();
+        return {text: option.textContent.trim(), x: r.x + r.width / 2, y: r.y + r.height / 2}; })
+        .find(at => send.contains(document.elementFromPoint(at.x, at.y)));
+    list.style.pointerEvents = '';
+    return over ?? null; })()";
+
+/// A tap that chooses an option clicks nothing under it. The popup chooses on the press's
+/// `pointerup` and closes, and the click the browser sends after it is aimed where the option
+/// was: on a phone the Add task form's p1 stood over its Send, so a tap choosing p1 sent the form.
+/// Chosen by a tap, the option over Send leaves the form unsent with its title, and a tap on Send
+/// afterwards sends it at that priority.
+#[test]
+fn a_tap_that_chooses_a_priority_over_send_sends_nothing() {
+    let site = site();
+    let Some(mut page) = chrome() else { return };
+    site.set_json("/api/quick-task", &json!({"slug":"inbox/tapped"}));
+    page.call(
+        "Emulation.setTouchEmulationEnabled",
+        json!({"enabled":true,"maxTouchPoints":5}),
+    );
+    page.call(
+        "Emulation.setDeviceMetricsOverride",
+        json!({"width":390,"height":844,"deviceScaleFactor":1,"mobile":true}),
+    );
+    page.open(&site.url("/"));
+    open_panel(&mut page);
+    task_tab(&mut page);
+    page.eval("const field = document.getElementById('quick-title'); field.value = 'A tapped task'; field.dispatchEvent(new Event('input', {bubbles: true}));
+        window.submits = 0; document.addEventListener('submit', () => window.submits++, true); true");
+    let trigger = "#quick-sheet button[aria-haspopup=listbox]";
+    page.tap(trigger);
+    popup_ready(&mut page);
+    let over = page.eval(OVER_SEND);
+    assert!(
+        over.is_object(),
+        "the setup: an option stands over Send: {}",
+        page.eval("[...document.querySelectorAll('[role=option], #quick-sheet form button[type=submit]')].map(e => [e.textContent.trim(), e.getBoundingClientRect().toJSON()])")
+    );
+    page.tap_at(&over["x"], &over["y"]);
+    assert!(
+        page.wait_for(
+            &format!(
+                "document.querySelector({})?.textContent.trim() === {} && document.querySelector('[role=listbox]') === null",
+                json!(trigger),
+                over["text"]
+            ),
+            SHOWN
+        ),
+        "the tap never chose {}",
+        over["text"]
+    );
+    // A later tap, on the details: once it takes the focus, every event of the first was handled.
+    page.tap("#quick-text");
+    assert!(page.wait_for("document.activeElement?.id === 'quick-text'", SHOWN));
+    let sent = |site: &crate::site::Site| {
+        site.posts()
+            .into_iter()
+            .filter(|(path, _)| path == "/api/quick-task")
+            .map(|(_, body)| body)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        sent(&site),
+        Vec::<serde_json::Value>::new(),
+        "the tap sent the form"
+    );
+    assert_eq!(
+        page.eval("[window.submits, document.getElementById('quick-title').value]"),
+        json!([0, "A tapped task"])
+    );
+    page.tap("#quick-sheet form button[type=submit]");
+    if let Err(stall) = test_time::until_true("Send's post", crate::STALL, || {
+        !sent(&site).is_empty() || {
+            page.pump(std::time::Duration::from_millis(25));
+            false
+        }
+    }) {
+        panic!("{stall}");
+    }
+    let posted = sent(&site);
+    let chosen: f64 = over["text"].as_str().unwrap()[1..].parse().unwrap();
+    assert_eq!(
+        (
+            posted.len(),
+            posted[0]["title"].clone(),
+            posted[0]["priority"].as_f64()
+        ),
+        (1, json!("A tapped task"), Some(chosen))
+    );
+}
+
 #[test]
 fn a_long_recipient_list_scrolls_each_option_into_view_and_repositions_on_resize() {
     let site = site();

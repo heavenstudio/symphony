@@ -4,6 +4,8 @@ mod component;
 mod deferred;
 #[cfg(all(feature = "overlays", any(target_arch = "wasm32", test)))]
 mod position;
+#[cfg(all(feature = "overlays", target_arch = "wasm32"))]
+mod tap;
 #[cfg(not(target_arch = "wasm32"))]
 pub use component::SelectPopup as SelectField;
 #[cfg(feature = "overlays")]

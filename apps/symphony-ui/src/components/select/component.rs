@@ -46,6 +46,9 @@ pub fn SelectPopup(
         .as_ref()
         .map(|id| format!("{id}-popup"))
         .unwrap_or(popup_id);
+    // A press that chooses an option clicks nothing under it once the popup has closed.
+    #[cfg(target_arch = "wasm32")]
+    use_hook(super::tap::keep_taps);
     #[cfg(target_arch = "wasm32")]
     let positioned = use_hook(|| {
         std::rc::Rc::new(std::cell::RefCell::new(

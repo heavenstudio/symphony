@@ -269,8 +269,9 @@ fn a_task_filed_above_the_reader_moves_nothing_in_their_column() {
 const TAPPED: &str = "document.querySelector('.column[data-status=in_progress]:hover') !== null";
 
 /// On a touch screen the pointer stays where the reader last tapped, not where they are: on a
-/// phone, a tap on a card of In progress, a swipe back to Ready, In progress still peeking in
-/// beside it under the tap, and a task filed at Ready's top moves nothing of Ready on the screen.
+/// narrow one, whose columns stand side by side (a phone's show one at a time), a tap on a card of
+/// In progress, a swipe back to Ready, In progress still beside it under the tap, and a task filed
+/// at Ready's top moves nothing of Ready on the screen.
 #[test]
 fn a_touch_screens_last_tap_leaves_the_readers_column_in_place() {
     let mut board = tasks();
@@ -289,7 +290,7 @@ fn a_touch_screens_last_tap_leaves_the_readers_column_in_place() {
         "Emulation.setTouchEmulationEnabled",
         json!({"enabled":true,"maxTouchPoints":5}),
     );
-    open(&mut page, &served, 390, 844);
+    open(&mut page, &served, 700, 1000);
     assert_eq!(
         page.eval("matchMedia('(hover: none)').matches"),
         json!(true),

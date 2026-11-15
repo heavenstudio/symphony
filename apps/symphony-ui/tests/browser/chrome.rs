@@ -103,6 +103,30 @@ impl Chrome {
     pub fn pump(&mut self, window: Duration) {
         self.0.pump(window).asserted();
     }
+
+    /// A tap of a finger at the middle of what `selector` names, on a page emulating a touch
+    /// screen (`Emulation.setTouchEmulationEnabled`).
+    pub fn tap(&mut self, selector: &str) {
+        let at = self.eval(&format!(
+            "(() => {{ const r = document.querySelector({})?.getBoundingClientRect(); return r ? [r.left + r.width / 2, r.top + r.height / 2] : null; }})()",
+            json!(selector)
+        ));
+        assert!(at.is_array(), "nothing to tap at {selector}");
+        self.tap_at(&at[0], &at[1]);
+    }
+
+    /// A tap of a finger at `x`, `y` of the page's viewport.
+    pub fn tap_at(&mut self, x: &Value, y: &Value) {
+        for (kind, points) in [
+            ("touchStart", json!([{"x": x, "y": y}])),
+            ("touchEnd", json!([])),
+        ] {
+            self.call(
+                "Input.dispatchTouchEvent",
+                json!({"type": kind, "touchPoints": points}),
+            );
+        }
+    }
 }
 
 /// Reexecuted in a separate process as a launch's leash, with no shared mutable environment in
