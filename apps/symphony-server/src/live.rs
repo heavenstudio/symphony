@@ -158,7 +158,10 @@ pub(crate) struct Hub {
     /// ([`symphony_board::project::locate_quick`]): what [`Hub::holds_its_project`] holds the
     /// folder to. None for a folder no repository held.
     repository: Option<PathBuf>,
-    signoff_pending: Mutex<Option<Pending>>,
+    /// The cards waiting on the owner and how many plugin gate answers had come back
+    /// ([`symphony::gates::Kept::answered`]) when the sign-off lane was last read: either moving
+    /// reads it again.
+    signoff_pending: Mutex<Option<(Pending, usize)>>,
     task_activity: Mutex<Option<(i64, Vec<symphony_api::ActivityItem>)>>,
     worker: Mutex<Option<std::thread::JoinHandle<()>>>,
     /// The board's health over the last hour: the clock's dispatch passes, the idle sweeps and
@@ -1183,22 +1186,26 @@ impl Hub {
                 .signoff_pending
                 .lock()
                 .unwrap_or_else(|e| e.into_inner());
+            // Counted before the read, so an answer that comes back during it reads it again.
+            let answered = self.gates.answered();
             if message_changed
-                || previous.as_ref() != Some(&pending)
+                || previous
+                    .as_ref()
+                    .is_none_or(|(cards, then)| *cards != pending || *then != answered)
                 || held
                     .last
                     .as_ref()
                     .is_none_or(|old| !tasks_alike(&old.tasks, &next.tasks))
             {
                 let signoff = measured("signoff", || {
-                    taskview::signoff(store, &next.tasks, &pending)
+                    taskview::signoff(store, &next.tasks, &pending, &self.root, &self.gates)
                 })?;
                 let mut old = self.task_signoff.lock().unwrap_or_else(|e| e.into_inner());
                 if *old != signoff {
                     changed.push(json!({"region":"task-signoff", "data":signoff}));
                     *old = signoff;
                 }
-                *previous = Some(pending);
+                *previous = Some((pending, answered));
             }
         }
         let mut cursor = self

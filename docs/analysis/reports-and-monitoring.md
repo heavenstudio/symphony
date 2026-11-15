@@ -285,11 +285,15 @@ nightly, dependency, review, adversarial, owner and holds. A plugin's gate with 
 Symphony's takes its place. Its review stamp, for example, is the approval its landing counts.
 
 **The rule: the more specific level's answer replaces the general one's**, everywhere, for the
-level that gives it. A project's gate
-replaces Symphony's same-named gate for that project everywhere the board judges it: the task page,
-the sign-off lane, the PULL digest orchestrators get, the move to blocked and the default land
-command. A project with no answer keeps Symphony's gates. The page's part is
-`tools/task-gates-seam`; the rest is `tools/project-gates-everywhere`.
+level that gives it. A project's gate replaces Symphony's same-named gate for that project
+everywhere the board judges it. The task page, its timeline and the sign-off lane read the plugin's
+answer, the lane only what the server keeps of it. The PULL digest orchestrators get runs in the
+board's own processes, which link no plugin, so it reads what the project's landing records of the
+tip: a review whose landing waits on no review there is not unreviewed
+([TASKS](../TASKS.md#the-pipeline-alarm)). The move to blocked and the land are the project's own
+`land` recipe, or the default land by the project's own stamp catalogue
+([TASKS](../TASKS.md#needed-stamps)). A project with no answer keeps Symphony's gates. The page's
+part is `tools/task-gates-seam`; the rest is `tools/project-gates-everywhere`.
 
 **Decided: A, a typed gates seam**, as the pictures below draw it.
 - A plugin trait answers a task's gates as data: name, state, by, when, commit, why, detail, link

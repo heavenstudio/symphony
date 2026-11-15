@@ -36,7 +36,10 @@
 //!
 //! A task in review whose record says a reviewer asked changes of the branch's tip now is rework:
 //! the digest and the alarm count it in progress, its live executor as executing, and one nobody
-//! executes as orphaned ([`REWORK_NOTE`]).
+//! executes as orphaned ([`REWORK_NOTE`]). One whose record judged the tip now and names neither
+//! `review` nor `changes` waits on no reviewer: the project's own review gate, as its landing keeps
+//! it, is met or not needed there and replaces the Symphony's, so it is not `review_unreviewed`.
+//! A record of another tip, or none, leaves the Symphony's: a review with no reviewer is listed.
 //!
 //! A recipient told a digest before hears the next one as what changed since the last one it
 //! received ([`Digest::changes_since`], against what that one said, [`Said`]): the header's counts
@@ -789,8 +792,12 @@ pub(crate) fn digest_on(
                     }
                 }
             }
+            // A review whose landing's record says it waits on no review at the tip now waits on
+            // no reviewer: the project's review gate replaces the Symphony's.
             "review"
-                if !present(t, "reviewer") && !below(t).iter().any(|c| present(c, "executor")) =>
+                if !present(t, "reviewer")
+                    && !below(t).iter().any(|c| present(c, "executor"))
+                    && !waits.get(t.slug.as_str()).is_some_and(Judged::reviewed) =>
             {
                 found
                     .entry("review_unreviewed")

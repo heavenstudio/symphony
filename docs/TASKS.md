@@ -1447,6 +1447,17 @@ a **Waiting for your sign-off** lane above the board. That needs all of:
 Deciding the card puts the task back in its column. Work nobody holds, or that
 posted no card, stays in its own column however its documents stand.
 
+A project's plugin that answers a gate named `owner` for the task ([Gates](#gates))
+decides in that rule's place: the open, executed task is in the lane while that
+gate is held, card or none. The lane reads the answer the server keeps for the
+task's status and tip and never asks the plugin for it, so only a read of the
+task's gates (its page) starts the plugin's work. A plugin that has answered
+`owner` for any task but keeps no answer for this one as it is now (a new tip, a
+new status) leaves it out of the lane, unknown, never judged by its cards
+instead; where the plugin's answer has no `owner` gate, or it never answered
+one, the rule above holds. The lane is read again when the board, a message, a
+waiting card or a kept answer changes.
+
 **`done` is reached only by a reviewer's `approve` (its orchestrator's, on a fast
 fix), a landing, for a subtask its executor's `done`, or a close as covered by another
 task's landing ([above](#a-task-another-landing-covers)).** A session
@@ -2571,6 +2582,13 @@ in progress is.
   a fresh assessment, is a request of its own, whatever its text: it waits on
   the branch's next move from that tip. The record answered, retried, is no
   new request: PULL and the alarm count the task in review alike.
+- **No review waited on.** A record that judged the branch's tip now and names
+  neither `review` nor `changes` says the project's own review gate, as its
+  landing keeps it, is met there or not needed, and that replaces the
+  Symphony's: PULL does not list the task as `review_unreviewed`, though no
+  reviewer holds it. A record of another tip, or none, says nothing of the tip
+  now, and a review with no reviewer is listed. A reader that cannot see the
+  task's branch takes the record as judging its tip, as for rework.
 
 ## Where the time goes
 

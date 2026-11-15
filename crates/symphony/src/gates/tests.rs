@@ -1242,6 +1242,44 @@ fn a_failing_answerer_stands_in_for_the_names_it_answered_so_the_symphonys_never
     assert!(gates.iter().all(|gate| gate.detail == "land exited 2"));
 }
 
+#[test]
+fn kept_theirs_reads_what_is_kept_asking_nothing_and_stands_in_where_nothing_is() {
+    let root = Path::new("/project");
+    let fake = Fake::leaked(false);
+    *fake.answers.lock().unwrap() = vec!["owner"];
+    let kept = Kept::new(limits(PATIENT, Duration::from_secs(30)));
+    let answerers: [(&str, &'static dyn Gates); 1] = [("plugin", fake)];
+    // Before it ever answered: one unknown gate named after it, so the Symphony's owner stays.
+    let none = kept_theirs(&kept, root, &answerers, &asked(TIP));
+    assert_eq!(names(&none), [("fake", GateState::Unknown)]);
+    assert_eq!(none[0].detail, NOT_KEPT);
+    let own = || vec![gate("owner", GateState::Held)];
+    assert_eq!(names(&merged(own(), none))[0], ("owner", GateState::Held));
+    assert_eq!((fake.calls(), kept.answered()), (0, 0), "nothing asked");
+    // An answer kept is read as given, once counted; reading it counts and asks nothing.
+    theirs(&kept, root, &answerers, &asked(TIP));
+    assert_eq!(kept.answered(), 1);
+    let read = kept_theirs(&kept, root, &answerers, &asked(TIP));
+    assert_eq!(names(&read), [("owner", GateState::Met)]);
+    assert_eq!(names(&merged(own(), read)), [("owner", GateState::Met)]);
+    assert_eq!((fake.calls(), kept.answered()), (1, 1));
+    // Nothing kept for another tip: the gate it answered before is unknown in the Symphony's place.
+    let other = kept_theirs(&kept, root, &answerers, &asked(OLD));
+    assert_eq!(names(&other), [("owner", GateState::Unknown)]);
+    assert_eq!(other[0].detail, NOT_KEPT);
+    assert_eq!(
+        names(&merged(own(), other)),
+        [("owner", GateState::Unknown)]
+    );
+    // An error kept is its detail, and counts as an answer.
+    *fake.error.lock().unwrap() = Some("land exited 2\nits log".into());
+    theirs(&kept, root, &answerers, &asked(OLD));
+    let failed = kept_theirs(&kept, root, &answerers, &asked(OLD));
+    assert_eq!(names(&failed), [("owner", GateState::Unknown)]);
+    assert_eq!(failed[0].detail, "land exited 2");
+    assert_eq!((fake.calls(), kept.answered()), (2, 2));
+}
+
 /// `git` with `args` in `root`, its output trimmed.
 fn git(root: &Path, args: &[&str]) -> String {
     let done = symphony_board::sys::output(

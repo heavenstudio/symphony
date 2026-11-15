@@ -4,6 +4,7 @@
 
 use super::{ALARM_SHOWN, InReview, ReviewAlarm};
 use crate::alarm::{self, Alarm, Assessed, Line, Standing, Thresholds, Tip, Tips, Written};
+use crate::land::needs::REVIEW;
 use crate::{Error, Store, Task};
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -48,6 +49,14 @@ impl Judged<'_> {
     /// not answered since.
     pub(super) fn reworking(&self) -> bool {
         self.current() && self.waits.changes() && !self.answered
+    }
+
+    /// Whether its landing waits on no review at the tip now: the record judged that tip and names
+    /// neither [`REVIEW`] nor [`alarm::CHANGES`]. The project's own review gate, as its landing
+    /// keeps it, is then met or not needed there, so the task waits on no reviewer
+    /// (`review_unreviewed`); a record of another tip says nothing of the tip now.
+    pub(super) fn reviewed(&self) -> bool {
+        self.current() && !self.waits.changes() && !self.waits.on.contains(&REVIEW)
     }
 
     /// What its line in the alarm says of it, after when it went into review.
