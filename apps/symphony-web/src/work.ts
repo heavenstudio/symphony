@@ -4,8 +4,8 @@
 //
 // `taskStage`, `placesAlike`, `canPlace`, `conflicts` and `isFor` carry crates/symphony-api's own
 // (task_stage.rs, machine_work.rs), held to the Rust by the cases it writes (wire.cases.json,
-// work.test.ts). The phases carry the Dioxus client's (apps/symphony-ui/src/machine_work.rs), held
-// by the browser tests; a machine's occupancy and the work a lost feed shows are the agents page's
+// work.test.ts). The phases carry the Dioxus client's (its `machine_work.rs`, gone with its task
+// page), held by the browser tests; a machine's occupancy and the work a lost feed shows are the agents page's
 // (agents-live.ts).
 
 import { field } from "./shared";

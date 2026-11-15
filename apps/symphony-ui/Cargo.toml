@@ -53,10 +53,6 @@ futures-util = { version = "0.3", default-features = false }
 js-sys = "0.3"
 serde = { version = "1", features = ["derive"] }
 serde-wasm-bindgen = "0.6"
-# The client draws no task's plugin board fields, so its tasks are read without them: their reader
-# is about 18 KB gzipped of the board's first visit. In this table alone, so the host's builds (its
-# tests, and the server's in one workspace run) keep the reader (crates/symphony-api, the feature).
-symphony-api = { path = "../../crates/symphony-api", features = ["skip-board-fields"] }
 # Configure Dioxus's existing tracing dependency for the shipped browser build. Warning/error
 # diagnostics remain; trace/debug/info spans otherwise retain large VDOM debug formatters.
 tracing = { version = "0.1", default-features = false, features = ["release_max_level_warn"] }
@@ -114,21 +110,18 @@ web-sys = { version = "0.3", features = [
 # One feature per platform: dx turns on the one it builds for. The desktop window's feature comes with
 # its slice (tools/python-zero/desktop), with its platform hooks (src/platform.rs).
 [features]
-default = ["web", "page-tasks", "overlays"]
+default = ["web", "overlays"]
 web = ["dioxus/web"]
-page-tasks = []
 page-panel = ["overlays"]
 # The overlay host alone: a select's popup and the picture viewer, for every other module.
 page-overlay = ["overlays"]
-# A task's timeline, loaded into the task page's box once the page is idle (task_timeline.rs).
-page-timeline = []
-# The program: the task pages, the chat, the menus and the timeline as one program that
-# `dx bundle --wasm-split` cuts into a main module and a chunk for each (src/split.rs, bundle.sh).
-# Its kinds share one runtime.
-page-program = ["page-tasks", "page-panel", "page-overlay", "page-timeline"]
+# The program: the chat and the menus every page mounts, as one program that `dx bundle --wasm-split`
+# cuts into a main module and a chunk for each, and one for the media layer (src/split.rs,
+# bundle.sh). Its kinds share one runtime.
+page-program = ["page-panel", "page-overlay"]
 overlays = ["dep:dioxus-primitives", "dep:dioxus-icons"]
 # Opt-in only: the release bundles never enable the development runtime or devtools.
-devtools = ["dioxus/devtools", "page-tasks", "page-panel", "page-overlay", "page-timeline"]
+devtools = ["dioxus/devtools", "page-panel", "page-overlay"]
 # The size probes' bins (probes/), for `cargo symphony-ui size` only.
 size-probe = []
 

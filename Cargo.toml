@@ -76,8 +76,10 @@ tract-linalg = { version = "=0.22.5", default-features = false, features = ["mul
 toml = { version = "1", default-features = false, features = ["parse", "serde", "std"] }
 # The wire types' TypeScript declarations, for the web client (apps/symphony-web/src/wire.ts): the
 # derive behind the `typescript` feature of symphony-api and symphony-blocks, which only the
-# generator turns on. serde-compat (its default) reads the types' serde attributes.
-ts-rs = "12.0.1"
+# generator turns on. serde-compat (its default) reads the types' serde attributes; it says
+# nothing of the one it cannot read, `#[serde(other)]` (a word a newer server sends read as a known
+# variant), which it leaves to the client's guards, as its declaration names that variant all the same.
+ts-rs = { version = "12.0.1", features = ["no-serde-warnings"] }
 
 # The lints every member inherits. `just lint-rs` runs clippy with `-D warnings`, so each `warn` below
 # is red at the gate and a warning in a plain build; `forbid` is for the few that no `expect` may
