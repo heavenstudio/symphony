@@ -116,6 +116,10 @@ fn a_refusal_says_what_is_followed_instead() {
     );
     let scheme = Server::parse("https://127.0.0.1").unwrap_err().to_string();
     assert!(scheme.contains("not https://"), "{scheme}");
+    let credentials = Server::parse("http://owner:secret@127.0.0.1")
+        .unwrap_err()
+        .to_string();
+    assert_eq!(credentials, "a server's address names no user or password");
     let unreadable = Server::parse("studio").unwrap_err().to_string();
     assert!(
         unreadable.ends_with("write it as http://HOST:PORT"),
