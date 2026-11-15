@@ -1,10 +1,11 @@
 //! A card on a document page, read in the release client: its verdict form fits a phone's card,
 //! its history keeps an agent's paragraphs, its buttons rank by what the owner does next, with
-//! Escape closing the editor, a link's excerpt opens beside the link's own button, callouts are
+//! Escape closing the editor and Later and its Undo keeping the focus on their button, a link's
+//! excerpt opens beside the link's own button, callouts are
 //! as wide as cards, a comment's colour its own, and a folded card opened by a click draws the
 //! picture in its history.
 use super::components::key;
-use super::{SHOWN, chrome, chrome::Chrome, common, dist, site::Site};
+use super::{SHOWN, chrome, chrome::Chrome, common, dist, focus_on, site::Site};
 use serde_json::{Value, json};
 
 const DOC: &str = "docs/PROBE.md";
@@ -393,6 +394,77 @@ fn document_card_escape_closes_the_editor_and_returns_focus_to_its_opener() {
         "Escape closes the comment editor and focus returns to + comment: {}",
         page.eval("document.activeElement.outerHTML.slice(0, 200)")
     );
+}
+
+/// A card's Later and its Undo, pressed from the keyboard in its editor, keep the focus on their
+/// button while the server saves and once the card's new state is drawn: Undo Later after Later,
+/// Later after Undo. The server names no card next, so the reader stays on this one.
+#[test]
+fn document_card_later_and_undo_keep_the_focus_on_their_button() {
+    let site = probe_site();
+    site.set_json("/api/postponed", &json!([]));
+    site.set_json(
+        "/api/postpone",
+        &json!({"ok":true,"changed":false,"next":null}),
+    );
+    let Some(mut page) = chrome() else { return };
+    viewport(&mut page, 1280, 900);
+    page.open(&site.url(&format!("/{DOC}")));
+    open_editor(&mut page, "alpha");
+    let later = "[data-doc-key=\"card:alpha\"] .verdict-choices .postpone-controls button";
+    for (pressed, postponed, label) in [
+        (("Enter", "Enter", 13), json!(["alpha"]), "Undo Later"),
+        ((" ", "Space", 32), json!([]), "Later"),
+    ] {
+        page.eval(&format!("document.querySelector({}).focus()", json!(later)));
+        site.hold_route("/api/postpone", true);
+        key(&mut page, pressed.0, pressed.1, pressed.2);
+        assert!(
+            page.wait_for(
+                &format!(
+                    "document.querySelector({})?.textContent === 'Saving…'",
+                    json!(later)
+                ),
+                SHOWN
+            ),
+            "{} says it saves",
+            pressed.0
+        );
+        assert_eq!(
+            focus_on(&mut page, later),
+            json!(true),
+            "the focus stays on the button while it saves"
+        );
+        assert!(
+            page.wait_for(&crate::drawn_disabled(later), SHOWN),
+            "it looks as a disabled button does while it saves"
+        );
+        site.set_json("/api/postponed", &postponed);
+        site.hold_route("/api/postpone", false);
+        assert!(
+            page.wait_for(
+                &format!(
+                    "document.querySelector({})?.textContent === {}",
+                    json!(later),
+                    json!(label)
+                ),
+                SHOWN
+            ),
+            "the card's button says {label} once the server answered"
+        );
+        assert_eq!(
+            focus_on(&mut page, later),
+            json!(true),
+            "once the server answered, the focus is on {label}"
+        );
+    }
+    let actions: Vec<_> = site
+        .posts()
+        .into_iter()
+        .filter(|(path, body)| path == "/api/postpone" && body["action"] != "seen")
+        .map(|(_, body)| body["action"].clone())
+        .collect();
+    assert_eq!(actions, [json!("later"), json!("undo")]);
 }
 
 /// The card `alpha`'s show button and its excerpt: the button's label and state, the gap between

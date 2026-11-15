@@ -29,7 +29,7 @@
 //! is bounded by the run's time and stops when the run is told to (HUP, INT or TERM, [`group`]).
 
 mod board;
-mod cadence;
+pub(crate) mod cadence;
 mod candidate;
 mod checks;
 mod consumers;

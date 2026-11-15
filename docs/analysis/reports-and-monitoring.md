@@ -401,9 +401,15 @@ Where a defect was caught, how long it took to fix, and whether it escaped.
 
 - **Time to fix**: a red task's creation to done; a `changes` verdict to the next move to review.
 - **Escape rate**: of the tasks landed in a window, how many a later main red, nightly red or
-  revert traces back to. The trace needs the red's filer (the project's landing and nightly) to
-  record which landing or commit it came from; Symphony shows reds per week beside landings per
-  week until it does.
+  revert traces back to. A red traces back through the commits its filer names it came between,
+  a `between: GOOD..BAD` line in its body (`crates/tasks/src/red.rs`, `BETWEEN`): the newest
+  commit known green and the first known red. The release run writes it (its last green run and
+  its candidate), and the roll-up lists the landings in that range on the red
+  ([the day files](#the-day-files)); a filer that writes none (the consuming project's landing
+  and nightly, until they do) leaves its reds untraced. At 20 landings a release, a release red's
+  range holds about that many landings: what it traces to is the landings it may have come from,
+  not the one that broke it. The page shows reds per week beside landings per week until it reads
+  them.
 - **Which checks catch what**: per step or check, its reds before landing against those on main
   or at night (from the run files' branch). A project adds its own classification through its
   report section: the consuming project's test ledger (a database of 11 MB, not opened) sorts
@@ -499,7 +505,8 @@ good ([open question 1](#open-questions)).
 **From what.** One read of the board (`Store::report_records`): every task open now, however old,
 every one written since yesterday's start, and every one with a line since then, since a landing
 writes its verdict on a closed task without writing the task; each with its thread's lines (a post
-by its sender and time alone, a verdict by its first words). Two cheap reads of the default
+by its sender and time alone, a verdict by its first words), and a red's body, for the commits it
+names it came between. Two cheap reads of the default
 branch's history since then. The decision cards of the documents in the main checkout
 (`crates/symphony/src/board.rs`, `documents`), with the cards a live branch posted laid on main's
 as the owner's queue lays them (`dashboard::merge_decisions`). A board read that fails writes
@@ -543,7 +550,10 @@ lines name an hour by its first second as `start` too, so a page joins an hour o
 
 **Per day**: the lead time of the tasks done (median, p90), each from its creation to its last
 close, the ten open tasks longest in their status,
-the `changes` and `approve` verdicts by review round, each red with its filing and close, the
+the `changes` and `approve` verdicts by review round, each red with its filing and close (and,
+where its body names the commits it came between, those commits and the tasks that landed in them:
+the merges on the default branch's line of first parents in that range, `Merge branch 'SLUG'`, by
+slug, as the release cadence counts landings, read with one more `git log` for each such red), the
 cards still waiting with since when, each card that left the queue in the day with its minute and
 the word of its line (`answered`, `auto_approved`, `withdrawn`), and what git was read with what it
 left out.
