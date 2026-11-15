@@ -259,8 +259,9 @@ own win, with their own steps in the dark. Charts below the screen mount through
 test context, who is connected and, read when their list opens, the lost agents. Each agent's row
 says what is known of it, its Go to session control (`session.tsx`, which the task page's role
 chips will share), its builds and tests, how to reach it, what it works on, the open tasks it
-orchestrates (its Following list, `Followed`, read a page at a time once opened) and the five it
-finished last. `src/agents-live.ts` holds its reads, guarded as serde reads them (a field a server
+orchestrates (its Following list, as many as the agent's `following` counts, `Followed` reading
+them a page at a time once opened) and the five it finished last. `src/agents-live.ts` holds its
+reads, guarded as serde reads them (a field a server
 leaves out reads as serde's default), its rules and the page kept live (`LiveAgents`): the first
 page of `/api/agent-page` once the board is read, then each feed event applied where it lands; one
 that brings in a task the page lists no record of (`agentsPageTakes`, the server's rule) or says

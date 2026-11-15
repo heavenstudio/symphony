@@ -268,7 +268,7 @@ fn unanswered_recovery_does_not_restart_a_reviewer_who_answered_on_its_instructi
         w.store().claim("sim/jump", &executor).unwrap();
         w.store().move_to("sim/jump", "review", &executor).unwrap();
         w.task("instructions/review", Some("sim/jump"));
-        let reviewer = w.review("instructions/review").row;
+        let reviewer = instruction_reviewer(&w, "instructions/review");
         w.store().claim(&reviewer.slug, &reviewer.handle).unwrap();
         close_terminal(&w, &reviewer);
         w.store()
@@ -306,7 +306,7 @@ fn unanswered_recovery_does_not_restart_a_reviewer_who_answered_on_its_instructi
             answered.get(),
             "late answer reached the inventory/recheck boundary"
         );
-        assert_eq!(w.calls_of(&["run"]).len(), 1);
+        assert!(w.calls_of(&["run"]).is_empty());
         assert!(
             w.store().task_sessions(&reviewer.slug).unwrap()[0]
                 .closed

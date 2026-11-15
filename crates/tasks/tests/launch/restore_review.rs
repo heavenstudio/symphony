@@ -69,7 +69,7 @@ fn a_departed_replacement_keeps_its_role_posts_without_reviving_its_predecessor(
                     w.task(parent, None);
                 }
                 w.task("sim/jump/review-a", Some(parent));
-                let a = w.review("sim/jump/review-a").row;
+                let a = instruction_reviewer(&w, "sim/jump/review-a");
                 if parent != "sim/jump" {
                     w.store()
                         .take_role("sim/jump", &a.handle, "reviewer")
@@ -80,7 +80,7 @@ fn a_departed_replacement_keeps_its_role_posts_without_reviving_its_predecessor(
                     .unwrap();
                 close_terminal(&w, &a);
                 w.task("sim/jump/review-b", Some(parent));
-                let b = w.review("sim/jump/review-b").row;
+                let b = instruction_reviewer(&w, "sim/jump/review-b");
                 if parent != "sim/jump" {
                     w.store()
                         .take_role("sim/jump", &b.handle, "reviewer")
@@ -99,7 +99,7 @@ fn a_departed_replacement_keeps_its_role_posts_without_reviving_its_predecessor(
                 close_terminal(&w, &b);
                 if another_reviewer {
                     w.task("sim/jump/review-c", Some(parent));
-                    let c = w.review("sim/jump/review-c").row;
+                    let c = instruction_reviewer(&w, "sim/jump/review-c");
                     if parent != "sim/jump" {
                         w.store()
                             .take_role("sim/jump", &c.handle, "reviewer")
@@ -165,7 +165,7 @@ fn an_unanswered_review_post_resumes_its_instruction_conversation() {
                 w.task(parent, None);
             }
             w.task("sim/jump/review", Some(parent));
-            let s = w.review("sim/jump/review").row;
+            let s = instruction_reviewer(&w, "sim/jump/review");
             if parent != "sim/jump" {
                 w.store()
                     .take_role("sim/jump", &s.handle, "reviewer")
@@ -211,7 +211,7 @@ fn an_unanswered_review_post_resumes_its_instruction_conversation() {
             let session = w.store().task_sessions(&s.slug).unwrap().remove(0);
             assert_eq!(session.claude_session, s.claude_session);
             assert!(session.closed.is_none());
-            assert_eq!(w.calls_of(&["run"]).len(), 2);
+            assert_eq!(w.calls_of(&["run"]).len(), 1);
             assert!(w.store().thread("sim/jump").unwrap().iter().any(|m| {
                 m.sender == "board" && m.text.contains(&format!("post #{}", post.id))
             }));
@@ -220,7 +220,7 @@ fn an_unanswered_review_post_resumes_its_instruction_conversation() {
                     .unwrap()
                     .is_empty()
             );
-            assert_eq!(w.calls_of(&["run"]).len(), 2);
+            assert_eq!(w.calls_of(&["run"]).len(), 1);
         }
     }
 }

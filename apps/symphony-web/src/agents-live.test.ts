@@ -10,7 +10,6 @@ import {
   Followed,
   finished,
   followedTasks,
-  followingCount,
   followingLabel,
   happening,
   held,
@@ -52,7 +51,8 @@ describe("the agents page's reads", () => {
 
   it("read what a server leaves out as serde's defaults", () => {
     const bare = SAMPLES.bareAgent as Record<string, unknown>;
-    const { callback, chat, slots, session_url, in_process, go, parent, ...older } = bare;
+    const { following, callback, chat, slots, session_url, in_process, go, parent, ...older } =
+      bare;
     expect(readAgent(older)).toEqual(readAgent(bare));
     expect(readAgent(bare)).toMatchObject({ handle: "birch", chat: false, go: null, parent: null });
     const { machine_work, ...view } = field(SAMPLES.emptyAgentPage, "view") as Record<
@@ -74,6 +74,8 @@ describe("the agents page's reads", () => {
       ["callback", false],
       ["tasks", null],
       ["tasks", [{ slug: "w/a", role: "executor" }]],
+      ["following", null],
+      ["following", "2"],
       ["chat", "yes"],
       ["in_process", 1],
       ["last_tool_call", "now"],
@@ -201,18 +203,12 @@ describe("an agent's line", () => {
 });
 
 describe("what an agent follows", () => {
-  const heldTask = (slug: string, role: string, status: string) => ({ slug, role, status });
-
-  it("counts the open tasks it orchestrates, in words", () => {
-    const agent = (tasks: ReturnType<typeof heldTask>[]) => anAgent("a", { tasks });
-    expect(followingCount(agent([heldTask("a/done", "orchestrator", "done")]))).toBe(0);
-    expect(followingCount(agent([heldTask("a/w", "worker", "in_progress")]))).toBe(0);
-    const two = agent([
-      heldTask("a/one", "orchestrator", "ready"),
-      heldTask("a/two", "orchestrator", "review"),
-      heldTask("a/old", "orchestrator", "cancelled"),
-    ]);
-    expect(followingCount(two)).toBe(2);
+  it("counts the open tasks it orchestrates as the server counts them, in words", () => {
+    const whole = field(SAMPLES.agentChange, "value") as Record<string, unknown>;
+    expect(readAgent(whole)?.following).toBe(2);
+    expect(readAgent({ ...whole, following: 48 })?.following).toBe(48);
+    const { following, ...older } = whole;
+    expect(readAgent(older)?.following).toBe(0);
     expect(followingLabel(1)).toBe("Following 1 open task");
     expect(followingLabel(2)).toBe("Following 2 open tasks");
   });

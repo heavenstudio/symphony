@@ -2,10 +2,11 @@
 
 use super::hc::{self, Hc, text_of};
 use super::{
-    GONE, LaunchError, Machine, Start, Started, branch_exists, claude_args, cleanup, codex_args,
-    git, gone, live_executor_in, skill, start_confirmed, stream,
+    GONE, LaunchError, Machine, Start, Started, agent_of, branch_exists, claude_args, cleanup,
+    codex_args, git, gone, live_executor_in, prompt_text, skill, start_confirmed, stream,
 };
 use crate::rows::TaskSessionRow;
+use crate::store::unanswered::restorable;
 use crate::{Error, Store};
 use std::collections::HashSet;
 use std::path::Path;
@@ -44,28 +45,120 @@ pub fn restore(
         {
             continue;
         }
-        // Held for the whole restore, as a close holds it: neither starts while the other runs,
-        // and each of its writes lands only while it still holds it.
-        let hold = store.take_session(&s.handle, "a restore")?;
-        let started = restore_one(store, hc, m, slug, s, tab, hold);
-        let released = store.release_session(&s.handle, hold);
-        restored.push(started?);
-        released?;
+        let text = format!(
+            "You were restored after your pane was closed. First run `just tasks callback --as {}`, then `just tasks inbox --as {}` and continue /{} {slug}.",
+            s.handle,
+            s.handle,
+            skill(&s.role)
+        );
+        restored.push(holding(store, hc, m, s, tab, &text)?);
     }
     Ok(restored)
 }
 
-/// Restore `session` of `slug`, closed or in a pane that is gone, while it holds it.
+/// The reviewers recorded on `slug` that never said `just tasks leave`, newest first: those a
+/// reviewer launch goes back to ([`resume_reviewer`]). A quiet one whose task went back to
+/// `in_progress` reads left by its health, and is one of them.
+pub(super) fn recorded_reviewers(store: &Store, slug: &str) -> Result<Vec<TaskSessionRow>, Error> {
+    let mut stayed = Vec::new();
+    for record in store.task_sessions(slug)?.into_iter().rev() {
+        if record.role != "reviewer" {
+            continue;
+        }
+        let left = match store.session(&record.handle) {
+            Ok(session) => session.row.left_at.is_some(),
+            Err(Error::Refused(_)) => true,
+            Err(problem) => return Err(problem),
+        };
+        if !left {
+            stayed.push(record);
+        }
+    }
+    Ok(stayed)
+}
+
+/// What a reviewer launch on `slug` does with its recorded reviewers ([`recorded_reviewers`]):
+/// refused while one still runs in a terminal (its handle's, or the one its open record names),
+/// naming it and the launch's `--beside WHY`; the newest with a conversation a restore can resume
+/// ([`restorable`]) is resumed ([`resume_reviewer`]); none, and a new reviewer starts.
+pub(super) fn reviewer_to_resume(
+    store: &Store,
+    hc: &dyn Hc,
+    slug: &str,
+) -> Result<Option<TaskSessionRow>, Error> {
+    let recorded = recorded_reviewers(store, slug)?;
+    let live = if recorded.iter().any(|r| r.closed.is_none()) {
+        live_addresses(hc)?
+    } else {
+        HashSet::new()
+    };
+    for record in recorded {
+        let open_in =
+            (record.closed.is_none() && live.contains(&record.pane)).then(|| record.pane.clone());
+        if let Some(terminal) = running_as(hc, &record.handle)?.or(open_in) {
+            let (board, handle) = (store.board_command(), &record.handle);
+            return Err(Error::Refused(format!(
+                "{handle} reviews {slug} and still runs in terminal {terminal}: give it the new tip \
+                 on the thread ({board} say {slug} TEXT --to @reviewer), or close it ({board} close \
+                 {slug} {handle}) and launch again to resume it, or launch another beside it \
+                 saying why ({board} launch {slug} --role reviewer --beside WHY)"
+            )));
+        }
+        if restorable(&record) {
+            return Ok(Some(record));
+        }
+    }
+    Ok(None)
+}
+
+/// Resume `record`, the reviewer a launch on its task goes back to ([`reviewer_to_resume`]): its
+/// own conversation, under its own handle, in its recorded worktree and on its model, in a new
+/// terminal, as a restore resumes it, told `/review-task SLUG HANDLE` (then `prompt`): its skill
+/// judges the new tip from there and takes the role again unless it holds it.
+pub(super) fn resume_reviewer(
+    store: &Store,
+    hc: &dyn Hc,
+    m: &Machine,
+    record: &TaskSessionRow,
+    prompt: &str,
+    tab: Option<&str>,
+) -> Result<Started, Error> {
+    let agent = agent_of(&record.claude_session);
+    let text = prompt_text(&record.slug, &record.handle, prompt, agent, &record.role);
+    holding(store, hc, m, record, tab, &text)
+}
+
+/// Restore `session`, telling it `text`, held for the whole restore as a close holds it: neither
+/// starts while the other runs, and each of its writes lands only while it still holds it.
+fn holding(
+    store: &Store,
+    hc: &dyn Hc,
+    m: &Machine,
+    session: &TaskSessionRow,
+    tab: Option<&str>,
+    text: &str,
+) -> Result<Started, Error> {
+    let hold = store.take_session(&session.handle, "a restore")?;
+    let started = restore_one(store, hc, m, session, tab, hold, text);
+    let released = store.release_session(&session.handle, hold);
+    let started = started?;
+    released?;
+    Ok(started)
+}
+
+/// Restore `session`, closed or in a pane that is gone, while it holds it, its first message
+/// `text`.
 fn restore_one(
     store: &Store,
     hc: &dyn Hc,
     machine: &Machine,
-    slug: &str,
     session: &TaskSessionRow,
     tab: Option<&str>,
     hold: u64,
+    text: &str,
 ) -> Result<Started, Error> {
-    if session.claude_session.is_empty() || session.claude_session == "codex:" {
+    let slug = session.slug.as_str();
+    if !restorable(session) {
         return Err(Error::Refused(format!(
             "{} has no recorded conversation id: its conversation cannot be resumed (start it again \
              with `just tasks launch`)",
@@ -123,12 +216,6 @@ fn restore_one(
             )?;
         }
     }
-    let text = format!(
-        "You were restored after your pane was closed. First run `just tasks callback --as {}`, then `just tasks inbox --as {}` and continue /{} {slug}.",
-        session.handle,
-        session.handle,
-        skill(&session.role)
-    );
     let (agent, args) = if let Some(id) = session.claude_session.strip_prefix("codex:") {
         let mut args = codex_args(&session.model, None, &session.handle, machine);
         args.extend(["resume".into(), id.into()]);
@@ -166,7 +253,7 @@ fn restore_one(
             agent,
             resumed_codex: agent == "codex",
             args,
-            text: &text,
+            text,
         },
     );
     let message = started.map_err(|problem| {
@@ -196,7 +283,7 @@ fn restore_one(
             .claude_session
             .strip_prefix("codex:")
             .expect("a resumed Codex turn");
-        let delivery = match hc.queue_codex(thread, &text) {
+        let delivery = match hc.queue_codex(thread, text) {
             Ok(()) => {
                 "restore message queued for when it is idle; delivery is not yet confirmed".into()
             }
@@ -219,7 +306,7 @@ fn restore_one(
                 session.handle
             ))
         })?;
-    Ok(Started { row })
+    Ok(Started { row, resumed: true })
 }
 
 /// The addresses of this board's live terminals.

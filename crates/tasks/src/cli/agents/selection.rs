@@ -40,6 +40,22 @@ pub(super) fn tasks_by_handle(tasks: &[Task]) -> HashMap<&str, Vec<(&Task, &str)
     held
 }
 
+/// How many open tasks each handle orchestrates, which [`tasks_by_handle`] leaves out: the tasks
+/// the agents page's Following list pages (`holder=HANDLE&role=orchestrator&open=1`). A handle
+/// holds a task's orchestrator role once at most ([`crate::Store::take_role`]).
+pub(super) fn following_by_handle(tasks: &[Task]) -> HashMap<&str, usize> {
+    let mut following = HashMap::<&str, usize>::new();
+    for task in tasks
+        .iter()
+        .filter(|t| !FINISHED.contains(&t.status.as_str()))
+    {
+        for role in task.roles.iter().filter(|r| r.role == "orchestrator") {
+            *following.entry(&role.handle).or_default() += 1;
+        }
+    }
+    following
+}
+
 /// The task it works now: an open one by role, priority and slug; else the finished one updated last.
 pub(super) fn primary<'t>(held: &[(&'t Task, &'t str)]) -> Option<(&'t Task, &'t str)> {
     let open = held

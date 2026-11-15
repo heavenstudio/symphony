@@ -98,24 +98,17 @@ fn a_failing_post_checkout_hook_removes_the_owned_checkout_and_allows_retry() {
 }
 
 #[test]
-fn a_database_error_after_reserving_a_review_instruction_releases_the_reservation() {
+fn a_database_error_taking_the_reviewers_role_leaves_its_handle_and_allows_a_retry() {
     let p = Terminals::new("setup-db-failure");
     let actor = p.orchestrator();
     let board = p.board();
     board.claim("sim/jump", &actor).unwrap();
     board.move_to("sim/jump", "review", &actor).unwrap();
-    board
-        .create(&NewTask {
-            parent: Some("sim/jump".into()),
-            instruction: true,
-            ..NewTask::new("sim/jump/review", "Review", &actor)
-        })
-        .unwrap();
     board.client().query(
         "DEFINE EVENT unavailable ON role WHEN $event = 'CREATE' AND $after.role = 'reviewer' THEN { THROW 'review role unavailable' };",
         json!({}),
     ).unwrap();
-    let args = ["launch", "sim/jump/review", "--role", "reviewer"];
+    let args = ["launch", "sim/jump", "--role", "reviewer"];
     let failed = p.as_(&actor, &args);
     assert_eq!(failed.code, 2, "{} {}", failed.out, failed.err);
     assert!(
@@ -124,9 +117,9 @@ fn a_database_error_after_reserving_a_review_instruction_releases_the_reservatio
         failed.err
     );
     let handle = failed_handle(&p, &actor);
-    released(&p, "sim/jump/review");
-    let parent = board.get("sim/jump").unwrap();
-    let reviewers = parent.holders("reviewer");
+    released(&p, "sim/jump");
+    let task = board.get("sim/jump").unwrap();
+    let reviewers = task.holders("reviewer");
     assert!(
         !reviewers.contains(&handle.as_str()),
         "failed handle {handle} still reviews: {reviewers:?}"
@@ -137,7 +130,7 @@ fn a_database_error_after_reserving_a_review_instruction_releases_the_reservatio
         .unwrap();
     let retried = p.as_(&actor, &args);
     assert_eq!(retried.code, 0, "{} {}", retried.out, retried.err);
-    assert_eq!(board.task_sessions("sim/jump/review").unwrap().len(), 1);
+    assert_eq!(board.task_sessions("sim/jump").unwrap().len(), 1);
 }
 
 #[test]
