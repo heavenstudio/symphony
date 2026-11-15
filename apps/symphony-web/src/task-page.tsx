@@ -802,6 +802,7 @@ export function TaskDetail({
       </div>
       <TaskGatesPanel
         slug={slug}
+        task={task}
         revision={task.updated}
         seen={page.gates ?? null}
         work={workOf(work, slug)}

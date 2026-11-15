@@ -42,10 +42,11 @@ label { display:block; } html:root :focus-visible { outline:2px solid var(--ring
 .kanban, .ghost-kanban { display:grid; grid-template-columns:minmax(0,1fr); gap:var(--sp-4); }
 .kanban > *, .ghost-kanban > * { min-width:0; }
 /* The board's scroller fits the window under what the page draws above it (the header, the
-   heading, the filters and the hint: 277 px on a desk, 395 on a phone) and over the dock while the
-   dock shows (frame.css), so its own horizontal scrollbar, at its foot, is never under the
-   prev/next bar. Its ghost is as tall. */
-:root:has(.frame-pending) { --board-dock:var(--dock); }
+   heading, the filters and the hint: 277 px on a desk, 395 on a phone) and over the dock's band
+   (frame.css), so its own horizontal scrollbar, at its foot, is never under the prev/next bar,
+   nor under the "+", which sits in that band, at its lift, when no bar draws. Its ghost is as
+   tall. */
+:root { --board-dock:var(--dock); }
 .board-scroll { max-width:100%; min-width:0; max-height:max(320px,calc(100dvh - 320px - var(--board-dock,0px))); overflow:auto; overscroll-behavior-x:contain; scroll-snap-type:x proximity; scrollbar-color:var(--muted-foreground) var(--muted); padding-bottom:12px; border-radius:var(--r-lg); }
 .board-scroll:focus-visible { outline:2px solid var(--primary); outline-offset:4px; }
 .board-scroll-hint, .ghost-hint { margin:0; font-size:var(--fs-sm); }

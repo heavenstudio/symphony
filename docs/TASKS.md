@@ -1463,6 +1463,18 @@ a **Waiting for your sign-off** lane above the board. That needs all of:
 Deciding the card puts the task back in its column. Work nobody holds, or that
 posted no card, stays in its own column however its documents stand.
 
+A project's plugin that answers a gate named `owner` for the task ([Gates](#gates))
+decides in that rule's place: the open, executed task is in the lane while that
+gate is held, card or none, and out of it while the gate is met, waived or
+missing. The lane reads the answer the server keeps for the task's status and
+tip and never asks the plugin for it, so only a read of the task's gates (its
+page) starts the plugin's work. Only a known gate kept for that task decides:
+with no answer kept for it as it is now (before its page is read, after a new
+tip or a new status), an error kept, an answer with no `owner` gate or one
+answered `unknown`, the rule above holds, so the lane errs toward showing the
+owner what may wait on them. The lane is read again when the board, a message,
+a waiting card or a kept answer changes.
+
 **`done` is reached only by a reviewer's `approve` (its orchestrator's, on a fast
 fix), a landing, for a subtask its executor's `done`, or a close as covered by another
 task's landing ([above](#a-task-another-landing-covers)).** A session
@@ -2086,7 +2098,11 @@ name, a state (`missing`, `held`, `unknown`, `waived` or `met`), who and when
 one-line detail, a link to its evidence, and the states it took before, oldest
 first, for the timeline. They come in that order of states: what the task waits
 on first. The task's page draws them in one section under its head, with what
-the task waits on and how many gates are in each state; on a phone a gate is
+the task waits on and how many gates are in each state. What it waits on follows
+its status: in review, the gates missing or held; in concept, design or progress,
+its executor; blocked, the tasks it depends on; before it starts (backlog, ready),
+nothing; and after those, while it is open, each gate held (a card waiting on the
+owner). A done or cancelled task waits on nothing. On a phone a gate is
 three lines, wide one row of bounded columns, a part whose words need more room
 wrapping within its own, so every word shows and none waits on a hover
 (`apps/symphony-web/src/gates.tsx`). A link is kept only for a path of the
@@ -2161,13 +2177,15 @@ stamps, so no task's history is judged again:
 - **owner**: held while a card the task posted waits on the owner, by the sign-off
   lane's rule above; absent otherwise.
 
-Every task has one more of the Symphony's:
+A task with work of its own to check has one more of the Symphony's:
 
 - **check**: the project's `[verdicts] check`, its words joined by spaces, as the
   board's recorder labels a run of it ([MACHINE_WORK](MACHINE_WORK.md#recording-builds-and-tests)),
   at the branch's tip: met when the newest such run there was green, missing when it
-  was red or is still going, unknown when none ran at the tip or the repository has
-  no such branch. A project with no check has no check gate.
+  was red or is still going, unknown when none ran at the tip. There is none for a
+  task whose branch holds no commit of its own (no such branch, one made at the default
+  branch and not yet committed to, or one already landed there), for an instruction
+  subtask, whose work lands with its task, or for a project with no check.
 
 A project's plugin answers its own through the gates seam (`symphony_plugin::Gates`,
 `Plugin::gates`) as the same typed data, so every project's gates are drawn the
@@ -2593,6 +2611,15 @@ in progress is.
   a fresh assessment, is a request of its own, whatever its text: it waits on
   the branch's next move from that tip. The record answered, retried, is no
   new request: PULL and the alarm count the task in review alike.
+- **No review waited on.** A record that judged the branch's tip now and names
+  neither `review` nor `changes` says the project's own review gate, as its
+  landing keeps it, is met there or not needed, and that replaces the
+  Symphony's: PULL does not list the task as `review_unreviewed`, though no
+  reviewer holds it. A record of another tip, or none, says nothing of the tip
+  now, and a review with no reviewer is listed. A task whose tip the reader
+  cannot tell (no repository, or a branch not named for its slug or gone) is
+  listed too, its record unread there, unlike rework: the row errs toward
+  listing.
 
 ## Where the time goes
 

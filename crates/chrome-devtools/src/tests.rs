@@ -3094,10 +3094,14 @@ fn a_real_page_navigating_under_a_wait_is_asked_again_on_the_document_it_went_to
     assert!(lost.navigated, "{lost}");
 }
 
-/// A DevTools connection of its own to `chrome`'s browser that, once the page under test has asked
-/// for `/held` (`arrived`, as [`holding_server`] tells of it), so that a wait's evaluation asking
-/// for it is surely in flight, ends that page by `how`: `Target.closeTarget`, or `Page.crash` on a
-/// session of its own. Its replies are not waited for: a crashed renderer answers none. The
+/// A DevTools connection of its own to `chrome`'s browser, and a thread that, once the page under
+/// test has asked for `/held` (`arrived`, as [`holding_server`] tells of it), so that a wait's
+/// evaluation asking for it is surely in flight, ends that page by `how`: `Target.closeTarget`, or
+/// `Page.crash` on a session of its own. The connection and that session are made here, so that
+/// their failure is the test's at once, before any wait. The thread ends the page even when the
+/// arrival stalls, and then fails with the stall: left running, the page would hold the wait under
+/// it to its allowance, and the test, which joins the thread ([`ended`]) before it judges the wait,
+/// would report the wait. The end's reply is not waited for: a crashed renderer answers none. The
 /// connection, to keep until the wait is over, and the arrivals back.
 fn end_the_page_once_held(
     chrome: &Chrome,
@@ -3109,46 +3113,49 @@ fn end_the_page_once_held(
 )> {
     let (port, path) = devtools_endpoint(chrome.profile()).unwrap();
     let target = chrome.own_pages[1].clone();
-    std::thread::spawn(move || {
-        let backstop = test_time::backstop(Duration::from_secs(10));
-        test_time::until("the page asks for /held", backstop, || {
-            arrived.try_recv().ok()
-        })
-        .unwrap_or_else(|stall| panic!("{stall}"));
-        let (mut socket, _) = tungstenite::connect(format!("ws://127.0.0.1:{port}{path}")).unwrap();
-        if let MaybeTlsStream::Plain(stream) = socket.get_mut() {
-            stream.set_read_timeout(Some(backstop)).unwrap();
-        }
-        let send = |socket: &mut WebSocket<_>, command: Value| {
-            socket.send(Message::text(command.to_string())).unwrap();
-        };
-        if how == "Page.crash" {
-            send(
-                &mut socket,
-                json!({"id": 1, "method": "Target.attachToTarget",
-                    "params": {"targetId": target, "flatten": true}}),
-            );
-            let session = loop {
-                let Message::Text(text) = socket.read().unwrap() else {
-                    continue;
-                };
-                let reply: Value = serde_json::from_str(text.as_str()).unwrap();
-                if reply["id"] == 1 {
-                    break reply["result"]["sessionId"].as_str().unwrap().to_owned();
-                }
+    let backstop = test_time::backstop(Duration::from_secs(10));
+    let (mut socket, _) = tungstenite::connect(format!("ws://127.0.0.1:{port}{path}")).unwrap();
+    if let MaybeTlsStream::Plain(stream) = socket.get_mut() {
+        stream.set_read_timeout(Some(backstop)).unwrap();
+    }
+    let send = |socket: &mut WebSocket<_>, command: Value| {
+        socket.send(Message::text(command.to_string())).unwrap();
+    };
+    let end = if how == "Page.crash" {
+        send(
+            &mut socket,
+            json!({"id": 1, "method": "Target.attachToTarget",
+                "params": {"targetId": target, "flatten": true}}),
+        );
+        let session = loop {
+            let Message::Text(text) = socket.read().unwrap() else {
+                continue;
             };
-            send(
-                &mut socket,
-                json!({"id": 2, "method": how, "params": {}, "sessionId": session}),
-            );
-        } else {
-            send(
-                &mut socket,
-                json!({"id": 1, "method": how, "params": {"targetId": target}}),
-            );
-        }
+            let reply: Value = serde_json::from_str(text.as_str()).unwrap();
+            if reply["id"] == 1 {
+                break reply["result"]["sessionId"].as_str().unwrap().to_owned();
+            }
+        };
+        json!({"id": 2, "method": how, "params": {}, "sessionId": session})
+    } else {
+        json!({"id": 1, "method": how, "params": {"targetId": target}})
+    };
+    std::thread::spawn(move || {
+        let held = test_time::until("the page asks for /held", backstop, || {
+            arrived.try_recv().ok()
+        });
+        send(&mut socket, end);
+        held.unwrap_or_else(|stall| panic!("{stall}"));
         (arrived, socket)
     })
+}
+
+/// What the thread `ender` returned. Its panic, if it panicked, is re-raised here, so that the test
+/// reports the thread's own failure rather than what came of the wait the thread was to end.
+fn ended<T>(ender: std::thread::JoinHandle<T>) -> T {
+    ender
+        .join()
+        .unwrap_or_else(|failure| std::panic::resume_unwind(failure))
 }
 
 #[test]
@@ -3166,8 +3173,10 @@ fn a_real_page_closed_or_crashed_under_a_wait_fails_it_at_once_saying_which() {
     const HELD: &str = "fetch('/held').then(() => false)";
     chrome.open(&base).unwrap();
     let ender = end_the_page_once_held(&chrome, arrived, "Page.crash");
-    let crashed = chrome.wait_for(HELD, PROTOCOL_CPU).unwrap_err();
-    let (arrived, crasher) = ender.join().unwrap();
+    let crashed = chrome.wait_for(HELD, PROTOCOL_CPU);
+    // The ender's failure, if it failed, is the test's, before the wait's is judged.
+    let (arrived, crasher) = ended(ender);
+    let crashed = crashed.unwrap_err();
     assert!(!crashed.stalled() && !crashed.past_deadline(), "{crashed}");
     assert_eq!(
         crashed.to_string(),
@@ -3191,8 +3200,9 @@ fn a_real_page_closed_or_crashed_under_a_wait_fails_it_at_once_saying_which() {
     drop(crasher);
 
     let ender = end_the_page_once_held(&chrome, arrived, "Target.closeTarget");
-    let closed = chrome.wait_for(HELD, PROTOCOL_CPU).unwrap_err();
-    let (_arrived, _closer) = ender.join().unwrap();
+    let closed = chrome.wait_for(HELD, PROTOCOL_CPU);
+    let (_arrived, _closer) = ended(ender);
+    let closed = closed.unwrap_err();
     assert!(!closed.stalled() && !closed.past_deadline(), "{closed}");
     assert_eq!(
         closed.to_string(),
