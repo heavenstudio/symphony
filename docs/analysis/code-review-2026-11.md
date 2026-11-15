@@ -112,9 +112,9 @@ a boundary by the back door is named in findings 3, 8 and 9.
 
 ### 4. Eight tenths of the board's dependencies serve a search mode nothing asks for
 
-- **Evidence.** `cargo tree -p symphony-board -e normal,build --prefix none`, its lines made
-  unique, lists 189 packages; with `--prune tract-onnx --prune tract-linalg --prune tokenizers`
-  it lists 36. So 153 of the 189 are there only for the local embedding model behind
+- **Evidence.** `cargo tree -p symphony-board -e normal,build --prefix none --no-dedupe | sort -u`
+  lists 189 packages; with `--prune tract-onnx --prune tract-linalg --prune tokenizers` before the
+  sort it lists 36. So 153 of the 189 are there only for the local embedding model behind
   `tasks search --mode vector` and `hybrid`. The default mode is keyword
   (`crates/tasks/src/cli/args.rs:197`), and no skill or page names another; the board's guide
   describes them. The size budgets (`tools/size-budget.toml`, each a size plus 4 %) hold `tasks`
