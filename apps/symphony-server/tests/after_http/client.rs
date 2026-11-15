@@ -1,5 +1,6 @@
 //! The fixture's HTTP client: one request per connection to the server under test, its response
-//! read whole, and the event feed read line by line until a marker arrives.
+//! read whole, and the event feed, as Server-Sent Events or on a WebSocket, read until a marker
+//! arrives.
 
 use super::{LIMIT, stalled};
 use serde_json::Value;
@@ -8,6 +9,7 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{SocketAddr, TcpStream};
 use std::path::PathBuf;
 use std::time::Instant;
+use tungstenite::client::IntoClientRequest;
 
 pub(super) struct Fixture {
     pub(super) root: PathBuf,
@@ -104,7 +106,9 @@ impl Fixture {
             body.to_string().as_bytes(),
         )
     }
-    pub(super) fn feed(&self, scope: &str) -> Feed {
+    /// The feed's path in `scope` as a page of SHELF.md opens it: from the board's version, with
+    /// its document and sections.
+    fn feed_path(&self, scope: &str) -> String {
         let document = self
             .get(&format!("{scope}/api/document?path=docs/SHELF.md"))
             .status(200)
@@ -130,10 +134,15 @@ impl Fixture {
         let version = self.get(&format!("{scope}/api/board")).status(200).json()["version"]
             .as_u64()
             .unwrap();
+        format!("{scope}/api/feed?since={version}&document={document_path}&sections={sections}")
+    }
+    /// The feed in `scope` as Server-Sent Events.
+    pub(super) fn feed(&self, scope: &str) -> Feed {
+        let path = self.feed_path(scope);
         let mut stream = self.connect();
         write!(
             stream,
-            "GET {scope}/api/feed?since={version}&document={document_path}&sections={sections} HTTP/1.0\r\nHost: {}\r\n\r\n",
+            "GET {path} HTTP/1.0\r\nHost: {}\r\n\r\n",
             self.address
         )
         .unwrap();
@@ -148,33 +157,77 @@ impl Fixture {
                 break;
             }
         }
-        let mut feed = Feed(reader);
-        // Server notice is emitted only after the feed has subscribed; there is no edit/read gap.
-        feed.until("server");
-        feed
+        Feed::Events(reader).subscribed()
+    }
+    /// The feed in `scope` on a WebSocket, as the server's own page opens it: its Origin the
+    /// server's.
+    pub(super) fn socket(&self, scope: &str) -> Feed {
+        let mut request = format!("ws://{}{}", self.address, self.feed_path(scope))
+            .into_client_request()
+            .unwrap();
+        request.headers_mut().insert(
+            "origin",
+            format!("http://{}", self.address).parse().unwrap(),
+        );
+        let (socket, answered) = tungstenite::client(request, self.connect()).unwrap();
+        assert_eq!(answered.status(), 101, "{answered:?}");
+        Feed::Socket(Box::new(socket)).subscribed()
     }
 }
 
-pub(super) struct Feed(BufReader<TcpStream>);
+/// The feed a test follows: Server-Sent Events read a line at a time, or a WebSocket a message at
+/// a time.
+pub(super) enum Feed {
+    Events(BufReader<TcpStream>),
+    Socket(Box<tungstenite::WebSocket<TcpStream>>),
+}
 impl Feed {
+    /// The feed once it said the server's notice, which it says only after it subscribed: no edit
+    /// made after falls in a gap before it.
+    fn subscribed(mut self) -> Self {
+        self.until("server");
+        self
+    }
     pub(super) fn until(&mut self, marker: &str) {
         let began = Instant::now();
         loop {
-            let mut line = String::new();
             // The stream's read timeout is the backstop: only a stall leaves a line unread.
-            let read = self
-                .0
-                .read_line(&mut line)
+            let said = self
+                .next()
                 .unwrap_or_else(|e| panic!("{}", stalled(format!("the feed's {marker}: {e}"))));
-            assert!(read > 0, "feed closed before {marker}");
-            if line.contains(marker) {
+            let Some(said) = said else {
+                panic!("feed closed before {marker}");
+            };
+            if said.contains(marker) {
                 return;
             }
             assert!(
                 began.elapsed() < LIMIT,
                 "{}",
-                stalled(format!("the feed's {marker}; its last line: {line}"))
+                stalled(format!("the feed's {marker}; the last it said: {said}"))
             );
+        }
+    }
+    /// What the feed says next: a line of its events, or a message of its socket (nothing for a
+    /// ping or a pong of the socket's own); none once it is closed.
+    fn next(&mut self) -> Result<Option<String>, String> {
+        match self {
+            Self::Events(reader) => {
+                let mut line = String::new();
+                let read = reader.read_line(&mut line).map_err(|e| e.to_string())?;
+                Ok((read > 0).then_some(line))
+            }
+            Self::Socket(socket) => match socket.read() {
+                Ok(tungstenite::Message::Text(text)) => Ok(Some(text.to_string())),
+                Ok(tungstenite::Message::Close(_)) | Err(tungstenite::Error::ConnectionClosed) => {
+                    Ok(None)
+                }
+                Ok(tungstenite::Message::Ping(_) | tungstenite::Message::Pong(_)) => {
+                    Ok(Some(String::new()))
+                }
+                Ok(other) => Err(format!("not a feed's message: {other:?}")),
+                Err(e) => Err(e.to_string()),
+            },
         }
     }
 }

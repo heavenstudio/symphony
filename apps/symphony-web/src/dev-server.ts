@@ -258,8 +258,9 @@ export function shellPlugin(served: string, sources: Sources): Plugin {
 /**
  * The dev server's settings over vite.config.ts in `root`: Vite's files under [`BASE`], on the
  * loopback address alone (it hands what it proxies to the server as this machine's), at `port`,
- * every request outside them proxied to the server with its Host and Origin unchanged (so a save
- * meets the server's origin check as on the server itself), and the shell from `plugins`. No CORS
+ * every request outside them, the feed's WebSocket among them (`ws`; Vite's own is under its base),
+ * proxied to the server with its Host and Origin unchanged (so a save or the feed meets the server's
+ * origin check as on the server itself), and the shell from `plugins`. No CORS
  * header of Vite's (its default lets a page on any loopback port read every answer, the server's
  * too): the dev page and all it loads are of its own origin, and another's reads through it no
  * more than from the server.
@@ -276,7 +277,7 @@ export function devConfig(root: string, args: DevArgs, plugins: Plugin[]): Inlin
       port: args.port,
       strictPort: true,
       cors: false,
-      proxy: { [PROXIED]: { target: origin(args.server), changeOrigin: false } },
+      proxy: { [PROXIED]: { target: origin(args.server), changeOrigin: false, ws: true } },
       fs: { allow: [".", ...OUTSIDE] },
     },
     plugins,

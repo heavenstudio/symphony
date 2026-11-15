@@ -1,5 +1,6 @@
-//! A loopback-only development front door: DX owns pages/assets/WebSockets; an owned Symphony
-//! server owns APIs/media/SSE. Forward bytes unchanged so Host and Origin still match on saves.
+//! A loopback-only development front door: DX owns pages/assets and its own WebSocket; an owned
+//! Symphony server owns APIs/media and the feed, as events or on a WebSocket. Forward bytes
+//! unchanged so Host and Origin still match on saves and on the feed's upgrade.
 //! No proxy or development code is started by the production server.
 
 use std::io::{BufRead, BufReader, Read};

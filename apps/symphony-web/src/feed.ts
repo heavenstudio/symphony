@@ -1,12 +1,16 @@
-// The board's feed in the browser: an EventSource on the page's project's feed, each event it hears
-// handed on as `Heard`.
+// The board's feed in the browser: a WebSocket on the page's project's feed, each event it hears
+// handed on as `Heard`. The server says on it what it says as Server-Sent Events to any other
+// request of the feed's (symphony_api's feed contract), each event one text message: its name, a
+// line feed, then its data. A browser keeps six HTTP/1.1 connections to a host, and an EventSource
+// holds one for as long as it is open, so six tabs following the board would leave a seventh none
+// for its reads; it counts its WebSockets apart from them.
 //
 // A page that goes away closes its stream: left (`pagehide`, which every browser fires as a page
 // is left, for good or into its back/forward cache) or frozen (Chrome's `freeze`). A page kept for
-// back and forward with its stream open would hold one of the browser's six connections to the
-// server for as long as it is kept. The stream ends as `away`, and the page reads again from a
-// fresh snapshot once it is back (`pageshow`, `resume`), as after any lost stream. Hidden alone
-// (another tab in front) the page keeps its stream.
+// back and forward with its stream open would keep its socket, and the server its subscription,
+// for as long as it is kept. The stream ends as `away`, and the page reads again from a fresh
+// snapshot once it is back (`pageshow`, `resume`), as after any lost stream. Hidden alone (another
+// tab in front) the page keeps its stream.
 
 import { here, project } from "./project";
 import { FEED_EVENT, PING_EVENT, SERVER_EVENT } from "./wire";
@@ -87,39 +91,65 @@ export function heard(type: string, data: unknown): Heard {
   return typeof value === "string" ? { kind: "server", message: value } : { kind: "lost" };
 }
 
+/** What one message of the socket says: its event's name, a line feed, then the event's data. */
+export function message(data: unknown): Heard {
+  if (typeof data !== "string") return { kind: "lost" };
+  const at = data.indexOf("\n");
+  if (at < 0) return { kind: "lost" };
+  return heard(data.slice(0, at), data.slice(at + 1));
+}
+
+/** The socket's address for `url`, an address of the page's: its `ws:` (or `wss:`) twin. */
+export function socketAddress(url: URL): string {
+  const socket = new URL(url);
+  socket.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+  return socket.href;
+}
+
 /**
  * The stream at `url` (a path under the project), each thing it says handed to `said`; none when
- * it cannot be opened or the page is away. The function it gives closes it.
+ * it cannot be opened or the page is away. Once lost it says nothing more, and once closed (by the
+ * function it gives, or as the page goes away) nothing at all: a socket closed tells of its close
+ * later.
  */
 export function openFeed(url: string, said: (heard: Heard) => void): (() => void) | null {
   if (isAway()) return null;
-  let source: EventSource;
+  let socket: WebSocket;
   try {
-    source = new EventSource(new URL(here(project(), url), location.href).href);
+    socket = new WebSocket(socketAddress(new URL(here(project(), url), location.href)));
   } catch {
     return null;
   }
-  const listener = (event: Event) =>
-    said(heard(event.type, event instanceof MessageEvent ? event.data : undefined));
-  const leaving = () => {
-    // Before the page is put away, whichever of its listeners runs first.
-    away = true;
-    source.close();
-    said({ kind: "away" });
+  let ended = false;
+  const say = (heard: Heard) => {
+    if (ended) return;
+    if (heard.kind === "lost") ended = true;
+    said(heard);
   };
-  for (const name of ["open", "error", PING_EVENT, FEED_EVENT, SERVER_EVENT]) {
-    source.addEventListener(name, listener);
-  }
-  isAway();
-  targets().forEach((target, at) => {
-    target.addEventListener(LEAVING[at] as string, leaving);
-  });
-  return () => {
-    source.close();
+  const close = () => {
+    ended = true;
+    socket.close();
     targets().forEach((target, at) => {
       target.removeEventListener(LEAVING[at] as string, leaving);
     });
   };
+  const leaving = () => {
+    // Before the page is put away, whichever of its listeners runs first.
+    away = true;
+    if (ended) return;
+    close();
+    said({ kind: "away" });
+  };
+  socket.addEventListener("open", () => say(heard("open", undefined)));
+  socket.addEventListener("message", (event) => say(message(event.data)));
+  // A socket that fails is closed too; the server ending the feed closes it.
+  socket.addEventListener("error", () => say({ kind: "lost" }));
+  socket.addEventListener("close", () => say({ kind: "lost" }));
+  isAway();
+  targets().forEach((target, at) => {
+    target.addEventListener(LEAVING[at] as string, leaving);
+  });
+  return close;
 }
 
 /** What a stream said, waited for one at a time, each wait bounded. */

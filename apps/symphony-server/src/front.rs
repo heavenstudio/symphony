@@ -493,10 +493,9 @@ async fn answer(State(shared): State<Arc<Shared>>, request: Request) -> Response
     *metadata.method_mut() = request.method().clone();
     *metadata.uri_mut() = request.uri().clone();
     *metadata.headers_mut() = request.headers().clone();
-    // Where the request came from: a Go to session focuses a pane only for this machine's own.
-    if let Some(peer) = request.extensions().get::<ConnectInfo<SocketAddr>>() {
-        metadata.extensions_mut().insert(*peer);
-    }
+    // Where the request came from (a Go to session focuses a pane only for this machine's own) and
+    // the connection's upgrade, which a feed asked for on a WebSocket takes over.
+    *metadata.extensions_mut() = request.extensions().clone();
     let response = match crate::api::answer(&shared, metadata).await {
         Some(response) => response,
         None => match crate::write::methods(request.uri().path()) {

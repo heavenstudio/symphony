@@ -1074,9 +1074,133 @@ fn a_script_the_page_does_not_name_is_refused() {
     );
 }
 
+// One chunk put in order as dx writes it (`--chunk`, wasm-opt.sh).
+
+/// `bytes` written to `name` in `tree`, and its path as the command line names it.
+fn module_at(tree: &Tree, name: &str, bytes: &[u8]) -> String {
+    let path = tree.path(name);
+    std::fs::write(&path, bytes).unwrap();
+    path.to_str().unwrap().to_string()
+}
+
+#[test]
+fn two_orders_of_one_chunk_are_the_same_bytes_once_each_is_put_in_order_in_place() {
+    let tree = Tree::new();
+    let (data, elements) = (chunk_data(), chunk_entries());
+    let first = chunk(&data, &elements);
+    let second = chunk(
+        &[data[2].clone(), data[0].clone(), data[1].clone()],
+        &[
+            elements[1].clone(),
+            elements[2].clone(),
+            elements[0].clone(),
+        ],
+    );
+    let (one, two) = (
+        module_at(&tree, "one.wasm", &first),
+        module_at(&tree, "two.wasm", &second),
+    );
+    let (code, report, err) = run(&["--chunk", &one]);
+    assert_eq!((code, err.as_str()), (0, ""));
+    assert_eq!(
+        report,
+        format!("chunk {one}: 5 of its 6 segments put in order, 0 joined to the one before\n")
+    );
+    assert_eq!(run(&["--chunk", &two]).0, 0);
+    let ordered = std::fs::read(&one).unwrap();
+    assert_eq!(ordered, std::fs::read(&two).unwrap());
+    // The order the repair after dx gives it, so that one finds nothing left to do.
+    assert_eq!(ordered, order::order(&first).unwrap().bytes);
+    let (code, report, _) = run(&["--chunk", &one]);
+    assert_eq!(code, 0);
+    assert_eq!(
+        report,
+        format!("chunk {one}: 0 of its 6 segments put in order, 0 joined to the one before\n")
+    );
+    assert_eq!(std::fs::read(&one).unwrap(), ordered);
+    // Nothing is left beside it.
+    assert_eq!(tree.names(""), ["one.wasm", "two.wasm"]);
+}
+
+#[test]
+fn a_chunk_s_touching_segments_are_joined_in_place_and_its_data_count_follows() {
+    let tree = Tree::new();
+    let data = [active(0x402, b"@{}"), active(0x400, b"ok")];
+    let path = module_at(&tree, "chunk.wasm", &chunk(&data, &[]));
+    let (code, report, err) = run(&["--chunk", &path]);
+    assert_eq!((code, err.as_str()), (0, ""));
+    assert_eq!(
+        report,
+        format!("chunk {path}: 2 of its 2 segments put in order, 1 joined to the one before\n")
+    );
+    let ordered = std::fs::read(&path).unwrap();
+    assert_eq!(segments_of(&ordered, wasm::DATA), [active(0x400, b"ok@{}")]);
+    assert_eq!(data_count(&ordered), 1);
+}
+
+#[test]
+fn a_main_module_or_the_empty_shared_chunk_is_left_byte_for_byte() {
+    let tree = Tree::new();
+    let main = module_at(&tree, "main.wasm", &split_main());
+    let (code, report, err) = run(&["--chunk", &main]);
+    assert_eq!((code, err.as_str()), (0, ""));
+    assert_eq!(
+        report,
+        format!("main module {main}: left as it is, for the repair after dx\n")
+    );
+    assert_eq!(std::fs::read(&main).unwrap(), split_main());
+    let empty = module_at(&tree, "empty.wasm", &empty_chunk());
+    let (code, report, _) = run(&["--chunk", &empty]);
+    assert_eq!(code, 0);
+    assert_eq!(
+        report,
+        format!("chunk {empty}: 0 of its 0 segments put in order, 0 joined to the one before\n")
+    );
+    assert_eq!(std::fs::read(&empty).unwrap(), empty_chunk());
+}
+
+#[test]
+fn a_chunk_whose_order_matters_or_that_is_no_module_is_refused_and_left_as_it_was() {
+    let tree = Tree::new();
+    let unlike = chunk(&[active(0x405, b"/{}"), active(0x402, b"@{}/()")], &[]);
+    let path = module_at(&tree, "unlike.wasm", &unlike);
+    let (code, out, err) = run(&["--chunk", &path]);
+    assert_eq!((code, out.as_str()), (1, ""));
+    assert_eq!(
+        err,
+        format!(
+            "symphony-build split-repair: {path}: its data segments 1 and 0 fill 0x406 with \
+             different contents, so their order matters\n"
+        )
+    );
+    assert_eq!(std::fs::read(&path).unwrap(), unlike);
+    let text = module_at(&tree, "text.wasm", b"not wasm");
+    let (code, _, err) = run(&["--chunk", &text]);
+    assert_eq!(code, 2);
+    assert!(
+        err.starts_with(&format!("symphony-build split-repair: {text}: ")),
+        "{err}"
+    );
+    assert_eq!(std::fs::read(&text).unwrap(), b"not wasm");
+    let (code, _, err) = run(&["--chunk", "/nowhere/chunk.wasm"]);
+    assert_eq!(code, 2);
+    assert!(
+        err.starts_with("symphony-build split-repair: /nowhere/chunk.wasm: "),
+        "{err}"
+    );
+    assert_eq!(tree.names(""), ["text.wasm", "unlike.wasm"]);
+}
+
 #[test]
 fn a_command_line_without_its_two_paths_is_its_usage_and_exit_2() {
-    for args in [&[][..], &["program.wasm"], &["a", "b", "c"]] {
+    for args in [
+        &[][..],
+        &["program.wasm"],
+        &["a", "b", "c"],
+        &["--chunk"],
+        &["--chunk", "a", "b"],
+        &["--module", "a"],
+    ] {
         assert_eq!(
             run(args),
             (2, String::new(), format!("{USAGE}\n")),

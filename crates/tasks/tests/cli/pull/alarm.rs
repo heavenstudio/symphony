@@ -163,10 +163,15 @@ fn ten_in_review_against_four_in_progress_for_four_hours_raises_the_alarm_naming
         "five named, no more: {}",
         lines[7]
     );
+    let unreviewed: Vec<String> = [0, 4, 5, 6, 7, 8, 9]
+        .iter()
+        .map(|n| format!("sim/review-{n}"))
+        .collect();
     assert_eq!(
-        slugs(&d, "review_unreviewed").len(),
-        10,
-        "the categories still list every one"
+        slugs(&d, "review_unreviewed"),
+        unreviewed,
+        "the categories list every one with no reviewer but the three whose landing waits on no \
+         review at the tip now (nightly, owner, conflict)"
     );
 }
 
@@ -321,6 +326,60 @@ fn a_task_in_review_whose_tip_a_reviewer_asked_changes_of_is_in_progress_its_exe
     assert_eq!(d.executing, 0);
     assert_eq!(slugs(&d, "in_progress_orphaned"), [""; 0]);
     assert_eq!(slugs(&d, "review_unreviewed"), ["sim/a", "sim/b"]);
+}
+
+// -- the project's review gate -------------------------------------------------------------
+
+#[test]
+fn a_review_whose_landing_waits_on_no_review_at_its_tip_waits_on_no_reviewer() {
+    let mut c = Case::new();
+    let now = c.f.now();
+    let slugs_of = [
+        "sim/met",
+        "sim/nothing",
+        "sim/needs",
+        "sim/stale",
+        "sim/none",
+    ];
+    for slug in slugs_of {
+        c.task(slug, "review");
+        c.tip(slug, &format!("{slug}-1"), now);
+    }
+    // Its review given, it waits on its certificate alone; another waits on nothing.
+    c.waits("sim/met", "sim/met-1: certificate");
+    c.waits("sim/nothing", "sim/nothing-1:");
+    // One still waits on review; one's record judged a tip its branch has moved past; one has none.
+    c.waits("sim/needs", "sim/needs-1: certificate, review");
+    c.waits("sim/stale", "sim/stale-0: certificate");
+    // One's branch the repository does not tell (not named for its slug, or gone).
+    c.task("sim/gone", "review");
+    c.waits("sim/gone", "sim/gone-1: certificate");
+    let d = c.digest();
+    assert_eq!(
+        slugs(&d, "review_unreviewed"),
+        ["sim/gone", "sim/needs", "sim/none", "sim/stale"],
+        "the project's review gate decides where its landing said it at the tip now"
+    );
+    assert_eq!(slugs(&d, "in_progress_orphaned"), [""; 0], "none is rework");
+    // A new tip on sim/met: what its landing said of the last one says nothing of this one.
+    c.tip("sim/met", "sim/met-2", now + MINUTE);
+    assert_eq!(
+        slugs(&c.digest(), "review_unreviewed"),
+        ["sim/gone", "sim/met", "sim/needs", "sim/none", "sim/stale"]
+    );
+    // With no repository to tell any tip, no record is read for the row: every one is listed.
+    let d = digest_with_tips(&c.f.store, &[], None, None, c.f.now(), &[]).unwrap();
+    assert_eq!(
+        slugs(&d, "review_unreviewed"),
+        [
+            "sim/gone",
+            "sim/met",
+            "sim/needs",
+            "sim/none",
+            "sim/nothing",
+            "sim/stale"
+        ]
+    );
 }
 
 #[test]
