@@ -31,10 +31,14 @@ describe("a read that did not finish", () => {
       "Busy (the server answered 503). Trying again…",
     );
     expect(failed(" ", true)).toBe("The read did not finish. Trying again…");
-    // A reason that ends in an ellipsis of its own ends once.
+    // A reason that says it goes on by itself says so once: the board's own notice, and a
+    // sentence said here before.
     expect(failed("The task board is unavailable. Reconnecting…", true)).toBe(
-      "The task board is unavailable. Reconnecting. Trying again…",
+      "The task board is unavailable. Reconnecting…",
     );
+    expect(failed(failed("Busy", true), true)).toBe("Busy. Trying again…");
+    // One that does not try again ends its reason's ellipsis.
+    expect(failed("Reading…")).toBe("Reading.");
     for (const why of [NOT_IN_TIME, UNREACHABLE, "Busy", ""]) {
       const said = failed(why, true);
       expect(said.endsWith(TRYING), said).toBe(true);

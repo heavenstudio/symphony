@@ -732,7 +732,8 @@ export class LiveTask {
 
   /**
    * The page of `slug`, naming the `copy` the page holds (with its tag) when it holds one: none when
-   * the server has no such task; else the page and, when the server sent one rather than a `304`,
+   * the server has no such task, or answers another's; else the page and, when the server sent one
+   * rather than a `304`,
    * the tag and body to keep.
    */
   async readPage(
@@ -756,6 +757,9 @@ export class LiveTask {
     }
     const page = readTaskPage(answer.value);
     if (page === null) throw new Error("The task's page is not readable");
+    // A page answered under another name is not this task's: the server has none by this one, and
+    // the page neither draws it nor asks again.
+    if (page.task.slug !== slug) return null;
     return [page, { etag: answer.etag, value: answer.value }];
   }
 
