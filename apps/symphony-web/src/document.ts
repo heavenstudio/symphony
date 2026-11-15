@@ -525,6 +525,37 @@ export function partEdges(sections: readonly Section[], index: number): [boolean
   ];
 }
 
+/** Whether a card is settled: resolved or rejected, folded under its summary. */
+export const isSettled = (card: DocumentCard | null): boolean =>
+  card !== null && (card.group === "resolved" || card.group === "rejected");
+
+/** The first blocks (a section's `ends`) that open its prose as text, or as a box. */
+const OPENS_TEXT = new Set(["paragraph", "list", "thread"]);
+const OPENS_BOX = new Set(["table", "callout"]);
+/** The last blocks that close its prose so the next part's text takes no gap of its own. */
+const CLOSES = new Set([...OPENS_TEXT, ...OPENS_BOX, "heading-2", "heading-3", "heading-4"]);
+
+/**
+ * The classes of what a section's part draws as, read from the outline: an open card's box
+ * (`doc-part-card`), and by the kinds of its first and last blocks (its `ends`) whether its prose
+ * opens with text (`doc-part-opens-text`: a paragraph, a list, a thread's list) or a box
+ * (`doc-part-opens-box`: a table, a callout), and whether it closes with one of those or an h2 to
+ * h4 (`doc-part-closes`), as BlocksView draws them. A settled card's fold and a section drawn with
+ * its difference from main take no part in the spacing between parts, and a section kept from
+ * before the outline named its ends counts as none. docs.css spaces parts as one card's sections
+ * collapsed their margins, by the neighbour's form, and reads these for a neighbour not drawn yet:
+ * drawing it changes no margin of the part being read, so the browser's scroll anchoring keeps the
+ * reader's place.
+ */
+export function partForm(section: Section, card: DocumentCard | null): string {
+  if (section.comparison != null || isSettled(card)) return "";
+  const [first, last] = section.ends ?? ["", ""];
+  const box = OPENS_BOX.has(first) ? " doc-part-opens-box" : "";
+  const opens = OPENS_TEXT.has(first) ? " doc-part-opens-text" : box;
+  const closes = CLOSES.has(last) ? " doc-part-closes" : "";
+  return `${card === null ? "" : " doc-part-card"}${opens}${closes}`;
+}
+
 /**
  * What a folder's page says it holds, in the pill under its title: the documents the server
  * counts, which leave out a history folder's pages, then those its listing shows beyond them, so

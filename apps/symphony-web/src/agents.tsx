@@ -85,7 +85,7 @@ export function AgentsMain({ live, boardRead, stale, trouble }: AgentsMainProps)
       ) : trouble !== null ? (
         <Trouble
           title="The board could not be loaded"
-          text={`${failed(trouble)} It is also tried again on its own.`}
+          text={failed(trouble, true)}
           retry={() => {
             if (live !== null) live.retry.current += 1;
           }}
@@ -129,7 +129,7 @@ function AgentsContent({ live, connected }: { live: LiveAgents; connected: boole
       ) : d.error !== "" ? (
         <Trouble
           title="The agents could not be loaded"
-          text={failed(d.error)}
+          text={failed(d.error, true)}
           retry={() => void live.load()}
         />
       ) : (

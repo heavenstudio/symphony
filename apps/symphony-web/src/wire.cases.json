@@ -4094,7 +4094,8 @@
             "comparison": {
               "kind": "changed",
               "before": [{ "type": "paragraph", "spans": [{ "type": "text", "text": "Before" }] }]
-            }
+            },
+            "ends": ["paragraph", "paragraph"]
           },
           {
             "start": 3,
@@ -4102,7 +4103,8 @@
             "key": "card:lamp-colour",
             "hash": "h1",
             "part": 1,
-            "blocks": [{ "type": "paragraph", "spans": [{ "type": "text", "text": "Body" }] }]
+            "blocks": [{ "type": "paragraph", "spans": [{ "type": "text", "text": "Body" }] }],
+            "ends": ["paragraph", "paragraph"]
           }
         ],
         "cards": [
@@ -4156,7 +4158,8 @@
             "comparison": {
               "kind": "changed",
               "before": [{ "type": "paragraph", "spans": [{ "type": "text", "text": "Before" }] }]
-            }
+            },
+            "ends": ["paragraph", "paragraph"]
           }
         ],
         "deleted": ["old"],
@@ -4203,7 +4206,8 @@
           "comparison": {
             "kind": "changed",
             "before": [{ "type": "paragraph", "spans": [{ "type": "text", "text": "Before" }] }]
-          }
+          },
+          "ends": ["paragraph", "paragraph"]
         }
       ],
       "deleted": ["old"],
@@ -4259,7 +4263,8 @@
             "comparison": {
               "kind": "changed",
               "before": [{ "type": "paragraph", "spans": [{ "type": "text", "text": "Before" }] }]
-            }
+            },
+            "ends": ["paragraph", "paragraph"]
           },
           {
             "start": 3,
@@ -4267,7 +4272,8 @@
             "key": "card:lamp-colour",
             "hash": "h1",
             "part": 1,
-            "blocks": [{ "type": "paragraph", "spans": [{ "type": "text", "text": "Body" }] }]
+            "blocks": [{ "type": "paragraph", "spans": [{ "type": "text", "text": "Body" }] }],
+            "ends": ["paragraph", "paragraph"]
           }
         ],
         "cards": [

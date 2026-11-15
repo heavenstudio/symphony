@@ -1668,12 +1668,12 @@ afterwards, and runs the check, the docs audit, on what it made ([below](#the-re
   [dev-dependencies]", "/justfile", "/symphony.just", "/tools/", "clippy.toml",
   ".clippy.toml", "rustfmt.toml", ".rustfmt.toml", "/.cargo/", "/Cargo.toml
   [workspace.lints]", "Cargo.toml [lints]", "/symphony.toml [verdicts]", "/symphony.toml [land]", "/symphony.toml [releases]",
-  "/crates/symphony/src/cli/commands/size_budget.rs",
-  "/crates/symphony/src/cli/commands/crates_check.rs", "/crates/symphony/src/release/crates.rs",
-  "/crates/symphony/src/docs_audit.rs",
-  "/crates/symphony/src/docs_audit/", "/crates/symphony/src/release.rs",
-  "/crates/symphony/src/release/checks.rs",
-  "/crates/symphony/src/release/steps.rs", "/crates/tasks/src/land.rs",
+  "/crates/symphony-build/src/commands/size_budget.rs",
+  "/crates/symphony-build/src/commands/crates_check.rs",
+  "/crates/symphony-build/src/release/crates.rs", "/crates/symphony/src/docs_audit.rs",
+  "/crates/symphony/src/docs_audit/", "/crates/symphony-build/src/release.rs",
+  "/crates/symphony-build/src/release/checks.rs",
+  "/crates/symphony-build/src/release/steps.rs", "/crates/tasks/src/land.rs",
   "/crates/tasks/src/land/", "/crates/tasks/src/fast_fix.rs", "/crates/tasks/src/red.rs",
   "/crates/tasks/src/store/work/red.rs"]`: the tests and what they read, the Cargo tables
   that say which tests run and how (a `[[test]]`, `[[bench]]`, `[[bin]]` or `[[example]]`

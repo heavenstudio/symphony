@@ -188,7 +188,7 @@ pub fn output_within(command: Command, timeout: Duration) -> Result<Output, Stri
 }
 
 /// The real time, on both clocks.
-fn moment() -> (Instant, SystemTime) {
+pub(crate) fn moment() -> (Instant, SystemTime) {
     (Instant::now(), SystemTime::now())
 }
 
@@ -262,7 +262,11 @@ pub(crate) fn captured(mut file: File) -> std::io::Result<Vec<u8>> {
 /// Whether `timeout` has passed between two moments on either clock: the monotonic clock stops
 /// while the machine sleeps, the wall clock does not, and a command that outlasts a sleep is over
 /// its time.
-fn outlasted(began: (Instant, SystemTime), now: (Instant, SystemTime), timeout: Duration) -> bool {
+pub(crate) fn outlasted(
+    began: (Instant, SystemTime),
+    now: (Instant, SystemTime),
+    timeout: Duration,
+) -> bool {
     now.0.saturating_duration_since(began.0) >= timeout
         || now
             .1

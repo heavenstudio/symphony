@@ -54,7 +54,8 @@ fi
 mkdir -p "$CARGO_TARGET_DIR/debug/deps" "$CARGO_TARGET_DIR/debug/build/standin-0"
 until mkdir "$CARGO_TARGET_DIR/standin.lock" 2>/dev/null; do sleep 0.01; done
 trap 'rmdir "$CARGO_TARGET_DIR/standin.lock"' EXIT
-for source in "crates/tasks/src/bin/$name.rs" "crates/symphony/src/bin/$name.rs"; do
+for source in "crates/tasks/src/bin/$name.rs" "crates/symphony/src/bin/$name.rs" \
+    "crates/symphony-build/src/bin/$name.rs"; do
     [ -f "$source" ] && break
 done
 inputs=("$PWD/$source")
@@ -113,7 +114,8 @@ mv -f "$uplifted" "$CARGO_TARGET_DIR/debug/$name"
 const BUILD: &str = r#"#!/bin/sh
 root="${0%/.target/rs-bin/*}"
 name="${0##*/}"
-for source in "$root/crates/tasks/src/bin/$name.rs" "$root/crates/symphony/src/bin/$name.rs"; do
+for source in "$root/crates/tasks/src/bin/$name.rs" "$root/crates/symphony/src/bin/$name.rs" \
+    "$root/crates/symphony-build/src/bin/$name.rs"; do
     [ -f "$source" ] && break
 done
 echo "$name from $root source $(cat "$source" 2>/dev/null) exe $0 cwd $(pwd -P) args $*"
@@ -142,7 +144,7 @@ const BINARIES: [(&str, &str); 5] = [
     ("agent-send", "crates/tasks"),
     ("fake-hc", "crates/tasks"),
     ("symphony", "crates/symphony"),
-    ("symphony-build", "crates/symphony"),
+    ("symphony-build", "crates/symphony-build"),
 ];
 
 /// A repository whose main checkout (`main/`) holds the launcher and `main` as every binary's source,

@@ -1,4 +1,4 @@
-use super::{BUILDS, KEEP, publish_client_main};
+use super::{BUILDS, KEEP, publish_keeping};
 use crate::test_tree::Tree;
 use serde_json::{Value, json};
 
@@ -40,11 +40,10 @@ fn folder(tree: &Tree, rel: &str, ids: &[&str], listed: bool) {
     }
 }
 
-fn publish(tree: &Tree) -> (i32, String) {
-    let mut err = Vec::new();
-    let args = [tree.path("stage"), tree.path("public")].map(|path| path.display().to_string());
-    let code = publish_client_main(&args, &mut err);
-    (code, String::from_utf8(err).unwrap())
+/// The tree's `stage` published over its `public` as `symphony-build publish-client` publishes it,
+/// or why it was refused.
+fn publish(tree: &Tree) -> Result<(), String> {
+    publish_keeping(&tree.path("stage"), &tree.path("public")).map_err(|error| error.to_string())
 }
 
 /// The shells `rel`'s `builds.json` names, newest first, and the bound it names.
@@ -87,7 +86,7 @@ fn a_publication_keeps_its_build_and_the_two_published_before_it() {
         "stage/assets/stray-0123456789abcdef.js",
         "named by no build",
     );
-    assert_eq!(publish(&tree), (0, String::new()));
+    publish(&tree).unwrap();
     assert_eq!(listed(&tree, "public"), (shells(&["d", "c", "b"]), 3));
     // The builds kept are whole, the ones the stage lacked copied from the folder published.
     assert_eq!(tree.names("public/assets"), names(&["d", "c", "b"]));
@@ -107,7 +106,7 @@ fn a_publication_keeps_its_build_and_the_two_published_before_it() {
     // The next publication keeps the three newest again and drops the oldest of them.
     std::fs::remove_dir_all(tree.path("stage")).unwrap();
     folder(&tree, "stage", &["e"], true);
-    assert_eq!(publish(&tree), (0, String::new()));
+    publish(&tree).unwrap();
     assert_eq!(listed(&tree, "public"), (shells(&["e", "d", "c"]), 3));
     assert_eq!(tree.names("public/assets"), names(&["e", "d", "c"]));
 }
@@ -117,7 +116,7 @@ fn publishing_the_newest_build_again_keeps_the_same_builds() {
     let tree = Tree::new();
     folder(&tree, "public", &["c", "b", "a"], true);
     folder(&tree, "stage", &["c"], true);
-    assert_eq!(publish(&tree), (0, String::new()));
+    publish(&tree).unwrap();
     assert_eq!(listed(&tree, "public"), (shells(&["c", "b", "a"]), 3));
     assert_eq!(tree.names("public/assets"), names(&["c", "b", "a"]));
 }
@@ -130,7 +129,7 @@ fn a_first_publication_or_one_over_a_folder_naming_no_builds_keeps_its_build_alo
         "stage/assets/stray-0123456789abcdef.js",
         "named by no build",
     );
-    assert_eq!(publish(&tree), (0, String::new()));
+    publish(&tree).unwrap();
     assert!(!tree.path("stage").exists());
     assert_eq!(listed(&tree, "public"), (shells(&["b"]), 3));
     assert_eq!(tree.names("public/assets"), names(&["b"]));
@@ -138,13 +137,13 @@ fn a_first_publication_or_one_over_a_folder_naming_no_builds_keeps_its_build_alo
     std::fs::remove_dir_all(tree.path("public")).unwrap();
     folder(&tree, "public", &["b", "a"], false);
     folder(&tree, "stage", &["c"], true);
-    assert_eq!(publish(&tree), (0, String::new()));
+    publish(&tree).unwrap();
     assert_eq!(listed(&tree, "public"), (shells(&["c"]), 3));
     assert_eq!(tree.names("public/assets"), names(&["c"]));
 }
 
-/// A way a publication cannot go through: what it is, how it spoils the folders and what
-/// publish-client says of it.
+/// A way a publication cannot go through: what it is, how it spoils the folders and what the
+/// refusal ends with.
 type Refusal = (&'static str, fn(&Tree), String);
 
 #[test]
@@ -229,15 +228,8 @@ fn a_stage_or_a_build_that_cannot_be_kept_whole_refuses_and_leaves_the_published
         folder(&tree, "stage", &["d"], true);
         spoil(&tree);
         let before = tree.names("public/assets");
-        let (code, err) = publish(&tree);
-        assert_eq!(code, 1, "{case}: {err}");
-        let prefix = format!(
-            "symphony-build publish-client: {} -> {}: ",
-            tree.path("stage").display(),
-            tree.path("public").display()
-        );
-        assert!(err.starts_with(&prefix), "{case}: {err}");
-        assert!(err.trim_end().ends_with(&said), "{case}: {err}");
+        let err = publish(&tree).unwrap_err();
+        assert!(err.ends_with(&said), "{case}: {err}");
         assert_eq!(
             listed(&tree, "public"),
             (shells(&["c", "b", "a"]), 0),
@@ -252,19 +244,10 @@ fn a_link_among_the_stage_assets_refuses() {
     let tree = Tree::new();
     folder(&tree, "stage", &["d"], true);
     std::os::unix::fs::symlink(tree.path("outside.js"), tree.path("stage/assets/link.js")).unwrap();
-    let (code, err) = publish(&tree);
-    assert_eq!(code, 1, "{err}");
+    let err = publish(&tree).unwrap_err();
     assert!(
-        err.trim_end()
-            .ends_with("link.js: client assets must be regular files"),
+        err.ends_with("link.js: client assets must be regular files"),
         "{err}"
     );
     assert!(!tree.path("public").exists());
-}
-
-#[test]
-fn a_command_line_without_both_folders_prints_the_usage() {
-    let mut err = Vec::new();
-    assert_eq!(publish_client_main(&["only-one".into()], &mut err), 2);
-    assert_eq!(err, b"usage: symphony-build publish-client STAGE PUBLIC\n");
 }

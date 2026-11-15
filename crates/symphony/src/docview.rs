@@ -356,6 +356,9 @@ pub fn document_marked(
         }
         doc.sections.splice(0..0, notice);
     }
+    for section in &mut doc.sections {
+        section.ends = symphony_api::Section::ends_of(&section.blocks);
+    }
     if !scope.is_empty() {
         doc.path = format!("@{scope}/{rel}");
         for crumb in &mut doc.crumbs {

@@ -1196,18 +1196,23 @@ describe("a task's timeline laid out", () => {
   });
 
   it("a failed read says its reason's first line as a sentence, never a stack", () => {
-    expect(failed("Failed to fetch")).toBe("The timeline could not be read: Failed to fetch.");
+    // Each says when it is tried again: a minute after a failure (`nextRead`).
+    expect(TIMELINE_EVERY).toBe(60);
+    const again = (said: string) => `${said} Trying again in a minute.`;
+    expect(failed("Failed to fetch")).toBe(
+      again("The timeline could not be read: Failed to fetch."),
+    );
     expect(failed(" Board snapshot unavailable. ")).toBe(
-      "The timeline could not be read: Board snapshot unavailable.",
+      again("The timeline could not be read: Board snapshot unavailable."),
     );
     expect(
       failed("TypeError: Failed to fetch\n    at window.fetch (shell.js:1:2)\n    at 0xe43e"),
-    ).toBe("The timeline could not be read: TypeError: Failed to fetch.");
-    expect(failed("")).toBe("The timeline could not be read.");
-    expect(failed(" . ")).toBe("The timeline could not be read.");
+    ).toBe(again("The timeline could not be read: TypeError: Failed to fetch."));
+    expect(failed("")).toBe(again("The timeline could not be read."));
+    expect(failed(" . ")).toBe(again("The timeline could not be read."));
     // A line's carriage return and every trailing point go; a point between words stays.
-    expect(failed("gone.\r\nmore")).toBe("The timeline could not be read: gone.");
-    expect(failed("a. b...")).toBe("The timeline could not be read: a. b.");
+    expect(failed("gone.\r\nmore")).toBe(again("The timeline could not be read: gone."));
+    expect(failed("a. b...")).toBe(again("The timeline could not be read: a. b."));
   });
 
   it("the next read is the timeline's own while open, a minute after a failure, none once closed", () => {
