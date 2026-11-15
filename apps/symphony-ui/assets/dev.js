@@ -2,14 +2,6 @@
 (() => {
     window.reviewPanelReady = true;
     window.reviewDevelopment = true;
-    // The overlay host is mounted beside the page (src/dev.rs): a select's popup and the picture
-    // viewer ask it as they ask the release shell's (assets/shell.js `reviewOverlay`).
-    window.reviewOverlay = request => {
-        if (request.kind !== 'close') window.reviewOverlayRequest = request;
-        else if (window.reviewOverlayRequest?.owner === request.owner) window.reviewOverlayRequest = null;
-        else return;
-        dispatchEvent(new Event('review:overlay'));
-    };
     const held = [];
     const drafts = new Map();
     function engaged() {

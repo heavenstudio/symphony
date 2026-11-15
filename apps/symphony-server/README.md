@@ -210,7 +210,10 @@ ask thread with a message the hub has not announced yet (`threads`, each `id` an
 document's questions read their thread again only then, and once after a
 reconnect, instead of polling. The hub compares the asks file's size and time each
 board interval and reads it only when they changed; `/api/ask` and `/api/asks` take
-the chat recipient from the hub's last board read. `branches` names the branches of the
+the chat recipient from the hub's last board read. `task-asks` is what the task
+board asks of each person, the questions waiting on them and the newest reviewer
+verdict, sent each time it changes, for the desktop app (`src/live/task_asks.rs`):
+no page reads it. `branches` names the branches of the
 project's repository whose tip moved, as the watcher saw their refs change: an open task page
 reads its gates again when the branch they were answered for is among them. Unknown regions
 are ignored by the current board client.

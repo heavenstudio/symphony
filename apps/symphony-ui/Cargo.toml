@@ -113,15 +113,13 @@ web-sys = { version = "0.3", features = [
 default = ["web", "overlays"]
 web = ["dioxus/web"]
 page-panel = ["overlays"]
-# The overlay host alone: a select's popup and the picture viewer, for every other module.
-page-overlay = ["overlays"]
-# The program: the chat and the menus every page mounts, as one program that `dx bundle --wasm-split`
-# cuts into a main module and a chunk for each, and one for the media layer (src/split.rs,
-# bundle.sh). Its kinds share one runtime.
-page-program = ["page-panel", "page-overlay"]
+# The program: the chat every page mounts, as one program that `dx bundle --wasm-split` cuts into a
+# main module and a chunk for it, and one for the media layer (src/split.rs, bundle.sh). The menus
+# every page mounts (a select's popup, the picture viewer) are the web client's.
+page-program = ["page-panel"]
 overlays = ["dep:dioxus-primitives", "dep:dioxus-icons"]
 # Opt-in only: the release bundles never enable the development runtime or devtools.
-devtools = ["dioxus/devtools", "page-panel", "page-overlay"]
+devtools = ["dioxus/devtools", "page-panel"]
 # The size probes' bins (probes/), for `cargo symphony-ui size` only.
 size-probe = []
 

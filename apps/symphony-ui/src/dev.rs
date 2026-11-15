@@ -1,12 +1,13 @@
-//! Development only: the program's kinds, the chat and the menus, in one runtime, using the same
-//! client library as releases. DX updates RSX in place and incrementally rebuilds Rust logic; dev.js
-//! gates the resulting reload. The pages are the web client's, whose own dev server serves them
-//! (apps/symphony-web/AGENTS.md, "The dev server").
+//! Development only: the program's kind, the chat, in a runtime of its own, using the same client
+//! library as releases. DX updates RSX in place and incrementally rebuilds Rust logic; dev.js
+//! gates the resulting reload. The pages and the menus (a select's popup, the picture viewer) are
+//! the web client's, whose own dev server serves them (apps/symphony-web/AGENTS.md, "The dev
+//! server"): here a select or a picture opens nothing.
 
 #![forbid(unsafe_code)]
 
 #[cfg(target_arch = "wasm32")]
-use symphony_ui::{components, frame, navigation};
+use symphony_ui::{frame, navigation};
 
 fn main() {
     #[cfg(target_arch = "wasm32")]
@@ -30,8 +31,5 @@ fn main() {
 #[dioxus::prelude::component]
 fn Development() -> dioxus::prelude::Element {
     use dioxus::prelude::*;
-    rsx! {
-        frame::PanelApp {}
-        components::OverlayApp {}
-    }
+    rsx! { frame::PanelApp {} }
 }
