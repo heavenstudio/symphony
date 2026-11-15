@@ -11,6 +11,9 @@ Implement under the destination project's implementation, testing and documentat
 - Delegation, model choices and concurrent runs follow the task and project policy. Keep every
   child process owned through shutdown and reaping. Use private fixtures for tests, and follow
   the project's policy for shared services and live data.
+- A log or scratch file you write in your scratchpad is named by your handle or the task's slug:
+  every in-process agent of one orchestrator shares that folder, and two writing one name read
+  each other's output.
 - This skill requires no language wrapper, verification binary, certificate scheme or landing
   command, and no recipe exists because another project has it: use the project's configured
   entrypoints and review rules.

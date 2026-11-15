@@ -2,7 +2,7 @@
 name: review-task
 description: Review one task in the board's review column, independently of its author: rerun its focused tests, judge its evidence and record a verdict naming the tip read. A reviewer's whole prompt is `/review-task SLUG HANDLE` (Codex `$review-task SLUG HANDLE`), never /work. Trigger on /review-task SLUG or $review-task SLUG.
 ---
-<!-- symphony-stamp: 497f8f8b7b3e0440 files=SKILL.md -->
+<!-- symphony-stamp: 05ef0eab01ed4b72 files=SKILL.md -->
 
 # /review-task SLUG HANDLE
 
@@ -19,7 +19,9 @@ assumes no certificate or landing system.
    hold it already: `just tasks role SLUG reviewer --as HANDLE`.
 3. Read `just tasks show SLUG --as HANDLE`, its thread, and the diff of the tip it names.
 4. Rerun the focused tests its evidence names yourself, never the full suite; never take the
-   executor's word that they are green.
+   executor's word that they are green. A log or scratch file you write in your scratchpad is
+   named by your handle or SLUG: every in-process agent of one orchestrator shares that folder,
+   and two writing one name read each other's output.
 5. Judge, naming what is missing in a changes:
    - whether the evidence is good enough for the change's risk: higher risk asks for stronger
      evidence, never for the whole suite;
