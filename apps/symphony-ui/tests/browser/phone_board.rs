@@ -1,7 +1,8 @@
 //! The task board on a phone (`assets/board.css`'s `max-width: 600px`, the React client's
 //! `src/board.tsx` and `src/boardswipe.ts`), app/phone-board-slides-a-column-at-a-time: one column
 //! on the screen at a time, each as wide as the board's scroller, and a swipe lands on the next
-//! one whole, a long or fast flick too, deep down a column as at its top; the search and the
+//! one whole, a long or fast flick too, deep down a column as at its top, and a tap begins no
+//! swipe that would hold the next scroll, a focus move's, to one column; the search and the
 //! filters wait behind a button of their own, shut as the board opens, which a wider window does
 //! not draw. Each waits on what the page shows, never on a pause.
 
@@ -185,6 +186,64 @@ fn a_long_or_fast_flick_on_a_phone_passes_one_column_at_most() {
         );
         eprintln!("PHONE FLICK {columns} of a column at {speed} px/s ended on {ended}");
     }
+}
+
+/// The frames a board that stays is watched for.
+const FRAMES: u32 = 30;
+
+/// Count in `window.phoneFrames` the frames drawn from now on, up to `FRAMES`, and in
+/// `window.phoneScrolls` the board's scroll events among them.
+fn still() -> String {
+    format!(
+        "(() => {{ const board = document.querySelector('.board-scroll'); window.phoneFrames = 0; window.phoneScrolls = 0;
+            board.onscroll = () => {{ window.phoneScrolls += 1; }};
+            const frame = () => {{ window.phoneFrames += 1; if (window.phoneFrames < {FRAMES}) requestAnimationFrame(frame); }};
+            requestAnimationFrame(frame); }})()"
+    )
+}
+
+/// A tap on the board begins no swipe, so the scroll that ends next, a focus move's here, lands
+/// where it lands. Before, a tap left its press noted (`src/boardswipe.ts` forgot it only at the
+/// end of a scroll, which a tap never starts), and a focus moved two columns on, as Tab or a
+/// screen reader moves it from In progress past the empty build and test rail to Review, was
+/// pulled back one column, the focused card off the screen.
+#[test]
+fn a_tap_then_a_focus_move_two_columns_on_stays_there() {
+    let site = site();
+    let Some(mut page) = chrome() else { return };
+    open_on_a_phone(&mut page, &site);
+    page.eval(LANDINGS);
+    // Ready's cards drawn, as a column's are once it came on the screen, and back to Concept.
+    reveal(&mut page, "ready", 2, 0);
+    let link = ".column[data-status=ready] .taskcard-title";
+    assert!(
+        page.wait_for(
+            &format!("document.querySelector({}) !== null", json!(link)),
+            SHOWN
+        ),
+        "Ready's cards never drew"
+    );
+    reveal(&mut page, "concept", 0, 0);
+    page.tap(".column[data-status=concept] > h2");
+    page.eval(&format!("document.querySelector({}).focus()", json!(link)));
+    lands(&mut page, 2, "the focus move to Ready");
+    // A scroll the board asks for as that one ends starts within a frame or two of it.
+    page.eval(&still());
+    assert!(
+        page.wait_for(&format!("window.phoneFrames >= {FRAMES}"), SHOWN),
+        "the page drew no {FRAMES} frames: {}",
+        page.eval("window.phoneFrames")
+    );
+    assert_eq!(
+        page.eval(&format!(
+            "(() => {{ const board = document.querySelector('.board-scroll').getBoundingClientRect(), focused = document.activeElement;
+                const card = focused.getBoundingClientRect();
+                return [window.phoneScrolls, window.phoneLandings, focused.matches({}), card.left >= board.left && card.right <= board.right]; }})()",
+            json!(link)
+        )),
+        json!([0, [], true, true]),
+        "after a tap the board stays on Ready, the focused card on its screen (scrolls, landings since, the card focused, on the screen)"
+    );
 }
 
 /// Bring the column of `status`, the pipeline's `column`th, onto the board's screen, `top` px down

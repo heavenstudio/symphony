@@ -147,6 +147,25 @@ describe("a swipe across the board", () => {
     expect(scrollBy).toHaveBeenCalledOnce();
   });
 
+  it("is no swipe after a tap: the scroll ending next, a key's, a focus move's or a script's, stays", () => {
+    const { limit, scrollBy, at } = board();
+    at(3);
+    for (const pointerType of ["touch", "pen"]) {
+      limit.down({ pointerType });
+      limit.up();
+      at(5);
+      limit.ended();
+      at(3);
+      limit.ended();
+    }
+    expect(scrollBy).not.toHaveBeenCalled();
+    // A finger's swipe after the tap is held as any other.
+    limit.down({ pointerType: "touch" });
+    at(1);
+    limit.ended();
+    expect(scrollBy).toHaveBeenCalledExactlyOnceWith({ left: PITCH, behavior: "smooth" });
+  });
+
   it("on a board with no column shows none and moves nothing", () => {
     const { limit, scrollBy } = board(0);
     limit.down({ pointerType: "touch" });
@@ -158,10 +177,13 @@ describe("a swipe across the board", () => {
 describe("the board's swipes held to one column", () => {
   it("listen on its scroller while it is drawn, asking how it snaps, until it goes", () => {
     const listeners: [string, (event: unknown) => void, AddEventListenerOptions][] = [];
+    const scrollBy = vi.fn();
     const node = {
       clientLeft: 0,
       getBoundingClientRect: () => ({ left: 0 }),
-      querySelectorAll: () => [],
+      querySelectorAll: () =>
+        [0, 1, 2].map((index) => ({ getBoundingClientRect: () => ({ left: index * 100 }) })),
+      scrollBy,
       addEventListener: (
         name: string,
         listener: (event: unknown) => void,
@@ -174,9 +196,24 @@ describe("the board's swipes held to one column", () => {
     useOneColumnASwipe({ current: node }, false);
     expect(listeners).toEqual([]);
     useOneColumnASwipe({ current: node }, true);
-    expect(listeners.map(([name]) => name)).toEqual(["pointerdown", "scrollend"]);
-    listeners[0]?.[1]({ pointerType: "touch" });
+    expect(listeners.map(([name, , options]) => [name, options.passive])).toEqual([
+      ["pointerdown", true],
+      ["pointerup", true],
+      ["scrollend", undefined],
+    ]);
+    const [down, up, ended] = listeners.map(([, listener]) => listener);
+    // A tap on the board's first column, then a scroll ending two on: it stays.
+    down?.({ pointerType: "touch" });
     expect(style).toHaveBeenCalledExactlyOnceWith(node);
+    up?.({ pointerType: "touch" });
+    node.getBoundingClientRect = () => ({ left: 200 }) as DOMRect;
+    ended?.({});
+    expect(scrollBy).not.toHaveBeenCalled();
+    // A swipe from there back to the first column goes on to the second only.
+    down?.({ pointerType: "touch" });
+    node.getBoundingClientRect = () => ({ left: 0 }) as DOMRect;
+    ended?.({});
+    expect(scrollBy).toHaveBeenCalledExactlyOnceWith({ left: 100, behavior: "smooth" });
     const signal = listeners[0]?.[2].signal;
     expect(signal?.aborted).toBe(false);
     effects.cleanups.pop()?.();

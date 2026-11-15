@@ -4,7 +4,9 @@
 // such a scroll ends more than one column from where it began, the board goes on to the column
 // next to that one, in the swipe's direction. A mouse's or a key's scroll lands where it lands, as
 // does every scroll of a board that does not snap to one column at a time (a desk, a narrow
-// window).
+// window). A press the browser takes to scroll ends in `pointercancel`; one that scrolled nothing,
+// a tap, ends in `pointerup` and is forgotten there, so the next scroll to end, a key's, a focus
+// move's or a script's (Back or Forward's, `boardplace.ts`), lands where it lands too.
 
 import { type RefObject, useEffect } from "react";
 import { useMount } from "./mount";
@@ -36,10 +38,12 @@ export type Board = Pick<
   "getBoundingClientRect" | "querySelectorAll" | "scrollBy" | "clientLeft"
 >;
 
-/** A board's swipes held to one column each: `down` for each press on it, `ended` for each end of
- * its scroll. `snaps` says whether the board snaps to one column at a time. */
+/** A board's swipes held to one column each: `down` for each press on it, `up` for each press let
+ * go with no scroll, `ended` for each end of its scroll. `snaps` says whether the board snaps to
+ * one column at a time. */
 export class SwipeLimit {
-  /** The column a finger's or a pen's press came down on, until its scroll ends. */
+  /** The column a finger's or a pen's press came down on, until its scroll ends or it is let go
+   * having scrolled nothing. */
   private from: number | null = null;
 
   constructor(
@@ -68,6 +72,12 @@ export class SwipeLimit {
     this.from = nearestColumn(lefts, edge);
   };
 
+  /** A press let go, not taken to scroll (a tap): no swipe began, and the scroll that ends next is
+   * not its. */
+  up = (): void => {
+    this.from = null;
+  };
+
   /** The board's scroll ended: a swipe that passed more than one column goes on to the one next to
    * where it began. */
   ended = (): void => {
@@ -93,6 +103,7 @@ export function useOneColumnASwipe(scroller: RefObject<HTMLElement | null>, draw
       getComputedStyle(node).scrollSnapType.includes("mandatory"),
     );
     node.addEventListener("pointerdown", limit.down, { passive: true, signal });
+    node.addEventListener("pointerup", limit.up, { passive: true, signal });
     node.addEventListener("scrollend", limit.ended, { signal });
     return () => controller.abort();
   }, [scroller, drawn, mount]);
