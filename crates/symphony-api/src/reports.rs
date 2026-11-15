@@ -285,6 +285,16 @@ pub struct Red {
     /// Its status at [`ReportDay::until`]: its time to fix is `closed` less `filed` once it is
     /// `done`.
     pub status: String,
+    /// The commits its filer said it came between, `GOOD..BAD`, the newest it knew green and the
+    /// first it found red, as its body's `between:` line names them; none for a red that names
+    /// none.
+    #[serde(default)]
+    pub between: Option<String>,
+    /// The tasks that landed in `between`, by slug, newest first: each merge the land made on the
+    /// default branch's line of first parents in that range, the landings it may trace back to.
+    /// None where it names no range, or git could not read it.
+    #[serde(default)]
+    pub landed: Option<Vec<String>>,
 }
 
 /// The waits that ended in an hour, each in the hour it ended.

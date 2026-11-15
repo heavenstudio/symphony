@@ -22,7 +22,7 @@ import {
 } from "./document-live";
 import { CASES, reply } from "./testing";
 import type { Document, DocumentCard, DocumentOutline, Folder, Section } from "./wire";
-import { CACHE_FORMAT, VERSION_HEADER } from "./wire";
+import { CACHE_FORMAT, FEED_EVENT, VERSION_HEADER } from "./wire";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -842,6 +842,63 @@ describe("a document page's loops", () => {
     left.abort();
     await done;
     expect(opened[1]?.closed).toBe(1);
+  });
+
+  it("tell the frame of a follow's first open alone: a stream opened again for sections missed nothing", async () => {
+    vi.useFakeTimers();
+    try {
+      const asked = serverOf();
+      deviceOf();
+      const opened = feeds();
+      const page = pageOf();
+      const left = new AbortController();
+      const done = documentLive(page, left.signal);
+      const outlines = () => asked.filter((read) => read.url.endsWith("&view=outline"));
+      /** The stream `at` opens, then says the event `version`, which moves no region. */
+      const says = async (at: number, version: number) => {
+        opened[at]?.source.dispatchEvent(new Event("open"));
+        opened[at]?.source.dispatchEvent(
+          new MessageEvent(FEED_EVENT, { data: JSON.stringify({ version, changes: [] }) }),
+        );
+        await vi.advanceTimersByTimeAsync(0);
+        expect(page.cursor).toBe(version);
+      };
+      await vi.advanceTimersByTimeAsync(0);
+      outlines()[0]?.answer(answered(200, OUTLINE_NOW, '"o1"', 7));
+      await vi.advanceTimersByTimeAsync(0);
+      await says(0, 8);
+      expect(page.frame.connected).toHaveBeenCalledTimes(1);
+      // Each section near the screen opens the stream again, from the last event heard.
+      for (const [at, key] of ["intro", "lamps"].entries()) {
+        page.want(key);
+        await vi.advanceTimersByTimeAsync(200);
+        expect(opened).toHaveLength(at + 2);
+        expect(opened[at]?.closed).toBe(1);
+        expect(opened[at + 1]?.url).toContain(`?since=${8 + at}&`);
+        await says(at + 1, 9 + at);
+      }
+      expect(page.frame.connected).toHaveBeenCalledTimes(1);
+      expect(page.stale).toBe(false);
+      // A stream lost: the outline is read again after a pause, and the next follow's first open
+      // tells the frame, so what the loss missed is read again.
+      opened[2]?.source.dispatchEvent(new Event("error"));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(page.stale).toBe(true);
+      expect(opened[2]?.closed).toBe(1);
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(outlines()).toHaveLength(2);
+      outlines()[1]?.answer(answered(200, OUTLINE_NOW, '"o1"'));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(opened).toHaveLength(4);
+      await says(3, 11);
+      expect(page.frame.connected).toHaveBeenCalledTimes(2);
+      expect(page.stale).toBe(false);
+      left.abort();
+      await vi.advanceTimersByTimeAsync(0);
+      await done;
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("lose a feed whose event they cannot read, and read again after a pause", async () => {

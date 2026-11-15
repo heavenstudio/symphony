@@ -363,7 +363,8 @@ fn flow(replayed: &[Replayed], top: bool, from: f64, to: f64, now: f64) -> Flow 
     flow
 }
 
-fn spread(values: Vec<f64>) -> Option<Spread> {
+/// The median and p90 of `values`, as a day file keeps a spread; none of none.
+pub(crate) fn spread(values: Vec<f64>) -> Option<Spread> {
     stages::stats::spread(values).map(|s| Spread {
         n: u32::try_from(s.n).unwrap_or(u32::MAX),
         median: s.median,
@@ -427,6 +428,9 @@ fn reds(replayed: &[Replayed], start: f64, until: f64) -> Vec<Red> {
                 status: task
                     .holding(until)
                     .map_or_else(|| task.task.status.clone(), |s| s.status.clone()),
+                between: task.task.between.clone(),
+                // The landings in that range are git's to say: the roll-up's.
+                landed: None,
             })
         })
         .collect()

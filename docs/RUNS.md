@@ -177,6 +177,46 @@ An end line of the workspace tests of a verify, a step, recorded on macOS:
 {"schema":1,"run":"8a21…","parent":"5f0c…","project":"symphony","machine":"9e1d…","pipeline":"verify","step":"tests","label":"tests","task":"tools/run-record","handle":"ember-osprey","trigger":"ember-osprey","branch":"tools/run-record","commit":"7ad7…","tree":"c41b…","dirty":false,"queued":1794400090.1,"started":1794400090.2,"ended":1794400412.9,"end":"red","exit":101,"signal":null,"cpu_s":1873.412,"cpu_partial":false,"rerun_of":"77e0…"}
 ```
 
+## The roll-up
+
+Once an hour the machine's one server rolls each project's runs up into
+`symphony/runs/rollup/YYYY-MM-DD.json` beside the day files, one file a UTC day,
+kept for good (`symphony_api::RunsDay`, schema 1;
+`crates/tasks/src/runs/rollup.rs`). This happens in the same hour as the board's day files
+and on the same thread (`apps/symphony-server/src/live/reports.rs`). It reads no
+board, so an hour whose board read failed rolls the runs up all the same. Today's
+file is written again each hour. Yesterday's is written once more after midnight,
+`closed`, and never again. A private server writes none.
+
+A day's figures come from the runs that ended in it, each run once (`fold`):
+
+- **Per pipeline:** its runs, how many ended each way, the pass rate (green over
+  green, red and timed out), and the median and p90 of their time from start to
+  end. Only runs count here, not their steps.
+- **Per suite:** each test binary a line reports (`suites`): its runs, those in
+  which a test of it failed, and the median and p90 of its time. A run whose steps
+  report their tests counts them by the steps alone. `slowest` names the ten
+  slowest by median; a suite's trend is its line in each day's file.
+- **Flaky tests,** over the day and the 13 before it: a test that failed in one
+  run and passed in another of the same pipeline, step, label and tree, both
+  clean, as a rerun is matched. A test passed in a run that ended green, or red
+  with the test's binary in its `suites` and the test not in its `failed`. Each
+  flaky test counts its `flaky` runs (failed on a tree it passed on) and its `red`
+  runs (failed on a tree it never passed on). A test failed on a changed or dirty
+  tree is never flaky.
+- **Cost:** the runs' CPU (`cpu_s`, steps included) and their time from start to
+  end. `cpu_partial` is set when a run's CPU is known short or not known. The ten
+  costliest tasks are named by CPU.
+
+There is no queue wait, as nothing queues for the recorder. There are no landings
+apart from the `landing` pipeline's own figures, from whichever project records
+one. Suites and flaky tests stay empty until a line carries `suites` and `failed`.
+
+A day file that is there but cannot be read, or is not a regular file, writes no
+roll-up that hour, and each one stays as the last hour left it. A line that does
+not parse is skipped. Each file is written aside and then renamed, while its server
+generation's gate stands open, as the board's day files are.
+
 ## The review command
 
 A task moving to review starts `[board] on_review` through the `tasks` that moved it

@@ -73,6 +73,7 @@ fn task(slug: &str, created: f64, status: &str, updated: f64, thread: Thread) ->
         parent: None,
         instruction: false,
         marked_red: false,
+        between: None,
         lines: thread.0,
     }
 }
@@ -116,6 +117,7 @@ fn board() -> ReportRead {
         Thread::default().made(-24.0, "filer"),
     );
     release.marked_red = true;
+    release.between = Some("0123456..89abcde".into());
     let a = task(
         "sim/a",
         1.0,
@@ -300,6 +302,8 @@ fn a_day_under_way_counts_each_figure_of_the_fixture_hour_by_hour() {
                 filed: at(-24.0),
                 closed: None,
                 status: "ready".into(),
+                between: Some("0123456..89abcde".into()),
+                landed: None,
             },
             Red {
                 slug: "tests/main-red-1".into(),
@@ -307,6 +311,8 @@ fn a_day_under_way_counts_each_figure_of_the_fixture_hour_by_hour() {
                 filed: at(2.0),
                 closed: Some(at(6.0)),
                 status: "done".into(),
+                between: None,
+                landed: None,
             },
         ]
     );
