@@ -315,10 +315,11 @@ reader. The spacing that stands in for the margins one card's sections collapsed
 neighbour not drawn yet as what it will draw as, by its part's classes (`partForm`, `document.ts`):
 an open card by the outline's cards, and how its prose opens and closes by the kinds of its first
 and last blocks, which the outline carries for each section (`ends`,
-`symphony_api::Section::ends_of`). A section in an outline kept from before it carried them counts
-as neither, so its neighbour moves once as it draws until the next read replaces that copy
-(`tests/browser/document_landing.rs`, each form beside a card and a paragraph, on a desk and a
-phone).
+`symphony_api::Section::ends_of`). A section in an outline kept from before it carried them reads
+as opening and closing with no listed block, so its neighbour may move once as it draws, until
+the next read replaces that copy
+(`tests/browser/document_landing.rs` reads a paragraph, a list, a table, the intro and a card
+beside code, a quote, a mockup, a picture, a heading, a table and a title, on a desk and a phone).
 
 ## A task's page
 

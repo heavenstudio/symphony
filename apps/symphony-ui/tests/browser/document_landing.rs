@@ -542,9 +542,16 @@ fn reads_asked(page: &mut Chrome, site: &Site, count: usize) -> Vec<Vec<String>>
 const READ: &str = "(() => { const box = window.reading.getBoundingClientRect();
     return {top: box.top, bottom: box.bottom, down: box.top + scrollY, height: innerHeight, y: scrollY}; })()";
 
-/// True once what the reader reads has held still for ten frames, with nothing near the screen
-/// still to draw when `drawn` (a reserved box or a ghost within its sentinel's 600 px); false after
-/// sixty frames without that, for the wait to look again.
+/// The document's sections near the screen still to draw (a reserved box or a ghost within its
+/// sentinel's 600 px): the classes of the part each is in, and its top and bottom.
+const PENDING_NEAR: &str = "[...document.querySelectorAll('.doc-part > [data-pending=true]')]
+    .map(box => { const r = box.getBoundingClientRect(); return [box.parentElement?.className ?? null, r.top, r.bottom]; })
+    .filter(([, top, bottom]) => bottom > -600 && top < innerHeight + 600)";
+
+/// True once what the reader reads has held still for ten frames, with no section near the screen
+/// still to draw when `drawn` (a reserved box or a ghost within its sentinel's 600 px; the links of
+/// a phone's closed outline draw only once it is opened); false after sixty frames without that,
+/// for the wait to look again.
 fn held(drawn: bool) -> String {
     format!(
         "new Promise(done => {{
@@ -552,7 +559,7 @@ fn held(drawn: bool) -> String {
         const near = box => {{ const r = box.getBoundingClientRect(); return r.bottom > -600 && r.top < innerHeight + 600; }};
         const look = () => {{
             const now = window.reading.isConnected ? `${{window.reading.getBoundingClientRect().top}} ${{scrollY}}` : null;
-            const waiting = {drawn} && [...document.querySelectorAll('[data-pending=true]')].some(near);
+            const waiting = {drawn} && [...document.querySelectorAll('.doc-part > [data-pending=true]')].some(near);
             still = now !== null && now === last && !waiting ? still + 1 : 0;
             last = now;
             if (still >= 10) return done(true);
@@ -724,9 +731,23 @@ fn read_while_drawn(
             );
         }
         Reading::Swiped => {
+            // A finger drawn 500 px up the screen, in steps, and lifted.
+            let x = width / 2;
+            let from = height * 3 / 4;
+            let point = |y: u32| json!([{"x": x, "y": y}]);
             page.call(
-                "Input.synthesizeScrollGesture",
-                json!({"x": width / 2, "y": height * 3 / 4, "yDistance": -500, "gestureSourceType": "touch", "speed": 1200}),
+                "Input.dispatchTouchEvent",
+                json!({"type": "touchStart", "touchPoints": point(from)}),
+            );
+            for step in 1..=10 {
+                page.call(
+                    "Input.dispatchTouchEvent",
+                    json!({"type": "touchMove", "touchPoints": point(from - step * 50)}),
+                );
+            }
+            page.call(
+                "Input.dispatchTouchEvent",
+                json!({"type": "touchEnd", "touchPoints": []}),
             );
         }
         Reading::Typing => {
@@ -769,6 +790,14 @@ fn read_while_drawn(
         page.eval(
             "window.reading = document.elementFromPoint(innerWidth / 2, innerHeight * 0.4); true",
         );
+        assert_eq!(
+            page.eval(&format!(
+                "{element}.closest('.doc-part').contains(window.reading)"
+            )),
+            json!(true),
+            "{id} {reading:?}: what the reader reads is in the section the page landed on: {}",
+            page.eval("window.reading?.outerHTML.slice(0, 200) ?? null")
+        );
     }
     assert!(
         page.wait_for(&held(false), SHOWN),
@@ -780,8 +809,9 @@ fn read_while_drawn(
     site.hold_route("/api/section", false);
     assert!(
         page.wait_for(&held(true), SHOWN),
-        "{id} {reading:?}: the sections near the screen draw and the page holds still: {}",
-        page.eval(READ)
+        "{id} {reading:?}: the sections near the screen draw and the page holds still: {}, still to draw near it: {}",
+        page.eval(READ),
+        page.eval(PENDING_NEAR)
     );
     let after = page.eval(READ);
     eprintln!("READING {id} {reading:?}: landed {landed}, before {before}, after {after}");
@@ -832,6 +862,16 @@ fn words(what: &str) -> Value {
     ))])
 }
 
+/// A paragraph taller than a window on a desk and on a phone, which a reader reads on in.
+fn long_words(what: &str) -> Value {
+    let lines: String = (1..=64)
+        .map(|n| {
+            format!("{what}, sentence {n}: words a reader reads on in while the page draws above. ")
+        })
+        .collect();
+    paragraph(vec![text(lines.trim_end())])
+}
+
 fn heading(level: u8, anchor: &str, words: &str) -> Value {
     json!({"type": "heading", "level": level, "anchor": anchor, "spans": [text(words)]})
 }
@@ -849,14 +889,21 @@ fn mockup() -> Value {
     json!({"type": "media", "media": {"kind": "mockup", "src": MOCKUP, "label": "A mockup"}})
 }
 
-fn list() -> Value {
-    json!({"type": "list", "ordered": false, "start": 1, "items": [[words("An item")], [words("Another item")]]})
+/// A list of `items`, each a paragraph.
+fn list(items: usize) -> Value {
+    let items: Vec<Value> = (1..=items)
+        .map(|n| json!([words(&format!("Item {n}"))]))
+        .collect();
+    json!({"type": "list", "ordered": false, "start": 1, "items": items})
 }
 
-fn table() -> Value {
+/// A table of lamps, `rows` of them.
+fn table(rows: usize) -> Value {
     let cell = |words: &str, header: bool| json!({"header": header, "spans": [text(words)], "presentation": {}});
-    json!({"type": "table", "head": [cell("Lamp", true), cell("Colour", true)],
-        "rows": [[cell("Desk", false), cell("Warm white", false)], [cell("Hall", false), cell("Amber", false)]]})
+    let rows: Vec<Value> = (1..=rows)
+        .map(|n| json!([cell(&format!("Lamp {n}"), false), cell("Warm white", false)]))
+        .collect();
+    json!({"type": "table", "head": [cell("Lamp", true), cell("Colour", true)], "rows": rows})
 }
 
 /// What a form's reader reads: a section of prose (its one block), or a card.
@@ -892,12 +939,12 @@ fn forms() -> Vec<Form> {
         below,
     };
     vec![
-        prose("p-after-code", code(), words("Read")),
-        prose("p-after-quote", quote(), words("Read")),
-        prose("p-after-mockup", mockup(), words("Read")),
-        prose("p-after-picture", picture(), words("Read")),
-        prose("list-after-code", code(), list()),
-        prose("table-after-quote", quote(), table()),
+        prose("p-after-code", code(), long_words("Read")),
+        prose("p-after-quote", quote(), long_words("Read")),
+        prose("p-after-mockup", mockup(), long_words("Read")),
+        prose("p-after-picture", picture(), long_words("Read")),
+        prose("list-after-code", code(), list(16)),
+        prose("table-after-quote", quote(), table(40)),
         card("card-after-code", code(), below()),
         card("card-after-quote", quote(), below()),
         card("card-after-mockup", mockup(), below()),
@@ -913,7 +960,7 @@ fn forms() -> Vec<Form> {
         card(
             "card-then-table",
             words("A paragraph above"),
-            vec![table(), words("Under it")],
+            vec![table(2), words("Under it")],
         ),
         // The last section of its part.
         card("last-card", picture(), Vec::new()),
@@ -987,14 +1034,14 @@ struct Reads {
     card: bool,
 }
 
-/// The forms document: its title over its intro, a part for each form (its heading, a paragraph
-/// over a tall picture, what is above what is read, what is read, what is below and three
+/// The forms document: its title over its intro, a part for each form (its heading, a long
+/// paragraph over a tall picture, what is above what is read, what is read, what is below and three
 /// paragraphs), and a part of paragraphs after the last. Says it, and what each form reads, the
 /// intro under the title first.
 fn forms_document() -> (Value, Vec<Reads>) {
     let mut written = Written::default();
     written.section("forms", 0, heading(1, "forms", "Forms"));
-    let (id, key) = written.section("forms", 0, words("The intro under the title"));
+    let (id, key) = written.section("forms", 0, long_words("The intro under the title"));
     let mut reads = vec![Reads {
         case: "intro-under-title".into(),
         id,
@@ -1008,7 +1055,9 @@ fn forms_document() -> (Value, Vec<Reads>) {
             part,
             heading(2, &anchor, &format!("Case {}", form.case)),
         );
-        written.section(&anchor, part, words("A paragraph opening the case"));
+        // Far taller than its ghost, so what draws above the reader moves them a long way where
+        // the browser does not hold them.
+        written.section(&anchor, part, long_words("A paragraph opening the case"));
         written.section(&anchor, part, picture());
         for block in form.above {
             written.section(&anchor, part, block);
@@ -1073,7 +1122,7 @@ fn each_form_holds(cards: bool) {
         for read in reads.iter().filter(|read| read.card == cards) {
             page.open("about:blank");
             let held = read_while_drawn(&mut page, &site, FORMS, &read.id, &read.key, reading);
-            held.held(&read.case, reading, 100.0);
+            held.held(&read.case, reading, 50.0);
         }
     }
 }

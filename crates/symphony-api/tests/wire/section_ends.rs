@@ -20,27 +20,27 @@ fn ends(value: Value) -> Option<[String; 2]> {
     Section::ends_of(&blocks(value))
 }
 
-fn pair(first: &str, last: &str) -> Option<[String; 2]> {
-    Some([first.into(), last.into()])
+fn pair(first: &str, last: &str) -> [String; 2] {
+    [first.into(), last.into()]
 }
 
 #[test]
 fn a_section_names_its_first_and_last_blocks_a_heading_by_its_level() {
     assert_eq!(
         ends(json!([paragraph("One.")])),
-        pair("paragraph", "paragraph")
+        Some(pair("paragraph", "paragraph"))
     );
     assert_eq!(
         ends(
             json!([heading(3), paragraph("One."), {"type": "code", "language": "rs", "text": "x"}])
         ),
-        pair("heading-3", "code")
+        Some(pair("heading-3", "code"))
     );
     assert_eq!(
         ends(
             json!([heading(1), {"type": "list", "ordered": false, "start": 1, "items": [[paragraph("A")]]}])
         ),
-        pair("heading-1", "list")
+        Some(pair("heading-1", "list"))
     );
 }
 
@@ -57,7 +57,7 @@ fn a_group_is_read_through_and_what_draws_nothing_is_passed_over() {
             {"type": "group", "blocks": [table, {"type": "group", "blocks": []}]},
             {"type": "comment", "text": "after"},
         ])),
-        pair("quote", "table")
+        Some(pair("quote", "table"))
     );
     assert_eq!(ends(json!([])), None);
     assert_eq!(
@@ -74,17 +74,17 @@ fn a_container_drawn_with_the_callout_class_is_a_callout_and_any_other_a_contain
     let container = |class: &str| json!({"type": "container", "tag": "div", "presentation": {"class": class}, "blocks": [paragraph("In it.")]});
     assert_eq!(
         ends(json!([container("wide callout")])),
-        pair("callout", "callout")
+        Some(pair("callout", "callout"))
     );
     assert_eq!(
         ends(json!([container("callouts")])),
-        pair("container", "container")
+        Some(pair("container", "container"))
     );
     assert_eq!(
         ends(
             json!([{"type": "callout", "kind": "comment", "title": [], "resolved": true, "blocks": []}, container("")])
         ),
-        pair("callout", "container")
+        Some(pair("callout", "container"))
     );
 }
 
@@ -111,7 +111,7 @@ fn each_kind_is_the_blocks_type_on_the_wire() {
     ]);
     for block in each.as_array().unwrap() {
         let kind = block["type"].as_str().unwrap();
-        assert_eq!(ends(json!([block])), pair(kind, kind), "{block}");
+        assert_eq!(ends(json!([block])), Some(pair(kind, kind)), "{block}");
     }
 }
 
@@ -127,7 +127,7 @@ fn a_section_carries_its_ends_on_the_wire_and_one_kept_from_before_reads_without
         "none is left out"
     );
     let mut ended = section;
-    ended.ends = pair("heading-2", "table");
+    ended.ends = Some(pair("heading-2", "table"));
     let written = serde_json::to_value(&ended).unwrap();
     assert_eq!(written["ends"], json!(["heading-2", "table"]));
     assert_eq!(serde_json::from_value::<Section>(written).unwrap(), ended);
