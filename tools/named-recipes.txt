@@ -25,7 +25,6 @@ prose published pushed ran so started successful the this to when written
 # reruns alone, the client a release candidate's fix commits, and `just nightly`, the old name of
 # `just release` that RELEASES says answers until the first release under the new one.
 own apps/symphony-server/src/api/client.rs symphony-ui-dist
-own apps/symphony-server/src/development.rs symphony-ui-dev
 own crates/symphony/src/cli/commands/size_budget.rs size-check
 own crates/symphony/src/release.rs release verify
 own crates/symphony/src/release/board.rs client-update release test-rs

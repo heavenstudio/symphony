@@ -2,9 +2,8 @@
 //! its history keeps an agent's paragraphs, its buttons rank by what the owner does next, with
 //! Escape closing the editor and Later and its Undo keeping the focus on their button, its focus
 //! ring is the page's and not the card's colour, a link's excerpt opens beside the link's own
-//! button, callouts are
-//! as wide as cards, a comment's colour its own, and a folded card opened by a click draws the
-//! picture in its history.
+//! button and fills even opened below a short window's fold, callouts are as wide as cards, a
+//! comment's colour its own, and a folded card opened by a click draws the picture in its history.
 use super::components::key;
 use super::{SHOWN, chrome, chrome::Chrome, common, dist, focus_on, site::Site};
 use serde_json::{Value, json};
@@ -668,6 +667,63 @@ fn document_card_link_opens_its_excerpt_beside_its_button_and_closes_it_again() 
         [&closed["label"], &closed["expanded"]],
         [&json!("▸ show"), &json!("false")],
         "{closed}"
+    );
+}
+
+/// Where the card `alpha`'s open excerpt is: the page's scroll, whether its box's top is below the
+/// window, and how many of its regions still wait to come near the screen.
+const EXCERPT_PLACE: &str = r#"(() => {
+    const box = document.querySelector('[data-doc-key="card:alpha"] .excerpt-box');
+    return {scrollY, below: box.getBoundingClientRect().top >= innerHeight,
+        waiting: box.querySelectorAll('[data-pending=true]').length};
+})()"#;
+
+/// On a short window (a laptop's browser, a phone) the owner opens a card's excerpt from a button at
+/// the window's bottom edge, its box opening below the screen: the excerpt fills without being
+/// scrolled to. Its box scrolls, and so clipped the look-ahead of the parts of it that waited to
+/// come near the screen (the copied card's history, the list item): opening it is the ask.
+#[test]
+fn document_card_excerpt_opened_below_a_short_windows_fold_fills_without_a_scroll() {
+    let site = probe_site();
+    let Some(mut page) = chrome() else { return };
+    viewport(&mut page, 756, 469);
+    // Room above the card, so its button can sit at the window's bottom edge.
+    page.call("Page.addScriptToEvaluateOnNewDocument", json!({"source":
+        "const observer = new MutationObserver(() => { if (document.head) { const style = document.createElement('style'); style.textContent = '[data-doc-key=\"intro\"] { margin-bottom: 900px }'; document.head.append(style); observer.disconnect(); } }); observer.observe(document, {childList: true, subtree: true});"
+    }));
+    page.open(&site.url(&format!("/{DOC}#alpha")));
+    let show = "[data-doc-key=\"card:alpha\"] .section-prose .show-link";
+    assert!(
+        page.wait_for(&crate::visible(show), SHOWN),
+        "the card alpha is drawn"
+    );
+    page.eval(&format!(
+        "(() => {{ const show = document.querySelector({0}); scrollBy(0, Math.ceil(show.getBoundingClientRect().bottom - innerHeight)); show.click(); }})()",
+        json!(show)
+    ));
+    assert!(
+        page.wait_for(
+            "document.querySelector('[data-doc-key=\"card:alpha\"] .excerpt-box h2') !== null",
+            SHOWN
+        ),
+        "the excerpt is read"
+    );
+    let opened = page.eval(EXCERPT_PLACE);
+    assert_eq!(
+        opened["below"],
+        json!(true),
+        "the excerpt's box opens below the window, so the case tests a box off screen: {opened}"
+    );
+    assert!(
+        page.wait_for(&format!("{PARAGRAPHS}.pairs === 4"), SHOWN),
+        "the excerpt draws its copied history and list item where it opened, below the window: {} {}",
+        page.eval(PARAGRAPHS),
+        page.eval(EXCERPT_PLACE)
+    );
+    assert_eq!(
+        page.eval(EXCERPT_PLACE),
+        json!({"scrollY": opened["scrollY"], "below": true, "waiting": 0}),
+        "it filled with nothing scrolled and nothing left waiting in it"
     );
 }
 
