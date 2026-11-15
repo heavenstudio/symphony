@@ -341,7 +341,7 @@ fn pass_inner(
         } else {
             Held::default()
         };
-        let idle = idle_for(&view.agents, &board, task, role, &used, &held);
+        let (resuming, idle) = job_for(store, &view.agents, &board, task, role, &used, &held)?;
         let memory = free_memory_gib()?;
         let machine_agents = store.limits().machine_agents;
         let blocked = if idle.is_none() && live >= config.max_sessions {
@@ -370,6 +370,9 @@ fn pass_inner(
                     a.handle,
                     a.pane.as_deref().unwrap_or_default()
                 )
+            } else if let Some(handle) = &resuming {
+                projected += 1;
+                format!("staff {}: would resume {handle} as {role}", task.slug)
             } else {
                 projected += 1;
                 format!(
@@ -472,6 +475,31 @@ fn idle_for<'a>(
     })
 }
 
+/// Who a job on `task` as `role` goes to: a review to the task's recorded reviewer, the newest that
+/// never left with a conversation a restore can resume ([`super::restore::recorded_reviewers`]),
+/// whose launch resumes it or is refused while it still runs ([`launch`]), never another idle one;
+/// else the idle agent [`idle_for`] picks, if any. Neither: a launch.
+fn job_for<'a>(
+    store: &Store,
+    agents: &'a [agents::Agent],
+    board: &Board,
+    task: &Task,
+    role: &str,
+    used: &HashSet<String>,
+    held: &Held,
+) -> Result<(Option<String>, Option<&'a agents::Agent>), Error> {
+    if role == "reviewer" {
+        let recorded = super::restore::recorded_reviewers(store, &task.slug)?;
+        let resumable = recorded
+            .into_iter()
+            .find(crate::store::unanswered::restorable);
+        if let Some(record) = resumable {
+            return Ok((Some(record.handle), None));
+        }
+    }
+    Ok((None, idle_for(agents, board, task, role, used, held)))
+}
+
 /// Whether `handle` is a fresh reviewer of `task`, `held` its [`Store::ever_held`]: one that
 /// executed none of it and, but on a fast fix, neither orchestrates, orchestrated nor filed it, by
 /// the one rule the board's verdict and the land hold ([`Held::unfresh`]).
@@ -518,13 +546,25 @@ fn dispatch(
         ask.worktree = Some(PathBuf::from(path));
     }
     launch(store, hc, machine, &ask).map(|s| {
+        let row = &s.row;
+        if s.resumed {
+            // The task's recorded reviewer, on its own agent: its prompt's `/` or `$` says which.
+            let agent = super::agent_of(&row.claude_session);
+            return format!(
+                "resumed {} as {role}: pane {}, worktree {}, prompt {}",
+                row.handle,
+                row.pane,
+                row.worktree,
+                prompt_text(&task.slug, &row.handle, "", agent, role),
+            );
+        }
         format!(
             "launched {} as {role}: {}, pane {}, worktree {}, prompt {}",
-            s.row.handle,
+            row.handle,
             launching.said(),
-            s.row.pane,
-            s.row.worktree,
-            prompt_text(&task.slug, &s.row.handle, "", launching.agent, role),
+            row.pane,
+            row.worktree,
+            prompt_text(&task.slug, &row.handle, "", launching.agent, role),
         )
     })
 }

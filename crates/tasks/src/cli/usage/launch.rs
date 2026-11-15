@@ -20,6 +20,11 @@ pub const HELP: &str = r#"usage: just tasks launch [-h] [--as ACTOR] [--model MO
 Start an agent on a task in an hc terminal of its own, its first message
 /work SLUG HANDLE (a reviewer's /review-task SLUG HANDLE). --kind says which
 agent runs, --role what it does there.
+A reviewer launch resumes the task's recorded reviewer, in its own worktree,
+agent and model, and is refused while that one still runs; a new reviewer
+starts only where none can be resumed (no conversation recorded, a Codex
+thread that never arrived, a reviewer that left). A reviewer goes on the
+task itself, never an instruction subtask.
 Refused while this machine runs as many agents as the project's [limits]
 machine_agents allows (`just tasks limits` prints it).
 

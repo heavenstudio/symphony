@@ -15,8 +15,10 @@
 //! that cannot be confirmed fails, naming the terminal, which is killed and removed. The launch is
 //! recorded on the task: handle, role, conversation id, worktree, branch, terminal, model, start
 //! time. [`restore`] reopens the recorded conversation in its worktree, in a new terminal, the same
-//! way. [`cleanup`] closes unneeded terminals (killed, then removed), each closure recorded on its
-//! task with the restore line; [`finish`] is the same for one task that just became done or
+//! way, and so does a reviewer launch for the task's recorded reviewer, refused while it still runs
+//! (a new reviewer starts only where none can be resumed). [`cleanup`] closes unneeded terminals
+//! (killed, then removed), each closure recorded on its task with the restore line; [`finish`] is
+//! the same for one task that just became done or
 //! cancelled (its worktree is the worktree sweep's, `tasks sweep --task`). [`reap`] is the periodic
 //! sweep of idle agents (`just tasks clean` runs one). [`close`] closes one agent's terminal on its
 //! orchestrator's word, whatever it holds, recorded the same way, under the rules its module gives.
@@ -243,10 +245,16 @@ impl Ask {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Started {
     pub row: TaskSessionRow,
+    /// A recorded conversation resumed (a restore, or a reviewer launch going back to the task's
+    /// reviewer), not a new one started.
+    pub resumed: bool,
 }
 
 /// Start a session for `ask.slug`: handle, worktree, terminal with its agent and `/work SLUG
-/// HANDLE` (a reviewer's `/review-task SLUG HANDLE`), and the record on the task.
+/// HANDLE` (a reviewer's `/review-task SLUG HANDLE`), and the record on the task. A reviewer goes
+/// to the task itself, never an instruction subtask, and a reviewer launch goes back to the task's
+/// recorded reviewer, resumed as a restore resumes it, refused while it still runs
+/// ([`restore::reviewer_to_resume`]); a new reviewer starts only where none can be resumed.
 pub fn launch(store: &Store, hc: &dyn Hc, m: &Machine, ask: &Ask) -> Result<Started, Error> {
     let (slug, role) = (ask.slug.as_str(), ask.role.as_str());
     if role != "executor" && role != "reviewer" {
@@ -271,6 +279,26 @@ pub fn launch(store: &Store, hc: &dyn Hc, m: &Machine, ask: &Ask) -> Result<Star
     let task = store.get(slug)?;
     if FINISHED.contains(&task.status.as_str()) {
         return Err(Error::Refused(format!("{slug} is {}", task.status)));
+    }
+    if role == "reviewer" {
+        if task.instruction {
+            let parent = task.parent.as_deref().unwrap_or("its parent");
+            return Err(Error::Refused(format!(
+                "{slug} is an instruction subtask: a reviewer judges the task itself \
+                 (/review-task takes no subtask), so launch it there: just tasks launch {parent} \
+                 --role reviewer"
+            )));
+        }
+        if let Some(record) = restore::reviewer_to_resume(store, hc, slug)? {
+            return restore::resume_reviewer(
+                store,
+                hc,
+                m,
+                &record,
+                &ask.prompt,
+                ask.tab.as_deref(),
+            );
+        }
     }
     let dashed = slug.replace('/', "-");
     let made_worktree = ask.worktree.is_none();
@@ -365,7 +393,7 @@ pub fn launch(store: &Store, hc: &dyn Hc, m: &Machine, ask: &Ask) -> Result<Star
     let mut terminal = String::new();
     let mut checkout_made = false;
     let started = (|| {
-        take_up(store, ask, &task, &handle)?;
+        take_up(store, ask, &handle)?;
         if made_worktree {
             let base = checkout::base(store, m, ask, &task)?;
             checkout::make(m, &path, &use_branch, detach, &base, &mut checkout_made)?;
@@ -415,7 +443,10 @@ pub fn launch(store: &Store, hc: &dyn Hc, m: &Machine, ask: &Ask) -> Result<Star
             model: ask.model.clone(),
             ..NewLaunch::default()
         })?;
-        Ok(Started { row })
+        Ok(Started {
+            row,
+            resumed: false,
+        })
     })();
     started.map_err(|problem| {
         rollback::failed(
@@ -498,6 +529,15 @@ pub(super) fn prompt_text(
     }
 }
 
+/// The agent whose conversation a record names: Codex's ids are kept as `codex:ID`.
+pub(super) fn agent_of(conversation: &str) -> &'static str {
+    if conversation.starts_with("codex:") {
+        "codex"
+    } else {
+        "claude"
+    }
+}
+
 fn agent_kind(ask: &Ask) -> &'static str {
     match ask.kind.as_deref() {
         Some("claude" | "worker" | "reviewer") => "claude",
@@ -505,20 +545,12 @@ fn agent_kind(ask: &Ask) -> &'static str {
     }
 }
 
-/// The new session takes its part on the task (an executor reserves it; a review subtask's reviewer
-/// reserves the subtask and judges its parent; any other reviewer takes the reviewer role).
-fn take_up(store: &Store, ask: &Ask, task: &crate::Task, handle: &str) -> Result<(), Error> {
+/// The new session takes its part on the task: an executor reserves it, a reviewer takes the
+/// reviewer role.
+fn take_up(store: &Store, ask: &Ask, handle: &str) -> Result<(), Error> {
     let slug = ask.slug.as_str();
     if ask.role == "executor" {
         store.reserve(slug, handle, RESERVE_SECONDS)?;
-    } else if let Some(parent) = task.parent.as_deref().filter(|_| task.instruction) {
-        // A review subtask: its reviewer claims it (`/review-task` does) and judges the
-        // task it reviews, so the reviewer role goes on the parent, never on the subtask it must claim.
-        store.reserve(slug, handle, RESERVE_SECONDS)?;
-        match store.take_role(parent, handle, "reviewer") {
-            Ok(_) | Err(Error::Refused(_)) => {} // the parent is not open for review: the reviewer says so
-            Err(problem) => return Err(problem),
-        }
     } else {
         store.take_role(slug, handle, "reviewer")?;
     }

@@ -150,9 +150,11 @@ const ORCHESTRATED: &str = "ochre-owl";
 const ORCHESTRATES: &str = "amber-heron";
 const EXECUTED: &str = "slate-wren";
 const FRESH: &str = "fleet-vole";
+/// Another fresh one.
+const SECOND: &str = "dune-lark";
 
 fn reviewing() -> Fixture {
-    let seed = [FILER, ORCHESTRATED, ORCHESTRATES, EXECUTED, FRESH];
+    let seed = [FILER, ORCHESTRATED, ORCHESTRATES, EXECUTED, FRESH, SECOND];
     Fixture::new(seed.into_iter().fold(Seed::default(), Seed::session))
 }
 
@@ -209,6 +211,61 @@ fn an_idle_reviewer_is_picked_only_when_the_board_takes_its_verdict() {
     );
     // The orchestrator it has now orchestrates work, which no idle pick takes, fast fix or not.
     assert_eq!(picked("sim/fast", &[ORCHESTRATES]), None);
+}
+
+#[test]
+fn a_review_goes_back_to_the_tasks_recorded_reviewer_never_to_another_idle_one() {
+    let f = reviewing();
+    in_review(&f, "sim/jump", false);
+    let idle = [idle_reviewer(SECOND)];
+    let job = || {
+        let board = f.store.board().unwrap();
+        let task = board.tasks.iter().find(|t| t.slug == "sim/jump").unwrap();
+        let held = f.store.ever_held("sim/jump").unwrap();
+        let (resumed, picked) = job_for(
+            &f.store,
+            &idle,
+            &board,
+            task,
+            "reviewer",
+            &HashSet::new(),
+            &held,
+        )
+        .unwrap();
+        (resumed, picked.map(|a| a.handle.clone()))
+    };
+    let record = |conversation: &str| {
+        f.store
+            .record_launch(&NewLaunch {
+                claude_session: conversation.into(),
+                worktree: env!("CARGO_MANIFEST_DIR").into(),
+                ..NewLaunch::new("sim/jump", FRESH, "reviewer")
+            })
+            .unwrap();
+    };
+    // No reviewer recorded: the idle fresh one.
+    let another = (None, Some(SECOND.to_string()));
+    assert_eq!(job(), another);
+    // One recorded with no conversation, or a Codex thread that never arrived: none to go back to.
+    for none in ["", "codex:"] {
+        record(none);
+        assert_eq!(job(), another, "{none:?}");
+    }
+    // One recorded with a conversation: back to it, and the idle one is passed over.
+    record("codex:0abc-def");
+    assert_eq!(job(), (Some(FRESH.to_string()), None));
+    // An executor's record is no reviewer's.
+    f.store
+        .record_launch(&NewLaunch {
+            claude_session: "work".into(),
+            worktree: env!("CARGO_MANIFEST_DIR").into(),
+            ..NewLaunch::new("sim/jump", EXECUTED, "executor")
+        })
+        .unwrap();
+    assert_eq!(job(), (Some(FRESH.to_string()), None));
+    // Once it left, another takes the review.
+    f.store.leave(FRESH).unwrap();
+    assert_eq!(job(), another);
 }
 
 /// A machine a reuse whose turn hc saw start runs on: it launches, looks and inspects nothing.

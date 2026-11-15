@@ -35,6 +35,28 @@ fn close_terminal(w: &World, s: &TaskSessionRow) {
         .unwrap();
 }
 
+/// A reviewer recorded on `slug`, a review instruction, as such a record stands: the instruction
+/// reserved, the reviewer's role on its parent, an idle Claude agent in a live terminal of its own
+/// and the record on the instruction, its worktree under the worktree base. No launch makes one:
+/// it sends a reviewer to the task itself.
+fn instruction_reviewer(w: &World, slug: &str) -> TaskSessionRow {
+    let handle = w.f.session("reviewer");
+    let parent = w.store().get(slug).unwrap().parent.unwrap();
+    w.store().reserve(slug, &handle, 3600.0).unwrap();
+    w.store().take_role(&parent, &handle, "reviewer").unwrap();
+    let pane = w.add_terminal(true, Some(&handle), serde_json::json!({}));
+    let worktree = w.wt.join(format!("{}-review", slug.replace('/', "-")));
+    w.store()
+        .record_launch(&NewLaunch {
+            claude_session: format!("conversation-of-{handle}"),
+            worktree: worktree.display().to_string(),
+            pane,
+            model: "sonnet".into(),
+            ..NewLaunch::new(slug, &handle, "reviewer")
+        })
+        .unwrap()
+}
+
 fn restored(w: &World, slug: &str, handle: Option<&str>) -> Result<Vec<Started>, Error> {
     restore(w.store(), &w.hc(), &w.machine(), slug, handle, None)
 }

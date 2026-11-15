@@ -433,8 +433,11 @@ fn unasked_a_launch_gives_its_agent_no_word_of_the_launchers() {
 fn a_reviewer_beside_an_executor_gets_a_worktree_of_its_own() {
     let w = World::new();
     let a = w.launch("sim/jump").row.worktree;
-    let b = w.review("sim/jump").row.worktree;
+    let b = w.review("sim/jump").row;
+    // A reviewer that left is resumed by no launch: the next reviewer is another, beside it.
+    w.store().leave(&b.handle).unwrap();
     let c = w.review("sim/jump").row.worktree;
+    let b = b.worktree;
     assert_eq!(
         [a, b, c].map(|p| Path::new(&p)
             .file_name()
@@ -776,25 +779,6 @@ fn a_reviewer_takes_the_reviewer_role() {
         [s.handle.as_str()]
     );
     assert_eq!(w.store().session(&s.handle).unwrap().row.kind, "reviewer");
-}
-
-#[test]
-fn a_launched_reviewer_of_a_review_subtask_reserves_it_and_judges_its_parent() {
-    let w = World::new();
-    w.task("sim/jump/review-x", Some("sim/jump"));
-    let s = w.review("sim/jump/review-x").row;
-    w.store().claim("sim/jump/review-x", &s.handle).unwrap();
-    assert!(
-        w.store()
-            .get("sim/jump")
-            .unwrap()
-            .holders("reviewer")
-            .contains(&s.handle.as_str())
-    );
-    assert_eq!(
-        w.store().task_sessions("sim/jump/review-x").unwrap()[0].role,
-        "reviewer"
-    );
 }
 
 #[test]
