@@ -142,7 +142,7 @@ const BINARIES: [(&str, &str); 5] = [
     ("agent-send", "crates/tasks"),
     ("fake-hc", "crates/tasks"),
     ("symphony", "crates/symphony"),
-    ("symphony-build", "crates/symphony"),
+    ("symphony-build", "crates/symphony-build"),
 ];
 
 /// A repository whose main checkout (`main/`) holds the launcher and `main` as every binary's source,

@@ -4,7 +4,7 @@
 //! machine's registry, and none runs the real verification. The release run runs with a hostile
 //! user git configuration ([`HOSTILE`]), which asks every push to take more than its refspec.
 
-#[path = "../common/mod.rs"]
+#[path = "../../../symphony/tests/common/mod.rs"]
 mod common;
 
 /// The task store's test server, as its own tests run on it: a database of its own per test.

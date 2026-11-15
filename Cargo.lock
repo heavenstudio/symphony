@@ -5241,6 +5241,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "symphony-build"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "regex",
+ "serde",
+ "serde_json",
+ "sha2",
+ "symphony-api",
+ "symphony-app",
+ "symphony-args",
+ "symphony-board",
+ "symphony-env",
+ "symphony-plugin",
+ "test-time",
+ "toml",
+]
+
+[[package]]
 name = "symphony-chrome"
 version = "0.1.0"
 dependencies = [

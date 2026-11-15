@@ -166,7 +166,7 @@ impl CliBoard {
 
     /// One call of the board's API: its result. A refusal is the board's own words; a board the binary
     /// cannot reach is said so.
-    pub(crate) fn call(&self, method: &str, args: &Value) -> Result<Value, VerdictError> {
+    pub fn call(&self, method: &str, args: &Value) -> Result<Value, VerdictError> {
         let request = json!({"method": method, "args": args}).to_string();
         let done = self.output(&["api"], Some(&request))?;
         let unreachable = VerdictError::unreachable;

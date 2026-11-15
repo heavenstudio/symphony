@@ -51,7 +51,7 @@ never the whole target, which the release run runs.
   script and main module, and a chunk for each and one for the media
   layer (no kind: the chat loads it once it shows media, Media below), which
   `symphony-build split-repair` puts right after dx
-  (crates/symphony/src/cli/commands/split_repair.rs)
+  (crates/symphony-build/src/commands/split_repair.rs)
   and `assets/chunks.js` loads (`window.reviewChunk`), rejecting a chunk that does not load so
   the shell's `gone` state, never a page left waiting, follows. dx runs with a DX_HOME of
   `bundle.sh`'s own under the held target, the machine's tools linked but for wasm-opt,

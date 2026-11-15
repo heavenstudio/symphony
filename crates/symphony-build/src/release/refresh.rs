@@ -59,8 +59,8 @@ use super::group::{Bound, Failed, output_until};
 use super::notes;
 use super::pin::{self, Locked};
 use super::record::{Refresh, THEIRS};
-use crate::children::command;
-use crate::machine::Registry;
+use symphony::children::command;
+use symphony::machine::Registry;
 
 /// Why a refresh's worktree of a project is locked, as `git worktree list` says it.
 pub(crate) const REASON: &str = "the Symphony release run's refresh";
@@ -147,7 +147,7 @@ pub(crate) fn release(against: &Against<'_>, out: &mut dyn Write) -> Refresh {
         let _ = fs::create_dir_all(against.logs);
         refresh.steps.push(Ran::never(&step, &log, why));
     };
-    let read = crate::machine::dir().and_then(|dir| Ok((Registry::read(&dir)?, dir)));
+    let read = symphony::machine::dir().and_then(|dir| Ok((Registry::read(&dir)?, dir)));
     let (registry, machine) = match read {
         Ok(read) => read,
         Err(problem) => {
@@ -179,7 +179,7 @@ pub(crate) fn release(against: &Against<'_>, out: &mut dyn Write) -> Refresh {
         say(&mut refresh, format!("left out: {skipped}"));
     }
     // The server as it answers before any main moves, to tell its reload's build after.
-    let before = crate::machine::command::running(&machine, None);
+    let before = symphony::machine::command::running(&machine, None);
     let mut taking = Vec::new();
     for consumer in found {
         let plain = !consumer.id.is_empty()
@@ -746,7 +746,7 @@ fn ask(
         &ask,
         format!("start\nupdate refs/heads/{main} {made} {tip}\nprepare\nabort\n"),
     )
-    .map_err(|e| crate::text::os_error(&e, &ask))?;
+    .map_err(|e| symphony::text::os_error(&e, &ask))?;
     let asked = log.run(
         root,
         &[
@@ -1043,7 +1043,7 @@ fn prepare(
     }
     let tree = against.trees.join(id);
     clear(&consumer.root, &tree, log)?;
-    fs::create_dir_all(against.trees).map_err(|e| crate::text::os_error(&e, against.trees))?;
+    fs::create_dir_all(against.trees).map_err(|e| symphony::text::os_error(&e, against.trees))?;
     let path = tree.to_string_lossy().into_owned();
     log.run(
         &consumer.root,
@@ -1076,7 +1076,7 @@ fn prepare(
             )));
         }
         if retagged != text {
-            fs::write(&file, retagged).map_err(|e| crate::text::os_error(&e, &file))?;
+            fs::write(&file, retagged).map_err(|e| symphony::text::os_error(&e, &file))?;
             log.line(&format!(
                 "{}: {count} named {}",
                 manifest.display(),
@@ -1094,7 +1094,7 @@ fn prepare(
     log.run(&tree, &["cargo", "update", "--workspace"], against.until)?;
     let lock_file = tree.join("Cargo.lock");
     let after =
-        fs::read_to_string(&lock_file).map_err(|e| crate::text::os_error(&e, &lock_file))?;
+        fs::read_to_string(&lock_file).map_err(|e| symphony::text::os_error(&e, &lock_file))?;
     let behind: Vec<String> = (pin::locked(&after, sources, names)?.iter())
         .filter(|package| package.commit != against.commit)
         .map(|package| format!("{} at {}", package.spec(), short(&package.commit)))
@@ -1134,7 +1134,7 @@ fn prepare(
         .logs
         .join(format!("{}.message", board::key(&format!("{STEP}-{id}"))));
     fs::write(&message, self::message(against, &from, &others))
-        .map_err(|e| crate::text::os_error(&e, &message))?;
+        .map_err(|e| symphony::text::os_error(&e, &message))?;
     gate(&tree, &message, consumer, against, log)?;
     let made = commit(&tree, "HEAD")?;
     if existing.is_some() {
@@ -1460,7 +1460,7 @@ fn server(
     taking: &[(Consumer, Taken)],
     against: &Against<'_>,
 ) -> String {
-    let Some(front) = crate::machine::command::running(machine, None) else {
+    let Some(front) = symphony::machine::command::running(machine, None) else {
         return "the shared server: none answers on this machine, so none takes the release".into();
     };
     let root = PathBuf::from(&front.root);
@@ -1550,7 +1550,7 @@ fn reload(
     let began = Instant::now();
     let until = (began + wait).min(against.until.until);
     loop {
-        if let Some(now) = crate::machine::command::running(machine, None)
+        if let Some(now) = symphony::machine::command::running(machine, None)
             && now.pid != old
             && (now.schema == 0 || target.is_none_or(|target| now.schema >= target))
         {

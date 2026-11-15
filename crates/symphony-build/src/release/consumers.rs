@@ -9,9 +9,9 @@ use std::path::{Path, PathBuf};
 use serde_json::Value;
 
 use super::group::{Bound, Failed, output_until};
-use crate::children::command;
-use crate::machine::Registry;
-use crate::project::Project;
+use symphony::children::command;
+use symphony::machine::Registry;
+use symphony::project::Project;
 
 /// A project a refresh moves.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -127,7 +127,7 @@ pub(crate) fn sources(metadata: &Value, names: &[String]) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::machine::Entry;
+    use symphony::machine::Entry;
     use crate::test_tree::Tree;
     use serde_json::json;
     use std::fs;

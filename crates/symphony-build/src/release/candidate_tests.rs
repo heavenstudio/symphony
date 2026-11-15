@@ -1206,7 +1206,7 @@ fn two_commits_are_the_same_tree_only_when_they_hold_the_same_files() {
 
 #[test]
 fn its_bounds_are_the_projects() {
-    let mut releases = crate::project::Releases::default();
+    let mut releases = symphony::project::Releases::default();
     assert_eq!(
         Bounds::of(&releases),
         Bounds {

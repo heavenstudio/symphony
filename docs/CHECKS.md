@@ -332,12 +332,12 @@ target that failed.
 
 The lanes share no port or store: every server, store and browser a test starts takes a port the
 system picks and a folder of its own. The one test writing the build folder (`wasm_build`, which
-links `symphony-build` there again) runs in the rest with every `symphony-app` target and
-`standalone`, which copies that folder. The browser lane writes it too when `SYMPHONY_UI_DIST`
-names no client: its own client build (`cargo symphony-ui dist`, whose `bundle.sh` runs
-`tools/rs-bin.sh --build symphony-build`) can link `symphony-build` there again while the rest runs
-it. Verify names the client its client check built, so only a verify whose client check built none
-leaves it to the browser lane. The binaries a test would build for itself under its case's clock
+links `symphony-build` there again) runs in the rest with every `symphony-build` and
+`symphony-app` target and `standalone`, which copies that folder. The browser lane writes it too
+when `SYMPHONY_UI_DIST` names no client: its own client build (`cargo symphony-ui dist`, whose
+`bundle.sh` runs `tools/rs-bin.sh --build symphony-build`) can link `symphony-build` there again
+while the rest runs it. Verify names the client its client check built, so only a verify whose
+client check built none leaves it to the browser lane. The binaries a test would build for itself under its case's clock
 are the build's own, named by `SYMPHONY_TEST_TASKS_BINARY` and `SYMPHONY_TEST_BINARIES` (a target
 run alone builds them as before).
 

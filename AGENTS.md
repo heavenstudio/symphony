@@ -2,9 +2,9 @@
 
 The app's workspace owns its server and its two web clients under `apps/` (the React one,
 `apps/symphony-web`, taking the pages over a kind at a time from the Dioxus one), and the review
-library, wire types, task board, working-directory scanner, headless Chrome driver and
-the tests' CPU meters and waits (`crates/test-time`, RULES.md `tests/no-test-fails-on-load`)
-under `crates/`.
+library, its own build and release commands (`crates/symphony-build`), wire types, task board,
+working-directory scanner, headless Chrome driver and the tests' CPU meters and waits
+(`crates/test-time`, RULES.md `tests/no-test-fails-on-load`) under `crates/`.
 The app's formats and operating contract live in [docs/](docs/README.md).
 A consuming project owns its landing policy and shared-service safeguards.
 
@@ -15,8 +15,9 @@ settings and dependency versions. The containing project's thin host and board-o
 packages consume these libraries through an immutable Git dependency pin. The plugin kit, the
 helpers and the product (the library as `symphony-app`, its library still `symphony`, the board,
 the server, the Chrome driver as `symphony-chrome` and the app's wire types, `symphony-api`) are
-made to be published on crates.io as well, each by its version, and the client's sources and the
-tests' time keep the workspace's `publish = false`
+made to be published on crates.io as well, each by its version, and the client's sources, the
+build and release commands (`symphony-build`) and the tests' time keep the workspace's
+`publish = false`
 ([RELEASES](docs/RELEASES.md#packages-on-cratesio)).
 A project's settings are
 its `symphony.toml` (generic defaults in `crates/symphony/src/project.rs`; the
@@ -118,13 +119,13 @@ holds, or `just tasks migrate` run there where it holds none. None searches a
 containing project. `just symphony
 --port 0` runs a server of its own; the server CLI retains shared-server selection.
 
-`symphony-build` (`crates/symphony/src/bin/symphony-build.rs`, `symphony::cli::build_main`) holds
+`symphony-build` (`crates/symphony-build`, a package of its own) holds
 the commands only this repository's own build and release run use: `publish-client`,
 `release-inputs`, `size-budget`, `crates-check`, `split-repair` and `release`. The recipes and
 scripts run it by
-`tools/rs-bin.sh symphony-build`; it is never shipped or installed (`init::BUILDS` does not name
-it), so neither the shipped `symphony` nor a consuming host that calls `symphony::cli::main`
-links them ([CHECKS](docs/CHECKS.md#size-budgets)).
+`tools/rs-bin.sh symphony-build`; it is never shipped, installed or published (`init::BUILDS` does
+not name it), and it reads the library through its public API alone, so neither the library every
+project links, its shipped `symphony` nor a consuming host compiles any of it.
 
 `just client-update` builds the Dioxus client's three page modules and its program (the pages
 that share one runtime, `apps/symphony-ui/src/split.rs`) and the React client's page kinds (one
@@ -141,7 +142,7 @@ under /private/tmp, copy the locked component source without changing its versio
 retain the caller's compiler flags, wrappers and resource settings. Snapshot
 configuration patches and lock accounting affect only those private copies.
 A snapshot holds only what the client's build reads (`symphony-build release-inputs`,
-`crates/symphony/src/cli/commands/release_inputs.rs`): the client's package and the local
+`crates/symphony-build/src/commands/release_inputs.rs`): the client's package and the local
 packages it builds with, the workspace manifest, lock, Cargo configuration, toolchain
 pin and the server's notice styles, the sources of the split repair the program's build
 runs (`symphony-build split-repair`), and the other members' manifests over empty targets. Its

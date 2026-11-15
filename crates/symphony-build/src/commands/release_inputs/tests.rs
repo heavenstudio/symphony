@@ -48,15 +48,15 @@ const PACKAGES_OF_THE_WORKSPACE: [(&str, &str, &str, Dependencies); 4] = [
 /// The checkout's files, the client's inputs among them, with their bodies.
 const CHECKOUT: [(&str, &str); 26] = [
     (
-        "crates/symphony/src/cli/commands/split_repair.rs",
+        "crates/symphony-build/src/commands/split_repair.rs",
         "pub fn repair() {}\n",
     ),
     (
-        "crates/symphony/src/cli/commands/split_repair/order.rs",
+        "crates/symphony-build/src/commands/split_repair/order.rs",
         "pub fn order() {}\n",
     ),
     (
-        "crates/symphony/src/cli/commands/publish.rs",
+        "crates/symphony-build/src/commands/publish.rs",
         "pub fn publish() {}\n",
     ),
     ("Cargo.toml", "[workspace]\nmembers=[]\n"),
@@ -631,10 +631,10 @@ fn the_snapshot_holds_the_clients_packages_the_workspace_files_and_the_other_mem
             "apps/symphony-ui/src/main.rs",
             "crates/symphony-api/Cargo.toml",
             "crates/symphony-api/src/lib.rs",
+            "crates/symphony-build/src/commands/split_repair.rs",
+            "crates/symphony-build/src/commands/split_repair/order.rs",
             "crates/symphony-derive/Cargo.toml",
             "crates/symphony-derive/src/lib.rs",
-            "crates/symphony/src/cli/commands/split_repair.rs",
-            "crates/symphony/src/cli/commands/split_repair/order.rs",
             "crates/tasks/Cargo.toml",
             "crates/tasks/src/lib.rs",
             "rust-toolchain.toml",
@@ -686,7 +686,7 @@ fn a_change_outside_the_clients_inputs_keeps_its_snapshot_and_one_inside_names_a
         ("tools/entry.sh", "#!/bin/sh\nexit 3\n"),
         (".claude-notes", "revised\n"),
         (
-            "crates/symphony/src/cli/commands/publish.rs",
+            "crates/symphony-build/src/commands/publish.rs",
             "pub fn publish() { todo!() }\n",
         ),
     ] {
@@ -708,8 +708,8 @@ fn a_change_outside_the_clients_inputs_keeps_its_snapshot_and_one_inside_names_a
         "crates/symphony-api/src/lib.rs",
         "crates/symphony-derive/src/lib.rs",
         "crates/tasks/Cargo.toml",
-        "crates/symphony/src/cli/commands/split_repair.rs",
-        "crates/symphony/src/cli/commands/split_repair/order.rs",
+        "crates/symphony-build/src/commands/split_repair.rs",
+        "crates/symphony-build/src/commands/split_repair/order.rs",
     ] {
         let original = fs::read_to_string(fixture.root.join(path)).unwrap();
         fixture.write(path, &format!("{original}# changed\n"));
@@ -722,10 +722,10 @@ fn a_change_outside_the_clients_inputs_keeps_its_snapshot_and_one_inside_names_a
     assert_ne!(fixture.key(), key, "a new file of the client is an input");
     let key = fixture.key();
     fixture.write(
-        "crates/symphony/src/cli/commands/split_repair/wasm.rs",
+        "crates/symphony-build/src/commands/split_repair/wasm.rs",
         "pub fn read() {}\n",
     );
-    fixture.list(&["crates/symphony/src/cli/commands/split_repair/wasm.rs"]);
+    fixture.list(&["crates/symphony-build/src/commands/split_repair/wasm.rs"]);
     assert_ne!(fixture.key(), key, "a new file of the split repair is one");
 }
 

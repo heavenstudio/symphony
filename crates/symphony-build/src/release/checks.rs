@@ -22,7 +22,7 @@ use serde::{Deserialize, Serialize};
 
 use super::group::{self, Bound};
 use super::record::Checking;
-use crate::children::command;
+use symphony::children::command;
 use symphony_board::sys::Stdio;
 
 /// What a check runs within: the run's bound, and what says which check runs, and in which group,

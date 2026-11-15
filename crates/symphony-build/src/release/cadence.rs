@@ -11,25 +11,15 @@
 
 use std::path::Path;
 
+use symphony::reports::git::landing_slug;
 use symphony_board::sys::pid_alive;
 
 use super::git::{commit, git, is_ancestor, short};
 use super::record::{self, Run, Running, local};
 use super::tags::Release;
 
-/// The landing a merge's subject says, by its slug: the land's own merge ("Merge branch 'SLUG'"),
-/// or git's for one made by hand on that branch ("Merge branch 'SLUG' into BRANCH"). A merge of
-/// the default branch `branch` itself ("Merge branch 'main' into SLUG": a task catching up, which
-/// reached the line), of another repository's branch ("… of URL") or of a remote-tracking branch
-/// is none.
-pub(crate) fn landed<'a>(subject: &'a str, branch: &str) -> Option<&'a str> {
-    let rest = subject.strip_prefix("Merge branch '")?;
-    let (slug, after) = rest.split_once('\'')?;
-    let lands = !slug.is_empty() && slug != branch;
-    (lands && (after.is_empty() || after.starts_with(" into "))).then_some(slug)
-}
-
-/// A landing: the merge's commit and the slug it landed.
+/// A landing: the merge's commit and the slug it landed ([`landing_slug`], the one reading of a
+/// merge's subject, which the reports' traces of a red share).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Landing {
     pub(crate) commit: String,
@@ -64,7 +54,7 @@ pub(crate) fn landings(
             let (commit, subject) = line.split_once(' ')?;
             Some(Landing {
                 commit: commit.to_string(),
-                slug: landed(subject, branch)?.to_string(),
+                slug: landing_slug(subject, branch)?.to_string(),
             })
         })
         .collect())
@@ -358,33 +348,6 @@ mod tests {
     use crate::release::record::Board;
     use crate::test_tree::Tree;
     use std::path::PathBuf;
-
-    #[test]
-    fn a_landing_is_the_lands_merge_or_gits_own_onto_the_branch() {
-        assert_eq!(landed("Merge branch 'tools/x'", "main"), Some("tools/x"));
-        assert_eq!(
-            landed("Merge branch 'tools/x' into main", "main"),
-            Some("tools/x")
-        );
-        for none in [
-            "Merge remote-tracking branch 'origin/main'",
-            "Merge branch 'main' of github.com:heavenstudio/symphony",
-            "Merge branch 'main' into tools/x",
-            "Merge branch 'main'",
-            "Merge branch ''",
-            "Merge branch 'unclosed",
-            "Regenerate the client distribution after tools/x",
-            "Merge pull request #3 from x/y",
-        ] {
-            assert_eq!(landed(none, "main"), None, "{none}");
-        }
-        // The default branch is the project's: another's merge of `main` is a landing of it.
-        assert_eq!(
-            landed("Merge branch 'main' into trunk", "trunk"),
-            Some("main")
-        );
-        assert_eq!(landed("Merge branch 'trunk' into tools/x", "trunk"), None);
-    }
 
     /// A repository on `main` with a commit, then a landing of each of `slugs` (a branch merged
     /// with the land's own message), a plain commit and a merge of a remote-tracking branch between

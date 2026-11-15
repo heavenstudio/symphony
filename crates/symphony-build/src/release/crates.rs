@@ -20,7 +20,7 @@ use serde_json::Value;
 use symphony_board::sys::Command;
 
 use super::group::{Bound, Failed, output_until};
-use crate::children::command;
+use symphony::children::command;
 
 /// crates.io's sparse index, a file of each crate's versions.
 const INDEX: &str = "https://index.crates.io";
@@ -196,7 +196,7 @@ impl Registry {
             Registry::Folder(folder) => match fs::read(folder.join("index").join(&path)) {
                 Ok(bytes) => Some(bytes),
                 Err(e) if e.kind() == io::ErrorKind::NotFound => None,
-                Err(e) => return Err(crate::text::os_error(&e, &folder.join("index").join(&path))),
+                Err(e) => return Err(symphony::text::os_error(&e, &folder.join("index").join(&path))),
             },
         };
         Ok(listed.is_some_and(|listed| lists(&String::from_utf8_lossy(&listed), version)))
@@ -222,7 +222,7 @@ impl Registry {
                 let from = folder.join("crates").join(&file);
                 fs::copy(&from, to)
                     .map(|_| ())
-                    .map_err(|e| crate::text::os_error(&e, &from))
+                    .map_err(|e| symphony::text::os_error(&e, &from))
             }
         }
     }
@@ -321,11 +321,11 @@ pub(crate) fn check(
     }
     let scratch = target.join(CHECKED);
     if scratch.exists() {
-        fs::remove_dir_all(&scratch).map_err(|e| crate::text::os_error(&e, &scratch))?;
+        fs::remove_dir_all(&scratch).map_err(|e| symphony::text::os_error(&e, &scratch))?;
     }
     let (ours, theirs) = (scratch.join("ours"), scratch.join("theirs"));
     for folder in [&ours, &theirs] {
-        fs::create_dir_all(folder).map_err(|e| crate::text::os_error(&e, folder))?;
+        fs::create_dir_all(folder).map_err(|e| symphony::text::os_error(&e, folder))?;
     }
     let mut package = command("cargo");
     package
@@ -416,9 +416,9 @@ fn files(root: &Path) -> Result<BTreeSet<String>, String> {
     let mut found = BTreeSet::new();
     let mut pending = vec![(root.to_path_buf(), String::new())];
     while let Some((folder, named)) = pending.pop() {
-        let entries = fs::read_dir(&folder).map_err(|e| crate::text::os_error(&e, &folder))?;
+        let entries = fs::read_dir(&folder).map_err(|e| symphony::text::os_error(&e, &folder))?;
         for entry in entries {
-            let entry = entry.map_err(|e| crate::text::os_error(&e, &folder))?;
+            let entry = entry.map_err(|e| symphony::text::os_error(&e, &folder))?;
             let name = entry.file_name().to_string_lossy().into_owned();
             let path = if named.is_empty() {
                 name.clone()
@@ -427,7 +427,7 @@ fn files(root: &Path) -> Result<BTreeSet<String>, String> {
             };
             let kind = entry
                 .file_type()
-                .map_err(|e| crate::text::os_error(&e, &entry.path()))?;
+                .map_err(|e| symphony::text::os_error(&e, &entry.path()))?;
             if kind.is_dir() {
                 pending.push((entry.path(), path));
             } else if !(named.is_empty() && NOT_SOURCES.contains(&name.as_str())) {
@@ -440,7 +440,7 @@ fn files(root: &Path) -> Result<BTreeSet<String>, String> {
 
 /// The bytes of the file at `path`: a `.crate` holds no link, as cargo packs a link's target.
 fn bytes(path: &Path) -> Result<Vec<u8>, String> {
-    fs::read(path).map_err(|e| crate::text::os_error(&e, path))
+    fs::read(path).map_err(|e| symphony::text::os_error(&e, path))
 }
 
 /// The line a check says of a changed package: what changed, and that its version is to move.

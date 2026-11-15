@@ -1,5 +1,5 @@
 //! The git the release run runs, each command in a folder of its choosing, without the session that
-//! started it ([`crate::children`]). A command that reaches the remote never waits on a prompt, and
+//! started it ([`symphony::children`]). A command that reaches the remote never waits on a prompt, and
 //! none runs past [`GIT_BOUND`] or the run's own time ([`super::group`]).
 
 use std::path::Path;
@@ -7,7 +7,7 @@ use std::process::Output;
 use std::time::{Duration, Instant};
 
 use super::group::{Bound, Failed, output_until};
-use crate::children::command;
+use symphony::children::command;
 
 /// How long one git command may run, unless the run's own time ends sooner.
 pub(super) const GIT_BOUND: Duration = Duration::from_secs(15 * 60);

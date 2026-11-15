@@ -96,8 +96,8 @@ const WORKSPACE_INPUTS: [&str; 5] = [
 /// The sources of the split repair, a file and a folder: `bundle.sh` runs it on the program's
 /// chunks, so what it writes is the client's bytes too, and a change to it builds a new client.
 const SPLIT_REPAIR: [&str; 2] = [
-    "crates/symphony/src/cli/commands/split_repair.rs",
-    "crates/symphony/src/cli/commands/split_repair",
+    "crates/symphony-build/src/commands/split_repair.rs",
+    "crates/symphony-build/src/commands/split_repair",
 ];
 
 /// What of the checkout the client's build reads, from Cargo's metadata of the workspace: the
