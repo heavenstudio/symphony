@@ -11,7 +11,7 @@ mod attach;
 mod shot;
 
 /// The Symphony's own commands, in the order its usage names them, each with what it does.
-const OWN: [(&str, &str); 13] = [
+const OWN: [(&str, &str); 14] = [
     ("status", "the review board's open cards and comments"),
     (
         "reply",
@@ -30,6 +30,10 @@ const OWN: [(&str, &str); 13] = [
         "turn the open verdict tasks into asks, once (main checkout)",
     ),
     ("docs-audit", "check that every document renders"),
+    (
+        "settings-check",
+        "check the project file's shape: known keys, typed values",
+    ),
     (
         "blocks",
         "count the typed blocks every document parses into",
@@ -53,7 +57,15 @@ const OWN: [(&str, &str); 13] = [
 
 /// The usage of the Symphony's commands that read no options of their own, and what their help says
 /// after their line: what `--help` or `-h` anywhere on their command line prints ([`plain_help`]).
-const PLAIN: [(&str, &str, &str); 3] = [
+const PLAIN: [(&str, &str, &str); 4] = [
+    (
+        "settings-check",
+        "usage: symphony settings-check [DIR]",
+        "DIR is the project (default: the current folder). It reads symphony.toml as\n\
+         the Symphony does and refuses, naming each on stderr (exit 1), a table or key\n\
+         the Symphony does not know, a value of the wrong type and a required value left\n\
+         out. It judges no name against a list: a model is any text.\n",
+    ),
     ("project", "usage: symphony project add [DIR]", ""),
     (
         "hook",
