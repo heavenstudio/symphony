@@ -162,7 +162,8 @@ audit on main after the land's round files it within minutes
 1. List what the branch changed: `git diff --name-only main...HEAD`.
 2. Name each file's package: `crates/tasks` is `symphony-board`, `crates/symphony` is
    `symphony`, `apps/symphony-server` is `symphony-server`, `apps/symphony-ui` is `symphony-ui`,
-   and any other `crates/NAME` is `NAME`; `apps/symphony-web` is the React client, no Cargo
+   `apps/symphony-desktop` is `symphony-desktop` (the Mac app, whose windows no test opens), and
+   any other `crates/NAME` is `NAME`; `apps/symphony-web` is the React client, no Cargo
    package, whose unit tests `just client-lint` runs with its other checks.
 3. For each package:
    - the unit tests of the changed modules: `just test-rs -p PACKAGE --lib MODULE`, the module
@@ -214,6 +215,7 @@ both kinds, to copy after `--`:
 | a task's page, its gates and its timeline | `task_page` `task_panel` `task_priority` `task_gates::` `timeline::` `owner_controls::` `owner_save::` `cache_tasks::` `cache_ahead` `feed_deltas::` `notice_layout::` `landmarks::` `layout_shift::` `skeleton::` `header::` `look_parity::` `restored::` `components::` `program::` `polish::` `projects::` `budget` `preload::` |
 | the agents page (`/agents`) | `machine_work` `the_agents_page` `header::` `look_parity::` `the_chat_opened_on` `polish::` `projects::` `budget` |
 | the reports page (`/reports`) | `reports::` `header::` `polish::` `projects::` `budget` |
+| the runs page (`/runs`) | `runs::` `header::` `polish::` `projects::` `preload::` `budget` |
 | document and folder pages | `document` `docs_index` `owner_` `cache_ahead` `cache_pages::` `restored::` `landmarks::` `skeleton::` `layout_shift::` `look_parity::` `polish::` `projects::` `budget` |
 | the header, on every page | `header::` `floating_controls::` `panel_open::` `program::` `polish::` `projects::` |
 | shared controls (select, menu, button, tooltip, theme) | `components::` `select` `theme` `polish::` |

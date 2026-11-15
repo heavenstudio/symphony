@@ -481,15 +481,13 @@ fn exercise(address: std::net::SocketAddr) {
             "Forbidden: the Host header does not name this machine",
         );
         f.refused_writes(host, None, HOST_REFUSED);
+        // Nor does the feed's WebSocket read past it, under the Host's own Origin, which the
+        // socket's own rule would let in, or with neither, which only the Host gate refuses.
+        let own = host.map(|host| format!("http://{host}"));
+        assert_eq!(f.socket(host, own.as_deref()), 403, "{host:?}");
         // Even a matching Origin cannot rescue an untrusted Host.
         if let Some(host) = host {
             f.refused_writes(Some(host), Some(&format!("http://{host}")), HOST_REFUSED);
-            // Nor does the feed's WebSocket read past it.
-            assert_eq!(
-                f.socket(host, Some(&format!("http://{host}"))),
-                403,
-                "{host}"
-            );
         }
         f.assert_unchanged(&baseline, &format!("Host {host:?}"));
     }
@@ -518,7 +516,7 @@ fn exercise(address: std::net::SocketAddr) {
         f.refused_writes(Some(&f.host()), Some(&origin), ORIGIN_REFUSED);
         f.assert_unchanged(&baseline, &format!("Origin {origin:?}"));
         // A WebSocket has no same-origin rule for its reads: the feed's is refused another page.
-        assert_eq!(f.socket(&f.host(), Some(&origin)), 403, "{origin:?}");
+        assert_eq!(f.socket(Some(&f.host()), Some(&origin)), 403, "{origin:?}");
     }
     let refused = f.refusals();
 
@@ -542,7 +540,11 @@ fn exercise(address: std::net::SocketAddr) {
         // Each missing-Origin request is a command-line request permitted by the README.
         // Each present-Origin request checks the same Host's exact scheme, name and port.
         for origin in [None, Some(format!("http://{host}"))] {
-            assert_eq!(f.socket(host, origin.as_deref()), 101, "{host} {origin:?}");
+            assert_eq!(
+                f.socket(Some(host), origin.as_deref()),
+                101,
+                "{host} {origin:?}"
+            );
             let marker = format!("allowed-{index}-{}", origin.is_some());
             let response = f.request(
                 "POST",
@@ -582,7 +584,7 @@ fn exercise(address: std::net::SocketAddr) {
     // Origin comparison is case-insensitive, as are DNS names.
     assert_eq!(
         f.socket(
-            &format!("LOCALHOST:{port}"),
+            Some(&format!("LOCALHOST:{port}")),
             Some(&format!("HTTP://localhost:{port}"))
         ),
         101

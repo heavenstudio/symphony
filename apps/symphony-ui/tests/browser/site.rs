@@ -324,6 +324,10 @@ impl Site {
                     "to": 1_800_003_600.0, "buckets": [], "first": null
                 }),
             ),
+            (
+                symphony_api::RUNS_PATH,
+                serde_json::json!({"runs": [], "more": false, "pipelines": [], "unread": []}),
+            ),
         ] {
             files.insert(
                 path.into(),
@@ -1260,7 +1264,9 @@ fn serve(
             return;
         }
         if path == symphony_api::FEED_PATH {
-            // The web client's kinds follow the feed on a WebSocket, the task pages as events.
+            // Every page follows the feed on a WebSocket. Any other request gets the events, as
+            // the server sends them, so a page that took the event stream again shows in
+            // `socket_feeds` (tabs.rs).
             let socket = asks_socket(&headers);
             let held = {
                 let mut shared = shared.lock().unwrap();

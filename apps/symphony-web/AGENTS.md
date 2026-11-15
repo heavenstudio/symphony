@@ -10,7 +10,8 @@ document an entrypoint serves, the kind `docs`) the fourth, the task board (`/ta
 its timeline (`/task/SLUG`, the kind `task`) the seventh: no page is left the Dioxus program's,
 which keeps the chat and its media layer, mounted beside every page. The menus (a select's popup
 and the picture viewer, the persistent kind `overlay`) are the eighth, mounted beside every page as
-well. The board's task card is a
+well. Runs (`/runs`, the kind `runs`) was built here from the start, with no Dioxus page before
+it. The board's task card is a
 component of its own (`src/taskcard.tsx`), which the agents page draws too, and whose status words
 and machine work a task's page draws. Like that
 client it reads the server's JSON API and never runs server code or inserts server-rendered HTML.
@@ -85,7 +86,7 @@ string, a character or a comment cuts it short (the reader's tests, which `just 
 `just test-rs -p symphony-api --features typescript --example typescript`). TypeScript that carries the Dioxus client's own Rust
 (`apps/symphony-ui`), not this crate's, is held by the browser parity tests alone.
 
-A read is checked where it arrives (`readQueue`, `readPageBoard`, `readReports`,
+A read is checked where it arrives (`readQueue`, `readPageBoard`, `readReports`, `readRunsPage`,
 `document-read.ts`, of the checks `blocks-read.ts` exports): a guard checks the fields the page
 draws, each of its type, and nothing else, so a field a newer server adds, or one it drops that
 the page does not draw, changes nothing, as the Dioxus client's serde reads skip
@@ -254,7 +255,9 @@ figures sit over five sections of charts, one column on a phone and two from 960
 links to the chart it sums up (`#chart-done`…) while the charts are drawn. A chart's id is an
 anchor of its `NearViewport`, held in its ghost until it mounts; the chart an address names mounts at
 once and is landed as a document's part is (the shell's `land`, once a navigation), so a fresh
-load's charts, which come after the shell looked for it, land too.
+load's charts, which come after the shell looked for it, land too, until the reader chooses a
+window: a first answer that drew no chart (nothing recorded, a failed read) started no landing,
+and the window chosen after it lands none (`lands`, `NearViewport`).
 `src/chart.tsx` draws each chart by hand, with no charting library: bars as boxes over a column
 a period, lines as one SVG whose strokes keep their width, both on one axis with its unit; a
 period no file recorded is hatched and its line broken, never a zero. Each entry of a chart's
@@ -269,6 +272,26 @@ Dioxus page wrote them, a tie rounded to the even digit as Rust's `{:.N}` does (
 series take `--chart-1` to `--chart-5` (`src/reports.css`), set at no specificity so a theme's
 own win, with their own steps in the dark. Charts below the screen mount through
 `NearViewport`. Hours are labelled in UTC.
+
+## Runs
+
+`src/runs.tsx` draws `/runs`, the kind `runs`, in the frame, with no feed of its own
+([RUNS](../../docs/RUNS.md#the-runs-page)). Now is the machine work (`/api/machine-work`,
+`followNow`, every 5 s), read by a guard of the fields it draws (`readNow`) rather than
+`work.ts`, which only the board's kinds import, so this page splits no shared chunk. The list is
+`/api/runs` (`followList`, its first page every 15 s with the last answer's tag), with its
+filters kept as a query through `storage.ts` (`runs-filters`) and Load more (`readOlder`) under
+the mount's signal. A run is `/runs?run=ID`, the same kind: the shell's move within it says
+`review:navigate`, and the page reads `location.search` again. Its read (`followRun`) goes on
+every 5 s while the run or a step of it has not ended, reading its log on from what is shown
+(`appended`), and from its tail again once the log is shorter than that; a log the server keeps
+no more (`404`) ends an ended run's read and is said quietly. The output before it
+(`readEarlier`) goes in front (`prepended`). Each reader takes its effect's signal, and each
+wait between reads is a parameter (`pause` by default: its time, then on only once the page is
+shown, `whenShown` in `feed.ts`), so `runs.test.tsx` runs them with no timer. Nothing is kept
+on the device but the filters. The steps are bars on the run's span drawn as boxes
+(`stepBars`), with no chart; Trends, a chart of the roll-up, will share `chart.tsx` with
+Reports. Times are in UTC.
 
 ## The agents page
 

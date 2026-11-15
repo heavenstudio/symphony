@@ -2,6 +2,7 @@ import { isValidElement, type KeyboardEvent, type ReactElement, type ReactNode }
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import FIXTURE from "../../../crates/symphony-api/fixtures/task-timeline.json";
+import { whenShown } from "./feed";
 import { Failure, NO_ANSWER as SLOW } from "./request";
 import {
   afterRead,
@@ -26,7 +27,6 @@ import {
   TimelineView,
   timelineUrl,
   watchCrossings,
-  whenShown,
 } from "./timeline";
 import { lanes, readTimeline, stops } from "./timeline-layout";
 import type { TaskTimeline } from "./wire";

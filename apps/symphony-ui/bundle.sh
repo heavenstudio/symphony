@@ -146,9 +146,9 @@ fi
 # module and a chunk for it and one for the media layer (src/split.rs), and `symphony-build
 # split-repair` makes that output safe and repeatable, from the program dx linked, before anything
 # is packaged; a failed repair fails the build. The web client's kinds (home, the queue, Reports,
-# the task board, the agents page, the documents, a task's page, and the menus every page mounts)
-# are one Vite build, `web`. All assets are content hashed; identical files from separate kinds
-# share one URL and one browser-cache entry.
+# Runs, the task board, the agents page, the documents, a task's page, and the menus every page
+# mounts) are one Vite build, `web`. All assets are content hashed; identical files from separate
+# kinds share one URL and one browser-cache entry.
 for kind in "${kinds[@]}"; do
     module="$out/.modules/$kind"
     # The web client's kinds, one Vite build, which no path or clock enters.
