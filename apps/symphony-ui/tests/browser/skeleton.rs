@@ -1,11 +1,13 @@
 //! A page's ghost: it outlines what is to come, each box as the real one with a bar for each line
 //! of text in it; it stays over the page until the regions on its first screen have their
 //! reads (`viewport::Settle`), at most three seconds, and not at all once a read fails; its look
-//! follows the theme and the reader's motion setting. Past it, a live update that adds or removes
+//! follows the theme and the reader's motion setting, and a page at rest animates none of it, the
+//! placeholders out of reach of the screen included. Past it, a live update that adds or removes
 //! a row leaves what the owner reads or types in where it is once they have scrolled, however
 //! many frames the row takes to draw, shows at
 //! the top what lands there while they have not, and never scrolls against the owner's own
 //! scroll; the chat's form stays at the foot of its sheet.
+use super::feed_deltas::{agent, agent_page};
 use super::{NO_STORE, SHOWN, chrome, chrome::Chrome, layout_shift, site::Site, wait_for_feed};
 use serde_json::{Value, json};
 
@@ -424,6 +426,54 @@ fn a_column_still_reading_its_tasks_draws_a_card_box_for_each_it_will_hold() {
             "reserved": 139, "bars": 5, "colour": "rgba(127, 127, 127, 0.14)"}),
         "a typical card's box per task counted, no agent's yet: a bar for its slug, its title's lines and its row of links, and no Load more while the first page is read"
     );
+}
+
+/// What a page animates: the shimmer animations that run (`document.getAnimations()`), and the
+/// bars its placeholders hold, the parts not yet within reach of the screen.
+const ANIMATED: &str = "(() => ({running: document.getAnimations().filter(a => a.animationName === 'shimmer' && a.playState === 'running').length,
+    held: document.querySelectorAll('.viewport-placeholder .bone').length}))()";
+
+/// Wait until `browser`'s page, every read on its screen in, runs no shimmer while its
+/// placeholders still hold their bars: a placeholder waits for no read, so its bars are still,
+/// and an animation off the screen would run every frame for as long as the page is open.
+fn comes_to_rest(browser: &mut Chrome, page: &str) {
+    assert!(
+        browser.wait_for(
+            &format!("(at => at.running === 0 && at.held > 0)({ANIMATED})"),
+            SHOWN
+        ),
+        "{page} never came to rest with its placeholders still waiting (shimmer animations running, placeholders' bars): {}",
+        browser.eval(ANIMATED)
+    );
+}
+
+#[test]
+fn a_board_at_rest_animates_none_of_the_rows_out_of_reach_of_the_screen() {
+    let site = site();
+    // Sixty tasks in one column: a screen of cards and the sentinel's reach drawn, the rest
+    // placeholders, each its card's ghost.
+    let Some(mut browser) = board_of(&site, 60) else {
+        return;
+    };
+    comes_to_rest(&mut browser, "the board");
+}
+
+#[test]
+fn the_agents_page_at_rest_animates_none_of_the_agents_out_of_reach_of_the_screen() {
+    let site = site();
+    let agents: Vec<Value> = (1..=40)
+        .map(|n| agent(&format!("agent-{n:02}"), "live"))
+        .collect();
+    site.set_json("/api/agent-page", &agent_page(&agents, &[]));
+    let Some(mut browser) = open(&site, "/agents", 1280, 900) else {
+        return;
+    };
+    assert!(
+        browser.wait_for("document.querySelector('.agent') !== null", SHOWN),
+        "the agents were never drawn: {}",
+        browser.eval(PAGE)
+    );
+    comes_to_rest(&mut browser, "the agents page");
 }
 
 /// A ready task's card and one under review, as the board draws them, each the typical card it

@@ -377,7 +377,7 @@ pub fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
         }
         "role" => {
             let (slug, role) = (c.arg("slug"), c.arg("role"));
-            store.take_role(&slug, &c.actor()?, &role)?;
+            store.take_role_beside(&slug, &c.actor()?, &role, p.get("beside"))?;
             c.say(&format!("{role} on {slug}"));
         }
         "handover" => {

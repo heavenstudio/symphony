@@ -106,7 +106,7 @@ repository writes where its Symphony reads: in the one `symphony/` folder of
 Symphony's state there, from the start, with no old name to read. `symphony/runs.<database>/` for a board database other than the live one.
 `SYMPHONY_RUNS` names another folder (a test's); a run whose work folder `TASKS_WORK`
 names, or whose board `TASKS_SERVER` names, writes no line without it.
-`symphony/runs/logs/` is not the recorder's (`tools/run-logs`).
+The runs' logs are in its `logs/` (below).
 
 Each line goes to the file of its UTC day: the day it ended, else the day it
 started, else the day it was asked for. A line is one JSON object and its newline,
@@ -119,8 +119,76 @@ newline, so that line stays apart; two that find it so without the lock leave an
 line between theirs. A reader passes over a line that does not parse, an empty one
 included. Then, under the lock only, each day file of a day more than 90 days before
 the day of that line's write goes: a regular file named `YYYY-MM-DD.jsonl`, never a
-link, a folder or another file. The rerun reader reads only a regular day file, never
-through a link or from a FIFO, and of a file longer than 16 MiB its last 16 MiB.
+link, a folder or another file; and each day folder of logs more than 14 days before
+it, with every log in it: a folder named `logs/YYYY-MM-DD`, never a link or a file. The
+rerun reader reads only a regular day file, never through a link or from a FIFO, and of
+a file longer than 16 MiB its last 16 MiB.
+
+## Logs
+
+A run's or a step's log is what its command wrote on its stdout and stderr, without
+terminal escape codes: `logs/YYYY-MM-DD/RUN.log` in the day files' folder, the UTC day
+the run was asked for, its `run` the operation's id. How its recorder reads it follows
+what the caller handed the command, and the caller sees the same bytes whichever it is:
+
+- **A terminal** (a person at it), on stdout or stderr: the command keeps the caller's
+  streams as they are, its colours and progress unchanged, and the run writes no log,
+  its lines naming none, as any other recorded command does.
+- **A regular file**: an agent's tool call, which hands its command files; each step
+  of the release run, which `tools/verify.sh` runs as `"$@" >"$log" 2>&1` into a log
+  file of its own that it keeps; the board's `[board] on_review` and `on_land`
+  commands, into theirs. The command keeps the caller's streams here too, nothing
+  between it and its file, so its last bytes are there before its status reaches the
+  caller, and a recorder that dies costs the record and the log alone. The recorder
+  marks where each file ends as the run starts, and once the command ended copies what
+  each gained past its mark into the log: a file both streams name (`>f 2>&1`) once,
+  two files one after the other, a stream that is no file not at all. Until then the
+  log is empty, the caller's file being where a running run is read. What anything
+  else wrote to the file meanwhile is in the log too, and on macOS, where the recorder
+  reads the file as soon as it sees the command end, so may what the caller wrote at
+  once after it be. A file its caller cut below its mark gives nothing.
+- **Anything else** (a pipe, a socket, `/dev/null`): the command writes to pipes its
+  recorder reads, which copies each read on to where that stream went before, as it
+  came, and into the log. A recorder that dies while its command runs leaves those
+  pipes with no reader: the command's next write ends it by SIGPIPE (exit 141), as a
+  pipeline's command whose reader went.
+
+Of a log kept either way:
+
+- **Plain.** The log holds what the command wrote less ECMA-48's escapes: its control
+  sequences (`ESC [`, parameters, a final byte), its strings (`ESC ]`, `ESC P`,
+  `ESC X`, `ESC ^`, `ESC _`, to `ESC \` or BEL; a string never ended stops at its
+  line's end) and its other escapes, wherever a read cuts one. Text, UTF-8 and the
+  other control characters (a carriage return among them) stay.
+- **Order.** From one file, the order the command wrote it; from two, stdout's then
+  stderr's. From pipes, stdout and stderr go into the one log in the order the
+  recorder read them: a program buffers its stdout in a pipe, so lines it wrote close
+  together may come in another order than at a terminal. A step has a log of its own,
+  and its output reaches its run's log too: from a file where the step wrote it, from
+  pipes through the step's recorder, so it may come after what the run wrote once the
+  step's command ended.
+- **Size.** The start line names the log (`log`). The end line names it with what it
+  held then (`log_bytes`): from files once the copy is done, so what a process the
+  command left writes later stays in the caller's file alone; from pipes once both
+  streams ended, or 1 s after the command did when a process it left still holds one.
+  What that process writes later is still copied on, and into the log. On macOS the
+  recorder copies until both streams end; where it is its command's parent (Linux, a
+  caller's process) the caller gets its status after those 1 s at most: `tasks run`
+  then ends, so a process still writing finds its stream closed, while in a caller's
+  process the copy goes on until the streams end.
+- **A reader that went.** A pipe whose caller's end can no longer be written (a
+  `| head` that exited) is read no more, so the command's next write there fails as
+  it would have; the other stream is still copied and logged.
+- **Kept** 14 days: a day folder of logs more than 14 days old goes with the day files'
+  own pruning (above).
+
+`GET /api/run-log?run=ID` (`symphony_api::RUN_LOG_PATH`), on a project's server, reads
+one: by default its last 64 KiB, `&tail=N` its last N bytes, `&from=A` (and `&to=B`) the
+bytes from A (to B), never more than 1 MiB at once. It answers a `symphony_api::RunLog`:
+`run`, `log`, `size` (the log's length as read), `from`, `to` and `text`, those bytes as
+text. A `run` that is not 32 hex digits is refused (400); a log that is not there, or is
+no regular file in a day folder of `logs/` (a link, a FIFO), is none (404). It reads the
+project's day files' folder alone, never the board.
 
 ## Start and end
 
@@ -162,7 +230,9 @@ one that sees only the day files shows it as started, not as running.
 | `cpu_s` | CPU seconds, to the millisecond, once it ended (above) |
 | `cpu_partial` | beside `cpu_s`: `true` when known short, `false` when the recorder saw no loss, absent when it does not watch for one (above) |
 | `rerun_of` | the run it repeats (above) |
-| `log`, `log_bytes`, `suites`, `failed` | left out until `tools/run-logs` and `tools/run-suites` fill them |
+| `log` | its log in the day files' folder ([Logs](#logs)), on its start line too; absent when it keeps none (its caller at a terminal) |
+| `log_bytes` | on its end line, the bytes its log held then; absent from the end line a sweep writes for a recorder that died |
+| `suites`, `failed` | left out until `tools/run-suites` fills them |
 
 `end` reads its command's end: exit 0 is `green`; exit 124 (what `timeout` exits
 with), `SIGALRM`, `SIGXCPU` or `SIGVTALRM` is `timed_out`; `SIGHUP`, `SIGINT`,
@@ -174,7 +244,7 @@ signal is `red`; a command that never started, or whose end is not known, is
 An end line of the workspace tests of a verify, a step, recorded on macOS:
 
 ```json
-{"schema":1,"run":"8a21…","parent":"5f0c…","project":"symphony","machine":"9e1d…","pipeline":"verify","step":"tests","label":"tests","task":"tools/run-record","handle":"ember-osprey","trigger":"ember-osprey","branch":"tools/run-record","commit":"7ad7…","tree":"c41b…","dirty":false,"queued":1794400090.1,"started":1794400090.2,"ended":1794400412.9,"end":"red","exit":101,"signal":null,"cpu_s":1873.412,"cpu_partial":false,"rerun_of":"77e0…"}
+{"schema":1,"run":"8a21…","parent":"5f0c…","project":"symphony","machine":"9e1d…","pipeline":"verify","step":"tests","label":"tests","task":"tools/run-record","handle":"ember-osprey","trigger":"ember-osprey","branch":"tools/run-record","commit":"7ad7…","tree":"c41b…","dirty":false,"queued":1794400090.1,"started":1794400090.2,"ended":1794400412.9,"end":"red","exit":101,"signal":null,"cpu_s":1873.412,"cpu_partial":false,"rerun_of":"77e0…","log":"logs/2026-11-11/8a21….log","log_bytes":48211}
 ```
 
 ## The roll-up
@@ -224,5 +294,6 @@ A task moving to review starts `[board] on_review` through the `tasks` that move
 `on_review`, for that task, on its branch's tip (`--commit`, `--branch`), with no
 session and outside any recorded command the mover ran in. A program that cannot start
 starts nothing, recorded or not, and the move says it did not start, as it says why.
-Its line keeps the command's exit; its output still goes to `symphony/tasks/on-review.log`.
+Its line keeps the command's exit; its output still goes to `symphony/tasks/on-review.log`,
+and to its log ([Logs](#logs)).
 With no recorder it runs unrecorded.

@@ -1478,7 +1478,7 @@ can hold one task at once, one role each:
 |---|---|---|
 | orchestrator | `just tasks role SLUG orchestrator`, or `just tasks create` by an orchestrator session | coordinate: spawn the others, follow the thread; close it as covered or cancel it; one a task |
 | executor | `just tasks claim SLUG` | do the work, move it to `review`; close it as covered or cancel it |
-| reviewer | `just tasks role SLUG reviewer` | give the verdict: `approve` (done) or `changes` (back to the executor) |
+| reviewer | `just tasks role SLUG reviewer` | give the verdict: `approve` (done) or `changes` (back to the executor); one a task: another is refused, naming it, until it is lost or left, or joins beside it saying why (`--beside WHY`, a post of its own after its join line; `just tasks launch --role reviewer` takes it too) |
 | reserved | `just tasks reserve SLUG` | hold it for later, for an hour, so nobody else claims it |
 
 A branch reaches `main` only through `just land`: the Symphony's default
@@ -1488,7 +1488,7 @@ reviewer gives one verdict, not two: `just land-approve BRANCH --tip SHA` with
 the full commit it checked, from its own
 session (`TASKS_SESSION`), holding the reviewer role on the branch's task,
 recorded on the branch's patch (`--adversarial` for the second reviewer of a
-tier 3 change). The landing then finishes the task in review for it: no board
+tier 3 change, which takes the role beside the first with `--beside WHY`). The landing then finishes the task in review for it: no board
 `approve` is needed. A branch with no task gets `review/BRANCH` from
 `just land-request BRANCH`, and the session that ran that (or the task's
 executor) is the one that lands it.
@@ -2129,8 +2129,8 @@ why.
   elsewhere named.
 - **pictures**: a post on the task's thread naming the tip and showing a picture (`png`,
   `jpg`, `jpeg`, `gif` or `webp`) under the task's artifacts folder (`artifacts/SLUG/` by
-  default) or uploaded by the owner (`/artifacts/uploads/`): met; missing while the newest
-  such post names another commit or none, or there is none.
+  default) or uploaded (`/artifacts/uploads/`, the owner's or an agent's `symphony attach`):
+  met; missing while the newest such post names another commit or none, or there is none.
 - **owner**: the owner's approve naming the tip, a line of the owner's whose first word is
   `approve`: met; held until then. Needed or not, it is held while a card the task posted
   waits on the owner, by the sign-off lane's rule above. Until the task page is ported

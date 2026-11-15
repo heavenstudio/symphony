@@ -70,6 +70,7 @@ pub mod red;
 pub mod reports;
 pub mod rows;
 pub mod rpc;
+pub mod run_logs;
 pub mod runs;
 pub mod schema;
 pub mod server;

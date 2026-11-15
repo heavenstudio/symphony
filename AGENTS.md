@@ -73,8 +73,11 @@ belongs to) records it for the Build and Test columns (docs/MACHINE_WORK.md), an
 with none that answers within 2 s, `TASKS_RECORDER=off`, inside a recorded run or in a
 tree without `tools/record.sh` it is exec'd as it is. On macOS the recorder becomes
 the build it records and watches it from a process of its own, so descriptors, the
-signal mask, ignored signals and a kill reach the build as they would without it.
-It uses this folder's `.target/`
+signal mask, ignored signals and a kill reach the build as they would without it, but
+for a run's or step's stdout and stderr when neither of the caller's is a terminal or a
+file: pipes it copies on as they come and, escape codes stripped, into the run's log;
+from a caller's file it copies what the build added there once it ended
+([RUNS](docs/RUNS.md#logs)). It uses this folder's `.target/`
 unless `CARGO_TARGET_DIR` names another. In a linked worktree it makes a missing target
 folder first as a copy-on-write clone of the main checkout's `.target/debug`, less the
 workspace's own units (`tools/seed-target.sh`, one `clonefile` call by `tools/seed-clone.rs`
@@ -425,8 +428,11 @@ bound the waits, and `--report` prints the console errors (a frame's naming its 
 failed requests, dialogs dismissed and horizontal overflow it saw; `--help` says the
 rest. It only reads the page, so the live board
 (`http://127.0.0.1:8765/symphony/tasks`) is fair to shoot; it never starts, stops or
-reconfigures a server. Pictures kept as a task's evidence go under the project's artifacts
-folder in the task's slug (`artifacts/SLUG/` by default) and are named on its thread.
+reconfigures a server. Pictures kept as a task's evidence are saved under the project's artifacts
+folder in the task's slug (`artifacts/SLUG/` by default) and attached, as a path there leads
+nowhere once the sweep moves a worktree's artifacts: `--attach` (`just symphony-cli attach FILE…`
+for a file saved before) stores each by its content in the main checkout's uploads, from a linked
+worktree too, and prints the line the thread post carries.
 The shot leashes Chrome by running its own program again, so a host binary that calls
 `symphony::cli` runs `symphony_chrome::leash_main()` first, as
 `crates/symphony/src/bin/symphony.rs` does; without it a shot fails with "leash exited
