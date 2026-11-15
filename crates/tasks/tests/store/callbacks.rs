@@ -5,6 +5,7 @@ use std::os::unix::net::UnixListener;
 use std::path::PathBuf;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
+use symphony_board::ChatSeat;
 
 mod in_process;
 
@@ -155,7 +156,7 @@ fn plain_orchestrators_receive_queued_chat_and_preserve_explicit_priority() {
     let f = Fixture::empty();
     let first = f.session("orchestrator");
     let second = f.session("orchestrator");
-    assert_eq!(f.store.chat_recipient().unwrap(), None);
+    assert_eq!(f.store.chat_seat().unwrap(), None);
     f.store
         .owner_callback("before-registration", "queued owner ask")
         .unwrap();
@@ -164,6 +165,11 @@ fn plain_orchestrators_receive_queued_chat_and_preserve_explicit_priority() {
     f.store
         .callback(&first, Some(&address), false, false)
         .unwrap();
+    // A plain callback hears chat as a fallback, holding no seat.
+    assert_eq!(
+        f.store.chat_seat().unwrap(),
+        Some((first.clone(), ChatSeat::Orchestrator))
+    );
     assert_eq!(f.store.chat_recipient().unwrap(), Some(first.clone()));
     listener.receive("queued owner ask");
     assert_eq!(
@@ -188,7 +194,10 @@ fn plain_orchestrators_receive_queued_chat_and_preserve_explicit_priority() {
         .unwrap();
     let winner = first.clone().min(second.clone());
     // This checks store integration; the unit case permutes rows to guard the tie-break itself.
-    assert_eq!(f.store.chat_recipient().unwrap(), Some(winner.clone()));
+    assert_eq!(
+        f.store.chat_seat().unwrap(),
+        Some((winner.clone(), ChatSeat::Orchestrator))
+    );
     let fallback = f.session("worker");
     let fallback_listener = Listener::new(&format!("{}-fallback", f.store.client().database()));
     f.store
@@ -207,7 +216,10 @@ fn plain_orchestrators_receive_queued_chat_and_preserve_explicit_priority() {
             json!({"handle":fallback}),
         )
         .unwrap();
-    assert_eq!(f.store.chat_recipient().unwrap(), Some(fallback.clone()));
+    assert_eq!(
+        f.store.chat_seat().unwrap(),
+        Some((fallback.clone(), ChatSeat::NextInLine))
+    );
     let seat = f.session("worker");
     let seat_listener = Listener::new(&format!("{}-seat", f.store.client().database()));
     f.store
@@ -218,14 +230,24 @@ fn plain_orchestrators_receive_queued_chat_and_preserve_explicit_priority() {
             false,
         )
         .unwrap();
-    assert_eq!(f.store.chat_recipient().unwrap(), Some(seat.clone()));
+    assert_eq!(
+        f.store.chat_seat().unwrap(),
+        Some((seat.clone(), ChatSeat::Held))
+    );
     f.store.callback(&seat, None, false, false).unwrap();
-    assert_eq!(f.store.chat_recipient().unwrap(), Some(fallback.clone()));
+    assert_eq!(
+        f.store.chat_seat().unwrap(),
+        Some((fallback.clone(), ChatSeat::NextInLine))
+    );
     f.store.callback(&fallback, None, false, false).unwrap();
-    assert_eq!(f.store.chat_recipient().unwrap(), Some(winner));
+    assert_eq!(
+        f.store.chat_seat().unwrap(),
+        Some((winner, ChatSeat::Orchestrator))
+    );
 
     f.store.callback(&first, None, false, false).unwrap();
     f.store.leave(&second).unwrap();
+    assert_eq!(f.store.chat_seat().unwrap(), None);
     assert_eq!(f.store.chat_recipient().unwrap(), None);
 }
 

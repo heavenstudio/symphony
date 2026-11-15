@@ -47,12 +47,30 @@ const BACKSTOP_FLOOR: Duration = Duration::from_secs(120);
 /// navigation leaves the page's turns uncounted.
 const PROBE_AGAIN: Duration = Duration::from_secs(1);
 
+/// What Chrome answers an evaluation the page's navigation took from it, or one that found no
+/// document to run in, each the `message` of its error reply: nothing was evaluated, and the
+/// document the page went to can be asked again ([`Chrome::wait_for`]).
+const LOST_TO_NAVIGATION: [&str; 3] = [
+    // The page went on to a document in its own frame host, which tore the old one's context
+    // down while the evaluation was in it.
+    "Execution context was destroyed.",
+    // The page went on in another frame host (another process, or a new frame while Chrome keeps
+    // the page it left for Back): Chrome answers every command still in flight on the old one so.
+    // A page closed is answered so too, and its next command then finds no session.
+    "Inspected target navigated or closed",
+    // V8's answer to an evaluation of a frame with no document's context to run it in: asked
+    // between two documents.
+    "Cannot find default execution context",
+];
+
 /// What went wrong driving Chrome, in one message that names what was waited for.
 #[derive(Debug)]
 pub struct Error {
     message: String,
     past_deadline: bool,
     stalled: bool,
+    /// An evaluation's reply was one of [`LOST_TO_NAVIGATION`]'s.
+    navigated: bool,
 }
 
 impl Error {
@@ -61,6 +79,7 @@ impl Error {
             message: message.into(),
             past_deadline: false,
             stalled: false,
+            navigated: false,
         }
     }
 
@@ -69,6 +88,7 @@ impl Error {
             message: format!("{what}: no reply before the deadline"),
             past_deadline: true,
             stalled: false,
+            navigated: false,
         }
     }
 
@@ -77,6 +97,18 @@ impl Error {
             message: format!("{what}: {}", budget.stall()),
             past_deadline: false,
             stalled: true,
+            navigated: false,
+        }
+    }
+
+    /// The error reply `error` to the evaluation of `expression`, which says whether the page's
+    /// navigation took the evaluation from it ([`LOST_TO_NAVIGATION`]).
+    fn evaluation(expression: &str, error: &Value) -> Self {
+        Self {
+            navigated: error["message"]
+                .as_str()
+                .is_some_and(|message| LOST_TO_NAVIGATION.contains(&message)),
+            ..Self::new(format!("{expression}: {error}"))
         }
     }
 
@@ -1240,7 +1272,8 @@ impl Chrome {
             .map_err(|error| Error::new(format!("Page.captureScreenshot: {error}")))
     }
 
-    /// Evaluate `expression` in the page (awaiting a promise), its value as JSON.
+    /// Evaluate `expression` in the page (awaiting a promise), its value as JSON. It is asked once,
+    /// as it may act: an evaluation the page's navigation took from it is an error naming that.
     pub fn eval(&mut self, expression: &str) -> Result<Value> {
         let mut budget = self.page_budget(PROTOCOL_CPU)?;
         self.eval_bounded(expression, &mut budget)?.ok_or_else(|| {
@@ -1262,7 +1295,7 @@ impl Chrome {
                 return Ok(None);
             }
             if let Some(error) = value.get("error") {
-                return Err(Error::new(format!("{expression}: {error}")));
+                return Err(Error::evaluation(expression, error));
             }
             let result = &value["result"];
             if let Some(exception) = result.get("exceptionDetails") {
@@ -1275,23 +1308,31 @@ impl Chrome {
     /// Wait until `expression` is truthy, bounded by browser CPU and the page's completed turns,
     /// including observer turns while an evaluation's promise is still pending. A page whose
     /// renderer stalls until the wall-clock backstop is an error naming the stall, not a false
-    /// condition: it never had the turns to make the condition true.
+    /// condition: it never had the turns to make the condition true. An evaluation the page's
+    /// navigation took from it ([`LOST_TO_NAVIGATION`]) is a turn whose condition is not met yet,
+    /// and the document the page went to is asked again; any other error reply ends the wait.
     pub fn wait_for(&mut self, expression: &str, cpu: Duration) -> Result<bool> {
         let mut budget = self.page_budget(cpu)?;
         let state = loop {
-            let Some(value) = self.eval_bounded(expression, &mut budget)? else {
-                break "evaluation still pending";
+            let (met, state) = match self.eval_bounded(expression, &mut budget) {
+                Ok(Some(value)) => (
+                    !(value.is_null()
+                        || value == json!(false)
+                        || value == json!(0)
+                        || value == json!("")),
+                    "condition still false",
+                ),
+                Ok(None) => break "evaluation still pending",
+                Err(error) if error.navigated => (false, "evaluation lost to a navigation"),
+                Err(error) => return Err(error),
             };
-            if !(value.is_null()
-                || value == json!(false)
-                || value == json!(0)
-                || value == json!(""))
-            {
+            if met {
                 return Ok(true);
             }
-            // The evaluation's reply is the page's own turn.
+            // The evaluation's reply is the page's own turn, or the browser's on its behalf as it
+            // navigated.
             if budget.poll(&self.owner.members()?) {
-                break "condition still false";
+                break state;
             }
             self.pump(POLL)?;
         };

@@ -16,6 +16,7 @@ use crate::live::Hub;
 mod failure;
 mod feed_socket;
 pub(crate) mod reports;
+pub(crate) mod run_log;
 mod validated;
 mod warm;
 
@@ -26,7 +27,7 @@ pub(crate) use warm::{start, warm};
 /// Where a plugin's routes answer: `/x/<route>/<rest>`.
 const PLUGIN_ROUTES: &str = "/x/";
 
-const READS: &[&str] = &[
+pub(crate) const READS: &[&str] = &[
     "/api/board",
     "/api/queue",
     "/api/postponed",
@@ -57,6 +58,7 @@ const READS: &[&str] = &[
     "/api/ask",
     "/api/health",
     symphony_api::REPORTS_PATH,
+    symphony_api::RUN_LOG_PATH,
 ];
 
 type Request = axum::http::Request<()>;
@@ -244,6 +246,35 @@ async fn read(shared: &Arc<Shared>, request: Request) -> Option<Response> {
                 Err(e) => error(
                     StatusCode::INTERNAL_SERVER_ERROR,
                     format!("the reports could not be read: {e}"),
+                ),
+            },
+        );
+    }
+    // A run's log is a file beside the project's day files: the board is never read.
+    if path == symphony_api::RUN_LOG_PATH {
+        let asked = run_log::asked(
+            query(&request, "run").as_deref(),
+            query(&request, "tail").as_deref(),
+            query(&request, "from").as_deref(),
+            query(&request, "to").as_deref(),
+        );
+        let (run, asked) = match asked {
+            Ok(asked) => asked,
+            Err(why) => return Some(error(StatusCode::BAD_REQUEST, why)),
+        };
+        let Some(hub) = shared.api.get().cloned() else {
+            return Some(error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "the Symphony server is starting",
+            ));
+        };
+        return Some(
+            match tokio::task::spawn_blocking(move || run_log::answer(&hub, &run, asked)).await {
+                Ok(Ok(log)) => no_store(Json(log)),
+                Ok(Err((status, why))) => error(status, why),
+                Err(e) => error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("the log could not be read: {e}"),
                 ),
             },
         );

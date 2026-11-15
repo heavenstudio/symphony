@@ -1932,6 +1932,148 @@ fn an_error_reply_or_a_failed_observer_turn_fails_the_wait_naming_it() {
 }
 
 #[test]
+fn an_evaluation_lost_to_a_navigation_is_told_by_chromes_message_alone() {
+    for (error, lost) in [
+        (
+            json!({"code": -32000, "message": "Execution context was destroyed."}),
+            true,
+        ),
+        (
+            json!({"code": -32000, "message": "Inspected target navigated or closed"}),
+            true,
+        ),
+        (
+            json!({"code": -32000, "message": "Cannot find default execution context"}),
+            true,
+        ),
+        // The message alone, whole: another message, one that only begins as a lost one does,
+        // or none, is a failure of the evaluation itself.
+        (
+            json!({"code": -32001, "message": "Session with given id not found."}),
+            false,
+        ),
+        (
+            json!({"code": -32000, "message": "Execution context was destroyed"}),
+            false,
+        ),
+        (
+            json!({"code": -32000, "message": "Inspected target navigated or closed!"}),
+            false,
+        ),
+        (json!({"code": -32000}), false),
+        (json!("Execution context was destroyed."), false),
+    ] {
+        let told = crate::Error::evaluation("window.x", &error);
+        assert_eq!(told.navigated, lost, "{error}");
+        assert_eq!(told.to_string(), format!("window.x: {error}"));
+        assert!(!told.stalled() && !told.past_deadline(), "{error}");
+    }
+}
+
+/// Chrome's error reply of `message` to `command`.
+fn refuse(peer: &Peer, command: &Value, message: &str) {
+    peer.send(json!({"id": command["id"], "error": {"code": -32000, "message": message}}));
+}
+
+#[test]
+fn a_wait_whose_evaluation_a_navigation_takes_asks_the_page_again_within_its_allowance() {
+    const DESTROYED: &str = "Execution context was destroyed.";
+    const NAVIGATED: &str = "Inspected target navigated or closed";
+    const BETWEEN: &str = "Cannot find default execution context";
+    // The stand-in page answers each evaluation of an expression in turn: with Chrome's error
+    // reply (`Err`) or a value, at once, or once the browser has taken one more observer turn
+    // after the one its watch began with (`held`), the evaluation in flight as the page leaves.
+    // Probes and observer turns are answered at once. What it saw: each expression asked.
+    let (mut chrome, peer) = with_peer(true, BACKSTOP_FLOOR, |peer| {
+        let answer = |peer: &Peer, command: &Value, answer: Result<Value, &str>| match answer {
+            Ok(value) => peer.reply(command, json!({"result": {"value": value}})),
+            Err(message) => refuse(peer, command, message),
+        };
+        let mut asked: Vec<String> = Vec::new();
+        let mut markers = 0u32;
+        let mut held: Vec<(Value, Result<Value, &str>, u32)> = Vec::new();
+        while let Some(command) = peer.next() {
+            if marker(&command) {
+                markers += 1;
+                for (command, value, _) in held.extract_if(.., |(_, _, at)| markers > *at + 1) {
+                    answer(peer, &command, value);
+                }
+                peer.reply(&command, json!({"result": {"value": null}}));
+                continue;
+            }
+            if probe(&command) {
+                peer.reply(&command, json!({"result": {"value": 0}}));
+                continue;
+            }
+            assert_eq!(command["method"], "Runtime.evaluate", "{command}");
+            let expression = command["params"]["expression"].as_str().unwrap().to_owned();
+            asked.push(expression.clone());
+            let count = asked.iter().filter(|asked| **asked == expression).count();
+            let (value, hold) = match (expression.as_str(), count) {
+                // The page goes on to another process under the first look, is asked between two
+                // documents, goes on in its own frame host under the third, and meets the
+                // condition on the second look at the document it stays on.
+                ("window.arrived", 1) => (Err(NAVIGATED), true),
+                ("window.arrived", 2) => (Err(BETWEEN), false),
+                ("window.arrived", 3) => (Err(DESTROYED), true),
+                ("window.arrived", 4) => (Ok(json!(false)), false),
+                ("window.arrived", 5) => (Ok(json!(true)), false),
+                // A page that goes on to another document whenever it is asked.
+                ("window.leaving", _) => (Err(DESTROYED), false),
+                // A page closed under the wait: its next ask finds no session.
+                ("window.closing", 1) => (Err(NAVIGATED), false),
+                ("window.closing", 2) => (Err("Session with given id not found."), false),
+                ("window.asked", 1) => (Err(NAVIGATED), false),
+                (other, count) => panic!("evaluation {count} of {other}"),
+            };
+            if hold {
+                held.push((command, value, markers));
+            } else {
+                answer(peer, &command, value);
+            }
+        }
+        asked
+    });
+    assert!(chrome.wait_for("window.arrived", PROTOCOL_CPU).unwrap());
+    // Each lost evaluation is one of the page's turns: a 26 ms wait's two (two asks), and the one
+    // a zero allowance still takes. The condition was never met.
+    assert!(
+        !chrome
+            .wait_for("window.leaving", Duration::from_millis(26))
+            .unwrap()
+    );
+    assert!(!chrome.wait_for("window.leaving", Duration::ZERO).unwrap());
+    let closed = chrome.wait_for("window.closing", PROTOCOL_CPU).unwrap_err();
+    assert!(
+        closed.to_string().starts_with(
+            "window.closing: {\"code\":-32000,\"message\":\"Session with given id not found.\""
+        ),
+        "{closed}"
+    );
+    assert!(!closed.stalled() && !closed.past_deadline(), "{closed}");
+    // An evaluation on its own is asked once: it may act.
+    let lost = chrome.eval("window.asked").unwrap_err().to_string();
+    assert!(
+        lost.starts_with("window.asked: ") && lost.contains(NAVIGATED),
+        "{lost}"
+    );
+    drop(chrome);
+    let asked = peer.join().unwrap();
+    let count = |expression: &str| asked.iter().filter(|asked| *asked == expression).count();
+    assert_eq!(
+        [
+            "window.arrived",
+            "window.leaving",
+            "window.closing",
+            "window.asked"
+        ]
+        .map(count),
+        [5, 2 + 1, 2, 1],
+        "{asked:?}"
+    );
+}
+
+#[test]
 fn a_chrome_that_refuses_to_tell_of_shared_workers_still_has_frames_followed() {
     let (mut chrome, peer) = with_peer(true, BACKSTOP_FLOOR, |peer| {
         let mut refused = false;
@@ -2737,6 +2879,47 @@ fn a_real_page_blocked_in_its_renderer_spends_nothing_and_a_stopped_browser_ends
     );
     chrome.backstop = BACKSTOP_FLOOR;
     assert_eq!(chrome.eval("window.held").unwrap(), json!(1));
+}
+
+#[test]
+fn a_real_page_navigating_under_a_wait_is_asked_again_on_the_document_it_went_to() {
+    let Some(binary) = find() else {
+        eprintln!("no Chrome: real browser capability unavailable");
+        return;
+    };
+    let (base, _release, _arrived) = holding_server();
+    let mut chrome = Chrome::launch(&binary, &leash()).unwrap();
+    // A condition false on the first document, where it navigates the page and stays pending, so
+    // its evaluation is surely in flight as the page leaves: for a document of the page's own
+    // site (Chrome answers `Execution context was destroyed.` where the page keeps its frame
+    // host, `Inspected target navigated or closed` where it keeps the page it left for Back and
+    // gives the next a new one), and for one of another site, in another process (the latter).
+    for to in [
+        format!("{base}second"),
+        format!("{}second", base.replace("127.0.0.1", "localhost")),
+    ] {
+        chrome.open(&format!("{base}first")).unwrap();
+        let to = json!(to);
+        assert!(
+            chrome
+                .wait_for(
+                    &format!(
+                        "location.href === {to} || \
+                         new Promise(() => setTimeout(() => {{ location.href = {to}; }}))"
+                    ),
+                    PROTOCOL_CPU
+                )
+                .unwrap(),
+            "{to}"
+        );
+        assert_eq!(chrome.eval("location.href").unwrap(), to);
+    }
+    // An evaluation on its own is asked once: the navigation it started is its error.
+    chrome.open(&format!("{base}first")).unwrap();
+    let lost = chrome
+        .eval("new Promise(() => setTimeout(() => { location.href = '/second'; }))")
+        .unwrap_err();
+    assert!(lost.navigated, "{lost}");
 }
 
 /// Two more visits to a page's own URL after the first, in a browser launched as `binary`, traced:

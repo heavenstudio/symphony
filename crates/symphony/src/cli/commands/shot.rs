@@ -14,8 +14,8 @@ use symphony_args::{Flag, parse};
 use symphony_chrome::{Chrome, Leash, Request};
 
 const USAGE: &str = "usage: symphony shot [-h] URL --out FILE.png [--wait-for CSS] [--timeout SECS] \
-[--size WxH | --phone] [--full-page] [--scheme light|dark] [--report] [--click CSS] [--type CSS=TEXT] \
-[--key NAME] [--hover CSS] [--eval JS] [--pause MS] [--shot FILE.png] …";
+[--size WxH | --phone] [--full-page] [--scheme light|dark] [--report] [--attach] [--click CSS] \
+[--type CSS=TEXT] [--key NAME] [--hover CSS] [--eval JS] [--pause MS] [--shot FILE.png] …";
 const HELP: &str =
     "A page as an agent sees it: a private headless Chrome opens URL, waits until the page
 has drawn (its document loaded, a Symphony page's own navigation ready, no region still loading,
@@ -50,6 +50,9 @@ options:
                        (one Chrome runs in a process of its own too) naming its address, the
                        dialogs dismissed (each one's kind, text and document), and the
                        document's scroll width against the viewport's (horizontal overflow)
+  --attach             once every picture is saved, attach each (`symphony attach`): stored in
+                       the main checkout's uploads and its line for a thread post printed, the
+                       --shot pictures in their order, then --out's
 
 steps, run in order before the final capture, each as often as needed:
   --wait-for CSS       wait until an element matches CSS (the page is not scrolled)
@@ -113,8 +116,8 @@ behind another tab (an Escape the page does not take, a page it opened), before 
 anything: a page it opened, of its own site, shares its process, and a dialog it shows in front
 holds the page until another tab is in front.
 Chrome is SYMPHONY_CHROME, else the first Chrome found on this machine.
-Exit 0 with every picture saved, 1 when the browser, the page or a step failed, 2 for a command
-line it cannot run.";
+Exit 0 with every picture saved (and with --attach attached), 1 when the browser, the page or a
+step failed or a picture was not attached, 2 for a command line it cannot run.";
 
 const DEFAULT_SIZE: (u32, u32) = (1440, 900);
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(20);
@@ -169,10 +172,11 @@ struct Shot {
     full_page: bool,
     scheme: Option<Scheme>,
     report: bool,
+    attach: bool,
     steps: Vec<Step>,
 }
 
-const FLAGS: [Flag; 15] = [
+const FLAGS: [Flag; 16] = [
     Flag {
         name: "--out",
         value: true,
@@ -203,6 +207,10 @@ const FLAGS: [Flag; 15] = [
     },
     Flag {
         name: "--report",
+        value: false,
+    },
+    Flag {
+        name: "--attach",
         value: false,
     },
     Flag {
@@ -260,10 +268,17 @@ pub(super) fn main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) ->
         );
         return 1;
     }
-    match run(&shot, &binary, out) {
-        Ok(()) => 0,
-        Err(problem) => {
-            let _ = writeln!(err, "symphony shot: {problem}");
+    if let Err(problem) = run(&shot, &binary, out) {
+        let _ = writeln!(err, "symphony shot: {problem}");
+        return 1;
+    }
+    if !shot.attach {
+        return 0;
+    }
+    match std::env::current_dir() {
+        Ok(here) => super::attach::attach(&here, &shot.pictures(), out, err),
+        Err(error) => {
+            let _ = writeln!(err, "symphony shot: the current folder: {error}");
             1
         }
     }
@@ -292,6 +307,7 @@ fn read(args: &[String]) -> Result<Option<Shot>, String> {
     let mut full_page = false;
     let mut scheme = None;
     let mut report = false;
+    let mut attach = false;
     let mut steps = Vec::new();
     for (name, value) in parsed.options() {
         match name {
@@ -312,6 +328,7 @@ fn read(args: &[String]) -> Result<Option<Shot>, String> {
                 });
             }
             "--report" => report = true,
+            "--attach" => attach = true,
             "--wait-for" => steps.push(Step::WaitFor(selector(name, value)?)),
             "--click" => steps.push(Step::Click(selector(name, value)?)),
             "--hover" => steps.push(Step::Hover(selector(name, value)?)),
@@ -351,8 +368,20 @@ fn read(args: &[String]) -> Result<Option<Shot>, String> {
         full_page,
         scheme,
         report,
+        attach,
         steps,
     }))
+}
+
+impl Shot {
+    /// Every picture the shot saves, in the order taken: each `--shot`, then `--out`.
+    fn pictures(&self) -> Vec<PathBuf> {
+        let shots = self.steps.iter().filter_map(|step| match step {
+            Step::Shot(path) => Some(path.clone()),
+            _ => None,
+        });
+        shots.chain([self.out.clone()]).collect()
+    }
 }
 
 fn seconds(value: &str) -> Result<Duration, String> {

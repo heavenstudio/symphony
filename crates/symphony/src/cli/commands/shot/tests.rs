@@ -27,6 +27,7 @@ fn a_bare_shot_takes_the_desktop_viewport_and_twenty_seconds() {
             full_page: false,
             scheme: None,
             report: false,
+            attach: false,
             steps: Vec::new(),
         }
     );
@@ -73,6 +74,28 @@ fn steps_keep_their_command_line_order_across_kinds_and_repeat() {
             Step::Click("h1".into()),
             Step::Shot("again.png".into()),
         ]
+    );
+    // Attached, each picture goes in the order it was taken, the final one last.
+    assert!(!shot.attach);
+    assert_eq!(
+        shot.pictures(),
+        [
+            PathBuf::from("open.png"),
+            "again.png".into(),
+            "closed.png".into()
+        ]
+    );
+}
+
+#[test]
+fn attach_is_a_flag_and_a_shot_with_no_step_attaches_its_one_picture() {
+    let shot = shot(&["http://h/x", "--attach", "--out", "evidence/a.png"]);
+    assert!(shot.attach);
+    assert_eq!(shot.pictures(), [PathBuf::from("evidence/a.png")]);
+    assert!(
+        refusal(&["http://h/x", "--out", "a.png", "--attach=yes"])
+            .contains("argument --attach: ignored explicit argument \"yes\""),
+        "a flag takes no value"
     );
 }
 

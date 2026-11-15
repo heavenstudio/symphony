@@ -2121,8 +2121,8 @@ why.
   elsewhere named.
 - **pictures**: a post on the task's thread naming the tip and showing a picture (`png`,
   `jpg`, `jpeg`, `gif` or `webp`) under the task's artifacts folder (`artifacts/SLUG/` by
-  default) or uploaded by the owner (`/artifacts/uploads/`): met; missing while the newest
-  such post names another commit or none, or there is none.
+  default) or uploaded (`/artifacts/uploads/`, the owner's or an agent's `symphony attach`):
+  met; missing while the newest such post names another commit or none, or there is none.
 - **owner**: the owner's approve naming the tip, a line of the owner's whose first word is
   `approve`: met; held until then. Needed or not, it is held while a card the task posted
   waits on the owner, by the sign-off lane's rule above. Until the task page is ported

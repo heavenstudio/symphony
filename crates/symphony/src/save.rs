@@ -465,8 +465,11 @@ impl Saves {
                 let db = asks::default_path(&self.root, std::env::var("ASKS_DB").ok().as_deref());
                 let db = format!("'{}'", db.to_string_lossy().replace('\'', "'\\''"));
                 let reply = id.map_or_else(|| format!("Reply in the document/card at {}#{} using the chat-doc skill.", string(payload, "path"), string(payload, "slug")), |id| format!("Read: just symphony-ask --db {db} show {id}. Answer: just symphony-ask --db {db} answer {id} TEXT --as HANDLE."));
+                // When the owner said it, so a line delivered late (nobody heard chat then) is
+                // never read as new; a retry publishes this same text.
                 let text = format!(
-                    "OWNER {route} scope={scope} {}\n{reply}{}",
+                    "OWNER {route} at {} scope={scope} {}\n{reply}{}",
+                    clock::now_stamp(),
                     payload,
                     attached(&self.root, payload)
                 );
