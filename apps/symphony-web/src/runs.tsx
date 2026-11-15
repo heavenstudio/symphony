@@ -751,9 +751,12 @@ export interface Told<T> {
   failed(why: string, missing: boolean): void;
 }
 
-/** The failure a read ended with, said for the page. */
-function failure(error: unknown): string {
-  return failedRead(said(error));
+/**
+ * The failure a read ended with, said for the page; `trying` when the read goes on by itself, which
+ * a 404 (said as missing) and a read asked by a click do not say.
+ */
+function failure(error: unknown, trying = false): string {
+  return failedRead(said(error), trying);
 }
 
 const isMissing = (error: unknown) => error instanceof Failure && error.kind === "missing";
@@ -778,7 +781,7 @@ export async function followNow(
       told.answered(read);
     } catch (error) {
       if (signal.aborted) return;
-      told.failed(failure(error), isMissing(error));
+      told.failed(failure(error, !isMissing(error)), isMissing(error));
     }
     await wait(NOW_MS, signal);
   }
@@ -811,7 +814,7 @@ export async function followList(
       }
     } catch (error) {
       if (signal.aborted) return;
-      told.failed(failure(error), isMissing(error));
+      told.failed(failure(error, !isMissing(error)), isMissing(error));
     }
     await wait(LIST_MS, signal);
   }
@@ -1264,7 +1267,7 @@ export async function followRun(
       }
     } catch (error) {
       if (signal.aborted) return;
-      told.failed(failure(error), isMissing(error));
+      told.failed(failure(error, !isMissing(error)), isMissing(error));
       if (isMissing(error)) return;
     }
     let logRead = true;
@@ -1285,7 +1288,7 @@ export async function followRun(
         if (isMissing(error)) {
           told.logMissing();
         } else {
-          told.logFailed(failure(error));
+          told.logFailed(failure(error, true));
           logRead = false;
         }
       }

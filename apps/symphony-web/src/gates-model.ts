@@ -11,8 +11,8 @@
 // (its `task_gates.rs`, gone with its task page), whose unit tests gates-model.test.ts and
 // gates.test.tsx port, and which the browser tests hold.
 
-import { NO_ANSWER } from "./request";
 import { field } from "./shared";
+import { NOT_IN_TIME } from "./trouble";
 import type { Gate, GateState, GatesSeen, MachineWork, Task, TaskGates, WorkState } from "./wire";
 
 /** The words the section says. */
@@ -57,7 +57,7 @@ export type GatesAnswer = { found: TaskGates | null } | { failed: string };
 /** The section's state from a read. */
 export function gatesOf(answer: GatesAnswer): Gates {
   if ("found" in answer) return { kind: "read", answer: answer.found ?? noGates() };
-  return answer.failed === NO_ANSWER ? { kind: "slow" } : { kind: "failed", why: answer.failed };
+  return answer.failed === NOT_IN_TIME ? { kind: "slow" } : { kind: "failed", why: answer.failed };
 }
 
 /**

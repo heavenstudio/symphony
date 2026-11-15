@@ -1155,14 +1155,15 @@ describe("a board whose first read failed", () => {
       />,
     );
     expect(html).toMatch(
-      /^<section class="trouble card unread-board" role="status"><h2>The task board could not be read<\/h2><p>the task board cannot be reached: the alpha board is not made yet, and a reader never makes a board: nothing was read or written; `just tasks list` in alpha makes it \(the server answered 503\)\.<\/p>/,
+      /^<section class="trouble card unread-board" role="status"><h2>The task board could not be read<\/h2><p>the task board cannot be reached: the alpha board is not made yet, and a reader never makes a board: nothing was read or written; `just tasks list` in alpha makes it \(the server answered 503\)\. Trying again…<\/p>/,
     );
     expect(html).toMatch(/>Retry<\/button>/);
     for (const drawn of ["ghost-", "kanban", "bone"]) expect(html).not.toContain(drawn);
-    // A server out of reach sends the reader to the connection, as every page does.
+    // A server out of reach sends the reader to the connection, as every page does, and the board
+    // is read again by itself.
     html = renderToStaticMarkup(<UnreadBoard why={UNREACHABLE} retry={() => {}} />);
     expect(html).toContain(
-      "<p>The server could not be reached. Check the connection and try again.</p>",
+      "<p>The server could not be reached; check the connection. Trying again…</p>",
     );
   });
 });
