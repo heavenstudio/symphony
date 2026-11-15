@@ -225,9 +225,9 @@ fn waiting_on_you(cards: &[Value]) -> Value {
 }
 
 /// Press `pressed` (a key, its code and its key code) on the button `button` while the server holds
-/// its post: the focus stays on it while it saves, and on the button that replaces it, saying
-/// `label`, once the server has answered and, as the server does, its feed's event `version` has
-/// made the queue read `after`.
+/// its post, and once more while it saves, which posts nothing: the focus stays on it while it
+/// saves, and on the button that replaces it, saying `label`, once the server has answered and, as
+/// the server does, its feed's event `version` has made the queue read `after`.
 fn press_keeping_focus(
     site: &Site,
     browser: &mut Chrome,
@@ -262,6 +262,8 @@ fn press_keeping_focus(
         browser.wait_for(&crate::drawn_disabled(button), SHOWN),
         "it looks as a disabled button does while it saves"
     );
+    // Pressed again while it saves: a second post would show in the test's count of them.
+    key(browser, pressed.0, pressed.1, pressed.2);
     site.set_json("/api/queue", after);
     site.hold_route("/api/postpone", false);
     site.push(
@@ -282,8 +284,8 @@ fn press_keeping_focus(
 }
 
 /// Later and its Undo, pressed from the keyboard, keep the focus on the card's button: while the
-/// server saves, and once the card's new state is drawn, on Undo Later after Later and on Later
-/// after Undo, its row moved back before the others. Later here is the only card's, so the server
+/// server saves, where a second press posts nothing, and once the card's new state is drawn, on
+/// Undo Later after Later and on Later after Undo, its row moved back before the others. Later here is the only card's, so the server
 /// names none next and the reader stays; with another card waiting they go to its document.
 #[test]
 fn later_and_undo_keep_the_focus_on_the_cards_button() {
