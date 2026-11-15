@@ -25,8 +25,9 @@ Three groups, always in this order, each with its count in its heading.
 | Auto-approved: spot-check | a card approved on the owner's earlier words | its first sentence, its mark, the basis it was approved on |
 | Waiting on the agent | a card the owner had the last word on, and each open comment in a document | its first sentence or the comment's title, its mark, the card's last line or the comment's document |
 
-A card an agent posted on a branch that has not landed is in the same groups: among those waiting
-on the owner with a tag naming its task, in the other two with its branch's name.
+A card an agent posted on a branch that has not landed is in the same groups. Among those waiting
+on the owner it carries a tag naming its task; in the other two it looks like a card of main's,
+and its title opens the branch's page.
 
 ## Order
 
@@ -41,9 +42,10 @@ from its top.
 
 ![The queue with one topic chosen, wide](pictures/queue-topic-wide.png)
 
-The chips under the first group's heading are **All** and one per topic, each with its count; the counts add
-up to the group's. Choosing a topic shows its cards alone, ranked again from 1, under a line that
-says how many of the total are shown. The choice is kept on this device, for this project. The
+The chips under the first group's heading are **All** and one per topic, each with its count; the
+counts add up to the group's. Choosing a topic shows its cards alone, ranked again from 1, under a
+line that says how many of the total are shown. The choice is kept on this device, for this
+project. The
 other two groups are never filtered.
 
 ## Later
@@ -52,8 +54,9 @@ other two groups are never filtered.
 mark, its lines and its place in the count; its button becomes **Undo Later**, which puts it back.
 It returns to its own place by itself once the owner has opened every card of its kind (not
 answered yet, or answered by an agent) that was waiting when it was put off and was not put off
-itself, or after three days. Answering the card, or a new line from the owner on it, ends its Later. The order
-is the owner's, not the device's: a card put off on the phone is put off on the laptop.
+itself, or after three days. Answering the card, or a new line from the owner on it, ends its
+Later. The order is the owner's, not the device's: a card put off on the phone is put off on the
+laptop.
 
 ## States
 
@@ -79,8 +82,8 @@ wraps beside its rank, and **Later** stays under each card.
 - Two cards of one topic posted in the same minute keep the order the triage gave them.
 - Several cards put off in one topic return in the order they were put off, after the topic's
   other cards.
-- A card a branch proposes under a name main's register also has is a card of its own for Later:
-  putting one off leaves the other where it is.
+- While a branch proposes a card main's register also has, the queue lists the branch's copy in
+  place of main's. Two branches that propose the same card are two cards, each put off on its own.
 - A branch's card whose pictures are not yet on disk in its worktree is not listed until they are.
 - When the file that keeps the order cannot be read, the queue is shown in its plain order with
   nothing put off; the file is left as it is.
