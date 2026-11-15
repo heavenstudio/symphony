@@ -231,7 +231,11 @@ open stream, so the client fetches a fresh snapshot. `Last-Event-ID` is not a
 resume mechanism across server starts. Named `ping` events follow the client
 contract: at most five seconds of silence.
 
-Worktree index locks and reflogs do not invalidate document snapshots. Text and
+Worktree index locks and reflogs do not invalidate document snapshots. A page follows each
+document a visit read, and a refresh renders those again only once the page's own files changed
+(main's: a file below its documents' folders or what its plugins watch, a lost event, or its
+project file edited, whether its settings still load or not): a ref, a worktree's record or a
+branch's edit renders none of main's but one whose cards or linking tasks moved. Text and
 parsed registers reuse unchanged files, checking inode, size, modification and
 change times so atomic replacement and a restored mtime still invalidate them.
 Schema validators are reused by schema contents. Unchanged feed lists skip diff
@@ -251,11 +255,14 @@ sequenced board snapshot also supplies the board and agents views. Unchanged raw
 That snapshot also names the tasks that link a document or a folder's introduction, and the
 work beside each agent on the agents page, so those reads read no board; while the board cannot be
 read, the agents views answer unavailable, as its tasks do. The task page's reads (`task-page`, `task-offer`,
-`task-history`, `task-brief`, `task-thread`) share one store of the board, opened by the
-first and kept until the board fails a read on it, so no read finds the board's server and
-asks `ps` and `lsof` about it again. A document renders without the lock the board, the feed and
-the project list read under, which it takes only to place its copy in its page; renders take
-turns, each from its read of the file to that placement, so the copy kept is the last read.
+`task-history`, `task-brief`, `task-thread`) and the task board's search share one store of the
+board, opened by the first and kept until the board fails a read on it, so no read finds the
+board's server and asks `ps` and `lsof` about it again. A document renders without the lock the
+board, the feed and the project list read under, which it takes only to place its copy in its
+page. Renders run side by side, a visit's on tokio's blocking pool, which bounds how many run at
+once, so a reader's waits on no refresh's; a copy is placed only over one whose read began before
+its own, so the copy kept is the last read begun, and a visit's first read of a document begun
+before a refresh that renders anew reads again, as that refresh rendered only what was followed.
 
 A cold server publishes its document hub and URL, then activates the first board
 read in the hub's owned worker. Data reads activate and await that first result; an unavailable board
