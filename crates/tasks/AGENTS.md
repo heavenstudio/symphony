@@ -379,5 +379,9 @@ here, so a change to the board's queries, its indexes or the api runs it by hand
 `just test-rs -p symphony-board --test perf`; `SYMPHONY_PERF_TASKS=PATH` times another `tasks` build
 on the same board. `tests/child_guard` is a nested build, the release run's alone.
 `examples/dispatch_load.rs` measures concurrent writes against a scratch database seeded from a
-dump. Which tests a change runs, and the evidence its kind asks for:
+dump. `examples/board_load.rs` is the store's meter: a fixed amount of the agents' work (beats and
+the board commands they run, as the `tasks` binary) on a scratch board whose server `server::Home`
+starts, reporting each command's cost and the server's CPU, memory and bytes; a change of the
+store, its settings or its engine runs it before and after, and the numbers it is compared with
+are [the store's baseline](../../docs/analysis/board-store-baseline.md). Which tests a change runs, and the evidence its kind asks for:
 [CHECKS](../../docs/CHECKS.md#picking-the-focused-set).
