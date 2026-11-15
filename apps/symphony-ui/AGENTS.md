@@ -713,7 +713,14 @@ never the whole target, which the release run runs.
   (`dioxus_ssr::render_element(rsx! { BlocksView { blocks } })`), pure state
   in plain Rust, and `tests/browser/` drives headless Chrome over its DevTools
   protocol against the release build, served as the server serves it.
-- **Development.** `just symphony-ui-dev [PORT]` starts an owned loopback API and
+- **Development.** The web client's pages are Vite's dev server's (`just symphony-ui-dev SERVER
+  [PORT]`, [its guide](../symphony-web/AGENTS.md#the-dev-server)), over a server of the
+  developer's own whose build serves the program's kinds. This client's dx front door
+  (`apps/symphony-server/src/development.rs`) stays for the consuming project, whose host's own
+  `symphony-ui-dev` calls `development::main` (`apps/symphony-server/tests/consumer_api.rs`) and
+  whose recipe runs `cargo symphony-ui dev` from a Symphony checkout: it leaves with this client,
+  under a consumer release plan. Here it runs as `PATH="$PWD/apps/symphony-ui/bin:$PATH"
+  tools/cargo.sh symphony-ui dev [PORT]` (`dev.sh`), which starts an owned loopback API and
   dx 0.7.10 with `serve --web --open false --interactive false`.
   PORT defaults to 0 (an available port); 8765 is refused. Use the printed front
   door URL, which forwards APIs, saves, media and SSE to that checkout's API and
@@ -739,12 +746,8 @@ never the whole target, which the release run runs.
   the CLI to a version with [Dioxus #5843](https://github.com/DioxusLabs/dioxus/pull/5843)
   is an owner decision; no patched CLI is installed here.
   The development runtime draws the Dioxus kinds alone: the web client's pages (`/`, `/queue`,
-  `/reports`, `/docs/` and the documents) are no part of it, and at their routes it draws its frame over "Page unavailable".
-  Such a page is tried on the built distribution, with no hot reload: once a whole
-  `just symphony-ui-dist` has built `build/symphony-ui`, `just symphony-ui-dist build/symphony-ui
-  web` builds the web kinds again alone, and a private server (`just symphony --port 0`) serves
-  them with `SYMPHONY_UI_DIST` naming `build/symphony-ui/public`, until the board's
-  `app/client-moves-to-react/dev-server` gives the web client Vite's dev server.
+  `/reports`, `/tasks`, `/agents`, `/docs/` and the documents) are no part of it, and at their
+  routes it draws its frame over "Page unavailable".
 - **Platforms.** Every platform hook goes through `platform::Platform`; the
   desktop slice adds its implementation and a `desktop` feature. The projects
   of the machine's one server share its origin, so every key the browser

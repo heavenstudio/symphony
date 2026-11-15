@@ -38,6 +38,7 @@ pub(super) fn launch(store: &Store, c: &mut Context) -> Result<(), Stop> {
         worktree: p.get("worktree").map(|w| c.env.cwd.join(w)),
         prompt: p.or("prompt", "").into(),
         tab: p.get("tab").map(str::to_string),
+        beside: p.get("beside").map(str::to_string),
     };
     let started = launch::launch(store, &hc, &machine, &ask)?;
     let s = &started.row;

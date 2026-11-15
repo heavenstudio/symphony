@@ -93,17 +93,22 @@ holds and which cost no call. A project that loads starts its plugins' processes
 declarations, as its navigation is among the routes an entrypoint's files must not meet. An
 entrypoint's `types` may name a renderer of a plugin's process; a project whose entrypoint names a
 type only a process could handle, and whose process cannot say its renderers, is refused, naming
-why and the plugin's log. A server serves a project refused with the defaults, and every page of it
-says so and why until it loads. While that refusal is a process that has not declared (its program
-missing, or slow to declare when the server starts), the project is read again a second after each
-read that failed (the process's pause), one read at a time on a thread of its own: every reader
-keeps the defaults meanwhile, and none waits on the process. Once the process declares, the project
-is served as its file says, with no change to the file. A command of such a project says why it is
-not known ([below](#its-commands)). Its other seams (board fields, gates, prose rules, generators
-and transports) are not asked of a process: a plugin that declares any of them is refused under
-`[plugins.process]`, naming them, rather than losing them without a word, and stays a linked
-plugin's to answer. Each is answered from a process once a plugin first declares it from one. So is
-a plugin refused that declares another name than the one `[plugins.process]` gives it.
+why and the plugin's log. A document's route needs no declaration, as none changes an entrypoint's
+URL or folder: `symphony reply` names the document it wrote by its route with no process started,
+while no entrypoint names such a type. A server serves a project refused with the defaults, and
+every page of it says so and why until it loads. While that refusal is a process that has not
+declared (its program missing, or slow to declare when the server starts), the project is read
+again a second after each read that failed (the process's pause), one read at a time on a thread of
+its own: while it is read again, every reader keeps the defaults and none waits on the process. The
+first read of the project, and the first after its file changes, are no retry: whoever makes it
+waits for the declaration, ten seconds at most, the server's live loop as much as a request. Once
+the process declares, the project is served as its file says, with no change to the file. A command
+of such a project says why it is not known ([below](#its-commands)). Its other seams (board fields,
+gates, prose rules, generators and transports) are not asked of a process: a plugin that declares
+any of them is refused under `[plugins.process]`, naming them, rather than losing them without a
+word, and stays a linked plugin's to answer. Each is answered from a process once a plugin first
+declares it from one. So is a plugin refused that declares another name than the one
+`[plugins.process]` gives it.
 
 ## Its process
 

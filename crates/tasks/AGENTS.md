@@ -782,12 +782,14 @@ runs the toolchain's clippy over a probe crate that reads the same file. `port.r
 Its sole config is `tools/task_staff.json` in the calling checkout, disabled by
 default; its pass lock is in the common `symphony/tasks/`. Its idle reviewer pick (`idle_for`)
 holds the verdict's rule, `Held::unfresh`, so it never hands a review to a session the
-board would refuse, and makes no pick for a task with a recorded reviewer to resume (`job_for`).
+board would refuse, and makes no pick for a task with a recorded reviewer to resume, asking the
+launch's own `reviewer_to_resume` (`job_for`), so a dry run and the pass agree.
 A reviewer launch, the CLI's and staffing's, goes back to the task's recorded reviewer
 (`src/launch/restore.rs`, `reviewer_to_resume`): the newest that never said `leave` with a
 conversation is resumed as `restore` resumes it, the launch refused while a recorded reviewer still
-runs in a terminal, and a new one starts only where none can be resumed; on an instruction subtask
-it is refused. A launch, the CLI's and staffing's, starts
+runs in a terminal, and a new one starts only where none can be resumed, or beside it with
+`--beside WHY` (`take_role_beside`, a refusal naming the launch's own flag); on an instruction
+subtask it is refused. A launch, the CLI's and staffing's, starts
 the agent, model and effort `[agents] launch` in the main checkout's `symphony.toml` names, on
 the model `[agents.models]` names for its role (`src/launch/defaults.rs`, `Defaults::resolve_as`;
 the assessor's, unwritten, the smallest its agent offers, `defaults::smallest`: Claude's `haiku`),
@@ -843,8 +845,8 @@ says what it holds. `sweep/holder.rs` reads a
 lock's holder: Claude Code's names the orchestrator's process, which outlives its agent,
 so a live one lets the tree go only once the board shows its agent finished
 (`Index::agent_finished`); a land's goes once the process it names (and its start) is gone;
-the release run's (`RELEASE_LOCK`, which `crates/symphony`'s release tests compare with its own,
-or `LEGACY_LOCK`, its reason before the rename) and any other keep it. Foreground `--task`
+the release run's (`RELEASE_LOCK`, which `crates/symphony`'s release tests compare with its own)
+and any other keep it. Foreground `--task`
 visits only that task's finished worktrees (its closed launches', its executors' and
 reviewers' sessions' once none is live or stale, and those on its branch) and asks for a
 detached full pass. A removed tree's merged branch is deleted with it, unless a land's record of its merge names it, under its name or the dashed one an earlier

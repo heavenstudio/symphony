@@ -79,8 +79,8 @@ pub(super) fn recorded_reviewers(store: &Store, slug: &str) -> Result<Vec<TaskSe
 
 /// What a reviewer launch on `slug` does with its recorded reviewers ([`recorded_reviewers`]):
 /// refused while one still runs in a terminal (its handle's, or the one its open record names),
-/// naming it; the newest with a conversation a restore can resume ([`restorable`]) is resumed
-/// ([`resume_reviewer`]); none, and a new reviewer starts.
+/// naming it and the launch's `--beside WHY`; the newest with a conversation a restore can resume
+/// ([`restorable`]) is resumed ([`resume_reviewer`]); none, and a new reviewer starts.
 pub(super) fn reviewer_to_resume(
     store: &Store,
     hc: &dyn Hc,
@@ -96,11 +96,12 @@ pub(super) fn reviewer_to_resume(
         let open_in =
             (record.closed.is_none() && live.contains(&record.pane)).then(|| record.pane.clone());
         if let Some(terminal) = running_as(hc, &record.handle)?.or(open_in) {
+            let (board, handle) = (store.board_command(), &record.handle);
             return Err(Error::Refused(format!(
-                "{} reviews {slug} and still runs in terminal {terminal}: give it the new tip on \
-                 the thread (just tasks say {slug} TEXT --to @reviewer), or close it (just tasks \
-                 close {slug} {}) and launch again to resume it",
-                record.handle, record.handle
+                "{handle} reviews {slug} and still runs in terminal {terminal}: give it the new tip \
+                 on the thread ({board} say {slug} TEXT --to @reviewer), or close it ({board} close \
+                 {slug} {handle}) and launch again to resume it, or launch another beside it \
+                 saying why ({board} launch {slug} --role reviewer --beside WHY)"
             )));
         }
         if restorable(&record) {

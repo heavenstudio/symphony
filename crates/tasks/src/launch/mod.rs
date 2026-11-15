@@ -220,6 +220,8 @@ pub struct Ask {
     pub worktree: Option<PathBuf>,
     pub prompt: String,
     pub tab: Option<String>,
+    /// A reviewer's: why it joins beside one still there ([`Store::take_role_beside`]).
+    pub beside: Option<String>,
 }
 
 impl Ask {
@@ -236,6 +238,7 @@ impl Ask {
             worktree: None,
             prompt: String::new(),
             tab: None,
+            beside: None,
         }
     }
 }
@@ -254,12 +257,19 @@ pub struct Started {
 /// HANDLE` (a reviewer's `/review-task SLUG HANDLE`), and the record on the task. A reviewer goes
 /// to the task itself, never an instruction subtask, and a reviewer launch goes back to the task's
 /// recorded reviewer, resumed as a restore resumes it, refused while it still runs
-/// ([`restore::reviewer_to_resume`]); a new reviewer starts only where none can be resumed.
+/// ([`restore::reviewer_to_resume`]); a new reviewer starts only where none can be resumed, or
+/// beside it when the launch says why (`ask.beside`).
 pub fn launch(store: &Store, hc: &dyn Hc, m: &Machine, ask: &Ask) -> Result<Started, Error> {
     let (slug, role) = (ask.slug.as_str(), ask.role.as_str());
     if role != "executor" && role != "reviewer" {
         return Err(Error::Refused(format!(
             "a launched session is an executor or a reviewer, not {}",
+            crate::pyjson::repr(role)
+        )));
+    }
+    if ask.beside.is_some() && role != "reviewer" {
+        return Err(Error::Refused(format!(
+            "only a reviewer joins beside another, not {}",
             crate::pyjson::repr(role)
         )));
     }
@@ -289,7 +299,10 @@ pub fn launch(store: &Store, hc: &dyn Hc, m: &Machine, ask: &Ask) -> Result<Star
                  --role reviewer"
             )));
         }
-        if let Some(record) = restore::reviewer_to_resume(store, hc, slug)? {
+        // A reviewer beside one still there (`--beside WHY`) is a second on purpose: no resume.
+        if ask.beside.is_none()
+            && let Some(record) = restore::reviewer_to_resume(store, hc, slug)?
+        {
             return restore::resume_reviewer(
                 store,
                 hc,
@@ -546,13 +559,24 @@ fn agent_kind(ask: &Ask) -> &'static str {
 }
 
 /// The new session takes its part on the task: an executor reserves it, a reviewer takes the
-/// reviewer role.
+/// reviewer role, beside one still there only when the launch says why. A refusal naming how one
+/// joins beside it names the launch's own `--beside`, not `tasks role`'s.
 fn take_up(store: &Store, ask: &Ask, handle: &str) -> Result<(), Error> {
     let slug = ask.slug.as_str();
+    let beside = ask.beside.as_deref();
     if ask.role == "executor" {
         store.reserve(slug, handle, RESERVE_SECONDS)?;
     } else {
-        store.take_role(slug, handle, "reviewer")?;
+        let board = store.board_command();
+        store
+            .take_role_beside(slug, handle, "reviewer", beside)
+            .map_err(|problem| match problem {
+                Error::Refused(text) => Error::Refused(text.replace(
+                    &format!("{board} role {slug} reviewer --beside WHY"),
+                    &format!("{board} launch {slug} --role reviewer --beside WHY"),
+                )),
+                problem => problem,
+            })?;
     }
     Ok(())
 }

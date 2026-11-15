@@ -43,7 +43,15 @@ fn instruction_reviewer(w: &World, slug: &str) -> TaskSessionRow {
     let handle = w.f.session("reviewer");
     let parent = w.store().get(slug).unwrap().parent.unwrap();
     w.store().reserve(slug, &handle, 3600.0).unwrap();
-    w.store().take_role(&parent, &handle, "reviewer").unwrap();
+    // An older board let a second reviewer take the parent's role: beside one still there now.
+    w.store()
+        .take_role_beside(
+            &parent,
+            &handle,
+            "reviewer",
+            Some("an older board's record"),
+        )
+        .unwrap();
     let pane = w.add_terminal(true, Some(&handle), serde_json::json!({}));
     let worktree = w.wt.join(format!("{}-review", slug.replace('/', "-")));
     w.store()

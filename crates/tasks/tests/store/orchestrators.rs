@@ -55,10 +55,16 @@ fn a_second_orchestrator_is_refused_naming_the_holder_and_the_hand_over() {
         f.store.get("scratch/one").unwrap().holders("orchestrator"),
         [a.as_str()]
     );
-    // Reviewers are not limited to one.
+    // A second reviewer joins one still there only saying why (`roles.rs`).
     let (r1, r2) = (f.session("reviewer"), f.session("reviewer"));
     f.store.take_role("scratch/one", &r1, "reviewer").unwrap();
-    f.store.take_role("scratch/one", &r2, "reviewer").unwrap();
+    assert!(
+        refused(f.store.take_role("scratch/one", &r2, "reviewer"))
+            .starts_with(&format!("scratch/one is reviewed by {r1} (live)"))
+    );
+    f.store
+        .take_role_beside("scratch/one", &r2, "reviewer", Some("a second stamp"))
+        .unwrap();
     assert_eq!(
         f.store
             .get("scratch/one")

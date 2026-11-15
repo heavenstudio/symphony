@@ -341,7 +341,12 @@ fn pass_inner(
         } else {
             Held::default()
         };
-        let (resuming, idle) = job_for(store, &view.agents, &board, task, role, &used, &held)?;
+        // A review whose recorded reviewer still runs fails here as its launch would, in a dry run
+        // too.
+        let job = job_for(store, &hc, &view.agents, &board, task, role, &used, &held);
+        let (resuming, idle) = job
+            .as_ref()
+            .map_or((None, None), |(resuming, idle)| (resuming.clone(), *idle));
         let memory = free_memory_gib()?;
         let machine_agents = store.limits().machine_agents;
         let blocked = if idle.is_none() && live >= config.max_sessions {
@@ -359,7 +364,9 @@ fn pass_inner(
             None
         };
         let mut dispatched = false;
-        let action = if let Some(why) = blocked {
+        let action = if let Err(problem) = &job {
+            format!("staff {}: failed: {problem}", task.slug)
+        } else if let Some(why) = blocked {
             format!("staff {}: deferred ({why})", task.slug)
         } else if dry_run {
             if let Some(a) = idle {
@@ -475,12 +482,17 @@ fn idle_for<'a>(
     })
 }
 
-/// Who a job on `task` as `role` goes to: a review to the task's recorded reviewer, the newest that
-/// never left with a conversation a restore can resume ([`super::restore::recorded_reviewers`]),
-/// whose launch resumes it or is refused while it still runs ([`launch`]), never another idle one;
-/// else the idle agent [`idle_for`] picks, if any. Neither: a launch.
+/// Who a job on `task` as `role` goes to: a review to the task's recorded reviewer that its launch
+/// resumes, by the launch's own rule ([`super::restore::reviewer_to_resume`]), never another idle
+/// one, and refused, as the launch is, while that reviewer still runs; else the idle agent
+/// [`idle_for`] picks, if any. Neither: a launch.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one job of the pass, named by what it reads"
+)]
 fn job_for<'a>(
     store: &Store,
+    hc: &dyn Hc,
     agents: &'a [agents::Agent],
     board: &Board,
     task: &Task,
@@ -488,14 +500,10 @@ fn job_for<'a>(
     used: &HashSet<String>,
     held: &Held,
 ) -> Result<(Option<String>, Option<&'a agents::Agent>), Error> {
-    if role == "reviewer" {
-        let recorded = super::restore::recorded_reviewers(store, &task.slug)?;
-        let resumable = recorded
-            .into_iter()
-            .find(crate::store::unanswered::restorable);
-        if let Some(record) = resumable {
-            return Ok((Some(record.handle), None));
-        }
+    if role == "reviewer"
+        && let Some(record) = super::restore::reviewer_to_resume(store, hc, &task.slug)?
+    {
+        return Ok((Some(record.handle), None));
     }
     Ok((None, idle_for(agents, board, task, role, used, held)))
 }

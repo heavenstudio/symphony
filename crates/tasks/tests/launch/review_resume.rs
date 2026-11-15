@@ -1,7 +1,7 @@
 //! A reviewer launch goes back to the task's recorded reviewer: its own conversation, handle,
 //! worktree, agent and model, in a new terminal; refused while it still runs; a new reviewer only
-//! where none can be resumed; never on an instruction subtask; and, through `just tasks`, only in
-//! the project.
+//! where none can be resumed, or beside it saying why (`--beside WHY`); never on an instruction
+//! subtask; and, through `just tasks`, only in the project.
 
 use crate::World;
 use crate::common::refused;
@@ -144,11 +144,13 @@ fn a_reviewer_launch_resumes_the_tasks_recorded_reviewer_in_its_own_conversation
 
 #[test]
 fn a_reviewer_launch_is_refused_while_the_recorded_reviewer_still_runs() {
-    let still = |handle: &str, terminal: &str| {
+    let still = |w: &World, handle: &str, terminal: &str| {
+        let board = w.store().board_command();
         format!(
             "{handle} reviews sim/jump and still runs in terminal {terminal}: give it the new tip \
-             on the thread (just tasks say sim/jump TEXT --to @reviewer), or close it (just tasks \
-             close sim/jump {handle}) and launch again to resume it"
+             on the thread ({board} say sim/jump TEXT --to @reviewer), or close it ({board} close \
+             sim/jump {handle}) and launch again to resume it, or launch another beside it saying \
+             why ({board} launch sim/jump --role reviewer --beside WHY)"
         )
     };
     // In the terminal its launch recorded; a Codex one whose thread never arrived among them, for
@@ -160,7 +162,7 @@ fn a_reviewer_launch_is_refused_while_the_recorded_reviewer_still_runs() {
         let records = w.store().task_sessions("sim/jump").unwrap();
         assert_eq!(
             refused(w.try_launch(&reviewer(&w, "sim/jump", None))),
-            still(&first.handle, &first.pane)
+            still(&w, &first.handle, &first.pane)
         );
         assert_eq!(w.calls_of(&["run"]).len(), 1);
         assert_eq!(reviewers(&w), [first.handle.as_str()]);
@@ -174,7 +176,7 @@ fn a_reviewer_launch_is_refused_while_the_recorded_reviewer_still_runs() {
         .unwrap();
     assert_eq!(
         refused(w.try_launch(&reviewer(&w, "sim/jump", None))),
-        still(&first.handle, &first.pane)
+        still(&w, &first.handle, &first.pane)
     );
     // Its open record naming a live terminal that bears neither its name nor its label (one it was
     // given in, as staffing gives an idle agent a job).
@@ -191,7 +193,7 @@ fn a_reviewer_launch_is_refused_while_the_recorded_reviewer_still_runs() {
         .unwrap();
     assert_eq!(
         refused(w.try_launch(&reviewer(&w, "sim/jump", None))),
-        still(&handle, &pane)
+        still(&w, &handle, &pane)
     );
     assert!(w.calls_of(&["run"]).is_empty());
 }
@@ -332,5 +334,69 @@ fn unasked_a_resume_starts_its_reviewer_only_in_the_project_and_never_a_new_one_
     assert_eq!(
         w.program(&again.row.pane)[..3],
         ["claude", "--resume", first.claude_session.as_str()]
+    );
+}
+
+#[test]
+fn a_reviewer_launched_beside_the_recorded_one_is_a_new_reviewer_never_a_resume() {
+    let w = in_review();
+    let first = reviewing(&w, false);
+    closed(&w, &first);
+    // sessions() orders by connected, then handle: the second connects later.
+    w.f.advance(60.0);
+    let again = w
+        .try_launch(&Ask {
+            beside: Some("a second stamp".into()),
+            ..reviewer(&w, "sim/jump", None)
+        })
+        .unwrap();
+    assert!(!again.resumed);
+    assert_ne!(again.row.handle, first.handle);
+    assert_eq!(
+        reviewers(&w),
+        [first.handle.as_str(), again.row.handle.as_str()]
+    );
+    let task = w.store().get("sim/jump").unwrap();
+    assert_eq!(
+        task.holders("reviewer"),
+        [first.handle.as_str(), again.row.handle.as_str()]
+    );
+}
+
+#[test]
+fn a_reviewer_there_with_nothing_to_resume_refuses_the_launch_naming_its_own_beside() {
+    // One that joined by `tasks role`, as a subagent does: no record a launch can resume.
+    let w = in_review();
+    let there = w.f.session("reviewer");
+    w.store().take_role("sim/jump", &there, "reviewer").unwrap();
+    let refusal = refused(w.try_launch(&reviewer(&w, "sim/jump", None)));
+    let board = w.store().board_command();
+    assert!(
+        refusal.starts_with(&format!("sim/jump is reviewed by {there} (")),
+        "{refusal}"
+    );
+    assert!(
+        refusal.ends_with(&format!(
+            "one joins beside it with: {board} launch sim/jump --role reviewer --beside WHY"
+        )),
+        "{refusal}"
+    );
+    // Refused before its terminal: nothing started or recorded, and the role is still the one's.
+    assert!(w.calls_of(&["run"]).is_empty());
+    assert!(w.store().task_sessions("sim/jump").unwrap().is_empty());
+    let task = w.store().get("sim/jump").unwrap();
+    assert_eq!(task.holders("reviewer"), [there.as_str()]);
+    // Saying why, it joins beside it.
+    let again = w
+        .try_launch(&Ask {
+            beside: Some("a second stamp".into()),
+            ..reviewer(&w, "sim/jump", None)
+        })
+        .unwrap();
+    assert!(!again.resumed);
+    let task = w.store().get("sim/jump").unwrap();
+    assert_eq!(
+        task.holders("reviewer"),
+        [there.as_str(), again.row.handle.as_str()]
     );
 }
