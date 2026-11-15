@@ -2192,6 +2192,24 @@ A task with work of its own to check has one more of the Symphony's:
   branch and not yet committed to, or one already landed there), for an instruction
   subtask, whose work lands with its task, or for a project with no check.
 
+The server keeps what its own gates are read from, each part by what tells it has not moved
+(`crates/symphony/src/gates/inputs.rs`), and puts the gates together from them on every read:
+
+- the task, its thread and the tasks under it, by the task's stamp on the board
+  (`Store::task_stamp`): its row, links, roles and executors' recorded branches, the tasks
+  right under it and its thread's newest line, in one small read;
+- the recorder's runs, by their files: the history and each operation's record are read again
+  once the file is another, by its length, when it changed and its inode, and an unfinished
+  operation's lease is asked on every read;
+- the stamps catalogue, by the commit the main checkout's head is at;
+- whether the tip holds work of its own, by that tip and the default branch's.
+
+So a read with nothing new asks the board once, for the stamp, resolves the three refs, and reads
+nothing else again; a post, a role, a recorded run, a new tip or a commit on the default branch
+shows at the next read. One thing shows later: a task moved under one of the task's subtasks
+joins the runs its `tests` stamp counts at the task's next post, role, status or subtask. The
+land reads its own, never what the page keeps.
+
 A project's plugin answers its own through the gates seam (`symphony_plugin::Gates`,
 `Plugin::gates`) as the same typed data, so every project's gates are drawn the
 same way and can be counted. A plugin's gate with the same name as one of the

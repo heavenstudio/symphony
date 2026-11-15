@@ -379,8 +379,9 @@ fn changes(from: f64, to: f64, offset_at: impl Fn(f64) -> i64) -> Vec<Offset> {
 
 /// The timeline of `record` in the project at `root`: its thread, the runs the board's recorder
 /// kept for it and its gates, `pending` the cards waiting on the owner and `kept` the plugins'
-/// answers. The thread and the recorder's history are read once, for the timeline and its gates
-/// both. Gates that cannot be read leave their lanes out, never the timeline.
+/// answers. The thread and the recorder's runs are read once, for the timeline and its gates
+/// both, the runs as `kept` holds them ([`crate::gates::Kept::runs`]). Gates that cannot be read
+/// leave their lanes out, never the timeline.
 pub fn answer(
     store: &symphony_board::Store,
     record: &symphony_board::Task,
@@ -390,10 +391,7 @@ pub fn answer(
 ) -> Result<TaskTimeline, String> {
     let thread = store.thread(&record.slug).map_err(|e| e.to_string())?;
     let folder = crate::gates::work_folder(root);
-    let all = folder
-        .as_deref()
-        .map(crate::gates::runs)
-        .unwrap_or_default();
+    let all = kept.runs(root);
     let mut gates = crate::gates::answer_from(store, record, root, pending, kept, &thread, &all)
         .map(|answer| answer.gates)
         .unwrap_or_default();
@@ -404,8 +402,9 @@ pub fn answer(
         .is_some_and(|folder| folder.join(recorded::ROTATED).exists());
     let runs_from = kept_from(rotated, &all, record.created);
     let runs: Vec<Record> = all
-        .into_iter()
+        .iter()
         .filter(|run| run.task.as_deref() == Some(record.slug.as_str()))
+        .cloned()
         .collect();
     let now = store.now();
     let facts = Facts {

@@ -17,6 +17,11 @@
 //! of a gate ask it the same way, through the same [`Kept`], so a plugin is asked once a tip. A
 //! reader that must ask nothing (the sign-off lane, `taskview::signoff`) reads only what is kept
 //! and known ([`kept_theirs`]) and merges it the same way.
+//!
+//! What the Symphony's own gates are read from is kept too ([`inputs`]): the task and its thread
+//! by the task's stamp on the board, the recorder's runs by their files, the stamps catalogue by
+//! the main checkout's head. A read with nothing new asks the board for that stamp, resolves the
+//! refs, and reads nothing else again ([`Kept::reads`] counts what is).
 
 use std::any::Any;
 use std::collections::HashMap;
@@ -29,13 +34,16 @@ use std::time::{Duration, Instant};
 use symphony_api::gates::{CHECK, OWNER, REVIEW, ranked};
 use symphony_api::{Gate, GatePast, GateState, GatesSeen, Pending, PendingItem, TaskGates};
 use symphony_board::cli::machine_work::recorded::{self, Record, Step};
-use symphony_board::stamps::{Catalogue, read};
+use symphony_board::stamps::read;
 use symphony_plugin::{Gates, TaskRef};
 
 use crate::plugins::Plugins;
 use crate::project::Project;
 
+pub mod inputs;
 pub mod stamps;
+
+pub use inputs::Reads;
 
 /// How long a page waits for a plugin's answer before it says the gate is unknown. The answer
 /// still arrives, and is kept, for the next read.
@@ -606,6 +614,8 @@ pub struct Kept {
     limits: Limits,
     /// How many answers have come back, whichever call made them ([`Kept::answered`]).
     answered: Arc<AtomicUsize>,
+    /// What the Symphony's own gates are read from.
+    inputs: inputs::Inputs,
 }
 
 impl Default for Kept {
@@ -622,7 +632,20 @@ impl Kept {
             seen: Mutex::new(HashMap::new()),
             limits,
             answered: Arc::default(),
+            inputs: inputs::Inputs::default(),
         }
+    }
+
+    /// How many times each part the Symphony's own gates are read from was read anew, since this
+    /// was made ([`inputs`]): a read of a task's gates that found nothing new adds to none.
+    pub fn reads(&self) -> Reads {
+        self.inputs.reads()
+    }
+
+    /// Every run the recorder holds for the repository at `root` ([`runs`]), each of its files
+    /// read again only once it is another: what the gates and the timeline read.
+    pub fn runs(&self, root: &Path) -> Arc<Vec<Record>> {
+        self.inputs.runs(root)
     }
 
     /// How many answers have come back so far, by any call, an error among them: a reader of what
@@ -705,11 +728,13 @@ impl Kept {
         lock(&self.seen).insert((root.to_path_buf(), answer.slug.clone()), answer.seen());
     }
 
-    /// Forget the shapes kept for every task `open` does not name, in every checkout: one that
-    /// closed or left the board has no page to hold room in, so what is kept stays as many as the
-    /// open tasks read since the server started. The hub calls it when the board's tasks change.
+    /// Forget the shapes kept for every task `open` does not name, in every checkout, and what
+    /// its gates were read from: one that closed or left the board has no page to hold room in,
+    /// so what is kept stays as many as the open tasks read since the server started. The hub
+    /// calls it when the board's tasks change.
     pub fn keep_open(&self, open: impl Fn(&str) -> bool) {
         lock(&self.seen).retain(|(_, slug), _| open(slug));
+        self.inputs.keep_open(open);
     }
 
     /// The names of the gates `answerer`, of the plugin `plugin`, has answered in the project at
@@ -919,6 +944,18 @@ pub fn tip(root: &Path, branch: &str) -> Option<String> {
     commit(root, &format!("refs/heads/{branch}"))
 }
 
+/// The commit each of the revisions `specs` names in the repository at `root`, a full id, `None`
+/// where it names none: the repository is opened once for them all.
+fn commits<const N: usize>(root: &Path, specs: [&str; N]) -> [Option<String>; N] {
+    let repo = gix::discover(root).ok();
+    specs.map(|spec| {
+        let id = (repo.as_ref()?)
+            .rev_parse_single(format!("{spec}^{{commit}}").as_str())
+            .ok()?;
+        Some(id.to_string())
+    })
+}
+
 /// Whether the commit `tip` in the repository at `root` holds work of its own: it is not on the
 /// branch `default` (the project's default branch), as a branch made there and not yet committed
 /// to is, or one already landed. A tip with no default branch to compare, or no merge base with
@@ -953,30 +990,38 @@ pub fn work_folder(root: &Path) -> Option<PathBuf> {
     Some(recorded::in_common(&common))
 }
 
-/// The gates of `record` in the project at `root`: the Symphony's own, `pending` the cards waiting
-/// on the owner, and its plugins' answers through `kept`.
+/// The gates of the task `slug` in the project at `root`: the Symphony's own, `pending` the cards
+/// waiting on the owner, and its plugins' answers through `kept`. The task, its thread and the
+/// recorder's runs are as `kept` holds them while nothing moved ([`inputs`]), so a read with
+/// nothing new asks the board once, for the task's stamp. The board's refusal or failure is the
+/// answer's.
 pub fn answer(
     store: &symphony_board::Store,
-    record: &symphony_board::Task,
+    slug: &str,
     root: &Path,
     pending: &Pending,
     kept: &Kept,
-) -> Result<TaskGates, String> {
-    let thread = store.thread(&record.slug).map_err(|e| e.to_string())?;
+) -> Result<TaskGates, symphony_board::Error> {
+    let task = kept.inputs.task(store, root, slug)?;
     // The recorder's history is read only for a task whose gates read its runs: the project's
     // check, or the stamps' tests.
-    let runs = if Project::of(root).verdicts.check.is_empty() && !stamps::stamped(record) {
-        Vec::new()
+    let runs = if Project::of(root).verdicts.check.is_empty() && !stamps::stamped(&task.record) {
+        Arc::default()
     } else {
-        work_folder(root)
-            .map(|folder| runs(&folder))
-            .unwrap_or_default()
+        kept.runs(root)
     };
-    answer_from(store, record, root, pending, kept, &thread, &runs)
+    let read = Read {
+        record: &task.record,
+        thread: &task.thread,
+        runs: &runs,
+        branch: task.branch.clone(),
+        ours: &|| task.ours(store).to_vec(),
+    };
+    Ok(put_together(&read, root, pending, kept))
 }
 
-/// [`answer`] from the task's `thread` and the recorder's `runs`, read already: the timeline reads
-/// each once, for its own lanes and for the gates beside them.
+/// [`answer`] of `record` from its `thread` and the recorder's `runs`, read already: the timeline
+/// reads each once, for its own lanes and for the gates beside them.
 pub fn answer_from(
     store: &symphony_board::Store,
     record: &symphony_board::Task,
@@ -988,8 +1033,48 @@ pub fn answer_from(
 ) -> Result<TaskGates, String> {
     let branch =
         crate::taskview::approval_branch(store, record).map_err(|error| error.to_string())?;
-    let tip = tip(root, &branch);
+    let read = Read {
+        record,
+        thread,
+        runs,
+        branch,
+        ours: &|| stamps::family(store, &record.slug),
+    };
+    Ok(put_together(&read, root, pending, kept))
+}
+
+/// What a task's gates are put together from, read already.
+struct Read<'a> {
+    record: &'a symphony_board::Task,
+    thread: &'a [symphony_board::Message],
+    /// The recorder's runs.
+    runs: &'a [Record],
+    /// The branch the gates are answered for (`taskview::approval_branch`).
+    branch: String,
+    /// The task and the work under it ([`stamps::family`]), asked only when a gate reads their
+    /// runs.
+    ours: &'a dyn Fn() -> Vec<String>,
+}
+
+/// The gates of the task `read` holds, in the project at `root`: the Symphony's own from what was
+/// read, the refs as they are now, the catalogue and whether the tip holds work of its own as
+/// `kept` holds them ([`inputs`]), and the plugins' answers through `kept`.
+fn put_together(read: &Read<'_>, root: &Path, pending: &Pending, kept: &Kept) -> TaskGates {
+    let Read {
+        record,
+        thread,
+        runs,
+        ..
+    } = *read;
+    let branch = read.branch.clone();
     let project = Project::of(root);
+    let [tip, default_tip] = commits(
+        root,
+        [
+            format!("refs/heads/{branch}").as_str(),
+            format!("refs/heads/{}", project.default_branch).as_str(),
+        ],
+    );
     let cards = linked_cards(&record.links, pending);
     let texts = std::iter::once(record.body.as_str()).chain(thread.iter().map(|m| m.text.as_str()));
     let posted = posted_cards(&cards, texts);
@@ -1007,7 +1092,7 @@ pub fn answer_from(
         own.extend(owner(&posted));
         own
     };
-    let mut own = match stamps::stamped(record).then(|| Catalogue::at(root)) {
+    let mut own = match stamps::stamped(record).then(|| kept.inputs.catalogue(root)) {
         Some(Ok(catalogue)) => {
             // A landed task's branch goes with the sweep: its stamps stand on what its land merged.
             let at = tip.clone().or_else(|| {
@@ -1018,7 +1103,7 @@ pub fn answer_from(
             let needed = read::needed(&catalogue, record.needs().as_ref(), at.as_deref());
             // The work under the task is read only when its runs are.
             let ours = if needed.iter().any(|need| need == stamps::TESTS) {
-                stamps::family(store, &record.slug)
+                (read.ours)()
             } else {
                 vec![record.slug.clone()]
             };
@@ -1046,7 +1131,12 @@ pub fn answer_from(
     let checked = tip.as_deref().filter(|tip| {
         !project.verdicts.check.is_empty()
             && !record.instruction
-            && own_commits(root, tip, &project.default_branch)
+            && kept.inputs.own_commits(
+                root,
+                &record.slug,
+                tip,
+                (&project.default_branch, default_tip.as_deref()),
+            )
     });
     if let Some(checked) = checked {
         own.push(check(
@@ -1070,7 +1160,7 @@ pub fn answer_from(
         gates: merged(own, theirs(kept, root, &answerers, &asked)),
     };
     kept.saw(root, &answer);
-    Ok(answer)
+    answer
 }
 
 #[cfg(test)]

@@ -24,7 +24,7 @@ use crate::sweep::git::{git, succeeds};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 pub mod read;
 
@@ -231,13 +231,18 @@ impl Catalogue {
     /// The catalogue of the repository the folder `dir` is in ([`Catalogue::of`] its main
     /// checkout): the Symphony's own outside a repository, or in one with no main checkout.
     pub fn at(dir: &Path) -> Result<Catalogue, String> {
-        let main = (crate::git::common_dir(dir).ok()).and_then(|common| {
-            crate::sweep::trigger::main_checkout(&common).map(Path::to_path_buf)
-        });
-        match main {
+        match Catalogue::main_of(dir) {
             Some(main) => Catalogue::of(&main),
             None => Ok(Catalogue::symphony()),
         }
+    }
+
+    /// The main checkout of the repository the folder `dir` is in, whose head's manifest
+    /// [`Catalogue::at`] reads: none outside a repository, or in one with no main checkout. A
+    /// reader that keeps a catalogue keeps it while that head is the commit it read it at.
+    pub fn main_of(dir: &Path) -> Option<PathBuf> {
+        (crate::git::common_dir(dir).ok())
+            .and_then(|common| crate::sweep::trigger::main_checkout(&common).map(Path::to_path_buf))
     }
 
     /// Its stamps' names, in order.

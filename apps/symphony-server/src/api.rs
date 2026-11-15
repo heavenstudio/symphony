@@ -574,13 +574,12 @@ async fn read(shared: &Arc<Shared>, request: Request) -> Option<Response> {
                         })
                     } else if gates {
                         // A plugin that errs or is slow is an unknown gate, never a failed answer:
-                        // only the board's own reads fail it.
-                        store.get(&slug).map_err(task_failure).and_then(|record| {
-                            let pending = hub.pending();
-                            symphony::gates::answer(&store, &record, &root, &pending, &hub.gates)
-                                .map(|gates| no_store(Json(gates)))
-                                .map_err(|e| unavailable(&e, ""))
-                        })
+                        // only the board's own reads fail it. A read with nothing new asks the
+                        // board for the task's stamp alone (`symphony::gates::inputs`).
+                        let pending = hub.pending();
+                        symphony::gates::answer(&store, &slug, &root, &pending, &hub.gates)
+                            .map(|gates| no_store(Json(gates)))
+                            .map_err(task_failure)
                     } else if timeline {
                         // The task's own thread and run records, and its gates as the gates
                         // answer gives them: gates that cannot be read leave their lanes out.
