@@ -972,9 +972,16 @@ describe("a document page's loops", () => {
       asked[0]?.answer(answered(200, OUTLINE_NOW, '"o1"', 7));
       await vi.advanceTimersByTimeAsync(0);
       opened[0]?.source.dispatchEvent(new Event("open"));
-      await vi.advanceTimersByTimeAsync(12_000);
+      await vi.advanceTimersByTimeAsync(0);
       expect(page.stale).toBe(false);
-      await vi.advanceTimersByTimeAsync(1_000);
+      // Each timer the advance fires costs a real turn of the event loop, which a loaded machine
+      // makes slow: the clock jumps across the silence (`setSystemTime` moves the date and every
+      // waiting timer alike, firing none), so only the follow's waits on either side of 12.5 s
+      // run, not 12 s of every loop's polls.
+      vi.setSystemTime(Date.now() + 12_200);
+      await vi.advanceTimersByTimeAsync(200);
+      expect(page.stale).toBe(false);
+      await vi.advanceTimersByTimeAsync(200);
       expect(page.stale).toBe(true);
       expect(opened[0]?.closed).toBe(1);
       left.abort();

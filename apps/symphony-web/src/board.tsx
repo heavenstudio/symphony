@@ -223,6 +223,23 @@ export function boardShape(
   return shape;
 }
 
+/**
+ * Each of `counts` less its tasks the board draws in the sign-off lane (`lane`, each in the stage
+ * `stage` gives it): the server counts a task waiting on the owner in its stage, so the stage's
+ * column holds, outlines and loads more of the rest alone.
+ */
+export function stageCounts(
+  counts: [string, number][],
+  lane: readonly Task[],
+  stage: (task: Task) => string,
+): [string, number][] {
+  if (lane.length === 0) return counts;
+  return counts.map(([status, count]) => [
+    status,
+    Math.max(0, count - lane.filter((task) => stage(task) === status).length),
+  ]);
+}
+
 /** The board's shape for a browser that kept none: the pipeline and the columns off it, a task in
  * each. */
 function defaultShape(): [string, number][] {
@@ -895,6 +912,12 @@ export function TaskBoard({
     return byColumn(filtered, place, kept.current);
   }, [tasks, search, selected, work, connected, signoff]);
   kept.current = columns;
+  // A stage's tasks waiting on the owner are drawn in the sign-off lane: its column counts the rest.
+  const lane = columns.get("signoff") ?? NONE;
+  const placed = useMemo(
+    () => stageCounts(counts, lane, (task) => taskStage(work, task, connected)),
+    [counts, lane, work, connected],
+  );
   const column = (status: string) => (
     <TaskColumn
       key={status}
@@ -902,7 +925,7 @@ export function TaskBoard({
       work={work}
       connected={connected}
       tasks={columns.get(status) ?? NONE}
-      count={counts.find(([one]) => one === status)?.[1] ?? 0}
+      count={placed.find(([one]) => one === status)?.[1] ?? 0}
       query={search}
       days={days}
       onLoad={onLoad}
