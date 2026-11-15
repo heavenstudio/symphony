@@ -175,6 +175,12 @@ pub struct Run {
     /// writes its end line, whatever folder the sweeping recorder's own lines go to.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub runs: Option<String>,
+    /// Its log, relative to `runs` ([`crate::run_logs`]): where its command's output is kept.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub log: Option<String>,
+    /// The bytes its log held as it finished.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub log_bytes: Option<u64>,
 }
 
 impl Run {
@@ -183,9 +189,14 @@ impl Run {
         symphony_api::run_name(&self.pipeline)
             && self.step.as_deref().is_none_or(symphony_api::run_name)
             && super::projection::identity(&self.trigger)
-            && [&self.project, &self.tree, &self.runs]
+            && [&self.project, &self.tree, &self.runs, &self.log]
                 .iter()
                 .all(|text| text.as_ref().is_none_or(|text| text.len() <= MAX_TEXT))
+            && self.log.as_deref().is_none_or(|log| {
+                Path::new(log)
+                    .components()
+                    .all(|part| matches!(part, std::path::Component::Normal(_)))
+            })
             && self
                 .runs
                 .as_deref()

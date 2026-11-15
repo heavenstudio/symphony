@@ -154,9 +154,11 @@ pub struct RunLine {
     pub cpu_partial: Option<bool>,
     /// The newest earlier run of the same pipeline, step and label on the same tree, both clean.
     pub rerun_of: Option<String>,
-    /// Its log, relative to the day files' folder (`tools/run-logs`).
+    /// Its log, relative to the day files' folder: `logs/YYYY-MM-DD/RUN.log`, the day it was asked
+    /// for. Named on its start line too, so a run that still runs can be read.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub log: Option<String>,
+    /// The bytes its log held as its end line was written.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub log_bytes: Option<u64>,
     /// Per test binary (`tools/run-suites`).
@@ -177,6 +179,33 @@ impl RunLine {
     pub fn day(&self) -> String {
         run_day(self.ended.or(self.started).unwrap_or(self.queued))
     }
+}
+
+/// The read of one run's log: `GET` [`RUN_LOG_PATH`]`?run=ID` answers its last [`RUN_LOG_TAIL`]
+/// bytes, `&tail=N` its last N, `&from=A` (and `&to=B`) the bytes from A (to B); never more than
+/// [`RUN_LOG_MOST`] at once (docs/RUNS.md, *Logs*).
+pub const RUN_LOG_PATH: &str = "/api/run-log";
+/// What a read of a log that names no range answers: its tail, this many bytes.
+pub const RUN_LOG_TAIL: u64 = 64 * 1024;
+/// The most bytes of a log one read answers.
+pub const RUN_LOG_MOST: u64 = 1024 * 1024;
+
+/// Part of one run's log, as [`RUN_LOG_PATH`] answers it: the bytes `from..to` of the `size` its
+/// file held when read.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RunLog {
+    /// The run's id.
+    pub run: String,
+    /// The log, relative to the day files' folder, as [`RunLine::log`] names it.
+    pub log: String,
+    /// Its whole length when read, in bytes: a run that still runs adds to it.
+    pub size: u64,
+    /// Where the bytes answered start in it.
+    pub from: u64,
+    /// Where they end, never past `size`.
+    pub to: u64,
+    /// Those bytes as text; a character a range cuts through reads as U+FFFD.
+    pub text: String,
 }
 
 /// A pipeline's or a step's name: 1 to 64 ASCII letters, digits, `-`, `_` or `.`.
