@@ -108,7 +108,7 @@ impl L {
         self
     }
     /// Its suites as (name, tests failed, seconds), and its failures as (suite, test): the
-    /// fields `tools/run-suites` fills.
+    /// fields its log's tests fill (`crate::runs::suites`).
     fn tests(mut self, suites: &[(&str, u32, f64)], failed: &[(Option<&str>, &str)]) -> L {
         self.0.suites = Some(
             suites
@@ -119,6 +119,7 @@ impl L {
                     failed: *failed,
                     ignored: 0,
                     s: *s,
+                    error: false,
                 })
                 .collect(),
         );
@@ -658,6 +659,21 @@ fn a_test_passes_in_a_green_run_or_a_red_one_that_reported_its_binary_without_it
     assert!(
         !passed(&unreported, failing),
         "a red that says nothing of its tests"
+    );
+    // A binary that ended with no result line (it crashed) ran its tests to no end of theirs.
+    let mut crashed = red(&[("store", 0, 1.0)], &[]);
+    crashed.suites.as_mut().unwrap()[0].error = true;
+    assert!(!passed(&crashed, failing), "its binary crashed");
+    assert_eq!(
+        suites([&crashed].into_iter()),
+        [SuiteDay {
+            name: "store".into(),
+            runs: 1,
+            failed: 1,
+            pass_rate: 0.0,
+            time: spread(1, 1.0, 1.0),
+        }],
+        "a crashed suite counts as failed, though no test of it did"
     );
     for end in [End::TimedOut, End::Interrupted, End::Incomplete] {
         let stopped = run("s", "test", "t", at(0, 1.0), 1.0).end(end).0;
