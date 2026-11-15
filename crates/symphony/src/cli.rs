@@ -61,6 +61,9 @@ options:
 
 /// `symphony COMMAND ARGS…`: the whole command line without the program name. Its exit code. A
 /// command the Symphony does not have is run by the first plugin this process holds that adds it.
+/// A host binary that calls this runs `symphony_chrome::leash_main()` first, as `bin/symphony.rs`
+/// does: `shot` leashes its Chrome by running the program again, and without it a shot fails
+/// before Chrome is ready, its leash exited.
 pub fn main(
     args: &[String],
     input: &mut dyn BufRead,
