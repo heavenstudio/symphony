@@ -22,9 +22,11 @@ main at 3f3d9186.
   (the shell's empty `data:,` link) and two beamed notes, the generic ♫, on the pages the server
   draws itself: the project list, a page that is not found, a Markdown file no entrypoint serves.
 - **The address's own icon**, `/favicon.ico` asked for outside any project, is answered from
-  `tools/static/icon.svg` of the project the machine's server was started from. On this machine
-  that is the consuming project's star, so anything that asks the address itself for its icon
-  gets that project's mark.
+  `tools/static/icon.svg` of a project (`apps/symphony-server/src/projects.rs`, where a path
+  outside any project finds its owner): the project the request's Referer names, a page of the
+  same server under `/ID/`, else the project the machine's server was started from. On this
+  machine that last is the consuming project, so a page with no Referer of a project's, the
+  project list among them, gets that project's star.
 - **The header** shows no mark and no name: it opens with Projects, then the pages. The project
   file's reference says a theme's name and icon are the header's and the tab's; only the tab
   shows them.
@@ -33,8 +35,10 @@ main at 3f3d9186.
 - **The README** opens with a `# Symphony` heading and no mark.
 
 A project's own `[theme]` (its name, its icon, its package) is its own look and stays its own.
-The options are Symphony's default: what a project with no icon of its own shows, what the
-machine's own pages show, and the address's own icon.
+The options are Symphony's default, and they show in two places: on the machine's own pages (the
+project list and the pages the server draws), and on a project with no theme name or icon of its
+own. A project's own theme name and icon take their place on its pages, as the project file's
+reference already says; the address's own icon is Symphony's where no project's answers it.
 
 ## The options
 
@@ -61,11 +65,23 @@ The follow-up, once the owner has chosen:
 - **The default icon.** The chosen icon file is the Symphony's own, embedded in the server: the
   icon of a project with no icon of its own, on its pages (in place of the shell's empty link) and
   on the server's own pages (in place of the beamed notes), and the answer to `/favicon.ico`
-  outside any project, in place of the started project's file.
+  outside any project. Its place in that answer's order is the follow-up's to set in
+  `projects.rs` (the Referer's project, then the started one): after the Referer's project and
+  before the started one, so the project list gets Symphony's icon and a project's page its own.
+- **The scheme.** The icon files choose their light and dark colours by the system's scheme
+  (`prefers-color-scheme` inside the file), not by the app's Appearance choice, which a browser
+  does not pass to a tab's icon; the header's mark, drawn in `--primary`, follows Appearance.
 - **The header.** The mark, inline and drawn in `--primary`, and the wordmark at its start, in the
   React frame and in the server's own pages, with their sizes in the frame's stylesheet and its
   server copy; a project's theme name and icon take their place, as the project file says.
 - **A touch icon**, the icon rendered as a 180 px PNG, for a phone's home screen.
 - **The README**, its heading with the mark.
+- **The product pictures** that show the header (`docs/product/pictures`: the queue wide, on a
+  phone and with a topic chosen, and the register wide), shown in the README and the queue's
+  spec, retaken with `tools/product-pictures.sh`: their fixture project sets no `[theme]`, so its
+  header takes the default.
+- **The words that say where the name and icon show**: the `[theme]` table's `name` and `icon`
+  rows in [PROJECT_FILE](../PROJECT_FILE.md#theme) ("the header and the tab") and the comments on
+  `name` and `icon` in `crates/symphony/src/theme.rs`, which then say what the default is.
 - The tests that read the icon link and the header's markup, and the client distribution, which
   the regenerator rebuilds after the land.
