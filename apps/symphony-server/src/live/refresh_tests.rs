@@ -170,11 +170,11 @@ fn a_followed_document_whose_one_card_moved_is_rendered_again_and_no_other() {
 fn a_followed_document_whose_linking_task_moved_is_rendered_again_and_no_other() {
     let tree = Tree::new();
     let root = repository(&tree);
-    let f = Fixture::new(
-        Seed::default()
-            .task("tools/topic", "ready")
-            .link("tools/topic", "doc", "docs/TOPIC.md"),
-    );
+    let f = Fixture::new(Seed::default().task("tools/topic", "ready").link(
+        "tools/topic",
+        "doc",
+        "docs/TOPIC.md",
+    ));
     let hub = following(&tree, &root);
     observe(&hub, &f.store, &[]);
     hub.refresh_docs(Some(&BTreeSet::new())).unwrap();
