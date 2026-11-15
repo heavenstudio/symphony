@@ -1,13 +1,11 @@
-//! The program (`page-program`): the chat and the menus every page mounts, as one program, which
-//! `dx bundle --wasm-split` cuts into a main module and a chunk for each of those kinds (bundle.sh,
-//! then `symphony-build split-repair`). No page kind is the program's: every page is the web
-//! client's (apps/symphony-web), and the program's kinds are the shell's persistent ones
-//! (assets/shell.js `PERSISTENT`). The main module holds
-//! the runtime and what each kind reaches before its own part; a kind's chunk holds that part. The
-//! kinds share the one runtime, so the second to load is a chunk, never another copy of the
-//! framework. The media layer (`media_live::MediaRuntime`) is a chunk of its own too, though no
-//! kind: the chat loads it once it shows media ([`MediaPart`]), so a chat without any loads none of
-//! it.
+//! The program (`page-program`): the chat every page mounts, as one program, which
+//! `dx bundle --wasm-split` cuts into a main module and a chunk for its kind (bundle.sh, then
+//! `symphony-build split-repair`). No page kind is the program's: every page is the web client's
+//! (apps/symphony-web), and so are the menus (its `overlay` kind); the program's kind is the shell's
+//! other persistent one (assets/shell.js `PERSISTENT`). The main module holds the runtime and what
+//! the kind reaches before its own part; the kind's chunk holds that part. The media layer
+//! (`media_live::MediaRuntime`) is a chunk of its own too, though no kind: the chat loads it once
+//! it shows media ([`MediaPart`]), so a chat without any loads none of it.
 //!
 //! Each split point is what `wasm_split::lazy_loader!` writes, spelled out: its expansion is edition
 //! 2021 (`extern` blocks and `#[no_mangle]` without `unsafe`), which this crate refuses. The names
@@ -32,8 +30,6 @@ use wasm_bindgen_futures::JsFuture;
 pub(crate) enum Chunk {
     /// The chat, the activity list and the Appearance panel.
     Panel,
-    /// A select's popup and the picture viewer, for every module.
-    Overlay,
 }
 
 thread_local! {
@@ -67,22 +63,20 @@ async fn fetch(name: &str, bit: u8) -> Result<(), JsValue> {
 }
 
 impl Chunk {
-    pub(crate) const ALL: [Chunk; 2] = [Chunk::Panel, Chunk::Overlay];
+    pub(crate) const ALL: [Chunk; 1] = [Chunk::Panel];
 
     /// Its page kind, as the shell's manifest and `reviewChunk` name it.
     pub(crate) fn kind(self) -> &'static str {
         match self {
             Chunk::Panel => "panel",
-            Chunk::Overlay => "overlay",
         }
     }
 
     /// The element its kind's Dioxus root is mounted on, which the shell makes (`mountFor`): the
-    /// persistent modules' own.
+    /// persistent module's own.
     pub(crate) fn root(self) -> &'static str {
         match self {
             Chunk::Panel => "quick-root",
-            Chunk::Overlay => "overlay-root",
         }
     }
 
@@ -155,8 +149,6 @@ unsafe extern "C" {
     #[allow(improper_ctypes)]
     fn __wasm_split_00___panel___00_import_5b5e7a5c000000000000000000000003_panel() -> Element;
     #[allow(improper_ctypes)]
-    fn __wasm_split_00___overlay___00_import_5b5e7a5c000000000000000000000004_overlay() -> Element;
-    #[allow(improper_ctypes)]
     fn __wasm_split_00___media___00_import_5b5e7a5c000000000000000000000006_media() -> Element;
 }
 
@@ -165,13 +157,6 @@ unsafe extern "C" {
 pub extern "C" fn __wasm_split_00___panel___00_export_5b5e7a5c000000000000000000000003_panel()
 -> Element {
     rsx! { crate::frame::PanelApp {} }
-}
-
-#[unsafe(no_mangle)]
-#[allow(improper_ctypes_definitions)]
-pub extern "C" fn __wasm_split_00___overlay___00_export_5b5e7a5c000000000000000000000004_overlay()
--> Element {
-    rsx! { crate::components::OverlayApp {} }
 }
 
 #[unsafe(no_mangle)]
@@ -189,16 +174,6 @@ pub(crate) fn PanelPart() -> Element {
     }
     // SAFETY: the chunk is in, and its entry takes no argument and returns an `Element`.
     unsafe { __wasm_split_00___panel___00_import_5b5e7a5c000000000000000000000003_panel() }
-}
-
-/// The overlay host, from its chunk.
-#[component]
-pub(crate) fn OverlayPart() -> Element {
-    if !use_chunk(Chunk::Overlay) {
-        return rsx! {};
-    }
-    // SAFETY: as in `PanelPart`.
-    unsafe { __wasm_split_00___overlay___00_import_5b5e7a5c000000000000000000000004_overlay() }
 }
 
 /// The media layer (`media_live::MediaRuntime`), from its chunk, drawn once the chat shows media

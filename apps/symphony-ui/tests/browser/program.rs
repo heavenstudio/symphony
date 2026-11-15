@@ -1,9 +1,9 @@
-//! The program (src/split.rs): the chat and the menus every page mounts over the web client's pages
-//! share one script and main module, each with a chunk of its own. The chat opened on one page and
-//! then on another fetches the program and its chunk once. The media layer is a chunk of its own,
-//! which the chat fetches only once its thread shows media: a mockup, here. A page of the web
-//! client's takes its pictures up with its own layer and opens them in the program's picture
-//! viewer, fetching no media chunk. A chat whose chunk is held keeps the page shown, its sheet
+//! The program (src/split.rs): the chat every page mounts over the web client's pages is its script
+//! and main module, with a chunk of its own; the menus every page mounts are the web client's
+//! (`overlay`). The chat opened on one page and then on another fetches the program and its chunk
+//! once, and none of the menus'. The media layer is a chunk of its own, which the chat fetches only
+//! once its thread shows media: a mockup, here. A page of the web client's takes its pictures up
+//! with its own layer and opens them in the menus' picture viewer, fetching no media chunk. A chat whose chunk is held keeps the page shown, its sheet
 //! loading over it; one whose chunk does not load says so with its retry, the page under its
 //! notice, or loads the page again when its build is gone. A media layer that does not load leaves
 //! its page shown under a notice whose retry loads it, or loads the page again when its build is
@@ -108,12 +108,11 @@ fn the_chat_opened_on_one_page_and_then_on_another_fetches_the_program_and_its_c
     // Each file is fetched by what shows it: no idle prefetch has the chat's in already.
     chrome.save_data();
     let (chat, menus) = (module(dist(), "panel"), module(dist(), "overlay"));
-    assert_eq!(
-        (&menus.script, &menus.wasm),
-        (&chat.script, &chat.wasm),
-        "the chat and the menus are one program"
+    assert!(
+        menus.wasm.is_empty() && menus.chunk.is_none(),
+        "the menus are the web client's, none of the program's"
     );
-    let files = [&chat.script, &chat.wasm, chat.chunk(), menus.chunk()];
+    let files = [&chat.script, &chat.wasm, chat.chunk(), &menus.script];
     chrome.open(&site.url("/tasks"));
     shows(&mut chrome, BOARD);
     assert_eq!(
@@ -187,10 +186,10 @@ fn picture_site() -> Site {
 }
 
 /// A task's page is the web client's: its own media layer takes the brief's picture up, which
-/// opens in the program's picture viewer, and the program's media layer is never fetched, with a
+/// opens in the menus' picture viewer, and the program's media layer is never fetched, with a
 /// picture or without one.
 #[test]
-fn a_web_page_takes_its_pictures_up_itself_and_opens_them_in_the_program_s_viewer() {
+fn a_web_page_takes_its_pictures_up_itself_and_opens_them_in_the_menus_viewer() {
     let site = site();
     {
         let Some(mut chrome) = chrome() else { return };

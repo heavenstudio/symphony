@@ -47,7 +47,7 @@ pub(crate) async fn task_post(url: &str, fields: &[(&str, JsValue)]) -> Result<O
 /// A read's fetch, aborted when the read is dropped before it ends: a page that left holds no
 /// connection open for an answer nobody will read. A post is never aborted that way: it may
 /// already have reached the server, and it goes on as `keepalive` does. The program carries this,
-/// for each of its kinds: the chat and the menus.
+/// for its kind: the chat.
 #[cfg(feature = "page-program")]
 struct Abandoned(Option<AbortController>);
 
