@@ -4,8 +4,8 @@
 // history entry, which Back draws the board at again. What draws the board is board.tsx's.
 
 import { type RefObject, useLayoutEffect, useRef } from "react";
-import { holdPlace } from "./journal";
 import { useMount } from "./mount";
+import { holdPlace } from "./shared";
 
 /** Every card of the board: what a live update holds in place when no column is the reader's. */
 export const ROWS = "[data-slug]";

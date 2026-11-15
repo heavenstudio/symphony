@@ -747,8 +747,16 @@ tasks cleanup`, or the task becoming done or cancelled: `hc kill`, then `hc rm`)
 record stays and says why and how to bring it back,
 `just tasks restore SLUG [HANDLE]`, which resumes the conversation in the same
 worktree, in a new terminal; through `just tasks`, only a worktree in the project
-([Where it lives](#where-it-lives)). A record from before hc names a herdr pane (`w1:p…`): that
-terminal is gone, so cleanup records it closed with its restore line, and restore brings
+([Where it lives](#where-it-lives)). A reviewer launch (`--role reviewer`) goes back to the
+task's recorded reviewer the same way: the newest that never said `just tasks leave` with a
+conversation recorded is resumed in its own worktree, agent and model, told `/review-task SLUG
+HANDLE` (the `resumed` line names it), and the launch is refused while a recorded reviewer still
+runs in a terminal; a new reviewer starts only where none can be resumed (no conversation
+recorded, a Codex thread that never arrived, a reviewer that left), or with `--beside WHY`, which
+resumes none and starts a second reviewer beside the one still there. One quiet since its task went
+back to `in_progress` reads `left` by its health and is resumed all the same. A reviewer launch on
+an instruction subtask is refused, naming the task it judges. A record from before hc names a
+herdr pane (`w1:p…`): that terminal is gone, so cleanup records it closed with its restore line, and restore brings
 the agent back in an hc terminal. `just tasks close SLUG HANDLE` closes one agent's terminal
 whatever role it holds (a reviewer waiting for a new tip), records it the same way once the
 terminal is killed, bound to that terminal, and retires the callback registered from it; it is
@@ -771,8 +779,11 @@ orchestrated work. The config belongs to the checkout running the command (main 
 the Symphony). `reap` runs staffing before its five-minute idle sweep. A shared
 `symphony/tasks/staff.lock` keeps concurrent staffing passes from dispatching twice. A review
 is given on the task itself, never as a subtask: its reviewer takes the reviewer's role there,
-its launch is recorded there, and the pass's line on the thread names the tip. It goes to an
-idle reviewer only when the board would take its verdict, by the rule the verdict holds
+its launch is recorded there, and the pass's line on the thread names the tip. A review whose
+task has a recorded reviewer to resume goes to it, by the launch's resume (`would resume HANDLE`
+in a dry run), never to another idle reviewer, and fails as that launch would while the reviewer
+still runs, in a dry run too. Otherwise it goes to an idle reviewer only when
+the board would take its verdict, by the rule the verdict holds
 (`Held::unfresh`, [the default landing](#the-default-landing)); a reused reviewer whose launch
 was not recorded lets the role go, so the task waits on no reviewer that has no job, and a
 launch that fails takes back what it took, as every launch does. Through `just tasks` a pass
@@ -1106,6 +1117,7 @@ rest of its document is the board's.
    "handle": "amber-heron", "kind": "worker", "model": "sonnet", "parent": "cobalt-otter",
    "task": "sim/jump", "role": "executor",           # the task it works now (an open one first)
    "tasks": [{"slug": "sim/jump", "role": "executor", "status": "in_progress"}],
+   "following": 0,                                   # the open tasks it orchestrates
    "worktree": "/…/lamp-works-wt/sim-jump", "branch": "sim/jump",   # where it really works
    "agent": "claude", "session_id": "9aa0…", "pane": "t5",
    "callback": "uds:/tmp/cc-socks/1234.sock", "chat": false,
@@ -1127,6 +1139,9 @@ question), `idle`, or `gone` (no terminal and no sign of life). An agent running
 `running_test` and `health: live`, never `lost`; so does a subagent whose worktree holds a live process, and one whose
 processes cannot be listed reads `health: unknown`. `last_tool_call` is the time of the last tool call of the agent
 (`null` before the first): the monitor's 20 s beat and board commands do not move it.
+`tasks` lists every task the agent holds a role on but those it orchestrates, and `following` counts
+the open ones it orchestrates (neither done nor cancelled), the count of its Following list on the
+agents page, which reads those tasks a page at a time.
 `callback` is the native address (`uds:` or `codex:`), or `null` for an inbox-only
 session; `chat` says whether this session is the current chat recipient, including
 an orchestrator fallback. `slots` is, under a project cap ([Slots](#slots)), the
@@ -2071,7 +2086,7 @@ on first. The task's page draws them in one section under its head, with what
 the task waits on and how many gates are in each state; on a phone a gate is
 three lines, wide one row of bounded columns, a part whose words need more room
 wrapping within its own, so every word shows and none waits on a hover
-(`apps/symphony-ui/src/task_gates.rs`). A link is kept only for a path of the
+(`apps/symphony-web/src/gates.tsx`). A link is kept only for a path of the
 app or an `http(s)` address (`symphony_api::linkable`): the server drops any
 other where it puts the answer together, and the page draws any other as words,
 so a plugin cannot hand a page a `javascript:` link in the origin every project
@@ -2220,10 +2235,11 @@ whole assignment. The executor's whole prompt is `/work SLUG HANDLE`
 anything more for either goes on the task's thread (`--to @executor`, `--to @reviewer`). A
 reviewer takes the reviewer's role on the task, so its verdicts are that task's review rounds,
 and each later round goes to the same reviewer, resumed with the new tip on the thread (a
-subagent by its parent, a `claude -p` run by `--resume`, a terminal by `just tasks restore SLUG
-HANDLE`), never to another reviewer or a review subtask. Resumed, it is still a fresh reviewer
-for the land: an earlier round of its own makes no session unfresh ([the default
-landing](#the-default-landing)). Only when it cannot be resumed (no conversation recorded, so
+subagent by its parent, a `claude -p` run by `--resume`, a terminal by `just tasks launch SLUG
+--role reviewer`, which resumes the task's recorded reviewer and is refused while it still runs,
+or `just tasks restore SLUG HANDLE`), never to another reviewer or a review subtask. Resumed, it
+is still a fresh reviewer for the land: an earlier round of its own makes no session unfresh
+([the default landing](#the-default-landing)). Only when it cannot be resumed (no conversation recorded, so
 `restore` refuses it; a Codex thread that never arrived; a reviewer that left) does another
 reviewer take the role on the task.
 
@@ -2745,7 +2761,7 @@ so each time reads on the server's local clock as it then stood, the thread's.
   list it, waived. A gates answer that cannot be read leaves the lanes out, never the
   timeline.
 
-The page keeps a box for it (`apps/symphony-ui/src/timeline_slot.rs`) as tall as
+The page keeps a box for it (`apps/symphony-web/src/timeline-slot.tsx`) as tall as
 this browser last drew the task's timeline, with placeholder rows in it, so nothing on
 the page moves when the timeline comes. On a phone the box is at most 240 px (the
 owner's choice, so the brief and the thread start near the page's top), and a read that
@@ -2757,9 +2773,9 @@ the box grows to hold every lane and keeps that height for the next visit, a tas
 drawn there taking a typical whole timeline's, 408 px. The whole of the lanes' part the
 focus is on (a click focuses one too) is said in the legend's place while one has it, so
 the box does not grow for it.
-The timeline itself is a module of its own (`apps/symphony-ui/src/task_timeline.rs`,
-the page kind `timeline`), which the shell loads once the page has drawn and is idle,
-so the page's first visit does not wait for it. On a phone it is a list: a row per
+The timeline itself is a chunk of its own (`apps/symphony-web/src/timeline.tsx`),
+which its box loads once it nears the screen and the page has settled, so the page's
+first visit does not wait for it. On a phone it is a list: a row per
 stage with its start, its label, its length and a bar as long, the wait in it drawn
 lighter; under each stage the builds, tests and gate changes that began in it (the
 review gate's are its rounds), a build or test named by its recipe, the machine's by

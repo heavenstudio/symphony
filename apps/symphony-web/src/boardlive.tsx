@@ -38,11 +38,11 @@ import {
 } from "./cache";
 import { sleep } from "./feed";
 import { type FrameRefresh, useFrame } from "./frame";
-import { holdPlace, type Journal, ReadCursor } from "./journal";
+import { type Journal, ReadCursor } from "./journal";
 import { type BoardRun, flushReload, keepBoard, type PageBoard, PageNotices } from "./live";
 import { href, scoped } from "./project";
 import { getIf, getJson, said } from "./request";
-import { field, list as items } from "./shared";
+import { field, holdPlace, list as items } from "./shared";
 import { Backoff } from "./state";
 import { load, save } from "./storage";
 import {
