@@ -1983,6 +1983,43 @@ fn in_a_callers_process_a_held_lock_never_holds_up_the_status() {
     holder.unlock().unwrap();
 }
 
+#[test]
+fn in_a_callers_process_a_run_whose_command_cannot_start_keeps_no_log() {
+    let case = Case::new();
+    let folders = Folders::new("recorder-run-unstarted-log");
+    let repo = repository(&folders.dir.join("repo"));
+    let runs = folders.dir.join("runs");
+    let env = in_process(&case, &folders, (&repo, &runs));
+    let missing = folders.dir.join("no-such-command");
+    let missing = missing.to_str().unwrap();
+    let asked = [
+        "run",
+        "--phase",
+        "test",
+        "--pipeline",
+        "test",
+        "--",
+        missing,
+    ];
+    let ran = crate::run(&env, &asked, "");
+    assert_eq!(ran.code, 127, "{}{}", ran.out, ran.err);
+    // Its log was made before its command was tried, and went when it could not start.
+    let [ended] = symphony_api::fold(day_lines(&folders.work, &runs, 1))
+        .try_into()
+        .unwrap();
+    assert_eq!(
+        (ended.started, ended.log, ended.log_bytes),
+        (None, None, None)
+    );
+    let kept: Vec<PathBuf> = fs::read_dir(runs.join("logs"))
+        .into_iter()
+        .flatten()
+        .flat_map(|day| fs::read_dir(day.unwrap().path()).unwrap())
+        .map(|log| log.unwrap().path())
+        .collect();
+    assert!(kept.is_empty(), "{kept:?}");
+}
+
 /// The first reading a beat wrote into the running record of the operation labelled `label` that
 /// read `processes` processes or more; a wait that gives up says the records a reader found and
 /// what the work folder holds.
