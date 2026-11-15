@@ -275,14 +275,18 @@ function reaches(r, clip) {
         && r.right > Math.max(0, clip?.left ?? 0) && r.left < Math.min(innerWidth, clip?.right ?? innerWidth);
 }
 
-// Whether a reserved box waits to draw within its sentinel's reach: 600 px above and below what
-// its own scroller shows of the window (`.viewport-sentinel`, as `viewport::waits_near` decides),
-// for a box past it never draws.
-function pendingNear() {
-    return [...document.querySelectorAll("[data-pending=true]")].some(box => {
+// Whether a box `selector` names is within a sentinel's reach: 600 px above and below what its own
+// scroller shows of the window (`.viewport-sentinel`, as `viewport::waits_near` decides).
+function near(selector) {
+    return [...document.querySelectorAll(selector)].some(box => {
         const r = box.getBoundingClientRect();
         return reaches(r) && reaches(r, scrollerOf(box)?.getBoundingClientRect());
     });
+}
+
+// Whether a reserved box waits to draw within its sentinel's reach, for a box past it never draws.
+function pendingNear() {
+    return near("[data-pending=true]");
 }
 
 // Call `stop` on the reader's own scroll, click or key (typing in a field aside); what it returns
@@ -344,50 +348,72 @@ function addressed() {
     try { return decodeURIComponent(location.hash.slice(1)); } catch { return null; }
 }
 
-// A landing on the element the address names, held: wherever the page scrolls it into view
-// (`scrollAnchor`, here and in the web client's route.ts: at the page's scroll padding, just below
-// the header), it stays while the page draws around it. Each frame it is scrolled into view again
-// once something drawn moved it, or the page's length changed (one at the page's end may go higher
-// now), until four frames pass with nothing moved, no reserved box waiting within its sentinel's
-// reach (`pendingNear`) and no region still busy (`aria-busy`: a ghost not lifted, a read not in),
-// or 1800 at most, a backstop as `reviewHoldPlace`'s. The browser's own scroll anchoring holds
-// none of this while the page is under its ghost (`.settle`, hidden), and the sections that draw
-// above a card once the landing brings them near grow it by their pictures. It ends at the
-// reader's own scroll, click or key, at a scroll that moved the page and the element alike (a
-// script's, not a draw's: the browser's own pull back at the page's end aside), at the next landing
-// and once the address is another. One landing is held at a time.
-let landing = 0;
-function holdAnchor() {
-    const id = addressed(), held = ++landing, href = location.href;
-    let target = id && document.getElementById(id);
-    if (!target) return;
-    let stopped = false, frame = 0, quiet = 0;
-    const listening = onGesture(() => { stopped = true; });
-    const root = document.documentElement;
-    // Where the hold left things: the element's top, the page's scroll and its scroller's, and the
-    // page's length.
-    const place = () => [target.getBoundingClientRect().top, scrollY, scrollerOf(target)?.scrollTop ?? 0, root.scrollHeight];
-    let [top, y, inner, length] = place();
+// The landing on the element the address names, one for each navigation (`requested`): wherever
+// the page lands it (`land`, from `scrollAnchor` here and from the web client's route.ts: at the
+// page's scroll padding, just below the header), it is held there while the page draws around it.
+// Each frame it is scrolled into view again once something drawn moved it, or the page's length
+// changed (one at the page's end may go higher now), until four frames pass with nothing moved, no
+// reserved box waiting within its sentinel's reach (`pendingNear`) and no region busy within that
+// reach (`aria-busy`: a ghost not lifted, a read not in), or 1800 at most, a backstop as
+// `reviewHoldPlace`'s. The browser's own scroll anchoring holds none of this while the page is
+// under its ghost (`.settle`, hidden), and the sections that draw above a card once the landing
+// brings them near grow it by their pictures. The landing ends at the reader's own scroll, click
+// or key, and at a scroll that moved the page and the element alike (a script's, not a draw's: the
+// browser's own pull back at the page's end aside); once ended it stays so until the next
+// navigation, so a later call to land (a section's read in, or the page's last, route.ts) leaves
+// the page where the reader or the script put it. A hold that ran out lands again at such a call.
+let landing = { generation: 0, ended: true, holds: 0, place: null, listening: () => {} };
+
+// Where `target` and the page are: its top, the page's scroll and its scroller's, the page's length.
+function placeOf(target) {
+    return [target.getBoundingClientRect().top, scrollY, scrollerOf(target)?.scrollTop ?? 0, document.documentElement.scrollHeight];
+}
+
+// Whether the page went from `before` to `now` (each `placeOf`) by a scroll that moved the element
+// alike.
+function scrolledAway([top, y, inner], [now, nowY, nowInner, nowLength]) {
+    const scrolled = nowY - y + nowInner - inner;
+    const pulledBack = nowY < y && nowY >= nowLength - document.documentElement.clientHeight - 1;
+    return Math.abs(scrolled) >= 0.5 && !pulledBack && Math.abs(now - top + scrolled) < 1;
+}
+
+function endLanding() {
+    landing.ended = true;
+    landing.listening();
+}
+
+// Land on `target`, the element the address names: open every `details` around it, scroll it into
+// view and hold it there, unless the reader or a script ended this navigation's landing.
+function land(target) {
+    if (landing.generation !== requested) {
+        endLanding();
+        const current = { generation: requested, ended: false, holds: 0, place: null };
+        current.listening = onGesture(() => { current.ended = true; current.listening(); });
+        landing = current;
+    } else if (landing.ended || (landing.place && scrolledAway(landing.place, placeOf(target)))) {
+        return endLanding();
+    }
+    for (let parent = target; parent; parent = parent.parentElement) {
+        if (parent instanceof HTMLDetailsElement) parent.open = true;
+    }
+    target.scrollIntoView();
+    const current = landing, id = target.id, href = location.href, held = ++current.holds;
+    let frame = 0, quiet = 0;
+    current.place = placeOf(target);
     const hold = () => {
-        target = document.getElementById(id);
-        if (!stopped && held === landing && location.href === href && target) {
-            const [now, nowY, nowInner, nowLength] = place();
-            const scrolled = nowY - y + nowInner - inner;
-            const pulledBack = nowY < y && nowY >= nowLength - root.clientHeight - 1;
-            if (Math.abs(scrolled) < 0.5 || pulledBack || Math.abs(now - top + scrolled) >= 1) {
-                if (Math.abs(now - top) >= 0.5 || nowLength !== length) target.scrollIntoView();
-                const after = target.getBoundingClientRect().top;
-                const moved = Math.abs(now - top) >= 0.5 || Math.abs(after - top) >= 0.5;
-                [top, y, inner, length] = place();
-                quiet = moved || pendingNear() || document.querySelector("[aria-busy=true]") ? 0 : quiet + 1;
-                if (quiet < 4 && ++frame < 1800) return requestAnimationFrame(hold);
-            }
-        }
-        listening();
+        const now = document.getElementById(id);
+        if (current.ended || landing !== current || held !== current.holds || location.href !== href || !now) return;
+        const before = current.place, there = placeOf(now);
+        if (scrolledAway(before, there)) return endLanding();
+        if (Math.abs(there[0] - before[0]) >= 0.5 || there[3] !== before[3]) now.scrollIntoView();
+        current.place = placeOf(now);
+        const moved = Math.abs(there[0] - before[0]) >= 0.5 || Math.abs(current.place[0] - before[0]) >= 0.5;
+        quiet = moved || pendingNear() || near("[aria-busy=true]") ? 0 : quiet + 1;
+        if (quiet < 4 && ++frame < 1800) requestAnimationFrame(hold);
     };
     requestAnimationFrame(hold);
 }
-window.reviewHoldAnchor = holdAnchor;
+window.reviewLand = land;
 
 // `then`, once the page has drawn its data (none of its reads in flight for half a second, the
 // last of them answered) and the browser is idle.
@@ -573,12 +599,7 @@ function scrollAnchor(preserveScroll) {
     if (id === null) return;
     if (!id) { if (!preserveScroll) scrollTo(0, 0); return; }
     const target = document.getElementById(id);
-    if (!target) return;
-    for (let parent = target; parent; parent = parent.parentElement) {
-        if (parent instanceof HTMLDetailsElement) parent.open = true;
-    }
-    target.scrollIntoView();
-    holdAnchor();
+    if (target) land(target);
 }
 
 async function show(generation, scroll) {
@@ -633,6 +654,7 @@ function navigate() {
         dispatchEvent(new Event("review:overlay"));
         overlay.callback?.(null);
     }
+    endLanding();
     const generation = ++requested;
     const scroll = { x: scrollX, y: scrollY, initial: !active };
     document.documentElement.dataset.navigation = "loading";

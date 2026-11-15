@@ -3,14 +3,17 @@
 //! to it brings the sections above it near, and they draw after it, taller than the ghosts they
 //! replace (a picture in each, and in each card's history). On a first visit and on a move in place
 //! from another document, on a desk and a phone. The landing is held by the shell
-//! (`holdAnchor`, assets/shell.js); here the sections' reads are held until the page has landed, so
-//! they draw after it on any machine.
+//! (`land`, assets/shell.js); here the sections' reads are held until the page has landed, so
+//! they draw after it on any machine, and the device keeps no copy of them ([`NO_STORE`]): the
+//! shell's read-ahead of the other document's links would otherwise put the card's sections on it
+//! before the reads are held. A reader who scrolls away during the landing, by a wheel or a
+//! script, is left there when the reads land.
 
 use serde_json::{Map, Value, json};
 
 use crate::chrome::Chrome;
 use crate::site::Site;
-use crate::{SHOWN, common, dist};
+use crate::{NO_STORE, SHOWN, common, dist};
 
 const LANDING: &str = "docs/landing.md";
 const FROM: &str = "docs/from.md";
@@ -147,13 +150,38 @@ const PLACE: &str = "(() => { const line = document.getElementById('five'), card
     return {line: line?.getBoundingClientRect().top ?? null, card: card?.getBoundingClientRect().top ?? null,
         header: document.querySelector('.app-header').getBoundingClientRect().bottom,
         padding: parseFloat(getComputedStyle(document.documentElement).scrollPaddingTop),
-        down: line ? line.getBoundingClientRect().top + scrollY : null}; })()";
+        down: line ? line.getBoundingClientRect().top + scrollY : null, y: scrollY}; })()";
 
-fn viewport(page: &mut Chrome, width: u32, height: u32) {
+/// True once the ghost over the card's page has lifted (`.settle`, at its deadline while the reads
+/// are held) and the card's ghost is at the scroll padding again.
+fn lifted() -> String {
+    format!(
+        "document.getElementById('five')?.closest('.settle')?.dataset.settled === 'true' && {LANDED}"
+    )
+}
+
+/// Counts the page's own scrolls from now on, by an element or the window (`window.pageScrolls`).
+const COUNT_SCROLLS: &str = "(() => { window.pageScrolls = 0;
+    const count = (owner, name) => { const own = owner[name]; owner[name] = function (...args) { window.pageScrolls += 1; return own.apply(this, args); }; };
+    count(Element.prototype, 'scrollIntoView'); count(Element.prototype, 'scrollTo'); count(Element.prototype, 'scrollBy');
+    count(window, 'scrollTo'); count(window, 'scrollBy'); count(window, 'scroll'); return true; })()";
+
+/// Two frames from now: a hold running sees what happened before it.
+const TWO_FRAMES: &str =
+    "new Promise(done => requestAnimationFrame(() => requestAnimationFrame(() => done(true))))";
+
+/// A browser of its own, `width` by `height`, whose device keeps no copy of what it reads.
+fn browser(width: u32, height: u32) -> Option<Chrome> {
+    let mut page = crate::chrome()?;
     page.call(
         "Emulation.setDeviceMetricsOverride",
         json!({"width": width, "height": height, "deviceScaleFactor": 1, "mobile": width < 600}),
     );
+    page.call(
+        "Page.addScriptToEvaluateOnNewDocument",
+        json!({ "source": NO_STORE }),
+    );
+    Some(page)
 }
 
 /// Arrive at the fifth card by its link in a browser of its own, `width` by `height`: opened at
@@ -161,8 +189,7 @@ fn viewport(page: &mut Chrome, width: u32, height: u32) {
 /// held until the page has landed, then let go. Says where the card landed, where it is once the
 /// page around it has drawn, and a moment later.
 fn arrive(site: &Site, width: u32, height: u32, in_place: bool) -> Option<[Value; 3]> {
-    let mut page = crate::chrome()?;
-    viewport(&mut page, width, height);
+    let mut page = browser(width, height)?;
     if in_place {
         page.open(&site.url(&format!("/{FROM}")));
         let link = format!("a[href=\"{LINK}\"]");
@@ -225,5 +252,72 @@ fn a_link_to_a_document_card_lands_it_below_the_header_and_it_stays_as_the_secti
                 );
             }
         }
+    }
+}
+
+/// How a reader leaves a landing: a wheel up the page, or a script's scroll with no event of the
+/// reader's.
+#[derive(Clone, Copy, Debug)]
+enum Away {
+    Wheel,
+    Script,
+}
+
+#[test]
+fn a_reader_who_scrolls_away_from_a_landing_is_left_there_when_the_reads_land() {
+    let site = site();
+    for away in [Away::Wheel, Away::Script] {
+        let Some(mut page) = browser(1280, 900) else {
+            return;
+        };
+        site.hold_route("/api/section", true);
+        page.open(&site.url(&format!("/{LANDING}#five")));
+        // The ghost lifts first, so the reader's scroll is the only one: the lift itself moves
+        // the page under it, which the landing holds.
+        assert!(
+            page.wait_for(&lifted(), SHOWN),
+            "{away:?}: the page lands on the card's ghost and its ghost lifts: {}",
+            page.eval(PLACE)
+        );
+        let y = page.eval(PLACE)["y"].as_f64().unwrap_or(f64::NAN);
+        match away {
+            Away::Wheel => {
+                page.call(
+                    "Input.dispatchMouseEvent",
+                    json!({"type": "mouseWheel", "x": 640, "y": 450, "deltaX": 0, "deltaY": -500}),
+                );
+            }
+            Away::Script => {
+                page.eval("scrollBy(0, -500)");
+            }
+        }
+        assert!(
+            page.wait_for(&format!("scrollY < {y} - 250"), SHOWN),
+            "{away:?}: the reader scrolls up from the card: {}",
+            page.eval(PLACE)
+        );
+        page.eval(TWO_FRAMES);
+        let left = page.eval(PLACE);
+        page.eval(COUNT_SCROLLS);
+        // The reads land: the card's own (a section read in lands it again) and the page's last.
+        site.hold_route("/api/section", false);
+        assert!(
+            page.wait_for(STILL, SHOWN),
+            "{away:?}: the page around the card draws and holds still: {}",
+            page.eval(PLACE)
+        );
+        page.pump(std::time::Duration::from_millis(600));
+        let later = page.eval(PLACE);
+        eprintln!("LEFT {away:?}: left {left}, later {later}");
+        assert_eq!(
+            page.eval("window.pageScrolls"),
+            json!(0),
+            "{away:?}: nothing scrolls the page once the reader left the landing: left {left}, later {later}"
+        );
+        let number = |key: &str| later[key].as_f64().unwrap_or(f64::NAN);
+        assert!(
+            (number("line") - number("padding")).abs() > 100.0,
+            "{away:?}: the card is not brought back to the scroll padding: left {left}, later {later}"
+        );
     }
 }

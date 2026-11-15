@@ -96,23 +96,28 @@ describe("the page's route and its address", () => {
     expect(element.scrollIntoView).toHaveBeenCalledTimes(1);
   });
 
-  it("has the shell hold the element it brought into view, and nothing it did not", () => {
-    const steps: string[] = [];
-    const element = {
-      parentElement: null,
-      scrollIntoView: () => steps.push("scrolled"),
-    };
-    vi.stubGlobal("HTMLDetailsElement", class {});
-    vi.stubGlobal("reviewHoldAnchor", () => steps.push("held"));
+  it("has the shell land the element its fragment names, and nothing it does not", () => {
+    class Details {
+      open = false;
+      parentElement = null;
+    }
+    const details = new Details();
+    const element = { parentElement: details, scrollIntoView: vi.fn() };
+    const landed: unknown[] = [];
+    vi.stubGlobal("HTMLDetailsElement", Details);
+    vi.stubGlobal("reviewLand", (target: unknown) => landed.push(target));
     vi.stubGlobal("document", { getElementById: (id: string) => (id === "you" ? element : null) });
     vi.stubGlobal("location", { hash: "#you" });
     scrollAnchor();
-    expect(steps).toEqual(["scrolled", "held"]);
+    expect(landed).toEqual([element]);
+    // The shell opens and scrolls, or leaves the page where the reader put it.
+    expect(details.open).toBe(false);
+    expect(element.scrollIntoView).not.toHaveBeenCalled();
     for (const hash of ["#gone", ""]) {
       vi.stubGlobal("location", { hash });
       scrollAnchor();
     }
-    expect(steps).toEqual(["scrolled", "held"]);
+    expect(landed).toEqual([element]);
   });
 
   it("scrolls on its own where no shell holds the landing", () => {

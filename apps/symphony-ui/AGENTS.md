@@ -645,10 +645,11 @@ never the whole target, which the release run runs.
   then `ready`, or `failed` if the page cannot load. It preserves a scroll made
   after the new page mounts instead of applying its late top reset. A scroll to the
   element the address names, its own or a web kind's (`route.ts`), is held there while
-  the page draws around it (`holdAnchor`): the sections a landing brings near draw after
+  the page draws around it (`land`): the sections a landing brings near draw after
   it, often taller than their ghosts, and the browser's own scroll anchoring holds nothing
-  under a page's ghost (`.settle`). The reader's own scroll, click or key ends the hold,
-  and so does a script's scroll.
+  under a page's ghost (`.settle`). The reader's own scroll, click or key ends the landing,
+  and so does a script's scroll, until the next navigation: a later read that lands it
+  again leaves the page where they put it.
   Compilation leaves `OUT/public` serving its last build;
   packaging assembles beside it and `symphony-build publish-client` atomically exchanges the
   complete directories (macOS/Linux). Failed builds leave the published client
