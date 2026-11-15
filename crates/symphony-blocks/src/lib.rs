@@ -72,6 +72,7 @@ pub struct ProgressBar {
 /// task's `branch`, shown while there is a `payload`, which the button sends back to the action
 /// `action` as it came (approve to land: the exact patch to land).
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct TaskOffer {
     /// The board action's name.
     pub action: String,

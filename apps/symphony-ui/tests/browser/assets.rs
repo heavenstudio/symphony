@@ -57,7 +57,7 @@ fn modules(dist: &Path) -> std::collections::HashMap<String, Module> {
 /// shell's manifest never names it, the program script's map of its chunks does, as the kinds'
 /// chunks are named there (the splitter's own loader, never used, names it `/./assets/…`).
 pub(super) fn media_chunk(dist: &Path) -> String {
-    let program = module(dist, "tasks").script;
+    let program = module(dist, "panel").script;
     let script = std::fs::read_to_string(dist.join(program.trim_start_matches('/')))
         .expect("the program's script");
     let named = |name: &&str| {

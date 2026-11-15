@@ -277,6 +277,69 @@ fn under_a_cap_an_orchestrator_shows_its_open_tasks_against_it_and_a_worker_show
 }
 
 #[test]
+fn an_agent_counts_the_open_tasks_it_orchestrates_which_its_tasks_leave_out() {
+    let c = Case::new();
+    let orchestrated = |slug: &str, by: &str| {
+        c.f.store
+            .create(&NewTask::new(slug, slug, "owner"))
+            .unwrap();
+        c.f.store.take_role(slug, by, "orchestrator").unwrap();
+    };
+    // Open in any status but done or cancelled: ready, in progress, blocked.
+    c.f.store
+        .take_role("sim/jump", &c.orch, "orchestrator")
+        .unwrap();
+    for slug in ["sim/dock", "sim/lift", "sim/stall", "sim/drop", "sim/land"] {
+        orchestrated(slug, &c.orch);
+    }
+    let worker = c.worker();
+    c.f.store.claim("sim/stall", &worker).unwrap();
+    c.f.store.move_to("sim/stall", "blocked", &worker).unwrap();
+    c.f.store.move_to("sim/drop", "cancelled", &c.orch).unwrap();
+    c.f.store.claim("sim/land", &worker).unwrap();
+    c.f.store.move_to("sim/land", "review", &worker).unwrap();
+    let reviewer = c.f.session_with(local_session("reviewer"));
+    c.f.store
+        .take_role("sim/land", &reviewer, "reviewer")
+        .unwrap();
+    c.f.store
+        .verdict("sim/land", &reviewer, "approve", "ok")
+        .unwrap();
+    // Another orchestrator's tasks are its own, and a worker holding the role on one follows it.
+    let other = c.f.session_with(local_session("orchestrator"));
+    orchestrated("sim/other", &other);
+    orchestrated("sim/side", &worker);
+    let view = c.view();
+    let orch = found(&view, &c.orch);
+    assert_eq!(
+        orch.following, 4,
+        "sim/jump, sim/dock, sim/lift and the blocked sim/stall"
+    );
+    assert_eq!(
+        (orch.task, orch.role, orch.tasks),
+        (None, None, Vec::new()),
+        "its tasks and the task it works now stay bar orchestrating"
+    );
+    assert_eq!(found(&view, &other).following, 1);
+    let working = found(&view, &worker);
+    assert_eq!(working.following, 1);
+    assert!(working.tasks.iter().all(|t| t.role != "orchestrator"));
+    assert_eq!(found(&view, &reviewer).following, 0);
+    let json = parsed(&view);
+    let by = |handle: &str| {
+        json["agents"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|a| a["handle"] == handle)
+            .cloned()
+            .unwrap()
+    };
+    assert_eq!(by(&c.orch)["following"], 4);
+    assert_eq!(by(&reviewer)["following"], 0);
+}
+
+#[test]
 fn the_json_is_written_in_the_contracts_key_order_as_python_writes_it() {
     let c = Case::new();
     let handle = c.worker();
@@ -303,6 +366,7 @@ fn the_json_is_written_in_the_contracts_key_order_as_python_writes_it() {
      "status": "in_progress"
     }}
    ],
+   "following": 0,
    "worktree": "/wt/sim-jump",
    "branch": "sim/jump",
    "agent": "claude",

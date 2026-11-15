@@ -19,14 +19,20 @@ export class Failure extends Error {
   constructor(
     readonly kind: FailureKind,
     readonly text: string,
+    /**
+     * What the server or the browser said of it, in their own words, before this client's around
+     * them: a refusal's `error` (else that the server answered its status), the message of the
+     * error a fetch or a body's read failed with. `text` where neither said anything.
+     */
+    readonly own: string = text,
   ) {
     super(text);
   }
 
   /** A refusal by the server's status: a 404 is missing, a server error leaves it unknown. */
-  static refused(status: number, text: string): Failure {
-    if (status === 404) return new Failure("missing", text);
-    return new Failure(status >= 500 ? "uncertain" : "known", text);
+  static refused(status: number, text: string, own = text): Failure {
+    if (status === 404) return new Failure("missing", text, own);
+    return new Failure(status >= 500 ? "uncertain" : "known", text, own);
   }
 }
 
@@ -121,7 +127,7 @@ async function exchanged(
     response = await inTime(fetched, ANSWER_MS);
   } catch (error) {
     mark("failed");
-    throw new Failure("uncertain", reading ? UNREACHABLE : String(error));
+    throw new Failure("uncertain", reading ? UNREACHABLE : String(error), said(error));
   }
   if (response === null) {
     controller.abort();
@@ -164,11 +170,11 @@ async function answer(
       ? refusedRead(response.status, error)
       : (error ?? `The server answered ${response.status}`);
     mark("refused");
-    throw Failure.refused(response.status, text);
+    throw Failure.refused(response.status, text, error ?? `the server answered ${response.status}`);
   }
   if (unreadable !== undefined) {
     mark("failed");
-    throw new Failure("uncertain", String(unreadable));
+    throw new Failure("uncertain", String(unreadable), said(unreadable));
   }
   if (body === null) {
     mark("no-answer");

@@ -1,14 +1,16 @@
-// An agent's Go to session control (docs/TASKS.md, "Going to a session"): an ordinary link to its
-// session's web address; for a page on the server's machine, a button that has the Herdr app show
-// its pane; for a page anywhere else, a button that shows the pane's screen, read only. A
-// subagent's goes to its parent's session and says so; with nothing known there is none.
+// An agent's Go to session control (docs/TASKS.md, "Going to a session"), which the agents page's
+// rows and a task's role chips draw: an ordinary link to its session's web address; for a page on
+// the server's machine, a button that has the Herdr app show its pane; for a page anywhere else, a
+// button that shows the pane's screen, read only. A subagent's goes to its parent's session and says
+// so; with nothing known there is none.
 //
-// What crates/symphony-api's agents.rs decides for it (`web_address`, `SessionGo::control`,
-// `via_parent`) is carried here, held to the Rust by the cases it writes (wire.cases.json,
-// session.test.tsx), as project.ts carries the project's routes.
+// What crates/symphony-api's agents.rs decides for it (`SessionGo::control`, `via_parent`) is
+// carried here, held to the Rust by the cases it writes (wire.cases.json, session.test.tsx), as
+// project.ts carries the project's routes; the address it links is a `webAddress` (links.ts).
 
 import { useState } from "react";
 import { Button } from "./button";
+import { webAddress } from "./links";
 import { useMount } from "./mount";
 import { scoped } from "./project";
 import { getJson, post, said } from "./request";
@@ -24,9 +26,6 @@ export type SessionControl =
   /** The pane's screen, read only: what a page on another machine sees. */
   | { kind: "screen"; pane: string };
 
-/** `http://` or `https://` first, in any case of its ASCII letters (no other letter folds to one). */
-const SCHEME = /^https?:\/\//i;
-
 /** Unicode's White_Space but its one range (U+2000 to U+200A), by their code points. */
 const SPACES = [0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x20, 0x85, 0xa0, 0x1680, 0x2028, 0x2029, 0x202f];
 const MORE_SPACES = [0x205f, 0x3000];
@@ -38,28 +37,6 @@ const MORE_SPACES = [0x205f, 0x3000];
  */
 export function whiteSpace(code: number): boolean {
   return (code >= 0x2000 && code <= 0x200a) || SPACES.includes(code) || MORE_SPACES.includes(code);
-}
-
-/**
- * Whether `code`, a UTF-16 unit, is a space or a control character as Rust's `char` names them
- * (`is_whitespace`, `is_control`): Unicode's White_Space, and the C0 and C1 controls with DEL.
- */
-export function spaceOrControl(code: number): boolean {
-  return code < 0x20 || (code >= 0x7f && code <= 0x9f) || whiteSpace(code);
-}
-
-/**
- * Whether a page may link to `url` as a session's web address: an `http://` or `https://` URL (in
- * any case) naming a host, with no space or control character in it, so no `javascript:` or other
- * scheme ever becomes one.
- */
-export function webAddress(url: string): boolean {
-  const scheme = SCHEME.exec(url);
-  if (scheme === null) return false;
-  for (let at = 0; at < url.length; at += 1) {
-    if (spaceOrControl(url.charCodeAt(at))) return false;
-  }
-  return /^[^/?#]/.test(url.slice(scheme[0].length));
 }
 
 /**

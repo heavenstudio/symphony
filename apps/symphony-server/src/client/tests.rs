@@ -102,9 +102,9 @@ fn shipped_shell_references_its_real_modules_and_valid_wasm() {
         .map(String::as_str)
         .collect();
     keys.sort_unstable();
-    for kind in [
-        "board", "docs", "overlay", "panel", "queue", "review", "tasks", "timeline",
-    ] {
+    // The program's kinds and the web client's that the committed build and the one regenerated
+    // from this tree both have: no page is the program's any more.
+    for kind in ["board", "docs", "overlay", "panel", "queue", "review"] {
         assert!(keys.contains(&kind), "no {kind} in {keys:?}");
     }
     for module in manifest.as_object().unwrap().values() {

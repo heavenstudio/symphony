@@ -11,7 +11,7 @@ use flate2::Compression;
 use flate2::read::GzDecoder;
 use flate2::write::GzEncoder;
 
-use super::{Site, fnv1a, runs};
+use super::{Site, fnv1a, outline_of, runs};
 
 /// A build folder of its own under the system's temporary folder: a shell naming `script` and
 /// each (path, bytes) of `files`, removed on drop.
@@ -303,4 +303,33 @@ fn the_build_sizes_are_each_files_gzip_as_sent_made_once_for_the_run() {
     let (_, body) = get(site.addr, "/assets/app.css", "");
     assert_eq!(body, best_gzip(&style));
     assert_eq!((runs(&script), runs(&style)), (1, 1));
+}
+
+#[test]
+fn a_documents_outline_names_the_ids_its_fixture_gives_each_section_and_none_otherwise() {
+    let document = |anchors: Option<serde_json::Value>| {
+        let mut document = serde_json::json!({"version": 1, "path": "docs/a.md", "title": "A",
+            "waiting": [], "crumbs": [], "headings": [], "tasks": [], "cards": [], "threads": {},
+            "sections": [{"start": 1, "end": 2, "key": "card:one", "hash": "h", "part": 0,
+                "blocks": [{"type": "paragraph", "spans": []}]}]});
+        if let Some(anchors) = anchors {
+            document["anchors"] = anchors;
+        }
+        document
+    };
+    let named = outline_of(&document(Some(serde_json::json!({"card:one": ["one"]}))));
+    assert_eq!(named["anchors"], serde_json::json!({"card:one": ["one"]}));
+    assert_eq!(
+        named["document"].get("anchors"),
+        None,
+        "the ids are the outline's alone"
+    );
+    assert_eq!(
+        named["document"]["sections"][0]["blocks"],
+        serde_json::json!([])
+    );
+    assert_eq!(
+        outline_of(&document(None))["anchors"],
+        serde_json::json!({})
+    );
 }

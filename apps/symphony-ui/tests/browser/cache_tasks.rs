@@ -1,5 +1,5 @@
 //! A task page drawn from this device's cache on a return visit (docs/analysis/client-cache.md,
-//! "A return visit, step by step"; src/task_live.rs). With the server's reads held back, the page
+//! "A return visit, step by step"; apps/symphony-web/src/task-live.ts). With the server's reads held back, the page
 //! draws the task's brief and its thread's newest messages before any answer, marked as possibly
 //! out of date, its actions waiting and its draft editable. Once the board's version is read it
 //! asks whether each changed: an unchanged task is a `304` with no body, and a message posted or a
