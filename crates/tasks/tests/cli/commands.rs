@@ -122,6 +122,30 @@ fn callback_sets_or_clears_the_session_url_alone_or_beside_a_channel() {
 }
 
 #[test]
+fn a_plain_orchestrator_callback_says_it_hears_chat_only_as_a_fallback() {
+    let c = Case::new();
+    let me = c.register("orchestrator");
+    assert_eq!(
+        c.ok(&me, &["callback", "codex:abcdef01"]),
+        format!(
+            "CALLBACK {me} codex:abcdef01\n\
+             CHAT {me} (fallback: an orchestrator with a callback; --chat takes the seat)\n"
+        )
+    );
+    assert_eq!(
+        c.ok(&me, &["callback", "codex:abcdef01", "--chat"]),
+        format!("CALLBACK {me} codex:abcdef01\nCHAT {me}\n")
+    );
+    // A worker's plain callback hears no chat, and nobody else is there to.
+    let worker = c.register("worker");
+    c.ok(&me, &["callback", "--off"]);
+    assert_eq!(
+        c.ok(&worker, &["callback", "codex:abcdef02"]),
+        format!("CALLBACK {worker} codex:abcdef02\nCHAT nobody registered\n")
+    );
+}
+
+#[test]
 fn a_refused_callback_leaves_the_session_url_as_it_was() {
     let c = Case::new();
     let me = c.register("worker");

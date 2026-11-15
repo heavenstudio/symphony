@@ -867,6 +867,45 @@ async fn a_refused_project_is_refused_through_todays_paths_as_under_its_prefix()
     }
 }
 
+/// The one server's own JSON answers, its `/api/front` and a refused project's error, say
+/// `nosniff` as a project's own answers do, under its prefix and through today's paths.
+#[tokio::test]
+async fn the_one_servers_own_json_answers_say_nosniff_as_a_projects_do() {
+    let machine = Machine::new();
+    let path = machine.tree.path("machine");
+    let mut registry = Registry::read(&path).unwrap();
+    let beta = registry
+        .projects
+        .iter_mut()
+        .find(|entry| entry.id == "beta")
+        .unwrap();
+    beta.plugins.push("fixture-uncompiled".into());
+    registry.write(&path).unwrap();
+    let from_beta = ("referer", "http://127.0.0.1:1/beta/docs/");
+    for (route, headers, status) in [
+        (symphony_api::FRONT_PATH, vec![], StatusCode::OK),
+        ("/beta/api/board", vec![], StatusCode::SERVICE_UNAVAILABLE),
+        (
+            "/api/board",
+            vec![from_beta],
+            StatusCode::SERVICE_UNAVAILABLE,
+        ),
+        ("/alpha/api/nope", vec![], StatusCode::NOT_FOUND),
+    ] {
+        let response = machine.get(route, &headers).await;
+        assert_eq!(response.status(), status, "{route} {headers:?}");
+        let said = |name| response.headers()[name].to_str().unwrap().to_string();
+        assert_eq!(
+            [
+                said(header::CONTENT_TYPE),
+                said(header::X_CONTENT_TYPE_OPTIONS)
+            ],
+            ["application/json", "nosniff"],
+            "{route} {headers:?}"
+        );
+    }
+}
+
 #[tokio::test]
 async fn the_starters_id_taken_by_another_checkout_serves_that_checkout() {
     let machine = Machine::new();

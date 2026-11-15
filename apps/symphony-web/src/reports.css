@@ -122,6 +122,31 @@
   font-size: var(--fs-sm);
   color: var(--muted-foreground);
 }
+/* A figure's label links to its chart, its link stretched over the figure's card: the whole card
+   is the tap, hovered or focused as one. */
+.reports-figure {
+  position: relative;
+}
+.reports-figure dt a {
+  color: inherit;
+  text-decoration: none;
+}
+.reports-figure dt a::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: var(--r-lg);
+}
+.reports-figure:has(dt a:hover) {
+  border-color: var(--muted-foreground);
+}
+.reports-figure dt a:focus-visible {
+  outline: none;
+}
+.reports-figure dt a:focus-visible::after {
+  outline: 2px solid var(--ring, var(--primary));
+  outline-offset: 2px;
+}
 .reports-figure dd {
   margin: 0;
 }

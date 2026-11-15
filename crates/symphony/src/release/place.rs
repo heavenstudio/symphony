@@ -3,9 +3,9 @@
 //! admin folder with its real path ([`MARK`]). It is outside the main checkout and every other
 //! worktree, and holds none. Anything else found in its place, a link included, is refused and
 //! left exactly as it is. The build folder it keeps is cleared once it is older than
-//! [`BUILD_KEPT_DAYS`]. The checkout a build older than the rename to `just release` made under its
-//! name (`nightly` beside the checkout, [`LEGACY_LOCK_REASON`] and its mark) the first run of a
-//! build that knows the new name moves to it ([`legacy`]), once no process works in it.
+//! [`BUILD_KEPT_DAYS`]. A checkout a build older than the rename to `just release` makes under the
+//! old name, `nightly` beside the checkout, is never looked at, and named as `--worktree` it is
+//! refused as one the release run did not lock.
 
 use std::fs;
 use std::path::{Component, Path, PathBuf};
@@ -21,13 +21,6 @@ const MARK: &str = "symphony-release";
 pub(crate) const BUILT: &str = "symphony-release-built";
 /// The days the build folder the release run keeps is built on incrementally before it is cleared.
 pub(crate) const BUILD_KEPT_DAYS: f64 = 7.0;
-/// The checkout's name before the rename, beside where it is now.
-const LEGACY_NAME: &str = "nightly";
-/// The reason a build older than the rename locked the checkout with.
-pub(crate) const LEGACY_LOCK_REASON: &str = "the Symphony nightly's checkout (docs/RELEASES.md)";
-/// [`MARK`] and [`BUILT`] as a build older than the rename named them.
-const LEGACY_MARK: &str = "symphony-nightly";
-const LEGACY_BUILT: &str = "symphony-nightly-built";
 /// The git locks a killed checkout or reset leaves in a worktree's admin folder.
 const GIT_LOCKS: [&str; 2] = ["index.lock", "HEAD.lock"];
 
@@ -232,121 +225,6 @@ pub(crate) fn place(
         checkout,
         admin: Some(admin),
     })
-}
-
-/// What a build older than the rename made at `nightly` beside the run's checkout, which the run
-/// moves to the names this build gives it ([`legacy`], [`Legacy::moved`]).
-#[derive(Debug, Default, PartialEq, Eq)]
-pub(crate) struct Legacy {
-    /// The checkout that build locked and marked, where it is and where it goes.
-    checkout: Option<(PathBuf, PathBuf)>,
-    /// Why that checkout stays where it is: something is where it would go.
-    left: Option<String>,
-}
-
-/// What [`Legacy::moved`] moves of what a build older than the rename made at `nightly` beside
-/// `asked`, the run's checkout in the repository whose checkout is `root` and common dir `common`:
-/// a checkout it locked with [`LEGACY_LOCK_REASON`] and marked, with nothing where it would go.
-/// Anything else is left as it is; nothing is asked for its old name or through a link. Nothing is
-/// written.
-pub(crate) fn legacy(root: &Path, common: &Path, asked: &Path) -> Result<Legacy, String> {
-    let asked = normal(asked);
-    let Some(name) = (asked.file_name()).map(|name| name.to_string_lossy().into_owned()) else {
-        return Ok(Legacy::default());
-    };
-    if name == LEGACY_NAME {
-        return Ok(Legacy::default());
-    }
-    legacy_checkout(root, common, &asked.with_file_name(LEGACY_NAME), &asked)
-}
-
-/// [`legacy`]'s checkout: the one at `old`, which goes to `asked`.
-fn legacy_checkout(root: &Path, common: &Path, old: &Path, asked: &Path) -> Result<Legacy, String> {
-    if is_link(old) || is_link(asked) {
-        return Ok(Legacy::default());
-    }
-    let (from, to) = (real(old), real(asked));
-    let worktrees = listed(&git(root, &["worktree", "list", "--porcelain", "-z"])?);
-    let ours = (worktrees.iter())
-        .find(|tree| tree.path == from)
-        .is_some_and(|tree| tree.locked.as_deref() == Some(LEGACY_LOCK_REASON))
-        && fs::symlink_metadata(&from).is_ok_and(|meta| meta.is_dir())
-        && admin(common, &from).is_some_and(|admin| marked(&admin.join(LEGACY_MARK), &from));
-    if !ours {
-        return Ok(Legacy::default());
-    }
-    if fs::symlink_metadata(&to).is_ok() || worktrees.iter().any(|tree| tree.path == to) {
-        return Ok(Legacy {
-            left: Some(format!(
-                "left {}, the checkout a build older than the rename to `just release` made: {} is \
-                 in the way",
-                from.display(),
-                to.display()
-            )),
-            ..Legacy::default()
-        });
-    }
-    Ok(Legacy {
-        checkout: Some((from, to)),
-        ..Legacy::default()
-    })
-}
-
-impl Legacy {
-    /// The folders [`Legacy::moved`] moves, which no process may work in while it does.
-    pub(crate) fn trees(&self) -> Vec<&Path> {
-        (self.checkout.iter().map(|(from, _)| from.as_path())).collect()
-    }
-
-    /// Move it in the repository whose checkout is `root` and common dir `common`, within `until`:
-    /// the checkout unlocked, moved by git with its build folder, locked with [`LOCK_REASON`] and
-    /// marked again, its build's stamp renamed. What it moved, and a checkout it left because
-    /// something is where it would go.
-    pub(crate) fn moved(
-        self,
-        root: &Path,
-        common: &Path,
-        until: Bound<'_>,
-    ) -> Result<Vec<String>, String> {
-        let mut noted: Vec<String> = self.left.into_iter().collect();
-        if let Some((from, to)) = &self.checkout {
-            noted.push(moved_checkout(root, common, from, to, until)?);
-        }
-        Ok(noted)
-    }
-}
-
-/// [`Legacy::moved`]'s checkout: the one at `from` to `to`, both real paths.
-fn moved_checkout(
-    root: &Path,
-    common: &Path,
-    from: &Path,
-    to: &Path,
-    until: Bound<'_>,
-) -> Result<String, String> {
-    let (at, there) = (from.to_string_lossy(), to.to_string_lossy());
-    git_until(root, &["worktree", "unlock", &at], until)?;
-    if let Err(why) = git_until(root, &["worktree", "move", &at, &there], until) {
-        let relocked = ["worktree", "lock", "--reason", LEGACY_LOCK_REASON, &at];
-        let _ = git_until(root, &relocked, until);
-        return Err(format!("cannot move {at} to {there}: {why}"));
-    }
-    let admin = admin(common, to).ok_or_else(|| format!("git kept no admin folder for {there}"))?;
-    let marker = admin.join(MARK);
-    fs::write(&marker, format!("{there}\n")).map_err(|e| crate::text::os_error(&e, &marker))?;
-    let _ = fs::remove_file(admin.join(LEGACY_MARK));
-    if fs::symlink_metadata(admin.join(LEGACY_BUILT)).is_ok() {
-        let _ = fs::rename(admin.join(LEGACY_BUILT), admin.join(BUILT));
-    }
-    git_until(
-        root,
-        &["worktree", "lock", "--reason", LOCK_REASON, &there],
-        until,
-    )?;
-    Ok(format!(
-        "moved the release run's checkout from {at} to {there}, where a build older than the \
-         rename to `just release` made it"
-    ))
 }
 
 /// Remove the git locks a killed git left in the admin folder `admin`, when no process holds one

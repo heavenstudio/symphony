@@ -716,6 +716,17 @@ export function figures(page: Page): [Figure, Figure, Figure, Figure] {
   return [done, lead, agents, decisions];
 }
 
+/** The four figures, each with the id of the chart it sums up, which its link opens. */
+export function linkedFigures(page: Page): [Figure, string][] {
+  const [done, lead, agents, decisions] = figures(page);
+  return [
+    [done, "done"],
+    [lead, "lead"],
+    [agents, "agents"],
+    [decisions, "decisions"],
+  ];
+}
+
 /**
  * `page` without its leading periods from before the project's roll-up began (`first`): the
  * periods no source recorded that end by its first file's first hour, all hatching on every chart
@@ -864,7 +875,7 @@ interface ReportProps {
 /**
  * One window's report, its axis from the first period recorded or the roll-up's start
  * (`fromFirstRecord`). The period tapped is the same on every chart; the series `hidden` names are
- * hidden on theirs.
+ * hidden on theirs. Each figure links to its chart while the charts are drawn.
  */
 function Report({ page: whole, hidden, onToggle }: ReportProps) {
   const [tapped, setTapped] = useState<number | null>(null);
@@ -892,9 +903,9 @@ function Report({ page: whole, hidden, onToggle }: ReportProps) {
         </details>
       )}
       <dl className="reports-figures">
-        {figures(page).map((figure) => (
+        {linkedFigures(page).map(([figure, chart]) => (
           <div key={figure.label} className="reports-figure">
-            <dt>{figure.label}</dt>
+            <dt>{drawn ? <a href={`#chart-${chart}`}>{figure.label}</a> : figure.label}</dt>
             <dd className="value">{figure.value}</dd>
             <dd className="detail">{figure.detail}</dd>
           </div>
@@ -917,7 +928,12 @@ function Report({ page: whole, hidden, onToggle }: ReportProps) {
                   key={chart.id}
                   height={330}
                   className="chart-slot"
-                  ghost={<GhostChart />}
+                  ghost={
+                    <>
+                      <span id={`chart-${chart.id}`} />
+                      <GhostChart />
+                    </>
+                  }
                 >
                   <ChartCard
                     chart={chart}
