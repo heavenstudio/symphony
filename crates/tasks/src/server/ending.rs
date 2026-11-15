@@ -173,7 +173,7 @@ mod tests {
     use std::io::Read;
     use std::os::unix::fs::PermissionsExt;
     use std::path::{Path, PathBuf};
-    use std::time::{Duration, Instant};
+    use std::time::Duration;
 
     /// A folder of its own under the temporary one, for test `name`.
     fn folder(name: &str) -> PathBuf {
@@ -200,26 +200,43 @@ mod tests {
         path
     }
 
-    /// Waits up to five seconds for `path` to be there.
+    /// The wall-clock backstop of these tests' waits, of the five seconds they once gave each: only
+    /// a stall reaches it (RULES.md `tests/no-test-fails-on-load`).
+    const PATIENT: Duration = test_time::backstop(Duration::from_secs(5));
+
+    /// Waits for `path` to be there.
+    #[track_caller]
     fn appears(path: &Path) {
-        let began = Instant::now();
-        while !path.exists() {
-            assert!(
-                began.elapsed() < Duration::from_secs(5),
-                "{}",
-                path.display()
-            );
-            std::thread::sleep(Duration::from_millis(10));
-        }
+        test_time::until_true(format!("{} is there", path.display()), PATIENT, || {
+            path.exists()
+        })
+        .unwrap();
     }
 
-    /// The SIGTERMs `dir`'s program took, once a moment has passed for its trap to run.
-    fn terms(dir: &Path) -> usize {
+    /// The SIGTERMs `dir`'s program took, once it has taken `least` and a moment more has passed
+    /// for its trap to write another. The wait for `least` is on its condition, so a trap a loaded
+    /// machine runs late is still counted. The moment after only lets a SIGTERM beyond it show; on
+    /// a loaded machine it may be too short to, which can let a second ask go unseen but never
+    /// fails a server asked right.
+    #[track_caller]
+    fn terms(dir: &Path, least: usize) -> usize {
+        let taken = || {
+            fs::read_to_string(dir.join("terms"))
+                .unwrap_or_default()
+                .lines()
+                .count()
+        };
+        test_time::until_true(
+            format!(
+                "the program in {} has taken at least {least} SIGTERMs",
+                dir.display()
+            ),
+            PATIENT,
+            || taken() >= least,
+        )
+        .unwrap();
         std::thread::sleep(Duration::from_millis(300));
-        fs::read_to_string(dir.join("terms"))
-            .unwrap_or_default()
-            .lines()
-            .count()
+        taken()
     }
 
     /// The pid of a process that has ended and been reaped.
@@ -272,7 +289,7 @@ mod tests {
             Some(Home::process_start(pid).unwrap()),
             "the ask names the process it asked"
         );
-        assert_eq!(terms(&dir), 1);
+        assert_eq!(terms(&dir, 1), 1);
         let again = home.end(pid).unwrap_err().to_string();
         assert!(
             again.starts_with(&format!(
@@ -280,14 +297,14 @@ mod tests {
             )) && again.contains("never asked again"),
             "{again}"
         );
-        assert_eq!(terms(&dir), 1, "asked a second time");
+        assert_eq!(terms(&dir, 1), 1, "asked a second time");
         assert!(pid_alive(pid));
 
         server.kill().unwrap();
         server.wait().unwrap();
         home.end(pid).unwrap();
         assert!(!asked.exists(), "the ask outlived its server");
-        assert_eq!(terms(&dir), 1);
+        assert_eq!(terms(&dir, 1), 1);
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -387,7 +404,7 @@ mod tests {
             matches!(&refused, ServerError::Io(why) if why.contains(&format!("the server (pid {pid}) is not asked to end"))),
             "{refused}"
         );
-        assert_eq!(terms(&dir), 0, "signalled without its ask written down");
+        assert_eq!(terms(&dir, 0), 0, "signalled without its ask written down");
         server.kill().unwrap();
         server.wait().unwrap();
         let _ = fs::remove_dir_all(&dir);
@@ -435,20 +452,16 @@ mod tests {
             }
             drop(lifeline);
             assert_eq!(
-                terms(&dir),
+                terms(&dir, usize::from(!already)),
                 usize::from(!already),
                 "already asked: {already}"
             );
             assert!(pid_alive(pid));
             terminate(pid, true);
-            let began = Instant::now();
-            while pid_alive(pid) {
-                assert!(
-                    began.elapsed() < Duration::from_secs(5),
-                    "{pid} survived its kill"
-                );
-                std::thread::sleep(Duration::from_millis(10));
-            }
+            test_time::until_true(format!("{pid} ended on its kill"), PATIENT, || {
+                !pid_alive(pid)
+            })
+            .unwrap();
             let _ = fs::remove_dir_all(&dir);
         }
     }
