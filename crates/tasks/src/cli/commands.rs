@@ -219,13 +219,7 @@ pub fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
                 "CALLBACK {actor} {}",
                 address.as_deref().unwrap_or("none — inbox fallback")
             ));
-            c.say(&format!(
-                "CHAT {}",
-                store
-                    .chat_recipient()?
-                    .as_deref()
-                    .unwrap_or("nobody registered")
-            ));
+            c.say(&chat_line(store.chat_seat()?));
         }
         "register" => {
             // Checked before the session exists, so a refused address registers nothing.
@@ -551,6 +545,22 @@ fn snapshot(path: &Path) -> bool {
         && head
             .strip_prefix(SNAPSHOT_TITLE.as_bytes())
             .is_some_and(|rest| matches!(rest, [] | [b'\n'] | [b'\r']))
+}
+
+/// What `callback` says of the owner's chat: who hears it and, when that session holds no seat,
+/// that it hears it as a fallback, why, and what takes the seat.
+fn chat_line(seat: Option<(String, crate::ChatSeat)>) -> String {
+    use crate::ChatSeat::{Held, NextInLine, Orchestrator, Waiting};
+    let Some((handle, why)) = seat else {
+        return "CHAT nobody registered".into();
+    };
+    let fallback = match why {
+        Held => return format!("CHAT {handle}"),
+        NextInLine => "next in line by --chat --if-free",
+        Orchestrator => "an orchestrator with a callback",
+        Waiting => "an orchestrator reading by tasks wait",
+    };
+    format!("CHAT {handle} (fallback: {fallback}; --chat takes the seat)")
 }
 
 /// Whom `say --to` addresses: `owner` and a role after `@` in any case, as the board spells them;
@@ -915,9 +925,27 @@ fn who(store: &Store, c: &mut Context) -> Result<(), Stop> {
 
 #[cfg(test)]
 mod tests {
-    use super::{imported_worktree, recipient};
+    use super::{chat_line, imported_worktree, recipient};
+    use crate::ChatSeat;
     use crate::sweep::git::Listed;
     use std::path::PathBuf;
+
+    #[test]
+    fn the_chat_line_says_when_its_recipient_hears_chat_only_as_a_fallback() {
+        let seat = |why| Some(("amber-heron".to_string(), why));
+        assert_eq!(chat_line(seat(ChatSeat::Held)), "CHAT amber-heron");
+        for (why, fallback) in [
+            (ChatSeat::NextInLine, "next in line by --chat --if-free"),
+            (ChatSeat::Orchestrator, "an orchestrator with a callback"),
+            (ChatSeat::Waiting, "an orchestrator reading by tasks wait"),
+        ] {
+            assert_eq!(
+                chat_line(seat(why)),
+                format!("CHAT amber-heron (fallback: {fallback}; --chat takes the seat)")
+            );
+        }
+        assert_eq!(chat_line(None), "CHAT nobody registered");
+    }
 
     #[test]
     fn the_owner_and_a_role_are_addressed_in_any_case_and_a_handle_as_written() {
