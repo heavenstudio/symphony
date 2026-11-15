@@ -166,6 +166,90 @@ fn a_reviewers_verdict_is_news_for_every_person_and_any_other_line_is_none() {
     );
 }
 
+/// The activity list's `answered` and the questions still waiting on the owner
+/// ([`symphony_board::Store::questions_waiting`]) are one rule, written in Rust here and in the
+/// store's SurrealQL: on one board, a line both read (an agent's message to the owner on an open
+/// task) is answered in the list exactly when it is not among those waiting.
+#[test]
+fn the_activity_says_answered_of_exactly_the_owners_questions_no_longer_waiting() {
+    use super::page_tests::store_fixture::{Fixture, NOW, Seed};
+    use std::collections::BTreeSet;
+    let line = |id: i32, slug: &str, sender: &str, to: Option<&str>, kind: &str| {
+        symphony_board::rows::MessageRow {
+            id: id.into(),
+            slug: slug.into(),
+            sender: sender.into(),
+            recipient: to.map(str::to_owned),
+            kind: kind.into(),
+            text: format!("line {id}"),
+            ts: NOW + f64::from(id),
+        }
+    };
+    let (agent, owner, to_owner) = ("amber-heron", "owner", Some("owner"));
+    let lines = vec![
+        // One post of the owner's answers every question before it on its thread, none after it.
+        line(1, "q/jump", agent, to_owner, "msg"),
+        line(2, "q/jump", agent, to_owner, "msg"),
+        line(3, "q/jump", owner, None, "msg"),
+        line(4, "q/jump", agent, to_owner, "msg"),
+        // A line of the owner's of any kind answers: a move they made.
+        line(5, "q/dock", agent, to_owner, "msg"),
+        line(6, "q/dock", owner, None, "system"),
+        // One before the question, or after it on another thread, answers nothing.
+        line(7, "q/cap", owner, None, "msg"),
+        line(8, "q/cap", agent, to_owner, "msg"),
+        line(9, "q/done", owner, None, "msg"),
+        // Lines to the owner the questions leave out: a verdict, and a question on a done task.
+        line(10, "q/cap", agent, to_owner, "verdict"),
+        line(11, "q/done", agent, to_owner, "msg"),
+    ];
+    let mut seed = Seed::default()
+        .task("q/jump", "in_progress")
+        .task("q/dock", "review")
+        .task("q/cap", "blocked")
+        .task("q/done", "done");
+    seed.dump.messages.clone_from(&lines);
+    let f = Fixture::new(seed);
+    let open: Vec<String> = ["q/jump", "q/dock", "q/cap"].map(String::from).into();
+
+    let waiting: BTreeSet<i64> = (f.store.questions_waiting(owner, &open).unwrap().iter())
+        .map(|question| question.id)
+        .collect();
+    assert_eq!(waiting, BTreeSet::from([4, 8]));
+    assert_eq!(
+        questions(&f.store, &open).unwrap(),
+        BTreeMap::from([(owner.to_string(), 2)])
+    );
+    let listed: BTreeMap<i64, bool> = (activity(&f.store).unwrap().iter())
+        .map(|item| {
+            let id = item.id.strip_prefix("task#").and_then(|id| id.parse().ok());
+            (id.expect("a task message's item"), item.answered)
+        })
+        .collect();
+    assert_eq!(
+        listed.keys().copied().collect::<Vec<_>>(),
+        [1, 2, 4, 5, 8, 10, 11],
+        "the list holds every line to the owner"
+    );
+    let both: Vec<i64> = (lines.iter())
+        .filter(|line| {
+            line.recipient.as_deref() == to_owner
+                && line.kind == "msg"
+                && line.sender != owner
+                && open.contains(&line.slug)
+        })
+        .map(|line| line.id)
+        .collect();
+    assert_eq!(both, [1, 2, 4, 5, 8]);
+    for id in both {
+        assert_eq!(
+            listed[&id],
+            !waiting.contains(&id),
+            "line {id}: answered in the list, against waiting among the questions"
+        );
+    }
+}
+
 #[test]
 fn a_brief_within_the_limit_is_its_whole_reply() {
     let tree = Tree::new();

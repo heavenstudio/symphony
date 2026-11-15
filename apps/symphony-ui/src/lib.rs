@@ -1,7 +1,7 @@
-//! The Symphony's Dioxus client: the chat, its activity and Appearance panels, and the menus (a
-//! select's popup and the picture viewer) that every page mounts over the web client's
-//! (apps/symphony-web), which draws every page. They read the server's JSON API
-//! (crates/symphony-api) themselves.
+//! The Symphony's Dioxus client: the chat, with its activity and Appearance panels, that every
+//! page mounts over the web client's (apps/symphony-web), which draws every page and the menus (a
+//! select's popup and the picture viewer). The chat reads the server's JSON API
+//! (crates/symphony-api) itself.
 //!
 //! - [`state`]: what the panel makes of what the page heard, pure: its toasts, the asks' news.
 //! - [`platform`]: the one trait every platform hook goes behind (a link opened outside,

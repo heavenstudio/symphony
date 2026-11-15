@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+<style>.tile{fill:#2f5d9e}.ink{fill:#fff}.line{fill:none;stroke:#fff}@media (prefers-color-scheme:dark){.tile{fill:#7fa7e0}.ink{fill:#0f1a2b}.line{stroke:#0f1a2b}}</style>
+<rect class="tile" width="32" height="32" rx="7"/>
+<g opacity=".55"><path class="line" d="M16 16A4.6 4.6 0 1 1 12.23 23.24" stroke-width="4"/><circle class="ink" cx="12.23" cy="23.24" r="2"/></g>
+<path class="line" d="M19.77 8.76A4.6 4.6 0 1 0 16 16" stroke-width="4"/><circle class="ink" cx="19.77" cy="8.76" r="2"/>
+</svg>

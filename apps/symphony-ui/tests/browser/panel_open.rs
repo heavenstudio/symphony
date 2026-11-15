@@ -208,17 +208,17 @@ fn an_idle_page_warms_the_chat_and_the_menus_outside_its_first_visit_and_their_f
     browser.open(&site.url("/"));
     wait_for_board(&mut browser);
     let (panel, overlay) = (module(dist(), "panel"), module(dist(), "overlay"));
-    // The chat and the menus are the program's: its script and main module, and a chunk each.
-    assert_eq!(
-        (&overlay.script, &overlay.wasm),
-        (&panel.script, &panel.wasm)
-    );
+    // The chat is the program's: its script and main module, and its chunk. The menus are the web
+    // client's: their script and their own styles (the shared sheet, and the chunks the script
+    // imports, the page has already).
+    assert!(overlay.wasm.is_empty() && overlay.chunk.is_none());
     let (warmed, requests) = settled(&mut browser);
-    let files = [&panel.script, &panel.wasm, panel.chunk(), overlay.chunk()];
-    for file in files {
+    let mut files = vec![&panel.script, &panel.wasm, panel.chunk(), &overlay.script];
+    files.extend(&overlay.styles[1..]);
+    for &file in &files {
         assert!(warmed.contains(file), "{file} is not warmed: {warmed:?}");
     }
-    for file in files {
+    for file in &files {
         assert!(
             requests
                 .iter()
@@ -232,7 +232,7 @@ fn an_idle_page_warms_the_chat_and_the_menus_outside_its_first_visit_and_their_f
         "first visit {} bytes; warmed at idle, outside it: {prefetched} bytes",
         needed_bytes(&requests)
     );
-    for file in [&panel.script, &panel.wasm, panel.chunk()] {
+    for &file in &files {
         assert_eq!(
             asked(&mut browser, &site, file, 1),
             1,
@@ -249,6 +249,24 @@ fn an_idle_page_warms_the_chat_and_the_menus_outside_its_first_visit_and_their_f
             asked(&mut browser, &site, file, 1),
             1,
             "the first open took the warmed {file} from the cache"
+        );
+    }
+    // The menus' first use, a picture shown in their viewer, takes their warmed files too.
+    browser.eval(
+        "window.reviewOverlay({kind: 'picture', owner: 'warmed', photos: [{src: '/first.svg', caption: 'First'}], at: 0, callback() {}})",
+    );
+    assert!(browser.wait_for(
+        "window.reviewOverlayReady === true && document.querySelector('#media-lightbox[data-state=open]') !== null",
+        SHOWN
+    ));
+    for file in [&overlay.script]
+        .into_iter()
+        .chain(overlay.styles[1..].iter())
+    {
+        assert_eq!(
+            asked(&mut browser, &site, file, 1),
+            1,
+            "the menus' first use took the warmed {file} from the cache"
         );
     }
 }
@@ -281,22 +299,22 @@ fn an_idle_page_warms_the_menus_only_once_the_chat_s_chunk_is_in() {
     );
     browser.pump(Duration::from_millis(500));
     assert_eq!(
-        linked(&mut browser, &[&panel.script, &panel.wasm, overlay.chunk()]),
+        linked(&mut browser, &[&panel.script, &panel.wasm, &overlay.script]),
         [true, true, false],
-        "the chat's files are warmed together, the menus' chunk waits for the chat's"
+        "the chat's files are warmed together, the menus' script waits for the chat's chunk"
     );
-    assert_eq!(asked(&mut browser, &site, overlay.chunk(), 0), 0);
+    assert_eq!(asked(&mut browser, &site, &overlay.script, 0), 0);
     site.hold_route(panel.chunk(), false);
     let (warmed, _) = settled(&mut browser);
     assert!(
-        warmed.contains(overlay.chunk()),
-        "the menus' chunk is not warmed: {warmed:?}"
+        warmed.contains(&overlay.script),
+        "the menus' script is not warmed: {warmed:?}"
     );
-    assert_eq!(asked(&mut browser, &site, overlay.chunk(), 1), 1);
+    assert_eq!(asked(&mut browser, &site, &overlay.script, 1), 1);
     assert_eq!(
         asked(&mut browser, &site, &panel.wasm, 1),
         1,
-        "the menus' main module is the chat's, warmed once"
+        "the chat's main module is warmed once"
     );
 }
 
@@ -324,20 +342,20 @@ fn a_click_before_the_idle_warm_up_holds_the_menus_until_the_chat_is_up() {
         json!(0),
         "the chat's own load is under way and the menus wait for it"
     );
-    assert_eq!(asked(&mut browser, &site, overlay.chunk(), 0), 0);
+    assert_eq!(asked(&mut browser, &site, &overlay.script, 0), 0);
     site.hold_route(&panel.script, false);
     assert!(browser.wait_for("window.reviewPanelReady === true", SHOWN));
     assert!(
         browser.wait_for(
             &format!(
                 "document.querySelector(`link[rel=prefetch][href=\"${{{}}}\"]`) !== null",
-                json!(overlay.chunk())
+                json!(overlay.script)
             ),
             SHOWN
         ),
         "the menus are warmed once the chat is up"
     );
-    assert_eq!(asked(&mut browser, &site, overlay.chunk(), 1), 1);
+    assert_eq!(asked(&mut browser, &site, &overlay.script, 1), 1);
     assert_eq!(
         asked(&mut browser, &site, &panel.wasm, 1),
         1,
@@ -830,7 +848,7 @@ fn the_board_s_chat_fetches_the_media_layer_only_for_a_thread_that_shows_media()
 
 /// Wait for the page's idle warm-up to start (once its own reads are over; up to 10 s, for a
 /// build that has none) and to end, every request it made, its prefetches included, finished,
-/// and no further file linked after that (the menus' follow the chat's wasm): the files warmed,
+/// and no further file linked after that (the menus' follow the chat's chunk): the files warmed,
 /// and the requests.
 pub(super) fn settled(browser: &mut Chrome) -> (Vec<String>, Vec<super::chrome::Request>) {
     browser.wait_for(PREFETCHING, Duration::from_secs(10));
