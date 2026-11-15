@@ -205,7 +205,7 @@ pub(super) fn agent(handle: &str, health: &str) -> Value {
 }
 
 /// A task of the agents page's at `status`, held in `roles` (each a handle and its role).
-fn held(slug: &str, title: &str, status: &str, roles: &[(&str, &str)]) -> Value {
+pub(super) fn held(slug: &str, title: &str, status: &str, roles: &[(&str, &str)]) -> Value {
     json!({"slug":slug,"title":title,"body":"","status":status,"priority":2,"parent":null,
         "created_by":"owner","created":1.0,"updated":2.0,"links":[],"depends":[],"instruction":false,
         "roles":roles.iter().map(|(handle, role)| json!({"handle":handle,"role":role,"since":1.0,

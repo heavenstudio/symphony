@@ -172,7 +172,9 @@ build_key() {
 # names as it was: `- PATH` still absent, and `+ PATH` there with its status last changed in a second
 # before the stamp's, so a change in the stamp's own second counts. What the stamp's own file times
 # say counts for nothing, so a stamp copied, restored or touched vouches for no change made after its
-# second. Anything else asks Cargo.
+# second. Anything else asks Cargo. It cannot see a toolchain a channel pin names updated in place
+# (this workspace pins a version), or a file changed while the clock stood before the stamp's second
+# and set right since, which fools Cargo too.
 fresh() {
     local line count=0 at="" names="" built="" now
     local -a paths=()

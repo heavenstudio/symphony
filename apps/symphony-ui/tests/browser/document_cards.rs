@@ -573,8 +573,37 @@ fn document_card_focus_ring_is_the_pages_not_the_cards_colour() {
                 .is_some_and(|(shadow, colour)| shadow.starts_with(colour)),
             "{mode}: the thread's dots stand clear of their line in the card's colour: {halo}"
         );
+        let surfaces = page.eval(SURFACE_HALOS);
+        for (surface, halo) in ["a document's prose", "a card"]
+            .iter()
+            .zip(surfaces.as_array().expect("a halo for each surface"))
+        {
+            assert!(
+                halo[0]
+                    .as_str()
+                    .zip(halo[1].as_str())
+                    .is_some_and(|(shadow, colour)| shadow.starts_with(colour)),
+                "{mode}: a history's dots on {surface} stand clear in its colour: {halo}"
+            );
+        }
     }
 }
+
+/// The halo of a history's dot on each surface that holds one outside a card's thread, a document's
+/// prose (`.doc-part`) and a card (`.card`, a task's brief among them): for each, the dot's shadow
+/// and the surface's colour.
+const SURFACE_HALOS: &str = r#"["doc-part", "card"].map(surface => {
+    const box = document.createElement("div");
+    box.className = surface;
+    box.innerHTML = '<ul class="history"><li class="entry">A line</li></ul>';
+    document.querySelector("main").append(box);
+    const halo = [
+        getComputedStyle(box.querySelector(".entry"), "::before").boxShadow,
+        getComputedStyle(box).backgroundColor,
+    ];
+    box.remove();
+    return halo;
+})"#;
 
 /// The card `alpha`'s show button and its excerpt: the button's label and state, the gap between
 /// the button and the excerpt, whether the excerpt's own words show, how many elements own the
