@@ -3,7 +3,17 @@
 // groups, and the ghost it draws before its first read, in the shape and with the cards it had.
 // What it reads and when is boardlive.tsx's.
 
-import { type CSSProperties, Fragment, memo, useEffect, useMemo, useRef, useState } from "react";
+import {
+  type CSSProperties,
+  Fragment,
+  memo,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import { focusedLink, focusedSlug, takeFocus, useKeptPlace } from "./boardplace";
 import { Button } from "./button";
 import { type Layout, layoutAt, rowHeight } from "./cardheight";
 import { sleep } from "./feed";
@@ -410,29 +420,58 @@ export function grownTree(shown: Tree, read: TaskListing | string, more: boolean
   return { rows, total: read.counts.reduce((sum, [, count]) => sum + count, 0), trouble: "" };
 }
 
+/** No task groups read yet. */
+export const NO_TREE: Tree = { rows: [], total: 0, trouble: "" };
+
+/**
+ * The reads of the task groups `parent` holds (the roots for none), a page at a time, while the
+ * part that shows them is drawn (`open` until `close`) and its kind is mounted (`mount`): each
+ * answer is given to `show` as the change it makes to what the part shows, and one that comes
+ * once either has ended is dropped. Before the part is open nothing is read.
+ */
+export class TreeReads {
+  /** Where the next page starts: the last page's `next`. */
+  private cursor: string | null = null;
+  private part: AbortSignal | null = null;
+
+  constructor(
+    readonly scope: string,
+    readonly parent: string | null,
+    private readonly mount: AbortSignal,
+    private readonly show: (change: (shown: Tree) => Tree) => void,
+  ) {}
+
+  /** The part is drawn: what it reads goes on until `signal` ends. */
+  open(signal: AbortSignal): void {
+    this.part = signal;
+  }
+
+  /** Read the first page again (`more` false), or the next one; settles once it is shown or
+   * dropped. */
+  async load(more: boolean): Promise<void> {
+    const signal = this.part;
+    if (signal === null || signal.aborted || this.mount.aborted) return;
+    const read = await readTree(this.scope, this.parent, more ? this.cursor : null, signal);
+    if (signal.aborted || this.mount.aborted) return;
+    if (typeof read !== "string") this.cursor = read.next ?? null;
+    this.show((shown) => grownTree(shown, read, more));
+  }
+}
+
 /**
  * The task groups `parent` holds (the roots for none), read a page at a time while the part that
- * shows them is drawn: the first page again (`more` false), or the next one.
+ * shows them is drawn: the first page again (`more` false), or the next one (`TreeReads`).
  */
 function useTree(scope: string, parent: string | null): [Tree, (more: boolean) => void] {
-  const [tree, setTree] = useState<Tree>({ rows: [], total: 0, trouble: "" });
-  const cursor = useRef<string | null>(null);
-  const alive = useRef<AbortSignal | null>(null);
+  const [tree, setTree] = useState<Tree>(NO_TREE);
   const mount = useMount();
+  const [reads] = useState(() => new TreeReads(scope, parent, mount, setTree));
   useEffect(() => {
     const controller = new AbortController();
-    alive.current = controller.signal;
+    reads.open(controller.signal);
     return () => controller.abort();
-  }, []);
-  const load = (more: boolean) => {
-    const signal = alive.current;
-    void readTree(scope, parent, more ? cursor.current : null, signal ?? undefined).then((read) => {
-      if (signal?.aborted !== false || mount.aborted) return;
-      if (typeof read !== "string") cursor.current = read.next ?? null;
-      setTree((shown) => grownTree(shown, read, more));
-    });
-  };
-  return [tree, load];
+  }, [reads]);
+  return [tree, (more) => void reads.load(more)];
 }
 
 /** The task groups' tree: the top tasks, each opening the tasks under it. */
@@ -560,12 +599,23 @@ export interface RowProps {
 
 /**
  * A row of a column: its card once near the screen, until then as tall as that card will take
- * (`rowCard`). Drawn again only when its card would change (`sameCard`), or its layout.
+ * (`rowCard`). Drawn again only when its card would change (`sameCard`), or its layout. A row
+ * first drawn while its task's card holds the focus elsewhere is that card's new place, in the
+ * column a live update moved it to: it draws the card at once and gives the focus back to it.
  */
 export const BoardRow = memo(function BoardRow({ task, work, connected, layout }: RowProps) {
   const reserve = rowCard(task, work, connected, layout);
+  const [follows] = useState(() => focusedLink(task.slug));
+  useLayoutEffect(() => {
+    if (follows !== null) takeFocus(task.slug, follows);
+  }, [follows, task.slug]);
   return (
-    <NearViewport id={`row-${task.slug}`} height={reserve[0]} ghost={<GhostCard card={reserve} />}>
+    <NearViewport
+      id={`row-${task.slug}`}
+      height={reserve[0]}
+      ghost={<GhostCard card={reserve} />}
+      eager={follows !== null}
+    >
       <TaskCard task={task} work={work} connected={connected} />
     </NearViewport>
   );
@@ -637,6 +687,10 @@ export const TaskColumn = memo(function TaskColumn({
   const ghosts = range(Math.min(count, PAGE)).map((slot) => (
     <GhostCard key={slot} card={card(kept, slot, status)} />
   ));
+  // A column not near the screen yet draws its rows at once when one of them is the new place of
+  // the card holding the focus (`BoardRow`), as a phone's column beside the one shown is.
+  const focused = visible ? null : focusedSlug();
+  const follows = focused !== null && tasks.some((task) => task.slug === focused);
   return (
     <section
       className={status === "signoff" ? "column signoff" : "column"}
@@ -656,6 +710,7 @@ export const TaskColumn = memo(function TaskColumn({
         height={reserved}
         onEnter={() => setVisible(true)}
         ghost={ghosts}
+        eager={follows}
       >
         {reading && (
           <div style={{ minHeight: `${reserved}px` }} data-pending="true">
@@ -708,6 +763,31 @@ export function windowOf(value: string): number {
   return value === "7" ? 7 : 1;
 }
 
+/** What the board's filters hold: the search typed and the window of finished tasks, in days. */
+export interface Filters {
+  search: string;
+  days: number;
+}
+
+/** The filters with `query` typed in the search: the board is read under it, in the window
+ * chosen. Every key reads, `boardlive`'s pause waiting for the next. */
+export function searched(filters: Filters, query: string, onFilter: Filter): Filters {
+  onFilter(query, filters.days);
+  return { ...filters, search: query };
+}
+
+/** The filters with the Finished tasks field's `value` chosen: the board is read in its window,
+ * under the search typed, the window already chosen too, which reads the board again. */
+export function windowChosen(filters: Filters, value: string, onFilter: Filter): Filters {
+  const days = windowOf(value);
+  onFilter(filters.search, days);
+  return { ...filters, days };
+}
+
+/** What the filters ask of the page: the board read under the search `query` in the window of
+ * `days`. */
+export type Filter = (query: string, days: number) => void;
+
 export interface TaskBoardProps {
   scope: string;
   tasks: Task[];
@@ -717,7 +797,7 @@ export interface TaskBoardProps {
   counts: [string, number][];
   statuses: string[];
   refreshed: number;
-  onFilter: (query: string, days: number) => void;
+  onFilter: Filter;
   onLoad: OnLoad;
 }
 
@@ -734,10 +814,14 @@ export function TaskBoard({
   onFilter,
   onLoad,
 }: TaskBoardProps) {
-  const [search, setSearch] = useState("");
+  const [filters, setFilters] = useState<Filters>({ search: "", days: 1 });
+  const { search, days } = filters;
   const [selected, setSelected] = useState("");
-  const [days, setDays] = useState(1);
   const [subtree, setSubtree] = useState(false);
+  const pipeline = selected === "" || (PIPELINE as readonly string[]).includes(selected);
+  // Back to the board draws it where the reader left it.
+  const scroller = useRef<HTMLDivElement>(null);
+  useKeptPlace(scroller, pipeline);
   const named = statuses.length === 0 ? counts.map(([status]) => status) : statuses;
   // With no machine reporting this project's work, nothing can place a task in Build or Test: one
   // narrow rail says so once, where two empty columns would each repeat it.
@@ -783,11 +867,7 @@ export function TaskBoard({
             type="search"
             placeholder="Slug or words"
             defaultValue=""
-            onInput={(event) => {
-              const query = event.currentTarget.value;
-              setSearch(query);
-              onFilter(query, days);
-            }}
+            onInput={(event) => setFilters(searched(filters, event.currentTarget.value, onFilter))}
           />
         </label>
         {/* biome-ignore lint/a11y/noLabelWithoutControl: the field's trigger, a button, is the control it labels */}
@@ -813,12 +893,7 @@ export function TaskBoard({
               ["1", "Last 24 hours"],
               ["7", "Last week"],
             ]}
-            onChange={(value) => {
-              // The window already chosen too: the board reads it again.
-              const window = windowOf(value);
-              setDays(window);
-              onFilter(search, window);
-            }}
+            onChange={(value) => setFilters(windowChosen(filters, value, onFilter))}
           />
         </label>
       </div>
@@ -841,9 +916,10 @@ export function TaskBoard({
             Columns continue right → · Swipe, scroll, or focus the board and use arrow keys.
           </p>
         )}
-        {(selected === "" || (PIPELINE as readonly string[]).includes(selected)) && (
+        {pipeline && (
           // biome-ignore lint/a11y/useSemanticElements: the scroller is a region of its own, as the Dioxus page draws it
           <div
+            ref={scroller}
             className="board-scroll"
             // biome-ignore lint/a11y/noNoninteractiveTabindex: the keyboard scrolls the columns from it
             tabIndex={0}
