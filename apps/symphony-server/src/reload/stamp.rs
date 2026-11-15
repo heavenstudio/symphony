@@ -88,8 +88,8 @@ fn binary_fingerprint(path: &Path) -> std::io::Result<String> {
 }
 
 /// The installed server's source, when this process is the installed image, that image holds the
-/// bytes the stamp hashed, and the installed client is the stamped one. `lease` is the home's
-/// server lock, which this start holds (`reload::setup`).
+/// bytes the stamp hashed, and the installed client is the stamped one where a reload stamps one.
+/// `lease` is the home's server lock, which this start holds (`reload::setup`).
 ///
 /// The hash decides: an upgrade or a manual replacement with other bytes never passes, and cargo
 /// installing the same bytes again does. The image's identity ([`Image`]) only spares the read, as
@@ -98,9 +98,21 @@ fn binary_fingerprint(path: &Path) -> std::io::Result<String> {
 /// process's link of that output and every rebuild's unlink of its name move the ctime of the
 /// installed file without changing a byte.
 pub(super) fn installed_source(serve: &Serve, lease: &File) -> Option<String> {
-    let home = serve.installed()?;
     installed_image(serve)?;
+    stamped_start(serve, lease)
+}
+
+/// [`installed_source`] of an install this process runs.
+fn stamped_start(serve: &Serve, lease: &File) -> Option<String> {
+    let home = serve.installed()?;
     let source = stamped_source(home, lease)?;
+    // A reload that builds no client stamps none, so the start asks for none: a consuming host
+    // serves the client its image embeds, which the server's stamp vouches for. Its client stamp,
+    // if any, is left from before, and its source follows the host's lockfile, which every pin move
+    // changes: asking for it would make every start of a stamped install build.
+    if !symphony::reload::builds_client(&serve.root) {
+        return Some(source);
+    }
     // A current server stamp alone cannot certify an older (or manually replaced) client.
     // Transferred generations bypass this initial-install lookup: their parent just published
     // the bundle, even if writing its optional recovery stamp failed.
@@ -253,10 +265,11 @@ fn write_stamp(home: &Path, installed: &Installed) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{
-        INSTALLED, Image, Installed, RunningImage, binary_fingerprint, image_hash, stamp_install,
-        stamped_source, write_stamp,
+        INSTALLED, Image, Installed, RunningImage, Serve, binary_fingerprint, image_hash,
+        stamp_install, stamped_source, stamped_start, write_stamp,
     };
     use crate::testing::Tree;
+    use sha2::{Digest, Sha256};
     use std::cell::Cell;
     use std::fs::{self, File};
     use std::path::Path;
@@ -490,6 +503,84 @@ mod tests {
         assert!(!home.join(INSTALLED).exists());
 
         assert!(RunningImage::at(&tree.path("home/bin/missing")).is_none());
+    }
+
+    /// A start of a stamped install asks for the client's stamp only where its reload builds and
+    /// stamps a client. A consuming host serves the client its image embeds, so a client stamp
+    /// left from before, of older sources, sends none of its starts to build. A source kit's does.
+    #[test]
+    fn a_start_asks_for_a_client_stamp_only_where_its_reload_stamps_one() {
+        let tree = Tree::new();
+        let root = crate::testing::repository(&tree);
+        tree.write(
+            "main/apps/symphony-host/Cargo.toml",
+            "[package]\nname = 'symphony-host'\n",
+        );
+        let home = tree.path("home");
+        tree.write("home/bin/symphony-server", "installed image");
+        let lease = File::create(home.join("server.lock")).unwrap();
+        lease.try_lock().unwrap();
+        stamp_install(&home, "server source").unwrap();
+        // The installed client, stamped as built from `source`: its distribution is the bytes'.
+        tree.write("home/client/public/index.html", "client");
+        let client_stamp = |source: &str| {
+            let mut distribution = Sha256::new();
+            let (name, contents) = ("index.html", "client");
+            distribution.update(name.len().to_le_bytes());
+            distribution.update(name.as_bytes());
+            distribution.update(contents.len().to_le_bytes());
+            distribution.update(contents.as_bytes());
+            let distribution: String = distribution
+                .finalize()
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect();
+            let stamp = serde_json::json!({"source": source, "distribution": distribution});
+            tree.write("home/client-installed.json", &stamp.to_string());
+        };
+        client_stamp("older sources");
+        assert_eq!(
+            symphony::reload::installed_client_source(&home).as_deref(),
+            Some("older sources")
+        );
+        let serve = Serve {
+            home: Some(home.clone()),
+            root: root.clone(),
+            port: 1,
+            hosts: Vec::new(),
+            install: None,
+        };
+
+        // A consuming host: its reload builds no client, and its start takes the server's stamp.
+        assert!(!symphony::reload::builds_client(&root));
+        assert_eq!(
+            stamped_start(&serve, &lease).as_deref(),
+            Some("server source")
+        );
+
+        // A source kit: its reload builds and stamps the client, so an older client sends its
+        // start to build, and a current one does not.
+        tree.write(
+            "main/symphony/apps/symphony-ui/Cargo.toml",
+            "[package]\nname = 'symphony-ui'\n",
+        );
+        assert!(symphony::reload::builds_client(&root));
+        assert_eq!(stamped_start(&serve, &lease), None);
+        client_stamp(&symphony::reload::client_fingerprint(&root).unwrap());
+        assert_eq!(
+            stamped_start(&serve, &lease).as_deref(),
+            Some("server source")
+        );
+
+        // Either way the server's own stamp decides first: other bytes installed, no source.
+        fs::rename(
+            tree.write("home/bin/next", "upgraded image"),
+            home.join("bin/symphony-server"),
+        )
+        .unwrap();
+        assert_eq!(stamped_start(&serve, &lease), None);
+        fs::remove_dir_all(root.join("symphony")).unwrap();
+        assert_eq!(stamped_start(&serve, &lease), None);
     }
 
     #[test]
