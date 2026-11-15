@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import fixture from "../../../crates/symphony-api/fixtures/reports-page.json";
 import { type ChartData, gap, seriesKey } from "./chart";
 import {
+  AskedChart,
   axis,
   Bucket,
   charts,
@@ -16,6 +17,7 @@ import {
   fromFirstRecord,
   HIDDEN,
   hiddenSeries,
+  linkedFigures,
   type Page,
   parseGrain,
   paths,
@@ -25,6 +27,7 @@ import {
   rangeName,
   ranges,
   readReports,
+  SECTIONS,
   toggle,
 } from "./reports";
 import { asking, CASES, childrenOf, memoryStorage, reply, server } from "./testing";
@@ -535,6 +538,109 @@ describe("the figures", () => {
     ]);
     expect(figures({ ...page(), grain: "hour" })[1].detail).toBe("kept by the day");
   });
+
+  it("each name the chart it sums up, one the page draws", () => {
+    const linked = linkedFigures(page());
+    expect(linked.map(([figure, chart]) => [figure.label, chart])).toEqual([
+      ["Done", "done"],
+      ["Lead time", "lead"],
+      ["Agents at work", "agents"],
+      ["Open decisions", "decisions"],
+    ]);
+    expect(linked.map(([figure]) => figure)).toEqual(figures(page()));
+    const titles = new Map(
+      SECTIONS.flatMap(([, specs]) => specs.map((spec): [string, string] => [spec.id, spec.title])),
+    );
+    expect(linked.map(([, chart]) => titles.get(chart))).toEqual([
+      "Tasks done",
+      "Lead time",
+      "Agents at work",
+      "Decisions",
+    ]);
+  });
+});
+
+describe("a figure's link", () => {
+  /** A page whose fragment is `hash`, its elements those `ids` name, each counting its scrolls. */
+  function addressed(hash: string, ids: string[]) {
+    const scrolled: string[] = [];
+    vi.stubGlobal("HTMLDetailsElement", class {});
+    vi.stubGlobal("location", { hash });
+    vi.stubGlobal("document", {
+      getElementById: (id: string) =>
+        ids.includes(id) ? { parentElement: null, scrollIntoView: () => scrolled.push(id) } : null,
+    });
+    return scrolled;
+  }
+
+  it("opens the chart it sums up, and none while no chart is drawn", () => {
+    const html = view(page());
+    expect(html.match(/<dt><a href="#chart-[a-z]+">/g)).toEqual([
+      '<dt><a href="#chart-done">',
+      '<dt><a href="#chart-lead">',
+      '<dt><a href="#chart-agents">',
+      '<dt><a href="#chart-decisions">',
+    ]);
+    // A chart still to mount holds its id in its ghost, so the link finds its place.
+    expect(html).toContain('<span id="chart-decisions"></span><div class="ghost-chart"');
+    for (const [, chart] of linkedFigures(page())) {
+      expect(html.match(new RegExp(`id="chart-${chart}"`, "g"))).toHaveLength(1);
+    }
+    const nothing = view(read(unrecorded(wire())));
+    expect(nothing).toContain("<dt>Done</dt>");
+    expect(nothing).not.toContain("href=");
+    expect(view(read({ ...unrecorded(wire()), first: null }))).not.toContain("href=");
+  });
+
+  it("brings its chart into view again once it mounts, and only then", () => {
+    const scrolled = addressed("#chart-decisions", ["chart-decisions", "chart-done"]);
+    const asked = new AskedChart();
+    // Charts mounting before the address moved, or after a move to another, are not scrolled to.
+    asked.entered("decisions");
+    asked.moved();
+    asked.entered("done");
+    expect(scrolled).toEqual([]);
+    asked.entered("decisions");
+    expect(scrolled).toEqual(["chart-decisions"]);
+    // Once: it is not pulled back into view after that.
+    asked.entered("decisions");
+    expect(scrolled).toEqual(["chart-decisions"]);
+    vi.stubGlobal("location", { hash: "#top" });
+    asked.moved();
+    asked.entered("done");
+    asked.entered("decisions");
+    expect(scrolled).toEqual(["chart-decisions"]);
+    // A new window mounts every chart again, the address unchanged: none is scrolled to.
+    vi.stubGlobal("location", { hash: "#chart-done" });
+    const next = new AskedChart();
+    next.entered("done");
+    expect(scrolled).toEqual(["chart-decisions"]);
+    next.moved();
+    next.entered("done");
+    expect(scrolled).toEqual(["chart-decisions", "chart-done"]);
+  });
+
+  it("is heard on each move of the address, the shell's or the fragment's, until let go", () => {
+    const scrolled = addressed("#chart-lead", ["chart-lead"]);
+    const heard = new Map<string, () => void>();
+    vi.stubGlobal("addEventListener", (name: string, listener: () => void) =>
+      heard.set(name, listener),
+    );
+    vi.stubGlobal("removeEventListener", (name: string, listener: () => void) => {
+      if (heard.get(name) === listener) heard.delete(name);
+    });
+    const asked = new AskedChart();
+    const stop = asked.follow();
+    expect([...heard.keys()]).toEqual(["hashchange", "review:navigate"]);
+    heard.get("review:navigate")?.();
+    asked.entered("lead");
+    expect(scrolled).toEqual(["chart-lead"]);
+    heard.get("hashchange")?.();
+    asked.entered("lead");
+    expect(scrolled).toEqual(["chart-lead", "chart-lead"]);
+    stop();
+    expect(heard.size).toBe(0);
+  });
 });
 
 describe("the page's view", () => {
@@ -583,7 +689,7 @@ describe("the page's view", () => {
     const html = view(page());
     expect(html).toContain('aria-busy="false"');
     expect(html).toContain('data-ready="reports"');
-    expect(html).toContain('<dt>Done</dt><dd class="value">7</dd>');
+    expect(html).toContain('<dt><a href="#chart-done">Done</a></dt><dd class="value">7</dd>');
     expect(html).toContain(
       '<ul class="reports-marks" aria-label="Settings changes in the window">',
     );
