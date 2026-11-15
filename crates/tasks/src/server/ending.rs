@@ -81,7 +81,8 @@ impl Home {
                 started: Home::process_start(pid).ok(),
             };
             let next = folder.join(format!("{pid}.{}", std::process::id()));
-            fs::create_dir_all(&folder)
+            self.make(&folder)
+                .map_err(|problem| std::io::Error::other(problem.to_string()))
                 .and_then(|()| {
                     fs::write(
                         &next,

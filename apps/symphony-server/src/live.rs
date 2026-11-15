@@ -197,7 +197,8 @@ pub(crate) struct Hub {
     rendering: Mutex<()>,
     /// The store the page reads of the board share ([`Hub::reader`]), once one has been opened.
     reader: Mutex<Option<Arc<symphony_board::Store>>>,
-    /// How [`Hub::reader`] opens the board: [`taskview::connect`], or a test's board.
+    /// How [`Hub::reader`] opens the board: [`taskview::connect_held`], held to `repository`, or a
+    /// test's board.
     pub(crate) connect_reader: Box<Connect>,
     /// The hc a Go to session asks about the panes of the checkout at a path ([`Panes`]).
     pub(crate) panes: Box<Panes>,
@@ -260,9 +261,17 @@ impl OrderExpiry {
     }
 }
 
+/// The repository (its common dir) the board's lookup from `root` finds on the files alone
+/// ([`symphony_board::project::locate_quick`]): what a hub made there holds its folder to, and its
+/// reaches of the board ([`taskview::connect_held`]).
+pub(super) fn repository_of(root: &Path) -> Option<PathBuf> {
+    symphony_board::project::locate_quick(root).map(|place| place.common)
+}
+
 impl Hub {
     pub(crate) fn new(root: &Path, ui_dist: &Path) -> Self {
         let native_reader = machine_work::READER_ENV.os();
+        let repository = repository_of(root);
         Self {
             root: root.into(),
             ui_dist: ui_dist.into(),
@@ -309,7 +318,7 @@ impl Hub {
             common: measured("hub checkout", || crate::repo::checkout(root))
                 .ok()
                 .map(|c| c.common),
-            repository: symphony_board::project::locate_quick(root).map(|place| place.common),
+            repository: repository.clone(),
             signoff_pending: Mutex::new(None),
             task_activity: Mutex::new(None),
             worker: Mutex::new(None),
@@ -325,7 +334,9 @@ impl Hub {
             low_disk: health::low_disk(root),
             rendering: Mutex::new(()),
             reader: Mutex::new(None),
-            connect_reader: Box::new(taskview::connect),
+            connect_reader: Box::new(move |root| {
+                taskview::connect_held(root, repository.as_deref())
+            }),
             panes: Box::new(|root| {
                 let mut env = symphony::children::board_env();
                 env.cwd = root.to_path_buf();

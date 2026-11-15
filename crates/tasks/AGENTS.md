@@ -19,7 +19,8 @@ checkout's launcher instead: main's build, in main's own target folder (the
 caller's `CARGO_TARGET_DIR` is dropped), in the caller's folder and environment,
 so no branch's build of a board binary runs on the live board. A branch's
 `symphony` (`just symphony-cli`, a preview server) runs its own build: it opens
-the board itself, only through `taskview::connect_in` and only to read (its
+the board itself, only through `taskview::connect_in` (or `connect_held_in`, the
+same opening held to a repository) and only to read (its
 `connect_tests.rs` holds the symphony and server sources to that), and a reader
 never moves a board forward or makes one (`schema::decide`), so a branch with
 a newer schema cannot move the live board from there. The main checkout is the
@@ -51,7 +52,14 @@ and the staffing lock stay there too. A fixture repository under a checkout's
 `artifacts/` is its own project, so no test reaches the board around it. The
 Symphony reaches a project's board from the project's folder (`project::at`): a
 folder that is gone is refused as a project with no board, never walked up from
-to the checkout that held it, whose board the reach would start.
+to the checkout that held it, whose board the reach would start; a hub's reach
+held to the repository it found there (`project::held`) is refused the same way
+once the lookup finds another, or a common dir with no `HEAD`. `Home` makes the
+board's folders only below the folder it is kept in, the common dir for
+`Home::in_common` (`Home::make`), and is refused once that is gone; a start whose
+folder no longer holds the starters' lock it took once its server answers
+(SurrealDB makes every missing folder of its store's path) ends that server and
+records none.
 The server `Home` starts for a board in a scratch place (under the temporary
 folder or a checkout's `artifacts/`, `server::scratch`) is not detached as the
 live board's is: a supervisor shell ends it once the process that started it
