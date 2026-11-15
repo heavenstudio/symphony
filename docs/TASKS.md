@@ -2270,7 +2270,13 @@ A consuming project's optional wait guard refuses a loop waiting on machine-wide
 - `just tasks show` lists a task's subtasks with each one's status and holder;
   `just tasks list` and the Symphony's **tasks** page, under its **Task
   groups** heading, show the same tree, at any depth (`list` leaves finished
-  tasks out unless `--all`).
+  tasks out unless `--all`). The Symphony's tree and a task page's
+  **Subtasks** leave out a finished instruction to do or review the task
+  itself (`SLUG/work`, `SLUG/review`, the staffing pass's
+  `SLUG/staff-review-N`), filed before a task's executor and reviewer worked
+  on the task itself: its verdicts stand on the task's thread, and the task is
+  its row. Open, it is listed, where its agent is found
+  (`crates/symphony/src/taskview.rs`, `listed_under_parent`).
 - Events climb: a message to `@orchestrator`, any verdict and any
   status change on a subtask reaches the orchestrator of the nearest task, at
   or above it, that has one, so the orchestrator takes the role on the root
