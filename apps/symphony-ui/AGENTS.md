@@ -374,14 +374,15 @@ never the whole target, which the release run runs.
   documents, where the program's WASM, glue and the task pages' chunk were; its timeline, a chunk
   of the web client's, takes 12,787 after it (from 56,385), its return 2,241 (from 2,240). No page
   is the program's after both: the chat and the menus are all it builds. The menus' move to the
-  React client (`app/client-moves-to-react/panel-and-overlay`, against main's build at 73f9fcc)
-  leaves it the chat alone, and the warmed chat and menus take 469,883 bytes outside home's first
-  visit (from 584,113): the menus' entry (4,756 on the wire) and sheet (1,072) where their chunk
-  of the program (115,620) was, the code they share with the pages in the chunk every page has
-  loaded already. Home, the documents, a document and a task's page take 137 to 160 bytes less
-  (`/` 111,611 from 111,771), the picture viewer's rules gone from the media sheet to the menus'
-  (its copy under the chat's name, warmed beside home's, 1,302 from 1,470); every other page stays
-  within 26 bytes of main's, the shell's manifest naming the menus' files. Each
+  React client (`app/client-moves-to-react/panel-and-overlay`, against main's build at 777b39e)
+  leaves it the chat alone, and the warmed chat and menus take 469,815 bytes outside home's first
+  visit (from 584,032): the menus' entry (4,757 on the wire) and sheet (1,072) where their chunk
+  of the program (115,594) was, the code they share with the pages in the chunk every page has
+  loaded already. Home, `/docs/` and a document take 160 to 166 bytes less (`/` 112,227 from
+  112,387), the picture viewer's rules gone from the media sheet to the menus' (its copy under
+  the chat's name, warmed beside home's, 1,299 from 1,472), and a task's page 143 less but for
+  the gates' change main made after that build (141,921 from 141,862 with it); every other page
+  stays within 28 bytes of main's, the shell's manifest naming the menus' files. Each
   module pays for its own compiled framework, the program once for all its kinds;
   later visits reuse cached imports. The home budget test
   is independent of the canonical-entry test, which gives every kind a fresh
