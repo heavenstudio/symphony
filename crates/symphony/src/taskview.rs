@@ -53,34 +53,54 @@ pub fn counts(board: &Tasks) -> TaskCounts {
     }
 }
 
+/// The tasks of the owner's sign-off lane (docs/TASKS.md): open, executed, and held by their owner
+/// gate. The Symphony's is held while a card the task posted waits on the owner
+/// ([`crate::gates::owner`]); a gate named `owner` that a plugin of the project at `root` answered
+/// for the task as it is now replaces it ([`crate::gates::merged`]), read from what `kept` holds and
+/// never asked ([`crate::gates::kept_theirs`]), so the lane starts no plugin's work. Only a known
+/// gate kept for the task does: with nothing kept for it as it is now, an error kept, or the gate
+/// unknown, the card rule decides, erring toward showing the owner what may wait on them.
 pub fn signoff(
     store: &symphony_board::Store,
     tasks: &[Task],
     pending: &symphony_api::Pending,
+    root: &Path,
+    kept: &crate::gates::Kept,
 ) -> Result<Vec<String>, String> {
+    let answerers = crate::gates::answerers(&crate::project::Project::of(root), root);
     let mut result = Vec::new();
     for task in tasks.iter().filter(|t| {
         !["done", "blocked", "cancelled"].contains(&t.status.as_str())
             && t.roles.iter().any(|r| r.role == "executor")
     }) {
-        // The owner gate's rule (`gates::posted_cards`), the thread read only when the body names
-        // none of the cards.
         let cards = crate::gates::linked_cards(&task.links, pending);
-        if cards.is_empty() {
+        if cards.is_empty() && answerers.is_empty() {
             continue;
         }
-        let posted = |texts: &mut dyn Iterator<Item = &str>| {
-            !crate::gates::posted_cards(&cards, texts).is_empty()
+        // The owner gate's rule (`gates::posted_cards`), the thread read only when the body names
+        // none of the cards.
+        let mut posted = crate::gates::posted_cards(&cards, std::iter::once(task.body.as_str()));
+        if posted.is_empty() && !cards.is_empty() {
+            let thread = store.thread(&task.slug).map_err(|e| e.to_string())?;
+            posted = crate::gates::posted_cards(&cards, thread.iter().map(|m| m.text.as_str()));
+        }
+        let own: Vec<symphony_api::Gate> = crate::gates::owner(&posted).into_iter().collect();
+        let gates = if answerers.is_empty() {
+            own
+        } else {
+            let branch = branch_of(store, &task.slug, &task.body).map_err(|e| e.to_string())?;
+            let asked = crate::gates::Asked {
+                slug: task.slug.clone(),
+                status: task.status.clone(),
+                tip: crate::gates::tip(root, &branch),
+                branch,
+            };
+            let theirs = crate::gates::kept_theirs(kept, root, &answerers, &asked);
+            crate::gates::merged(own, theirs)
         };
-        if posted(&mut std::iter::once(task.body.as_str()))
-            || posted(
-                &mut store
-                    .thread(&task.slug)
-                    .map_err(|e| e.to_string())?
-                    .iter()
-                    .map(|m| m.text.as_str()),
-            )
-        {
+        if gates.iter().any(|gate| {
+            gate.name == symphony_api::gates::OWNER && gate.state == symphony_api::GateState::Held
+        }) {
             result.push(task.slug.clone());
         }
     }
@@ -218,8 +238,16 @@ pub(crate) fn approval_branch(
     store: &symphony_board::Store,
     task: &symphony_board::Task,
 ) -> Result<String, symphony_board::Error> {
-    if let Some(branch) = task
-        .body
+    branch_of(store, &task.slug, &task.body)
+}
+
+/// [`approval_branch`] of the task `slug`, whose brief is `body`.
+fn branch_of(
+    store: &symphony_board::Store,
+    slug: &str,
+    body: &str,
+) -> Result<String, symphony_board::Error> {
+    if let Some(branch) = body
         .trim_start()
         .strip_prefix("Review `")
         .and_then(|text| text.split_once("` before it lands"))
@@ -227,15 +255,15 @@ pub(crate) fn approval_branch(
     {
         return Ok(branch.to_string());
     }
-    if let Some(branch) = task.slug.strip_prefix("review/") {
+    if let Some(branch) = slug.strip_prefix("review/") {
         return Ok(branch.to_string());
     }
     Ok(store
-        .task_sessions(&task.slug)?
+        .task_sessions(slug)?
         .into_iter()
         .rev()
         .find(|s| s.role == "executor" && !s.branch.is_empty())
-        .map_or_else(|| task.slug.clone(), |s| s.branch))
+        .map_or_else(|| slug.to_string(), |s| s.branch))
 }
 
 pub fn history(
