@@ -991,8 +991,8 @@ impl Hub {
         if let Some(tasks) = &board {
             snapshot.board.counts.tasks = Some(taskview::counts(tasks));
         }
-        // The followed documents read again: every one while the page's files changed, else only
-        // one whose cards or linking tasks moved, as no file says.
+        // Which followed documents are read again: every one while the page's files changed, else
+        // only one whose cards or linking tasks moved, which no file says.
         let moved = |rel: &str, doc: &symphony_api::Document| {
             cards_before
                 .as_ref()
