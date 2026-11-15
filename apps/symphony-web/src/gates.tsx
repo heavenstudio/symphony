@@ -11,7 +11,8 @@
 // when the task changes, one of its runs starts or ends (`workOf`), or the page's feed counts
 // another event that may change them (`nudged`), the last answer shown meanwhile, and only the
 // latest read is drawn: a newer one aborts the one before. A task nothing gates shows no section,
-// and a read that failed says so in its place while the rest of the page works.
+// and a read that failed says so in its place while the rest of the page works. Its head's pill
+// says what the task waits on, by its status (`waitsOn`): the gates only in review.
 //
 // Wide, a gate is one row of bounded columns, a part wrapping within its own when its words need
 // more room, so every word shows without a hover; on a phone, three lines (its name and state, its
@@ -39,6 +40,7 @@ import {
   readTaskGates,
   recall,
   seenOf,
+  type Waiter,
   WORDS,
   type Words,
   waitsOn,
@@ -141,6 +143,8 @@ export class GatesReader {
 
 export interface TaskGatesPanelProps {
   slug: string;
+  /** The task as its page has it: its status says what the pill names (`waitsOn`). */
+  task: Waiter;
   /** The task's `updated`: a change reads the gates again. */
   revision: number;
   /** What the server last answered for the task (`TaskPage.gates`): the room held until its answer. */
@@ -160,6 +164,7 @@ export interface TaskGatesPanelProps {
  */
 export function TaskGatesPanel({
   slug,
+  task,
   revision,
   seen = null,
   work = 0,
@@ -190,6 +195,7 @@ export function TaskGatesPanel({
       {!near && <div className="viewport-sentinel" aria-hidden="true" ref={watch} />}
       <GatesView
         gates={gates}
+        task={task}
         now={Date.now() / 1000}
         room={room}
         width={width()}
@@ -213,7 +219,9 @@ export function GhostGates({ slug }: { slug: string }) {
     const lines = load(KEPT) ?? "";
     return Room.of(null, recall(lines, slug) ?? latest(lines, width()));
   });
-  return <GatesView gates={READING} now={0} room={room} width={width()} onRetry={() => {}} />;
+  return (
+    <GatesView gates={READING} task={null} now={0} room={room} width={width()} onRetry={() => {}} />
+  );
 }
 
 /** A shadow bar's style: its width, `--w`. */
@@ -221,6 +229,8 @@ const bar = (wide: string) => ({ "--w": wide }) as CSSProperties;
 
 export interface GatesViewProps {
   gates: Gates;
+  /** The task the gates are of, which says what the pill names (`waitsOn`); none on its ghost. */
+  task: Waiter | null;
   /** Now, in seconds since the epoch: what the gates' times are told against. */
   now: number;
   /** What the section holds until it has an answer. */
@@ -234,7 +244,7 @@ export interface GatesViewProps {
  * The section for `gates`, its times told against `now`: nothing for a task nothing gates. Until it
  * has an answer it holds `room`, at the height drawn before in a window `width` px wide.
  */
-export function GatesView({ gates, now, room, width, onRetry }: GatesViewProps) {
+export function GatesView({ gates, task, now, room, width, onRetry }: GatesViewProps) {
   const head = (
     <h2 className="eyebrow" id="task-gates-title">
       {WORDS.title}
@@ -312,15 +322,15 @@ export function GatesView({ gates, now, room, width, onRetry }: GatesViewProps) 
       const { answer } = gates;
       if (answer.gates.length === 0) return null;
       const today = localMinutes(now);
-      const waits = waitsOn(answer);
+      const waits = task === null ? null : waitsOn(answer, task);
       return (
         <section className="task-gates card" data-gates="read" aria-labelledby="task-gates-title">
           <div className="gates-head">
             {head}
             {waits !== null && (
-              <span className={`pill gate-${waits[0]} gates-waits`}>
+              <span className={`pill ${waits.tone} gates-waits`}>
                 {WORDS.waitsOn}
-                {waits[1].map((name, at, names) => (
+                {waits.names.map((name, at, names) => (
                   // biome-ignore lint/suspicious/noArrayIndexKey: the names are drawn in their order, which a new answer draws whole
                   <Fragment key={at}>
                     {at > 0 && (at + 1 === names.length ? WORDS.and : WORDS.comma)}

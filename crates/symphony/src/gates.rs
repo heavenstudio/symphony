@@ -2,7 +2,8 @@
 //! answers three of its own: [`review`], the board's reviewer verdicts ([`review_rounds`]), or the
 //! covered close a task is done by instead ([`review_of`]);
 //! [`check`], the project's `[verdicts] check` at the tip, from the run records the board's
-//! recorder keeps (docs/MACHINE_WORK.md); and [`owner`], a card the task posted that waits on the
+//! recorder keeps (docs/MACHINE_WORK.md), for a branch with work of its own ([`own_commits`]) and
+//! never an instruction subtask's; and [`owner`], a card the task posted that waits on the
 //! owner, by the sign-off lane's rule ([`posted_cards`]). A project's plugins answer its own
 //! through the gates seam (`symphony_plugin::Gates`), all asked at once ([`theirs`]), each answer
 //! [`Kept`] by the task and its branch's tip, and a plugin's gate replaces the Symphony's of its
@@ -859,6 +860,23 @@ pub fn tip(root: &Path, branch: &str) -> Option<String> {
     commit(root, &format!("refs/heads/{branch}"))
 }
 
+/// Whether the commit `tip` in the repository at `root` holds work of its own: it is not on the
+/// branch `default` (the project's default branch), as a branch made there and not yet committed
+/// to is, or one already landed. A tip with no default branch to compare, or no merge base with
+/// it, holds its own.
+pub fn own_commits(root: &Path, tip: &str, default: &str) -> bool {
+    let on_default = || -> Option<bool> {
+        let repo = gix::discover(root).ok()?;
+        let tip = repo.rev_parse_single(tip).ok()?.detach();
+        let default = repo
+            .rev_parse_single(format!("refs/heads/{default}^{{commit}}").as_str())
+            .ok()?
+            .detach();
+        Some(repo.merge_base(tip, default).ok()?.detach() == tip)
+    };
+    !on_default().unwrap_or(false)
+}
+
 /// The commit the revision `spec` names in the repository at `root`, a full id; `None` when it
 /// names none there.
 fn commit(root: &Path, spec: &str) -> Option<String> {
@@ -964,11 +982,18 @@ pub fn answer_from(
         }
         None => before(),
     };
-    if !project.verdicts.check.is_empty() {
+    // The check reads the task's own work: none on an instruction, whose work lands with its
+    // parent, nor on a branch with no commit of its own (none yet, or landed).
+    let checked = tip.as_deref().filter(|tip| {
+        !project.verdicts.check.is_empty()
+            && !record.instruction
+            && own_commits(root, tip, &project.default_branch)
+    });
+    if let Some(checked) = checked {
         own.push(check(
             &project.verdicts.check.join(" "),
             &branch,
-            tip.as_deref(),
+            Some(checked),
             runs,
         ));
     }
