@@ -304,8 +304,9 @@ pub struct Waits {
     #[serde(default)]
     pub approved_to_landed: Vec<Wait>,
     /// From a move into review to the first reviewer on it: a session joining the task as its
-    /// reviewer, or claiming an instruction subtask of it, while it is in review; none at once
-    /// where one already held the task.
+    /// reviewer, or claiming an instruction subtask of it, while it is in review. A reviewer that
+    /// already held the role at the move (a re-review whose reviewer kept it) ends none, as the
+    /// board's lines cannot tell when it came back.
     #[serde(default)]
     pub review_to_reviewer: Vec<Wait>,
     /// From a `changes` verdict to its executor's first line after it: a claim of the task, or a
@@ -368,8 +369,8 @@ pub struct Decisions {
 /// A card waiting on the owner.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct OpenCard {
-    /// The page it is on, by its route: `docs/DECISIONS.md`, or `@BRANCH/docs/DECISIONS.md` for a
-    /// card a live branch posted.
+    /// The page it is on, by its route: `docs/DECISIONS.md`, a live branch's copy of one of main's
+    /// cards included, or `@BRANCH/docs/DECISIONS.md` for a card only a live branch posted.
     pub doc: String,
     pub slug: String,
     /// Since when it has waited: the minute of its line that last put it in the owner's queue,
