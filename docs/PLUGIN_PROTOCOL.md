@@ -287,14 +287,35 @@ request: a plugin of 0.2 is asked them card by card, and answers the same.
   `Request` is `#[non_exhaustive]` as well, as a new call is a minor of the protocol and a new
   variant of it, and a match on it outside the kit ends with `_`. The protocol's other enums stay
   exhaustive: a variant of `Answered` or `Member` is a line an older peer cannot read, a new major
-  of the protocol, and `Lined` never goes on the wire. The seam types and the vocabulary (`Card`,
-  `Picture`, `TaskOffer`, `Submission`, `Theme`, `Block`…) are not marked, as a plugin and its
-  tests build them by their fields: a field added to one is a new major of the kit, whichever
-  minor of the protocol carries it. A new kind of block, text span or media is to be a new minor
-  of the kit ([its card](DECISIONS.md#kit-new-block-version)), as a plugin makes blocks and never
-  lists them: `Block`, `Span` and `Media` get `#[non_exhaustive]` before the kit's first
-  publication, and a test that the client draws every kind takes the place of the compiler's
-  refusal. They are not marked yet, so until then a variant added to one is still a new major.
+  of the protocol, and `Lined` never goes on the wire. The seam types' and the vocabulary's structs
+  (`Card`, `Picture`, `TaskOffer`, `Submission`, `Theme`, `Image`, `Viewer`…) and a variant's own
+  fields are not marked, as a plugin and its tests build them by their fields: a field added to one
+  is a new major of the kit, whichever minor of the protocol carries it.
+- **The vocabulary grows in a minor** (the board task `tools/kit-vocabulary-grows-in-a-minor`,
+  [its card](DECISIONS.md#kit-new-block-version)). A new kind of block, text span or media is a
+  minor of the kit (1.1.0), never a new major: a plugin makes blocks and never has to list them,
+  so one written for 1.0.0 keeps building. `Block`, `Span` and `Media` are `#[non_exhaustive]`,
+  and so is every other list of the kit a minor may add to: the words a block carries
+  (`CalloutKind`, `FigureSize`, `ContainerKind`, `InlineKind`, `VectorKind`, `CardState`,
+  `CardGroup`, `ThreadAuthor`), a gate's `GateState`, a board field's `FieldKind` and a renderer's
+  `Drawing`. A match on one outside the kit ends with `_`, a plugin's too, and a variant is made
+  as before. Two stay exhaustive: `FieldValue`, a number or text as JSON has them, which a field's
+  `validate` tells apart, and `Reply`, which a consuming project's route test matches whole, so
+  that a new kind of reply waits for a consumer release plan. The kit's own test holds the marks
+  and names those two with their reasons (`crates/symphony-plugin/tests/vocabulary.rs`, a crate
+  that links the kit alone and matches each list with `_`).
+
+  The compiler no longer refuses a build of this workspace in which a new kind has no arm, so
+  tests do. `crates/symphony-api/tests/vocabulary_drawn.rs` reads each list from the kit's source
+  and fails on a variant that a match on it in the server, the wire types or the Dioxus client
+  does not name. The React client is held by its types, written from the same lists: its
+  switches end in a value of type `never` and its tables name every kind, so a kind it does not
+  draw fails its type check, and `blocks.test.tsx` fails until the sample the wire types' example
+  writes holds the kind and it is drawn. A kind a client does not know, sent by a newer server, is
+  not a failed read: the React client lets it through with its fields unread and says it where it
+  stands (`Unsupported document content: NAME`, `Unsupported NAME` in a line, `Unsupported media:
+  NAME`), drawing the rest of the page. A word it does not know (a size, a tag, a shape) still
+  fails the read, which the page says and tries again.
 - A call the plugin does not know, a request missing a field, or a second member beside the call is
   answered `{"refused":"…"}`, naming what could not be read, and the host shows that in the call's
   place.

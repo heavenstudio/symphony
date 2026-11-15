@@ -42,7 +42,11 @@ version, under MIT: crates.io is the package manager their versions live in
 ([its card](DECISIONS.md#consumer-contract-versioning)).
 
 - **The kit:** `symphony-plugin`, `symphony-blocks` and `symphony-docs`
-  ([the kit](PLUGIN_PROTOCOL.md#the-kit)), one version for the three, from 1.0.0.
+  ([the kit](PLUGIN_PROTOCOL.md#the-kit)), one version for the three, from 1.0.0. A new kind of
+  block, text span or media, or a new word one carries, is a minor of it (1.1.0), which a plugin
+  written for 1.0.0 takes by itself and keeps building on: those lists are `#[non_exhaustive]`
+  in the code, as they must be before the first publication, since marking one later is itself a
+  new major ([what is marked and what holds it](PLUGIN_PROTOCOL.md#versions)).
 - **The helpers:** `symphony-env`, `symphony-args`, `symphony-schema`, `process-cwd` and
   `repository-read`, each on a version line of its own from 1.0.0.
 - **The product:** the library and its `symphony` command as `symphony-app`, the board
