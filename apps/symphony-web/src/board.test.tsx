@@ -18,6 +18,7 @@ import {
   keepRows,
   keepShape,
   keepsWatching,
+  layoutNow,
   MORE,
   NO_TREE,
   PAGE,
@@ -27,6 +28,7 @@ import {
   recallShape,
   rememberCards,
   rowCard,
+  rowGuess,
   sameRow,
   searched,
   stageCounts,
@@ -256,6 +258,20 @@ describe("the board's columns", () => {
     expect(html).not.toContain('id="task-groups"');
   });
 
+  // The button a phone shows them behind (board.css draws it on a phone alone, and the filters
+  // there only while it is pressed), shut as the board opens, before the filters it opens.
+  it("keep the search and the filters behind a phone's button, shut", () => {
+    const html = board({ statuses: LIFECYCLE });
+    const toggle =
+      '<button class="dx-button board-filters-toggle" data-style="outline" data-size="default" type="button" aria-expanded="false" aria-controls="board-filters">Search and filters</button>';
+    expect(html).toContain(toggle);
+    expect(html).toContain('<div id="board-filters" class="row filters" data-open="false">');
+    expect(html.indexOf(toggle)).toBeLessThan(html.indexOf('id="board-filters"'));
+    expect(html.indexOf('id="board-filters"')).toBeLessThan(
+      html.indexOf("Search tasks and messages"),
+    );
+  });
+
   it("are filtered by status and by the window of finished tasks", () => {
     const html = board({ statuses: LIFECYCLE });
     expect(html).toContain(">Search tasks and messages <input");
@@ -340,6 +356,20 @@ describe("a column's reserve", () => {
     expect(firstPageHeight(2, kept)).toBe(134 + 113);
     expect(firstPageHeight(5, kept)).toBe(134 + 113 + 192 + 2 * ROW);
     expect(firstPageHeight(31, kept)).toBe(134 + 113 + 192 + 27 * ROW + MORE);
+    // The guess as the board's layout draws the typical card.
+    expect(card(kept, 3, "review", 119)).toEqual([119, 2]);
+    expect(card(kept, 0, "review", 119)).toEqual([134, 1]);
+    expect(firstPageHeight(5, kept, 119)).toBe(134 + 113 + 192 + 2 * 119);
+    expect(firstPageHeight(31, [], 119)).toBe(30 * 119 + MORE);
+  });
+
+  // The typical card draws at ROW in a desk's column and a narrow window's, its title on two
+  // lines; a phone's column is wider, and its title takes one.
+  it("guesses the typical card as the layout draws it", () => {
+    expect(rowGuess(layoutAt(1280))).toBe(ROW);
+    expect(rowGuess(layoutAt(700))).toBe(ROW);
+    expect(rowGuess(layoutAt(390))).toBe(119);
+    expect(rowGuess(layoutAt(600))).toBe(119);
   });
 
   // A row waiting to be drawn holds the height its own card will draw at, chips among it: a row of
@@ -354,15 +384,15 @@ describe("a column's reserve", () => {
     ]);
     const phases = phaseLabels(building, "load/ready-1", true);
     expect(phases).toHaveLength(1);
-    for (const layout of ["desk", "phone"] as const) {
+    for (const layout of [layoutAt(1280), layoutAt(390)]) {
       expect(rowCard(both, building, true, layout)).toEqual([rowHeight(both, phases, layout), 3]);
       expect(rowCard(bare, NO_WORK, true, layout)).toEqual([rowHeight(bare, [], layout), 0]);
       expect(rowCard(linked, NO_WORK, true, layout)).toEqual([rowHeight(linked, [], layout), 1]);
       expect(rowCard(staffed, NO_WORK, true, layout)).toEqual([rowHeight(staffed, [], layout), 1]);
       expect(rowCard(both, NO_WORK, true, layout)).toEqual([rowHeight(both, [], layout), 2]);
     }
-    expect(rowCard(staffed, NO_WORK, true, "desk")[0]).toBeGreaterThan(
-      rowCard(bare, NO_WORK, true, "desk")[0],
+    expect(rowCard(staffed, NO_WORK, true, layoutAt(1280))[0]).toBeGreaterThan(
+      rowCard(bare, NO_WORK, true, layoutAt(1280))[0],
     );
   });
 });
@@ -551,6 +581,10 @@ describe("a board drawn again", () => {
     const row = { task: a, work: NO_WORK, connected: true, layout };
     expect(sameRow(row, { ...row })).toBe(true);
     expect(sameRow(row, { ...row, layout: layoutAt(400) })).toBe(false);
+    // Two phones as wide draw alike; a wider one's column is wider.
+    const phone = { ...row, layout: layoutAt(390) };
+    expect(sameRow(phone, { ...row, layout: layoutAt(390) })).toBe(true);
+    expect(sameRow(phone, { ...row, layout: layoutAt(430) })).toBe(false);
     expect(sameRow(row, { ...row, task: { ...a } })).toBe(false);
     expect(sameRow(row, { ...row, connected: false })).toBe(false);
     // Another machine's work that leaves this card's phases as they were draws nothing again.
@@ -562,6 +596,25 @@ describe("a board drawn again", () => {
       aMachine("alpha", [anOperation("alpha", "b", "build", "running", { task: "w/a" })]),
     ]);
     expect(sameRow(row, { ...row, work: here })).toBe(false);
+  });
+
+  // The window's width chooses a desk's, a narrow window's or a phone's columns; a phone's is the
+  // page inside the room a scrollbar takes, none on most phones.
+  it("is laid out for the window it is drawn in", () => {
+    expect(layoutNow()).toBe(layoutAt(1280));
+    vi.stubGlobal("innerWidth", 390);
+    expect(layoutNow()).toBe(layoutAt(390));
+    vi.stubGlobal("document", { documentElement: { clientWidth: 390 } });
+    expect(layoutNow()).toBe(layoutAt(390));
+    vi.stubGlobal("innerWidth", 500);
+    vi.stubGlobal("document", { documentElement: { clientWidth: 485 } });
+    expect(layoutNow()).toBe(layoutAt(500, 485));
+    expect(layoutNow()).not.toBe(layoutAt(500));
+    // A page a stand-in drew with no root element, or none measured yet, is the window's.
+    vi.stubGlobal("document", { getElementById: () => null });
+    expect(layoutNow()).toBe(layoutAt(500));
+    vi.stubGlobal("document", { documentElement: { clientWidth: 0 } });
+    expect(layoutNow()).toBe(layoutAt(500));
   });
 
   it("is memoized: a row by `sameRow`, a column by what it is given", () => {
@@ -1117,6 +1170,16 @@ describe("the board's ghost", () => {
     expect(html).not.toContain('role="status"');
   });
 
+  // As the board opens: a phone's button, which board.css draws there alone, and the filters it
+  // keeps shut there.
+  it("draws a phone's button for the search and the filters before them, shut", () => {
+    const html = ghost(recallShape(null));
+    const toggle = html.indexOf('class="ghost-field ghost-filters-toggle"');
+    expect(toggle).toBeGreaterThanOrEqual(0);
+    expect(toggle).toBeLessThan(html.indexOf('class="row filters"'));
+    expect(html).not.toContain("data-open");
+  });
+
   it("draws the rail's reasons and link where no machine reported", () => {
     const html = ghost([["build-test", 0]]);
     const rail = html.slice(html.indexOf('data-for="build-test"'));
@@ -1137,8 +1200,17 @@ describe("the board's ghost", () => {
       (m[1] ?? "").split(/\s+/),
     );
     expect(classes).toContain("ghost-kanban");
+    expect(classes).toContain("ghost-filters-toggle");
     expect(html).not.toContain("data-status");
-    for (const real of ["kanban", "pipeline", "board-scroll", "offline", "column", "taskcard"]) {
+    for (const real of [
+      "kanban",
+      "pipeline",
+      "board-scroll",
+      "offline",
+      "column",
+      "taskcard",
+      "board-filters-toggle",
+    ]) {
       expect(classes, real).not.toContain(real);
     }
   });

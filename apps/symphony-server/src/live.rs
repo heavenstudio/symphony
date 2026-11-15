@@ -4,6 +4,7 @@
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, LazyLock, Mutex, OnceLock, RwLock, Weak, mpsc};
 use std::time::{Duration, Instant};
 
@@ -95,6 +96,16 @@ pub(crate) struct Page {
     order: Arc<symphony::postpone::View>,
     pub history: VecDeque<Event>,
     pub documents: BTreeMap<String, symphony_api::Document>,
+    /// The read ([`Hub::reads`]) each document's copy in `documents`, or its removal, came from: a
+    /// render begun before it places nothing.
+    copied: BTreeMap<String, u64>,
+    /// Where the last refresh that renders anew (its files changed, or main's one cards moved)
+    /// began, in [`Hub::reads`]' numbers: a first read of a document begun before it reads again,
+    /// as that refresh renders only the documents followed when it listed them.
+    renews_from: u64,
+    /// Documents a first read placed though a refresh that renders anew began after it, as it had
+    /// read again once already: the next refresh renders them whatever changed.
+    stale: BTreeSet<String>,
     missing: BTreeSet<String>,
     /// When the documents its queue came from began to be read, in seconds since the epoch: an
     /// owner's ask said after it is not in it yet ([`symphony::owner_asks`]).
@@ -198,11 +209,11 @@ pub(crate) struct Hub {
     /// machine's, or a test's.
     pub(crate) low_disk:
         Box<dyn Fn() -> Option<symphony_board::board_health::disk::Low> + Send + Sync>,
-    /// Held by a document's render from its read of the file until its copy is in its page, so the
-    /// copy a page keeps is the last one read. It is never taken with `pages` held, and `pages` is
-    /// taken only to place the copy, so the board, the feed and the project list, which read
-    /// `pages`, never wait on a render.
-    rendering: Mutex<()>,
+    /// Numbers each document's render as its read begins ([`Page::copied`]), so renders run side by
+    /// side and the copy a page keeps is the last one begun: a reader waits on no refresh's
+    /// renders. `pages` is taken only to place a copy, so the board, the feed and the project
+    /// list, which read `pages`, never wait on a render either.
+    reads: AtomicU64,
     /// The store the page reads of the board share ([`Hub::reader`]), once one has been opened.
     reader: Mutex<Option<Arc<symphony_board::Store>>>,
     /// How [`Hub::reader`] opens the board: [`taskview::connect_held`], held to `repository`, or a
@@ -336,13 +347,13 @@ impl Hub {
             report_folders: OnceLock::new(),
             runs_index: crate::api::runs::Index::default(),
             recording_gate: OnceLock::new(),
-            notices: Mutex::new(health::Notices::default()),
+            notices: Mutex::new(health::Notices::of(root)),
             replaying: Mutex::new(None),
             clock: Box::new(symphony_board::sweep::trigger::now),
             asks: Mutex::new(asks::AskWatch::default()),
             chat: Mutex::new(None),
             low_disk: health::low_disk(root),
-            rendering: Mutex::new(()),
+            reads: AtomicU64::new(0),
             reader: Mutex::new(None),
             connect_reader: Box::new(move |root| {
                 taskview::connect_held(root, repository.as_deref())
@@ -623,24 +634,46 @@ impl Hub {
         {
             return Err(removed());
         }
-        // A panic under this lock leaves nothing half done: it guards no data.
-        let _rendering = self.rendering.lock().unwrap_or_else(|e| e.into_inner());
-        let mut doc = self.render_document(&root, rel, scope)?;
-        if !follow {
-            let pages = self.pages.read().unwrap_or_else(|e| e.into_inner());
-            doc.version = pages.get(scope).ok_or_else(removed)?.board.version;
+        let mut read_again = true;
+        loop {
+            let read = self.reads.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let mut doc = self.render_document(&root, rel, scope)?;
+            if !follow {
+                let pages = self.pages.read().unwrap_or_else(|e| e.into_inner());
+                doc.version = pages.get(scope).ok_or_else(removed)?.board.version;
+                return Ok(doc);
+            }
+            let mut pages = self.pages.write().unwrap_or_else(|e| e.into_inner());
+            let page = pages.get_mut(scope).ok_or_else(removed)?;
+            // A refresh that renders anew begun since this read did, which listed the documents to
+            // render without this one, as none followed it: what this read read may be gone. It
+            // reads once again; behind a second such refresh it is placed and left to the next, so
+            // no reader renders on while the files keep changing.
+            let behind = read < page.renews_from && !page.documents.contains_key(rel);
+            if behind && std::mem::take(&mut read_again) {
+                continue;
+            }
+            // A render begun after this one placed its copy first: that copy is the newer.
+            if page.copied.get(rel).is_some_and(|copied| *copied > read)
+                && let Some(newer) = page.documents.get(rel)
+            {
+                doc = newer.clone();
+            } else {
+                // A GET can observe an edit before the watcher. Publish it before handing out its
+                // cursor, so existing subscribers also receive that edit.
+                if let Some(delta) = document_change(page, rel, &doc) {
+                    self.publish(page, vec![json!({"region":"document","data":delta})]);
+                }
+                page.documents.insert(rel.into(), doc.clone());
+                page.copied.insert(rel.into(), read);
+                if behind {
+                    page.stale.insert(rel.into());
+                    self.rescan.store(true, std::sync::atomic::Ordering::SeqCst);
+                }
+            }
+            doc.version = page.board.version;
             return Ok(doc);
         }
-        let mut pages = self.pages.write().unwrap_or_else(|e| e.into_inner());
-        let page = pages.get_mut(scope).ok_or_else(removed)?;
-        // A GET can observe an edit before the watcher. Publish it before handing out its cursor,
-        // so existing subscribers also receive that edit.
-        if let Some(delta) = document_change(page, rel, &doc) {
-            self.publish(page, vec![json!({"region":"document","data":delta})]);
-        }
-        doc.version = page.board.version;
-        page.documents.insert(rel.into(), doc.clone());
-        Ok(doc)
     }
 
     pub fn folder(&self, scope: &str, rel: &str) -> Result<symphony_api::Folder, String> {
@@ -725,8 +758,21 @@ impl Hub {
         *self.awaited.lock().unwrap_or_else(|e| e.into_inner()) = scan.awaited;
         *self.marks.write().unwrap_or_else(|e| e.into_inner()) = Arc::new(scan.pages);
         let shown_before = Arc::clone(&self.one_cards.read().unwrap_or_else(|e| e.into_inner()));
+        // Main's documents are read from main's own files: a ref, a worktree's record or a branch's
+        // edit changes none of them. A lost event names main's root.
+        let main_files_changed = dirty.is_none_or(|paths| {
+            let inputs = tree_inputs(&self.root);
+            let trees = self.trees.read().unwrap_or_else(|e| e.into_inner());
+            paths.iter().any(|path| {
+                *path == self.root
+                    || (inputs
+                        .iter()
+                        .any(|(below, _)| path.starts_with(self.root.join(below)))
+                        && !trees.values().any(|tree| path.starts_with(tree)))
+            })
+        });
         // Main also displays branch-only cards; branch document edits can change that queue.
-        let main = self.refresh_page("", &self.root);
+        let main = self.refresh_page_read("", &self.root, main_files_changed);
         let shown_after = Arc::clone(&self.one_cards.read().unwrap_or_else(|e| e.into_inner()));
         let scopes = self
             .pages
@@ -755,17 +801,7 @@ impl Hub {
                 .map(|(page, cards)| (page.clone(), cards.clone()))
                 .collect::<Vec<_>>()
         };
-        let main_cards_changed = mains(&shown_before) != mains(&shown_after)
-            || dirty.is_none_or(|paths| {
-                let inputs = tree_inputs(&self.root);
-                let trees = self.trees.read().unwrap_or_else(|e| e.into_inner());
-                paths.iter().any(|path| {
-                    inputs
-                        .iter()
-                        .any(|(below, _)| path.starts_with(self.root.join(below)))
-                        && !trees.values().any(|tree| path.starts_with(tree))
-                })
-            });
+        let main_cards_changed = mains(&shown_before) != mains(&shown_after) || main_files_changed;
         for scope in scopes {
             let root = self.tree(&scope);
             // A page that goes, or follows its tree to another folder, leaves that folder's
@@ -960,6 +996,8 @@ impl Hub {
                 })
             }
         });
+        // Main's one cards before this read, to tell which of its documents show other cards now.
+        let mut cards_before = None;
         let mut snapshot = match snapshot {
             Ok(snapshot) => {
                 self.invalid
@@ -968,8 +1006,10 @@ impl Hub {
                     .remove(scope);
                 if scope.is_empty() {
                     // Read by the documents rendered below, and by every page's after them.
-                    *self.one_cards.write().unwrap_or_else(|e| e.into_inner()) =
-                        Arc::clone(&snapshot.pages);
+                    cards_before = Some(std::mem::replace(
+                        &mut *self.one_cards.write().unwrap_or_else(|e| e.into_inner()),
+                        Arc::clone(&snapshot.pages),
+                    ));
                 }
                 snapshot
             }
@@ -983,30 +1023,68 @@ impl Hub {
                 return Err(error);
             }
         };
-        if let Ok(tasks) = self.tasks_read() {
-            snapshot.board.counts.tasks = Some(taskview::counts(&tasks));
+        let board = self.tasks_read().ok();
+        if let Some(tasks) = &board {
+            snapshot.board.counts.tasks = Some(taskview::counts(tasks));
         }
-        // The page's documents are read again before `pages` is taken, under `rendering` until
-        // their copies are in the page.
-        let rendering = documents_changed.then(|| {
-            // A panic under this lock leaves nothing half done: it guards no data.
-            self.rendering.lock().unwrap_or_else(|e| e.into_inner())
+        let cards_moved = cards_before.as_ref().is_some_and(|before| {
+            !Arc::ptr_eq(before, &snapshot.pages) && **before != *snapshot.pages
         });
-        let followed: Vec<String> = if rendering.is_some() {
-            self.pages
-                .read()
-                .unwrap_or_else(|e| e.into_inner())
-                .get(scope)
-                .map(|page| page.documents.keys().cloned().collect())
-                .unwrap_or_default()
-        } else {
-            Vec::new()
-        };
+        // A first read begun before this point may have read what this refresh reads anew, and
+        // is in no list below: it reads again rather than place its copy. Main's new one cards
+        // are in place, and every file read from here on was edited before this refresh began.
+        let begun = (documents_changed || cards_moved)
+            .then(|| self.reads.fetch_add(1, std::sync::atomic::Ordering::SeqCst));
+        // Which followed documents are read again: every one while the page's files changed, else
+        // only one a first read left behind, or whose cards or linking tasks moved, which no file
+        // says. Listed under the lock the first reads place under, so each is listed or reads again.
+        let listed: Vec<(String, bool, Vec<symphony_api::DocumentTask>)> = self
+            .pages
+            .write()
+            .unwrap_or_else(|e| e.into_inner())
+            .get_mut(scope)
+            .map(|page| {
+                if let Some(begun) = begun {
+                    page.renews_from = begun;
+                }
+                let stale = std::mem::take(&mut page.stale);
+                page.documents
+                    .iter()
+                    .map(|(rel, doc)| {
+                        let tasks = if documents_changed {
+                            Vec::new()
+                        } else {
+                            doc.tasks.clone()
+                        };
+                        (rel.clone(), stale.contains(rel), tasks)
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let followed: Vec<String> = listed
+            .into_iter()
+            .filter(|(rel, stale, tasks)| {
+                documents_changed
+                    || *stale
+                    || cards_before
+                        .as_ref()
+                        .is_some_and(|before| before.get(rel) != snapshot.pages.get(rel))
+                    || *tasks
+                        != symphony::docview::linked(
+                            root,
+                            rel,
+                            board.as_ref().map_or(&[], |board| &board.tasks),
+                        )
+            })
+            .map(|(rel, _, _)| rel)
+            .collect();
+        // They are read again before `pages` is taken, each numbered as its read begins.
         let rendered: Vec<_> = followed
             .into_iter()
             .map(|rel| {
+                let read = self.reads.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                 let doc = self.render_document(root, &rel, scope);
-                (rel, doc)
+                (rel, read, doc)
             })
             .collect();
         let mut pages = self.pages.write().unwrap_or_else(|e| e.into_inner());
@@ -1048,7 +1126,12 @@ impl Hub {
             }
             sort_activity(&mut combined);
             let mut changes = board_changes(&page.board, &snapshot.board);
-            for (rel, rendered) in rendered {
+            for (rel, read, rendered) in rendered {
+                // A reader's render begun after this one placed the newer copy meanwhile.
+                if page.copied.get(&rel).is_some_and(|copied| *copied > read) {
+                    continue;
+                }
+                page.copied.insert(rel.clone(), read);
                 match rendered {
                     Ok(doc) => {
                         if let Some(delta) = document_change(page, &rel, &doc) {
@@ -1130,6 +1213,9 @@ impl Hub {
                     order: snapshot.order,
                     history: VecDeque::new(),
                     documents: BTreeMap::new(),
+                    copied: BTreeMap::new(),
+                    renews_from: 0,
+                    stale: BTreeSet::new(),
                     missing: BTreeSet::new(),
                     read_at,
                     held: snapshot.held,
@@ -1996,6 +2082,9 @@ mod no_documents_tests;
 
 #[cfg(test)]
 mod read_paths_tests;
+
+#[cfg(test)]
+mod refresh_tests;
 
 #[cfg(test)]
 mod feed_deltas_tests;
