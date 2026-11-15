@@ -49,7 +49,7 @@ the pages: no server is started, stopped or changed.
 positional arguments:
   BASE                 the project's address (http://127.0.0.1:8765/symphony)
   PATH                 the pages under BASE (default: / /tasks /queue /reports /agents
-                       /docs/TASKS.md /task/perf/pages-time-to-synced)
+                       /docs/TASKS.md; a task's page is named, /task/SLUG)
 
 options:
   -h, --help           show this help message and exit
@@ -60,20 +60,21 @@ options:
                        following its feed, while the page is measured (default 0)
   --note TEXT          a few words the kept run says of itself (\"before the outline fix\")
   --against RUN        print this run beside the kept run RUN (its file, or its name in synced/)
-                       rather than the last one kept of the same BASE
+                       rather than the last one kept of the same BASE: a server started on port 0
+                       has another BASE once it is built again, so name the run before it
 
 Chrome is SYMPHONY_CHROME, else the first Chrome found on this machine.
 Exit 0 with the table printed, 1 when the browser failed, 2 for a command line it cannot run.";
 
-/// The pages measured when none is named: one of each kind.
-const PAGES: [&str; 7] = [
+/// The pages measured when none is named: one of each kind every project has. A task's page
+/// (`/task/SLUG`) is named, as no task is on every board.
+const PAGES: [&str; 6] = [
     "/",
     "/tasks",
     "/queue",
     "/reports",
     "/agents",
     "/docs/TASKS.md",
-    "/task/perf/pages-time-to-synced",
 ];
 
 const FLAGS: [Flag; 5] = [
@@ -190,7 +191,9 @@ const PROBE: &str = r#"(() => {
     Response.prototype[name] = function () {
       log.bodies += 1;
       const body = native.call(this);
-      body.finally(() => { log.bodies -= 1; schedule(); });
+      // Settled either way, and a body that fails is the page's to hear, not this count's.
+      const settled = () => { log.bodies -= 1; schedule(); };
+      body.then(settled, settled);
       return body;
     };
   }
@@ -232,7 +235,7 @@ const PROBE: &str = r#"(() => {
     attributeFilter: ["data-ready", "data-cache", "data-feed"] });
 })();"#;
 
-/// What the page recorded, with its own paint, marks and resource timings, as one value.
+/// What the page recorded, with its own paint and resource timings, as one value.
 const COLLECT: &str = r#"(() => {
   const log = window.__synced;
   const navigation = performance.getEntriesByType("navigation")[0];
@@ -241,7 +244,6 @@ const COLLECT: &str = r#"(() => {
     commitsSynced: log.commitsSynced, longtasks: log.longtasks,
     build: document.querySelector("script[src*='symphony-shell-']")?.getAttribute("src") ?? null,
     paint: Object.fromEntries(performance.getEntriesByType("paint").map((entry) => [entry.name, entry.startTime])),
-    marks: performance.getEntriesByType("mark").map((entry) => [entry.name, entry.startTime]),
     document: navigation ? { sent: navigation.requestStart, first: navigation.responseStart,
       end: navigation.responseEnd, loaded: navigation.domContentLoadedEventEnd,
       bytes: navigation.transferSize } : null,
@@ -303,6 +305,39 @@ impl Visit {
 
     fn synced(&self) -> Option<f64> {
         self.probe["synced"].as_f64()
+    }
+
+    /// When the page, once synced, was no longer: a region drawn again from the device or as
+    /// loading, the feed lost, or a read begun.
+    fn unsynced(&self) -> Option<f64> {
+        self.probe["unsynced"].as_f64()
+    }
+
+    /// The page's own reads that failed, each as its address and its status: a status other than
+    /// 2xx or 304, or no answer at all. A read still out when the page was read is none of them.
+    fn failed(&self) -> Vec<String> {
+        self.probe["fetches"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|fetch| fetch["own"] == true)
+            .filter_map(|fetch| {
+                let status = &fetch["status"];
+                let failed = match status.as_u64() {
+                    Some(code) => !(200..300).contains(&code) && code != 304,
+                    None => status.is_string(),
+                };
+                failed.then(|| {
+                    let said = status
+                        .as_u64()
+                        .map_or_else(|| "no answer".to_string(), |code| code.to_string());
+                    format!(
+                        "{} {said}",
+                        short(fetch["url"].as_str().unwrap_or_default())
+                    )
+                })
+            })
+            .collect()
     }
 }
 
@@ -790,9 +825,20 @@ fn waterfall(page: &str, visits: &[Visit]) -> String {
         } else {
             format!("return {}", visit.run)
         };
+        let mut notes = String::new();
+        if let Some(left) = visit.unsynced() {
+            let _ = write!(notes, "  LEFT SYNCED at {left:.0}");
+        }
+        let failed = visit.failed();
+        if !failed.is_empty() {
+            let _ = write!(notes, "  READS FAILED: {}", failed.join(", "));
+        }
+        if let Some(error) = &visit.error {
+            let _ = write!(notes, "  ({error}; last state {})", visit.probe["last"]);
+        }
         let _ = writeln!(
             said,
-            "  {which:<9} drawn {:>6}  checked {:>6}  synced {:>6}  {}  {}  CPU busy {}  {}{}",
+            "  {which:<9} drawn {:>6}  checked {:>6}  synced {:>6}  {}  {}  CPU busy {}  {}{notes}",
             ms(visit.drawn()),
             ms(visit.checked()),
             ms(visit.synced()),
@@ -802,11 +848,6 @@ fn waterfall(page: &str, visits: &[Visit]) -> String {
                 .busy
                 .map_or_else(|| "-".into(), |busy| format!("{busy:.0}%")),
             visit.memory.said(),
-            visit
-                .error
-                .as_ref()
-                .map(|error| format!("  ({error}; last state {})", visit.probe["last"]))
-                .unwrap_or_default()
         );
     }
     if let Some(median) = median(visits) {
@@ -869,26 +910,38 @@ fn table(base: &str, measured: &[(String, Vec<Visit>)], load: Option<[f64; 3]>) 
         "{:<40} {:>7}  returns, drawn/checked/synced",
         "page", "first"
     );
+    // A visit whose own read failed is marked: it may read as synced, and soon, on nothing.
+    let marked = |visit: &Visit| if visit.failed().is_empty() { "" } else { "!" };
+    let mut any_failed = false;
     for (page, visits) in measured {
+        any_failed |= visits.iter().any(|visit| !visit.failed().is_empty());
         let first = visits.iter().find(|visit| visit.run == 0);
         let returns: Vec<String> = visits
             .iter()
             .filter(|visit| visit.run > 0)
             .map(|visit| {
                 format!(
-                    "{}/{}/{}",
+                    "{}/{}/{}{}",
                     ms(visit.drawn()),
                     ms(visit.checked()),
-                    ms(visit.synced())
+                    ms(visit.synced()),
+                    marked(visit)
                 )
             })
             .collect();
         let _ = writeln!(
             said,
-            "{:<40} {:>7}  {}",
+            "{:<40} {:>7}{:<1} {}",
             short(page),
             ms(first.and_then(Visit::synced)),
+            first.map_or("", marked),
             returns.join("  ")
+        );
+    }
+    if any_failed {
+        let _ = writeln!(
+            said,
+            "! a read of the page's own failed: its visit's line above names it"
         );
     }
     said

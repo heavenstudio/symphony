@@ -213,6 +213,103 @@ fn the_table_has_a_row_a_page_with_each_returns_drawn_and_synced() {
     );
 }
 
+/// A visit synced at 40 ms whose board read answered 503 and whose task read had no answer.
+fn failing() -> Visit {
+    visit(
+        1,
+        json!({"drawn": 10.0, "checked": 30.0, "synced": 40.0, "fetches": [
+            {"url": "http://h/p/api/board", "status": 503, "own": true},
+            {"url": "http://h/p/api/task/a", "status": "failed", "own": true},
+        ]}),
+    )
+}
+
+#[test]
+fn a_read_of_the_pages_own_fails_on_any_status_but_2xx_or_304_or_on_no_answer() {
+    let said = visit(
+        1,
+        json!({"fetches": [
+            {"url": "http://h/p/api/board", "status": 200, "own": true},
+            {"url": "http://h/p/api/runs", "status": 204, "own": true},
+            {"url": "http://h/p/api/docs", "status": 304, "own": true},
+            {"url": "http://h/p/api/out", "status": null, "own": true},
+            {"url": "http://h/p/api/ahead", "status": 404, "own": false},
+            {"url": "http://h/p/api/task/a", "status": 404, "own": true},
+            {"url": "http://h/p/api/gone", "status": 302, "own": true},
+            {"url": "http://h/p/api/down", "status": "failed", "own": true},
+        ]}),
+    )
+    .failed();
+    assert_eq!(
+        said,
+        [
+            "/p/api/task/a 404",
+            "/p/api/gone 302",
+            "/p/api/down no answer"
+        ]
+    );
+    assert!(visit(1, json!({})).failed().is_empty());
+}
+
+#[test]
+fn a_visit_whose_own_read_failed_names_it_on_its_line() {
+    let said = waterfall("/tasks", &[failing()]);
+    let line = said
+        .lines()
+        .find(|line| line.contains("return 1 "))
+        .unwrap();
+    assert!(
+        line.ends_with("  READS FAILED: /p/api/board 503, /p/api/task/a no answer"),
+        "{said}"
+    );
+    assert!(!said.contains("LEFT SYNCED"), "{said}");
+}
+
+#[test]
+fn a_visit_that_left_synced_says_when() {
+    let said = waterfall(
+        "/queue",
+        &[visit(
+            1,
+            json!({"synced": 32.0, "unsynced": 851.6, "fetches": []}),
+        )],
+    );
+    assert!(said.contains("synced     32"), "{said}");
+    assert!(said.contains("  LEFT SYNCED at 852"), "{said}");
+    assert!(!said.contains("READS FAILED"), "{said}");
+}
+
+#[test]
+fn the_table_marks_a_visit_whose_own_read_failed_and_says_what_the_mark_is() {
+    let mut first = failing();
+    first.run = 0;
+    let measured = vec![
+        (
+            "/tasks".to_string(),
+            vec![
+                first,
+                failing(),
+                visit(2, json!({"drawn": 9.0, "synced": 50.0})),
+            ],
+        ),
+        (
+            "/queue".to_string(),
+            vec![visit(0, json!({"synced": 30.0}))],
+        ),
+    ];
+    let said = table("http://h/p", &measured, None);
+    let lines: Vec<&str> = said.lines().collect();
+    assert!(lines[3].starts_with("/tasks"), "{said}");
+    assert!(lines[3].ends_with("40! 10/30/40!  9/-/50"), "{said}");
+    assert!(lines[4].ends_with("30  "), "{said:?}");
+    assert_eq!(
+        lines[5],
+        "! a read of the page's own failed: its visit's line above names it"
+    );
+    let clean = table("http://h/p", &measured[1..], None);
+    assert!(!clean.contains('!'), "{clean}");
+}
+
 #[test]
 fn each_visit_says_its_drawn_synced_spending_and_why_it_ended_unsynced() {
     let mut late = visit(

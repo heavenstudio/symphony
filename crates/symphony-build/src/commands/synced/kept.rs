@@ -73,9 +73,14 @@ pub(super) fn record(run: &Run<'_>, measured: &[(String, Vec<Visit>)]) -> Value 
     })
 }
 
-/// A visit's drawn, checked and synced.
+/// A visit's drawn, checked and synced, and the reads of its own that failed.
 fn moments(visit: &Visit) -> Value {
-    json!({"drawn": visit.drawn(), "checked": visit.checked(), "synced": visit.synced()})
+    json!({
+        "drawn": visit.drawn(),
+        "checked": visit.checked(),
+        "synced": visit.synced(),
+        "failed": visit.failed(),
+    })
 }
 
 fn memory_json(memory: &Memory) -> Value {
@@ -227,7 +232,7 @@ pub(super) fn compare(name: &str, then: &Value, now: &Value) -> String {
     }));
     let _ = writeln!(
         said,
-        "  {:<32} {:<38} {:<14} {:<16} tab heap",
+        "  {:<32} {:<38} {:<18} {:<16} tab heap",
         "page", "median return drawn/checked/synced", "synced", "first visit"
     );
     for page in now["pages"].as_array().into_iter().flatten() {
@@ -250,14 +255,25 @@ pub(super) fn compare(name: &str, then: &Value, now: &Value) -> String {
             )
         };
         let first = |page: &Value| ms(page["first"]["synced"].as_f64());
+        // A time over a failed read is no time to compare: it may be fast because nothing came.
+        let failed = |median: &Value| {
+            median["failed"]
+                .as_array()
+                .is_some_and(|all| !all.is_empty())
+        };
+        let moved = match (failed(&before["median"]), failed(&page["median"])) {
+            (true, true) => "a read failed both".to_string(),
+            (true, false) => "a read failed then".to_string(),
+            (false, true) => "a read failed now".to_string(),
+            (false, false) => times(
+                before["median"]["synced"].as_f64(),
+                page["median"]["synced"].as_f64(),
+            ),
+        };
         let _ = writeln!(
             said,
-            "  {named:<32} {:<38} {:<14} {:<16} {} → {} MB",
+            "  {named:<32} {:<38} {moved:<18} {:<16} {} → {} MB",
             format!("{} → {}", three(&before["median"]), three(&page["median"])),
-            times(
-                before["median"]["synced"].as_f64(),
-                page["median"]["synced"].as_f64()
-            ),
             format!("{} → {}", first(before), first(page)),
             mb(before["median"]["heap"].as_f64()),
             mb(page["median"]["heap"].as_f64()),

@@ -96,9 +96,11 @@ fn a_record_holds_the_run_each_pages_median_and_first_and_every_visit() {
     assert_eq!(page["page"], "/tasks");
     assert_eq!(page["build"], "/assets/symphony-shell-ab.js");
     assert_eq!(page["first"]["synced"], 700.0);
+    assert_eq!(page["first"]["failed"], json!([]));
     assert_eq!(
         page["median"],
-        json!({"run": 1, "drawn": 100.0, "checked": 230.0, "synced": 240.0, "heap": 12e6})
+        json!({"run": 1, "drawn": 100.0, "checked": 230.0, "synced": 240.0, "failed": [],
+            "heap": 12e6})
     );
     assert_eq!(page["visits"].as_array().map(Vec::len), Some(3));
     assert_eq!(page["visits"][2]["cpu_busy"], 80.0);
@@ -217,6 +219,40 @@ fn a_run_is_printed_beside_an_earlier_one_page_by_page() {
         said.contains(&format!("  {:<32} not measured then", "/queue")),
         "{said}"
     );
+}
+
+#[test]
+fn a_page_whose_read_failed_is_said_so_beside_the_earlier_run_never_faster() {
+    let failing = |status: Value| {
+        let mut measured = measured();
+        measured[0].1[1].probe = json!({"drawn": 5.0, "checked": 6.0, "synced": 40.0,
+            "fetches": [{"url": "http://h:1/p/api/board", "status": status, "own": true}]});
+        measured
+    };
+    let record_of = |measured: &[(String, Vec<Visit>)]| record(&run("x", 1), measured);
+    let fine = record_of(&measured());
+    let broken = record_of(&failing(json!(503)));
+    assert_eq!(
+        broken["pages"][0]["median"]["failed"],
+        json!(["/p/api/board 503"])
+    );
+    let moved = |then: &Value, now: &Value| {
+        let said = compare("then.json", then, now);
+        let tasks = said
+            .lines()
+            .find(|line| line.trim_start().starts_with("/tasks"))
+            .unwrap()
+            .to_string();
+        assert!(
+            !tasks.contains("faster") && !tasks.contains("slower"),
+            "{tasks}"
+        );
+        tasks
+    };
+    assert!(moved(&fine, &broken).contains("a read failed now"));
+    assert!(moved(&broken, &fine).contains("a read failed then"));
+    let no_answer = record_of(&failing(json!("failed")));
+    assert!(moved(&broken, &no_answer).contains("a read failed both"));
 }
 
 #[test]
