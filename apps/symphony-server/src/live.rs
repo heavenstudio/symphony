@@ -722,8 +722,21 @@ impl Hub {
         *self.awaited.lock().unwrap_or_else(|e| e.into_inner()) = scan.awaited;
         *self.marks.write().unwrap_or_else(|e| e.into_inner()) = Arc::new(scan.pages);
         let shown_before = Arc::clone(&self.one_cards.read().unwrap_or_else(|e| e.into_inner()));
+        // Main's documents are read from main's own files: a ref, a worktree's record or a branch's
+        // edit changes none of them. A lost event names main's root.
+        let main_files_changed = dirty.is_none_or(|paths| {
+            let inputs = tree_inputs(&self.root);
+            let trees = self.trees.read().unwrap_or_else(|e| e.into_inner());
+            paths.iter().any(|path| {
+                *path == self.root
+                    || (inputs
+                        .iter()
+                        .any(|(below, _)| path.starts_with(self.root.join(below)))
+                        && !trees.values().any(|tree| path.starts_with(tree)))
+            })
+        });
         // Main also displays branch-only cards; branch document edits can change that queue.
-        let main = self.refresh_page("", &self.root);
+        let main = self.refresh_page_read("", &self.root, main_files_changed);
         let shown_after = Arc::clone(&self.one_cards.read().unwrap_or_else(|e| e.into_inner()));
         let scopes = self
             .pages
@@ -752,17 +765,7 @@ impl Hub {
                 .map(|(page, cards)| (page.clone(), cards.clone()))
                 .collect::<Vec<_>>()
         };
-        let main_cards_changed = mains(&shown_before) != mains(&shown_after)
-            || dirty.is_none_or(|paths| {
-                let inputs = tree_inputs(&self.root);
-                let trees = self.trees.read().unwrap_or_else(|e| e.into_inner());
-                paths.iter().any(|path| {
-                    inputs
-                        .iter()
-                        .any(|(below, _)| path.starts_with(self.root.join(below)))
-                        && !trees.values().any(|tree| path.starts_with(tree))
-                })
-            });
+        let main_cards_changed = mains(&shown_before) != mains(&shown_after) || main_files_changed;
         for scope in scopes {
             let root = self.tree(&scope);
             // A page that goes, or follows its tree to another folder, leaves that folder's
@@ -957,6 +960,8 @@ impl Hub {
                 })
             }
         });
+        // Main's one cards before this read, to tell which of its documents show other cards now.
+        let mut cards_before = None;
         let mut snapshot = match snapshot {
             Ok(snapshot) => {
                 self.invalid
@@ -965,8 +970,10 @@ impl Hub {
                     .remove(scope);
                 if scope.is_empty() {
                     // Read by the documents rendered below, and by every page's after them.
-                    *self.one_cards.write().unwrap_or_else(|e| e.into_inner()) =
-                        Arc::clone(&snapshot.pages);
+                    cards_before = Some(std::mem::replace(
+                        &mut *self.one_cards.write().unwrap_or_else(|e| e.into_inner()),
+                        Arc::clone(&snapshot.pages),
+                    ));
                 }
                 snapshot
             }
@@ -980,25 +987,42 @@ impl Hub {
                 return Err(error);
             }
         };
-        if let Ok(tasks) = self.tasks_read() {
-            snapshot.board.counts.tasks = Some(taskview::counts(&tasks));
+        let board = self.tasks_read().ok();
+        if let Some(tasks) = &board {
+            snapshot.board.counts.tasks = Some(taskview::counts(tasks));
         }
-        // The page's documents are read again before `pages` is taken, under `rendering` until
-        // their copies are in the page.
-        let rendering = documents_changed.then(|| {
+        // The followed documents read again: every one while the page's files changed, else only
+        // one whose cards or linking tasks moved, as no file says.
+        let moved = |rel: &str, doc: &symphony_api::Document| {
+            cards_before
+                .as_ref()
+                .is_some_and(|before| before.get(rel) != snapshot.pages.get(rel))
+                || doc.tasks
+                    != symphony::docview::linked(
+                        root,
+                        rel,
+                        board.as_ref().map_or(&[], |board| &board.tasks),
+                    )
+        };
+        let followed: Vec<String> = self
+            .pages
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(scope)
+            .map(|page| {
+                page.documents
+                    .iter()
+                    .filter(|(rel, doc)| documents_changed || moved(rel, doc))
+                    .map(|(rel, _)| rel.clone())
+                    .collect()
+            })
+            .unwrap_or_default();
+        // They are read again before `pages` is taken, under `rendering` until their copies are in
+        // the page.
+        let _rendering = (!followed.is_empty()).then(|| {
             // A panic under this lock leaves nothing half done: it guards no data.
             self.rendering.lock().unwrap_or_else(|e| e.into_inner())
         });
-        let followed: Vec<String> = if rendering.is_some() {
-            self.pages
-                .read()
-                .unwrap_or_else(|e| e.into_inner())
-                .get(scope)
-                .map(|page| page.documents.keys().cloned().collect())
-                .unwrap_or_default()
-        } else {
-            Vec::new()
-        };
         let rendered: Vec<_> = followed
             .into_iter()
             .map(|rel| {
@@ -1993,6 +2017,9 @@ mod no_documents_tests;
 
 #[cfg(test)]
 mod read_paths_tests;
+
+#[cfg(test)]
+mod refresh_tests;
 
 #[cfg(test)]
 mod feed_deltas_tests;

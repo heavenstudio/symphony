@@ -121,6 +121,11 @@ impl Hub {
         if loads {
             self.forget_watched(&self.root);
         }
+        // Its settings render its documents: the read renders them again, as after a lost event.
+        self.dirty
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(self.root.clone());
         self.rescan.store(true, std::sync::atomic::Ordering::SeqCst);
     }
 
