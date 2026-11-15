@@ -104,6 +104,15 @@ for module_kind in program; do
     # dx starts the generated module itself. Expose that one promise to the shell (to each of the
     # program's kinds), and make the splitter's initSync reference local to this ESM instead of
     # overwriting another kind's. The program's chunk loader follows, with its chunks' names.
+    #
+    # The whole script is then minified again, as one module. dx minified the glue while it named
+    # each chunk by dx's hash of the bytes its splitter wrote, which differ on every build
+    # (split-repair orders them and names them by their bytes only afterwards), and esbuild hands
+    # out its short names by how often each character stands in the file, those hex digits among
+    # them: two builds of the same sources gave glue with two local names exchanged, and so another
+    # script, shell and index.html (tests/release-red-verify-client-check-3). Minified here, over
+    # the names split-repair gave, the same sources give the same script whichever names dx chose.
+    # dx's glue repeats a key in an object literal, which esbuild warns of: errors alone are said.
     {
         printf 'let __reviewInitSync;\n'
         sed -E -e 's/globalThis\.__wasm_split_main_initSync/__reviewInitSync/g' \
@@ -111,9 +120,9 @@ for module_kind in program; do
             "$module/public/assets/$original"
         if [ "$module_kind" = program ]; then
             printf '\n'
-            sed "s#__CHUNKS__#$chunks#" assets/chunks.js | "$esbuild" --minify --format=esm --log-level=warning
+            sed "s#__CHUNKS__#$chunks#" assets/chunks.js
         fi
-    } > "$stage/module-$module_kind.js"
+    } | "$esbuild" --minify --format=esm --log-level=error > "$stage/module-$module_kind.js"
     if [ "$(grep -F -o "$ready" "$stage/module-$module_kind.js" | wc -l | tr -d ' ')" != 1 ]; then
         echo "symphony-ui: $module_kind has no unique dx initializer; refusing to package it" >&2
         exit 2
