@@ -499,6 +499,8 @@ fn watch_with<W: Watcher + Send + 'static>(
                         };
                         let fingerprint =
                             symphony::reload::fingerprint(&request.root).unwrap_or_default();
+                        // This hand-off is the starter's to ask again; a retry of the sources'
+                        // own update that waits still comes, and the notice keeps its time.
                         let result = replace(
                             &successor,
                             &request.exe,
@@ -507,7 +509,15 @@ fn watch_with<W: Watcher + Send + 'static>(
                             &fingerprint,
                             &shared,
                             None,
-                        );
+                        )
+                        .map_err(|why| match retry.waiting() {
+                            Some(again) => format!(
+                                "{}. The version whose update failed before is tried again at \
+                                 about {again}.",
+                                reason(&why)
+                            ),
+                            None => why,
+                        });
                         if replaced(&shared, result) {
                             return;
                         }
@@ -572,7 +582,16 @@ fn watch_with<W: Watcher + Send + 'static>(
             }
             // An edit during compilation may have produced a mixed binary. Build again for the
             // stable source set instead of installing a generation labelled with the wrong code.
+            // That result is dropped, and counts as a failure of this version: were the sources to
+            // read as it again (a read that failed in passing, an edit undone), it is built again
+            // once that failure's wait is over, and any other version at its first check.
             if symphony::reload::fingerprint(&serve.root).ok().as_deref() != Some(&fingerprint) {
+                let again = retry.failed(&fingerprint);
+                eprintln!(
+                    "· Symphony reload: the sources changed or could not be read during the \
+                     build; its result is dropped, and that version is tried again at about \
+                     {again} if they read as it again"
+                );
                 continue;
             }
             if matches!(result, Ok(None)) && kept(running.as_ref(), install, &fingerprint, &shared)
@@ -592,11 +611,11 @@ fn watch_with<W: Watcher + Send + 'static>(
                     )
                 })
                 .map_err(|why| {
-                    // A build that said nothing leaves its separator, and diagnostics may end a
-                    // sentence: the reason ends where the notice's next sentence starts.
-                    let why = why.trim_end_matches([' ', ':', '.']);
                     let again = retry.failed(&fingerprint);
-                    format!("{why}. It tries this version again at about {again}.")
+                    format!(
+                        "{}. It tries this version again at about {again}.",
+                        reason(&why)
+                    )
                 });
             if replaced(&shared, result) {
                 return;
@@ -604,6 +623,12 @@ fn watch_with<W: Watcher + Send + 'static>(
         }
     };
     Some(crate::front::worker(crate::front::RELOAD_WORKER, reload))
+}
+
+/// Why an update failed, ending where the notice's next sentence starts: a build that said nothing
+/// leaves its separator, and diagnostics may end a sentence.
+fn reason(why: &str) -> &str {
+    why.trim_end_matches([' ', ':', '.'])
 }
 
 /// After a build of `fingerprint` into `install` with no client to publish: whether the installed

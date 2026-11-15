@@ -41,7 +41,8 @@ Each build of the board writes one schema version, which the board records. A
 build opens a board at its own version with one read and no write. A newer
 build migrates an older board forward once, its additive steps and the new
 version in one transaction before any other write. An older build is refused
-before it writes, naming the project and `just symphony`. A Symphony one version
+before it writes, naming the project, the program to rebuild (its file name and
+where it is) and `just symphony`. A Symphony one version
 behind still reads the board, and every write it would send is refused the same
 way. A store opened before a newer build migrated is refused at its next write.
 The Symphony never moves a board forward or makes one, so a branch's command line
@@ -128,6 +129,59 @@ board keeps no record, nor does a server an address names that is no project's b
 Builds from before the record neither read nor write it: the protection holds for a project only
 once each of its readers and writers runs a build that carries it, the main checkout's
 `.target/bin/tasks`, the shared Symphony server and a consuming project's host.
+
+### Who writes a board
+
+A board keeps a line for each program that opens it to write (`crates/tasks/src/store/writers.rs`,
+the `writer` table): the program's file name, where it is, its host, the schema it was built at
+and when it was last seen, by the machine's clock, which `TASKS_NOW` does not set. The board's own
+programs (`tasks`, `agent-send`, `tasks-copy`) keep one, and so does a project's own program that
+opens the board to write through the board's crate. The heartbeat and the recorder, which take the
+board's tables as they are, keep none: the `tasks` build they run keeps its line by its other
+commands. The line is read in the opening's one read of the board's schema and written only when
+it is missing, names another schema, or is an hour old, so a board command sends no request for it
+most of the time and "last seen" is good to the hour. A reader keeps none, and the Symphony opens
+its board to read. A writer refused a board behind its build (a project's live board,
+which only `just tasks migrate` moves) still writes its line, so a writer rebuilt for the next
+schema counts as rebuilt once it has run; one refused a board ahead of its build writes nothing,
+refused before any write. The table holds no event, so a line written moves no board marker, and
+builds of any schema write it.
+
+`just tasks migrate` reads the lines before it moves anything. A writer seen in the last week
+that is behind the schema the move would bring the board to, other than the migrate's own build,
+would be refused the board from then on: the migrate names each (its program, schema, path, host
+and when it was last seen), moves nothing, and exits 2. Rebuild each at the new schema and run it
+once, which records it, then migrate again; `just tasks migrate --leave-behind` moves the board
+all the same, and each writer left behind is refused, naming itself as the program to rebuild,
+until it is. A writer not seen for a week is not counted. Only the migrate asks: where a project's
+default branch commits the board's source, as this repository's does, main's build moves the board
+at its first command once a schema lands, and names no writer.
+
+The shared server is not counted. The Symphony opens a board to read
+(`crates/symphony/src/taskview/connect.rs`), though it writes through that store (the owner's
+saves and chat, asks, a task's priority, fields and cancels), and only an opening to write keeps a
+line. Counting it would stop every move: the server takes a build of the new schema only by its
+reload after the move ([RELEASES](RELEASES.md#the-refresh)), so its line would always be behind
+when the migrate reads it, and every refresh's migrate would refuse. Meanwhile a server one schema
+behind its board reads on, and every write it sends is refused: the owner's saves and chat, with
+the asks they open, wait in its journal, which it tries again each tick until a server that can
+write hands them over, while its other writes (the owner's message on a task, a priority, a field,
+a cancel, an ask it would close) are refused until it has reloaded. A server two schemas behind
+reads nothing of its board.
+
+The record arrives with schema 18, a raise of its own, and a build below it keeps no line, so the
+move to 18 names no one: a board at 17 has no table of writers to read. In this repository main's
+build moves the board at its first board command once the raise lands, as for any schema here,
+with no migrate and no writer check. A consuming project's board is moved by the refresh of the
+first release that carries 18 ([RELEASES](RELEASES.md#the-refresh)): its `just tasks migrate`
+runs whenever the schema the project's pin locks is above its board's, and moves the board without
+naming anyone. From then on every program of the project's still built at its old pin (a linked
+`tasks` or `agent-send` not rebuilt, a program of its own that opens the board through the board's
+crate) is refused the board, naming itself as the program to rebuild; the project rebuilds each at
+its new pin right after the refresh, and each keeps its line once it has run. From 18 on, every
+build that can write a board keeps its line, so each later move names the writers it would leave
+behind, the refresh's migrate included: that move stops, naming them, until each is rebuilt and
+run once.
 
 The store takes about what it holds. Every server the board starts keeps each
 value beside its key, where compaction drops the versions a rewrite leaves, and
@@ -383,7 +437,7 @@ refusal's words, in place of the board until a read answers.
 | `just tasks status [--json]` | the board's health over the last hour, as its Symphony server recorded it: failed dispatches and sweeps, the slowest request, write latency ([Board health](#board-health)) |
 | `just tasks asks [--all] [--json]` | what the owner waits on an agent for: the open asks, oldest first, each with its age and who holds it; `--all` adds those answered in the last day ([Asks](#asks)) |
 | `just tasks asks close ID "WHY" --as HANDLE` | close an ask that needs no answer, saying why |
-| `just tasks migrate` | move the board forward to this build's schema, or make it, and say which; a live board moves by it only from its main checkout (any checkout of a repository with none), and in a project whose main checkout holds no board source, or that has none, only by it |
+| `just tasks migrate` | move the board forward to this build's schema, or make it, and say which; a live board moves by it only from its main checkout (any checkout of a repository with none), and in a project whose main checkout holds no board source, or that has none, only by it; it moves nothing while a writer seen in the last week is behind the schema it would move to, naming each, unless `--leave-behind` ([Who writes a board](#who-writes-a-board)) |
 | `just tasks database [hold WHY \| release [--of HOLDER]] [--as HANDLE]` | the board's database: whether it is held, what runs on its data, what a start or replay under way does, and the snapshots kept until the owner removes them; `hold` stops its server cleanly and keeps every board command and the Symphony from starting it, naming the hold, until `release` by its holder (or by another naming it with `--of`), which starts nothing |
 | `just tasks schema [--accept VERSION]` | the board's schema and the highest its live board was seen at; exit 1, in the rollback's words, while it went back below it; `--accept VERSION` (`none` for a store with no board), the owner's, accepts an older board they meant ([A board that went back](#a-board-that-went-back)) |
 | `just tasks snapshot [--list]` | a copy-on-write clone of the board's store, taken only while no server has it open; one whose write-ahead log holds writes is kept until the owner removes it, and the newest three of the others; `--list` names them ([Snapshots](#where-it-lives)) |

@@ -332,10 +332,14 @@ days is none (404). Both read only regular files, never through a link, and neve
 board; a project that keeps no runs where its server reads has none (404).
 
 The server keeps what it folded of each day file in memory, a project's own, by the
-file's length, modification time and inode, and parses a file again only once one of
-them changed: a closed day is parsed once, today's again after each line the recorder
-writes. It keeps the days of the 14-day window alone, and nothing of a file gone or
-refused (`apps/symphony-server/src/api/runs.rs`, `Index`).
+file's length, modification time and inode: of each run only what the filters, the fold
+and the steps' order read, and where its line is in the file. An answer's lines are read
+again from the file, and a line no longer the run kept there has its day parsed again. A
+file that only grew, on the same inode and still holding the last line read, is read on
+from there, and any other change parses it again: a closed day is parsed once, today's a
+line at a time as the recorder writes them. It keeps the days of the 14-day window
+alone, and nothing of a file gone or refused (`apps/symphony-server/src/api/runs.rs`,
+`Index`).
 
 ## The roll-up
 

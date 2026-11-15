@@ -4,10 +4,23 @@
 use super::*;
 use serde_json::json;
 
+/// The program the cases open boards as.
+fn program() -> Program {
+    Program::named("gate-review", "/work/alpha/.target/debug/gate-review")
+}
+
+/// [`decide`] for [`program`].
+fn decided(found: Option<i64>, own: i64, access: Access, project: Option<&str>) -> Opened {
+    decide(found, own, access, project, &program())
+}
+
 #[test]
 fn a_board_at_this_builds_version_opens_with_nothing_to_write_for_either_access() {
     for access in [Access::Write, Access::Read] {
-        assert_eq!(decide(Some(11), 11, access, Some("alpha")), Opened::Current);
+        assert_eq!(
+            decided(Some(11), 11, access, Some("alpha")),
+            Opened::Current
+        );
     }
 }
 
@@ -15,7 +28,7 @@ fn a_board_at_this_builds_version_opens_with_nothing_to_write_for_either_access(
 fn an_older_board_or_none_is_migrated_by_a_newer_writer() {
     for found in [None, Some(0), Some(9), Some(10)] {
         assert_eq!(
-            decide(found, 11, Access::Write, None),
+            decided(found, 11, Access::Write, None),
             Opened::Migrate,
             "{found:?}"
         );
@@ -26,7 +39,7 @@ fn an_older_board_or_none_is_migrated_by_a_newer_writer() {
 fn a_reader_never_migrates_an_older_board_but_refuses_it_naming_the_board_command() {
     for found in [0, 9, 10] {
         assert_eq!(
-            decide(Some(found), 11, Access::Read, Some("alpha")),
+            decided(Some(found), 11, Access::Read, Some("alpha")),
             Opened::Refused(format!(
                 "the alpha board is at schema {found}, behind this build's 11, and a reader never \
                  moves a board forward: nothing was read or written; `just tasks migrate` in the \
@@ -35,7 +48,7 @@ fn a_reader_never_migrates_an_older_board_but_refuses_it_naming_the_board_comman
             )),
         );
     }
-    let Opened::Refused(unnamed) = decide(Some(10), 11, Access::Read, None) else {
+    let Opened::Refused(unnamed) = decided(Some(10), 11, Access::Read, None) else {
         panic!("an older board is refused to a reader");
     };
     assert!(
@@ -51,14 +64,14 @@ fn a_reader_never_migrates_an_older_board_but_refuses_it_naming_the_board_comman
 #[test]
 fn a_reader_never_makes_a_board_but_refuses_one_not_made_yet_naming_the_board_command() {
     assert_eq!(
-        decide(None, 11, Access::Read, Some("alpha")),
+        decided(None, 11, Access::Read, Some("alpha")),
         Opened::Refused(
             "the alpha board is not made yet, and a reader never makes a board: nothing was read \
              or written; `just tasks list` in alpha makes it"
                 .into()
         )
     );
-    let Opened::Refused(unnamed) = decide(None, 11, Access::Read, None) else {
+    let Opened::Refused(unnamed) = decided(None, 11, Access::Read, None) else {
         panic!("a board not made yet is refused to a reader");
     };
     assert_eq!(
@@ -75,7 +88,7 @@ fn no_board_a_reader_opens_is_migrated() {
     for found in std::iter::once(None).chain((0..=own + 3).map(Some)) {
         for project in [None, Some("alpha")] {
             assert_ne!(
-                decide(found, own, Access::Read, project),
+                decided(found, own, Access::Read, project),
                 Opened::Migrate,
                 "{found:?} {project:?}"
             );
@@ -86,15 +99,16 @@ fn no_board_a_reader_opens_is_migrated() {
 #[test]
 fn a_board_one_ahead_is_read_by_a_reader_and_refused_to_a_writer_naming_the_project() {
     assert_eq!(
-        decide(Some(12), 11, Access::Read, Some("alpha")),
+        decided(Some(12), 11, Access::Read, Some("alpha")),
         Opened::Ahead
     );
     assert_eq!(
-        decide(Some(12), 11, Access::Write, Some("alpha")),
+        decided(Some(12), 11, Access::Write, Some("alpha")),
         Opened::Refused(
             "the alpha board is at schema 12, and this build writes only a board at its own \
-             schema, 11: nothing was written; `just symphony` in alpha brings its Symphony to \
-             the board's schema"
+             schema, 11: nothing was written; rebuild gate-review \
+             (/work/alpha/.target/debug/gate-review) at the board's schema, and `just symphony` \
+             in alpha brings its Symphony to it"
                 .into()
         )
     );
@@ -104,7 +118,7 @@ fn a_board_one_ahead_is_read_by_a_reader_and_refused_to_a_writer_naming_the_proj
 fn a_board_two_or_more_ahead_is_refused_to_a_reader_too() {
     for found in [13, 40] {
         assert_eq!(
-            decide(Some(found), 11, Access::Read, Some("alpha")),
+            decided(Some(found), 11, Access::Read, Some("alpha")),
             Opened::Refused(format!(
                 "the alpha board is at schema {found}, more than one ahead of this build's 11: \
                  nothing was read; `just symphony` in alpha brings its Symphony to the board's \
@@ -112,7 +126,7 @@ fn a_board_two_or_more_ahead_is_refused_to_a_reader_too() {
             ))
         );
         assert!(matches!(
-            decide(Some(found), 11, Access::Write, Some("alpha")),
+            decided(Some(found), 11, Access::Write, Some("alpha")),
             Opened::Refused(why) if why.contains("writes only a board at its own schema")
         ));
     }
@@ -120,18 +134,33 @@ fn a_board_two_or_more_ahead_is_refused_to_a_reader_too() {
 
 #[test]
 fn a_board_no_project_names_is_this_board_of_its_project() {
-    let Opened::Refused(why) = decide(Some(12), 11, Access::Write, None) else {
+    let Opened::Refused(why) = decided(Some(12), 11, Access::Write, None) else {
         panic!("a newer board is refused to a writer");
     };
     assert!(why.starts_with("this board is at schema 12,"), "{why}");
     assert!(why.contains("`just symphony` in its project"), "{why}");
 }
 
+/// An older writer is told which program to rebuild: its file name and where it is.
+#[test]
+fn an_older_writers_refusal_names_the_program_to_rebuild() {
+    let other = Program::named("tasks", "/opt/symphony/bin/tasks");
+    let Opened::Refused(why) = decide(Some(19), 18, Access::Write, Some("alpha"), &other) else {
+        panic!("a newer board is refused to a writer");
+    };
+    assert!(
+        why.contains("rebuild tasks (/opt/symphony/bin/tasks) at the board's schema"),
+        "{why}"
+    );
+    let refusal = Refusal::of(Some("alpha"), 18, &other);
+    assert_eq!(why, format!("{}19{}", refusal.before, refusal.after));
+}
+
 #[test]
 fn the_write_refusal_is_split_around_the_version_the_guard_reads() {
-    let refusal = Refusal::of(Some("beta"), 11);
+    let refusal = Refusal::of(Some("beta"), 11, &program());
     assert_eq!(refusal.before, "the beta board is at schema ");
-    let Opened::Refused(whole) = decide(Some(12), 11, Access::Write, Some("beta")) else {
+    let Opened::Refused(whole) = decided(Some(12), 11, Access::Write, Some("beta")) else {
         panic!("a newer board is refused to a writer");
     };
     assert_eq!(whole, format!("{}12{}", refusal.before, refusal.after));
@@ -139,7 +168,7 @@ fn the_write_refusal_is_split_around_the_version_the_guard_reads() {
 
 #[test]
 fn the_guard_takes_a_writes_own_variables_and_adds_its_own() {
-    let refusal = Refusal::of(Some("alpha"), 11);
+    let refusal = Refusal::of(Some("alpha"), 11, &program());
     let mut vars = json!({"slug": "a/b"});
     guard_vars(&mut vars, 11, &refusal, "refused: ");
     assert_eq!(
@@ -201,4 +230,12 @@ fn this_builds_schema_is_the_version_and_its_neighbours_one_either_side() {
     let before = schema.before();
     assert_eq!(before.version(), VERSION - 1);
     assert_eq!(before.steps(), DEFINE);
+}
+
+/// The writers' table arrives with its own schema raise, schemaless and with no event, so builds
+/// of other schemas write their line and a line written moves no marker.
+#[test]
+fn the_writers_table_is_schemaless_with_no_event() {
+    assert!(DEFINE.contains("DEFINE TABLE IF NOT EXISTS writer SCHEMALESS;"));
+    assert!(!DEFINE.contains(" ON writer"), "an event or a field on it");
 }

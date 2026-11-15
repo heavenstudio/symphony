@@ -591,6 +591,137 @@ describe("a column of the live board", () => {
     expect(board.fresh.failing).toEqual(["column:ready"]);
   });
 
+  it("reads a first page that failed again by itself, waiting longer each time, until it answers", async () => {
+    let refused = 2;
+    const { board, d, asked } = live((url) =>
+      url === column("ready") && refused-- > 0
+        ? answer(503)
+        : answer(200, listing(ready, [["ready", 2]])),
+    );
+    d.waiting = false;
+    void board.column("ready", false, "", 1);
+    await pass(250);
+    expect(asked).toHaveLength(1);
+    expect(d.error).toBe("The server answered 503. Trying again…");
+    expect(d.tasks).toEqual([]);
+    await pass(999);
+    expect(asked).toHaveLength(1);
+    await pass(1);
+    expect(asked).toHaveLength(2);
+    expect(d.error).toBe("The server answered 503. Trying again…");
+    await pass(2000);
+    // Answered: its tasks are drawn, nothing is said of the failure and nothing is asked again.
+    expect(urls(asked)).toEqual([column("ready"), column("ready"), column("ready")]);
+    expect(d.tasks).toEqual(ready);
+    expect(d.error).toBe("");
+    expect(board.fresh.failing).toEqual([]);
+    await pass(120_000);
+    expect(asked).toHaveLength(3);
+  });
+
+  it("keeps saying why while another read still fails", async () => {
+    const { board, d } = live((url) =>
+      url === column("ready") ? answer(200, listing(ready, [["ready", 2]])) : answer(503),
+    );
+    d.waiting = false;
+    void board.column("done", false, "", 1);
+    await pass(250);
+    void board.column("ready", false, "", 1);
+    await pass(250);
+    expect(d.tasks).toEqual(ready);
+    expect(board.fresh.failing).toEqual(["column:done"]);
+    expect(d.error).toBe("The server answered 503. Trying again…");
+  });
+
+  it("answered, leaves what the board says of its own state", async () => {
+    const { board, d } = opened({ [column("ready")]: listing(ready, [["ready", 2]]) });
+    void board.column("ready", false, "", 1);
+    board.heard(event(["tasks-status", { available: false, slow: false }]));
+    const notice = statusNotice(false, false);
+    expect(d.error).toBe(notice);
+    await pass(250);
+    expect(d.tasks).toEqual(ready);
+    expect(d.error).toBe(notice);
+  });
+
+  it("stops trying a failed first page once a newer read of it, another view or the page's end replaces it", async () => {
+    const newer = live();
+    newer.d.waiting = false;
+    void newer.board.column("ready", false, "", 1);
+    await pass(250);
+    // A refresh's read of the column takes over: one chain of tries, not two.
+    void newer.board.column("ready", false, "", 1);
+    await pass(250);
+    expect(newer.asked).toHaveLength(2);
+    await pass(1000);
+    expect(newer.asked).toHaveLength(3);
+    // Its tries would go on, into the next board's server.
+    newer.page.abort();
+
+    const viewed = live();
+    viewed.d.waiting = false;
+    void viewed.board.column("ready", false, "", 1);
+    await pass(250);
+    viewed.d.view += 1;
+    await pass(120_000);
+    expect(viewed.asked).toHaveLength(1);
+
+    const gone = live();
+    gone.d.waiting = false;
+    void gone.board.column("ready", false, "", 1);
+    await pass(250);
+    gone.page.abort();
+    await pass(120_000);
+    expect(gone.asked).toHaveLength(1);
+  });
+
+  it("takes a first page given up as the page ends for no failure, and tries nothing again", async () => {
+    const given: (AbortSignal | null)[] = [];
+    const { board, d, asked, page, host } = live();
+    vi.stubGlobal("fetch", (url: string, init?: RequestInit) => {
+      asked.push([url, ""]);
+      given.push(init?.signal ?? null);
+      return new Promise<Response>((_, refuse) =>
+        init?.signal?.addEventListener("abort", () =>
+          refuse(new DOMException("gone", "AbortError")),
+        ),
+      );
+    });
+    d.waiting = false;
+    void board.column("ready", false, "", 1);
+    await pass(250);
+    expect(asked).toHaveLength(1);
+    host.redraw.mockClear();
+    page.abort();
+    await pass(120_000);
+    expect(given[0]?.aborted).toBe(true);
+    expect([d.error, board.fresh.failing, asked.length]).toEqual(["", [], 1]);
+    expect(host.redraw).not.toHaveBeenCalled();
+  });
+
+  it("reads a page Load more asked for once: a failure is said, not tried again, and gone once a click's read answers", async () => {
+    let refused = true;
+    const { board, d, asked } = live((url) => {
+      if (url === column("ready")) {
+        return answer(200, listing([aTask("w/a")], [["ready", 2]], { next: "w/a" }));
+      }
+      return refused ? answer(503) : answer(200, listing([aTask("w/b")], [["ready", 2]]));
+    });
+    d.waiting = false;
+    void board.column("ready", false, "", 1);
+    await pass(250);
+    void board.column("ready", true, "", 1);
+    await pass(250);
+    expect(d.error).toBe("The server answered 503");
+    await pass(120_000);
+    expect(asked).toHaveLength(2);
+    refused = false;
+    void board.column("ready", true, "", 1);
+    await pass(250);
+    expect(d.tasks.map((task) => task.slug)).toEqual(["w/a", "w/b"]);
+    expect(d.error).toBe("");
+  });
+
   it("drops an answer for a view replaced meanwhile", async () => {
     const held = later<Response>();
     const { board, d } = live(() => held.promise);

@@ -66,16 +66,53 @@ fn every_snapshot_read_is_a_read_and_binds_its_bounds() {
         Which::Linked("docs/x.md"),
         Which::Pullable("someone"),
     ] {
-        let (read, vars) = Store::reading(&which);
+        for sessions in [Sessions::Whole, Sessions::Shown] {
+            let (read, vars) = Store::reading(&which, sessions);
+            assert_eq!(
+                crate::rpc::Kind::of(&read),
+                crate::rpc::Kind::Read,
+                "{read}"
+            );
+            assert_eq!(
+                (vars["codex"].as_str(), vars["codex_after"].as_str()),
+                (Some("codex:"), Some("codex;")),
+                "{vars}"
+            );
+        }
+    }
+}
+
+/// The session table is read whole only where every session is asked for: a read of the sessions
+/// its answer shows names each by its id, the holders of the roles it read and, for `next`, the
+/// session asking.
+#[test]
+fn a_read_of_the_sessions_shown_reads_them_by_id_and_never_the_table() {
+    const TABLE: &str = "FROM session ORDER BY";
+    const BY_ID: &str =
+        "FROM $shown_sessions.map(|$h| type::record('session', $h)) ORDER BY connected, handle";
+    let slugs = ["p/a".to_string()];
+    for which in [
+        Which::All,
+        Which::Status("ready"),
+        Which::Slug("p/a"),
+        Which::Slugs(&slugs),
+        Which::Children("p/a"),
+        Which::Linked("docs/x.md"),
+        Which::Pullable("someone"),
+    ] {
+        let (whole, _) = Store::reading(&which, Sessions::Whole);
+        assert!(whole.contains(TABLE) && !whole.contains(BY_ID), "{whole}");
+        let (shown, _) = Store::reading(&which, Sessions::Shown);
+        assert!(!shown.contains(TABLE) && shown.contains(BY_ID), "{shown}");
+        let asker = "array::concat($view_roles.handle, [$handle])";
         assert_eq!(
-            crate::rpc::Kind::of(&read),
-            crate::rpc::Kind::Read,
-            "{read}"
+            shown.contains(asker),
+            matches!(which, Which::Pullable(_)),
+            "{shown}"
         );
-        assert_eq!(
-            (vars["codex"].as_str(), vars["codex_after"].as_str()),
-            (Some("codex:"), Some("codex;")),
-            "{vars}"
+        assert!(
+            shown.contains("LET $shown_sessions = array::distinct("),
+            "{shown}"
         );
     }
 }
