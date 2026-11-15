@@ -201,13 +201,16 @@ fn reveal(page: &mut Chrome, status: &str, column: usize, top: u32) {
         lands(page, column, &format!("the scroll to {status}"));
     }
     assert!(
-        page.wait_for(
-            &format!("Math.round(document.querySelector('.board-scroll').scrollTop) === {top}"),
-            SHOWN
-        ),
+        page.wait_for(&deep(top), SHOWN),
         "the board never stood {top} px down: {}",
         page.eval("document.querySelector('.board-scroll').scrollTop")
     );
+}
+
+/// Whether the board stands `top` px down, to the few pixels the browser's scroll anchoring moves
+/// it by as rows above the screen draw a little off what they reserved.
+fn deep(top: u32) -> String {
+    format!("Math.abs(document.querySelector('.board-scroll').scrollTop - {top}) <= 20")
 }
 
 /// A key pressed on the focused board.
@@ -248,10 +251,10 @@ fn a_swipe_deep_down_a_column_lands_on_the_next_one_short_or_empty() {
         swipe(&mut page, columns, 800, false);
         lands(&mut page, column, &format!("{what}, 400 px down"));
     }
-    assert_eq!(
-        page.eval("Math.round(document.querySelector('.board-scroll').scrollTop)"),
-        json!(400),
-        "the swipes kept the reader's place down the columns"
+    assert!(
+        page.wait_for(&deep(400), SHOWN),
+        "the swipes kept the reader's place down the columns: {}",
+        page.eval("document.querySelector('.board-scroll').scrollTop")
     );
     page.eval("document.querySelector('.board-scroll').focus()");
     for top in [400, 900] {
