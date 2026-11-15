@@ -6,7 +6,7 @@ import { memo, useEffect } from "react";
 import { linkName } from "./cardheight";
 import { href } from "./project";
 import type { MachineWork, Role, Task } from "./wire";
-import { NO_WORK, phaseLabel, samePhases, shownPhases } from "./work";
+import { NO_WORK, type Phase, phaseLabel, samePhases, shownPhases } from "./work";
 
 /** The performance mark set once a task's card is first drawn. */
 const READY_MARK = "tasks-ready";
@@ -54,7 +54,11 @@ export function WorkPhases({
   slug: string;
   connected: boolean;
 }) {
-  const rows = shownPhases(work, slug, connected);
+  return <PhaseChips rows={shownPhases(work, slug, connected)} />;
+}
+
+/** Builds and tests as a card, an agent or a machine shows them: a chip each, or nothing. */
+export function PhaseChips({ rows }: { rows: Phase[] }) {
   if (rows.length === 0) return null;
   return (
     // A group, so the label is read: a plain box's is not.

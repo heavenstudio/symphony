@@ -3,14 +3,16 @@
 // The tests run in Node, without a DOM: markup is drawn with react-dom/server, and the page's
 // globals are stubbed where a test needs one.
 
-import { isValidElement, type ReactNode } from "react";
+import { isValidElement, type ReactElement, type ReactNode } from "react";
 import { expect, vi } from "vitest";
 import type {
+  Agent,
   Block,
   MachineObservation,
   MachineWork,
   ProjectView,
   Role,
+  SessionGo,
   Task,
   View,
   Viewer,
@@ -66,6 +68,14 @@ export const CASES = cases as unknown as {
   /** A word, the grain it names, and that grain's default and longest windows in days. */
   grains: [string, string | null, number | null, number | null][];
   fileAddress: [string, string][];
+  /** An address, and whether a page may link it as a session's. */
+  webAddress: [string, boolean][];
+  /**
+   * A way into a session, whether the page is on the server's machine, the control it shows
+   * (`{focus|link|screen: target}`, null for none), and whether it goes through another session
+   * than `amber`'s.
+   */
+  sessionControl: [SessionGo, boolean, Record<string, string> | null, boolean][];
   /** A viewer, a file, its caption and poster, and the element's markup (null for none). */
   elementHtml: [Viewer, string, string, string | null, string | null][];
   encoded: [View, string][];
@@ -84,6 +94,13 @@ export const CASES = cases as unknown as {
     bareTaskChange: unknown;
     taskAdded: unknown;
     taskRemoved: unknown;
+    agentPage: unknown;
+    emptyAgentPage: unknown;
+    agentChange: unknown;
+    bareAgent: unknown;
+    agentProbes: unknown;
+    agentFocus: unknown;
+    agentScreen: unknown;
     reports: unknown;
     emptyReports: unknown;
     blocks: Block[];
@@ -109,6 +126,37 @@ export function aTask(slug: string, fields: Partial<Task> = {}): Task {
     depends: [],
     roles: [],
     instruction: false,
+    ...fields,
+  };
+}
+
+/** `handle`, an idle worker holding nothing, with nothing known of its session; `fields` say
+ * otherwise. */
+export function anAgent(handle: string, fields: Partial<Agent> = {}): Agent {
+  return {
+    handle,
+    kind: "worker",
+    model: "opus",
+    parent: null,
+    task: null,
+    role: null,
+    tasks: [],
+    worktree: "",
+    branch: "",
+    agent: null,
+    session_id: null,
+    pane: null,
+    callback: null,
+    chat: false,
+    state: "idle",
+    state_detail: null,
+    health: "live",
+    last_tool_call: null,
+    last_message: null,
+    slots: null,
+    session_url: null,
+    in_process: false,
+    go: null,
     ...fields,
   };
 }
@@ -241,6 +289,42 @@ export async function asking(asked: unknown[], count: number): Promise<void> {
   }
   expect(asked).toHaveLength(count);
 }
+
+/** An element as a test finds it: its type, and its props to read or call. */
+export type Found = ReactElement<Record<string, unknown>>;
+
+/**
+ * The first element of `node` that `test` takes, itself or one it writes (a component in it is not
+ * drawn, but its element is found), depth first: a handler a test calls as the browser would.
+ */
+export function elementOf(node: ReactNode, test: (element: Found) => boolean): Found | undefined {
+  if (Array.isArray(node)) {
+    for (const each of node) {
+      const found = elementOf(each, test);
+      if (found !== undefined) return found;
+    }
+    return undefined;
+  }
+  if (!isValidElement<Record<string, unknown>>(node)) return undefined;
+  if (test(node)) return node;
+  return elementOf(node.props.children as ReactNode, test);
+}
+
+/** Calls handler `name` of the first element of `node` that `test` takes, as the browser would;
+ * a test whose element or handler is not there fails. */
+export function fire(
+  node: ReactNode,
+  test: (element: Found) => boolean,
+  name: string,
+  ...event: unknown[]
+): void {
+  const handler = elementOf(node, test)?.props[name];
+  if (typeof handler !== "function") throw new Error(`No element with ${name} was drawn`);
+  handler(...event);
+}
+
+/** Whether `element` reads `text` and nothing more. */
+export const reading = (text: string) => (element: Found) => element.props.children === text;
 
 /**
  * The children of the first element of `node` whose class or tag is `name`, searched through the
