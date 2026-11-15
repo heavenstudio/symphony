@@ -70,7 +70,11 @@ fn a_subagents_beats_give_its_own_transcripts_tokens_once_from_its_binding_on() 
     append(&own, &[assistant("m2", 2)]);
     let command = format!("just tasks show sim/jump --as {h}");
     beat(&env, &at(bash(&command).agent("a1").0));
-    assert_eq!(total(&env), worth(3, 2), "its own two messages, the parent's none");
+    assert_eq!(
+        total(&env),
+        worth(3, 2),
+        "its own two messages, the parent's none"
+    );
     beat(&env, &at(bash(&command).agent("a1").ended().0));
     assert_eq!(total(&env), worth(3, 2), "nothing new, nothing added");
     // An event `just tasks beat` reads is one an agent wrote: the transcript it names is not read.

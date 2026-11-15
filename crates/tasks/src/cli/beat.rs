@@ -290,9 +290,9 @@ pub fn beat_event(
             ended: false,
         }
     };
-    Ok(full(store.agent_beat_spending(
-        agent, &beat, place, boot, spent,
-    )?))
+    Ok(full(
+        store.agent_beat_spending(agent, &beat, place, boot, spent)?,
+    ))
 }
 
 /// What one beat came to.
@@ -401,13 +401,23 @@ pub fn run(input: &mut dyn std::io::Read, env: &Env) -> i32 {
             .and_then(|(((key, _), path), folder)| Ledger::open(&folder, key, &path));
         let spent = ledger.as_ref().map_or(&[][..], Ledger::spent);
         let beaten = beat_event(&store, event, boot.as_ref(), bind, spent);
-        let recorded = matches!(&beaten, Ok(Some(Beaten { handle: Some(_), .. })));
+        let recorded = matches!(
+            &beaten,
+            Ok(Some(Beaten {
+                handle: Some(_),
+                ..
+            }))
+        );
         if let Some(ledger) = ledger {
             ledger.close(recorded);
         }
         let beaten = beaten.ok()??;
         if beaten.full {
-            mark(&keys_folder(env, &cwd)?, &beaten.key, beaten.handle.is_some());
+            mark(
+                &keys_folder(env, &cwd)?,
+                &beaten.key,
+                beaten.handle.is_some(),
+            );
         }
         Some(())
     })();

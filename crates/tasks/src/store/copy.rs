@@ -105,7 +105,14 @@ impl Store {
             (
                 "usage",
                 keyed(values(&dump.usages), &|r| {
-                    json!([r["handle"], r["slug"], r["role"], r["model"], r["speed"], r["round"]])
+                    json!([
+                        r["handle"],
+                        r["slug"],
+                        r["role"],
+                        r["model"],
+                        r["speed"],
+                        r["round"]
+                    ])
                 }),
             ),
         ];

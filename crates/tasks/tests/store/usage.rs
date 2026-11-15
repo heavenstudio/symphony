@@ -72,7 +72,9 @@ fn sum(parts: &[u64]) -> Tokens {
 fn a_task_worked_over_two_rounds_reads_each_rounds_cost_back() {
     let f = working();
     assert_eq!(beat(&f, "exec", &[opus(1)]).as_deref(), Some("amber-heron"));
-    f.store.move_to("sim/jump", "review", "amber-heron").unwrap();
+    f.store
+        .move_to("sim/jump", "review", "amber-heron")
+        .unwrap();
     f.store
         .take_role("sim/jump", "brisk-finch", "reviewer")
         .unwrap();
@@ -82,7 +84,9 @@ fn a_task_worked_over_two_rounds_reads_each_rounds_cost_back() {
         .verdict("sim/jump", "brisk-finch", "changes", "the jump overshoots")
         .unwrap();
     beat(&f, "exec", &[opus(4)]);
-    f.store.move_to("sim/jump", "review", "amber-heron").unwrap();
+    f.store
+        .move_to("sim/jump", "review", "amber-heron")
+        .unwrap();
     beat(&f, "rev", &[opus(8)]);
     let rows = f.store.spent_on(&["sim/jump"]).unwrap();
     let tally = Tally::of(&rows);
@@ -195,7 +199,8 @@ fn spends_on(roles: &[(&str, &str, &str)]) -> Vec<(String, String)> {
 }
 
 #[test]
-fn an_open_tasks_execution_comes_before_its_review_before_a_reservation_and_a_finished_task_never() {
+fn an_open_tasks_execution_comes_before_its_review_before_a_reservation_and_a_finished_task_never()
+{
     let on = |slug: &str, role: &str| vec![(slug.to_string(), role.to_string())];
     let done = ("sim/done", "done", "executor");
     let review = ("sim/a", "review", "reviewer");
@@ -205,7 +210,10 @@ fn an_open_tasks_execution_comes_before_its_review_before_a_reservation_and_a_fi
         on("sim/b", "executor"),
         "an executor waiting on its review still works its task"
     );
-    assert_eq!(spends_on(&[done, reserved, review]), on("sim/a", "reviewer"));
+    assert_eq!(
+        spends_on(&[done, reserved, review]),
+        on("sim/a", "reviewer")
+    );
     assert_eq!(spends_on(&[done, reserved]), on("sim/c", "reserved"));
     assert_eq!(spends_on(&[done]), on("", "worker"));
 }

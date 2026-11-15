@@ -266,7 +266,10 @@ impl Agent {
             ("slots", slots),
             ("session_url", Py::opt_str(self.session_url.as_deref())),
             ("in_process", Py::Bool(self.in_process)),
-            ("tokens", self.tokens.as_ref().map_or(Py::Null, Tokens::json)),
+            (
+                "tokens",
+                self.tokens.as_ref().map_or(Py::Null, Tokens::json),
+            ),
         ])
     }
 }

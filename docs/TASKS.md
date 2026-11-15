@@ -2748,9 +2748,9 @@ What is not recorded:
 - **A session with a monitor** (an orchestrator in a terminal the board launched) is never bound
   to its key, so its beats record nothing.
 - **The last answer.** The beat runs at a tool call, so the reply after a session's last tool
-  call is never read: replayed through the beats it would have had, a subagent's run of 242
+  call is never read: replayed through the beats they would have had, a subagent's run of 242
   calls (46.7 MB of transcript) left the board 241 calls and 99.8 % of the transcript's tokens,
-  the last reply's being the rest.
+  and one of 2,705 calls (75.1 MB) 2,704 and 99.95 %, the last reply's being the rest.
 - A beat run through `just tasks beat` (its event one an agent wrote, not the hook's) reads no
   transcript.
 
@@ -2763,14 +2763,15 @@ What is not recorded:
 ```
 
 each amount in three figures at most (`950`, `12.3k`, `7.8M`), rounded down; a task with none
-prints no lines. `--json` carries them as `tokens`: `total`, `by_role` (`[{"role", "tokens"}]`), `by_round`
-(`[{"round", "tokens"}]`) and the `rows` themselves (`handle`, `slug`, `role`, `model`, `speed`,
-`round`, `tokens`, `first`, `last`), from which a price is read by model and speed; each
-`tokens` is `{"input", "cache_write_5m", "cache_write_1h", "cache_read", "output", "calls"}`.
-The agents API gives each agent's `tokens`, all its rows summed ([The agents
+prints no lines. `--json` carries them as `tokens`: `total`, `by_role` (`[{"role", "tokens"}]`),
+`by_round` (`[{"round", "tokens"}]`) and the `rows` themselves (`handle`, `slug`, `role`,
+`model`, `speed`, `round`, `tokens`, `first`, `last`), from which a price is read by model and
+speed; each `tokens` is `{"input", "cache_write_5m", "cache_write_1h", "cache_read", "output",
+"calls"}`. The agents API gives each agent's `tokens`, all its rows summed ([The agents
 API](#the-agents-api)). A landing's closing line names the task's after the commit (`landed
 SLUG on main at SHA; 71.6k tokens in 6 calls (executor 51.5k, reviewer 20.1k; round 1 51.5k,
-round 2 20.1k)`), each amount with its unit, so no number in it reads as a commit. A copy of the board carries the rows (`Dump.usages`).
+round 2 20.1k)`), each amount with its unit, so no number in it reads as a commit. A copy of
+the board carries the rows (`Dump.usages`). The pages draw none of it yet.
 
 ## The timeline
 

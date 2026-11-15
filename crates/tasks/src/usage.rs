@@ -249,11 +249,9 @@ pub fn amount(n: u64) -> String {
     const UNITS: [(u64, &str); 3] = [(1_000_000_000, "G"), (1_000_000, "M"), (1_000, "k")];
     for (size, unit) in UNITS {
         if n >= size {
-            // Tenths, rounded down, so 999.95k never reads as 1000.0k.
+            // Tenths, rounded down, so 999.95k never reads as 1000.0k; none from 100 on.
             let tenths = n / (size / 10);
-            return if tenths >= 1000 {
-                format!("{}{unit}", tenths / 10)
-            } else if tenths % 10 == 0 {
+            return if tenths >= 1000 || tenths.is_multiple_of(10) {
                 format!("{}{unit}", tenths / 10)
             } else {
                 format!("{}.{}{unit}", tenths / 10, tenths % 10)
@@ -386,7 +384,11 @@ mod tests {
     #[test]
     fn a_landing_line_naming_tokens_names_no_commit() {
         // `land::named` reads 7 to 40 hex digits as a commit; an amount always carries its unit.
-        let rows = [row("executor", 1, tokens(0, 0, 9_876_543, 1_234_567, 1_000))];
+        let rows = [row(
+            "executor",
+            1,
+            tokens(0, 0, 9_876_543, 1_234_567, 1_000),
+        )];
         let line = said(&rows).unwrap();
         assert_eq!(crate::land::named(&line), Vec::<&str>::new(), "{line}");
     }

@@ -173,7 +173,9 @@ impl Ledger {
         let Ok(text) = serde_json::to_vec(&self.kept) else {
             return;
         };
-        let staged = self.file.with_extension(format!("json.{}", std::process::id()));
+        let staged = self
+            .file
+            .with_extension(format!("json.{}", std::process::id()));
         if fs::write(&staged, text).is_err() || fs::rename(&staged, &self.file).is_err() {
             let _ = fs::remove_file(&staged);
         }
@@ -238,7 +240,10 @@ fn message(line: &[u8]) -> Option<(String, Spent)> {
     let n = |count: Option<u64>| count.unwrap_or(0);
     let written = n(usage.cache_creation_input_tokens);
     let (five, hour) = usage.cache_creation.map_or((written, 0), |split| {
-        let (five, hour) = (n(split.ephemeral_5m_input_tokens), n(split.ephemeral_1h_input_tokens));
+        let (five, hour) = (
+            n(split.ephemeral_5m_input_tokens),
+            n(split.ephemeral_1h_input_tokens),
+        );
         (five + written.saturating_sub(five + hour), hour)
     });
     let speed = usage
@@ -313,10 +318,11 @@ fn prune(folder: &Path, now: SystemTime) {
                 let _ = fs::remove_file(&path);
                 let _ = fs::remove_file(folder.join(format!("{key}.lock")));
             }
-        } else if let Some(key) = name.strip_suffix(".lock") {
-            if !folder.join(format!("{key}.json")).exists() && old(&path) {
-                let _ = fs::remove_file(&path);
-            }
+        } else if let Some(key) = name.strip_suffix(".lock")
+            && !folder.join(format!("{key}.json")).exists()
+            && old(&path)
+        {
+            let _ = fs::remove_file(&path);
         }
     }
 }

@@ -145,13 +145,19 @@ fn a_line_still_being_written_is_read_whole_at_the_next_beat() {
 fn what_the_board_did_not_take_is_handed_again_with_what_came_after() {
     let folder = Folder::new("pending");
     let (ledgers, transcript) = (folder.path("usage"), folder.path("s-1.jsonl"));
-    append(&transcript, &format!("{}\n", assistant("m1", 1, 10, 0, 100, 1)));
+    append(
+        &transcript,
+        &format!("{}\n", assistant("m1", 1, 10, 0, 100, 1)),
+    );
     // Not bound yet: the board takes nothing, and the ledger keeps it.
     assert_eq!(
         beat(&ledgers, "k", &transcript, false),
         [opus(tokens(1, 10, 0, 100, 1, 1))]
     );
-    append(&transcript, &format!("{}\n", assistant("m2", 2, 20, 0, 200, 2)));
+    append(
+        &transcript,
+        &format!("{}\n", assistant("m2", 2, 20, 0, 200, 2)),
+    );
     assert_eq!(
         beat(&ledgers, "k", &transcript, true),
         [opus(tokens(3, 30, 0, 300, 3, 2))]
@@ -176,7 +182,9 @@ fn kinds_models_and_speeds_are_kept_apart_and_synthetic_messages_are_no_calls() 
     let summary = json!({"type": "summary", "usage": "x", "assistant": "y"});
     append(
         &transcript,
-        &format!("{fast}\n{unsplit}\n{short}\n{synthetic}\n{summary}\nnot json \"assistant\" \"usage\"\n"),
+        &format!(
+            "{fast}\n{unsplit}\n{short}\n{synthetic}\n{summary}\nnot json \"assistant\" \"usage\"\n"
+        ),
     );
     let haiku = |t: Tokens| Spent {
         model: "claude-haiku-4-5".into(),
@@ -200,7 +208,10 @@ fn kinds_models_and_speeds_are_kept_apart_and_synthetic_messages_are_no_calls() 
 fn a_second_beat_of_the_key_meanwhile_reads_nothing_and_the_next_reads_what_it_left() {
     let folder = Folder::new("held");
     let (ledgers, transcript) = (folder.path("usage"), folder.path("s-1.jsonl"));
-    append(&transcript, &format!("{}\n", assistant("m1", 1, 0, 0, 0, 1)));
+    append(
+        &transcript,
+        &format!("{}\n", assistant("m1", 1, 0, 0, 0, 1)),
+    );
     let first = Ledger::open(&ledgers, "k", &transcript).unwrap();
     assert!(Ledger::open(&ledgers, "k", &transcript).is_none());
     // Another key is its own.
@@ -209,7 +220,10 @@ fn a_second_beat_of_the_key_meanwhile_reads_nothing_and_the_next_reads_what_it_l
         [opus(tokens(1, 0, 0, 0, 1, 1))]
     );
     first.close(true);
-    append(&transcript, &format!("{}\n", assistant("m2", 2, 0, 0, 0, 2)));
+    append(
+        &transcript,
+        &format!("{}\n", assistant("m2", 2, 0, 0, 0, 2)),
+    );
     assert_eq!(
         beat(&ledgers, "k", &transcript, true),
         [opus(tokens(2, 0, 0, 0, 2, 1))]
@@ -220,11 +234,17 @@ fn a_second_beat_of_the_key_meanwhile_reads_nothing_and_the_next_reads_what_it_l
 fn a_ledger_that_does_not_parse_starts_at_the_end_and_counts_nothing_again() {
     let folder = Folder::new("corrupt");
     let (ledgers, transcript) = (folder.path("usage"), folder.path("s-1.jsonl"));
-    append(&transcript, &format!("{}\n", assistant("m1", 1, 0, 0, 0, 1)));
+    append(
+        &transcript,
+        &format!("{}\n", assistant("m1", 1, 0, 0, 0, 1)),
+    );
     fs::create_dir_all(&ledgers).unwrap();
     fs::write(ledgers.join("k.json"), "{cut sh").unwrap();
     assert_eq!(beat(&ledgers, "k", &transcript, true), []);
-    append(&transcript, &format!("{}\n", assistant("m2", 2, 0, 0, 0, 2)));
+    append(
+        &transcript,
+        &format!("{}\n", assistant("m2", 2, 0, 0, 0, 2)),
+    );
     assert_eq!(
         beat(&ledgers, "k", &transcript, true),
         [opus(tokens(2, 0, 0, 0, 2, 1))]
@@ -261,10 +281,7 @@ fn a_transcript_longer_than_one_read_is_read_over_several_beats() {
     let filler = json!({"type": "user", "message": {"content": padding}}).to_string();
     append(
         &transcript,
-        &format!(
-            "{filler}\n{filler}\n{}\n",
-            assistant("m1", 1, 0, 0, 0, 1)
-        ),
+        &format!("{filler}\n{filler}\n{}\n", assistant("m1", 1, 0, 0, 0, 1)),
     );
     assert_eq!(beat(&ledgers, "k", &transcript, true), []);
     assert_eq!(
@@ -286,7 +303,9 @@ fn a_subagents_transcript_is_its_own_never_its_parents() {
     let event = |pairs: Value| pairs.as_object().unwrap().clone();
     let main = "/h/.claude/projects/-r/s-1.jsonl";
     assert_eq!(
-        of_event(&event(json!({"session_id": "s-1", "transcript_path": main}))),
+        of_event(&event(
+            json!({"session_id": "s-1", "transcript_path": main})
+        )),
         Some(PathBuf::from(main))
     );
     assert_eq!(
@@ -335,7 +354,10 @@ fn a_new_ledger_prunes_those_left_a_week() {
     }
     let week = SystemTime::now() + PRUNE_AFTER;
     let fresh = |name: &str| {
-        let file = File::options().write(true).open(ledgers.join(name)).unwrap();
+        let file = File::options()
+            .write(true)
+            .open(ledgers.join(name))
+            .unwrap();
         file.set_modified(week).unwrap();
     };
     fresh("new.json");

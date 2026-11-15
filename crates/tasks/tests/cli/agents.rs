@@ -271,7 +271,13 @@ fn an_agents_tokens_are_what_its_session_spent_all_told_and_null_before_any() {
     };
     for (model, n) in [("claude-opus-5-5", 1), ("claude-haiku-4-5", 2)] {
         c.f.store
-            .agent_beat_spending("agent-sub", &Beat::default(), None, None, &[spent(model, n)])
+            .agent_beat_spending(
+                "agent-sub",
+                &Beat::default(),
+                None,
+                None,
+                &[spent(model, n)],
+            )
             .unwrap();
     }
     let view = c.view();
@@ -372,7 +378,8 @@ fn the_json_is_written_in_the_contracts_key_order_as_python_writes_it() {
    }},
    "slots": null,
    "session_url": null,
-   "in_process": false
+   "in_process": false,
+   "tokens": null
   }}"#,
             orch = c.orch
         )

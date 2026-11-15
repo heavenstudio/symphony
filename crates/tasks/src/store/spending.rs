@@ -71,8 +71,7 @@ impl Store {
             return Ok(BTreeMap::new());
         }
         let read = "SELECT * OMIT id FROM usage WHERE handle IN $handles;";
-        let rows: Vec<UsageRow> =
-            self.retrying(|| self.read(read, json!({"handles": handles})))?;
+        let rows: Vec<UsageRow> = self.retrying(|| self.read(read, json!({"handles": handles})))?;
         let mut by = BTreeMap::new();
         for row in &rows {
             by.entry(row.handle.clone())
