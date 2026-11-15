@@ -351,11 +351,23 @@ fn with_no_plugin_the_symphony_answers_review_check_and_owner_from_the_board_and
         "[verdicts]\ncheck = [\"just\", \"verify\"]\n",
     )
     .unwrap();
-    for branch in ["tools/green", "tools/unrun", "tools/asks"] {
+    for branch in [
+        "tools/green",
+        "tools/unrun",
+        "tools/asks",
+        "tools/landed",
+        "tools/brief/step",
+    ] {
         git(&root, &["branch", branch]);
     }
-    // Each branch at a tip of its own: a run at a commit counts for every branch there.
+    let base = git_tip(&root, "main");
+    // Each branch at a tip of its own: a run at a commit counts for every branch there. Those with
+    // none, tools/asks made at main's tip and tools/landed merged there, have nothing to check.
     let green = commit_on(&root, "tools/green");
+    let unrun = commit_on(&root, "tools/unrun");
+    commit_on(&root, "tools/landed");
+    git(&root, &["merge", "-q", "--ff-only", "tools/landed"]);
+    commit_on(&root, "tools/brief/step");
     // The board's recorder kept a green `just verify` at the tip, in the repository's common dir.
     let work = root.join(".git/symphony/tasks/work");
     let mut run = symphony_board::cli::machine_work::recorded::Record {
@@ -398,7 +410,10 @@ fn with_no_plugin_the_symphony_answers_review_check_and_owner_from_the_board_and
         .role("tools/unrun", "lucid-heron", "reviewer")
         .task("tools/asks", "in_progress")
         .link("tools/asks", "doc", "docs/TOPIC.md")
-        .task("tools/green/slice", "in_progress");
+        .task("tools/landed", "done")
+        .task("tools/green/slice", "in_progress")
+        .task("tools/brief", "ready")
+        .task("tools/brief/step", "in_progress");
     let seed = verdict(seed, 1, "tools/green", "lucid-heron", "changes: not yet");
     let mut seed = verdict(seed, 2, "tools/green", "lucid-heron", "approve: it holds");
     seed.dump
@@ -407,6 +422,10 @@ fn with_no_plugin_the_symphony_answers_review_check_and_owner_from_the_board_and
         .for_each(|task| match task.slug.as_str() {
             "tools/asks" => task.body = "Posted initial-card for the owner.".into(),
             "tools/green/slice" => task.parent = Some("tools/green".into()),
+            "tools/brief/step" => {
+                task.parent = Some("tools/brief".into());
+                task.instruction = true;
+            }
             _ => {}
         });
     let f = Fixture::new(seed);
@@ -436,28 +455,19 @@ fn with_no_plugin_the_symphony_answers_review_check_and_owner_from_the_board_and
     assert_eq!(answer["gates"][1]["by"], "quiet-wren");
     assert_eq!(answer["gates"][1]["commit"], json!(green));
     // Done with no round, a bug fix's waiver as before; cancelled, its review missing as before.
+    // Neither has a branch, so no check.
     let (status, answer) = ask("/api/task-gates?slug=tools/fixed");
     assert_eq!(status, StatusCode::OK, "{answer}");
-    let no_branch = |slug: &str| {
-        (
-            "check".to_string(),
-            GateState::Unknown,
-            format!("No branch {slug} in this repository"),
-        )
-    };
     assert_eq!(
         gates(&answer),
-        [
-            no_branch("tools/fixed"),
-            (
-                "review".into(),
-                GateState::Waived,
-                "Landed with no review verdict".into()
-            ),
-        ]
+        [(
+            "review".into(),
+            GateState::Waived,
+            "Landed with no review verdict".into()
+        )]
     );
     assert_eq!(
-        answer["gates"][1]["why"],
+        answer["gates"][0]["why"],
         "a bug fix lands on its evidence, with a reviewer only when its risk calls for one \
          (workflow/fast-bugfixes)"
     );
@@ -465,19 +475,27 @@ fn with_no_plugin_the_symphony_answers_review_check_and_owner_from_the_board_and
     assert_eq!(status, StatusCode::OK, "{answer}");
     assert_eq!(
         gates(&answer),
-        [
-            (
-                "review".into(),
-                GateState::Missing,
-                "Not reviewed yet".into()
-            ),
-            no_branch("tools/dropped"),
-        ]
+        [(
+            "review".into(),
+            GateState::Missing,
+            "Not reviewed yet".into()
+        )]
     );
+    // Its branch landed: it is on main, with nothing of its own left to check.
+    let (status, answer) = ask("/api/task-gates?slug=tools/landed");
+    assert_eq!(status, StatusCode::OK, "{answer}");
+    assert_eq!(
+        gates(&answer),
+        [(
+            "review".into(),
+            GateState::Waived,
+            "Landed with no review verdict".into()
+        )]
+    );
+    assert_eq!(answer["tip"], json!(git_tip(&root, "tools/landed")));
 
     let (status, answer) = ask("/api/task-gates?slug=tools/unrun");
     assert_eq!(status, StatusCode::OK, "{answer}");
-    let unrun = git_tip(&root, "tools/unrun");
     // An open task's gates are its stamps, review needed by default, and the check beside them.
     let by_default = |name: &str| {
         (
@@ -505,9 +523,11 @@ fn with_no_plugin_the_symphony_answers_review_check_and_owner_from_the_board_and
         ]
     );
 
+    // Its branch was made at main's tip and holds no commit yet: no check, whose run there would
+    // be main's.
     let (status, answer) = ask("/api/task-gates?slug=tools/asks");
     assert_eq!(status, StatusCode::OK, "{answer}");
-    let asks = git_tip(&root, "tools/asks");
+    assert_eq!(answer["tip"], json!(base));
     assert_eq!(
         gates(&answer),
         [
@@ -521,11 +541,6 @@ fn with_no_plugin_the_symphony_answers_review_check_and_owner_from_the_board_and
                 GateState::Held,
                 "Card initial-card in docs/TOPIC.md waits on the owner".into()
             ),
-            (
-                "check".into(),
-                GateState::Unknown,
-                format!("`just verify` has not run at {}", asks.get(..7).unwrap())
-            ),
             by_default("tests"),
             by_default("pictures"),
         ]
@@ -533,18 +548,16 @@ fn with_no_plugin_the_symphony_answers_review_check_and_owner_from_the_board_and
     assert_eq!(answer["gates"][1]["link"], "/docs/TOPIC.md#initial-card");
 
     // A subtask has no review gate: only its top-level task goes to review. Its branch, its slug
-    // here, is not in the repository, so its check cannot be told.
+    // here, is not in the repository, so nothing gates it.
     let (status, answer) = ask("/api/task-gates?slug=tools/green/slice");
     assert_eq!(status, StatusCode::OK, "{answer}");
-    assert_eq!(
-        gates(&answer),
-        [(
-            "check".into(),
-            GateState::Unknown,
-            "No branch tools/green/slice in this repository".into()
-        )]
-    );
+    assert_eq!(gates(&answer), []);
     assert_eq!(answer.get("tip"), None);
+    // An instruction's work lands with its task: its own commits are checked there, not here.
+    let (status, answer) = ask("/api/task-gates?slug=tools/brief/step");
+    assert_eq!(status, StatusCode::OK, "{answer}");
+    assert_eq!(gates(&answer), []);
+    assert_eq!(answer["tip"], json!(git_tip(&root, "tools/brief/step")));
     assert!(
         !root.join(shelf::GATES_CALLS).exists(),
         "no plugin was asked"
@@ -879,6 +892,115 @@ fn a_landed_tasks_stamps_stand_on_the_tip_its_land_merged_once_the_sweep_removed
                     .into()
             ),
         ]
+    );
+    shared.stop();
+}
+
+#[test]
+fn the_sign_off_lane_follows_a_plugins_owner_gate_kept_for_the_task_as_it_is_now() {
+    let tree = Tree::new();
+    let root = shelf_project(&tree, &["tools/x", "tools/y"]);
+    std::fs::write(
+        root.join(shelf::GATES),
+        json!({
+            "tools/x": {"gates": [{"name": "owner", "state": "held", "by": "owner",
+                                   "detail": "Waits on the owner's tier sign-off"}]},
+            "tools/y": {"gates": [{"name": "owner", "state": "met", "by": "owner",
+                                   "detail": "Signed off"}]},
+        })
+        .to_string(),
+    )
+    .unwrap();
+    // tools/y posted a card that waits on the owner, so the Symphony's own rule lifts it alone.
+    let seed = Seed::default()
+        .session("worker")
+        .task("tools/x", "in_progress")
+        .role("tools/x", "worker", "executor")
+        .task("tools/y", "in_progress")
+        .role("tools/y", "worker", "executor")
+        .link("tools/y", "doc", "docs/TOPIC.md");
+    let f = Fixture::new(said(
+        seed,
+        (1, "msg"),
+        "tools/y",
+        "worker",
+        "Please answer initial-card.",
+    ));
+    let (shared, ask) = served(&root, hub(&root, &f, BACKSTOP));
+    let hub = shared.api.get().unwrap();
+    let lane = || hub.task_signoff.lock().unwrap().clone();
+    assert_eq!(lane(), ["tools/y"], "nothing kept yet: the Symphony's rule");
+    assert!(calls(&root).is_empty(), "the lane asks the plugin nothing");
+
+    // The pages ask the plugin; the lane reads what came back at the next look, the board unchanged.
+    for slug in ["tools/x", "tools/y"] {
+        let (status, answer) = ask(&format!("/api/task-gates?slug={slug}"));
+        assert_eq!(status, StatusCode::OK, "{slug}: {answer}");
+    }
+    observe(hub, &f.store, &[]);
+    assert_eq!(
+        lane(),
+        ["tools/x"],
+        "the plugin's owner gate in the Symphony's place: held lifts tools/x, met leaves tools/y"
+    );
+
+    // In review, neither has an answer kept for it as it is now: the card rule decides again, so
+    // tools/y, whose card still waits, is back and tools/x, which posted none, is out.
+    for slug in ["tools/x", "tools/y"] {
+        f.store.move_to(slug, "review", "worker").unwrap();
+    }
+    observe(hub, &f.store, &[]);
+    assert_eq!(lane(), ["tools/y"]);
+    assert_eq!(calls(&root).len(), 2, "asked by the pages alone");
+    shared.stop();
+}
+
+#[test]
+fn a_plugins_owner_gate_for_one_task_never_hides_another_tasks_card_from_the_lane() {
+    let tree = Tree::new();
+    let root = shelf_project(&tree, &["tools/x", "tools/z"]);
+    // The plugin holds tools/x for the owner and says nothing of tools/z, whose card waits.
+    std::fs::write(
+        root.join(shelf::GATES),
+        json!({"tools/x": {"gates": [{"name": "owner", "state": "held", "by": "owner",
+                                      "detail": "Waits on the owner's tier sign-off"}]}})
+        .to_string(),
+    )
+    .unwrap();
+    let seed = Seed::default()
+        .session("worker")
+        .task("tools/x", "in_progress")
+        .role("tools/x", "worker", "executor")
+        .task("tools/z", "in_progress")
+        .role("tools/z", "worker", "executor")
+        .link("tools/z", "doc", "docs/TOPIC.md");
+    let f = Fixture::new(said(
+        seed,
+        (1, "msg"),
+        "tools/z",
+        "worker",
+        "Please answer initial-card.",
+    ));
+    let (shared, ask) = served(&root, hub(&root, &f, BACKSTOP));
+    let hub = shared.api.get().unwrap();
+    let lane = || hub.task_signoff.lock().unwrap().clone();
+    assert_eq!(lane(), ["tools/z"], "before any read: its card");
+    let read = |slug: &str| {
+        let (status, answer) = ask(&format!("/api/task-gates?slug={slug}"));
+        assert_eq!(status, StatusCode::OK, "{slug}: {answer}");
+        observe(hub, &f.store, &[]);
+    };
+    read("tools/x");
+    assert_eq!(
+        lane(),
+        ["tools/x", "tools/z"],
+        "tools/x's page alone: the plugin's owner for tools/x leaves tools/z's card standing"
+    );
+    read("tools/z");
+    assert_eq!(
+        lane(),
+        ["tools/x", "tools/z"],
+        "tools/z's page too: the plugin's answer has no owner gate for it"
     );
     shared.stop();
 }
