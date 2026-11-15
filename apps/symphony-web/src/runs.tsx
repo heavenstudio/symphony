@@ -1158,10 +1158,10 @@ export function RunView({
                       <span className="run-suite-error"> ended with no result</span>
                     )}
                   </th>
-                  <td>{suite.passed}</td>
-                  <td>{suite.failed}</td>
-                  <td>{suite.ignored}</td>
-                  <td>{duration(suite.s)}</td>
+                  <td data-label="Passed">{suite.passed}</td>
+                  <td data-label="Failed">{suite.failed}</td>
+                  <td data-label="Ignored">{suite.ignored}</td>
+                  <td data-label="Time">{duration(suite.s)}</td>
                 </tr>
               ))}
             </tbody>

@@ -40,8 +40,8 @@ never the whole target, which the release run runs.
   (opt-level z, fat LTO, one codegen unit, abort on panic) and dx's wasm-opt at
   `-Oz` (`Dioxus.toml`). `KIND` defaults to `all`: independently compile the
   program, the one kind dx builds since every other moved to the React client, build the React
-  client's kinds (`web`: one Vite build of `apps/symphony-web`, home, the queue, Reports, the
-  documents, the task board, the agents page and a task's page, [its
+  client's kinds (`web`: one Vite build of `apps/symphony-web`, home, the queue, Reports, Runs,
+  the documents, the task board, the agents page and a task's page, [its
   guide](../symphony-web/AGENTS.md)),
   then assemble their content-hashed assets with `package.sh`, which refuses a kind both
   clients build. Naming a kind (`program` among
@@ -372,7 +372,13 @@ never the whole target, which the release run runs.
   and sheet (1,460), the chunk the web kinds share and the pieces it shares with the board and the
   documents, where the program's WASM, glue and the task pages' chunk were; its timeline, a chunk
   of the web client's, takes 12,787 after it (from 56,385), its return 2,241 (from 2,240). No page
-  is the program's after both: the chat and the menus are all it builds. RUNSBYTES Each
+  is the program's after both: the chat and the menus are all it builds. The Runs page
+  (`tools/runs-page`, against main's build at 777b39e) takes `/runs` to 106,622 bytes: its entry
+  (7,174 on the wire), its styles (1,837), the chunk the web kinds share (76,680) and the shared
+  styles. It imports the shared ghost and words (`viewport.tsx`, `words.ts`) as every other kind
+  does, so no chunk splits. Every other page takes 143 to 161 bytes more (a document's once 230 of
+  three readings; `/` 112,545, `/tasks` 120,443): the shell's manifest names the kind, and the shared
+  chunk carries its route and header link. Each
   module pays for its own compiled framework, the program once for all its kinds;
   later visits reuse cached imports. The home budget test
   is independent of the canonical-entry test, which gives every kind a fresh

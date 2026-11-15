@@ -71,6 +71,10 @@ fn steps() -> Value {
                 "failed": [
                     {"suite": "symphony", "name": "api::runs::tests::a_run_opens_on_its_steps", "line": "assertion `left == right` failed: a very long line that a phone wraps rather than scrolling the page sideways"},
                     {"suite": null, "name": "project::reads", "line": "panicked at src/project.rs:12"}
+                ],
+                "suites": [
+                    {"name": "unittests src/lib.rs (symphony_server)", "passed": 1204, "failed": 1, "ignored": 3, "s": 212.4},
+                    {"name": "tests/cli/main.rs (cli)", "passed": 0, "failed": 0, "ignored": 0, "s": 41.0, "error": true}
                 ]})
             ),
             "red",
@@ -152,6 +156,21 @@ fn drawn(chrome: &mut Chrome, drawn: &str) {
 const OVERFLOW: &str =
     "Math.max(0, document.documentElement.scrollWidth - document.documentElement.clientWidth)";
 
+/// How a run's page is laid out: whether each step's time shares its name's line, how far its
+/// suites' table scrolls across, on how many lines each binary's name is drawn, and what the one
+/// that ended with no result says.
+const LAID_OUT: &str = "(() => {
+    const beside = (a, b) => { const x = a.getBoundingClientRect(), y = b.getBoundingClientRect(); return x.top < y.bottom && y.top < x.bottom; };
+    const lines = (cell) => { const range = document.createRange(); range.selectNodeContents(cell.firstChild); return new Set([...range.getClientRects()].map(r => Math.round(r.top))).size; };
+    const table = document.querySelector('.run-suites table');
+    return {
+        times: [...document.querySelectorAll('.run-step')].map(s => beside(s.querySelector('a'), s.querySelector('.run-time'))),
+        scroll: table.scrollWidth - table.clientWidth,
+        lines: [...table.querySelectorAll('tbody th')].map(lines),
+        error: document.querySelector('.run-suite-error')?.textContent.trim(),
+    };
+})()";
+
 /// A click on the first element `selector` names, as a person's.
 fn click(chrome: &mut Chrome, selector: &str) {
     assert_eq!(
@@ -200,6 +219,12 @@ fn the_runs_page_fits_a_desk_and_a_phone_and_opens_a_run_on_its_steps_failures_a
             )),
             json!({"overflow": 0, "search": format!("?run={}", id(30)), "steps": ["build", "unit"], "failed": 2, "part": "The last 120 B of 200 B", "ends": true}),
             "{width}: the run's page, its steps, the two tests it failed and its log's tail, within the screen"
+        );
+        assert_eq!(
+            chrome.eval(LAID_OUT),
+            json!({"times": [true, true], "scroll": 0, "lines": [1, 1], "error": "ended with no result"}),
+            "{width}: each step's time on its name's line, each binary's name whole on one line, the \
+             one that ended with no result saying so, and its table never scrolling across"
         );
         click(&mut chrome, ".run-log .dx-button");
         assert!(

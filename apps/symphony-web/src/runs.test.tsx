@@ -919,7 +919,8 @@ describe("a run's page", () => {
     expect(html).toContain('<code>a::one</code><span class="run-suite"> in symphony</span>');
     expect(html).toContain("panicked at src/b.rs:3");
     expect(html).toContain(
-      '<th scope="row">symphony</th><td>10</td><td>2</td><td>1</td><td>12 s</td>',
+      '<th scope="row">symphony</th><td data-label="Passed">10</td><td data-label="Failed">2</td>' +
+        '<td data-label="Ignored">1</td><td data-label="Time">12 s</td>',
     );
     expect(html).toContain("The last 100.0 KB of 2.0 MB");
     expect(html).toContain("Show earlier output");

@@ -274,14 +274,17 @@
   border: 1px solid var(--border);
   border-radius: var(--r-lg);
 }
+/* A step: its name, its bar and its time in a row, each in its area, as `.run-time` names one. */
 .run-step {
   display: grid;
   grid-template-columns: minmax(0, 14rem) minmax(0, 1fr) 5.5rem;
+  grid-template-areas: "name track time";
   gap: var(--sp-3);
   align-items: center;
   padding-left: calc(var(--depth, 0) * var(--sp-4));
 }
 .run-step > a {
+  grid-area: name;
   display: inline-flex;
   gap: var(--sp-2);
   align-items: baseline;
@@ -300,6 +303,7 @@
   overflow-wrap: anywhere;
 }
 .run-step-track {
+  grid-area: track;
   position: relative;
   height: 0.75rem;
   border-radius: var(--r-sm);
@@ -320,15 +324,6 @@
       "name time"
       "track track";
     gap: 2px var(--sp-2);
-  }
-  .run-step > a {
-    grid-area: name;
-  }
-  .run-step-track {
-    grid-area: track;
-  }
-  .run-step .run-time {
-    grid-area: time;
   }
 }
 
@@ -372,7 +367,39 @@
   white-space: nowrap;
 }
 .run-suites th[scope="row"] {
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
+}
+/* On a phone a binary is a row of its own: its name across, then its counts under it, each
+   with its word, so a long name never squeezes the counts off the card. */
+@media (max-width: 599px) {
+  .run-suites table,
+  .run-suites tbody {
+    display: block;
+    width: auto;
+  }
+  .run-suites thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+  .run-suites tbody tr {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+  .run-suites th[scope="row"] {
+    grid-column: 1 / -1;
+  }
+  .run-suites td {
+    text-align: left;
+  }
+  .run-suites td::before {
+    content: attr(data-label);
+    display: block;
+    font-size: var(--fs-xs);
+    color: var(--muted-foreground);
+  }
 }
 /* A binary that crashed or was stopped before its result: never a pass. */
 .run-suite-error {
