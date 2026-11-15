@@ -2,8 +2,10 @@
 //! environment failure, not failed tests. A target that never ran, or never compiled, because a
 //! file its own build had made was gone ([`super::rerun`] reads which from the log) failed for its
 //! build folder: what removed the file ran while the target the log names ran ([`Went`]), that
-//! target or something it started, or something outside the run. What the build folder holds
-//! when the red is filed, each entry with when it was made, names who wrote there after the build.
+//! target or something it started, or something outside the run; in a run of the tests' lanes side
+//! by side, while those lanes ran, any of them, never one target the log's order names. What the
+//! build folder holds when the red is filed, each entry with when it was made, names who wrote
+//! there after the build.
 
 use std::fs;
 use std::path::{Component, Path, PathBuf};
@@ -32,17 +34,36 @@ pub(crate) fn said(log: &Log) -> Option<String> {
             files.push(file);
         }
     }
-    let when = match &log.went {
+    let target = "that target or something it started";
+    let (when, who) = match &log.went {
         Some(Went::While(header, selected)) => {
             let selected = (selected.as_ref())
                 .map(|args| format!(" (`{args}`)"))
                 .unwrap_or_default();
-            format!(
+            let when = format!(
                 "while `{header}`{selected} ran, the last target cargo started before the first \
                  that found one gone"
-            )
+            );
+            (when, target)
         }
-        Some(Went::Building) | None => "while it built, before any target ran".into(),
+        Some(Went::Lanes(lanes, at_once)) => {
+            let names: Vec<&str> = lanes.iter().map(String::as_str).collect();
+            let at_once = if *at_once >= lanes.len() {
+                "all at once".to_string()
+            } else {
+                format!("at most {at_once} at once")
+            };
+            let when = format!(
+                "while the tests' {count} lanes ran side by side, {at_once} ({names})",
+                count = lanes.len(),
+                names = listed(&names, names.len()),
+            );
+            let who = "a test of any of those lanes or something it started (their outputs follow \
+                       one another in the log, but they ran at the same time, so it names no one \
+                       target)";
+            (when, who)
+        }
+        Some(Went::Building) | None => ("while it built, before any target ran".into(), target),
     };
     let folder = (files.iter())
         .find_map(|file| folder_of(Path::new(file)))
@@ -51,8 +72,8 @@ pub(crate) fn said(log: &Log) -> Option<String> {
     Some(format!(
         "An environment failure, not a failed test: {count} of its failed targets found files its \
          own build had made gone, and never ran or never compiled for that ({targets}): {files}. \
-         They went {when}: what removed them ran then, that target or something it started, or \
-         something outside the run.{folder}",
+         They went {when}: what removed them ran then, {who}, or something outside the \
+         run.{folder}",
         count = failed.len(),
         targets = listed(&failed, LISTED),
         files = listed(&files, LISTED),
@@ -302,6 +323,56 @@ mod tests {
                 .unwrap()
                 .contains("They went while `Doc-tests a` ran, the last target"),
             "no arguments are guessed for a target whose package the log does not say"
+        );
+    }
+
+    #[test]
+    fn files_gone_while_lanes_ran_side_by_side_are_said_of_those_lanes_and_of_no_one_target() {
+        let tree = Tree::new();
+        let target = tree.path("t");
+        let file = format!("{}/debug/deps/b-0123", target.display());
+        let lanes: Vec<String> = ["perf", "sweep", "rest", "doc"].map(String::from).into();
+        let log = |at_once: usize| Log {
+            targets: vec![
+                failed("-p a --test b", &[], &[&file]),
+                failed("-p a --doc", &[], &[&file]),
+            ],
+            went: Some(Went::Lanes(lanes.clone(), at_once)),
+            ..Log::default()
+        };
+        assert_eq!(
+            said(&log(8)).unwrap(),
+            format!(
+                "An environment failure, not a failed test: 2 of its failed targets found files \
+                 its own build had made gone, and never ran or never compiled for that (`-p a \
+                 --test b` and `-p a --doc`): `{file}`. They went while the tests' 4 lanes ran \
+                 side by side, all at once (`perf`, `sweep`, `rest` and `doc`): what removed them \
+                 ran then, a test of any of those lanes or something it started (their outputs \
+                 follow one another in the log, but they ran at the same time, so it names no one \
+                 target), or something outside the run. Its build folder, {}, is gone.",
+                target.display()
+            )
+        );
+        for (at_once, said) in [
+            (4, "4 lanes ran side by side, all at once (`perf`, "),
+            (2, "4 lanes ran side by side, at most 2 at once (`perf`, "),
+        ] {
+            let told = super::said(&log(at_once)).unwrap();
+            assert!(told.contains(said), "{at_once}: {told}");
+        }
+        // Every lane is named, however many.
+        let many: Vec<String> = (1..=9).map(|n| format!("l{n}")).collect();
+        let crowded = Log {
+            went: Some(Went::Lanes(many, 8)),
+            ..log(8)
+        };
+        let told = said(&crowded).unwrap();
+        assert!(
+            told.contains(
+                "9 lanes ran side by side, at most 8 at once (`l1`, `l2`, `l3`, `l4`, \
+                 `l5`, `l6`, `l7`, `l8` and `l9`)"
+            ),
+            "{told}"
         );
     }
 
