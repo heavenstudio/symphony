@@ -6,23 +6,34 @@
 //!
 //! 1. T is a merge of two parents and no more, its first the commit the approve names and its
 //!    second a commit the default branch holds. T is the branch's tip, so nothing is on top.
-//! 2. Every path where T differs from git's own merge of those two parents (`git merge-tree`,
-//!    which leaves its conflict markers where the two conflict) is a document ([`document`]). So
-//!    what nobody read is the settling of a conflict in a document and nothing else: each other
-//!    path is as git merges what the reviewer read with what the default branch landed, which is
-//!    what the land itself makes of a tip. A merge that changes anything else by hand, in a
-//!    conflict or not, is read by a reviewer, as before.
+//! 2. Every path git's own merge of those two parents leaves in conflict (`git merge-tree`, by
+//!    its status and the paths it lists, whatever the conflict: both changed, one deleted, a
+//!    mode) is a document ([`document`]) that T holds as a regular file ([`REGULAR`]).
+//! 3. T differs from that merge's tree in conflicted paths alone. So what nobody read is the
+//!    settling of a conflict in a document and nothing else: each other path, a document
+//!    included, is as git merges what the reviewer read with what the default branch landed,
+//!    which is what the land itself makes of a tip.
 //!
-//! The land then reads the task's tests at T whatever its needs name ([`super::needs::TESTS`]): the
-//! approve says the change was read, and the recorded run that it still works on the default
-//! branch as merged.
+//! A merge that settles a conflict anywhere else, or changes by hand a path that did not
+//! conflict, is read by a reviewer, as before. The land then reads the task's tests at T whatever
+//! its needs name ([`super::needs::TESTS`]): the approve says the change was read, and the
+//! recorded run that it still works on the default branch as merged.
 
 use super::{git_z, run_git, short};
 use crate::sweep::git::{ancestor, git};
 use std::path::Path;
 
-/// How many paths a refusal names of those a merge changes beyond git's own.
+/// How many paths a refusal names of those that keep a merge with its reviewer.
 const NAMED: usize = 5;
+
+/// The mode of a regular file in a tree: no executable, symbolic link or submodule.
+const REGULAR: &str = "100644";
+
+/// The files that instruct agents wherever they lie, never a document here.
+const INSTRUCTIONS: [&str; 3] = ["AGENTS.md", "CLAUDE.md", "RULES.md"];
+
+/// The folder whose files are skills, agent instructions too, at any depth.
+const SKILLS: &str = "skills";
 
 /// The one merge an approve stands over ([`over`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -33,8 +44,7 @@ pub struct Carried {
     pub approved: String,
     /// The default branch's commit the merge brought in: its second parent.
     pub from: String,
-    /// The documents where the merge differs from git's own merge of the two, each a conflict
-    /// settled by hand or a document edited in the merge; none where git merged them alone.
+    /// The documents whose conflict the merge settles; none where git merged the two alone.
     pub settled: Vec<String>,
 }
 
@@ -47,7 +57,8 @@ impl Carried {
             "which is git's own merge of the two".to_string()
         } else {
             format!(
-                "which differs from git's own merge of the two in documents alone ({})",
+                "which settles conflicts in documents alone ({}) and is git's own merge of the \
+                 two elsewhere",
                 self.settled.join(", ")
             )
         };
@@ -62,11 +73,36 @@ impl Carried {
     }
 }
 
-/// Whether `path` is a document: a Markdown file, by its extension.
+/// Whether `path` names a document whose conflict an executor settles unread: a Markdown file by
+/// its extension that instructs no agent, so none under a `skills` folder and none named as a
+/// guide or the rules ([`INSTRUCTIONS`]), where a wrong settling misleads every agent and no test
+/// says so.
 pub fn document(path: &str) -> bool {
-    Path::new(path)
+    let path = Path::new(path);
+    let markdown = path
         .extension()
-        .is_some_and(|extension| extension.eq_ignore_ascii_case("md"))
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("md"));
+    let instructs = path
+        .file_name()
+        .is_some_and(|name| INSTRUCTIONS.iter().any(|guide| name == *guide))
+        || path
+            .parent()
+            .is_some_and(|folder| folder.components().any(|part| part.as_os_str() == SKILLS));
+    markdown && !instructs
+}
+
+/// `paths` as a refusal names them: the first few, and how many more.
+fn listed(paths: &[String]) -> String {
+    let mut said = paths
+        .iter()
+        .take(NAMED)
+        .cloned()
+        .collect::<Vec<_>>()
+        .join(", ");
+    if paths.len() > NAMED {
+        said.push_str(&format!(" and {} more", paths.len() - NAMED));
+    }
+    said
 }
 
 /// Whether an approve naming one of the commits `named` stands at `tip` in the checkout `dir`,
@@ -88,60 +124,93 @@ pub fn over(
         return Err(None);
     }
     let cannot = |why: String| Some(format!("what that merge settles cannot be read ({why})"));
-    let differs = merged(dir, approved, from)
-        .and_then(|tree| {
-            git_z(
-                dir,
-                &["diff", "--name-only", "--no-renames", "-z", &tree, tip],
-            )
-        })
-        .map_err(cannot)?;
-    let (settled, beyond): (Vec<String>, Vec<String>) =
-        differs.into_iter().partition(|path| document(path));
-    if beyond.is_empty() {
-        return Ok(Carried {
-            merge: tip.to_string(),
-            approved: approved.to_string(),
-            from: from.to_string(),
-            settled,
-        });
-    }
-    let mut said = beyond
-        .iter()
-        .take(NAMED)
+    let (tree, conflicted) = merged(dir, approved, from).map_err(cannot)?;
+    let regular = regular(dir, tip, &conflicted).map_err(cannot)?;
+    let unread: Vec<String> = (conflicted.iter())
+        .filter(|path| !document(path) || !regular.contains(path))
         .cloned()
-        .collect::<Vec<_>>()
-        .join(", ");
-    if beyond.len() > NAMED {
-        said.push_str(&format!(" and {} more", beyond.len() - NAMED));
+        .collect();
+    if !unread.is_empty() {
+        return Err(Some(format!(
+            "that merge settles a conflict in {}, no document its executor settles alone (a \
+             Markdown file kept as a regular file, no skill, guide or rules): an approve stands \
+             over a merge that settles conflicts in documents alone",
+            listed(&unread)
+        )));
     }
-    Err(Some(format!(
-        "that merge differs from git's own merge of the two in {said}, no document: an approve \
-         stands over a merge that settles documents alone"
-    )))
+    let args = ["diff", "--name-only", "--no-renames", "-z", &tree, tip];
+    let beside: Vec<String> = (git_z(dir, &args).map_err(cannot)?.into_iter())
+        .filter(|path| !conflicted.contains(path))
+        .collect();
+    if !beside.is_empty() {
+        return Err(Some(format!(
+            "that merge changes {} where the two did not conflict: an approve stands over a \
+             merge that settles conflicts in documents alone",
+            listed(&beside)
+        )));
+    }
+    Ok(Carried {
+        merge: tip.to_string(),
+        approved: approved.to_string(),
+        from: from.to_string(),
+        settled: conflicted,
+    })
 }
 
-/// The tree git's own merge of `ours` and `theirs` makes in `dir`, conflict markers left where the
-/// two conflict, nothing checked out.
-fn merged(dir: &Path, ours: &str, theirs: &str) -> Result<String, String> {
-    let args = ["merge-tree", "--write-tree", "--name-only", ours, theirs];
+/// Those of `paths` the commit `tip` holds as a regular file ([`REGULAR`]) in `dir`.
+fn regular(dir: &Path, tip: &str, paths: &[String]) -> Result<Vec<String>, String> {
+    if paths.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut args = vec!["ls-tree", "-z", tip, "--"];
+    args.extend(paths.iter().map(String::as_str));
+    // Each entry is `MODE TYPE OBJECT<TAB>PATH`.
+    Ok((git_z(dir, &args)?.iter())
+        .filter_map(|entry| entry.split_once('\t'))
+        .filter(|(meta, _)| meta.split(' ').next() == Some(REGULAR))
+        .map(|(_, path)| path.to_string())
+        .collect())
+}
+
+/// Git's own merge of `ours` and `theirs` in `dir`, nothing checked out: its tree, which holds
+/// conflict markers where both changed a text and one side's version of any other conflict, and
+/// the paths it leaves in conflict, sorted, each once.
+fn merged(dir: &Path, ours: &str, theirs: &str) -> Result<(String, Vec<String>), String> {
+    let args = [
+        "merge-tree",
+        "--write-tree",
+        "--name-only",
+        "-z",
+        ours,
+        theirs,
+    ];
     let done = git(dir, &args).ok_or_else(|| format!("git cannot run in {}", dir.display()))?;
-    // 0 is a clean merge and 1 one with conflicts, the tree written either way.
-    let tree = String::from_utf8_lossy(&done.stdout)
-        .lines()
-        .next()
-        .map(str::trim)
-        .unwrap_or_default()
-        .to_string();
-    if !matches!(done.status.code(), Some(0 | 1)) || tree.is_empty() {
+    // The tree, then each conflicted path, then an empty field before git's messages.
+    let out = String::from_utf8_lossy(&done.stdout);
+    let mut fields = out.split('\0');
+    let tree = fields.next().unwrap_or_default().trim().to_string();
+    let mut conflicted: Vec<String> = fields
+        .take_while(|field| !field.is_empty())
+        .map(str::to_string)
+        .collect();
+    conflicted.sort();
+    conflicted.dedup();
+    // 0 is a clean merge and 1 one with conflicts, the tree written either way; a status that
+    // disagrees with the paths listed is not one to go by.
+    let read = match done.status.code() {
+        Some(0) => conflicted.is_empty(),
+        Some(1) => !conflicted.is_empty(),
+        _ => false,
+    };
+    if !read || tree.is_empty() {
         let said = String::from_utf8_lossy(&done.stderr);
         let said = said.lines().find(|l| !l.trim().is_empty());
         return Err(format!(
             "git merge-tree: {}",
-            said.map_or("failed", str::trim)
+            said.map_or("its answer cannot be read", str::trim)
         ));
     }
-    Ok(tree)
+    Ok((tree, conflicted))
 }
 
 #[cfg(test)]

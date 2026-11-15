@@ -1762,25 +1762,31 @@ afterwards, and runs the check, the docs audit, on what it made ([below](#the-re
   landing's line on the thread then says it judged by time. A commit after the named
   one, after the verdict, or during the review without a named tip refuses, naming it.
 - **An approve over one merge.** An approve naming a commit stands at a tip that is one
-  merge of the default branch into that commit, where the merge settles documents alone
-  (`crates/tasks/src/land/carried.rs`): the merge an executor makes when a land conflicts in
-  a document, which no reviewer reads again. The tip is a merge of two parents, the first
-  the commit the approve names and the second a commit the default branch holds, with
-  nothing on top; and every path where it differs from git's own merge of those two (`git
-  merge-tree`, its conflict markers left in) is a Markdown file (`*.md`). So each other path
-  is as git merges what the reviewer read with what the default branch landed, which is what
-  the land itself makes of a tip, and what nobody read is a document's conflict as settled.
-  The land then needs the task's `tests` green at that tip whatever its needs name, and says
-  what it went by: `land SLUG: approved by HANDLE at TIME, naming A, which stands over the
-  one merge T of main at M into it, which differs from git's own merge of the two in
-  documents alone (PATHS); its tests are read at T`, the landing's line on the thread adding
-  `its approve of A stands over the one merge T of main into it`. A merge that settles or
-  changes anything else, in a conflict or beside one, a commit on top of the merge, a merge
-  made on another commit than the approved one or of a commit the default branch does not
-  hold, and an approve naming no commit each go to the reviewer as before, a merge that
-  changes more than documents named with the paths. The other stamps read at the tip are as
-  they were: a picture's post and the owner's approve name the merge, and an assessment
-  that read the approved commit is of another tip there.
+  merge of the default branch into that commit, where the merge settles conflicts in
+  documents alone (`crates/tasks/src/land/carried.rs`): the merge an executor makes when a
+  land conflicts in a document, which no reviewer reads again. Three things hold of it. The
+  tip is a merge of two parents, the first the commit the approve names and the second a
+  commit the default branch holds, with nothing on top. Every path git's own merge of those
+  two leaves in conflict (`git merge-tree`, by its status and the paths it lists, whatever
+  the conflict: both sides changed, one deleted, a mode) is a document: a Markdown file
+  (`*.md`) the tip holds as a regular file (mode `100644`, no symbolic link or submodule)
+  that instructs no agent, so none under a `skills` folder and none named `AGENTS.md`,
+  `CLAUDE.md` or `RULES.md`, where a wrong settling misleads every agent and no test says so.
+  And the tip differs from that merge's tree in the conflicted paths alone. So what nobody
+  read is the settling of a conflict in a document: every other path, a document that did
+  not conflict among them, is as git merges what the reviewer read with what the default
+  branch landed, which is what the land itself makes of a tip. The land then needs the
+  task's `tests` green at that tip whatever its needs name, and says what it went by: `land
+  SLUG: approved by HANDLE at TIME, naming A, which stands over the one merge T of main at M
+  into it, which settles conflicts in documents alone (PATHS) and is git's own merge of the
+  two elsewhere; its tests are read at T`, the landing's line on the thread adding `its
+  approve of A stands over the one merge T of main into it`. A merge that settles a conflict
+  anywhere else (code, a file one side deleted, a guide, the rules, a skill) or changes a
+  path that did not conflict, each named with its paths, a commit on top of the merge, a
+  merge made on another commit than the approved one or of a commit the default branch does
+  not hold, and an approve naming no commit each go to the reviewer as before. The other
+  stamps read at the tip are as they were: a picture's post and the owner's approve name the
+  merge, and an assessment that read the approved commit is of another tip there.
 - **No owner's answer left behind.** A worktree at a commit the land brings (on the branch,
   on another branch or detached at one of its commits) whose documents hold an owner's dated
   line under a card that no commit has (the owner's answer on a card only the branch holds,
@@ -1801,12 +1807,14 @@ afterwards, and runs the check, the docs audit, on what it made ([below](#the-re
   that worktree meanwhile.
 - **Back to review.** An approve that does not do (someone else's to give, or not
   covering the tip) sends the task back to review, said to `@orchestrator` or
-  `@reviewer`. A conflict in documents alone (every conflicted path a Markdown file) is
+  `@reviewer`. A conflict in documents alone (every conflicted path a document, as above)
+  under an approve that names the tip is
   said to `@executor`, which merges the default branch into its branch once, settling
-  those documents and changing nothing else, runs its tests at the new tip and lands it
-  again: the task stays done, its approve standing over that one merge
+  the conflict in those documents and changing nothing else, runs its tests at the new tip
+  and lands it again: the task stays done, its approve standing over that one merge
   ([above](#the-default-landing), "An approve over one merge"), and a move back to review
-  would ask for a fresh one. Any other conflict, or a red check on the merge of the tip as
+  would ask for a fresh one. Any other conflict, one under an approve that names no commit
+  or stands over a merge already, or a red check on the merge of the tip as
   approved, is said to `@executor`, which merges the default branch into its branch and
   fixes it there, then moves the task back to review itself (`just tasks move SLUG
   review`) for a fresh approve naming the new tip, and the land runs again. The one done

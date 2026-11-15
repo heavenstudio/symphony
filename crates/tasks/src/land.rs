@@ -1009,6 +1009,7 @@ pub fn land(
         log,
         interrupts: interrupts.as_ref(),
         recorder,
+        named: false,
         out,
     }
     .land();
@@ -1628,6 +1629,9 @@ struct Landing<'a> {
     interrupts: Option<&'a sys::Interrupts>,
     /// The `tasks` running the land, which records a review command it starts.
     recorder: Option<&'a Path>,
+    /// Whether the task's approve names the tip it lands, so a conflict in documents alone is
+    /// its executor's to settle by one merge the approve stands over ([`carried`]).
+    named: bool,
     out: &'a mut dyn Write,
 }
 
@@ -1881,6 +1885,7 @@ impl Landing<'_> {
             }
             None => Judged::Stamped(needed.stood(&tip)),
         };
+        self.named = matches!(judged, Judged::Approved(Covered::Named));
         // An approve standing over a merge it did not read says the change was read; that it
         // works as merged is the tests' to say, read at the tip whatever the task's needs name.
         if let Judged::Approved(Covered::Merged(_)) = &judged {
@@ -2665,7 +2670,11 @@ impl Landing<'_> {
             )
         };
         match merging {
-            Merging::Tip(_) if !files.is_empty() && files.iter().all(|f| carried::document(f)) => {
+            Merging::Tip(_)
+                if self.named
+                    && !files.is_empty()
+                    && files.iter().all(|f| carried::document(f)) =>
+            {
                 Refusal::to(line, "@executor", self.settle_on_branch())
             }
             Merging::Tip(_) => Refusal::to(line, "@executor", self.fix_on_branch()),
@@ -3056,16 +3065,18 @@ impl Landing<'_> {
         )
     }
 
-    /// What the executor does when the branch conflicts with the default branch in documents
-    /// alone: the one merge an approve stands over ([`carried`]), with no reviewer.
+    /// What the executor does when the branch, its approve naming its tip, conflicts with the
+    /// default branch in documents alone ([`carried::document`]): the one merge an approve
+    /// stands over ([`carried`]), with no reviewer.
     fn settle_on_branch(&self) -> String {
         let (slug, default) = (self.slug, &self.settings.default_branch);
         format!(
-            "Merge {default} into {slug} once, settling those documents and changing nothing \
-             else, run its tests at the new tip through the project's recorded recipes, and land \
-             it again: an approve naming the commit merged into stands over that one merge, so \
-             {slug} stays as it is and no reviewer reads it again. A change beyond those \
-             documents, or a move back to review, asks for a fresh approve of the new tip"
+            "Merge {default} into {slug} once, settling the conflict in those documents and \
+             changing nothing else, run its tests at the new tip through the project's recorded \
+             recipes, and land it again: an approve naming the commit merged into stands over \
+             that one merge, so {slug} stays as it is and no reviewer reads it again. A change \
+             beyond those conflicts, or a move back to review, asks for a fresh approve of the \
+             new tip"
         )
     }
 
