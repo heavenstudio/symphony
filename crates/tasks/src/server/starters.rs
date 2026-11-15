@@ -68,7 +68,7 @@ pub(super) struct Note {
 /// The starters' lock, held: its note goes before the lock does.
 pub(super) struct Starters {
     note: PathBuf,
-    _lock: FileLock,
+    lock: FileLock,
 }
 
 impl Starters {
@@ -89,6 +89,19 @@ impl Starters {
             let _ = fs::remove_file(&next);
         }
     }
+
+    /// Whether the lock this holds is still the one in the board's folder: a folder removed while
+    /// it was held, made again or not, holds another or none.
+    pub(super) fn here(&self) -> bool {
+        use std::os::unix::fs::MetadataExt as _;
+        match (
+            self.lock.0.metadata(),
+            fs::metadata(self.note.with_file_name(LOCK)),
+        ) {
+            (Ok(held), Ok(there)) => held.dev() == there.dev() && held.ino() == there.ino(),
+            _ => false,
+        }
+    }
 }
 
 impl Drop for Starters {
@@ -102,7 +115,7 @@ impl Home {
     /// it go, saying what it waits on meanwhile, or refused once this board's bound on the wait
     /// passes ([`Home::waiting_at_most`]).
     pub(super) fn lock(&self, doing: Doing) -> Result<Starters, ServerError> {
-        fs::create_dir_all(&self.dir).map_err(io("could not make", &self.dir))?;
+        self.make(&self.dir)?;
         let path = self.dir.join(LOCK);
         let file = OpenOptions::new()
             .create(true)
@@ -116,7 +129,7 @@ impl Home {
         }
         let starters = Starters {
             note: self.dir.join(NOTE),
-            _lock: FileLock(file),
+            lock: FileLock(file),
         };
         starters.doing(doing, None);
         Ok(starters)
