@@ -379,18 +379,19 @@ export interface Tree {
 
 /**
  * A page of the task groups `parent` holds (the roots for none, older tasks among them), from
- * `cursor` on: its listing, or why it could not be read.
+ * `cursor` on: its listing, or why it could not be read. Given up once `signal` ends.
  */
 export async function readTree(
   scope: string,
   parent: string | null,
   cursor: string | null,
+  signal?: AbortSignal,
 ): Promise<TaskListing | string> {
   const after = cursor === null ? "" : `&cursor=${encodeURIComponent(cursor)}`;
   const selection = parent === null ? "roots=1" : `parent=${encodeURIComponent(parent)}`;
   try {
     const list = readListing(
-      await getJson(scoped(scope, `/api/task-board?${selection}&older=1${after}`)),
+      await getJson(scoped(scope, `/api/task-board?${selection}&older=1${after}`), signal),
     );
     return list ?? "The task board's answer is not a listing";
   } catch (failure) {
@@ -425,7 +426,7 @@ function useTree(scope: string, parent: string | null): [Tree, (more: boolean) =
   }, []);
   const load = (more: boolean) => {
     const signal = alive.current;
-    void readTree(scope, parent, more ? cursor.current : null).then((read) => {
+    void readTree(scope, parent, more ? cursor.current : null, signal ?? undefined).then((read) => {
       if (signal?.aborted !== false || mount.aborted) return;
       if (typeof read !== "string") cursor.current = read.next ?? null;
       setTree((shown) => grownTree(shown, read, more));

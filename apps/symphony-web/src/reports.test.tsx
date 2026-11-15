@@ -724,11 +724,13 @@ describe("the reports' read", () => {
     expect(tags).toHaveLength(4);
   });
 
-  it("stops, telling nothing, once the page that asked is gone", async () => {
+  it("stops, telling nothing and its read given up, once the page that asked is gone", async () => {
     const page = new AbortController();
     const { asked, told, waited, done } = follow("hour", 1, 1, page);
     await asking(asked, 1);
+    expect(asked[0]?.signal?.aborted).toBe(false);
     page.abort();
+    expect(asked[0]?.signal?.aborted).toBe(true);
     asked[0]?.answer(reply(200, wire(), "r1"));
     await done;
     expect(told).toEqual([]);

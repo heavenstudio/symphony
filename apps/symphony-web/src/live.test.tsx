@@ -385,11 +385,13 @@ describe("the board's loop", () => {
     expect(paused).toEqual([]);
   });
 
-  it("keeps and draws nothing once the page is gone before the board answers", async () => {
+  it("keeps and draws nothing, its read given up, once the page is gone before the board answers", async () => {
     const { asked, keep, page, did, paused, done } = loop();
     await asking(asked, 1);
+    expect(asked[0]?.signal?.aborted).toBe(false);
     // The shell stops the kind before the board answers.
     page.abort();
+    expect(asked[0]?.signal?.aborted).toBe(true);
     asked[0]?.answer(reply(200, CASES.samples.board, "b1"));
     await done;
     expect(keep).not.toHaveBeenCalled();

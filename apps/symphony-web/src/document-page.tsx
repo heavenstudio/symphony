@@ -714,7 +714,7 @@ export function Versions({ path, scope }: { path: string; scope: string }) {
     done: (read: T) => void,
   ) => {
     try {
-      const value = await getJson(url);
+      const value = await getJson(url, mount);
       if (mount.aborted) return;
       const parsed = parse(value);
       if (parsed === null) throw new Error("The server's answer could not be read");

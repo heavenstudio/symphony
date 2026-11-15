@@ -168,8 +168,7 @@ export async function readOutlineAt(
   signal: AbortSignal,
 ): Promise<DocumentOutline | null> {
   for (;;) {
-    const read = await getDocument(url, copy.current?.tag ?? "");
-    // getDocument takes no signal: a page that left while it read keeps and asks for nothing more.
+    const read = await getDocument(url, copy.current?.tag ?? "", signal);
     if (signal.aborted) return null;
     if (read === null) {
       copy.current = null;
@@ -667,7 +666,7 @@ export async function followFolder(page: FolderLive, signal: AbortSignal): Promi
   while (!signal.aborted) {
     const before = [page.folder, page.missing, page.error, JSON.stringify(page.freshness)];
     try {
-      const answer = await getIf(url, copy?.tag ?? "");
+      const answer = await getIf(url, copy?.tag ?? "", signal);
       if (signal.aborted) return;
       if (answer.same) {
         if (copy === null)

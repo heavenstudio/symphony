@@ -1020,7 +1020,7 @@ export async function followReports(
   const url = `${REPORTS_PATH}?grain=${grain}&days=${days}`;
   while (!signal.aborted) {
     try {
-      const answer = await getIf(url, etag());
+      const answer = await getIf(url, etag(), signal);
       if (signal.aborted) return;
       if (answer.same) {
         check.answered(null, "");

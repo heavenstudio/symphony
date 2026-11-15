@@ -91,13 +91,20 @@ describe("the frame", () => {
 });
 
 describe("the frame's reads", () => {
+  /** The signals the server's reads were given, by path. */
+  const given = new Map<string, AbortSignal | null>();
   /** The server, holding each read until the test answers it by its path. */
   const server = () => {
     const held = new Map<string, (response: Response) => void>();
+    given.clear();
     vi.stubGlobal("document", { getElementById: () => null });
     vi.stubGlobal(
       "fetch",
-      (url: string) => new Promise<Response>((answer) => held.set(url, answer)),
+      (url: string, init?: RequestInit) =>
+        new Promise<Response>((answer) => {
+          held.set(url, answer);
+          given.set(url, init?.signal ?? null);
+        }),
     );
     const answer = async (activity: unknown, pending: unknown) => {
       for (let turn = 0; turn < 50 && held.size < 2; turn += 1) {
@@ -114,7 +121,7 @@ describe("the frame's reads", () => {
     const answer = server();
     const said: string[] = [];
     window.addEventListener("review:frame", () => said.push("review:frame"));
-    const read = readMetadata(new MetadataReads(), () => true);
+    const read = readMetadata(new MetadataReads(), new AbortController().signal);
     await answer({ items: [{ id: "a" }] }, { items: [] });
     expect(await read).toBe(false);
     expect(window.reviewActivitySnapshot).toEqual({ items: [{ id: "a" }] });
@@ -123,15 +130,18 @@ describe("the frame's reads", () => {
     expect(said).toEqual(["review:frame"]);
   });
 
-  it("answering after the page is gone write nothing over the next page's", async () => {
+  it("given up once the page is gone, write nothing over the next page's", async () => {
     const window = page({ reviewActivitySnapshot: "the next page's" });
     const answer = server();
     const said: string[] = [];
     window.addEventListener("review:frame", () => said.push("review:frame"));
     const mount = new AbortController();
-    const read = readMetadata(new MetadataReads(), () => !mount.signal.aborted);
+    const read = readMetadata(new MetadataReads(), mount.signal);
+    expect([...given.values()].map((signal) => signal?.aborted)).toEqual([false, false]);
     // The shell stops the kind before the reads answer.
     mount.abort();
+    expect([...given.keys()]).toEqual(["/api/activity", "/api/pending"]);
+    expect([...given.values()].map((signal) => signal?.aborted)).toEqual([true, true]);
     await answer({ items: [{ id: "late" }] }, { items: [{}] });
     expect(await read).toBe(false);
     expect(window.reviewActivitySnapshot).toBe("the next page's");

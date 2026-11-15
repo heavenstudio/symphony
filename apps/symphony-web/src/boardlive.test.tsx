@@ -464,6 +464,33 @@ describe("the live board's machine work", () => {
   });
 });
 
+describe("the live board's reads", () => {
+  it("are given up on the wire once the page ends, and change nothing", async () => {
+    const { board, d, page, host } = live();
+    const signals: AbortSignal[] = [];
+    // As the browser's: a fetch whose signal ends refuses.
+    vi.stubGlobal(
+      "fetch",
+      (_url: string, init?: RequestInit) =>
+        new Promise<Response>((_answer, refuse) => {
+          const signal = init?.signal;
+          if (!signal) return;
+          signals.push(signal);
+          signal.addEventListener("abort", () => refuse(new DOMException("aborted", "AbortError")));
+        }),
+    );
+    const reads = [board.counts(), board.machineWork()];
+    expect(signals.map((signal) => signal.aborted)).toEqual([false, false]);
+    page.abort();
+    expect(signals.map((signal) => signal.aborted)).toEqual([true, true]);
+    await Promise.all(reads);
+    expect(d.error).toBe("");
+    expect(d.counted).toBe(0);
+    expect(d.worked).toBe(0);
+    expect(host.redraw).not.toHaveBeenCalled();
+  });
+});
+
 describe("a column of the live board", () => {
   const ready = [aTask("w/a"), aTask("w/b")];
 
