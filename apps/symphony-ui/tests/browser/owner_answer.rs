@@ -497,7 +497,7 @@ fn an_owner_verdict_given_beside_an_open_excerpt_shows_and_regroups() {
             "document.querySelector({}).click()",
             within("alpha", ".show-link")
         ));
-        // The excerpt fills once its box is on screen: the owner reads it there.
+        // The excerpt fills, and the owner scrolls to it and reads it there.
         assert!(owner.wait_for(
             &format!(
                 "(() => {{ const b = document.querySelector({}); b?.scrollIntoView({{block: 'center'}}); return b?.textContent.includes('Is it red?') === true; }})()",

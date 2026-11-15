@@ -286,7 +286,39 @@ pub fn router(shared: Arc<Shared>) -> Router {
         )
         .layer(middleware::from_fn(head))
         .layer(middleware::from_fn_with_state(shared.clone(), judge))
+        .layer(middleware::map_response(nosniff))
         .with_state(shared)
+}
+
+/// `response`, saying `X-Content-Type-Options: nosniff` when it is JSON or the feed
+/// ([`sniffless`]), whichever route made it, its refusals and misses among them. A browser then
+/// runs or applies none of them as a script or a stylesheet: a page that loads an answer of the
+/// app's (an HTML document an entrypoint at the project's root serves can name any of its
+/// addresses) gets the same refusal whether the route answered or not, and learns nothing from
+/// the load. A project's own files and uploads say it themselves ([`crate::media_files`]); its
+/// router and the one server's dispatch ([`crate::projects::router`]) each end with this.
+pub(crate) async fn nosniff(mut response: Response) -> Response {
+    if sniffless(response.headers()) {
+        response.headers_mut().insert(
+            header::X_CONTENT_TYPE_OPTIONS,
+            header::HeaderValue::from_static("nosniff"),
+        );
+    }
+    response
+}
+
+/// Whether `headers` name a type [`nosniff`] marks: the API's `application/json` or the event
+/// feed's `text/event-stream`, its parameters and letters' case aside.
+fn sniffless(headers: &HeaderMap) -> bool {
+    headers
+        .get(header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|kind| kind.split(';').next())
+        .is_some_and(|essence| {
+            let essence = essence.trim();
+            essence.eq_ignore_ascii_case("application/json")
+                || essence.eq_ignore_ascii_case("text/event-stream")
+        })
 }
 
 /// Let routing and compression see GET's representation before discarding a HEAD body.
@@ -1338,6 +1370,9 @@ mod sweep_tests;
 
 #[cfg(test)]
 mod head_tests;
+
+#[cfg(test)]
+mod nosniff_tests;
 
 #[cfg(test)]
 mod broken_stderr_tests;

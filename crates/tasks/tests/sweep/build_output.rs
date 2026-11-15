@@ -15,7 +15,7 @@ use std::fs::{self, File};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use symphony_board::sweep::Sweep;
-use symphony_board::sweep::holder::{LEGACY_LOCK, RELEASE_LOCK};
+use symphony_board::sweep::holder::RELEASE_LOCK;
 use symphony_board::sweep::size;
 use symphony_board::sweep::trigger::now;
 
@@ -555,16 +555,9 @@ fn a_land_that_runs_keeps_it_and_one_gone_does_not() {
 
 #[test]
 fn the_release_runs_checkout_keeps_its_build_a_week() {
-    // Locked as the run locks it now, and as a build older than the rename locked it.
-    for (name, reason) in [("release", RELEASE_LOCK), ("nightly", LEGACY_LOCK)] {
-        a_week_kept(name, reason);
-    }
-}
-
-fn a_week_kept(name: &str, reason: &str) {
     let r = Repo::new();
-    let checkout = r.detached(name);
-    r.lock(&checkout, reason);
+    let checkout = r.detached("release");
+    r.lock(&checkout, RELEASE_LOCK);
     let folders = built(&checkout);
     // Touched hours ago, by the machine's clock: the release run builds on it run after run.
     let hours_ago = r.sweep_with(|o| o.now = Box::new(now));

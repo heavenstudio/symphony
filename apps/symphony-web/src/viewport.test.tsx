@@ -2,6 +2,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { memoryStorage } from "./testing";
 import {
+  AtOnce,
   drawnHeight,
   drawnStyle,
   keepHeight,
@@ -171,6 +172,25 @@ describe("content near the screen", () => {
     expect(markup.match(/class="bone"/g)).toHaveLength(2);
   });
 
+  it("is mounted at once under AtOnce, which leaves the latch elsewhere as it was", () => {
+    observers();
+    const markup = renderToStaticMarkup(
+      <>
+        <AtOnce.Provider value={true}>
+          <NearViewport height={64}>
+            <b>asked for</b>
+          </NearViewport>
+        </AtOnce.Provider>
+        <NearViewport height={64}>
+          <b>beside it</b>
+        </NearViewport>
+      </>,
+    );
+    expect(markup).toContain("<b>asked for</b>");
+    expect(markup).not.toContain("beside it");
+    expect(markup.match(/class="viewport-sentinel"/g)).toHaveLength(1);
+  });
+
   it("is mounted at once when the address names it or an anchor it holds", () => {
     vi.stubGlobal("location", { hash: "#part" });
     for (const named of [{ id: "part" }, { anchors: ["part"] }]) {
@@ -222,6 +242,24 @@ describe("a part that keeps its box until it comes into view", () => {
     observers();
     expect(renderToStaticMarkup(<Latched />)).toBe("<i>waiting</i>");
     expect(renderToStaticMarkup(<Latched initial />)).toBe("<i>shown</i>");
+  });
+
+  it("shows at once under AtOnce, where the browser could tell", () => {
+    observers();
+    expect(
+      renderToStaticMarkup(
+        <AtOnce.Provider value={true}>
+          <Latched />
+        </AtOnce.Provider>,
+      ),
+    ).toBe("<i>shown</i>");
+    expect(
+      renderToStaticMarkup(
+        <AtOnce.Provider value={false}>
+          <Latched />
+        </AtOnce.Provider>,
+      ),
+    ).toBe("<i>waiting</i>");
   });
 
   it("shows at once where nothing can tell it came into view", () => {
