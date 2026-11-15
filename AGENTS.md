@@ -428,8 +428,11 @@ bound the waits, and `--report` prints the console errors (a frame's naming its 
 failed requests, dialogs dismissed and horizontal overflow it saw; `--help` says the
 rest. It only reads the page, so the live board
 (`http://127.0.0.1:8765/symphony/tasks`) is fair to shoot; it never starts, stops or
-reconfigures a server. Pictures kept as a task's evidence go under the project's artifacts
-folder in the task's slug (`artifacts/SLUG/` by default) and are named on its thread.
+reconfigures a server. Pictures kept as a task's evidence are saved under the project's artifacts
+folder in the task's slug (`artifacts/SLUG/` by default) and attached, as a path there leads
+nowhere once the sweep moves a worktree's artifacts: `--attach` (`just symphony-cli attach FILE…`
+for a file saved before) stores each by its content in the main checkout's uploads, from a linked
+worktree too, and prints the line the thread post carries.
 The shot leashes Chrome by running its own program again, so a host binary that calls
 `symphony::cli` runs `symphony_chrome::leash_main()` first, as
 `crates/symphony/src/bin/symphony.rs` does; without it a shot fails with "leash exited
