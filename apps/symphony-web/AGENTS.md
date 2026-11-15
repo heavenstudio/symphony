@@ -102,7 +102,8 @@ to check before sending again, as a post the server may have acted on does. A pa
 read again by itself says "Trying again…" (`failed(why, true)`), and one with nothing drawn yet
 does try it again, on the feed's waits (`tryAgain`, `src/state.ts`: 1 s doubling to 30 s), until
 it is answered, the server has no such thing (a 404), a newer read starts or the page leaves; its
-Retry stays, to try at once. A 404 said as missing and a read a click asks for (Load more) say no
+Retry stays, to try at once. A board column's first page is such a read: the column keeps its
+ghost and the page's notice says it, until it answers or the view changes. A 404 said as missing and a read a click asks for (Load more) say no
 "Trying again…". The limit a request waits for is `ANSWER_MS`, 15 s, which a page's
 `symphonyAnswerMs` shortens for a browser test of a read held past it.
 

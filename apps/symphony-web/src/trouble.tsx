@@ -30,6 +30,9 @@ export function answered(status: number, error?: string): string {
  * server that could not be reached sends the reader to the connection.
  */
 export function failed(why: string, trying = false): string {
+  // A reason that says it goes on by itself (the board's own notice, a sentence said here before)
+  // says so once.
+  if (trying && why.trimEnd().endsWith("…")) return why.trim();
   const reason = why.trim().replace(/[.…]+$/, "");
   if (reason === "") return `The read did not finish. ${trying ? TRYING : "Try again."}`;
   if (reason === UNREACHABLE) {
