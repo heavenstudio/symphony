@@ -915,7 +915,7 @@ export function LiveTaskPage({ live, connected }: { live: LiveTask; connected: b
       ) : d.error !== "" ? (
         <Trouble
           title="The task could not be loaded"
-          text={failedRead(d.error)}
+          text={failedRead(d.error, true)}
           retry={() => void live.refresh()}
         />
       ) : (
@@ -959,7 +959,7 @@ export function TaskPageView({ live, stale, freshness }: TaskPageViewProps) {
       ) : live !== null && trouble !== null ? (
         <Trouble
           title="The board could not be loaded"
-          text={`${failedRead(trouble)} It is also tried again on its own.`}
+          text={failedRead(trouble, true)}
           retry={() => {
             live.retry.current += 1;
           }}

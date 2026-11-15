@@ -29,6 +29,7 @@ import {
   SECTIONS,
   toggle,
 } from "./reports";
+import { Backoff } from "./state";
 import { asking, CASES, childrenOf, memoryStorage, reply, server } from "./testing";
 import type { Grain } from "./wire";
 
@@ -622,7 +623,7 @@ describe("the page's view", () => {
     let html = view(null, why);
     expect(html).toContain('data-ready="failed"');
     expect(html).toContain(
-      'role="alert">The reports could not be read: The server could not be reached</p>',
+      'role="alert">The reports could not be read. The server could not be reached; check the connection. Trying again…</p>',
     );
     html = view(page(), why);
     expect(html).toContain('data-ready="reports"');
@@ -641,7 +642,7 @@ describe("the page's view", () => {
     });
     expect(childrenOf(drawn, "reports-sub")).toBe("Days · the last 3 days · times in UTC");
     expect(childrenOf(drawn, "reports-error")).toBe(
-      "The reports could not be read: The server could not be reached",
+      "The reports could not be read. The server could not be reached; check the connection. Trying again…",
     );
   });
 
@@ -797,7 +798,7 @@ describe("the reports' read", () => {
   };
 
   it("asks for the window at once and again on its timer, naming the copy shown", async () => {
-    const { asked, told, waited, tags, done } = follow("day", 14, 4);
+    const { asked, told, waited, tags, done } = follow("day", 14, 6);
     await asking(asked, 1);
     expect(asked[0]?.url).toBe("/api/reports?grain=day&days=14");
     asked[0]?.answer(reply(200, { ...wire(), days: 14 }, "r1"));
@@ -807,15 +808,25 @@ describe("the reports' read", () => {
     asked[2]?.answer(reply(503, {}));
     await asking(asked, 4);
     asked[3]?.answer(reply(200, { grain: "month" }, "r2"));
+    await asking(asked, 5);
+    asked[4]?.answer(reply(200, { ...wire(), days: 14 }, "r3"));
+    await asking(asked, 6);
+    asked[5]?.answer(reply(503, {}));
     await done;
     expect(told).toEqual([
       ["answered", 14, "r1"],
       ["answered", null, ""],
       ["failed", "The server answered 503"],
       ["failed", "The reports' answer is not a report"],
+      ["answered", 14, "r3"],
+      ["failed", "The server answered 503"],
     ]);
-    expect(waited).toEqual([EVERY_MS, EVERY_MS, EVERY_MS, EVERY_MS]);
-    expect(tags).toHaveLength(4);
+    // A read that failed is tried again on the feed's backoff, not the timer, and an answer puts
+    // the timer back, the backoff after a failure starting again.
+    const backoff = new Backoff();
+    const first = backoff.after(0);
+    expect(waited).toEqual([EVERY_MS, EVERY_MS, first, backoff.after(0), EVERY_MS, first]);
+    expect(tags).toHaveLength(6);
   });
 
   it("stops, telling nothing and its read given up, once the page that asked is gone", async () => {

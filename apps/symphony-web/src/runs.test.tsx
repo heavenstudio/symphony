@@ -599,13 +599,13 @@ describe("the reads", () => {
     await done;
     expect(told).toEqual([
       ["answered", { machines: [], operations: [] }],
-      ["failed", "the board is down (the server answered 503).", false],
-      ["failed", "The machine work's answer is not machine work.", false],
+      ["failed", "the board is down (the server answered 503). Trying again…", false],
+      ["failed", "The machine work's answer is not machine work. Trying again…", false],
     ]);
     expect(waited).toEqual([NOW_MS, NOW_MS, NOW_MS]);
   });
 
-  it("read the list's first page naming the last tag, a 404 said as missing", async () => {
+  it("read the list's first page naming the last tag, a 404 said as missing and not as tried again", async () => {
     const asked = server();
     const page = new AbortController();
     const { waited, wait } = waits(page, 4);
@@ -631,7 +631,7 @@ describe("the reads", () => {
         "this project keeps no runs where this server reads (the server answered 404).",
         true,
       ],
-      ["failed", "The runs' answer is not a page of runs.", false],
+      ["failed", "The runs' answer is not a page of runs. Trying again…", false],
     ]);
     expect(waited).toEqual([LIST_MS, LIST_MS, LIST_MS, LIST_MS]);
   });
@@ -725,7 +725,7 @@ describe("a run's read", () => {
       ["answered", id(1)],
       ["log", "one"],
       ["answered", null],
-      ["log failed", "The server answered 503."],
+      ["log failed", "The server answered 503. Trying again…"],
       ["answered", id(1)],
       ["log", "one two"],
     ]);
@@ -757,7 +757,7 @@ describe("a run's read", () => {
     await done;
     expect(told.slice(2)).toEqual([
       ["answered", id(1)],
-      ["log failed", "The log's answer is not a log."],
+      ["log failed", "The log's answer is not a log. Trying again…"],
       ["answered", null],
       ["log", "anew"],
     ]);
@@ -805,7 +805,9 @@ describe("a run's read", () => {
     await asking(failing.asked, 1);
     failing.asked[0]?.answer(reply(200, { run: null }));
     await failing.done;
-    expect(failing.told).toEqual([["failed", "The run's answer is not a run.", false]]);
+    expect(failing.told).toEqual([
+      ["failed", "The run's answer is not a run. Trying again…", false],
+    ]);
     const leaving = follow(5);
     await asking(leaving.asked, 1);
     leaving.asked[0]?.answer(reply(200, running, "r"));
