@@ -1,7 +1,7 @@
 //! The browser half of the program's waits and marks: a timer to await, a mark on the page's
 //! performance timeline, and a browser value said as text. No page is the program's: every page,
-//! its reads and its feed are the web client's (apps/symphony-web), and the chat and the menus the
-//! program draws over it read what they need themselves.
+//! its reads and its feed are the web client's (apps/symphony-web), and the chat, all the program
+//! draws over it, reads what it needs itself.
 
 use wasm_bindgen::JsValue;
 use wasm_bindgen_futures::JsFuture;

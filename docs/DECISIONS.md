@@ -7,79 +7,6 @@ their dated history work is in [REVIEW](REVIEW.md).
 <!-- register:start -->
 ## Needs your decision
 
-### Product specs
-
-- [ ] **product-spec-form** — Each page of the Symphony would get a short document of its own, written for whoever uses the page: what it is for, what you do there, what it shows, its states, and how it looks on a phone, with pictures taken by one command from a made-up project. Today no document does this for any page, and no document outside this register shows a picture. One spec is written so you can judge the form: [the review queue](product/QUEUE.md). Is this the form the other thirteen should take? Approve, or comment with what to change. [[analysis/product-docs-review-2026-11#Proposed specs]]
-  [2026-11-15 02:40] agent — Posted for the board task `docs/product-docs-review`. The example's pictures, as the command took them, wide and on a phone:
-
-    ![The queue, wide](product/pictures/queue-wide.png) ![The queue on a phone](product/pictures/queue-phone.png)
-
-    **What approving sets:**
-
-    - **One page, one document**, under `docs/product/`, with the same parts in the same order ([the form](product/README.md#the-form-of-a-spec)). No source file, route or wire type in it: those stay in the reference documents, which a spec links.
-    - **Pictures are taken, never pasted.** `tools/product-pictures.sh` takes every listed page, on a phone, wide or both as a spec shows it, from a small fixture project, on a server of its own. Taken twice on one Chrome, a picture comes out byte for byte the same, so after a retake git lists the ones that went stale. No checker is added.
-    - **The task that changes a page retakes its pictures**, as its after pictures.
-
-    **Cost:**
-
-    - About 0.1 MB a wide picture and 0.3 MB a phone picture, committed beside the specs as documents' pictures already are. At three wide and one phone picture a spec, the whole set is about 8 MB.
-    - Each retake commits the changed pictures again, into every clone's history: about 0.1 to 0.4 MB for each picture of the page that changed.
-    - A Chrome update, or other fonts, can redraw every picture with no page changed. Git then shows the whole set as stale, and one retake commits the whole set again, about 8 MB.
-
-    **Earlier verdicts checked:** your approval of **pictures-in-every-clone** ("agreed with F") decides where these pictures live, committed beside the documents that show them, so that is not asked. It says nothing of what a product spec holds or how its pictures are made and kept current, and no other verdict does: that is this card.
-
-    **What it leaves for later:** the home page shows the hour's greeting and each card's age, so its picture needs the shot taken at a fixed time; that is built when its spec is written. The other thirteen specs, one paragraph each, and the ranked gaps are in the linked review.
-
-### The look
-
-- [ ] **symphony-mark** — Symphony would get a mark and a name of its own, at the start of the header, on the browser's tab and on a phone's home screen. They show on the machine's own pages (the project list and the pages the server draws) and on every project with no theme name or icon of its own; a project's own theme name and icon take their place on its pages. Today the header shows neither, the tab shows no icon or a generic ♫, and the icon the browser asks the server for by itself is the consuming project's star. Which mark and wordmark should Symphony's own look carry? A: the note-card, a note whose head is a task card. B: the podium, the orchestra's seats round two maestros. C: the fermata, the sign where the music holds for the maestro. D: the two-stroke S, one stroke for you and one for the orchestrator agents. Recommended: D. Approve and say A, B, C or D in the note, or comment. [[analysis/symphony-mark#The options]]
-  [2026-11-15 05:12] agent — Posted for the board task `app/symphony-mark-and-name-options`. Your words on its inbox item: "A proper "themed" design of Symphony could be develop that is closer to the concept of "a symphony that is executed by maestros" where maestro are the human + orchestrator agents. I would like to view different options to select."
-  [2026-11-15 05:12] agent — Base: today, wide and on a phone, no mark and no name in the header. ![Today: the header wide, then on a phone](analysis/symphony-mark/today.png)
-  [2026-11-15 05:12] agent — Each option in the header wide (light, then dark), on a phone (light, dark) and in the tab (light, dark), drawn on a private server with the option set as a scratch project's look; nothing in the app has changed. A headless browser shows no tab strip, so the tab is a stand-in drawn around the real icon file, and the Projects link the machine's server draws is added to the private server's header. ![The note-card, A](analysis/symphony-mark/a.png) ![The podium, B](analysis/symphony-mark/b.png) ![The fermata, C](analysis/symphony-mark/c.png) ![The two-stroke S, D](analysis/symphony-mark/d.png)
-
-    **A, the note-card.** A note whose head is a task card: the board's work is the symphony's music. Wordmark: "Symphony" in the app's own sans.
-
-    **B, the podium.** The orchestra seen from above: its seats in an arc round two maestros, you and the orchestrator agent. Wordmark: "symphony" in lower case. At 16 px it reads as a fan of dots; the seats show from 32 px.
-
-    **C, the fermata.** The sign where the orchestra holds until the maestro moves on, as a card holds until you answer it. Wordmark: "Symphony" in a serif.
-
-    **D, the two-stroke S.** Symphony's S in two strokes, one full and one lighter: you and the orchestrator agents, two maestros conducting one work. Wordmark: "SYMPHONY" in spaced capitals.
-
-    Any wordmark can go with another mark: say which in the note.
-  [2026-11-15 05:12] agent — The four icons at 180, 32 and 16 px, light then dark: ![The icons at three sizes, light and dark](analysis/symphony-mark/sizes.png)
-
-    **Why D.** It is the only one that says the name at every size, down to the 16 px tab, and its two strokes are the two maestros you named. Its cost: a letter says nothing of music, and the two maestros show only once explained; the lighter stroke loses contrast at 16 px, most on the light tile; and it is close in kind to other music products' S marks. C is as clear at 16 px and the simplest, but it shows one maestro's hold, not two maestros. B tells the most and blurs the most when small. A is the closest to today's ♫ and says the least about the maestros.
-
-    **What it changes.** The machine's own pages and every project with no theme name or icon of its own show the chosen mark and wordmark in the header and the icon in the tab; a project's own theme name and icon take their place on its pages, as the project file's reference already says, so the consuming project keeps its own name and star. The icon the browser asks the server for by itself becomes Symphony's where no project's own answers it; the header stays two rows on a phone (measured at 390 wide for all four); a phone's home screen gets the icon. A follow-up task builds it after your answer.
-
-    **Earlier verdicts checked.** **header-page-names**, **header-on-a-phone** and **header-appearance** set the header's words, its two rows on a phone and its ◑ button; every option keeps them. **symphony-own-names** took the consuming project's names out of Symphony's code and says nothing of a mark. **pictures-in-every-clone** decides that these pictures are committed beside this card. None of them chooses a mark or a wordmark: that is this card.
-  [2026-11-15 05:52] agent — Corrected after the task's review, before any answer: the first lines say where the mark and the wordmark show (not on every page), Why D gives D's own cost, and the pictures' line says the tab is a stand-in.
-
-### Delivery to projects
-
-- [ ] **client-distribution-on-main** — Each land that changes the web client is followed by a background run that commits a fresh build of the client to main. Those builds are about 85 % of what git holds for main's history and grow about 27 MiB a day, which every clone downloads. Nothing on the pages changes under any option. How often should the built client be committed? A: only by a release, the one it verified, on a commit of its own under its tag that main never holds; a checkout that needs pages builds its own. B: once a release: the release run starts the run that commits it to main, and no land does. C: after every land that changes it, as today. None of them shrinks the history already there: that takes rewriting it, a choice of its own. Recommended: B. Approve and say A, B or C in the note, or comment. [[analysis/code-review-2026-11#2. The built client is committed, and is 85 % of the repository]]
-  [2026-11-15 03:46] agent — Posted for the board task `docs/code-review-owner-choices`, from the codebase review.
-
-    **Today**, read at main `3f3d9186` with the review's command (in its finding): git holds 156.2 MiB for main's history, 134.0 MiB of it the client under `apps/symphony-server/client/public`, first committed on 2026-11-10. 95 of main's commits regenerate it, 12 to 39 a day, and all but `e3314c18` (which also restates figures in two documents) do nothing else; in the tree it is 110 files, 6.3 MB. Each of those rounds is also main's only build of the client after a land, and between releases the only audit of the documents on main's tip: a round that fails files a red task within minutes, as one did on 2026-11-15.
-
-    **What A and B both change:**
-    - *A fresh clone* fetches every release tag, so under either it gets one client a release. Since the first release (2026-11-13), main gained 1,918 client files, 247 MiB before git compresses them; the five releases since hold 545 of them, 71 MiB: about three tenths, at one release every 20 landings.
-    - *No round after a land.* A land that breaks the client's build, or the documents, is found by the next task that builds the client, or by the release run. While a release candidate is open, up to 24 hours, main's landings have only their own evidence. A build after each land that commits nothing would keep that check, at a build a land.
-
-    **A, only a release:**
-    - *Main holds no client.* A pin to a commit of main would build a server with no pages, so it is no longer possible. A checkout that serves pages (an agent's server of its own, for pictures) builds the client first, as a task already does for its tests; while the Dioxus client remains, that takes minutes.
-    - *The release* builds the client in its own checkout, commits it on top of the tip it verified and tags that commit. `just client-check` then has no client on main to compare a fresh build with: the release's check becomes the build it commits, and the two older builds a page may still be open on (`KEEP` in `crates/symphony/src/cli/publish.rs`) come from the previous release's tag.
-    - *What goes:* the regenerator, 1,674 lines (`crates/tasks/src/land/regenerate.rs`) and 1,962 of tests, with the rule that a branch never commits the client, the land keeping main's side of it and a pin's wait for it.
-    - *What changes:* 32 tracked code, script and settings files name the folder (`git grep -l client/public`, less the documents, test fixtures and one experiment): 26 Rust files, among them the server's build script, its client and their tests, the size budget's client line, the release's verified client and the packaging test, and the server's manifest, the justfile, `symphony.toml`, the size budget, `tools/client-check.sh` and `tools/verify.sh`. The review sizes it as a project.
-
-    **B, once a release.** The release run starts the regenerator's round on main's tip and waits for it before it verifies, as it waits for one today; no land starts one. The regenerator, its check and those 32 files stay as they are. Between releases main's client is older than its sources, so a pin to a commit of main waits for the next release, and main's tree keeps its 6.3 MB of client. A task.
-
-    **C, as today.** About 27 MiB a day, some 0.8 GiB more in a month at this pace.
-
-    **Why B.** A fresh clone gets the same bytes under A and B, so B takes nearly all of A's saving for a task rather than a project: the release run starts the round a land starts today, and the rest stays as it is. What A adds, a main with no client in it and the regenerator's removal, is cheaper once the Dioxus client is gone and the client is one quick build.
-
-    **Earlier verdicts checked.** **symphony-update-command** (B, projects follow release tags) already makes every pin a release, which A and B rely on. **pin-waits-for-current-client** (A) keeps a pin to a commit of main off a client older than its sources; A leaves such a pin no client and B makes it wait for a release, so neither changes that choice. **release-main-while-candidate-open** (A) counts on "the regenerator's client check and docs audit each round" to check main's landings while a candidate is open; under A or B those landings would have only their own evidence for up to 24 hours, a consequence of either, not a change to that choice. **release-delivery** (C) ships a release's client beside the server once `symphony update` is built; it does not say whether main commits one before then. **pictures-in-every-clone** (F) commits the documents' pictures, not the client. None of them answers this card.
-
 ### Board
 
 - [ ] **board-search-by-meaning** — The board can find tasks by what they mean as well as by their words, with a small language model that runs on this machine: you asked for tasks to be searchable by meaning, and chose the model. Nothing calls it today: the board page searches by words, no skill or document names it but the board's own guide and help, and the consuming project's tools never call it. It costs 153 of the 189 packages the board is built from, a 133 MB download for each project, and a pass every minute on the server for each project, 13 hours of it on this repository's board since 2026-11-14. What becomes of it? A: delete it; the board searches by words alone. B: move the model into a program of its own, as an approved branch that never landed does: the board and the server build without it, and search by meaning works where that program is built. C: keep it in the board behind a build switch that is off by default. D: keep it as it is. Recommended: B. Approve and say A, B, C or D in the note, or comment. [[analysis/code-review-2026-11#4. Eight tenths of the board's dependencies serve a search mode nothing calls]]
@@ -131,6 +58,25 @@ their dated history work is in [REVIEW](REVIEW.md).
 
     **Earlier verdicts checked.** No card asks about the hand-over. **server-framework** (A, keep Axum) counted the server's own listener, which the hand-over relies on, in the cost of moving off Axum, and noted that Axum's next version will need the drain checked; it did not ask whether to keep the hand-over.
 
+### Delivery to projects
+
+- [ ] **live-board-schema-moves** — Two approved tasks each move Symphony's own board (this repository's, in its git common dir) from schema 17 to 18, and both are held unlanded on that: `tasks/board-writer-record` (approved at 6394e33a) and `tools/board-token-usage` (approved at 71f05a84). The shared server on port 8765 runs release-2026-11-13.2, schema 17, and from the first land until it is refreshed you cannot write this board from the app. When may the board move? A: now, `tasks/board-writer-record` to 18 at once and `tools/board-token-usage`, renumbered to 19, only after the server is refreshed. B: only once the refresh works again and no release candidate is open, then `tasks/board-writer-record` lands in a quiet moment and `just release` is run by hand at once, on main's tip, which is then its merge commit, so the app's writes are out until that commit is released; `tools/board-token-usage` follows the same way at 19. C: not yet, both stay held. Recommended: B. Approve and say A, B or C in the note, or comment.
+  [2026-11-15 02:40] agent — Posted by the two orchestrators (quiet-plover, silver-sparrow) for those two tasks. One decision, not two: the second to land must renumber, so the order is part of it.
+
+    **What the shared server does against a board ahead of it.** It is built from the consuming project's checkout at its pin, release-2026-11-13.2 (4056a635), schema 17; "ahead" is counted from that pin, not from main, which is also 17 today. Read in that release's code (`crates/tasks/src/schema.rs`, `decide`):
+    - **At 18 it reads and writes nothing.** Pages and the board draw. Every write of yours from the app is refused at once: a post on a task's thread, a priority, a field, a cancel, a board action. Document saves and chat wait in its journal until it can write.
+    - **At 19 it reads nothing either:** more than one ahead is refused, so this project shows no board.
+    - Only its idle sweep, its embedding catch-up and the end of a cancel run the main checkout's `.target/bin/tasks`, and so follow that link.
+
+    **What a 17 build of `tasks` does against 18**, measured on a private scratch board by the reviewer of `tools/board-token-usage` (main's 17 build against that task's 18; `tasks/board-writer-record`'s 18 adds one table and meets the same rule): every command is refused before any write, `list` and `show` included, and a heartbeat writes nothing, so its agent reads quiet or lost until the link it runs is renewed.
+
+    **What each costs.**
+    - **A:** you cannot act on this board from the app from the land until a refresh. The refresh is red today (the release run's refresh of the consuming project, filed 2026-11-14, waiting on your word for who edits one line of that project's manifest), so that time has no end in sight. Agents and both orchestrators keep working through `just tasks`.
+    - **B:** nothing changes until the refresh is mended. Then each move costs the app's writes until its commit is released: one run when it is green (a run took 23 to 124 minutes), hours more through a release candidate when it is red, and 7 of the last 10 runs were red. Three steps are in it. Your word on that manifest line comes first. The release candidate open today (f35f9eb4, red in one test, its fix in work) is released or dropped before the land, since no run judges main's tip while one is open. And approving B is your word for two `just release` runs by hand, one right after each land, a run that is otherwise yours to start; a red one holds that merge commit as the release candidate until its fixes land and a rerun is green. The quiet moment runs from the land to the first `just tasks` after it, whose build moves the board: no land or review mid-flight in a worktree with a board binary of its own. The refresh moves the server only if the consuming project's own gate and hooks pass the pin's move; otherwise ending the wait is that project's to do.
+    - **C:** the board shows no writers still behind and no token cost per task, and the two branches age.
+
+    **Your earlier verdict.** `board-schema-at-update` (C, 2026-11-12), given for `symphony update`: a board moves only once every program that writes it is on the new schema. The shared server writes this board, so A moves it while a writer is behind; B keeps that time to the wait for one release. `tasks/board-writer-record` leaves the server out of its count of writers on purpose, since counting it would refuse the very migrate a refresh runs.
+
 ## Auto-approved: spot-check
 
 ### Releases
@@ -152,6 +98,58 @@ their dated history work is in [REVIEW](REVIEW.md).
   [2026-11-13 20:43] agent · auto-approved — A: the owner, 2026-11-13, in the terminal: "contract-tool-route reads like it should be auto triaged". The card's own evidence leaves A standing: both tools exist to check what the machine does (the card you will see, whether the machine would hold a land), and under B the project's copies "keep passing while the machine does otherwise, until someone copies again", so they would stop checking it. Symphony adds the two commands (one that draws a single card, one that answers the landing's checks for a branch) and keeps their output, and status's and triage's, stable; its side is filed on the board now. Any verdict here overrides this.
 
 ## Waiting on an agent
+
+### Delivery to projects
+
+- [-] **client-distribution-on-main** — Each land that changes the web client is followed by a background run that commits a fresh build of the client to main. Those builds are about 85 % of what git holds for main's history and grow about 27 MiB a day, which every clone downloads. Nothing on the pages changes under any option. How often should the built client be committed? A: only by a release, the one it verified, on a commit of its own under its tag that main never holds; a checkout that needs pages builds its own. B: once a release: the release run starts the run that commits it to main, and no land does. C: after every land that changes it, as today. None of them shrinks the history already there: that takes rewriting it, a choice of its own. Recommended: B. Approve and say A, B or C in the note, or comment. [[analysis/code-review-2026-11#2. The built client is committed, and is 85 % of the repository]]
+  [2026-11-15 03:46] agent — Posted for the board task `docs/code-review-owner-choices`, from the codebase review.
+
+    **Today**, read at main `3f3d9186` with the review's command (in its finding): git holds 156.2 MiB for main's history, 134.0 MiB of it the client under `apps/symphony-server/client/public`, first committed on 2026-11-10. 95 of main's commits regenerate it, 12 to 39 a day, and all but `e3314c18` (which also restates figures in two documents) do nothing else; in the tree it is 110 files, 6.3 MB. Each of those rounds is also main's only build of the client after a land, and between releases the only audit of the documents on main's tip: a round that fails files a red task within minutes, as one did on 2026-11-15.
+
+    **What A and B both change:**
+    - *A fresh clone* fetches every release tag, so under either it gets one client a release. Since the first release (2026-11-13), main gained 1,918 client files, 247 MiB before git compresses them; the five releases since hold 545 of them, 71 MiB: about three tenths, at one release every 20 landings.
+    - *No round after a land.* A land that breaks the client's build, or the documents, is found by the next task that builds the client, or by the release run. While a release candidate is open, up to 24 hours, main's landings have only their own evidence. A build after each land that commits nothing would keep that check, at a build a land.
+
+    **A, only a release:**
+    - *Main holds no client.* A pin to a commit of main would build a server with no pages, so it is no longer possible. A checkout that serves pages (an agent's server of its own, for pictures) builds the client first, as a task already does for its tests; while the Dioxus client remains, that takes minutes.
+    - *The release* builds the client in its own checkout, commits it on top of the tip it verified and tags that commit. `just client-check` then has no client on main to compare a fresh build with: the release's check becomes the build it commits, and the two older builds a page may still be open on (`KEEP` in `crates/symphony/src/cli/publish.rs`) come from the previous release's tag.
+    - *What goes:* the regenerator, 1,674 lines (`crates/tasks/src/land/regenerate.rs`) and 1,962 of tests, with the rule that a branch never commits the client, the land keeping main's side of it and a pin's wait for it.
+    - *What changes:* 32 tracked code, script and settings files name the folder (`git grep -l client/public`, less the documents, test fixtures and one experiment): 26 Rust files, among them the server's build script, its client and their tests, the size budget's client line, the release's verified client and the packaging test, and the server's manifest, the justfile, `symphony.toml`, the size budget, `tools/client-check.sh` and `tools/verify.sh`. The review sizes it as a project.
+
+    **B, once a release.** The release run starts the regenerator's round on main's tip and waits for it before it verifies, as it waits for one today; no land starts one. The regenerator, its check and those 32 files stay as they are. Between releases main's client is older than its sources, so a pin to a commit of main waits for the next release, and main's tree keeps its 6.3 MB of client. A task.
+
+    **C, as today.** About 27 MiB a day, some 0.8 GiB more in a month at this pace.
+
+    **Why B.** A fresh clone gets the same bytes under A and B, so B takes nearly all of A's saving for a task rather than a project: the release run starts the round a land starts today, and the rest stays as it is. What A adds, a main with no client in it and the regenerator's removal, is cheaper once the Dioxus client is gone and the client is one quick build.
+
+    **Earlier verdicts checked.** **symphony-update-command** (B, projects follow release tags) already makes every pin a release, which A and B rely on. **pin-waits-for-current-client** (A) keeps a pin to a commit of main off a client older than its sources; A leaves such a pin no client and B makes it wait for a release, so neither changes that choice. **release-main-while-candidate-open** (A) counts on "the regenerator's client check and docs audit each round" to check main's landings while a candidate is open; under A or B those landings would have only their own evidence for up to 24 hours, a consequence of either, not a change to that choice. **release-delivery** (C) ships a release's client beside the server once `symphony update` is built; it does not say whether main commits one before then. **pictures-in-every-clone** (F) commits the documents' pictures, not the client. None of them answers this card.
+  [2026-11-15 06:46] owner · rejected — we should push those releases as crates to crates.io and not commit then at all if possible.
+
+### The look
+
+- [x] **symphony-mark** — Symphony would get a mark and a name of its own, at the start of the header, on the browser's tab and on a phone's home screen. They show on the machine's own pages (the project list and the pages the server draws) and on every project with no theme name or icon of its own; a project's own theme name and icon take their place on its pages. Today the header shows neither, the tab shows no icon or a generic ♫, and the icon the browser asks the server for by itself is the consuming project's star. Which mark and wordmark should Symphony's own look carry? A: the note-card, a note whose head is a task card. B: the podium, the orchestra's seats round two maestros. C: the fermata, the sign where the music holds for the maestro. D: the two-stroke S, one stroke for you and one for the orchestrator agents. Recommended: D. Approve and say A, B, C or D in the note, or comment. [[analysis/symphony-mark#The options]]
+  [2026-11-15 05:12] agent — Posted for the board task `app/symphony-mark-and-name-options`. Your words on its inbox item: "A proper "themed" design of Symphony could be develop that is closer to the concept of "a symphony that is executed by maestros" where maestro are the human + orchestrator agents. I would like to view different options to select."
+  [2026-11-15 05:12] agent — Base: today, wide and on a phone, no mark and no name in the header. ![Today: the header wide, then on a phone](analysis/symphony-mark/today.png)
+  [2026-11-15 05:12] agent — Each option in the header wide (light, then dark), on a phone (light, dark) and in the tab (light, dark), drawn on a private server with the option set as a scratch project's look; nothing in the app has changed. A headless browser shows no tab strip, so the tab is a stand-in drawn around the real icon file, and the Projects link the machine's server draws is added to the private server's header. ![The note-card, A](analysis/symphony-mark/a.png) ![The podium, B](analysis/symphony-mark/b.png) ![The fermata, C](analysis/symphony-mark/c.png) ![The two-stroke S, D](analysis/symphony-mark/d.png)
+
+    **A, the note-card.** A note whose head is a task card: the board's work is the symphony's music. Wordmark: "Symphony" in the app's own sans.
+
+    **B, the podium.** The orchestra seen from above: its seats in an arc round two maestros, you and the orchestrator agent. Wordmark: "symphony" in lower case. At 16 px it reads as a fan of dots; the seats show from 32 px.
+
+    **C, the fermata.** The sign where the orchestra holds until the maestro moves on, as a card holds until you answer it. Wordmark: "Symphony" in a serif.
+
+    **D, the two-stroke S.** Symphony's S in two strokes, one full and one lighter: you and the orchestrator agents, two maestros conducting one work. Wordmark: "SYMPHONY" in spaced capitals.
+
+    Any wordmark can go with another mark: say which in the note.
+  [2026-11-15 05:12] agent — The four icons at 180, 32 and 16 px, light then dark: ![The icons at three sizes, light and dark](analysis/symphony-mark/sizes.png)
+
+    **Why D.** It is the only one that says the name at every size, down to the 16 px tab, and its two strokes are the two maestros you named. Its cost: a letter says nothing of music, and the two maestros show only once explained; the lighter stroke loses contrast at 16 px, most on the light tile; and it is close in kind to other music products' S marks. C is as clear at 16 px and the simplest, but it shows one maestro's hold, not two maestros. B tells the most and blurs the most when small. A is the closest to today's ♫ and says the least about the maestros.
+
+    **What it changes.** The machine's own pages and every project with no theme name or icon of its own show the chosen mark and wordmark in the header and the icon in the tab; a project's own theme name and icon take their place on its pages, as the project file's reference already says, so the consuming project keeps its own name and star. The icon the browser asks the server for by itself becomes Symphony's where no project's own answers it; the header stays two rows on a phone (measured at 390 wide for all four); a phone's home screen gets the icon. A follow-up task builds it after your answer.
+
+    **Earlier verdicts checked.** **header-page-names**, **header-on-a-phone** and **header-appearance** set the header's words, its two rows on a phone and its ◑ button; every option keeps them. **symphony-own-names** took the consuming project's names out of Symphony's code and says nothing of a mark. **pictures-in-every-clone** decides that these pictures are committed beside this card. None of them chooses a mark or a wordmark: that is this card.
+  [2026-11-15 05:52] agent — Corrected after the task's review, before any answer: the first lines say where the mark and the wordmark show (not on every page), Why D gives D's own cost, and the pictures' line says the tab is a stand-in.
+  [2026-11-15 06:40] owner · approved — C
 
 ### Web stack
 
@@ -386,6 +384,30 @@ their dated history work is in [REVIEW](REVIEW.md).
   [2026-11-11 19:13] agent — Done on `tools/orphan-processes`: the Symphony no longer looks for copies of itself or for test databases. The census, the notice at the top of every page, the `symphony-server orphans` command and the starter's line about leftovers are gone, with their tests and docs; no notice moved to the live feed. The repairs at the source stay: the database of a board in the temporary folder or under `artifacts/` ends when the process that started it ends, even when that process is killed, and the two test fixtures that start a database themselves end it the same way. The server's status still sends `orphans`, always 0, so a starter built before this can still read it.
 
 ## Resolved
+
+### Product specs
+
+- [x] **product-spec-form** — Each page of the Symphony would get a short document of its own, written for whoever uses the page: what it is for, what you do there, what it shows, its states, and how it looks on a phone, with pictures taken by one command from a made-up project. Today no document does this for any page, and no document outside this register shows a picture. One spec is written so you can judge the form: [the review queue](product/QUEUE.md). Is this the form the other thirteen should take? Approve, or comment with what to change. [[analysis/product-docs-review-2026-11#Proposed specs]]
+  [2026-11-15 02:40] agent — Posted for the board task `docs/product-docs-review`. The example's pictures, as the command took them, wide and on a phone:
+
+    ![The queue, wide](product/pictures/queue-wide.png) ![The queue on a phone](product/pictures/queue-phone.png)
+
+    **What approving sets:**
+
+    - **One page, one document**, under `docs/product/`, with the same parts in the same order ([the form](product/README.md#the-form-of-a-spec)). No source file, route or wire type in it: those stay in the reference documents, which a spec links.
+    - **Pictures are taken, never pasted.** `tools/product-pictures.sh` takes every listed page, on a phone, wide or both as a spec shows it, from a small fixture project, on a server of its own. Taken twice on one Chrome, a picture comes out byte for byte the same, so after a retake git lists the ones that went stale. No checker is added.
+    - **The task that changes a page retakes its pictures**, as its after pictures.
+
+    **Cost:**
+
+    - About 0.1 MB a wide picture and 0.3 MB a phone picture, committed beside the specs as documents' pictures already are. At three wide and one phone picture a spec, the whole set is about 8 MB.
+    - Each retake commits the changed pictures again, into every clone's history: about 0.1 to 0.4 MB for each picture of the page that changed.
+    - A Chrome update, or other fonts, can redraw every picture with no page changed. Git then shows the whole set as stale, and one retake commits the whole set again, about 8 MB.
+
+    **Earlier verdicts checked:** your approval of **pictures-in-every-clone** ("agreed with F") decides where these pictures live, committed beside the documents that show them, so that is not asked. It says nothing of what a product spec holds or how its pictures are made and kept current, and no other verdict does: that is this card.
+
+    **What it leaves for later:** the home page shows the hour's greeting and each card's age, so its picture needs the shot taken at a fixed time; that is built when its spec is written. The other thirteen specs, one paragraph each, and the ranked gaps are in the linked review.
+  [2026-11-15 06:38] owner · approved
 
 ### Web stack
 
@@ -867,22 +889,6 @@ their dated history work is in [REVIEW](REVIEW.md).
   [2026-11-12 10:20] owner · approved — I didn't say which one I approved did I. C makes sense to improve upon A. while we don't have a dedicated build service.
   [2026-11-12 10:54] agent — Recorded as C, the improvement on A while there is no dedicated build service. Two of its costs, stated plainly. Symphony's own board keeps moving with main, so whenever a release that raises the schema is held, by a lagging writer of any project or by the update waiting to be run, the machine's server reads Symphony's board and writes nothing to it, and after a second raise cannot read it at all: today's "Symphony's own pages wait for the consumer's pin" in another form. The update names the writer that holds it, and the hold ends when that writer is rebuilt. Writers built before the record never write it, so the record alone cannot see them. The record therefore lands with a schema raise of its own, made once as today by each project's `just tasks migrate` after its writers are rebuilt; since a writer behind its board's schema is refused, no older build can write the board from then on, and the update never moves a board whose schema predates the record. [[analysis/plugin-delivery#The board]]
   [2026-11-12 10:54] agent · resolved
-- [ ] **live-board-schema-moves** — Two approved tasks each move Symphony's own board (this repository's, in its git common dir) from schema 17 to 18, and both are held unlanded on that: `tasks/board-writer-record` (approved at 6394e33a) and `tools/board-token-usage` (approved at 71f05a84). The shared server on port 8765 runs release-2026-11-13.2, schema 17, and from the first land until it is refreshed you cannot write this board from the app. When may the board move? A: now, `tasks/board-writer-record` to 18 at once and `tools/board-token-usage`, renumbered to 19, only after the server is refreshed. B: only once the refresh works again and no release candidate is open, then `tasks/board-writer-record` lands in a quiet moment and `just release` is run by hand at once, on main's tip, which is then its merge commit, so the app's writes are out until that commit is released; `tools/board-token-usage` follows the same way at 19. C: not yet, both stay held. Recommended: B. Approve and say A, B or C in the note, or comment.
-  [2026-11-15 02:40] agent — Posted by the two orchestrators (quiet-plover, silver-sparrow) for those two tasks. One decision, not two: the second to land must renumber, so the order is part of it.
-
-    **What the shared server does against a board ahead of it.** It is built from the consuming project's checkout at its pin, release-2026-11-13.2 (4056a635), schema 17; "ahead" is counted from that pin, not from main, which is also 17 today. Read in that release's code (`crates/tasks/src/schema.rs`, `decide`):
-    - **At 18 it reads and writes nothing.** Pages and the board draw. Every write of yours from the app is refused at once: a post on a task's thread, a priority, a field, a cancel, a board action. Document saves and chat wait in its journal until it can write.
-    - **At 19 it reads nothing either:** more than one ahead is refused, so this project shows no board.
-    - Only its idle sweep, its embedding catch-up and the end of a cancel run the main checkout's `.target/bin/tasks`, and so follow that link.
-
-    **What a 17 build of `tasks` does against 18**, measured on a private scratch board by the reviewer of `tools/board-token-usage` (main's 17 build against that task's 18; `tasks/board-writer-record`'s 18 adds one table and meets the same rule): every command is refused before any write, `list` and `show` included, and a heartbeat writes nothing, so its agent reads quiet or lost until the link it runs is renewed.
-
-    **What each costs.**
-    - **A:** you cannot act on this board from the app from the land until a refresh. The refresh is red today (the release run's refresh of the consuming project, filed 2026-11-14, waiting on your word for who edits one line of that project's manifest), so that time has no end in sight. Agents and both orchestrators keep working through `just tasks`.
-    - **B:** nothing changes until the refresh is mended. Then each move costs the app's writes until its commit is released: one run when it is green (a run took 23 to 124 minutes), hours more through a release candidate when it is red, and 7 of the last 10 runs were red. Three steps are in it. Your word on that manifest line comes first. The release candidate open today (f35f9eb4, red in one test, its fix in work) is released or dropped before the land, since no run judges main's tip while one is open. And approving B is your word for two `just release` runs by hand, one right after each land, a run that is otherwise yours to start; a red one holds that merge commit as the release candidate until its fixes land and a rerun is green. The quiet moment runs from the land to the first `just tasks` after it, whose build moves the board: no land or review mid-flight in a worktree with a board binary of its own. The refresh moves the server only if the consuming project's own gate and hooks pass the pin's move; otherwise ending the wait is that project's to do.
-    - **C:** the board shows no writers still behind and no token cost per task, and the two branches age.
-
-    **Your earlier verdict.** `board-schema-at-update` (C, 2026-11-12), given for `symphony update`: a board moves only once every program that writes it is on the new schema. The shared server writes this board, so A moves it while a writer is behind; B keeps that time to the wait for one release. `tasks/board-writer-record` leaves the server out of its count of writers on purpose, since counting it would refuse the very migrate a refresh runs.
 - [r] **release-delivery** — Each release comes as separate parts, each with its checksum: the server with no client inside it, one build of the client beside it, the board commands, the document command line. One command, `symphony update`, installs them on the machine, fetching only the parts that changed. From the fifth slice it replaces the per-project update command chosen on 2026-11-11: no project moves a pin to take a release. How does a release reach the machine? A: the nightly builds it here after it tags, once per release (about 11 minutes); nothing is downloaded. B: a hosted build makes each platform's parts on the tag and publishes them; the update downloads them. C: A now, B once a project runs on another machine. Recommended: C. Approve and say A, B or C in the note, or comment. [[analysis/plugin-delivery#Distribution]]
   [2026-11-12 10:06] agent — Posted for the board task `design/plugin-delivery-without-rebuilds`, revised after its review.
 
