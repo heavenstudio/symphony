@@ -245,7 +245,12 @@ mod tests {
                 true,
             ),
         );
-        let done = output(symphony::children::command("plutil").arg("-lint").arg(&file)).unwrap();
+        let done = output(
+            symphony::children::command("plutil")
+                .arg("-lint")
+                .arg(&file),
+        )
+        .unwrap();
         assert!(done.status.success(), "{done:?}");
         let read = |key: &str| {
             let read = output(

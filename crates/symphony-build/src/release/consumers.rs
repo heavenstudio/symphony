@@ -127,11 +127,11 @@ pub(crate) fn sources(metadata: &Value, names: &[String]) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use symphony::machine::Entry;
     use crate::test_tree::Tree;
     use serde_json::json;
     use std::fs;
     use std::time::{Duration, Instant};
+    use symphony::machine::Entry;
 
     fn entry(id: &str, root: &Path, plugins: &[&str]) -> Entry {
         Entry {

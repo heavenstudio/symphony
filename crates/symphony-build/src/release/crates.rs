@@ -196,7 +196,12 @@ impl Registry {
             Registry::Folder(folder) => match fs::read(folder.join("index").join(&path)) {
                 Ok(bytes) => Some(bytes),
                 Err(e) if e.kind() == io::ErrorKind::NotFound => None,
-                Err(e) => return Err(symphony::text::os_error(&e, &folder.join("index").join(&path))),
+                Err(e) => {
+                    return Err(symphony::text::os_error(
+                        &e,
+                        &folder.join("index").join(&path),
+                    ));
+                }
             },
         };
         Ok(listed.is_some_and(|listed| lists(&String::from_utf8_lossy(&listed), version)))

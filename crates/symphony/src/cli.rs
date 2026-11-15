@@ -6,10 +6,10 @@
 mod commands;
 mod publish;
 
-pub(crate) use publish::{BUILDS, publish_client};
 /// A built client published over the one served, keeping the builds published before it: what
 /// `symphony-build publish-client` (crates/symphony-build) runs.
 pub use publish::publish_keeping;
+pub(crate) use publish::{BUILDS, publish_client};
 
 use std::collections::BTreeMap;
 use std::io::{BufRead, Write};

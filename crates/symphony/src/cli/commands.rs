@@ -201,7 +201,12 @@ pub(super) fn help(
         Some(name) => {
             let (every, failed) = every(binary);
             if every.iter().any(|(known, _)| known == name) {
-                super::main(&[name.to_string(), "--help".into()], &mut &b""[..], out, err)
+                super::main(
+                    &[name.to_string(), "--help".into()],
+                    &mut &b""[..],
+                    out,
+                    err,
+                )
             } else {
                 refuse_unknown(binary, name, &failed, err)
             }
