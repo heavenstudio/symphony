@@ -10,6 +10,7 @@ import {
   GhostBoard,
   keepShape,
   type OnLoad,
+  PAGE,
   recallShape,
   SHAPE,
   TaskBoard,
@@ -47,6 +48,7 @@ import { Backoff } from "./state";
 import { load, save } from "./storage";
 import {
   holderHealth,
+  isTask,
   merge,
   readItemChange,
   readListing,
@@ -259,7 +261,8 @@ export function withListed(
 export interface BoardHost {
   /** The data changed: draw it again. */
   redraw(): void;
-  /** The board was read again: each column shown reads its first page again. */
+  /** The board was read again: each column shown reads its first page again, as long as the rows
+   * it shows (`readColumn`). */
   refresh(): void;
   /** What the page shows from this device changed. */
   freshness(f: Freshness): void;
@@ -585,9 +588,20 @@ export class LiveBoard {
     }
   }
 
+  /** The rows the board draws in `status`'s column: its tasks the stages place there. */
+  shownRows(status: string): number {
+    const { d } = this;
+    return d.tasks.filter((task) => isTask(task) && taskStage(d.work, task, d.connected) === status)
+      .length;
+  }
+
   /**
    * Read a page of `status`'s column, unless a later read of it or another view supersedes it
-   * (`view`, `version`: the read's). Whether the page shows the server's answer.
+   * (`view`, `version`: the read's). Whether the page shows the server's answer. A first page read
+   * again is as long as the rows the column shows, when they are more than a page (the server's
+   * `rows`): it replaces them with the same rows as they stand now, so the pages Load more brought
+   * stay, the reader's place among them with them, and the next page starts after them. Such a read
+   * is no first page this device keeps, and names no tag.
    */
   async readColumn(
     status: string,
@@ -603,12 +617,14 @@ export class LiveBoard {
     if (!current()) return false;
     const part = columnPart(status);
     const activity = d.connected ? 1 : 0;
-    const kept = !more && keptView(query, days, activity);
+    const rows = more ? 0 : this.shownRows(status);
+    const kept = !more && rows <= PAGE && keptView(query, days, activity);
     const cursor = more ? (d.cursors.get(status) ?? null) : null;
     const since = new ReadCursor(d.journal);
     try {
       const after = cursor === null ? "" : `&cursor=${encodeURIComponent(cursor)}`;
-      const path = `/api/task-board?q=${encodeURIComponent(query)}&status=${status}&days=${days}${after}&activity=${activity}&work=0`;
+      const length = rows > PAGE ? `&rows=${rows}` : "";
+      const path = `/api/task-board?q=${encodeURIComponent(query)}&status=${status}&days=${days}${after}${length}&activity=${activity}&work=0`;
       let read: Awaited<ReturnType<LiveBoard["readListing"]>> | null = null;
       let why = "";
       try {

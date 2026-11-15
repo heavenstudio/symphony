@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+<style>.tile{fill:#2f5d9e}.ink{fill:#fff}@media (prefers-color-scheme:dark){.tile{fill:#7fa7e0}.ink{fill:#0f1a2b}}</style>
+<rect class="tile" width="32" height="32" rx="7"/>
+<g class="ink" opacity=".55">
+<circle cx="5.6" cy="19" r="2.2"/><circle cx="8" cy="13.7" r="2.2"/><circle cx="12.9" cy="10.5" r="2.2"/><circle cx="19.1" cy="10.5" r="2.2"/><circle cx="24" cy="13.7" r="2.2"/><circle cx="26.4" cy="19" r="2.2"/>
+</g>
+<circle class="ink" cx="13.4" cy="21.4" r="2.9"/><circle class="ink" cx="18.9" cy="21.7" r="2.3"/>
+</svg>
