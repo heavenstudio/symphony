@@ -9,7 +9,7 @@ use crate::common::{HOST, NOW, client, refused};
 use serde_json::{Value, json};
 use symphony_board::rows::Dump;
 use symphony_board::rpc::Client;
-use symphony_board::{Error, NewTask, Opening, Schema, Store};
+use symphony_board::{Error, NewTask, Opening, Program, Schema, Store};
 
 /// The store `how` opens on `client`, its clock at `NOW` and no process alive.
 fn opened(client: Client, how: &Opening) -> Result<Store, Error> {
@@ -218,13 +218,16 @@ fn an_older_writer_is_refused_a_migrated_board_before_any_write_naming_the_proje
     let older = again(&client);
     let why = refused(opened(older, &Opening::write().of(Some("alpha"))).map(drop));
     let this = Schema::this_build().version();
+    let program = Program::this();
     assert_eq!(
         why,
         format!(
             "the alpha board is at schema {}, and this build writes only a board at its own \
-             schema, {this}: nothing was written; `just symphony` in alpha brings its Symphony \
-             to the board's schema",
-            this + 1
+             schema, {this}: nothing was written; rebuild {} ({}) at the board's schema, and \
+             `just symphony` in alpha brings its Symphony to it",
+            this + 1,
+            program.name,
+            program.path
         )
     );
     // The refusal came from the one read: the board is the newer build's as it left it.

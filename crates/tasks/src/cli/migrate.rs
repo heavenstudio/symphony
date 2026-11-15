@@ -1,7 +1,9 @@
 //! `tasks migrate`: the board moved forward to this build's schema, or made, and its schema said.
 //! On a project's live board it runs only in the main checkout, or in any checkout of a repository
 //! with none, and it is what alone moves a live board whose default branch commits no board source
-//! ([`crate::live::may_move`]); on a scratch board it moves it as any writer would.
+//! ([`crate::live::may_move`]); on a scratch board it moves it as any writer would. It moves nothing
+//! while a writer seen in the last week is behind the schema it would move to, naming each, unless
+//! `--leave-behind` says to ([`crate::Store::opening`]).
 
 use super::{Clock, Env, open_as, reach};
 use crate::rpc::Client;
@@ -12,10 +14,10 @@ use std::io::Write;
 pub const COMMAND: &str = "migrate";
 
 /// Its usage line.
-pub const USAGE: &str = "usage: just tasks migrate [-h] [--as ACTOR]\n";
+pub const USAGE: &str = "usage: just tasks migrate [-h] [--leave-behind] [--as ACTOR]\n";
 
 /// Its `--help`.
-pub const HELP: &str = "usage: just tasks migrate [-h] [--as ACTOR]
+pub const HELP: &str = "usage: just tasks migrate [-h] [--leave-behind] [--as ACTOR]
 
 Move the board forward to this build's schema, or make it, and say its schema.
 A project's live board moves only by a build its default branch ([project]
@@ -29,21 +31,32 @@ default_branch names that does not exist, a ref that names no commit) moves it
 by no command, this one included. A scratch board (--database NAME) moves here
 as under any command.
 
+Each program that opens the board to write keeps a line on it: its name, where
+it is, its host, the schema it was built at and when it was last seen. Before
+it moves the board, this command names each writer seen in the last week that
+is behind the schema it would move it to, which would be refused the board
+from then on, and moves nothing: rebuild each and run it once, then migrate
+again.
+
 options:
-  -h, --help  show this help message and exit
-  --as ACTOR  taken and not used: moving the board acts as no one
+  -h, --help      show this help message and exit
+  --leave-behind  move the board though writers seen in the last week are
+                  behind, leaving them refused until they are rebuilt
+  --as ACTOR      taken and not used: moving the board acts as no one
 ";
 
 /// `tasks migrate ARGS` (the words after `migrate`) in `env`: what it did goes to `out`, a refusal
 /// to `err`; the exit code is returned.
 pub fn run(args: &[String], env: &Env, out: &mut dyn Write, err: &mut dyn Write) -> i32 {
     let mut words = args.iter();
+    let mut leave_behind = false;
     while let Some(word) = words.next() {
         match word.as_str() {
             "-h" | "--help" => {
                 let _ = write!(out, "{HELP}");
                 return 0;
             }
+            "--leave-behind" => leave_behind = true,
             "--as" if words.next().is_some() => {}
             _ => {
                 let _ = writeln!(
@@ -55,7 +68,7 @@ pub fn run(args: &[String], env: &Env, out: &mut dyn Write, err: &mut dyn Write)
             }
         }
     }
-    match migrate(env) {
+    match migrate(env, leave_behind) {
         Ok(said) => {
             let _ = writeln!(out, "✔ {said}");
             0
@@ -67,7 +80,9 @@ pub fn run(args: &[String], env: &Env, out: &mut dyn Write, err: &mut dyn Write)
     }
 }
 
-fn migrate(env: &Env) -> Result<String, String> {
+/// The board `env` reaches moved forward, or made, and what was done said; refused while a writer
+/// seen in the last week is behind the schema it would move to, unless `leave_behind`.
+fn migrate(env: &Env, leave_behind: bool) -> Result<String, String> {
     let reached = reach(env, &env.cwd, true)?;
     let board = match &reached.live {
         Some(live) => {
@@ -87,7 +102,13 @@ fn migrate(env: &Env) -> Result<String, String> {
     };
     let before = version(&reached.client)?;
     let clock = Clock::of(env)?;
-    let store = open_as(reached, &clock, Opening::write().migrating())?;
+    let how = Opening::write().migrating();
+    let how = if leave_behind {
+        how.leave_behind()
+    } else {
+        how
+    };
+    let store = open_as(reached, &clock, how)?;
     let after = store
         .board_version()
         .map_err(|e| e.to_string())?
