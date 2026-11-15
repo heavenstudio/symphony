@@ -678,7 +678,7 @@ impl Site {
         self.send(&Said::delta(id, data));
     }
 
-    /// How many open feed streams are WebSockets.
+    /// How many of the open feed streams are on a WebSocket.
     pub fn socket_feeds(&self) -> usize {
         let shared = self.shared.lock().unwrap();
         shared.feeds.iter().filter(|stream| stream.socket).count()

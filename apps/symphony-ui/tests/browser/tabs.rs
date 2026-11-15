@@ -114,7 +114,7 @@ impl Tab {
 
     /// Wait until `expression` is true in the tab; `what` names it.
     fn until(&self, chrome: &mut Chrome, what: &str, expression: &str) {
-        test_time::until_true(&format!("{} {what}", self.path), BACKSTOP, || {
+        test_time::until_true(format!("{} {what}", self.path), BACKSTOP, || {
             self.eval(chrome, expression) == json!(true)
         })
         .unwrap_or_else(|stall| panic!("{stall}; the tab says {}", self.eval(chrome, STATE)));
@@ -137,10 +137,10 @@ fn site_for_every_page() -> Site {
     site
 }
 
-/// Wait until the stand-in holds `streams` feed streams open, `sockets` of them WebSockets.
+/// Wait until the stand-in holds `streams` feed streams open, `sockets` of them on a WebSocket.
 fn holding(site: &Site, streams: usize, sockets: usize) {
     test_time::until_true(
-        &format!("{streams} feed streams, {sockets} on WebSockets"),
+        format!("{streams} feed streams, {sockets} on a WebSocket"),
         BACKSTOP,
         || site.feeds() == streams && site.socket_feeds() == sockets,
     )

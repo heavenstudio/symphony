@@ -1,7 +1,7 @@
 //! The feed on a WebSocket: the same events as its Server-Sent Events, from the same `?since=`,
-//! each one text message ([`Said::text`]), for a request that asks to upgrade. A browser counts its
-//! WebSockets apart from its six HTTP/1.1 connections a host, which a stream of Server-Sent Events
-//! holds one of for as long as it is open, so a tab following the board on one leaves every
+//! each one text message ([`Said::text`]), for a request that asks to upgrade. A browser counts
+//! each WebSocket apart from its six HTTP/1.1 connections a host, which a stream of Server-Sent
+//! Events holds one of for as long as it is open, so a tab following the board on one leaves every
 //! connection to its reads, however many tabs of the server are open (`symphony_api`'s feed
 //! contract).
 //!
@@ -356,7 +356,7 @@ mod tests {
     #[test]
     fn the_origin_is_this_servers_own_page_or_none() {
         let host = (header::HOST, "127.0.0.1:8765");
-        assert!(own_origin(&request(&[host.clone()])));
+        assert!(own_origin(&request(std::slice::from_ref(&host))));
         assert!(own_origin(&request(&[
             host.clone(),
             (header::ORIGIN, "http://127.0.0.1:8765")

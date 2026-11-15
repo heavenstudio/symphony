@@ -22,8 +22,8 @@
 //!   [`Delta`] or a [`SERVER_EVENT`]'s string, as JSON; nothing for a [`PING_EVENT`]), closed by
 //!   the server where the stream would end.
 //!   A browser keeps six HTTP/1.1 connections to a host and an event stream holds one while it is
-//!   open, so six tabs following the board would leave a seventh none for its reads; it counts its
-//!   WebSockets apart. The web client follows the feed so (`apps/symphony-web/src/feed.ts`). A
+//!   open, so six tabs following the board would leave a seventh none for its reads; it counts
+//!   each WebSocket apart. The web client follows the feed so (`apps/symphony-web/src/feed.ts`). A
 //!   WebSocket has no same-origin rule for what it reads, so an upgrade whose `Origin` is not
 //!   `http://` and its own `Host` is refused (`403`), as such a write is.
 //!
