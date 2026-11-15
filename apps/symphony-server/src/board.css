@@ -42,8 +42,8 @@ label { display:block; } html:root :focus-visible { outline:2px solid var(--ring
 .kanban, .ghost-kanban { display:grid; grid-template-columns:minmax(0,1fr); gap:var(--sp-4); }
 .kanban > *, .ghost-kanban > * { min-width:0; }
 /* The board's scroller fits the window under what the page draws above it (the header, the
-   heading, the filters and the hint: 277 px on a desk, 395 in a narrow window, 298 on a phone with
-   its filters shut and 447 with them open) and over the dock's band
+   heading, the filters and the hint: 277 px on a desk, 303 to 374 in a narrow window as its filters
+   wrap, 298 on a phone with its filters shut and 447 with them open) and over the dock's band
    (frame.css), so its own horizontal scrollbar, at its foot, is never under the prev/next bar,
    nor under the "+", which sits in that band, at its lift, when no bar draws. Its ghost is as
    tall. */
