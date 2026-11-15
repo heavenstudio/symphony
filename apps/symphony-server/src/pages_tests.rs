@@ -81,7 +81,10 @@ fn a_machine_page_wears_the_client_frame_and_the_symphony_icon() {
     assert!(page.contains(".app-header {"), "the client's frame");
     assert!(page.contains(".projects li {"), "the pages' own styles");
     assert_eq!(page.matches(&format!("id=\"{NOTICE_STYLE}\"")).count(), 1);
-    assert!(page.contains(".app-brand .app-wordmark {"), "the mark's rules");
+    assert!(
+        page.contains(".app-brand .app-wordmark {"),
+        "the mark's rules"
+    );
     // The header opens with the Symphony's mark and wordmark; a miss leads back to the list,
     // unlit, and its crumb says what it is.
     assert!(

@@ -938,7 +938,7 @@ const LANTERN: &str = "[project]\nname = \"Lantern\"\nid = \"lantern\"\n\
                        [theme]\nname = \"Lantern Works\"\nicon = \"docs/dot.svg\"\n";
 
 /// What the page's header opens with and the icons its head links: the mark's element, the
-/// address a theme's own is read from, whether it is drawn in the page's primary colour, the
+/// address a theme's own is read from, whether it is the mark drawn in the page's primary, the
 /// name with its class and whether it is set in the wordmark's serif, whether the tab's icon is
 /// the Symphony's fermata inline with both schemes' colours, and the home screen's icon with the
 /// type its address answers.
@@ -956,7 +956,7 @@ const BRAND: &str = r#"(async () => {
         brand: brand.className, link: brand.closest('a') !== null || brand.querySelector('a') !== null,
         mark: mark.tagName.toLowerCase(), src: mark.getAttribute('src'),
         drawn: box.width > 0 && box.height > 0,
-        inPrimary: getComputedStyle(mark).fill === primary,
+        inPrimary: mark.tagName === 'svg' && getComputedStyle(mark).fill === primary,
         name: name.textContent, named: name.className,
         serif: getComputedStyle(name).fontFamily.includes('Iowan Old Style'),
         fermata: icon.startsWith('data:image/svg+xml,')

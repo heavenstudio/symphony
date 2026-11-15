@@ -18,7 +18,7 @@ use axum::response::{IntoResponse, Json, Response};
 use symphony::markup::escape;
 use symphony_api::page_names;
 
-use crate::shell::{NOTICE_STYLE, NO_ICON, REGION};
+use crate::shell::{NO_ICON, NOTICE_STYLE, REGION};
 
 const BOARD: &str = include_str!("board.css");
 const FRAME: &str = include_str!("frame.css");

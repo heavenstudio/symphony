@@ -85,7 +85,11 @@ fn a_header_is_the_symphonys_until_the_theme_has_a_name_or_an_icon_of_its_own() 
         // A theme may name itself as its project is named: the name is still its own.
         ("[theme]\nname = \"Plain\"\n", Some("Plain"), ""),
         // An icon alone stands beside the project's name, never the Symphony's.
-        ("[theme]\nicon = \"look/i.svg\"\n", Some("Plain"), "look/i.svg"),
+        (
+            "[theme]\nicon = \"look/i.svg\"\n",
+            Some("Plain"),
+            "look/i.svg",
+        ),
         (
             "[theme]\nname = \"Shown\"\nicon = \"look/i.svg\"\n",
             Some("Shown"),
