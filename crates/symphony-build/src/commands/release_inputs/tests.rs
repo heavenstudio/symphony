@@ -945,3 +945,30 @@ fn the_regenerators_client_key_captures_the_inputs_as_the_client_build_does() {
         "the key is the last line printed"
     );
 }
+
+/// The split repair's sources the client's inputs name are where this workspace keeps them, the
+/// file and the folder: a path a move left behind would leave the repair out of every snapshot,
+/// and a change to it would build no new client.
+#[test]
+fn every_split_repair_source_the_inputs_name_is_in_the_workspace() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let [file, folder] = SPLIT_REPAIR;
+    assert!(
+        root.join(file).is_file(),
+        "{file} is no file of the workspace"
+    );
+    assert!(
+        root.join(folder).is_dir(),
+        "{folder} is no folder of the workspace"
+    );
+    assert!(
+        fs::read_dir(root.join(folder)).unwrap().any(|entry| {
+            entry
+                .unwrap()
+                .path()
+                .extension()
+                .is_some_and(|ext| ext == "rs")
+        }),
+        "{folder} holds none of the repair's sources"
+    );
+}
