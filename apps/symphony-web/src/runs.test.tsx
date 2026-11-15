@@ -605,7 +605,7 @@ describe("the reads", () => {
     expect(waited).toEqual([NOW_MS, NOW_MS, NOW_MS]);
   });
 
-  it("read the list's first page naming the last tag, a 404 said as missing and not as tried again", async () => {
+  it("read the list's first page naming the last tag, until a 404, said as missing and not tried again", async () => {
     const asked = server();
     const page = new AbortController();
     const { waited, wait } = waits(page, 4);
@@ -619,21 +619,37 @@ describe("the reads", () => {
     await asking(asked, 2);
     asked[1]?.answer(new Response(null, { status: 304 }));
     await asking(asked, 3);
-    asked[2]?.answer(reply(404, { error: "this project keeps no runs where this server reads" }));
+    asked[2]?.answer(reply(200, { runs: "none" }, "t2"));
     await asking(asked, 4);
-    asked[3]?.answer(reply(200, { runs: "none" }, "t2"));
+    asked[3]?.answer(reply(404, { error: "this project keeps no runs where this server reads" }));
+    // The server has no such thing: the read ends there, with no wait and no read after it.
     await done;
     expect(told).toEqual([
       ["answered", list],
       ["answered", null],
+      ["failed", "The runs' answer is not a page of runs. Trying again…", false],
       [
         "failed",
         "this project keeps no runs where this server reads (the server answered 404).",
         true,
       ],
-      ["failed", "The runs' answer is not a page of runs. Trying again…", false],
     ]);
-    expect(waited).toEqual([LIST_MS, LIST_MS, LIST_MS, LIST_MS]);
+    expect(waited).toEqual([LIST_MS, LIST_MS, LIST_MS]);
+    expect(asked).toHaveLength(4);
+    expect(page.signal.aborted).toBe(false);
+  });
+
+  it("read what runs now no more once the server has no such thing", async () => {
+    const asked = server();
+    const page = new AbortController();
+    const { waited, wait } = waits(page, 2);
+    const { told, check } = telling<Now>();
+    const done = followNow(page.signal, check, wait);
+    await asking(asked, 1);
+    asked[0]?.answer(reply(404, { error: "no machine work here" }));
+    await done;
+    expect(told).toEqual([["failed", "no machine work here (the server answered 404).", true]]);
+    expect([waited, asked.length, page.signal.aborted]).toEqual([[], 1, false]);
   });
 
   it("stop telling anything once the page that asked is gone", async () => {

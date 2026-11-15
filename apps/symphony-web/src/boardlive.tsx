@@ -45,7 +45,7 @@ import { type BoardRun, flushReload, keepBoard, type PageBoard, PageNotices } fr
 import { href, scoped } from "./project";
 import { getIf, getJson, said } from "./request";
 import { field, holdPlace, list as items } from "./shared";
-import { Backoff } from "./state";
+import { tryAgain } from "./state";
 import { load, save } from "./storage";
 import {
   holderHealth,
@@ -57,6 +57,7 @@ import {
   readTaskChange,
 } from "./task";
 import { markTasksReady } from "./taskcard";
+import { failed as failedRead } from "./trouble";
 import type { ItemChange, MachineWork, Task, TaskChange, TaskListing } from "./wire";
 import { PAGE_NAMES } from "./wire";
 import { statusNotice } from "./words";
@@ -578,7 +579,13 @@ export class LiveBoard {
     d.requests.set(status, version);
     await sleep(250, this.signal);
     if (this.signal.aborted) return;
-    await this.readColumn(status, more, query, days, view, version);
+    const read = () => this.readColumn(status, more, query, days, view, version);
+    // A page a click asked for is read once. A first page that failed is read again by itself
+    // until it answers, or a newer read of the column or another view replaces it.
+    if (more) await read();
+    else {
+      await this.untilAnswered(() => d.view === view && d.requests.get(status) === version, read);
+    }
   }
 
   /**
@@ -649,7 +656,8 @@ export class LiveBoard {
       }
       if (!current()) return false;
       if (read === null) {
-        this.unanswered(part, why);
+        // A first page is tried again by itself (`column`, `check`), and says so.
+        this.unanswered(part, more ? why : failedRead(why, true));
         return false;
       }
       const [list, fresh] = read;
@@ -669,8 +677,10 @@ export class LiveBoard {
           d.tasks = d.tasks.filter((task) => !left.includes(task.slug));
         }
         this.rememberShape();
-        this.freshen((f) => answered(f, part));
       }
+      this.freshen((f) => answered(f, part));
+      // What a failed read said goes once none fails any more.
+      if (this.fresh.failing.length === 0) d.error = "";
       const queued = !more && hasNext && d.pendingMore.includes(status);
       d.pendingMore = d.pendingMore.filter((one) => one !== status);
       this.host.redraw();
@@ -716,25 +726,14 @@ export class LiveBoard {
     await Promise.all(firsts);
   }
 
-  /** Try `read` until it says it was answered, waiting longer after each failure, while `current`;
-   * settles once the first try is over. */
-  untilAnswered(current: () => boolean, read: () => Promise<boolean>): Promise<void> {
-    return new Promise<void>((done) => {
-      void (async () => {
-        let answeredYet = false;
-        try {
-          answeredYet = await read();
-        } finally {
-          done();
-        }
-        const backoff = new Backoff();
-        while (!answeredYet) {
-          await sleep(backoff.after(0), this.signal);
-          if (!current()) return;
-          answeredYet = await read();
-        }
-      })();
-    });
+  /** Try `read` until it says it was answered, waiting longer after each failure (`tryAgain`),
+   * while `current`; settles once the first try is over. */
+  async untilAnswered(current: () => boolean, read: () => Promise<boolean>): Promise<void> {
+    let answeredYet = await read();
+    const again = async () => {
+      answeredYet = await read();
+    };
+    void tryAgain(() => !answeredYet && current(), again, this.signal);
   }
 
   /** The board's version was read: each column may read, and what the page drew is checked; then
