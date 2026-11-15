@@ -131,30 +131,39 @@ fn one_read_from_yesterday_fills_both_files_with_the_board_documents_and_git() {
     assert_eq!(yesterday.hours[23].git.unwrap().commits, 0);
 }
 
+/// The register's line stamp `hours` after today's midnight.
+fn stamp(hours: f64) -> String {
+    #[allow(clippy::cast_possible_truncation)]
+    crate::clock::stamp_at((today() + hours * HOUR) as libc::time_t)
+}
+
+/// The card `text` as the live branch `branch` of the repository at `tree` posted it in
+/// `docs/DECISIONS.md`.
+fn posted(tree: &Tree, branch: &str, text: &str) -> BranchCard {
+    let lines: Vec<&str> = text.lines().collect();
+    BranchCard {
+        tree: Worktree {
+            branch: branch.into(),
+            path: tree.path(&branch.replace('/', "~")),
+        },
+        doc: "docs/DECISIONS.md".into(),
+        card: crate::register::parse_decisions(&lines).remove(0),
+        on_main: false,
+    }
+}
+
 #[test]
 fn a_live_branch_s_posted_card_waits_on_the_owner_beside_main_s_by_its_page() {
     let tree = Tree::new();
     repository(&tree);
     let folder = tree.path("reports");
-    #[allow(clippy::cast_possible_truncation)]
-    let stamp = |hours: f64| crate::clock::stamp_at((today() + hours * HOUR) as libc::time_t);
     let text = format!(
         "- [x] **two** — And this?\n  [{}] agent — Posted on the branch.\n  [{}] owner · \
          approved\n",
         stamp(6.0),
         stamp(7.75)
     );
-    let lines: Vec<&str> = text.lines().collect();
-    let card = BranchCard {
-        tree: Worktree {
-            branch: "tools/x".into(),
-            path: tree.path("x"),
-        },
-        doc: "docs/DECISIONS.md".into(),
-        card: crate::register::parse_decisions(&lines).remove(0),
-        on_main: false,
-    };
-    roll(&tree, &folder, NOW, &[card]).unwrap();
+    roll(&tree, &folder, NOW, &[posted(&tree, "tools/x", &text)]).unwrap();
     let day = written(&folder, today());
     let open = |hour: usize| day.hours[hour].decisions.unwrap().open;
     assert_eq!(
@@ -171,6 +180,58 @@ fn a_live_branch_s_posted_card_waits_on_the_owner_beside_main_s_by_its_page() {
         .collect();
     assert_eq!(answered, [("@tools~x/docs/DECISIONS.md", "two")]);
     assert_eq!(decisions.open[0].slug, "one");
+}
+
+#[test]
+fn a_live_branch_s_copy_of_one_of_main_s_cards_is_counted_once_by_main_s_page() {
+    let tree = Tree::new();
+    repository(&tree);
+    let folder = tree.path("reports");
+    let main = format!(
+        "- [ ] **one** — Is this it?\n  [{}] agent — Posted.\n",
+        stamp(7.0)
+    );
+    let edited = format!(
+        "- [x] **one** — Is this it, now?\n  [{}] agent — Posted.\n  [{}] owner · approved\n",
+        stamp(7.0),
+        stamp(7.75)
+    );
+    let new = format!(
+        "- [x] **two** — And this?\n  [{}] agent — Posted on the branch.\n  [{}] owner · \
+         approved\n",
+        stamp(6.0),
+        stamp(7.5)
+    );
+    let cards = [
+        posted(&tree, "tools/x", &edited),
+        posted(&tree, "tools/x", &new),
+        posted(&tree, "tools/y", &main),
+    ];
+    roll(&tree, &folder, NOW, &cards).unwrap();
+    let day = written(&folder, today());
+    assert_eq!(
+        day.hours[7].decisions.unwrap(),
+        symphony_api::reports::DecisionCounts {
+            open: 0,
+            answered: 2,
+            ..Default::default()
+        },
+        "each card once: tools/y's copy of main's says nothing main's does not"
+    );
+    let decisions = day.decisions.unwrap();
+    let answered: Vec<(&str, &str)> = decisions
+        .answered
+        .iter()
+        .map(|a| (a.doc.as_str(), a.slug.as_str()))
+        .collect();
+    assert_eq!(
+        answered,
+        [
+            ("@tools~x/docs/DECISIONS.md", "two"),
+            ("docs/DECISIONS.md", "one")
+        ],
+        "a card only the branch has is the branch's page's; its edit of main's card is main's"
+    );
 }
 
 #[test]
