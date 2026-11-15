@@ -57,9 +57,9 @@ pub fn counts(board: &Tasks) -> TaskCounts {
 /// gate. The Symphony's is held while a card the task posted waits on the owner
 /// ([`crate::gates::owner`]); a gate named `owner` that a plugin of the project at `root` answered
 /// for the task as it is now replaces it ([`crate::gates::merged`]), read from what `kept` holds and
-/// never asked ([`crate::gates::kept_theirs`]), so the lane starts no plugin's work. A plugin that
-/// answered `owner` before but holds no answer for the task now makes it unknown: out of the lane,
-/// never judged by the Symphony's rule in its place.
+/// never asked ([`crate::gates::kept_theirs`]), so the lane starts no plugin's work. Only a known
+/// gate kept for the task does: with nothing kept for it as it is now, an error kept, or the gate
+/// unknown, the card rule decides, erring toward showing the owner what may wait on them.
 pub fn signoff(
     store: &symphony_board::Store,
     tasks: &[Task],

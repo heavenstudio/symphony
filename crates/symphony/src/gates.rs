@@ -14,8 +14,8 @@
 //!
 //! [`answer`] puts them together for the task page's `/api/task-gates`; the server's other readers
 //! of a gate ask it the same way, through the same [`Kept`], so a plugin is asked once a tip. A
-//! reader that must ask nothing (the sign-off lane, `taskview::signoff`) reads what is kept
-//! ([`kept_theirs`]) and merges it the same way.
+//! reader that must ask nothing (the sign-off lane, `taskview::signoff`) reads only what is kept
+//! and known ([`kept_theirs`]) and merges it the same way.
 
 use std::any::Any;
 use std::collections::HashMap;
@@ -820,12 +820,11 @@ pub fn theirs(
         .collect()
 }
 
-/// What an answerer with nothing kept for a task as it is now says, read where nothing is asked.
-pub const NOT_KEPT: &str = "no answer kept for this tip yet";
-
-/// [`theirs`] as `kept` holds it now, asking nothing, for a reader that must start no answerer's
-/// work (the sign-off lane): an answerer with no answer kept for `asked` stands in as [`failed`],
-/// [`NOT_KEPT`] its detail, as one that cannot answer does.
+/// The known gates `answerers` have answered for `asked`, as `kept` holds them now, asking nothing,
+/// for a reader that must start no answerer's work (the sign-off lane). An answerer with nothing
+/// kept for the task as it is now, or an error kept, gives none, and neither does a gate answered
+/// `unknown`: what a reader that never asks cannot know leaves the Symphony's gate of its name to
+/// decide, never a stand-in made of the names the answerer gave other tasks.
 pub fn kept_theirs(
     kept: &Kept,
     root: &Path,
@@ -834,18 +833,14 @@ pub fn kept_theirs(
 ) -> Vec<Gate> {
     answerers
         .iter()
-        .flat_map(|(plugin, answerer)| {
-            let why = match kept.kept(root, plugin, *answerer, asked) {
-                Some(Ok(gates)) => return gates,
-                Some(Err(why)) => why,
-                None => NOT_KEPT.to_string(),
-            };
-            failed(
-                answerer.name(),
-                &kept.names(root, plugin, answerer.name()),
-                &why,
-            )
-        })
+        .filter_map(
+            |(plugin, answerer)| match kept.kept(root, plugin, *answerer, asked) {
+                Some(Ok(gates)) => Some(gates),
+                Some(Err(_)) | None => None,
+            },
+        )
+        .flatten()
+        .filter(|gate| gate.state != GateState::Unknown)
         .collect()
 }
 

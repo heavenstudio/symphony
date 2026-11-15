@@ -51,12 +51,16 @@ impl Judged<'_> {
         self.current() && self.waits.changes() && !self.answered
     }
 
-    /// Whether its landing waits on no review at the tip now: the record judged that tip and names
-    /// neither [`REVIEW`] nor [`alarm::CHANGES`]. The project's own review gate, as its landing
-    /// keeps it, is then met or not needed there, so the task waits on no reviewer
-    /// (`review_unreviewed`); a record of another tip says nothing of the tip now.
+    /// Whether its landing waits on no review at the tip now: the repository told that tip, the
+    /// record judged it, and it names neither [`REVIEW`] nor [`alarm::CHANGES`]. The project's own
+    /// review gate, as its landing keeps it, is then met or not needed there, so the task waits on
+    /// no reviewer (`review_unreviewed`). A record of another tip, or of a tip nobody can tell (a
+    /// branch not named for its slug, or gone), says nothing of the tip now, so the task is listed.
     pub(super) fn reviewed(&self) -> bool {
-        self.current() && !self.waits.changes() && !self.waits.on.contains(&REVIEW)
+        self.tip.is_some()
+            && self.current()
+            && !self.waits.changes()
+            && !self.waits.on.contains(&REVIEW)
     }
 
     /// What its line in the alarm says of it, after when it went into review.

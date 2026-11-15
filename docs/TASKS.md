@@ -1464,14 +1464,15 @@ posted no card, stays in its own column however its documents stand.
 
 A project's plugin that answers a gate named `owner` for the task ([Gates](#gates))
 decides in that rule's place: the open, executed task is in the lane while that
-gate is held, card or none. The lane reads the answer the server keeps for the
-task's status and tip and never asks the plugin for it, so only a read of the
-task's gates (its page) starts the plugin's work. A plugin that has answered
-`owner` for any task but keeps no answer for this one as it is now (a new tip, a
-new status) leaves it out of the lane, unknown, never judged by its cards
-instead; where the plugin's answer has no `owner` gate, or it never answered
-one, the rule above holds. The lane is read again when the board, a message, a
-waiting card or a kept answer changes.
+gate is held, card or none, and out of it while the gate is met, waived or
+missing. The lane reads the answer the server keeps for the task's status and
+tip and never asks the plugin for it, so only a read of the task's gates (its
+page) starts the plugin's work. Only a known gate kept for that task decides:
+with no answer kept for it as it is now (before its page is read, after a new
+tip or a new status), an error kept, an answer with no `owner` gate or one
+answered `unknown`, the rule above holds, so the lane errs toward showing the
+owner what may wait on them. The lane is read again when the board, a message,
+a waiting card or a kept answer changes.
 
 **`done` is reached only by a reviewer's `approve` (its orchestrator's, on a fast
 fix), a landing, for a subtask its executor's `done`, or a close as covered by another
@@ -2603,8 +2604,10 @@ in progress is.
   landing keeps it, is met there or not needed, and that replaces the
   Symphony's: PULL does not list the task as `review_unreviewed`, though no
   reviewer holds it. A record of another tip, or none, says nothing of the tip
-  now, and a review with no reviewer is listed. A reader that cannot see the
-  task's branch takes the record as judging its tip, as for rework.
+  now, and a review with no reviewer is listed. A task whose tip the reader
+  cannot tell (no repository, or a branch not named for its slug or gone) is
+  listed too, its record unread there, unlike rework: the row errs toward
+  listing.
 
 ## Where the time goes
 

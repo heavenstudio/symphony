@@ -351,10 +351,13 @@ fn a_review_whose_landing_waits_on_no_review_at_its_tip_waits_on_no_reviewer() {
     // One still waits on review; one's record judged a tip its branch has moved past; one has none.
     c.waits("sim/needs", "sim/needs-1: certificate, review");
     c.waits("sim/stale", "sim/stale-0: certificate");
+    // One's branch the repository does not tell (not named for its slug, or gone).
+    c.task("sim/gone", "review");
+    c.waits("sim/gone", "sim/gone-1: certificate");
     let d = c.digest();
     assert_eq!(
         slugs(&d, "review_unreviewed"),
-        ["sim/needs", "sim/none", "sim/stale"],
+        ["sim/gone", "sim/needs", "sim/none", "sim/stale"],
         "the project's review gate decides where its landing said it at the tip now"
     );
     assert_eq!(slugs(&d, "in_progress_orphaned"), [""; 0], "none is rework");
@@ -362,11 +365,21 @@ fn a_review_whose_landing_waits_on_no_review_at_its_tip_waits_on_no_reviewer() {
     c.tip("sim/met", "sim/met-2", now + MINUTE);
     assert_eq!(
         slugs(&c.digest(), "review_unreviewed"),
-        ["sim/met", "sim/needs", "sim/none", "sim/stale"]
+        ["sim/gone", "sim/met", "sim/needs", "sim/none", "sim/stale"]
     );
-    // With no repository to tell the tip, a record is taken to judge it, as the alarm takes it.
+    // With no repository to tell any tip, no record is read for the row: every one is listed.
     let d = digest_with_tips(&c.f.store, &[], None, None, c.f.now(), &[]).unwrap();
-    assert_eq!(slugs(&d, "review_unreviewed"), ["sim/needs", "sim/none"]);
+    assert_eq!(
+        slugs(&d, "review_unreviewed"),
+        [
+            "sim/gone",
+            "sim/met",
+            "sim/needs",
+            "sim/none",
+            "sim/nothing",
+            "sim/stale"
+        ]
+    );
 }
 
 #[test]
