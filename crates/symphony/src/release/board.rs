@@ -275,6 +275,21 @@ fn since(night: &Night<'_>) -> String {
     text.trim_end().to_string()
 }
 
+/// The line that names the commits a red check came between, the last green run's and the
+/// candidate, by their full names, for the roll-up to list the landings between them
+/// ([`symphony_board::red::BETWEEN`]); nothing when no green run is recorded or the run had no
+/// candidate.
+fn between(night: &Night<'_>) -> String {
+    match night.green {
+        Some(green) if !night.commit.is_empty() => format!(
+            "{}{green}..{}\n",
+            symphony_board::red::BETWEEN,
+            night.commit
+        ),
+        _ => String::new(),
+    }
+}
+
 /// Why a red is staffed first and how it is fixed: what a red check's task, and a stop's an
 /// executor clears, say.
 const FIRST: &str = "It blocks every release, so it is staffed before anything else and fixed as \
@@ -501,7 +516,8 @@ fn closed_by(name: &str, night: &Night<'_>) -> String {
 /// names failed and its last lines ([`quoted`]), what of it is
 /// the environment's (files of its build gone while it ran), the commands that rerun its failures
 /// alone, the commits since the last green run, how a release candidate's red is fixed ([`held`]),
-/// who fixes it, how its fix is approved, the open red `beside` it ([`beside`]) and what closes it.
+/// who fixes it, how its fix is approved, the open red `beside` it ([`beside`]), what closes it and
+/// the commits it came between ([`between`]).
 fn body(ran: &Ran, night: &Night<'_>, beside: Option<&str>) -> String {
     format!(
         "The Symphony release run is red in `{name}` on {on} at {commit} (run {id}, {when}).\n\n\
@@ -516,7 +532,9 @@ fn body(ran: &Ran, night: &Night<'_>, beside: Option<&str>) -> String {
          Who fixes: any free executor takes this from the board. {FIRST} {LANDS}\n\n\
          {beside}\
          {closed}\n\n\
+         {between}\
          key: {key}\ncheck: {name}",
+        between = between(night),
         held = night.candidate.map(held).unwrap_or_default(),
         on = if night.rerun {
             "the release candidate"
@@ -1897,6 +1915,33 @@ mod tests {
             "No green run is recorded yet, so no range of commits narrows it."
         );
         assert!(since(&night(&[])).contains("this same commit (beef01234567)"));
+    }
+
+    /// A red check's task names the commits it came between on a line of its own, the last green
+    /// run's and the candidate, in full, which the board reads back as the red's range; none
+    /// without a green run or a candidate.
+    #[test]
+    fn a_red_task_names_the_commits_it_came_between_for_the_roll_up() {
+        let board = Fake::default();
+        report(&board, &night(&[]), &[ran("verify", 1)]);
+        let filed = board.thread("tests/release-red-verify").join("\n");
+        assert!(
+            filed.contains("\nbetween: beef0123456789abcdef..cafe0123456789abcdef\nkey: verify\n"),
+            "{filed}"
+        );
+        assert_eq!(
+            symphony_board::red::between(&filed),
+            Some("beef0123456789abcdef..cafe0123456789abcdef")
+        );
+        let mut first = night(&[]);
+        first.green = None;
+        let mut early = night(&[]);
+        early.commit = "";
+        for (night, why) in [(first, "no green run"), (early, "no candidate")] {
+            let said = body(&ran("verify", 1), &night, None);
+            assert!(!said.contains("between: "), "{why}: {said}");
+            assert_eq!(symphony_board::red::between(&said), None, "{why}");
+        }
     }
 
     /// A verify log in which cargo named failed targets: `count` tests of the lib failing, and an

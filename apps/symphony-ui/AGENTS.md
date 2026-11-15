@@ -802,7 +802,9 @@ never the whole target, which the release run runs.
   with `format=blocks`, no rendered HTML on that path.
   A document's questions and the `+` sheet's chat read again when the page's feed
   says so (the chat by `frame::use_asks_heard`): its `asks` region names a moved thread (by id
-  and document path) or a new chat recipient, or a stream opens again. The page
+  and document path) or a new chat recipient, or a stream opens, first or after a loss. A
+  document page that opens its stream again for other sections, from the cursor of the last
+  event it heard, missed nothing, and reads nothing again (`followDocument`). The page
   module forwards that region to every module as a `review:asks` event; a read
   that fails tries again every 3 s until one answers, and none polls. A document's
   question read the next one replaces aborts its fetch (`getJson`'s signal): a fetch whose

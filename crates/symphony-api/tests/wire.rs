@@ -617,6 +617,22 @@ fn a_day_file_reads_and_writes_back_as_the_same_json_and_its_hours_sum_to_the_sp
     );
     let written = serde_json::to_value(&older).unwrap();
     assert_eq!(written["hours"][0]["top"]["done"], Value::Null);
+    // A red names the commits it came between and the tasks that landed in them.
+    let release = &day.reds[1];
+    assert_eq!(
+        (release.between.as_deref(), release.landed.as_deref()),
+        (
+            Some(
+                "1a5037fc9e2b4d6a8c0e1f3a5b7c9d0e2f4a6b8c..fd70821942b4c97d1e17b420217ada28988e27da"
+            ),
+            Some(
+                &[
+                    "tests/release-red-verify-lint".to_string(),
+                    "app/board-filter".into()
+                ][..]
+            )
+        )
+    );
     let decisions = day.decisions.unwrap();
     assert_eq!(
         decisions.open[0].since, None,
@@ -692,5 +708,14 @@ fn a_day_file_without_its_later_figures_reads_with_them_empty() {
             counts.withdrawn
         ),
         (2, 1, 0, 0)
+    );
+    let red: symphony_api::reports::Red = serde_json::from_str(
+        r#"{"slug":"tests/main-red-1","series":"main","filed":1799982000.0,"status":"ready"}"#,
+    )
+    .unwrap();
+    assert_eq!(
+        (red.closed, red.between, red.landed),
+        (None, None, None),
+        "a red of a file written before reds named their commits names none"
     );
 }
