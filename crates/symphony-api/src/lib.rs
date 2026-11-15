@@ -594,6 +594,7 @@ pub struct TaskHistory {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct AgentPage {
     pub view: Agents,
     pub tasks: Vec<Task>,

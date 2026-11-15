@@ -12,7 +12,9 @@ import {
   placesAlike,
   readWork,
   samePhases,
+  scopedPhases,
   shownPhases,
+  shownScoped,
   taskStage,
 } from "./work";
 
@@ -288,5 +290,79 @@ describe("a freshness", () => {
     ["unknown", "unknown"],
   ] as const)("%s reads %s", (freshness, word) => {
     expect(freshnessWord(freshness)).toBe(word);
+  });
+});
+
+describe("an agent's, a machine's and the unassigned phases", () => {
+  const op = anOperation;
+
+  it("deduplicate a machine's reports of one operation without merging other machines'", () => {
+    const build = op("alpha", "same-nonce", "build", "running");
+    const twice = aWork([
+      aMachine("alpha", [build, { ...build }]),
+      aMachine("beta", [op("beta", "same-nonce", "test", "queued")]),
+    ]);
+    expect(scopedPhases(twice, { agent: "worker-a" }).map(phaseLabel)).toEqual([
+      "Build running · alpha",
+      "Test queued · beta",
+    ]);
+  });
+
+  it("count only builds and tests, owned by the agent or the task they name", () => {
+    const work = aWork([
+      aMachine("alpha", [
+        op("alpha", "build", "build", "queued"),
+        op("alpha", "native", "test", "running", { task: null }),
+        op("alpha", "setup", "setup", "running"),
+        op("alpha", "command", "command", "running"),
+        op("alpha", "reservation", "reservation", "queued"),
+      ]),
+    ]);
+    expect(scopedPhases(work, { task: "sim/a" }).map(phaseLabel)).toEqual(["Build queued · alpha"]);
+    expect(scopedPhases(work, { agent: "worker-a" })).toHaveLength(2);
+    expect(scopedPhases(work, { agent: "other-worker" })).toEqual([]);
+    expect(scopedPhases(work, { machine: "alpha" })).toHaveLength(2);
+    expect(scopedPhases(work, { machine: "beta" })).toEqual([]);
+  });
+
+  it("keep a stale machine's sibling stale in every scope, and an unproven row apart", () => {
+    const work = aWork([
+      aMachine(
+        "alpha",
+        [
+          op("alpha", "test", "test", "running"),
+          op("alpha", "new-sibling", "build", "queued", { task: "sim/new" }),
+        ],
+        { freshness: "stale", age_ms: 10_002 },
+      ),
+    ]);
+    for (const scope of [{ task: "sim/a" }, { agent: "worker-a" }, { machine: "alpha" }]) {
+      expect(shownScoped(work, scope, true).map(phaseLabel)).toContain(
+        "Observed Test running · alpha · stale",
+      );
+    }
+    const foreign = aWork([
+      aMachine("alpha", [op("foreign", "test", "test", "running")], { freshness: "stale" }),
+    ]);
+    expect(scopedPhases(foreign, { machine: "foreign" }).map(phaseLabel)).toEqual([
+      "Observed Test running · Machine unknown · conflicting evidence",
+    ]);
+    expect(scopedPhases(foreign, { machine: "alpha" })).toEqual([]);
+  });
+
+  it("of the unassigned are the operations no machine vouches for, never deduplicated", () => {
+    const legacy = op(null, null, "build", "queued");
+    const claimed = op("claimed-alpha", "same-untrusted-nonce", "build", "queued");
+    const work = aWork([aMachine("alpha", [op("alpha", "b", "test", "running")])], {
+      unassigned: [legacy, legacy, claimed, claimed],
+    });
+    const rows = scopedPhases(work, "unassigned");
+    expect(rows.map(phaseLabel)).toEqual(
+      Array(4).fill("Observed Build queued · Machine unknown · unknown"),
+    );
+    expect(scopedPhases(work, { machine: "claimed-alpha" })).toHaveLength(2);
+    expect(shownScoped(work, "unassigned", false).map((row) => row.freshness)).toEqual(
+      Array(4).fill("unknown"),
+    );
   });
 });

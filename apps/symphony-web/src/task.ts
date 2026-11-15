@@ -140,6 +140,11 @@ function bytes(a: Uint8Array, b: Uint8Array): number {
   return Math.sign(a.length - b.length);
 }
 
+/** `a` against `b` as Rust orders two strings, by their UTF-8 bytes: -1, 0 or 1. */
+export function textOrder(a: string, b: string): number {
+  return bytes(utf8.encode(a), utf8.encode(b));
+}
+
 const isDigit = (byte: number | undefined) => byte !== undefined && byte >= 0x30 && byte <= 0x39;
 
 /** Where the run of digits starting at `at` in `text` ends. */
