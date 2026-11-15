@@ -96,11 +96,20 @@ and home draw whole.
   | `/api/task-gates` | 252 |
 
   A task's reads differ a hundredfold, so which waits behind which is most of what a reader
-  feels. One after another, as the page orders them, the thread is answered at about 219 ms of
-  server time and the gates at about 400; side by side, at 71 and 252, the head at 146 (inferred,
-  the measured parts added; a browser's own time is on top). `symphony-build synced` measured the
-  same page on main's build under load: its copy drawn at 26 to 34 ms, checked at 98 to 127, synced
-  at 352 to 534 (the thread of `perf/pages-time-to-synced`).
+  feels, and it differs by visit:
+
+  - **A first visit to a task the device has not kept** orders them one after another: the board,
+    the page, then the thread and the gates. The thread is answered at about 219 ms of server time
+    and the gates at about 400; side by side they would be at 71 and 252, the head at 146, each
+    about 150 ms sooner (inferred, the measured parts added; a browser's own time is on top).
+  - **A return visit** already has them side by side. The page and the kept thread are checked
+    together once the board is read (`task-live.ts`, `load`), and the gates read starts as soon as
+    its part nears the screen on the page drawn from the device, behind neither (`gates.tsx`). A
+    store brings the thread about 2 ms sooner there, the board's read, and the gates no sooner.
+    Synced on that visit is bounded by the gates' own 252 ms, which no option here shortens:
+    `perf/task-gates-kept-by-tip` does. `symphony-build synced` measured such a visit on main's
+    build under load: the copy drawn at 26 to 34 ms, checked at 98 to 127, synced at 352 to 534
+    (the thread of `perf/pages-time-to-synced`).
 
 ## The pattern wanted
 
@@ -143,8 +152,12 @@ the part that needs the most care, and the reason for doing it once: `task-live.
   charts come apart only with a split on the server ([c](#c-the-server-sending-parts-as-they-are-ready)).
 - **Cost.** Code: the probe's store is 114 lines with its two sample components; the real one,
   with freshness, versions and the near-the-screen start, perhaps 300 and its tests (inferred),
-  against the hand-written order it takes out of five modules. Bytes: 143 gzipped beyond a page
-  read whole (measured, below). Server: the version header on every read. Checks: none change.
+  against the hand-written order it takes out of five modules. Bytes: the probe's store is 143
+  gzipped beyond a page read whole (measured, below); the real one's are not measured, and about
+  nothing beside the order it replaces (inferred). Server: the version header on every read; and,
+  for a part to refresh when its data changes, a feed event when the server writes a report's day
+  file or a run, with Reports and runs opening the feed they do not open today. Checks: none
+  change.
 
 ### b. A library for the client side
 
@@ -227,12 +240,13 @@ which stands ([its card](../DECISIONS.md#graphql)):
   bring it. The feed's rules would still be rebuilt on top.
 - **New: incremental delivery is what `@defer` is for.** One query, its deferred parts sent as
   they are ready. It is still outside the released specification: an RFC in draft, experimental in
-  GraphQL.js 17 "pending spec work"
-  ([the RFC](https://rfcs.graphql.org/rfcs/1110/), [GraphQL.js](https://graphql-js.org/docs/defer-stream)),
-  and both Rust libraries hold an open request for it, since 2021 and 2020
-  ([async-graphql #403](https://github.com/async-graphql/async-graphql/issues/403),
-  [Juniper #734](https://github.com/graphql-rust/juniper/issues/734)), so neither is taken to
-  serve it (inferred).
+  GraphQL.js 17, where incremental delivery is "pending GraphQL specification work"
+  ([the RFC](https://rfcs.graphql.org/rfcs/1110/), [GraphQL.js](https://graphql-js.org/docs/defer-stream)).
+  Neither Rust library serves it: async-graphql removed both directives after its 1.x line, and
+  its maintainer wrote that they return "after these directives have become standards"
+  ([async-graphql #403](https://github.com/async-graphql/async-graphql/issues/403), open); Juniper's
+  request has been open since 2020 with no pull request
+  ([Juniper #734](https://github.com/graphql-rust/juniper/issues/734)).
 - **Unchanged:** it is the streamed answer of (c) with a schema: one response, no `304` a part.
   The bytes (10 to 58 kB), the plugins' blocks crossing untyped and the second set of types are as
   the card weighed them.
@@ -274,9 +288,10 @@ Nothing here reopens it.
 A, in this order, each step a task with `symphony-build synced` run before and after on the same
 scratch board under the day's load, posting the first important part's time and synced:
 
-1. **The store and a task's page**, where the gap is widest (synced at 352 to 534 ms against a
-   copy drawn at 26 to 34): the six parts read side by side, the version header on every read. It
-   takes in what `app/task-page-reads-beside-board` did by hand.
+1. **The store and a task's page**, the page with the most parts: the six read side by side, the
+   version header on every read. The gain is a first visit's, about 150 ms for the thread and the
+   gates under load (inferred); a return visit, whose reads are side by side already, gains about
+   nothing in time. It takes in what `app/task-page-reads-beside-board` did by hand.
 2. **`live.tsx`'s loop**: the feed opened beside the board's read, so `/tasks`, the queue and the
    agents page stop starting one round trip late.
 3. **Reports**: the answer split by source, three parts, and a feed event in place of the timer.
@@ -294,6 +309,7 @@ has data that cannot come by a read a part.
   (`perf/pages-time-to-synced`).
 - **Read in code:** what each page reads and behind what; in docs, the libraries' behaviour and
   the state of `@defer`.
-- **Inferred, not tried:** the store's real size; a task page's times with its reads side by side;
+- **Inferred, not tried:** the store's real size; a task page's first-visit times with its reads
+  side by side;
   the version header letting the feed open from any read; what the Reports split gains under
   load. Step 1 measures the second and third before any other page moves.
