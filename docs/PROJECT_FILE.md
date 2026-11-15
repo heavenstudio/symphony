@@ -61,9 +61,11 @@ its reach, and it cannot navigate the app away, submit a form or open a window, 
 opens in the frame or not at all. The files beside it (stylesheets, scripts, pictures) load from
 under its entrypoint's address and from nowhere else, and it opens no connection, a fetch of its
 own files among them. For an entrypoint at the project's root that address is the whole project's,
-the app's own files and answers among it: the page can load any of them as a script, a stylesheet
-or a picture, a script running in the page's own origin, and fetch none, so no answer of the app's
-reaches it as data. Its route is the app's page, however it
+the app's own files and answers among it, and the page fetches none of them, so no answer of the
+app's reaches it as data. What it can run or apply from there, a script running in the page's own
+origin, is the project's own files and the client's static assets: the app's JSON answers and its
+feed are all sent with `X-Content-Type-Options: nosniff`, so the browser refuses each as a script
+or a stylesheet, whether its route answered or not. Its route is the app's page, however it
 is asked for; the frame loads the file at the route's own address with `?raw` added, and the file
 is only ever served under that same sandbox, so no address of it runs with the app's origin. An
 HTML document has none of a Markdown
