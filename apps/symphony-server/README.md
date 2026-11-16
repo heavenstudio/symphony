@@ -154,11 +154,11 @@ keeping the tag and `no-store` (`src/api/validated.rs`, applied where every read
 (`version`), which moves with every change on the board, so their tag is of the JSON with the
 cursor left out: it moves only with the document. An outline's check that names the tag of the copy
 the hub follows for that page is answered `304` at the feed's cursor without rendering the
-document: the hub renders that copy again when anything a render reads that it tracks changed, and
-makes its outline's tag once for each copy (`Hub::outline_kept`). A check with another tag or none,
-of a document not followed yet, of a copy whose tasks are no longer the ones that link it on the
-board as last read (a board read asks for no refresh), or of one that names a file from outside the
-entrypoints' folders by its change time and size, which no refresh watches, renders as a read does.
+document: the hub renders that copy again when anything a render reads that it tracks changed, its
+linking tasks among them, which a board read keeps current (`Hub::update_board`), and makes its
+outline's tag once for each copy (`Hub::outline_kept`). A check with another tag or none, of a
+document not followed yet, or of one that names a file from outside the entrypoints' folders by its
+change time and size, which no refresh watches, renders as a read does.
 A page whose kept copy is still current takes the cursor from `/api/board`. Every JSON read names
 the feed's cursor it was read at in a header (`symphony_api::VERSION_HEADER`), on its `200` and its
 `304` alike: the server takes the cursor before it reads the answer, so every event at or before it

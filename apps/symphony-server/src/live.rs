@@ -1472,7 +1472,8 @@ impl Hub {
         if held.error.is_some() {
             changed.push(json!({"region":"tasks-status", "data":{"available":true}}));
         }
-        // A document rendered while the board was unread lists none of its tasks.
+        // A document rendered while the board was not read yet, or could not be read, lists none of
+        // its tasks, however little the board moved since.
         let relinked = held.error.is_some()
             || held
                 .last

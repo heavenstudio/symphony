@@ -2,8 +2,8 @@
 //! its tick's) that moves a task linking a followed document, or a task coming to link it, renders
 //! that document again and no other, and the feed the page follows it on sends its new tasks; one
 //! that moves nothing a followed document lists renders nothing and sends it nothing, and it looks
-//! at the followed documents only once a task came, went or moved its slug, title, status or links.
-//! Renders are counted, never timed.
+//! at the followed documents only once a task came, went or moved its slug, title, status or links,
+//! or the board could not be read before it. Renders are counted, never timed.
 
 use super::{Hub, relinks};
 use crate::front::{Shared, router};
@@ -325,6 +325,36 @@ fn a_document_read_before_the_board_was_read_lists_its_tasks_once_the_board_is_r
             .tasks
             .is_empty()
     );
+    let rendered = served.renders();
+    served.hub.board_read(&f.store).unwrap();
+    assert_eq!(served.renders(), rendered + 1);
+    let (changes, _) = served.fed("", cursor, TOPIC);
+    let told = documents(&changes);
+    assert_eq!(told.len(), 1, "{changes:?}");
+    let title = f.store.get("tools/topic").unwrap().title;
+    assert_eq!(
+        told[0]["data"]["tasks"],
+        tasks(&[("tools/topic", title.as_str(), "ready")])
+    );
+}
+
+#[test]
+fn a_document_read_while_the_board_could_not_be_read_lists_its_tasks_once_it_is_read_again() {
+    let tree = Tree::new();
+    let root = repository(&tree);
+    let f = board();
+    let served = Served::new(&root);
+    served.hub.board_read(&f.store).unwrap();
+    // The board's server restarts: a tick's read fails, and the page opens the document meanwhile.
+    served.hub.board_error("the board is restarting".into());
+    let cursor = served.open("", TOPIC);
+    assert!(
+        served.hub.pages.read().unwrap()[""].documents[TOPIC]
+            .tasks
+            .is_empty(),
+        "a render while the board cannot be read lists no task"
+    );
+    // The next tick reads the board as it was: nothing on it moved.
     let rendered = served.renders();
     served.hub.board_read(&f.store).unwrap();
     assert_eq!(served.renders(), rendered + 1);
