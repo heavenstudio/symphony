@@ -70,6 +70,10 @@ pub fn release(child: &mut symphony_board::sys::Child) {
     while began.elapsed() < std::time::Duration::from_secs(5)
         && matches!(child.try_wait(), Ok(None))
     {
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "no-timed-waits baseline: looks again for its child's end, where a wait on the child is the event"
+        )]
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
 }

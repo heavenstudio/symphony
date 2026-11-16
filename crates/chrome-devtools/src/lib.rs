@@ -812,6 +812,10 @@ impl Owner {
                     ),
                 ));
             }
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "no-timed-waits baseline: looks again for the browser's answer, where its pipe is the event"
+            )]
             std::thread::sleep(POLL);
         }
     }
@@ -1089,6 +1093,10 @@ fn cleanup_profile(profile: &Path, group: u32) -> std::io::Result<()> {
         }
         // Killed members add no CPU while waiting for reaping. A missed live helper
         // spends the budget instead of keeping the leash alive forever.
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "no-timed-waits baseline: looks again for a process group's end, which no wait reports"
+        )]
         std::thread::sleep(POLL);
     }
 }

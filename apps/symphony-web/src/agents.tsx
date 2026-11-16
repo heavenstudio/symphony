@@ -21,7 +21,7 @@ import {
 } from "./agents-live";
 import { Button } from "./button";
 import { useFrame } from "./frame";
-import { flushReload, markBoardReady, PageNotices } from "./live";
+import { markBoardReady, PageNotices } from "./live";
 import { useMount } from "./mount";
 import { href } from "./project";
 import { scrollAnchor } from "./route";
@@ -51,11 +51,7 @@ export function AgentsPage({ scope }: { scope: string }) {
     live.current = agents;
     redraw();
     void agents.start(frame);
-    const minutes = setInterval(flushReload, 60_000);
-    return () => {
-      controller.abort();
-      clearInterval(minutes);
-    };
+    return () => controller.abort();
   }, [scope, frame]);
   useEffect(() => {
     if (boardRead) markBoardReady();

@@ -17,7 +17,6 @@ import { focusedLink, focusedSlug, takeFocus, useKeptPlace } from "./boardplace"
 import { useOneColumnASwipe } from "./boardswipe";
 import { Button } from "./button";
 import { type Layout, layoutAt, rowHeight } from "./cardheight";
-import { sleep } from "./feed";
 import { useMount } from "./mount";
 import { href, scoped } from "./project";
 import { getJson, said } from "./request";
@@ -25,6 +24,8 @@ import { SelectField } from "./select";
 import { load, save } from "./storage";
 import { byPriority, byRecent, isTask, readListing } from "./task";
 import { sameCard, statusWords, TaskCard } from "./taskcard";
+// biome-ignore lint/style/noRestrictedImports: no-timed-waits baseline: keepRows measures what it keeps every 100 ms, where a ResizeObserver of each column is the event
+import { sleep } from "./timing";
 import { failed } from "./trouble";
 import { KEEP_MS, NearViewport, Skeleton, waitsNear, windowWidth } from "./viewport";
 import type { MachineWork, Task, TaskListing } from "./wire";

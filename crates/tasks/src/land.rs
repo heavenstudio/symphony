@@ -1216,6 +1216,10 @@ fn hold(
                     let _ = out.flush();
                     said = true;
                 }
+                #[expect(
+                    clippy::disallowed_methods,
+                    reason = "no-timed-waits baseline: tries the land's lock again until it is free, where a blocking lock is the event"
+                )]
                 std::thread::sleep(Duration::from_millis(200));
             }
             Err(TryLockError::Error(e)) => return Err(at(&path, &e)),
@@ -1500,6 +1504,10 @@ fn end_leftovers(group: u32) {
     sys::end_group(group, false);
     let asked = Instant::now();
     while sys::group_alive(group) && asked.elapsed() < GRACE {
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "no-timed-waits baseline: looks again for a process group's end, which no wait reports"
+        )]
         std::thread::sleep(POLL);
     }
     if sys::group_alive(group) {

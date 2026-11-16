@@ -309,6 +309,10 @@ fn fetched_by(
                 format!("{problem} (tried {tried} times)")
             });
         }
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "no-timed-waits baseline: tries crates.io again after a fixed pause, where a backoff is the helper"
+        )]
         std::thread::sleep(pause);
         tried += 1;
     }

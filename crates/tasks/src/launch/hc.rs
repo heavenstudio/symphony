@@ -188,6 +188,10 @@ pub trait Hc {
         loop {
             match self.get(terminal) {
                 Ok(Some(found)) if text(found.get("state")) != "live" => return true,
+                #[expect(
+                    clippy::disallowed_methods,
+                    reason = "no-timed-waits baseline: looks again for a terminal's state, which its app announces to no one"
+                )]
                 Ok(Some(_)) if Instant::now() < until => std::thread::sleep(ENDING_LOOK),
                 Ok(_) | Err(_) => return false,
             }

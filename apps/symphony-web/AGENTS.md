@@ -56,7 +56,15 @@ lockfile written again, in a task of their own.
   typescript-eslint, whose TypeScript support ends below the TypeScript this package pins, and it
   is one tool and one file for both jobs. `biome ci --error-on-warnings` makes a warning an error.
   Two style rules are off under `src/styles/` alone, the sheets carried whole from the retired
-  client ([their README](src/styles/README.md)).
+  client ([their README](src/styles/README.md)). Three more keep RULES.md `code/no-timed-waits`:
+  `noRestrictedGlobals` refuses a bare `setTimeout` or `setInterval` outside `src/timing.ts`,
+  the plugin `no-timed-waits.grit` one reached through an object (`window.setTimeout`), and
+  `noRestrictedImports` `src/timing.ts`'s `sleep`. A wait is for its event (a socket's message,
+  `pageshow`, a `MutationObserver`'s change, the reader's press); a number paces one only through
+  `src/timing.ts`'s helpers: `retryWait` (the retry's wait, `Backoff`'s in `state.ts`),
+  `debounce`, `deadline` (a bound on a wait for an event) and `tick` (a clock), and a unit test
+  yields a turn through `turn()` in `src/testing.ts`. A site kept is a `biome-ignore` whose
+  reason begins `no-timed-waits baseline:`.
 - **Vitest** runs the unit tests, with `@vitest/coverage-v8` for their coverage.
 
 `just client-lint` (`check.sh`) runs the wire types' check and the tests of the example that
@@ -515,7 +523,10 @@ What holds on every page, and each page's contract where its section above names
   background. A board
   or a `client` change naming another build than the
   page's own module script loads the page again, once per build
-  (`reloadFor` in `src/state.ts`, remembered in `sessionStorage`).
+  (`reloadFor` in `src/state.ts`, remembered in `sessionStorage`); while the reader is in the
+  middle of something (`engaged` in `src/route.ts`) it is held, and goes at the first event that
+  can end that (`whenFree`: the focus leaving the fields, a busy region, list box or details
+  changing), never on a timer.
 - **Cache.** What a page drew is kept on the device so a return visit draws at once
   ([the client cache](../../docs/analysis/client-cache.md)). The store is `shell/cache.js`
   (`window.symphonyCache`), which `package.sh` puts first in the shell's one script: every page

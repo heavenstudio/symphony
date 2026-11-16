@@ -107,6 +107,10 @@ fn interrupting_the_hook_stops_and_reaps_its_beat_even_with_pipe_backpressure() 
                 Instant::now() < until,
                 "the {padding}-byte fixture beat never started in {CEILING:?}"
             );
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "no-timed-waits baseline: a test looks again for its condition by hand, where test_time::wait::until is the helper"
+            )]
             std::thread::sleep(Duration::from_millis(2));
         }
         let pid = hook.beat.unwrap();
@@ -127,6 +131,10 @@ fn interrupting_the_hook_stops_and_reaps_its_beat_even_with_pipe_backpressure() 
                 Instant::now() < until,
                 "interrupted hook still waits on beat {pid} after {CEILING:?}"
             );
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "no-timed-waits baseline: a test looks again for its condition by hand, where test_time::wait::until is the helper"
+            )]
             std::thread::sleep(Duration::from_millis(2));
         };
         assert!(status.success(), "silent hook exit: {status:?}");

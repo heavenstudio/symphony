@@ -8,6 +8,7 @@ import { openActivity } from "./frame";
 import { PictureView } from "./media";
 import { documentsHref, href, project } from "./project";
 import { TaskTag } from "./task-tag";
+import { tick } from "./timing";
 import type {
   Board,
   Card,
@@ -55,10 +56,19 @@ function percent(part: number, whole: number): number {
 function useNow(): number {
   const [now, setNow] = useState(() => localMoment(new Date()));
   useEffect(() => {
-    const minutes = setInterval(() => setNow(localMoment(new Date())), 60_000);
-    return () => clearInterval(minutes);
+    const controller = new AbortController();
+    void keepTime(controller.signal, setNow);
+    return () => controller.abort();
   }, []);
   return now;
+}
+
+/** The moment it is where the owner is, told to `shown` at each minute's tick until `signal` ends. */
+export async function keepTime(signal: AbortSignal, shown: (now: number) => void): Promise<void> {
+  while (!signal.aborted) {
+    await tick(60_000, signal);
+    if (!signal.aborted) shown(localMoment(new Date()));
+  }
 }
 
 /** The body of `/`: the board drawn at `now` for `view`'s project. */

@@ -171,6 +171,7 @@ fn convert(mut command: Command, dest: &Path, timeout: Duration) -> bool {
                 match child.try_wait() {
                     Ok(Some(status)) => return status.success(),
                     Ok(None) if start.elapsed() < timeout => {
+                        #[expect(clippy::disallowed_methods, reason = "no-timed-waits baseline: looks again for its child's end, where a wait on the child under a deadline is the event")]
                         std::thread::sleep(
                             Duration::from_millis(10).min(timeout - start.elapsed().min(timeout)),
                         );

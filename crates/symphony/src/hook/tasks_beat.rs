@@ -260,6 +260,10 @@ fn beat_within(binary: &Path, raw: &[u8], passed: &mut dyn FnMut(Duration) -> bo
         }
         match child.try_wait() {
             Ok(Some(_)) => break,
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "no-timed-waits baseline: looks again for its child's end, where a wait on the child under a deadline is the event"
+            )]
             Ok(None) if !passed(start.elapsed()) => std::thread::sleep(Duration::from_millis(2)),
             _ => {
                 let _ = child.kill();

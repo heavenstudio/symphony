@@ -133,6 +133,10 @@ pub fn until<T>(
                 load: Load::now(),
             });
         }
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "the named helper of RULES.md code/no-timed-waits for a test's wait: test_time::wait::until"
+        )]
         std::thread::sleep(pause.min(backstop.saturating_sub(waited)));
         pause = pause.saturating_mul(2).min(LONGEST_PAUSE);
     }

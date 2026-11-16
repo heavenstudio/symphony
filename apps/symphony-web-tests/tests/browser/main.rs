@@ -872,6 +872,10 @@ fn a_page_whose_build_is_gone_loads_again_once_and_one_still_served_says_the_fai
     }
     // This stand-in serves no other build, so the page loaded again finds its build gone too: it
     // loads no more.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "no-timed-waits baseline: a test holds for a length of time to show the page loads no more"
+    )]
     std::thread::sleep(Duration::from_secs(3));
     assert_eq!(loads(&site), 1, "{:?}", site.requests());
     assert_eq!(chrome.eval("window.__kept === undefined"), json!(true));
@@ -1631,6 +1635,10 @@ fn a_stream_that_falls_silent_is_lost_and_healed_while_one_that_pings_holds() {
     wait_for_feed(&site).expect("the page never followed the feed");
     record_stale(&mut chrome);
     // The server pings as its board says: the stream holds past the longest silence allowed.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "no-timed-waits baseline: a test holds past the feed's longest silence to show the stream stays"
+    )]
     std::thread::sleep(SILENCE_GIVEN_UP + Duration::from_secs(2));
     assert_eq!(site.feed_requests(), 1, "a stream that pings was given up");
     assert!(!stale_seen(&mut chrome), "a stream that pings showed stale");
@@ -1676,6 +1684,10 @@ fn a_client_healed_onto_another_build_loads_the_page_again_once() {
     }
     // This stand-in still serves the old files, so the page loaded again is not the build the
     // board names either: it loads no more.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "no-timed-waits baseline: a test holds for a length of time to show the page loads no more"
+    )]
     std::thread::sleep(Duration::from_secs(3));
     assert_eq!(
         shells(&site),
@@ -1702,6 +1714,10 @@ fn a_stream_that_ends_as_soon_as_it_opens_is_tried_again_ever_later() {
     let before = site.board_requests();
     let feeds_before = site.feed_requests();
     site.drop_feeds();
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "no-timed-waits baseline: a test holds for a length of time to count the page's reads after its feeds drop"
+    )]
     std::thread::sleep(Duration::from_secs(8));
     let fetches = site.board_requests() - before;
     let feed_retries = site.feed_requests() - feeds_before;

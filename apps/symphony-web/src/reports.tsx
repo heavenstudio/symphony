@@ -20,11 +20,12 @@ import {
   sum,
   type Unit,
 } from "./chart";
-import { sleep } from "./feed";
 import { getIf, said } from "./request";
 import { field } from "./shared";
 import { Backoff } from "./state";
 import { load, save } from "./storage";
+// biome-ignore lint/style/noRestrictedImports: no-timed-waits baseline: reports reads again every EVERY_MS with no feed of its own, where a feed event of a roll-up is the wait
+import { sleep } from "./timing";
 import { failed, ready } from "./trouble";
 import { NearViewport } from "./viewport";
 import { type Grain, REPORTS_PATH, type ReportMark } from "./wire";

@@ -105,6 +105,10 @@ impl Store {
     /// lease lapses first.
     fn wait_on(&self, ask: u64, began: Instant) -> Result<Waited, Error> {
         loop {
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "no-timed-waits baseline: looks again in the store for another holder's pass to end, where a live query is the event"
+            )]
             std::thread::sleep(LOOK);
             let lease: Lease =
                 self.retrying(|| self.read(sql::LEASE, json!({"host": self.host})))?;
@@ -162,6 +166,10 @@ impl Store {
             }
             began = next.began.unwrap_or(began);
             if more {
+                #[expect(
+                    clippy::disallowed_methods,
+                    reason = "no-timed-waits baseline: paces the dispatcher's passes by a length of time"
+                )]
                 std::thread::sleep(BACK_OFF);
             }
         }

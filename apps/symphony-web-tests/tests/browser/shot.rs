@@ -3170,10 +3170,18 @@ fn a_dedicated_workers_script_answered_late_is_waited_for_and_what_its_worker_sa
         if running.try_wait().unwrap().is_some() {
             ended(running, "before its worker's script was asked for");
         }
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "no-timed-waits baseline: a test looks again for its condition by hand, where test_time::wait::until is the helper"
+        )]
         std::thread::sleep(Duration::from_millis(10));
     }
     // A second on, the shot still waits: a loaded machine only slows it, and it ends only once the
     // script is answered.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "no-timed-waits baseline: a test holds for a length of time to show the shot still waits"
+    )]
     std::thread::sleep(Duration::from_secs(1));
     if running.try_wait().unwrap().is_some() {
         ended(running, "with its worker's script still unanswered");
@@ -3624,6 +3632,10 @@ fn a_selector_that_never_appears_fails_within_the_timeout_naming_it_and_leaves_n
                 said(&output)
             );
         }
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "no-timed-waits baseline: a test looks again for its condition by hand, where test_time::wait::until is the helper"
+        )]
         std::thread::sleep(Duration::from_millis(10));
     };
     let output = running.wait_with_output().unwrap();
@@ -3765,6 +3777,10 @@ fn two_shots_at_once_each_have_a_profile_and_a_port_of_their_own() {
             Instant::now() < deadline,
             "two browsers never started: {launched:?}"
         );
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "no-timed-waits baseline: a test looks again for its condition by hand, where test_time::wait::until is the helper"
+        )]
         std::thread::sleep(Duration::from_millis(50));
     };
     let launched = launches(&records);

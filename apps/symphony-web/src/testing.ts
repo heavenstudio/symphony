@@ -322,10 +322,19 @@ export const reply = (status: number, body: unknown, etag?: string) =>
     headers: etag === undefined ? {} : { ETag: etag },
   });
 
+/**
+ * One turn of the event loop: what the code under test queued before it (a reply, a promise's
+ * callbacks) has run. The tests' one wait of this kind, by no length of time.
+ */
+export function turn(): Promise<void> {
+  // biome-ignore lint/style/noRestrictedGlobals: the named helper of the unit tests' turns: no length of time, the next task
+  return new Promise((done) => setTimeout(done, 0));
+}
+
 /** Lets the replies given so far reach the code that awaits them, until `asked` holds `count`. */
 export async function asking(asked: unknown[], count: number): Promise<void> {
-  for (let turn = 0; turn < 50 && asked.length < count; turn += 1) {
-    await new Promise((done) => setTimeout(done, 0));
+  for (let turns = 0; turns < 50 && asked.length < count; turns += 1) {
+    await turn();
   }
   expect(asked).toHaveLength(count);
 }

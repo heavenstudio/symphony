@@ -23,6 +23,37 @@ allow-print-in-tests = true
 # words. `..` keeps clippy's own list (JavaScript, GitHub, macOS and the rest).
 doc-valid-idents = ["SurrealDB", "SurrealKV", "SQLite", "GDScript", "CBOR", ".."]
 
+# No code waits a length of time and then looks or acts (RULES.md `code/no-timed-waits`): it waits
+# for the thing itself (a message, a signal, a child's end, a watcher's event) and acts at once. A
+# number only paces a named helper, which says so in an `#[expect]` of its own, and a site kept
+# until it is converted says why in `#[expect(clippy::disallowed_methods, reason = "no-timed-waits
+# baseline: ...")]`, which fails once the site is gone. A deadline that only bounds a wait for an
+# event (`recv_timeout`, `Condvar::wait_timeout`, `thread::park_timeout`, `tokio::time::timeout`) is
+# not listed. Tables, not one array, so crates/tasks/clippy.toml adds its own after this file whole.
+[[disallowed-methods]]
+path = "std::thread::sleep"
+reason = "RULES.md code/no-timed-waits: wait for the event itself, or pace it by a named helper (test_time::wait::until in a test)"
+
+[[disallowed-methods]]
+path = "std::thread::sleep_ms"
+reason = "RULES.md code/no-timed-waits: wait for the event itself, or pace it by a named helper (test_time::wait::until in a test)"
+
+[[disallowed-methods]]
+path = "tokio::time::sleep"
+reason = "RULES.md code/no-timed-waits: wait for the event itself, or pace it by a named helper (test_time::wait::until in a test)"
+
+[[disallowed-methods]]
+path = "tokio::time::sleep_until"
+reason = "RULES.md code/no-timed-waits: wait for the event itself, or pace it by a named helper (test_time::wait::until in a test)"
+
+[[disallowed-methods]]
+path = "tokio::time::interval"
+reason = "RULES.md code/no-timed-waits: wait for the event itself, or pace it by a named helper (test_time::wait::until in a test)"
+
+[[disallowed-methods]]
+path = "tokio::time::interval_at"
+reason = "RULES.md code/no-timed-waits: wait for the event itself, or pace it by a named helper (test_time::wait::until in a test)"
+
 # The board's own, below the workspace's settings above. Clippy reads the nearest clippy.toml alone,
 # so this crate's starts with symphony/clippy.toml whole (src/sys.rs's tests hold it to that).
 #
@@ -30,11 +61,27 @@ doc-valid-idents = ["SurrealDB", "SurrealKV", "SQLite", "GDScript", "CBOR", ".."
 # the session of the process that starts it (`sys::SESSION_VARS`). Clippy refuses any other
 # constructor, however its path is spelled, imported or renamed. A test target, or a library test
 # module, starts what it likes and says so: `#[expect(clippy::disallowed_methods, reason = "...")]`.
-disallowed-methods = [
-    { path = "std::process::Command::new", reason = "a board child starts without its starter's session: sys::command, or sys::command_with in a caller's environment" },
-    { path = "process_cwd::spawn::Command::new", reason = "a board child starts without its starter's session: sys::command, or sys::command_with in a caller's environment" },
-    { path = "std::process::Command::env_clear", reason = "a child in a caller's environment is sys::command_with's, which keeps none of the session" },
-    { path = "process_cwd::spawn::Command::env_clear", reason = "a child in a caller's environment is sys::command_with's, which keeps none of the session" },
-    { path = "process_cwd::process_cwds", reason = "its lsof keeps the starter's session: process_cwd::process_cwds_with(sys::command(\"lsof\"))" },
-    { path = "process_cwd::occupied", reason = "its lsof keeps the starter's session: process_cwd::occupied_with(sys::command(\"lsof\"), tree)" },
-]
+# That one expectation covers the timers above as well, so a test target's sleeps are read in review.
+[[disallowed-methods]]
+path = "std::process::Command::new"
+reason = "a board child starts without its starter's session: sys::command, or sys::command_with in a caller's environment"
+
+[[disallowed-methods]]
+path = "process_cwd::spawn::Command::new"
+reason = "a board child starts without its starter's session: sys::command, or sys::command_with in a caller's environment"
+
+[[disallowed-methods]]
+path = "std::process::Command::env_clear"
+reason = "a child in a caller's environment is sys::command_with's, which keeps none of the session"
+
+[[disallowed-methods]]
+path = "process_cwd::spawn::Command::env_clear"
+reason = "a child in a caller's environment is sys::command_with's, which keeps none of the session"
+
+[[disallowed-methods]]
+path = "process_cwd::process_cwds"
+reason = "its lsof keeps the starter's session: process_cwd::process_cwds_with(sys::command(\"lsof\"))"
+
+[[disallowed-methods]]
+path = "process_cwd::occupied"
+reason = "its lsof keeps the starter's session: process_cwd::occupied_with(sys::command(\"lsof\"), tree)"

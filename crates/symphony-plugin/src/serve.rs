@@ -108,6 +108,7 @@ impl<R: BufRead> BufRead for Ending<R> {
             let _ = std::thread::Builder::new()
                 .name("ending".into())
                 .spawn(move || {
+                    #[expect(clippy::disallowed_methods, reason = "no-timed-waits baseline: a thread sleeps out a deadline, where a deadline on the wait itself is the bound")]
                     std::thread::sleep(after);
                     then();
                 });

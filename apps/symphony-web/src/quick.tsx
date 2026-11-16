@@ -16,7 +16,6 @@ import {
 import { AttachControls, useAttach } from "./attach";
 import { BlocksView } from "./blocks";
 import { Button } from "./button";
-import { sleep } from "./feed";
 import { Input } from "./input";
 import { useMount } from "./mount";
 import { returnFocus, takeFocus, useEscape } from "./panel-focus";
@@ -40,6 +39,8 @@ import { field, publish, remember, snapshot } from "./shared";
 import { load, save } from "./storage";
 import { TabContent, TabList, Tabs, TabTrigger } from "./tabs";
 import { Textarea } from "./textarea";
+// biome-ignore lint/style/noRestrictedImports: no-timed-waits baseline: readThread tries again on a fixed RETRY_MS (Backoff is the helper), and saveTask asks the server again each CHECK_MS while it checks a save, where the feed's event of it is the wait
+import { sleep } from "./timing";
 import { Tooltip } from "./tooltip";
 import { Skeleton } from "./viewport";
 import { QUICK_TASK_TITLE_MAX } from "./wire";
@@ -111,6 +112,7 @@ export function useDraft(): [Draft, ChangeDraft] {
       if (!sameDraft(next, latest.current)) keep(next);
     };
     addEventListener("review:quick", heard);
+    // biome-ignore lint/style/noRestrictedGlobals: no-timed-waits baseline: the draft is kept a turn after the mount, where the mount's own effect is the event
     const mounted = setTimeout(() => keep(latest.current), 0);
     return () => {
       removeEventListener("review:quick", heard);

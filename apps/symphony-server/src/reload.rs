@@ -117,6 +117,10 @@ fn answer(from: &PipeReader, stopping: impl Fn() -> bool) -> std::io::Result<Ans
                 if began.elapsed() >= PATIENCE {
                     return Ok(Answer::Outlasted);
                 }
+                #[expect(
+                    clippy::disallowed_methods,
+                    reason = "no-timed-waits baseline: reads a nonblocking socket again, where a blocking read under a deadline is the event"
+                )]
                 std::thread::sleep(Duration::from_millis(10));
             }
             Err(e) => return Err(e),
@@ -531,10 +535,7 @@ fn watch_with<W: Watcher + Send + 'static>(
             // files, hash code or spawn repository commands.
             if !initial {
                 match backstop.wait(&recv, Duration::from_millis(250)) {
-                    Wake::Event => {
-                        std::thread::sleep(Duration::from_millis(100));
-                        while recv.try_recv().is_ok() {}
-                    }
+                    Wake::Event => backstop::debounce(&recv, backstop::QUIET, backstop::BURST),
                     Wake::Period => {}
                     Wake::Idle => continue,
                 }

@@ -203,6 +203,10 @@ fn hand_off(
         if let Some(successor) = successor(running, ours, front, home.recorded()) {
             return Ok(successor);
         }
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "no-timed-waits baseline: looks again for the server that replaces this one, which no event of its own announces"
+        )]
         std::thread::sleep(Duration::from_millis(100));
     }
     Err(format!(

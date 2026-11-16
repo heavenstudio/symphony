@@ -349,6 +349,10 @@ fn a_browser_that_ended_is_reaped_only_after_the_kill_of_its_group() {
             began.elapsed() < Duration::from_secs(30),
             "the browser ran on"
         );
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "no-timed-waits baseline: a test looks again for its condition by hand, where test_time::wait::until is the helper"
+        )]
         std::thread::sleep(POLL);
     }
     // SAFETY: signal 0 to this test's own unreaped child sends nothing.
@@ -365,6 +369,10 @@ fn a_browser_that_ended_is_reaped_only_after_the_kill_of_its_group() {
             killed.elapsed() < Duration::from_secs(10),
             "its helper lives"
         );
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "no-timed-waits baseline: a test looks again for its condition by hand, where test_time::wait::until is the helper"
+        )]
         std::thread::sleep(POLL);
     }
     assert!(
@@ -401,6 +409,10 @@ fn a_stopped_browser_has_not_ended() {
     let began = Instant::now();
     let mut killed = false;
     while !killed && began.elapsed() < Duration::from_secs(10) {
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "no-timed-waits baseline: a test looks again for its condition by hand, where test_time::wait::until is the helper"
+        )]
         std::thread::sleep(POLL);
         killed = crate::exited(id).unwrap();
     }
@@ -1309,6 +1321,10 @@ wait "$helper"
                     }
                     assert_eq!(error.kind(), ErrorKind::PermissionDenied, "{error}");
                 }
+                #[expect(
+                    clippy::disallowed_methods,
+                    reason = "no-timed-waits baseline: a test looks again for its condition by hand, where test_time::wait::until is the helper"
+                )]
                 std::thread::sleep(POLL);
             }
             // The leash's exit is the boundary under test. Waiting here for a leaked
@@ -3182,6 +3198,10 @@ fn a_real_page_blocked_in_its_renderer_spends_nothing_and_a_stopped_browser_ends
     let started = Instant::now();
     let late = release.clone();
     let releaser = std::thread::spawn(move || {
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "no-timed-waits baseline: a test releases what it holds after a length of time"
+        )]
         std::thread::sleep(Duration::from_secs(3));
         late.send(()).unwrap();
     });

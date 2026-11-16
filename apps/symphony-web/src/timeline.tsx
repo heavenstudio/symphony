@@ -24,7 +24,7 @@ import {
   useState,
 } from "react";
 import { Button } from "./button";
-import { sleep, whenShown } from "./feed";
+import { whenShown } from "./feed";
 import type { Shown as Answer } from "./parts";
 import { Failure, said } from "./request";
 import STYLE from "./timeline.css?inline";
@@ -50,6 +50,8 @@ import {
   stops,
   totals,
 } from "./timeline-layout";
+// biome-ignore lint/style/noRestrictedImports: no-timed-waits baseline: readAgain reads the timeline again each period while the task is open, where the feed's event of a change, or a clock tick for the times shown, is the wait
+import { sleep } from "./timing";
 import { NOT_IN_TIME } from "./trouble";
 import type { TaskTimeline } from "./wire";
 import { fixed } from "./words";

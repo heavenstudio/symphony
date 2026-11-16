@@ -13,11 +13,22 @@ import {
   noticeGeometry,
   type PageBoard,
   PageNotices,
+  pause,
+  Retry,
   readPageBoard,
   reloadIfRedeployed,
 } from "./live";
 import { SERVER_NOTICE } from "./shared";
-import { asking, CASES, memoryStorage, feeds as pageFeeds, reply, say, server } from "./testing";
+import {
+  asking,
+  CASES,
+  memoryStorage,
+  feeds as pageFeeds,
+  reply,
+  say,
+  server,
+  turn,
+} from "./testing";
 import { CACHE_FORMAT, FEED_EVENT } from "./wire";
 
 afterEach(() => {
@@ -223,26 +234,48 @@ describe("the board a page draws from this device", () => {
 });
 
 describe("a page loaded again for the build the server serves", () => {
-  /** The page: its shell's script, whether the reader is in the middle of something, its tab. */
-  const page = (engaged: boolean) => {
+  /**
+   * The page: its shell's script, whether the reader is in the middle of something (`reader`),
+   * its tab, and the changes to it a held reload is watched for (`changed`, its focus moving).
+   */
+  const page = (busy = false) => {
     const reload = vi.fn();
+    const reader = { busy };
+    const watched = new Set<() => void>();
     vi.stubGlobal("sessionStorage", memoryStorage());
     vi.stubGlobal("location", { reload });
-    vi.stubGlobal("document", {
+    vi.stubGlobal(
+      "MutationObserver",
+      class {
+        constructor(private readonly seen: () => void) {}
+        observe() {
+          watched.add(this.seen);
+        }
+        disconnect() {
+          watched.delete(this.seen);
+        }
+      },
+    );
+    const doc = Object.assign(new EventTarget(), {
       getElementById: () => null,
-      activeElement: null,
+      documentElement: {},
+      activeElement: null as { matches: (selector: string) => boolean } | null,
       querySelector: (selector: string) =>
         selector.startsWith("script")
           ? { getAttribute: () => "/assets/symphony-shell-a.js" }
-          : engaged
+          : reader.busy
             ? {}
             : null,
     });
-    return reload;
+    vi.stubGlobal("document", doc);
+    const changed = () => {
+      for (const seen of [...watched]) seen();
+    };
+    return { reload, reader, doc, watched, changed };
   };
 
   it("loads once for another build, never for its own", () => {
-    const reload = page(false);
+    const { reload } = page();
     reloadIfRedeployed("/assets/symphony-shell-a.js");
     expect(reload).not.toHaveBeenCalled();
     reloadIfRedeployed("/assets/symphony-shell-b.js");
@@ -251,7 +284,7 @@ describe("a page loaded again for the build the server serves", () => {
   });
 
   it("loads for a feed event's client change naming another build, once", () => {
-    const reload = page(false);
+    const { reload } = page();
     const client = (build: unknown) => ({ changes: [{ region: "client", data: { build } }] });
     followClient(client("/assets/symphony-shell-a.js"));
     followClient({
@@ -265,16 +298,105 @@ describe("a page loaded again for the build the server serves", () => {
     expect(reload).toHaveBeenCalledTimes(1);
   });
 
-  it("waits while the reader is in the middle of something", () => {
-    const reload = page(true);
+  it("waits while the reader is in the middle of something, and loads as they are done", async () => {
+    const { reload, reader, watched, changed } = page(true);
     reloadIfRedeployed("/assets/symphony-shell-c.js");
     flushReload();
     expect(reload).not.toHaveBeenCalled();
-    const after = page(false);
+    // A change that leaves them in the middle of it: still held, and still watched.
+    changed();
+    await turn();
+    expect(reload).not.toHaveBeenCalled();
+    expect(watched.size).toBe(1);
+    reader.busy = false;
+    changed();
+    await turn();
+    expect(reload).toHaveBeenCalledTimes(1);
+    // Loaded, nothing is watched any more, and nothing is held to load again.
+    expect(watched.size).toBe(0);
     flushReload();
-    expect(after).toHaveBeenCalledTimes(1);
-    flushReload();
-    expect(after).toHaveBeenCalledTimes(1);
+    expect(reload).toHaveBeenCalledTimes(1);
+  });
+
+  it("loads a held reload as the focus leaves the fields, not as it moves to another", async () => {
+    const { reload, doc, watched } = page();
+    const field = { matches: () => true };
+    doc.activeElement = field;
+    reloadIfRedeployed("/assets/symphony-shell-e.js");
+    // Several held while it waits: one watch for them all.
+    reloadIfRedeployed("/assets/symphony-shell-f.js");
+    expect(watched.size).toBe(1);
+    doc.dispatchEvent(Object.assign(new Event("focusout"), { relatedTarget: field }));
+    await turn();
+    expect(reload).not.toHaveBeenCalled();
+    doc.activeElement = null;
+    doc.dispatchEvent(new Event("focusout"));
+    await turn();
+    expect(reload).toHaveBeenCalledTimes(1);
+    expect(watched.size).toBe(0);
+  });
+});
+
+describe("a read's pause before it is tried again", () => {
+  afterEach(() => vi.useRealTimers());
+
+  /** Whether `waiting` ended within the turns its events take. */
+  async function ended(waiting: Promise<void>): Promise<boolean> {
+    let over = false;
+    void waiting.then(() => {
+      over = true;
+    });
+    for (let turns = 0; turns < 4; turns += 1) await Promise.resolve();
+    return over;
+  }
+
+  it("ends when its time is up", async () => {
+    vi.useFakeTimers();
+    const waiting = pause(5_000, new Retry(), new AbortController().signal);
+    await vi.advanceTimersByTimeAsync(4_999);
+    expect(await ended(waiting)).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(await ended(waiting)).toBe(true);
+  });
+
+  it("ends at the reader's press of Retry, and leaves the presses after it alone", async () => {
+    vi.useFakeTimers();
+    const retry = new Retry();
+    const waiting = pause(60_000, retry, new AbortController().signal);
+    expect(await ended(waiting)).toBe(false);
+    retry.current += 1;
+    expect(await ended(waiting)).toBe(true);
+    expect(retry.current).toBe(1);
+    expect(vi.getTimerCount()).toBe(0);
+    // A press with no pause waiting is only counted.
+    retry.current += 1;
+    expect(retry.current).toBe(2);
+  });
+
+  it("ends once its signal ends, or at once when it had, leaving no timer", async () => {
+    vi.useFakeTimers();
+    const leaving = new AbortController();
+    const waiting = pause(60_000, new Retry(), leaving.signal);
+    leaving.abort();
+    expect(await ended(waiting)).toBe(true);
+    await pause(60_000, new Retry(), leaving.signal);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+});
+
+describe("the reader's presses of Retry", () => {
+  it("are counted, each told to whoever hears them until they stop", () => {
+    const retry = new Retry();
+    const first = vi.fn();
+    const second = vi.fn();
+    const stopFirst = retry.heard(first);
+    retry.heard(second);
+    retry.current += 1;
+    stopFirst();
+    retry.current += 1;
+    expect(retry.current).toBe(2);
+    expect(first).toHaveBeenCalledOnce();
+    expect(second).toHaveBeenCalledTimes(2);
   });
 });
 
@@ -314,7 +436,7 @@ describe("the board's loop", () => {
         },
         setStale: (stale) => did.push(["stale", stale]),
         setTrouble: (why) => did.push(["trouble", why]),
-        retry: { current: 0 },
+        retry: new Retry(),
         views: {
           freshen: () => {},
           read: () => did.push(["read"]),
@@ -378,7 +500,7 @@ describe("the board's loop", () => {
   it("reads nothing once the page is gone while it waits for the page to be back", async () => {
     // The shell stops the kind while the page is away, which ends that wait.
     const { asked, did, paused, done } = loop(async (page) => page.abort());
-    await new Promise((settled) => setTimeout(settled, 0));
+    await turn();
     expect(asked).toEqual([]);
     await done;
     expect(did).toEqual([]);
@@ -420,7 +542,7 @@ describe("the board's loop", () => {
     await asking(opened, 1);
     expect(opened[0]?.url).toBe("ws://127.0.0.1/api/feed?since=7&document=");
     opened[0]?.source.dispatchEvent(new Event("open"));
-    await new Promise((settled) => setTimeout(settled, 0));
+    await turn();
     expect(did).toEqual([["show", 7], ["read"], ["stale", false]]);
     // The shell stops the kind while the feed is open and quiet.
     page.abort();

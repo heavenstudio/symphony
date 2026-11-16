@@ -50,6 +50,10 @@ fn again(began: Instant, route: &str, what: &str) {
         "{}",
         stalled(format!("{route}: {what}"))
     );
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "no-timed-waits baseline: a test looks again for its condition by hand, where test_time::wait::until is the helper"
+    )]
     std::thread::sleep(Duration::from_millis(20));
 }
 

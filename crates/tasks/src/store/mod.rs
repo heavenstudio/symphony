@@ -746,6 +746,10 @@ fn retried<T>(
             Err(Failure::Stop(error)) => return Err(error),
             Err(Failure::Again) if began.elapsed() < patience => {
                 TRIED_AGAIN.with(|tried| tried.set(tried.get() + 1));
+                #[expect(
+                    clippy::disallowed_methods,
+                    reason = "the named helper of RULES.md code/no-timed-waits for a retry with backoff: the board store's"
+                )]
                 std::thread::sleep(backoff(attempt));
                 attempt += 1;
             }
