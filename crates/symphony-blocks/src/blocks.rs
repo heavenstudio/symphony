@@ -11,6 +11,7 @@ macro_rules! vocabulary {
     ($name:ident { $($variant:ident => $word:literal),+ $(,)? }) => {
         #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
         #[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
+        #[non_exhaustive]
         pub enum $name { $(#[serde(rename = $word)] $variant),+ }
         impl $name {
             pub fn as_str(self) -> &'static str { match self { $(Self::$variant => $word),+ } }
@@ -33,6 +34,7 @@ vocabulary!(FigureSize { Small => "small", Row => "row", Large => "large", Tile 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[serde(tag = "type", rename_all = "kebab-case")]
+#[non_exhaustive]
 pub enum Block {
     Heading {
         level: u8,
@@ -145,6 +147,7 @@ pub enum Block {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[serde(tag = "type", rename_all = "kebab-case")]
+#[non_exhaustive]
 pub enum Span {
     Text {
         text: String,
@@ -284,6 +287,7 @@ pub struct ThreadEntry {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[serde(rename_all = "kebab-case")]
+#[non_exhaustive]
 pub enum ContainerKind {
     Div,
     Section,
@@ -299,6 +303,7 @@ pub enum ContainerKind {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[serde(rename_all = "kebab-case")]
+#[non_exhaustive]
 pub enum InlineKind {
     Span,
     Small,
@@ -325,6 +330,7 @@ pub struct VectorShape {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[serde(rename_all = "kebab-case")]
+#[non_exhaustive]
 pub enum VectorKind {
     Path,
     Circle,

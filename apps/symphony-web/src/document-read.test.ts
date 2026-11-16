@@ -62,7 +62,7 @@ describe("a document's reads", () => {
     ["a section's end past 32 bits", ["document", "sections", 0, "end"], 2 ** 32],
     ["a section's part of a fraction", ["document", "sections", 0, "part"], 0.5],
     ["a section with no blocks", ["document", "sections", 0, "blocks"], undefined],
-    ["a block it does not know", ["document", "sections", 0, "blocks", 0], { type: "marquee" }],
+    ["a block of no kind", ["document", "sections", 0, "blocks", 0], { text: "marquee" }],
     ["a difference it does not know", ["document", "sections", 0, "comparison", "kind"], "moved"],
     ["a difference's before of no blocks", ["document", "sections", 0, "comparison", "before"], 1],
     ["a section's ends of one block", ["document", "sections", 0, "ends"], ["paragraph"]],
@@ -153,7 +153,7 @@ describe("the asks' read", () => {
     ["an id past a safe integer", ["asks", 0, "id"], 2 ** 53],
     ["a quote that is no text", ["asks", 0, "quote"], null],
     ["a message whose seq is text", ["asks", 0, "messages", 0, "seq"], "1"],
-    ["a message's blocks it cannot read", ["asks", 0, "messages", 0, "blocks"], [{ type: "x" }]],
+    ["a message's blocks it cannot read", ["asks", 0, "messages", 0, "blocks"], [{ type: 7 }]],
     ["a message with no author", ["asks", 0, "messages", 1, "by"], undefined],
   ])("refuses %s", (_, path, to) => {
     expect(readAsks(edited(sample("asks"), path, to))).toBeNull();

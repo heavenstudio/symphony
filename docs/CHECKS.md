@@ -119,8 +119,12 @@ a measurement before and after.
   comes with a constructor (its `#[non_exhaustive]` the protocol's tests hold, as they hold
   `Request`'s and name each enum there left exhaustive), that a field added to a call is a new major
   unless `new` leaves it out ([PLUGIN_PROTOCOL](PLUGIN_PROTOCOL.md#versions)), and that a name
-  removed or changed, or a field or variant added to a seam type or the vocabulary, is a new major
-  of the package's line.
+  removed or changed, or a field added to a seam type or the vocabulary, is a new major of the
+  package's line. A variant added to a list of the vocabulary is a minor: the kit's tests hold
+  each list `#[non_exhaustive]` and name the two left exhaustive, to which a variant added is a
+  new major (`crates/symphony-plugin/tests/vocabulary.rs`), and
+  `crates/symphony-api/tests/vocabulary_drawn.rs` holds every kind to an arm in each match of
+  this workspace, in the compiler's place.
 - **A doc** (a document, guide, skill or rule): `just symphony-cli docs-audit --check` (every
   document renders, and every recipe a text of this repository names is one a project has,
   [below](#the-recipes-a-text-names)) and `just symphony-cli status --lint` (no card slug in prose,

@@ -425,6 +425,7 @@ pub trait Gates: Send + Sync {
 
 /// What a board field holds.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum FieldKind {
     Text,
     /// One of these words.

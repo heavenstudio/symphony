@@ -91,7 +91,12 @@ A read is checked where it arrives (`readQueue`, `readPageBoard`, `readReports`,
 `document-read.ts`, of the checks `blocks-read.ts` exports): a guard checks the fields the page
 draws, each of its type, and nothing else, so a field a newer server adds, or one it drops that
 the page does not draw, changes nothing, as the Dioxus client's serde reads skip
-unknown fields. A read the guard refuses is a failed read, said and retried as any other. A feed
+unknown fields. A kind of block, text span or media the client does not know passes too, its
+fields unread, and is said where it stands as unsupported content (`blocks-read.ts`, `blocks.tsx`,
+`media.tsx`), the rest of the page drawn: the kit's lists grow in a minor, so a newer server may
+send one ([PLUGIN_PROTOCOL](../../docs/PLUGIN_PROTOCOL.md#versions)). A word it does not know (a
+figure's size, a tag, a shape) and a kind that is no text still fail the read.
+A read the guard refuses is a failed read, said and retried as any other. A feed
 event of a region or kind the page does not know is not its own, and is left alone.
 `JSON.parse` costs no code per field, so a field the page does not draw, a task's plugins' board
 fields among them, costs it nothing to receive: its types say what the server sends, and its

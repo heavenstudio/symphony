@@ -211,14 +211,22 @@ export function MediaView({ media }: { media: Media }) {
     case "gallery":
       return <Gallery items={media.items} viewer={media.viewer ?? NO_VIEWER} />;
     default:
-      return unknownMedia(media);
+      return (
+        <span className="unknown-block" role="alert">
+          Unsupported media: {unknownMedia(media)}
+        </span>
+      );
   }
 }
 
-/** No media kind is left undrawn: a kind the Rust adds fails the type check here. */
-function unknownMedia(media: never): null {
-  void media;
-  return null;
+/**
+ * The `kind` of media of no kind the wire types know. No kind they know is left undrawn: a kind the
+ * Rust adds fails the type check here. What does reach it is a kind a newer server sent; one whose
+ * `kind` is no text, which no read lets through, is `unnamed`.
+ */
+function unknownMedia(media: never): string {
+  const kind = (media as { kind?: unknown }).kind;
+  return typeof kind === "string" ? kind : "unnamed";
 }
 
 export interface PictureViewProps {
