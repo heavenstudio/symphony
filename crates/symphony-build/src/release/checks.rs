@@ -288,6 +288,10 @@ pub(crate) fn run(step: &Step, checkout: &Path, log: &Path, within: Within<'_>) 
             group::stop(pid, group::GRACE);
             break;
         }
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "no-timed-waits baseline: looks again for a check's process group to end, which no wait reports"
+        )]
         std::thread::sleep(group::POLL);
     }
     // The load as it ended, before what it left is stopped: what a red's reader judges it under.

@@ -1398,3 +1398,142 @@ fn a_reload_hands_over_only_to_a_release_installed_whole_by_its_own_folder() {
         Err(format!("{} does not run", server.display()))
     );
 }
+
+/// A watcher event of `kind` naming `paths`.
+fn event(kind: notify::EventKind, paths: &[&str]) -> notify::Result<notify::Event> {
+    Ok(paths.iter().fold(notify::Event::new(kind), |event, path| {
+        event.add_path(PathBuf::from(path))
+    }))
+}
+
+#[test]
+fn current_moves_at_a_change_naming_its_link_a_rescan_or_the_watchers_error() {
+    use notify::EventKind::{Access, Create, Modify, Remove};
+    use notify::event::{AccessKind, CreateKind, ModifyKind, RemoveKind, RenameMode};
+    let renamed = Modify(ModifyKind::Name(RenameMode::Both));
+    // `point`'s new link renamed over the old, as each backend says it.
+    assert!(super::moves_current(&event(
+        renamed,
+        &["/m/.current.7", "/m/current"]
+    )));
+    assert!(super::moves_current(&event(
+        Create(CreateKind::Any),
+        &["/m/current"]
+    )));
+    assert!(super::moves_current(&event(
+        Remove(RemoveKind::Any),
+        &["/m/current"]
+    )));
+    // The new link made beside it, the registry written, a release installed, or the link read.
+    assert!(!super::moves_current(&event(
+        Create(CreateKind::Any),
+        &["/m/.current.7"]
+    )));
+    assert!(!super::moves_current(&event(
+        renamed,
+        &["/m/projects.json"]
+    )));
+    assert!(!super::moves_current(&event(
+        Create(CreateKind::Folder),
+        &["/m/releases/current-2"]
+    )));
+    assert!(!super::moves_current(&event(
+        Access(AccessKind::Any),
+        &["/m/current"]
+    )));
+    // What a lost or failing stream says: read it again.
+    assert!(super::moves_current(&Ok(notify::Event::new(Modify(
+        ModifyKind::Any
+    ))
+    .set_flag(notify::event::Flag::Rescan))));
+    assert!(super::moves_current(&Err(notify::Error::generic(
+        "stream ended"
+    ))));
+}
+
+/// The handler a [`Handing`] watcher was given and what it was asked to watch.
+#[derive(Default)]
+struct Handed {
+    handler: Option<Box<dyn notify::EventHandler>>,
+    watched: Vec<(PathBuf, notify::RecursiveMode)>,
+}
+
+std::thread_local! {
+    /// What the [`Handing`] watcher the test on this thread made was handed.
+    static HANDED: std::cell::RefCell<Handed> = std::cell::RefCell::default();
+}
+
+/// A watcher that hands its handler to the test ([`HANDED`]), or, when `FAILS`, fails to watch,
+/// its handler gone with it as a dropped watcher's is.
+struct Handing<const FAILS: bool>;
+
+impl<const FAILS: bool> notify::Watcher for Handing<FAILS> {
+    fn new<F: notify::EventHandler>(handler: F, _: notify::Config) -> notify::Result<Self> {
+        if !FAILS {
+            HANDED.with_borrow_mut(|handed| handed.handler = Some(Box::new(handler)));
+        }
+        Ok(Self)
+    }
+
+    fn watch(&mut self, path: &Path, mode: notify::RecursiveMode) -> notify::Result<()> {
+        if FAILS {
+            return Err(notify::Error::generic("no such folder"));
+        }
+        HANDED.with_borrow_mut(|handed| handed.watched.push((path.into(), mode)));
+        Ok(())
+    }
+
+    fn unwatch(&mut self, _: &Path) -> notify::Result<()> {
+        Ok(())
+    }
+
+    fn kind() -> notify::WatcherKind {
+        notify::WatcherKind::NullWatcher
+    }
+}
+
+/// The watcher's handler is told `event`, as its backend would.
+fn tell(event: notify::Result<notify::Event>) {
+    HANDED.with_borrow_mut(|handed| {
+        handed
+            .handler
+            .as_mut()
+            .expect("a watcher was made")
+            .handle_event(event);
+    });
+}
+
+#[test]
+fn a_release_server_hears_current_move_from_a_watch_of_the_machine_folder_alone() {
+    let machine = Path::new("/m");
+    let (watcher, moved) = super::watch_current::<Handing<false>>(machine);
+    assert!(watcher.is_some());
+    assert_eq!(
+        HANDED.with_borrow(|handed| handed.watched.clone()),
+        vec![(machine.to_path_buf(), notify::RecursiveMode::NonRecursive)]
+    );
+    tell(event(
+        notify::EventKind::Create(notify::event::CreateKind::Any),
+        &["/m/registry.json"],
+    ));
+    assert_eq!(moved.try_recv(), Err(std::sync::mpsc::TryRecvError::Empty));
+    // A move's burst is one wake: the loop reads once it is quiet.
+    let renamed = notify::EventKind::Modify(notify::event::ModifyKind::Name(
+        notify::event::RenameMode::Any,
+    ));
+    tell(event(renamed, &["/m/current"]));
+    tell(event(renamed, &["/m/current"]));
+    assert_eq!(moved.try_recv(), Ok(()));
+    assert_eq!(moved.try_recv(), Err(std::sync::mpsc::TryRecvError::Empty));
+}
+
+#[test]
+fn a_release_server_that_cannot_watch_its_machine_folder_reads_current_once_a_period() {
+    let (watcher, moved) = super::watch_current::<Handing<true>>(Path::new("/m"));
+    assert!(watcher.is_none());
+    // The handler went with the watcher: no event can come, and the backstop's period reads alone.
+    assert_eq!(
+        moved.try_recv(),
+        Err(std::sync::mpsc::TryRecvError::Disconnected)
+    );
+}

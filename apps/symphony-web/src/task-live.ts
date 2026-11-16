@@ -17,7 +17,7 @@ import { flushSync } from "react-dom";
 import { type Freshness, PAGE, shown, THREAD, taskItem, visitLater } from "./cache";
 import type { FrameRefresh } from "./frame";
 import { readTaskGates, WORDS, workOf } from "./gates-model";
-import { type BoardRun, keepBoard, type PageBoard } from "./live";
+import { type BoardRun, keepBoard, type PageBoard, Retry } from "./live";
 import { type Heard, type Part, Parts, type Shown } from "./parts";
 import { scoped } from "./project";
 import { getJson, said } from "./request";
@@ -429,7 +429,7 @@ export class LiveTask {
   /** Whether the board was read. */
   boardShown = false;
   /** How many times the reader pressed Retry, which the board's loop waits on. */
-  readonly retry = { current: 0 };
+  readonly retry = new Retry();
   /** Why the board's last read failed, while nothing is drawn: said in place of the page. */
   trouble: string | null = null;
   /** What the board says of its own state (`boardNotice`). */

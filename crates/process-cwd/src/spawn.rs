@@ -2484,6 +2484,10 @@ mod tests {
                             if e.kind() == io::ErrorKind::WouldBlock
                                 && made.elapsed() < test_time::backstop(Duration::from_secs(5)) =>
                         {
+                            #[expect(
+                                clippy::disallowed_methods,
+                                reason = "no-timed-waits baseline: a test looks again on a nonblocking pipe by hand, where test_time::wait::until is the helper"
+                            )]
                             std::thread::sleep(Duration::from_millis(1));
                         }
                         other => panic!(

@@ -57,13 +57,15 @@ import {
   readOutline,
   readSections,
 } from "./document-read";
-import { back, type Heard, Inbox, openFeed, sleep } from "./feed";
+import { back, type Heard, Inbox, openFeed } from "./feed";
 import type { FrameRefresh } from "./frame";
-import { flushReload, pause } from "./live";
+import { flushReload, pause, Retry } from "./live";
 import { scoped } from "./project";
 import { Failure, getDocument, getIf, getJson, said } from "./request";
 import { field, SERVER_NOTICE } from "./shared";
 import { Backoff, type Ended } from "./state";
+// biome-ignore lint/style/noRestrictedImports: no-timed-waits baseline: flushHeld looks every 400 ms whether a held section is free (whenFree and the page's changes are the events), loadSections looks every 50 ms for sections to read and for the feed to catch up and tries a failed read again after 1 s, and followFolder reads its folder again each FOLDER_MS, where a feed event of the folder is the wait
+import { sleep } from "./timing";
 import type {
   DocumentCard,
   DocumentChange,
@@ -251,7 +253,7 @@ export class DocumentLive extends Model {
    */
   readonly sent = new Map<string, Body>();
   /** The reader's Retry presses. */
-  readonly retry = { current: 0 };
+  readonly retry = new Retry();
 
   constructor(
     readonly path: string,
@@ -646,7 +648,7 @@ export class FolderLive extends Model {
   missing = false;
   freshness: Freshness = FRESH;
   /** The reader's Retry presses. */
-  readonly retry = { current: 0 };
+  readonly retry = new Retry();
 
   constructor(
     readonly path: string,
@@ -718,6 +720,7 @@ export async function followFolder(page: FolderLive, signal: AbortSignal): Promi
     }
     const after = [page.folder, page.missing, page.error, JSON.stringify(page.freshness)];
     if (after.some((one, at) => one !== before[at])) page.changed();
-    await pause(FOLDER_MS, page.retry, signal);
+    // The baseline's plain wait (its import says why): a folder follows no feed.
+    await pause(FOLDER_MS, page.retry, signal, sleep);
   }
 }

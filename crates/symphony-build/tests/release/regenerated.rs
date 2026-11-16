@@ -183,6 +183,10 @@ fn a_night_waits_while_the_regenerator_makes_mains_files_then_checks_and_release
         ),
     );
     // It waits on while the regenerator makes them, then checks once they are current.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "no-timed-waits baseline: a test holds for a length of time to show the run still waits"
+    )]
     std::thread::sleep(Duration::from_secs(3));
     assert!(night.try_wait().unwrap().is_none(), "it waits");
     regenerator(&fixture, "current", &tip, 1);
@@ -247,11 +251,19 @@ fn a_night_gives_the_regenerator_a_land_has_just_started_its_time_to_take_main()
             &first[..7]
         ),
     );
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "no-timed-waits baseline: a test holds for a length of time to show the run still waits"
+    )]
     std::thread::sleep(Duration::from_secs(3));
     assert!(night.try_wait().unwrap().is_none(), "it waits");
     // It takes main, makes them, and they are current.
     let making = living();
     regenerator(&fixture, "building", &tip, i64::from(making.id()));
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "no-timed-waits baseline: a test holds for a length of time to show the run still waits"
+    )]
     std::thread::sleep(Duration::from_secs(3));
     assert!(
         night.try_wait().unwrap().is_none(),

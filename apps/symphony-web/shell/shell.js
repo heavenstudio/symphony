@@ -510,8 +510,10 @@ window.reviewLand = land;
 // `then`, once the page has drawn its data (none of its reads in flight for half a second, the
 // last of them answered) and the browser is idle.
 function settled(then) {
+  // biome-ignore lint/style/noRestrictedGlobals: no-timed-waits baseline: a browser with no idle callback (Safari) goes on at once
   (window.requestIdleCallback || setTimeout)(
     function next() {
+      // biome-ignore lint/style/noRestrictedGlobals: no-timed-waits baseline: looks again each 500 ms whether the page's reads went quiet, where the last read's answer is the event
       if (reads || Date.now() - answered < 500) return setTimeout(next, 500);
       then();
     },
@@ -532,8 +534,10 @@ function warm() {
     kinds = Object.keys(PERSISTENT);
   if (warmed || link?.saveData || /2g/.test(link?.effectiveType)) return;
   warmed = true;
+  // biome-ignore lint/style/noRestrictedGlobals: no-timed-waits baseline: a browser with no idle callback (Safari) goes on at once
   (window.requestIdleCallback || setTimeout)(
     function next() {
+      // biome-ignore lint/style/noRestrictedGlobals: no-timed-waits baseline: looks again each 500 ms whether the page's reads went quiet, where the last read's answer is the event
       if (reads || Date.now() - answered < 500) return setTimeout(next, 500);
       const kind = kinds.shift();
       if (!kind) return;
@@ -568,6 +572,7 @@ function ahead(generation, tries = 60) {
     if (generation !== requested) return;
     const feed = document.querySelector("main[data-feed], main [data-feed]")?.dataset.feed;
     if (feed !== "live")
+      // biome-ignore lint/style/noRestrictedGlobals: no-timed-waits baseline: looks again each second, a minute at most, whether the feed is open, where its data-feed turning live is the event
       return feed && tries > 1 && setTimeout(() => ahead(generation, tries - 1), 1000);
     const base = project().base || "",
       id = base.replace(/^\/+/, ""),

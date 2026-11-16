@@ -419,6 +419,10 @@ impl Clock {
     /// monitor's looks.
     pub fn wait(&self, seconds: f64, input: &mut dyn Read, err: &mut dyn Write) {
         match self {
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "no-timed-waits baseline: the board's monitor looks again each period, behind the clock its tests replace"
+            )]
             Clock::Machine => std::thread::sleep(Clock::span(seconds)),
             Clock::Pinned(now) => {
                 let at = {

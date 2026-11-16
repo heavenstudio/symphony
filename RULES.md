@@ -169,6 +169,33 @@ only when the work needs one. *A terminal keeps its memory until it is closed.*
 Name work by its slug, `area/slug` (`tools/memory-guard-hook`), the one its branch and commits
 use; never a code like `M17`, which ends up shared by unrelated work.
 
+## Code
+
+### `code/no-timed-waits`
+
+No code sleeps or waits by a number: a wait is for its event (a channel's message, a process's
+exit, a socket's answer, a page's `pageshow`, a `MutationObserver`'s change, the reader's press).
+A number drives only a debounce, a throttle, a retry with exponential backoff, a deadline that
+bounds a wait for an event, or a clock's tick, and each goes through one named helper: in Rust
+`test_time::wait::until` for a test's wait, `backstop::debounce` for a server's watcher
+(`apps/symphony-server/src/backstop.rs`), the board store's retry (`crates/tasks/src/store/mod.rs`)
+and `reload/retry.rs`'s `backoff`; in the React client `src/timing.ts`'s `retryWait`, `debounce`,
+`deadline` and `tick`, with `Backoff` and `tryAgain` (`src/state.ts`). A deadline on the wait
+itself (`recv_timeout`, `Condvar::wait_timeout`, `park_timeout`, `tokio::time::timeout`, a socket's
+read timeout) is the event's own bound and needs no helper.
+
+`just lint-rs` refuses a new one with a line naming this rule: clippy's `disallowed-methods`
+(`clippy.toml`, which `crates/tasks/clippy.toml` starts with) for `std::thread::sleep` and tokio's
+`sleep`, `sleep_until`, `interval` and `interval_at`, and Biome for the client's `setTimeout`,
+`setInterval` and `src/timing.ts`'s plain `sleep` (`apps/symphony-web/biome.json`). Each site kept
+is the baseline: its linter's own suppression, `#[expect(clippy::disallowed_methods, reason =
+"no-timed-waits baseline: WHY")]` or `// biome-ignore …: no-timed-waits baseline: WHY`, where WHY
+names the event it should wait for. The baseline only shrinks: a site converted leaves its
+suppression unfulfilled or unused, which fails `just lint-rs` until it is removed, and a new
+suppression is a new timer, which a reviewer refuses. `git grep 'no-timed-waits baseline'` lists
+it. The lint does not see the board crate's test targets, whose crate-wide expectation for its
+process spawns covers their sleeps as well, nor the shell scripts: those are read in review.
+
 ## Tests
 
 ### `workflow/tests-after`

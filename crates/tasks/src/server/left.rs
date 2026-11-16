@@ -202,6 +202,10 @@ impl Home {
                 Err(_) if now() < until => gone_since = None,
                 told => return told.map_err(|why| self.cannot_tell(&why)),
             }
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "no-timed-waits baseline: looks again for a session's process to say it left, which no event announces"
+            )]
             std::thread::sleep(LOOK_AGAIN);
         }
     }

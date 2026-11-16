@@ -8,7 +8,7 @@ use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, LazyLock, Mutex, OnceLock, RwLock, Weak, mpsc};
 use std::time::{Duration, Instant};
 
-use crate::backstop::{Backstop, Sweep, Wake};
+use crate::backstop::{self, Backstop, Sweep, Wake};
 use notify::{RecursiveMode, Watcher};
 use serde_json::{Value, json};
 use symphony::{branches, dashboard, taskview};
@@ -1867,8 +1867,10 @@ fn run(
         drop(hub);
         let wake = backstop.wait(&recv, Duration::from_millis(250));
         if wake == Wake::Event {
-            std::thread::sleep(Duration::from_millis(100));
-            while recv.try_recv().is_ok() {}
+            // Every event within QUIET of the first is taken with it, and the pass reads then:
+            // never later than that, as the watched worktrees seldom go quiet and every live
+            // page's update waits on this pass.
+            backstop::debounce(&recv, backstop::QUIET, backstop::QUIET);
         }
         let Some(hub) = weak.upgrade() else { break };
         if *hub.draining.borrow() {

@@ -22,3 +22,34 @@ allow-print-in-tests = true
 # Names `doc_markdown` would otherwise want in backticks: the products and formats the docs name as
 # words. `..` keeps clippy's own list (JavaScript, GitHub, macOS and the rest).
 doc-valid-idents = ["SurrealDB", "SurrealKV", "SQLite", "GDScript", "CBOR", ".."]
+
+# No code waits a length of time and then looks or acts (RULES.md `code/no-timed-waits`): it waits
+# for the thing itself (a message, a signal, a child's end, a watcher's event) and acts at once. A
+# number only paces a named helper, which says so in an `#[expect]` of its own, and a site kept
+# until it is converted says why in `#[expect(clippy::disallowed_methods, reason = "no-timed-waits
+# baseline: ...")]`, which fails once the site is gone. A deadline that only bounds a wait for an
+# event (`recv_timeout`, `Condvar::wait_timeout`, `thread::park_timeout`, `tokio::time::timeout`) is
+# not listed. Tables, not one array, so crates/tasks/clippy.toml adds its own after this file whole.
+[[disallowed-methods]]
+path = "std::thread::sleep"
+reason = "RULES.md code/no-timed-waits: wait for the event itself, or pace it by a named helper (test_time::wait::until in a test)"
+
+[[disallowed-methods]]
+path = "std::thread::sleep_ms"
+reason = "RULES.md code/no-timed-waits: wait for the event itself, or pace it by a named helper (test_time::wait::until in a test)"
+
+[[disallowed-methods]]
+path = "tokio::time::sleep"
+reason = "RULES.md code/no-timed-waits: wait for the event itself, or pace it by a named helper (test_time::wait::until in a test)"
+
+[[disallowed-methods]]
+path = "tokio::time::sleep_until"
+reason = "RULES.md code/no-timed-waits: wait for the event itself, or pace it by a named helper (test_time::wait::until in a test)"
+
+[[disallowed-methods]]
+path = "tokio::time::interval"
+reason = "RULES.md code/no-timed-waits: wait for the event itself, or pace it by a named helper (test_time::wait::until in a test)"
+
+[[disallowed-methods]]
+path = "tokio::time::interval_at"
+reason = "RULES.md code/no-timed-waits: wait for the event itself, or pace it by a named helper (test_time::wait::until in a test)"

@@ -13,6 +13,7 @@
 // tab in front) the page keeps its stream.
 
 import { here, project } from "./project";
+import { deadline } from "./timing";
 import { FEED_EVENT, PING_EVENT, SERVER_EVENT } from "./wire";
 
 /** What the feed's stream said. */
@@ -57,20 +58,6 @@ export function isAway(): boolean {
   return away;
 }
 
-/** `ms` later, or at once when `signal` aborts. */
-export function sleep(ms: number, signal?: AbortSignal): Promise<void> {
-  return new Promise((resolve) => {
-    if (signal?.aborted) return resolve();
-    const done = () => {
-      clearTimeout(timer);
-      signal?.removeEventListener("abort", done);
-      resolve();
-    };
-    const timer = setTimeout(done, ms);
-    signal?.addEventListener("abort", done);
-  });
-}
-
 /** Once the page is shown: at once if it is, else at the first change of visibility that shows
  * it, or once `signal` ends. */
 export function whenShown(signal: AbortSignal): Promise<void> {
@@ -89,9 +76,25 @@ export function whenShown(signal: AbortSignal): Promise<void> {
   });
 }
 
-/** Wait until the page is back, if it is away: a stream opened while it is away would be held. */
-export async function back(signal?: AbortSignal): Promise<void> {
-  while (isAway() && !signal?.aborted) await sleep(100, signal);
+/**
+ * Wait until the page is back, if it is away: at the first event that says so (`pageshow`,
+ * `resume`), or once `signal` ends. A stream opened while it is away would be held.
+ */
+export function back(signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    if (!isAway() || signal?.aborted) return resolve();
+    const done = () => {
+      targets().forEach((target, at) => {
+        target.removeEventListener(RETURNING[at] as string, done);
+      });
+      signal?.removeEventListener("abort", done);
+      resolve();
+    };
+    targets().forEach((target, at) => {
+      target.addEventListener(RETURNING[at] as string, done);
+    });
+    signal?.addEventListener("abort", done);
+  });
 }
 
 /** What one event of the stream says. */
@@ -185,19 +188,20 @@ export class Inbox<T> {
     }
   }
 
-  /** The next thing said, or `null` when `ms` pass first or `signal` aborts. */
+  /** The next thing said, or `null` when `ms` pass first (the wait's deadline) or `signal`
+   * aborts. */
   next(ms: number, signal?: AbortSignal): Promise<T | null> {
     const first = this.queued.shift();
     if (first !== undefined) return Promise.resolve(first);
     return new Promise((resolve) => {
       const done = (value: T | null) => {
-        clearTimeout(timer);
+        ended();
         signal?.removeEventListener("abort", aborted);
         this.waiting = null;
         resolve(value);
       };
       const aborted = () => done(null);
-      const timer = setTimeout(aborted, ms);
+      const ended = deadline(ms, aborted);
       if (signal?.aborted) return aborted();
       signal?.addEventListener("abort", aborted);
       this.waiting = done;

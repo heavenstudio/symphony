@@ -790,6 +790,10 @@ fn a_plugins_process_killed_mid_call_fails_that_call_alone() {
     );
     // The next calls, once its pause is over, answer as linked, from a process started again.
     until("the plugin is down", || remote.down().is_some());
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "no-timed-waits baseline: a test waits out the plugin's restart pause"
+    )]
     std::thread::sleep(PAUSE);
     assert_eq!(
         piped.render(&page, "every", "a", None),
@@ -844,6 +848,10 @@ fn a_killed_plugin_process_starts_again_after_its_pause() {
     assert!(killed.success());
     until("the plugin is down", || remote.down().is_some());
     // After the pause the next call starts it again, and the page is as it was.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "no-timed-waits baseline: a test waits out the plugin's restart pause"
+    )]
     std::thread::sleep(PAUSE);
     assert_eq!(render.html(doc, "docs/A.md"), before);
     let again = remote.pid().unwrap();

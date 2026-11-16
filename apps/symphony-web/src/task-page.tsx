@@ -13,7 +13,7 @@ import { Button } from "./button";
 import { FRESH, type Freshness, shown } from "./cache";
 import { useFrame } from "./frame";
 import { TaskGatesPanel } from "./gates";
-import { flushReload, PageNotices } from "./live";
+import { PageNotices } from "./live";
 import { useMount } from "./mount";
 import { PartsContext, type Shown, usePart } from "./parts";
 import { href, scoped } from "./project";
@@ -975,11 +975,7 @@ export function TaskPage({ scope, slug }: { scope: string; slug: string }) {
     setFreshness(FRESH);
     redraw();
     void task.start(frame);
-    const minutes = setInterval(flushReload, 60_000);
-    return () => {
-      controller.abort();
-      clearInterval(minutes);
-    };
+    return () => controller.abort();
   }, [scope, frame]);
   useEffect(() => {
     live.current?.moved(slug);

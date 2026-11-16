@@ -548,17 +548,17 @@ describe("the board's place kept", () => {
     return { keeper: new PlaceKeeper(scroller, controller.signal), scroller, controller };
   }
 
-  it("is written once the reader's scrolling rests, and only when it moved", () => {
+  it("is written once the reader's scrolling rests, and only when it moved", async () => {
     const { keeper: kept, scroller } = keeper();
     entry.state = { other: true };
     scroller.scrollTop = 400.4;
     kept.later();
-    vi.advanceTimersByTime(RESTS_MS - 1);
+    await vi.advanceTimersByTimeAsync(RESTS_MS - 1);
     scroller.scrollTop = 800.6;
     kept.later();
-    vi.advanceTimersByTime(RESTS_MS - 1);
+    await vi.advanceTimersByTimeAsync(RESTS_MS - 1);
     expect(replaced).not.toHaveBeenCalled();
-    vi.advanceTimersByTime(1);
+    await vi.advanceTimersByTimeAsync(1);
     expect(replaced).toHaveBeenCalledExactlyOnceWith({
       other: true,
       board: { left: 0, top: 801, page: 0 },
@@ -718,18 +718,19 @@ describe("the board's place kept", () => {
     expect(held).toHaveBeenCalledExactlyOnceWith(rowIn("ready", "w/b"));
   });
 
-  it("is written at once before a link is followed, the rest's wait dropped", () => {
+  it("is written at once before a link is followed, the rest's wait dropped", async () => {
     const { keeper: kept, scroller } = keeper();
     scroller.scrollLeft = 300;
     vi.stubGlobal("scrollY", 150);
     kept.later();
     kept.keep();
     expect(entry.state).toEqual({ board: { left: 300, top: 0, page: 150 } });
-    vi.advanceTimersByTime(RESTS_MS);
+    expect(vi.getTimerCount()).toBe(0);
+    await vi.advanceTimersByTimeAsync(RESTS_MS);
     expect(replaced).toHaveBeenCalledOnce();
   });
 
-  it("is never written into another page's entry, nor once the board is gone", () => {
+  it("is never written into another page's entry, nor once the board is gone", async () => {
     const { keeper: kept, scroller, controller } = keeper();
     scroller.scrollTop = 10;
     vi.stubGlobal("location", { pathname: "/task/w/a", href: "http://here/task/w/a" });
@@ -739,7 +740,7 @@ describe("the board's place kept", () => {
     controller.abort();
     kept.keep();
     kept.later();
-    vi.advanceTimersByTime(RESTS_MS);
+    await vi.advanceTimersByTimeAsync(RESTS_MS);
     expect(replaced).not.toHaveBeenCalled();
   });
 
@@ -818,7 +819,7 @@ describe("the board's place kept", () => {
     expect(frames).toEqual([]);
   });
 
-  it("drops the scrolling not yet kept on Back, and returns to the board entry's own place", () => {
+  it("drops the scrolling not yet kept on Back, and returns to the board entry's own place", async () => {
     const { keeper: kept, scroller } = keeper();
     scroller.scrollTop = 600;
     kept.later();
@@ -826,7 +827,7 @@ describe("the board's place kept", () => {
     entry.state = { board: { left: 0, top: 90, page: 0 } };
     kept.moved();
     expect(scroller.scrollTop).toBe(90);
-    vi.advanceTimersByTime(RESTS_MS);
+    await vi.advanceTimersByTimeAsync(RESTS_MS);
     expect(replaced).not.toHaveBeenCalled();
     // Back to another page's entry: nothing to return to there.
     vi.stubGlobal("location", { pathname: "/task/w/a", href: "http://here/task/w/a" });

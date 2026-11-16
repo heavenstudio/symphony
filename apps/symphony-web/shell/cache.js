@@ -69,6 +69,7 @@ window.symphonyCache = (() => {
   function open() {
     opened ??= new Promise((resolve) => {
       let late = false;
+      // biome-ignore lint/style/noRestrictedGlobals: no-timed-waits baseline: the store's deadline on its open, OPENING, in the shell's own script, which cannot take src/timing.ts's deadline
       const deadline = setTimeout(() => {
         late = true;
         resolve(null);

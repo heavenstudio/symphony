@@ -459,6 +459,10 @@ fn retry_conflicts<T>(
                     );
                     said = true;
                 }
+                #[expect(
+                    clippy::disallowed_methods,
+                    reason = "no-timed-waits baseline: tries a commit again after a fixed pause, where a backoff is the helper"
+                )]
                 std::thread::sleep(std::time::Duration::from_millis(250));
             }
         }

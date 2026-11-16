@@ -518,6 +518,10 @@ fn an_input_that_ends_runs_its_ending_after_its_delay_and_only_then() {
     let mut input = Ending::new(&b"a\nb\n"[..], std::time::Duration::from_millis(20), then);
     let mut line = String::new();
     input.read_line(&mut line).unwrap();
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "no-timed-waits baseline: a test holds past the input's ending deadline"
+    )]
     std::thread::sleep(std::time::Duration::from_millis(60));
     assert_eq!(
         ran.load(Ordering::SeqCst),
@@ -533,8 +537,16 @@ fn an_input_that_ends_runs_its_ending_after_its_delay_and_only_then() {
     let deadline = Instant::now() + std::time::Duration::from_secs(5);
     while ran.load(Ordering::SeqCst) == 0 {
         assert!(Instant::now() < deadline, "the ending did not run");
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "no-timed-waits baseline: a test looks again for its condition by hand, where test_time::wait::until is the helper"
+        )]
         std::thread::sleep(std::time::Duration::from_millis(5));
     }
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "no-timed-waits baseline: a test holds for a length of time to show nothing more runs"
+    )]
     std::thread::sleep(std::time::Duration::from_millis(60));
     assert_eq!(ran.load(Ordering::SeqCst), 1);
 }

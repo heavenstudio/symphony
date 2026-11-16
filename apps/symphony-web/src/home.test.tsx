@@ -1,8 +1,8 @@
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import fullBoard from "../../../crates/symphony-api/fixtures/board.json";
 import emptyBoard from "../../../crates/symphony-api/fixtures/board-empty.json";
-import { age, BoardView, greeting, HomePage, lead } from "./home";
+import { age, BoardView, greeting, HomePage, keepTime, lead } from "./home";
 import { readBoard } from "./home-board";
 import { PLAIN } from "./project";
 import type { Board, Card, ProjectView, Region } from "./wire";
@@ -37,6 +37,28 @@ function region(html: string, marker: string): string {
 }
 
 const count = (html: string, needle: string) => html.split(needle).length - 1;
+
+describe("the owner's clock", () => {
+  afterEach(() => vi.useRealTimers());
+
+  it("tells the moment at each minute's tick, and nothing once the page is gone", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 9, 8, 10, 12));
+    const shown: number[] = [];
+    const page = new AbortController();
+    const kept = keepTime(page.signal, (now) => shown.push(now));
+    await vi.advanceTimersByTimeAsync(59_999);
+    expect(shown).toEqual([]);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(shown).toEqual([at("2026-10-08 10:13")]);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(shown).toEqual([at("2026-10-08 10:13"), at("2026-10-08 10:14")]);
+    page.abort();
+    await kept;
+    expect(vi.getTimerCount()).toBe(0);
+    expect(shown).toHaveLength(2);
+  });
+});
 
 describe("the greeting", () => {
   it("follows the hour", () => {

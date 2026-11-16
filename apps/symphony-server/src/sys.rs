@@ -311,6 +311,10 @@ pub(crate) fn output_while(
             let _ = owned.stop(&why);
             return Err(why);
         }
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "no-timed-waits baseline: looks again for a child's answer until its deadline, where its pipe is the event"
+        )]
         std::thread::sleep(Duration::from_millis(10));
     }
     let status = owned

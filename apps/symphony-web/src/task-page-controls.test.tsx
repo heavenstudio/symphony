@@ -22,7 +22,7 @@ import {
   TaskPage,
   TaskPageView,
 } from "./task-page";
-import { aRole, memoryStorage, reply, server, until } from "./testing";
+import { aRole, memoryStorage, reply, server, turn, until } from "./testing";
 import type { TaskOffer } from "./wire";
 import { TASK_ACTION_ROUTE } from "./wire";
 import { CHECKING } from "./words";
@@ -200,7 +200,7 @@ function byId(node: ReactNode, id: string): Record<string, unknown> {
 /** Until `response`'s body is read, then the turn after it: what awaited it has gone on. */
 async function read(response: Response): Promise<void> {
   await until(() => expect(response.bodyUsed).toBe(true));
-  await new Promise((done) => setTimeout(done, 0));
+  await turn();
 }
 
 const calls = (spy: Mock | undefined) => spy?.mock.calls ?? [];
@@ -789,7 +789,8 @@ describe("the page's wiring", () => {
       moved.effects[1]?.();
       expect(task?.moved).toHaveBeenCalledWith("w/b");
       expect(made.tasks).toHaveLength(1);
-      expect(vi.getTimerCount()).toBe(1);
+      // No timer of its own: a held reload waits for the reader to be done, not a minute.
+      expect(vi.getTimerCount()).toBe(0);
       leave?.();
       expect(task?.signal.aborted).toBe(true);
       expect(vi.getTimerCount()).toBe(0);

@@ -1565,6 +1565,10 @@ fn held(
     let living = || record::holder(folder).filter(|holder| pid_alive(i64::from(holder.pid)));
     let mut holder = living();
     while holder.is_none() && Instant::now() < said_by {
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "no-timed-waits baseline: looks again for the folder's holder to say itself, which no event announces"
+        )]
         std::thread::sleep(group::POLL);
         holder = living();
     }
@@ -2156,6 +2160,10 @@ fn regenerated(
         .and_then(|seconds| seconds.parse::<u64>().ok())
         .map_or(REGENERATOR, Duration::from_secs);
     let pause = || {
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "no-timed-waits baseline: the release run looks again for the regenerator each period, which no event announces"
+        )]
         std::thread::sleep(REGENERATING.min(until.until.saturating_duration_since(Instant::now())));
     };
     // Whether the main checkout's branch was the candidate at a look: from then on its moves are

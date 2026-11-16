@@ -248,6 +248,10 @@ fn spawn(
             ended = true;
             break;
         }
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "no-timed-waits baseline: looks again for its child's end, where a wait on the child under a deadline is the event"
+        )]
         std::thread::sleep(LOOK);
     }
     if !ended {

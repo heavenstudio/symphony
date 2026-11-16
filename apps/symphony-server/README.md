@@ -59,8 +59,9 @@ server on a project's build, naming the command that lets it go, and `just relea
 the same ([RELEASES](../../docs/RELEASES.md#status)); a stop and a start then make the release
 the machine's server once nothing holds it.
 
-A release's server builds nothing and watches no source: once a second it reads where the
-machine's `current` link points, and when it names another release, hands its sockets to that
+A release's server builds nothing and watches no source: it watches the machine folder for its
+`current` link moving, reads where the link points as it starts, at each move and once a period
+(`backstop.rs`, for an event lost), and when it names another release, hands its sockets to that
 release's server, by its own folder's path, as a reload below hands them. A release not installed
 whole, or whose server does not become ready, leaves the running one serving, said on the notice
 and tried again on the waits below; `current` pointed back at the running release clears the
