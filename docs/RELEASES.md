@@ -839,7 +839,7 @@ current -> releases/release-2026-11-20
   run from a release's folder it serves `client/HASH/` from beside it. The client is the
   distribution the commit holds (`apps/symphony-server/client/public/`), which the release's own
   `client-check` compared byte for byte with a build of its sources, so nothing builds it again.
-- **The manifest.** What the release serves is asked of the binaries just built, never read from
+- **The manifest.** What the release serves is asked of the binaries that build made, never read from
   the program that installs, which a retry runs from a later main: `symphony-server --serves`
   prints its plugin protocol and board schema, and `tasks api` answers the method `version` with
   its api version and its schema. A server and a board built at different schemas are never

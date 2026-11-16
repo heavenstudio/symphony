@@ -8,7 +8,7 @@
 //! installed beside it. The client is the distribution the commit holds
 //! (`apps/symphony-server/client/public/`), which the release's own verification compared byte for
 //! byte with a build of its sources, so nothing builds it again. What the release serves is asked
-//! of the binaries just built, never of this program, which a retry runs from a later main: the
+//! of the binaries that build made, never of this program, which a retry runs from a later main: the
 //! server its plugin protocol and board schema (`symphony-server --serves`), the board its schema
 //! and its `tasks api` version (`tasks api`, the method `version`).
 //!
