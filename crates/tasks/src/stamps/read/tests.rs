@@ -246,6 +246,68 @@ fn tests_are_missing_while_a_command_is_red_still_going_or_no_test_ran() {
     );
 }
 
+/// What [`at_tip`] holds, by operation number: each command's newest and the runs before it, then
+/// the runs elsewhere.
+fn numbered(found: &AtTip<'_>) -> (Vec<(u8, Vec<u8>)>, Vec<u8>) {
+    let n = |run: &Record| u8::from_str_radix(&run.operation_id, 16).unwrap();
+    let commands = (found.commands.iter())
+        .map(|command| {
+            (
+                n(command.newest),
+                command.before.iter().map(|r| n(r)).collect(),
+            )
+        })
+        .collect();
+    (commands, found.elsewhere.iter().map(|r| n(r)).collect())
+}
+
+#[test]
+fn at_the_tip_each_command_is_its_newest_run_with_those_before_and_other_commits_apart() {
+    let runs = [
+        run(4, SLUG, "just test-rs", Test, TIP, Finished, 0),
+        run(1, SLUG, "just test-rs", Test, LATER, Finished, 0),
+        run(2, SLUG, "just test-rs", Test, TIP, Finished, 101),
+        run(3, SLUG, "just lint-rs", Build, TIP, Finished, 0),
+        // Work under it counts; another task's, and one of no commit, do not.
+        run(5, "tools/x/work", "just test-rs", Test, TIP, Running, 0),
+        run(6, "tools/y", "just lint-rs", Build, TIP, Finished, 1),
+    ];
+    let mut no_commit = run(7, SLUG, "just test-rs", Test, TIP, Finished, 0);
+    no_commit.commit = None;
+    let runs = [runs.as_slice(), &[no_commit]].concat();
+    // In the order each command was first run at the tip, begun times deciding, not the files'.
+    assert_eq!(
+        numbered(&at_tip(&runs, TIP, ours)),
+        (vec![(5, vec![2, 4]), (3, vec![])], vec![1])
+    );
+    assert_eq!(
+        numbered(&at_tip(&runs, LATER, ours)),
+        (vec![(1, vec![])], vec![2, 3, 4, 5])
+    );
+    assert_eq!(at_tip(&[], TIP, ours), AtTip::default());
+}
+
+#[test]
+fn the_newest_run_of_a_command_at_the_tip_is_whoever_ran_it() {
+    let check = "just symphony-cli docs-audit --check";
+    let mut unattributed = run(3, SLUG, check, Test, TIP, Finished, 1);
+    unattributed.task = None;
+    let runs = [
+        run(1, SLUG, check, Test, TIP, Finished, 0),
+        run(2, "tools/y", check, Test, LATER, Finished, 0),
+        unattributed,
+        run(4, SLUG, "just lint-rs", Build, TIP, Finished, 0),
+    ];
+    let newest = newest_of(&runs, TIP, check).unwrap();
+    assert_eq!((newest.task.as_deref(), newest.exit_code), (None, Some(1)));
+    assert_eq!(
+        newest_of(&runs, LATER, check).unwrap().handle.as_deref(),
+        Some("agent-2")
+    );
+    assert!(newest_of(&runs, TIP, "just verify").is_none());
+    assert!(newest_of(&[], TIP, check).is_none());
+}
+
 #[test]
 fn a_picture_is_a_file_under_the_tasks_artifacts_folder_or_an_upload() {
     for shown in [

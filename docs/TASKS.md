@@ -2356,6 +2356,18 @@ landing](#the-default-landing)).
   when an assessment reads the brief alone); and `CHECK PATHS`, the paths the branch changes
   since it left the default branch that `[land] check_paths` names, which the `review` guideline asks
   for, so an assessor need not find the tests in a diff.
+- **`just tasks runs SLUG [--tip SHA]`** prints what the recorder kept of the task at its
+  branch's tip in the main checkout, or at the commit `--tip` names there, read as the `tests`
+  stamp reads it (`crates/tasks/src/cli/commands/runs.rs`): `TIP`; `RUNS`, a row for each build
+  and test command the task and the work under it ran there, its newest run's result (`green`,
+  `red`, `running`, `queued`), when, how long, who, why it is red, and how many runs of it came
+  before there; `TESTS`, the `tests` stamp met or not with its reader's line; `CHECK`, the
+  project's `[verdicts] check` as the task page's check gate reads it, its newest run there by
+  anyone or `no run`; and `ELSEWHERE`, how many of the task's runs are at other commits, none of
+  them the tip's. It is what a reviewer reads in place of building again (RULES.md
+  `workflow/no-second-build-in-review`, [CHECKS](CHECKS.md#no-second-build-in-review)), and what
+  an executor reads before it asks for review. It is refused for a task the board does not hold,
+  outside a checkout of its repository, and with no tip to read.
 - **The needs** are the board's own field `fields._board.needs`, out of `just tasks field`'s
   reach as the red and fast-fix marks are: the stamps, the tip the assessment read (none, from
   the brief), who made it and why. `just tasks needs SLUG STAMP… [--tip TIP] --why WHY --as

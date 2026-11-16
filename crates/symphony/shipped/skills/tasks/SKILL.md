@@ -166,11 +166,11 @@ Act on requests without an acknowledgement post.
 
 A reviewer works by the [review-task](../review-task/SKILL.md) skill, its whole prompt
 `/review-task SLUG HANDLE` (Codex: `$review-task SLUG HANDLE`) on the task it judges, never a
-subtask: an independent verdict naming the tip it read, after rerunning the task's focused
-tests itself, recorded on that task as a round of its review. A later round is the same
-reviewer's, resumed with the new tip. Choose reviewer
-families, models and launch methods under the project's policy; `just tasks limits`
-names the reviewer's model the project sets.
+subtask: an independent verdict naming the tip it read, after reading the task's recorded
+builds and tests at that tip (`just tasks runs SLUG`) and building or running only what they
+leave open, recorded on that task as a round of its review. A later round is the same
+reviewer's, resumed with the new tip. Choose reviewer families, models and launch methods under
+the project's policy; `just tasks limits` names the reviewer's model the project sets.
 
 ## Assess (assessor)
 
