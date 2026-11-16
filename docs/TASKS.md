@@ -2687,8 +2687,8 @@ does not answer for the whole board while others wait for work
 project's: `orchestrator_tasks` in the `[limits]` table of `symphony.toml` ([Limits and
 models](#limits-and-models)), 16 with none written, read from the main checkout as the cap is. A
 value that is no whole number, or one below 1, is said on stderr with its line and takes 16, and
-`just settings-check` refuses it (`[limits] orchestrator_tasks (line 2) is "sixteen"; not a whole
-number`).
+the settings check ([PROJECT_FILE](PROJECT_FILE.md#the-settings-check)) refuses it (`[limits]
+orchestrator_tasks (line 2) is "sixteen"; not a whole number`).
 
 - **What counts.** Each task not done or cancelled whose orchestrator role the session holds
   itself: in review and blocked too, as the limit bounds what one orchestrator answers for, not
