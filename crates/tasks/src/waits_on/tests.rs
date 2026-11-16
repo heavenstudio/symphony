@@ -374,8 +374,8 @@ fn a_block_on_the_owners_stamp_waits_on_his_decision_named_by_his_approve_never_
         says(CHECK, "owners", "a check to give")
     );
     assert_eq!(
-        said(&line_of(&board, "held").unwrap(), 90.0),
-        "Waits: on decision: the owner's approve of 0123abc · its landing waits on it · 90 s"
+        said(&line_of(&board, "held").unwrap(), 300.0),
+        "Waits: on decision: the owner's approve of 0123abc · its landing waits on it · 5 min"
     );
 }
 
