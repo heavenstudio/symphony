@@ -223,7 +223,7 @@ fn a_tasks_timeline_is_a_list_that_fits_a_phone_and_lanes_on_a_wide_screen() {
     assert_eq!(shown(&mut chrome, ".tl-more"), Vec::<String>::new());
     assert_eq!(
         super::texts(&mut chrome, ".tl-lane[data-lane] .tl-name b"),
-        ["Stage", "Executor", "Reviewer", "Builds & tests"]
+        ["Stage", "Executor", "Reviewer", "Builds", "Tests"]
     );
     assert_eq!(
         super::texts(&mut chrome, ".tl-gate .tl-name"),
@@ -303,13 +303,250 @@ fn a_task_with_no_run_kept_draws_no_builds_or_tests() {
         json!(3)
     );
     assert_eq!(
-        chrome.eval("document.querySelector('.tl-lane[data-lane=runs], .tl-running, .tl-machine')"),
+        chrome.eval("document.querySelector('.tl-lane[data-lane=builds], .tl-lane[data-lane=tests], .tl-running, .tl-machine')"),
         Value::Null
     );
     assert_eq!(
         shown(&mut chrome, ".tl-totals"),
         ["6 h 18 m so far · 2 review rounds · 1 bounce"]
     );
+}
+
+/// The pictures' task's tests run on the same commit as its build: a run's words name its command,
+/// its wait and its run time apart.
+const LINT: &str =
+    "Build, just lint-rs · waited 3 m · ran 4 m · green · at 9ac5149 by quiet-wren on studio";
+const VERIFY: &str =
+    "Test, just verify · waited 6 m · ran 24 m · green · at 9ac5149 by quiet-wren on studio";
+const CERTIFICATE: &str =
+    "Test, certificate verify · waited 10 m · ran 18 m so far · at 4be91c2 on studio";
+
+/// Where the list's last row is in the box and what it says under its bar: the row's top and bottom
+/// from the box's top, its words
+/// and whether they are whole inside the part of the box that shows the steps, that part's scroll,
+/// the box's height and the words the box's foot shows.
+const LAST_ROW: &str = "(() => { const row = document.querySelector('.tl-list > li:last-of-type'); const facts = row.querySelector('.tl-facts'); const body = document.getElementById('tl-body').getBoundingClientRect(); const f = facts.getBoundingClientRect(); const shown = facts.getClientRects().length > 0; const slot = document.getElementById('timeline-slot').getBoundingClientRect().top; return {top: Math.round(row.getBoundingClientRect().top - slot), bottom: Math.round(row.getBoundingClientRect().bottom - slot), facts: shown ? facts.textContent : null, whole: shown && f.top >= body.top - 0.5 && f.bottom <= body.bottom + 0.5, scrolled: document.getElementById('tl-body').scrollTop, box: Math.round(document.getElementById('timeline-slot').getBoundingClientRect().height), foot: [...document.querySelectorAll('.tl-foot .tl-detail, .tl-foot .tl-legend li')].filter(e => e.getClientRects().length > 0).map(e => e.textContent.trim())}; })()";
+
+/// A run's words, for a pointer resting on its part and for its focus: wide, a lane's part the
+/// keyboard or a click reaches says them in the legend's place, and a pointer resting on it reads
+/// them; on a phone, a run's row a tap reaches says them under its bar, growing upward in a box that
+/// keeps its height and the rows under it where they were, the legend left in its place.
+#[test]
+fn a_runs_hover_and_focus_say_its_command_its_wait_and_its_run_time_apart() {
+    let site = served(&fixture());
+    let Some(mut chrome) = chrome() else { return };
+    open(&mut chrome, &site, 1280, 13);
+    // The build is in its lane, the tests in theirs, each a part of its own the keyboard stops at.
+    let said = |chrome: &mut super::chrome::Chrome, lane: &str| {
+        chrome.eval(&format!(
+            "[...document.querySelectorAll('.tl-lane[data-lane={lane}] [role=img]')].map(e => e.getAttribute('aria-label'))"
+        ))
+    };
+    assert_eq!(said(&mut chrome, "builds"), json!([LINT]));
+    assert_eq!(
+        said(&mut chrome, "tests")[0],
+        json!(VERIFY),
+        "the tests' lane: {}",
+        said(&mut chrome, "tests")
+    );
+    // A pointer resting on the test's part reads all of it, as on the queue before it.
+    let selector = ".tl-lane[data-lane=tests] [role=img]";
+    let under = chrome.eval(&format!(
+        "(() => {{ const b = document.querySelector({}).getBoundingClientRect(); const at = document.elementFromPoint(b.left + b.width / 2, b.top + b.height / 2); return [at.title, document.querySelector('.tl-lane[data-lane=tests] .tl-waiting').title]; }})()",
+        json!(selector)
+    ));
+    assert_eq!(under, json!([VERIFY, VERIFY]));
+    // A click focuses it, as the keyboard does: its words take the legend's place.
+    tap(&mut chrome, selector);
+    assert_eq!(shown(&mut chrome, ".tl-detail"), [VERIFY]);
+    assert!(shown(&mut chrome, ".tl-legend li").is_empty());
+    // On a phone, the latest run's row a tap reaches says all of the run under its bar, whole in
+    // the box, which keeps its height; the row grows upward, its bottom where it was, and the foot
+    // keeps the legend.
+    view(&mut chrome, 390, true);
+    assert!(chrome.wait_for(
+        "document.querySelector('.tl-drawn.tl-clipped .tl-more') !== null",
+        SHOWN
+    ));
+    frames(&mut chrome);
+    let legend = json!(["worked or ran", "queued or waiting", "running now"]);
+    let before = chrome.eval(LAST_ROW);
+    assert_eq!(
+        (&before["facts"], &before["box"], &before["foot"]),
+        (&Value::Null, &json!(240), &legend)
+    );
+    tap(&mut chrome, ".tl-list > li:last-of-type");
+    assert_eq!(
+        chrome.eval(
+            "document.activeElement === document.querySelector('.tl-list > li:last-of-type')"
+        ),
+        json!(true)
+    );
+    frames(&mut chrome);
+    let mut focused = chrome.eval(LAST_ROW);
+    let top = focused["top"].take();
+    assert!(
+        top.as_f64() < before["top"].as_f64(),
+        "the row grew down from {before} to {focused}"
+    );
+    assert_eq!(
+        focused,
+        json!({"top": null, "bottom": before["bottom"], "facts": CERTIFICATE, "whole": true, "scrolled": 0, "box": 240, "foot": legend}),
+        "before the tap: {before}"
+    );
+    assert_eq!(
+        chrome.eval("document.getElementById('quick-open').getAttribute('aria-expanded')"),
+        json!("false"),
+        "the tap reached the page"
+    );
+    // The totals give the row their room while it has the focus.
+    assert!(!drawn(&mut chrome, ".tl-totals"));
+    // A tap elsewhere takes the focus: the row says no more and the totals are back.
+    tap(&mut chrome, ".tl-legend");
+    assert!(drawn(&mut chrome, ".tl-totals"));
+    assert_eq!(chrome.eval(LAST_ROW), before);
+    assert_eq!(
+        chrome.eval("document.activeElement?.closest('.tl-row') ?? null"),
+        Value::Null
+    );
+}
+
+/// On a phone, a timeline the box holds whole, its run's row a tap reaches says all of the run
+/// under its bar, the row growing down, its top where it was, and the box with it where it needs to,
+/// never under its height and no step cut off; in a box that clips, long words are whole too; and
+/// "Show all" open, the box grows to hold them, as the reader asked.
+#[test]
+fn on_a_phone_a_runs_row_says_all_of_it_in_every_box() {
+    let mut short = fixture();
+    let first = short["stages"][0].clone();
+    short["stages"] = json!([first]);
+    short["stages"][0]["to"] = Value::Null;
+    let last = short["runs"][0].clone();
+    short["runs"] = json!([last]);
+    for empty in ["gates", "claims", "rounds"] {
+        short[empty] = json!([]);
+    }
+    let site = served(&short);
+    let Some(mut chrome) = chrome() else { return };
+    open(&mut chrome, &site, 390, 2);
+    assert_eq!(
+        chrome.eval("document.querySelector('.tl-drawn').className"),
+        json!("tl-drawn"),
+        "the box holds every step"
+    );
+    let before = chrome.eval(LAST_ROW);
+    tap(&mut chrome, ".tl-list > li:last-of-type");
+    frames(&mut chrome);
+    let focused = chrome.eval(LAST_ROW);
+    assert_eq!(
+        (&focused["top"], &focused["facts"], &focused["whole"]),
+        (&before["top"], &json!(LINT), &json!(true)),
+        "before the tap: {before}, then {focused}"
+    );
+    assert!(
+        focused["bottom"].as_f64() > before["bottom"].as_f64()
+            && focused["box"].as_f64() >= before["box"].as_f64(),
+        "before the tap: {before}, then {focused}"
+    );
+    assert_eq!(chrome.eval(EVERY_STEP_SHOWN), json!(true), "a step cut off");
+    // A box that clips, its totals on two lines over a note of the runs no longer kept, and a run
+    // whose words take five lines: they are whole, the box as tall as before.
+    let mut long = fixture();
+    let host = "a-long-machine-name-of-the-studio-in-the-back-room.local";
+    for run in long["runs"].as_array_mut().unwrap() {
+        run["host"] = json!(host);
+    }
+    long["runs_from"] = json!(long["created"].as_f64().unwrap() + 83.0 * 60.0);
+    let site = served(&long);
+    // A browser of its own: this one keeps the short timeline's height for the task.
+    let Some(mut chrome) = super::chrome() else {
+        return;
+    };
+    open(&mut chrome, &site, 390, 13);
+    assert!(drawn(&mut chrome, ".tl-note"));
+    tap(&mut chrome, ".tl-list > li:last-of-type");
+    frames(&mut chrome);
+    let focused = chrome.eval(LAST_ROW);
+    assert!(
+        focused["facts"].as_str().unwrap().ends_with(host)
+            && focused["whole"] == json!(true)
+            && focused["box"] == json!(240),
+        "{focused}"
+    );
+    // Every step shown, the words the row grows by take room of their own.
+    tap(&mut chrome, ".tl-more");
+    let shown_all = chrome.eval(BOX_HEIGHT);
+    let row = ".tl-list > li.tl-sub:not(.tl-event)";
+    tap(&mut chrome, row);
+    frames(&mut chrome);
+    let grown = chrome.eval(BOX_HEIGHT);
+    let words = chrome.eval(&format!(
+        "(() => {{ const facts = document.querySelector({}).querySelector('.tl-facts'); return [facts.textContent, facts.getBoundingClientRect().height]; }})()",
+        json!(row)
+    ));
+    assert!(
+        words[0].as_str().unwrap().ends_with(host)
+            && grown.as_f64().unwrap() >= shown_all.as_f64().unwrap() + words[1].as_f64().unwrap(),
+        "the box was {shown_all} px and is {grown} px for {words}"
+    );
+    assert_eq!(chrome.eval(EVERY_STEP_SHOWN), json!(true));
+}
+
+/// Each two parts of different runs in one lane of runs whose boxes meet or overlap: none, where
+/// each run is a bar of its own.
+const MERGED: &str = "(() => { const met = []; for (const lane of document.querySelectorAll('.tl-lane[data-lane=builds], .tl-lane[data-lane=tests]')) { const parts = [...lane.querySelectorAll('.tl-seg')].map(e => [e.title, e.getBoundingClientRect()]); for (let i = 0; i < parts.length; i++) for (let j = i + 1; j < parts.length; j++) { const [a, r] = parts[i], [b, s] = parts[j]; if (a !== b && r.left < s.right + 1 && s.left < r.right + 1 && r.top < s.bottom && s.top < r.bottom) met.push([a, b]); } } return met; })()";
+
+/// Four tests at once, and one queued half a minute after another's end, each drawn as a bar of its
+/// own in the tests' lane: a row each where they overlap or meet, as many rows as they need.
+#[test]
+fn runs_that_overlap_or_meet_are_each_drawn_as_a_bar_of_its_own() {
+    let mut timeline = fixture();
+    let made = timeline["created"].as_f64().unwrap();
+    let run = |phase: &str, label: &str, from: f64, to: f64| json!({"phase": phase, "label": label, "by": "quiet-wren", "commit": "9ac5149", "host": "studio", "queued": made + from * 60.0, "started": made + from * 60.0 + 30.0, "ended": made + to * 60.0, "result": "green"});
+    timeline["runs"] = json!([
+        run("build", "just lint-rs", 60.0, 200.0),
+        run("test", "just test-rs -p a", 60.0, 200.0),
+        run("test", "just test-rs -p b", 70.0, 190.0),
+        run("test", "just test-rs -p c", 80.0, 180.0),
+        run("test", "just test-rs -p d", 90.0, 170.0),
+        // Half a minute after c's end: it would read as c's bar, so it takes another row.
+        run("test", "just test-rs -p e", 180.5, 250.0),
+        run("test", "just verify", 260.0, 300.0),
+    ]);
+    let site = served(&timeline);
+    let Some(mut chrome) = chrome() else { return };
+    open(&mut chrome, &site, 1280, 16);
+    assert_eq!(
+        chrome.eval("[...document.querySelectorAll('.tl-lane[data-lane=builds], .tl-lane[data-lane=tests]')].map(lane => [lane.dataset.lane, lane.style.getPropertyValue('--rows'), lane.querySelectorAll('[role=img]').length])"),
+        json!([["builds", "1", 1], ["tests", "4", 6]])
+    );
+    for width in [900, 1280, 1600] {
+        view(&mut chrome, width, false);
+        assert_eq!(chrome.eval(MERGED), json!([]), "at {width} px");
+        assert_eq!(chrome.eval(EVERY_STEP_SHOWN), json!(true), "at {width} px");
+    }
+    // A burst of forty tests a minute apart on a timeline of a week: each meets the one before it
+    // and takes a row, more rows than words are drawn for, so they are drawn thin, every run still
+    // a bar of its own and a part the keyboard stops at, no word under any.
+    let mut timeline = week();
+    let now = timeline["now"].as_f64().unwrap();
+    let burst: Vec<Value> = (0..40)
+        .map(|at| {
+            let queued = now - 7200.0 + f64::from(at) * 60.0;
+            json!({"phase": "test", "label": format!("just test-rs -p p{at}"), "by": "quiet-wren", "commit": "9ac5149", "host": "studio", "queued": queued, "started": queued + 1.0, "ended": queued + 30.0, "result": "green"})
+        })
+        .collect();
+    timeline["runs"] = json!(burst);
+    let site = served(&timeline);
+    open(&mut chrome, &site, 1280, 90);
+    assert_eq!(
+        chrome.eval("(() => { const lane = document.querySelector('.tl-lane[data-lane=tests]'); return [lane.hasAttribute('data-dense'), lane.style.getPropertyValue('--rows'), lane.querySelectorAll('[role=img]').length, lane.querySelectorAll('.tl-under').length, Math.round(lane.querySelector('.tl-track').getBoundingClientRect().height)]; })()"),
+        json!([true, "40", 40, 0, 40 * 12 + 4])
+    );
+    for width in [900, 1280, 1600] {
+        view(&mut chrome, width, false);
+        assert_eq!(chrome.eval(MERGED), json!([]), "at {width} px");
+    }
 }
 
 /// The pairs of words drawn in one track of the lanes whose boxes meet: none, where every word is

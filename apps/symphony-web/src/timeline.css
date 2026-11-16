@@ -96,6 +96,26 @@
   padding-left: calc(var(--rail) + 28px);
   font-size: 0.8125rem;
 }
+/* A run's row a tap put the focus on says all of it under its bar: its command, its wait and its
+   run time apart. The row grows: in a box that clips, upward, the rows under it kept in place and
+   the totals giving it their room; in one that holds every step, the box with it
+   (timeline-slot.css). */
+.tl-sub:focus {
+  outline: none;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--primary) 14%, transparent);
+}
+.tl-facts {
+  display: none;
+}
+.tl-sub:focus .tl-facts {
+  grid-column: 1 / -1;
+  display: block;
+  margin-top: 4px;
+  color: var(--muted-foreground);
+  font-size: var(--fs-xs);
+  overflow-wrap: anywhere;
+}
 .tl-at {
   position: absolute;
   left: 0;
@@ -189,7 +209,8 @@
 
 /* The page's + button floats over a phone's bottom right: what the timeline says keeps clear of
    its column. A list the box clips keeps its latest steps in view, its earliest cut at the top,
-   where they fade out, however the box's foot or a late font changes the room it has. */
+   where they fade out, however the box's foot, a late font or a run's row grown to say all of it
+   changes the room it has. */
 @media (max-width: 899.98px) {
   .tl-drawn {
     padding-right: 40px;
@@ -211,6 +232,11 @@
     height: 28px;
     background: linear-gradient(var(--card), transparent);
     pointer-events: none;
+  }
+  /* A run's row a tap focused in a box that clips grows upward into the room of the totals above
+     the steps, which come back with the focus gone: its words need the room more. */
+  .tl-clipped:has(.tl-sub:focus) .tl-head {
+    display: none;
   }
 }
 
@@ -347,14 +373,24 @@
   font-weight: 600;
   line-height: 26px;
 }
-.tl-lane[data-lane="runs"] .tl-track {
+.tl-lane:is([data-lane="builds"], [data-lane="tests"]) .tl-track {
   height: calc(var(--rows) * 42px + 4px);
 }
-.tl-lane[data-lane="runs"] .tl-seg {
+.tl-lane:is([data-lane="builds"], [data-lane="tests"]) .tl-seg {
   top: calc(var(--row) * 42px + 4px);
   height: 20px;
   padding: 0;
   border-radius: 3px;
+}
+/* A lane of more rows than its runs' words are drawn for (timeline-layout.ts WORDED_ROWS) draws
+   them thin: each run's words are in its hover, its focus and the list. */
+.tl-lane[data-dense] .tl-track {
+  height: calc(var(--rows) * 12px + 4px);
+}
+.tl-lane[data-dense] .tl-seg {
+  top: calc(var(--row) * 12px + 4px);
+  height: 8px;
+  border-radius: 2px;
 }
 .tl-under {
   position: absolute;
