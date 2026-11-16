@@ -37,9 +37,10 @@ landing](TASKS.md#the-default-landing)). A change to a test or a check (`[land] 
 keeps `review`, since a loosened test or check is how a red turns green unfixed. A change of
 settings' values needs `tests` alone, the settings check ([by kind](#evidence-by-kind-of-change)).
 
-Where review is needed, a reviewer runs the same focused tests itself, never the suite, reads the
-diff against the evidence and judges whether it is good enough for the change's risk. Evidence
-that falls short is a `changes` verdict naming what to add. The reviewer's approve is that stamp:
+Where review is needed, a reviewer reads the diff against the evidence and judges whether it is
+good enough for the change's risk, and builds or runs nothing the task's recorded runs at the
+tip already show green ([no second build in review](#no-second-build-in-review)), never the
+suite. Evidence that falls short is a `changes` verdict naming what to add. The reviewer's approve is that stamp:
 the board verdict (`just tasks verdict SLUG approve "FULL_SHA: why"`, naming the tip it read,
 RULES.md `workflow/reviewers-not-the-owner`), given on the task it reviews, never on a review
 subtask, and drawn as a round of its review gate ([Gates](TASKS.md#gates)). A slice's evidence is
@@ -118,13 +119,20 @@ a measurement before and after.
   comes with a constructor (its `#[non_exhaustive]` the protocol's tests hold, as they hold
   `Request`'s and name each enum there left exhaustive), that a field added to a call is a new major
   unless `new` leaves it out ([PLUGIN_PROTOCOL](PLUGIN_PROTOCOL.md#versions)), and that a name
-  removed or changed, or a field or variant added to a seam type or the vocabulary, is a new major
-  of the package's line.
+  removed or changed, or a field added to a seam type or the vocabulary, is a new major of the
+  package's line. A variant added to a list of the vocabulary is a minor: the kit's tests hold
+  each list `#[non_exhaustive]` and name the two left exhaustive, to which a variant added is a
+  new major (`crates/symphony-plugin/tests/vocabulary.rs`), and
+  `crates/symphony-api/tests/vocabulary_drawn.rs` holds every kind to an arm in each match of
+  this workspace, in the compiler's place.
 - **A doc** (a document, guide, skill or rule): `just symphony-cli docs-audit --check` (every
   document renders, and every recipe a text of this repository names is one a project has,
   [below](#the-recipes-a-text-names)) and `just symphony-cli status --lint` (no card slug in prose,
   nothing the plugins' prose rules refuse) clean, both run at the branch's final tip, after its
-  last edit: a run before an edit is evidence of the text before it. A guide, or a document under
+  last edit: a run before an edit is evidence of the text before it. Typed so, each is a test
+  run the recorder keeps with its commit
+  ([MACHINE_WORK](MACHINE_WORK.md#recording-builds-and-tests)), so its reviewer reads it as
+  recorded, like any test. A guide, or a document under
   `docs/` but the register and `docs/history/`, also runs the check for the owner's words in the
   shapes the guides gave them, dated or straight-quoted (`just test-rs -p symphony-app --test hooks
   owner_words`, RULES.md `docs/no-ledger-in-documents`), and its reviewer reads for any other
@@ -193,8 +201,9 @@ audit on main after the land's round files it within minutes
 4. `just lint-rs` (which runs `just client-lint`), and, when `apps/symphony-ui` or
    `apps/symphony-web` changed, the client built (`just client-update`) for its tests and
    pictures, its distribution never committed.
-5. After merging main, the targets steps 1 to 3 pick run again at the new tip, before review,
-   as main may have changed what the branch's code meets ([after main moves](#after-main-moves)).
+5. Main is merged once, when the work is complete, and the targets steps 1 to 3 pick run again
+   at the new tip, before review, as main may have changed what the branch's code meets
+   ([after main moves](#after-main-moves)).
 
 A package's own run (`-p PACKAGE`) and the workspace's can differ, as Cargo turns on a
 dependency's features for every package one build takes: the workspace and `-p symphony-server`
@@ -227,12 +236,13 @@ both kinds, to copy after `--`:
 | the home queue (`/`) | `queue` `polish::` `projects::` `budget` `phone::` |
 | the queue page (`/queue`) | `queue` `cache_pages::` `landmarks::` `skeleton::` `header::` `look_parity::` `postponed_labels` `later_advances` `restored_mockups` `reconnect_pills` `polish::` `projects::` `budget` |
 | the tasks board (`/tasks`) and its cards | `board` `task_columns` `task_controls` `tasks_and` `a_revealed_column` `owner_` `machine_work` `run_records::` `cache_pages::` `kept_pages::` `landmarks::` `layout_shift::` `skeleton::` `feed_deltas::` `header::` `look_parity::` `restored::` `components::` `polish::` `shot::` `projects::` `budget` |
-| a task's page, its gates and its timeline | `task_page` `task_panel` `task_priority` `task_gates::` `timeline::` `owner_controls::` `owner_save::` `cache_tasks::` `cache_ahead` `feed_deltas::` `notice_layout::` `landmarks::` `layout_shift::` `skeleton::` `header::` `look_parity::` `restored::` `components::` `program::` `polish::` `projects::` `budget` `preload::` |
+| a task's page, its gates and its timeline | `task_page` `task_panel` `task_priority` `task_gates::` `timeline::` `owner_controls::` `owner_save::` `cache_tasks::` `cache_ahead` `feed_deltas::` `notice_layout::` `landmarks::` `layout_shift::` `skeleton::` `header::` `look_parity::` `restored::` `components::` `persistent::` `polish::` `projects::` `budget` `preload::` |
 | the agents page (`/agents`) | `machine_work` `the_agents_page` `header::` `look_parity::` `the_chat_opened_on` `polish::` `projects::` `budget` |
 | the reports page (`/reports`) | `reports::` `header::` `polish::` `projects::` `budget` |
 | the runs page (`/runs`) | `runs::` `header::` `polish::` `projects::` `preload::` `budget` |
 | document and folder pages | `document` `docs_index` `owner_` `cache_ahead` `cache_pages::` `restored::` `landmarks::` `skeleton::` `layout_shift::` `look_parity::` `polish::` `projects::` `budget` |
-| the header, on every page | `header::` `floating_controls::` `panel_open::` `program::` `polish::` `projects::` |
+| the header, on every page | `header::` `floating_controls::` `panel_open::` `persistent::` `polish::` `projects::` |
+| the panel (the chat, add task, the activity list, Appearance, toasts, the pending bar) | `panel_open::` `persistent::` `header::` `floating_controls::` `components::` `look_parity::` `server_notices::` `notice_layout::` `polish::` `projects::` `budget` |
 | shared controls (select, menu, button, tooltip, theme) | `components::` `select` `theme` `polish::` |
 | the project switch and a project's look | `projects::` |
 | the feed and its stream | `feed` `stream` |
@@ -557,6 +567,55 @@ the candidate, so it commits the distribution its own sources make (`just client
 its rerun's client check proves, and the land still keeps main's side of it
 ([RELEASES](RELEASES.md#the-release-candidate)).
 
+## No second build in review
+
+A task's builds and tests go through the recorder
+([MACHINE_WORK](MACHINE_WORK.md#recording-builds-and-tests)), which keeps each run with the task
+and the commit it ran at. The recorded runs at the task's tip are its evidence, and the thread's
+post names the commands and the tip (RULES.md `workflow/no-second-build-in-review`). A stamp
+stands on evidence of work already done, so nothing is built twice to land once.
+
+**One command reads the record.** `just tasks runs SLUG` prints what the recorder kept of the
+task at its branch's tip, `--tip SHA` at another commit ([TASKS](TASKS.md#needed-stamps)): each
+build and test command the task ran there with its newest result, when and by whom, and the runs
+of it before there; the `tests` stamp as its reader reads it; the project's `[verdicts] check`
+(the docs audit here) with its run there, or `no run`; and how many of its runs are at other
+commits, none of them the tip's. The executor reads it before it moves the task to review, and
+the reviewer reads it beside the thread's evidence.
+
+**The executor runs at the tip it asks review for.** A run made before the last commit is of
+another commit: the executor runs it again at the tip, and no reviewer does it in its place. A
+command that cannot pass as typed is recorded red like any other, and no green run of another
+command answers it: only a new commit clears it, so a filter goes after `--`
+(`just test-rs -p PACKAGE --test TARGET -- FILTER FILTER`), as [step 3](#picking-the-focused-set)
+writes it.
+
+**The reviewer takes a green recorded run at the tip as run.** It reads the diff against the
+record (`just tasks runs SLUG`) and judges whether those runs cover the change. It builds or
+runs only what the record does not cover and reading cannot settle:
+
+- a doubt it names, with the smallest target that answers it (one test by its filter, never the
+  package);
+- a mutation, to see that a test the task adds can fail;
+- a run the executor left out, where the reviewer's own run is quicker than a round: otherwise a
+  `changes` naming the command.
+
+A run the evidence claims and no record at the tip shows is asked for in a `changes`, as is a
+red one.
+
+**The `tests` stamp reads the same record.** It is met by the newest recorded run of each build
+and test command the task ran at the tip, every one green and one test run among them
+([needed stamps](TASKS.md#needed-stamps)). So a reviewer's second run of a command proves
+nothing the stamp did not read, and where it is recorded for the task it becomes that command's
+newest run: red under load, it takes away a stamp that stood. The stamp says the runs are green,
+never that they are the right runs; that is the assessor's reason where it names `tests`, and
+the reviewer's judgment where the task needs `review`.
+
+**What changes do to each other is the release run's.** A task's evidence is of its own change.
+What it breaks beside another change that landed meanwhile is found on main, by
+[the release run](#the-release-run) and the candidate it holds, and filed as a red with one
+owner: no review builds for it.
+
 ## After main moves
 
 A branch's evidence is of the commit it ran at, and main moves on meanwhile: what main gained can
@@ -564,13 +623,26 @@ break the branch's change, or be broken by it, in a test neither side's evidence
 that adds a `symphony` subcommand and merges main's new test that lists the subcommands is red at
 its own tip, in a 0.2 s test it never ran.
 
+**A branch merges main once, at review, and never chases it after.** A task merges main into its
+branch when its work is complete and it is about to ask for review, so the review is of the
+change on main as it is (RULES.md `workflow/never-chase-main`). From then on it does not merge
+main because main moved: main moves with every landing, so a branch that merges, builds and
+measures finds main moved again when that ends, and would never reach its review. It lands
+once its stamps stand on its tip and it merges without conflict. It merges main again in two
+cases alone: its land reports a conflict, or a reviewer asks for the merge by naming what main
+gained that breaks the change or that the change breaks. A reviewer does not send a branch back
+only because main moved. A figure a guide quotes, such as a page's first-visit bytes or a
+binary's size, is measured once, at the review tip, and stays as measured there: no check
+compares a guide's figures with a fresh build, and the budgets are held by their tests.
+
 **After merging main, before review: the executor's and the reviewer's rule.** After a branch
 merges main, the closest targets of the packages the branch itself changed run again on the
 branch, at the new tip, before review, as main may have changed what they meet. They are the
 targets [steps 1 to 3](#picking-the-focused-set) pick at the new tip, where `main...HEAD` still
 lists the branch's own files alone; a package only main's commits touched is main's evidence, not
 the branch's. The evidence posted names the new tip. The reviewer approves only a tip the
-evidence names, and a branch that merges main during its review runs them again first.
+evidence names, and a branch that merges main during its review, in one of those two cases, runs
+them again first.
 
 **A release candidate's fix merges `release-candidate`, never main, before its land.** A red's
 own task while the release run holds a candidate ([RELEASES](RELEASES.md#the-release-candidate))
@@ -578,7 +650,9 @@ starts at the local branch `release-candidate` and merges it again before review
 moves when another red's fix lands; the same rule then holds with `release-candidate` in place of
 main: its closest targets run again at the new tip, and the evidence names it. Its evidence is
 the red check's failures run alone at its tip, the commands its task names. Main is merged only
-when its land conflicts, after an approve, and then the fresh approve the merged tip needs leaves
+when its land conflicts, after an approve, and then the approve, standing over a merge that
+settles documents alone or given afresh for the merged tip
+([TASKS](TASKS.md#the-default-landing)), leaves
 the candidate on the commit approved before the merge; a fix that needed no review has none, so
 its land then drops the candidate. One that merges main before any approve gives the candidate
 nothing it can take, and drops it.

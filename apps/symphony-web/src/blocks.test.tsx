@@ -769,11 +769,53 @@ describe("blocks inside a line of text", () => {
   });
 });
 
-describe("a kind no read lets through", () => {
-  it("draws nothing, should one reach a component past the type check", () => {
-    const stray = (value: object) => value as never;
-    expect(drawn([stray({ type: "marquee" })])).toBe("");
-    expect(renderToStaticMarkup(<SpansView spans={[stray({ type: "blink" })]} />)).toBe("");
-    expect(drawn([{ type: "media", media: stray({ kind: "sound" }) }])).toBe("");
+// The kit's lists of kinds grow in a minor (docs/PLUGIN_PROTOCOL.md), so a newer server may send
+// this client a kind its types do not know, which the read lets through (`blocks-read.ts`).
+describe("a kind the client does not know", () => {
+  const later = (value: object) => value as never;
+  const SAID =
+    '<aside class="unknown-block" role="alert"><strong>Unsupported document content: ' +
+    "marquee</strong></aside>";
+
+  it("is said where it stands, by its name, and draws none of its fields", () => {
+    expect(drawn([later({ type: "marquee", text: "Scrolling", blocks: [paragraph("in")] })])).toBe(
+      SAID,
+    );
+    expect(
+      renderToStaticMarkup(<SpansView spans={[later({ type: "blink", text: "old" })]} />),
+    ).toBe('<span class="unknown-block" role="alert">Unsupported blink</span>');
+    expect(drawn([{ type: "media", media: later({ kind: "sound", src: "/a.ogg" }) }])).toBe(
+      '<span class="unknown-block" role="alert">Unsupported media: sound</span>',
+    );
+  });
+
+  it("leaves what stands around it drawn", () => {
+    expect(drawn([paragraph("before"), later({ type: "marquee" }), paragraph("after")])).toBe(
+      `<p>before</p>${SAID}<p>after</p>`,
+    );
+    expect(
+      drawn([
+        {
+          type: "paragraph",
+          spans: [text("a "), later({ type: "blink" }), text(" b")],
+        },
+      ]),
+    ).toBe('<p>a <span class="unknown-block" role="alert">Unsupported blink</span> b</p>');
+    expect(drawn([{ type: "quote", blocks: [later({ type: "marquee" })] }])).toBe(
+      `<blockquote>${SAID}</blockquote>`,
+    );
+  });
+
+  it("is said whatever stands for its name, and never throws", () => {
+    expect(drawn([later({})])).toContain("Unsupported document content: unnamed");
+    expect(drawn([later({ type: "" })])).toContain("Unsupported document content: </strong>");
+    // An object with no text of its own, which `String` would throw on.
+    expect(drawn([later({ type: { toString: null } })])).toContain(
+      "Unsupported document content: unnamed",
+    );
+    expect(renderToStaticMarkup(<SpansView spans={[later({ type: 3 })]} />)).toBe(
+      '<span class="unknown-block" role="alert">Unsupported unnamed</span>',
+    );
+    expect(drawn([{ type: "media", media: later({}) }])).toContain("Unsupported media: unnamed");
   });
 });

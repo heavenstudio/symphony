@@ -37,6 +37,7 @@ mod project;
 mod pull;
 mod record_script;
 mod recorder;
+mod runs;
 mod scratch_folder;
 mod search;
 mod slots;

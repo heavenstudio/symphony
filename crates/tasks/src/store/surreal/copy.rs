@@ -69,8 +69,8 @@ pub(in crate::store) fn swap(staging: &str, tables: &[&str]) -> String {
             "DELETE {table}; INSERT INTO {table} (SELECT VALUE row FROM {staging}_{table}) RETURN NONE; REMOVE TABLE {staging}_{table};"
         );
     }
-    // These caches describe the replaced board and are rebuilt by catch-up. Keep the
-    // reset in the swap transaction so a refused copy preserves the current index.
+    // What the deleted search by meaning left describes the replaced board: emptied in the
+    // swap transaction, so a refused copy leaves those rows as they were.
     swap.push_str("DELETE task_chunk RETURN NONE; DELETE task_embedding_source RETURN NONE; DELETE task_embedding_checkpoint RETURN NONE;\n");
     swap.push_str("UPSERT counter:message SET last = $last, ts = $last_ts RETURN NONE;\nUPSERT counter:task SET last = $last_task RETURN NONE;\nUPSERT counter:ask SET last = $last_ask RETURN NONE;\n");
     swap.push_str("RETURN NONE;");

@@ -19,8 +19,8 @@
 //! is read again whenever its file changes, at a request or at the server's own look every
 //! [`LOOK`], and a changed root or id is served from new state.
 //!
-//! Each project's state holds the maintenance of its board, its idle sweep and its embedding
-//! catch-up ([`crate::front::maintenance`]), each on a schedule of its own: started once the
+//! Each project's state holds the maintenance of its board, its idle sweep
+//! ([`crate::front::maintenance`]), on a schedule of its own: started once the
 //! server's generation is live, its socket hand-off committed, as the starter's own are, or when
 //! the project is first served after that; stopped when it is retired or the server stops. The
 //! starter's checkout is maintained by the server's own workers, under whatever id it is
@@ -291,10 +291,10 @@ impl Projects {
         if self.warming == Warming::AsRead
             && refused.is_none()
             && !Arc::ptr_eq(&shared, &self.starter)
-            && let Ok(runtime) = tokio::runtime::Handle::try_current()
+            && tokio::runtime::Handle::try_current().is_ok()
         {
             let warming = shared.clone();
-            runtime.spawn(async move {
+            crate::spawn::task(async move {
                 if let Err(why) = crate::api::warm(&warming).await {
                     eprintln!("· {}: read data could not be warmed: {why}", warming.base);
                 }
@@ -363,7 +363,7 @@ async fn dispatch(
     let ip = peer.ip();
     let starter = projects.starter.clone();
     let allowed = ip.is_loopback()
-        || tokio::task::spawn_blocking(move || starter.gate.allows(ip))
+        || crate::spawn::blocking(move || starter.gate.allows(ip))
             .await
             .unwrap_or(false);
     if !allowed {
@@ -383,7 +383,7 @@ async fn dispatch(
             .unwrap_or("")
             .to_string();
         let starter = projects.starter.clone();
-        let named = tokio::task::spawn_blocking(move || starter.allows_host(&host))
+        let named = crate::spawn::blocking(move || starter.allows_host(&host))
             .await
             .unwrap_or(false);
         if !named {
@@ -395,7 +395,7 @@ async fn dispatch(
         }
     }
     let reading = projects.clone();
-    let Ok(served) = tokio::task::spawn_blocking(move || reading.served()).await else {
+    let Ok(served) = crate::spawn::blocking(move || reading.served()).await else {
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     };
     if path == symphony_api::FRONT_PATH {
@@ -430,6 +430,11 @@ async fn dispatch(
     }
     if let Some(plain) = respelled(&served, &path) {
         return redirect(&plain, request.uri());
+    }
+    // The address's own icon, asked for by no project's page (a file opened raw, the address
+    // itself), is the Symphony's, never the started project's.
+    if path == "/favicon.ico" && referred(request.headers(), &served).is_none() {
+        return crate::mark::answer(request.uri().query());
     }
     // A path of today is its project's only when that project answers it: a first segment no
     // project holds and no route of the Symphony's or that project's is a project id mistyped.

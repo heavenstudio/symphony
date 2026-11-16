@@ -19,6 +19,7 @@ pub struct File<'a> {
 
 /// How a renderer draws a file.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 pub enum Drawing {
     /// Generic blocks, drawn where the link or picture was.
     Blocks(Vec<Block>),

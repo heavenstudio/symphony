@@ -130,14 +130,14 @@ pub const GROUPS: &[(&str, &[(&str, &str)])] = &[
                 "the stamps a land can require, and what a task needs of them",
             ),
             (
+                "runs",
+                "what the recorder kept of a task at its tip, for its review",
+            ),
+            (
                 "asks",
                 "what the owner waits on an agent for, and who holds each",
             ),
             ("export", "write a markdown snapshot of the board"),
-            (
-                "embed",
-                "catch up the local embeddings `search --mode vector` reads",
-            ),
         ],
     ),
     (
@@ -426,11 +426,11 @@ options:
         "search",
         r#"usage: just tasks search [-h] [--as ACTOR]
                          [--status {backlog,concept,design,ready,in_progress,review,done,blocked,cancelled}]
-                         [--limit N] [--json] [--mode {keyword,vector,hybrid,exact}] query
+                         [--limit N] [--json] query
 "#,
         r#"usage: just tasks search [-h] [--as ACTOR]
                          [--status {backlog,concept,design,ready,in_progress,review,done,blocked,cancelled}]
-                         [--limit N] [--json] [--mode {keyword,vector,hybrid,exact}] query
+                         [--limit N] [--json] query
 
 Rank full-text matches in task titles, bodies, slugs and thread messages.
 
@@ -446,9 +446,6 @@ options:
                         filter by task status before limiting results
   --limit N             positive maximum number of results (default: 20)
   --json                list-compatible task records with score, snippet and snippet_source
-  --mode {keyword,vector,hybrid,exact}
-                        keyword is the default; vector uses local embeddings, hybrid fuses
-                        both rankings, exact checks vector recall; the shared server catches up
 "#,
     ),
     (
@@ -474,11 +471,6 @@ options:
   --days N    how many days back, 1 to 3650 (default: 14)
   --json      the same figures, every duration in seconds
 "#,
-    ),
-    (
-        "embed",
-        "usage: just tasks embed [-h] [--as ACTOR] [--task SLUG] [--batch-size N] [--threads N] [--maintenance]\n",
-        "usage: just tasks embed [-h] [--as ACTOR] [--task SLUG] [--batch-size N] [--threads N] [--maintenance]\n\nCatch up local BGE embeddings for missing or changed title/brief and thread chunks.\nDownloads checksum-pinned model artifacts when changed sources need them. No board text is sent out.\nThe shared Symphony server runs maintenance automatically; use this command for repair.\n\noptions:\n  -h, --help       show this help message and exit\n  --as ACTOR\n  --task SLUG      catch up just this task (default: the whole board)\n  --batch-size N   CPU inference batch size, 1 to 64 (default: 8)\n  --threads N      inference threads, 1 to 64 (default: 1)\n  --maintenance   cache-only server pass; no agent session required\n",
     ),
     (
         "next",
@@ -625,6 +617,29 @@ positional arguments:
 options:
   -h, --help  show this help message and exit
   --as ACTOR
+"#,
+    ),
+    (
+        "runs",
+        "usage: just tasks runs [-h] [--as ACTOR] [--tip TIP] slug\n",
+        r#"usage: just tasks runs [-h] [--as ACTOR] [--tip TIP] slug
+
+What the recorder kept of a task at its branch's tip in the main checkout, or
+at the commit --tip names there, which its reviewer reads in place of building
+again: each build and test command the task and the work under it ran there,
+with its newest run's result, when, how long and who, and how many runs of it
+came before there; the tests stamp as its reader reads it; the project's
+[verdicts] check with its newest run there, or none; and how many of the
+task's runs are at other commits, none of them the tip's.
+
+positional arguments:
+  slug
+
+options:
+  -h, --help  show this help message and exit
+  --as ACTOR
+  --tip TIP   the commit to read at, resolved in the main checkout; left out,
+              the task's branch's tip
 "#,
     ),
     (

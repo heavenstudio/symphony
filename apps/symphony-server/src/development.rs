@@ -197,7 +197,7 @@ async fn run(root: PathBuf, dx: PathBuf, port: u16) -> Result<(), String> {
             self.0.abort();
         }
     }
-    let _signals = Signals(tokio::spawn(async move {
+    let _signals = Signals(crate::spawn::task(async move {
         tokio::select! {
             _ = interrupt.recv() => {},
             _ = terminate.recv() => {},
@@ -295,7 +295,7 @@ async fn run(root: PathBuf, dx: PathBuf, port: u16) -> Result<(), String> {
             accepted = front.accept() => {
                 let (stream, _) = accepted.map_err(|e| e.to_string())?;
                 let nav = nav.clone();
-                tokio::spawn(async move {
+                crate::spawn::task(async move {
                     if let Err(why) = forward(stream, api, web, &nav).await {
                         eprintln!("symphony-ui-dev request: {why}");
                     }

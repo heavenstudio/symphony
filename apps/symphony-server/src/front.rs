@@ -21,7 +21,6 @@ use tokio::sync::watch;
 use tower_http::compression::predicate::{DefaultPredicate, Predicate};
 
 mod connections;
-mod embeddings;
 mod port_file;
 
 pub(crate) use port_file::port_file;
@@ -83,7 +82,7 @@ pub struct Shared {
     /// ([`symphony_board::recording`]).
     pub(crate) recording: Arc<symphony_board::recording::Gate>,
     pub(crate) saves: std::sync::OnceLock<symphony::save::Saves>,
-    /// The workers that maintain this project's board, its idle sweep and its embedding catch-up,
+    /// The workers that maintain this project's board, its idle sweep,
     /// when the one server serves it beside its starter's ([`crate::projects`]): joined as it stops,
     /// so none, nor any child of theirs, outlives its state. The starter's own are the server's
     /// ([`Background`]).
@@ -381,7 +380,7 @@ async fn judge(
     let ip = peer.ip();
     let allowed = ip.is_loopback() || {
         let shared = shared.clone();
-        tokio::task::spawn_blocking(move || shared.gate.allows(ip))
+        crate::spawn::blocking(move || shared.gate.allows(ip))
             .await
             .unwrap_or(false)
     };
@@ -843,9 +842,9 @@ fn stop_when(
     signal: impl Future<Output = ()> + Send + 'static,
 ) -> tokio::task::JoinHandle<()> {
     let shared = shared.clone();
-    tokio::spawn(async move {
+    crate::spawn::task(async move {
         signal.await;
-        let _ = tokio::task::spawn_blocking(move || shared.stop()).await;
+        let _ = crate::spawn::blocking(move || shared.stop()).await;
     })
 }
 
@@ -997,11 +996,11 @@ async fn start(mut serve: Serve, open: bool) -> Result<Started, i32> {
     for listener in listeners {
         let shared = shared.clone();
         let app = app.clone();
-        serving.push(tokio::spawn(async move {
+        serving.push(crate::spawn::task(async move {
             connections::serve(listener, app, shared).await;
         }));
     }
-    let ready = tokio::task::spawn_blocking(move || {
+    let ready = crate::spawn::blocking(move || {
         reload.ready()?;
         Ok::<_, String>(reload)
     })
@@ -1068,7 +1067,7 @@ fn handover_when_asked(shared: &Arc<Shared>) {
         return;
     };
     let shared = shared.clone();
-    tokio::spawn(async move {
+    crate::spawn::task(async move {
         loop {
             tokio::select! {
                 () = shared.until_stopped() => return,
@@ -1103,7 +1102,7 @@ impl Started {
         let others = match projects {
             Some(projects) => {
                 stages("the other projects");
-                tokio::task::spawn_blocking(move || projects.stop())
+                crate::spawn::blocking(move || projects.stop())
                     .await
                     .unwrap_or_default()
             }
@@ -1128,7 +1127,7 @@ impl Started {
         }
         let draining = shared.clone();
         let closing = stages.clone();
-        let _ = tokio::task::spawn_blocking(move || {
+        let _ = crate::spawn::blocking(move || {
             if let Some(saves) = draining.saves.get() {
                 saves.close_saying(|stage| closing(stage));
             }
@@ -1146,16 +1145,14 @@ impl Started {
 }
 
 /// What the machine's one server (`home`, its machine folder) runs for each project it serves, on
-/// the wall clock: the idle sweep ([`session_maintenance`]) and the embedding catch-up
-/// ([`embeddings::start`]), each a worker of its own, so one project's hung or failing round never
-/// holds up another's. A private preview (no `home`) runs none.
+/// the wall clock: the idle sweep ([`session_maintenance`]), a worker of its own, so one project's
+/// hung or failing round never holds up another's. A private preview (no `home`) runs none.
 pub(crate) fn maintenance(
     shared: &Arc<Shared>,
     home: Option<&Path>,
 ) -> Vec<std::thread::JoinHandle<()>> {
     session_maintenance(shared, home, Stamp::now)
         .into_iter()
-        .chain(embeddings::start(shared, home, Stamp::now))
         .collect()
 }
 

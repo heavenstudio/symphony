@@ -8,7 +8,8 @@
 //!
 //! They read and decide nothing themselves: the task page's gates (`symphony::gates`) draw them, and
 //! the land goes by them ([`crate::land::needs`]), the same readers; [`reds`] names a red run for
-//! the land's refusal.
+//! the land's refusal, and [`at_tip`] and [`newest_of`] what `just tasks runs` prints of the runs
+//! [`tests`] reads.
 
 use super::{Catalogue, Needs, short};
 use crate::Message;
@@ -75,12 +76,12 @@ pub fn needed(catalogue: &Catalogue, needs: Option<&Needs>, tip: Option<&str>) -
 }
 
 /// When `run` began: started, else queued.
-fn began(run: &Record) -> f64 {
+pub fn began(run: &Record) -> f64 {
     run.started_at.unwrap_or(run.queued_at)
 }
 
 /// Why the finished `run` is red, `None` when it is green.
-fn red(run: &Record) -> Option<String> {
+pub fn red(run: &Record) -> Option<String> {
     match (run.exit_code, run.signal) {
         (Some(0), _) => None,
         (Some(code), _) => Some(format!("exit {code}")),
@@ -132,6 +133,53 @@ pub fn reds(runs: &[Record], tip: &str, ours: impl Fn(&str) -> bool) -> Vec<(Str
         .filter(|run| run.state == Step::Finished)
         .filter_map(|run| red(run).map(|why| (run.label.clone(), why)))
         .collect()
+}
+
+/// One command the task ran at a tip ([`at_tip`]): its newest run there, the one [`tests`] reads,
+/// and its runs there before that one, oldest first.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Command<'a> {
+    pub newest: &'a Record,
+    pub before: Vec<&'a Record>,
+}
+
+/// What the task's runs among `runs` hold at `tip`, those whose task `ours` names, as [`tests`]
+/// reads them.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct AtTip<'a> {
+    /// Each command run at the tip, in the order each was first run there.
+    pub commands: Vec<Command<'a>>,
+    /// The task's runs at other commits, oldest first: none of them is the tip's.
+    pub elsewhere: Vec<&'a Record>,
+}
+
+/// The task's runs among `runs` (those whose task `ours` names) at `tip`, each command's newest
+/// with the runs of it there before, and its runs at other commits apart ([`AtTip`]).
+pub fn at_tip<'a>(runs: &'a [Record], tip: &str, ours: impl Fn(&str) -> bool) -> AtTip<'a> {
+    let (mine, newest) = newest_at(runs, tip, ours);
+    let here = |run: &&Record| run.commit.as_deref() == Some(tip);
+    let commands = (newest.into_iter())
+        .map(|newest| Command {
+            newest,
+            before: (mine.iter().copied())
+                .filter(here)
+                .filter(|run| run.label == newest.label && !std::ptr::eq(*run, newest))
+                .collect(),
+        })
+        .collect();
+    let elsewhere = mine.into_iter().filter(|run| !here(run)).collect();
+    AtTip {
+        commands,
+        elsewhere,
+    }
+}
+
+/// The newest run of the command `label` at `tip` among `runs`, whoever ran it: how the task page's
+/// check gate reads the project's `[verdicts] check` there (`symphony::gates::check`).
+pub fn newest_of<'a>(runs: &'a [Record], tip: &str, label: &str) -> Option<&'a Record> {
+    (runs.iter())
+        .filter(|run| run.label == label && run.commit.as_deref() == Some(tip))
+        .max_by(|a, b| began(a).total_cmp(&began(b)))
 }
 
 /// The `tests` stamp at `tip`, from `runs`, the recorder's, of which those whose task `ours` names

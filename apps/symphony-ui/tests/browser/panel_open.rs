@@ -1,9 +1,9 @@
 //! The chat's and the activity list's first open. The sheet a click opens is drawn in the frame
-//! after the click, loading; the panel's script, wasm and styles are requested together; once a
-//! page is idle the persistent modules' files are warmed into the HTTP cache, outside the first
-//! visit's transfer; an open chat reads its thread when the page's feed says it moved, never on a
-//! timer. On the board, whose page has no media layer, the chat fetches the program's only for a
-//! thread that shows media.
+//! after the click, loading; the panel's script, the chunks it imports and its styles are
+//! requested together; once a page is idle the persistent modules' files are warmed into the HTTP
+//! cache, outside the first visit's transfer, each once and none the page has; an open chat reads
+//! its thread when the page's feed says it moved, never on a timer. On the board, whose page has
+//! no media layer, the chat's own takes its thread's media up, from the files the chat came with.
 
 use super::{
     SHOWN, assets::module, chrome, chrome::Chrome, completed_requests, dist, needed_bytes,
@@ -35,7 +35,7 @@ fn counted(browser: &mut Chrome, what: &str, count: usize, counted: impl Fn() ->
 }
 
 /// How many times the site was asked for `path`, once that count is `count` or more.
-fn asked(browser: &mut Chrome, site: &super::Site, path: &str, count: usize) -> usize {
+pub(super) fn asked(browser: &mut Chrome, site: &super::Site, path: &str, count: usize) -> usize {
     counted(browser, &format!("the asks for {path}"), count, || {
         site.requests()
             .iter()
@@ -106,6 +106,12 @@ fn a_click_draws_its_sheet_loading_in_the_next_frame_and_asks_for_the_panel_s_fi
         browser.open(&site.url("/"));
         wait_for_board(&mut browser);
         let panel = module(dist(), "panel");
+        let fresh = not_asked(&site, &panel.imports);
+        assert!(
+            !fresh.is_empty(),
+            "the page has every chunk the chat imports: {:?}",
+            site.requests()
+        );
         site.hold_route(&panel.script, true);
         // A live region announces what changes in it once it is in the page: the status is
         // drawn empty with the sheet, outside any busy container, and says its words a frame on.
@@ -123,7 +129,7 @@ fn a_click_draws_its_sheet_loading_in_the_next_frame_and_asks_for_the_panel_s_fi
             "the panel's styles are requested while its script is still held"
         );
         assert_eq!(asked(&mut browser, &site, &panel.script, 1), 1);
-        for file in [&panel.wasm, panel.chunk()] {
+        for &file in &fresh {
             assert_eq!(
                 asked(&mut browser, &site, file, 1),
                 1,
@@ -149,15 +155,20 @@ fn a_click_draws_its_sheet_loading_in_the_next_frame_and_asks_for_the_panel_s_fi
             json!(1),
             "one sheet once the panel is up"
         );
-        for file in [&panel.wasm, panel.chunk()] {
+        for &file in &fresh {
             assert_eq!(
                 asked(&mut browser, &site, file, 1),
                 1,
-                "the program's initializer and chunk loader took the preloaded {file}, no second \
-                 request"
+                "the script's imports took the preloaded {file}, no second request"
             );
         }
     }
+}
+
+/// Those of `files` the site has not been asked for yet.
+fn not_asked<'a>(site: &super::Site, files: &'a [String]) -> Vec<&'a String> {
+    let asked = site.requests();
+    files.iter().filter(|file| !asked.contains(file)).collect()
 }
 
 #[test]
@@ -208,16 +219,37 @@ fn an_idle_page_warms_the_chat_and_the_menus_outside_its_first_visit_and_their_f
     browser.open(&site.url("/"));
     wait_for_board(&mut browser);
     let (panel, overlay) = (module(dist(), "panel"), module(dist(), "overlay"));
-    // The chat is the program's: its script and main module, and its chunk. The menus are the web
-    // client's: their script and their own styles (the shared sheet, and the chunks the script
-    // imports, the page has already).
-    assert!(overlay.wasm.is_empty() && overlay.chunk.is_none());
     let (warmed, requests) = settled(&mut browser);
-    let mut files = vec![&panel.script, &panel.wasm, panel.chunk(), &overlay.script];
-    files.extend(&overlay.styles[1..]);
-    for &file in &files {
-        assert!(warmed.contains(file), "{file} is not warmed: {warmed:?}");
+    // Each module's script, the chunks it imports and its styles, the chat's first: each once, and
+    // none the page fetched itself (the shared sheet, the media layer's sheet home shows media
+    // with, the chunks home imports).
+    let page = |file: &String| {
+        requests
+            .iter()
+            .any(|request| !request.prefetch && request.url.ends_with(file.as_str()))
+    };
+    let mut files: Vec<&String> = Vec::new();
+    for module in [&panel, &overlay] {
+        let all = std::iter::once(&module.script)
+            .chain(&module.imports)
+            .chain(&module.styles);
+        for file in all {
+            if !page(file) && !files.contains(&file) {
+                files.push(file);
+            }
+        }
     }
+    assert_eq!(
+        warmed.iter().collect::<Vec<_>>(),
+        files,
+        "the warm-up is the chat's files and then the menus', each once and none the page has"
+    );
+    let media = panel
+        .styles
+        .iter()
+        .find(|style| style.starts_with("/assets/media-layer-"))
+        .expect("the chat's media layer's sheet");
+    assert!(page(media), "home shows no media: {requests:#?}");
     for file in &files {
         assert!(
             requests
@@ -244,11 +276,14 @@ fn an_idle_page_warms_the_chat_and_the_menus_outside_its_first_visit_and_their_f
         "window.reviewPanelReady === true && document.querySelector('#quick-text') !== null",
         SHOWN
     ));
-    for file in [&panel.script, &panel.wasm, panel.chunk()] {
+    let chat = std::iter::once(&panel.script)
+        .chain(&panel.imports)
+        .chain(&panel.styles);
+    for file in chat {
         assert_eq!(
             asked(&mut browser, &site, file, 1),
             1,
-            "the first open took the warmed {file} from the cache"
+            "the first open took {file} from the cache"
         );
     }
     // The menus' first use, a picture shown in their viewer, takes their warmed files too.
@@ -259,14 +294,14 @@ fn an_idle_page_warms_the_chat_and_the_menus_outside_its_first_visit_and_their_f
         "window.reviewOverlayReady === true && document.querySelector('#media-lightbox[data-state=open]') !== null",
         SHOWN
     ));
-    for file in [&overlay.script]
-        .into_iter()
-        .chain(overlay.styles[1..].iter())
-    {
+    let menus = std::iter::once(&overlay.script)
+        .chain(&overlay.imports)
+        .chain(&overlay.styles);
+    for file in menus {
         assert_eq!(
             asked(&mut browser, &site, file, 1),
             1,
-            "the menus' first use took the warmed {file} from the cache"
+            "the menus' first use took {file} from the cache"
         );
     }
 }
@@ -285,26 +320,27 @@ fn linked(browser: &mut Chrome, files: &[&String]) -> Vec<bool> {
 }
 
 #[test]
-fn an_idle_page_warms_the_menus_only_once_the_chat_s_chunk_is_in() {
+fn an_idle_page_warms_the_menus_only_once_the_chat_s_script_is_in() {
     let site = site();
     let Some(mut browser) = chrome() else { return };
     let (panel, overlay) = (module(dist(), "panel"), module(dist(), "overlay"));
-    site.hold_route(panel.chunk(), true);
+    let own = panel.styles.last().expect("the chat's own sheet");
+    site.hold_route(&panel.script, true);
     browser.open(&site.url("/"));
     wait_for_board(&mut browser);
     assert_eq!(
-        asked(&mut browser, &site, panel.chunk(), 1),
+        asked(&mut browser, &site, &panel.script, 1),
         1,
-        "the chat's chunk is warmed"
+        "the chat's script is warmed"
     );
     browser.pump(Duration::from_millis(500));
     assert_eq!(
-        linked(&mut browser, &[&panel.script, &panel.wasm, &overlay.script]),
+        linked(&mut browser, &[&panel.script, own, &overlay.script]),
         [true, true, false],
-        "the chat's files are warmed together, the menus' script waits for the chat's chunk"
+        "the chat's files are warmed together, the menus' script waits for the chat's script"
     );
     assert_eq!(asked(&mut browser, &site, &overlay.script, 0), 0);
-    site.hold_route(panel.chunk(), false);
+    site.hold_route(&panel.script, false);
     let (warmed, _) = settled(&mut browser);
     assert!(
         warmed.contains(&overlay.script),
@@ -312,9 +348,9 @@ fn an_idle_page_warms_the_menus_only_once_the_chat_s_chunk_is_in() {
     );
     assert_eq!(asked(&mut browser, &site, &overlay.script, 1), 1);
     assert_eq!(
-        asked(&mut browser, &site, &panel.wasm, 1),
+        asked(&mut browser, &site, own, 1),
         1,
-        "the chat's main module is warmed once"
+        "the chat's own sheet is warmed once"
     );
 }
 
@@ -357,9 +393,9 @@ fn a_click_before_the_idle_warm_up_holds_the_menus_until_the_chat_is_up() {
     );
     assert_eq!(asked(&mut browser, &site, &overlay.script, 1), 1);
     assert_eq!(
-        asked(&mut browser, &site, &panel.wasm, 1),
+        asked(&mut browser, &site, &panel.script, 1),
         1,
-        "the chat's wasm is fetched once, by its load, not again by a warm-up"
+        "the chat's script is fetched once, by its load, not again by a warm-up"
     );
 }
 
@@ -388,7 +424,7 @@ fn a_page_warms_on_a_fast_link_and_never_when_it_saves_data_or_is_on_2g() {
                 "a {link} link that keeps its data warms the chat"
             );
             took = shown.elapsed();
-            assert_eq!(asked(&mut browser, &site, &panel.wasm, 1), 1);
+            assert_eq!(asked(&mut browser, &site, &panel.script, 1), 1);
         } else {
             browser.pump((took * 3).max(Duration::from_secs(2)));
             assert_eq!(
@@ -397,7 +433,7 @@ fn a_page_warms_on_a_fast_link_and_never_when_it_saves_data_or_is_on_2g() {
                 "saveData {save_data} on {link} warms nothing"
             );
             assert_eq!(
-                asked(&mut browser, &site, &panel.wasm, 0),
+                asked(&mut browser, &site, &panel.script, 0),
                 0,
                 "saveData {save_data} on {link}: nothing fetched the panel before its use"
             );
@@ -768,8 +804,16 @@ fn an_open_chat_reads_its_thread_when_the_feed_says_it_moved_never_on_a_timer() 
     assert_eq!(browser.eval("askPoll.length"), json!(0));
 }
 
+/// The build's files the site was asked for.
+fn build_files(site: &super::Site) -> Vec<String> {
+    site.requests()
+        .into_iter()
+        .filter(|path| path.starts_with("/assets/"))
+        .collect()
+}
+
 #[test]
-fn the_board_s_chat_fetches_the_media_layer_only_for_a_thread_that_shows_media() {
+fn the_board_s_chat_takes_its_thread_s_media_up_with_the_files_it_came_with() {
     let site = site();
     site.set_json("/api/ask", &chat(&["First question"]));
     site.set_file(
@@ -778,6 +822,8 @@ fn the_board_s_chat_fetches_the_media_layer_only_for_a_thread_that_shows_media()
         "text/html",
     );
     let Some(mut browser) = chrome() else { return };
+    // Each file is fetched by what shows it: no idle prefetch has the chat's in already.
+    browser.save_data();
     // The board's own page has no media layer: the chat's panel holds one there.
     browser.call(
         "Page.addScriptToEvaluateOnNewDocument",
@@ -802,12 +848,8 @@ fn the_board_s_chat_fetches_the_media_layer_only_for_a_thread_that_shows_media()
         browser.eval("document.getElementById('quick-sheet')?.innerText ?? null")
     );
     assert_eq!(chat_reads(&mut browser, &site, 1), 1);
-    assert_eq!(
-        super::program::media_asked(&site),
-        0,
-        "a chat of text fetched the media layer: {:?}",
-        site.requests()
-    );
+    assert!(browser.wait_for("window.reviewPanelReady === true", SHOWN));
+    let files = build_files(&site);
     // The thread moves on to a mockup, which the open chat reads and shows.
     let mut thread = chat(&["First question", "A mockup"]);
     thread["ask"]["messages"][1]["blocks"] =
@@ -839,16 +881,15 @@ fn the_board_s_chat_fetches_the_media_layer_only_for_a_thread_that_shows_media()
         site.requests()
     );
     assert_eq!(
-        super::program::media_asked(&site),
-        1,
-        "{:?}",
-        site.requests()
+        build_files(&site),
+        files,
+        "the chat's media layer is in the files it came with: nothing more is fetched for it"
     );
 }
 
 /// Wait for the page's idle warm-up to start (once its own reads are over; up to 10 s, for a
 /// build that has none) and to end, every request it made, its prefetches included, finished,
-/// and no further file linked after that (the menus' follow the chat's chunk): the files warmed,
+/// and no further file linked after that (the menus' follow the chat's script): the files warmed,
 /// and the requests.
 pub(super) fn settled(browser: &mut Chrome) -> (Vec<String>, Vec<super::chrome::Request>) {
     browser.wait_for(PREFETCHING, Duration::from_secs(10));

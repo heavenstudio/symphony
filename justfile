@@ -77,10 +77,14 @@ _client-update:
     @just symphony-ui-dist build/shipped-client
     @tools/rs-bin.sh symphony-build publish-client build/shipped-client/public apps/symphony-server/client/public
 
-# The generic document CLI and board binaries belong to this workspace.
+# The generic document CLI and board binaries belong to this workspace. The docs checks a doc's
+# evidence names, `docs-audit --check` and `status --lint` as typed, are each a test run of the
+# pipeline `docs` through tools/record.sh, so a task's recorded runs at its tip hold them and the
+# task page's check gate reads the docs audit, the project's [verdicts] check; every other command
+# runs as it is.
 [no-exit-message]
 symphony-cli *ARGS:
-    @tools/rs-bin.sh symphony "$@"
+    @{{ if ARGS =~ '^(docs-audit --check|status --lint)$' { record + ' --pipeline docs test "just symphony-cli $*"' } else { '' } }} tools/rs-bin.sh symphony "$@"
 
 # The board but its recorder, which the Symphony's recipe refuses too (`_symphony_board`): a build
 # records itself by the binary, through tools/record.sh. Like the Symphony's, it writes only where
@@ -108,7 +112,7 @@ release *ARGS:
 agent-send *ARGS:
     @tools/rs-bin.sh agent-send "$@"
 
-# Rebuild the real modules and the program and refuse drift from the client embedded at this pin.
+# Rebuild the client's kinds and its shared stylesheet and refuse drift from the client embedded at this pin.
 client-check OUT="build/verified-client":
     @{{record}} --pipeline client --step client-check build "just client-check" just --justfile {{quote(justfile())}} _client-check {{quote(OUT)}}
 

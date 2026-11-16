@@ -10,6 +10,10 @@ step it finishes by. The destination project's instructions come first (its tool
 staffing, review, verification and landing); this skill supplies the board's mechanics, not a
 build or approval policy.
 
+Those instructions are the project's guide (its `AGENTS.md`), the rules it names and the guide of
+each package the task touches, and `project.md` beside this file where the project has one: its
+own standing instructions for an executor. Read them before the stage page of step 3.
+
 1. Reuse HANDLE from the prompt, the task's reservation or `TASKS_SESSION`; with none, register
    with `just tasks register --kind worker`.
 2. Pass it on every board command as `just tasks … --as HANDLE`, the handle last, Claude and

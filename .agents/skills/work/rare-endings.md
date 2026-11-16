@@ -13,5 +13,14 @@ branches): check those first.
 ## A refused land
 
 A land that refused your approved task over a conflict or a red check, said to you as its
-executor: merge the default branch into the branch and fix it there, post the new complete tip
-and its evidence, then `just tasks move SLUG review --as HANDLE` for a fresh approve.
+executor, says what to do next; do that and no more.
+
+- **A conflict in documents alone**, where the land says the approve stands over one merge:
+  merge the default branch into the branch once, settle the conflict in those documents and
+  change nothing else, another document included, run the focused checks at the new tip
+  through the project's recorded entrypoints, post the new complete tip, and ask for the land
+  again. Leave the task as it is: a move back to review, or any change beyond those conflicts,
+  asks for a fresh approve.
+- **Any other conflict, or a red check**: merge the default branch into the branch and fix it
+  there, post the new complete tip and its evidence, then `just tasks move SLUG review --as
+  HANDLE` for a fresh approve.

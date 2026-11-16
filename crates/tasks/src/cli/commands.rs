@@ -26,6 +26,7 @@ mod finish;
 mod limits;
 mod list;
 mod panes;
+mod runs;
 mod stamps;
 mod stats;
 mod wait;
@@ -270,17 +271,6 @@ pub fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
         "asks" => asks::run(store, c)?,
         "search" => super::search::run(store, c)?,
         "stats" => stats::run(store, c)?,
-        "embed" => {
-            // Only the cache-only maintenance mode may run without an agent. Explicit actors
-            // still pass the normal validation, including the owner restriction.
-            if !p.flag("maintenance")
-                || p.get("actor").is_some()
-                || c.env.var("TASKS_SESSION").is_some()
-            {
-                store.session(&c.actor()?)?;
-            }
-            super::embedding::run(store, c)?;
-        }
         "next" => {
             if let Some(t) = store.next_for(&c.actor()?)? {
                 // Past `[limits] machine_agents` the task is still named: its asker runs already.
@@ -299,6 +289,7 @@ pub fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
         }
         "limits" => limits::run(store, c)?,
         "stamps" => stamps::stamps(store, c)?,
+        "runs" => runs::runs(store, c)?,
         "needs" => stamps::needs(store, c)?,
         "create" => create(store, c)?,
         "priority" => {
