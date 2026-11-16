@@ -556,10 +556,13 @@ form.verdict {
   align-items: baseline;
   gap: 8px;
 }
-.folder-entry:hover {
-  transform: translateY(-2px);
-  box-shadow: var(--shadow-2);
-  color: var(--primary);
+/* A hover that moves or raises a thing is a pointer's: a tap would leave it raised. */
+@media (hover: hover) and (pointer: fine) {
+  .folder-entry:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-2);
+    color: var(--primary);
+  }
 }
 .folder-entry p {
   margin: 0;
@@ -670,8 +673,10 @@ form.verdict {
   cursor: pointer;
   transition: box-shadow 0.15s ease;
 }
-.decision:hover {
-  box-shadow: var(--shadow-2);
+@media (hover: hover) and (pointer: fine) {
+  .decision:hover {
+    box-shadow: var(--shadow-2);
+  }
 }
 .decision[data-state="pending"] {
   --edge: var(--primary);

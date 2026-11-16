@@ -24,6 +24,7 @@ fn agent(handle: &str) -> Agent {
         last_message: None,
         slots: None,
         tokens: None,
+        cost: None,
         session_url: None,
         in_process: false,
         go: None,
@@ -276,5 +277,25 @@ fn the_open_tasks_it_orchestrates_are_counted_and_an_older_answer_counts_none() 
         following
     );
     wire.as_object_mut().unwrap().remove("following");
+    assert_eq!(serde_json::from_value::<Agent>(wire).unwrap(), agent("a"));
+}
+
+#[test]
+fn a_cost_reads_as_the_board_writes_it_and_an_older_answer_has_none() {
+    let board = serde_json::json!({
+        "dollars": 2.7, "input": 1.0, "cache_write_5m": 0.5, "cache_write_1h": 0.0,
+        "cache_read": 0.2, "output": 1.0,
+        "unpriced": [{"model": "gpt-x", "speed": "fast", "tokens": {"input": 7,
+            "cache_write_5m": 0, "cache_write_1h": 0, "cache_read": 0, "output": 0, "calls": 1}}],
+        "prices": "2026-11-16",
+    });
+    let mut wire = serde_json::to_value(agent("a")).unwrap();
+    wire["cost"] = board;
+    let read: Agent = serde_json::from_value(wire.clone()).unwrap();
+    let cost = read.cost.unwrap();
+    assert_eq!((cost.dollars, cost.prices.as_str()), (2.7, "2026-11-16"));
+    assert_eq!(cost.unpriced[0].model, "gpt-x");
+    assert_eq!(cost.unpriced[0].tokens.input, 7);
+    wire.as_object_mut().unwrap().remove("cost");
     assert_eq!(serde_json::from_value::<Agent>(wire).unwrap(), agent("a"));
 }

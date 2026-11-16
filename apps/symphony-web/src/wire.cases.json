@@ -3106,6 +3106,29 @@
               "cache_read": 78900,
               "output": 1200,
               "calls": 7
+            },
+            "cost": {
+              "dollars": 0.061308,
+              "input": 0.000048,
+              "cache_write_5m": 0.017,
+              "cache_write_1h": 0.00448,
+              "cache_read": 0.01578,
+              "output": 0.024,
+              "unpriced": [
+                {
+                  "model": "gpt-x",
+                  "speed": "standard",
+                  "tokens": {
+                    "input": 5,
+                    "cache_write_5m": 0,
+                    "cache_write_1h": 0,
+                    "cache_read": 0,
+                    "output": 1,
+                    "calls": 1
+                  }
+                }
+              ],
+              "prices": "2026-11-16"
             }
           },
           {
@@ -3133,7 +3156,8 @@
             "session_url": null,
             "in_process": false,
             "go": null,
-            "tokens": null
+            "tokens": null,
+            "cost": null
           }
         ]
       },
@@ -3217,6 +3241,29 @@
           "cache_read": 78900,
           "output": 1200,
           "calls": 7
+        },
+        "cost": {
+          "dollars": 0.061308,
+          "input": 0.000048,
+          "cache_write_5m": 0.017,
+          "cache_write_1h": 0.00448,
+          "cache_read": 0.01578,
+          "output": 0.024,
+          "unpriced": [
+            {
+              "model": "gpt-x",
+              "speed": "standard",
+              "tokens": {
+                "input": 5,
+                "cache_write_5m": 0,
+                "cache_write_1h": 0,
+                "cache_read": 0,
+                "output": 1,
+                "calls": 1
+              }
+            }
+          ],
+          "prices": "2026-11-16"
         }
       }
     },
@@ -3245,7 +3292,8 @@
       "session_url": null,
       "in_process": false,
       "go": null,
-      "tokens": null
+      "tokens": null,
+      "cost": null
     },
     "agentProbes": { "panes": "ok", "herdr": "ok", "slots": "unavailable" },
     "agentFocus": { "said": "Shown in the Herdr app" },
