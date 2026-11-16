@@ -291,7 +291,7 @@ fn git_init(folder: &Path) {
 /// when it began to be served: once its `.git` goes, the journal found from it again is the one of
 /// the checkout that holds it, and every journal this process finds from the folder is its own
 /// still; `ASKS_DB` names another before either. A folder this process does not serve finds its
-/// journal now, as the command line does.
+/// journal now, as the command line does; one served again keeps the journal found then.
 #[test]
 fn a_served_folders_journal_is_the_one_found_when_it_began_to_be_served() {
     use crate::asks::{default_path, found_path};
@@ -318,4 +318,7 @@ fn a_served_folders_journal_is_the_one_found_when_it_began_to_be_served() {
     let unserved = tree.path("artifacts/other");
     std::fs::create_dir_all(&unserved).unwrap();
     assert_eq!(default_path(&unserved, None), outer);
+    // Served again, the folder keeps the journal found then.
+    super::serve(&inner);
+    assert_eq!(default_path(&inner, None), outer);
 }
