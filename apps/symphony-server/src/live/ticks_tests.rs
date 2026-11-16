@@ -136,7 +136,10 @@ fn a_tick_due_while_a_refresh_is_held_mid_render_is_published_before_that_refres
     .unwrap();
 
     // Meanwhile the task goes to review, which the next tick reads.
-    fixture.store.move_to("tools/held", "review", "worker").unwrap();
+    fixture
+        .store
+        .move_to("tools/held", "review", "worker")
+        .unwrap();
     let published = test_time::until_true("the tick to publish the move", BACKSTOP, || {
         in_review(&hub) == Some(1)
     });
@@ -173,15 +176,17 @@ fn a_refresh_that_read_the_board_before_a_tick_places_no_older_task_counts_than_
     let picture = paused_on_a_picture(&tree, &root, &hub);
 
     let tick_said = std::thread::scope(|scope| {
-        let refreshing = scope.spawn(|| {
-            hub.refresh_docs(Some(&BTreeSet::from([root.join("docs/PAUSED.md")])))
-        });
+        let refreshing =
+            scope.spawn(|| hub.refresh_docs(Some(&BTreeSet::from([root.join("docs/PAUSED.md")]))));
         let mut opened = test_time::until("the refresh to read the picture", BACKSTOP, || {
             writer(&picture)
         })
         .unwrap();
         // While it renders, the task goes to review and a tick sends the counts that say so.
-        fixture.store.move_to("tools/held", "review", "worker").unwrap();
+        fixture
+            .store
+            .move_to("tools/held", "review", "worker")
+            .unwrap();
         observe(&hub, &fixture.store, &[]);
         let tick_said = in_review(&hub);
         opened.write_all(&PNG).unwrap();
