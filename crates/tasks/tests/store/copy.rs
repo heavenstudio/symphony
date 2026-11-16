@@ -475,11 +475,14 @@ fn copy_replaces_derived_vectors_only_when_the_board_swap_commits() {
         "CREATE task_chunk SET slug = 'sim/jump', source = 'brief', source_hash = 'old', text_hash = 'old', model = 'fake', text = 'cached board text', embedding = $vector; CREATE task_embedding_source SET slug = 'sim/jump', source = 'brief', source_hash = 'old', model = 'fake', parts = 1; CREATE task_embedding_checkpoint:board SET snapshot = {model: 'fake'};",
         serde_json::json!({"vector":vec![1.0_f32; symphony_board::embedding::DIMENSIONS]}),
     ).unwrap();
-    let counts = || {
-        f.store.client().query(
-        "RETURN count(SELECT id FROM task_chunk); RETURN count(SELECT id FROM task_embedding_source); RETURN count(SELECT id FROM task_embedding_checkpoint);",
-        serde_json::json!({}),
-    ).unwrap()
+    let counts = || -> Vec<serde_json::Value> {
+        [
+            "task_chunk",
+            "task_embedding_source",
+            "task_embedding_checkpoint",
+        ]
+        .map(|table| serde_json::json!(f.store.raw().table(table).count().unwrap()))
+        .to_vec()
     };
     assert_eq!(counts(), vec![serde_json::json!(1); 3]);
     let mut bad = everything();

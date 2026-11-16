@@ -9,10 +9,10 @@
 //! moving its `seen` back by hand.
 
 use crate::common::{HOST, NOW, client, refused};
-use serde_json::{Value, json};
+use serde_json::json;
 use std::time::{SystemTime, UNIX_EPOCH};
 use symphony_board::rpc::Client;
-use symphony_board::{Error, NewTask, Opening, Program, Schema, Store, Writer};
+use symphony_board::{Error, NewTask, Opening, Program, Raw, Schema, Store, Writer};
 
 const HOUR: f64 = 3600.0;
 const DAY: f64 = 24.0 * HOUR;
@@ -65,23 +65,17 @@ fn line(client: &Client, program: &str, host: &str) -> Writer {
 
 /// `program`'s line on `host` made to have been seen `by` seconds earlier than it was.
 fn age(client: &Client, program: &str, host: &str, by: f64) {
-    client
-        .query(
-            "UPDATE writer SET seen = seen - $by WHERE program = $program AND host = $host;",
-            json!({"by": by, "program": program, "host": host}),
-        )
+    Raw::on(client)
+        .table("writer")
+        .matching(json!({"program": program, "host": host}))
+        .add("seen", -by)
         .unwrap();
 }
 
 /// The version `meta:schema` records.
 fn version(client: &Client) -> Option<i64> {
-    let found = client
-        .query(
-            "RETURN (SELECT VALUE version FROM ONLY meta:schema);",
-            json!({}),
-        )
-        .unwrap();
-    found.last().and_then(Value::as_i64)
+    let found = Raw::on(client).row("meta", "schema").field("version");
+    found.unwrap().as_i64()
 }
 
 fn this() -> i64 {
@@ -267,11 +261,9 @@ fn a_migrate_counts_no_writer_unseen_for_a_week_at_its_schema_already_or_itself(
     // A writer already at the schema the migrate moves to is not behind it.
     let already = client();
     opened(&already, &Opening::write().by(gate()), HOST).unwrap();
-    already
-        .query(
-            "UPDATE writer SET schema = $schema;",
-            json!({"schema": this() + 1}),
-        )
+    Raw::on(&already)
+        .table("writer")
+        .set(json!({"schema": this() + 1}))
         .unwrap();
     opened(&already, &migrate, HOST).unwrap();
     assert_eq!(version(&already), Some(this() + 1));

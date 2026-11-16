@@ -227,8 +227,9 @@ fn a_handle_owes_the_posts_of_the_threads_that_name_it_and_of_no_other_handle() 
     // A finished task keeps its direct post; a role post goes to its holder by its claim.
     f.task("finished");
     f.store
-        .client()
-        .query("UPDATE task:finished SET status = 'done';", json!({}))
+        .raw()
+        .row("task", "finished")
+        .set(json!({"status": "done"}))
         .unwrap();
     let finished = f
         .store
@@ -276,11 +277,10 @@ fn a_released_holder_still_owes_the_role_posts_its_history_addresses() {
     let (f, worker, post) = board();
     f.store.say("work", &worker, "on it", None).unwrap();
     f.store
-        .client()
-        .query(
-            "DELETE role WHERE slug = 'work' AND handle = $handle;",
-            json!({"handle": worker}),
-        )
+        .raw()
+        .table("role")
+        .matching(json!({"slug": "work", "handle": worker}))
+        .delete()
         .unwrap();
     let role = f
         .store
@@ -339,8 +339,9 @@ fn overdue_asks_only_open_tasks_and_posts_half_an_hour_old_of_a_gone_agent() {
     assert_eq!(overdue(&board, f.now()), [(worker.clone(), post.id)]);
     // Nothing of a finished task is read, though its post was never answered.
     f.store
-        .client()
-        .query("UPDATE task:work SET status = 'done';", json!({}))
+        .raw()
+        .row("task", "work")
+        .set(json!({"status": "done"}))
         .unwrap();
     let board = f.store.board().unwrap();
     assert_eq!(overdue(&board, f.now()), []);

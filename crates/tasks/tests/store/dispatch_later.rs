@@ -81,14 +81,11 @@ pub(super) fn deferring(f: &Fixture) -> Store {
 
 /// `host`'s dispatch lease as it stands.
 fn lease_of(f: &Fixture, host: &str) -> Value {
-    f.store
-        .client()
-        .query(
-            "RETURN SELECT until, asked, served, completed FROM ONLY type::record('callback_lease', ['dispatch', $host]);",
-            json!({"host": host}),
-        )
-        .unwrap()
-        .remove(0)
+    (f.store
+        .raw()
+        .row("callback_lease", json!(["dispatch", host])))
+    .fields(&["until", "asked", "served", "completed"])
+    .unwrap()
 }
 
 /// This host's dispatch lease as it stands.
@@ -98,18 +95,14 @@ pub(super) fn lease(f: &Fixture) -> Value {
 
 /// Whether the outbox holds `message` for `handle`, and whether it went out.
 fn queued(f: &Fixture, handle: &str, message: i64) -> Option<bool> {
-    let row = f
-        .store
-        .client()
-        .query(
-            "RETURN IF record::exists(type::record('callback_event', [$handle, $key])) {
-                 type::record('callback_event', [$handle, $key]).delivered ?? false
-             } ELSE { NONE };",
-            json!({"handle": handle, "key": format!("message-{message}")}),
-        )
-        .unwrap()
-        .remove(0);
-    row.as_bool()
+    let key = format!("message-{message}");
+    let row = f.store.raw().row("callback_event", json!([handle, key]));
+    let row = row.fields(&["delivered"]).unwrap();
+    match &row["delivered"] {
+        _ if row.is_null() => None,
+        Value::Null => Some(false),
+        delivered => delivered.as_bool(),
+    }
 }
 
 #[test]
@@ -241,13 +234,11 @@ fn a_dispatcher_on_another_host_delivers_there_while_this_hosts_is_busy() {
         &format!("{}-remote", f.store.client().database()),
     );
     // This host's dispatcher is busy for as long as the test runs.
-    f.store
-        .client()
-        .query(
-            "UPSERT type::record('callback_lease', ['dispatch', $host]) SET until = $until, revision = 1, asked = 0, served = 0 RETURN NONE;",
-            json!({"host": HOST, "until": f.now() + 3600.0}),
-        )
-        .unwrap();
+    (f.store
+        .raw()
+        .row("callback_lease", json!(["dispatch", HOST])))
+    .put(json!({"until": f.now() + 3600.0, "revision": 1, "asked": 0, "served": 0}))
+    .unwrap();
     let id = f
         .elsewhere()
         .dispatching_by(Box::new(|| true))

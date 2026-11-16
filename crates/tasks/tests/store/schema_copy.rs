@@ -7,7 +7,7 @@ use serde_json::{Value, json};
 use std::sync::{Arc, Mutex};
 use symphony_board::rows::Dump;
 use symphony_board::rpc::Client;
-use symphony_board::{Error, Opening, Schema, Store};
+use symphony_board::{Error, Opening, Raw, Schema, Store};
 
 fn opened(client: Client, how: &Opening) -> Store {
     Store::opening(
@@ -29,11 +29,7 @@ fn migrate(client: Client) -> Store {
 }
 
 fn count(client: &Client, table: &str) -> Value {
-    client
-        .query(&format!("RETURN count(SELECT * FROM {table});"), json!({}))
-        .unwrap()
-        .pop()
-        .unwrap()
+    json!(Raw::on(client).table(table).count().unwrap())
 }
 
 fn tables(client: &Client) -> Vec<String> {
@@ -90,13 +86,11 @@ fn guarded_staging_preserves_nested_nulls_in_copied_plugin_fields() {
 fn stale_remove_staging_preserves_newer_tables_even_when_migration_follows_the_table_list() {
     let f = Fixture::new(Seed::default().task("old/one", "ready"));
     let before = f.store.dump().unwrap();
-    f.store
-        .client()
-        .query(
-            "CREATE copy_abandoned:one SET kept = true; CREATE unrelated:one SET kept = true;",
-            json!({}),
-        )
-        .unwrap();
+    for table in ["copy_abandoned", "unrelated"] {
+        (f.store.raw().row(table, "one"))
+            .create(json!({"kept": true}))
+            .unwrap();
+    }
     let next = f.other_client();
     let mut pending = Some(next);
     let relay = Relay::with_before(

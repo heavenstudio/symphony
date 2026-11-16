@@ -1,7 +1,7 @@
 use super::common::{Fixture, RawWrite, Seed};
 use serde_json::json;
 use symphony_board::embedding::{Chunk, DIMENSIONS, Embedder};
-use symphony_board::{EmbeddingStats, Store};
+use symphony_board::{EmbeddingStats, Raw, Store};
 
 pub(super) struct Fake {
     model: String,
@@ -35,7 +35,15 @@ fn repeated_neighbours_overfetch_until_the_requested_number_of_tasks_is_found() 
             .task("a/many", "ready")
             .task("b/one", "ready"),
     );
-    f.other_client().write("UPDATE task SET body = $body WHERE slug = 'a/many'; UPDATE task SET body = 'engine secondary' WHERE slug = 'b/one';", json!({"body":"engine\n".repeat(80)})).unwrap();
+    for (slug, body) in [
+        ("a/many", "engine\n".repeat(80)),
+        ("b/one", "engine secondary".to_string()),
+    ] {
+        (Raw::on(&f.other_client()).table("task"))
+            .matching(json!({"slug": slug}))
+            .set(json!({"body": body}))
+            .unwrap();
+    }
     let mut fake = Fake::default();
     assert_eq!(catch_up(&f.store, &mut fake).chunks, 83);
     let hits = f
@@ -76,14 +84,11 @@ fn briefs_larger_than_the_database_concat_limit_are_kept_in_full() {
     let mut fake = Fake::default();
     let stats = catch_up(&f.store, &mut fake);
     assert_eq!((stats.sources, stats.chunks), (1, 1001));
-    let found = f
-        .other_client()
-        .query(
-            "RETURN count(SELECT id FROM task_chunk WHERE text = $line);",
-            json!({"line":line}),
-        )
+    let found = (Raw::on(&f.other_client()).table("task_chunk"))
+        .matching(json!({"text": line}))
+        .count()
         .unwrap();
-    assert_eq!(found[0], json!(1000));
+    assert_eq!(found, 1000);
     assert_eq!(catch_up(&f.store, &mut fake).sources, 0);
 }
 impl Embedder for Fake {
@@ -164,29 +169,26 @@ fn maintenance_detects_message_counters_task_stamps_deletions_and_model_changes(
     assert_eq!(maintain(&f.store, &mut fake).sources, 1);
     // Independent update stamps also cover writes without a message and multiple writes at one
     // clock instant. Only the changed brief is inferred; the existing message remains cached.
-    for stamp in ["updated += 1", "version += 1"] {
-        f.other_client()
-            .write(
-                &format!("UPDATE task SET title = $title, {stamp};"),
-                json!({"title": stamp}),
-            )
-            .unwrap();
+    for (stamp, field) in [("updated += 1", "updated"), ("version += 1", "version")] {
+        let client = f.other_client();
+        let tasks = Raw::on(&client).table("task");
+        tasks.set(json!({"title": stamp})).unwrap();
+        tasks.add(field, 1).unwrap();
         assert_eq!(maintain(&f.store, &mut fake).sources, 1);
     }
     f.task("new/task");
     assert_eq!(maintain(&f.store, &mut fake).sources, 1);
-    f.other_client()
-        .write("DELETE task WHERE slug = 'new/task';", json!({}))
+    (Raw::on(&f.other_client()).table("task"))
+        .matching(json!({"slug": "new/task"}))
+        .delete()
         .unwrap();
     assert_eq!(maintain(&f.store, &mut fake).sources, 0);
     assert_eq!(
-        f.other_client()
-            .query(
-                "RETURN count(SELECT id FROM task_chunk WHERE slug = 'new/task');",
-                json!({})
-            )
-            .unwrap()[0],
-        json!(0)
+        (Raw::on(&f.other_client()).table("task_chunk"))
+            .matching(json!({"slug": "new/task"}))
+            .count()
+            .unwrap(),
+        0
     );
     fake.model = "fake-v2".into();
     assert_eq!(maintain(&f.store, &mut fake).sources, 2);
@@ -213,14 +215,9 @@ fn the_maintenance_checkpoint_is_one_digest_on_any_board_and_replaces_an_older_s
         .unwrap();
     let mut fake = Fake::default();
     assert_eq!(maintain(&f.store, &mut fake).sources, 300);
-    let row = f
-        .other_client()
-        .query(
-            "RETURN SELECT * OMIT id FROM ONLY task_embedding_checkpoint:board;",
-            json!({}),
-        )
-        .unwrap()
-        .remove(0);
+    let row = (Raw::on(&f.other_client()).row("task_embedding_checkpoint", "board"))
+        .get()
+        .unwrap();
     let digest = row["digest"].as_str().unwrap().to_owned();
     assert_eq!(row, json!({"digest": digest}));
     assert_eq!(digest.len(), 64);
@@ -244,12 +241,10 @@ fn failed_and_racing_passes_leave_work_visible_to_the_next_maintenance_child() {
     let stats = f
         .store
         .maintain_embeddings(&mut fake, 8, &mut |_, _| {
-            f.other_client()
-                .write(
-                    "UPDATE task SET title = 'racing edit', version += 1;",
-                    json!({}),
-                )
-                .unwrap();
+            let client = f.other_client();
+            let tasks = Raw::on(&client).table("task");
+            tasks.set(json!({"title": "racing edit"})).unwrap();
+            tasks.add("version", 1).unwrap();
         })
         .unwrap();
     assert_eq!(stats.sources, 1);
@@ -330,11 +325,9 @@ fn deleted_or_malformed_message_sources_cannot_reappear_from_cached_neighbours()
     let f = Fixture::new(Seed::default().task("sim/a", "ready").session("worker"));
     let message = f.store.say("sim/a", "worker", "engine", None).unwrap();
     catch_up(&f.store, &mut Fake::default());
-    f.other_client()
-        .write(
-            "DELETE message WHERE sid = $sid;",
-            json!({"sid":message.id}),
-        )
+    (Raw::on(&f.other_client()).table("message"))
+        .matching(json!({"sid": message.id}))
+        .delete()
         .unwrap();
     let check = || {
         let hits = f
@@ -365,8 +358,8 @@ fn a_deleted_task_with_surviving_messages_cannot_consume_a_vector_result() {
     );
     f.store.say("a/deleted", "worker", "engine", None).unwrap();
     catch_up(&f.store, &mut Fake::default());
-    f.other_client()
-        .write("DELETE type::record('task', 'a/deleted');", json!({}))
+    (Raw::on(&f.other_client()).row("task", "a/deleted"))
+        .delete()
         .unwrap();
     let hits = f
         .store
@@ -394,8 +387,8 @@ fn changed_source_hash_is_stale_unchanged_is_not_and_new_model_reembeds_every_so
     let inputs = fake.inputs;
     assert_eq!(catch_up(&f.store, &mut fake).sources, 0);
     assert_eq!(fake.inputs, inputs);
-    f.other_client()
-        .write("UPDATE task SET body = 'engine changed';", json!({}))
+    (Raw::on(&f.other_client()).table("task"))
+        .set(json!({"body": "engine changed"}))
         .unwrap();
     let hits = f
         .store
@@ -412,8 +405,8 @@ fn changed_source_hash_is_stale_unchanged_is_not_and_new_model_reembeds_every_so
     assert!(!f.store.has_embeddings("fake-v1").unwrap());
     assert!(f.store.has_embeddings("fake-v2").unwrap());
     assert_eq!(catch_up(&f.store, &mut fake).sources, 0);
-    f.other_client()
-        .write("UPDATE task SET title = 'new title';", json!({}))
+    (Raw::on(&f.other_client()).table("task"))
+        .set(json!({"title": "new title"}))
         .unwrap();
     fake.broken = true;
     assert!(
@@ -424,13 +417,11 @@ fn changed_source_hash_is_stale_unchanged_is_not_and_new_model_reembeds_every_so
             .contains("number of vectors")
     );
     assert_eq!(
-        f.other_client()
-            .query(
-                "RETURN count(SELECT id FROM task_chunk WHERE source = 'brief');",
-                json!({})
-            )
-            .unwrap()[0],
-        json!(2)
+        (Raw::on(&f.other_client()).table("task_chunk"))
+            .matching(json!({"source": "brief"}))
+            .count()
+            .unwrap(),
+        2
     );
     fake.broken = false;
     assert_eq!(catch_up(&f.store, &mut fake).sources, 1);
@@ -445,11 +436,8 @@ fn neighbours_fold_chunks_into_tasks_and_filter_status_before_the_task_limit() {
             .task("c/ready", "ready")
             .session("worker"),
     );
-    f.other_client()
-        .write(
-            "UPDATE task SET body = 'engine one\nengine two\nengine three';",
-            json!({}),
-        )
+    (Raw::on(&f.other_client()).table("task"))
+        .set(json!({"body": "engine one\nengine two\nengine three"}))
         .unwrap();
     f.store
         .say("b/ready", "worker", "engine thread", None)
@@ -475,11 +463,9 @@ fn neighbours_fold_chunks_into_tasks_and_filter_status_before_the_task_limit() {
         );
     }
     // Moving a task needs no re-embedding and immediately changes vector eligibility.
-    f.other_client()
-        .write(
-            "UPDATE task SET status = 'blocked' WHERE slug = 'b/ready';",
-            json!({}),
-        )
+    (Raw::on(&f.other_client()).table("task"))
+        .matching(json!({"slug": "b/ready"}))
+        .set(json!({"status": "blocked"}))
         .unwrap();
     assert_eq!(
         f.store
@@ -509,14 +495,14 @@ fn only_selected_tasks_are_embedded_deleted_sources_are_removed_and_bad_vectors_
         .catch_up_embeddings(&mut fake, Some(&["sim/a".into()]), 1, &mut |_, _| {})
         .unwrap();
     assert_eq!((stats.tasks, stats.sources), (1, 1));
-    f.other_client()
-        .write("DELETE task_chunk;", json!({}))
+    (Raw::on(&f.other_client()).table("task_chunk"))
+        .delete()
         .unwrap();
     assert_eq!(
-        f.other_client()
-            .query("RETURN count(SELECT id FROM task_chunk);", json!({}))
-            .unwrap()[0],
-        json!(0)
+        (Raw::on(&f.other_client()).table("task_chunk"))
+            .count()
+            .unwrap(),
+        0
     );
     let repaired = f
         .store
@@ -530,23 +516,22 @@ fn only_selected_tasks_are_embedded_deleted_sources_are_removed_and_bad_vectors_
             .slug,
         "sim/a"
     );
-    f.other_client()
-        .write("DELETE task WHERE slug = 'sim/a';", json!({}))
+    (Raw::on(&f.other_client()).table("task"))
+        .matching(json!({"slug": "sim/a"}))
+        .delete()
         .unwrap();
     catch_up(&f.store, &mut fake);
-    let rows = f
-        .other_client()
-        .query("SELECT slug FROM task_chunk;", json!({}))
+    let rows = (Raw::on(&f.other_client()).table("task_chunk"))
+        .fields(&["slug"])
         .unwrap();
-    assert_eq!(rows[0], json!([{"slug":"sim/b"}]));
-    let wrong_length = f
-        .other_client()
-        .write("UPDATE task_chunk SET embedding = [1.0, 0.0];", json!({}))
+    assert_eq!(rows, json!([{"slug":"sim/b"}]));
+    let wrong_length = (Raw::on(&f.other_client()).table("task_chunk"))
+        .set(json!({"embedding": [1.0, 0.0]}))
         .unwrap_err()
         .to_string();
     assert!(wrong_length.contains("384"), "{wrong_length}");
-    f.other_client()
-        .write("UPDATE task SET title = '', body = '';", json!({}))
+    (Raw::on(&f.other_client()).table("task"))
+        .set(json!({"title": "", "body": ""}))
         .unwrap();
     let empty = catch_up(&f.store, &mut fake);
     assert_eq!((empty.sources, empty.chunks), (1, 0));

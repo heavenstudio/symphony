@@ -34,13 +34,12 @@ fn setup() -> (Fixture, Pending) {
 
 fn reserved(f: &Fixture, pending: &Pending) -> bool {
     f.store
-        .client()
-        .query(
-            "RETURN record::exists(type::record('unanswered_restore', [$slug, $handle, $post]));",
-            json!({"slug":pending.slug, "handle":pending.handle, "post":pending.post.id}),
+        .raw()
+        .row(
+            "unanswered_restore",
+            json!([pending.slug, pending.handle, pending.post.id]),
         )
-        .unwrap()[0]
-        .as_bool()
+        .exists()
         .unwrap()
 }
 
@@ -110,8 +109,9 @@ fn final_reservation_rechecks_ancestry_and_heartbeat_without_consuming_an_attemp
             }
             "status" => {
                 f.other()
-                    .client()
-                    .query("UPDATE task:work SET status = 'done';", json!({}))
+                    .raw()
+                    .row("task", "work")
+                    .set(json!({"status": "done"}))
                     .unwrap();
             }
             _ => unreachable!(),

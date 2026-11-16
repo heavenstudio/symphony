@@ -132,8 +132,11 @@ fn a_stale_child_running_a_test_leaves_idle_callback_rows_unchanged() {
         "Live"
     );
     let rows = || {
-        f.store.client().query(
-        "RETURN {states: (SELECT * FROM callback_state ORDER BY id), counters: (SELECT * FROM counter ORDER BY id), leases: (SELECT * FROM callback_lease ORDER BY id)};", json!({})).unwrap()
+        let rows = |table: &str| f.store.raw().table(table).get().unwrap();
+        json!({
+            "states": rows("callback_state"), "counters": rows("counter"),
+            "leases": rows("callback_lease"),
+        })
     };
     let before = rows();
     for _ in 0..4 {
@@ -191,13 +194,10 @@ fn an_armed_idle_gate_delivers_a_reservation_lapse_without_a_marker_change() {
     let before = marker();
     let checkpoint = || {
         f.store
-            .client()
-            .query(
-                "RETURN type::record('callback_lease', 'orchestrator').pull;",
-                json!({}),
-            )
-            .unwrap()[0]
-            .clone()
+            .raw()
+            .row("callback_lease", "orchestrator")
+            .field("pull")
+            .unwrap()
     };
     assert_eq!(checkpoint(), json!(NOW));
     f.advance(31.0);
@@ -219,11 +219,9 @@ fn old_seen_write(f: &Fixture, handle: &str) {
         .unwrap()
         .retain(|field, _| matches!(field.as_str(), "roles" | "statuses" | "ready" | "children"));
     f.store
-        .client()
-        .query(
-            "UPDATE type::record('callback_state', $handle) SET seen = $seen RETURN NONE;",
-            json!({"handle":handle,"seen":legacy}),
-        )
+        .raw()
+        .row("callback_state", handle)
+        .set(json!({"seen": legacy}))
         .unwrap();
     let after = callback_state(f, handle);
     assert!(after["seen"].get("latest_message").is_none());
@@ -239,20 +237,16 @@ fn an_undelivered_first_empty_pull_keeps_its_key_until_it_is_received() {
     // Persist the registration before its first dispatch, then lose the listener. This is the
     // same durable state a restart can find after registration committed but before delivery.
     f.store
-        .client()
-        .query(
-            "UPSERT type::record('callback_state', $handle) SET lease = $until RETURN NONE;",
-            json!({"handle":orch,"until":f.now()+60.0}),
-        )
+        .raw()
+        .row("callback_state", orch.as_str())
+        .put(json!({"lease": f.now() + 60.0}))
         .unwrap();
     let o = listen(&f, &orch);
     drop(o);
     f.store
-        .client()
-        .query(
-            "UPDATE type::record('callback_state', $handle) SET lease = 0 RETURN NONE;",
-            json!({"handle":orch}),
-        )
+        .raw()
+        .row("callback_state", orch.as_str())
+        .set(json!({"lease": 0}))
         .unwrap();
     f.store.dispatch_callbacks().unwrap();
     let pending = f.store.callback_inbox(&orch).unwrap();
@@ -611,12 +605,14 @@ fn due_ticks_probe_once_and_idle_cursor_changes_do_not_probe() {
         (hc_image.dev(), hc_image.ino())
     );
     f.store
-        .client()
-        .query(
-            "UPDATE type::record('callback_state', $handle) SET host = $host, pull = 0 RETURN NONE;
-         UPDATE type::record('callback_lease', $handle) SET pull = 0 RETURN NONE;",
-            json!({"handle":orch,"host":sys::hostname()}),
-        )
+        .raw()
+        .row("callback_state", orch.as_str())
+        .set(json!({"host": sys::hostname(), "pull": 0}))
+        .unwrap();
+    f.store
+        .raw()
+        .row("callback_lease", orch.as_str())
+        .set(json!({"pull": 0}))
         .unwrap();
     let dispatch = || {
         let output = sys::output(
@@ -734,24 +730,23 @@ fn one_dispatch_coalesces_launch_roles_and_suppresses_self_events() {
     );
     let r = listen(&f, &rev);
     o.drain(&f, &exe, &orch);
-    f.store
-        .client()
-        .query(
-            "UPDATE callback_state SET lease = $until WHERE handle IN $handles RETURN NONE;",
-            json!({"handles":[orch,rev],"until":f.now()+60.0}),
-        )
-        .unwrap();
+    for handle in [&orch, &rev] {
+        f.store
+            .raw()
+            .table("callback_state")
+            .matching(json!({"handle": handle}))
+            .set(json!({"lease": f.now() + 60.0}))
+            .unwrap();
+    }
     f.store.reserve("tools/launch", &rev, 3600.0).unwrap();
     f.store.take_role("tools/launch", &rev, "reviewer").unwrap();
     f.store
         .release("tools/launch", &rev, Some("reserved"))
         .unwrap();
     f.store
-        .client()
-        .query(
-            "UPDATE callback_state SET lease = 0 RETURN NONE;",
-            json!({}),
-        )
+        .raw()
+        .table("callback_state")
+        .set(json!({"lease": 0}))
         .unwrap();
     f.store.dispatch_callbacks().unwrap();
     assert_eq!(
@@ -779,11 +774,9 @@ fn a_later_blocked_move_is_not_hidden_by_a_verdict_in_the_same_dispatch() {
     let o = listen_orchestrator(&f, &orch, EMPTY_PULL);
     assert!(o.drain(&f, &exe, &orch).is_empty());
     f.store
-        .client()
-        .query(
-            "UPDATE type::record('callback_state', $handle) SET lease = $until RETURN NONE;",
-            json!({"handle":orch,"until":f.now()+60.0}),
-        )
+        .raw()
+        .row("callback_state", orch.as_str())
+        .set(json!({"lease": f.now() + 60.0}))
         .unwrap();
     f.store
         .verdict("tools/batched", &rev, "changes", "fix the issue")
@@ -791,11 +784,9 @@ fn a_later_blocked_move_is_not_hidden_by_a_verdict_in_the_same_dispatch() {
     let verdict = f.store.thread("tools/batched").unwrap().pop().unwrap();
     f.store.move_to("tools/batched", "blocked", &exe).unwrap();
     f.store
-        .client()
-        .query(
-            "UPDATE type::record('callback_state', $handle) SET lease = 0 RETURN NONE;",
-            json!({"handle":orch}),
-        )
+        .raw()
+        .row("callback_state", orch.as_str())
+        .set(json!({"lease": 0}))
         .unwrap();
     f.store.dispatch_callbacks().unwrap();
     assert_eq!(
@@ -890,13 +881,10 @@ fn a_pending_digest_keeps_its_retry_budget_until_a_new_action_replaces_it() {
     }
     let state = || {
         f.store
-            .client()
-            .query(
-                "RETURN SELECT * OMIT id FROM ONLY type::record('callback_state', $handle);",
-                json!({"handle":orch}),
-            )
+            .raw()
+            .row("callback_state", orch.as_str())
+            .get()
             .unwrap()
-            .remove(0)
     };
     assert_eq!(state()["pull_entries"], json!([["low_volume", orch]]));
     let pending = f.store.callback_inbox(&orch).unwrap();
@@ -1020,11 +1008,9 @@ fn batching_retry_and_chat_recipient_gating_keep_their_delivery_contracts() {
     f.store.claim("tools/batch", &worker).unwrap();
     let listener = listen(&f, &worker);
     f.store
-        .client()
-        .query(
-            "UPDATE type::record('callback_state', $handle) SET lease = $until RETURN NONE;",
-            json!({"handle":worker,"until":f.now()+60.0}),
-        )
+        .raw()
+        .row("callback_state", worker.as_str())
+        .set(json!({"lease": f.now() + 60.0}))
         .unwrap();
     let first = f
         .store
@@ -1035,11 +1021,9 @@ fn batching_retry_and_chat_recipient_gating_keep_their_delivery_contracts() {
         .say("tools/batch", &sender, "second", Some(&worker))
         .unwrap();
     f.store
-        .client()
-        .query(
-            "UPDATE type::record('callback_state', $handle) SET lease = 0 RETURN NONE;",
-            json!({"handle":worker}),
-        )
+        .raw()
+        .row("callback_state", worker.as_str())
+        .set(json!({"lease": 0}))
         .unwrap();
     f.store.dispatch_callbacks().unwrap();
     assert_eq!(
@@ -1125,11 +1109,9 @@ fn a_legacy_upgrade_baselines_once_across_older_seen_writes_and_keeps_retries() 
         // A compatibility dispatcher snapshot contains these tasks but only
         // direct-role watches. Preserve the delivered question acknowledgement.
         f.store
-            .client()
-            .query(
-                "UPDATE type::record('callback_state', $handle) SET lease = $until RETURN NONE;",
-                json!({"handle":orch,"until":f.now()+60.0}),
-            )
+            .raw()
+            .row("callback_state", orch.as_str())
+            .set(json!({"lease": f.now() + 60.0}))
             .unwrap();
         for (slug, status) in [
             ("tools/root/finished", "done"),
@@ -1176,11 +1158,14 @@ fn a_legacy_upgrade_baselines_once_across_older_seen_writes_and_keeps_retries() 
             .as_array_mut()
             .unwrap()
             .retain(|role| role[0] == "tools/root");
-        f.store.client().query(
-            "UPDATE type::record('callback_state', $handle) UNSET pull_entries, pull_queued, message_floor, message_cursor, delivery_version RETURN NONE;
-             UPDATE type::record('callback_state', $handle) SET seen = $seen, lease = 0 RETURN NONE;",
-            json!({"handle":orch,"seen":legacy}),
-        ).unwrap();
+        let state = || f.store.raw().row("callback_state", orch.as_str());
+        state()
+            .set(json!({
+                "pull_entries": null, "pull_queued": null, "message_floor": null,
+                "message_cursor": null, "delivery_version": null,
+            }))
+            .unwrap();
+        state().set(json!({"seen": legacy, "lease": 0})).unwrap();
         f.store.dispatch_callbacks().unwrap();
         let mut expected = if pending {
             vec![format!("AGENT from {exe} to {orch} — still pending")]
@@ -1196,18 +1181,14 @@ fn a_legacy_upgrade_baselines_once_across_older_seen_writes_and_keeps_retries() 
         assert_eq!(callback_state(&f, &orch)["delivery_version"], 1);
         for round in 0..4 {
             old_seen_write(&f, &orch);
-            f.store.client().query(
-                "UPDATE type::record('callback_state', $handle) SET lease = $until RETURN NONE;",
-                json!({"handle":orch,"until":f.now()+60.0}),
-            ).unwrap();
+            state().set(json!({"lease": f.now() + 60.0})).unwrap();
             let text = format!("new question {round}");
             let future = f.store.say("tools/root", &exe, &text, Some(&orch)).unwrap();
             // Older writers also advance their floor and inbox cursor after losing Seen's cursor.
             // Only the durable cursor owned by this stream may decide what is already observed.
-            f.store.client().query(
-                "UPDATE type::record('callback_state', $handle) SET message_floor = $sid, inbox_cursor = $sid, lease = 0 RETURN NONE;",
-                json!({"handle":orch,"sid":future.id}),
-            ).unwrap();
+            state()
+                .set(json!({"message_floor": future.id, "inbox_cursor": future.id, "lease": 0}))
+                .unwrap();
             assert!(
                 callback_state(&f, &orch)["message_cursor"]
                     .as_i64()
@@ -1430,10 +1411,7 @@ done
         assert!(
             !calls.is_empty(),
             "stand-in not reached: {output:?}; state {:?}; inbox {:?}",
-            f.store.client().query(
-                "RETURN SELECT * OMIT id FROM ONLY type::record('callback_state', $handle);",
-                json!({"handle":worker})
-            ),
+            f.store.raw().row("callback_state", worker.as_str()).get(),
             f.store.callback_inbox(&worker)
         );
         calls

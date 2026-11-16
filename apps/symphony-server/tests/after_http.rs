@@ -1201,10 +1201,15 @@ fn persistence(f: &Fixture) {
         .row
         .handle;
     // An isolated remote callback exercises recipient selection without invoking a local agent.
-    store.client().query(
-        "UPSERT type::record('callback_state', $handle) SET handle = $handle, address = 'codex:abcdef01', host = 'http-fixture-remote' RETURN NONE;",
-        json!({"handle":orchestrator}),
-    ).unwrap();
+    store
+        .raw()
+        .row("callback_state", orchestrator.as_str())
+        .put(json!({
+            "handle": orchestrator,
+            "address": "codex:abcdef01",
+            "host": "http-fixture-remote",
+        }))
+        .unwrap();
     feed.until(&format!("\"recipient\":\"{orchestrator}\""));
     let read = f.get(&format!("/api/ask?id={id}")).status(200).json();
     assert_eq!(read["ask"]["id"], id);

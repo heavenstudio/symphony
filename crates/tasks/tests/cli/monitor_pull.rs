@@ -17,9 +17,19 @@ fn held_count_changes_warn_before_the_periodic_pull_and_failed_reads_report_unkn
         store.hold_blocked(&slug, &worker).unwrap();
     }
     m.watch(&orch, Watch::polls(4), &|m, n| match n {
-        0 => { m.board().client().query("UPDATE type::record('counter', ['hold', 'sim/held-3']) SET ts += 1 RETURN NONE;", json!({})).unwrap(); }
-        1 => { m.board().client().query("CREATE type::record('counter', ['slots', 7]) SET last = 0 RETURN NONE;", json!({})).unwrap(); }
-        2 => { m.board().client().query("DELETE type::record('counter', ['slots', 7]) RETURN NONE;", json!({})).unwrap(); }
+        0 => {
+            let held = json!(["hold", "sim/held-3"]);
+            m.board().raw().row("counter", held).add("ts", 1).unwrap();
+        }
+        1 => {
+            let slots = m.board();
+            let slots = slots.raw().row("counter", json!(["slots", 7]));
+            slots.create(json!({"last": 0})).unwrap();
+        }
+        2 => {
+            let slots = json!(["slots", 7]);
+            m.board().raw().row("counter", slots).delete().unwrap();
+        }
         _ => {}
     });
     assert_eq!(

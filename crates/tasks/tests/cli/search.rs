@@ -62,10 +62,25 @@ fn embedding_maintenance_reuses_current_chunks_without_loading_a_model_or_requir
     create(&c, "cached/task", "Engine task", "", 2);
     let mut vector = vec![0.0_f32; DIMENSIONS];
     vector[0] = 1.0;
-    c.store().client().query(
-        "CREATE type::record('task_chunk', ['cached/task', 'brief', 0]) SET slug = 'cached/task', source = 'brief', source_hash = $hash, text_hash = $chunk_hash, text = 'Engine task', model = $model, embedding = $vector; CREATE type::record('task_embedding_source', ['cached/task', 'brief']) SET slug = 'cached/task', source = 'brief', source_hash = $hash, model = $model, parts = 1;",
-        serde_json::json!({"hash":text_hash("Engine task\n"),"chunk_hash":text_hash("Engine task"),"model":MODEL_ID,"vector":vector}),
-    ).unwrap();
+    let seeded = c.store();
+    (seeded
+        .raw()
+        .row("task_chunk", serde_json::json!(["cached/task", "brief", 0])))
+    .create(serde_json::json!({
+        "slug": "cached/task", "source": "brief", "source_hash": text_hash("Engine task\n"),
+        "text_hash": text_hash("Engine task"), "text": "Engine task", "model": MODEL_ID,
+        "embedding": vector,
+    }))
+    .unwrap();
+    (seeded.raw().row(
+        "task_embedding_source",
+        serde_json::json!(["cached/task", "brief"]),
+    ))
+    .create(serde_json::json!({
+        "slug": "cached/task", "source": "brief", "source_hash": text_hash("Engine task\n"),
+        "model": MODEL_ID, "parts": 1,
+    }))
+    .unwrap();
     for _ in 0..2 {
         let ran = c.run_as("", &["embed", "--maintenance"], "");
         assert_eq!(ran.code, 0, "{}", said(&ran));

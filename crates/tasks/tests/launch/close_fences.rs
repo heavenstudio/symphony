@@ -9,7 +9,7 @@ use crate::close_holds::restoring;
 use crate::close_races::{after, ahead_of, record};
 use crate::common::refused;
 use crate::{Hooked, World};
-use serde_json::json;
+use serde_json::{Value, json};
 use std::cell::{Cell, RefCell};
 use symphony_board::launch::hc::Hc;
 use symphony_board::launch::{Started, restore};
@@ -235,26 +235,17 @@ fn register(world: &World, handle: &str) {
         .unwrap();
 }
 
-/// `sql` run on the world's board, given `$handle`: a write of an older build.
-fn written(world: &World, handle: &str, sql: &str) {
-    let vars = json!({"handle": handle});
-    world.store().client().query(sql, vars).unwrap();
-}
-
-/// `handle`'s registration row changed by `set` (a SurrealQL `SET` list), as an older build
-/// writes it: one that numbers registrations on its own and writes no nonce.
-fn rewrite(world: &World, handle: &str, set: &str) {
-    let sql = format!("UPDATE type::record('callback_state', $handle) SET {set} RETURN NONE;");
-    written(world, handle, &sql);
+/// `handle`'s registration row changed by `set` (the fields it sets, a null unset), as an older
+/// build writes it: one that numbers registrations on its own and writes no nonce.
+fn rewrite(world: &World, handle: &str, set: Value) {
+    let store = world.store();
+    store.raw().row("callback_state", handle).set(set).unwrap();
 }
 
 /// `handle`'s registration retired as an older build retires it: its row deleted.
 fn retired(world: &World, handle: &str) {
-    written(
-        world,
-        handle,
-        "DELETE type::record('callback_state', $handle);",
-    );
+    let store = world.store();
+    store.raw().row("callback_state", handle).delete().unwrap();
 }
 
 /// What is left of `handle`'s callback: the terminal it registered from, if it is not retired.
@@ -271,14 +262,14 @@ fn a_close_never_retires_a_registration_made_since_though_it_took_the_number_rea
         let session = world.waiting_reviewer();
         let handle = &session.handle;
         register(&world, handle);
-        let numbered = format!("registration_revision = {number}");
-        rewrite(&world, handle, &numbered);
+        let numbered = json!({"registration_revision": number});
+        rewrite(&world, handle, numbered.clone());
         // As the close kills, that registration is retired, its row with it, and the agent
         // registers again from no terminal; its number comes to be the one read.
         let racing = ahead_of(&world, "kill", 1, || {
             retired(&world, handle);
             register(&world, handle);
-            rewrite(&world, handle, &numbered);
+            rewrite(&world, handle, numbered.clone());
         });
         world.close_through(&racing, handle).unwrap();
         assert_eq!(left(&world, handle), Some(None), "{number}");
@@ -297,7 +288,7 @@ fn a_close_retires_a_registration_an_older_build_wrote_only_as_it_read_it() {
         rewrite(
             &world,
             handle,
-            "registration_revision = 1, registration_nonce = NONE",
+            json!({"registration_revision": 1, "registration_nonce": null}),
         );
         let racing = ahead_of(&world, "kill", 1, || {
             if since {

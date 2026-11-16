@@ -9,7 +9,7 @@ use super::{COPY, Held, Live, SEND, TASKS, before, refused, this};
 use crate::common::NOW;
 use std::path::{Path, PathBuf};
 use symphony_board::live::seen::{self, Rollback};
-use symphony_board::{Opening, Store};
+use symphony_board::{Opening, Raw, Store};
 
 impl Live {
     /// The board's store, in its folder in the common dir.
@@ -39,15 +39,8 @@ impl Live {
 
     /// How many tasks the board holds: one read.
     fn tasks_held(&self) -> i64 {
-        self.client("tasks")
-            .query(
-                "RETURN array::len(SELECT VALUE id FROM task);",
-                serde_json::json!({}),
-            )
-            .unwrap()
-            .last()
-            .and_then(serde_json::Value::as_i64)
-            .unwrap()
+        let held = Raw::on(&self.client("tasks")).table("task").count();
+        i64::try_from(held.unwrap()).unwrap()
     }
 }
 

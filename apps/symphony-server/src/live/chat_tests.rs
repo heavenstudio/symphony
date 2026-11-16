@@ -110,10 +110,10 @@ fn only_the_shared_server_drains_the_chat_journal() {
         &std::env::var("TASKS_DATABASE").unwrap(),
     );
     let posted = || {
-        board
-            .query("SELECT text FROM chat_event;", json!({}))
-            .unwrap()[0]
-            .clone()
+        symphony_board::Raw::on(&board)
+            .table("chat_event")
+            .fields(&["text"])
+            .unwrap()
     };
     assert_eq!(posted(), json!([]));
 

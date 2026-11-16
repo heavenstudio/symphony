@@ -260,12 +260,8 @@ fn a_recipient_far_behind_the_board_reads_its_inbox_from_its_cursor() {
             false,
         )
         .unwrap();
-    f.store
-        .client()
-        .query(
-            "UPDATE type::record('callback_state', 'worker') SET message_cursor = 1, inbox_cursor = 1 RETURN NONE;",
-            serde_json::json!({}),
-        )
+    (f.store.raw().row("callback_state", "worker"))
+        .set(serde_json::json!({"message_cursor": 1, "inbox_cursor": 1}))
         .unwrap();
     f.store
         .say("tools/far", "writer", "far news", Some("worker"))
