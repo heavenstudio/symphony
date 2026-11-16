@@ -156,8 +156,14 @@ impl Tree {
         for key in READS {
             command.env_remove(key);
         }
-        // A search path holding no build of the board's, unless the case names one.
+        // A search path holding no build of the board's, unless the case names one, and a machine
+        // folder of the tree's own, never the one this process inherits: no case runs a release
+        // installed on this machine.
         command.env("PATH", "/usr/bin:/bin");
+        command.env(
+            symphony::machine::DIR_ENV,
+            self.root().join("machine-folder"),
+        );
         command.env(CLOCK, self.clock());
         for (key, value) in env {
             command.env(key, value);

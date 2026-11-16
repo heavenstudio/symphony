@@ -134,6 +134,47 @@ fn a_checkout_with_no_link_anywhere_beats_on_the_search_paths_build() {
 }
 
 #[test]
+fn a_checkout_with_no_link_beats_on_the_machines_release_before_the_search_paths() {
+    // A project with no build of its own, on a machine with a release installed: a machine folder
+    // of the test's own, named to the hook.
+    let tree = Tree::new("beat-release");
+    let (repo, linked) = repo_with_worktree(&tree);
+    let machine = tree.root().join("its-machine");
+    let release = machine.join("releases/release-1/bin");
+    std::fs::create_dir_all(&release).unwrap();
+    recorder_at(&release.join("tasks"));
+    std::os::unix::fs::symlink("releases/release-1", machine.join("current")).unwrap();
+    let folder = tree.root().join("installed");
+    std::fs::create_dir_all(&folder).unwrap();
+    recorder_at(&folder.join("tasks"));
+    let path = format!("{}:/usr/bin:/bin", folder.display());
+    let event = bash("ls", Some("agent-1"), None);
+    for root in [repo.clone(), linked] {
+        quiet(&tree.beat(
+            &event,
+            &[
+                ("CLAUDE_PROJECT_DIR", root.to_str().unwrap()),
+                ("PATH", &path),
+                (symphony::machine::DIR_ENV, machine.to_str().unwrap()),
+            ],
+        ));
+    }
+    assert_eq!(runs(&release.join("tasks")), ["beat", "beat"]);
+    assert_eq!(runs(&folder.join("tasks")), [] as [&str; 0]);
+    // A link in the main checkout wins over the release.
+    let mains = link_main(&repo.join(".git"), &tree.recorder());
+    quiet(&tree.beat(
+        &event,
+        &[
+            ("CLAUDE_PROJECT_DIR", repo.to_str().unwrap()),
+            (symphony::machine::DIR_ENV, machine.to_str().unwrap()),
+        ],
+    ));
+    assert_eq!(runs(&mains), ["beat"]);
+    assert_eq!(runs(&release.join("tasks")), ["beat", "beat"]);
+}
+
+#[test]
 fn a_nested_manifest_uses_its_located_common_build_without_crossing_invalid_markers() {
     let tree = Tree::new("beat-nested-manifest");
     let (repo, linked) = repo_with_worktree(&tree);

@@ -6,12 +6,19 @@ use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
-fn database(root: &Path) -> Result<(AskStore, String), String> {
-    let path = crate::asks::default_path(root, std::env::var("ASKS_DB").ok().as_deref());
+/// The journal of the project at `root`, where this process's `ASKS_DB` puts it, else in the
+/// project's artifacts folder ([`crate::asks::default_path`]).
+fn journal(root: &Path) -> PathBuf {
+    crate::asks::default_path(root, std::env::var("ASKS_DB").ok().as_deref())
+}
+
+/// The journal at `path`, opened and brought to its columns, and the key its records' events are
+/// named by.
+fn database(path: &Path) -> Result<(AskStore, String), String> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
-    let connection = AskStore::open(&path).map_err(|e| e.to_string())?;
+    let connection = AskStore::open(path).map_err(|e| e.to_string())?;
     connection.run("CREATE TABLE IF NOT EXISTS callbacks (id INTEGER PRIMARY KEY AUTOINCREMENT, text TEXT NOT NULL, ask TEXT);").map_err(|e| e.to_string())?;
     // A journal made before asks has no `ask` column: it gains one, its records keeping none.
     #[derive(serde::Deserialize)]
@@ -46,7 +53,7 @@ pub fn publish_asking(
     text: &str,
     ask: Option<&symphony_board::NewAsk>,
 ) -> Result<(), String> {
-    let (connection, _) = database(root)?;
+    let (connection, _) = database(&journal(root))?;
     let ask = match ask {
         Some(ask) => text_sql(&serde_json::to_string(ask).map_err(|e| e.to_string())?),
         None => "NULL".into(),
@@ -66,6 +73,8 @@ pub fn publish_asking(
 /// An unchanged empty SQLite database (including its WAL) needs no
 /// sqlite3 child at all. Compare the stamp from before the read: a concurrent publish then always
 /// makes the next tick read again, including when a different process wrote the journal.
+/// It reads the journal its project had when it was made, never one found from the folder again,
+/// which a folder left without its `.git` would find in the checkout that holds it.
 pub struct Flusher {
     path: PathBuf,
     empty: Option<Stamp>,
@@ -77,18 +86,20 @@ struct Stamp(Vec<Option<(SystemTime, u64)>>);
 impl Flusher {
     pub fn new(root: &Path) -> Self {
         Self {
-            path: crate::asks::default_path(root, std::env::var("ASKS_DB").ok().as_deref()),
+            path: journal(root),
             empty: None,
         }
     }
 
+    /// Hand the journal's records to the board of the project at `root`, each deleted once the
+    /// board holds it.
     pub fn flush(&mut self, root: &Path) -> Result<(), String> {
         let stamp = self.stamp()?;
         if self.empty.as_ref() == Some(&stamp) {
             return Ok(());
         }
         self.empty = None;
-        if flush(root)? {
+        if flush(&self.path, root)? {
             self.empty = Some(stamp);
         }
         Ok(())
@@ -112,8 +123,10 @@ impl Flusher {
     }
 }
 
-fn flush(root: &Path) -> Result<bool, String> {
-    let (connection, key) = database(root)?;
+/// Hand the records of the journal at `path` to the board of the project at `root`: whether the
+/// journal was empty.
+fn flush(path: &Path, root: &Path) -> Result<bool, String> {
+    let (connection, key) = database(path)?;
     #[derive(serde::Deserialize)]
     struct Record {
         id: i64,

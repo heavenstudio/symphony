@@ -1231,17 +1231,17 @@ fn sweep_late(last: Stamp, now: Stamp, interval: Duration) -> Option<Duration> {
 
 /// The build of `tasks` that runs the board for the checkout at `root`, as its recipes would from its
 /// main checkout ([`symphony_board::builds::of_main`]): the main checkout's `.target/bin/tasks`, else
-/// `tasks` on this server's `PATH`, never a linked worktree's build of branch code. None found is an
+/// the machine's release's, else `tasks` on this server's `PATH`, never a linked worktree's build of branch code. None found is an
 /// error saying where one goes.
 pub(crate) fn board_build(root: &Path) -> Result<PathBuf, String> {
-    board_build_on(root, std::env::var_os("PATH").as_deref())
+    board_build_on(root, &symphony_board::builds::Beyond::of_process())
 }
 
-/// [`board_build`] with the search path `path`.
-fn board_build_on(root: &Path, path: Option<&std::ffi::OsStr>) -> Result<PathBuf, String> {
+/// [`board_build`] past the main checkout's link in `beyond`.
+fn board_build_on(root: &Path, beyond: &symphony_board::builds::Beyond) -> Result<PathBuf, String> {
     use symphony_board::builds;
     let main = builds::main_of(root);
-    builds::of_main(&main, "tasks", path).ok_or_else(|| builds::missing(&main, "tasks"))
+    builds::of_main(&main, "tasks", beyond).ok_or_else(|| builds::missing(&main, "tasks"))
 }
 
 /// A round every `interval`, whose reap child is ended after `timeout`, both measured on `clock`,

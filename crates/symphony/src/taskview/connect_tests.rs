@@ -167,7 +167,7 @@ fn a_running_board_read_starts_no_server() {
     for name in ["TASKS_SERVER", "TASKS_DATABASE", symphony_env::SURREAL.name] {
         env.vars.remove(name);
     }
-    let refused = super::open(&tree.root, env, symphony_board::cli::running_board)
+    let refused = super::open(&tree.root, env, symphony_board::cli::held_running_board)
         .err()
         .expect("no server runs");
     assert!(
@@ -196,10 +196,9 @@ fn a_held_board_refuses_the_symphonys_reads_naming_the_hold() {
     let home = symphony_board::server::Home::in_common(&tree.path(".git"), None);
     let hold = home.hold("russet-lynx", "a swap").unwrap().hold;
     let said = symphony_board::server::ServerError::Held(hold).to_string();
-    type Reach = fn(&symphony_board::cli::Env) -> Result<symphony_board::cli::Reached, String>;
-    let reaches: [(Reach, &str); 2] = [
-        (symphony_board::cli::board, "board"),
-        (symphony_board::cli::running_board, "running_board"),
+    let reaches: [(super::Reach, &str); 2] = [
+        (symphony_board::cli::held_board, "board"),
+        (symphony_board::cli::held_running_board, "running_board"),
     ];
     for (reach, named) in reaches {
         let refused = super::open(&tree.root, env.clone(), reach)
@@ -209,4 +208,69 @@ fn a_held_board_refuses_the_symphonys_reads_naming_the_hold() {
     }
     assert!(!tree.path(".git/symphony/tasks/server.json").exists());
     assert!(home.release("russet-lynx", None).unwrap().is_some());
+}
+
+/// A folder this process serves is held to the repository it was served from: once its `.git`
+/// goes, after whatever check its caller made, every reach of its board by its path, the one that
+/// starts a server and the branch scan's, is refused as a folder that is gone, and none walks up to
+/// the board of the checkout above it, whose folders are never made. That holds whether the folder
+/// keeps a project file, where the board's lookup stops before it reads the repository, or not.
+/// Served again, it is held to what the lookup finds then; a folder no repository holds is held to
+/// nothing.
+#[test]
+fn a_served_folder_left_without_its_git_reaches_no_board_above_it() {
+    let tree = crate::test_tree::Tree::checkout();
+    let mut env = crate::children::board_env();
+    for name in ["TASKS_SERVER", "TASKS_DATABASE", symphony_env::SURREAL.name] {
+        env.vars.remove(name);
+    }
+    let reaches: [(super::Reach, &str); 2] = [
+        (symphony_board::cli::held_board, "board"),
+        (symphony_board::cli::held_running_board, "running_board"),
+    ];
+    for (case, filed) in [("filed", true), ("unfiled", false)] {
+        tree.write(
+            &format!("artifacts/{case}/.git/HEAD"),
+            "ref: refs/heads/main\n",
+        );
+        if filed {
+            tree.write(
+                &format!("artifacts/{case}/symphony.toml"),
+                "[project]\nid = \"inner\"\n",
+            );
+        }
+        let inner = tree.path(&format!("artifacts/{case}"));
+        let own = inner.canonicalize().unwrap().join(".git");
+        assert_eq!(super::serve(&inner), Some(own.clone()), "{case}");
+        std::fs::remove_dir_all(inner.join(".git")).unwrap();
+        for (reach, named) in reaches {
+            let refused = super::open(&inner, env.clone(), reach)
+                .err()
+                .expect("the folder no longer holds its repository");
+            assert_eq!(
+                refused,
+                format!(
+                    "the project's folder {} no longer holds the repository it was served from, \
+                     {}: {}",
+                    inner.display(),
+                    own.display(),
+                    symphony_board::project::GONE
+                ),
+                "{case}, {named}"
+            );
+        }
+        assert!(
+            !tree.path(".git/symphony").exists(),
+            "{case}: the outer checkout's board was looked for"
+        );
+        // Served again, the folder is held to the checkout that holds it now.
+        assert_eq!(
+            super::serve(&inner),
+            Some(tree.root.canonicalize().unwrap().join(".git")),
+            "{case}"
+        );
+    }
+    let plain = crate::test_tree::Tree::new();
+    assert_eq!(super::serve(&plain.root), None);
+    assert_eq!(super::held(&plain.root), None);
 }

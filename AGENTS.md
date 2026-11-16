@@ -174,7 +174,8 @@ not a question in chat.
 
 **Releases.** A land starts a release run (`just release`, below) once `[releases]
 every_landings` tasks (20) have landed since the last release or run ([the
-cadence](docs/RELEASES.md#the-cadence)), and a green release refreshes the machine: each consuming
+cadence](docs/RELEASES.md#the-cadence)), and a green release refreshes the machine: the release installed in the machine folder
+([the install](docs/RELEASES.md#the-install)), each consuming
 project's pin, main and board, and the shared server by its own reload ([the
 refresh](docs/RELEASES.md#the-refresh)). Running a release run or `--commit` by hand, installing
 its schedule and turning `[releases] publish` on are the owner's call; an orchestrator reruns
@@ -222,9 +223,11 @@ skills name (`crates/symphony/shipped/symphony.just`: `tasks`, `agent-send`, `sy
 `land`), which the project's justfile imports; a recipe of the project's own of the same name
 wins, and so does an unstamped copy of a file it writes. What it writes, keeps current, retires
 and refuses, and the `Next:` it ends with, is the module doc of `crates/symphony/src/init.rs`. Each
-recipe and hook runs the project's build linked at `.target/bin/NAME`, else the main checkout's
-link from a linked worktree, else NAME on PATH (`crates/symphony/src/builds.rs`), and builds
-nothing.
+recipe runs the project's build linked at `.target/bin/NAME`, else the main checkout's link from
+a linked worktree, else the release installed on the machine (`current/bin/NAME` in the machine
+folder, [RELEASES](docs/RELEASES.md#the-install)), else NAME on PATH
+(`crates/symphony/src/builds.rs`), and builds nothing; a hook finds `symphony` by the links, else
+on PATH.
 
 **What an agent is told, and where.** What a launch prompt carries, and where what is one task's
 alone goes instead, is step 5 of [the orchestrator's
