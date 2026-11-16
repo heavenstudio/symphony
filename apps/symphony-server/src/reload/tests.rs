@@ -359,7 +359,10 @@ fn idle_source_watch_follows_build_inputs_and_recovers_an_incomplete_graph() {
         ("symphony/apps/symphony-web/vite.config.ts", true),
         ("symphony/apps/symphony-web/build.sh", true),
         ("symphony/apps/symphony-web/package.sh", true),
-        ("symphony/apps/symphony-web/node_modules/vite/index.js", false),
+        (
+            "symphony/apps/symphony-web/node_modules/vite/index.js",
+            false,
+        ),
         ("symphony/apps/symphony-web/.install/lock", false),
         ("symphony/apps/symphony-web/AGENTS.md", false),
         ("symphony/crates/symphony-api/src/lib.rs", true),
@@ -635,10 +638,7 @@ fn standalone_source_watch_includes_client_assets_and_its_own_build_scripts() {
         ("apps/symphony-web/src/styles/frame.css", true),
         ("apps/symphony-web/node_modules/vite/index.js", false),
         ("apps/symphony-server/client/public/index.html", true),
-        (
-            "apps/symphony-server/client/public/assets/current.js",
-            true,
-        ),
+        ("apps/symphony-server/client/public/assets/current.js", true),
         ("tools/rs-bin.sh", true),
         ("tools/cargo.sh", true),
         ("tools/test-rs.sh", true),

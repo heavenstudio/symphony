@@ -143,12 +143,15 @@ fn files_in(dir: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
 #[test]
 fn a_build_publishes_every_kind_over_one_shared_stylesheet_into_out_as_named_from_where_it_runs() {
     let scratch = Scratch::new("build");
-    let done = build(&scratch.0, "build/ui").output().expect("run build.sh");
+    let done = build(&scratch.0, "build/ui")
+        .output()
+        .expect("run build.sh");
     succeeded(&done, "build.sh");
     assert!(done.stdout.is_empty(), "{done:?}");
     let public = scratch.0.join("build/ui/public");
     let file = |path: &str| {
-        fs::read(public.join(path.trim_start_matches('/'))).unwrap_or_else(|e| panic!("{path}: {e}"))
+        fs::read(public.join(path.trim_start_matches('/')))
+            .unwrap_or_else(|e| panic!("{path}: {e}"))
     };
     let (manifest, body) = shell_of(&public);
     // Each of the client's kinds, and nothing else: the shared stylesheet's entry is no kind.
@@ -194,7 +197,11 @@ fn a_build_publishes_every_kind_over_one_shared_stylesheet_into_out_as_named_fro
         assert!(at >= last, "{name} comes in its written order");
         last = at;
     }
-    assert_eq!(sheet.lines().count(), 1, "the shared stylesheet is minified");
+    assert_eq!(
+        sheet.lines().count(),
+        1,
+        "the shared stylesheet is minified"
+    );
 
     for (kind, sheets) in KINDS {
         let script = manifest[kind]["script"].as_str().unwrap();
@@ -284,7 +291,9 @@ fn a_build_publishes_every_kind_over_one_shared_stylesheet_into_out_as_named_fro
     // A second build of the same sources, into the same OUT, publishes the same bytes.
     let before = files_in(&public);
     succeeded(
-        &build(&scratch.0, "build/ui").output().expect("run build.sh"),
+        &build(&scratch.0, "build/ui")
+            .output()
+            .expect("run build.sh"),
         "build.sh again",
     );
     let after = files_in(&public);
@@ -511,7 +520,10 @@ fn the_manifest_step_names_each_kinds_script_imports_and_styles_shared_sheet_fir
     let notices =
         fs::read_to_string(workspace().join("apps/symphony-server/src/notices.css")).unwrap();
     assert!(
-        index.contains(&format!("<style id=\"shell-notices-style\">{}</style>", notices.trim_end())),
+        index.contains(&format!(
+            "<style id=\"shell-notices-style\">{}</style>",
+            notices.trim_end()
+        )),
         "the page carries the server's notice styles"
     );
 }
@@ -521,7 +533,13 @@ fn the_manifest_step_names_each_kinds_script_imports_and_styles_shared_sheet_fir
 #[test]
 fn a_build_with_no_manifest_shared_stylesheet_or_kind_is_refused_and_publishes_nothing() {
     for (name, shared, kinds, manifest, said) in [
-        ("no-manifest", true, true, false, "the client's build is missing: "),
+        (
+            "no-manifest",
+            true,
+            true,
+            false,
+            "the client's build is missing: ",
+        ),
         (
             "no-shared",
             false,
@@ -529,7 +547,13 @@ fn a_build_with_no_manifest_shared_stylesheet_or_kind_is_refused_and_publishes_n
             true,
             "the client's build has no shared stylesheet (src/styles/shared.css): ",
         ),
-        ("no-kind", true, false, true, "the client's build has no kind: "),
+        (
+            "no-kind",
+            true,
+            false,
+            true,
+            "the client's build has no kind: ",
+        ),
     ] {
         let scratch = Scratch::new(name);
         let out = modules(&scratch, shared, kinds);
@@ -577,11 +601,18 @@ fn the_shells_minifier_refuses_a_script_it_cannot_read() {
             .unwrap();
         child.wait_with_output().unwrap()
     };
-    let done = minify("const longName = 1;\nexport function shown() {\n    return longName + 1;\n}\n");
+    let done =
+        minify("const longName = 1;\nexport function shown() {\n    return longName + 1;\n}\n");
     succeeded(&done, "the minifier");
     let small = String::from_utf8(done.stdout).unwrap();
-    assert!(small.ends_with('\n') && small.lines().count() == 1, "{small}");
-    assert!(small.contains("shown") && !small.contains("longName"), "{small}");
+    assert!(
+        small.ends_with('\n') && small.lines().count() == 1,
+        "{small}"
+    );
+    assert!(
+        small.contains("shown") && !small.contains("longName"),
+        "{small}"
+    );
     let done = minify("const = ;\n");
     assert!(!done.status.success(), "{done:?}");
     assert!(done.stdout.is_empty(), "{done:?}");
@@ -702,11 +733,21 @@ fn the_shell_keys_storage_by_the_clients_rule() {
 #[test]
 fn the_shell_yields_the_same_routes_to_the_symphony_as_the_server() {
     let shell = fs::read_to_string(web().join("shell/shell.js")).unwrap();
-    let list = shell
-        .lines()
-        .find_map(|line| line.strip_prefix("const SYMPHONY_ROUTES = "))
-        .and_then(|rest| rest.strip_suffix(';'))
+    // The list as the formatter writes it: a quoted route a line, between `[` and `];`.
+    let (_, rest) = shell
+        .split_once("const SYMPHONY_ROUTES = [")
         .expect("shell.js names the Symphony's routes");
-    let routes: Vec<String> = serde_json::from_str(list).unwrap();
+    let (list, _) = rest.split_once("];").expect("the routes' list ends");
+    let routes: Vec<&str> = list
+        .split(',')
+        .map(str::trim)
+        .filter(|route| !route.is_empty())
+        .map(|route| {
+            route
+                .strip_prefix('"')
+                .and_then(|route| route.strip_suffix('"'))
+                .unwrap_or_else(|| panic!("a route is a quoted word: {route}"))
+        })
+        .collect();
     assert_eq!(routes, symphony_api::SYMPHONY_ROUTES);
 }

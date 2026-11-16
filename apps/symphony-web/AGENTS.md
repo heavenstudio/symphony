@@ -55,6 +55,8 @@ lockfile written again, in a task of their own.
   domains on, the formatter at two spaces and 100 columns). It was chosen over ESLint with
   typescript-eslint, whose TypeScript support ends below the TypeScript this package pins, and it
   is one tool and one file for both jobs. `biome ci --error-on-warnings` makes a warning an error.
+  Two style rules are off under `src/styles/` alone, the sheets carried whole from the retired
+  client ([their README](src/styles/README.md)).
 - **Vitest** runs the unit tests, with `@vitest/coverage-v8` for their coverage.
 
 `just client-lint` (`check.sh`) runs the wire types' check and the tests of the example that

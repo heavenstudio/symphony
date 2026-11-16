@@ -1271,7 +1271,10 @@ fn client_only_and_shared_edits_publish_once_and_failures_preserve_the_serving_b
         1
     );
 
-    f.source("symphony/apps/symphony-web/src/main.tsx", "incomplete bundle");
+    f.source(
+        "symphony/apps/symphony-web/src/main.tsx",
+        "incomplete bundle",
+    );
     f.entered("client").release("empty");
     lines.until("client build has no index.html");
     assert_front(address, original_pid);
@@ -1322,7 +1325,10 @@ fn client_only_and_shared_edits_publish_once_and_failures_preserve_the_serving_b
         "old module",
         "old tabs retain their hashed modules"
     );
-    assert_eq!(text_get(address, "/assets/new-0123456789abcdef.js"), "new module");
+    assert_eq!(
+        text_get(address, "/assets/new-0123456789abcdef.js"),
+        "new module"
+    );
     assert_eq!(
         text_get(address, "/assets/chunks/old-789789789789789a.js"),
         "old chunk"
@@ -1337,12 +1343,11 @@ fn client_only_and_shared_edits_publish_once_and_failures_preserve_the_serving_b
         old_stamp
     );
 
-    // One dependency is an input to both products: exactly one client build, one server build
-    // and one handover must cover that event, without a second reload from the new generation.
-    f.source(
-        "symphony/crates/symphony-api/src/lib.rs",
-        "// changed shared contract\n",
-    );
+    // The lockfile is an input to both products (the client's publisher is the workspace's):
+    // exactly one client build, one server build and one handover must cover that event, without
+    // a second reload from the new generation. A crate is the server's alone now, the wire types'
+    // too: the client reads them as the TypeScript its package commits.
+    f.source("Cargo.lock", "# changed shared lockfile\n");
     f.entered("client").release("bundle");
     f.entered("build").release("install");
     let startup = f.startup();
@@ -1421,7 +1426,10 @@ fn shutdown_cancels_build_or_startup_and_releases_the_lease() {
         let (mut server, mut lines, address) = f.server(true);
         let pid = i64::from(server.0.id());
         let build = if phase == "client" {
-            f.source("symphony/apps/symphony-web/src/main.tsx", "cancelled client");
+            f.source(
+                "symphony/apps/symphony-web/src/main.tsx",
+                "cancelled client",
+            );
             f.entered("client")
         } else {
             f.edit("main.rs", "fn main() { /* cancelled replacement */ }\n");

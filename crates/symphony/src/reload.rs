@@ -186,7 +186,9 @@ pub fn client_source(web: &Path, path: &Path) -> bool {
         return false;
     };
     let first = inner.components().next().map(|part| part.as_os_str());
-    !CLIENT_OUTPUTS.iter().any(|name| first == Some(name.as_ref()))
+    !CLIENT_OUTPUTS
+        .iter()
+        .any(|name| first == Some(name.as_ref()))
         && path.extension().is_none_or(|extension| extension != "md")
 }
 

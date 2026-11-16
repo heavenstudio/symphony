@@ -20,6 +20,8 @@ pub(super) fn source_event(root: &Path, directories: &BTreeSet<PathBuf>, path: &
             "tools/check_lock.sh",
             "symphony/tools/rs-bin.sh",
             "symphony/tools/check_lock.sh",
+            "tools/node.sh",
+            "symphony/tools/node.sh",
         ]
         .iter()
         .any(|name| path == root.join(name))
