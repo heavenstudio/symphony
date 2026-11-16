@@ -170,8 +170,8 @@ pub(crate) struct Hub {
     swept: Mutex<Sweep>,
     common: Option<PathBuf>,
     /// The repository (its common dir) the board's lookup from `root` found when the hub was made
-    /// ([`symphony_board::project::locate_quick`]): what [`Hub::holds_its_project`] holds the
-    /// folder to. None for a folder no repository held.
+    /// ([`taskview::serve`]): what [`Hub::holds_its_project`] holds the folder to, and every reach
+    /// of its board from here. None for a folder no repository held.
     repository: Option<PathBuf>,
     /// The cards waiting on the owner and how many plugin gate answers had come back
     /// ([`symphony::gates::Kept::answered`]) when the sign-off lane was last read: either moving
@@ -226,8 +226,8 @@ pub(crate) struct Hub {
     renders: AtomicU64,
     /// The store the page reads of the board share ([`Hub::reader`]), once one has been opened.
     reader: Mutex<Option<Arc<symphony_board::Store>>>,
-    /// How [`Hub::reader`] opens the board: [`taskview::connect_held`], held to `repository`, or a
-    /// test's board.
+    /// How [`Hub::reader`] opens the board: [`taskview::connect`], held to `repository` as every
+    /// reach from `root` here is ([`taskview::serve`]), or a test's board.
     pub(crate) connect_reader: Box<Connect>,
     /// The hc a Go to session asks about the panes of the checkout at a path ([`Panes`]).
     pub(crate) panes: Box<Panes>,
@@ -290,17 +290,13 @@ impl OrderExpiry {
     }
 }
 
-/// The repository (its common dir) the board's lookup from `root` finds on the files alone
-/// ([`symphony_board::project::locate_quick`]): what a hub made there holds its folder to, and its
-/// reaches of the board ([`taskview::connect_held`]).
-pub(super) fn repository_of(root: &Path) -> Option<PathBuf> {
-    symphony_board::project::locate_quick(root).map(|place| place.common)
-}
-
 impl Hub {
+    /// The hub of the project at `root`, which this process serves from now on
+    /// ([`taskview::serve`]): every reach of the board from `root` here, the hub's and any route's,
+    /// is held to the repository found there now.
     pub(crate) fn new(root: &Path, ui_dist: &Path) -> Self {
         let native_reader = machine_work::READER_ENV.os();
-        let repository = repository_of(root);
+        let repository = taskview::serve(root);
         Self {
             root: root.into(),
             ui_dist: ui_dist.into(),
@@ -347,7 +343,7 @@ impl Hub {
             common: measured("hub checkout", || crate::repo::checkout(root))
                 .ok()
                 .map(|c| c.common),
-            repository: repository.clone(),
+            repository,
             signoff_pending: Mutex::new(None),
             task_activity: Mutex::new(None),
             task_asks: Mutex::default(),
@@ -367,9 +363,7 @@ impl Hub {
             reads: AtomicU64::new(0),
             renders: AtomicU64::new(0),
             reader: Mutex::new(None),
-            connect_reader: Box::new(move |root| {
-                taskview::connect_held(root, repository.as_deref())
-            }),
+            connect_reader: Box::new(taskview::connect),
             panes: Box::new(|root| {
                 let mut env = symphony::children::board_env();
                 env.cwd = root.to_path_buf();

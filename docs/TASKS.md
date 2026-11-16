@@ -683,11 +683,15 @@ pass of it is counted, and the picker says plainly that it has no task board. So
 folder is gone, or no longer holds the repository its server found there: the server says so once
 in its log, then reads, maintains and records nothing more of it, answers its pages' reads and saves
 with that refusal before any route runs, and never looks for its board in the folders above it,
-another repository's (`Hub::holds_its_project`, `symphony_board::project::at`). The hub's own
-reaches of its board are held to the repository it found when it began to serve the folder
-(`symphony_board::project::held`), so a `.git` removed after its check leads them to no other
-board, and a board's start, stop or hold makes no folder at or above the repository's common dir
-again; a start whose board folder goes while its server starts (SurrealDB makes every missing
+another repository's (`Hub::holds_its_project`, `symphony_board::project::at`). Every connect to
+its board the server's own process makes from the folder, through `symphony::taskview` (the hub's
+tick, its refreshes and branch scan, its chat journal's flush, a route's read or save), is held to
+the repository it found when it began to serve the folder (`symphony::taskview::serve`,
+`symphony_board::project::held`), so a `.git` removed after a check leads none of them to another
+board, and the flush reads the journal the project had then. Not held: a route that finds the
+project's journal from the folder again (the asks read, a chat save), and a child process the
+server runs in the folder (a `tasks` command, a sweep), which looks the board up itself. A board's
+start, stop or hold makes no folder at or above the repository's common dir again; a start whose board folder goes while its server starts (SurrealDB makes every missing
 folder of its store's path) ends that server and records none. A board whose store is there is never no board: when the SurrealDB
 that serves it is missing (a version bump before the new binary is fetched, `SYMPHONY_SURREAL` naming a file that is not there), or its server answers with an
 older schema or not at all, its passes fail and it is unwell and says so.
