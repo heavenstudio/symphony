@@ -704,11 +704,31 @@ began to serve the folder (`symphony::taskview::serve`, `symphony_board::project
 every journal of the project's chat and asks it finds from the folder (the flush's, the asks read's,
 a question's or a chat save's) is the one it found then (`symphony::asks::default_path`), so a
 `.git` removed after a check leads none of them to another board or another checkout's journal.
-Not held: the cleanup a cancel starts (a `tasks finish`, then a sweep of the repository found from
-the folder) and the idle-session reap, which find the board from the folder themselves. Only the
-machine's shared installation runs them, for the projects it registers, each just after a check
-that the folder holds its project, and a registered project in no other checkout finds no board
-above it. A board's
+That journal is found once, so a change of `[project] artifacts` while the server runs leaves its
+routes on the old journal until it restarts, while an agent's `symphony reply` writes to the new
+one. Not held, each finding its repository from the folder again, and so the checkout above a
+folder left without its `.git`, starting and acting on that checkout's board:
+
+- The cleanup a cancel starts: `tasks finish`, run in the folder, then the sweep, whose
+  repository the server's own process finds from the folder by git
+  (`symphony_board::sweep::trigger::trigger`), making its folder and log in that repository's
+  common dir and starting the sweep from its main checkout. `tasks finish` starts milliseconds
+  after the cancel's save, which is held; the sweep only once `tasks finish` has returned, so its
+  window is that command's whole run.
+- The idle-session reap, a `tasks reap` run in the folder milliseconds after its round's check
+  that the folder holds its project.
+- A verdict's commit, after its worktree's commit: the record of that commit (`common_dir` by git
+  from the folder, a file written in that repository's record folder) and its `tasks` run in the
+  folder for the app's session (`sessions`, then `register --kind app`), kept a run of the
+  project's own build of `tasks` so that a board one schema ahead of the server still takes the
+  app's registration. The commit's git in the folder walks up before either, so a held store
+  would not hold the flow; once its worktree is made, their window is the gap from the worktree's
+  `rev-parse HEAD`, as the worktree's git fails once the project's `.git`, which holds its git
+  dir, is gone.
+
+Only the machine's shared installation runs the cancel's cleanup and the reap. Each matters only
+for a project the server serves whose folder sits inside another git checkout; one in no checkout
+finds no repository above it, and no board. A board's
 start, stop or hold makes no folder at or above the repository's common dir again; a start whose board folder goes while its server starts (SurrealDB makes every missing
 folder of its store's path) ends that server and records none. A board whose store is there is never no board: when the SurrealDB
 that serves it is missing (a version bump before the new binary is fetched, `SYMPHONY_SURREAL` naming a file that is not there), or its server answers with an
