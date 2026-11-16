@@ -145,10 +145,13 @@ and the three runs of thirty, the last at twice the load of the others, agree to
   16 cores: another run moves them (the median beat took 89 ms in one run of thirty and 45 in the
   next) and moves the rest little.
 - **A server that answers from several processes** is counted with every process under it. Their
-  resident memory counts the pages they share once each, so such a server reads higher here than
-  it holds, and the CPU of a process that ended before the run did is not in the server's
-  reading. A store of that shape needs both said beside its numbers, or the meter taught to read
-  them.
+  resident memory counts the pages they share once each, so such a server reads higher there than
+  it holds. Since `tools/board-pg-server` the meter reads both: the server's CPU is each process's
+  own with what the children it reaped took, so a backend that ended during the run is in its
+  postmaster's, and the report's `server_memory_mib` beside `server_rss_mib` counts what they share
+  once (macOS's `footprint` of them all, the memory they dirtied; Linux's proportional set sizes).
+  For SurrealDB's one process the CPU is what it was; its `footprint` is not its resident size, so
+  the two stores compare by the same field.
 - **Durability is whatever the store's server does as the board starts it.** This page did not
   measure what a commit's sync costs or what it survives. A store compared with these numbers
   commits at least as durably as SurrealDB does under the board's settings, and says how it was
@@ -178,6 +181,9 @@ tools/rs-bin.sh tasks-copy --board --out > "$DUMP"      # a read; the main check
 .target/debug/examples/board_load --home "$SCRATCH" --surreal "$(bash tools/surreal.sh)" \
     --tasks "$PWD/.target/debug/tasks" --dump "$DUMP" --sessions 30 --calls 40 --seed 1
 ```
+
+The board's PostgreSQL bare, its opening and a connection's cost, is
+`--postgresql /opt/homebrew/opt/postgresql@18/bin` in place of `--surreal`, `--tasks` and `--dump`.
 
 `$SCRATCH` is under the temporary folder or a checkout's `artifacts/`, a new one for each run:
 the board stays in it, and a second run there would start from the first's rows. The report is

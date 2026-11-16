@@ -105,6 +105,47 @@ fn a_childs_work_is_read_while_it_waits_and_at_its_reap_and_its_wait_is_not() {
     );
 }
 
+/// A shell whose child does [`SHELL`]'s steps and ends, which the shell waits for, then says so
+/// and waits on its input: the work is its reaped child's, not its own.
+const REAPING: &str =
+    "sh -c 'i=0; while [ $i -lt 100000 ]; do i=$((i+1)); done'; echo worked; read _";
+
+/// The work of a child a process has reaped is in what its reaped children took and not in its
+/// own CPU, and its own reap reports both: so a server whose workers end with their work is read
+/// whole, its own CPU and its reaped children's.
+#[test]
+#[expect(
+    clippy::zombie_processes,
+    reason = "`reap` waits on the child by its pid, to read the CPU its reap reports"
+)]
+fn a_reaped_childs_work_is_its_parents_reaped_cpu_and_not_its_own() {
+    let mut parent = Command::new("sh")
+        .args(["-c", REAPING])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut stdout = BufReader::new(parent.stdout.take().unwrap());
+    let mut line = String::new();
+    stdout.read_line(&mut line).unwrap();
+    assert_eq!(line, "worked\n");
+    let (own, its_reaped) = (of(parent.id()).unwrap(), reaped(parent.id()).unwrap());
+    parent.stdin.take().unwrap().write_all(b"\n").unwrap();
+    let (status, whole) = reap(parent.id()).unwrap();
+    eprintln!("cpu: its own {own:?}, its reaped child's {its_reaped:?}, at its reap {whole:?}");
+    assert!(status.success(), "{status:?}");
+    assert!(its_reaped >= Duration::from_millis(20), "{its_reaped:?}");
+    assert!(
+        own < its_reaped,
+        "its own {own:?}, its child's {its_reaped:?}"
+    );
+    assert!(
+        whole >= its_reaped,
+        "reaped whole {whole:?}, its child's {its_reaped:?}"
+    );
+    assert!(reaped(parent.id()).is_err(), "a reaped process's children");
+}
+
 /// A process that is gone has no CPU to read, and a process that is not this one's child cannot
 /// be reaped: each an error, not a reading of none.
 #[test]
@@ -139,6 +180,11 @@ fn the_meters_tick_is_this_machines() {
 fn a_stat_line_is_read_after_its_commands_last_parenthesis() {
     let stat = "10 (chrome (helper) 2) S 1 10 10 0 0 0 0 0 0 0 25 5 900 800";
     assert_eq!(stat_ticks(stat), Some(30));
+    assert_eq!(stat_reaped_ticks(stat), Some(1700));
     assert_eq!(stat_ticks("10 (sh) S 1 10"), None);
+    assert_eq!(
+        stat_reaped_ticks("10 (sh) S 1 10 10 0 0 0 0 0 0 0 25 5 900"),
+        None
+    );
     assert_eq!(stat_ticks("malformed"), None);
 }
