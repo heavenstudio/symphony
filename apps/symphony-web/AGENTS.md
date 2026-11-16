@@ -708,7 +708,16 @@ What holds on every page, and each page's contract where its section above names
   shell restores their saved CSS before mounting a page. Status tokens such as `like`, `question`
   and `live` keep their defaults unless the imported file sets them. UI colours use the canonical
   shadcn token names; `src/styles/controls-theme.css` maps those names to the copied controls'
-  palette. Extend the shared controls for new fields.
+  palette. Extend the shared controls for new fields. A text field is 16px on a touch screen
+  (`(pointer: coarse)`, `!important` in `src/styles/board.css`, so no page's own sheet linked after
+  it undoes it): iOS zooms into a smaller one as it takes focus and does not zoom back out
+  (`apps/symphony-web-tests/tests/browser/touch.rs`). A press is the control's own `:active`,
+  which sinks it, with no tap flash and no label a long press selects, while an unseen layer
+  keeps its whole box a target, and a hover that moves or raises a thing sits under `(hover:
+  hover) and (pointer: fine)`, as a tap would leave it raised. A select's popup grows from the
+  edge nearest its trigger (`data-side`, `src/popup-position.ts`), stays drawn closed while its
+  exit eases out (the overlay host lets it go at its `animationend`, `src/overlay.tsx`), and under
+  reduced motion only fades (`apps/symphony-web-tests/tests/browser/polish.rs`).
 - **Task views.** The task board (`/tasks`, `src/board.tsx` over `src/boardlive.tsx`, its card
   `src/taskcard.tsx`), the agents page ([below](#the-agents-page)) and a task's page
   ([below](#a-tasks-page); the gates' and the timeline's contract,
