@@ -31,6 +31,7 @@ fn front(plugins: &[&str], pin: u32, schema: i64) -> symphony_api::Front {
         pin,
         schema,
         projects: Vec::new(),
+        release: None,
     }
 }
 

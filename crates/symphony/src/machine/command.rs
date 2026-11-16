@@ -16,7 +16,7 @@ use super::{Added, Entry, Registry};
 
 const USAGE: &str = "usage: symphony project add [DIR]";
 /// The running server's record in the machine folder, as its starters write it.
-const RECORD: &str = "server.json";
+pub(crate) const RECORD: &str = "server.json";
 /// A project's Symphony install in its git common dir, which also held the record of a server
 /// started before the machine folder.
 const INSTALL: &str = symphony_board::folders::SERVER;

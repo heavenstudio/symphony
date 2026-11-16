@@ -28,7 +28,9 @@ pub const RELEASES: &str = "releases";
 pub const MANIFEST: &str = "manifest.json";
 /// The binaries a release holds, in `bin/`: the server, the board's commands, the messages between
 /// agents and the document command line.
-pub const BINARIES: [&str; 4] = ["symphony-server", "tasks", "agent-send", "symphony"];
+pub const BINARIES: [&str; 4] = [SERVER, "tasks", "agent-send", "symphony"];
+/// A release's server, the first of its [`BINARIES`].
+pub const SERVER: &str = "symphony-server";
 /// What a client build must hold to be one.
 const PAGE: &str = "index.html";
 
@@ -40,12 +42,17 @@ pub struct Version {
 }
 
 /// What a release's own binaries say they serve: the board schema they write, the plugin protocol
-/// its server speaks and the `tasks api` its board answers.
+/// its server speaks, the `tasks api` its board answers and the Symphony pin its server is at
+/// ([`super::PIN`]), which the host rule reads before a start runs the release's server.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Serves {
     pub schema: i64,
     pub protocol: Version,
     pub tasks_api: Version,
+    /// 0 from a release whose server did not say: older than every project's pin, so no start
+    /// runs it in place of its own build.
+    #[serde(default)]
+    pub pin: u32,
 }
 
 /// One artifact of a release: its path in the release's folder and its size in bytes; for the
@@ -113,6 +120,12 @@ pub struct Built<'a> {
 /// The folder of the release `name` in the machine folder `machine`.
 pub fn folder(machine: &Path, name: &str) -> PathBuf {
     machine.join(RELEASES).join(name)
+}
+
+/// The binary `binary` of the release `name` in `machine`, by its own folder's path and never
+/// through `current`, so a process started from it stays that release's when the link moves.
+pub fn binary(machine: &Path, name: &str, binary: &str) -> PathBuf {
+    folder(machine, name).join("bin").join(binary)
 }
 
 /// Whether `name` can name a release's folder: one path segment, not hidden, so never the
@@ -314,6 +327,22 @@ pub fn current(machine: &Path) -> Option<String> {
     (target.parent() == Some(Path::new(RELEASES)) && plain(&name)).then_some(name)
 }
 
+/// The manifest of the release `machine`'s `current` names, when that release is installed whole
+/// and its server runs: none while no link names one, or what it names is not all there.
+pub fn current_installed(machine: &Path) -> Option<Manifest> {
+    let manifest = installed(machine, &current(machine)?).ok().flatten()?;
+    crate::builds::runnable(&binary(machine, &manifest.release, SERVER)).then_some(manifest)
+}
+
+/// The installed release this process's binary is of ([`of_binary`]): its folder and its manifest,
+/// found at the first ask and the same for the process's life, so a server started through
+/// `current` stays the release it started as when the link moves. None for any other build.
+pub fn this() -> Option<&'static (PathBuf, Manifest)> {
+    static THIS: std::sync::OnceLock<Option<(PathBuf, Manifest)>> = std::sync::OnceLock::new();
+    THIS.get_or_init(|| std::env::current_exe().ok().and_then(|exe| of_binary(&exe)))
+        .as_ref()
+}
+
 /// Point `machine`'s `current` at the installed release `name`: a new link beside it, renamed over
 /// the old. The release it named before, when it named one.
 ///
@@ -366,6 +395,12 @@ pub fn of_binary(binary: &Path) -> Option<(PathBuf, Manifest)> {
 /// `binary` is an installed release's and that folder holds a page.
 pub fn client_beside(binary: &Path) -> Option<PathBuf> {
     let (release, manifest) = of_binary(binary)?;
+    client_of(&release, &manifest)
+}
+
+/// The client `manifest` names in the folder of its release, `release`, when that folder holds a
+/// page there.
+pub fn client_of(release: &Path, manifest: &Manifest) -> Option<PathBuf> {
     let relative = Path::new(&manifest.client);
     let inside = relative
         .components()

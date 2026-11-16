@@ -114,7 +114,8 @@ pub struct Front {
     #[serde(default)]
     pub orphans: usize,
     /// The plugins the host binary compiles, by name: the one server serves a project only when
-    /// it holds every plugin the project names.
+    /// it holds every plugin the project names linked, one with no `[plugins.process]` command
+    /// (a plugin that answers from its process any host serves); a release's server compiles none.
     #[serde(default)]
     pub plugins: Vec<String>,
     /// The Symphony version the host was built at, its pin; 0 from a server before pins.
@@ -127,6 +128,10 @@ pub struct Front {
     /// server of its own, which serves its one checkout at `/`.
     #[serde(default)]
     pub projects: Vec<String>,
+    /// The release installed on the machine it runs, when it is one: no start replaces it, and its
+    /// reload follows the machine's `current` link; none for a project's build.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub release: Option<String>,
 }
 
 /// The route that answers a [`Board`].

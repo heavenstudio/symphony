@@ -12,6 +12,7 @@ const SERVES: Serves = Serves {
         major: 1,
         minor: 14,
     },
+    pin: 1,
 };
 
 /// A build in `tree`: each binary of `names` in `build/`, saying its name, and a client of three

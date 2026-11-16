@@ -26,7 +26,7 @@ fn builder(fixture: &Fixture) -> String {
          [ ! -e '{root}/build-red' ] || {{ echo 'error: could not compile'; exit 101; }}\n\
          out=\"$CARGO_TARGET_DIR/release\"\nmkdir -p \"$out\"\n\
          printf '#!/bin/sh\\necho %s\\n' \
-         \"'{{\\\"protocol\\\":{{\\\"major\\\":0,\\\"minor\\\":3}},\\\"schema\\\":18}}'\" \
+         \"'{{\\\"protocol\\\":{{\\\"major\\\":0,\\\"minor\\\":3}},\\\"schema\\\":18,\\\"pin\\\":1}}'\" \
          > \"$out/symphony-server\"\n\
          printf '#!/bin/sh\\necho %s\\n' \
          \"'{{\\\"ok\\\":{{\\\"api\\\":{{\\\"major\\\":1,\\\"minor\\\":14}},\\\"schema\\\":18}}}}'\" \
@@ -87,7 +87,7 @@ fn a_green_release_is_built_once_in_the_runs_checkout_and_installed_on_the_machi
     assert!(
         out.contains(&format!(
             "release: refresh: {RELEASE} serves board schema 18, plugin protocol 0.3 and tasks \
-             api 1.14\n"
+             api 1.14, at Symphony pin 1\n"
         )),
         "{out}"
     );
@@ -118,6 +118,7 @@ fn a_green_release_is_built_once_in_the_runs_checkout_and_installed_on_the_machi
     assert_eq!(manifest["schema"], 18);
     assert_eq!(manifest["protocol"]["minor"], 3);
     assert_eq!(manifest["tasks_api"]["minor"], 14);
+    assert_eq!(manifest["pin"], 1);
     let client = manifest["client"].as_str().unwrap();
     assert_eq!(
         fs::read_to_string(place.join(client).join("assets/app.js")).unwrap(),
@@ -146,6 +147,11 @@ fn a_green_release_is_built_once_in_the_runs_checkout_and_installed_on_the_machi
     assert!(
         status.contains(&format!("  installed {RELEASE} in {}", place.display()))
             && status.contains("last refresh: green"),
+        "{status}"
+    );
+    // The machine's own line: what `current` names, and what holds the server off it, if anything.
+    assert!(
+        status.contains(&format!("\nmachine: current names {RELEASE}; ")),
         "{status}"
     );
     // A retry finds it installed: nothing is built again, though the build would now fail.

@@ -162,6 +162,83 @@ fn a_tick_gives_a_gone_holders_open_work_to_an_orchestrator_that_stays() {
     assert_eq!(fixture.store.thread("tools/quiet").unwrap().len(), lines);
 }
 
+/// A board one schema ahead of this build's, as a release's server finds the board of a project
+/// whose main moved it on: each tick reads it, gives and dispatches nothing, and every page says it
+/// is read with nothing written to it. A board at this build's schema says nothing.
+#[test]
+fn a_board_ahead_of_this_build_is_read_with_nothing_written_and_said_on_every_page() {
+    use symphony_board::{Opening, Schema, Store};
+    let tree = Tree::new();
+    let root = repository(&tree);
+    let file = tree.path("symphony/tasks/health.json");
+    let orchestrator = |handle: &str, seen: f64| symphony_board::rows::SessionRow {
+        handle: handle.into(),
+        kind: "orchestrator".into(),
+        connected: NOW - 3_600.0,
+        last_seen: seen,
+        ..Default::default()
+    };
+    // A give is due: amber went an hour ago holding tools/quiet, and cobalt stays.
+    let fixture = Fixture::new(
+        Seed::default()
+            .session_row(orchestrator("amber-heron", NOW - 3_600.0))
+            .session_row(orchestrator("cobalt-otter", NOW))
+            .task("tools/quiet", "ready")
+            .role("tools/quiet", "amber-heron", "orchestrator"),
+    );
+    let clock = Clock::at(now());
+    let hub = hub(&root, &file, &clock);
+    let mut notices = hub.server_notice.subscribe();
+    let client = || {
+        let held = fixture.store.client();
+        Client::new(held.addr(), "sf", held.database())
+    };
+    let opened = |how: &Opening| {
+        Store::opening(client(), Box::new(|| NOW), Box::new(|_| false), HOST, how).unwrap()
+    };
+    let current = opened(&Opening::read());
+    assert_eq!(hub.read_ahead(&current), None);
+    assert!(
+        !notices.has_changed().unwrap(),
+        "a current board says nothing"
+    );
+    // A newer build moves the board one schema on; this build reads it and writes nothing.
+    let newer = Schema::this_build().then("DEFINE TABLE IF NOT EXISTS fixture_next SCHEMALESS;");
+    opened(&Opening::write().at(newer));
+    let ahead = opened(&Opening::read());
+    let lines = fixture.store.thread("tools/quiet").unwrap().len();
+    hub.board_read(&ahead).unwrap();
+    let schema = symphony_board::SCHEMA + 1;
+    assert_eq!(
+        *notices.borrow_and_update(),
+        super::health::read_only(schema)
+    );
+    assert_eq!(
+        super::health::read_only(schema),
+        format!(
+            "The task board is at schema {schema}, ahead of this Symphony's {}: it is read, and \
+             nothing is written to it from here, until a Symphony at schema {schema} serves it.",
+            symphony_board::SCHEMA
+        )
+    );
+    let quiet = ahead.get("tools/quiet").unwrap();
+    assert_eq!(
+        quiet.holders("orchestrator"),
+        ["amber-heron"],
+        "nothing was given"
+    );
+    assert_eq!(ahead.thread("tools/quiet").unwrap().len(), lines);
+    assert_eq!(
+        hub.health.report(clock.now()).unowned,
+        Some(1),
+        "the tick read the board all the same"
+    );
+    // A second tick tells the pages nothing new.
+    clock.pass(1.0);
+    hub.board_read(&ahead).unwrap();
+    assert!(!notices.has_changed().unwrap());
+}
+
 #[test]
 fn a_failed_dispatch_pass_warns_until_a_minute_of_good_passes_and_the_record_says_the_same() {
     let tree = Tree::new();
