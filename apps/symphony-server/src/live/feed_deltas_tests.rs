@@ -195,11 +195,9 @@ fn a_changed_task_is_sent_once_as_the_fields_that_changed() {
     let f = board();
     let hub = observed(&f, &tree);
     f.store
-        .client()
-        .query(
-            "UPDATE type::record('task', $slug) SET title = 'Renamed' RETURN NONE;",
-            json!({"slug": OPEN}),
-        )
+        .raw()
+        .row("task", OPEN)
+        .set(json!({"title": "Renamed"}))
         .unwrap();
     let published = Published::of(&hub, &f.store, both("working", 1.0));
     eprintln!("{}", published.said("one title"));
@@ -217,12 +215,9 @@ fn a_new_holder_is_sent_with_the_roles_it_joined_and_their_health() {
     f.advance(20.0);
     // Written as the store writes a role, without the claim's beat, which would make it live.
     f.store
-        .client()
-        .query(
-            "UPSERT type::record('role', [$slug, $handle, 'reviewer']) \
-             CONTENT {slug: $slug, handle: $handle, role: 'reviewer', since: $now} RETURN NONE;",
-            json!({"slug": OPEN, "handle": QUIET, "now": NOW + 20.0}),
-        )
+        .raw()
+        .row("role", json!([OPEN, QUIET, "reviewer"]))
+        .put(json!({"slug": OPEN, "handle": QUIET, "role": "reviewer", "since": NOW + 20.0}))
         .unwrap();
     let published = Published::of(&hub, &f.store, both("working", 1.0));
     eprintln!("{}", published.said("health sweep and a role"));

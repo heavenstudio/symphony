@@ -284,7 +284,12 @@ never on the recorder's history.
 `bench`) through `tools/record.sh`, which it sources, as a run of `build`, `lint`
 or `test`, and the `lint-rs`, `test-rs`, `client-check`, `client-update`,
 `size-check` and `verify` recipes run through it as one run each, of `lint`, `test`,
-`client`, `client`, `size` and `verify`. Inside a recorded run only a step a recipe names
+`client`, `client`, `size` and `verify`. So do the docs checks a doc's evidence names
+([CHECKS](CHECKS.md#evidence-by-kind-of-change)), `just symphony-cli docs-audit --check` and
+`just symphony-cli status --lint`, each a test run of `docs` labelled as typed, so the task
+page's check gate reads the docs audit, the project's `[verdicts] check`, from the record;
+every other `just symphony-cli` command, either check typed with other words among them, runs
+unrecorded. Inside a recorded run only a step a recipe names
 is recorded again: `verify` records `lint-rs` as its step `lint`, `client-check` as
 `client-check`, `size-check` as `size-check`, the docs audit as `docs-audit`, `crates-check` as
 `crates-check` and its workspace tests as `tests`, each whatever the ones before it did

@@ -130,7 +130,10 @@ a measurement before and after.
   document renders, and every recipe a text of this repository names is one a project has,
   [below](#the-recipes-a-text-names)) and `just symphony-cli status --lint` (no card slug in prose,
   nothing the plugins' prose rules refuse) clean, both run at the branch's final tip, after its
-  last edit: a run before an edit is evidence of the text before it. A guide, or a document under
+  last edit: a run before an edit is evidence of the text before it. Typed so, each is a test
+  run the recorder keeps with its commit
+  ([MACHINE_WORK](MACHINE_WORK.md#recording-builds-and-tests)), so its reviewer reads it as
+  recorded, like any test. A guide, or a document under
   `docs/` but the register and `docs/history/`, also runs the check for the owner's words in the
   shapes the guides gave them, dated or straight-quoted (`just test-rs -p symphony-app --test hooks
   owner_words`, RULES.md `docs/no-ledger-in-documents`), and its reviewer reads for any other
@@ -571,6 +574,14 @@ and the commit it ran at. The recorded runs at the task's tip are its evidence, 
 post names the commands and the tip (RULES.md `workflow/no-second-build-in-review`). A stamp
 stands on evidence of work already done, so nothing is built twice to land once.
 
+**One command reads the record.** `just tasks runs SLUG` prints what the recorder kept of the
+task at its branch's tip, `--tip SHA` at another commit ([TASKS](TASKS.md#needed-stamps)): each
+build and test command the task ran there with its newest result, when and by whom, and the runs
+of it before there; the `tests` stamp as its reader reads it; the project's `[verdicts] check`
+(the docs audit here) with its run there, or `no run`; and how many of its runs are at other
+commits, none of them the tip's. The executor reads it before it moves the task to review, and
+the reviewer reads it beside the thread's evidence.
+
 **The executor runs at the tip it asks review for.** A run made before the last commit is of
 another commit: the executor runs it again at the tip, and no reviewer does it in its place. A
 command that cannot pass as typed is recorded red like any other, and no green run of another
@@ -579,8 +590,8 @@ command answers it: only a new commit clears it, so a filter goes after `--`
 writes it.
 
 **The reviewer takes a green recorded run at the tip as run.** It reads the diff against the
-record and judges whether those runs cover the change. It builds or runs only what the record
-does not cover and reading cannot settle:
+record (`just tasks runs SLUG`) and judges whether those runs cover the change. It builds or
+runs only what the record does not cover and reading cannot settle:
 
 - a doubt it names, with the smallest target that answers it (one test by its filter, never the
   package);

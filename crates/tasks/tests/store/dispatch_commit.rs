@@ -164,14 +164,8 @@ fn two_orchestrators(f: &Fixture) -> (String, String) {
 
 /// What `handle`'s recorded observation says its inbox was read up to.
 fn inbox_cursor(store: &Store, handle: &str) -> Value {
-    store
-        .client()
-        .query(
-            "RETURN (SELECT VALUE inbox_cursor FROM ONLY type::record('callback_state', $handle));",
-            json!({"handle": handle}),
-        )
-        .unwrap()
-        .remove(0)
+    let state = store.raw().row("callback_state", handle);
+    state.field("inbox_cursor").unwrap()
 }
 
 #[test]
@@ -231,27 +225,15 @@ fn a_write_whose_later_recipient_heard_a_newer_board_never_says_a_status_back() 
 
 /// `handle`'s lease revision, which each taking of its lease moves.
 fn lease_revision(store: &Store, handle: &str) -> Value {
-    store
-        .client()
-        .query(
-            "RETURN (SELECT VALUE revision FROM ONLY type::record('callback_lease', $handle));",
-            json!({"handle": handle}),
-        )
-        .unwrap()
-        .remove(0)
+    let lease = store.raw().row("callback_lease", handle);
+    lease.field("revision").unwrap()
 }
 
 /// Whether `handle`'s outbox holds message `id`'s line, delivered or not.
 fn queued(store: &Store, handle: &str, id: i64) -> bool {
-    store
-        .client()
-        .query(
-            "RETURN record::exists(type::record('callback_event', [$handle, $key]));",
-            json!({"handle": handle, "key": format!("message-{id}")}),
-        )
-        .unwrap()
-        .remove(0)
-        == json!(true)
+    let key = format!("message-{id}");
+    let line = store.raw().row("callback_event", json!([handle, key]));
+    line.exists().unwrap()
 }
 
 #[test]

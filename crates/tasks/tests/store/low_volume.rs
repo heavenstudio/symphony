@@ -84,11 +84,18 @@ struct Waiting {
 }
 
 fn waiting(f: &Fixture, orch: &str) -> Vec<Waiting> {
-    let value = f.store.client().query(
-        "RETURN SELECT key, text, attempts FROM callback_event WHERE handle = $handle AND delivered != true AND string::starts_with(key, 'pull-');",
-        json!({"handle":orch}),
-    ).unwrap().remove(0);
-    serde_json::from_value(value).unwrap()
+    let rows = (f.store.raw().table("callback_event"))
+        .matching(json!({"handle": orch}))
+        .fields(&["key", "text", "attempts", "delivered"])
+        .unwrap();
+    let rows: Vec<serde_json::Value> = serde_json::from_value(rows).unwrap();
+    let waits = |row: &serde_json::Value| {
+        let pull = row["key"]
+            .as_str()
+            .is_some_and(|key| key.starts_with("pull-"));
+        row["delivered"] != json!(true) && pull
+    };
+    serde_json::from_value(rows.into_iter().filter(waits).collect()).unwrap()
 }
 
 #[test]

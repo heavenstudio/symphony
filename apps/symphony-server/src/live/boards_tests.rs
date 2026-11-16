@@ -74,8 +74,6 @@ impl Project {
         let gate = Arc::clone(&reaches);
         let pause = Arc::new(Mutex::new(None::<Pause>));
         let paused = Arc::clone(&pause);
-        // Held to the repository found as the hub is made, as `Hub::start`'s reach is.
-        let held = super::repository_of(&root);
         let hub = Hub::start_watching::<notify::NullWatcher>(
             &root,
             &root.join("build/client"),
@@ -92,7 +90,9 @@ impl Project {
                     let _ = pause.there.send(());
                     let _ = pause.on.recv();
                 }
-                symphony::taskview::connect_held_in(root, held.as_deref(), reach.clone())
+                // Held to the repository found as the hub was made, as every reach from its
+                // folder in this process is.
+                symphony::taskview::connect_in(root, reach.clone())
             },
         )
         .unwrap();
@@ -132,14 +132,12 @@ impl Project {
 
     /// The schema version the project's board records.
     fn version(&self) -> Option<i64> {
-        Client::new(&self.home().recorded().unwrap().addr, "sf", "tasks")
-            .query(
-                "RETURN (SELECT VALUE version FROM ONLY meta:schema);",
-                serde_json::json!({}),
-            )
+        let client = Client::new(&self.home().recorded().unwrap().addr, "sf", "tasks");
+        symphony_board::Raw::on(&client)
+            .row("meta", "schema")
+            .field("version")
             .unwrap()
-            .last()
-            .and_then(serde_json::Value::as_i64)
+            .as_i64()
     }
 
     /// Wait for the hub to say why it reads no board in words that start with `start` (not that it
@@ -513,6 +511,203 @@ fn a_reach_whose_projects_git_goes_after_its_hubs_check_starts_no_board_above_it
     assert_eq!(why, inner.hub.gone());
     assert_eq!(outer_board.0.recorded(), None, "the outer board started");
     assert_eq!(inner.home().serving(), None, "its own board's server runs");
+}
+
+/// A served project left without its `.git` after its hub's check found that its folder holds it:
+/// in its own repository under another checkout's artifacts, as a test's scratch projects are, its
+/// `.git` removed once `before` has run on it and its board's server has stopped, its hub kept from
+/// the board meanwhile and waited on until it says its folder is gone. So what a case calls next is
+/// a reach made after that check, as a tick's, a refresh's or a route's is. The outer checkout's
+/// board is made and down, served by the `surreal` pinned in its common dir as a live board's is,
+/// which a reach in this process, with no `SYMPHONY_SURREAL`, would start it on.
+struct Gitless {
+    inner: Project,
+    outer_board: Stopped,
+    outer: PathBuf,
+    /// Removed once the case's servers have stopped.
+    _tree: Tree,
+}
+
+impl Gitless {
+    fn new<T>(before: impl FnOnce(&Tree, &Project) -> T) -> (Gitless, T) {
+        let tree = Tree::new();
+        let outer = repository_at(&tree, "outer");
+        std::fs::write(outer.join("symphony.toml"), "[project]\nid = \"outer\"\n").unwrap();
+        writer(&outer)
+            .create(&NewTask::new("outer/one", "The outer checkout's", "owner"))
+            .unwrap();
+        let outer_board = Stopped(Home::in_common(&outer.join(".git"), None));
+        let pinned = outer_board.0.surreal();
+        std::fs::create_dir_all(pinned.parent().unwrap()).unwrap();
+        std::os::unix::fs::symlink(surreal(), pinned).unwrap();
+        assert!(outer_board.0.stop().unwrap().is_some());
+        let inner = Project::made_in(&tree, "outer/artifacts/scratch/inner", "inner", writer);
+        inner.reads(&["inner/one"]);
+        let made = before(&tree, &inner);
+        inner.unreached(|| {
+            inner.home().stop().unwrap();
+            std::fs::remove_dir_all(inner.root.join(".git")).unwrap();
+        });
+        inner.refused(&inner.hub.gone());
+        let case = Gitless {
+            inner,
+            outer_board,
+            outer,
+            _tree: tree,
+        };
+        (case, made)
+    }
+
+    /// Whether the outer checkout's board stayed down: no reach started it.
+    fn outer_down(&self) -> bool {
+        self.outer_board.0.recorded().is_none()
+    }
+
+    /// The words a reach of the inner project's board is refused in: its folder no longer holds
+    /// the repository it was served from.
+    fn held(&self) -> String {
+        format!(
+            "the project's folder {} no longer holds the repository it was served from, {}: {}",
+            self.inner.root.display(),
+            self.inner.root.join(".git").display(),
+            symphony_board::project::GONE
+        )
+    }
+
+    /// What the project's route answers `request` once front's check that its folder holds it has
+    /// passed: the save or the read itself, as `front::answer` calls it after that check.
+    fn past_the_check(&self, request: Request<Body>) -> (u16, Value) {
+        let shared = Shared::new(
+            1,
+            1234,
+            &self.inner.root,
+            None,
+            Gate::new(Arc::new(|_| Ok(None)), Arc::new(Instant::now)),
+        );
+        assert!(shared.api.set(self.inner.hub.clone()).is_ok());
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            let response = if crate::write::handles(&request) {
+                crate::write::answer(&shared, request).await
+            } else {
+                let (parts, _) = request.into_parts();
+                crate::api::answer(&shared, Request::from_parts(parts, ()))
+                    .await
+                    .unwrap()
+            };
+            let status = response.status().as_u16();
+            let bytes = to_bytes(response.into_body(), 1_000_000).await.unwrap();
+            let said = serde_json::from_slice(&bytes)
+                .unwrap_or_else(|_| Value::String(String::from_utf8_lossy(&bytes).into()));
+            (status, said)
+        })
+    }
+}
+
+/// The shared server's chat flush, run on its tick's store once the tick's check passed, reads the
+/// journal its project had when the hub was made and reaches the board held to that project's
+/// repository: with the `.git` gone it is refused as gone, so the owner's message waits, and it
+/// neither reads the outer checkout's journal, which a path found from the folder again would be,
+/// nor hands anything to the outer board, which it would start.
+#[test]
+fn a_chat_flush_after_its_projects_git_went_reaches_no_journal_or_board_above_it() {
+    let (case, mut flusher) = Gitless::new(|_, inner| {
+        let flusher = symphony::callbacks::Flusher::new(&inner.root);
+        symphony::callbacks::publish(&inner.root, "From the owner").unwrap();
+        flusher
+    });
+    assert_eq!(flusher.flush(&case.inner.root), Err(case.held()));
+    assert!(case.outer_down(), "the outer board started");
+    assert!(
+        !case.outer.join("artifacts/asks").exists(),
+        "the outer checkout's journal was read"
+    );
+}
+
+/// A refresh's snapshot of main's page, once a branch's card is held, names each branch's task from
+/// the board (`branches::task_names`): on a project whose `.git` went after its check, that reach
+/// is refused, the card names its branch alone, and the outer board is not started.
+#[test]
+fn a_refreshs_task_names_after_its_projects_git_went_start_no_board_above_it() {
+    let (case, cards) = Gitless::new(|tree, inner| {
+        let worktree = tree.path("inner-feature");
+        git(
+            &inner.root,
+            &[
+                "worktree",
+                "add",
+                "-q",
+                "-b",
+                "feature",
+                worktree.to_str().unwrap(),
+            ],
+        );
+        std::fs::write(
+            worktree.join("docs/TOPIC.md"),
+            "# Topic\n\n- [ ] **initial-card** — Initial question.\n\
+             - [ ] **branch-card** — The branch's question.\n",
+        )
+        .unwrap();
+        git(&worktree, &["commit", "-qam", "Ask on the branch"]);
+        symphony::branches::branch_cards(&inner.root)
+    });
+    assert!(
+        cards.iter().any(|card| !card.on_main),
+        "the branch's card is held: {cards:?}"
+    );
+    let snapshot = symphony::dashboard::snapshot(&case.inner.root, &cards, "").unwrap();
+    let card = snapshot
+        .queue
+        .waiting
+        .iter()
+        .find(|card| card.slug == "branch-card")
+        .expect("the branch's card is on main's page");
+    assert_eq!(card.task.as_deref(), Some("feature"));
+    assert!(case.outer_down(), "the outer board started");
+}
+
+/// The branch scan's read of a running board (`taskview::connect_running`), made after its check
+/// on a project whose `.git` went, is refused as gone, and never reads the outer checkout's board,
+/// running as it is.
+#[test]
+fn a_branch_scans_read_after_its_projects_git_went_reads_no_running_board_above_it() {
+    let (case, ()) = Gitless::new(|_, _| ());
+    writer(&case.outer)
+        .get("outer/one")
+        .expect("the outer board runs");
+    assert!(!case.outer_down());
+    let refused = symphony::taskview::connect_running(&case.inner.root)
+        .err()
+        .expect("the read is refused");
+    assert_eq!(refused, case.held());
+}
+
+/// A page's save and its read of the asks, each of which reaches a board for itself once front's
+/// check that the folder holds its project has passed, on a project whose `.git` went after that
+/// check: the save is refused as the board's reach is, and writes nothing above it; the read, of a
+/// hub that has no chat recipient from a board read yet, asks the board for none; neither starts
+/// the outer checkout's board.
+#[test]
+fn a_pages_save_or_asks_read_past_its_check_after_its_projects_git_went_starts_no_board_above_it() {
+    let (case, ()) = Gitless::new(|_, _| ());
+    let save = json!({ "slug": "outer/one", "priority": 0 });
+    assert_eq!(
+        case.past_the_check(asked("POST", "/api/task-priority", Some(&save))),
+        (
+            503,
+            json!({ "error": format!("the task board cannot be reached: {}", case.held()) })
+        ),
+        "the save"
+    );
+    assert!(case.outer_down(), "the save started the outer board");
+    // As a hub that has not read its board yet: the read connects for the recipient itself.
+    *case.inner.hub.chat.lock().unwrap() = None;
+    let (status, said) = case.past_the_check(asked("GET", "/api/asks?path=docs/TOPIC.md", None));
+    assert_eq!(status, 200, "{said}");
+    assert!(case.outer_down(), "the asks read started the outer board");
 }
 
 /// A page on this machine asking `method` at `uri`, with `body` as its JSON.

@@ -7,7 +7,6 @@
 
 use crate::common::{Scratch, gone, signal};
 use crate::home_fixture::healthy_server;
-use serde_json::json;
 use std::convert::Infallible;
 use std::path::Path;
 use std::time::{Duration, Instant};
@@ -69,16 +68,7 @@ fn board(running: &Running) -> Store {
 
 /// How many rows the table `table` of `store`'s board holds.
 fn count(store: &Store, table: &str) -> i64 {
-    store
-        .client()
-        .query(
-            &format!("RETURN array::len(SELECT VALUE id FROM {table});"),
-            json!({}),
-        )
-        .unwrap()
-        .last()
-        .and_then(serde_json::Value::as_i64)
-        .unwrap()
+    i64::try_from(store.raw().table(table).count().unwrap()).unwrap()
 }
 
 /// `count` tasks, each with a message on its thread.

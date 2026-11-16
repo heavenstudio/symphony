@@ -1932,20 +1932,22 @@ fn saves_persist_verdicts_comments_asks_and_callbacks_across_restart() {
             let mut flusher = symphony::callbacks::Flusher::new(&root);
             flusher.flush(&root).unwrap();
             flusher.flush(&root).unwrap();
-            let rows = rpc::Client::new(
+            let board = rpc::Client::new(
                 &std::env::var("TASKS_SERVER").unwrap(),
                 "sf",
                 &std::env::var("TASKS_DATABASE").unwrap(),
-            )
-            .query("SELECT text FROM chat_event;", json!({}))
-            .unwrap();
-            let events = rows[0].as_array().unwrap();
+            );
+            let rows = symphony_board::Raw::on(&board)
+                .table("chat_event")
+                .fields(&["text"])
+                .unwrap();
+            let events = rows.as_array().unwrap();
             assert_eq!(
                 events.len(),
                 5,
                 "one callback per save, no repeated tap: {rows:?}"
             );
-            let callbacks = rows[0].to_string();
+            let callbacks = rows.to_string();
             for words in [
                 "use this shape",
                 "keep the outline",
@@ -2013,16 +2015,23 @@ fn a_journal_from_before_asks_and_an_ask_the_board_refuses_still_deliver_their_c
                 .flush(&root)
                 .unwrap();
             assert_eq!(sqlite("SELECT count(*) FROM callbacks;"), "0");
-            let rows = rpc::Client::new(
+            let board = rpc::Client::new(
                 &std::env::var("TASKS_SERVER").unwrap(),
                 "sf",
                 &std::env::var("TASKS_DATABASE").unwrap(),
-            )
-            .query("SELECT text FROM chat_event ORDER BY text;", json!({}))
-            .unwrap();
+            );
+            let rows = symphony_board::Raw::on(&board)
+                .table("chat_event")
+                .fields(&["text"])
+                .unwrap();
+            let mut rows = rows.as_array().unwrap().clone();
+            rows.sort_by(|a, b| a["text"].as_str().cmp(&b["text"].as_str()));
             assert_eq!(
-                rows[0],
-                json!([{"text": "said before asks"}, {"text": "too pale"}])
+                rows,
+                [
+                    json!({"text": "said before asks"}),
+                    json!({"text": "too pale"})
+                ]
             );
             assert!(f.store().asks(None).unwrap().is_empty());
         },
@@ -2136,13 +2145,19 @@ fn verdict_saves_run_no_board_command_and_write_nothing_on_the_board() {
                 None,
                 "a save ran the board command"
             );
-            let rows = board()
-                .query(
-                    "SELECT VALUE slug FROM task; SELECT VALUE handle FROM session; \
-                     SELECT VALUE about FROM ask;",
-                    json!({}),
-                )
-                .unwrap();
+            let board = board();
+            let values = |table: &str, field: &str| {
+                let rows = symphony_board::Raw::on(&board)
+                    .table(table)
+                    .fields(&[field]);
+                let rows = rows.unwrap().as_array().unwrap().clone();
+                serde_json::Value::Array(rows.iter().map(|row| row[field].clone()).collect())
+            };
+            let rows = [
+                values("task", "slug"),
+                values("session", "handle"),
+                values("ask", "about"),
+            ];
             assert_eq!(rows, [json!([]), json!([]), json!([])]);
             assert!(!root.join(".git").exists());
         },
@@ -2200,16 +2215,18 @@ fn a_failed_callback_journal_retries_the_saved_comment_once() {
             let mut flusher = symphony::callbacks::Flusher::new(&root);
             flusher.flush(&root).unwrap();
             flusher.flush(&root).unwrap();
-            let rows = rpc::Client::new(
+            let board = rpc::Client::new(
                 &std::env::var("TASKS_SERVER").unwrap(),
                 "sf",
                 &std::env::var("TASKS_DATABASE").unwrap(),
-            )
-            .query("SELECT text FROM chat_event;", json!({}))
-            .unwrap();
-            assert_eq!(rows[0].as_array().unwrap().len(), 1, "{rows:?}");
+            );
+            let rows = symphony_board::Raw::on(&board)
+                .table("chat_event")
+                .fields(&["text"])
+                .unwrap();
+            assert_eq!(rows.as_array().unwrap().len(), 1, "{rows:?}");
             assert!(
-                rows[0][0]["text"]
+                rows[0]["text"]
                     .as_str()
                     .unwrap()
                     .contains("Keep this outline")

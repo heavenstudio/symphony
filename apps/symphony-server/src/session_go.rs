@@ -56,7 +56,7 @@ pub(crate) fn local<B>(
         let Some(ip) = ip else {
             return false;
         };
-        tokio::task::spawn_blocking(move || shared.gate.is_this_machine(ip))
+        crate::spawn::blocking(move || shared.gate.is_this_machine(ip))
             .await
             .unwrap_or(false)
     }
@@ -192,7 +192,7 @@ pub(crate) async fn answer_focus(shared: &Arc<Shared>, request: Request) -> Resp
             "the Symphony server is starting",
         );
     };
-    match tokio::task::spawn_blocking(move || focus(&hub, &handle)).await {
+    match crate::spawn::blocking(move || focus(&hub, &handle)).await {
         Ok(Ok(focused)) => ([(header::CACHE_CONTROL, "no-store")], Json(focused)).into_response(),
         Ok(Err((code, why))) => error(code, why),
         Err(e) => error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),

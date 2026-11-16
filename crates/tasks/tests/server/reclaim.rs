@@ -71,13 +71,10 @@ fn a_row_rewritten_many_times_leaves_the_store_the_size_of_what_it_holds() {
         bytes(&data(&home).join("vlog")) < 65536,
         "no value went to the value log"
     );
-    let row = store
-        .client()
-        .query(
-            "RETURN string::len((SELECT VALUE seen FROM ONLY callback_state:orchestrator));",
-            json!({}),
-        )
+    let seen = (store.raw().row("callback_state", "orchestrator"))
+        .field("seen")
         .unwrap();
+    let row = [json!(seen.as_str().unwrap().chars().count())];
     assert_eq!(row, [json!(65536)]);
 }
 
@@ -94,11 +91,10 @@ fn holdings(store: &Store) -> Value {
         "meta",
         "ask",
     ];
-    let sql: String = tables
-        .iter()
-        .map(|table| format!("SELECT * FROM {table} ORDER BY id;"))
+    let rows: Vec<Value> = (tables.iter())
+        .map(|table| store.raw().table(table).get().unwrap())
         .collect();
-    json!(store.client().query(&sql, json!({})).unwrap())
+    json!(rows)
 }
 
 #[test]

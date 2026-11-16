@@ -29,30 +29,14 @@ fn until(done: impl Fn() -> bool) {
 
 /// Whether `handle` acknowledged `message`, as a delivery records it.
 fn delivered(f: &Fixture, message: i64, handle: &str) -> bool {
-    f.store
-        .client()
-        .query(
-            "RETURN record::exists(type::record('delivery', [$message, $handle]));",
-            json!({"message": message, "handle": handle}),
-        )
-        .unwrap()
-        .remove(0)
-        .as_bool()
-        .unwrap()
+    let delivery = f.store.raw().row("delivery", json!([message, handle]));
+    delivery.exists().unwrap()
 }
 
 /// Whether no dispatcher holds `handle`'s own lease, the one each delivery to it takes.
 fn free(f: &Fixture, handle: &str) -> bool {
-    f.store
-        .client()
-        .query(
-            "RETURN (SELECT VALUE until FROM ONLY type::record('callback_lease', $handle)) ?? 0;",
-            json!({"handle": handle}),
-        )
-        .unwrap()
-        .remove(0)
-        .as_f64()
-        .is_none_or(|until| until <= f.now())
+    let until = f.store.raw().row("callback_lease", handle).field("until");
+    (until.unwrap().as_f64()).is_none_or(|until| until <= f.now())
 }
 
 /// A post while a dispatcher holds the lease, and the dispatcher it starts.

@@ -141,14 +141,7 @@ impl Drop for Listener {
 }
 
 fn state(f: &Fixture, handle: &str) -> Value {
-    f.store
-        .client()
-        .query(
-            "RETURN SELECT * OMIT id FROM ONLY type::record('callback_state', $handle);",
-            json!({"handle":handle}),
-        )
-        .unwrap()
-        .remove(0)
+    f.store.raw().row("callback_state", handle).get().unwrap()
 }
 
 #[test]
@@ -174,12 +167,10 @@ fn plain_orchestrators_receive_queued_chat_and_preserve_explicit_priority() {
     listener.receive("queued owner ask");
     assert_eq!(
         f.store
-            .client()
-            .query(
-                "RETURN type::record('chat_event', 'before-registration').delivered;",
-                json!({})
-            )
-            .unwrap()[0],
+            .raw()
+            .row("chat_event", "before-registration")
+            .field("delivered")
+            .unwrap(),
         true
     );
 
@@ -210,11 +201,9 @@ fn plain_orchestrators_receive_queued_chat_and_preserve_explicit_priority() {
         .unwrap();
     // A fallback remains preferred even when it does not occupy the explicit seat.
     f.store
-        .client()
-        .query(
-            "UPDATE type::record('callback_state', $handle) SET chat = false RETURN NONE;",
-            json!({"handle":fallback}),
-        )
+        .raw()
+        .row("callback_state", fallback.as_str())
+        .set(json!({"chat": false}))
         .unwrap();
     assert_eq!(
         f.store.chat_seat().unwrap(),
@@ -273,11 +262,9 @@ fn failed_chat_delivery_and_presence_sweep_restore_the_registered_priority() {
         if chat && !seat {
             // An if-free registration can remain a fallback after another seat has displaced it.
             f.store
-                .client()
-                .query(
-                    "UPDATE type::record('callback_state', $handle) SET chat = false RETURN NONE;",
-                    json!({"handle":orchestrator}),
-                )
+                .raw()
+                .row("callback_state", orchestrator.as_str())
+                .set(json!({"chat": false}))
                 .unwrap();
         }
         assert_eq!(
@@ -359,13 +346,10 @@ fn stale_failed_delivery_preserves_the_priority_saved_by_a_newer_dispatcher() {
         let stale = f.busy(move || {
             let lease = meanwhile
                 .store
-                .client()
-                .query(
-                    "RETURN type::record('callback_lease', $handle).until ?? 0;",
-                    json!({"handle":target}),
-                )
-                .unwrap()
-                .remove(0);
+                .raw()
+                .row("callback_lease", target.as_str())
+                .field("until")
+                .unwrap();
             if lease.as_f64().unwrap_or(0.0) > 0.0 && reads.fetch_add(1, Ordering::SeqCst) == 4 {
                 // After refreshing the board, checking pending work, selecting due events and
                 // checking its deadline before it sends, the leased worker reads the clock to
@@ -381,12 +365,10 @@ fn stale_failed_delivery_preserves_the_priority_saved_by_a_newer_dispatcher() {
         assert!(leased_reads.load(Ordering::SeqCst) >= 5);
         assert_eq!(
             f.store
-                .client()
-                .query(
-                    "RETURN type::record('callback_event', [$handle, 'chat-overlap']).attempts;",
-                    json!({"handle":handle}),
-                )
-                .unwrap()[0],
+                .raw()
+                .row("callback_event", json!([handle, "chat-overlap"]))
+                .field("attempts")
+                .unwrap(),
             4,
             "both dispatchers must have recorded their real failed send"
         );
@@ -419,27 +401,24 @@ fn a_plain_orchestrator_needs_live_health_or_confirmed_native_presence() {
         )
         .unwrap();
     f.store
-        .client()
-        .query(
-            "UPDATE type::record('session', $handle) SET last_seen = $seen RETURN NONE;",
-            json!({"handle":orchestrator, "seen":f.now()-symphony_board::health::LIVE_SECONDS-1.0}),
-        )
+        .raw()
+        .row("session", orchestrator.as_str())
+        .set(json!({"last_seen": f.now() - symphony_board::health::LIVE_SECONDS - 1.0}))
         .unwrap();
     assert_eq!(f.store.chat_recipient().unwrap(), None);
-    f.store.client().query(
-        "UPDATE type::record('callback_state', $handle) SET confirmed_until = $until RETURN NONE;",
-        json!({"handle":orchestrator, "until":f.now()+60.0}),
-    ).unwrap();
+    f.store
+        .raw()
+        .row("callback_state", orchestrator.as_str())
+        .set(json!({"confirmed_until": f.now() + 60.0}))
+        .unwrap();
     assert_eq!(
         f.store.chat_recipient().unwrap(),
         Some(orchestrator.clone())
     );
     f.store
-        .client()
-        .query(
-            "UPDATE type::record('callback_state', $handle) SET chat_resume = true RETURN NONE;",
-            json!({"handle":orchestrator}),
-        )
+        .raw()
+        .row("callback_state", orchestrator.as_str())
+        .set(json!({"chat_resume": true}))
         .unwrap();
     assert_eq!(f.store.chat_recipient().unwrap(), None);
 }
@@ -466,20 +445,20 @@ fn legacy_writers_do_not_repeat_unknown_notices_across_the_lost_threshold() {
         )
         .unwrap();
     assert_eq!(state(&f, &orchestrator)["seen"]["children"][&child], "Live");
-    f.store.client().query(
-        "UPSERT type::record('callback_state', $handle) SET handle = $handle, address = 'codex:abcdef01', host = $host, confirmed_until = $until, lease = $lease RETURN NONE;",
-        json!({"handle":child, "host":super::common::HOST, "until":f.now()-1.0, "lease":f.now()+1_000_000.0}),
-    ).unwrap();
+    f.store
+        .raw()
+        .row("callback_state", child.as_str())
+        .put(json!({
+            "handle": child, "address": "codex:abcdef01", "host": super::common::HOST,
+            "confirmed_until": f.now() - 1.0, "lease": f.now() + 1_000_000.0,
+        }))
+        .unwrap();
     let event_count = || {
-        f.store
-            .client()
-            .query(
-                "RETURN (SELECT VALUE last FROM ONLY type::record('counter', ['callback-event', $handle])) ?? 0;",
-                json!({"handle":orchestrator}),
-            )
-            .unwrap()[0]
-            .as_u64()
-            .unwrap()
+        let counter = json!(["callback-event", orchestrator]);
+        match f.store.raw().row("counter", counter).field("last").unwrap() {
+            Value::Null => 0,
+            last => last.as_u64().unwrap(),
+        }
     };
 
     // Keep the parent clock fixed so PULL is not due. Age only the child, as an older writer
@@ -493,10 +472,20 @@ fn legacy_writers_do_not_repeat_unknown_notices_across_the_lost_threshold() {
         (0.0, false, "Live", Health::Live, 0),
         (700.0, false, "Lost", Health::Unknown, 1),
     ] {
-        f.store.client().query(
-            "UPDATE type::record('session', $handle) SET connected = $seen, last_seen = $seen, busy_until = IF $busy { $until } ELSE { NONE }, pid = IF $busy { 999999999 } ELSE { NONE }, host = $host RETURN NONE;",
-            json!({"handle":child, "seen":f.now()-age, "busy":busy, "until":f.now()+60.0, "host":super::common::HOST}),
-        ).unwrap();
+        let seen = f.now() - age;
+        let (busy_until, pid) = if busy {
+            (json!(f.now() + 60.0), json!(999_999_999))
+        } else {
+            (Value::Null, Value::Null)
+        };
+        f.store
+            .raw()
+            .row("session", child.as_str())
+            .set(json!({
+                "connected": seen, "last_seen": seen, "busy_until": busy_until, "pid": pid,
+                "host": super::common::HOST,
+            }))
+            .unwrap();
         assert_eq!(f.health(&child), health);
         let before = event_count();
         for round in 0..4 {
@@ -505,11 +494,9 @@ fn legacy_writers_do_not_repeat_unknown_notices_across_the_lost_threshold() {
             let mut legacy_seen = state(&f, &orchestrator)["seen"].clone();
             legacy_seen["children"][&child] = json!(legacy_health);
             f.store
-                .client()
-                .query(
-                    "UPDATE type::record('callback_state', $handle) SET seen = $seen RETURN NONE;",
-                    json!({"handle":orchestrator, "seen":legacy_seen}),
-                )
+                .raw()
+                .row("callback_state", orchestrator.as_str())
+                .set(json!({"seen": legacy_seen}))
                 .unwrap();
             f.store.dispatch_callbacks_snapshot().unwrap();
             let after = state(&f, &orchestrator);
@@ -539,10 +526,11 @@ fn legacy_writers_do_not_repeat_unknown_notices_across_the_lost_threshold() {
 
     // Expiring the Unknown grace must clear its richer observation, queue LOST once, and leave
     // a heartbeat-derived baseline that both dispatcher generations can read without repeating it.
-    f.store.client().query(
-        "UPDATE type::record('callback_state', $handle) SET confirmed_until = $until RETURN NONE;",
-        json!({"handle":child, "until":f.now()-601.0}),
-    ).unwrap();
+    f.store
+        .raw()
+        .row("callback_state", child.as_str())
+        .set(json!({"confirmed_until": f.now() - 601.0}))
+        .unwrap();
     assert_eq!(f.health(&child), Health::Lost);
     f.store.dispatch_callbacks_snapshot().unwrap();
     let after_first = event_count();
@@ -596,11 +584,9 @@ fn idle_callback_snapshots_drain_queued_work_without_rewriting_observations() {
 
     // Another dispatcher owns this recipient while the direct event is queued.
     f.store
-        .client()
-        .query(
-            "UPDATE type::record('callback_lease', $handle) SET until = $until RETURN NONE;",
-            json!({"handle":worker,"until":f.now()+60.0}),
-        )
+        .raw()
+        .row("callback_lease", worker.as_str())
+        .set(json!({"until": f.now() + 60.0}))
         .unwrap();
     assert!(
         !f.store
@@ -608,11 +594,9 @@ fn idle_callback_snapshots_drain_queued_work_without_rewriting_observations() {
             .unwrap()
     );
     f.store
-        .client()
-        .query(
-            "UPDATE type::record('callback_lease', $handle) SET until = 0 RETURN NONE;",
-            json!({"handle":worker}),
-        )
+        .raw()
+        .row("callback_lease", worker.as_str())
+        .set(json!({"until": 0}))
         .unwrap();
 
     let snapshot = f.store.dispatch_callbacks_snapshot().unwrap().unwrap();
@@ -628,10 +612,11 @@ fn idle_callback_snapshots_drain_queued_work_without_rewriting_observations() {
     assert_eq!(after["statuses"], before["statuses"]);
     assert_eq!(after["inbox_cursor"], before["inbox_cursor"]);
     let idle_rows = || {
-        f.store.client().query(
-        "RETURN {states: (SELECT * FROM callback_state ORDER BY id), counters: (SELECT * FROM counter ORDER BY id), leases: (SELECT * FROM callback_lease ORDER BY id)};",
-        json!({}),
-    ).unwrap()
+        let rows = |table: &str| f.store.raw().table(table).get().unwrap();
+        json!({
+            "states": rows("callback_state"), "counters": rows("counter"),
+            "leases": rows("callback_lease"),
+        })
     };
     let idle_before = idle_rows();
     for _ in 0..3 {
@@ -699,22 +684,17 @@ fn idle_unchanged_observation_prevents_an_older_snapshot_from_emitting_a_transie
     assert_eq!(before["statuses"], json!({}));
     assert!(before["snapshot_sequence"].as_u64().unwrap() > 0);
     let events = |store: &symphony_board::Store| {
-        store
-            .client()
-            .query(
-                "RETURN (SELECT VALUE last FROM ONLY type::record('counter', ['callback-event', $handle])) ?? 0;",
-                json!({"handle":worker}),
-            )
-            .unwrap()
-            .remove(0)
+        let counter = json!(["callback-event", worker]);
+        match store.raw().row("counter", counter).field("last").unwrap() {
+            Value::Null => json!(0),
+            last => last,
+        }
     };
     let before_events = events(&f.store);
     f.store
-        .client()
-        .query(
-            "UPDATE type::record('task', 'tools/idle') SET status = 'review' RETURN NONE;",
-            json!({}),
-        )
+        .raw()
+        .row("task", "tools/idle")
+        .set(json!({"status": "review"}))
         .unwrap();
 
     // The slow dispatcher has already read the transient board when its clock is read. A newer
@@ -722,11 +702,9 @@ fn idle_unchanged_observation_prevents_an_older_snapshot_from_emitting_a_transie
     let other = f.other();
     let slow = f.slow(move || {
         other
-            .client()
-            .query(
-                "UPDATE type::record('task', 'tools/idle') SET status = 'in_progress' RETURN NONE;",
-                json!({}),
-            )
+            .raw()
+            .row("task", "tools/idle")
+            .set(json!({"status": "in_progress"}))
             .unwrap();
         let board = other.dispatch_callbacks_snapshot().unwrap().unwrap();
         assert_eq!(board.tasks[0].status, "in_progress");
@@ -774,11 +752,9 @@ fn cached_board_inputs_age_without_a_board_read_and_refresh_after_mutation() {
     assert_eq!(board.sessions[0].health, symphony_board::Health::Lost);
     assert_eq!(board.tasks[0].roles[0].health, symphony_board::Health::Lost);
     f.store
-        .client()
-        .query(
-            "UPDATE task SET title = 'Changed by another writer' RETURN NONE;",
-            json!({}),
-        )
+        .raw()
+        .table("task")
+        .set(json!({"title": "Changed by another writer"}))
         .unwrap();
     assert_eq!(
         f.store.clock_board().unwrap().tasks[0].title,
@@ -923,22 +899,18 @@ fn finished_history_is_not_retained_and_new_ready_work_still_arrives() {
     );
     assert_eq!(
         f.store
-            .client()
-            .query(
-                "RETURN type::record('callback_lease', 'orchestrator').pull;",
-                json!({})
-            )
-            .unwrap()[0],
+            .raw()
+            .row("callback_lease", "orchestrator")
+            .field("pull")
+            .unwrap(),
         json!(f.now()),
         "the small scheduling checkpoint must still advance"
     );
     assert!(listener.drain(&f, "sender", "orchestrator").is_empty());
     f.store
-        .client()
-        .query(
-            "UPDATE type::record('task', 'tools/history-0') SET status = 'ready' RETURN NONE;",
-            json!({}),
-        )
+        .raw()
+        .row("task", "tools/history-0")
+        .set(json!({"status": "ready"}))
         .unwrap();
     f.store.dispatch_callbacks().unwrap();
     listener.receive("NEW tools/history-0 ready");
@@ -963,11 +935,9 @@ fn a_second_dispatcher_cannot_take_a_live_small_recipient_lease() {
         )
         .unwrap();
     f.store
-        .client()
-        .query(
-            "UPDATE type::record('callback_lease', $handle) SET until = $until RETURN NONE;",
-            json!({"handle":receiver,"until":f.now()+60.0}),
-        )
+        .raw()
+        .row("callback_lease", receiver.as_str())
+        .set(json!({"until": f.now() + 60.0}))
         .unwrap();
     assert!(
         !f.store
@@ -975,11 +945,9 @@ fn a_second_dispatcher_cannot_take_a_live_small_recipient_lease() {
             .unwrap()
     );
     f.store
-        .client()
-        .query(
-            "UPDATE type::record('callback_lease', $handle) SET until = 0 RETURN NONE;",
-            json!({"handle":receiver}),
-        )
+        .raw()
+        .row("callback_lease", receiver.as_str())
+        .set(json!({"until": 0}))
         .unwrap();
     let entered = Arc::new(AtomicBool::new(false));
     let checked = Arc::clone(&entered);
@@ -989,15 +957,13 @@ fn a_second_dispatcher_cannot_take_a_live_small_recipient_lease() {
         let lease = || {
             meanwhile
                 .store
-                .client()
-                .query(
-                    "RETURN SELECT * FROM ONLY type::record('callback_lease', $handle);",
-                    json!({"handle":receiver}),
-                )
+                .raw()
+                .row("callback_lease", receiver.as_str())
+                .get()
                 .unwrap()
         };
         let before = lease();
-        if before[0]["until"].as_f64().unwrap_or(0.0) > meanwhile.now()
+        if before["until"].as_f64().unwrap_or(0.0) > meanwhile.now()
             && !checked.swap(true, Ordering::SeqCst)
         {
             other.dispatch_callbacks().unwrap();
@@ -1036,22 +1002,27 @@ fn a_failed_chat_waits_without_writes_and_retries_at_its_deadline() {
         .unwrap();
     let state_writes = || {
         f.store
-            .client()
-            .query("RETURN callback_audit:writes.count;", json!({}))
+            .raw()
+            .row("callback_audit", "writes")
+            .field("count")
             .unwrap()
     };
     let writes = state_writes();
     assert_eq!(
         writes,
-        vec![json!(1)],
+        json!(1),
         "the first failure marks the callback blocked"
     );
     let rows = || {
-        f.store.client().query("RETURN {states: (SELECT * FROM callback_state ORDER BY id), events: (SELECT * FROM callback_event ORDER BY id), counters: (SELECT * FROM counter ORDER BY id), leases: (SELECT * FROM callback_lease ORDER BY id)};", json!({})).unwrap()
+        let rows = |table: &str| f.store.raw().table(table).get().unwrap();
+        json!({
+            "states": rows("callback_state"), "events": rows("callback_event"),
+            "counters": rows("counter"), "leases": rows("callback_lease"),
+        })
     };
     let before = rows();
     assert_eq!(
-        before[0]["events"][0]["attempts"], 1,
+        before["events"][0]["attempts"], 1,
         "the first delivery failed"
     );
     for elapsed in [0.0, 4.0] {
@@ -1062,7 +1033,7 @@ fn a_failed_chat_waits_without_writes_and_retries_at_its_deadline() {
     f.advance(1.0);
     f.store.dispatch_callbacks().unwrap();
     assert_eq!(
-        rows()[0]["events"][0]["attempts"],
+        rows()["events"][0]["attempts"],
         2,
         "the clock retries without another board mutation"
     );
@@ -1092,12 +1063,14 @@ fn a_contended_observation_is_retried_even_without_another_board_change() {
         )
         .unwrap();
     f.store
-        .client()
-        .query(
-            "UPDATE callback_lease SET until = $until RETURN NONE;
-        UPDATE task SET status = 'review' RETURN NONE;",
-            json!({"until":f.now()+60.0}),
-        )
+        .raw()
+        .table("callback_lease")
+        .set(json!({"until": f.now() + 60.0}))
+        .unwrap();
+    f.store
+        .raw()
+        .table("task")
+        .set(json!({"status": "review"}))
         .unwrap();
     f.store.dispatch_callbacks().unwrap();
     assert_eq!(
@@ -1105,11 +1078,9 @@ fn a_contended_observation_is_retried_even_without_another_board_change() {
         "in_progress"
     );
     f.store
-        .client()
-        .query(
-            "UPDATE callback_lease SET until = 0 RETURN NONE;",
-            json!({}),
-        )
+        .raw()
+        .table("callback_lease")
+        .set(json!({"until": 0}))
         .unwrap();
     f.store.dispatch_callbacks().unwrap();
     listener.receive("STATUS tools/contended in_progress → review");
@@ -1165,22 +1136,9 @@ fn unchanged_periodic_pull_rearms_across_lost_sessions_and_fresh_stores() {
     let baseline = dispatch_requests(&f.store);
     let fresh_baseline = dispatch_requests(&f.other());
     let observation = state(&f, "orchestrator");
-    let counters = || {
-        f.store
-            .client()
-            .query("RETURN SELECT * FROM counter ORDER BY id;", json!({}))
-            .unwrap()
-    };
+    let counters = || f.store.raw().table("counter").get().unwrap();
     let before_counters = counters();
-    let leases = || {
-        f.store
-            .client()
-            .query(
-                "RETURN SELECT * FROM callback_lease ORDER BY id;",
-                json!({}),
-            )
-            .unwrap()
-    };
+    let leases = || f.store.raw().table("callback_lease").get().unwrap();
 
     f.advance(601.0);
     let overdue = dispatch_requests(&f.store);
@@ -1192,7 +1150,7 @@ fn unchanged_periodic_pull_rearms_across_lost_sessions_and_fresh_stores() {
         "periodic PULL requests: warm idle {baseline}, due {overdue}, fresh idle {fresh_baseline}"
     );
     let checked = leases();
-    assert_eq!(checked[0][0]["pull"], json!(f.now()));
+    assert_eq!(checked[0]["pull"], json!(f.now()));
     for _ in 0..5 {
         assert_eq!(
             dispatch_requests(&f.store),
@@ -1218,7 +1176,7 @@ fn unchanged_periodic_pull_rearms_across_lost_sessions_and_fresh_stores() {
         dispatch_requests(&f.store) > baseline,
         "the next periodic check still fires exactly when due"
     );
-    assert_eq!(leases()[0][0]["pull"], json!(f.now()));
+    assert_eq!(leases()[0]["pull"], json!(f.now()));
     assert_eq!(
         state(&f, "orchestrator"),
         observation,
@@ -1242,13 +1200,10 @@ fn callback_pruning_retains_lease_revisions_across_retirement_and_registration()
         .unwrap();
     let lease = || {
         f.store
-            .client()
-            .query(
-                "RETURN SELECT * FROM ONLY type::record('callback_lease', $handle);",
-                json!({"handle":worker}),
-            )
+            .raw()
+            .row("callback_lease", worker.as_str())
+            .get()
             .unwrap()
-            .remove(0)
     };
     let before = lease();
     assert!(before["revision"].as_u64().unwrap() > 0);

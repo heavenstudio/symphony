@@ -1,7 +1,7 @@
 //! The canonical read-only holdings observation, through the real store and admission boundary.
 
 use super::{F, K, O, P, W, capped, sessions, with};
-use crate::common::{Fixture, HOST, NOW, RawWrite, refused, task};
+use crate::common::{Fixture, HOST, NOW, refused, task};
 use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
 use std::net::TcpListener;
@@ -41,12 +41,7 @@ fn one_owned_observation_groups_nested_and_branch_mirror_keys_without_writing_st
         })
         .unwrap();
     let original = f.store.dump().unwrap();
-    let counters = || {
-        f.store
-            .client()
-            .query("SELECT * FROM counter ORDER BY id;", json!({}))
-            .unwrap()
-    };
+    let counters = || f.store.raw().table("counter").get().unwrap();
     let original_counters = counters();
     let before = f.store.client().requests();
     let observed = f.store.slot_holdings().unwrap();
@@ -88,13 +83,10 @@ fn only_a_blocked_hold_with_the_current_nonmissing_stamp_counts_as_admission_doe
     let f = Fixture::new(seed);
     f.store.hold_blocked("valid", O).unwrap();
     f.store.hold_blocked("stale", O).unwrap();
-    f.store
-        .client()
-        .write(
-            "UPDATE task:stale SET updated += 1;
-         UPSERT type::record('counter', ['hold', 'unstamped']) SET last = 0 RETURN NONE;",
-            json!({}),
-        )
+    let raw = f.store.raw();
+    raw.row("task", "stale").add("updated", 1).unwrap();
+    (raw.row("counter", json!(["hold", "unstamped"])))
+        .put(json!({"last": 0}))
         .unwrap();
     assert_eq!(
         f.store.slot_holdings().unwrap(),
@@ -171,13 +163,16 @@ fn unknown_owners_retain_valid_held_slots_exactly_as_the_admission_view_does() {
     let seed = with(sessions(), "feature", "review", None, Some(O));
     let f = Fixture::new(with(seed, "next", "ready", None, Some(O)));
     f.store.hold_blocked("feature", O).unwrap();
-    f.store.client().write(
-        "UPSERT type::record('callback_state', $handle) SET handle = $handle,
-             address = 'codex:abcdef01', host = $host, confirmed_until = $until, lease = $lease RETURN NONE;
-         UPDATE type::record('session', $handle) SET last_seen = $seen RETURN NONE;",
-        json!({"handle": O, "host": HOST, "until": NOW - 1.0,
-            "lease": NOW + 1000.0, "seen": NOW - 1000.0}),
-    ).unwrap();
+    let raw = f.store.raw();
+    (raw.row("callback_state", O))
+        .put(
+            json!({"handle": O, "address": "codex:abcdef01", "host": HOST,
+            "confirmed_until": NOW - 1.0, "lease": NOW + 1000.0}),
+        )
+        .unwrap();
+    (raw.row("session", O))
+        .set(json!({"last_seen": NOW - 1000.0}))
+        .unwrap();
     assert_eq!(f.health(O), Health::Unknown);
     assert_eq!(
         f.store.slot_holdings().unwrap(),
@@ -186,10 +181,9 @@ fn unknown_owners_retain_valid_held_slots_exactly_as_the_admission_view_does() {
     let said = refused(capped(&f, 1).claim("next", K));
     assert!(said.contains("holds 1 open tasks"), "{said}");
     assert!(said.contains("feature (blocked, held)"), "{said}");
-    f.store.client().write(
-        "UPDATE type::record('callback_state', $handle) SET confirmed_until = $until RETURN NONE;",
-        json!({"handle": O, "until": NOW - 601.0}),
-    ).unwrap();
+    (raw.row("callback_state", O))
+        .set(json!({"confirmed_until": NOW - 601.0}))
+        .unwrap();
     assert_eq!(f.health(O), Health::Left);
     assert!(f.store.slot_holdings().unwrap().is_empty());
 }

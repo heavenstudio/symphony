@@ -14,7 +14,7 @@
 
 use serde_json::{Value, json};
 
-use crate::cache_pages::{PARTS, keeps, kept, notice, shows, store_opened};
+use crate::cache_pages::{PARTS, VALUES, keeps, kept, notice, shows, store_opened};
 use crate::chrome::Chrome;
 use crate::common;
 use crate::site::{Answered, Site, asked_keys, query};
@@ -96,13 +96,34 @@ pub(super) fn draws(chrome: &mut Chrome, texts: &[&str]) {
     );
 }
 
+/// Wait until this device keeps the bodies of the fixture document's sections saying each of
+/// `texts`. A page keeps what it read in a transaction of the store's after it draws it, and the
+/// store aborts every transaction open when the page goes away (`pagehide`, `assets/cache.js`): a
+/// visit left as soon as it drew keeps nothing of what was not committed yet. Its sections part is
+/// kept again for each change of the bodies held, so only what it holds, not when it was kept,
+/// tells the last of them in.
+#[track_caller]
+fn keeps_bodies(chrome: &mut Chrome, texts: &[&str]) {
+    shows(
+        chrome,
+        &format!(
+            "{VALUES}.then(kept => (bodies => {}.every(text => bodies.includes(text)))(JSON.stringify(kept[{}] ?? null)))",
+            json!(texts),
+            json!(KEPT[1])
+        ),
+        &format!("the bodies saying {texts:?} kept"),
+    );
+}
+
 /// A first visit to the fixture document: drawn from the server, live, and kept.
 fn visit(chrome: &mut Chrome, site: &Site) {
     store_opened(chrome, site);
     chrome.open(&site.url(&format!("/{DOC}")));
-    draws(chrome, &["Kept: the intro.", "Posted.", "Lamps, as kept."]);
+    let texts = ["Kept: the intro.", "Posted.", "Lamps, as kept."];
+    draws(chrome, &texts);
     shows(chrome, LIVE, "the first visit");
     keeps(chrome, &KEPT);
+    keeps_bodies(chrome, &texts);
 }
 
 /// When the older of the document's kept parts was kept.
@@ -359,11 +380,7 @@ fn a_section_edited_or_a_card_answered_while_away_is_read_alone_redrawn_and_kept
         [(vec!["lamps".to_string()], 200)],
         "{sections:#?}"
     );
-    shows(
-        &mut chrome,
-        &format!("{PARTS}.then(kept => kept[{}] > {saved})", json!(KEPT[1])),
-        "the edited section kept",
-    );
+    keeps_bodies(&mut chrome, &["Lamps, edited while away."]);
 
     // The card's thread answered while away: the card alone is read, its new line drawn.
     let mut answered_card = edited.clone();
@@ -385,6 +402,10 @@ fn a_section_edited_or_a_card_answered_while_away_is_read_alone_redrawn_and_kept
             .collect::<Vec<_>>(),
         [vec!["card:palette".to_string()]],
         "{sections:#?}"
+    );
+    keeps_bodies(
+        &mut chrome,
+        &["Lamps, edited while away.", "Answered while away."],
     );
 
     // The third visit draws both from the device, and reads no section.

@@ -4,7 +4,8 @@
 //! between steps, starts one at most once an hour, by a stamp file. Each runs from the main checkout
 //! as `tasks sweep --background=WHY`, its lines appended to `symphony/tasks/sweep.log` in the git
 //! common dir, one sweep at a time (`symphony/tasks/sweep.lock`). The build that runs it is the main
-//! checkout's ([`crate::builds::of_main`]: its `.target/bin/tasks` link, else `tasks` on `PATH`),
+//! checkout's ([`crate::builds::of_main`]: its `.target/bin/tasks` link, else the machine's release's,
+//! else `tasks` on `PATH`),
 //! never the caller's: a worktree holding sweep code that has not landed would run it for real.
 //! When the main checkout has no build, the log says so and nothing sweeps; a test's `TASKS_BIN`
 //! stands in for it on a test's board. A board `TASKS_SERVER` names (a test's) starts none, unless
@@ -194,13 +195,17 @@ pub(crate) fn test_build(env: &Env) -> Option<PathBuf> {
 }
 
 /// The build that sweeps for the main checkout `root`: a test's `TASKS_BIN` on a test's board, else
-/// the main checkout's own ([`crate::builds::of_main`]: its `.target/bin/tasks` link, else `tasks` on
-/// the caller's `PATH`). Never the caller's: a worktree's `tasks` carries that worktree's sweep,
+/// the main checkout's own ([`crate::builds::of_main`]: its `.target/bin/tasks` link, else the machine's
+/// release's, else `tasks` on the caller's `PATH`). Never the caller's: a worktree's `tasks` carries that worktree's sweep,
 /// which has not landed.
 fn sweeper(env: &Env, root: &Path) -> Option<PathBuf> {
-    test_build(env).or_else(|| {
-        crate::builds::of_main(root, "tasks", env.var("PATH").map(std::ffi::OsStr::new))
-    })
+    test_build(env).or_else(|| crate::builds::of_main(root, "tasks", &beyond(env)))
+}
+
+/// What a search for a build reads past the main checkout's link, in `env`: its machine folder and
+/// its `PATH` ([`crate::builds::Beyond`]).
+pub(crate) fn beyond(env: &Env) -> crate::builds::Beyond {
+    crate::builds::Beyond::of(|name| env.var(name).map(std::ffi::OsString::from))
 }
 
 /// The main checkout of the repository whose git common dir is `common`: the folder holding it, when

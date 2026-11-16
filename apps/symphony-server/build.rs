@@ -35,6 +35,20 @@ fn files(root: &Path, directory: &Path, found: &mut Vec<(String, PathBuf)>) -> i
 /// shares.
 const INCLUDE_LIMIT: u64 = 1_000_000;
 
+/// What a release's build sets (non-empty) so the server embeds no client: installed on the
+/// machine it serves the release's `client/HASH/` from beside it (`symphony_env::CLIENT_BESIDE`,
+/// docs/RELEASES.md, "The install").
+const BESIDE: &str = "SYMPHONY_CLIENT_BESIDE";
+
+/// The manifest of the client at `root`, or of none when the build is told its client is `beside`
+/// it: whatever `root` holds is then left out.
+fn embedded(root: &Path, beside: bool) -> io::Result<String> {
+    if beside {
+        return generate(&root.join("beside"));
+    }
+    generate(root)
+}
+
 fn generate(root: &Path) -> io::Result<String> {
     let present = match fs::symlink_metadata(root) {
         Ok(meta) if meta.is_dir() => true,
@@ -94,7 +108,9 @@ fn main() -> io::Result<()> {
             .ok_or_else(|| io::Error::other("missing manifest directory"))?,
     )
     .join("client/public");
-    let generated = generate(&root)?;
+    println!("cargo:rerun-if-env-changed={BESIDE}");
+    let beside = env::var_os(BESIDE).is_some_and(|value| !value.is_empty());
+    let generated = embedded(&root, beside)?;
     let output = PathBuf::from(
         env::var_os("OUT_DIR").ok_or_else(|| io::Error::other("missing build output directory"))?,
     );
@@ -103,7 +119,7 @@ fn main() -> io::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{INCLUDE_LIMIT, generate};
+    use super::{INCLUDE_LIMIT, embedded, generate};
     use crate::tree::Tree;
 
     const EXPECTATION: &str = "#[expect(clippy::large_include_file";
@@ -129,6 +145,23 @@ mod tests {
         tree.write("release/assets/second.js", &format!("{at_limit}x"));
         let manifest = generate(&root).unwrap();
         assert_eq!(manifest.matches(EXPECTATION).count(), 1, "{manifest}");
+    }
+
+    #[test]
+    fn a_build_told_its_client_is_beside_it_embeds_none_of_what_is_there() {
+        let tree = Tree::new();
+        let root = tree.path("release");
+        tree.write("release/index.html", "protocol input only");
+        tree.write("release/assets/module.js", "protocol input only");
+        let none = "pub(super) static FILES: &[(&str, &[u8])] = &[\n];\n";
+        assert_eq!(embedded(&root, true).unwrap(), none);
+        let all = embedded(&root, false).unwrap();
+        assert_eq!(all, generate(&root).unwrap());
+        assert!(all.contains("index.html") && all.contains("assets/module.js"));
+        // A partial distribution, refused when embedded, is nothing to a build that embeds none.
+        std::fs::remove_file(root.join("index.html")).unwrap();
+        assert!(embedded(&root, false).is_err());
+        assert_eq!(embedded(&root, true).unwrap(), none);
     }
 
     #[test]

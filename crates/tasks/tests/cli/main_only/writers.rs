@@ -11,7 +11,7 @@ use crate::common::NOW;
 use serde_json::json;
 use std::time::{SystemTime, UNIX_EPOCH};
 use symphony_board::rpc::Client;
-use symphony_board::{Opening, Program, Schema, Store, Writer};
+use symphony_board::{Opening, Program, Raw, Schema, Store, Writer};
 
 const HOUR: f64 = 3600.0;
 
@@ -165,11 +165,9 @@ fn migrate_leave_behind_moves_a_board_whose_writers_are_behind_and_says_so_in_it
     assert_eq!(made.code, 0, "{}", made.err);
     let client = Client::new(&env.vars["TASKS_SERVER"], "sf", &env.vars["TASKS_DATABASE"]);
     // A board one schema behind this build that carries the record, its gate's line two days old.
-    client
-        .query(
-            "UPDATE meta:schema SET version = $version;",
-            json!({"version": before()}),
-        )
+    Raw::on(&client)
+        .row("meta", "schema")
+        .set(json!({"version": before()}))
         .unwrap();
     write_line(&client, &gate(), "studio", before(), now() - 48.0 * HOUR);
     let board = format!(

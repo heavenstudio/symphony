@@ -189,7 +189,7 @@ impl Drop for FirstResponse {
         {
             let needs_response = !self.response_started;
             let grace = self.grace;
-            tokio::spawn(async move {
+            crate::spawn::task(async move {
                 if needs_response {
                     let _ = stream.write_all(UNAVAILABLE).await;
                 }

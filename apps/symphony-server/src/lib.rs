@@ -31,6 +31,7 @@ pub mod repo;
 mod session_go;
 pub mod shelf;
 mod shell;
+mod spawn;
 mod starter;
 pub mod sys;
 mod write;

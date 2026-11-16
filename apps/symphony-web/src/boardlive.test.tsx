@@ -18,6 +18,21 @@ import type { MachineWork, Task, TaskListing } from "./wire";
 import { statusNotice } from "./words";
 import { NO_WORK } from "./work";
 
+// React's `flushSync` stood in for, as no DOM runs here: whether a draw comes within it.
+const react = vi.hoisted(() => ({ flushing: false }));
+
+vi.mock("react-dom", async (original) => ({
+  ...(await original<typeof import("react-dom")>()),
+  flushSync: (draw: () => void) => {
+    react.flushing = true;
+    try {
+      draw();
+    } finally {
+      react.flushing = false;
+    }
+  },
+}));
+
 /** The wall clock the board reads: a task updated before it by more than its window is old. */
 const NOW = 1_800_000_000_000;
 
@@ -1073,6 +1088,18 @@ describe("a feed event on the live board", () => {
     expect(d.tasks.map((task) => task.slug)).toEqual(["w/a"]);
     expect(held).toHaveBeenCalledWith("[data-slug]");
     expect(host.redraw).toHaveBeenCalled();
+  });
+
+  it("holds the reader's place, then draws the change at once, within the event", () => {
+    const { board, held, host } = live();
+    const order: string[] = [];
+    held.mockImplementation(() => order.push("held"));
+    host.redraw.mockImplementation(() => order.push(react.flushing ? "drawn" : "drawn later"));
+    board.apply(event(["task", { key: "w/a", value: aTask("w/a") }]));
+    // A refresh asked for, with nothing the page draws changed, holds and draws alike.
+    board.apply(event(["task-counts", {}]));
+    expect(order).toEqual(["held", "drawn", "held", "drawn"]);
+    expect(react.flushing).toBe(false);
   });
 
   it("moves no count for the machines' heartbeat, only for work placed elsewhere", () => {

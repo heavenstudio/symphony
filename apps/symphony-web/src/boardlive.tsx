@@ -5,6 +5,7 @@
 // column reads its first page once it comes near the screen.
 
 import { useEffect, useReducer, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import {
   boardShape,
   GhostBoard,
@@ -838,7 +839,11 @@ export class LiveBoard {
     }
     if (changed || refresh) {
       holdPlace(readerRows());
-      this.host.redraw();
+      // Drawn at once, within the event, so the hold starts from the change in the page. React
+      // would leave the draw to its scheduler, a later task, and a slow or loaded renderer runs
+      // frames before such a task: the hold's four quiet frames could pass first, and a row filed
+      // above the reader land with nothing holding their place.
+      flushSync(() => this.host.redraw());
     }
     return refresh;
   }

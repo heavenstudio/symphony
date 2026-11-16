@@ -513,6 +513,13 @@ pub fn running_board(env: &Env) -> Result<Reached, String> {
     reach_board(env, &env.cwd, Reaching::Peek, None)
 }
 
+/// The board [`running_board`] reaches, held to `repository` as [`held_board`] holds its reach:
+/// refused, as a folder that is gone, when the lookup finds another repository, and refused rather
+/// than started when its server is not running.
+pub fn held_running_board(env: &Env, repository: Option<&Path>) -> Result<Reached, String> {
+    reach_board(env, &env.cwd, Reaching::Peek, repository)
+}
+
 /// The board `env` reaches from `cwd`; a server that is not running is started if `start`, else
 /// refused.
 fn reach(env: &Env, cwd: &Path, start: bool) -> Result<Reached, String> {
