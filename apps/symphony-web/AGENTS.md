@@ -693,7 +693,10 @@ What holds on every page, and each page's contract where its section above names
   focus and does not zoom back out (`apps/symphony-web-tests/tests/browser/touch.rs`). A press
   is the control's own `:active`, which sinks it, with no tap flash and no label a long press
   selects, and a hover that moves or raises a thing sits under `(hover: hover) and (pointer:
-  fine)`, as a tap would leave it raised.
+  fine)`, as a tap would leave it raised. A select's popup grows from the edge nearest its trigger
+  (`data-side`, `src/popup-position.ts`), stays drawn closed while its exit eases out (the overlay
+  host lets it go at its `animationend`, `src/overlay.tsx`), and under reduced motion only fades
+  (`apps/symphony-web-tests/tests/browser/polish.rs`).
 - **Task views.** The task board (`/tasks`, `src/board.tsx` over `src/boardlive.tsx`, its card
   `src/taskcard.tsx`), the agents page ([below](#the-agents-page)) and a task's page
   ([below](#a-tasks-page); the gates' and the timeline's contract,
