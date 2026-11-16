@@ -105,12 +105,12 @@ fn module(test: &str, size: usize) -> Vec<u8> {
 }
 
 #[test]
-fn a_content_hash_names_dx_and_package_assets_and_nothing_else() {
+fn a_content_hash_names_a_builds_assets_and_nothing_else() {
     for hashed in [
         "assets/board-f129bf6e05941e78.js",
         "assets/symphony-shell-4375f62f92e3d4a2.js",
-        "assets/symphony-ui_bg-dxh8d1bca92fd62af8.wasm",
-        "assets/dx-components-theme-dxh3f7454274acd8235.css",
+        "assets/program_bg-dxh8d1bca92fd62af8.wasm",
+        "assets/theme-dxh3f7454274acd8235.css",
         "assets/app-dxh123.js",
         "assets/chunks/old-dxh789.js",
         "assets/board-f129bf6e05941e78.min.js",
@@ -291,9 +291,9 @@ async fn a_build_file_is_gzipped_on_its_first_request_and_sent_stored_after() {
     let hash = sha256(&source);
     let (_tree, app) = serving(&[
         ("index.html", b"<html><body>shell</body></html>"),
-        ("assets/symphony-ui_bg-dxhfeed01.wasm", &source),
+        ("assets/program-feed01feed01feed.wasm", &source),
     ]);
-    let path = "/assets/symphony-ui_bg-dxhfeed01.wasm";
+    let path = "/assets/program-feed01feed01feed.wasm";
     let gzip = [("Accept-Encoding", "br;q=1, gzip;q=0.8")];
 
     let plain = send(&app, Method::GET, path, &[("Accept-Encoding", "identity")]).await;

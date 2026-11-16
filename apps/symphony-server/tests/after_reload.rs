@@ -159,8 +159,8 @@ fn main() {
             assert_eq!(args.len(), 2);
             let public = PathBuf::from(&args[1]).join("public");
             fs::create_dir_all(public.join("assets")).unwrap();
-            fs::write(public.join("index.html"), fs::read("symphony/apps/symphony-ui/src/main.rs").unwrap()).unwrap();
-            fs::write(public.join("assets/new-dxh123.js"), "new module").unwrap();
+            fs::write(public.join("index.html"), fs::read("symphony/apps/symphony-web/src/main.tsx").unwrap()).unwrap();
+            fs::write(public.join("assets/new-0123456789abcdef.js"), "new module").unwrap();
             let action = event("client");
             if action == "fail" { eprintln!("fixture client compiler refused source"); std::process::exit(25); }
             if action == "empty" { fs::remove_file(public.join("index.html")).unwrap(); return; }
@@ -310,15 +310,15 @@ impl Fixture {
             "fn main() {}\n",
         );
         write(
-            &root.join("symphony/apps/symphony-ui/Cargo.toml"),
-            "[package]\nname = \"symphony-ui\"\n[dependencies]\nsymphony-api = { path = \"../../crates/symphony-api\" }\n",
+            &root.join("symphony/apps/symphony-web/package.json"),
+            "{}\n",
         );
         write(
-            &root.join("symphony/apps/symphony-ui/src/main.rs"),
+            &root.join("symphony/apps/symphony-web/src/main.tsx"),
             "initial client",
         );
         write(
-            &root.join("symphony/apps/symphony-ui/assets/frame.css"),
+            &root.join("symphony/apps/symphony-web/src/styles/frame.css"),
             "body {}\n",
         );
         write(
@@ -363,19 +363,19 @@ impl Fixture {
         );
         write(&home.join("client/public/index.html"), "initial client");
         write(
-            &home.join("client/public/assets/old-dxh456.js"),
+            &home.join("client/public/assets/old-456456456456456a.js"),
             "old module",
         );
         write(
-            &home.join("client/public/assets/chunks/old-dxh789.js"),
+            &home.join("client/public/assets/chunks/old-789789789789789a.js"),
             "old chunk",
         );
         let mut distribution = Sha256::new();
         // This fixture's installed files in lexical order, matching the documented stamp
         // format. No production publication helper is used to prepare the old generation.
         for (name, contents) in [
-            ("assets/chunks/old-dxh789.js", "old chunk"),
-            ("assets/old-dxh456.js", "old module"),
+            ("assets/chunks/old-789789789789789a.js", "old chunk"),
+            ("assets/old-456456456456456a.js", "old module"),
             ("index.html", "initial client"),
         ] {
             distribution.update(name.len().to_le_bytes());
@@ -1237,7 +1237,7 @@ fn client_only_and_shared_edits_publish_once_and_failures_preserve_the_serving_b
     let old_binary = Sha256::digest(fs::read(f.home.join("bin/symphony-server")).unwrap());
     assert_eq!(client_page(address), "initial client");
 
-    f.source("symphony/apps/symphony-ui/src/main.rs", "refused client");
+    f.source("symphony/apps/symphony-web/src/main.tsx", "refused client");
     let client = f.entered("client");
     assert_front(address, original_pid);
     assert_eq!(
@@ -1271,7 +1271,7 @@ fn client_only_and_shared_edits_publish_once_and_failures_preserve_the_serving_b
         1
     );
 
-    f.source("symphony/apps/symphony-ui/src/main.rs", "incomplete bundle");
+    f.source("symphony/apps/symphony-web/src/main.tsx", "incomplete bundle");
     f.entered("client").release("empty");
     lines.until("client build has no index.html");
     assert_front(address, original_pid);
@@ -1282,7 +1282,7 @@ fn client_only_and_shared_edits_publish_once_and_failures_preserve_the_serving_b
     );
 
     // A successful bundle followed by a failed replacement must also restore the client.
-    f.source("symphony/apps/symphony-ui/src/main.rs", "unready client");
+    f.source("symphony/apps/symphony-web/src/main.tsx", "unready client");
     f.entered("client").release("bundle");
     let build = f.entered("build");
     assert_eq!(client_page(address), "initial client");
@@ -1304,7 +1304,7 @@ fn client_only_and_shared_edits_publish_once_and_failures_preserve_the_serving_b
         old_stamp
     );
 
-    f.source("symphony/apps/symphony-ui/src/main.rs", "shipped client");
+    f.source("symphony/apps/symphony-web/src/main.tsx", "shipped client");
     f.entered("client").release("bundle");
     f.entered("build").release("install");
     let startup = f.startup();
@@ -1318,13 +1318,13 @@ fn client_only_and_shared_edits_publish_once_and_failures_preserve_the_serving_b
     assert!(original.0.wait().unwrap().success());
     assert_eq!(client_page(address), "shipped client");
     assert_eq!(
-        text_get(address, "/assets/old-dxh456.js"),
+        text_get(address, "/assets/old-456456456456456a.js"),
         "old module",
         "old tabs retain their hashed modules"
     );
-    assert_eq!(text_get(address, "/assets/new-dxh123.js"), "new module");
+    assert_eq!(text_get(address, "/assets/new-0123456789abcdef.js"), "new module");
     assert_eq!(
-        text_get(address, "/assets/chunks/old-dxh789.js"),
+        text_get(address, "/assets/chunks/old-789789789789789a.js"),
         "old chunk"
     );
     let second_source = symphony::reload::client_fingerprint(&f.root).unwrap();
@@ -1377,7 +1377,7 @@ fn client_only_and_shared_edits_publish_once_and_failures_preserve_the_serving_b
 fn startup_rebuilds_an_older_client_even_when_the_server_stamp_is_current() {
     let mut f = Fixture::new("startup-client-stamp");
     let old_source = symphony::reload::installed_client_source(&f.home).unwrap();
-    f.source("symphony/apps/symphony-ui/src/main.rs", "current client");
+    f.source("symphony/apps/symphony-web/src/main.tsx", "current client");
     // Model a partial installation: the binary/source stamp is current, while the client
     // stamp still correctly identifies the old bundle. Only its source identity is stale.
     let installed_path = f.home.join("installed.json");
@@ -1421,7 +1421,7 @@ fn shutdown_cancels_build_or_startup_and_releases_the_lease() {
         let (mut server, mut lines, address) = f.server(true);
         let pid = i64::from(server.0.id());
         let build = if phase == "client" {
-            f.source("symphony/apps/symphony-ui/src/main.rs", "cancelled client");
+            f.source("symphony/apps/symphony-web/src/main.tsx", "cancelled client");
             f.entered("client")
         } else {
             f.edit("main.rs", "fn main() { /* cancelled replacement */ }\n");

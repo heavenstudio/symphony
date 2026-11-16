@@ -78,7 +78,7 @@ fi
 {
     cat shell/cache.js
     grep -vx 'const modules = __MODULES__;' shell/shell.js
-} | "$root/tools/node.sh" node shell/minify.js > "$stage/shell.min.js"
+} | bash "$here/npm.sh" run --silent minify > "$stage/shell.min.js"
 {
     printf 'const modules = %s;\n' "$(jq -c . <<< "$manifest")"
     cat "$stage/shell.min.js"

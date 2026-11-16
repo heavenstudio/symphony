@@ -31,8 +31,8 @@ fn files(root: &Path, directory: &Path, found: &mut Vec<(String, PathBuf)>) -> i
 
 /// Clippy's `max-include-file-size` (its default; clippy.toml leaves it): `large_include_file`
 /// fires on an `include_bytes!` of a file longer than this, so the manifest expects the lint only
-/// while the distribution holds such a file, the Dioxus program's wasm once and none since its pages
-/// moved to the React client.
+/// while the distribution holds such a file: none today, the largest being the chunk every kind
+/// shares.
 const INCLUDE_LIMIT: u64 = 1_000_000;
 
 fn generate(root: &Path) -> io::Result<String> {

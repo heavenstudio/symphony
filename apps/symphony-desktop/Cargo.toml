@@ -19,9 +19,8 @@ symphony-api = { path = "../../crates/symphony-api", version = "=0.1.0" }
 # reads them by, so the origin the app compares is the one the page has.
 url = "2.5"
 
-# The window, its web view and the menu-bar item: the crates beneath Dioxus desktop, at the
-# versions Dioxus desktop 0.7.10 builds on, so its screens add no second copy. macOS only, so no
-# other platform's build of the workspace needs their system libraries.
+# The window, its web view and the menu-bar item. macOS only, so no other platform's build of the
+# workspace needs their system libraries.
 [target.'cfg(target_os = "macos")'.dependencies]
 tao = { version = "0.34.8", default-features = false, features = ["rwh_06"] }
 wry = { version = "0.53.5", default-features = false }

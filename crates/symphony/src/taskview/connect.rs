@@ -3,8 +3,8 @@
 use std::path::Path;
 
 /// How long the server waits on each board request: its board tick shares the data worker's thread
-/// with every document refresh, and a page gives up on an answer after 15 s (`symphony-ui`'s
-/// `request.rs`). A read with no whole answer in that time goes once more
+/// with every document refresh, and a page gives up on an answer after 15 s (the client's
+/// `request.ts`). A read with no whole answer in that time goes once more
 /// ([`symphony_board::rpc::Kind`]), and so waits at most twice this.
 const BOARD_WAIT: std::time::Duration = std::time::Duration::from_secs(3);
 

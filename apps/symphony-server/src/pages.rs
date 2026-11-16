@@ -4,9 +4,9 @@
 //! `pages.css`; a project's page also takes the project's theme package, as each of its pages
 //! does ([`crate::shell::page`]). A miss under `/api/` answers JSON, as every API error does.
 //!
-//! `board.css` and `frame.css` here are copies of the client's (`apps/symphony-ui/assets/`), so the
-//! package crates.io gets builds alone: the client reads its own through `asset!`, which takes no
-//! file outside its crate. crates/symphony/tests/packages.rs holds each copy equal to the client's.
+//! `board.css` and `frame.css` here are copies of the client's (`apps/symphony-web/src/styles/`),
+//! so the package crates.io gets builds alone, with no file outside it.
+//! crates/symphony/tests/packages.rs holds each copy equal to the client's.
 
 use std::path::Path;
 use std::sync::LazyLock;

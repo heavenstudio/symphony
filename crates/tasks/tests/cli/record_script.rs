@@ -284,12 +284,11 @@ fn a_cargo_test_or_build_is_recorded_with_its_arguments_streams_status_and_limit
     // Run by itself, each is a run of the pipeline its command says.
     for (count, args, phase, run) in [
         (3, ["clippy", "-q"], Phase::Build, "lint"),
-        (4, ["symphony-ui", "dist"], Phase::Build, "client"),
-        (5, ["nextest", "run"], Phase::Test, "test"),
-        (6, ["check", "-q"], Phase::Build, "build"),
-        (7, ["doc", "-q"], Phase::Build, "build"),
-        (8, ["rustc", "-q"], Phase::Build, "build"),
-        (9, ["bench", "-q"], Phase::Test, "test"),
+        (4, ["nextest", "run"], Phase::Test, "test"),
+        (5, ["check", "-q"], Phase::Build, "build"),
+        (6, ["doc", "-q"], Phase::Build, "build"),
+        (7, ["rustc", "-q"], Phase::Build, "build"),
+        (8, ["bench", "-q"], Phase::Test, "test"),
     ] {
         cargo_said(&setup, setup.cargo(&args, Some(RECORDER)), &args);
         let history = setup.history(count);
@@ -312,7 +311,6 @@ fn what_is_neither_a_build_nor_a_test_or_runs_inside_a_recorded_one_or_finds_no_
     // Neither a build nor a test: the recorder named is not even asked.
     for args in [
         vec!["fmt", "--check"],
-        vec!["symphony-ui", "dev", "0"],
         vec!["metadata"],
     ] {
         cargo_said(&setup, setup.cargo(&args, logging.to_str()), &args);

@@ -135,8 +135,9 @@ fn file_type(extension: &str) -> (&'static str, bool) {
 }
 
 /// Whether the build file at `relative` is named by its content, so its bytes never change under
-/// that name: under `assets/`, the last `-` part of its name before the extension is dx's hash
-/// (`dxh` and hex digits) or `package.sh`'s (sixteen hex digits).
+/// that name: under `assets/`, the last `-` part of its name before the extension is the build's
+/// hash (sixteen hex digits), or the one an older build's tool wrote (`dxh` and hex digits), which
+/// the builds a distribution still keeps from before the client's move to Vite hold.
 fn content_hashed(relative: &str) -> bool {
     let Some(file) = relative.strip_prefix("assets/") else {
         return false;

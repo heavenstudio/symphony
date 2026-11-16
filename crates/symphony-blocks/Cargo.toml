@@ -1,6 +1,6 @@
 # The plugin kit's block vocabulary: the content a plugin renders to and the data its seams return,
 # as the server sends them and the client draws them. Serde only, so one definition builds for the
-# server, a plugin and the wasm client; it depends on no other workspace crate.
+# server, a plugin and the client; it depends on no other workspace crate.
 [package]
 name = "symphony-blocks"
 version = "1.0.0"

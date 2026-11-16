@@ -1,4 +1,4 @@
-//! The native Symphony server and Dioxus client host.
+//! The native Symphony server, which serves the web client it embeds.
 //!
 //! `symphony-server` owns the app's port. There is one per machine: its record, lock, log and the
 //! registry of the projects it serves live in the machine folder ([`home::Home::ensure`],
@@ -13,7 +13,6 @@ mod backstop;
 pub mod binary;
 pub mod cli;
 mod client;
-pub mod development;
 mod file_body;
 pub mod front;
 pub mod gate;

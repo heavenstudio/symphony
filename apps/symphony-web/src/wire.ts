@@ -48,8 +48,6 @@ export const SYMPHONY_ROUTES = [
   "doc",
   "history",
   "diff",
-  "wasm",
-  "_dioxus",
   "favicon.ico",
 ] as const;
 export const PAGE_NAMES = {

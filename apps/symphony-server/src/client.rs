@@ -53,7 +53,7 @@ pub(crate) fn build(dist: &Path, embedded: bool) -> String {
     } else {
         std::fs::read_to_string(dist.join("index.html")).unwrap_or_default()
     };
-    // dx writes the module script with a hashed filename. This is exactly the path the browser
+    // The build names the shell's script by its content. This is exactly the path the browser
     // compares with Board.build.
     shell
         .split("src=\"")

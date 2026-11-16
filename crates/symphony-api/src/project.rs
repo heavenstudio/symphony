@@ -183,8 +183,6 @@ pub const SYMPHONY_ROUTES: &[&str] = &[
     "doc",
     "history",
     "diff",
-    "wasm",
-    "_dioxus",
     "favicon.ico",
 ];
 

@@ -106,7 +106,7 @@ fn the_guides_and_the_documents_are_held_and_the_records_are_not() {
         "AGENTS.md",
         "README.md",
         "crates/tasks/AGENTS.md",
-        "apps/symphony-ui/AGENTS.md",
+        "apps/symphony-web/AGENTS.md",
         "crates/symphony-api/README.md",
         "docs/README.md",
         "docs/TASKS.md",

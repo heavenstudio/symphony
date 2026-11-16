@@ -68,11 +68,10 @@ of the test's own in that folder (`symphony_board::server::Home`, ending with th
 as the app follows it. It builds `symphony-server` through `tools/rs-bin.sh --build`, or takes it
 from the folder `SYMPHONY_TEST_BINARIES` names, and runs the pinned SurrealDB as the board's tests
 do (`SYMPHONY_SURREAL`, else `tools/surreal.sh`). The stub's test is the browser target's `desktop_stub`
-(`apps/symphony-ui/tests/browser/desktop_stub.rs`): home behind another tab, its count rising,
+(`apps/symphony-web-tests/tests/browser/desktop_stub.rs`): home behind another tab, its count rising,
 notifies under a browser's granted permission and neither throws nor notifies under the stub.
 
-tao, wry, tray-icon and the objc2 crates are this package's alone, at the versions Dioxus desktop
-0.7.10 builds on, and macOS-only: `tools/cargo.sh tree -p symphony-app`, `-p symphony-server` and
+tao, wry, tray-icon and the objc2 crates are this package's alone and macOS-only: `tools/cargo.sh tree -p symphony-app`, `-p symphony-server` and
 `-p symphony-board` name none of them.
 
 ## Not in it yet

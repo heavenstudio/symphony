@@ -6,7 +6,8 @@ import { minify } from "vite";
 
 const { code, errors } = await minify("shell.js", await text(process.stdin), { module: true });
 if (errors.length > 0) {
-  for (const error of errors) console.error(`symphony-web: the shell does not minify: ${error.message}`);
+  for (const error of errors)
+    console.error(`symphony-web: the shell does not minify: ${error.message}`);
   process.exit(1);
 }
 process.stdout.write(code.endsWith("\n") ? code : `${code}\n`);

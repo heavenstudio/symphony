@@ -1,5 +1,5 @@
 //! The Symphony's wire types: the JSON the server (`apps/symphony-server`) sends and the client
-//! (`apps/symphony-ui`) reads. Serde only, so one definition builds for the server and for wasm32.
+//! (`apps/symphony-web`) reads through its generated TypeScript. Serde only.
 //!
 //! The board view, the front page `/`:
 //!
@@ -470,7 +470,7 @@ pub struct ActivityItem {
     pub answered: bool,
 }
 
-/// The task board's read records. These stay serde-only so native and wasm clients share them.
+/// The task board's read records. These stay serde-only.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct Task {
