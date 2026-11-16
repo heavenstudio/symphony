@@ -140,7 +140,8 @@ describe("the timeline's box", () => {
     expect(placeholders(0)).toBe(1);
     expect(placeholders(LEAST)).toBe(1);
     expect(placeholders(NARROW)).toBe(3);
-    expect(placeholders(WIDE)).toBe(6);
+    expect(placeholders(WIDE)).toBe(9);
+    expect(placeholders(408)).toBe(6);
     expect(placeholders(5000)).toBe(9);
     // A row more for each 46 px past the first 90.
     expect([181, 182, 136, 135].map(placeholders)).toEqual([1, 2, 1, 1]);
@@ -214,6 +215,11 @@ describe("the timeline's box", () => {
       ".tl-box:has(.tl-failed) {\n  height: auto;\n  min-height: var(--tl-narrow);\n}",
     );
     expect(style).toContain("  .tl-box:has(.tl-failed) {\n    min-height: var(--tl-wide);\n  }\n}");
+    // On a phone, a box that holds every step grows with a run's row a tap focused, never under
+    // its height; one that clips keeps it.
+    expect(style).toContain(
+      "@media (max-width: 899.98px) {\n  .tl-box:has(.tl-drawn:not(.tl-clipped) .tl-sub:focus) {\n    height: auto;\n    min-height: var(--tl-narrow);\n  }\n}",
+    );
     // The timeline is laid out where the shell put its root, which the box still holds.
     expect(style).toContain('.tl-box > [id="timeline-root"]:not([hidden]) {');
     for (const written of ["#", "rgb(", "rgba(", "hsl("]) expect(style).not.toContain(written);

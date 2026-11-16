@@ -18,9 +18,11 @@ import {
   gateChanges,
   gateTone,
   keptNote,
+  type Lane,
   LONGEST_WAIT,
   label,
   lanes,
+  lasted,
   legendStates,
   lookClass,
   machineSeconds,
@@ -29,7 +31,7 @@ import {
   PAD_PX,
   queuedSeconds,
   type Row,
-  RUN_ROWS,
+  RUN_GAP,
   ran,
   readTimeline,
   reason,
@@ -40,6 +42,7 @@ import {
   runLabel,
   runRow,
   runRows,
+  runTitle,
   Scale,
   short,
   shortCommit,
@@ -54,6 +57,7 @@ import {
   verdictTone,
   verdictWord,
   WIDTHS,
+  WORDED_ROWS,
   waited,
   widthFor,
 } from "./timeline-layout";
@@ -347,6 +351,24 @@ describe("a task's timeline laid out", () => {
     for (const [seconds, words] of cases) expect(took(seconds), `${seconds} s`).toBe(words);
   });
 
+  it("a run's length reads to the second under a minute, else to the minute", () => {
+    const cases: [number, string][] = [
+      [-5, "0 s"],
+      [0, "0 s"],
+      [0.44, "0 s"],
+      [0.5, "1 s"],
+      [47, "47 s"],
+      [59.49, "59 s"],
+      // Half a second short of a minute rounds to it: a minute, never "60 s".
+      [59.5, "1 m"],
+      [60, "1 m"],
+      [3292.14, "55 m"],
+      [6720, "1 h 52 m"],
+      [Number.NaN, "0 s"],
+    ];
+    for (const [seconds, words] of cases) expect(lasted(seconds), `${seconds} s`).toBe(words);
+  });
+
   it("a time reads on the server's local clock and its day by the calendar", () => {
     const midnight = 20_768 * 86_400;
     expect(clock(midnight, 0)).toBe("00:00");
@@ -415,8 +437,8 @@ describe("a task's timeline laid out", () => {
     expect(said(listed)).toEqual([
       ["09:02", "Ready, unclaimed", "41 m", "", false],
       ["09:43", "In progress · quiet-wren", "1 h 52 m", "", false],
-      // A build that went green says no more than that it was built.
-      ["10:28", "Build · queued 3 m", "4 m", "", true],
+      // A build is named by its command; one that went green says no more than that it was built.
+      ["10:28", "Build, just lint-rs · queued 3 m", "4 m", "", true],
       ["10:52", "Test, just verify · queued 6 m", "24 m", "green", true],
       ["11:35", "Review, round 1 · lucid-heron", "52 m", "changes", false],
       ["12:27", "In progress again", "1 h 10 m", "", false],
@@ -450,7 +472,13 @@ describe("a task's timeline laid out", () => {
     expect(listed[11]?.title).toBe("Main moved: verify on the merge tree 4be91c2 running");
     expect(listed[12]?.tone).toBe("primary");
     expect(listed[3]?.tone).toBe("like");
-    expect(listed[9]?.title).toContain("queued 5 m");
+    // A run's row says all of it: what it ran, its wait and its run time apart, and where.
+    expect(listed[9]?.title).toBe(
+      "Test, certificate verify · waited 5 m · ran 24 m · green · at e19d3a0 on studio",
+    );
+    expect(listed[2]?.title).toBe(
+      "Build, just lint-rs · waited 3 m · ran 4 m · green · at 9ac5149 by quiet-wren on studio",
+    );
     expect(listed[0]?.title).toBe(
       "Ready, unclaimed: from 09:02 to 09:43, moved there by glacial-merlin",
     );
@@ -550,7 +578,11 @@ describe("a task's timeline laid out", () => {
     // Six stages and three gate changes.
     expect(listed).toHaveLength(9);
     expect(totals(timeline)[1]).toBeNull();
-    expect(lanes(timeline).lanes.every((lane) => lane.key !== "runs")).toBe(true);
+    expect(lanes(timeline).lanes.map((lane) => lane.key)).toEqual([
+      "stage",
+      "executor",
+      "reviewer",
+    ]);
   });
 
   it("a timeline over two days marks each day's first row", () => {
@@ -664,7 +696,7 @@ describe("a task's timeline laid out", () => {
     });
     expect(rows(at100).map((row) => row.label)).toEqual([
       "In progress",
-      "Build",
+      "Build, just lint-rs",
       "Test, just verify",
       "Check met",
     ]);
@@ -674,7 +706,11 @@ describe("a task's timeline laid out", () => {
       runs: [aRun("build", "just lint-rs", "a", [0, 0, 200])],
       gates: [met(-0)],
     };
-    expect(rows(zeros).map((row) => row.label)).toEqual(["In progress", "Check met", "Build"]);
+    expect(rows(zeros).map((row) => row.label)).toEqual([
+      "In progress",
+      "Check met",
+      "Build, just lint-rs",
+    ]);
   });
 
   it("a word is drawn only at the track widths its room holds it", () => {
@@ -759,7 +795,9 @@ describe("a task's timeline laid out", () => {
       ["Stage", "", 1],
       ["Executor", "quiet-wren", 1],
       ["Reviewer", "lucid-heron", 1],
-      ["Builds & tests", "studio", 1],
+      // The builds and the tests each a lane of their own, never one.
+      ["Builds", "studio", 1],
+      ["Tests", "studio", 1],
     ]);
     expect(texts("stage", 950)).toEqual([
       "ready 41 m",
@@ -790,16 +828,38 @@ describe("a task's timeline laid out", () => {
       ["changes", "dislike"],
       ["approved", "like"],
     ]);
-    expect(
-      lane("runs")
+    const unders = (key: string, px: number) =>
+      lane(key)
         ?.segs.filter((seg) => seg.under !== null)
-        .map((seg) => shown([seg.under?.[0] as Fit], 950)),
-    ).toEqual(["build 4 m", "verify 24 m", "verify 23 m", "certificate 24 m", "running 18 m"]);
-    // On the narrowest track the build's label would meet the next run's: it is left out.
-    expect(shown([lane("runs")?.segs[0]?.under?.[0] as Fit], 600)).toBe("");
-    const looks = lane("runs")?.segs.map((seg) => seg.look) ?? [];
+        .map((seg) => shown([seg.under?.[0] as Fit], px));
+    expect(unders("builds", 950)).toEqual(["lint-rs 4 m"]);
+    expect(unders("tests", 950)).toEqual([
+      "verify 24 m",
+      "verify 23 m",
+      "certificate 24 m",
+      "running 18 m",
+    ]);
+    // Alone in its lane, the build's label has room to the track's end on the narrowest track.
+    expect(unders("builds", 600)).toEqual(["lint-rs 4 m"]);
+    const looks = lane("tests")?.segs.map((seg) => seg.look) ?? [];
     expect(looks.filter((look) => look === "running")).toHaveLength(1);
     expect(looks.at(-1)).toBe("running");
+    expect(lane("builds")?.segs.map((seg) => seg.look)).toEqual(["waiting", "solid"]);
+    // A run's part says its command, its wait and its run time apart: the one the keyboard stops
+    // at, and its queue's, which a pointer rests on.
+    expect(lane("builds")?.segs.map((seg) => [seg.title, seg.stop])).toEqual([
+      [
+        "Build, just lint-rs · waited 3 m · ran 4 m · green · at 9ac5149 by quiet-wren on studio",
+        false,
+      ],
+      [
+        "Build, just lint-rs · waited 3 m · ran 4 m · green · at 9ac5149 by quiet-wren on studio",
+        true,
+      ],
+    ]);
+    expect(lane("tests")?.segs.at(-1)?.title).toBe(
+      "Test, certificate verify · waited 10 m · ran 18 m so far · at 4be91c2 on studio",
+    );
     expect(drawn.gates.map((gate) => [gate.name, gate.spans.map((span) => span.state)])).toEqual([
       ["certificate", ["missing", "met", "missing"]],
       ["dependency", ["missing", "waived"]],
@@ -820,37 +880,223 @@ describe("a task's timeline laid out", () => {
       return [segs.length, segs.filter((seg) => seg.stop).length];
     };
     expect(parts("reviewer")).toEqual([4, 2]);
-    expect(parts("runs")).toEqual([10, 5]);
-    expect(stops(drawn)).toBe(6 + 2 + 2 + 5 + 3 + 2 + 1 + 3);
+    expect(parts("builds")).toEqual([2, 1]);
+    expect(parts("tests")).toEqual([8, 4]);
+    expect(stops(drawn)).toBe(6 + 2 + 2 + 1 + 4 + 3 + 2 + 1 + 3);
     expect(legendStates(drawn)).toEqual(["met", "missing", "waived"]);
   });
 
-  it("runs that overlap take a row each, and a fourth shares the row that frees first", () => {
+  it("runs that overlap or meet take a row each, as many as they need, never one bar", () => {
     const runs = [
-      aRun("build", "just lint-rs", "a", [0, 10, 100]),
+      aRun("test", "just lint-rs", "a", [0, 10, 100]),
       aRun("test", "just verify", "a", [20, 30, 60]),
       aRun("test", "just verify", "b", [40, 50, 90]),
+      // A fourth over the three: a row of its own, never drawn over another's.
       aRun("test", "just verify", "c", [45, 50, 80]),
       // After the second's end: back in its row.
       aRun("test", "just verify", "d", [70, 75, 95]),
     ];
-    expect(runRows(runs, 200)).toEqual([[0, 1, 2, 1, 1], RUN_ROWS]);
+    expect(runRows(runs, 200)).toEqual([[0, 1, 2, 3, 1], 4]);
+    // Ten seconds after the second's end is far enough apart to share its row, nine is not.
+    expect(runRows(runs, 200, 10)).toEqual([[0, 1, 2, 3, 1], 4]);
+    expect(runRows(runs, 200, 11)).toEqual([[0, 1, 2, 3, 4], 5]);
     expect(runRows(runs.slice(0, 1), 200)).toEqual([[0], 1]);
     expect(runRows([], 200)).toEqual([[], 1]);
-    // One after another: one row.
+    // One after another: one row, unless they meet within the gap.
     const apart = [
-      aRun("build", "just lint-rs", "a", [0, 10, 20]),
+      aRun("test", "just lint-rs", "a", [0, 10, 20]),
       aRun("test", "just verify", "a", [20, 30, 60]),
     ];
     expect(runRows(apart, 200)[0]).toEqual([0, 0]);
-    // A label has room up to the next run in its own row.
-    const drawn = lanes({ ...pictures(), runs });
-    const lane = drawn.lanes.find((one) => one.key === "runs");
-    expect(lane?.rows).toBe(RUN_ROWS);
-    expect(lane?.segs.map((seg) => seg.row)).toEqual([0, 0, 1, 1, 2, 2, 1, 1, 1, 1]);
-    // Rows that free at once: the first of them is shared.
-    const tied = [0, 1, 2, 3].map((n) => aRun("test", "x", "a", [0, 1, 50 + n * 0]));
-    expect(runRows(tied, 200)[0]).toEqual([0, 1, 2, 0]);
+    expect(runRows(apart, 200, 1)).toEqual([[0, 1], 2]);
+    // One still running holds its row until now.
+    const running = [
+      aRun("test", "just verify", "a", [0, 10, null]),
+      aRun("test", "just verify", "b", [150, 160, 170]),
+    ];
+    expect(runRows(running, 200)[0]).toEqual([0, 1]);
+    expect(runRows(running, 100)[0]).toEqual([0, 0]);
+    // Rows that free at once: each run its own while they overlap, the first freed taken after.
+    const tied = [0, 1, 2, 3].map(() => aRun("test", "x", "a", [0, 1, 50]));
+    expect(runRows(tied, 200)).toEqual([[0, 1, 2, 3], 4]);
+    expect(runRows([...tied, aRun("test", "x", "a", [50, 51, 60])], 200)[0]).toEqual([
+      0, 1, 2, 3, 0,
+    ]);
+  });
+
+  it("a lane's runs are drawn a row each where they overlap or meet, a label room to the next", () => {
+    // Twenty thousand seconds drawn: runs a hundred seconds apart or nearer meet.
+    const gap = (20_000 * RUN_GAP) / 100;
+    expect(gap).toBe(100);
+    const tests = [
+      aRun("test", "just verify", "a", [0, 100, 4000]),
+      aRun("test", "just test-rs -p symphony-board", "a", [1000, 1100, 3000]),
+      aRun("test", "just test-rs -p symphony-api", "b", [2000, 2100, 3500]),
+      aRun("test", "just test-rs -p symphony-web-tests", "c", [2500, 2600, 3800]),
+      // Fifty seconds after the second's end: it meets it, so it takes a row of its own.
+      aRun("test", "just verify", "d", [3050, 3100, 5000]),
+      // A thousand after the first's: back in its row.
+      aRun("test", "just verify", "d", [5000, 5000, 6000]),
+    ];
+    const build = aRun("build", "just lint-rs", "a", [0, 50, 6000]);
+    const timeline = aTimeline({ now: 20_000, created: 0, runs: [build, ...tests] });
+    const drawn = lanes(timeline);
+    const lane = (key: string) => drawn.lanes.find((one) => one.key === key) as Lane;
+    // The build overlaps every test, and has a lane and a row of its own.
+    expect([lane("builds").rows, lane("builds").segs.map((seg) => seg.row)]).toEqual([1, [0, 0]]);
+    expect(lane("tests").rows).toBe(5);
+    expect(lane("tests").segs.map((seg) => seg.row)).toEqual([0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 0, 0]);
+    // No two runs in one row are nearer than the gap: each is its own bar.
+    for (const row of [0, 1, 2, 3, 4]) {
+      const spans = tests
+        .filter((_, index) => lane("tests").segs[index * 2]?.row === row)
+        .map((run) => [run.queued, run.ended ?? 20_000] as const);
+      for (let at = 1; at < spans.length; at += 1) {
+        expect((spans[at]?.[0] as number) - (spans[at - 1]?.[1] as number)).toBeGreaterThanOrEqual(
+          gap,
+        );
+      }
+    }
+    // The first test's label has room up to the run after it in its row, the last to the end.
+    const rooms = lane("tests")
+      .segs.filter((seg) => seg.under !== null)
+      .map((seg) => [seg.under?.[1].room, seg.under?.[1].last]);
+    expect(rooms[0]).toEqual([25, false]);
+    expect(rooms.at(-1)).toEqual([75, true]);
+    expect(drawn.lanes.map((one) => one.dense)).toEqual([false, false, false]);
+  });
+
+  it("a lane of more rows than WORDED_ROWS draws them thin, every run its own bar, no word under", () => {
+    // A burst of tests a minute apart on a timeline of five days: each meets the one before it,
+    // and needs a row of its own.
+    const days = 5 * 86_400;
+    const burst = (count: number) =>
+      Array.from({ length: count }, (_, at) =>
+        aRun("test", `just test-rs -p p${at}`, "a", [
+          days - 3600 + at * 60,
+          days - 3600 + at * 60 + 1,
+          days - 3600 + at * 60 + 30,
+        ]),
+      );
+    const drawn = (count: number) =>
+      lanes(
+        aTimeline({
+          now: days,
+          created: 0,
+          runs: [aRun("build", "just lint-rs", "a", [0, 50, 600]), ...burst(count)],
+        }),
+      );
+    const tests = (count: number) => drawn(count).lanes.find((one) => one.key === "tests") as Lane;
+    // As many rows as WORDED_ROWS: each run's words still under its bar.
+    expect([tests(WORDED_ROWS).rows, tests(WORDED_ROWS).dense]).toEqual([WORDED_ROWS, false]);
+    expect(tests(WORDED_ROWS).segs.filter((seg) => seg.under !== null)).toHaveLength(WORDED_ROWS);
+    // One more: thin rows and no word under any of them; each run still a part the keyboard
+    // stops at, its words its own.
+    const dense = tests(WORDED_ROWS + 3);
+    expect([dense.rows, dense.dense]).toEqual([WORDED_ROWS + 3, true]);
+    expect(dense.segs.map((seg) => seg.row)).toEqual(
+      Array.from({ length: WORDED_ROWS + 3 }, (_, at) => [at, at]).flat(),
+    );
+    expect(dense.segs.every((seg) => seg.under === null)).toBe(true);
+    expect(dense.segs.filter((seg) => seg.stop).map((seg) => seg.title.split(" · ")[0])).toEqual(
+      Array.from({ length: WORDED_ROWS + 3 }, (_, at) => `Test, just test-rs -p p${at}`),
+    );
+    // The builds' lane is drawn as before, its word under its bar.
+    const builds = drawn(WORDED_ROWS + 3).lanes.find((one) => one.key === "builds") as Lane;
+    expect([builds.dense, builds.segs.some((seg) => seg.under !== null)]).toEqual([false, true]);
+  });
+
+  it("the owner's case reads as it ran: a 55-minute build, then another of 8, each named", () => {
+    // perf/client-distribution-keeps-every-build, from the recorder's day files: a cold build of
+    // the full install, a rebuild after a touch, a cold build of the pruned one, and a test and the
+    // client's builds over it.
+    const created = 1_794_485_013.498;
+    const run = (
+      phase: string,
+      recipe: string,
+      [queued, started, ended]: [number, number, number],
+    ) => ({
+      ...aRun(phase, recipe, "glacial-ibis", [queued, started, ended]),
+      commit: "329c98640a491148c96e9da99ebdd2f2d0a3f8c8",
+      host: "Stefanos-MacBook-Pro.local",
+    });
+    const runs = [
+      run(
+        "build",
+        "cargo install symphony-server (cold-full)",
+        [1_794_485_256.2, 1_794_485_256.64, 1_794_488_548.78],
+      ),
+      run(
+        "build",
+        "cargo install symphony-server (touch-full)",
+        [1_794_488_602.28, 1_794_488_602.52, 1_794_489_109.33],
+      ),
+      run(
+        "build",
+        "cargo install symphony-server (cold-pruned)",
+        [1_794_489_150.22, 1_794_489_150.74, 1_794_491_176.22],
+      ),
+      run(
+        "test",
+        "just test-rs -p symphony --lib -- cli::publish reload::build_tests",
+        [1_794_489_874.0, 1_794_489_874.11, 1_794_490_072.58],
+      ),
+      run("build", "just client-update", [1_794_490_223.53, 1_794_490_223.7, 1_794_491_103.93]),
+    ];
+    const timeline = aTimeline({
+      now: 1_794_863_486.18,
+      zone: [{ from: created, seconds: 3600 }],
+      created,
+      closed: 1_794_494_770.6,
+      stages: [aStage({ status: "in_progress", from: created, to: 1_794_494_770.6 })],
+      runs,
+    });
+    const drawn = lanes(timeline);
+    const lane = (key: string) => drawn.lanes.find((one) => one.key === key) as Lane;
+    // The builds in a lane, the test in another, each a bar of its own: the pruned one's cold
+    // build, queued 41 s after the touched rebuild ended, would meet it, and takes a row of its
+    // own; the client's build, over it, the first row, free by then.
+    expect(
+      lane("builds")
+        .segs.filter((seg) => seg.stop)
+        .map((seg) => [seg.row, seg.title]),
+    ).toEqual([
+      [
+        0,
+        "Build, cargo install symphony-server (cold-full) · waited 0 s · ran 55 m · green · at 329c986 by glacial-ibis on Stefanos-MacBook-Pro.local",
+      ],
+      [
+        0,
+        "Build, cargo install symphony-server (touch-full) · waited 0 s · ran 8 m · green · at 329c986 by glacial-ibis on Stefanos-MacBook-Pro.local",
+      ],
+      [
+        1,
+        "Build, cargo install symphony-server (cold-pruned) · waited 1 s · ran 34 m · green · at 329c986 by glacial-ibis on Stefanos-MacBook-Pro.local",
+      ],
+      [
+        0,
+        "Build, just client-update · waited 0 s · ran 15 m · green · at 329c986 by glacial-ibis on Stefanos-MacBook-Pro.local",
+      ],
+    ]);
+    expect(
+      lane("tests")
+        .segs.filter((seg) => seg.stop)
+        .map((seg) => seg.title),
+    ).toEqual([
+      "Test, just test-rs -p symphony --lib -- cli::publish reload::build_tests · waited 0 s · ran 3 m · green · at 329c986 by glacial-ibis on Stefanos-MacBook-Pro.local",
+    ]);
+    // On a phone each is a row named by its command, its run time beside it.
+    expect(
+      rows(timeline)
+        .filter((row) => row.sub)
+        .map((row) => [row.at, row.label, row.took]),
+    ).toEqual([
+      ["13:07", "Build, cargo install symphony-server (cold-full)", "55 m"],
+      ["14:03", "Build, cargo install symphony-server (touch-full)", "8 m"],
+      ["14:12", "Build, cargo install symphony-server (cold-pruned)", "34 m"],
+      ["14:24", "Test, just test-rs -p symphony --lib -- cli::publish reload::build_tests", "3 m"],
+      ["14:30", "Build, just client-update", "15 m"],
+    ]);
   });
 
   it("a run's label says its result unless it went green", () => {
@@ -859,13 +1105,16 @@ describe("a task's timeline laid out", () => {
     const queued = { ...aRun("test", "just verify", "a", [0, 1, null]), result: "queued" as const };
     expect(short(queued)).toBe("verify queued");
     expect(short(aRun("test", "just verify", null, [0, 1, null]))).toBe("running");
+    // A build is named by its command as a test is: its lane says it is a build.
     const build = aRun("build", "just lint-rs", "a", [0, 1, 60]);
-    expect(short(build)).toBe("build");
+    expect(short(build)).toBe("lint-rs");
     const redBuild = { ...build, result: "red" as const };
-    expect(short(redBuild)).toBe("build red");
-    // A red build says so in the list too.
+    expect(short(redBuild)).toBe("lint-rs red");
+    // A red build says so in the list too, by its command.
     expect(runRow(redBuild, pictures(), () => 1).word).toEqual(["red", "dislike"]);
-    expect(runLabel(redBuild, 120)).toBe("Build · queued 2 m");
+    expect(runLabel(redBuild, 120)).toBe("Build, just lint-rs · queued 2 m");
+    // A wait of less than a minute is not said in the label.
+    expect(runLabel(redBuild, 59)).toBe("Build, just lint-rs");
     const gate = aRun("test", "certificate verify", null, [0, 1, 60]);
     expect(runLabel(gate, 600)).toBe("Certificate verify · 0123456");
     // A run of a recipe with no `just`, ended unknown: its first word and "ended".
@@ -894,10 +1143,52 @@ describe("a task's timeline laid out", () => {
     expect([row.label, row.took, row.title]).toEqual([
       "Test, just verify · queued 15 m",
       "15 m",
-      "just verify: queued by a, queued 15 m",
+      "Test, just verify · waited 15 m so far · not started yet · by a",
     ]);
     expect(row.bar).toEqual({ wait: 90, waitTone: "primary", work: 0, running: false });
     expect(row.word).toEqual(["queued", "primary"]);
+    // A short run's row says its seconds, never "0 m".
+    const quick = runRow(aRun("test", "just test-rs", "a", [990, 991, 997]), timeline, () => 1);
+    expect([quick.label, quick.took]).toEqual(["Test, just test-rs", "6 s"]);
+  });
+
+  it("a run's words say its command, its wait and its run time apart, and how it ended", () => {
+    const run = aRun(
+      "build",
+      "cargo install symphony-server (cold-full)",
+      "glacial-ibis",
+      [100, 100.44, 3392.58],
+    );
+    expect(runTitle(run, 5000)).toBe(
+      "Build, cargo install symphony-server (cold-full) · waited 0 s · ran 55 m · green · " +
+        "at 0123456 by glacial-ibis on studio",
+    );
+    // Red, or ended with no word of how: said after its times.
+    expect(runTitle({ ...run, result: "red" }, 5000)).toContain(" · ran 55 m · red · at ");
+    expect(runTitle({ ...run, result: "unknown" }, 5000)).toContain(" · ran 55 m · ended · at ");
+    // Going on: its run time so far, and no word of an end.
+    const running = { ...run, ended: null, result: "running" as const };
+    expect(runTitle(running, 1300.44)).toBe(
+      "Build, cargo install symphony-server (cold-full) · waited 0 s · ran 20 m so far · " +
+        "at 0123456 by glacial-ibis on studio",
+    );
+    // Waiting still, or ended before it started (its recorder lost).
+    const queued = { ...run, started: null, ended: null, result: "queued" as const };
+    expect(runTitle(queued, 145)).toBe(
+      "Build, cargo install symphony-server (cold-full) · waited 45 s so far · not started yet · " +
+        "at 0123456 by glacial-ibis on studio",
+    );
+    const lost = { ...run, started: null, ended: 400, result: "unknown" as const };
+    expect(runTitle(lost, 5000)).toBe(
+      "Build, cargo install symphony-server (cold-full) · waited 5 m · never started · ended · " +
+        "at 0123456 by glacial-ibis on studio",
+    );
+    // Nobody's run, with no commit or machine said: what it ran and its times alone.
+    const bare = { ...run, by: null, commit: null, host: "" };
+    expect(runTitle(bare, 5000)).toBe(
+      "Build, cargo install symphony-server (cold-full) · waited 0 s · ran 55 m · green",
+    );
+    expect(runTitle({ ...bare, host: "studio" }, 5000)).toMatch(/ · green · on studio$/);
   });
 
   it("a long timeline marks fewer hours, and a midnight by its date", () => {
@@ -972,7 +1263,9 @@ describe("a task's timeline laid out", () => {
     expect(rows(empty)).toEqual([]);
     expect(totals(empty)).toEqual(["0 m so far · 0 review rounds · 0 bounces", null]);
     const drawn = lanes(empty);
-    expect(drawn.lanes).toEqual([{ key: "stage", name: "Stage", who: "", rows: 1, segs: [] }]);
+    expect(drawn.lanes).toEqual([
+      { key: "stage", name: "Stage", who: "", rows: 1, dense: false, segs: [] },
+    ]);
     // Nothing to draw before now: no hour marked, and now at its start (20:00 UTC, no zone).
     expect(drawn.ticks).toEqual([]);
     expect(drawn.now).toEqual({ left: 0, label: "now 20:00" });
@@ -1144,9 +1437,11 @@ describe("a task's timeline laid out", () => {
       "@media (max-width: 899.98px) {\n  .tl-drawn {\n    padding-right: 40px;\n  }",
     );
     // A phone's clipped list is drawn from its end, the latest steps in view, and fades out at its
-    // top; the lanes are never clipped, and no fade is drawn wide.
+    // top, a run's row a tap focused growing upward into the totals' room; the lanes are never
+    // clipped, and no fade is drawn wide.
+    expect(phone).toContain("  .tl-clipped:has(.tl-sub:focus) .tl-head {\n    display: none;\n  }");
     expect(phone).toContain(
-      '  .tl-clipped .tl-body {\n    display: flex;\n    flex-direction: column;\n    justify-content: flex-end;\n  }\n  .tl-clipped .tl-list {\n    flex: none;\n  }\n  .tl-clipped .tl-body::after {\n    content: "";\n    position: absolute;\n    left: 0;\n    right: 0;\n    top: 0;\n    height: 28px;\n    background: linear-gradient(var(--card), transparent);\n    pointer-events: none;\n  }\n}',
+      '  .tl-clipped .tl-body {\n    display: flex;\n    flex-direction: column;\n    justify-content: flex-end;\n  }\n  .tl-clipped .tl-list {\n    flex: none;\n  }\n  .tl-clipped .tl-body::after {\n    content: "";\n    position: absolute;\n    left: 0;\n    right: 0;\n    top: 0;\n    height: 28px;\n    background: linear-gradient(var(--card), transparent);\n    pointer-events: none;\n  }\n',
     );
     expect(CSS.split("::after")).toHaveLength(2);
     expect(wide).not.toContain("tl-clipped");
@@ -1161,7 +1456,33 @@ describe("a task's timeline laid out", () => {
     expect(CSS).not.toContain("min-height: 1.3em");
     expect(phone).toContain(".tl-detail {\n  flex: 1 1 0;\n");
     expect(CSS).not.toContain("flex-basis: 100%");
+    expect(wide).toContain("  .tl-detail.tl-wide {\n    display: block;\n  }");
     expect(wide).toContain("  .tl-foot:has(.tl-detail) .tl-legend {\n    display: none;\n  }");
+    expect(phone).not.toContain(":has(.tl-detail)");
+    // A run's row a tap focused says all of the run under its bar, across the row, and nothing
+    // while it has no focus: the foot keeps the legend on a phone. The row with the focus is tinted,
+    // over no word of it, where an outline would cross its time and its length.
+    expect(phone).toContain(
+      ".tl-sub:focus {\n  outline: none;\n  border-radius: 6px;\n  background: color-mix(in srgb, var(--primary) 14%, transparent);\n}",
+    );
+    expect(phone).toContain(".tl-facts {\n  display: none;\n}");
+    expect(phone).toContain(
+      ".tl-sub:focus .tl-facts {\n  grid-column: 1 / -1;\n  display: block;\n  margin-top: 4px;\n",
+    );
+    expect(wide).not.toContain("tl-facts");
+    // The builds' lane and the tests' are drawn alike, a row each for runs that overlap.
+    expect(phone).toContain(
+      '.tl-lane:is([data-lane="builds"], [data-lane="tests"]) .tl-track {\n  height: calc(var(--rows) * 42px + 4px);\n}',
+    );
+    expect(CSS).not.toContain('data-lane="runs"');
+    // A lane of more rows than its runs' words are drawn for draws them thin, after the rule it
+    // overrides.
+    const thin =
+      ".tl-lane[data-dense] .tl-track {\n  height: calc(var(--rows) * 12px + 4px);\n}\n.tl-lane[data-dense] .tl-seg {\n  top: calc(var(--row) * 12px + 4px);\n  height: 8px;\n";
+    expect(phone).toContain(thin);
+    expect(CSS.indexOf(thin)).toBeGreaterThan(
+      CSS.indexOf('.tl-lane:is([data-lane="builds"], [data-lane="tests"]) .tl-seg {'),
+    );
     // The gate states' marks are in the legend wide only, beside the lanes that draw them: a rule
     // as specific as the legend's items' own hides them on a phone.
     expect(phone).toContain(".tl-legend .tl-wide {\n  display: none;\n}");
