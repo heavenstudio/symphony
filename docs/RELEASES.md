@@ -153,7 +153,8 @@ and compares every file with that version's `.crate` from crates.io, Cargo's own
 `.cargo_vcs_info.json` and `Cargo.lock` aside. A difference is red, naming the package and the
 files that differ: its version must move before a release publishes it. A version crates.io does
 not list yet is green, with nothing to compare, and a crates.io it cannot read is red too
-(exit 2). It reads crates.io and publishes nothing, so it is cheap enough for the evidence of a
+(exit 2): a read that got no answer, or a server's error, is tried three times before it is. It
+reads crates.io and publishes nothing, so it is cheap enough for the evidence of a
 task that changes a published package; in the release run, its red is a step's
 (`tests/release-red-verify-crates-check`).
 
