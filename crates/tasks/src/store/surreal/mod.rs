@@ -71,16 +71,24 @@ pub(in crate::store) const THREADS: &str = "RETURN {
     threads: $slugs.map(|$slug| (SELECT * OMIT id FROM message:[$slug, NONE]..[$slug, ..])),
 };";
 
-/// A rule's write ([`WRITE`]) with what its change adds: the move's `reason` posted after its
-/// line, the task's `needs` written, a change of status (`moved`, whether to cancelled) settling
-/// its hold and its dependants, and the slot counters it `holds` guarded.
+/// A rule's write ([`WRITE`]) with what its change adds: what a block waited on removed by a
+/// change of status out of blocked, what it waits on written (`blocked`), the move's `reason`
+/// posted after its line, the task's `needs` written, a change of status (`moved`, whether to
+/// cancelled) settling its hold and its dependants, and the slot counters it `holds` guarded.
 pub(in crate::store) fn rule(
     reason: bool,
     needs: bool,
+    blocked: bool,
     moved: Option<bool>,
     holds: bool,
 ) -> String {
     let mut body = String::from(WRITE);
+    if moved.is_some() {
+        body.push_str(work::UNBLOCKED);
+    }
+    if blocked {
+        body.push_str(work::BLOCKED_WRITTEN);
+    }
     if reason {
         body.push('\n');
         body.push_str(&work::reason_written());

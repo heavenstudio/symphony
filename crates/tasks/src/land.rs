@@ -1952,8 +1952,9 @@ impl Landing<'_> {
     /// The refusal of a land whose task lacks the stamps `missing` at `tip` ([`needs::refusal`]),
     /// said on the thread to its executor when a stamp of its is missing. One waiting on the owner
     /// alone is said to its orchestrator, and waits: held blocked from review
-    /// ([`Store::hold_blocked`], which keeps its slot), blocked or done as it is (a task its approve
-    /// left done stays done, the approve standing), the owner giving the stamp on its page.
+    /// ([`Store::hold_blocked_on`], which keeps its slot, the block naming the owner's stamp,
+    /// `check:owner`), blocked or done as it is (a task its approve left done stays done, the
+    /// approve standing), the owner giving the stamp on its page.
     fn lacks(&self, task: &Task, tip: &str, missing: &[needs::Missing]) -> Stop {
         let slug = self.slug;
         let (line, to) = needs::refusal(slug, tip, missing);
@@ -1968,8 +1969,15 @@ impl Landing<'_> {
                 "waiting on the owner's approve of {at}, which the owner gives on the task's page \
                  (its Approve {at}); land it again once it is given"
             );
+            // The hold names what it waits on: the owner's approve stamp of the tip.
+            let thing = format!("{}:{}", crate::waits_on::CHECK, needs::OWNER);
+            let why = format!("the owner's approve of {at}");
+            let on = crate::On {
+                thing: &thing,
+                why: Some(&why),
+            };
             match task.status.as_str() {
-                "review" => match self.store.hold_blocked(slug, self.actor) {
+                "review" => match self.store.hold_blocked_on(slug, self.actor, Some(on)) {
                     Ok(_) => format!("{slug} is held blocked, {waits}"),
                     Err(error) => format!(
                         "It stays in review, as the land could not hold it blocked ({error}), \

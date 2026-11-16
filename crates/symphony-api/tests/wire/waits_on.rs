@@ -10,8 +10,7 @@ use symphony_api::{TaskFields, TaskListing, Tasks, WAITS_KINDS, WaitsOn};
 fn the_listing_with_what_each_task_waits_on_reads_and_writes_back_as_the_same_json() {
     let (written, fixture) = super::round_trip::<TaskListing>("task-waits-on.json");
     assert_eq!(written, fixture);
-    let listing: TaskListing =
-        serde_json::from_str(&super::fixture("task-waits-on.json")).unwrap();
+    let listing: TaskListing = serde_json::from_str(&super::fixture("task-waits-on.json")).unwrap();
     let line = |slug: &str| {
         let task = listing.tasks.iter().find(|t| t.slug == slug).unwrap();
         (task.waits_on.clone(), task.from.clone())
@@ -39,7 +38,10 @@ fn the_listing_with_what_each_task_waits_on_reads_and_writes_back_as_the_same_js
     let health: Vec<(&str, &str)> = (listing.orchestrators.iter())
         .map(|o| (o.handle.as_str(), o.health.as_str()))
         .collect();
-    assert_eq!(health, [("glacial-heron", "left"), ("sable-finch", "stale")]);
+    assert_eq!(
+        health,
+        [("glacial-heron", "left"), ("sable-finch", "stale")]
+    );
     assert_eq!(listing.unstarted, 1);
     for task in &listing.tasks {
         if let Some(waits) = &task.waits_on {
@@ -58,12 +60,18 @@ fn a_listing_and_a_snapshot_without_the_fields_still_read() {
         .expect("an older listing reads");
     assert_eq!(listing.tasks[0].waits_on, None);
     assert_eq!(listing.tasks[0].from, None);
-    assert!(listing.orchestrators.is_empty());
+    assert_eq!(
+        listing.orchestrators,
+        Vec::<symphony_api::Orchestrator>::new()
+    );
     assert_eq!(listing.unstarted, 0);
     let tasks: Tasks =
         serde_json::from_value(json!({"version": "v", "tasks": [task], "sessions": []}))
             .expect("an older snapshot reads");
-    assert!(tasks.orchestrators.is_empty());
+    assert_eq!(
+        tasks.orchestrators,
+        Vec::<symphony_api::Orchestrator>::new()
+    );
     assert_eq!(tasks.unstarted, 0);
 }
 
@@ -96,6 +104,8 @@ fn the_kinds_are_seven_each_named_once() {
     assert_eq!(kinds.len(), WAITS_KINDS.len());
     assert_eq!(
         WAITS_KINDS,
-        ["decision", "nobody", "check", "task", "working", "queued", "parked"]
+        [
+            "decision", "nobody", "check", "task", "working", "queued", "parked"
+        ]
     );
 }

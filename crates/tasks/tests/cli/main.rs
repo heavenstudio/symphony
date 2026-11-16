@@ -14,6 +14,7 @@ mod api;
 mod asks;
 mod attach;
 mod beat;
+mod blocks;
 mod boards;
 mod close;
 mod commands;

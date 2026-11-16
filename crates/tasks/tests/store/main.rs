@@ -9,6 +9,7 @@ mod amend;
 mod asks;
 mod bindings;
 mod blocked_panes;
+mod blocks;
 mod board;
 mod callbacks;
 mod cancel;

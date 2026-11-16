@@ -58,9 +58,12 @@ pub const MAJOR: i64 = 1;
 /// over the board's `ask` table; 13: `done`'s `covered_by`, a task closed as covered by another
 /// task's landing, and `move`'s `reason`, a post saying why it moves, in the move's write; 14:
 /// `in_status_since`, when each task named took the status it holds, by slug, as `tasks list
-/// --json` carries it). Each added a method or what one takes, and none removed or changed what an
-/// earlier build took or answered, so the fourteen are minors of major 1.
-pub const MINOR: i64 = 14;
+/// --json` carries it; 15: `move`'s and `hold`'s `on` and `why`, what a block waits on
+/// ([`crate::waits_on::Thing`]) and why in a few words, kept on the task in the move's write, a
+/// block given neither recording nothing, as before). Each added a method or what one takes, and
+/// none removed or changed what an earlier build took or answered, so the fifteen are minors of
+/// major 1.
+pub const MINOR: i64 = 15;
 
 /// Why a call has no result.
 enum Fail {
@@ -255,6 +258,23 @@ fn one<F: FnOnce() -> Result<Store, String>>(call: Value, board: &mut Lazy<F>) -
 
 fn none(done: Result<(), Error>) -> Result<Py, Fail> {
     done.map(|()| Py::Null).map_err(Fail::from)
+}
+
+/// What a block waits on, as `move` and `hold` take it (`on`, `why`): none when neither is given,
+/// as before minor 15, which records nothing; a `why` alone is refused, naming nothing to give
+/// it to. The store checks the thing and the words ([`crate::Store::move_on`]).
+fn blocked_on<'a>(
+    on: Option<&'a str>,
+    why: Option<&'a str>,
+) -> Result<Option<crate::On<'a>>, Fail> {
+    match (on, why) {
+        (Some(thing), why) => Ok(Some(crate::On { thing, why })),
+        (None, None) => Ok(None),
+        (None, Some(_)) => Err(Fail::Refused(format!(
+            "a block's why goes with what it waits on (`on`, one of {})",
+            crate::waits_on::THINGS
+        ))),
+    }
 }
 
 /// Each method: its arguments read and checked before the board is reached.
@@ -498,36 +518,41 @@ fn dispatch<F: FnOnce() -> Result<Store, String>>(
             shape::task(&board.get()?.release(&slug, &handle, role.as_deref())?)
         }
         "move" => {
-            args!(slug: need, status: need, handle: actor, from: take, reason: take);
-            let (slug, status, handle, from, reason): (
-                String,
-                String,
-                String,
-                Option<Vec<String>>,
-                Option<String>,
-            ) = (slug, status, handle, from, reason);
+            args!(slug: need, status: need, handle: actor, from: take, reason: take, on: take, why: take);
+            let (slug, status, handle): (String, String, String) = (slug, status, handle);
+            let from: Option<Vec<String>> = from;
+            let (reason, on, why): (Option<String>, Option<String>, Option<String>) =
+                (reason, on, why);
             let context = board.context.clone();
             let store = board.get()?;
             if status == "review" {
                 crate::land::reopenable(store, context.as_ref(), &slug)?;
             }
+            let on = blocked_on(on.as_deref(), why.as_deref())?;
             shape::task(&match from {
                 Some(_) if reason.is_some() => {
                     return Err(Fail::Refused(
                         "a move from named statuses takes no reason".into(),
                     ));
                 }
+                Some(_) if on.is_some() => {
+                    return Err(Fail::Refused(
+                        "a move from named statuses names no block's thing".into(),
+                    ));
+                }
                 Some(from) => {
                     let from: Vec<&str> = from.iter().map(String::as_str).collect();
                     store.move_from(&slug, &from, &status, &handle)?
                 }
-                None => store.move_with(&slug, &status, &handle, reason.as_deref())?,
+                None => store.move_on(&slug, &status, &handle, reason.as_deref(), on)?,
             })
         }
         "hold" => {
-            args!(slug: need, handle: actor);
-            let (slug, handle): (String, String) = (slug, handle);
-            shape::task(&board.get()?.hold_blocked(&slug, &handle)?)
+            args!(slug: need, handle: actor, on: take, why: take);
+            let (slug, handle, on, why): (String, String, Option<String>, Option<String>) =
+                (slug, handle, on, why);
+            let on = blocked_on(on.as_deref(), why.as_deref())?;
+            shape::task(&board.get()?.hold_blocked_on(&slug, &handle, on)?)
         }
         "verdict" => {
             args!(slug: need, handle: actor, verdict: need, text: need);

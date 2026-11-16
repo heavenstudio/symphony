@@ -381,7 +381,9 @@ pub fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
             if status == "review" {
                 crate::land::reopenable(store, Some(c.env), &slug)?;
             }
-            let t = store.move_with(&slug, &status, &c.actor()?, p.get("reason"))?;
+            let board = store.board_command();
+            let on = blocking(&board, &slug, &status, p.get("on"), p.get("why"))?;
+            let t = store.move_on(&slug, &status, &c.actor()?, p.get("reason"), on)?;
             c.say(&format!("{slug} is {}", t.status));
             finish::after_move(store, c, &t);
         }
@@ -748,6 +750,55 @@ fn names_folder(body: &str, needle: &str) -> bool {
     })
 }
 
+/// What a move of `slug` to `status` waits on, as `--on` and `--why` name it: a block names a
+/// thing, so one without `--on` is refused, saying what to pass (`board`, the command that reaches
+/// this board); a move anywhere else waits on nothing they name.
+fn blocking<'a>(
+    board: &str,
+    slug: &str,
+    status: &str,
+    on: Option<&'a str>,
+    why: Option<&'a str>,
+) -> Result<Option<crate::On<'a>>, Stop> {
+    match (status, on) {
+        ("blocked", Some(thing)) => Ok(Some(crate::On { thing, why })),
+        ("blocked", None) => Err(Stop::Refused(format!(
+            "a block names what it waits on: {board} move {slug} blocked --on THING [--why \
+             TEXT], THING one of {}; nothing was moved",
+            crate::waits_on::THINGS
+        ))),
+        (_, None) if why.is_none() => Ok(None),
+        _ => Err(Stop::Refused(format!(
+            "--on and --why say what a block waits on: {slug} moves to {status}; nothing was \
+             moved"
+        ))),
+    }
+}
+
+/// What `task` waits on ([`crate::waits_on::line`]), read over the tasks it needs, so `show` reads
+/// no whole board: `children`, the tasks right under it that `show` lists (the board's listings
+/// read every depth), and in one read its dependencies and a task its block names; its landing's
+/// record taken at the tip it judged, as the listings take it. None for a finished task.
+fn waits_on(
+    store: &Store,
+    task: &Task,
+    children: &[Task],
+) -> Result<Option<crate::waits_on::Line>, Stop> {
+    use crate::waits_on::{Blocked, Landing, Look, Thing, line};
+    if crate::health::FINISHED.contains(&task.status.as_str()) {
+        return Ok(None);
+    }
+    let mut near = task.depends.clone();
+    if let Some(Thing::Task(target)) = Blocked::of(task).as_ref().and_then(Blocked::thing) {
+        near.push(target.to_string());
+    }
+    let mut tasks = vec![task.clone()];
+    tasks.extend(children.iter().cloned());
+    tasks.extend(store.tasks_by_slug(&near)?);
+    let look = Look::new(&tasks, &[]);
+    Ok(line(task, &look, Landing::of(task, None).as_ref()))
+}
+
 fn show(store: &Store, c: &mut Context) -> Result<(), Stop> {
     let slug = c.arg("slug");
     let task = store.get(&slug)?;
@@ -781,6 +832,10 @@ fn show(store: &Store, c: &mut Context) -> Result<(), Stop> {
             r.handle,
             r.health.as_str()
         ));
+    }
+    if let Some(line) = waits_on(store, &task, &children)? {
+        let since = store.now() - stages.current_since;
+        c.say(&format!("  {}", crate::waits_on::said(&line, since)));
     }
     let held = (task.roles.iter()).any(|r| r.role == "orchestrator" && r.health.holds());
     let waiting = match crate::orchestration::waiting(&task.fields) {

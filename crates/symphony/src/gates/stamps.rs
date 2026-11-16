@@ -67,12 +67,11 @@ pub fn stamps(record: &Task, catalogue: &Catalogue, evidence: &Evidence<'_>) -> 
     let needed = read::needed(catalogue, needs.as_ref(), evidence.tip);
     let defaults = catalogue.defaults();
     let (slug, status) = (record.slug.as_str(), record.status.as_str());
-    let closed = matches!(status, "done" | "cancelled");
     let reviewers = record.holders("reviewer");
     let read_at = |name: &str, unmet: GateState, read: &dyn Fn(&str) -> Reading| match evidence.tip
     {
         Some(tip) => of_reading(name, slug, read(tip), unmet),
-        None => no_tip(name, unmet, evidence.branch, closed),
+        None => no_tip(name, unmet, evidence.branch, status),
     };
     let mut gates: Vec<Gate> = (catalogue.stamps.iter())
         .map(|stamp| {
@@ -87,7 +86,7 @@ pub fn stamps(record: &Task, catalogue: &Catalogue, evidence: &Evidence<'_>) -> 
                 REVIEW if wanted => {
                     let rounds = review_rounds(evidence.thread);
                     let gate = review(slug, status, &reviewers, &rounds);
-                    review_at(gate, &rounds, evidence.branch, evidence.tip, closed)
+                    review_at(gate, &rounds, evidence.branch, evidence.tip, status)
                 }
                 OWNER => match owner(evidence.cards) {
                     Some(held) => held,
@@ -115,8 +114,8 @@ pub fn stamps(record: &Task, catalogue: &Catalogue, evidence: &Evidence<'_>) -> 
     gates
 }
 
-/// The review stamp at `tip` ([`review`]'s gate from its `rounds`; `None` with no tip, as the task
-/// is `closed` or not, [`without_tip`]): met only while the last round's approve names the tip,
+/// The review stamp at `tip` ([`review`]'s gate from its `rounds`; `None` with no tip, as the
+/// task's `status` says, [`without_tip`]): met only while the last round's approve names the tip,
 /// else missing, naming the commit it approved; a task done with no round landed without review,
 /// which its assessment did not waive: missing.
 pub fn review_at(
@@ -124,7 +123,7 @@ pub fn review_at(
     rounds: &[Round],
     branch: &str,
     tip: Option<&str>,
-    closed: bool,
+    status: &str,
 ) -> Gate {
     match (gate.state, rounds.last()) {
         (GateState::Waived, None) => Gate {
@@ -135,13 +134,15 @@ pub fn review_at(
         },
         (GateState::Met, Some(last)) => {
             let Some(tip) = tip else {
-                let (state, nor) = without_tip(GateState::Missing, closed);
+                let (state, none) = without_tip(GateState::Missing, status);
+                let none = match none {
+                    NoTip::Unstarted => "it has no branch yet".to_string(),
+                    NoTip::Open => format!("no branch {branch} is in this repository"),
+                    NoTip::Closed => format!("no branch {branch} is in this repository{NOR}"),
+                };
                 return Gate {
                     state,
-                    detail: format!(
-                        "{}, but no branch {branch} is in this repository{nor}",
-                        gate.detail
-                    ),
+                    detail: format!("{}, but {none}", gate.detail),
                     ..gate
                 };
             };
@@ -187,31 +188,55 @@ fn owner_waits() -> String {
     "the task needs the owner's approve of its tip, which its page offers".into()
 }
 
-/// The stamp `name` with no tip to read it at: the repository has no branch `branch`, and a
-/// `closed` task's thread names no commit its land merged ([`without_tip`]).
-fn no_tip(name: &str, unmet: GateState, branch: &str, closed: bool) -> Gate {
-    let (state, nor) = without_tip(unmet, closed);
+/// The stamp `name` with no tip to read it at: the repository has no branch `branch`, a task in
+/// `status` not started has none yet, and a closed task's thread names no commit its land merged
+/// ([`without_tip`]).
+fn no_tip(name: &str, unmet: GateState, branch: &str, status: &str) -> Gate {
+    let (state, none) = without_tip(unmet, status);
+    let detail = match none {
+        NoTip::Unstarted => NO_BRANCH_YET.to_string(),
+        NoTip::Open => format!("No branch {branch} in this repository"),
+        NoTip::Closed => format!("No branch {branch} in this repository{NOR}"),
+    };
     Gate {
         name: name.into(),
         state,
         why: (state == GateState::Held).then(owner_waits),
-        detail: format!("No branch {branch} in this repository{nor}"),
+        detail,
         ..Gate::default()
     }
 }
 
-/// What a needed stamp with no tip to read it at is, and what its detail adds to the missing
-/// branch: an open task's stands on nothing yet, `unmet`; a closed task's stood on a branch that
-/// is gone, with no land on its thread naming the commit it merged, so where it stood cannot be
-/// read: unknown, never missing.
-fn without_tip(unmet: GateState, closed: bool) -> (GateState, &'static str) {
-    if closed {
-        (
-            GateState::Unknown,
-            ", nor a land on its thread naming the commit it merged",
-        )
+/// The statuses a task is in before its work starts: it has no branch yet, and none is missing.
+const UNSTARTED: [&str; 4] = ["backlog", "concept", "design", "ready"];
+
+/// A needed stamp's detail on a task not started, which has no branch to read it at yet.
+pub const NO_BRANCH_YET: &str = "No branch yet";
+
+/// What a closed task's detail adds to its missing branch.
+const NOR: &str = ", nor a land on its thread naming the commit it merged";
+
+/// Why a task has no tip to read a stamp at ([`without_tip`]).
+enum NoTip {
+    /// Not started: no branch yet.
+    Unstarted,
+    /// Started and open: its branch is not in this repository.
+    Open,
+    /// Done or cancelled: its branch is gone, and no land on its thread names what it merged.
+    Closed,
+}
+
+/// What a needed stamp of a task in `status` with no tip to read it at is, and why there is none:
+/// an open task's stands on nothing yet, `unmet`, one not started having no branch yet; a closed
+/// task's stood on a branch that is gone, with no land on its thread naming the commit it merged,
+/// so where it stood cannot be read: unknown, never missing.
+fn without_tip(unmet: GateState, status: &str) -> (GateState, NoTip) {
+    if matches!(status, "done" | "cancelled") {
+        (GateState::Unknown, NoTip::Closed)
+    } else if UNSTARTED.contains(&status) {
+        (unmet, NoTip::Unstarted)
     } else {
-        (unmet, "")
+        (unmet, NoTip::Open)
     }
 }
 

@@ -326,7 +326,12 @@ const COMMANDS: &[Command] = &[
                 many: false,
             },
         ],
-        opts: &[AS, opt("--reason", "reason", STR)],
+        opts: &[
+            AS,
+            opt("--reason", "reason", STR),
+            opt("--on", "on", STR),
+            opt("--why", "why", STR),
+        ],
     },
     Command {
         name: "verdict",

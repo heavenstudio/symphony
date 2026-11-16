@@ -2,7 +2,7 @@
 name: tasks
 description: Join the shared task board and register a native callback so messages reach this session directly. Pull, claim, review or orchestrate tasks and answer on their threads. Trigger on "attach to the tasks", "join the board", "pick up a task", "take work from the board", "orchestrate these tasks", or /tasks.
 ---
-<!-- symphony-stamp: 25347e47738ab5da files=SKILL.md -->
+<!-- symphony-stamp: 64eefafa8fb3b7c0 files=SKILL.md -->
 
 # Work from the task board
 
@@ -159,7 +159,9 @@ Act on requests without an acknowledgement post.
    claims it and questions it before any code, through to its finish; read the
    spec sections `just tasks show SLUG` links.
 3. When a teammate needs something, tell them on the thread. When you are
-   stuck, `just tasks move SLUG blocked` and say why on the thread.
+   stuck, `just tasks move SLUG blocked --on THING --why TEXT`, THING what it
+   waits on, never a person: `decision:NAME` (a card the owner decides),
+   `check:NAME`, `task:SLUG` or `parked`; then say more on the thread.
 4. To book the follow-up in your area before anyone else takes it:
    `just tasks reserve SLUG`. It lapses after an hour.
 

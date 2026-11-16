@@ -838,11 +838,13 @@ options:
     ),
     (
         "move",
-        r#"usage: just tasks move [-h] [--as ACTOR] [--reason REASON]
+        r#"usage: just tasks move [-h] [--as ACTOR] [--reason REASON] [--on THING]
+                       [--why WHY]
                        slug
                        {backlog,concept,design,ready,in_progress,review,done,blocked,cancelled}
 "#,
-        r#"usage: just tasks move [-h] [--as ACTOR] [--reason REASON]
+        r#"usage: just tasks move [-h] [--as ACTOR] [--reason REASON] [--on THING]
+                       [--why WHY]
                        slug
                        {backlog,concept,design,ready,in_progress,review,done,blocked,cancelled}
 
@@ -855,6 +857,12 @@ options:
   --as ACTOR
   --reason REASON       why it moves (a cancel's, say), posted on its thread
                         after the move's line, in the same write
+  --on THING            a move to blocked's: what it waits on, decision:NAME
+                        (a card of the owner's), check:NAME, task:SLUG or
+                        parked; refused without it. A task blocked already
+                        takes it in place of what it named
+  --why WHY             why, in a few words (at most 120 characters), kept
+                        beside what it waits on
 "#,
     ),
     (

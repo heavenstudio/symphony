@@ -62,7 +62,7 @@ fn search_keeps_relevance_order_and_list_fields_and_filters_before_limiting() {
         assert_eq!(&Value::Object(fields), list_row);
     }
     let actor = c.register("worker");
-    c.ok(&actor, &["move", "needle", "blocked"]);
+    c.ok(&actor, &["move", "needle", "blocked", "--on", "parked"]);
     let filtered = json(
         &c,
         &["search", "needle", "--status", "ready", "--limit", "1"],

@@ -263,15 +263,19 @@ export interface Waits {
 /** The statuses a task's executor works it in. */
 const WORKED = ["concept", "design", "in_progress"];
 
+/** The healths of a holder that is gone: its role stands, but nobody works it. */
+const GONE = ["lost", "left"];
+
 /**
  * What `task` waits on, by its status, as the pill says it (`waits on certificate`, `waits on
  * executor quiet-wren and owner`, `waits on a, b and c`); none when it waits on nothing.
  *
  * In review, the gates of `answer` missing or held, in their order, coloured as the first. Else
- * who its status waits on, coloured as that status: in concept, design or progress, its executor;
- * blocked, every task it depends on (the page has no word of theirs); not started (backlog,
- * ready), none. Then each gate held, a card waiting on the owner, coloured as held when it is all.
- * A done or cancelled task waits on nothing, whatever its gates say.
+ * who its status waits on, coloured as that status: in concept, design or progress, its executor,
+ * said `lost` or `left` when it is gone and coloured as missing when every one is, since nobody
+ * works it then; blocked, every task it depends on (the page has no word of theirs); not started
+ * (backlog, ready), none. Then each gate held, a card waiting on the owner, coloured as held when
+ * it is all. A done or cancelled task waits on nothing, whatever its gates say.
  */
 export function waitsOn(answer: TaskGates, task: Waiter): Waits | null {
   const { status } = task;
@@ -283,16 +287,20 @@ export function waitsOn(answer: TaskGates, task: Waiter): Waits | null {
       ? null
       : { tone: `gate-${first.state}`, names: waiting.map((gate) => gate.name) };
   }
-  const own = WORKED.includes(status)
-    ? task.roles
-        .filter((role) => role.role === "executor")
-        .map(({ handle }) => `executor ${handle}`)
-    : status === "blocked"
+  const executors = WORKED.includes(status)
+    ? task.roles.filter((role) => role.role === "executor")
+    : [];
+  const own =
+    status === "blocked"
       ? task.depends
-      : [];
+      : executors.map(({ handle, health }) =>
+          GONE.includes(health) ? `executor ${handle} ${health}` : `executor ${handle}`,
+        );
   const held = answer.gates.filter((gate) => gate.state === "held").map((gate) => gate.name);
   if (own.length + held.length === 0) return null;
-  return { tone: own.length > 0 ? `st-${status}` : "gate-held", names: [...own, ...held] };
+  const gone = executors.length > 0 && executors.every(({ health }) => GONE.includes(health));
+  const tone = gone ? "gate-missing" : own.length > 0 ? `st-${status}` : "gate-held";
+  return { tone, names: [...own, ...held] };
 }
 
 /** The states the counts say, what no longer stands in the way first. */

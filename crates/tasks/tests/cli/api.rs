@@ -532,6 +532,67 @@ fn a_covered_close_over_the_api_reads_the_repository_first() {
     assert_eq!(c.store().get("sim/b").unwrap().status, "in_progress");
 }
 
+/// `move`'s and `hold`'s `on` and `why` (api 15): what the block waits on, kept on the task; a
+/// block given neither records nothing, as before, and a `why` alone or with `from` is refused.
+#[test]
+fn a_block_over_the_api_names_what_it_waits_on_or_nothing_as_before() {
+    use symphony_board::waits_on::Blocked;
+    let c = Case::new();
+    let exe = c.register("worker");
+    c.ok(&exe, &["create", "sim/a", "A"]);
+    c.ok(&exe, &["claim", "sim/a"]);
+    let call = |method: &str, more: Value| {
+        let mut args = json!({"slug": "sim/a", "handle": exe});
+        if method == "move" {
+            args["status"] = json!("blocked");
+        }
+        for (key, value) in more.as_object().unwrap() {
+            args[key] = value.clone();
+        }
+        json!({"method": method, "args": args})
+    };
+    let record = || Blocked::of(&c.store().get("sim/a").unwrap());
+    assert_eq!(
+        answer(&c.env, call("move", json!({"why": "later"}))),
+        json!({"refused": "a block's why goes with what it waits on (`on`, one of decision:NAME, \
+                           check:NAME, task:SLUG or parked)"})
+    );
+    assert_eq!(
+        answer(
+            &c.env,
+            call("move", json!({"on": "parked", "from": ["in_progress"]}))
+        ),
+        json!({"refused": "a move from named statuses names no block's thing"})
+    );
+    let moved = answer(
+        &c.env,
+        call("move", json!({"on": "check:nightly", "why": "red"})),
+    );
+    assert_eq!(moved["ok"]["status"], "blocked");
+    let kept = record().unwrap();
+    assert_eq!(
+        (kept.on.as_str(), kept.why.as_deref()),
+        ("check:nightly", Some("red"))
+    );
+    c.ok(&exe, &["move", "sim/a", "review"]);
+    // A hold names its thing too, or, as before minor 15, nothing.
+    let held = answer(&c.env, call("hold", json!({"on": "check:owner"})));
+    assert_eq!(held["ok"]["status"], "blocked");
+    assert_eq!(record().unwrap().on, "check:owner");
+    c.ok(&exe, &["move", "sim/a", "review"]);
+    assert_eq!(
+        answer(&c.env, call("hold", json!({})))["ok"]["status"],
+        "blocked"
+    );
+    assert_eq!(record(), None);
+    c.ok(&exe, &["move", "sim/a", "in_progress"]);
+    assert_eq!(
+        answer(&c.env, call("move", json!({})))["ok"]["status"],
+        "blocked"
+    );
+    assert_eq!(record(), None);
+}
+
 /// `move`'s `reason` is posted after the move's line; with `from` it is refused.
 #[test]
 fn a_move_over_the_api_says_its_reason() {

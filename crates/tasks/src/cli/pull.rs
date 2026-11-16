@@ -61,7 +61,7 @@
 mod pipeline;
 
 use crate::alarm::{Alarm, Thresholds, Tips};
-use crate::health::{EXECUTING, Health};
+use crate::health::Health;
 use crate::orchestration::{Owners, claimable_work};
 use crate::red::UNSTAFFED_SECONDS;
 use crate::store::unanswered::Pending;
@@ -730,34 +730,11 @@ pub(crate) fn digest_on(
         .collect::<BTreeSet<_>>()
         .into_iter()
         .collect();
-    let by_slug: HashMap<&str, &Task> = tasks.iter().map(|t| (t.slug.as_str(), t)).collect();
-    let mut kids: HashMap<&str, Vec<&Task>> = HashMap::new();
-    for t in tasks {
-        if let Some(parent) = t.parent.as_deref().filter(|p| by_slug.contains_key(p)) {
-            kids.entry(parent).or_default().push(t);
-        }
-    }
-    let children = |slug: &str| kids.get(slug).cloned().unwrap_or_default();
-    // The tasks under it still to be executed: a subtask in review, done or cancelled has an executor
-    // that is waiting or finished, not on this work.
-    let below = |task: &Task| -> Vec<&Task> {
-        let (mut found, mut todo) = (Vec::new(), children(&task.slug));
-        while let Some(child) = todo.pop() {
-            if EXECUTING.contains(&child.status.as_str()) {
-                found.push(child);
-            }
-            todo.extend(children(&child.slug));
-        }
-        found
-    };
-    let present = |task: &Task, role: &str| {
-        task.roles
-            .iter()
-            .any(|r| r.role == role && (r.health.holds() || busy.contains(r.handle.as_str())))
-    };
-    let staffed = |task: &Task| {
-        present(task, "executor") || below(task).iter().any(|c| present(c, "executor"))
-    };
+    // Who is there, by the rule the board's line of what a task waits on reads too.
+    let look = crate::waits_on::Look::new(tasks, verifying);
+    let below = |task: &Task| look.below(task);
+    let present = |task: &Task, role: &str| look.present(task, role);
+    let staffed = |task: &Task| look.staffed(task);
     let mut running = Vec::new();
     let mut found: BTreeMap<&'static str, Vec<Task>> = BTreeMap::new();
     let mut notes = BTreeMap::new();
@@ -784,16 +761,7 @@ pub(crate) fn digest_on(
         }
     }
     for t in tasks {
-        let cancelled: Vec<&str> = t
-            .depends
-            .iter()
-            .filter(|slug| {
-                by_slug
-                    .get(slug.as_str())
-                    .is_some_and(|d| d.status == "cancelled")
-            })
-            .map(String::as_str)
-            .collect();
+        let cancelled = look.cancelled(t);
         let blocked = (!cancelled.is_empty())
             .then(|| format!("cancelled dependencies: {}", cancelled.join(", ")));
         let unstaffed = |name: &'static str,
@@ -835,12 +803,7 @@ pub(crate) fn digest_on(
         };
         match status {
             "ready" if !red => {
-                let free = t
-                    .depends
-                    .iter()
-                    .filter_map(|d| by_slug.get(d.as_str()))
-                    .all(|d| d.status == "done");
-                if free && !staffed(t) {
+                if look.free(t) && !staffed(t) {
                     unstaffed("ready_unstaffed", &mut found, &mut notes);
                 }
             }

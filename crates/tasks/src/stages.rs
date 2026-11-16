@@ -507,7 +507,28 @@ pub fn stages(facts: Facts, lines: &[Line], now: f64) -> Stages {
 /// [`Stages::current_since`], which no clock moves. For a closed task it is its close; where the
 /// thread does not record the change to the status it holds, its `updated`.
 pub fn in_status_since(facts: Facts, lines: &[Line]) -> f64 {
-    stages(facts, lines, facts.updated).current_since
+    in_status(facts, lines).since
+}
+
+/// When a task took the status it holds, and the status it held before, by the replay
+/// ([`in_status`]): what the board's line of what a task waits on reads of its thread.
+#[derive(Debug, Clone, PartialEq)]
+pub struct InStatus {
+    /// [`Stages::current_since`].
+    pub since: f64,
+    /// The status of the stretch before the one it holds; none for a task in the status it was
+    /// made in. For a blocked task, the status it was blocked from.
+    pub from: Option<String>,
+}
+
+/// [`in_status_since`], with the status the task held before the one it holds.
+pub fn in_status(facts: Facts, lines: &[Line]) -> InStatus {
+    let replayed = stages(facts, lines, facts.updated);
+    let count = replayed.segments.len();
+    InStatus {
+        since: replayed.current_since,
+        from: (count >= 2).then(|| replayed.segments[count - 2].status.clone()),
+    }
 }
 
 /// One session's hold on the executor or reviewer role of a task.
