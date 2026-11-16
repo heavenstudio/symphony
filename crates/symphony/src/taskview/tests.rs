@@ -20,10 +20,14 @@ fn project_task_counts_exclude_children_and_grandchildren() {
         roles: Vec::new(),
         instruction: false,
         fields: BTreeMap::new(),
+        waits_on: None,
+        from: None,
     };
     let board = Tasks {
         version: "fixture".into(),
         sessions: Vec::new(),
+        orchestrators: Vec::new(),
+        unstarted: 0,
         tasks: vec![
             task("feature", "in_progress", None),
             task("reviewed", "review", None),
@@ -112,6 +116,8 @@ fn a_questions_task_is_open_until_it_is_done_or_cancelled() {
         roles: Vec::new(),
         instruction: false,
         fields: BTreeMap::new(),
+        waits_on: None,
+        from: None,
     };
     let tasks: Vec<Task> = [
         ("a", "backlog"),

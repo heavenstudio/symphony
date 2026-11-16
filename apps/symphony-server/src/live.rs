@@ -140,6 +140,8 @@ pub(crate) struct Hub {
     machine_work: Mutex<machine_work::Sampler>,
     latest_message: Mutex<Option<i64>>,
     pub task_signoff: Mutex<Vec<String>>,
+    /// What the board's snapshot reads beside the board ([`Waiting`]).
+    waiting: Mutex<Waiting>,
     /// The last scan of the branches' own cards ([`BranchScan`]).
     branches: Mutex<BranchScan>,
     /// The branches whose task the board last said is done or cancelled ([`branches::finished`]):
@@ -265,6 +267,16 @@ struct TaskState {
     error: Option<String>,
 }
 
+/// What the board's snapshot says of each task beside the board's own read: when each open task
+/// took its status, read again only for a task whose status or write moved
+/// ([`taskview::Stood`]), and the owner's sign-off lane with the cards each waits on, which the
+/// snapshot sends as a decision ([`taskview::waiting::decided`]).
+#[derive(Default)]
+struct Waiting {
+    stood: taskview::Stood,
+    lane: BTreeMap<String, Vec<String>>,
+}
+
 #[derive(Default)]
 struct OrderExpiry {
     retry_at: u64,
@@ -298,7 +310,8 @@ impl OrderExpiry {
 impl Hub {
     /// The hub of the project at `root`, which this process serves from now on
     /// ([`taskview::serve`]): every reach of the board from `root` here, the hub's and any route's,
-    /// is held to the repository found there now.
+    /// is held to the repository found there now, and every journal found from it is the one
+    /// found now.
     pub(crate) fn new(root: &Path, ui_dist: &Path) -> Self {
         let native_reader = machine_work::READER_ENV.os();
         let repository = taskview::serve(root);
@@ -331,6 +344,7 @@ impl Hub {
             )),
             latest_message: Mutex::new(None),
             task_signoff: Mutex::new(Vec::new()),
+            waiting: Mutex::new(Waiting::default()),
             branches: Mutex::new((Arc::default(), 0.0, Arc::default())),
             finished: Mutex::new(BTreeSet::new()),
             rescan: std::sync::atomic::AtomicBool::new(false),
@@ -1372,17 +1386,24 @@ impl Hub {
         snapshot: symphony_board::Board,
         agents: symphony_api::Agents,
     ) -> Result<(), String> {
-        let (next, latest) = {
+        let unchanged = {
             let state = self.tasks.lock().unwrap_or_else(|e| e.into_inner());
-            if state.raw.as_ref() == Some(&snapshot)
-                && let Some(last) = &state.last
-            {
-                (Arc::clone(last), snapshot.latest_message)
-            } else {
+            (state.raw.as_ref() == Some(&snapshot))
+                .then(|| state.last.clone())
+                .flatten()
+        };
+        let (mut next, latest) = match unchanged {
+            Some(last) => (last, snapshot.latest_message),
+            None => {
                 // Only a board that changed can finish a task.
                 self.note_finished(&snapshot);
-                let (next, latest) =
-                    measured("board snapshot", || taskview::snapshot_board(&snapshot));
+                let mut waiting = self.waiting.lock().unwrap_or_else(|e| e.into_inner());
+                // A beat moves the board, not a task's status: this reads no thread then.
+                measured("task stages", || waiting.stood.read(store, &snapshot))
+                    .map_err(|e| e.to_string())?;
+                let (next, latest) = measured("board snapshot", || {
+                    taskview::snapshot_board(&snapshot, &waiting.stood, &waiting.lane)
+                });
                 (Arc::new(next), latest)
             }
         };
@@ -1426,14 +1447,27 @@ impl Hub {
                     .as_ref()
                     .is_none_or(|old| !tasks_alike(&old.tasks, &next.tasks))
             {
-                let signoff = measured("signoff", || {
+                let lane = measured("signoff", || {
                     taskview::signoff(store, &next.tasks, &pending, &self.root, &self.gates)
                 })?;
+                let signoff: Vec<String> = lane.iter().map(|(slug, _)| slug.clone()).collect();
                 let mut old = self.task_signoff.lock().unwrap_or_else(|e| e.into_inner());
                 if *old != signoff {
                     changed.push(json!({"region":"task-signoff", "data":signoff}));
                     *old = signoff;
                 }
+                // A lane that moved moves what its tasks wait on: the board's snapshot again, over
+                // what was read of it already.
+                let lane: BTreeMap<String, Vec<String>> = lane.into_iter().collect();
+                let mut waiting = self.waiting.lock().unwrap_or_else(|e| e.into_inner());
+                if waiting.lane != lane {
+                    waiting.lane = lane;
+                    let (again, _) = measured("board snapshot", || {
+                        taskview::snapshot_board(&snapshot, &waiting.stood, &waiting.lane)
+                    });
+                    next = Arc::new(again);
+                }
+                drop(waiting);
                 *previous = Some((pending, answered));
             }
         }
@@ -2178,6 +2212,8 @@ fn shown_alike(a: &symphony_api::Task, b: &symphony_api::Task) -> bool {
         roles,
         instruction,
         fields,
+        waits_on,
+        from,
     } = a;
     *slug == b.slug
         && *title == b.title
@@ -2192,6 +2228,8 @@ fn shown_alike(a: &symphony_api::Task, b: &symphony_api::Task) -> bool {
         && *depends == b.depends
         && *instruction == b.instruction
         && *fields == b.fields
+        && *waits_on == b.waits_on
+        && *from == b.from
         && roles_alike(roles, &b.roles)
 }
 
@@ -2256,6 +2294,13 @@ fn task_changes(changes: &mut Vec<Value>, old: &[symphony_api::Task], new: &[sym
             }
             if before.parent != after.parent {
                 fields.parent = Some(after.parent.clone().unwrap_or_default());
+            }
+            // What it waits on, which a holder's health can change too; none is one of no kind.
+            if before.waits_on != after.waits_on {
+                fields.waits_on = Some(after.waits_on.clone().unwrap_or_default());
+            }
+            if before.from != after.from {
+                fields.from = Some(after.from.clone().unwrap_or_default());
             }
             // A change of what no field carries (a plugin's board fields, which no page draws)
             // sends nothing.
@@ -3042,9 +3087,22 @@ mod tests {
             .unwrap();
         observe(&hub, &f.store);
         let after = hub.task_snapshot().unwrap();
+        // What the task waits on is the lane's: the board's own fields stand as they were.
+        let board_fields = |tasks: &[symphony_api::Task]| {
+            let mut tasks = tasks.to_vec();
+            tasks.iter_mut().for_each(|t| t.waits_on = None);
+            tasks
+        };
         assert_eq!(
-            before.tasks, after.tasks,
+            board_fields(&before.tasks),
+            board_fields(&after.tasks),
             "task changes must not trigger this case"
+        );
+        let waits = |tasks: &symphony_api::Tasks| tasks.tasks[0].waits_on.clone().unwrap();
+        assert_eq!(
+            (waits(&before).kind, waits(&after).kind, waits(&after).who),
+            ("working".into(), "decision".into(), "initial-card".into()),
+            "the lane's task waits on the card, a decision"
         );
         assert_ne!(before.version, after.version, "the message cursor advanced");
         assert_eq!(
@@ -3064,6 +3122,12 @@ mod tests {
                 .any(|change| change["region"] == "task-signoff"
                     && change["data"] == serde_json::json!(["tools/signoff"]))
         );
+        // And a page that holds the task is told what it waits on now.
+        let told = event["changes"].as_array().unwrap().iter().any(|change| {
+            change["data"]["fields"]["waits_on"]["who"] == "initial-card"
+                && change["data"]["fields"]["waits_on"]["kind"] == "decision"
+        });
+        assert!(told, "{event}");
     }
 
     #[test]

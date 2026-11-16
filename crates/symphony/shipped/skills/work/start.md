@@ -20,8 +20,9 @@
    answer ([connected.md](connected.md): your callback or inbox, and how to wait). A brief is an
    instruction, not proof the work is worth doing.
 4. From then on follow the description exactly. If it cannot be fulfilled, say what prevents it
-   and move the task blocked. Resolve conflicting instructions under project policy; never change
-   the scope silently or invent a replacement task.
+   and move the task blocked, naming what it waits on (`--on decision:NAME`, `check:NAME`,
+   `task:SLUG` or `parked`, with `--why TEXT`). Resolve conflicting instructions under project
+   policy; never change the scope silently or invent a replacement task.
 
 ## Fast bug fixes
 

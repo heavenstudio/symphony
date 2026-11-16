@@ -267,6 +267,8 @@ fn project(
         signoff,
         counts: counts.into_iter().collect(),
         lifecycle_counts: lifecycle_counts.into_iter().collect(),
+        orchestrators: tasks.orchestrators,
+        unstarted: tasks.unstarted,
     }))
 }
 

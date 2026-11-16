@@ -9,6 +9,7 @@ import type { ReactElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, type Mock, vi } from "vitest";
 import {
+  arrowsFrom,
   choosesOnClick,
   clickChooses,
   nextIndex,
@@ -175,6 +176,13 @@ describe("the focus moved round the list", () => {
     expect(previousIndex(3, 2)).toBe(1);
     expect(previousIndex(0, 1)).toBeNull();
   });
+
+  it("starts from the focused option, else the chosen one, else none", () => {
+    expect(arrowsFrom(PRIORITIES, "2", 0)).toBe(0);
+    expect(arrowsFrom(PRIORITIES, "1", null)).toBe(1);
+    expect(arrowsFrom(PRIORITIES, "9", null)).toBeNull();
+    expect(arrowsFrom([], "1", null)).toBeNull();
+  });
 });
 
 describe("what a key or a pointer means", () => {
@@ -270,15 +278,15 @@ describe("a select's popup used", () => {
 
   it("moves the focus with the arrows, Home and End, forgetting what was typed", () => {
     const moves: [string, number | null, number | null][] = [
-      ["ArrowDown", null, 0],
+      ["ArrowDown", 0, 1],
       ["ArrowDown", 2, 0],
-      ["ArrowUp", null, 2],
+      ["ArrowUp", 0, 2],
       ["ArrowUp", 1, 0],
       ["Home", 2, 0],
       ["End", 0, 2],
     ];
     for (const [name, from, to] of moves) {
-      const { element, setFocused } = draw(props(), [true, from]);
+      const { element, setFocused } = draw(props({ value: "1" }), [true, from]);
       (runtime.refs[1] as { current: { typed: string } }).current.typed = "no";
       const event = key(name);
       handler(element, isList, "onKeyDown")(event);
@@ -286,6 +294,22 @@ describe("a select's popup used", () => {
       expect((runtime.refs[1] as { current: { typed: string } }).current.typed).toBe("");
       expect(event.preventDefault).toHaveBeenCalled();
       expect(event.stopPropagation).toHaveBeenCalled();
+    }
+  });
+
+  it("moves the arrows from the chosen option while none has the focus, from the ends with none chosen", () => {
+    const moves: [string, string, number][] = [
+      ["ArrowUp", "1", 0],
+      ["ArrowDown", "1", 2],
+      ["ArrowUp", "0", 2],
+      ["ArrowDown", "2", 0],
+      ["ArrowUp", "9", 2],
+      ["ArrowDown", "9", 0],
+    ];
+    for (const [name, value, to] of moves) {
+      const { element, setFocused } = draw(props({ value }), [true, null]);
+      handler(element, isList, "onKeyDown")(key(name));
+      expect(setFocused, `${name} with ${value} chosen`).toHaveBeenCalledWith(to);
     }
   });
 
@@ -573,6 +597,35 @@ describe("a select's popup used", () => {
       expect(set).not.toHaveBeenCalled();
     expect(given.onClose).not.toHaveBeenCalled();
     expect(given.onChange).not.toHaveBeenCalled();
+  });
+
+  // The list's edge given the focus by a press leaves no option holding it, so the arrows start
+  // again as at the opening: from the chosen option (here High, 1), neither from the option last
+  // focused (Urgent, 0) nor from the list's first.
+  it("moves the arrows from the chosen option after a press on the list's edge", () => {
+    for (const [name, to] of [
+      ["ArrowDown", 2],
+      ["ArrowUp", 0],
+    ] as const) {
+      const given = props({ value: "1" });
+      const { list, options } = placed();
+      const focused = draw(given, [true, 0]);
+      handler(focused.element, option(0), "onBlur")({ relatedTarget: list });
+      handler(focused.element, isList, "onFocus")({ target: list, currentTarget: list });
+      expect(focused.setFocused).toHaveBeenCalledExactlyOnceWith(null);
+      expect(focused.setOpen).not.toHaveBeenCalled();
+      const edge = draw(given, [true, null]);
+      handler(edge.element, isList, "onKeyDown")(key(name));
+      expect(edge.setFocused, name).toHaveBeenCalledExactlyOnceWith(to);
+      // And so after the focus moved from an option to another, the arrows go on from that one.
+      const moved = draw(given, [true, 0]);
+      handler(moved.element, option(0), "onBlur")({ relatedTarget: options[2] });
+      handler(moved.element, option(2), "onFocus")({});
+      const after = draw(given, [true, 2]);
+      handler(after.element, isList, "onKeyDown")(key(name));
+      expect(after.setFocused, name).toHaveBeenCalledExactlyOnceWith(name === "ArrowDown" ? 0 : 1);
+      expect(given.onClose).not.toHaveBeenCalled();
+    }
   });
 
   it("is anchored beside its trigger until it goes, its search forgotten with it", async () => {

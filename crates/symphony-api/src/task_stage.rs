@@ -23,6 +23,14 @@ pub struct TaskListing {
     #[serde(default)]
     pub lifecycle_counts: Vec<(String, usize)>,
     pub next: Option<String>,
+    /// Each session holding the orchestrator role on an open task, by handle, whatever the
+    /// listing selects: the board says once when none is live.
+    #[serde(default)]
+    pub orchestrators: Vec<crate::Orchestrator>,
+    /// The board's ready tasks no live executor holds with nothing open before them, whatever the
+    /// listing selects ([`crate::Tasks::unstarted`]).
+    #[serde(default)]
+    pub unstarted: usize,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

@@ -487,7 +487,9 @@ select, its save asked again until the server knows the outcome), the activity l
 against what was seen, and its toasts, the pending bar, and the header's Appearance
 (`src/appearance.tsx`, the theme file read by `src/theme.ts`). Its pure parts are
 `src/panel-model.ts` (the snapshots' readers, the draft, the toasts, a save's outcome, what was
-read) and `src/panel-focus.ts` (the focus taken on open, Escape giving it back to the opener). Until it mounts, the shell draws the
+read) and `src/panel-focus.ts` (the focus taken on open, held on the shown tab's panel while a
+send disables the sheet's fields and given to the field the reader types in after it, Escape
+giving it back to the opener). Until it mounts, the shell draws the
 sheet a click opened at once (`#panel-loading`), and the panel's own sheet takes the focus over.
 
 It has no feed of its own: the frame (`src/frame.tsx`) reads the activity and the pending cards
@@ -499,8 +501,9 @@ and the two speak through the window, as the frame and the shell do: the snapsho
 `review:asks`). What it keeps in the browser is under its keys (`review-quick-draft`,
 `docs-review-seen`, `studio.cssVars`), the ones a reader's draft, what they saw and their theme are
 already kept under, so all three stay. Its media layer (`reachOf`) takes the chat's pictures up on every page,
-each opening in the menus' viewer, and on the task board and the agents page, which mount none of
-their own, the page's media too.
+each opening in the menus' viewer, and on the pages that mount none of their own (the task board,
+the agents page, the queue, Reports and Runs) every mockup and viewer as well, the chat's and the
+page's, with the page's pictures.
 
 ## What the pages keep
 
@@ -929,8 +932,9 @@ What holds on every page, and each page's contract where its section above names
   latch defers native media shells and gallery rows. The media layer that sizes mounted frames
   and opens pictures at `data-full` in the menus' viewer is
   `src/media-layer.ts`: each page that shows media mounts it, and the chat
-  mounts one for its own pictures on every page and for the page's media on the task board and
-  the agents page, which have none of their own; it is in the chunks of each, so it loads, or
+  mounts one for its own pictures on every page and, on the pages that have none of their own
+  (the task board, the agents page, the queue, Reports and Runs), for every mockup and viewer
+  and the page's pictures; it is in the chunks of each, so it loads, or
   fails, with them. Mockups stay at 1280x800,
   scaled by their card's width, with only `allow-scripts` in their sandbox. Never add
   `allow-same-origin`.

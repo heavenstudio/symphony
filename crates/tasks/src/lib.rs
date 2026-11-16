@@ -82,6 +82,7 @@ mod store;
 pub mod sweep;
 pub mod sys;
 pub mod usage;
+pub mod waits_on;
 
 #[path = "cli/api/assessment/publication.rs"]
 pub mod assessment_publication;
@@ -90,7 +91,7 @@ pub use schema::{Access, Schema};
 pub use store::{
     ASK_KINDS, Ask, AssessmentReceipt, AssessmentState, BEFORE_WORK, Beat, Binding, Board, COVERED,
     Callback, ChatSeat, CoveredLine, Error, Filed, Given, HandOff, Held, KINDS, LANDS_FROM,
-    LATE_SECONDS, Landed, Message, NewAsk, NewLaunch, NewSession, NewTask, Opening, PIPELINE,
+    LATE_SECONDS, Landed, Message, NewAsk, NewLaunch, NewSession, NewTask, On, Opening, PIPELINE,
     PULLABLE, Pick, Presence, Program, ROLES, Raw, RawRows, ReportRead, ReportTask, Role,
     SLOT_READS, STATUSES, SearchHit, Session, StageRecord, Store, Task, TaskStamp, UNANSWERED_WAIT,
     UNANSWERED_WAIT_VAR, Unfresh, WRITERS_RECENT, WRITERS_SINCE, Writer, approved, can_transition,

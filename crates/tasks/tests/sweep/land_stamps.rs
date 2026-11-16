@@ -412,7 +412,31 @@ fn a_task_waiting_on_the_owner_alone_is_held_blocked_and_lands_from_there() {
     );
     assert_eq!(to.as_deref(), Some("@orchestrator"));
     let store = &r.board.store;
-    assert_eq!(store.get(slug).unwrap().status, "blocked");
+    let held = store.get(slug).unwrap();
+    assert_eq!(held.status, "blocked");
+    // The hold names what it waits on: the owner's approve stamp of the tip, from review.
+    let record = symphony_board::waits_on::Blocked::of(&held).expect("the hold names its thing");
+    assert_eq!(
+        (record.on.as_str(), record.why, record.from.as_deref()),
+        (
+            "check:owner",
+            Some(format!("the owner's approve of {at}")),
+            Some("review")
+        )
+    );
+    // And it reads as the owner's decision, named by his approve of the tip, never by him.
+    use symphony_board::waits_on::{DECISION, Landing, Look, line};
+    let board = [held.clone()];
+    let look = Look::new(&board, &[]);
+    let waits = line(&held, &look, Landing::of(&held, None).as_ref()).unwrap();
+    assert_eq!(
+        (waits.kind, waits.who, waits.why.as_str()),
+        (
+            DECISION,
+            format!("the owner's approve of {at}"),
+            "its landing waits on it"
+        )
+    );
     // Landed again before the owner gives it: still waiting, still blocked.
     assert!(landed_by(&r, slug, &staff.orch).1.is_err());
     let (text, _) = told(&r, slug);
@@ -425,6 +449,14 @@ fn a_task_waiting_on_the_owner_alone_is_held_blocked_and_lands_from_there() {
         .unwrap();
     let (_, result) = landed_by(&r, slug, &staff.orch);
     assert_landed(&r, slug, &tip, result);
+    // Landed from blocked: the record of what it waited on goes with the block.
+    let closed = store.get(slug).unwrap();
+    assert!(
+        (closed.fields.get(symphony_board::red::FIELDS))
+            .is_none_or(|board| !board.contains_key(symphony_board::waits_on::BLOCKED)),
+        "{:?}",
+        closed.fields
+    );
 }
 
 /// A waiver stands only on the tip its assessor read: a commit after it brings the catalogue's

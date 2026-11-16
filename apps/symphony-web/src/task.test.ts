@@ -116,7 +116,16 @@ describe("a listing as the client reads it", () => {
       counts: [],
       lifecycle_counts: [],
       next: null,
+      orchestrators: [],
+      unstarted: 0,
     });
+  });
+
+  it("keeps the board's orchestrators and the tasks waiting to start", () => {
+    const orchestrators = [{ handle: "sable-finch", health: "stale" }];
+    const read = readListing({ tasks: [], orchestrators, unstarted: 3 });
+    expect(read?.orchestrators).toEqual(orchestrators);
+    expect(read?.unstarted).toBe(3);
   });
 
   it.each([
@@ -128,6 +137,8 @@ describe("a listing as the client reads it", () => {
     ["counts that are no pairs", { tasks: [], counts: [["ready"]] }],
     ["a count that is text", { tasks: [], lifecycle_counts: [["ready", "3"]] }],
     ["a cursor that is no text", { tasks: [], next: 3 }],
+    ["orchestrators with no health", { tasks: [], orchestrators: [{ handle: "a" }] }],
+    ["a count to start that is text", { tasks: [], unstarted: "3" }],
   ])("is none for %s", (_, value) => {
     expect(readListing(value)).toBeNull();
   });
@@ -148,6 +159,8 @@ describe("a change the feed sends", () => {
     ["a priority that is text", { key: "w/a", fields: { priority: "1" } }],
     ["roles it cannot read", { key: "w/a", fields: { roles: [{}] } }],
     ["an instruction that is no flag", { key: "w/a", fields: { instruction: "yes" } }],
+    ["a wait with no since", { key: "w/a", fields: { waits_on: { kind: "x", who: "", why: "" } } }],
+    ["a from that is no text", { key: "w/a", fields: { from: 1 } }],
   ])("of a task's fields is none for %s", (_, value) => {
     expect(readTaskChange(value)).toBeNull();
   });
@@ -204,6 +217,20 @@ describe("a task's changed fields", () => {
     expect(merge(task, { parent: "x" }).parent).toBe("x");
     expect(merge(task, { parent: null }).parent).toBe("w");
     expect(merge(task, {})).toEqual(task);
+  });
+
+  it("say what it waits on and where it stopped, each cleared by one of none", () => {
+    const waits = { kind: "decision", who: "a-card", why: "the owner's call", since: 4 };
+    const blocked = merge(aTask("w/a"), { waits_on: waits, from: "review" });
+    expect(blocked.waits_on).toEqual(waits);
+    expect(blocked.from).toBe("review");
+    const cleared = merge(blocked, {
+      waits_on: { kind: "", who: "", why: "", since: 0 },
+      from: "",
+    });
+    expect(cleared.waits_on).toBeNull();
+    expect(cleared.from).toBeNull();
+    expect(merge(blocked, { waits_on: null, from: null })).toEqual(blocked);
   });
 });
 

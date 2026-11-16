@@ -145,6 +145,8 @@ mod tests {
             roles: Vec::new(),
             instruction: false,
             fields: std::collections::BTreeMap::default(),
+            waits_on: None,
+            from: None,
         }
     }
 

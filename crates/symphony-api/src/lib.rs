@@ -496,6 +496,46 @@ pub struct Task {
     /// The plugins' board fields: plugin name, then field name, then its value.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub fields: std::collections::BTreeMap<String, std::collections::BTreeMap<String, FieldValue>>,
+    /// What an open task waits on; none for a closed one, or from a server before it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub waits_on: Option<WaitsOn>,
+    /// The status a task the board holds blocked was blocked from, where it is known. A block that
+    /// names nothing is not blocked on the wire: the task is sent in that status, `from` beside it,
+    /// and its [`WaitsOn`] says no reason is recorded (docs/TASKS.md, what a task waits on).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub from: Option<String>,
+}
+
+/// What an open task waits on, why, and since when: the one line the board's card ends in, read by
+/// the board's one rule (`symphony_board::waits_on`), the one the PULL digest applies.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
+pub struct WaitsOn {
+    /// One of [`WAITS_KINDS`]. A client that does not know a kind draws it as `nobody`.
+    pub kind: String,
+    /// Who or what: the holder at work (`amber-heron`, `amber-heron (stale)`), the decision's
+    /// name, the checks' names, the task's slug; empty where the kind names nothing.
+    pub who: String,
+    /// Why, in a few words: the role at work, a block's own words, what a landing lacks.
+    pub why: String,
+    /// When the task took the status it holds, in seconds since the epoch.
+    pub since: f64,
+}
+
+/// The kinds of [`WaitsOn`], in the order every list and count of them keeps: what needs someone
+/// first (the owner's decision, nobody, a check, other tasks), then work going on, then work that
+/// waits by design.
+pub const WAITS_KINDS: [&str; 7] = [
+    "decision", "nobody", "check", "task", "working", "queued", "parked",
+];
+
+/// A session holding the orchestrator role on an open task, and its health (`live`, `stale`,
+/// `unknown`, `lost` or `left`): the board says once when none is live.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
+pub struct Orchestrator {
+    pub handle: String,
+    pub health: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -532,6 +572,13 @@ pub struct Tasks {
     pub version: String,
     pub tasks: Vec<Task>,
     pub sessions: Vec<Session>,
+    /// Each session holding the orchestrator role on an open task, by handle.
+    #[serde(default)]
+    pub orchestrators: Vec<Orchestrator>,
+    /// The ready tasks no live executor holds with nothing open before them: what waits to start,
+    /// by the PULL digest's rule.
+    #[serde(default)]
+    pub unstarted: usize,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -1066,6 +1113,12 @@ pub struct TaskFields {
     pub roles: Option<Vec<Role>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub instruction: Option<bool>,
+    /// Present only when what it waits on changes; one of no kind (empty) clears it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub waits_on: Option<WaitsOn>,
+    /// Present only when the status it was blocked from changes. Empty string clears it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub from: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

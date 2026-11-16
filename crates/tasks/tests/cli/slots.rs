@@ -99,7 +99,7 @@ fn a_claim_past_the_cap_the_project_file_sets_is_refused_naming_the_open_tasks()
 fn a_move_back_from_blocked_and_the_orchestrator_role_on_open_work_are_refused_too() {
     let (mut c, _) = in_project("slots-move", &cap(2));
     let (orch, worker) = holding(&c, 2);
-    c.ok(&worker, &["move", "work/1", "blocked"]);
+    c.ok(&worker, &["move", "work/1", "blocked", "--on", "parked"]);
     c.ok(&worker, &["claim", "work/2"]);
     let ran = c.run_as(&worker, &["move", "work/1", "in_progress"], "");
     assert_eq!(ran.code, 1, "{}", ran.err);

@@ -288,7 +288,7 @@ fn each_needed_stamp_read_at_a_later_commit_is_stale_and_names_the_one_it_stood_
 #[test]
 fn a_needed_stamp_with_nothing_given_is_missing_and_the_owners_is_held() {
     let every = assessed(&["tests", "review", "pictures", "owner"], Some(TIP));
-    let record = task("in_progress", Some(every));
+    let record = task("in_progress", Some(every.clone()));
     let gates = read(&record, &[], &[], Some(TIP));
     assert_eq!(
         states(&gates),
@@ -327,6 +327,30 @@ fn a_needed_stamp_with_nothing_given_is_missing_and_the_owners_is_held() {
             ("owner", GateState::Held, no_branch),
         ]
     );
+    // Not started, it has no branch yet: nothing is missing from the repository, and each needed
+    // stamp still waits as an open task's does.
+    for status in ["backlog", "concept", "design", "ready"] {
+        let gates = read(&task(status, Some(every.clone())), &given(), &[], None);
+        assert_eq!(
+            states(&gates),
+            [
+                ("tests", GateState::Missing, NO_BRANCH_YET),
+                (
+                    "review",
+                    GateState::Missing,
+                    "Approved in round 1 of 1, but it has no branch yet"
+                ),
+                ("pictures", GateState::Missing, NO_BRANCH_YET),
+                ("owner", GateState::Held, NO_BRANCH_YET),
+            ],
+            "{status}"
+        );
+    }
+    // Blocked or in review, it started: its branch is missing.
+    for status in ["blocked", "review"] {
+        let gates = read(&task(status, Some(every.clone())), &given(), &[], None);
+        assert_eq!(gates[0].detail, no_branch, "{status}");
+    }
     // Closed, with no branch and no land naming what it merged, where it stood cannot be read:
     // unknown, never missing, and nothing is held.
     let every = assessed(&["tests", "review", "pictures", "owner"], Some(TIP));

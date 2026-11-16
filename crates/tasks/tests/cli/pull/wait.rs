@@ -114,7 +114,7 @@ fn wait_never_says_its_own_writes() {
     c.ok(&orch, &["create", "sim/mine", "Mine"]);
     c.ok(&orch, &["role", "sim/mine", "orchestrator"]);
     c.ok(&orch, &["wait", "--timeout", "0"]);
-    c.ok(&orch, &["move", "sim/mine", "blocked"]);
+    c.ok(&orch, &["move", "sim/mine", "blocked", "--on", "parked"]);
     assert_eq!(c.ok(&orch, &["wait", "--timeout", "0"]), nothing(0));
 }
 

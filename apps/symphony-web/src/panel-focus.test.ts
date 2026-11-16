@@ -1,5 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { escapeCloses, focusFirst, returnFocus, takeFocus } from "./panel-focus";
+import {
+  escapeCloses,
+  focusFirst,
+  holdFocus,
+  releaseFocus,
+  returnFocus,
+  takeFocus,
+} from "./panel-focus";
 
 afterEach(() => {
   vi.useRealTimers();
@@ -48,6 +55,9 @@ class Page {
     return this.querySelectorAll(selector)[0] ?? null;
   }
 }
+
+/** A spot as the element the code under test holds it as. */
+const element = (spot: Spot) => spot as unknown as Element;
 
 /** A window holding `values`, and a page stubbed as the document. */
 function stubbed(values: Record<string, unknown> = {}) {
@@ -188,6 +198,64 @@ describe("the focus given back as a sheet closes", () => {
       await vi.advanceTimersByTimeAsync(0);
       expect(page.activeElement).toBe(fallback);
     }
+  });
+});
+
+describe("the focus a send holds in the sheet", () => {
+  it("moves from the control the send disables to the shown holder, in the sheet", () => {
+    const { page } = stubbed();
+    const hidden = new Spot(page, ["#quick-sheet"], { width: 0, height: 0 });
+    const panel = new Spot(page, ["#quick-sheet"]);
+    page.found.set("#panel", [hidden, panel]);
+    page.activeElement = new Spot(page, ["#quick-sheet"]);
+    expect(holdFocus("#quick-sheet", "#panel")).toBe(panel);
+    expect(page.activeElement).toBe(panel);
+    expect(hidden.focused).toBe(0);
+  });
+
+  it("holds nothing for a focus outside the sheet or on its stand-in, or with no holder shown", () => {
+    for (const from of [[], ["#quick-sheet", "#panel-loading"]]) {
+      const { page } = stubbed();
+      const panel = new Spot(page, ["#quick-sheet"]);
+      page.found.set("#panel", [panel]);
+      const focused = new Spot(page, from);
+      page.activeElement = focused;
+      expect(holdFocus("#quick-sheet", "#panel"), from.join()).toBeNull();
+      expect(page.activeElement).toBe(focused);
+      expect(panel.focused).toBe(0);
+    }
+    const { page } = stubbed();
+    page.found.set("#panel", [new Spot(page, ["#quick-sheet"], { width: 0, height: 0 })]);
+    page.activeElement = new Spot(page, ["#quick-sheet"]);
+    expect(holdFocus("#quick-sheet", "#panel")).toBeNull();
+  });
+
+  it("goes to the first field shown that takes it once the send is over", () => {
+    const { page } = stubbed();
+    const panel = new Spot(page, ["#quick-sheet"]);
+    const hidden = new Spot(page, ["#quick-sheet"], { width: 0, height: 0 });
+    const field = new Spot(page, ["#quick-sheet"]);
+    page.found.set("#hidden", [hidden]);
+    page.found.set("#field", [field]);
+    page.activeElement = panel;
+    releaseFocus(element(panel), ["#none", "#hidden", "#field"]);
+    expect(page.activeElement).toBe(field);
+    expect(hidden.focused).toBe(0);
+  });
+
+  it("stays where the reader moved it during the send, and moves nothing it did not hold", () => {
+    const { page } = stubbed();
+    const panel = new Spot(page, ["#quick-sheet"]);
+    const field = new Spot(page, ["#quick-sheet"]);
+    page.found.set("#field", [field]);
+    const opener = new Spot(page);
+    page.activeElement = opener;
+    releaseFocus(element(panel), ["#field"]);
+    expect(page.activeElement).toBe(opener);
+    page.activeElement = panel;
+    releaseFocus(null, ["#field"]);
+    expect(page.activeElement).toBe(panel);
+    expect(field.focused).toBe(0);
   });
 });
 

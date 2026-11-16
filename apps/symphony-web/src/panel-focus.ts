@@ -2,7 +2,9 @@
 // (frame.tsx) ask for the focus to move into a sheet they open (`reviewPanelFocus`, with the control
 // that opened it, `reviewPanelOpener`): the sheet takes it once it shows, unless the reader has put
 // it in the sheet already, and gives it back to that control when it closes, else to its header or
-// page button. Escape closes a sheet the focus is in, unless a control in it takes that Escape itself.
+// page button. A send holds the focus in the sheet while it disables the sheet's fields, and gives it
+// to the field the reader types in once it is over. Escape closes a sheet the focus is in, unless a
+// control in it takes that Escape itself.
 
 import { useEffect, useRef } from "react";
 import { remember, snapshot } from "./shared";
@@ -31,6 +33,16 @@ function focusIn(within: string): boolean {
   );
 }
 
+/** Focus the first of `selectors` to show and take it now: whether one did. */
+function focusShown(selectors: readonly string[]): boolean {
+  for (const selector of selectors) {
+    const element = shown(selector);
+    element?.focus();
+    if (element && document.activeElement === element) return true;
+  }
+  return false;
+}
+
 /**
  * Focus the first of `selectors` to show and take it, trying for a second while the panel draws.
  * The first try waits for the task that opened it to end: the shell takes its loading sheet down
@@ -42,11 +54,7 @@ export async function focusFirst(selectors: readonly string[], within?: string):
   for (let tries = 0; tries < 50; tries += 1) {
     await sleep(tries === 0 ? 0 : 20);
     if (within !== undefined && focusIn(within)) return;
-    for (const selector of selectors) {
-      const element = shown(selector);
-      element?.focus();
-      if (element && document.activeElement === element) return;
-    }
+    if (focusShown(selectors)) return;
   }
 }
 
@@ -80,6 +88,26 @@ export function returnFocus(fallback: string): void {
   void focusFirst(selectors).then(() =>
     document.querySelector("[data-panel-opener]")?.removeAttribute("data-panel-opener"),
   );
+}
+
+/**
+ * Hold the focus in the sheet `within` while a send disables its fields and buttons: a disabled
+ * control drops the focus to the page's body, where Escape closes nothing, so it goes to the first
+ * shown element `holder` finds (a stop for Tab the send leaves enabled). The element holding it,
+ * or none when the focus was not in the sheet.
+ */
+export function holdFocus(within: string, holder: string): Element | null {
+  if (!focusIn(within)) return null;
+  const held = shown(holder);
+  held?.focus();
+  return held !== null && document.activeElement === held ? held : null;
+}
+
+/** The send over and its fields enabled again: the focus `held` holds goes to the first of
+ * `selectors` that shows and takes it (the field the reader types in), unless the reader moved it
+ * meanwhile. */
+export function releaseFocus(held: Element | null, selectors: readonly string[]): void {
+  if (held !== null && document.activeElement === held) focusShown(selectors);
 }
 
 /** What an Escape key's event names: its key, whether a handler took it, and where it was pressed. */

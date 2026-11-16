@@ -6,7 +6,16 @@
 // `kind`), held to the Rust by the cases it writes (wire.cases.json, task.test.ts).
 
 import { field } from "./shared";
-import type { ItemChange, Role, Task, TaskChange, TaskFields, TaskListing } from "./wire";
+import type {
+  ItemChange,
+  Orchestrator,
+  Role,
+  Task,
+  TaskChange,
+  TaskFields,
+  TaskListing,
+  WaitsOn,
+} from "./wire";
 
 const isText = (value: unknown): value is string => typeof value === "string";
 const isNumber = (value: unknown): value is number => typeof value === "number";
@@ -19,6 +28,18 @@ function isRole(value: unknown): value is Role {
 }
 
 const isRoles = (value: unknown): value is Role[] => Array.isArray(value) && value.every(isRole);
+
+/** What a task waits on, as the server says it: its kind, who, why, and since when. */
+function isWaitsOn(value: unknown): value is WaitsOn {
+  return (
+    ["kind", "who", "why"].every((key) => isText(field(value, key))) &&
+    isNumber(field(value, "since"))
+  );
+}
+
+function isOrchestrator(value: unknown): value is Orchestrator {
+  return ["handle", "health"].every((key) => isText(field(value, key)));
+}
 
 /**
  * A task as this client reads it, or none for a value without what a card draws: its slug, title,
@@ -46,8 +67,9 @@ function isCounts(value: unknown): value is [string, number][] {
 
 /**
  * A listing of the task board (`/api/task-board`) as this client reads it, or none: its tasks,
- * each as `readTask` reads it, and what a missing list of statuses, sign-offs or counts reads as
- * (none), as serde's defaults do.
+ * each as `readTask` reads it, and what a missing list of statuses, sign-offs, counts or
+ * orchestrators, or a missing count of tasks waiting to start, reads as (none), as serde's
+ * defaults do.
  */
 export function readListing(value: unknown): TaskListing | null {
   const tasks = field(value, "tasks");
@@ -63,6 +85,8 @@ export function readListing(value: unknown): TaskListing | null {
     !listed("signoff", isTexts) ||
     !listed("counts", isCounts) ||
     !listed("lifecycle_counts", isCounts) ||
+    !listed("orchestrators", (one) => Array.isArray(one) && one.every(isOrchestrator)) ||
+    !listed("unstarted", isNumber) ||
     !(absent(field(value, "next")) || isText(field(value, "next")))
   ) {
     return null;
@@ -75,6 +99,8 @@ export function readListing(value: unknown): TaskListing | null {
     counts: (field(value, "counts") as [string, number][] | undefined) ?? [],
     lifecycle_counts: (field(value, "lifecycle_counts") as [string, number][] | undefined) ?? [],
     next: (field(value, "next") as string | undefined) ?? null,
+    orchestrators: (field(value, "orchestrators") as Orchestrator[] | undefined) ?? [],
+    unstarted: (field(value, "unstarted") as number | undefined) ?? 0,
   };
 }
 
@@ -90,6 +116,8 @@ const FIELDS: [keyof TaskFields, (value: unknown) => boolean][] = [
   ["depends", isTexts],
   ["roles", isRoles],
   ["instruction", (value) => typeof value === "boolean"],
+  ["waits_on", isWaitsOn],
+  ["from", isText],
 ];
 
 /** A task's changed fields as the feed's `task-fields` sends them, or none for what is not. */
@@ -224,6 +252,13 @@ export function merge(task: Task, fields: TaskFields): Task {
   }
   if (fields.parent !== undefined && fields.parent !== null) {
     next.parent = fields.parent === "" ? null : fields.parent;
+  }
+  // What it waits on of no kind, and a `from` of no status, clear each.
+  if (fields.waits_on !== undefined && fields.waits_on !== null) {
+    next.waits_on = fields.waits_on.kind === "" ? null : fields.waits_on;
+  }
+  if (fields.from !== undefined && fields.from !== null) {
+    next.from = fields.from === "" ? null : fields.from;
   }
   return next;
 }

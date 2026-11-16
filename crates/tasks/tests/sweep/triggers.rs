@@ -311,7 +311,7 @@ fn a_move_that_finishes_nothing_starts_none() {
         &r,
         "amber-heron",
         &r.root,
-        &["move", "sim/jump", "blocked"],
+        &["move", "sim/jump", "blocked", "--on", "parked"],
         |_| {},
     );
     none_started(&r);

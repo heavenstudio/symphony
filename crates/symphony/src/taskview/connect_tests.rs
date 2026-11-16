@@ -274,3 +274,59 @@ fn a_served_folder_left_without_its_git_reaches_no_board_above_it() {
     assert_eq!(super::serve(&plain.root), None);
     assert_eq!(super::held(&plain.root), None);
 }
+
+/// `git init` in `folder`, made first.
+fn git_init(folder: &Path) {
+    std::fs::create_dir_all(folder).unwrap();
+    let done = symphony_board::sys::output(
+        symphony_board::sys::Command::new("git")
+            .args(["init", "-q", "-b", "main"])
+            .current_dir(folder),
+    )
+    .unwrap();
+    assert!(done.status.success(), "{done:?}");
+}
+
+/// A folder this process serves keeps the journal of its project's chat and asks as it was found
+/// when it began to be served: once its `.git` goes, the journal found from it again is the one of
+/// the checkout that holds it, and every journal this process finds from the folder is its own
+/// still; `ASKS_DB` names another before either. A folder this process does not serve finds its
+/// journal now, as the command line does; one served again keeps the journal found then.
+#[test]
+fn a_served_folders_journal_is_the_one_found_when_it_began_to_be_served() {
+    use crate::asks::{default_path, found_path};
+    let tree = crate::test_tree::Tree::new();
+    git_init(&tree.root);
+    let inner = tree.path("artifacts/inner");
+    git_init(&inner);
+    let canonical = |path: &Path| path.canonicalize().unwrap();
+    let own = canonical(&inner).join("artifacts/asks/asks.db");
+    let outer = canonical(&tree.root).join("artifacts/asks/asks.db");
+    assert_eq!(found_path(&inner), own);
+    assert_eq!(super::served_journal(&inner), None, "not served yet");
+
+    super::serve(&inner);
+    std::fs::remove_dir_all(inner.join(".git")).unwrap();
+    assert_eq!(
+        found_path(&inner),
+        outer,
+        "found again, it is the outer checkout's"
+    );
+    assert_eq!(super::served_journal(&inner), Some(own.clone()));
+    assert_eq!(default_path(&inner, None), own);
+    assert_eq!(
+        default_path(&inner, Some("")),
+        own,
+        "an empty ASKS_DB names none"
+    );
+    assert_eq!(
+        default_path(&inner, Some("/x/y.db")),
+        PathBuf::from("/x/y.db")
+    );
+    let unserved = tree.path("artifacts/other");
+    std::fs::create_dir_all(&unserved).unwrap();
+    assert_eq!(default_path(&unserved, None), outer);
+    // Served again, the folder keeps the journal found then.
+    super::serve(&inner);
+    assert_eq!(default_path(&inner, None), outer);
+}

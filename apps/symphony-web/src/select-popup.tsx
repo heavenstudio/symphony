@@ -1,15 +1,16 @@
 // A select's popup, as the overlay module draws it for a field of any page (select.tsx asks for it
 // through the shell's `reviewOverlay`): a listbox that behaves as the pinned primitive's does
 // (dioxus-primitives `select`), mounted afresh on each opening. The list takes the focus; the
-// arrows, Home and End move it among the options, round the list, and typing moves it to the
-// option nearest what was typed (`typeahead.ts`); Enter or Space chooses the focused option, as a
-// press released on the option it went down on does (a finger's or a pen's on its click, so the
-// click lands on the option and nothing under it, `choosesOnClick`), and as a click does with no
-// pointer released before it (`clickChooses`), an assistive technology's activation; Escape, or
-// the focus leaving the list, closes it, and the focus moving among its options, as a screen
-// reader moves it, does not. It is drawn beside its field's trigger (`popup-position.ts`), whose
-// page gives the trigger its focus back, and drawn closed while its exit plays (overlay.css),
-// which its host waits for before it lets it go (`onLeft`).
+// arrows (from the chosen option while none has the focus), Home and End move it among the options,
+// round the list, and typing moves it to the option nearest what was typed (`typeahead.ts`); Enter
+// or Space chooses the focused option, as a press released on the option it went down on does (a
+// finger's or a pen's on its click, so the click lands on the option and nothing under it,
+// `choosesOnClick`), and as a click does with no pointer released before it (`clickChooses`), an
+// assistive technology's activation; Escape, or the focus leaving the list, closes it, and the
+// focus moving among its options, as a screen reader moves it, does not. It is drawn beside its
+// field's trigger (`popup-position.ts`), whose page gives the trigger its focus back, and drawn
+// closed while its exit plays (overlay.css), which its host waits for before it lets it go
+// (`onLeft`).
 //
 // What an assistive technology sends to activate an option, from the engines' own sources: Blink,
 // for TalkBack or any other's default action, focuses the option, then sends a mouse's pointerdown,
@@ -35,6 +36,17 @@ export function previousIndex(count: number, current: number | null): number | n
   if (count === 0) return null;
   if (current === null || current === 0) return count - 1;
   return current - 1;
+}
+
+/** Where the arrows move from: the focused option, else the chosen one (`value`'s), else none. */
+export function arrowsFrom(
+  options: readonly [string, string][],
+  value: string,
+  focused: number | null,
+): number | null {
+  if (focused !== null) return focused;
+  const chosen = options.findIndex(([key]) => key === value);
+  return chosen < 0 ? null : chosen;
 }
 
 /** Whether a key types a letter (a search) rather than naming one (`Enter`, `ArrowDown`…). */
@@ -156,6 +168,7 @@ export function SelectPopup({
       event.stopPropagation();
       setFocused(to);
     };
+    const from = arrowsFrom(options, value, focused);
     if (key === " " || key === "Enter") {
       if (!shut && focused !== null) {
         const option = options[focused];
@@ -179,8 +192,8 @@ export function SelectPopup({
         options.map(([, text], index) => ({ index, text })),
       );
       if (match !== null) setFocused(match);
-    } else if (key === "ArrowUp") moved(previousIndex(options.length, focused));
-    else if (key === "ArrowDown") moved(nextIndex(options.length, focused));
+    } else if (key === "ArrowUp") moved(previousIndex(options.length, from));
+    else if (key === "ArrowDown") moved(nextIndex(options.length, from));
     else if (key === "Home") moved(options.length > 0 ? 0 : null);
     else if (key === "End") moved(options.length > 0 ? options.length - 1 : null);
     else if (key === "Escape") {

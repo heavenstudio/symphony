@@ -87,6 +87,16 @@ fn a_read_that_shows_tasks_returns_the_sessions_on_them_and_a_whole_read_every_s
         all.iter().copied().filter(|t| pick(t)).collect()
     };
     let shown = holders(&of(&|t| t.slug == thread), &known, &[]);
+    // What an open task waits on is read over the tasks it depends on too, in one read of its own.
+    let shown_task = all
+        .iter()
+        .find(|t| t.slug == thread)
+        .expect("the thread's task");
+    let waited = if symphony_board::health::FINISHED.contains(&shown_task.status.as_str()) {
+        0
+    } else {
+        holders(&of(&|t| shown_task.depends.contains(&t.slug)), &known, &[])
+    };
     let listed = holders(&all, &known, &[]);
     let in_progress = holders(&of(&|t| t.status == "in_progress"), &known, &[]);
     let pullable = holders(
@@ -95,11 +105,11 @@ fn a_read_that_shows_tasks_returns_the_sessions_on_them_and_a_whole_read_every_s
         &[&writer],
     );
     let counted = [
-        // The task and the tasks right under it, each a read of its own.
+        // The task, the tasks right under it and those it depends on, each a read of its own.
         (
             "show",
             ran(&board, &["show", &thread, "--as", &writer]),
-            shown + holders(&of(&|t| t.parent.as_deref() == Some(&thread)), &known, &[]),
+            shown + holders(&of(&|t| t.parent.as_deref() == Some(&thread)), &known, &[]) + waited,
         ),
         ("list", ran(&board, &["list", "--as", &writer]), listed),
         (

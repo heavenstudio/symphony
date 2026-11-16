@@ -1,0 +1,135 @@
+{
+  "machine_work": {
+    "freshness": "disconnected",
+    "machines": [],
+    "unassigned": [],
+    "guidance": {}
+  },
+  "tasks": [
+    {
+      "slug": "tools/at-work",
+      "title": "Work going on",
+      "body": "",
+      "status": "in_progress",
+      "priority": 1,
+      "parent": null,
+      "created_by": "owner",
+      "created": 1794380520.0,
+      "updated": 1794382980.0,
+      "links": [],
+      "depends": [],
+      "roles": [
+        {
+          "handle": "amber-heron",
+          "role": "executor",
+          "since": 1794382980.0,
+          "expires": null,
+          "health": "stale"
+        }
+      ],
+      "instruction": false,
+      "waits_on": {
+        "kind": "working",
+        "who": "amber-heron (stale)",
+        "why": "executor",
+        "since": 1794382980.0
+      }
+    },
+    {
+      "slug": "app/on-a-card",
+      "title": "Blocked on a decision",
+      "body": "",
+      "status": "blocked",
+      "priority": 2,
+      "parent": null,
+      "created_by": "owner",
+      "created": 1794380520.0,
+      "updated": 1794389700.0,
+      "links": ["docs/DECISIONS.md"],
+      "depends": [],
+      "roles": [],
+      "instruction": false,
+      "waits_on": {
+        "kind": "decision",
+        "who": "task-first-visit-head-first",
+        "why": "which part of the page comes first",
+        "since": 1794389700.0
+      },
+      "from": "in_progress"
+    },
+    {
+      "slug": "app/stopped",
+      "title": "A block that names nothing",
+      "body": "",
+      "status": "review",
+      "priority": 2,
+      "parent": null,
+      "created_by": "owner",
+      "created": 1794380520.0,
+      "updated": 1794392820.0,
+      "links": [],
+      "depends": [],
+      "roles": [],
+      "instruction": false,
+      "waits_on": {
+        "kind": "nobody",
+        "who": "",
+        "why": "no reason recorded",
+        "since": 1794392820.0
+      },
+      "from": "review"
+    },
+    {
+      "slug": "tools/to-start",
+      "title": "Ready to start",
+      "body": "",
+      "status": "ready",
+      "priority": 3,
+      "parent": null,
+      "created_by": "owner",
+      "created": 1794380520.0,
+      "updated": 1794380520.0,
+      "links": [],
+      "depends": [],
+      "roles": [],
+      "instruction": false,
+      "waits_on": {
+        "kind": "queued",
+        "who": "",
+        "why": "waits to be staffed",
+        "since": 1794380520.0
+      }
+    },
+    {
+      "slug": "tools/landed",
+      "title": "Closed",
+      "body": "",
+      "status": "done",
+      "priority": 3,
+      "parent": null,
+      "created_by": "owner",
+      "created": 1794380520.0,
+      "updated": 1794397020.0,
+      "links": [],
+      "depends": [],
+      "roles": [],
+      "instruction": false
+    }
+  ],
+  "statuses": ["ready", "in_progress", "review", "blocked", "done"],
+  "signoff": [],
+  "counts": [["ready", 1], ["in_progress", 1], ["review", 1], ["blocked", 1], ["done", 1]],
+  "lifecycle_counts": [["ready", 1], ["in_progress", 1], ["review", 1], ["blocked", 1], ["done", 1]],
+  "next": null,
+  "orchestrators": [
+    {
+      "handle": "glacial-heron",
+      "health": "left"
+    },
+    {
+      "handle": "sable-finch",
+      "health": "stale"
+    }
+  ],
+  "unstarted": 1
+}

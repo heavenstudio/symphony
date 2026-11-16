@@ -56,7 +56,7 @@ fn pipeline_by() -> (Case, [String; 3]) {
     t(3.0).ok(&rev, &["role", "sim/a", "reviewer"]);
     t(4.0).ok(&rev, &["verdict", "sim/a", "approve", "fine"]);
     t(5.0).ok(&exe, &["claim", "sim/b"]);
-    t(6.0).ok(&exe, &["move", "sim/c", "blocked"]);
+    t(6.0).ok(&exe, &["move", "sim/c", "blocked", "--on", "parked"]);
     t(8.0).ok(&exe, &["move", "sim/b", "review"]);
     t(8.0).ok(&rev, &["role", "sim/b", "reviewer"]);
     t(10.0).ok(&rev, &["verdict", "sim/b", "changes", "a test is missing"]);

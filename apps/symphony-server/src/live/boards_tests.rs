@@ -712,6 +712,43 @@ fn a_pages_save_or_asks_read_past_its_check_after_its_projects_git_went_starts_n
     assert!(case.outer_down(), "the asks read started the outer board");
 }
 
+/// A page's question and its read of the asks, past front's check on a project whose `.git` went
+/// after that check, keep to the project's own journal, the one found when its server began to
+/// serve it: the question is saved there, with the chat line its save journals for an agent, and
+/// read back from there. Neither makes nor reads the outer checkout's journal, which a path found
+/// from the folder again would be, and whose own server would hand that chat line to the outer
+/// checkout's board.
+#[test]
+fn a_pages_ask_and_asks_read_after_its_projects_git_went_keep_to_its_own_journal() {
+    let (case, ()) = Gitless::new(|_, _| ());
+    let question = json!({ "path": "docs/TOPIC.md", "question": "Is it held?" });
+    let (status, said) = case.past_the_check(asked("POST", "/api/ask", Some(&question)));
+    assert_eq!(status, 200, "the ask: {said}");
+    let id = said["id"].as_i64().expect("the ask's id");
+    assert!(
+        !case.outer.join("artifacts/asks").exists(),
+        "the ask made the outer checkout's journal"
+    );
+    let (status, said) = case.past_the_check(asked("GET", "/api/asks?path=docs/TOPIC.md", None));
+    assert_eq!(status, 200, "the asks read: {said}");
+    let read: Vec<(i64, String)> = said["asks"]
+        .as_array()
+        .expect("the asks read lists the asks")
+        .iter()
+        .map(|ask| (ask["id"].as_i64().unwrap(), ask["question"].to_string()))
+        .collect();
+    assert_eq!(read, [(id, json!("Is it held?").to_string())]);
+    assert!(
+        !case.outer.join("artifacts/asks").exists(),
+        "the asks read made the outer checkout's journal"
+    );
+    let journal =
+        symphony::asks::AskStore::existing(&case.inner.root.join("artifacts/asks/asks.db"))
+            .expect("the project's own journal");
+    assert_eq!(journal.thread(id).unwrap().question, "Is it held?");
+    assert!(case.outer_down(), "the ask started the outer board");
+}
+
 /// A page on this machine asking `method` at `uri`, with `body` as its JSON.
 fn asked(method: &str, uri: &str, body: Option<&Value>) -> Request<Body> {
     Request::builder()
