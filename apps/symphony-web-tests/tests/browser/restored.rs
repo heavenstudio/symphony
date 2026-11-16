@@ -1396,9 +1396,10 @@ fn restored_ask_feed_and_navigation_preserve_drafts_while_rendering_typed_answer
     let mut ask = json!({"id":7,"path":"docs/PROBE.md","anchor":"","quote":"","question":"Question","asked":1.0,"answers":[],"status":"open","updated":1.0,"messages":[{"seq":1,"kind":"question","by":"owner","text":"","at":1.0,"blocks":[paragraph("Original typed answer")]}]});
     site.set_json("/api/asks", &json!({"asks":[ask],"recipient":"fixture"}));
     let Some(mut browser) = chrome() else { return };
-    // Every three-second timer the page sets is held here: an answered read must set none. The
-    // page's news of the asks is kept from its start.
-    browser.call("Page.addScriptToEvaluateOnNewDocument",json!({"source":"window.askPoll=[];const timer=window.setTimeout;window.setTimeout=function(fn,ms,...args){if(ms===3000){askPoll.push(()=>fn(...args));return 0}return timer(fn,ms,...args)};window.asksNews=[];addEventListener('review:asks',event=>asksNews.push(event.moved))"}));
+    // Every timer of the asks' retry the page sets is held here: an answered read must leave none
+    // waiting. The page's news of the asks is kept from its start.
+    super::hold_ask_polls(&mut browser);
+    browser.call("Page.addScriptToEvaluateOnNewDocument",json!({"source":"window.asksNews=[];addEventListener('review:asks',event=>asksNews.push(event.moved))"}));
     browser.open(&site.url("/docs/PROBE.md"));
     // Document hydration performs its initial anchor scroll. Wait for that readiness marker
     // before revealing the ask thread, or its later scroll can move the deferred thread away.
@@ -1415,7 +1416,7 @@ fn restored_ask_feed_and_navigation_preserve_drafts_while_rendering_typed_answer
         site.targets()
     );
     assert_eq!(
-        browser.eval("askPoll.length"),
+        browser.eval("askPoll.size"),
         json!(0),
         "a read that answered waits for the feed, not a timer"
     );
@@ -1445,7 +1446,7 @@ fn restored_ask_feed_and_navigation_preserve_drafts_while_rendering_typed_answer
         read + 1,
         "one read, for this document's thread alone"
     );
-    assert_eq!(browser.eval("askPoll.length"), json!(0));
+    assert_eq!(browser.eval("askPoll.size"), json!(0));
     assert_eq!(
         browser.eval(
             "[document.getElementById('new-ask').value,document.getElementById('reply-7').value]"

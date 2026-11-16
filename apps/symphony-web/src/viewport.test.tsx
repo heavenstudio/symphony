@@ -416,6 +416,7 @@ describe("the watch of a page's first screen", () => {
     resized(whole);
     expect(settled).toHaveBeenCalledOnce();
     expect(sized.size).toBe(0);
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it("settles as its region is drawn, and looks again at a scroll or a resize", () => {
@@ -425,9 +426,12 @@ describe("the watch of a page's first screen", () => {
     view.dispatchEvent(new Event("scroll"));
     view.dispatchEvent(new Event("resize"));
     expect(settled).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(1);
     region.waits = false;
     changed({ attribute: "data-pending" });
     expect(settled).toHaveBeenCalledOnce();
+    // Its deadline ended with it: a page settled by its event leaves no timer waiting.
+    expect(vi.getTimerCount()).toBe(0);
     view.dispatchEvent(new Event("scroll"));
     expect(settled).toHaveBeenCalledOnce();
   });
