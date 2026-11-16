@@ -31,10 +31,13 @@ impl Hub {
         )
     }
 
-    /// Finish the current refresh (including its children), then release the watcher and board.
+    /// Finish the current refresh (including its children) and tick, then release the watcher and
+    /// board.
     pub fn stop(&self) {
         self.draining.send_replace(true);
         self.disarm_initial_board();
+        // The ticks' wait between two reads ends at once.
+        self.ticks.lock().unwrap_or_else(|e| e.into_inner()).take();
         let mut worker = self.worker.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(worker) = worker.take()
             && worker.join().is_err()
@@ -53,7 +56,8 @@ impl Hub {
     }
 
     /// Install watcher `W` and documents. The owned worker starts its board read when activated,
-    /// then sweeps the watched files on its own every `period`.
+    /// then runs the board's ticks on a thread of its own and sweeps the watched files on its own
+    /// every `period` ([`run`]).
     pub(super) fn start_watching<W: Watcher + Send + 'static>(
         root: &Path,
         ui_dist: &Path,
