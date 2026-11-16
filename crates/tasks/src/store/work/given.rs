@@ -15,9 +15,15 @@
 //! it read before is decided again ([`crate::store::cap`]): a give is never refused for the cap,
 //! as the owner's hand-over is not, but a move's, which the move's own cap read decides. Only the
 //! topmost task of each tree with no orchestrator is given ([`orchestration::unowned_tops`]); the
-//! tree gives the rest. The board's own choice is an orchestrator that stays ([`Pool::of`]); with
+//! tree gives the rest. The board's own choice is an orchestrator that stays ([`Pool::of`]) and
+//! holds fewer open tasks than the limit (`[limits] orchestrator_tasks`, [`Pool::within`]), but
+//! for a red, which goes to one that stays whatever it holds; the orchestrator a filing's own story
+//! names is passed over at the limit, and the filer told why ([`Store::give_filed_saying`]). With
 //! none, that task is marked waiting ([`orchestration::WAITING`]), once, and the mark goes when it
-//! is given or somebody's again.
+//! is given or somebody's again. The limit is fenced as the cap is: a pass holds each receiver's
+//! slot counter as it read it before the board, and a take or hand-over of the role that the limit
+//! holds reads the taker's open tasks and its counter together ([`GAINING`], `Store::gaining`), so
+//! two writes that each saw a place cannot both fill it.
 
 use crate::health::FINISHED;
 use crate::orchestration::{self, Owners, Pool, WAITING};
@@ -42,6 +48,16 @@ pub struct Given {
     pub waiting: Vec<String>,
     /// Of those, the ones that began waiting with this pass, marked by it.
     pub marked: Vec<String>,
+}
+
+/// Who orchestrates a task just filed ([`Store::give_filed_saying`]).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Filed {
+    /// Its orchestrator; none while it waits for one.
+    pub orchestrator: Option<String>,
+    /// Why the orchestrator its story named first was passed over: the filer refused the role, or
+    /// one at the limit on the open tasks it holds the role on ([`orchestration::at_limit`]).
+    pub passed: Option<String>,
 }
 
 /// Whose a task is once a give was looked for ([`Store::give_task`]).
@@ -83,6 +99,8 @@ pub(in crate::store) struct Pass {
     /// Each holder dropped, with its `last_seen` as read.
     seen: Vec<Value>,
     receivers: BTreeSet<String>,
+    /// Each receiver's slot counter as read before the board the pass decided on ([`Pass::guard`]).
+    counters: Vec<Value>,
     marks: Vec<String>,
     unmarks: Vec<String>,
     pub(in crate::store) given: Given,
@@ -155,6 +173,20 @@ impl Pass {
         self.given.gave.push((top.slug.clone(), to));
     }
 
+    /// Hold each receiver's slot counter at `last`, as read before the board this pass decided on
+    /// (`Store::slot_counters`): a take of the role or a hand-over to it written since moved it, so
+    /// the pass, which gave it work by a count that write raised, reads and decides again, and the
+    /// limit on its open tasks holds.
+    pub(in crate::store) fn guard(&mut self, last: &[(String, i64)]) {
+        let read: HashMap<&str, i64> = last.iter().map(|(h, l)| (h.as_str(), *l)).collect();
+        self.counters = (self.receivers.iter())
+            .map(|to| {
+                let last = read.get(to.as_str()).copied().unwrap_or(0);
+                json!({"key": ["slots", to], "last": last})
+            })
+            .collect();
+    }
+
     /// Lift the waiting mark from each task of `board` that carries it and is somebody's now,
     /// finished, or no longer the top of what waits.
     fn unmark_settled(&mut self, board: &Board, versions: &Versions) {
@@ -180,6 +212,7 @@ impl Pass {
             "fenced": self.fenced,
             "seen": self.seen,
             "receivers": self.receivers,
+            "counters": self.counters,
             "marks": self.marks,
             "unmarks": self.unmarks,
             "sender": sender,
@@ -191,6 +224,15 @@ impl Pass {
     }
 }
 
+/// What [`Store::gaining`] reads of `$handle`: its slot counter, and the status and red mark of each
+/// task it holds the orchestrator role on, by `role_handle` and then by id.
+pub const GAINING: &str =
+    "LET $mine = (SELECT VALUE slug FROM role WHERE handle = $handle AND role = 'orchestrator');
+RETURN {
+    last: (SELECT VALUE last FROM ONLY type::record('counter', ['slots', $handle])) ?? 0,
+    tasks: (SELECT status, fields._board.red AS red FROM $mine.map(|$s| type::record('task', $s))),
+};";
+
 /// The checks a pass's write makes first, before any statement of its own moves a version or a
 /// `last_seen`: each task as read, each dropped holder as read. Needs `$fenced` and `$seen`.
 pub(in crate::store) const FENCES: &str = "
@@ -201,15 +243,19 @@ FOR $s IN $seen {
     IF (SELECT VALUE last_seen FROM ONLY type::record('session', $s.handle)) != $s.last_seen { THROW 'stale' };
 };";
 
-/// A pass's writes, after its [`FENCES`]: each receiver still there, fenced as a recipient is; each
-/// give's role, version, slot counter and line, sent by `$sender`; each mark set or lifted. Needs
-/// `$receivers`, `$gives`, `$marks`, `$unmarks`, `$sender` and `$now`.
+/// A pass's writes, after its [`FENCES`]: each receiver still there, fenced as a recipient is, its
+/// slot counter where it was read ([`Pass::guard`]); each give's role, version, slot counter and
+/// line, sent by `$sender`; each mark set or lifted. Needs `$receivers`, `$counters`, `$gives`,
+/// `$marks`, `$unmarks`, `$sender` and `$now`.
 pub(in crate::store) fn gives() -> String {
     format!(
         "
 FOR $handle IN $receivers {{
     IF !record::exists(type::record('session', $handle)) OR type::record('session', $handle).left_at != NONE {{ THROW 'stale' }};
     {FENCE_RECIPIENT}
+}};
+FOR $c IN $counters {{
+    IF ((SELECT VALUE last FROM ONLY type::record('counter', $c.key)) ?? 0) != $c.last {{ THROW 'stale' }};
 }};
 FOR $g IN $gives {{
     FOR $h IN $g.drop {{ DELETE type::record('role', [$g.slug, $h, 'orchestrator']) RETURN NONE; }};
@@ -263,10 +309,64 @@ impl Store {
             .map(|_| ())
     }
 
-    /// The orchestrators of `board` that stay, but `except` ([`Pool::of`]): its live ones past their
-    /// first live line are read for whether each listens, a channel registered (`callback_state`
-    /// with an address) or a reader of `tasks wait` (on the chat seat's waiting list), by their
-    /// records alone; with none, nothing is read.
+    /// Refused, saying `what` cannot happen and why, when `to` holds the orchestrator role on
+    /// `limit` open tasks or more ([`orchestration::counted`]): a rule giving it the role on another
+    /// (`role`, `handover`, a filer's own take). Else `to`'s slot counter, read with its tasks,
+    /// joins `slots`, the counters the rule's write holds (`cap::GUARD`), so a give or another take
+    /// written since, which moved it, has the rule read and decide again. A counter the rule's cap
+    /// read already holds at another value is the board moving under it: decided again too.
+    pub(in crate::store) fn gaining(
+        &self,
+        to: &str,
+        what: &str,
+        limit: usize,
+        slots: &mut Vec<Value>,
+    ) -> Result<(), Failure> {
+        #[derive(serde::Deserialize)]
+        struct Mine {
+            last: i64,
+            tasks: Vec<Held>,
+        }
+        #[derive(serde::Deserialize)]
+        struct Held {
+            status: String,
+            #[serde(default)]
+            red: Option<Value>,
+        }
+        let mine: Mine = self.read(GAINING, json!({"handle": to}))?;
+        let held = (mine.tasks.iter())
+            .filter(|t| !FINISHED.contains(&t.status.as_str()))
+            .filter(|t| t.red.as_ref().is_none_or(Value::is_null))
+            .count();
+        if let Some(why) = orchestration::at_limit(to, held, limit) {
+            return Err(Failure::Stop(crate::store::refused(format!(
+                "{what}: {why}"
+            ))));
+        }
+        let key = json!(["slots", to]);
+        match slots.iter().find(|s| s["key"] == key) {
+            Some(read) if read["last"] != json!(mine.last) => return Err(Failure::Again),
+            Some(_) => {}
+            None => slots.push(json!({"key": key, "last": mine.last})),
+        }
+        Ok(())
+    }
+
+    /// Every orchestrator's slot counter, `counter:['slots', HANDLE]`, which every give and every
+    /// take of the role or hand-over to it moves: what a pass reads before the board it decides on,
+    /// to hold its receivers' where it read them ([`Pass::guard`]).
+    pub(in crate::store) fn slot_counters(&self) -> Result<Vec<(String, i64)>, Failure> {
+        self.read(
+            &format!("RETURN ({});", crate::store::cap::COUNTERS),
+            json!({}),
+        )
+    }
+
+    /// The orchestrators of `board` that stay, but `except` ([`Pool::of`]), none given a task past
+    /// the limit on its open tasks but a red ([`Pool::within`], `[limits] orchestrator_tasks`): its
+    /// live ones past their first live line are read for whether each listens, a channel registered
+    /// (`callback_state` with an address) or a reader of `tasks wait` (on the chat seat's waiting
+    /// list), by their records alone; with none, nothing is read.
     pub(in crate::store) fn pool(&self, board: &Board, except: &[&str]) -> Result<Pool, Failure> {
         let now = self.now();
         let candidates = orchestration::candidates(board, except, now);
@@ -280,7 +380,7 @@ impl Store {
                 json!({"candidates": candidates}),
             )?,
         };
-        Ok(Pool::of(board, except, &listening, now))
+        Ok(Pool::of(board, except, &listening, now).within(self.limits().orchestrator_tasks))
     }
 
     /// What a reader of the whole board does with what it read, `board`: when it shows the board's
@@ -333,6 +433,7 @@ impl Store {
 
     fn unowned_pass(&self, by: Option<&str>, write: bool) -> Result<Given, Error> {
         self.retrying(|| {
+            let counted = self.slot_counters()?;
             let (board, versions) = self.board_versions()?;
             let mut pool = self.pool(&board, &[])?;
             let mut pass = Pass::default();
@@ -342,9 +443,10 @@ impl Store {
                 } else {
                     "nobody orchestrated it"
                 };
-                pass.give(&board, &versions, top, pool.pick(), why, &[]);
+                pass.give(&board, &versions, top, pool.pick_for(top), why, &[]);
             }
             pass.unmark_settled(&board, &versions);
+            pass.guard(&counted);
             if write {
                 self.write_pass(&pass, by)?;
             }
@@ -365,15 +467,35 @@ impl Store {
         by: &str,
         to: Option<&str>,
     ) -> Result<Option<String>, Error> {
+        Ok(self.give_filed_saying(slug, by, to)?.orchestrator)
+    }
+
+    /// [`Store::give_filed`], with why the orchestrator the task's story names first was passed
+    /// over: `by`, an orchestrator, refused the role (at the limit on the open tasks it holds the
+    /// role on, `[limits] orchestrator_tasks`, or past its slots), or the first live one of the
+    /// rest at that limit. What `tasks create` says.
+    pub fn give_filed_saying(
+        &self,
+        slug: &str,
+        by: &str,
+        to: Option<&str>,
+    ) -> Result<Filed, Error> {
+        let mut refused = None;
         if to.is_none() && by != OWNER {
             match self.orchestrate_filed(slug, by) {
-                Ok(true) => return Ok(Some(by.to_owned())),
-                Ok(false) | Err(Error::Refused(_)) => {}
+                Ok(true) => {
+                    return Ok(Filed {
+                        orchestrator: Some(by.to_owned()),
+                        passed: None,
+                    });
+                }
+                Ok(false) => {}
+                Err(Error::Refused(why)) => refused = Some(why),
                 Err(error) => return Err(error),
             }
         }
         let why = format!("filed by {by}");
-        let kept = self.give_task(slug, by, &why, &|board: &Board| {
+        let (kept, passed) = self.give_task(slug, by, &why, &|board: &Board| {
             let mut first: Vec<String> = to.map(str::to_owned).into_iter().collect();
             // The work `by` holds a role on, the latest taken first: its orchestrators.
             let mut working: Vec<(f64, &str)> = Vec::new();
@@ -394,16 +516,22 @@ impl Store {
             first.extend(parent);
             first
         })?;
-        Ok(match kept {
+        let orchestrator = match kept {
             Kept::Held(owner) | Kept::Given(owner) => Some(owner),
             Kept::Waiting | Kept::Finished => None,
+        };
+        Ok(Filed {
+            passed: refused
+                .or(passed)
+                .filter(|_| orchestrator.as_deref() != Some(by)),
+            orchestrator,
         })
     }
 
     /// Keep `slug` somebody's after `by` reopened it: when nobody orchestrates it now, give it by
     /// rule 4, `why` on the line. Whether that wrote anything: a give, or the task marked waiting.
     pub(crate) fn keep_owned(&self, slug: &str, by: &str, why: &str) -> Result<bool, Error> {
-        let kept = self.give_task(slug, by, why, &|_: &Board| Vec::new())?;
+        let (kept, _) = self.give_task(slug, by, why, &|_: &Board| Vec::new())?;
         Ok(matches!(kept, Kept::Given(_) | Kept::Waiting))
     }
 
@@ -491,31 +619,34 @@ impl Store {
     }
 
     /// Give the topmost task nobody orchestrates at or above `slug` to the first live orchestrator
-    /// `first` names on the board read, else by rule 4 among those that stay, as `by` with `why` on
-    /// its line.
+    /// `first` names on the board read that holds fewer open tasks than the limit (any, for a red),
+    /// else by rule 4 among those that stay, as `by` with `why` on its line. With it, why the first
+    /// live one `first` names was passed over, at the limit ([`orchestration::at_limit`]).
     fn give_task(
         &self,
         slug: &str,
         by: &str,
         why: &str,
         first: &dyn Fn(&Board) -> Vec<String>,
-    ) -> Result<Kept, Error> {
+    ) -> Result<(Kept, Option<String>), Error> {
         // Most tasks are somebody's by the tree: read the line of parents before the whole board.
         match self.orchestrators_of(slug) {
-            Ok(owners) if !owners.is_empty() => return Ok(Kept::Held(owners[0].clone())),
+            Ok(owners) if !owners.is_empty() => return Ok((Kept::Held(owners[0].clone()), None)),
             Ok(_) | Err(Error::Refused(_)) => {}
             Err(error) => return Err(error),
         }
         let actor = self.give_actor(by)?;
+        let limit = self.limits().orchestrator_tasks;
         self.retrying(|| {
+            let counted = self.slot_counters()?;
             let (board, versions) = self.board_versions()?;
             let owners = Owners::new(&board.tasks);
             let task = board.tasks.iter().find(|t| t.slug == slug);
             let Some(task) = task.filter(|t| !FINISHED.contains(&t.status.as_str())) else {
-                return Ok(Kept::Finished);
+                return Ok((Kept::Finished, None));
             };
             if let Some(owner) = owners.of(&task.slug).first() {
-                return Ok(Kept::Held((*owner).to_owned()));
+                return Ok((Kept::Held((*owner).to_owned()), None));
             }
             let mut chain = vec![task.slug.as_str()];
             let mut at = task.parent.as_deref();
@@ -527,10 +658,11 @@ impl Store {
             }
             let tops = orchestration::unowned_tops(&board.tasks);
             let Some(top) = tops.into_iter().find(|t| chain.contains(&t.slug.as_str())) else {
-                return Ok(Kept::Finished);
+                return Ok((Kept::Finished, None));
             };
-            // The task's own story names a live orchestrator, whoever it is; the board's own
-            // choice goes to one that stays ([`Pool::of`]).
+            // The task's own story names a live orchestrator under the limit on its open tasks (at
+            // any count for a red), whoever it is; the board's own choice goes to one that stays
+            // ([`Pool::of`]).
             let live = |handle: &str| {
                 (board.sessions.iter()).any(|s| {
                     s.row.handle == handle
@@ -538,14 +670,24 @@ impl Store {
                         && s.health == crate::Health::Live
                 })
             };
-            let to = match first(&board).into_iter().find(|h| live(h)) {
+            let (mut chosen, mut passed) = (None, None);
+            for handle in first(&board).into_iter().filter(|h| live(h)) {
+                let held = orchestration::orchestrated(&board.tasks, &handle);
+                if top.red() || held < limit {
+                    chosen = Some(handle);
+                    break;
+                }
+                passed = passed.or_else(|| orchestration::at_limit(&handle, held, limit));
+            }
+            let to = match chosen {
                 Some(to) => Some(to),
-                None => self.pool(&board, &[])?.pick(),
+                None => self.pool(&board, &[])?.pick_for(top),
             };
             let mut pass = Pass::default();
             pass.give(&board, &versions, top, to.clone(), why, &[]);
+            pass.guard(&counted);
             self.write_pass(&pass, actor.as_deref())?;
-            Ok(to.map_or(Kept::Waiting, Kept::Given))
+            Ok((to.map_or(Kept::Waiting, Kept::Given), passed))
         })
     }
 

@@ -585,8 +585,9 @@ fn letting_the_orchestrator_role_go_is_refused_while_it_leaves_open_work_with_no
         refused(f.store.release("tools/a", &amber, Some("orchestrator"))),
         format!(
             "{amber} cannot let go of orchestrator on tools/a: tools/a would have no orchestrator, \
-             and no other orchestrator that stays is there to take it: it stays {amber}'s \
-             (`{board} leave` leaves it waiting for the next orchestrator)"
+             and no other orchestrator that stays and holds fewer open tasks than the limit is \
+             there to take it: it stays {amber}'s (`{board} leave` leaves it waiting for the next \
+             orchestrator)"
         )
     );
     // Finished, it still keeps the open work below it: that goes first.
@@ -599,8 +600,9 @@ fn letting_the_orchestrator_role_go_is_refused_while_it_leaves_open_work_with_no
         refused(f.store.release("tools/a", &amber, Some("orchestrator"))),
         format!(
             "{amber} cannot let go of orchestrator on tools/a: tools/a/part would have no \
-             orchestrator, and no other orchestrator that stays is there to take it: it stays \
-             {amber}'s (`{board} leave` leaves it waiting for the next orchestrator)"
+             orchestrator, and no other orchestrator that stays and holds fewer open tasks than \
+             the limit is there to take it: it stays {amber}'s (`{board} leave` leaves it waiting \
+             for the next orchestrator)"
         )
     );
     f.store
