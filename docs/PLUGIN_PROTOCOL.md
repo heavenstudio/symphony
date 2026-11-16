@@ -291,10 +291,9 @@ request: a plugin of 0.2 is asked them card by card, and answers the same.
   (`Card`, `Picture`, `TaskOffer`, `Submission`, `Theme`, `Image`, `Viewer`…) and a variant's own
   fields are not marked, as a plugin and its tests build them by their fields: a field added to one
   is a new major of the kit, whichever minor of the protocol carries it.
-- **The vocabulary grows in a minor** (the board task `tools/kit-vocabulary-grows-in-a-minor`,
-  [its card](DECISIONS.md#kit-new-block-version)). A new kind of block, text span or media is a
-  minor of the kit (1.1.0), never a new major: a plugin makes blocks and never has to list them,
-  so one written for 1.0.0 keeps building. `Block`, `Span` and `Media` are `#[non_exhaustive]`,
+- **The vocabulary grows in a minor** ([its card](DECISIONS.md#kit-new-block-version)). A new
+  kind of block, text span or media is a minor of the kit (1.1.0), never a new major: a plugin
+  makes blocks and never has to list them, so one written for 1.0.0 keeps building. `Block`, `Span` and `Media` are `#[non_exhaustive]`,
   and so is every other list of the kit a minor may add to: the words a block carries
   (`CalloutKind`, `FigureSize`, `ContainerKind`, `InlineKind`, `VectorKind`, `CardState`,
   `CardGroup`, `ThreadAuthor`), a gate's `GateState`, a board field's `FieldKind` and a renderer's
@@ -305,8 +304,8 @@ request: a plugin of 0.2 is asked them card by card, and answers the same.
   and names those two with their reasons (`crates/symphony-plugin/tests/vocabulary.rs`, a crate
   that links the kit alone and matches each list with `_`).
 
-  The compiler no longer refuses a build of this workspace in which a new kind has no arm, so
-  tests do. `crates/symphony-api/tests/vocabulary_drawn.rs` reads each list from the kit's source
+  The compiler does not refuse a build of this workspace in which a kind has no arm, as each
+  match outside the kit ends with `_`, so tests do. `crates/symphony-api/tests/vocabulary_drawn.rs` reads each list from the kit's source
   and fails on a variant that a match on it in the server, the wire types or the Dioxus client
   does not name. The React client is held by its types, written from the same lists: its
   switches end in a value of type `never` and its tables name every kind, so a kind it does not

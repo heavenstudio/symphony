@@ -314,7 +314,10 @@ project is given and neither the library nor the shipped `symphony` compiles
    plugin writes. Each enum whose variants a guard holds is also matched there by every variant, the
    guards' own choice: a variant added fails the guard, and waits for a consumer release plan only
    where a consumer matches that enum whole, while a variant that only that match names goes or
-   changes with it. The signature of a function a guard names alone, and a field read or a method
+   changes with it. The kit's enums that grow in a minor
+   ([PLUGIN_PROTOCOL](PLUGIN_PROTOCOL.md#versions)) are matched there by every variant and `_`,
+   as any match outside the kit is: a variant added to one passes the guard, as it breaks no
+   consumer, and one renamed or removed still fails it. The signature of a function a guard names alone, and a field read or a method
    called on a value that no guard names, are the project's to meet when it moves its pin: its own
    gate builds it on the new one.
 5. **Red:** no tag. Each red check, and each red step of a check that lists them (step 3), is a

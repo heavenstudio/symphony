@@ -1,7 +1,7 @@
 //! Every kind of the plugin kit's vocabulary has its arm wherever this workspace matches the
 //! kinds. The kit's lists grow in a minor (`docs/PLUGIN_PROTOCOL.md`, *Versions*), so they are
-//! `#[non_exhaustive]` and each match outside the kit ends with `_`: the compiler no longer refuses
-//! a build in which a new kind has no arm. This reads the sources in its place: a variant of a list
+//! `#[non_exhaustive]` and each match outside the kit ends with `_`: the compiler does not refuse
+//! a build in which a kind has no arm. This reads the sources in its place: a variant of a list
 //! that a match below does not name fails here, naming the variant and the function. The React
 //! client's own check is its type check and `blocks.test.tsx`, over the types `just client-wire`
 //! writes from these same lists.

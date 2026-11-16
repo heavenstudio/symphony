@@ -10,7 +10,8 @@
 //! over every target), so a change that would break a consumer in what this file holds fails a
 //! task's gate rather than a run later.
 //!
-//! Each enum whose variants are held here is also matched by every variant, with no `_` arm. That
+//! Each enum whose variants are held here, but the kit's that grow in a minor (below), is also
+//! matched by every variant, with no `_` arm. That
 //! match is this repository's own choice, wider than a consumer's use unless it matches the enum
 //! whole (a plugin's route test matches `Reply` so): a tripwire, so a variant added fails this file
 //! and whoever adds it reads what the consumers do with that enum. One that matches it whole
