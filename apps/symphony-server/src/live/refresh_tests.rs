@@ -214,11 +214,10 @@ fn a_followed_document_whose_linking_task_moved_is_rendered_again_and_no_other()
     );
 
     f.store
-        .client()
-        .query(
-            "UPDATE task SET status = 'in_progress' WHERE slug = 'tools/topic' RETURN NONE;",
-            serde_json::json!({}),
-        )
+        .raw()
+        .table("task")
+        .matching(serde_json::json!({"slug": "tools/topic"}))
+        .set(serde_json::json!({"status": "in_progress"}))
         .unwrap();
     observe(&hub, &f.store, &[]);
     hub.refresh_docs(Some(&BTreeSet::new())).unwrap();

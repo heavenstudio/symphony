@@ -16,12 +16,14 @@ import {
   useState,
 } from "react";
 import { Button } from "./button";
-import { sleep, whenShown } from "./feed";
+import { whenShown } from "./feed";
 import { useMount } from "./mount";
 import { href } from "./project";
 import { Failure, getIf, getJson, said } from "./request";
 import { field } from "./shared";
 import { load, save } from "./storage";
+// biome-ignore lint/style/noRestrictedImports: no-timed-waits baseline: Runs has no feed of its own: it reads again every 5 and 15 s while shown, where a feed event of a run is the wait
+import { sleep } from "./timing";
 import { failed as failedRead, ready, Trouble } from "./trouble";
 import { Skeleton } from "./viewport";
 import {
@@ -926,7 +928,9 @@ function RunsHome({ now, nowError, at }: { now: Now | null; nowError: string | n
     <div
       className="runs"
       data-ready={list !== null ? "runs" : ready(missing, error !== null)}
-      aria-busy={list === null}
+      // Busy while the first page is read, and no longer once its read failed: the page then says
+      // so, drawn, and a region busy on the screen would hold `symphony shot` to its timeout.
+      aria-busy={list === null && error === null}
     >
       <header className="runs-head">
         <div>
@@ -1311,6 +1315,31 @@ export async function readEarlier(id: string, log: ShownLog, signal: AbortSignal
  * A run's page and its log: read at once, and again every NOW_MS until the run and its steps have
  * ended, its log read on from where it stopped; earlier output read under the mount's signal.
  */
+/**
+ * A run's page before its first answer: its ghost while it is read, busy, or why it could not be
+ * read, with Retry. That one is drawn and not busy: a region busy on the screen would hold
+ * `symphony shot` to its timeout, picturing nothing of what the page says.
+ */
+export function RunWaiting({ error, onRetry }: { error: string | null; onRetry: () => void }) {
+  return (
+    <div
+      className="runs run-page"
+      data-ready={ready(false, error !== null)}
+      aria-busy={error === null}
+    >
+      <a className="run-back" href={href("/runs")}>
+        <span aria-hidden="true">← </span>
+        Every run
+      </a>
+      {error === null ? (
+        <Skeleton lines={8} label="Loading the run…" />
+      ) : (
+        <Trouble title="The run could not be read" text={error} retry={onRetry} />
+      )}
+    </div>
+  );
+}
+
 function RunScreen({ id, running, at }: { id: string; running: ReadonlySet<string>; at: number }) {
   const mount = useMount();
   const [page, setPage] = useState<RunPage | null>(null);
@@ -1381,23 +1410,7 @@ function RunScreen({ id, running, at }: { id: string; running: ReadonlySet<strin
     );
   }
   if (page === null) {
-    return (
-      <div className="runs run-page" data-ready={ready(false, error !== null)} aria-busy="true">
-        <a className="run-back" href={href("/runs")}>
-          <span aria-hidden="true">← </span>
-          Every run
-        </a>
-        {error === null ? (
-          <Skeleton lines={8} label="Loading the run…" />
-        ) : (
-          <Trouble
-            title="The run could not be read"
-            text={error}
-            retry={() => setAsked((n) => n + 1)}
-          />
-        )}
-      </div>
-    );
+    return <RunWaiting error={error} onRetry={() => setAsked((n) => n + 1)} />;
   }
   return (
     <RunView

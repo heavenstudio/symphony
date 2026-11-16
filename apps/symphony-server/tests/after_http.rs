@@ -106,7 +106,7 @@ fn fixture() -> tree::Tree {
     );
     write(
         &root,
-        "build/symphony-ui/public/assets/app-dxh123.js",
+        "build/symphony-ui/public/assets/app-0123456789abcdef.js",
         "console.log('fixture');\n".repeat(100),
     );
     repository(&root, &["add", "."]);
@@ -638,7 +638,7 @@ fn contracts(f: &Fixture) {
         "/",
         DOCUMENT,
         "/api/board",
-        "/assets/app-dxh123.js",
+        "/assets/app-0123456789abcdef.js",
         "/artifacts/raw.svg",
         "/room/shelf/items/A.item",
         "/x/shelf/A.item",
@@ -661,7 +661,7 @@ fn contracts(f: &Fixture) {
     }
     for route in [
         "/",
-        "/assets/app-dxh123.js",
+        "/assets/app-0123456789abcdef.js",
         "/room/shelf/items/A.item",
         "/x/shelf/A.item",
         "/artifacts/raw.svg",
@@ -743,7 +743,7 @@ fn contracts(f: &Fixture) {
     );
     for route in [
         "/",
-        "/assets/app-dxh123.js",
+        "/assets/app-0123456789abcdef.js",
         DOCUMENT,
         "/api/board",
         "/artifacts/large.svg",
@@ -807,7 +807,7 @@ fn contracts(f: &Fixture) {
     assert!(decoded.status.success());
     assert_eq!(decoded.stdout, shell.body);
     assert_eq!(
-        f.get("/assets/app-dxh123.js")
+        f.get("/assets/app-0123456789abcdef.js")
             .status(200)
             .header("cache-control"),
         "public, max-age=31536000, immutable"
@@ -1201,10 +1201,15 @@ fn persistence(f: &Fixture) {
         .row
         .handle;
     // An isolated remote callback exercises recipient selection without invoking a local agent.
-    store.client().query(
-        "UPSERT type::record('callback_state', $handle) SET handle = $handle, address = 'codex:abcdef01', host = 'http-fixture-remote' RETURN NONE;",
-        json!({"handle":orchestrator}),
-    ).unwrap();
+    store
+        .raw()
+        .row("callback_state", orchestrator.as_str())
+        .put(json!({
+            "handle": orchestrator,
+            "address": "codex:abcdef01",
+            "host": "http-fixture-remote",
+        }))
+        .unwrap();
     feed.until(&format!("\"recipient\":\"{orchestrator}\""));
     let read = f.get(&format!("/api/ask?id={id}")).status(200).json();
     assert_eq!(read["ask"]["id"], id);

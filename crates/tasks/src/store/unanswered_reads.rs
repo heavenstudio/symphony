@@ -63,7 +63,7 @@ fn every_read_of_the_lookup_is_a_range_or_an_index_inside_its_closures() {
     let naming = planned(
         &f,
         "naming",
-        &naming_sql(" EXPLAIN"),
+        &sql::naming(" EXPLAIN"),
         json!({"handles": [&worker, "absent"]}),
     );
     let indexes: Vec<&str> = (naming.iter())
@@ -83,13 +83,13 @@ fn every_read_of_the_lookup_is_a_range_or_an_index_inside_its_closures() {
     let threads = planned(
         &f,
         "threads",
-        &threads_sql(" EXPLAIN"),
+        &sql::threads(" EXPLAIN"),
         json!({"slugs": ["work", "absent"], "launched": ["work", "work-child"]}),
     );
     let below = planned(
         &f,
         "below",
-        &below_sql(" EXPLAIN"),
+        &sql::below(" EXPLAIN"),
         json!({"asks": [{"handle": &worker, "after": post.id, "below": ["work-child", "absent"]}]}),
     );
     for (what, steps, count) in [("threads", &threads, 4), ("below", &below, 2)] {
@@ -117,7 +117,7 @@ fn the_reads_answer_only_the_asked_threads_handles_and_answers() {
     f.store.say("work-child", "owner", "a word", None).unwrap();
     let named: Vec<Vec<String>> = f
         .store
-        .bounded_read(&naming_sql(""), json!({"handles": [&worker, "absent"]}))
+        .bounded_read(&sql::naming(""), json!({"handles": [&worker, "absent"]}))
         .map_err(recovery_error)
         .unwrap();
     // Its claim on work is a system record it made; the post on work addresses it.
@@ -125,7 +125,7 @@ fn the_reads_answer_only_the_asked_threads_handles_and_answers() {
     let read: Threads = f
         .store
         .bounded_read(
-            &threads_sql(""),
+            &sql::threads(""),
             json!({"slugs": ["work", "absent"], "launched": ["work", "work-child"]}),
         )
         .map_err(recovery_error)
@@ -142,7 +142,7 @@ fn the_reads_answer_only_the_asked_threads_handles_and_answers() {
     let found: Vec<Vec<i64>> = f
         .store
         .bounded_read(
-            &below_sql(""),
+            &sql::below(""),
             json!({"asks": [
                 {"handle": &worker, "after": post.id, "below": ["work-child"]},
                 {"handle": &worker, "after": answer.id, "below": ["work-child"]},
@@ -187,7 +187,7 @@ fn launches_on_the_task_and_its_instructions_are_read_by_range() {
     let read: Threads = f
         .store
         .bounded_read(
-            &threads_sql(""),
+            &sql::threads(""),
             json!({"slugs": ["work"], "launched": ["work", "work-review"]}),
         )
         .map_err(recovery_error)
@@ -227,8 +227,9 @@ fn a_handle_owes_the_posts_of_the_threads_that_name_it_and_of_no_other_handle() 
     // A finished task keeps its direct post; a role post goes to its holder by its claim.
     f.task("finished");
     f.store
-        .client()
-        .query("UPDATE task:finished SET status = 'done';", json!({}))
+        .raw()
+        .row("task", "finished")
+        .set(json!({"status": "done"}))
         .unwrap();
     let finished = f
         .store
@@ -276,11 +277,10 @@ fn a_released_holder_still_owes_the_role_posts_its_history_addresses() {
     let (f, worker, post) = board();
     f.store.say("work", &worker, "on it", None).unwrap();
     f.store
-        .client()
-        .query(
-            "DELETE role WHERE slug = 'work' AND handle = $handle;",
-            json!({"handle": worker}),
-        )
+        .raw()
+        .table("role")
+        .matching(json!({"slug": "work", "handle": worker}))
+        .delete()
         .unwrap();
     let role = f
         .store
@@ -339,8 +339,9 @@ fn overdue_asks_only_open_tasks_and_posts_half_an_hour_old_of_a_gone_agent() {
     assert_eq!(overdue(&board, f.now()), [(worker.clone(), post.id)]);
     // Nothing of a finished task is read, though its post was never answered.
     f.store
-        .client()
-        .query("UPDATE task:work SET status = 'done';", json!({}))
+        .raw()
+        .row("task", "work")
+        .set(json!({"status": "done"}))
         .unwrap();
     let board = f.store.board().unwrap();
     assert_eq!(overdue(&board, f.now()), []);

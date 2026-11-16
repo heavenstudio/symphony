@@ -123,6 +123,7 @@ function FrameExtras({ route, draft, change }: ExtrasProps) {
   // What the frame read: the items that arrived since its last read and are unread come up as
   // toasts, a batch at a time.
   useEffect(() => {
+    // biome-ignore lint/style/noRestrictedGlobals: no-timed-waits baseline: the toasts' timers, below
     const timers = new Set<ReturnType<typeof setTimeout>>();
     const refresh = () => {
       const news = frameNews(
@@ -145,6 +146,7 @@ function FrameExtras({ route, draft, change }: ExtrasProps) {
       if (news.added.length > 0) {
         const next = arrive(shownToasts.current, news.added);
         toast(next);
+        // biome-ignore lint/style/noRestrictedGlobals: no-timed-waits baseline: a batch of toasts leaves TOAST_MS after it came, a change shown by a length of time
         const timer = setTimeout(() => {
           timers.delete(timer);
           toast(expire(shownToasts.current, next.batches));
@@ -301,8 +303,23 @@ function PendingControls({ route, pending }: { route: Route; pending: Pending })
       setTargets(next);
     };
     measure();
-    const timer = setInterval(measure, 200);
-    return () => clearInterval(timer);
+    // Measured again at each change that can move the cards or the reader's place among them: a
+    // scroll of the page or a box in it, the window resized, the anchor followed, the page's
+    // height changed as it draws, or a card drawn in where its ghost stood.
+    const watching = new AbortController();
+    const options = { capture: true, passive: true, signal: watching.signal };
+    addEventListener("scroll", measure, options);
+    addEventListener("resize", measure, { signal: watching.signal });
+    addEventListener("hashchange", measure, { signal: watching.signal });
+    const grown = new ResizeObserver(measure);
+    grown.observe(document.documentElement);
+    const drawn = new MutationObserver(measure);
+    drawn.observe(document.body, { childList: true, subtree: true });
+    return () => {
+      watching.abort();
+      grown.disconnect();
+      drawn.disconnect();
+    };
   }, [route, pending]);
   useEffect(() => {
     const keyed = (event: KeyboardEvent) => {

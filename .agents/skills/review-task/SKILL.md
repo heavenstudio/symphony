@@ -2,7 +2,7 @@
 name: review-task
 description: Review one task in the board's review column, independently of its author: read its diff against its recorded evidence, run only what that leaves open and record a verdict naming the tip read. A reviewer's whole prompt is `/review-task SLUG HANDLE` (Codex `$review-task SLUG HANDLE`), never /work. Trigger on /review-task SLUG or $review-task SLUG.
 ---
-<!-- symphony-stamp: 2a44ace31bc8391b files=SKILL.md -->
+<!-- symphony-stamp: 3a1a2176e3b0ce92 files=SKILL.md -->
 
 # /review-task SLUG HANDLE
 
@@ -14,7 +14,7 @@ assumes no certificate or landing system.
 
 Those rules are the project's guide (its `AGENTS.md`), the rules it names and the guide of each
 package the change touches, and `project.md` beside this file where the project has one: its own
-standing instructions for a reviewer, which no prompt repeats. Read them before step 3.
+standing instructions for a reviewer. Read them before step 3.
 
 1. Reuse HANDLE from the prompt; with none, register with `just tasks register --kind reviewer`.
    Pass it on every board command as `just tasks … --as HANDLE`, the handle last. A session with
@@ -24,15 +24,18 @@ standing instructions for a reviewer, which no prompt repeats. Read them before 
    the thread `--to @orchestrator`; never pass `--beside` yourself.
 3. Read `just tasks show SLUG --as HANDLE`, its thread with every earlier review on it, and the
    whole diff of the tip it names against the default branch.
-4. Read its recorded builds and tests at that tip (the task page's gates, beside the thread's
-   evidence). A run recorded green at the tip is run: never build or run it again, and never the
-   full suite. Build or run only what the record does not cover and reading cannot settle: a
-   doubt you name, with the smallest target that answers it; a mutation, to see that a test can
-   fail; a run the executor left out. Green is the record's to say, never the executor's word:
-   where nothing recorded a run the evidence names, ask for it in a changes, or in a project
-   that records none rerun the focused tests yourself. A log or scratch file you write in your
-   scratchpad is named by your handle: every in-process agent of one orchestrator shares that
-   folder, and two writing one name read each other's output.
+4. Read its recorded builds and tests at that tip, beside the thread's evidence:
+   `just tasks runs SLUG --as HANDLE` (`--tip SHA` for another commit) prints each command it ran
+   there with its newest result, the `tests` stamp's reading, the project's `[verdicts] check`
+   with its run there or none, and its runs at other commits. A run recorded green at the tip is
+   run: never build or run it again, and never the full suite. Build or run only what the record
+   does not cover and reading cannot settle: a doubt you name, with the smallest target that
+   answers it; a mutation, to see that a test can fail; a run the executor left out. Green is the
+   record's to say, never the executor's word: where nothing recorded a run the evidence names,
+   ask for it in a changes, or in a project that records none rerun the focused tests yourself. A
+   log or scratch file you write in your scratchpad is named by your handle: every in-process
+   agent of one orchestrator shares that folder, and two writing one name read each other's
+   output.
 5. Judge, naming what is missing in a changes:
    - whether the change is correct and does what the brief asks, its documents included;
    - whether its tests cover the edge cases, and whether a test or a check was loosened to pass;

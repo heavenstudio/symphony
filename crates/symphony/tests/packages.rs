@@ -49,17 +49,17 @@ const PRODUCT: [&str; 5] = [
 ];
 
 /// The files a published package carries as a copy of one outside it, which it cannot read from
-/// there once packaged, each beside the file it copies: the copy first. The client reads its
-/// stylesheets through `asset!`, which takes no file outside its crate, and the board's fixtures
-/// find the source root by the descriptor-closing script where it is, so neither can move.
+/// there once packaged, each beside the file it copies: the copy first. The client's stylesheets
+/// are its package's, which the server's does not carry, and the board's fixtures find the source
+/// root by the descriptor-closing script where it is, so neither can move.
 const COPIES: [(&str, &str); 3] = [
     (
         "apps/symphony-server/src/board.css",
-        "apps/symphony-ui/assets/board.css",
+        "apps/symphony-web/src/styles/board.css",
     ),
     (
         "apps/symphony-server/src/frame.css",
-        "apps/symphony-ui/assets/frame.css",
+        "apps/symphony-web/src/styles/frame.css",
     ),
     (
         "crates/chrome-devtools/src/fixture_process.sh",
@@ -243,8 +243,8 @@ fn lacks(package: &Value, licence: &[u8]) -> Vec<String> {
         lacks.push("no LICENSE in the package holding the workspace's".to_owned());
     } else if !std::fs::symlink_metadata(here.join("LICENSE")).is_ok_and(|meta| meta.is_file()) {
         lacks.push(
-            "its LICENSE is a link, which the client's release inputs refuse \
-             (`symphony-build release-inputs`): a copy of the workspace's"
+            "its LICENSE is a link, which a package cannot carry out of the workspace: a \
+             copy of the workspace's"
                 .to_owned(),
         );
     }

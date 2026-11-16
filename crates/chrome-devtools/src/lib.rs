@@ -1,6 +1,6 @@
 //! Headless Chrome, driven over the DevTools protocol: one browser per launch, on a profile of
 //! its own, leashed so it dies with the process that launched it however that ends. The client's
-//! browser tests (apps/symphony-ui/tests/browser) and `symphony shot` both drive it.
+//! browser tests (apps/symphony-web-tests/tests/browser) and `symphony shot` both drive it.
 //!
 //! A native leash owns and waits for Chrome: the launching program run again ([`Leash`]), which
 //! hands itself to [`leash_main`] first. EOF on its launcher's pipe terminates the browser even
@@ -43,11 +43,11 @@ const CLEANUP_CPU: Duration = Duration::from_secs(1);
 /// wait well past its allowance, neither of which may end it.
 const BACKSTOP_TIMES: u32 = 6;
 const BACKSTOP_FLOOR: Duration = Duration::from_secs(120);
-/// The longest a launch waits on the wall for Chrome to open DevTools, by the rule every wait here
-/// keeps: [`BACKSTOP_TIMES`] its CPU allowance ([`PROTOCOL_CPU`]), six minutes. Chrome opens
-/// DevTools on about half a second of its group's CPU, in under a second on a quiet machine, which
-/// a loaded machine's fair share stretches to tens of seconds: only a Chrome that stalled, alive and
-/// spending next to nothing, reaches it.
+/// The longest each start of a launch waits on the wall for Chrome to open DevTools, by the rule
+/// every wait here keeps: [`BACKSTOP_TIMES`] its CPU allowance ([`PROTOCOL_CPU`]), six minutes.
+/// Chrome opens DevTools on about half a second of its group's CPU, in under a second on a quiet
+/// machine, which a loaded machine's fair share stretches to tens of seconds: only a Chrome that
+/// stalled, alive and spending next to nothing, reaches it.
 const LAUNCH_BACKSTOP: Duration = PROTOCOL_CPU.saturating_mul(BACKSTOP_TIMES);
 /// A probe of the page under test unanswered this long goes again, so no reply lost to a
 /// navigation leaves the page's turns uncounted.
@@ -152,7 +152,8 @@ impl Error {
     }
 
     /// Whether the wait ended on its wall-clock backstop: the page under test took too few turns
-    /// in it to spend its allowance, its renderer stalled.
+    /// in it to spend its allowance, its renderer stalled, or Chrome stalled before it opened
+    /// DevTools.
     pub fn stalled(&self) -> bool {
         self.stalled
     }
@@ -758,8 +759,8 @@ impl Owner {
 
     /// Success comes only from the handshake. The leash's exit (which the browser's own exit
     /// makes), `cpu` of the group's CPU spent, or the wall-clock `backstop` reached first by a
-    /// browser alive that neither answered nor spent its CPU (a stall) fails it, saying what was
-    /// seen.
+    /// browser alive that neither answered nor spent its CPU (a stall, [`StartStalled`]) fails it,
+    /// saying what was seen.
     fn ready<T>(
         &mut self,
         what: &str,
@@ -803,15 +804,19 @@ impl Owner {
                 };
                 return Err(std::io::Error::new(
                     ErrorKind::TimedOut,
-                    format!(
+                    StartStalled(format!(
                         "Chrome stalled before {what}: {watched} spent {:?} CPU in the wait, \
                          and the launch's wall-clock backstop of {backstop:.1?} ran out after \
                          {waited:.1?}; {}",
                         budget.used(),
                         load_said(load_average())
-                    ),
+                    )),
                 ));
             }
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "no-timed-waits baseline: looks again for the browser's answer, where its pipe is the event"
+            )]
             std::thread::sleep(POLL);
         }
     }
@@ -870,6 +875,19 @@ impl Owner {
         })
     }
 }
+
+/// What [`Owner::ready`] fails with once its wall-clock backstop ran out, the browser alive and its
+/// CPU allowance unspent: Chrome stalled at its start.
+#[derive(Debug)]
+struct StartStalled(String);
+
+impl fmt::Display for StartStalled {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for StartStalled {}
 
 /// A launch's profile and logs until its leash has started: removed if the launch fails first.
 struct Unstarted<'a> {
@@ -1089,6 +1107,10 @@ fn cleanup_profile(profile: &Path, group: u32) -> std::io::Result<()> {
         }
         // Killed members add no CPU while waiting for reaping. A missed live helper
         // spends the budget instead of keeping the leash alive forever.
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "no-timed-waits baseline: looks again for a process group's end, which no wait reports"
+        )]
         std::thread::sleep(POLL);
     }
 }
@@ -1134,15 +1156,36 @@ pub const PHONE: (u32, u32, u32) = (390, 844, 3);
 
 impl Chrome {
     /// Chrome at `binary`, on a new profile, under a leash `leash` starts, with one blank page
-    /// attached and its page and network events on. A Chrome that exits first, spends a minute of
-    /// CPU without opening DevTools, or stalls, alive and opening none, for six minutes on the wall,
-    /// fails its launch with an error saying which.
+    /// attached and its page and network events on. A Chrome that exits first or spends a minute
+    /// of CPU without opening DevTools fails its launch with an error saying which. One that
+    /// stalls, alive and opening none for six minutes on the wall, is ended and Chrome started
+    /// once more, on a profile of its own; a second start that fails fails the launch, its error
+    /// naming the stall before it.
     pub fn launch(binary: &str, leash: &Leash) -> Result<Chrome> {
-        Self::launch_within(binary, leash, LAUNCH_BACKSTOP)
+        Self::launch_within(leash, [(binary, LAUNCH_BACKSTOP); 2])
     }
 
-    /// [`Chrome::launch`], waiting at most `backstop` on the wall for Chrome to open DevTools.
-    fn launch_within(binary: &str, leash: &Leash, backstop: Duration) -> Result<Chrome> {
+    /// [`Chrome::launch`], its first start running the binary `first` names and waiting at most
+    /// its backstop on the wall for Chrome to open DevTools, and the start after a stall `again`'s.
+    /// A start that stalled has run nothing of its caller's. A Chrome hung at its start, blocked
+    /// rather than starved, stays hung while others start beside it on the same loaded machine:
+    /// it is ended with its group and profile as the start returns, and the next starts afresh.
+    fn launch_within(leash: &Leash, [first, again]: [(&str, Duration); 2]) -> Result<Chrome> {
+        match Self::start(first.0, leash, first.1) {
+            Err(stall) if stall.stalled => {
+                leash_report(format_args!("{stall}; starting Chrome again"));
+                Self::start(again.0, leash, again.1).map_err(|error| Error {
+                    message: format!("{error}; the start before it: {stall}"),
+                    ..error
+                })
+            }
+            started => started,
+        }
+    }
+
+    /// One start of [`Chrome::launch_within`]'s, waiting at most `backstop` on the wall for
+    /// DevTools: a failure there that the backstop ended is [`Error::stalled`].
+    fn start(binary: &str, leash: &Leash, backstop: Duration) -> Result<Chrome> {
         let mut owner = Owner::launch(binary, leash)?;
         let (port, path) = owner
             .ready(
@@ -1151,8 +1194,11 @@ impl Chrome {
                 backstop,
                 devtools_endpoint,
             )
-            .map_err(|error| {
-                Error::new(format!(
+            .map_err(|error| Error {
+                stalled: error
+                    .get_ref()
+                    .is_some_and(|inner| inner.is::<StartStalled>()),
+                ..Error::new(format!(
                     "Chrome DevTools readiness: {error}; {}",
                     owner.diagnostics()
                 ))

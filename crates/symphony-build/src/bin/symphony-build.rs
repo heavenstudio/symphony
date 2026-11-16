@@ -1,7 +1,6 @@
 //! `symphony-build COMMAND …` (`tools/rs-bin.sh symphony-build`): the commands only this
 //! repository's own build and release run use (`symphony_build::main`): `publish-client`,
-//! `release-inputs`, `size-budget`, `crates-check`, `split-repair`, `synced` and `release`. It is
-//! never shipped: no project is given it (`init::BUILDS` does not name it), and its package is its
+//! `size-budget`, `crates-check`, `synced` and `release`. It is never shipped: no project is given it (`init::BUILDS` does not name it), and its package is its
 //! own, so neither the library every project links nor its `symphony` binary compiles any of it.
 
 use std::process::ExitCode;

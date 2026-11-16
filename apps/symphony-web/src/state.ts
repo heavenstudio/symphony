@@ -2,7 +2,7 @@
 // build loads the page again, and when the frame's metadata is read again; and a failed read tried
 // again by itself on the same waits.
 
-import { sleep } from "./feed";
+import { retryWait } from "./timing";
 
 /** The first wait before a lost feed is tried again, in ms. */
 const FIRST_WAIT_MS = 1_000;
@@ -51,7 +51,7 @@ export async function tryAgain(
   unanswered: () => boolean,
   read: () => Promise<unknown>,
   signal: AbortSignal,
-  wait: (ms: number, signal: AbortSignal) => Promise<void> = sleep,
+  wait: (ms: number, signal: AbortSignal) => Promise<void> = retryWait,
 ): Promise<void> {
   const backoff = new Backoff();
   while (unanswered() && !signal.aborted) {

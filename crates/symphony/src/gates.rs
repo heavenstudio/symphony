@@ -242,9 +242,9 @@ fn past(rounds: &[Round], total: usize) -> Vec<GatePast> {
 /// stamp by too.
 pub use recorded::runs;
 
-/// The check gate: the newest run of the command `label` at `tip`, green (met), red or still going
-/// (missing), or none there (unknown); the earlier finished runs of it on `branch` or at `tip`, its
-/// past.
+/// The check gate: the newest run of the command `label` at `tip`, whoever ran it, as
+/// [`read::newest_of`] reads it, green (met), red or still going (missing), or none there
+/// (unknown); the earlier finished runs of it on `branch` or at `tip`, its past.
 pub fn check(label: &str, branch: &str, tip: Option<&str>, runs: &[Record]) -> Gate {
     let short = |commit: &str| commit.chars().take(7).collect::<String>();
     let ours = |run: &&Record| {
@@ -254,9 +254,7 @@ pub fn check(label: &str, branch: &str, tip: Option<&str>, runs: &[Record]) -> G
                 .as_deref()
                 .is_some_and(|commit| Some(commit) == tip || run.branch.as_deref() == Some(branch))
     };
-    let began = |run: &Record| run.started_at.unwrap_or(run.queued_at);
-    let mut mine: Vec<&Record> = runs.iter().filter(ours).collect();
-    mine.sort_by(|a, b| began(a).total_cmp(&began(b)));
+    let current = tip.and_then(|tip| read::newest_of(runs, tip, label));
     let finished = |run: &Record| -> (GateState, String) {
         let at = short(run.commit.as_deref().unwrap_or_default());
         match (run.exit_code, run.signal) {
@@ -279,15 +277,11 @@ pub fn check(label: &str, branch: &str, tip: Option<&str>, runs: &[Record]) -> G
             ),
         }
     };
-    let current = tip.and_then(|tip| {
-        mine.iter()
-            .rposition(|run| run.commit.as_deref() == Some(tip))
-    });
-    let mut past = mine
-        .iter()
-        .enumerate()
-        .filter(|(index, run)| Some(*index) != current && run.state == Step::Finished)
-        .filter_map(|(_, run)| {
+    let mut past = (runs.iter())
+        .filter(ours)
+        .filter(|run| !current.is_some_and(|current| std::ptr::eq(*run, current)))
+        .filter(|run| run.state == Step::Finished)
+        .filter_map(|run| {
             let (state, detail) = finished(run);
             Some(GatePast {
                 state,
@@ -312,7 +306,7 @@ pub fn check(label: &str, branch: &str, tip: Option<&str>, runs: &[Record]) -> G
             format!("No branch {branch} in this repository"),
         );
     };
-    let Some(run) = current.map(|index| mine[index]) else {
+    let Some(run) = current else {
         return Gate {
             commit: Some(tip.to_string()),
             ..gate(

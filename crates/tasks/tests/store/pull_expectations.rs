@@ -2,17 +2,9 @@
 
 use super::super::callbacks::Listener;
 use super::super::common::Fixture;
-use serde_json::json;
 
 pub(super) fn callback_state(f: &Fixture, handle: &str) -> serde_json::Value {
-    f.store
-        .client()
-        .query(
-            "RETURN SELECT * OMIT id FROM ONLY type::record('callback_state', $handle);",
-            json!({"handle":handle}),
-        )
-        .unwrap()
-        .remove(0)
+    f.store.raw().row("callback_state", handle).get().unwrap()
 }
 
 pub(super) fn listen_orchestrator(f: &Fixture, handle: &str, initial_pull: &str) -> Listener {

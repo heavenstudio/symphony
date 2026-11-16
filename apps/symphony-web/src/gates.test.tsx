@@ -5,12 +5,11 @@ import fixture from "../../../crates/symphony-api/fixtures/task-gates.json";
 import {
   drawn,
   GateRow,
-  GatesReader,
   GatesView,
-  GhostGates,
+  gatesShown,
   kept,
-  readGates,
   remember,
+  roomFor,
   TaskGatesPanel,
   width,
 } from "./gates";
@@ -23,10 +22,12 @@ import {
   readGate,
   readTaskGates,
   type Waiter,
-  WORDS,
 } from "./gates-model";
-import { aRole, asking, aTask, memoryStorage, reply, server } from "./testing";
-import { UNREACHABLE } from "./trouble";
+import { Parts, PartsContext, type Shown } from "./parts";
+import { Failure } from "./request";
+import { gatesPart, type TaskEvent } from "./task-live";
+import { aRole, aTask, memoryStorage, reply, until } from "./testing";
+import { NOT_IN_TIME } from "./trouble";
 import type { Gate, GatesSeen, TaskGates } from "./wire";
 
 /** 2026-11-11 13:10 UTC, the day of every time in the fixture. */
@@ -89,9 +90,9 @@ const bylinesHeld = (html: string) =>
 const panel = (seen?: GatesSeen | null) =>
   renderToStaticMarkup(
     seen === undefined ? (
-      <TaskGatesPanel slug="tools/x" task={IN_REVIEW} revision={1} />
+      <TaskGatesPanel slug="tools/x" scope="" task={IN_REVIEW} />
     ) : (
-      <TaskGatesPanel slug="tools/x" task={IN_REVIEW} revision={1} seen={seen} />
+      <TaskGatesPanel slug="tools/x" scope="" task={IN_REVIEW} seen={seen} />
     ),
   );
 
@@ -114,6 +115,12 @@ describe("the section", () => {
     expect(html).toContain(
       '<div class="gates-head"><h2 class="eyebrow" id="task-gates-title">Gates</h2><span class="pill gate-missing gates-waits">waits on <span dir="auto">certificate</span></span><span class="gates-counts">2 met · 1 waived · 1 missing</span></div>',
     );
+    // Read before the task's page: the pill's outline where the room kept says one was drawn,
+    // none where it says nothing waited.
+    expect(shown(read(pictured()), room(4, 1), null, null)).toContain(
+      '<h2 class="eyebrow" id="task-gates-title">Gates</h2><span class="pill gates-waits gate-shadow"><span class="gate-bar" style="--w:9em"></span></span><span class="gates-counts">2 met · 1 waived · 1 missing</span>',
+    );
+    expect(shown(read(pictured()), room(4, 0), null, null)).not.toContain("gates-waits");
     const drawnRows = rows(html);
     expect(drawnRows).toHaveLength(4);
     expect(drawnRows[0]).toBe(
@@ -269,20 +276,6 @@ describe("the panel", () => {
     expect(rows(two)).toHaveLength(2);
     expect(two).not.toContain("gates-waits");
     expect(bylinesHeld(two)).toEqual([true, false]);
-    const told = renderToStaticMarkup(
-      <TaskGatesPanel
-        slug="tools/x"
-        task={IN_REVIEW}
-        revision={1}
-        work={7}
-        nudged={3}
-        onBranch={() => {}}
-      />,
-    );
-    expect(
-      rows(told),
-      "the work, the feed's count and the branch's listener change nothing drawn",
-    ).toHaveLength(4);
     expect(
       panel({ count: 0, waiting: 0, unsigned: 0 }),
       "a task the server last answered with no gates holds no room",
@@ -290,20 +283,56 @@ describe("the panel", () => {
     expect(rows(panel(null)), "nothing said by the server").toHaveLength(4);
   });
 
-  it("watches for the screen from a sentinel while the browser can tell it is far", () => {
-    vi.stubGlobal(
-      "IntersectionObserver",
-      class {
-        observe() {}
-        disconnect() {}
-        takeRecords() {
-          return [];
-        }
-      },
+  /** The panel in a page whose server answers its gates as `answered` does. */
+  async function inPage(answered: () => Response, task: Waiter | null = IN_REVIEW) {
+    vi.stubGlobal("document", { getElementById: () => null });
+    const asked: string[] = [];
+    vi.stubGlobal("fetch", async (url: string) => {
+      asked.push(url);
+      return answered();
+    });
+    const mount = new AbortController();
+    const parts = new Parts<TaskEvent>(mount.signal);
+    const part = gatesPart("", "tools/x");
+    parts.open(part);
+    await until(() => {
+      const shown = parts.shown(part);
+      expect(shown.answered || shown.error !== null).toBe(true);
+    });
+    const html = renderToStaticMarkup(
+      <PartsContext.Provider value={parts}>
+        <TaskGatesPanel slug="tools/x" scope="" task={task} />
+      </PartsContext.Provider>,
     );
-    expect(panel()).toMatch(
-      /^<div id="gates-tools\/x" class="task-gates-slot"><div class="viewport-sentinel" aria-hidden="true"><\/div><section class="task-gates card" data-gates="reading"/,
+    mount.abort();
+    return { html, asked };
+  }
+
+  it("draws the answer its page's store holds, asked once under the page's checkout", async () => {
+    const { html, asked } = await inPage(() => reply(200, fixture));
+    expect(asked).toEqual(["/api/task-gates?slug=tools%2Fx"]);
+    expect(html).toContain('data-gates="read"');
+    expect(rows(html)).toHaveLength(4);
+    expect(html).toContain("gates-waits");
+    // Before the task's page has come, the gates are drawn all the same, the pill its outline.
+    const alone = await inPage(() => reply(200, fixture), null);
+    expect(rows(alone.html)).toHaveLength(4);
+    expect(alone.html).toContain('<span class="pill gates-waits gate-shadow">');
+    expect(alone.html).not.toContain("waits on");
+  });
+
+  it("draws nothing for a task the server has no gates for, and says a failed read in its place", async () => {
+    const none = await inPage(() => reply(404, { error: "No such task" }));
+    expect(none.html).toBe('<div id="gates-tools/x" class="task-gates-slot"></div>');
+    const failed = await inPage(() => reply(500, { error: "Board snapshot unavailable." }));
+    expect(failed.html).toContain('data-gates="failed"');
+    expect(failed.html).toContain(
+      "The gates could not be read: Board snapshot unavailable (the server answered 500). The rest of the page still works.",
     );
+    const unread = await inPage(() =>
+      reply(200, { slug: "tools/x", branch: "tools/x", gates: [{ name: 1 }] }),
+    );
+    expect(unread.html).toContain("s gates could not be read. The rest of the page still works.");
   });
 
   it("holds the room this browser kept for the task, at the height it drew in a window as wide", () => {
@@ -544,43 +573,41 @@ describe("the pill", () => {
     }
   });
 
-  it("is not drawn for a task the section is not told of", () => {
-    expect(shown(stamped, DEFAULT_ROOM, null, null)).not.toContain("gates-waits");
+  it("is its outline for a task the section is not told of yet, and says nothing", () => {
+    const untold = shown(stamped, DEFAULT_ROOM, null, null);
+    expect(untold).toContain('<span class="pill gates-waits gate-shadow">');
+    expect(untold).not.toContain("waits on");
   });
 });
 
-describe("a task's ghost", () => {
-  it("outlines its gates as the section holds them before its answer", () => {
-    const html = renderToStaticMarkup(<GhostGates slug="tools/x" />);
-    expect(html).toContain('data-gates="reading"');
-    expect(rows(html)).toHaveLength(4);
-    expect(html.match(/gates-waits/g)).toHaveLength(1);
-    expect(html).toBe(holding(DEFAULT_ROOM));
+describe("the room held until the gates answer", () => {
+  it("is four gates where nothing is known", () => {
+    expect(roomFor("tools/x", null)).toEqual(DEFAULT_ROOM);
   });
 
-  it("takes the room kept for its task, else the last drawn as wide, else four gates", () => {
+  it("is the room kept for its task, else the last drawn as wide, else four gates", () => {
     const storage = memoryStorage();
     storage.setItem(KEPT, "1 0 0 1280 90 tools/y\n2 1 0 390 140 tools/x");
     vi.stubGlobal("localStorage", storage);
     vi.stubGlobal("innerWidth", 390);
-    const own = renderToStaticMarkup(<GhostGates slug="tools/x" />);
-    expect(rows(own)).toHaveLength(2);
-    expect(own).toContain("height:140px");
-    const never = renderToStaticMarkup(<GhostGates slug="tools/z" />);
-    expect(never, "the last task drawn at 390").toBe(own);
+    expect(roomFor("tools/x", null)).toEqual(room(2, 1, [390, 140]));
+    expect(roomFor("tools/z", null), "the last task drawn at 390").toEqual(room(2, 1, [390, 140]));
     vi.stubGlobal("innerWidth", 800);
-    expect(renderToStaticMarkup(<GhostGates slug="tools/z" />)).toBe(holding(DEFAULT_ROOM, 800));
+    expect(roomFor("tools/z", null)).toEqual(DEFAULT_ROOM);
     vi.stubGlobal("localStorage", memoryStorage(true));
-    expect(renderToStaticMarkup(<GhostGates slug="tools/x" />), "storage refused").toBe(
-      holding(DEFAULT_ROOM, 800),
-    );
+    expect(roomFor("tools/x", null), "storage refused").toEqual(DEFAULT_ROOM);
   });
 
-  it("draws nothing for a task this browser kept with no gates", () => {
+  it("is what the server last answered, at the height kept for the task alone", () => {
     const storage = memoryStorage();
-    storage.setItem(KEPT, "0 0 0 0 0 tools/x");
+    storage.setItem(KEPT, "1 0 0 1280 90 tools/y\n2 1 0 390 140 tools/x");
     vi.stubGlobal("localStorage", storage);
-    expect(renderToStaticMarkup(<GhostGates slug="tools/x" />)).toBe("");
+    vi.stubGlobal("innerWidth", 390);
+    const seen = { count: 2, waiting: 1, unsigned: 0 };
+    expect(roomFor("tools/x", seen)).toEqual(room(2, 1, [390, 140]));
+    // Another task's height is never held for what the server said of this one.
+    expect(roomFor("tools/z", seen)).toEqual(room(2, 1));
+    expect(holding(roomFor("tools/x", { count: 0, waiting: 0, unsigned: 0 }), 390)).toBe("");
   });
 });
 
@@ -592,179 +619,38 @@ describe("the window's width", () => {
   });
 });
 
-/** A server whose fetches a test answers, each failing as a browser's does once its signal aborts. */
-function held() {
-  const asked: { url: string; signal: AbortSignal | null; answer: (response: Response) => void }[] =
-    [];
-  vi.stubGlobal("document", { getElementById: () => null });
-  vi.stubGlobal("location", { pathname: "/task/tools/x" });
-  vi.stubGlobal(
-    "fetch",
-    (url: string, init?: RequestInit) =>
-      new Promise<Response>((answer, fail) => {
-        const signal = init?.signal ?? null;
-        signal?.addEventListener("abort", () => fail(new DOMException("gone", "AbortError")));
-        asked.push({ url, signal, answer });
-      }),
-  );
-  return asked;
-}
+describe("what the section has of its part", () => {
+  const NOTHING: Shown<TaskGates> = {
+    value: undefined,
+    stale: false,
+    error: null,
+    missing: false,
+    answered: false,
+  };
 
-describe("the gates' read", () => {
-  it("asks for the task's gates under the page's checkout", async () => {
-    const asked = held();
-    const reading = readGates("tools/x", new AbortController().signal);
-    await asking(asked, 1);
-    expect(asked[0]?.url).toBe("/api/task-gates?slug=tools%2Fx");
-    asked[0]?.answer(reply(200, fixture));
-    expect(await reading).toEqual(read(pictured()));
-    vi.stubGlobal("location", { pathname: "/@proposal~x/task/tools/x" });
-    const scoped = new AbortController();
-    const other = readGates("a b&c", scoped.signal);
-    await asking(asked, 2);
-    expect(asked[1]?.url).toBe("/@proposal~x/api/task-gates?slug=a%20b%26c");
-    scoped.abort();
-    await other;
+  it("is reading before any answer, and the answer once there is one", () => {
+    expect(gatesShown(NOTHING)).toBe(READING);
+    expect(gatesShown({ ...NOTHING, value: pictured(), answered: true })).toEqual(read(pictured()));
   });
 
-  it("reads the server's 404 as a task it has no gates for", async () => {
-    const asked = held();
-    const reading = readGates("tools/x", new AbortController().signal);
-    await asking(asked, 1);
-    asked[0]?.answer(reply(404, { error: "No such task" }));
-    expect(await reading).toEqual({ kind: "read", answer: { slug: "", branch: "", gates: [] } });
+  it("reads the server's 404 as a task it has no gates for", () => {
+    expect(gatesShown({ ...NOTHING, missing: true, answered: true })).toEqual({
+      kind: "read",
+      answer: { slug: "", branch: "", gates: [] },
+    });
   });
 
-  it("says why it failed: the server's own words with its status, or that it was not reached", async () => {
-    const asked = held();
-    const refused = readGates("tools/x", new AbortController().signal);
-    await asking(asked, 1);
-    asked[0]?.answer(reply(500, { error: "Board snapshot unavailable." }));
-    expect(await refused).toEqual({
+  it("says why a read failed, or that it was too slow, only while no answer is shown", () => {
+    const refused = new Failure("known", "Board snapshot unavailable (the server answered 500)");
+    expect(gatesShown({ ...NOTHING, error: refused })).toEqual({
       kind: "failed",
       why: "Board snapshot unavailable (the server answered 500)",
     });
-    vi.stubGlobal("fetch", () => Promise.reject(new TypeError("Failed to fetch")));
-    expect(await readGates("tools/x", new AbortController().signal)).toEqual({
-      kind: "failed",
-      why: UNREACHABLE,
-    });
-  });
-
-  it("fails an answer it cannot read", async () => {
-    const asked = held();
-    const reading = readGates("tools/x", new AbortController().signal);
-    await asking(asked, 1);
-    asked[0]?.answer(reply(200, { slug: "tools/x", branch: "tools/x", gates: [{ name: 1 }] }));
-    expect(await reading).toEqual({ kind: "failed", why: WORDS.unreadable });
-  });
-
-  it("gives up a read the server does not answer in time, as too slow", async () => {
-    vi.useFakeTimers();
-    const asked = held();
-    const reading = readGates("tools/x", new AbortController().signal);
-    await vi.advanceTimersByTimeAsync(15_000);
-    expect(await reading).toEqual({ kind: "slow" });
-    expect(asked[0]?.signal?.aborted, "its request with it").toBe(true);
-  });
-
-  it("aborts its request once its signal ends", async () => {
-    const asked = held();
-    const given = new AbortController();
-    const reading = readGates("tools/x", given.signal);
-    await asking(asked, 1);
-    given.abort();
-    expect(asked[0]?.signal?.aborted).toBe(true);
-    expect((await reading).kind).toBe("failed");
-  });
-});
-
-describe("the section's reads", () => {
-  it("draw each answer", async () => {
-    const asked = held();
-    const shownGates: Gates[] = [];
-    const reader = new GatesReader(
-      "tools/x",
-      (gates) => shownGates.push(gates),
-      new AbortController().signal,
+    expect(gatesShown({ ...NOTHING, error: new Error(NOT_IN_TIME) })).toEqual({ kind: "slow" });
+    // The last answer stays shown while a later read fails.
+    expect(gatesShown({ ...NOTHING, value: pictured(), answered: true, error: refused })).toEqual(
+      read(pictured()),
     );
-    const reading = reader.read();
-    await asking(asked, 1);
-    asked[0]?.answer(reply(200, fixture));
-    await reading;
-    expect(shownGates).toEqual([read(pictured())]);
-  });
-
-  it("draw only the latest, a newer one aborting the one before", async () => {
-    const asked = held();
-    const shownGates: Gates[] = [];
-    const reader = new GatesReader(
-      "tools/x",
-      (gates) => shownGates.push(gates),
-      new AbortController().signal,
-    );
-    const first = reader.read();
-    await asking(asked, 1);
-    const second = reader.read();
-    await asking(asked, 2);
-    expect(asked[0]?.signal?.aborted, "the read dropped was aborted, not left waiting").toBe(true);
-    expect(asked[1]?.signal?.aborted).toBe(false);
-    await first;
-    expect(shownGates, "the dropped read draws nothing, not even its failure").toEqual([]);
-    asked[1]?.answer(reply(200, fixture));
-    await second;
-    expect(shownGates).toEqual([read(pictured())]);
-  });
-
-  it("never draw a late answer of a read a newer one dropped", async () => {
-    // A server that answers whatever was given up, as one whose answer was already on its way.
-    const asked = server();
-    vi.stubGlobal("location", { pathname: "/task/tools/x" });
-    const shownGates: Gates[] = [];
-    const reader = new GatesReader(
-      "tools/x",
-      (gates) => shownGates.push(gates),
-      new AbortController().signal,
-    );
-    const first = reader.read();
-    await asking(asked, 1);
-    const second = reader.read();
-    await asking(asked, 2);
-    asked[1]?.answer(reply(200, fixture));
-    await second;
-    const stale = {
-      slug: "tools/x",
-      branch: "tools/x",
-      gates: [{ name: "stale", state: "missing" }],
-    };
-    asked[0]?.answer(reply(200, stale));
-    await first;
-    expect(shownGates).toEqual([read(pictured())]);
-  });
-
-  it("draw nothing once the section stops or the kind's mount ends", async () => {
-    const asked = held();
-    const shownGates: Gates[] = [];
-    const reader = new GatesReader(
-      "tools/x",
-      (gates) => shownGates.push(gates),
-      new AbortController().signal,
-    );
-    const stopped = reader.read();
-    await asking(asked, 1);
-    reader.stop();
-    expect(asked[0]?.signal?.aborted).toBe(true);
-    await stopped;
-    reader.stop();
-    const mount = new AbortController();
-    const unmounted = new GatesReader("tools/x", (gates) => shownGates.push(gates), mount.signal);
-    const late = unmounted.read();
-    await asking(asked, 2);
-    mount.abort();
-    expect(asked[1]?.signal?.aborted, "the mount's end gives the request up").toBe(true);
-    asked[1]?.answer(reply(200, fixture));
-    await late;
-    expect(shownGates).toEqual([]);
   });
 });
 
@@ -787,20 +673,16 @@ function page(height: number | null, wide: number) {
 }
 
 describe("an answer drawn", () => {
-  it("keeps the room it took in this window, and tells its branch", () => {
+  it("keeps the room it took in this window", () => {
     const storage = page(611.6, 390);
-    const told: [string, string][] = [];
-    drawn("tools/x", pictured(), (slug, branch) => told.push([slug, branch]));
+    drawn("tools/x", pictured());
     expect(storage.getItem(KEPT)).toBe("4 1 0 390 612 tools/x");
     expect(kept("tools/x")).toEqual(room(4, 1, [390, 612]));
-    expect(told).toEqual([["tools/x", "tools/verify-stops-when-moved"]]);
   });
 
-  it("tells no branch the answer does not name, and keeps a task with no gates as no room", () => {
+  it("keeps a task with no gates as no room", () => {
     const storage = page(null, 1280);
-    const told: string[] = [];
-    drawn("tools/x", { slug: "tools/x", branch: "", gates: [] }, (_, branch) => told.push(branch));
-    expect(told).toEqual([]);
+    drawn("tools/x", { slug: "tools/x", branch: "", gates: [] });
     expect(storage.getItem(KEPT), "nothing drawn, no height").toBe("0 0 0 0 0 tools/x");
     drawn("tools/x", answer([gate({ name: "review", state: "missing" })]));
     expect(storage.getItem(KEPT), "one line a task, the newest").toBe("1 1 1 0 0 tools/x");

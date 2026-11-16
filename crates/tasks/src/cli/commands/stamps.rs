@@ -15,7 +15,7 @@ use crate::{Store, Task};
 use std::path::{Path, PathBuf};
 
 /// The main checkout of the repository the command runs in: none outside one, or in one with none.
-fn main_of(c: &Context) -> Option<PathBuf> {
+pub(super) fn main_of(c: &Context) -> Option<PathBuf> {
     let common = crate::git::common_dir(&c.env.cwd).ok()?;
     main_checkout(&common).map(Path::to_path_buf)
 }

@@ -504,7 +504,7 @@ checkout, and a chat callback names the full paths.
 ## On a phone
 
 The owner reviews on a phone over a mobile link, so the app is built to cost little there
-(`symphony::images` and `apps/symphony-ui`; measured with Chrome at phone size).
+(`symphony::images` and `apps/symphony-web`; measured with Chrome at phone size).
 
 - **A picture never moves the page.** Every local PNG the app draws carries its real `width` and
   `height`, so its space is reserved before it arrives. Nothing is unhidden or reshaped after the first
@@ -549,8 +549,8 @@ The card's comparison row (Base, A, B, C above its lines) shows an `.html` candi
 - **Source.** Compose a screen from one shared CSS file of tokens and one file per component, assembled per page; a
   PNG is only a snapshot for a thumbnail. Tracked sources beat `artifacts/`, which is gitignored.
 
-The SPA renders media in `apps/symphony-ui/src/media.rs`; its browser adapter is
-`media_live.rs`, and the native server confines raw media to the selected
+The client renders media in `apps/symphony-web/src/media.tsx`; its layer over a drawn page is
+`media-layer.ts`, and the native server confines raw media to the selected
 checkout in `apps/symphony-server/src/media_files.rs`. Browser coverage returns after
 the Rust migration, including attempts to read, write or navigate the parent
 from a mockup.

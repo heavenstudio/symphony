@@ -117,6 +117,10 @@ fn answer(from: &PipeReader, stopping: impl Fn() -> bool) -> std::io::Result<Ans
                 if began.elapsed() >= PATIENCE {
                     return Ok(Answer::Outlasted);
                 }
+                #[expect(
+                    clippy::disallowed_methods,
+                    reason = "no-timed-waits baseline: reads a nonblocking socket again, where a blocking read under a deadline is the event"
+                )]
                 std::thread::sleep(Duration::from_millis(10));
             }
             Err(e) => return Err(e),
@@ -360,11 +364,15 @@ fn replace(
         if installed && let Err(why) = stamp_install(&install, fingerprint) {
             eprintln!("· Symphony reload: could not stamp installed binary: {why}");
         }
-        home.record(&Running {
-            port: serve.port,
-            pid: i64::from(child.id()),
-            root: serve.root.display().to_string(),
-        })
+        let release = crate::home::release_of(exe);
+        home.record(
+            &Running {
+                port: serve.port,
+                pid: i64::from(child.id()),
+                root: serve.root.display().to_string(),
+            },
+            release.as_deref(),
+        )
         .map_err(|e| e.to_string())?;
         if let Some(client) = &client
             && let Err(why) = client.stamp()
@@ -385,11 +393,15 @@ fn replace(
             .recording
             .reopen(symphony_board::sweep::trigger::now());
         // The old server is still accepting. Restore its publication if the child failed after it.
-        let _ = home.record(&Running {
-            port: serve.port,
-            pid: i64::from(std::process::id()),
-            root: serve.root.display().to_string(),
-        });
+        let ours = symphony::machine::release::this().map(|(_, manifest)| &manifest.release);
+        let _ = home.record(
+            &Running {
+                port: serve.port,
+                pid: i64::from(std::process::id()),
+                root: serve.root.display().to_string(),
+            },
+            ours.map(String::as_str),
+        );
         return Err(why);
     }
     if let Some(client) = &mut client {
@@ -445,6 +457,29 @@ fn watch_with<W: Watcher + Send + 'static>(
     mut retry: Retry,
 ) -> Option<std::thread::JoinHandle<()>> {
     let lease = setup.lease?;
+    // A release's server builds nothing: it follows the machine's `current` link.
+    if let (Some((_, manifest)), Some(machine)) =
+        (symphony::machine::release::this(), serve.home.clone())
+    {
+        let release = manifest.release.clone();
+        return Some(crate::front::worker(
+            crate::front::RELOAD_WORKER,
+            move || {
+                follow::<W>(
+                    &serve,
+                    &Follow {
+                        machine,
+                        release,
+                        sockets,
+                        lease,
+                    },
+                    &shared,
+                    period,
+                    retry,
+                );
+            },
+        ));
+    }
     let reload = move || {
         let (send, recv) = mpsc::sync_channel(1);
         let directories = Arc::new(Mutex::new(BTreeSet::<PathBuf>::new()));
@@ -530,11 +565,8 @@ fn watch_with<W: Watcher + Send + 'static>(
             // can be lost. An idle tick checks shutdown and the hand-off flag; it does not read
             // files, hash code or spawn repository commands.
             if !initial {
-                match backstop.wait(&recv, Duration::from_millis(250)) {
-                    Wake::Event => {
-                        std::thread::sleep(Duration::from_millis(100));
-                        while recv.try_recv().is_ok() {}
-                    }
+                match backstop.wait(&recv, TICK) {
+                    Wake::Event => backstop::debounce(&recv, backstop::QUIET, backstop::BURST),
                     Wake::Period => {}
                     Wake::Idle => continue,
                 }
@@ -623,6 +655,168 @@ fn watch_with<W: Watcher + Send + 'static>(
         }
     };
     Some(crate::front::worker(crate::front::RELOAD_WORKER, reload))
+}
+
+/// The longest a watching loop waits for its watcher's event before it looks for shutdown and a
+/// starter's hand-off request, neither of which wakes it.
+const TICK: Duration = Duration::from_millis(250);
+
+/// Whether a watcher's `event` in the machine folder can have moved its `current` link: a new link
+/// renamed over it ([`symphony::machine::release::point`]), a rescan, or the watcher's own error.
+fn moves_current(event: &notify::Result<notify::Event>) -> bool {
+    event.as_ref().map_or(true, |event| {
+        event.need_rescan()
+            || (!matches!(event.kind, notify::EventKind::Access(_))
+                && event.paths.iter().any(|path| {
+                    path.file_name()
+                        == Some(std::ffi::OsStr::new(symphony::machine::release::CURRENT))
+                }))
+    })
+}
+
+/// A watcher `W` of `machine`'s own entries, kept while it is followed, and the events that can
+/// have moved its `current` link, one message for a burst ([`moves_current`]). A watcher that
+/// cannot start, or cannot watch the folder, is said in the log and hears nothing: the backstop's
+/// period then reads `current` alone.
+fn watch_current<W: Watcher>(machine: &Path) -> (Option<W>, mpsc::Receiver<()>) {
+    let (send, recv) = mpsc::sync_channel(1);
+    let handler = move |event: notify::Result<notify::Event>| {
+        if moves_current(&event) {
+            let _ = send.try_send(());
+        }
+    };
+    let watcher = W::new(handler, notify::Config::default()).and_then(|mut watcher| {
+        watcher.watch(machine, RecursiveMode::NonRecursive)?;
+        Ok(watcher)
+    });
+    match watcher {
+        Ok(watcher) => (Some(watcher), recv),
+        Err(why) => {
+            eprintln!(
+                "· Symphony reload: cannot watch {} for `current` moving: {why}; it is read once \
+                 a period",
+                machine.display()
+            );
+            (None, recv)
+        }
+    }
+}
+
+/// What a release's server hands over when the machine's `current` moves: the machine folder, the
+/// release it runs, its listening sockets and its lease.
+struct Follow {
+    machine: PathBuf,
+    release: String,
+    sockets: Vec<OwnedFd>,
+    lease: File,
+}
+
+/// The reload of the server of the release `follow.release`: whether the machine's `current` names
+/// another release, read at the start, as its watcher `W` hears the link move, and once a `period`
+/// as an event can be lost; when it does, the hand-off to that release's server, by its own
+/// folder's path, with no build. A release not installed whole, or whose server does not become
+/// ready, leaves this one serving, said on the notice, and is tried again when `retry` says, at the
+/// check that finds it due; `current` named back at this release clears the notice. A starter's
+/// request to hand over is refused, said in the log: no start replaces a release's server
+/// ([`symphony::machine::host`]).
+fn follow<W: Watcher>(
+    serve: &Serve,
+    follow: &Follow,
+    shared: &Shared,
+    period: Duration,
+    mut retry: Retry,
+) {
+    let Follow {
+        machine,
+        release,
+        sockets,
+        lease,
+    } = follow;
+    // Watched before its first read, so no move after that read goes unheard.
+    let (_watcher, moved) = watch_current::<W>(machine);
+    let mut backstop = Backstop::new(period);
+    let mut initial = true;
+    let mut attempted: Option<String> = None;
+    while !shared.stopping() {
+        // An idle tick only looks for shutdown and the hand-off flag: `current` is read at the
+        // start, at a move and once a period.
+        let look = initial
+            || match backstop.wait(&moved, TICK) {
+                // A new link and its rename are one move: read once both are done.
+                Wake::Event => {
+                    backstop::debounce(&moved, backstop::QUIET, backstop::QUIET);
+                    true
+                }
+                Wake::Period => true,
+                Wake::Idle => false,
+            };
+        initial = false;
+        if shared
+            .handover
+            .swap(false, std::sync::atomic::Ordering::SeqCst)
+        {
+            match crate::host::Handover::take(machine) {
+                Some(Ok(request)) => eprintln!(
+                    "· Symphony hand-off refused: this server is the release {release}, which only \
+                     its reload replaces, following {}; {} asked for {}",
+                    machine.join(symphony::machine::release::CURRENT).display(),
+                    request.root.display(),
+                    request.exe.display()
+                ),
+                Some(Err(why)) => eprintln!("· Symphony hand-off refused: {why}"),
+                None => {}
+            }
+        }
+        if !look {
+            continue;
+        }
+        let Some(next) = symphony::machine::release::current(machine) else {
+            continue;
+        };
+        if &next == release {
+            if attempted.take().is_some()
+                && let Some(hub) = shared.api.get()
+            {
+                hub.tell_update(String::new());
+            }
+            continue;
+        }
+        if attempted.as_deref() == Some(next.as_str()) && !retry.again(&next) {
+            continue;
+        }
+        attempted = Some(next.clone());
+        eprintln!("· Symphony reload: current names {next}; handing over to its server");
+        let result = to_release(machine, &next)
+            .and_then(|exe| replace(serve, &exe, sockets, lease, &next, shared, None))
+            .map_err(|why| {
+                let again = retry.failed(&next);
+                format!(
+                    "The release {next} did not take over: {}. It is tried again at about {again}.",
+                    reason(&why)
+                )
+            });
+        if replaced(shared, result) {
+            return;
+        }
+    }
+}
+
+/// The server of the release `name` in `machine`, by its own folder's path, when the release is
+/// installed whole; why not otherwise.
+fn to_release(machine: &Path, name: &str) -> Result<PathBuf, String> {
+    use symphony::machine::release;
+    match release::installed(machine, name)? {
+        Some(_) => {
+            let exe = release::binary(machine, name, release::SERVER);
+            symphony::builds::runnable(&exe)
+                .then_some(exe.clone())
+                .ok_or_else(|| format!("{} does not run", exe.display()))
+        }
+        None => Err(format!(
+            "{} holds no manifest",
+            release::folder(machine, name).display()
+        )),
+    }
 }
 
 /// Why an update failed, ending where the notice's next sentence starts: a build that said nothing

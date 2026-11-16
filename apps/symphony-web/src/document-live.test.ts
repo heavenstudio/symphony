@@ -20,7 +20,7 @@ import {
   took,
   vanished,
 } from "./document-live";
-import { CASES, feeds as pageFeeds, reply, say } from "./testing";
+import { CASES, feeds as pageFeeds, reply, say, until } from "./testing";
 import { UNREACHABLE } from "./trouble";
 import type { Document, DocumentCard, DocumentOutline, Folder, Section } from "./wire";
 import { CACHE_FORMAT, FEED_EVENT, VERSION_HEADER } from "./wire";
@@ -155,7 +155,7 @@ function serverOf(): Held[] {
 
 /** Until `asked` holds `count`, the page's waits running meanwhile. */
 const askedFor = (asked: unknown[], count: number) =>
-  vi.waitFor(() => expect(asked).toHaveLength(count));
+  until(() => expect(asked).toHaveLength(count));
 
 /** A document answer of `status`, at the feed's `cursor` when one is given, tagged `etag`. */
 function answered(status: number, body: unknown, etag = "", cursor?: number): Response {
@@ -448,6 +448,20 @@ describe("a document page's model", () => {
     expect(told).toHaveBeenCalledTimes(2);
   });
 
+  it("has its feed name the sections it wants and those whose bodies it holds, once each", () => {
+    const page = pageOf();
+    expect(page.followed()).toEqual(new Set());
+    page.loaded = new Set(["intro", "card:palette"]);
+    expect(page.followed()).toEqual(new Set(["intro", "card:palette"]));
+    page.want("intro");
+    page.want("lamps");
+    expect(page.followed()).toEqual(new Set(["intro", "card:palette", "lamps"]));
+    // A copy, which the page's later wants leave as it was.
+    const named = page.followed();
+    page.want("later");
+    expect(named.has("later")).toBe(false);
+  });
+
   it("gives this device the bodies it holds once one was taken, as the server sent them", () => {
     const store = deviceOf();
     const page = pageOf();
@@ -583,21 +597,23 @@ describe("an event of the document's feed", () => {
   });
 });
 
-describe("a document drawn from this device", () => {
-  const sent = documentOf(SECTIONS_NOW);
-  const keptBodies = {
-    intro: { validator: "i1", body: { section: sent.sections[0] } },
-    "card:palette": {
-      validator: "p1/t1",
-      body: { section: sent.sections[1], card: PALETTE, thread: sent.threads.palette },
-    },
-    lamps: { validator: "l0", body: { section: section("lamps", "l0", "Old lamps") } },
-  };
-  const kept = (outline: unknown = OUTLINE_NOW, bodies: unknown = keptBodies) => ({
-    [`document:${PATH} ${OUTLINE}`]: { value: outline, etag: '"o1"', saved: 1_000 },
-    [`document:${PATH} ${SECTIONS}`]: { value: bodies, etag: "", saved: 2_000 },
-  });
+const sent = documentOf(SECTIONS_NOW);
+/** The bodies this device kept: the intro's and the card's current by `OUTLINE_NOW`, the lamps' not. */
+const keptBodies = {
+  intro: { validator: "i1", body: { section: sent.sections[0] } },
+  "card:palette": {
+    validator: "p1/t1",
+    body: { section: sent.sections[1], card: PALETTE, thread: sent.threads.palette },
+  },
+  lamps: { validator: "l0", body: { section: section("lamps", "l0", "Old lamps") } },
+};
+/** What this device kept of the document: `outline`, tagged `"o1"`, and `bodies`. */
+const kept = (outline: unknown = OUTLINE_NOW, bodies: unknown = keptBodies) => ({
+  [`document:${PATH} ${OUTLINE}`]: { value: outline, etag: '"o1"', saved: 1_000 },
+  [`document:${PATH} ${SECTIONS}`]: { value: bodies, etag: "", saved: 2_000 },
+});
 
+describe("a document drawn from this device", () => {
   it("is its outline with the bodies current by it, one more visit counted", async () => {
     const store = deviceOf(kept());
     const page = pageOf();
@@ -699,6 +715,37 @@ describe("a document drawn from this device", () => {
     expect(waits(page.freshness, OUTLINE)).toBe(false);
     expect(page.state?.latest.version).toBe(12);
     expect(page.state?.removed).toBe(false);
+  });
+
+  it("keeps a body it holds off the screen that a change left alike, and reads again one it changed", async () => {
+    deviceOf(kept());
+    const page = pageOf();
+    await fromDevice(page, new AbortController().signal);
+    outlined(page, OUTLINE_NOW);
+    // Held from this device, neither near the screen yet.
+    expect(page.wanted).toEqual(new Set());
+    expect(page.loaded).toEqual(new Set(["intro", "card:palette"]));
+    page.heard({
+      version: 9,
+      changes: [
+        {
+          region: "document",
+          data: {
+            path: PATH,
+            sections: [section("intro", "i1", ""), section("card:palette", "p2", "")],
+          },
+        },
+      ],
+    });
+    const blocks = (key: string) =>
+      page.state?.latest.sections.find((one) => one.key === key)?.blocks;
+    expect(blocks("intro")).toEqual(section("intro", "i1", "Intro").blocks);
+    expect(blocks("card:palette")).toEqual([]);
+    expect(page.loaded).toEqual(new Set(["intro"]));
+    // Scrolled to, the changed one is read, not left a ghost.
+    page.want("intro");
+    page.want("card:palette");
+    expect(page.loading()).toEqual(new Set(["card:palette"]));
   });
 
   it("answered 404 goes, and so does its item unless it is pinned", async () => {
@@ -815,7 +862,7 @@ describe("a document page's loops", () => {
       "ws://127.0.0.1/api/feed?since=7&document=docs%2FDECISIONS.md&sections=%5B%5D",
     );
     opened[0]?.source.dispatchEvent(new Event("open"));
-    await vi.waitFor(() => expect(page.stale).toBe(false));
+    await until(() => expect(page.stale).toBe(false));
     expect(page.frame.connected).toHaveBeenCalledTimes(1);
     // A section near the screen: its body is read, and the feed opened again for it.
     page.want("intro");
@@ -829,7 +876,7 @@ describe("a document page's loops", () => {
     asked[1]?.answer(
       reply(200, { version: 7, change: { path: PATH, sections: [SECTIONS_NOW[0]] } }),
     );
-    await vi.waitFor(() => expect(page.ready()).toBe(true));
+    await until(() => expect(page.ready()).toBe(true));
     expect(page.state?.latest.sections[0]?.blocks).toEqual(SECTIONS_NOW[0]?.blocks);
     expect(store.keep).toHaveBeenCalledWith(
       CACHE_FORMAT,
@@ -902,6 +949,60 @@ describe("a document page's loops", () => {
     }
   });
 
+  it("open one feed on a return visit, naming the sections drawn from this device before they near the screen", async () => {
+    vi.useFakeTimers();
+    try {
+      const asked = serverOf();
+      deviceOf(kept());
+      const opened = feeds();
+      const page = pageOf();
+      const left = new AbortController();
+      const done = documentLive(page, left.signal);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(asked).toHaveLength(1);
+      expect(asked[0]?.headers).toEqual({ "If-None-Match": '"o1"' });
+      // The check answers before any section has come near the screen.
+      expect(page.wanted).toEqual(new Set());
+      asked[0]?.answer(answered(304, null, "", 7));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(opened).toHaveLength(1);
+      const held = new Set(["intro", "card:palette"]);
+      expect(opened[0]?.url).toBe(
+        `ws://127.0.0.1/api/feed?since=7&document=docs%2FDECISIONS.md&sections=${keysQuery(held)}`,
+      );
+      opened[0]?.source.dispatchEvent(new Event("open"));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(page.stale).toBe(false);
+      // Their slots come near the screen a frame later and name them: the stream names them
+      // already, so it stays, and nothing is read.
+      page.want("intro");
+      page.want("card:palette");
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(opened).toHaveLength(1);
+      expect(opened[0]?.closed).toBe(0);
+      expect(asked).toHaveLength(1);
+      expect(page.ready()).toBe(true);
+      // A section this device held no current body of opens it again, naming it too, and is read.
+      page.want("lamps");
+      await vi.advanceTimersByTimeAsync(200);
+      expect(opened).toHaveLength(2);
+      expect(opened[0]?.closed).toBe(1);
+      expect(opened[1]?.url).toContain(
+        `?since=7&document=docs%2FDECISIONS.md&sections=${keysQuery(new Set([...held, "lamps"]))}`,
+      );
+      expect(asked.map((read) => read.url)).toContain(
+        `/api/section?path=docs%2FDECISIONS.md&format=blocks&keys=${keysQuery(new Set(["lamps"]))}`,
+      );
+      expect(page.frame.connected).toHaveBeenCalledTimes(1);
+      left.abort();
+      await vi.advanceTimersByTimeAsync(0);
+      await done;
+      expect(opened[1]?.closed).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("lose a feed whose event they cannot read, and read again after a pause", async () => {
     const asked = serverOf();
     deviceOf();
@@ -913,9 +1014,9 @@ describe("a document page's loops", () => {
     asked[0]?.answer(answered(200, OUTLINE_NOW, '"o1"', 7));
     await askedFor(opened, 1);
     opened[0]?.source.dispatchEvent(new Event("open"));
-    await vi.waitFor(() => expect(page.stale).toBe(false));
+    await until(() => expect(page.stale).toBe(false));
     say(opened[0]?.source, FEED_EVENT, '{"version":"x"}');
-    await vi.waitFor(() => expect(page.stale).toBe(true));
+    await until(() => expect(page.stale).toBe(true));
     expect(opened[0]?.closed).toBe(1);
     left.abort();
     await done;
@@ -933,7 +1034,7 @@ describe("a document page's loops", () => {
     expect(page.state).not.toBeNull();
     expect(asked[0]?.headers).toEqual({ "If-None-Match": '"o1"' });
     asked[0]?.answer(reply(404, { error: "no such document" }));
-    await vi.waitFor(() => expect(page.missing).toBe(true));
+    await until(() => expect(page.missing).toBe(true));
     expect(page.state).toBeNull();
     expect(store.forget).toHaveBeenCalledTimes(1);
     left.abort();
@@ -950,7 +1051,7 @@ describe("a document page's loops", () => {
     const done = documentLive(page, left.signal);
     await askedFor(asked, 1);
     asked[0]?.answer(reply(500, { error: "the disk is full" }));
-    await vi.waitFor(() => expect(page.trouble).not.toBeNull());
+    await until(() => expect(page.trouble).not.toBeNull());
     expect(page.trouble).toContain("the disk is full");
     expect(page.freshness.failing).toEqual([OUTLINE]);
     expect(page.state).not.toBeNull();
@@ -1168,7 +1269,7 @@ describe("a folder page's loop", () => {
     expect(store.visit).toHaveBeenCalledWith(CACHE_FORMAT, "", item.id, "document", true);
     expect(asked[0]?.url).toBe(URL);
     asked[0]?.answer(reply(200, FOLDER, '"f1"'));
-    await vi.waitFor(() => expect(page.folder).toEqual(FOLDER));
+    await until(() => expect(page.folder).toEqual(FOLDER));
     expect(page.freshness.open).toBe(true);
     expect(store.keep).toHaveBeenCalledWith(
       CACHE_FORMAT,
@@ -1197,7 +1298,7 @@ describe("a folder page's loop", () => {
     expect(waits(page.freshness, FOLDER_PART)).toBe(true);
     expect(asked[0]?.headers).toEqual({ "If-None-Match": '"f1"' });
     asked[0]?.answer(answered(304, null));
-    await vi.waitFor(() => expect(waits(page.freshness, FOLDER_PART)).toBe(false));
+    await until(() => expect(waits(page.freshness, FOLDER_PART)).toBe(false));
     expect(page.folder).toEqual(FOLDER);
     left.abort();
     await done;
@@ -1233,7 +1334,7 @@ describe("a folder page's loop", () => {
     const done = followFolder(page, left.signal);
     await askedFor(asked, 1);
     asked[0]?.answer(reply(404, { error: "no such folder" }));
-    await vi.waitFor(() => expect(page.missing).toBe(true));
+    await until(() => expect(page.missing).toBe(true));
     expect(page.folder).toBeNull();
     expect(page.error).toBeNull();
     left.abort();
@@ -1253,7 +1354,7 @@ describe("a folder page's loop", () => {
       const done = followFolder(page, left.signal);
       await askedFor(asked, 1);
       asked[0]?.answer(answer);
-      await vi.waitFor(() => expect(page.error).not.toBeNull());
+      await until(() => expect(page.error).not.toBeNull());
       expect(page.error).toContain(said);
       expect(page.freshness.failing).toEqual([FOLDER_PART]);
       left.abort();

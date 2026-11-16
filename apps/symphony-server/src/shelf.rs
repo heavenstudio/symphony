@@ -247,10 +247,18 @@ impl Gates for ShelfGates {
         };
         let answer = &answers[task.slug];
         if let Some(ms) = answer["sleep_ms"].as_u64() {
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "no-timed-waits baseline: a test plugin's gate made slow by a length of time, not held until its test releases it"
+            )]
             std::thread::sleep(std::time::Duration::from_millis(ms));
         }
         if let Some(file) = answer["held_until"].as_str() {
             while !root.join(file).exists() {
+                #[expect(
+                    clippy::disallowed_methods,
+                    reason = "no-timed-waits baseline: a test plugin looks again for the file its test makes to release it"
+                )]
                 std::thread::sleep(std::time::Duration::from_millis(10));
             }
         }

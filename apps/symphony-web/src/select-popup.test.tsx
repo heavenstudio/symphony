@@ -256,7 +256,7 @@ describe("a select's popup used", () => {
     }
   });
 
-  it("focuses the option nearest what was typed within a second, learning the keyboard", () => {
+  it("focuses the option nearest what was typed within a second, learning the keyboard", async () => {
     vi.useFakeTimers();
     const given = props();
     const first = draw(given, [true, null]);
@@ -273,9 +273,9 @@ describe("a select's popup used", () => {
     handler(second.element, isList, "onKeyDown")(key("ф", "KeyA"));
     expect(search.typed).toBe("nф");
     expect(search.keyboard.layout).toBeNull();
-    vi.advanceTimersByTime(TYPEAHEAD_MS - 1);
+    await vi.advanceTimersByTimeAsync(TYPEAHEAD_MS - 1);
     expect(search.typed).toBe("nф");
-    vi.advanceTimersByTime(1);
+    await vi.advanceTimersByTimeAsync(1);
     expect(search.typed).toBe("");
     // Typed again: a search of its own.
     const third = draw(given, [true, 2]);
@@ -423,7 +423,7 @@ describe("a select's popup used", () => {
     expect(focused.setOpen).toHaveBeenCalledWith(false);
   });
 
-  it("is anchored beside its trigger until it goes, its search forgotten with it", () => {
+  it("is anchored beside its trigger until it goes, its search forgotten with it", async () => {
     vi.useFakeTimers();
     const { element, effects } = draw(props(), [true, null]);
     const [place, forget] = effects;
@@ -434,7 +434,8 @@ describe("a select's popup used", () => {
     handler(element, isList, "onKeyDown")(key("h", "KeyH"));
     const search = (runtime.refs[1] as { current: { typed: string } }).current;
     forget?.()?.();
-    vi.advanceTimersByTime(TYPEAHEAD_MS);
+    expect(vi.getTimerCount()).toBe(0);
+    await vi.advanceTimersByTimeAsync(TYPEAHEAD_MS);
     expect(search.typed).toBe("h");
   });
 

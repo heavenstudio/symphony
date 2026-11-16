@@ -354,6 +354,10 @@ mod tests {
             if left.is_empty() || ended.elapsed() > std::time::Duration::from_secs(60) {
                 break left;
             }
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "no-timed-waits baseline: looks again for the processes holding a profile to end, which no wait reports for processes it did not start"
+            )]
             std::thread::sleep(std::time::Duration::from_millis(250));
         };
         assert!(

@@ -116,6 +116,10 @@ export function scrollAnchor(): void {
   element.scrollIntoView();
 }
 
+/** The fields and controls whose focus `engaged` reads as the reader's work. */
+const FIELDS =
+  "input, textarea, select, button[aria-haspopup=listbox], [role=listbox], [role=option]";
+
 /**
  * Whether the reader is in the middle of something a reload would lose: a busy region, an open
  * history or prose `details`, an open list box, or the focus in a field or a list's control.
@@ -128,9 +132,36 @@ export function engaged(): boolean {
   ) {
     return true;
   }
-  return (
-    document.activeElement?.matches(
-      "input, textarea, select, button[aria-haspopup=listbox], [role=listbox], [role=option]",
-    ) ?? false
-  );
+  return document.activeElement?.matches(FIELDS) ?? false;
+}
+
+/**
+ * At the next event that can end what `engaged` reads, or once `signal` ends: the focus leaving a
+ * field for anything but another field, a change of a region's `data-busy`, a list box's
+ * `data-state` or a `details`' `open` anywhere in the page, or an element added or removed: a
+ * busy region, an open `details` or list box, or the focused field gone with what held it, which
+ * changes no attribute and moves no focus. What waited reads `engaged` again.
+ */
+export function whenFree(signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    if (signal?.aborted) return resolve();
+    const changed = new MutationObserver(() => done());
+    const left = (event: Event) => {
+      const next = (event as FocusEvent).relatedTarget as Element | null;
+      if (!next?.matches?.(FIELDS)) done();
+    };
+    const done = () => {
+      changed.disconnect();
+      document.removeEventListener("focusout", left, true);
+      signal?.removeEventListener("abort", done);
+      resolve();
+    };
+    changed.observe(document.documentElement, {
+      subtree: true,
+      childList: true,
+      attributeFilter: ["data-busy", "data-state", "open"],
+    });
+    document.addEventListener("focusout", left, true);
+    signal?.addEventListener("abort", done);
+  });
 }

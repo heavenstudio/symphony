@@ -136,9 +136,17 @@ fn the_times_hold_the_calls_own_time_and_the_round_trip_the_jsons_besides() {
     let tree = Tree::new();
     let path = tree.path("artifacts/moves.jsonl");
     let timed = new_meter(&path, false);
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "no-timed-waits baseline: a meter's test of a call made slow by a length of time"
+    )]
     timed.time::<Validate, _>("slow", || std::thread::sleep(SLEPT));
     let looped = new_meter(&path, true);
     let slow_answer = || {
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "no-timed-waits baseline: a meter's test of a call made slow by a length of time"
+        )]
         std::thread::sleep(SLEPT);
         Ok(FieldValue::Text("x".into()))
     };
@@ -146,6 +154,7 @@ fn the_times_hold_the_calls_own_time_and_the_round_trip_the_jsons_besides() {
         "slow",
         || panic!("the request reads back"),
         || {
+            #[expect(clippy::disallowed_methods, reason = "no-timed-waits baseline: a meter's test of a call made slow by a length of time")]
             std::thread::sleep(SLEPT);
             validate(FieldValue::Text("x".into()))
         },

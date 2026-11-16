@@ -5,6 +5,7 @@
 // draft it kept.
 
 import { here, project } from "./project";
+import { deadline } from "./timing";
 import { NOT_IN_TIME, answered as refusedRead, UNREACHABLE } from "./trouble";
 import { VERSION_HEADER } from "./wire";
 
@@ -55,17 +56,17 @@ export type Answer =
   /** The body as the browser parsed it, and the tag the server answered it with. */
   | { same: false; value: unknown; etag: string };
 
-/** `answer`, or `null` when `ms` passed first. */
+/** `answer`, or `null` when `ms` passed first (the answer's deadline). */
 export function inTime<T>(answer: Promise<T>, ms: number): Promise<{ value: T } | null> {
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => resolve(null), ms);
+    const ended = deadline(ms, () => resolve(null));
     answer.then(
       (value) => {
-        clearTimeout(timer);
+        ended();
         resolve({ value });
       },
       (error: unknown) => {
-        clearTimeout(timer);
+        ended();
         reject(error);
       },
     );
@@ -214,12 +215,16 @@ export async function getIf(url: string, etag: string, signal: AbortSignal): Pro
   return (await exchange(url, undefined, etag, signal))[0];
 }
 
-/** What a document read answered, and the feed's cursor it was read at. */
-export interface DocumentAnswer {
+/** What a read answered, and the feed's cursor it was read at. */
+export interface AnswerAt {
   answer: Answer;
-  /** The cursor the server named (`VERSION_HEADER`), on its `200` and its `304` alike. */
+  /** The cursor the server named (`VERSION_HEADER`), on its `200` and its `304` alike: every feed
+   * event at or before it is in the answer. None from a server that names none. */
   cursor: number | null;
 }
+
+/** What a document read answered, and the feed's cursor it was read at. */
+export type DocumentAnswer = AnswerAt;
 
 /**
  * The feed's cursor a header names: a whole number, as Rust's `u64` parses it (an optional `+`,
@@ -232,18 +237,23 @@ export function cursorOf(header: string | null): number | null {
 }
 
 /**
- * A document read naming the copy this device kept (`getIf`), with the feed's cursor it was read
- * at, so a page that draws its kept copy on a `304`, which has no body, opens the feed from it;
- * null when the server has no such document (a `404`). Given up, as `getIf`, once `signal` ends.
+ * A read naming the copy this device kept (`getIf`), with the feed's cursor it was read at, so a
+ * page drops what its feed says of the read at or before it, and one that draws its kept copy on
+ * a `304`, which has no body, opens the feed from it. Given up, as `getIf`, once `signal` ends.
  */
+export async function getAt(url: string, etag: string, signal: AbortSignal): Promise<AnswerAt> {
+  const [answer, headers] = await exchange(url, undefined, etag, signal);
+  return { answer, cursor: cursorOf(headers.get(VERSION_HEADER)) };
+}
+
+/** A document read (`getAt`); null when the server has no such document (a `404`). */
 export async function getDocument(
   url: string,
   etag: string,
   signal: AbortSignal,
 ): Promise<DocumentAnswer | null> {
   try {
-    const [answer, headers] = await exchange(url, undefined, etag, signal);
-    return { answer, cursor: cursorOf(headers.get(VERSION_HEADER)) };
+    return await getAt(url, etag, signal);
   } catch (failure) {
     if (failure instanceof Failure && failure.kind === "missing") return null;
     throw failure;

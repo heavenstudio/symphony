@@ -138,6 +138,10 @@ pub struct Machine {
 
 impl Machine {
     /// This machine's, for a command run in `env`'s working directory.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "no-timed-waits baseline: the machine's pause behind the clock the launch's tests replace"
+    )]
     pub fn of(env: &Env) -> Machine {
         let root = root_of(env);
         let wt_base = worktree_base(&root, env);

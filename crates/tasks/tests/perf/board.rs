@@ -192,14 +192,9 @@ impl Board {
         store
             .callback(&recipients[0], Some(&path(&recipients[0])), false, false)
             .unwrap();
-        let owner = store
-            .client()
-            .query(
-                "RETURN (SELECT VALUE owner FROM ONLY type::record('callback_state', $handle));",
-                json!({"handle": recipients[0]}),
-            )
-            .unwrap()
-            .remove(0);
+        let owner = (store.raw().row("callback_state", json!(recipients[0])))
+            .field("owner")
+            .unwrap();
         let rows: Vec<Value> = (recipients[1..].iter())
             .map(|handle| {
                 json!({"handle": handle, "address": path(handle), "host": sys::hostname(), "owner": owner,

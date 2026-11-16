@@ -161,6 +161,10 @@ impl Component for Slow {
         if argument == "hang" {
             // A root that is no folder (a test's `/r`) takes no mark, and the call hangs all the same.
             let _ = std::fs::write(page.root.join(HANGING), "");
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "no-timed-waits baseline: a test plugin hangs by a length of time, not until its test releases it"
+            )]
             std::thread::sleep(std::time::Duration::from_secs(600));
         }
         let micros: u64 = argument

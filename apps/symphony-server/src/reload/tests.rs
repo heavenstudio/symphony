@@ -139,13 +139,13 @@ fn client_fingerprint_and_events_cover_assets_config_and_transitive_crates() {
     let root = repository(&tree);
     tree.write(
         "main/symphony/apps/symphony-server/Cargo.toml",
-        "[package]\nname = \"symphony-server\"\n",
+        "[package]\nname = \"symphony-server\"\n[dependencies]\nwire = { path = \"../../../crates/wire\" }\n",
     );
     tree.write(
         "main/symphony/apps/symphony-server/src/main.rs",
         "fn main() {}\n",
     );
-    tree.write("main/symphony/apps/symphony-ui/Cargo.toml", "[package]\nname = \"symphony-ui\"\n[dependencies]\nwire = { path = \"../../../crates/wire\" }\n");
+    tree.write("main/symphony/apps/symphony-web/package.json", "{}\n");
     tree.write(
         "main/crates/wire/Cargo.toml",
         "[package]\nname = \"wire\"\n[build-dependencies]\nleaf = { path = \"../leaf\" }\n",
@@ -176,37 +176,46 @@ fn client_fingerprint_and_events_cover_assets_config_and_transitive_crates() {
         &directories,
         &root.join("apps/symphony-host/src/bin/symphony-server.rs")
     ));
-    for file in [
-        "symphony/apps/symphony-ui/src/main.rs",
-        "symphony/apps/symphony-ui/assets/docs.css",
-        "symphony/apps/symphony-ui/Dioxus.toml",
-        "symphony/apps/symphony-ui/index.html",
-        "symphony/apps/symphony-ui/bin/cargo-symphony-ui",
-        "symphony/apps/symphony-ui/bundle.sh",
-        "symphony/apps/symphony-ui/dx-path.sh",
-        "symphony/apps/symphony-ui/package.sh",
-        "symphony/apps/symphony-ui/tools.sh",
-        "symphony/apps/symphony-ui/wasm-fresh.sh",
-        "crates/wire/src/lib.rs",
-        "crates/leaf/src/lib.rs",
-        "crates/leaf/build.rs",
-        "Cargo.toml",
-        "Cargo.lock",
-        "symphony/Cargo.toml",
-        "symphony/Cargo.lock",
-        "symphony/.cargo/config.toml",
-        "symphony/justfile",
-        "symphony/tools/rs-bin.sh",
-        "symphony/tools/check_lock.sh",
-        "rust-toolchain.toml",
-        ".cargo/config.toml",
-        "justfile",
-        "tools/rs-bin.sh",
+    // Each build input, and whether the client's build reads it: the web client's package but
+    // what its installs and builds write there, the shell's notice styles, the launchers and the
+    // workspace's settings. The server's crates are its own build's alone.
+    for (file, client) in [
+        ("symphony/apps/symphony-web/src/kinds/board.tsx", true),
+        ("symphony/apps/symphony-web/src/styles/frame.css", true),
+        ("symphony/apps/symphony-web/shell/shell.js", true),
+        ("symphony/apps/symphony-web/package.json", true),
+        ("symphony/apps/symphony-web/package-lock.json", true),
+        ("symphony/apps/symphony-web/vite.config.ts", true),
+        ("symphony/apps/symphony-web/.node-version", true),
+        ("symphony/apps/symphony-web/build.sh", true),
+        ("symphony/apps/symphony-web/package.sh", true),
+        ("symphony/apps/symphony-web/npm.sh", true),
+        ("symphony/apps/symphony-server/src/notices.css", true),
+        ("symphony/tools/node.sh", true),
+        ("crates/wire/src/lib.rs", false),
+        ("crates/leaf/src/lib.rs", false),
+        ("crates/leaf/build.rs", false),
+        ("Cargo.toml", true),
+        ("Cargo.lock", true),
+        ("symphony/Cargo.toml", true),
+        ("symphony/Cargo.lock", true),
+        ("symphony/.cargo/config.toml", true),
+        ("symphony/justfile", true),
+        ("symphony/tools/rs-bin.sh", true),
+        ("symphony/tools/check_lock.sh", true),
+        ("rust-toolchain.toml", true),
+        (".cargo/config.toml", true),
+        ("justfile", true),
+        ("tools/rs-bin.sh", true),
     ] {
         let all_before = symphony::reload::fingerprint(&root).unwrap();
         tree.write(&format!("main/{file}"), "changed build input\n");
         let after = symphony::reload::client_fingerprint(&root).unwrap();
-        assert_ne!(before, after, "client identity must include {file}");
+        assert_eq!(
+            before != after,
+            client,
+            "client identity and {file}: the client's build reads it, or does not"
+        );
         assert_ne!(
             all_before,
             symphony::reload::fingerprint(&root).unwrap(),
@@ -218,9 +227,30 @@ fn client_fingerprint_and_events_cover_assets_config_and_transitive_crates() {
         );
         before = after;
     }
+    // What an install, a build or a coverage run writes in the client's package, its guides and
+    // its browser tests' package are no input of its build, and wake no reload.
+    for file in [
+        "symphony/apps/symphony-web/node_modules/vite/package.json",
+        "symphony/apps/symphony-web/.install/lock",
+        "symphony/apps/symphony-web/dist/assets/board.js",
+        "symphony/apps/symphony-web/coverage/index.html",
+        "symphony/apps/symphony-web/AGENTS.md",
+        "symphony/apps/symphony-web/src/styles/README.md",
+        "symphony/apps/symphony-web-tests/tests/browser/main.rs",
+    ] {
+        tree.write(&format!("main/{file}"), "not a client input\n");
+        assert_eq!(
+            before,
+            symphony::reload::client_fingerprint(&root).unwrap(),
+            "{file} must not rebuild the client"
+        );
+        assert!(
+            !source_event(&root, &directories, &root.join(file)),
+            "watch must not wake for {file}"
+        );
+    }
     for file in [
         "symphony/apps/symphony-server/src/main.rs",
-        "symphony/apps/symphony-ui/tests/view.rs",
         "docs/TOPIC.md",
         "crates/unrelated/src/lib.rs",
     ] {
@@ -231,7 +261,7 @@ fn client_fingerprint_and_events_cover_assets_config_and_transitive_crates() {
             "{file} must not rebuild the client"
         );
     }
-    std::fs::remove_file(root.join("symphony/apps/symphony-ui/assets/docs.css")).unwrap();
+    std::fs::remove_file(root.join("symphony/apps/symphony-web/src/styles/frame.css")).unwrap();
     assert_ne!(
         before,
         symphony::reload::client_fingerprint(&root).unwrap(),
@@ -322,15 +352,19 @@ fn idle_source_watch_follows_build_inputs_and_recovers_an_incomplete_graph() {
         ("symphony/crates/tasks/build.rs", true),
         ("symphony/crates/tasks/src/new/module.rs", true),
         ("symphony/apps/symphony-server/src/api.rs", true),
-        ("symphony/apps/symphony-ui/src/main.rs", true),
-        ("symphony/apps/symphony-ui/assets/docs.css", true),
-        ("symphony/apps/symphony-ui/Dioxus.toml", true),
-        ("symphony/apps/symphony-ui/index.html", true),
-        ("symphony/apps/symphony-ui/bin/cargo-symphony-ui", true),
-        ("symphony/apps/symphony-ui/bundle.sh", true),
-        ("symphony/apps/symphony-ui/package.sh", true),
-        ("symphony/apps/symphony-ui/tools.sh", true),
-        ("symphony/apps/symphony-ui/wasm-fresh.sh", true),
+        ("symphony/apps/symphony-web/src/kinds/board.tsx", true),
+        ("symphony/apps/symphony-web/src/styles/frame.css", true),
+        ("symphony/apps/symphony-web/shell/shell.js", true),
+        ("symphony/apps/symphony-web/package-lock.json", true),
+        ("symphony/apps/symphony-web/vite.config.ts", true),
+        ("symphony/apps/symphony-web/build.sh", true),
+        ("symphony/apps/symphony-web/package.sh", true),
+        (
+            "symphony/apps/symphony-web/node_modules/vite/index.js",
+            false,
+        ),
+        ("symphony/apps/symphony-web/.install/lock", false),
+        ("symphony/apps/symphony-web/AGENTS.md", false),
         ("symphony/crates/symphony-api/src/lib.rs", true),
         ("tools/rs-bin.sh", true),
         ("justfile", true),
@@ -601,12 +635,10 @@ fn standalone_source_watch_includes_client_assets_and_its_own_build_scripts() {
     let root = Path::new("/standalone");
     let directories = BTreeSet::from([root.join("apps/symphony-server")]);
     for (path, expected) in [
-        ("apps/symphony-ui/assets/frame.css", true),
+        ("apps/symphony-web/src/styles/frame.css", true),
+        ("apps/symphony-web/node_modules/vite/index.js", false),
         ("apps/symphony-server/client/public/index.html", true),
-        (
-            "apps/symphony-server/client/public/assets/current.wasm",
-            true,
-        ),
+        ("apps/symphony-server/client/public/assets/current.js", true),
         ("tools/rs-bin.sh", true),
         ("tools/cargo.sh", true),
         ("tools/test-rs.sh", true),
@@ -1316,4 +1348,192 @@ fn a_kept_build_says_so_in_one_line() {
     let (was, told) = told::during(|| super::kept(None, &server.home, "source", &server.shared));
     assert!(!was);
     assert!(told.is_empty(), "{told:?}");
+}
+
+/// The release a reload hands over to is its own folder's server, and only one installed whole:
+/// a folder without its manifest, or whose server does not run, is said why.
+#[test]
+fn a_reload_hands_over_only_to_a_release_installed_whole_by_its_own_folder() {
+    use symphony::machine::release;
+    let tree = Tree::new();
+    let machine = tree.path("machine");
+    let why = super::to_release(&machine, "release-1").unwrap_err();
+    assert_eq!(
+        why,
+        format!(
+            "{} holds no manifest",
+            release::folder(&machine, "release-1").display()
+        )
+    );
+    // Never run here: plain files of their own, which the test may change.
+    let build = tree.path("build");
+    for binary in release::BINARIES {
+        let path = tree.write(&format!("build/{binary}"), "#!/bin/sh\n");
+        std::fs::set_permissions(&path, std::os::unix::fs::PermissionsExt::from_mode(0o755))
+            .unwrap();
+    }
+    tree.write("client/index.html", "<p>");
+    let version = release::Version { major: 0, minor: 3 };
+    release::install(
+        &machine,
+        &release::Built {
+            release: "release-1",
+            commit: "abc",
+            serves: release::Serves {
+                schema: symphony_board::SCHEMA,
+                protocol: version,
+                tasks_api: version,
+                pin: symphony::machine::PIN,
+            },
+            binaries: &build,
+            client: &tree.path("client"),
+        },
+    )
+    .unwrap();
+    let server = release::folder(&machine, "release-1").join("bin/symphony-server");
+    assert_eq!(super::to_release(&machine, "release-1"), Ok(server.clone()));
+    std::fs::set_permissions(&server, std::os::unix::fs::PermissionsExt::from_mode(0o644)).unwrap();
+    assert_eq!(
+        super::to_release(&machine, "release-1"),
+        Err(format!("{} does not run", server.display()))
+    );
+}
+
+/// A watcher event of `kind` naming `paths`.
+fn event(kind: notify::EventKind, paths: &[&str]) -> notify::Result<notify::Event> {
+    Ok(paths.iter().fold(notify::Event::new(kind), |event, path| {
+        event.add_path(PathBuf::from(path))
+    }))
+}
+
+#[test]
+fn current_moves_at_a_change_naming_its_link_a_rescan_or_the_watchers_error() {
+    use notify::EventKind::{Access, Create, Modify, Remove};
+    use notify::event::{AccessKind, CreateKind, ModifyKind, RemoveKind, RenameMode};
+    let renamed = Modify(ModifyKind::Name(RenameMode::Both));
+    // `point`'s new link renamed over the old, as each backend says it.
+    assert!(super::moves_current(&event(
+        renamed,
+        &["/m/.current.7", "/m/current"]
+    )));
+    assert!(super::moves_current(&event(
+        Create(CreateKind::Any),
+        &["/m/current"]
+    )));
+    assert!(super::moves_current(&event(
+        Remove(RemoveKind::Any),
+        &["/m/current"]
+    )));
+    // The new link made beside it, the registry written, a release installed, or the link read.
+    assert!(!super::moves_current(&event(
+        Create(CreateKind::Any),
+        &["/m/.current.7"]
+    )));
+    assert!(!super::moves_current(&event(
+        renamed,
+        &["/m/projects.json"]
+    )));
+    assert!(!super::moves_current(&event(
+        Create(CreateKind::Folder),
+        &["/m/releases/current-2"]
+    )));
+    assert!(!super::moves_current(&event(
+        Access(AccessKind::Any),
+        &["/m/current"]
+    )));
+    // What a lost or failing stream says: read it again.
+    assert!(super::moves_current(&Ok(notify::Event::new(Modify(
+        ModifyKind::Any
+    ))
+    .set_flag(notify::event::Flag::Rescan))));
+    assert!(super::moves_current(&Err(notify::Error::generic(
+        "stream ended"
+    ))));
+}
+
+/// The handler a [`Handing`] watcher was given and what it was asked to watch.
+#[derive(Default)]
+struct Handed {
+    handler: Option<Box<dyn notify::EventHandler>>,
+    watched: Vec<(PathBuf, notify::RecursiveMode)>,
+}
+
+std::thread_local! {
+    /// What the [`Handing`] watcher the test on this thread made was handed.
+    static HANDED: std::cell::RefCell<Handed> = std::cell::RefCell::default();
+}
+
+/// A watcher that hands its handler to the test ([`HANDED`]), or, when `FAILS`, fails to watch,
+/// its handler gone with it as a dropped watcher's is.
+struct Handing<const FAILS: bool>;
+
+impl<const FAILS: bool> notify::Watcher for Handing<FAILS> {
+    fn new<F: notify::EventHandler>(handler: F, _: notify::Config) -> notify::Result<Self> {
+        if !FAILS {
+            HANDED.with_borrow_mut(|handed| handed.handler = Some(Box::new(handler)));
+        }
+        Ok(Self)
+    }
+
+    fn watch(&mut self, path: &Path, mode: notify::RecursiveMode) -> notify::Result<()> {
+        if FAILS {
+            return Err(notify::Error::generic("no such folder"));
+        }
+        HANDED.with_borrow_mut(|handed| handed.watched.push((path.into(), mode)));
+        Ok(())
+    }
+
+    fn unwatch(&mut self, _: &Path) -> notify::Result<()> {
+        Ok(())
+    }
+
+    fn kind() -> notify::WatcherKind {
+        notify::WatcherKind::NullWatcher
+    }
+}
+
+/// The watcher's handler is told `event`, as its backend would.
+fn tell(event: notify::Result<notify::Event>) {
+    HANDED.with_borrow_mut(|handed| {
+        handed
+            .handler
+            .as_mut()
+            .expect("a watcher was made")
+            .handle_event(event);
+    });
+}
+
+#[test]
+fn a_release_server_hears_current_move_from_a_watch_of_the_machine_folder_alone() {
+    let machine = Path::new("/m");
+    let (watcher, moved) = super::watch_current::<Handing<false>>(machine);
+    assert!(watcher.is_some());
+    assert_eq!(
+        HANDED.with_borrow(|handed| handed.watched.clone()),
+        vec![(machine.to_path_buf(), notify::RecursiveMode::NonRecursive)]
+    );
+    tell(event(
+        notify::EventKind::Create(notify::event::CreateKind::Any),
+        &["/m/registry.json"],
+    ));
+    assert_eq!(moved.try_recv(), Err(std::sync::mpsc::TryRecvError::Empty));
+    // A move's burst is one wake: the loop reads once it is quiet.
+    let renamed = notify::EventKind::Modify(notify::event::ModifyKind::Name(
+        notify::event::RenameMode::Any,
+    ));
+    tell(event(renamed, &["/m/current"]));
+    tell(event(renamed, &["/m/current"]));
+    assert_eq!(moved.try_recv(), Ok(()));
+    assert_eq!(moved.try_recv(), Err(std::sync::mpsc::TryRecvError::Empty));
+}
+
+#[test]
+fn a_release_server_that_cannot_watch_its_machine_folder_reads_current_once_a_period() {
+    let (watcher, moved) = super::watch_current::<Handing<true>>(Path::new("/m"));
+    assert!(watcher.is_none());
+    // The handler went with the watcher: no event can come, and the backstop's period reads alone.
+    assert_eq!(
+        moved.try_recv(),
+        Err(std::sync::mpsc::TryRecvError::Disconnected)
+    );
 }

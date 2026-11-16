@@ -1,5 +1,5 @@
 //! The command line, keys, readiness and report of `symphony shot`, without a browser. The browser
-//! cases (a real page, its pictures, its clean failures) are in apps/symphony-ui/tests/browser/shot.rs.
+//! cases (a real page, its pictures, its clean failures) are in apps/symphony-web-tests/tests/browser/shot.rs.
 
 use super::*;
 
@@ -477,8 +477,8 @@ fn request(url: &str, kind: &str) -> Request {
 }
 
 #[test]
-fn a_page_is_drawn_once_loaded_navigated_with_no_region_loading_and_only_streams_open() {
-    let drawn = json!({"ready": "complete", "navigation": "ready", "loading": 0});
+fn a_page_is_drawn_once_loaded_navigated_with_no_region_loading_or_busy_and_only_streams_open() {
+    let drawn = json!({"ready": "complete", "navigation": "ready", "loading": 0, "busy": 0});
     let stream = request("http://h/api/feed", "EventSource");
     let socket = request("ws://h/api/feed", symphony_chrome::WEB_SOCKET);
     let done = Request {
@@ -509,7 +509,7 @@ fn a_page_is_drawn_once_loaded_navigated_with_no_region_loading_and_only_streams
         .map(|n| request(&format!("http://h/{n}"), "Fetch"))
         .collect();
     let said = waiting(
-        &json!({"ready": "interactive", "navigation": "loading", "loading": 2}),
+        &json!({"ready": "interactive", "navigation": "loading", "loading": 2, "busy": 3}),
         &[vec![stream, socket, done, failed], pending].concat(),
     );
     assert_eq!(
@@ -518,8 +518,17 @@ fn a_page_is_drawn_once_loaded_navigated_with_no_region_loading_and_only_streams
             "the document to load (it is interactive)",
             "the page's navigation (html[data-navigation=loading])",
             "2 region(s) still loading ([data-ready=loading])",
+            "3 region(s) busy on the screen ([aria-busy=true])",
             "5 request(s) in flight: http://h/0, http://h/1, http://h/2 and 2 more",
         ]
+    );
+    // A page drawn but for a region busy on the screen (a ghost not lifted) waits for it alone.
+    assert_eq!(
+        waiting(
+            &json!({"ready": "complete", "navigation": "ready", "loading": 0, "busy": 1}),
+            &[]
+        ),
+        ["1 region(s) busy on the screen ([aria-busy=true])"]
     );
 }
 

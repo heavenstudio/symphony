@@ -26,6 +26,7 @@ mod finish;
 mod limits;
 mod list;
 mod panes;
+mod runs;
 mod stamps;
 mod stats;
 mod wait;
@@ -288,6 +289,7 @@ pub fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
         }
         "limits" => limits::run(store, c)?,
         "stamps" => stamps::stamps(store, c)?,
+        "runs" => runs::runs(store, c)?,
         "needs" => stamps::needs(store, c)?,
         "create" => create(store, c)?,
         "priority" => {
@@ -650,12 +652,24 @@ fn create(store: &Store, c: &mut Context) -> Result<(), Stop> {
         Some(arm) => store.create_in_arm(&new, arm)?,
         None => store.create(&new)?,
     };
-    // Every open task has an orchestrator: the filer when it is one, else the board gives it. One
-    // line says who, or that it waits for one that stays, where any orchestrator is on the board.
-    let role = match store.give_filed(&t.slug, &new.by, for_orchestrator.as_deref()) {
-        Ok(Some(to)) => format!("; {to} orchestrates it"),
-        Ok(None) if !any_orchestrator(store)? => String::new(),
-        Ok(None) => "; it waits for an orchestrator that stays".to_string(),
+    // The filer orchestrates it when it is an orchestrator under the limit on its open tasks, else
+    // the board gives it. One line says who, and why the filer or the orchestrator `--for` names was
+    // passed over, or that it waits for one under its limit that stays, where any orchestrator is
+    // on the board.
+    let role = match store.give_filed_saying(&t.slug, &new.by, for_orchestrator.as_deref()) {
+        Ok(filed) => {
+            let passed = filed
+                .passed
+                .map(|why| format!("; {why}"))
+                .unwrap_or_default();
+            match filed.orchestrator {
+                Some(to) => format!("{passed}; {to} orchestrates it"),
+                None if !any_orchestrator(store)? => passed,
+                None => {
+                    format!("{passed}; it waits for an orchestrator under its limit that stays")
+                }
+            }
+        }
         Err(error) => format!(
             "; no orchestrator was given it yet ({error}): the board gives it at its next read"
         ),
@@ -746,12 +760,19 @@ fn show(store: &Store, c: &mut Context) -> Result<(), Stop> {
         updated: task.updated,
     };
     let stages = stages::stages(facts, &lines, store.now());
+    // The task's tokens, its subtasks' with them.
+    let slugs: Vec<&str> = std::iter::once(slug.as_str())
+        .chain(children.iter().map(|child| child.slug.as_str()))
+        .collect();
+    let spent = store.spent_on(&slugs)?;
+    let tally = crate::usage::Tally::of(&spent);
     if c.parsed.flag("json") {
         let json = Py::obj(vec![
             ("task", shape::task(&task)),
             ("thread", shape::messages(&thread)),
             ("children", shape::tasks(&children)),
             ("stages", shape::stages(&stages)),
+            ("tokens", tally.json(&spent)),
         ]);
         c.say(&pyjson::dumps(&json));
         return Ok(());
@@ -775,9 +796,14 @@ fn show(store: &Store, c: &mut Context) -> Result<(), Stop> {
     };
     if let Some(at) = waiting {
         let minutes = ((store.now() - at) / 60.0).max(0.0).floor();
+        let limit = store.limits().orchestrator_tasks;
         c.say(&format!(
-            "  waits for an orchestrator that stays, for {minutes} min: the first live past its \
-             first live line that waits, watches or holds a task is given it"
+            "  waits for an orchestrator under its limit that stays, for {minutes} min: the first \
+             live past its first live line that waits, watches or holds a task, and orchestrates \
+             fewer than {limit} open tasks ([limits] orchestrator_tasks), is given it, and any \
+             such orchestrator takes it with: {} role {} orchestrator",
+            store.board_command(),
+            task.slug
         ));
     }
     let parent: Vec<String> = task.parent.iter().cloned().collect();
@@ -794,6 +820,9 @@ fn show(store: &Store, c: &mut Context) -> Result<(), Stop> {
         c.say(&format!("  arm: {arm}"));
     }
     c.say(&format!("  {}", stages::summary_line(&stages)));
+    for line in tally.lines() {
+        c.say(&format!("  {line}"));
+    }
     if !children.is_empty() {
         c.say("  subtasks:");
         let width = children

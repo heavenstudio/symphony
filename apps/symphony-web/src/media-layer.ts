@@ -6,11 +6,11 @@
 // for is its reach (`Reach`): a page's layer, the page's pictures and its views; the panel's, the
 // chat's pictures on every page, and the page's media too on a page with no layer of its own
 // (panel.tsx). It observes the whole page, and whatever it added ends with its mount, the viewer
-// closed. The media's styles are the Dioxus client's
-// media sheet, which comes with the layer: a kind that mounts it (home, the documents, a task's
+// closed. The media's styles are the media sheet
+// (`styles/media.css`), which comes with the layer: a kind that mounts it (home, the documents, a task's
 // page, the panel) loads them once, in the CSS of the chunk the kinds share it in.
 
-import "../../symphony-ui/assets/media.css";
+import "./styles/media.css";
 import { useEffect } from "react";
 import { decode, localAsset, pathOf, WAITING } from "./media";
 import { useMount } from "./mount";

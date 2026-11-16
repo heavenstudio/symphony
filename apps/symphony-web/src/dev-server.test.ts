@@ -305,8 +305,8 @@ function response() {
 }
 
 const SOURCES = {
-  cache: "/checkout/apps/symphony-ui/assets/cache.js",
-  shell: "/checkout/apps/symphony-ui/assets/shell.js",
+  cache: "/checkout/apps/symphony-web/shell/cache.js",
+  shell: "/checkout/apps/symphony-web/shell/shell.js",
   read: (path: string) => (path.endsWith("cache.js") ? CACHE : SOURCE),
 };
 
@@ -451,7 +451,7 @@ describe("the dev server's settings", () => {
           strictPort: true,
           cors: false,
           proxy: { [PROXIED]: { target: "http://127.0.0.1:4321", changeOrigin: false, ws: true } },
-          fs: { allow: [".", "../symphony-ui/assets"] },
+          fs: { allow: ["."] },
         },
         plugins,
       },
@@ -507,8 +507,6 @@ async function symphony(body: string): Promise<ViteDevServer> {
 }
 
 describe("the dev server, to a page of another origin", () => {
-  // Two servers started and three requests: the time is a backstop only a stall reaches, of two
-  // minutes, the least docs/CHECKS.md ("Time in tests") gives one.
   it("answers as the server would, letting it read nothing, Vite's files or the server's", async () => {
     const served = await symphony("the server's answer");
     let dev: ViteDevServer | undefined;
@@ -543,5 +541,5 @@ describe("the dev server, to a page of another origin", () => {
       await dev?.close();
       await served.close();
     }
-  }, 120_000);
+  });
 });

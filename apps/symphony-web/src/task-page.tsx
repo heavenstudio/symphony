@@ -1,8 +1,10 @@
 // A task's page (`/task/SLUG`): its head (slug, title, state, who filed it, the owner's priority and
 // cancel, its facts, its roles and their sessions, its builds and tests), its gates, its subtasks,
-// its timeline, its brief, its thread and the composer under it. Before its read it is its ghost:
-// each part at the height this browser last drew it, so nothing moves as the page comes in its
-// place. Live, it is task-live.ts's `LiveTask`, under the board's notices.
+// its timeline, its brief, its thread and the composer under it. Each part is drawn from its own
+// read (task-live.ts's parts, in the page's store) as soon as that read is there, and is its own
+// mock-up until then: the head and the brief at the height this browser last drew them, the gates'
+// outline, the timeline's box, the thread's and the composer's ghosts, so a part that comes moves
+// none of the others. Live, it is task-live.ts's `LiveTask`, under the board's notices.
 
 import { type CSSProperties, memo, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { AttachControls, useAttach } from "./attach";
@@ -10,10 +12,10 @@ import { BlocksView } from "./blocks";
 import { Button } from "./button";
 import { FRESH, type Freshness, shown } from "./cache";
 import { useFrame } from "./frame";
-import { GhostGates, TaskGatesPanel } from "./gates";
-import { workOf } from "./gates-model";
-import { flushReload, PageNotices } from "./live";
+import { TaskGatesPanel } from "./gates";
+import { PageNotices } from "./live";
 import { useMount } from "./mount";
+import { PartsContext, type Shown, usePart } from "./parts";
 import { href, scoped } from "./project";
 import { getJson, post, said } from "./request";
 import { currentRoute } from "./route";
@@ -21,20 +23,18 @@ import { SelectField } from "./select";
 import { GoToSession } from "./session";
 import { field, STALE, useStore } from "./shared";
 import { load, save } from "./storage";
-import { LiveTask } from "./task-live";
+import { LiveTask, offerPart, type Thread } from "./task-live";
 import { readBrief } from "./task-read";
 import { statusWords, WorkPhases } from "./taskcard";
 import { Textarea } from "./textarea";
-import { placeholders, reserved, TimelineSlot } from "./timeline-slot";
+import { TimelineSlot } from "./timeline-slot";
 import { failed as failedRead, ready, Trouble } from "./trouble";
 import { drawnHeight, drawnStyle, NearViewport, rememberDrawn, Settle, Skeleton } from "./viewport";
 import type {
   Block,
-  MachineWork,
   TaskPage as Page,
   Role,
   SessionGo,
-  Task,
   TaskBrief,
   TaskEntry,
   TaskOffer,
@@ -93,39 +93,41 @@ function GhostEntry() {
   );
 }
 
-/**
- * A task's thread and composer while the thread loads: messages, then the composer's field, its
- * Attach button and its recipient and Send controls; it says it loads unless the page around it
- * says so (`announce`).
- */
-export function GhostThread({ announce = true }: { announce?: boolean }) {
+/** The composer while its task's page loads: its field, its Attach button and its recipient and
+ * Send controls. */
+export function GhostComposer() {
+  return (
+    <div className="ghost-composer">
+      <div>
+        <span className="bone" style={bone("7ch")} />
+      </div>
+      <div className="ghost-field ghost-textarea" />
+      <div>
+        <span className="ghost-field" style={{ width: "6rem" }} />
+        <span className="bone" style={bone("22ch")} />
+      </div>
+      <div>
+        <span className="bone" style={bone("2ch")} />
+        <span className="ghost-field" style={{ width: "9rem" }} />
+        <span className="ghost-field" style={{ width: "4.5rem" }} />
+      </div>
+    </div>
+  );
+}
+
+/** A task's thread and composer while the thread loads: messages, then the composer. */
+export function GhostThread({ quiet = false }: { quiet?: boolean }) {
   return (
     <>
-      {announce && (
-        <span className="status-text" role="status">
-          Loading the thread…
-        </span>
-      )}
+      <span className="status-text" role={quiet ? undefined : "status"}>
+        Loading the thread…
+      </span>
       <div className="ghost-history">
         <GhostEntry />
         <GhostEntry />
         <GhostEntry />
       </div>
-      <div className="ghost-composer">
-        <div>
-          <span className="bone" style={bone("7ch")} />
-        </div>
-        <div className="ghost-field ghost-textarea" />
-        <div>
-          <span className="ghost-field" style={{ width: "6rem" }} />
-          <span className="bone" style={bone("22ch")} />
-        </div>
-        <div>
-          <span className="bone" style={bone("2ch")} />
-          <span className="ghost-field" style={{ width: "9rem" }} />
-          <span className="ghost-field" style={{ width: "4.5rem" }} />
-        </div>
-      </div>
+      <GhostComposer />
     </>
   );
 }
@@ -240,60 +242,6 @@ export function GhostBrief({ height }: { height: number | null }) {
     <div className="card ghost-brief" style={drawnStyle(height)}>
       {first > 0 && <Skeleton lines={first} />}
       {second > 0 && <Skeleton lines={second} />}
-    </div>
-  );
-}
-
-/**
- * A task's page before its read: its head card, its gates' outline, its timeline's box, its brief's
- * card, and its thread. The head, its title, its facts and the brief take the heights this browser
- * last drew them at for the task in a window as wide, else those of the last task it drew there,
- * the title and the facts a bar for each line their height holds; the timeline's box the height its
- * own box will hold (`reserved`).
- */
-export function GhostTask({ slug }: { slug: string }) {
-  const [heights] = useState(() => ({
-    head: drawnHeight(`head ${slug}`),
-    title: drawnHeight(`title ${slug}`),
-    facts: drawnHeight(`facts ${slug}`),
-    brief: drawnHeight(`brief ${slug}`),
-    timeline: reserved(slug),
-  }));
-  const [narrow, wide] = heights.timeline;
-  const rows = placeholders(Math.max(narrow, wide));
-  return (
-    <div aria-busy="true">
-      <span className="status-text" role="status">
-        Loading task…
-      </span>
-      <GhostHead height={heights.head} title={heights.title} facts={heights.facts} />
-      {/* Said once, by the page: the outline's own status is not read out. */}
-      <div aria-hidden="true">
-        <GhostGates slug={slug} />
-      </div>
-      <div
-        className="ghost-tl"
-        style={{ "--tl-narrow": `${narrow}px`, "--tl-wide": `${wide}px` } as CSSProperties}
-      >
-        <div className="ghost-heading">
-          <span className="bone" style={bone("8ch")} />
-        </div>
-        <div className="card ghost-tl-box">
-          <span className="bone" style={bone("60%")} />
-          {Array.from({ length: rows }, (_, row) => (
-            // biome-ignore lint/suspicious/noArrayIndexKey: the rows are alike, and only their count changes
-            <div key={row}>
-              <span className="bone" style={bone("2.4rem")} />
-              <span className="bone" style={bone(`${30 + ((row * 17) % 40)}%`)} />
-            </div>
-          ))}
-        </div>
-      </div>
-      <GhostBrief height={heights.brief} />
-      <div className="ghost-heading">
-        <span className="bone" style={bone("5ch")} />
-      </div>
-      <GhostThread announce={false} />
     </div>
   );
 }
@@ -696,59 +644,108 @@ export function Brief({ slug, revision, blocks, omitted, next }: BriefProps) {
   );
 }
 
-/** Asks for the landing the task offers once, as it mounts: its key names the task's revision. */
-function OfferLoader({ onOffer }: { onOffer: () => void }) {
-  const asked = useRef(onOffer);
-  useEffect(() => asked.current(), []);
-  return null;
-}
-
-export interface TaskDetailProps {
+export interface TaskHeadProps {
   page: Page;
   /** The checkout the route names (`""`, the main one), whose sessions the role chips go to. */
   scope: string;
-  work: MachineWork;
   /** Whether the feed is open and nothing shown came from this device: the machines' own work is
    * read as disconnected otherwise. */
   connected: boolean;
-  tasks: Task[];
-  entries: TaskEntry[];
-  older: boolean;
-  loaded: boolean;
-  offer: [TaskOffer, number] | null;
-  failed: boolean;
-  /** How many board events have changed the task's gates (`TaskData.gatesNudged`). */
-  nudged: number;
-  /** Told the task and the branch its gates were answered for (`LiveTask.gatesAnswered`). */
-  onBranch?: (slug: string, branch: string) => void;
-  onHistory: (older: boolean) => void;
-  onChildren: (more: boolean) => void;
-  onOffer: () => void;
 }
 
-/** A task's page as its read stands. */
-export function TaskDetail({
-  page,
-  scope,
-  work,
-  connected,
-  tasks,
-  entries,
-  older,
-  loaded,
-  offer,
-  failed,
-  nudged,
-  onBranch,
-  onHistory,
-  onChildren,
-  onOffer,
-}: TaskDetailProps) {
+/** A task's head card: its slug, title, state, who filed it, the owner's controls, its facts, its
+ * roles and its builds and tests. */
+export function TaskHead({ page, scope, connected }: TaskHeadProps) {
   const { task } = page;
   const { slug } = task;
-  const approval = offer !== null && offer[1] === task.updated ? offer[0] : null;
-  // The head's and the brief's heights, for the ghost of the next visit (`GhostTask`).
+  return (
+    <div className="task-head card">
+      <p className="eyebrow">
+        <code>{slug}</code>
+      </p>
+      <h1>{task.title}</h1>
+      {/* The state, who filed it, then the owner's controls apart from them: the priority is said
+          once, by its own control. */}
+      <div className="task-state row">
+        <span className={`state pill st-${task.status}`}>{statusWords(task.status)}</span>
+        <span className="by">{`filed by ${task.created_by}`}</span>
+        <OwnerControls slug={slug} priority={task.priority} status={task.status} />
+      </div>
+      <ul className="facts">
+        {task.parent !== null && (
+          <li>
+            {"part of "}
+            <a href={href(`/task/${task.parent}`)}>{task.parent}</a>
+          </li>
+        )}
+        {task.depends.map((dependency) => (
+          <li key={`after ${dependency}`}>
+            {"after "}
+            <a href={href(`/task/${dependency}`)}>{dependency}</a>
+          </li>
+        ))}
+        {task.links.map((link) => (
+          <li key={`implements ${link}`}>
+            {"implements "}
+            <a href={href(`/${link}`)}>{link}</a>
+          </li>
+        ))}
+      </ul>
+      <RoleChips roles={task.roles} sessions={page.sessions} local={page.local} scope={scope} />
+      <WorkPhases work={page.machine_work} slug={slug} connected={connected} />
+    </div>
+  );
+}
+
+export interface TaskDetailProps {
+  /** The route's task. */
+  slug: string;
+  /** The checkout the route names (`""`, the main one). */
+  scope: string;
+  /** The task's page, once its read or this device gave it: its head and its brief are their
+   * mock-ups before. */
+  page: Page | null;
+  /** Why the page's read failed, while there is none to draw: said in the head's place. */
+  pageFailed: string;
+  connected: boolean;
+  /** The thread as its part stands. */
+  thread: Shown<Thread>;
+  /** Whether the page says a failure: the thread waits under its ghost no longer. */
+  failed: boolean;
+  onRetry: () => void;
+  onHistory: (older: boolean) => void;
+  onChildren: (more: boolean) => void;
+}
+
+/** A task's page, each part as its own read stands: its data, or its mock-up until that comes. */
+export function TaskDetail({
+  slug,
+  scope,
+  page,
+  pageFailed,
+  connected,
+  thread,
+  failed,
+  onRetry,
+  onHistory,
+  onChildren,
+}: TaskDetailProps) {
+  const offer = usePart(offerPart(scope, slug)).value;
+  const approval = offer !== undefined && offer.payload !== null ? offer : null;
+  // The heights this browser last drew the head and the brief at, for their mock-ups: the task's
+  // own in a window as wide, else those of the last task it drew there.
+  const [heights] = useState(() => ({
+    head: drawnHeight(`head ${slug}`),
+    title: drawnHeight(`title ${slug}`),
+    facts: drawnHeight(`facts ${slug}`),
+    brief: drawnHeight(`brief ${slug}`),
+  }));
+  const drawn = page !== null;
+  // The page says once that the task loads: its parts' own mock-ups do not say theirs beside it.
+  const waiting = !drawn && pageFailed === "";
+  // The head's and the brief's heights, for their mock-ups on the next visit.
   useEffect(() => {
+    if (!drawn) return;
     const controller = new AbortController();
     const at = `article.task[data-slug="${slug}"] > `;
     void rememberDrawn(
@@ -762,54 +759,37 @@ export function TaskDetail({
       controller.signal,
     );
     return () => controller.abort();
-  }, [slug]);
+  }, [slug, drawn]);
+  const entries = thread.value?.entries ?? [];
+  const loaded = thread.value !== undefined;
+  const older = (thread.value?.before ?? null) !== null;
+  const tasks = page?.children ?? [];
   return (
-    <article className="task" data-slug={slug}>
-      <div className="task-head card">
-        <p className="eyebrow">
-          <code>{slug}</code>
-        </p>
-        <h1>{task.title}</h1>
-        {/* The state, who filed it, then the owner's controls apart from them: the priority is said
-            once, by its own control. */}
-        <div className="task-state row">
-          <span className={`state pill st-${task.status}`}>{statusWords(task.status)}</span>
-          <span className="by">{`filed by ${task.created_by}`}</span>
-          <OwnerControls slug={slug} priority={task.priority} status={task.status} />
-        </div>
-        <ul className="facts">
-          {task.parent !== null && (
-            <li>
-              {"part of "}
-              <a href={href(`/task/${task.parent}`)}>{task.parent}</a>
-            </li>
-          )}
-          {task.depends.map((dependency) => (
-            <li key={`after ${dependency}`}>
-              {"after "}
-              <a href={href(`/task/${dependency}`)}>{dependency}</a>
-            </li>
-          ))}
-          {task.links.map((link) => (
-            <li key={`implements ${link}`}>
-              {"implements "}
-              <a href={href(`/${link}`)}>{link}</a>
-            </li>
-          ))}
-        </ul>
-        <RoleChips roles={task.roles} sessions={page.sessions} local={page.local} scope={scope} />
-        <WorkPhases work={work} slug={slug} connected={connected} />
-      </div>
+    <article className="task" data-slug={slug} aria-busy={drawn ? undefined : "true"}>
+      {page !== null ? (
+        <TaskHead page={page} scope={scope} connected={connected} />
+      ) : pageFailed !== "" ? (
+        <Trouble
+          title="The task could not be loaded"
+          text={failedRead(pageFailed, true)}
+          retry={onRetry}
+        />
+      ) : (
+        <>
+          <span className="status-text" role="status">
+            Loading task…
+          </span>
+          <GhostHead height={heights.head} title={heights.title} facts={heights.facts} />
+        </>
+      )}
       <TaskGatesPanel
         slug={slug}
-        task={task}
-        revision={task.updated}
-        seen={page.gates ?? null}
-        work={workOf(work, slug)}
-        nudged={nudged}
-        {...(onBranch === undefined ? {} : { onBranch })}
+        scope={scope}
+        task={page?.task ?? null}
+        seen={page?.gates ?? null}
+        quiet={waiting}
       />
-      {page.children_count > 0 && (
+      {page !== null && page.children_count > 0 && (
         <NearViewport id={`subtasks-${slug}`} height={60} onEnter={() => onChildren(false)}>
           <h2>
             {"Subtasks "}
@@ -830,19 +810,23 @@ export function TaskDetail({
           ) : null}
         </NearViewport>
       )}
-      <TimelineSlot key={slug} slug={slug} revision={task.updated} />
-      <Brief
-        slug={slug}
-        revision={page.brief_revision}
-        blocks={page.blocks}
-        omitted={page.brief_omitted}
-        next={page.brief_next}
-      />
+      <TimelineSlot key={slug} slug={slug} scope={scope} />
+      {page !== null ? (
+        <Brief
+          slug={slug}
+          revision={page.brief_revision}
+          blocks={page.blocks}
+          omitted={page.brief_omitted}
+          next={page.brief_next}
+        />
+      ) : (
+        pageFailed === "" && <GhostBrief height={heights.brief} />
+      )}
       <h2>Thread</h2>
-      {/* The head and the brief are in with the page; the thread and the composer under it wait
-          under their ghost until the thread on the first screen is in. */}
-      <Settle failed={failed} cover={<GhostThread />}>
-        <NearViewport id={`thread-region-${slug}`} height={200} onEnter={() => onHistory(false)}>
+      {/* The thread and the composer under it wait under their ghost until the thread on the first
+          screen is in, whatever the head and the brief do meanwhile. */}
+      <Settle failed={failed} cover={<GhostThread quiet={waiting} />}>
+        <NearViewport id={`thread-region-${slug}`} height={200}>
           <div id="task-thread" data-pending={`${!loaded}`}>
             {older && <Button onClick={() => onHistory(true)}>Load earlier messages</Button>}
             {!loaded && <Button onClick={() => onHistory(false)}>Load messages</Button>}
@@ -869,57 +853,53 @@ export function TaskDetail({
           </div>
         </NearViewport>
         <NearViewport id={`composer-${slug}`} height={200}>
-          <OfferLoader key={`offer-${slug}-${task.updated}`} onOffer={onOffer} />
-          <Composer slug={slug} roles={task.roles} approval={approval} />
+          {page !== null ? (
+            <Composer slug={slug} roles={page.task.roles} approval={approval} />
+          ) : (
+            <GhostComposer />
+          )}
         </NearViewport>
       </Settle>
     </article>
   );
 }
 
-/** The route's task as `live` stands: its page, why it could not be read, or its ghost. */
+/** The route's task as `live` stands: its parts, each its data or its mock-up, or that the board
+ * has no such task. */
 export function LiveTaskPage({ live, connected }: { live: LiveTask; connected: boolean }) {
-  const { d, slug } = live;
-  const page = d.page !== null && d.page.task.slug === slug ? d.page : null;
+  const { slug } = live;
+  const page = live.page();
+  const missing = live.missing();
+  const pageError = live.parts.shown(live.pagePart).error;
+  const pageFailed = page === null && pageError !== null ? said(pageError) : "";
   return (
     <div
       className="task-page"
-      data-ready={page !== null ? "task" : ready(d.missing === slug, d.error !== "")}
+      data-ready={page !== null ? "task" : ready(missing, pageFailed !== "")}
     >
-      {page !== null ? (
-        <TaskDetail
-          key={slug}
-          page={page}
-          scope={live.scope}
-          work={page.machine_work}
-          connected={connected}
-          tasks={page.children}
-          entries={d.entries}
-          older={d.before !== null}
-          loaded={d.threadLoaded}
-          offer={d.approval}
-          failed={d.error !== ""}
-          nudged={d.gatesNudged}
-          onBranch={(task, branch) => live.gatesAnswered(task, branch)}
-          onHistory={(more) => void live.history(more)}
-          onChildren={(more) => void live.children(more)}
-          onOffer={() => void live.offer()}
-        />
-      ) : d.missing === slug ? (
+      {missing ? (
         <Trouble
           title={`No task ${slug}`}
           text="The board has no task by this name: it may have been removed, or the link names it wrongly."
           back={["/tasks", "All tasks"]}
-          retry={() => void live.refresh()}
-        />
-      ) : d.error !== "" ? (
-        <Trouble
-          title="The task could not be loaded"
-          text={failedRead(d.error, true)}
-          retry={() => void live.refresh()}
+          retry={() => live.again()}
         />
       ) : (
-        <GhostTask key={slug} slug={slug} />
+        <PartsContext.Provider value={live.parts}>
+          <TaskDetail
+            key={slug}
+            slug={slug}
+            scope={live.scope}
+            page={page}
+            pageFailed={pageFailed}
+            connected={connected}
+            thread={live.thread()}
+            failed={pageFailed !== "" || live.error() !== ""}
+            onRetry={() => live.again()}
+            onHistory={(more) => void live.history(more)}
+            onChildren={(more) => void live.children(more)}
+          />
+        </PartsContext.Provider>
       )}
     </div>
   );
@@ -933,8 +913,9 @@ export interface TaskPageViewProps {
 }
 
 /**
- * A task's page under the board's notices: the task once the board is read or a copy of the task
- * from this device is drawn; before, the board's skeleton, or why the board could not be read.
+ * A task's page under the board's notices: its parts from the moment the page starts, each behind
+ * its own read alone, the board's among them; why the board could not be read, only while no part
+ * of the task is drawn.
  */
 export function TaskPageView({ live, stale, freshness }: TaskPageViewProps) {
   const device = shown(freshness);
@@ -944,19 +925,18 @@ export function TaskPageView({ live, stale, freshness }: TaskPageViewProps) {
   useEffect(() => {
     if (live?.boardShown) performance.mark(READY_MARK);
   }, [live?.boardShown]);
-  // A task with nothing yet to show says in its own trouble block what is missing or failed; once
+  // A task with nothing yet to show says in its head's place what is missing or failed; once
   // drawn, the page's error is drawn in its notice stack, out of the page's flow.
-  const error = drawn && live !== null ? live.d.error : "";
+  const error = drawn && live !== null ? live.error() : "";
   return (
     <main
       data-ready={onPage ? "board" : ready(false, trouble !== null)}
       data-feed={stale || device !== null ? "stale" : "live"}
       data-cache={device !== null ? "device" : undefined}
     >
-      {live !== null && onPage ? (
-        // What the device drew is not the machines' work now: shown as out of touch until read.
-        <LiveTaskPage live={live} connected={!stale && device === null} />
-      ) : live !== null && trouble !== null ? (
+      {live === null ? (
+        <Skeleton lines={8} label="Loading the board…" />
+      ) : trouble !== null && !onPage ? (
         <Trouble
           title="The board could not be loaded"
           text={failedRead(trouble, true)}
@@ -965,13 +945,10 @@ export function TaskPageView({ live, stale, freshness }: TaskPageViewProps) {
           }}
         />
       ) : (
-        <Skeleton lines={8} label="Loading the board…" />
+        // What the device drew is not the machines' work now: shown as out of touch until read.
+        <LiveTaskPage live={live} connected={!stale && device === null} />
       )}
-      <PageNotices
-        reconnecting={stale && (live?.boardShown ?? false)}
-        error={error}
-        device={device}
-      />
+      <PageNotices reconnecting={stale && onPage} error={error} device={device} />
     </main>
   );
 }
@@ -998,14 +975,10 @@ export function TaskPage({ scope, slug }: { scope: string; slug: string }) {
     setFreshness(FRESH);
     redraw();
     void task.start(frame);
-    const minutes = setInterval(flushReload, 60_000);
-    return () => {
-      controller.abort();
-      clearInterval(minutes);
-    };
+    return () => controller.abort();
   }, [scope, frame]);
   useEffect(() => {
-    void live.current?.moved(slug);
+    live.current?.moved(slug);
   }, [slug]);
   return <TaskPageView live={live.current} stale={stale} freshness={freshness} />;
 }

@@ -875,8 +875,15 @@ fn the_command_installs_and_reports_and_refuses_what_it_does_not_know() {
         "{out}"
     );
     assert!(out.ends_with(&format!("\n\n{TRUST}\n")), "{out}");
-    let warned = heartbeat_warning(&tree.root, std::env::var_os("PATH").as_deref())
-        .map_or_else(String::new, |warning| format!("symphony init: {warning}\n"));
+    // As `main` reads them: this process's machine folder and search path.
+    let warned = heartbeat_warning(
+        &tree.root,
+        &builds::Beyond {
+            machine: crate::machine::dir().ok(),
+            path: std::env::var_os("PATH"),
+        },
+    )
+    .map_or_else(String::new, |warning| format!("symphony init: {warning}\n"));
     assert_eq!(err, warned);
     let (code, out, _) = run(&["--root", root]);
     assert_eq!((code, out.contains("skill work: current\n")), (0, true));
@@ -978,20 +985,24 @@ fn every_shipped_skill_is_a_skill_with_front_matter_and_no_stamp_of_its_own() {
 const PROJECT_PAGE: &str = "project.md";
 
 /// A project's standing instructions for a role are its own page beside the role's skill: each
-/// role's skill names the page, no skill ships one, and a run neither writes over the project's,
-/// counts it as an edit to the skill, nor removes it.
+/// role's skill names the page, and so does the orchestrator's, which says where an instruction
+/// goes; no other skill names it, backticked or bare, and none ships one; and a run neither writes
+/// over the project's, counts it as an edit to the skill, nor removes it.
 #[test]
 fn a_projects_page_beside_a_role_skill_is_named_by_the_skill_and_left_as_written() {
     let shipped = Shipped::builtin();
     let roles = ["work", "review-task", "assess-task"];
     for skill in &shipped.skills {
-        let names = skill.files[0].1.contains(&format!("`{PROJECT_PAGE}`"));
-        assert_eq!(
-            names,
-            roles.contains(&skill.name.as_str()),
-            "{}",
-            skill.name
-        );
+        let name = skill.name.as_str();
+        let names = |text: &str| text.contains(PROJECT_PAGE);
+        if roles.contains(&name) || name == "task-orchestrator" {
+            assert!(names(&skill.files[0].1), "{name} does not name the page");
+        } else {
+            assert!(
+                skill.files.iter().all(|(_, text)| !names(text)),
+                "{name} names the page"
+            );
+        }
         assert!(
             skill.files.iter().all(|(file, _)| file != PROJECT_PAGE),
             "{} ships the project's page",
@@ -1485,7 +1496,10 @@ fn a_project_with_everything_in_place_has_nothing_left() {
     .write(&tree.path("machine"))
     .unwrap();
     assert_eq!(left(&tree, ""), Vec::<String>::new());
-    assert_eq!(heartbeat_warning(&tree.path("Lamp Shop"), None), None);
+    assert_eq!(
+        heartbeat_warning(&tree.path("Lamp Shop"), &builds::Beyond::default()),
+        None
+    );
     assert_eq!(
         next(&[]),
         "Next: nothing; agents can run the board (`just tasks register`)."
@@ -1512,7 +1526,7 @@ fn builds_on_the_search_path_serve_the_recipes_and_the_hooks_alike() {
     assert!(steps[0].starts_with("register the project"), "{steps:?}");
     let path = std::ffi::OsString::from(path);
     assert_eq!(
-        heartbeat_warning(&tree.path("Lamp Shop"), Some(&path)),
+        heartbeat_warning(&tree.path("Lamp Shop"), &builds::Beyond::path(Some(&path))),
         None
     );
 }
@@ -1624,10 +1638,13 @@ fn a_linked_worktree_finds_its_main_checkouts_builds_as_the_hooks_do() {
         .collect::<Vec<_>>()
     };
     assert_eq!(found(&tree.path("lamp")), Vec::<String>::new());
-    assert_eq!(heartbeat_warning(&tree.path("lamp"), None), None);
+    assert_eq!(
+        heartbeat_warning(&tree.path("lamp"), &builds::Beyond::default()),
+        None
+    );
     std::fs::remove_file(tree.path("main/.target/bin/tasks")).unwrap();
     assert_eq!(
-        heartbeat_warning(&tree.path("lamp"), None).unwrap(),
+        heartbeat_warning(&tree.path("lamp"), &builds::Beyond::default()).unwrap(),
         "warning: tasks has no build at .target/bin/ or on PATH: no tool call counts as a beat \
          until it does (see Next)"
     );
@@ -1993,27 +2010,68 @@ fn an_entrypoint_at_the_root_or_elsewhere_names_its_own_folder_and_route() {
 fn the_warning_names_the_missing_builds_and_what_goes_without_them() {
     let tree = Tree::new();
     assert_eq!(
-        heartbeat_warning(&tree.root, None).unwrap(),
+        heartbeat_warning(&tree.root, &builds::Beyond::default()).unwrap(),
         "warning: symphony and tasks have no build at .target/bin/ or on PATH: no tool call \
          counts as a beat and the memory guard refuses nothing until they do (see Next)"
     );
     program(&tree, ".target/bin/symphony");
     assert_eq!(
-        heartbeat_warning(&tree.root, None).unwrap(),
+        heartbeat_warning(&tree.root, &builds::Beyond::default()).unwrap(),
         "warning: tasks has no build at .target/bin/ or on PATH: no tool call counts as a beat \
          until it does (see Next)"
     );
     std::fs::remove_file(tree.path(".target/bin/symphony")).unwrap();
     program(&tree, ".target/bin/tasks");
     assert_eq!(
-        heartbeat_warning(&tree.root, None).unwrap(),
+        heartbeat_warning(&tree.root, &builds::Beyond::default()).unwrap(),
         "warning: symphony has no build at .target/bin/ or on PATH: no tool call counts as a \
          beat and the memory guard refuses nothing until it does (see Next)"
     );
     // On the search path it counts, as the hooks find it there.
     program(&tree, "bin/symphony");
     let path = std::ffi::OsString::from(format!("/nowhere:{}", tree.path("bin").display()));
-    assert_eq!(heartbeat_warning(&tree.root, Some(&path)), None);
+    assert_eq!(
+        heartbeat_warning(&tree.root, &builds::Beyond::path(Some(&path))),
+        None
+    );
+}
+
+#[test]
+fn a_release_installed_on_the_machine_is_the_beats_tasks_and_never_the_hooks_symphony() {
+    // A project with no build of its own, and a release holding both binaries: its recipes run
+    // the release, but the hooks' shell finds `symphony` by the links and the search path alone.
+    let tree = Tree::new();
+    program(&tree, "machine/releases/release-1/bin/symphony");
+    program(&tree, "machine/releases/release-1/bin/tasks");
+    std::os::unix::fs::symlink("releases/release-1", tree.path("machine/current")).unwrap();
+    let project = tree.path("lamp");
+    std::fs::create_dir_all(&project).unwrap();
+    let released = |path: Option<&std::ffi::OsStr>| builds::Beyond {
+        machine: Some(tree.path("machine")),
+        path: path.map(std::ffi::OsStr::to_os_string),
+    };
+    assert_eq!(
+        heartbeat_warning(&project, &released(None)).unwrap(),
+        "warning: symphony has no build at .target/bin/ or on PATH: no tool call counts as a \
+         beat and the memory guard refuses nothing until it does (see Next)"
+    );
+    // The recipes do find it there: no step asks for a link.
+    assert_eq!(
+        unfound(&project, &["symphony", "tasks"], &released(None)),
+        [] as [&str; 0]
+    );
+    // With `symphony` where the hooks look, the beat's `tasks` is the release's: nothing to warn.
+    program(&tree, "bin/symphony");
+    let path = tree.path("bin").into_os_string();
+    assert_eq!(heartbeat_warning(&project, &released(Some(&path))), None);
+    program(&tree, "lamp/.target/bin/symphony");
+    assert_eq!(heartbeat_warning(&project, &released(None)), None);
+    // Without the release, the same project lacks `tasks` as well.
+    assert_eq!(
+        heartbeat_warning(&project, &builds::Beyond::default()).unwrap(),
+        "warning: tasks has no build at .target/bin/ or on PATH: no tool call counts as a beat \
+         until it does (see Next)"
+    );
 }
 
 #[test]

@@ -77,8 +77,9 @@ a measurement before and after.
 - **A client page.** Before and after screenshots of each changed view, dark and
   light where colour changed, desktop and phone width where layout changed
   (`just symphony-cli shot URL --out FILE.png`, with `--phone` and `--scheme dark`;
-  `just symphony-cli shot --help` says the rest); the new tests for the changed behaviour (host
-  views in `-p symphony-ui --test view`, the page in `--test browser`); the existing tests the
+  `just symphony-cli shot --help` says the rest); the new tests for the changed behaviour (its
+  pure parts in the client's unit tests, `just client-lint`; the page in
+  `-p symphony-web-tests --test browser`); the existing tests the
   change was likely to break, updated where they pinned what changed, and green
   ([by page](#the-browser-target-by-page)); and `just client-update` for the pictures, its
   distribution not committed.
@@ -129,7 +130,10 @@ a measurement before and after.
   document renders, and every recipe a text of this repository names is one a project has,
   [below](#the-recipes-a-text-names)) and `just symphony-cli status --lint` (no card slug in prose,
   nothing the plugins' prose rules refuse) clean, both run at the branch's final tip, after its
-  last edit: a run before an edit is evidence of the text before it. A guide, or a document under
+  last edit: a run before an edit is evidence of the text before it. Typed so, each is a test
+  run the recorder keeps with its commit
+  ([MACHINE_WORK](MACHINE_WORK.md#recording-builds-and-tests)), so its reviewer reads it as
+  recorded, like any test. A guide, or a document under
   `docs/` but the register and `docs/history/`, also runs the check for the owner's words in the
   shapes the guides gave them, dated or straight-quoted (`just test-rs -p symphony-app --test hooks
   owner_words`, RULES.md `docs/no-ledger-in-documents`), and its reviewer reads for any other
@@ -181,10 +185,10 @@ audit on main after the land's round files it within minutes
 
 1. List what the branch changed: `git diff --name-only main...HEAD`.
 2. Name each file's package: `crates/tasks` is `symphony-board`, `crates/symphony` is
-   `symphony`, `apps/symphony-server` is `symphony-server`, `apps/symphony-ui` is `symphony-ui`,
-   `apps/symphony-desktop` is `symphony-desktop` (the Mac app, whose windows no test opens), and
-   any other `crates/NAME` is `NAME`; `apps/symphony-web` is the React client, no Cargo
-   package, whose unit tests `just client-lint` runs with its other checks.
+   `symphony`, `apps/symphony-server` is `symphony-server`, `apps/symphony-web-tests` is `symphony-web-tests`
+   (the client's browser and build tests), `apps/symphony-desktop` is `symphony-desktop` (the Mac
+   app, whose windows no test opens), and any other `crates/NAME` is `NAME`; `apps/symphony-web`
+   is the client, no Cargo package, whose unit tests `just client-lint` runs with its other checks.
 3. For each package:
    - the unit tests of the changed modules: `just test-rs -p PACKAGE --lib MODULE`, the module
      path as a filter (`store::work` for `crates/tasks/src/store/work.rs`);
@@ -195,8 +199,7 @@ audit on main after the land's round files it within minutes
      any of them matches;
    - when a public item's contract changed, the tests of the packages that call it (`git grep`
      its name).
-4. `just lint-rs` (which runs `just client-lint`), and, when `apps/symphony-ui` or
-   `apps/symphony-web` changed, the client built (`just client-update`) for its tests and
+4. `just lint-rs` (which runs `just client-lint`), and, when `apps/symphony-web` changed, the client built (`just client-update`) for its tests and
    pictures, its distribution never committed.
 5. Main is merged once, when the work is complete, and the targets steps 1 to 3 pick run again
    at the new tip, before review, as main may have changed what the branch's code meets
@@ -209,8 +212,8 @@ as the server does, and so do the own runs of `symphony-board` and `symphony-app
 `symphony` binaries do (the board's dependency asks for them), of `symphony-api`,
 `symphony-blocks` and `symphony-plugin` (a dev-dependency asks for them, which never reaches the
 client or a plugin's build) and of `symphony-schema` (`raw_value` aside, which changes no read),
-while the own runs of `symphony-ui` and `symphony-chrome` link it with none of them, so a test of
-theirs that reads a JSON object's key order or a number's text can pass alone and fail in the
+while the own runs of `symphony-web-tests` and `symphony-chrome` link it with none of them, so a
+test of theirs that reads a JSON object's key order or a number's text can pass alone and fail in the
 workspace's run.
 
 Steps 1 to 3 without the filters are mechanical, and a recipe that runs them from the branch's
@@ -219,7 +222,7 @@ stays the agent's, and the reviewer's to judge.
 
 ### The browser target by page
 
-`just test-rs -p symphony-ui --test browser -- FILTER…` builds the release client once and
+`just test-rs -p symphony-web-tests --test browser -- FILTER…` builds the release client once and
 opens each test's page in headless Chrome. Most of its tests are named for the page or control
 they open, so a page change runs the names that page's words match. Others draw several pages
 each, under names no page's words match, and a change to a page they draw runs them too:
@@ -269,7 +272,7 @@ page's rows, in `apps/symphony-web/src/queue.tsx` and `apps/symphony-web/src/que
 just symphony-cli shot URL --out queue-before.png   (desktop and phone, light and dark, before the change)
 just symphony-cli shot URL --out queue-after.png    (the same four, after it)
 just client-lint
-just test-rs -p symphony-ui --test browser -- queue polish:: projects::
+just test-rs -p symphony-web-tests --test browser -- queue polish:: projects::
 just client-update
 just lint-rs
 ```
@@ -355,11 +358,11 @@ whole, `--workspace` and its targets, and named after its output by a line in ca
 target that failed.
 
 The lanes share no port or store: every server, store and browser a test starts takes a port the
-system picks and a folder of its own. The one test writing the build folder (`wasm_build`, which
-links `symphony-build` there again) runs in the rest with every `symphony-build` and
+system picks and a folder of its own. The one target writing the build folder (the
+client's `build`, which links `symphony-build` there again) runs in the rest with every `symphony-build` and
 `symphony-app` target and `standalone`, which copies that folder. The browser lane writes it too
-when `SYMPHONY_UI_DIST` names no client: its own client build (`cargo symphony-ui dist`, whose
-`bundle.sh` runs `tools/rs-bin.sh --build symphony-build`) can link `symphony-build` there again
+when `SYMPHONY_UI_DIST` names no client: its own client build
+(`apps/symphony-web/build.sh`, which runs `tools/rs-bin.sh --build symphony-build`) can link `symphony-build` there again
 while the rest runs it. Verify names the client its client check built, so only a verify whose
 client check built none leaves it to the browser lane. The binaries a test would build for itself under its case's clock
 are the build's own, named by `SYMPHONY_TEST_TASKS_BINARY` and `SYMPHONY_TEST_BINARIES` (a target
@@ -549,8 +552,7 @@ too.
 
 A land runs none of its `[land] generators` either: the regenerator it starts makes them of
 main's newest tip after it ([TASKS](TASKS.md#the-regenerator)). This project's one is the
-client distribution. Its key (`tools/client-key.sh`, the release snapshot's name and the React
-client's package's hash) skips a tip
+client distribution. Its key (`tools/client-key.sh`, the hash of the client's package) skips a tip
 whose client inputs and committed distribution passed before; otherwise `just client-check`
 builds the client fresh and compares it with the committed one, and only when they differ does
 `just client-update` rebuild it and `just client-check` compare again, the change landed on main
@@ -572,6 +574,14 @@ and the commit it ran at. The recorded runs at the task's tip are its evidence, 
 post names the commands and the tip (RULES.md `workflow/no-second-build-in-review`). A stamp
 stands on evidence of work already done, so nothing is built twice to land once.
 
+**One command reads the record.** `just tasks runs SLUG` prints what the recorder kept of the
+task at its branch's tip, `--tip SHA` at another commit ([TASKS](TASKS.md#needed-stamps)): each
+build and test command the task ran there with its newest result, when and by whom, and the runs
+of it before there; the `tests` stamp as its reader reads it; the project's `[verdicts] check`
+(the docs audit here) with its run there, or `no run`; and how many of its runs are at other
+commits, none of them the tip's. The executor reads it before it moves the task to review, and
+the reviewer reads it beside the thread's evidence.
+
 **The executor runs at the tip it asks review for.** A run made before the last commit is of
 another commit: the executor runs it again at the tip, and no reviewer does it in its place. A
 command that cannot pass as typed is recorded red like any other, and no green run of another
@@ -580,8 +590,8 @@ command answers it: only a new commit clears it, so a filter goes after `--`
 writes it.
 
 **The reviewer takes a green recorded run at the tip as run.** It reads the diff against the
-record and judges whether those runs cover the change. It builds or runs only what the record
-does not cover and reading cannot settle:
+record (`just tasks runs SLUG`) and judges whether those runs cover the change. It builds or
+runs only what the record does not cover and reading cannot settle:
 
 - a doubt it names, with the smallest target that answers it (one test by its filter, never the
   package);

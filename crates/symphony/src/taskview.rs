@@ -12,9 +12,7 @@ use symphony_api::{
 use crate::{clock, dashboard, render::Render};
 
 mod connect;
-pub use connect::{
-    connect, connect_held, connect_held_in, connect_in, connect_running, read_failure,
-};
+pub use connect::{connect, connect_in, connect_running, read_failure, serve};
 
 pub fn snapshot(store: &symphony_board::Store) -> Result<(Tasks, i64), symphony_board::Error> {
     let board = store.board()?;

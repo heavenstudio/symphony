@@ -94,7 +94,7 @@ fn an_orchestrator_back_from_not_live_is_given_what_waited_and_told_once() {
     let worker = c.register("worker");
     assert_eq!(
         c.ok(&worker, &["create", "sim/loose", "Loose"]),
-        "created sim/loose (ready); it waits for an orchestrator that stays\n"
+        "created sim/loose (ready); it waits for an orchestrator under its limit that stays\n"
     );
     let back = c.ok(&orch, &["wait", "--timeout", "0"]);
     assert!(
@@ -189,11 +189,12 @@ fn waiting_beats_for_the_session_as_a_monitor_does() {
     assert_eq!((ran.code, ran.out), (0, nothing(40)), "{}", ran.err);
     // It looked at 0 s, every 16 s while the board stood still (its marker read every 2 s), and
     // beat at the first look and at the first 20 s or more after: at 32 s.
-    let seen = c.store().client().query(
-        "RETURN type::record('session', $handle).last_seen;",
-        json!({"handle": orch}),
-    );
-    let seen = seen.unwrap().first().and_then(|seen| seen.as_f64());
+    let seen = c
+        .store()
+        .raw()
+        .row("session", orch.as_str())
+        .field("last_seen");
+    let seen = seen.unwrap().as_f64();
     assert_eq!(seen, Some(crate::common::NOW + 32.0));
 }
 
@@ -202,10 +203,8 @@ fn wait_is_refused_while_a_channel_takes_the_pushes() {
     let c = case("wait-channel");
     let orch = c.register("orchestrator");
     // A registered Codex thread, as `tasks callback` records it.
-    let registered = c.store().client().query(
-        "UPSERT type::record('callback_state', $handle) SET handle = $handle, address = 'codex:abcdef01' RETURN NONE;",
-        json!({"handle": orch}),
-    );
+    let registered = (c.store().raw().row("callback_state", orch.as_str()))
+        .put(json!({"handle": orch, "address": "codex:abcdef01"}));
     registered.unwrap();
     let ran = c.run_as(&orch, &["wait", "--timeout", "0"], "");
     assert_eq!(ran.code, 1, "{}", ran.out);

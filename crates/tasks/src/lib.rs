@@ -81,6 +81,7 @@ pub mod stamps;
 mod store;
 pub mod sweep;
 pub mod sys;
+pub mod usage;
 
 #[path = "cli/api/assessment/publication.rs"]
 pub mod assessment_publication;
@@ -88,11 +89,12 @@ pub use health::Health;
 pub use schema::{Access, Schema};
 pub use store::{
     ASK_KINDS, Ask, AssessmentReceipt, AssessmentState, BEFORE_WORK, Beat, Binding, Board, COVERED,
-    Callback, ChatSeat, CoveredLine, Error, Given, HandOff, Held, KINDS, LANDS_FROM, LATE_SECONDS,
-    Landed, Message, NewAsk, NewLaunch, NewSession, NewTask, Opening, PIPELINE, PULLABLE, Pick,
-    Presence, Program, ROLES, ReportRead, ReportTask, Role, SLOT_READS, STATUSES, SearchHit,
-    Session, StageRecord, Store, Task, TaskStamp, UNANSWERED_WAIT, UNANSWERED_WAIT_VAR, Unfresh,
-    Writer, approved, can_transition, covered_by, covered_line, landing, reviewer_verdict,
+    Callback, ChatSeat, CoveredLine, Error, Filed, Given, HandOff, Held, KINDS, LANDS_FROM,
+    LATE_SECONDS, Landed, Message, NewAsk, NewLaunch, NewSession, NewTask, Opening, PIPELINE,
+    PULLABLE, Pick, Presence, Program, ROLES, Raw, RawRows, ReportRead, ReportTask, Role,
+    SLOT_READS, STATUSES, SearchHit, Session, StageRecord, Store, Task, TaskStamp, UNANSWERED_WAIT,
+    UNANSWERED_WAIT_VAR, Unfresh, Writer, approved, can_transition, covered_by, covered_line,
+    landing, reviewer_verdict,
 };
 
 /// The board schema this build reads and writes: the one server serves no project whose
@@ -217,7 +219,7 @@ fn copy(
     let store = Store::open_as(client, &opening).map_err(|e| e.to_string())?;
     store.copy(&dump).map_err(|e| e.to_string())?;
     Ok(Some(format!(
-        "{} tasks, {} links, {} sessions, {} roles, {} messages, {} deliveries, {} barred keys, {} task sessions, {} delivery keys, {} asks into {NAMESPACE}/{db} at {addr}",
+        "{} tasks, {} links, {} sessions, {} roles, {} messages, {} deliveries, {} barred keys, {} task sessions, {} delivery keys, {} asks, {} usage rows into {NAMESPACE}/{db} at {addr}",
         dump.tasks.len(),
         dump.task_links.len(),
         dump.sessions.len(),
@@ -228,6 +230,7 @@ fn copy(
         dump.task_sessions.len(),
         dump.delivery_keys.len(),
         dump.asks.len(),
+        dump.usages.len(),
     )))
 }
 

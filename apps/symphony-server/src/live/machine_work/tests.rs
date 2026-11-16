@@ -23,6 +23,15 @@ fn prepared_reader(root: &Path) -> PathBuf {
     reader
 }
 
+/// The sampler of the project at `root` (`supplied` its named reader) whose reader is given a
+/// stall's backstop to answer, not the tick's 2 s: these cases are of what a reader answers, never
+/// of how soon, which a loaded machine would decide.
+fn reading(root: &Path, supplied: Option<&Path>) -> Sampler {
+    let mut sampler = Sampler::new(root, supplied);
+    sampler.wait = test_time::backstop(symphony_board::cli::probes::NATIVE_READER_WAIT);
+    sampler
+}
+
 fn input(state: &str) -> Vec<u8> {
     serde_json::to_vec(&json!({"version":1,"complete":false,"uncertain":false,"truncated":false,"records":[{
         "evidence":if state == "finished" { "finished" } else { "active" },
@@ -228,7 +237,7 @@ fn one_native_probe_feeds_cached_agents_task_pages_and_listings_then_preserves_f
     );
     std::fs::write(common.join("native.json"), input("running")).unwrap();
     let hub = Hub::new(&root, &root.join("client"));
-    let mut sampler = Sampler::new(&root, None);
+    let mut sampler = reading(&root, None);
     sampler.identity = Some(Ok("machine-a".into()));
     *hub.machine_work.lock().unwrap() = sampler;
     let evidence = hub
@@ -319,7 +328,7 @@ fn unavailable_reader_or_identity_never_claims_a_machine_or_retires_unassigned_e
         assert!(sampler.reason.contains(&why), "{}", sampler.reason);
     }
     let reader = reader.unwrap();
-    let mut sampler = Sampler::new(&root, None);
+    let mut sampler = reading(&root, None);
     crate::fixture_script::write(&reader, "#!/bin/sh\n/bin/cat \"$3/native.json\"\n", true);
     let common = root.join(".git");
     sampler.identity = Some(Err("corrupt installation identity".into()));
@@ -365,7 +374,7 @@ fn explicit_or_prepared_reader_paths_are_retained_without_a_launcher_or_cache_se
         "#!/bin/sh\nprintf 'called\\n' >> \"$3/explicit-calls\"\n/bin/cat \"$3/native.json\"\n";
     crate::fixture_script::write(&explicit, script, true);
     std::fs::write(common.join("native.json"), "{").unwrap();
-    let mut sampler = Sampler::new(&root, Some(&explicit));
+    let mut sampler = reading(&root, Some(&explicit));
     sampler.scan(&root, Some(&common), &[]);
     assert!(
         sampler.identity.is_none(),
@@ -428,6 +437,50 @@ fn explicit_or_prepared_reader_paths_are_retained_without_a_launcher_or_cache_se
         std::fs::read_to_string(common.join("explicit-calls")).unwrap(),
         "called\ncalled\ncalled\ncalled\n"
     );
+}
+
+#[test]
+fn a_reader_with_no_answer_within_its_wait_is_given_up_and_the_machine_unknown_until_one_answers() {
+    let tree = Tree::new();
+    let root = repository(&tree);
+    let common = root.join(".git");
+    let reader = prepared_reader(&root);
+    let answers = "#!/bin/sh\n/bin/cat \"$3/native.json\"\n";
+    crate::fixture_script::write(&reader, answers, true);
+    std::fs::write(common.join("native.json"), input("running")).unwrap();
+    let mut sampler = reading(&root, None);
+    sampler.identity = Some(Ok("machine-a".into()));
+    let known = sampler.scan(&root, Some(&common), &[]).snapshot;
+    assert_eq!(known.machines[0].freshness, Freshness::Incomplete);
+    // A reader that never answers, its sleep the very process the kill past the wait ends: a
+    // wait of a second is one it cannot meet, whatever the machine's load.
+    crate::fixture_script::write(&reader, "#!/bin/sh\nexec /bin/sleep 600\n", true);
+    sampler.wait = Duration::from_secs(1);
+    let view = sampler
+        .scan(&root, Some(&common), &[])
+        .snapshot
+        .machines
+        .remove(0);
+    assert_eq!(
+        view.reason,
+        format!(
+            "native observation unknown: native inventory reader {}: no answer in 1 s",
+            reader.display()
+        )
+    );
+    assert_eq!(view.freshness, Freshness::Unknown);
+    assert_eq!(view.operations.len(), 1, "the last evidence is kept");
+    assert_eq!((view.sequence, view.counts), (1, None));
+    // The next scan asks again, and a reader that answers makes the machine known again.
+    crate::fixture_script::write(&reader, answers, true);
+    sampler.wait = test_time::backstop(symphony_board::cli::probes::NATIVE_READER_WAIT);
+    let view = sampler
+        .scan(&root, Some(&common), &[])
+        .snapshot
+        .machines
+        .remove(0);
+    assert_eq!(view.freshness, Freshness::Incomplete, "{view:?}");
+    assert_eq!(view.reason, known.machines[0].reason);
 }
 
 #[test]

@@ -12,10 +12,11 @@
 // zone holds the event's target.
 
 import { useEffect, useReducer, useRef, useState } from "react";
-import STYLE from "../../symphony-ui/assets/attach.css?inline";
 import { Button } from "./button";
 import { here, project } from "./project";
 import { load, save } from "./storage";
+import STYLE from "./styles/attach.css?inline";
+import { deadline } from "./timing";
 import { UPLOAD_ACCEPT, UPLOAD_MAX_BYTES, UPLOAD_PATH, type Upload } from "./wire";
 import { fixed } from "./words";
 
@@ -99,7 +100,7 @@ export function isUpload(value: unknown): value is Upload {
  */
 export async function upload(file: File): Promise<Upload> {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), UPLOAD_MS);
+  const ended = deadline(UPLOAD_MS, () => controller.abort());
   try {
     const url = `${here(project(), UPLOAD_PATH)}?name=${encodeURIComponent(file.name)}`;
     let response: Response;
@@ -128,7 +129,7 @@ export async function upload(file: File): Promise<Upload> {
     if (!isUpload(value)) throw new Error("the server's answer is no upload");
     return value;
   } finally {
-    clearTimeout(timer);
+    ended();
   }
 }
 

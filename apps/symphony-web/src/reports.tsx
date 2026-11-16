@@ -20,11 +20,12 @@ import {
   sum,
   type Unit,
 } from "./chart";
-import { sleep } from "./feed";
 import { getIf, said } from "./request";
 import { field } from "./shared";
 import { Backoff } from "./state";
 import { load, save } from "./storage";
+// biome-ignore lint/style/noRestrictedImports: no-timed-waits baseline: reports reads again every EVERY_MS with no feed of its own, where a feed event of a roll-up is the wait
+import { sleep } from "./timing";
 import { failed, ready } from "./trouble";
 import { NearViewport } from "./viewport";
 import { type Grain, REPORTS_PATH, type ReportMark } from "./wire";
@@ -819,7 +820,9 @@ export function ReportsView({
   device = null,
   now = new Date(),
 }: ReportsViewProps) {
-  const busy = page === null || page.grain !== grain || page.days !== days;
+  // Busy while the window asked for is on its way, and no longer once its read failed: the page
+  // then says so, drawn, and a region busy on the screen would hold `symphony shot` to its timeout.
+  const busy = (page === null || page.grain !== grain || page.days !== days) && error === null;
   const kept = page !== null ? device : null;
   return (
     <div

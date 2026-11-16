@@ -268,7 +268,7 @@ fn given_lines(given: &crate::Given, dry_run: bool) -> Vec<String> {
     if !waiting.is_empty() {
         let would = if dry_run { "would wait" } else { "wait" };
         lines.push(format!(
-            "{would} for an orchestrator that stays: {}",
+            "{would} for an orchestrator under its limit that stays: {}",
             waiting.join(", ")
         ));
     }

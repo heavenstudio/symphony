@@ -23,6 +23,7 @@ pub struct Dump {
     pub task_sessions: Vec<TaskSessionRow>,
     pub delivery_keys: Vec<DeliveryKeyRow>,
     pub asks: Vec<AskRow>,
+    pub usages: Vec<UsageRow>,
 }
 
 impl Dump {
@@ -48,6 +49,7 @@ impl Dump {
             task_sessions: table(&mut tables, "task_sessions")?,
             delivery_keys: table(&mut tables, "delivery_keys")?,
             asks: table(&mut tables, "asks")?,
+            usages: table(&mut tables, "usages")?,
         };
         match tables.keys().next() {
             Some(name) => Err(format!(
@@ -289,6 +291,31 @@ pub struct TaskSessionRow {
     pub closed_why: String,
     #[serde(default)]
     pub restore: String,
+}
+
+/// The tokens one session spent on one task, in one role, on one model at one speed, in one round
+/// (`crate::usage`): what its beats added up. Never a SQLite table.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct UsageRow {
+    pub handle: String,
+    /// The task, "" for calls made while the session worked none.
+    pub slug: String,
+    /// Its role on the task, else the session's kind.
+    pub role: String,
+    pub model: String,
+    pub speed: String,
+    /// 1 and the moves into review the task's thread held then; 0 with no task.
+    pub round: i64,
+    pub input: u64,
+    pub cache_write_5m: u64,
+    pub cache_write_1h: u64,
+    pub cache_read: u64,
+    pub output: u64,
+    pub calls: u64,
+    /// When the first and the last beat added to it.
+    pub first: f64,
+    pub last: f64,
 }
 
 fn two() -> i64 {

@@ -1,5 +1,5 @@
 //! The Symphony's wire types: the JSON the server (`apps/symphony-server`) sends and the client
-//! (`apps/symphony-ui`) reads. Serde only, so one definition builds for the server and for wasm32.
+//! (`apps/symphony-web`) reads through its generated TypeScript. Serde only.
 //!
 //! The board view, the front page `/`:
 //!
@@ -114,7 +114,8 @@ pub struct Front {
     #[serde(default)]
     pub orphans: usize,
     /// The plugins the host binary compiles, by name: the one server serves a project only when
-    /// it holds every plugin the project names.
+    /// it holds every plugin the project names linked, one with no `[plugins.process]` command
+    /// (a plugin that answers from its process any host serves); a release's server compiles none.
     #[serde(default)]
     pub plugins: Vec<String>,
     /// The Symphony version the host was built at, its pin; 0 from a server before pins.
@@ -127,15 +128,20 @@ pub struct Front {
     /// server of its own, which serves its one checkout at `/`.
     #[serde(default)]
     pub projects: Vec<String>,
+    /// The release installed on the machine it runs, when it is one: no start replaces it, and its
+    /// reload follows the machine's `current` link; none for a project's build.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub release: Option<String>,
 }
 
 /// The route that answers a [`Board`].
 pub const BOARD_PATH: &str = "/api/board";
 /// The route of the feed: Server-Sent Events, or the same events on a WebSocket, `?since=VERSION`.
 pub const FEED_PATH: &str = "/api/feed";
-/// The response header a document read (`/api/document`, `/api/section`) names the feed's cursor
-/// at the read in, on its `200` and its `304` alike: a page that draws the copy it kept on a
-/// `304`, which has no body, opens the feed from it.
+/// The response header every JSON read names the feed's cursor at the read in, on its `200` and
+/// its `304` alike: every event at or before it is in the answer. A page that draws the copy it
+/// kept on a `304`, which has no body, opens the feed from it, and a page whose feed is open
+/// drops what the feed says of a read at or before the read's cursor.
 pub const VERSION_HEADER: &str = "symphony-version";
 /// A server-update failure, a JSON string (empty clears it). It does not advance the document
 /// cursor. A retiring server finishes its feed normally; reconnects fetch a fresh snapshot.
@@ -470,7 +476,7 @@ pub struct ActivityItem {
     pub answered: bool,
 }
 
-/// The task board's read records. These stay serde-only so native and wasm clients share them.
+/// The task board's read records. These stay serde-only.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct Task {

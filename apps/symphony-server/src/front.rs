@@ -259,6 +259,7 @@ impl Shared {
             pin: build.pin,
             schema: build.schema,
             projects: Vec::new(),
+            release: build.release,
             pid: self.pid,
             port: self.port,
             root: self.root.display().to_string(),
@@ -380,7 +381,7 @@ async fn judge(
     let ip = peer.ip();
     let allowed = ip.is_loopback() || {
         let shared = shared.clone();
-        tokio::task::spawn_blocking(move || shared.gate.allows(ip))
+        crate::spawn::blocking(move || shared.gate.allows(ip))
             .await
             .unwrap_or(false)
     };
@@ -842,9 +843,9 @@ fn stop_when(
     signal: impl Future<Output = ()> + Send + 'static,
 ) -> tokio::task::JoinHandle<()> {
     let shared = shared.clone();
-    tokio::spawn(async move {
+    crate::spawn::task(async move {
         signal.await;
-        let _ = tokio::task::spawn_blocking(move || shared.stop()).await;
+        let _ = crate::spawn::blocking(move || shared.stop()).await;
     })
 }
 
@@ -867,6 +868,10 @@ struct Started {
 
 /// Listen, start the owned workers and print the URL; a failed start is its exit status.
 async fn start(mut serve: Serve, open: bool) -> Result<Started, i32> {
+    // The release this server is, read once, now: what it serves and follows for its life.
+    if let Some((_, manifest)) = symphony::machine::release::this() {
+        eprintln!("· Symphony: the server of the release {}", manifest.release);
+    }
     let mut reload = match crate::reload::setup(&serve) {
         Ok(setup) => setup,
         Err(why) => {
@@ -996,11 +1001,11 @@ async fn start(mut serve: Serve, open: bool) -> Result<Started, i32> {
     for listener in listeners {
         let shared = shared.clone();
         let app = app.clone();
-        serving.push(tokio::spawn(async move {
+        serving.push(crate::spawn::task(async move {
             connections::serve(listener, app, shared).await;
         }));
     }
-    let ready = tokio::task::spawn_blocking(move || {
+    let ready = crate::spawn::blocking(move || {
         reload.ready()?;
         Ok::<_, String>(reload)
     })
@@ -1067,7 +1072,7 @@ fn handover_when_asked(shared: &Arc<Shared>) {
         return;
     };
     let shared = shared.clone();
-    tokio::spawn(async move {
+    crate::spawn::task(async move {
         loop {
             tokio::select! {
                 () = shared.until_stopped() => return,
@@ -1102,7 +1107,7 @@ impl Started {
         let others = match projects {
             Some(projects) => {
                 stages("the other projects");
-                tokio::task::spawn_blocking(move || projects.stop())
+                crate::spawn::blocking(move || projects.stop())
                     .await
                     .unwrap_or_default()
             }
@@ -1127,7 +1132,7 @@ impl Started {
         }
         let draining = shared.clone();
         let closing = stages.clone();
-        let _ = tokio::task::spawn_blocking(move || {
+        let _ = crate::spawn::blocking(move || {
             if let Some(saves) = draining.saves.get() {
                 saves.close_saying(|stage| closing(stage));
             }
@@ -1231,17 +1236,17 @@ fn sweep_late(last: Stamp, now: Stamp, interval: Duration) -> Option<Duration> {
 
 /// The build of `tasks` that runs the board for the checkout at `root`, as its recipes would from its
 /// main checkout ([`symphony_board::builds::of_main`]): the main checkout's `.target/bin/tasks`, else
-/// `tasks` on this server's `PATH`, never a linked worktree's build of branch code. None found is an
+/// the machine's release's, else `tasks` on this server's `PATH`, never a linked worktree's build of branch code. None found is an
 /// error saying where one goes.
 pub(crate) fn board_build(root: &Path) -> Result<PathBuf, String> {
-    board_build_on(root, std::env::var_os("PATH").as_deref())
+    board_build_on(root, &symphony_board::builds::Beyond::of_process())
 }
 
-/// [`board_build`] with the search path `path`.
-fn board_build_on(root: &Path, path: Option<&std::ffi::OsStr>) -> Result<PathBuf, String> {
+/// [`board_build`] past the main checkout's link in `beyond`.
+fn board_build_on(root: &Path, beyond: &symphony_board::builds::Beyond) -> Result<PathBuf, String> {
     use symphony_board::builds;
     let main = builds::main_of(root);
-    builds::of_main(&main, "tasks", path).ok_or_else(|| builds::missing(&main, "tasks"))
+    builds::of_main(&main, "tasks", beyond).ok_or_else(|| builds::missing(&main, "tasks"))
 }
 
 /// A round every `interval`, whose reap child is ended after `timeout`, both measured on `clock`,

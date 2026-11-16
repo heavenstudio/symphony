@@ -812,6 +812,10 @@ impl Home {
             if began.elapsed() >= wait {
                 return Waited::Silent;
             }
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "no-timed-waits baseline: looks again for the board server's answer or end, which no wait reports for a process it did not start"
+            )]
             std::thread::sleep(Duration::from_millis(50));
         }
     }
@@ -1110,6 +1114,10 @@ impl Home {
                         log.display()
                     )));
                 }
+                #[expect(
+                    clippy::disallowed_methods,
+                    reason = "no-timed-waits baseline: looks again for the board server's answer or end, which no wait reports for a process it did not start"
+                )]
                 std::thread::sleep(Duration::from_millis(50));
             }
         });

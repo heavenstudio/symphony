@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { memoryStorage } from "./testing";
+import { memoryStorage, observers as pageObservers } from "./testing";
 import {
   AtOnce,
   drawnHeight,
@@ -10,11 +10,13 @@ import {
   NearViewport,
   onScreen,
   recallHeight,
+  SETTLE_MS,
   Settle,
   Skeleton,
   unsettled,
   useVisibility,
   waitsNear,
+  watchSettle,
   watchUntilShown,
 } from "./viewport";
 
@@ -351,5 +353,106 @@ describe("a page's first screen", () => {
     expect(unsettled(root(2, [[900, 1000, 0, 300]]))).toBe(false);
     expect(unsettled(root(2, [[100, 200, 500, 600]]))).toBe(false);
     expect(unsettled(root(2, []))).toBe(false);
+  });
+});
+
+describe("the watch of a page's first screen", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  /**
+   * A page 800 px high whose root holds one region still waiting for its read, at `top` (moved
+   * by the test), heard by its observers (`changed`, `resized`) and its window's listeners.
+   */
+  function page(top: number) {
+    vi.useFakeTimers();
+    vi.stubGlobal("innerHeight", 800);
+    vi.stubGlobal("innerWidth", 1000);
+    const seen = pageObservers();
+    const view = new EventTarget();
+    vi.stubGlobal("addEventListener", view.addEventListener.bind(view));
+    const whole = {};
+    vi.stubGlobal("document", { documentElement: whole });
+    const region = { top, waits: true };
+    const node = {
+      childElementCount: 2,
+      getBoundingClientRect: () => ({ left: 0, right: 400 }),
+      querySelectorAll: () =>
+        region.waits
+          ? [
+              {
+                getBoundingClientRect: () => ({
+                  top: region.top,
+                  bottom: region.top + 100,
+                  left: 0,
+                  right: 300,
+                }),
+              },
+            ]
+          : [],
+    } as unknown as Element;
+    const settled = vi.fn();
+    return { ...seen, view, whole, region, node, settled };
+  }
+
+  it("settles at once when nothing on its first screen waits", () => {
+    const { node, settled, watched, sized } = page(900);
+    watchSettle(node, settled);
+    expect(settled).toHaveBeenCalledOnce();
+    expect(watched.size + sized.size).toBe(0);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("settles as what draws above it moves its waiting region off the screen", () => {
+    const { node, region, settled, sized, whole, resized } = page(100);
+    watchSettle(node, settled);
+    expect(settled).not.toHaveBeenCalled();
+    expect([...sized.values()]).toEqual([[node, whole]]);
+    // The gates and the timeline drawn above it on a phone: its own box neither changed nor moved
+    // under it, the page's size did.
+    region.top = 900;
+    resized(whole);
+    expect(settled).toHaveBeenCalledOnce();
+    expect(sized.size).toBe(0);
+  });
+
+  it("settles as its region is drawn, and looks again at a scroll or a resize", () => {
+    const { node, region, settled, changed, view } = page(100);
+    watchSettle(node, settled);
+    changed({ attribute: "class" });
+    view.dispatchEvent(new Event("scroll"));
+    view.dispatchEvent(new Event("resize"));
+    expect(settled).not.toHaveBeenCalled();
+    region.waits = false;
+    changed({ attribute: "data-pending" });
+    expect(settled).toHaveBeenCalledOnce();
+    view.dispatchEvent(new Event("scroll"));
+    expect(settled).toHaveBeenCalledOnce();
+  });
+
+  it("settles at its deadline when its region never comes, and only once", () => {
+    const { node, settled, view, watched } = page(100);
+    watchSettle(node, settled);
+    vi.advanceTimersByTime(SETTLE_MS - 1);
+    expect(settled).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1);
+    expect(settled).toHaveBeenCalledOnce();
+    expect(watched.size).toBe(0);
+    view.dispatchEvent(new Event("scroll"));
+    vi.advanceTimersByTime(SETTLE_MS);
+    expect(settled).toHaveBeenCalledOnce();
+  });
+
+  it("stops unsettled, hearing nothing after", () => {
+    const { node, region, settled, view, watched, sized } = page(100);
+    const stop = watchSettle(node, settled);
+    stop();
+    expect(watched.size + sized.size).toBe(0);
+    expect(vi.getTimerCount()).toBe(0);
+    region.waits = false;
+    view.dispatchEvent(new Event("scroll"));
+    expect(settled).not.toHaveBeenCalled();
   });
 });

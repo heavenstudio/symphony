@@ -2,7 +2,7 @@
 
 `just symphony` runs this server. The native read models live in `crates/symphony`, and
 their serde-only wire records in `crates/symphony-api`. All routes run natively:
-the Dioxus SPA, reads, saves and media, under each project's `/<id>/` on the one server and
+the client, reads, saves and media, under each project's `/<id>/` on the one server and
 at `/` on a server of its own.
 
 ## Projects
@@ -10,7 +10,8 @@ at `/` on a server of its own.
 The one server (`serve --home`) keeps its record (`server.json`), log, lease and lock in the
 machine folder: `~/Library/Application Support/Symphony/` on macOS, `$XDG_DATA_HOME/symphony`
 elsewhere, `SYMPHONY_MACHINE_DIR` when set (every test sets a temporary one). The registry
-beside them (`projects.json`) holds each project's root, id and `symphony.toml`; `symphony
+beside them (`projects.json`) holds each project's root, id and `symphony.toml`, and the
+releases installed on the machine are there too (`releases/NAME/`, with the `current` link); `symphony
 project add [DIR]` writes it, and every start runs it. The build and client stay in the
 starter's install folder (`--install`, `symphony/server/` in its git common dir), where a record
 an older server left is read once; a project's own state (asks, thumbnails,
@@ -28,18 +29,49 @@ A navigation to a path of today
 the starter's; other requests on such a path are answered by that project in place. A
 project whose root is gone, or whose plugins the running build lacks, answers 503 saying why.
 
-The running server compiles every registered project's plugins. A start judges it
-(`symphony::machine::host`): served, when it holds the project's plugins at the project's pin
-and schema or newer; waiting, when it lacks a plugin, naming the project whose build holds them;
-refused, registering nothing, when the project's pin or schema is newer than the running
-build's and the start's build cannot replace it. A project with no plugins never replaces it. A start whose build holds every registered plugin replaces it by
-hand-off: it writes `handover.json` (its executable, root and install folder) in the machine
-folder and sends `SIGUSR1`; the server hands its sockets to that build as a reload does.
+A start judges the running server by the host rule (`symphony::machine::host`). A build serves a
+project's plugin when the plugin answers from a process of its own (`[plugins.process]`,
+[PLUGIN_PROTOCOL](../../docs/PLUGIN_PROTOCOL.md#the-host)), or when it compiles the plugin. The
+server of a release installed on the machine compiles none: it serves every project whose plugins
+all answer from a process, at its pin and board schema or older, and a project one board schema
+ahead, whose board it reads and writes nothing to. A start that finds no server running starts
+the server of the release `current` names, by its own folder's path
+(`releases/NAME/bin/symphony-server`), when that release serves every registered project, and its
+own build otherwise (`symphony::machine::switch`); the record (`server.json`) names the release
+its server is. A start whose own build is a release's (`just symphony` in a project with no build
+of its own) starts nothing while a project holds the switch: it registers its project and says,
+in one line, which project holds it and that `just symphony` in that project's checkout, by its
+own build, starts the machine's server. No start replaces a release's server: a project naming a
+linked plugin is registered and refused, its pages naming the `[plugins.process]` command that
+lets the release serve it, and a project at a newer pin or schema is refused until `current`
+names a release that serves it.
 
-The shared server watches main's server sources and transitive local crate sources. It builds
-through the command main's `[project] cargo` names (when unset, `tools/cargo.sh` in Symphony's
-own workspace and plain `cargo` elsewhere) under `symphony/server/reload-build.lock`, while
-continuing to serve.
+While a project's build is the machine's server, a start judges it by the plugins it compiles:
+served, when it holds the project's linked plugins at the project's pin and schema or newer;
+waiting, when it lacks one, naming the project whose build holds them; refused, registering
+nothing, when the project's pin or schema is newer than the running build's and the start's build
+cannot replace it. A project with no plugins, and a start of a release, never replaces it. A start
+whose build holds every registered linked plugin replaces it by hand-off: it writes
+`handover.json` (its executable, root and install folder) in the machine folder and sends
+`SIGUSR1`; the server hands its sockets to that build as a reload does. While a release is
+installed, every project naming a linked plugin says on its pages that it holds the machine's
+server on a project's build, naming the command that lets it go, and `just release --status` says
+the same ([RELEASES](../../docs/RELEASES.md#status)); a stop and a start then make the release
+the machine's server once nothing holds it.
+
+A release's server builds nothing and watches no source: it watches the machine folder for its
+`current` link moving, reads where the link points as it starts, at each move and once a period
+(`backstop.rs`, for an event lost), and when it names another release, hands its sockets to that
+release's server, by its own folder's path, as a reload below hands them. A release not installed
+whole, or whose server does not become ready, leaves the running one serving, said on the notice
+and tried again on the waits below; `current` pointed back at the running release clears the
+notice. A starter's request to hand over is refused, said in the log. The release a server is, and
+the client it serves, are read once, as it starts.
+
+A project's build as the shared server watches main's server sources and transitive local crate
+sources. It builds through the command main's `[project] cargo` names (when unset,
+`tools/cargo.sh` in Symphony's own workspace and plain `cargo` elsewhere) under
+`symphony/server/reload-build.lock`, while continuing to serve.
 The replacement inherits every listening socket and the `server.lock` lease, warms its read
 hub, then acknowledges readiness on a private pipe. Only then does the old generation stop
 accepting, finish its feeds, and drain its save workers without a timeout and its accepted
@@ -120,8 +152,18 @@ before compression. A request whose `If-None-Match` names it is answered `304` w
 keeping the tag and `no-store` (`src/api/validated.rs`, applied where every read leaves
 `api::answer`). A document, its outline and its sections' bodies carry the feed's cursor
 (`version`), which moves with every change on the board, so their tag is of the JSON with the
-cursor left out: it moves only with the document. A page whose kept copy is still current takes
-the cursor from `/api/board`. The browser keeps no copy of its own: the client's cache keeps
+cursor left out: it moves only with the document. An outline's check that names the tag of the copy
+the hub follows for that page is answered `304` at the feed's cursor without rendering the
+document: the hub renders that copy again when anything a render reads that it tracks changed, and
+makes its outline's tag once for each copy (`Hub::outline_kept`). A check with another tag or none,
+of a document not followed yet, of a copy whose tasks are no longer the ones that link it on the
+board as last read (a board read asks for no refresh), or of one that names a file from outside the
+entrypoints' folders by its change time and size, which no refresh watches, renders as a read does.
+A page whose kept copy is still current takes the cursor from `/api/board`. Every JSON read names
+the feed's cursor it was read at in a header (`symphony_api::VERSION_HEADER`), on its `200` and its
+`304` alike: the server takes the cursor before it reads the answer, so every event at or before it
+is in the answer, and a page drops what its feed says of a read at or before the read's cursor
+(`api::cursor`). The browser keeps no copy of its own: the client's cache keeps
 the body and sends the tag back (docs/analysis/client-cache.md). An error carries no tag, and the
 feed's stream is never read whole.
 
@@ -143,9 +185,12 @@ insertions and removals do not shift an integer offset past an unread record.
 Document and picture links in those snapshots retain the branch prefix. Removed worktrees
 return 404. Empty or missing task slugs return 400 before reading the board.
 A missing task returns 404; an unavailable board returns 503 while the document
-board continues without task counts. A board that took a read and answered it
-later than the 3 s wait, on its one resend too, is slow: 504, "the task board is
-slow", never "cannot be reached". The wait bounds the board tick and each sending's
+board continues without task counts. A board one schema ahead of the build's (main's build moved
+it on before a release caught up) is read, and nothing is written to it from the server: its ticks
+dispatch no callback, give no work and keep no owner's asks, the schema rule refuses every other
+write, and every page says so on the notice until the board and the build agree. A board that
+took a read and answered it later than the 3 s wait, on its one resend too, is slow: 504, "the
+task board is slow", never "cannot be reached". The wait bounds the board tick and each sending's
 whole answer, so a read sent twice stays inside the client's 15 s request limit. Native routes apply both
 the peer gate and the Host check; sandboxed frames cannot read the API.
 
@@ -161,15 +206,20 @@ The server package embeds its committed `client/public` distribution: the curren
 the two published before it, as its `builds.json` names them. A direct
 `symphony-server --port N` uses it when the default local build directory is absent.
 An explicit install or `SYMPHONY_UI_DIST` never falls back, and a present local
-bundle keeps its strict errors. `just client-update` in the Symphony workspace
-refreshes the real distribution before committing client changes. Its default
-root is the checkout's top level even when the command starts in a subfolder; `--root`
-selects another folder. A private server on the main checkout leaves the
+bundle keeps its strict errors. A release's build of the server (`SYMPHONY_CLIENT_BESIDE=1`)
+embeds no client: run from the release's folder in the machine folder
+(`releases/NAME/bin/symphony-server`, through `current` or not), it serves that release's
+`client/HASH/` from beside it, whatever else is named
+([RELEASES](../../docs/RELEASES.md#the-install)). `symphony-server --serves` prints, as one line
+of JSON, the plugin protocol, the board schema and the Symphony pin the build serves.
+`just client-update` in the Symphony workspace refreshes the real distribution before committing
+client changes. Its default root is the checkout's top level even when the command starts in a
+subfolder; `--root` selects another folder. A private server on the main checkout leaves the
 shared app's `artifacts/docs-app.port` record alone. A project's page serves the
 shell with revalidation by its ETag, as is any client file not named by its
 content. A file named by its content, an `assets/` name whose last `-` part is
-dx's `dxh…` hash or the packager's sixteen hex digits (the shell script, every
-page module, wasm and stylesheet), is cached for a year as immutable, so a
+the build's sixteen hex digits (the shell script, every page module and stylesheet), is
+cached for a year as immutable, so a
 return visit revalidates the page alone (`src/api/client.rs`). Snapshots and the
 page are gzipped per request. A client file is gzipped once per content, at the
 best level, by the first request that takes gzip; later requests, from any

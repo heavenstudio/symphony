@@ -120,8 +120,16 @@ fn listen(path: &Path, handle: String, frames: Frames, stop: Arc<AtomicBool>) {
                     }
                 }
                 Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    #[expect(
+                        clippy::disallowed_methods,
+                        reason = "no-timed-waits baseline: a load example run by hand paces itself by lengths of time"
+                    )]
                     std::thread::sleep(Duration::from_millis(5));
                 }
+                #[expect(
+                    clippy::disallowed_methods,
+                    reason = "no-timed-waits baseline: a load example run by hand paces itself by lengths of time"
+                )]
                 Err(_) => std::thread::sleep(Duration::from_millis(5)),
             }
         }
@@ -384,11 +392,8 @@ fn main() -> Result<(), Failed> {
         );
     }
     let board = set_up(&options, &store)?;
-    let messages_before: Value = store
-        .client()
-        .query("RETURN count(SELECT id FROM message);", json!({}))
-        .map_err(|e| e.to_string())?
-        .remove(0);
+    let messages_before = (store.raw().table("message").count()).map_err(|e| e.to_string())?;
+    let messages_before: Value = json!(messages_before);
     eprintln!(
         "{} recipients registered on a board of {messages_before} messages; {} writers start",
         options.recipients, options.writers
@@ -421,15 +426,27 @@ fn main() -> Result<(), Failed> {
     };
     let deadline = Instant::now() + Duration::from_secs(options.settle as u64);
     while !complete() && Instant::now() < deadline {
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "no-timed-waits baseline: a load example run by hand paces itself by lengths of time"
+        )]
         std::thread::sleep(Duration::from_millis(50));
     }
     let delivered_by_itself = complete().then(|| began.elapsed().as_secs_f64());
     if delivered_by_itself.is_none() {
         // What no dispatcher delivered is still owed: one more pass from here says whether it was lost.
         store.dispatch_callbacks()?;
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "no-timed-waits baseline: a load example run by hand paces itself by lengths of time"
+        )]
         std::thread::sleep(Duration::from_secs(2));
     }
     // Let a late duplicate arrive before counting.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "no-timed-waits baseline: a load example run by hand paces itself by lengths of time"
+    )]
     std::thread::sleep(Duration::from_secs(3));
     let cpu_after = options.cpu();
     let mut report = json!({

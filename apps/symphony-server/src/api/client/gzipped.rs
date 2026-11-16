@@ -99,9 +99,9 @@ impl Store {
                         .entry(hash.to_owned())
                         .or_default() += 1;
                 }
-                // The best level holds a thread a while on a page's wasm: a blocking one, not a worker.
+                // The best level holds a thread a while on a large module: a blocking one, not a worker.
                 let raw = bytes.clone();
-                let zipped = tokio::task::spawn_blocking(move || compress(&raw))
+                let zipped = crate::spawn::blocking(move || compress(&raw))
                     .await
                     .map_err(io::Error::other)??;
                 let zipped = (zipped.len() < bytes.len()).then(|| Bytes::from(zipped));

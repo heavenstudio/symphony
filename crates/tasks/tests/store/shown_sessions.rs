@@ -2,7 +2,7 @@
 //! every task what a read of the whole board says: the same roles at the same health, whatever
 //! the health and whoever else the board has seen.
 
-use crate::common::{Fixture, GONE, HOST, NOW, RawWrite, Seed, session};
+use crate::common::{Fixture, GONE, HOST, NOW, Seed, session};
 use serde_json::json;
 use std::collections::{BTreeSet, HashMap};
 use symphony_board::health::LIVE_SECONDS;
@@ -93,11 +93,10 @@ fn board() -> Fixture {
         .link("w/busy", "dep", "w/live");
     let f = Fixture::new(seed);
     // A native registration whose sweep is overdue: its liveness is unknown.
-    (f.store.client())
-        .write(
-            "UPSERT type::record('callback_state', $handle) SET handle = $handle,
-                 address = 'codex:abcdef01', host = $host, confirmed_until = $until, lease = $lease RETURN NONE;",
-            json!({"handle": "unknown", "host": HOST, "until": NOW - 1.0, "lease": NOW + 1000.0}),
+    (f.store.raw().row("callback_state", "unknown"))
+        .put(
+            json!({"handle": "unknown", "address": "codex:abcdef01", "host": HOST,
+            "confirmed_until": NOW - 1.0, "lease": NOW + 1000.0}),
         )
         .unwrap();
     f

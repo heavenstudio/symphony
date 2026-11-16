@@ -22,7 +22,7 @@ use std::process::Command;
 use symphony_board::live::SOURCE;
 use symphony_board::rpc::Client;
 use symphony_board::server::Home;
-use symphony_board::{NewTask, Opening, Schema, Store};
+use symphony_board::{NewTask, Opening, Program, Raw, Schema, Store};
 
 /// This build's schema source, which the binaries under test embed.
 const OWN: &str = include_str!("../../src/schema.rs");
@@ -208,14 +208,19 @@ impl Drop for Live {
 }
 
 /// The board `client` reaches, made by the build one schema version behind, holding the task
-/// `live/one`.
+/// `live/one`: main's own `tasks` on this machine before its rebuild at this build's schema, so the
+/// line it writes (a build at schema 18 or later keeps one) is the migrate's own, which leaves it
+/// out.
 fn seed(client: Client) {
+    let tasks = Path::new(TASKS).canonicalize().unwrap();
     Store::opening(
         client,
         Box::new(|| NOW),
         Box::new(|_| false),
-        "this-host",
-        &Opening::write().at(Schema::this_build().before()),
+        &symphony_board::sys::hostname(),
+        &Opening::write()
+            .at(Schema::this_build().before())
+            .by(Program::at(&tasks)),
     )
     .unwrap()
     .create(&NewTask::new("live/one", "Made by main's build", "owner"))
@@ -351,15 +356,14 @@ fn a_branch_build_moves_the_live_board_by_no_entry_and_each_refusal_names_what_d
     refused(&live.tasks(&live.main, &["migrate"]), &why);
 
     assert_eq!(live.version("tasks"), Some(before()));
+    let titles = (Raw::on(&live.client("tasks")).table("task"))
+        .fields(&["title"])
+        .unwrap();
+    let titles: Vec<serde_json::Value> = (titles.as_array().unwrap().iter())
+        .map(|row| row["title"].clone())
+        .collect();
     assert_eq!(
-        live.client("tasks")
-            .query(
-                "RETURN (SELECT VALUE title FROM task);",
-                serde_json::json!({})
-            )
-            .unwrap()
-            .last()
-            .cloned(),
+        Some(serde_json::Value::Array(titles)),
         Some(serde_json::json!(["Made by main's build"]))
     );
 }

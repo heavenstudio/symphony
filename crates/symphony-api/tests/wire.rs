@@ -184,7 +184,7 @@ fn a_task_page_says_the_room_its_gates_took_once_the_server_has_answered_them() 
 #[test]
 fn the_board_names_the_client_build_served_and_how_often_the_feed_pings() {
     let board: Board = serde_json::from_str(&fixture("board.json")).unwrap();
-    assert_eq!(board.build, "/assets/symphony-ui-dxh0123456789abcdef.js");
+    assert_eq!(board.build, "/assets/symphony-shell-0123456789abcdef.js");
     assert_eq!(board.ping_ms, 5_000);
     assert!(board.ping_ms <= symphony_api::PING_MAX_MS);
 }

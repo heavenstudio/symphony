@@ -2,7 +2,8 @@
 //! whether any of them could reach a recipient, made on the client from those rows
 //! ([`Store::could_hear`]), so a write's observation reads no inbox that holds nothing for it.
 
-use super::messages::{DELIVERED, OWNER_MOVES};
+use super::messages::DELIVERED;
+use super::surreal::pool as sql;
 use super::work::OWNER;
 use super::{Error, Message, Store};
 use serde_json::{Value, json};
@@ -95,11 +96,7 @@ impl Store {
             .is_some_and(|pool| pool.floor <= since && pool.latest >= latest)
         {
             let floor = pool.as_ref().map_or(since, |pool| pool.floor.min(since));
-            let read = format!(
-                "RETURN [(SELECT VALUE last FROM ONLY counter:message) ?? 0,
-                    (SELECT sid, slug, sender, recipient, kind, ts FROM message WHERE sid > $floor AND (kind IN $delivered OR {}))];",
-                *OWNER_MOVES
-            );
+            let read = sql::pool();
             let (latest, rows): (i64, Value) = self
                 .retrying(|| self.read(&read, json!({"floor": floor, "delivered": DELIVERED})))?;
             *pool = Some(Pool {

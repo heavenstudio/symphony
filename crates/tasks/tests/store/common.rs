@@ -86,6 +86,10 @@ fn retry_conflicts<T>(
         match once() {
             Err(DbError::Conflict) if Instant::now() < until => {
                 let ceiling = 1000u64 << attempt.min(6);
+                #[expect(
+                    clippy::disallowed_methods,
+                    reason = "no-timed-waits baseline: a test's backoff of its own, where the board store's is the helper"
+                )]
                 std::thread::sleep(Duration::from_micros(
                     RandomState::new().hash_one(attempt) % ceiling,
                 ));
@@ -411,12 +415,8 @@ impl Fixture {
 
     /// Seed legacy child-review state for compatibility tests; new slices cannot enter it.
     pub fn historical_review(&self, slug: &str) {
-        self.store
-            .client()
-            .write(
-                "UPDATE type::record('task', $slug) SET status = 'review'",
-                serde_json::json!({"slug": slug}),
-            )
+        (self.store.raw().row("task", slug))
+            .set(serde_json::json!({"status": "review"}))
             .unwrap();
     }
 

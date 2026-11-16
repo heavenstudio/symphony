@@ -1459,6 +1459,9 @@ fn server(
     let Some(front) = symphony::machine::command::running(machine, None) else {
         return "the shared server: none answers on this machine, so none takes the release".into();
     };
+    if let Some(said) = released(&front) {
+        return said;
+    }
     let root = PathBuf::from(&front.root);
     let same = |path: &Path| {
         path == root
@@ -1530,6 +1533,20 @@ fn server(
     }
 }
 
+/// What the shared server `front` does with the release, said, when it is an installed release's
+/// server: no project's checkout builds it, and its own reload follows the machine's `current`,
+/// which the install pointed, so nothing of it is waited for here.
+fn released(front: &Front) -> Option<String> {
+    let release = front.release.as_deref()?;
+    Some(format!(
+        "the shared server (process {}, port {}) is the release {release}: its own reload \
+         (apps/symphony-server/src/reload.rs) follows the machine's current link to the release \
+         the install points it at, a release whose server does not start leaving it serving and \
+         saying why on its notice",
+        front.pid, front.port
+    ))
+}
+
 /// The shared server this machine's folder `machine` records, once a process other than `old`,
 /// the one that answered before the move, answers for it, at the release's board schema `target`
 /// or past it when both say one: its reload's new build. Waited for within [`RELOAD`] (the tests'
@@ -1555,6 +1572,10 @@ fn reload(
         if Instant::now() >= until || against.until.interrupted() {
             return Err(until.saturating_duration_since(began));
         }
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "no-timed-waits baseline: looks again for the reloaded server, which no event announces"
+        )]
         std::thread::sleep(RELOAD_LOOK.min(until.saturating_duration_since(Instant::now())));
     }
 }
@@ -1657,6 +1678,23 @@ struct Failure {
 mod tests {
     use super::*;
     use crate::test_tree::Tree;
+
+    #[test]
+    fn a_release_as_the_shared_server_is_said_to_follow_current_and_a_projects_build_is_not() {
+        let mut front: Front = serde_json::from_value(serde_json::json!({
+            "pid": 4242, "port": 41005, "root": "/work/consumer", "ready": true,
+        }))
+        .unwrap();
+        assert_eq!(released(&front), None);
+        front.release = Some("release-2026-11-20".into());
+        assert_eq!(
+            released(&front).unwrap(),
+            "the shared server (process 4242, port 41005) is the release release-2026-11-20: its \
+             own reload (apps/symphony-server/src/reload.rs) follows the machine's current link to \
+             the release the install points it at, a release whose server does not start leaving \
+             it serving and saying why on its notice"
+        );
+    }
 
     #[test]
     fn a_running_database_older_than_the_pins_is_one_the_move_would_replace() {

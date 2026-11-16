@@ -1,4 +1,5 @@
-//! Client selection and the release assets compiled into this server's package.
+//! Client selection and the release assets compiled into this server's package: none in a release's
+//! build (`SYMPHONY_CLIENT_BESIDE`), which serves the client installed beside it.
 
 use std::path::{Path, PathBuf};
 
@@ -53,7 +54,7 @@ pub(crate) fn build(dist: &Path, embedded: bool) -> String {
     } else {
         std::fs::read_to_string(dist.join("index.html")).unwrap_or_default()
     };
-    // dx writes the module script with a hashed filename. This is exactly the path the browser
+    // The build names the shell's script by its content. This is exactly the path the browser
     // compares with Board.build.
     shell
         .split("src=\"")
@@ -67,7 +68,16 @@ pub(crate) fn build(dist: &Path, embedded: bool) -> String {
 #[cfg(test)]
 mod tests;
 
-/// Read the foreground override separately from an installed server's explicit bundle.
+/// Read the foreground override separately from an installed server's explicit bundle. A server
+/// run from a release installed on the machine serves that release's client, from the folder
+/// beside it, whatever else is named: the release this process is, found once
+/// ([`symphony::machine::release::this`]), so every project it serves later is served the same
+/// client however the machine's `current` moved since.
 pub(crate) fn selection(root: &Path, install: Option<&Path>) -> (PathBuf, bool) {
+    let beside = symphony::machine::release::this()
+        .and_then(|(release, manifest)| symphony::machine::release::client_of(release, manifest));
+    if let Some(client) = beside {
+        return (client, false);
+    }
     select(root, install, symphony_env::UI_DIST.os().map(PathBuf::from))
 }

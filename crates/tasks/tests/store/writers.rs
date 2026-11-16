@@ -9,10 +9,10 @@
 //! moving its `seen` back by hand.
 
 use crate::common::{HOST, NOW, client, refused};
-use serde_json::{Value, json};
+use serde_json::json;
 use std::time::{SystemTime, UNIX_EPOCH};
 use symphony_board::rpc::Client;
-use symphony_board::{Error, NewTask, Opening, Program, Schema, Store, Writer};
+use symphony_board::{Error, NewTask, Opening, Program, Raw, Schema, Store, Writer};
 
 const HOUR: f64 = 3600.0;
 const DAY: f64 = 24.0 * HOUR;
@@ -65,23 +65,17 @@ fn line(client: &Client, program: &str, host: &str) -> Writer {
 
 /// `program`'s line on `host` made to have been seen `by` seconds earlier than it was.
 fn age(client: &Client, program: &str, host: &str, by: f64) {
-    client
-        .query(
-            "UPDATE writer SET seen = seen - $by WHERE program = $program AND host = $host;",
-            json!({"by": by, "program": program, "host": host}),
-        )
+    Raw::on(client)
+        .table("writer")
+        .matching(json!({"program": program, "host": host}))
+        .add("seen", -by)
         .unwrap();
 }
 
 /// The version `meta:schema` records.
 fn version(client: &Client) -> Option<i64> {
-    let found = client
-        .query(
-            "RETURN (SELECT VALUE version FROM ONLY meta:schema);",
-            json!({}),
-        )
-        .unwrap();
-    found.last().and_then(Value::as_i64)
+    let found = Raw::on(client).row("meta", "schema").field("version");
+    found.unwrap().as_i64()
 }
 
 fn this() -> i64 {
@@ -146,14 +140,23 @@ fn a_writer_is_recorded_as_it_opens_and_its_last_seen_moves_once_an_hour_has_gon
     assert_eq!(lines(&client), [studio, moved]);
 }
 
+/// A build from before the record, which arrived with schema 18 (`store/writers.rs`'s `SINCE`):
+/// this build's tables, the writers' among them, at the version below it.
+fn before_the_record() -> Schema {
+    let mut older = Schema::this_build();
+    while older.version() >= 18 {
+        older = older.before();
+    }
+    older
+}
+
 #[test]
 fn a_build_from_before_the_record_writes_no_line_and_the_build_that_moves_its_board_does() {
     let client = client();
     let older = Program::named("tasks", "/opt/old/tasks");
-    // `before` defines this build's tables at the version behind, the writers' among them.
     opened(
         &client,
-        &Opening::write().at(Schema::this_build().before()).by(older),
+        &Opening::write().at(before_the_record()).by(older),
         HOST,
     )
     .unwrap()
@@ -267,11 +270,9 @@ fn a_migrate_counts_no_writer_unseen_for_a_week_at_its_schema_already_or_itself(
     // A writer already at the schema the migrate moves to is not behind it.
     let already = client();
     opened(&already, &Opening::write().by(gate()), HOST).unwrap();
-    already
-        .query(
-            "UPDATE writer SET schema = $schema;",
-            json!({"schema": this() + 1}),
-        )
+    Raw::on(&already)
+        .table("writer")
+        .set(json!({"schema": this() + 1}))
         .unwrap();
     opened(&already, &migrate, HOST).unwrap();
     assert_eq!(version(&already), Some(this() + 1));

@@ -36,7 +36,7 @@ const RELOADED: &str = "360";
 
 /// The fixture with the refresh on and its Symphony a workspace of two packages pinning the
 /// board's SurrealDB, pushed: the commit.
-fn refreshing() -> (Fixture, String) {
+pub(super) fn refreshing() -> (Fixture, String) {
     let fixture = Fixture::new();
     fixture.write("symphony.toml", &Fixture::project_file("refresh = true\n"));
     symphony_crate(&fixture, 42);
@@ -461,13 +461,23 @@ fn the_status_says_the_landings_since_the_release_and_what_its_refresh_did() {
              taken it yet; its own reload (apps/symphony-server/src/reload.rs) builds and \
              installs a server from that checkout's new Cargo.lock and hands it its sockets, a \
              failed build leaving the old one serving and saying why on its notice (`just \
-             symphony-status` says which process answers)\n",
+             symphony-status` says which process answers)\n{}",
             &release[..12],
             &last[..12],
+            standing(&fixture),
             id = run["id"].as_str().unwrap(),
             made = &made[..12],
         )
     );
+}
+
+/// What `--status` ends with in the fixture's machine folder, where no release is installed: the
+/// machine's server ([`symphony::machine::switch::standing`]).
+fn standing(fixture: &Fixture) -> String {
+    format!(
+        "machine: no release is installed in {}: a project's build is the machine's server\n",
+        fixture.root.join("machine").display()
+    )
 }
 
 /// What `--status` says under a refresh one of whose steps is its project's to finish.
@@ -719,7 +729,7 @@ fn a_main_checkout_not_ready_keeps_its_main_and_its_board_catches_up_with_the_pi
         status.contains(&format!("\n  {}", &off["release: refresh: ".len()..]))
             && status
                 .contains("  refresh-consumer the project's to finish, filed nowhere here; log ")
-            && status.ends_with(BY_HAND),
+            && status.ends_with(&format!("{BY_HAND}{}", standing(&fixture))),
         "{status}"
     );
 

@@ -8,6 +8,11 @@ fn value(f: &Fixture, sql: &str) -> Value {
     f.store.client().query(sql, json!({})).unwrap().remove(0)
 }
 
+/// One field of the row `id` of `table`.
+fn field(f: &Fixture, table: &str, id: &str, field: &str) -> Value {
+    f.store.raw().row(table, id).field(field).unwrap()
+}
+
 fn legacy_board() -> Fixture {
     let f = Fixture::new(
         Seed::default()
@@ -38,29 +43,29 @@ fn legacy_board() -> Fixture {
 fn migration_preserves_the_live_marker_and_retires_the_scalar_once() {
     let f = legacy_board();
     let original = f.store.dump().unwrap();
-    let before = value(&f, "RETURN counter:board.last;");
+    let before = field(&f, "counter", "board", "last");
     let upgraded = f.other();
-    assert_eq!(value(&f, "RETURN counter:board.last;"), json!(i64::MIN));
-    assert_eq!(value(&f, "RETURN counter:board_structure.last;"), before);
+    assert_eq!(field(&f, "counter", "board", "last"), json!(i64::MIN));
+    assert_eq!(field(&f, "counter", "board_structure", "last"), before);
     assert_eq!(
         value(&f, &format!("RETURN {};", schema::BOARD_MARKER)),
         before
     );
     assert_eq!(upgraded.dump().unwrap(), original);
     assert_eq!(
-        value(&f, "RETURN meta:schema.version;"),
+        field(&f, "meta", "schema", "version"),
         json!(Schema::this_build().version())
     );
     let warm = f.other();
     assert_eq!(warm.client().requests(), 1, "a current open writes nothing");
-    assert_eq!(value(&f, "RETURN counter:board_structure.last;"), before);
-    assert_eq!(value(&f, "RETURN counter:board.last;"), json!(i64::MIN));
+    assert_eq!(field(&f, "counter", "board_structure", "last"), before);
+    assert_eq!(field(&f, "counter", "board", "last"), json!(i64::MIN));
 }
 
 #[test]
 fn a_failed_migration_rolls_back_both_marker_transfer_and_retirement() {
     let f = legacy_board();
-    let before = value(&f, "RETURN counter:board.last;");
+    let before = field(&f, "counter", "board", "last");
     let original = f.store.dump().unwrap();
     let stopped = Schema::this_build().then("THROW 'retirement-aborted';");
     let result = Store::opening(
@@ -74,11 +79,12 @@ fn a_failed_migration_rolls_back_both_marker_transfer_and_retirement() {
         .err()
         .expect("the failing step must abort the migration");
     assert!(error.to_string().contains("retirement-aborted"), "{error}");
-    assert_eq!(value(&f, "RETURN meta:schema.version;"), json!(14));
-    assert_eq!(value(&f, "RETURN counter:board.last;"), before);
-    assert_eq!(
-        value(&f, "RETURN record::exists(counter:board_structure);"),
-        json!(false)
+    assert_eq!(field(&f, "meta", "schema", "version"), json!(14));
+    assert_eq!(field(&f, "counter", "board", "last"), before);
+    assert!(
+        !(f.store.raw().row("counter", "board_structure"))
+            .exists()
+            .unwrap()
     );
     assert_eq!(
         value(&f, "RETURN (INFO FOR DB).tables.session_revision ?? NULL;"),
@@ -86,8 +92,8 @@ fn a_failed_migration_rolls_back_both_marker_transfer_and_retirement() {
     );
     assert_eq!(f.store.dump().unwrap(), original);
     f.other();
-    assert_eq!(value(&f, "RETURN counter:board_structure.last;"), before);
-    assert_eq!(value(&f, "RETURN counter:board.last;"), json!(i64::MIN));
+    assert_eq!(field(&f, "counter", "board_structure", "last"), before);
+    assert_eq!(field(&f, "counter", "board", "last"), json!(i64::MIN));
 }
 
 #[test]
@@ -108,10 +114,11 @@ fn a_retired_scalar_without_its_successor_refuses_instead_of_resetting_the_marke
         refused(result.map(|_| ())),
         "structural marker missing after legacy marker retirement"
     );
-    assert_eq!(value(&f, "RETURN meta:schema.version;"), json!(14));
-    assert_eq!(value(&f, "RETURN counter:board.last;"), json!(i64::MIN));
-    assert_eq!(
-        value(&f, "RETURN record::exists(counter:board_structure);"),
-        json!(false)
+    assert_eq!(field(&f, "meta", "schema", "version"), json!(14));
+    assert_eq!(field(&f, "counter", "board", "last"), json!(i64::MIN));
+    assert!(
+        !(f.store.raw().row("counter", "board_structure"))
+            .exists()
+            .unwrap()
     );
 }

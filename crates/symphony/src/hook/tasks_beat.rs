@@ -9,7 +9,8 @@
 //! bound to that key: a subagent by its agent id, a full session with no monitor (one started in an
 //! hc terminal) by its session id; a session with a monitor beats through it and is never bound.
 //! The beat is one call to the board's server, which it never starts, and waits on it at most two
-//! seconds.
+//! seconds; it carries the tokens the session's own transcript gained since its last beat, read
+//! from where the last one stopped (`crates/tasks/src/usage/transcript.rs`).
 //!
 //! The binary is `TASKS_BIN`, else the build this tree last ran, `.target/bin/tasks` under the project
 //! (`SYMPHONY_HOOK_ROOT`, else `CLAUDE_PROJECT_DIR`).
@@ -115,7 +116,7 @@ fn wanted(raw: &[u8], env: &HashMap<String, String>) -> bool {
 
 /// The board's binary: `TASKS_BIN`, else the project's `.target/bin/tasks` while it names a build, else
 /// its main checkout's ([`main_link`]), else the build the recipes run ([`crate::builds::find`]: the
-/// main checkout's link from a linked worktree, else `tasks` on `PATH`).
+/// main checkout's link from a linked worktree, else the machine's release's, else `tasks` on `PATH`).
 fn binary(env: &HashMap<String, String>, raw: &[u8]) -> Option<PathBuf> {
     if let Some(named) = set(env, "TASKS_BIN") {
         return Some(PathBuf::from(named));
@@ -154,8 +155,10 @@ fn binary(env: &HashMap<String, String>, raw: &[u8]) -> Option<PathBuf> {
         return Some(link);
     }
     common.as_deref().and_then(main_link).or_else(|| {
-        // As the recipes find it: the main checkout's link, else the search path's.
-        crate::builds::find(&root, TASKS, set(env, "PATH").map(std::ffi::OsStr::new))
+        // As the recipes find it: the main checkout's link, else the machine's release's, else the
+        // search path's.
+        let beyond = crate::builds::Beyond::of(|name| set(env, name).map(std::ffi::OsString::from));
+        crate::builds::find(&root, TASKS, &beyond)
     })
 }
 
@@ -258,6 +261,10 @@ fn beat_within(binary: &Path, raw: &[u8], passed: &mut dyn FnMut(Duration) -> bo
         }
         match child.try_wait() {
             Ok(Some(_)) => break,
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "no-timed-waits baseline: looks again for its child's end, where a wait on the child under a deadline is the event"
+            )]
             Ok(None) if !passed(start.elapsed()) => std::thread::sleep(Duration::from_millis(2)),
             _ => {
                 let _ = child.kill();

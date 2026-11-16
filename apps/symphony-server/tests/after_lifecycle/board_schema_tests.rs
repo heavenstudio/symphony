@@ -32,28 +32,46 @@ impl Board {
         Client::new(&self.home.recorded().unwrap().addr, "sf", "tasks")
     }
 
+    /// The board of the checkout at `main`, made by a build one schema version ahead of this one
+    /// (main's, while the release this build stands for has not caught up), holding one task.
+    fn newer(main: &Path) -> Board {
+        let board = Board {
+            home: Home::in_common(&main.join(".git"), Some(&surreal())),
+        };
+        board.home.ensure().unwrap();
+        board
+            .opened(
+                Schema::this_build().then("DEFINE TABLE IF NOT EXISTS fixture_next SCHEMALESS;"),
+            )
+            .create(&NewTask::new("main/one", "Made by main's build", "owner"))
+            .unwrap();
+        board
+    }
+
     /// The board as the main checkout's build opens it to write.
     fn older_build(&self) -> Store {
+        self.opened(Schema::this_build().before())
+    }
+
+    /// The board as a build of `schema` opens it to write.
+    fn opened(&self, schema: Schema) -> Store {
         Store::opening(
             self.client(),
             Box::new(|| 1_000_000.0),
             Box::new(|_| false),
             "this-host",
-            &Opening::write().at(Schema::this_build().before()),
+            &Opening::write().at(schema),
         )
         .unwrap()
     }
 
     /// The schema version the board records.
     fn version(&self) -> Option<i64> {
-        self.client()
-            .query(
-                "RETURN (SELECT VALUE version FROM ONLY meta:schema);",
-                serde_json::json!({}),
-            )
+        symphony_board::Raw::on(&self.client())
+            .row("meta", "schema")
+            .field("version")
             .unwrap()
-            .last()
-            .and_then(serde_json::Value::as_i64)
+            .as_i64()
     }
 }
 
@@ -122,4 +140,69 @@ fn a_preview_in_a_worktree_of_a_newer_build_never_moves_the_main_checkouts_board
     main.say("main/one", "owner", "after the preview", None)
         .unwrap();
     assert_eq!(main.thread("main/one").unwrap().len(), 2);
+}
+
+/// The server of an installed release, one board schema behind main's: it reads the board main's
+/// build moved on, writes nothing to it, and every page says so.
+#[test]
+fn a_release_reads_a_board_one_schema_ahead_writes_nothing_and_its_pages_say_so() {
+    let repo = Repo::new("board-ahead");
+    let board = Board::newer(&repo.main);
+    let ahead = Schema::this_build().version() + 1;
+    let server = super::release_tests::installed(&repo, "release-1", "first", None);
+    let main = board
+        .opened(Schema::this_build().then("DEFINE TABLE IF NOT EXISTS fixture_next SCHEMALESS;"));
+    let lines = main.thread("main/one").unwrap().len();
+    let (_, path) = repo
+        .environment()
+        .into_iter()
+        .find(|(name, _)| *name == "PATH")
+        .unwrap();
+    let mut path = path.into_string().unwrap();
+    path.push_str(":/usr/sbin:/sbin");
+    let mut command = Command::new(&server);
+    command
+        .current_dir(&repo.main)
+        .env_clear()
+        .envs(repo.environment())
+        .env_remove("TASKS_DATABASE")
+        .env("SYMPHONY_SURREAL", surreal())
+        .env("PATH", path)
+        .stdin(Stdio::null())
+        .args(["--root", repo.main.to_str().unwrap()])
+        .args(["--port", "0", "--host", "127.0.0.1"]);
+    let mut served = repo.run(command);
+    let actual = served.ready();
+    assert_eq!(actual.release.as_deref(), Some("release-1"));
+    let mut last = None;
+    let read = test_time::until(
+        "the release to list the board's tasks",
+        fixture::BACKSTOP,
+        || {
+            let answer = get(actual.port, "/api/tasks");
+            let read = match &answer {
+                Some((200, body)) => serde_json::from_str::<symphony_api::Tasks>(body).ok(),
+                _ => None,
+            };
+            last = answer;
+            read
+        },
+    );
+    let tasks = read.unwrap_or_else(|stall| panic!("{stall}; its last answer: {last:?}"));
+    let slugs: Vec<String> = tasks.tasks.into_iter().map(|task| task.slug).collect();
+    assert_eq!(slugs, ["main/one"]);
+    super::release_tests::told(
+        actual.port,
+        "",
+        &format!(
+            "The task board is at schema {ahead}, ahead of this Symphony's {}: it is read, and \
+             nothing is written to it from here, until a Symphony at schema {ahead} serves it.",
+            ahead - 1
+        ),
+    );
+    served.signal(libc::SIGTERM);
+    served.success();
+    // Nothing was written: the board is where main's build left it.
+    assert_eq!(board.version(), Some(ahead));
+    assert_eq!(main.thread("main/one").unwrap().len(), lines);
 }

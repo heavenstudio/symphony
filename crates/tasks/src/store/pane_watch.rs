@@ -8,6 +8,7 @@ use crate::Board;
 use crate::cli::agents::{Answer, Pane};
 use crate::cli::attach::{self, PaneWatch};
 use crate::rows::TaskSessionRow;
+use crate::store::surreal::pane_watch as sql;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::cell::OnceCell;
@@ -118,18 +119,15 @@ impl Store {
         send: &dyn Fn(&str) -> Result<(), DeliveryError>,
     ) -> Result<(), Error> {
         let handle = callback.handle.as_str();
-        let queued: Vec<Queued> = self.retrying(|| self.read(
-            "RETURN SELECT key, text FROM callback_event WHERE handle = $handle AND delivered != true AND message = NONE AND string::starts_with(key, 'pane-');",
-            json!({"handle":handle}),
-        ))?;
+        let queued: Vec<Queued> =
+            self.retrying(|| self.read(sql::QUEUED, json!({"handle":handle})))?;
         let plan = look(board, handle, open, panes, &callback.pane_watch, &queued);
         if plan.unchanged(&callback.pane_watch) {
             return Ok(());
         }
         self.with_callback_lease(handle, collect, |revision| {
             let saved: Saved = self.retrying(|| self.read(
-                "RETURN { watch: (SELECT VALUE pane_watch FROM ONLY type::record('callback_state', $handle)) ?? {},
-                    queued: (SELECT key, text FROM callback_event WHERE handle = $handle AND delivered != true AND message = NONE AND string::starts_with(key, 'pane-')) };",
+                sql::SAVED,
                 json!({"handle":handle}),
             ))?;
             // A role or launch can move while the first look waits for its lease.
@@ -143,16 +141,7 @@ impl Store {
                 pull_entries: None, pull_withheld: None, pull_said: None,
             }).collect();
             self.retrying(|| self.transact::<Value>(
-                "DELETE callback_event WHERE handle = $handle AND delivered != true AND message = NONE AND key IN $retired RETURN NONE;
-                 FOR $event IN $events {
-                    IF !record::exists(type::record('callback_event', [$handle, $event.key])) {
-                        LET $counted = (UPSERT ONLY type::record('counter', ['callback-event', $handle]) SET last = (last ?? 0) + 1);
-                        CREATE type::record('callback_event', [$handle, $event.key]) CONTENT $event RETURN NONE;
-                        UPDATE type::record('callback_event', [$handle, $event.key]) SET sequence = $counted.last RETURN NONE;
-                    };
-                 };
-                 UPDATE type::record('callback_state', $handle) SET pane_watch = $after RETURN NONE;
-                 RETURN NONE;",
+                sql::RECORD,
                 json!({"handle":handle, "events":events, "after":plan.after, "retired":plan.retired}),
             ))?;
             self.deliver_pending(handle, callback, revision, send)

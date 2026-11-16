@@ -67,7 +67,12 @@ pub(crate) const READS: &[&str] = &[
 type Request = axum::http::Request<()>;
 
 /// What the server reads answer for `request`. Every JSON read leaves here with its validator
-/// (`validated`), so a read added later has one too.
+/// (`validated`), so a read added later has one too, and naming the feed's cursor it was read at
+/// ([`symphony_api::VERSION_HEADER`]), on its `200` and its `304` alike. The cursor is read
+/// before the answer is: every event at or before it is in the answer, and one after it may be,
+/// so a page drops what its feed says of a read at or before the read's cursor and applies the
+/// rest, whichever of its reads and its feed it started first. A document's reads name their own,
+/// read with their content.
 pub(crate) async fn answer(shared: &Arc<Shared>, request: Request) -> Option<Response> {
     let asked: Vec<_> = request
         .headers()
@@ -75,8 +80,31 @@ pub(crate) async fn answer(shared: &Arc<Shared>, request: Request) -> Option<Res
         .iter()
         .cloned()
         .collect();
-    let response = read(shared, request).await?;
+    let cursor = cursor(shared, request.uri().path());
+    let mut response = read(shared, request).await?;
+    if let Some(cursor) = cursor
+        && validated::is_json_read(&response)
+        && !response
+            .headers()
+            .contains_key(symphony_api::VERSION_HEADER)
+    {
+        response.headers_mut().insert(
+            symphony_api::VERSION_HEADER,
+            header::HeaderValue::from(cursor),
+        );
+    }
     Some(validated::validated(&asked, response).await)
+}
+
+/// The feed's cursor now for the checkout the API route `path` names; none for any other path,
+/// for a checkout the server has no page of, and before the server has read anything.
+fn cursor(shared: &Shared, path: &str) -> Option<u64> {
+    let decoded = decode_path(path)?;
+    let (scope, route) = scope_path(&decoded);
+    if !route.starts_with("/api/") {
+        return None;
+    }
+    shared.api.get()?.cursor(scope)
 }
 
 async fn read(shared: &Arc<Shared>, request: Request) -> Option<Response> {
@@ -139,7 +167,7 @@ async fn read(shared: &Arc<Shared>, request: Request) -> Option<Response> {
         .unwrap_or("")
         .to_string();
     let check = shared.clone();
-    let allowed = tokio::task::spawn_blocking(move || check.allows_host(&host))
+    let allowed = crate::spawn::blocking(move || check.allows_host(&host))
         .await
         .unwrap_or(false);
     if !allowed {
@@ -245,7 +273,7 @@ async fn read(shared: &Arc<Shared>, request: Request) -> Option<Response> {
             ));
         };
         return Some(
-            match tokio::task::spawn_blocking(move || reports::answer(&hub, grain, days)).await {
+            match crate::spawn::blocking(move || reports::answer(&hub, grain, days)).await {
                 Ok(answer) => {
                     let mut response =
                         no_store(([(header::CONTENT_TYPE, "application/json")], answer.body));
@@ -280,7 +308,7 @@ async fn read(shared: &Arc<Shared>, request: Request) -> Option<Response> {
             ));
         };
         return Some(
-            match tokio::task::spawn_blocking(move || run_log::answer(&hub, &run, asked)).await {
+            match crate::spawn::blocking(move || run_log::answer(&hub, &run, asked)).await {
                 Ok(Ok(log)) => no_store(Json(log)),
                 Ok(Err((status, why))) => error(status, why),
                 Err(e) => error(
@@ -310,7 +338,7 @@ async fn read(shared: &Arc<Shared>, request: Request) -> Option<Response> {
             ));
         };
         return Some(
-            match tokio::task::spawn_blocking(move || runs::answer(&hub, &filters)).await {
+            match crate::spawn::blocking(move || runs::answer(&hub, &filters)).await {
                 Ok(Ok(page)) => no_store(Json(page)),
                 Ok(Err((status, why))) => error(status, why),
                 Err(e) => error(
@@ -334,7 +362,7 @@ async fn read(shared: &Arc<Shared>, request: Request) -> Option<Response> {
             ));
         };
         return Some(
-            match tokio::task::spawn_blocking(move || runs::answer_run(&hub, &run)).await {
+            match crate::spawn::blocking(move || runs::answer_run(&hub, &run)).await {
                 Ok(Ok(page)) => no_store(Json(page)),
                 Ok(Err((status, why))) => error(status, why),
                 Err(e) => error(
@@ -378,7 +406,7 @@ async fn read(shared: &Arc<Shared>, request: Request) -> Option<Response> {
     };
     let check = hub.clone();
     let selected = scope.to_string();
-    if let Err(e) = tokio::task::spawn_blocking(move || check.ensure_page(&selected))
+    if let Err(e) = crate::spawn::blocking(move || check.ensure_page(&selected))
         .await
         .unwrap_or_else(|e| Err(e.to_string()))
     {
@@ -390,9 +418,7 @@ async fn read(shared: &Arc<Shared>, request: Request) -> Option<Response> {
     if path == symphony_api::AGENT_SCREEN_PATH {
         let handle = query(&request, "handle").unwrap_or_default();
         return Some(
-            match tokio::task::spawn_blocking(move || crate::session_go::screen(&hub, &handle))
-                .await
-            {
+            match crate::spawn::blocking(move || crate::session_go::screen(&hub, &handle)).await {
                 Ok(Ok(screen)) => no_store(Json(screen)),
                 Ok(Err((code, why))) => error(code, why),
                 Err(e) => error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
@@ -443,7 +469,7 @@ async fn read(shared: &Arc<Shared>, request: Request) -> Option<Response> {
         let scope = scope.to_string();
         let path = path.to_string();
         let rel = rel.to_string();
-        let response = tokio::task::spawn_blocking(move || {
+        let response = crate::spawn::blocking(move || {
             document_response(&shared, &hub, &root, &scope, &path, &rel, &request)
         })
         .await;
@@ -462,7 +488,7 @@ async fn read(shared: &Arc<Shared>, request: Request) -> Option<Response> {
             let scores = if path == "/api/task-board" && !search.is_empty() {
                 let reading = hub.clone();
                 let needle = search.clone();
-                match tokio::task::spawn_blocking(move || {
+                match crate::spawn::blocking(move || {
                     // On the store the task pages' reads share, never a board opened anew.
                     let store = reading.reader()?;
                     let hits = store.search(&needle);
@@ -539,7 +565,7 @@ async fn read(shared: &Arc<Shared>, request: Request) -> Option<Response> {
             let local = (agent_page || detail) && crate::session_go::local(shared, &request).await;
             let gates = path == symphony_api::TASK_GATES_PATH;
             let timeline = path == symphony_api::TASK_TIMELINE_PATH;
-            match tokio::task::spawn_blocking(move || {
+            match crate::spawn::blocking(move || {
                 if agents {
                     // The agents and their work as the hub's board tick last read them: while the
                     // board cannot be read, neither can they, as with its tasks.
@@ -734,6 +760,16 @@ fn document_response(
             Err((status, why)) => error(status, why),
         };
     }
+    // An outline's check that names the tag of the copy the hub follows is answered from it, at
+    // the feed's cursor, with no render: the validator turns it into the `304`.
+    if path == "/api/document"
+        && query(request, "view").as_deref() == Some("outline")
+        && request.headers().contains_key(header::IF_NONE_MATCH)
+        && let Some((tag, cursor)) = hub.outline_kept(scope, rel, validated::outline_tag)
+        && matches_etag(request, &tag)
+    {
+        return document_read(tag, Vec::new(), Some(cursor));
+    }
     let result = match path {
         // What a page reads ahead of a document it links to: its first part, within the cap, or
         // nothing when its head alone is over it. Read ahead, the document is not followed.
@@ -813,22 +849,27 @@ fn document_response(
         // content: their tag leaves it out, and a header names it, on the `304` too.
         Ok(mut value) if matches!(path, "/api/document" | "/api/section" | "/api/folder") => {
             let tagged = validated::without_cursor(&mut value);
-            let mut response =
-                no_store(([(header::CONTENT_TYPE, "application/json")], tagged.body));
-            response
-                .extensions_mut()
-                .insert(validated::Content(tagged.tag));
-            if let Some(cursor) = tagged.cursor {
-                response.headers_mut().insert(
-                    symphony_api::VERSION_HEADER,
-                    header::HeaderValue::from(cursor),
-                );
-            }
-            response
+            document_read(tagged.tag, tagged.body, tagged.cursor)
         }
         Ok(value) => no_store(Json(value)),
         Err(e) => error(StatusCode::NOT_FOUND, e),
     }
+}
+
+/// A document read's answer: its `body` named by `tag`, its content's validator
+/// ([`validated::Content`]), and the feed's cursor it was read at in a header of its own. A check
+/// that names `tag` leaves as a `304` without `body` ([`validated::validated`]), so one answered
+/// before its body was made carries none.
+fn document_read(tag: String, body: Vec<u8>, cursor: Option<u64>) -> Response {
+    let mut response = no_store(([(header::CONTENT_TYPE, "application/json")], body));
+    response.extensions_mut().insert(validated::Content(tag));
+    if let Some(cursor) = cursor {
+        response.headers_mut().insert(
+            symphony_api::VERSION_HEADER,
+            header::HeaderValue::from(cursor),
+        );
+    }
+    response
 }
 
 fn ask_response(
@@ -1000,7 +1041,7 @@ async fn plugin_response(shared: &Shared, root: &Path, path: &str, request: &Req
         return error(StatusCode::NOT_FOUND, "no such route");
     };
     let (checkout, route, rest) = (root.to_path_buf(), route.to_string(), rest.to_string());
-    let reply = tokio::task::spawn_blocking(move || {
+    let reply = crate::spawn::blocking(move || {
         symphony::plugins::Plugins::of(&checkout)
             .route(&route)?
             .serve(&checkout, &rest)

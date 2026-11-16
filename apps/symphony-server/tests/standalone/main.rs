@@ -153,7 +153,7 @@ fn copy_source(source: &Path, destination: &Path) {
     for entry in fs::read_dir(source).unwrap() {
         let entry = entry.unwrap();
         let name = entry.file_name();
-        if [".target", "build", ".git", ".dioxus"]
+        if [".target", "build", ".git"]
             .iter()
             .any(|skip| name == *skip)
         {

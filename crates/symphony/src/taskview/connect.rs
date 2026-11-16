@@ -1,10 +1,17 @@
 //! How the Symphony reaches a project's board to read it, and how a failed read is told.
+//!
+//! Every reach goes through [`open`], which holds a folder this process serves ([`serve`]) to the
+//! repository found from it when it began to serve it: a reach made after a caller's check that the
+//! folder still holds its project, once its `.git` went, is refused as gone, and never walks up to
+//! the board of the checkout that holds the folder, whatever the caller.
 
-use std::path::Path;
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
+use std::sync::{Mutex, PoisonError};
 
 /// How long the server waits on each board request: its board tick shares the data worker's thread
-/// with every document refresh, and a page gives up on an answer after 15 s (`symphony-ui`'s
-/// `request.rs`). A read with no whole answer in that time goes once more
+/// with every document refresh, and a page gives up on an answer after 15 s (the client's
+/// `request.ts`). A read with no whole answer in that time goes once more
 /// ([`symphony_board::rpc::Kind`]), and so waits at most twice this.
 const BOARD_WAIT: std::time::Duration = std::time::Duration::from_secs(3);
 
@@ -18,18 +25,44 @@ pub fn read_failure(error: &str, unreachable: &str) -> (u16, String) {
     }
 }
 
+/// The folders this process serves, each with the repository (its common dir) the board's lookup
+/// from it found when it began to serve it, none for a folder no repository held then.
+static SERVED: Mutex<BTreeMap<PathBuf, Option<PathBuf>>> = Mutex::new(BTreeMap::new());
+
+/// Begin to serve the folder `root`: from here on, for the life of this process, every reach of its
+/// board from that path, spelled as here ([`connect`], [`connect_in`], [`connect_running`]), the
+/// server's own and any route's, is held to the repository
+/// the board's lookup from it finds now, on the files alone
+/// ([`symphony_board::project::locate_quick`]), which is returned. Once the lookup finds another
+/// (a folder left without its `.git` leads it up to the checkout that holds the folder) or that one
+/// is a repository no more, a reach is refused as a folder that is gone, saying
+/// [`symphony_board::project::GONE`], and starts or reads no board
+/// ([`symphony_board::cli::held_board`]). A folder no repository holds now is held to nothing, as a
+/// folder this process does not serve: its reach is refused only once it is gone. Served again, the
+/// folder is held to what the lookup finds then.
+pub fn serve(root: &Path) -> Option<PathBuf> {
+    let repository = symphony_board::project::locate_quick(root).map(|place| place.common);
+    SERVED
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .insert(root.to_path_buf(), repository.clone());
+    repository
+}
+
+/// The repository a reach from `root` is held to ([`serve`]): none for a folder this process does
+/// not serve, or that no repository held when it began to.
+fn held(root: &Path) -> Option<PathBuf> {
+    SERVED
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .get(root)
+        .cloned()
+        .flatten()
+}
+
 /// The board of the project at `root`, as this process's environment reaches it.
 pub fn connect(root: &Path) -> Result<symphony_board::Store, String> {
     connect_in(root, crate::children::board_env())
-}
-
-/// [`connect`], held to the repository whose common dir is `repository`, the one the Symphony
-/// found from `root` when it began to serve that folder ([`connect_held_in`]).
-pub fn connect_held(
-    root: &Path,
-    repository: Option<&Path>,
-) -> Result<symphony_board::Store, String> {
-    connect_held_in(root, repository, crate::children::board_env())
 }
 
 /// [`connect`] to a board whose server is running, never starting one: for a read that can go
@@ -38,7 +71,7 @@ pub fn connect_running(root: &Path) -> Result<symphony_board::Store, String> {
     open(
         root,
         crate::children::board_env(),
-        symphony_board::cli::running_board,
+        symphony_board::cli::held_running_board,
     )
 }
 
@@ -47,37 +80,31 @@ pub fn connect_running(root: &Path) -> Result<symphony_board::Store, String> {
 /// project and `just symphony`; a board behind this build, or not made yet, is refused before it is
 /// read, naming `just tasks`, and never moved forward or made. So a branch's build, its command
 /// line or a preview server, cannot move the live board past the build its board command runs.
+/// A folder this process serves is reached held to its repository ([`serve`]).
 pub fn connect_in(
     root: &Path,
     env: symphony_board::cli::Env,
 ) -> Result<symphony_board::Store, String> {
-    open(root, env, symphony_board::cli::board)
+    open(root, env, symphony_board::cli::held_board)
 }
 
-/// [`connect_in`], refused, as a folder that is gone, when the board's lookup from `root` finds
-/// another repository than `repository` ([`symphony_board::cli::held_board`]): a folder left without
-/// its `.git` leads it up to the checkout that holds the folder, whose board it never starts.
-pub fn connect_held_in(
-    root: &Path,
-    repository: Option<&Path>,
-    env: symphony_board::cli::Env,
-) -> Result<symphony_board::Store, String> {
-    open(root, env, |env| {
-        symphony_board::cli::held_board(env, repository)
-    })
-}
+/// How a reach finds the board of the project whose folder its `Env` runs in, held to the
+/// repository it is handed ([`symphony_board::cli::held_board`],
+/// [`symphony_board::cli::held_running_board`]).
+type Reach =
+    fn(&symphony_board::cli::Env, Option<&Path>) -> Result<symphony_board::cli::Reached, String>;
 
-/// The board `reach` finds for the project at `root` under `env`, opened to read as [`connect_in`]
-/// says.
+/// The board `reach` finds for the project at `root` under `env`, held to the repository `root` is
+/// served from ([`serve`]), opened to read as [`connect_in`] says.
 fn open(
     root: &Path,
     mut env: symphony_board::cli::Env,
-    reach: impl FnOnce(&symphony_board::cli::Env) -> Result<symphony_board::cli::Reached, String>,
+    reach: Reach,
 ) -> Result<symphony_board::Store, String> {
     env.cwd = root.to_path_buf();
     // A read-only web request is never a board session or a launcher.
     env.vars.remove("TASKS_SESSION");
-    let reached = reach(&env)?;
+    let reached = reach(&env, held(root).as_deref())?;
     let client = reached.client.waiting(BOARD_WAIT);
     let how = symphony_board::Opening::read()
         .of(reached.project.as_deref())

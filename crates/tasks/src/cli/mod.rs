@@ -419,6 +419,10 @@ impl Clock {
     /// monitor's looks.
     pub fn wait(&self, seconds: f64, input: &mut dyn Read, err: &mut dyn Write) {
         match self {
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "no-timed-waits baseline: the board's monitor looks again each period, behind the clock its tests replace"
+            )]
             Clock::Machine => std::thread::sleep(Clock::span(seconds)),
             Clock::Pinned(now) => {
                 let at = {
@@ -511,6 +515,13 @@ pub fn held_board(env: &Env, repository: Option<&Path>) -> Result<Reached, Strin
 /// read that can go without the board asks for.
 pub fn running_board(env: &Env) -> Result<Reached, String> {
     reach_board(env, &env.cwd, Reaching::Peek, None)
+}
+
+/// The board [`running_board`] reaches, held to `repository` as [`held_board`] holds its reach:
+/// refused, as a folder that is gone, when the lookup finds another repository, and refused rather
+/// than started when its server is not running.
+pub fn held_running_board(env: &Env, repository: Option<&Path>) -> Result<Reached, String> {
+    reach_board(env, &env.cwd, Reaching::Peek, repository)
 }
 
 /// The board `env` reaches from `cwd`; a server that is not running is started if `start`, else

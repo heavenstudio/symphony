@@ -1,10 +1,12 @@
 // What the unit tests share: the cases crates/symphony-api writes (wire.cases.json, `just
-// client-wire`), a browser's storage held in memory, and a server whose answers the test gives.
+// client-wire`), a browser's storage held in memory, a server whose answers the test gives, and the
+// one wait for a condition (`until`).
 // The tests run in Node, without a DOM: markup is drawn with react-dom/server, and the page's
 // globals are stubbed where a test needs one.
 
 import { isValidElement, type ReactElement, type ReactNode } from "react";
 import { expect, vi } from "vitest";
+import { BACKSTOP_MS } from "./unit-run";
 import type {
   Agent,
   Block,
@@ -158,6 +160,7 @@ export function anAgent(handle: string, fields: Partial<Agent> = {}): Agent {
     session_url: null,
     in_process: false,
     go: null,
+    tokens: null,
     ...fields,
   };
 }
@@ -322,10 +325,82 @@ export const reply = (status: number, body: unknown, etag?: string) =>
     headers: etag === undefined ? {} : { ETag: etag },
   });
 
+/**
+ * Waits until `condition` holds, its assertions passing, as `vi.waitFor` does: it looks again every
+ * 50 ms of real time, moving Vitest's fake timers on as far between looks where they are on. Its one
+ * time is the unit run's backstop (`BACKSTOP_MS`), never `vi.waitFor`'s own second, which a loaded
+ * machine reaches and which fails as the condition's assertion would. The test's own backstop, which
+ * started first, runs out first, and the run says it as a stall (src/unit-run.ts). Every test waits
+ * so: unit-run.test.ts fails on a `vi.waitFor` or `vi.waitUntil` anywhere else.
+ */
+export function until<T>(condition: () => T | Promise<T>): Promise<T> {
+  return vi.waitFor(condition, { timeout: BACKSTOP_MS });
+}
+
+/**
+ * One turn of the event loop: what the code under test queued before it (a reply, a promise's
+ * callbacks) has run. The tests' one wait of this kind, by no length of time.
+ */
+export function turn(): Promise<void> {
+  // biome-ignore lint/style/noRestrictedGlobals: the named helper of the unit tests' turns: no length of time, the next task
+  return new Promise((done) => setTimeout(done, 0));
+}
+
+/** A change a page's MutationObserver can be told of: an attribute's, or elements added or
+ * removed. */
+export type Mutation = { attribute: string } | { childList: true };
+
+/**
+ * The page's MutationObserver and ResizeObserver, stubbed. A mutation (`changed`) reaches only the
+ * observers whose options cover it, as the browser's does, and a resize (`resized`) only those
+ * that observe what changed size. `watched` holds each observing mutation observer's options and
+ * `sized` what each resize observer observes.
+ */
+export function observers() {
+  const watched = new Map<() => void, MutationObserverInit>();
+  const sized = new Map<() => void, unknown[]>();
+  vi.stubGlobal(
+    "MutationObserver",
+    class {
+      constructor(private readonly seen: () => void) {}
+      observe(_: unknown, options: MutationObserverInit) {
+        watched.set(this.seen, options);
+      }
+      disconnect() {
+        watched.delete(this.seen);
+      }
+    },
+  );
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      constructor(private readonly seen: () => void) {}
+      observe(target: unknown) {
+        sized.set(this.seen, [...(sized.get(this.seen) ?? []), target]);
+      }
+      disconnect() {
+        sized.delete(this.seen);
+      }
+    },
+  );
+  const covers = (options: MutationObserverInit, change: Mutation) =>
+    "childList" in change
+      ? options.childList === true
+      : options.attributes === true ||
+        (options.attributeFilter?.includes(change.attribute) ?? false);
+  const changed = (change: Mutation) => {
+    for (const [seen, options] of [...watched]) if (covers(options, change)) seen();
+  };
+  const resized = (target: unknown) => {
+    for (const [seen, targets] of [...sized]) if (targets.includes(target)) seen();
+  };
+  return { watched, sized, changed, resized };
+}
+
 /** Lets the replies given so far reach the code that awaits them, until `asked` holds `count`. */
 export async function asking(asked: unknown[], count: number): Promise<void> {
-  for (let turn = 0; turn < 50 && asked.length < count; turn += 1) {
-    await new Promise((done) => setTimeout(done, 0));
+  for (let turns = 0; turns < 50 && asked.length < count; turns += 1) {
+    await turn();
   }
   expect(asked).toHaveLength(count);
 }

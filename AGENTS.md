@@ -1,8 +1,8 @@
 # Symphony
 
-The app's workspace owns its server, its two web clients and its Mac app under `apps/` (the React
-one, `apps/symphony-web`, which draws every page now, and the Dioxus one, whose build is the
-stylesheets every page shares; the Mac app, `apps/symphony-desktop`, a thin shell over each
+The app's workspace owns its server, its web client and its Mac app under `apps/` (the client,
+`apps/symphony-web`, React and TypeScript built by Vite, its browser tests a package of their own,
+`apps/symphony-web-tests`; the Mac app, `apps/symphony-desktop`, a thin shell over each
 server's own pages, `publish = false`, whose window crates no other package links), and the review
 library, its own build and release commands (`crates/symphony-build`), wire types, task board,
 working-directory scanner, headless Chrome driver and the tests' CPU meters and waits
@@ -40,8 +40,11 @@ sources, the Mac app, the build and release commands (`symphony-build`) and the 
   never listed or read. The Symphony's own routes (`symphony_api::SYMPHONY_ROUTES`, which
   `assets/shell.js` repeats) win over every entrypoint.
 - **The one server** serves every project the machine folder's registry holds, each under
-  `/<id>/`, and the host rule decides whether a start's build serves, waits for or replaces the
-  running one ([the server guide](apps/symphony-server/README.md), `crates/symphony/src/machine/`).
+  `/<id>/`. It is the server of the release installed on the machine (`current`) while every
+  registered project's plugins answer from a process, which any host serves, and a project's build
+  while one names a plugin linked into its host; the host rule decides whether a start serves,
+  waits or replaces, and no start replaces a release's server, which follows `current` by its own
+  reload ([the server guide](apps/symphony-server/README.md), `crates/symphony/src/machine/`).
   A start in a linked worktree never starts, registers with or replaces the one server
   (`apps/symphony-server/src/starter.rs`): `just symphony --port 0` there runs a server of its
   own, and `--shared` is the owner's word. A project's state stays in its checkout: paths under its
@@ -52,8 +55,8 @@ sources, the Mac app, the build and release commands (`symphony-build`) and the 
   [MACHINE_WORK](docs/MACHINE_WORK.md) and [RUNS](docs/RUNS.md); what a task proves is
   [CHECKS](docs/CHECKS.md); releases are [RELEASES](docs/RELEASES.md).
 
-Read [the client guide](apps/symphony-ui/AGENTS.md), [the React client's
-guide](apps/symphony-web/AGENTS.md), [the Mac app's guide](apps/symphony-desktop/AGENTS.md) and
+Read [the client's guide](apps/symphony-web/AGENTS.md), [the Mac app's
+guide](apps/symphony-desktop/AGENTS.md) and
 [the board guide](crates/tasks/AGENTS.md) before editing those packages. A consuming project
 applies its own Rust, review and resource policy.
 Never run a shared-service restart as a test: use a private port and scratch board.
@@ -61,18 +64,18 @@ Never run a shared-service restart as a test: use a private port and scratch boa
 ### Building and testing
 
 Use `just lint-rs`, `just test-rs`, `just symphony-ui-dist` and `just symphony-ui-dev`
-from this folder; `just lint-rs` runs `just client-lint` as well, the React client's checks on
+from this folder; `just lint-rs` runs `just client-lint` as well, the client's checks on
 its pinned Node ([its guide](apps/symphony-web/AGENTS.md)). `tools/cargo.sh` runs ordinary Cargo
 in this workspace, preserving its arguments, streams, status and inherited limits. A build or test
 goes through `tools/record.sh`, as do the `lint-rs`, `test-rs`, `client-check`, `client-update`
-and `verify` recipes, each as one operation the board's recorder records for the Build and Test
+and `verify` recipes and the docs checks (`just symphony-cli docs-audit --check`,
+`status --lint`), each as one operation the board's recorder records for the Build and Test
 columns, or runs as it is where none answers
 ([MACHINE_WORK](docs/MACHINE_WORK.md#recording-builds-and-tests), its logs in
 [RUNS](docs/RUNS.md#logs)). It uses this folder's `.target/` unless `CARGO_TARGET_DIR` names
 another: a linked worktree's starts as a copy-on-write clone of the main checkout's compiled
 dependencies (`tools/seed-target.sh`), never one folder for two worktrees, where Cargo names their
-packages alike and each runs the other's build. The toolchain pin is `rust-toolchain.toml`, the
-wasm target in it. The workspace supplies no project gate planner, test selection, certificate or
+packages alike and each runs the other's build. The toolchain pin is `rust-toolchain.toml`. The workspace supplies no project gate planner, test selection, certificate or
 shared slot pool: the containing project keeps its own for its own consumers.
 
 `tools/rs-bin.sh NAME` runs a declared workspace binary, asking Cargo to build it first only when
@@ -91,8 +94,8 @@ API alone, so neither the library every project links nor its `symphony` compile
 
 ### The client's distribution
 
-`just client-update` builds the client (the React client's kinds, over the stylesheets every page
-shares, which dx builds from the Dioxus package) and publishes its bundle, one shell and one
+`just client-update` builds the client (one Vite build of `apps/symphony-web`: its kinds over the
+stylesheet every page shares) and publishes its bundle, one shell and one
 `builds.json` under
 `apps/symphony-server/client/public/`, which the server package embeds at build time. A branch
 commits no distribution, whatever it changed: the regenerator a land starts rebuilds it from
@@ -103,9 +106,8 @@ candidate's fix that changes what the client is built from: no regenerator build
 so that branch commits the distribution its own sources make, and the land keeps main's side of it
 ([RELEASES](docs/RELEASES.md#the-release-candidate)). `just client-check` rebuilds into a
 separate folder and compares every path and byte with the committed distribution. How the build
-stays the same from any checkout (its release snapshot, dx's one path, the builds a distribution
-keeps) is [the client guide's](apps/symphony-ui/AGENTS.md) and [the React client's
-guide's](apps/symphony-web/AGENTS.md).
+stays the same from any checkout, and the builds a distribution keeps, is [the client's
+guide's](apps/symphony-web/AGENTS.md#the-build-and-the-distribution).
 
 `just verify` runs every check the release run does, each step with a log of its own
 (`tools/verify.sh`): the release run's full verification, never a task's gate
@@ -114,12 +116,11 @@ guide's](apps/symphony-web/AGENTS.md).
 ### What it needs installed
 
 Local acceptance requires a working Chrome executable (installed, or named with `SYMPHONY_CHROME`,
-so a missing browser cannot pass as acceptance not run) and the React client's pinned Node (on
+so a missing browser cannot pass as acceptance not run) and the client's pinned Node (on
 PATH, or fnm to fetch it once: `tools/node.sh`); the consuming project's binaries are not
-prerequisites. The client build needs Git, Bash, jq, curl and a C/C++ build toolchain, and native
-board fixtures need lsof and the pinned SurrealDB (`tools/surreal.sh`, or `SYMPHONY_SURREAL`). A
-Linux build host makes the release snapshots' parent folder first (`sudo install -d -m 1777
-/private/tmp`). This repository has no hosted GitHub CI requirement.
+prerequisites. The client build needs Git, Bash and jq, and native
+board fixtures need lsof and the pinned SurrealDB (`tools/surreal.sh`, or `SYMPHONY_SURREAL`).
+This repository has no hosted GitHub CI requirement.
 
 ## This repository as its own project
 
@@ -173,7 +174,8 @@ not a question in chat.
 
 **Releases.** A land starts a release run (`just release`, below) once `[releases]
 every_landings` tasks (20) have landed since the last release or run ([the
-cadence](docs/RELEASES.md#the-cadence)), and a green release refreshes the machine: each consuming
+cadence](docs/RELEASES.md#the-cadence)), and a green release refreshes the machine: the release
+installed in the machine folder ([the install](docs/RELEASES.md#the-install)), each consuming
 project's pin, main and board, and the shared server by its own reload ([the
 refresh](docs/RELEASES.md#the-refresh)). Running a release run or `--commit` by hand, installing
 its schedule and turning `[releases] publish` on are the owner's call; an orchestrator reruns
@@ -221,22 +223,21 @@ skills name (`crates/symphony/shipped/symphony.just`: `tasks`, `agent-send`, `sy
 `land`), which the project's justfile imports; a recipe of the project's own of the same name
 wins, and so does an unstamped copy of a file it writes. What it writes, keeps current, retires
 and refuses, and the `Next:` it ends with, is the module doc of `crates/symphony/src/init.rs`. Each
-recipe and hook runs the project's build linked at `.target/bin/NAME`, else the main checkout's
-link from a linked worktree, else NAME on PATH (`crates/symphony/src/builds.rs`), and builds
-nothing.
+recipe runs the project's build linked at `.target/bin/NAME`, else the main checkout's link from
+a linked worktree, else the release installed on the machine (`current/bin/NAME` in the machine
+folder, [RELEASES](docs/RELEASES.md#the-install)), else NAME on PATH
+(`crates/symphony/src/builds.rs`), and builds nothing; a hook finds `symphony` by the links, else
+on PATH.
 
-**What an agent is told, and where.** An executor's whole prompt is `/work SLUG HANDLE`, a
-reviewer's `/review-task SLUG HANDLE` and an assessor's `/assess-task SLUG HANDLE`. What holds for
-every task here is standing and committed, so every orchestrator's agents work under the same
-words and a change to them is a commit: a rule in [RULES.md](RULES.md), guidance here, in a
-package's guide or in [CHECKS](docs/CHECKS.md), and what one role alone needs in `project.md`
-beside that role's installed skill (`.agents/skills/work/project.md`,
-`.agents/skills/review-task/project.md`), which the skill reads first. That page is the
-project's own: init writes and retires only the files a skill's stamp names, and never a file
-beside them. What is one task's alone (another task on the same files and who merges whose
-landing, a finding since the brief, a file to leave alone) goes in its brief or on its thread,
-never in a prompt, and an orchestrator keeps no standing brief of its own in a prompt or a
-scratch file: an instruction it writes a second time belongs in one of those places.
+**What an agent is told, and where.** What a launch prompt carries, and where what is one task's
+alone goes instead, is step 5 of [the orchestrator's
+skill](.agents/skills/task-orchestrator/SKILL.md). What holds for every task here is standing and
+committed, so every orchestrator's agents work under the same words and a change to them is a
+commit: a rule in [RULES.md](RULES.md), guidance here, in a package's guide or in
+[CHECKS](docs/CHECKS.md), and what one role alone needs in `project.md` beside that role's
+installed skill (`.agents/skills/work/project.md`, `.agents/skills/review-task/project.md`),
+which the skill reads first. That page is the project's own: init writes and retires only the
+files a skill's stamp names, and never a file beside them.
 
 The allow rules pass the board and reply recipes (`tasks`, `agent-send`, `symphony-status`,
 `symphony-reply`, `symphony-ask`) and `land` with no prompt, and not the two server recipes:

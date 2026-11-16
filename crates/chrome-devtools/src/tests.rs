@@ -349,6 +349,10 @@ fn a_browser_that_ended_is_reaped_only_after_the_kill_of_its_group() {
             began.elapsed() < Duration::from_secs(30),
             "the browser ran on"
         );
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "no-timed-waits baseline: a test looks again for its condition by hand, where test_time::wait::until is the helper"
+        )]
         std::thread::sleep(POLL);
     }
     // SAFETY: signal 0 to this test's own unreaped child sends nothing.
@@ -365,6 +369,10 @@ fn a_browser_that_ended_is_reaped_only_after_the_kill_of_its_group() {
             killed.elapsed() < Duration::from_secs(10),
             "its helper lives"
         );
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "no-timed-waits baseline: a test looks again for its condition by hand, where test_time::wait::until is the helper"
+        )]
         std::thread::sleep(POLL);
     }
     assert!(
@@ -401,6 +409,10 @@ fn a_stopped_browser_has_not_ended() {
     let began = Instant::now();
     let mut killed = false;
     while !killed && began.elapsed() < Duration::from_secs(10) {
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "no-timed-waits baseline: a test looks again for its condition by hand, where test_time::wait::until is the helper"
+        )]
         std::thread::sleep(POLL);
         killed = crate::exited(id).unwrap();
     }
@@ -690,37 +702,114 @@ fn a_browser_that_never_opens_devtools_stalls_its_wait_at_the_backstop() {
     );
 }
 
-/// The same stall through a whole launch: it fails with the stall first and the launch's
-/// diagnostics after, and leaves no browser, leash or profile behind.
-#[test]
-fn a_launch_whose_browser_never_opens_devtools_fails_as_a_stall() {
-    let binary = stand_in_binary(ASLEEP);
-    let failure = Chrome::launch_within(binary.to_str().unwrap(), &leash(), Duration::from_secs(1))
-        .err()
-        .expect("a browser that never opens DevTools must fail its launch");
-    std::fs::remove_file(&binary).unwrap();
-    let failure = failure.to_string();
+/// The stall of one start, as its launch's failure says it: the pid it names, Chrome's or, on a
+/// machine too loaded to have started it, its leash's, leads a group no process is left in, as the
+/// launch ended it before it returned.
+#[track_caller]
+fn a_stall_ended(start: &str) {
     assert!(
-        failure.starts_with(
+        start.starts_with(
             "Chrome DevTools readiness: Chrome stalled before DevTools port readiness: "
         ),
-        "{failure}"
+        "{start}"
     );
     assert!(
-        failure.contains("the launch's wall-clock backstop of 1.0s ran out after "),
-        "{failure}"
+        start.contains("the launch's wall-clock backstop of 1.0s ran out after "),
+        "{start}"
     );
-    assert!(failure.contains("; load average "), "{failure}");
-    assert!(failure.contains("; leash="), "{failure}");
-    // The pid it names, Chrome's or, on a machine too loaded to have started it, its leash's,
-    // leads a group no process is left in: the launch ended them before it returned.
-    let pid: u32 = failure
+    assert!(start.contains("; load average "), "{start}");
+    assert!(start.contains("; leash="), "{start}");
+    let pid: u32 = start
         .split_once("(pid ")
         .and_then(|(_, rest)| rest.split_once(')'))
         .and_then(|(pid, _)| pid.parse().ok())
-        .unwrap_or_else(|| panic!("no pid in {failure}"));
-    assert!(process::members(pid).unwrap().is_empty(), "{failure}");
+        .unwrap_or_else(|| panic!("no pid in {start}"));
+    assert!(process::members(pid).unwrap().is_empty(), "{start}");
+}
+
+/// What a launch's failure says after a first start that stalled: the second start's failure,
+/// then the stall before it, ended.
+#[track_caller]
+fn after_a_stall(failure: &str) -> &str {
+    let (second, first) = failure
+        .split_once("; the start before it: ")
+        .unwrap_or_else(|| panic!("no start before it in {failure}"));
+    a_stall_ended(first);
+    second
+}
+
+/// The same stall through a whole launch, on each of its two starts: it fails as a stall, with the
+/// second stall first and the first after, each with its diagnostics, and leaves no browser, leash
+/// or profile behind.
+#[test]
+fn a_launch_whose_browser_never_opens_devtools_fails_as_a_stall() {
+    let binary = stand_in_binary(ASLEEP);
+    let asleep = (binary.to_str().unwrap(), Duration::from_secs(1));
+    let failure = Chrome::launch_within(&leash(), [asleep; 2])
+        .err()
+        .expect("a browser that never opens DevTools must fail its launch");
+    std::fs::remove_file(&binary).unwrap();
+    assert!(failure.stalled(), "{failure}");
+    let failure = failure.to_string();
+    a_stall_ended(after_a_stall(&failure));
     eprintln!("stalled launch: {failure}");
+}
+
+/// A launch whose first start stalls starts Chrome once more: a second start that exits fails the
+/// launch at once with that exit, not as a stall, and names the stall before it. The exit is
+/// waited for as a launch waits, so only its own stall could end it sooner.
+#[test]
+fn a_launch_whose_first_start_stalls_starts_chrome_again_and_names_both_when_that_fails() {
+    let asleep = stand_in_binary(ASLEEP);
+    let exits = stand_in_binary("#!/bin/sh\nprintf 'second start gave up\\n' >&2\nexit 3\n");
+    let failure = Chrome::launch_within(
+        &leash(),
+        [
+            (asleep.to_str().unwrap(), Duration::from_secs(1)),
+            (exits.to_str().unwrap(), LAUNCH_BACKSTOP),
+        ],
+    )
+    .err()
+    .expect("a second start that exits must fail the launch");
+    std::fs::remove_file(&asleep).unwrap();
+    std::fs::remove_file(&exits).unwrap();
+    assert!(!failure.stalled(), "{failure}");
+    let failure = failure.to_string();
+    let second = after_a_stall(&failure);
+    assert!(
+        second.starts_with(
+            "Chrome DevTools readiness: Chrome's leash exited exit status: 3 before DevTools port \
+             readiness; "
+        ),
+        "{failure}"
+    );
+    assert!(second.contains("second start gave up"), "{failure}");
+}
+
+/// A launch whose first start stalls runs on the Chrome it starts next, on a profile of its own.
+#[test]
+fn a_launch_whose_first_start_stalls_runs_on_the_chrome_it_starts_again() {
+    let Some(real) = find() else {
+        eprintln!("no Chrome: real browser capability unavailable");
+        return;
+    };
+    let asleep = stand_in_binary(ASLEEP);
+    let launched = Chrome::launch_within(
+        &leash(),
+        [
+            (asleep.to_str().unwrap(), Duration::from_secs(1)),
+            (&real, LAUNCH_BACKSTOP),
+        ],
+    );
+    std::fs::remove_file(&asleep).unwrap();
+    let mut chrome = launched.unwrap();
+    chrome.open("data:text/html,<p>started again</p>").unwrap();
+    assert_eq!(
+        chrome
+            .eval("document.querySelector('p').textContent")
+            .unwrap(),
+        json!("started again")
+    );
 }
 
 /// Set on the run of [`a_quiet_leash_keeps_its_reports_off_the_launchers_stderr`] that launches.
@@ -1309,6 +1398,10 @@ wait "$helper"
                     }
                     assert_eq!(error.kind(), ErrorKind::PermissionDenied, "{error}");
                 }
+                #[expect(
+                    clippy::disallowed_methods,
+                    reason = "no-timed-waits baseline: a test looks again for its condition by hand, where test_time::wait::until is the helper"
+                )]
                 std::thread::sleep(POLL);
             }
             // The leash's exit is the boundary under test. Waiting here for a leaked
@@ -3182,6 +3275,10 @@ fn a_real_page_blocked_in_its_renderer_spends_nothing_and_a_stopped_browser_ends
     let started = Instant::now();
     let late = release.clone();
     let releaser = std::thread::spawn(move || {
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "no-timed-waits baseline: a test releases what it holds after a length of time"
+        )]
         std::thread::sleep(Duration::from_secs(3));
         late.send(()).unwrap();
     });

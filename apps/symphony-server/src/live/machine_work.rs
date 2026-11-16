@@ -71,6 +71,10 @@ pub(super) struct Sampler {
     /// The reader was named (`SYMPHONY_MACHINE_WORK_READER`): it must answer, where the project's
     /// path may hold none.
     supplied: bool,
+    /// How long the reader is given to answer a scan
+    /// ([`symphony_board::cli::probes::NATIVE_READER_WAIT`]); a test of anything but that deadline
+    /// gives it a stall's backstop.
+    wait: Duration,
     identity: Option<Result<String, String>>,
     revisions: BTreeMap<String, Vec<u8>>,
     /// The nonces among `revisions` the board's own recorder wrote.
@@ -88,6 +92,7 @@ impl Sampler {
             projection: Projection::new(64, HISTORY_LIMIT, 10_000),
             reader: Self::reader(root, supplied),
             supplied: supplied.is_some(),
+            wait: symphony_board::cli::probes::NATIVE_READER_WAIT,
             identity: None,
             revisions: BTreeMap::new(),
             recorded: BTreeSet::new(),
@@ -241,10 +246,12 @@ impl Sampler {
                 Some(reader) if self.supplied || reader.exists() => {
                     let mut env = symphony::children::board_env();
                     env.cwd = root.to_path_buf();
-                    let bytes = symphony_board::cli::probes::native_inventory(&env, reader, common)
-                        .map_err(|error| {
-                            format!("native inventory reader {}: {error}", reader.display())
-                        })?;
+                    let bytes = symphony_board::cli::probes::native_inventory(
+                        &env, reader, common, self.wait,
+                    )
+                    .map_err(|error| {
+                        format!("native inventory reader {}: {error}", reader.display())
+                    })?;
                     Some(bytes)
                 }
                 _ => None,
@@ -305,30 +312,39 @@ impl Sampler {
 }
 
 impl Hub {
-    /// One tick's read of the board on `store`.
+    /// One tick's read of the board on `store`. On a board ahead of this build's schema
+    /// ([`Hub::read_ahead`]) it reads alone: no chat journal, owner's asks, callbacks or gives are
+    /// written, as the schema rule would refuse each.
     pub(crate) fn board_read(&self, store: &symphony_board::Store) -> Result<(), String> {
-        if let Some(callbacks) = self
-            .callbacks
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .as_mut()
+        let ahead = self.read_ahead(store).is_some();
+        if !ahead
+            && let Some(callbacks) = self
+                .callbacks
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .as_mut()
             && let Err(error) = measured("chat journal", || callbacks.flush(&self.root))
         {
             eprintln!("CHAT deferred: {error}");
         }
-        self.keep_asks(store);
+        if !ahead {
+            self.keep_asks(store);
+        }
         self.health.reading(store.client().queries());
-        let dispatched = measured("callbacks", || store.dispatch_callbacks_snapshot());
         let now = self.now();
-        let snapshot = match dispatched {
-            Ok(snapshot) => {
-                self.health.dispatched(now, Ok(()));
-                snapshot
-            }
-            Err(error) => {
-                eprintln!("CALLBACK deferred: {error}");
-                self.health.dispatched(now, Err(&error.to_string()));
-                None
+        let snapshot = if ahead {
+            None
+        } else {
+            match measured("callbacks", || store.dispatch_callbacks_snapshot()) {
+                Ok(snapshot) => {
+                    self.health.dispatched(now, Ok(()));
+                    snapshot
+                }
+                Err(error) => {
+                    eprintln!("CALLBACK deferred: {error}");
+                    self.health.dispatched(now, Err(&error.to_string()));
+                    None
+                }
             }
         };
         self.tell_health(now);
@@ -340,7 +356,7 @@ impl Hub {
         // Each tick gives the open tasks no orchestrator holds on the board it read, when one that
         // stays could take them ([`symphony_board::Store::give_if_due`]): every project the server
         // serves, whatever starts its sweeps. The give's own write delivers its GIVEN line.
-        let snapshot = match store.give_if_due(&snapshot) {
+        let snapshot = match !ahead && store.give_if_due(&snapshot) {
             true => read()?,
             false => snapshot,
         };

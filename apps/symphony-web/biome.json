@@ -4,5 +4,55 @@
   "vcs": { "enabled": true, "clientKind": "git", "useIgnoreFile": true },
   "files": { "includes": ["**", "!package-lock.json"] },
   "formatter": { "indentStyle": "space", "indentWidth": 2, "lineWidth": 100 },
-  "linter": { "domains": { "react": "recommended", "test": "recommended" } }
+  "plugins": ["./no-timed-waits.grit"],
+  "linter": {
+    "domains": { "react": "recommended", "test": "recommended" },
+    "rules": {
+      "style": {
+        "noRestrictedGlobals": {
+          "level": "error",
+          "options": {
+            "deniedGlobals": {
+              "setTimeout": "RULES.md code/no-timed-waits: wait for the event itself, or through a helper of src/timing.ts (a retry's wait, a deadline, a debounce, a clock's tick)",
+              "setInterval": "RULES.md code/no-timed-waits: wait for the event itself, or through a helper of src/timing.ts (a retry's wait, a deadline, a debounce, a clock's tick)"
+            }
+          }
+        },
+        "noRestrictedImports": {
+          "level": "error",
+          "options": {
+            "paths": {
+              "./timing": {
+                "importNames": ["sleep"],
+                "message": "RULES.md code/no-timed-waits: sleep is the baseline's alone; wait for the event itself, or through a named helper of src/timing.ts"
+              },
+              "../timing": {
+                "importNames": ["sleep"],
+                "message": "RULES.md code/no-timed-waits: sleep is the baseline's alone; wait for the event itself, or through a named helper of src/timing.ts"
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "overrides": [
+    {
+      "includes": ["src/styles/board.css", "src/styles/frame.css"],
+      "formatter": { "enabled": false }
+    },
+    {
+      "includes": ["src/styles/**"],
+      "linter": {
+        "rules": {
+          "style": { "noDescendingSpecificity": "off" },
+          "complexity": { "noImportantStyles": "off" }
+        }
+      }
+    },
+    {
+      "includes": ["src/timing.ts"],
+      "linter": { "rules": { "style": { "noRestrictedGlobals": "off" } } }
+    }
+  ]
 }

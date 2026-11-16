@@ -5,9 +5,9 @@
 //! judged by checks this repository owns, never by a consuming project's suite. Every red check,
 //! and a run that stopped short of deciding, is a task on the board ([`board`]); when every check
 //! is green it tags the commit as the next release (`release-YYYY-MM-DD`, [`tags`]) with what it
-//! holds ([`notes`]) and pushes that one tag, then refreshes the projects the machine serves to it
-//! ([`refresh`], [`consumers`]). `--commit COMMIT` does the same out of cycle for a commit already
-//! on the remote's main and past the newest release. A run of main's tip red in a check holds that
+//! holds ([`notes`]) and pushes that one tag, then installs it on the machine ([`install`]) and
+//! refreshes the projects the machine serves to it ([`refresh`], [`consumers`]). `--commit COMMIT`
+//! does the same out of cycle for a commit already on the remote's main and past the newest release. A run of main's tip red in a check holds that
 //! commit as the release candidate ([`candidate`]) while its reds are fixed: until each is answered
 //! no run checks main's tip, and then the candidate is rerun, with what its fixes changed, and
 //! released or held again. Each run is recorded in the git common dir ([`record`]), which
@@ -38,6 +38,7 @@ mod failures;
 mod git;
 mod gone;
 mod group;
+mod install;
 mod notes;
 mod pin;
 mod place;
@@ -82,7 +83,8 @@ const HELP: &str =
     "Symphony's releases: main's tip as fetched from the remote, verified in a clean \
 checkout outside the repository's folder, building and testing nothing of the projects this \
 machine serves; each red check filed on the board as tests/release-red-NAME, and a green commit \
-tagged release-YYYY-MM-DD and pushed, then the machine refreshed to it: each project's pin moved \
+tagged release-YYYY-MM-DD and pushed, then the machine refreshed to it: the release built and \
+installed in the machine folder, each project's pin moved \
 on a branch through its own commit gate, its main fast-forwarded to it in its main checkout \
 when that is on its main and clean, and its board moved to the schema of the pin its main locks. \
 A run red in a check holds its commit as the release candidate, the local branch \
@@ -732,6 +734,16 @@ fn status(
     }
     let _ = write!(out, "{}", record::publish_status(&runs, now));
     let _ = write!(out, "{}", record::refresh_status(&runs, now));
+    // Whether the machine's server is the release `current` names, or what holds it on a
+    // project's build ([`symphony::machine::switch`]).
+    match symphony::machine::dir() {
+        Ok(machine) => {
+            let _ = write!(out, "{}", symphony::machine::switch::standing(&machine));
+        }
+        Err(problem) => {
+            let _ = writeln!(out, "machine: {problem}");
+        }
+    }
     0
 }
 
@@ -1352,30 +1364,118 @@ impl Refreshing<'_> {
         }
         self.hold_for(PUBLISH);
         let until = Bound::hearing(Instant::now() + PUBLISH, self.heard);
-        let (repo, options) = (self.repo, self.options);
-        let mut place = match place::place(&repo.root, &repo.main, &repo.common, &options.worktree)
-        {
+        let place = match self.checkout_at(commit, until, out) {
             Ok(place) => place,
-            Err(why) => return not(format!("the run's checkout: {why}")),
+            Err(why) => return not(why),
         };
-        if let Err(Stop::Refused(why) | Stop::Error(why) | Stop::InUse(why)) = unused(&place, until)
-        {
-            return not(why);
-        }
-        match place.checkout(&repo.root, &repo.common, commit, until, options.now) {
-            Ok(noted) => note(out, &noted),
-            Err(why) => return not(format!("the run's checkout: {why}")),
-        }
         let cargo = std::env::var_os(crates::PUBLISHER).unwrap_or_else(|| "cargo".into());
         let log = record::logs(self.folder, id).join("publish.log");
         let registry = crates::Registry::of_env();
         crates::publish(&place.checkout, tag, &registry, &cargo, &log, until)
     }
 
+    /// The run's own checkout brought to `commit` by `until` (a later run may have left it
+    /// elsewhere), unused by any process, what that noted said on `out`.
+    fn checkout_at(
+        &self,
+        commit: &str,
+        until: Bound<'_>,
+        out: &mut dyn Write,
+    ) -> Result<Place, String> {
+        let (repo, options) = (self.repo, self.options);
+        let mut place = place::place(&repo.root, &repo.main, &repo.common, &options.worktree)
+            .map_err(|why| format!("the run's checkout: {why}"))?;
+        if let Err(Stop::Refused(why) | Stop::Error(why) | Stop::InUse(why)) = unused(&place, until)
+        {
+            return Err(why);
+        }
+        let noted = place
+            .checkout(&repo.root, &repo.common, commit, until, options.now)
+            .map_err(|why| format!("the run's checkout: {why}"))?;
+        note(out, &noted);
+        Ok(place)
+    }
+
+    /// The release `tag` (`commit`) installed on the machine by the run `id` ([`install`]), each
+    /// line of it said: built in the run's own checkout, brought to `commit` first. None on the
+    /// tests' clock without their stand-in for cargo, so no test builds the workspace.
+    fn install(
+        &self,
+        id: &str,
+        tag: &str,
+        commit: &str,
+        until: Bound<'_>,
+        out: &mut dyn Write,
+    ) -> Option<install::Installed> {
+        let builder = std::env::var_os(install::BUILDER);
+        if std::env::var_os(CLOCK).is_some() && builder.is_none() {
+            return None;
+        }
+        let logs = record::logs(self.folder, id);
+        let never = |why: String| {
+            let _ = fs::create_dir_all(&logs);
+            install::Installed {
+                said: vec![format!("not installed: {why}")],
+                ran: Ran::never(&install::step(tag), &install::log(&logs), why),
+            }
+        };
+        let installed = match symphony::machine::dir() {
+            Err(why) => never(format!("the machine folder cannot be named: {why}")),
+            Ok(machine) => match self.checkout_at(commit, until, out) {
+                Err(why) => never(why),
+                Ok(place) => install::install(&install::Install {
+                    checkout: &place.checkout,
+                    machine: &machine,
+                    tag,
+                    commit,
+                    logs: &logs,
+                    builder: builder.as_deref(),
+                    until,
+                }),
+            },
+        };
+        for line in &installed.said {
+            let _ = writeln!(out, "release: refresh: {line}");
+        }
+        let ran = &installed.ran;
+        let why = (ran.error.as_ref()).map_or_else(String::new, |why| format!(": {why}"));
+        let _ = writeln!(
+            out,
+            "release: {} {} ({:.0} s){why}; log {}",
+            ran.name,
+            if ran.green() { "green" } else { "red" },
+            ran.seconds,
+            ran.log.display()
+        );
+        Some(installed)
+    }
+
     /// The machine refreshed to the release `tag` (`commit`) by the run `id`, within [`REFRESH`]
-    /// from now, which the lock's word is made to cover, so no later run takes it for stuck.
+    /// from now, which the lock's word is made to cover, so no later run takes it for stuck: the
+    /// release installed on the machine first ([`Refreshing::install`]), its step and lines the
+    /// refresh's first, then each project.
     fn to(&self, id: &str, tag: &str, commit: &str, out: &mut dyn Write) -> record::Refresh {
         self.hold_for(REFRESH);
+        let until = Bound::hearing(Instant::now() + REFRESH, self.heard);
+        let installed = self.install(id, tag, commit, until, out);
+        let mut refresh = self.projects(id, tag, commit, until, out);
+        if let Some(installed) = installed {
+            refresh.steps.insert(0, installed.ran);
+            refresh.said.splice(0..0, installed.said);
+        }
+        refresh
+    }
+
+    /// [`Refreshing::to`]'s projects: each one the machine serves refreshed to the release, by
+    /// `until`.
+    fn projects(
+        &self,
+        id: &str,
+        tag: &str,
+        commit: &str,
+        until: Bound<'_>,
+        out: &mut dyn Write,
+    ) -> record::Refresh {
         let name = (self.options.worktree.file_name())
             .map_or_else(|| "release".into(), |name| name.to_string_lossy());
         let trees = place::real(
@@ -1397,7 +1497,7 @@ impl Refreshing<'_> {
             trees: &trees,
             logs: &logs,
             surreal: Some(&surreal),
-            until: Bound::hearing(Instant::now() + REFRESH, self.heard),
+            until,
         };
         refresh::release(&against, out)
     }
@@ -1465,6 +1565,10 @@ fn held(
     let living = || record::holder(folder).filter(|holder| pid_alive(i64::from(holder.pid)));
     let mut holder = living();
     while holder.is_none() && Instant::now() < said_by {
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "no-timed-waits baseline: looks again for the folder's holder to say itself, which no event announces"
+        )]
         std::thread::sleep(group::POLL);
         holder = living();
     }
@@ -2056,6 +2160,10 @@ fn regenerated(
         .and_then(|seconds| seconds.parse::<u64>().ok())
         .map_or(REGENERATOR, Duration::from_secs);
     let pause = || {
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "no-timed-waits baseline: the release run looks again for the regenerator each period, which no event announces"
+        )]
         std::thread::sleep(REGENERATING.min(until.until.saturating_duration_since(Instant::now())));
     };
     // Whether the main checkout's branch was the candidate at a look: from then on its moves are

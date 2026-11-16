@@ -110,6 +110,18 @@ word, and stays a linked plugin's to answer. Each is answered from a process onc
 declares it from one. So is a plugin refused that declares another name than the one
 `[plugins.process]` gives it.
 
+## The host
+
+Any host serves a plugin that answers from its process, whatever it was built with: the rule that
+judges a host for a project (`crates/symphony/src/machine/host.rs`) counts a plugin the project's
+main checkout gives a `[plugins.process]` command as served, read from its file each time it
+judges. A linked plugin is served only by a build that compiles it, a project's own. The server of
+a release installed on the machine compiles none, so it serves a project only when every plugin
+the project names answers from a process; a project naming a linked one is registered and refused
+there, its pages naming the command that would let the release serve it. While one does, the
+machine's server stays a project's build ([the switch](RELEASES.md#the-switch)), and every project
+naming a linked plugin says so on its pages.
+
 ## Its process
 
 The host starts a plugin's process when it first needs what the plugin declared (a project's load
@@ -306,8 +318,8 @@ request: a plugin of 0.2 is asked them card by card, and answers the same.
 
   The compiler does not refuse a build of this workspace in which a kind has no arm, as each
   match outside the kit ends with `_`, so tests do. `crates/symphony-api/tests/vocabulary_drawn.rs` reads each list from the kit's source
-  and fails on a variant that a match on it in the server, the wire types or the Dioxus client
-  does not name. The React client is held by its types, written from the same lists: its
+  and fails on a variant that a match on it in the server or the wire types
+  does not name. The client is held by its types, written from the same lists: its
   switches end in a value of type `never` and its tables name every kind, so a kind it does not
   draw fails its type check, and `blocks.test.tsx` fails until the sample the wire types' example
   writes holds the kind and it is drawn. A kind a client does not know, sent by a newer server, is

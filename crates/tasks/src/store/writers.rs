@@ -5,7 +5,7 @@
 //!
 //! The line arrives with schema [`SINCE`]: a build below it never writes one, and a board below it
 //! has no table to hold one. It is read in the opening's one read of the board's schema
-//! ([`OPENING`]) and written only when it is missing, names another schema, or is [`EVERY`] old, so a
+//! ([`sql::OPENING`]) and written only when it is missing, names another schema, or is [`EVERY`] old, so a
 //! board command adds no request in the common case and "last seen" is good to the hour. A writer
 //! refused a board behind its build (a project's live board that only `tasks migrate` moves) still
 //! writes its line, so a rebuilt writer stops counting as behind once it has run; one refused a board
@@ -13,6 +13,7 @@
 //! is written without the schema guard, as builds of other schemas write it; it has no event, so a
 //! line written moves no board marker. Its times are this machine's clock ([`seen_now`]).
 
+use super::surreal::writers as sql;
 use super::{Failure, Store};
 use crate::board_health::ago;
 use crate::schema::{Access, Schema};
@@ -107,23 +108,12 @@ pub(super) struct Kept {
     seen: f64,
 }
 
-/// The opening's one read: the board's schema version, or NONE before its tables are made, and the
-/// line of the writer `[$host, $path]`, or NONE, or `false` where the table is not there.
-pub(super) const OPENING: &str = "LET $tables = (INFO FOR DB).tables;
-RETURN [IF $tables.meta = NONE { NONE } ELSE { (SELECT VALUE version FROM ONLY meta:schema) }, IF $tables.writer = NONE { false } ELSE { (SELECT schema, seen FROM ONLY type::record('writer', [$host, $path])) }];";
-
-/// Every writer's line, or none where the table is not there.
-const LINES: &str = "RETURN IF (INFO FOR DB).tables.writer = NONE { [] } ELSE { (SELECT program, path, host, schema, seen FROM writer) };";
-
-/// A writer's line, made or replaced.
-const WRITE_LINE: &str = "UPSERT type::record('writer', [$host, $path]) CONTENT { program: $program, path: $path, host: $host, schema: $schema, seen: $seen } RETURN NONE;";
-
 /// The opening's read's variables, for `program` on `host`.
 pub(super) fn opening_vars(program: &Program, host: &str) -> Value {
     json!({"host": host, "path": program.path})
 }
 
-/// The board's version and the line [`OPENING`] answered with.
+/// The board's version and the line [`sql::OPENING`] answered with.
 pub(super) fn opened(answer: &[Value]) -> (Option<i64>, Line) {
     let pair = answer.last().and_then(Value::as_array);
     let found = pair.and_then(|pair| pair.first()).and_then(Value::as_i64);
@@ -199,7 +189,7 @@ impl Store {
     }
 
     fn writer_lines(&self) -> Result<Vec<Writer>, Failure> {
-        let found = self.client.query(LINES, json!({}))?;
+        let found = self.request(sql::LINES, json!({}))?;
         let lines = found.last().cloned().unwrap_or(Value::Null);
         serde_json::from_value(lines)
             .map_err(|e| Failure::Stop(super::Error::Db(format!("a writer's line: {e}"))))
@@ -233,8 +223,8 @@ impl Store {
         if !due(line, schema.version(), now) {
             return;
         }
-        let _ = self.client.query(
-            WRITE_LINE,
+        let _ = self.request(
+            sql::WRITE_LINE,
             json!({
                 "host": self.host,
                 "path": program.path,

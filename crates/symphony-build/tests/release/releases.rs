@@ -469,14 +469,18 @@ fn the_status_reads_the_record_and_the_tags_and_changes_nothing() {
     let out = fixture.run(NOW, &["--status"], 0);
     assert_eq!(
         out,
-        "newest release: none yet\nlast run: none yet\nlast green: none recorded\n\
-         release candidate: off ([releases] candidate_reruns or candidate_hours is 0): a red run \
-         holds none\n\
-         landings: 0 on origin/main since the line's start: no release and no run on record, so \
-         every landing counts\n\
-         next run: after 20 more landings (0 of 20), or the scheduled run\n\
-         last publish: none recorded\n\
-         last refresh: none recorded\n"
+        format!(
+            "newest release: none yet\nlast run: none yet\nlast green: none recorded\n\
+             release candidate: off ([releases] candidate_reruns or candidate_hours is 0): a red \
+             run holds none\n\
+             landings: 0 on origin/main since the line's start: no release and no run on record, \
+             so every landing counts\n\
+             next run: after 20 more landings (0 of 20), or the scheduled run\n\
+             last publish: none recorded\n\
+             last refresh: none recorded\n\
+             machine: no release is installed in {}: a project's build is the machine's server\n",
+            fixture.root.join("machine").display()
+        )
     );
     fixture.night(NOW, 0);
     let green = fixture.land("notes.txt", Some("n"), "n");
@@ -519,6 +523,11 @@ fn the_status_reads_the_record_and_the_tags_and_changes_nothing() {
         "last publish: of release-2026-11-12.2 by the run {}, 2026-11-12 11:00 (4 h ago)",
         fixture.runs()[1]["id"].as_str().unwrap()
     );
+    // Last, the machine's server: none of the runs installs a release in the fixture's folder.
+    let machine = format!(
+        "machine: no release is installed in {}: a project's build is the machine's server",
+        fixture.root.join("machine").display()
+    );
     assert_eq!(
         lines[3..],
         [
@@ -534,6 +543,7 @@ fn the_status_reads_the_record_and_the_tags_and_changes_nothing() {
             published.as_str(),
             "  not published: [releases] publish is off",
             "last refresh: none recorded",
+            machine.as_str(),
         ]
     );
     let late = fixture.run(NOW + 2.0 * DAY, &["--status"], 0);

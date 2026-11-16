@@ -130,3 +130,52 @@ fn a_server_ends_with_its_named_test_process_even_while_its_parent_lives() {
     assert!(!repo.tree.join("artifacts/docs-app.port").exists());
     assert!(front(actual.port).is_none());
 }
+
+/// A release installed in `repo`'s machine folder as an install leaves it
+/// ([`super::release_tests::installed`]): the server in it, through the `current` link.
+fn installed_release(repo: &Repo, name: &str, mark: &str) -> PathBuf {
+    super::release_tests::installed(repo, name, mark, None);
+    repo.home.join("current/bin/symphony-server")
+}
+
+#[test]
+fn a_server_run_from_an_installed_release_serves_the_client_beside_it() {
+    let repo = Repo::new("released-client");
+    let serve = |binary: &Path| {
+        let mut released = Command::new(binary);
+        released
+            .current_dir(&repo.tree)
+            .env_clear()
+            .envs(repo.environment())
+            .stdin(Stdio::null())
+            .args(["--root", repo.tree.to_str().unwrap()])
+            .args(["--port", "0", "--host", "127.0.0.1"]);
+        repo.run(released)
+    };
+    let first = installed_release(&repo, "release-1", "first");
+    let mut server = serve(&first);
+    let port = server.ready().port;
+    let (status, page) = answer(port, "/");
+    assert_eq!(status, 200, "{page}");
+    // The release's own page, the project's shell written into it.
+    assert!(
+        page.contains("src=\"/assets/app-first.js\"") && page.ends_with("first</body></html>"),
+        "{page}"
+    );
+    let (status, file) = answer(port, "/assets/app-first.js");
+    assert_eq!((status, file.as_str()), (200, "console.log('first')"));
+    server.signal(libc::SIGTERM);
+    server.success();
+    // Another release, another client: nothing of the first is compiled into the server.
+    let second = installed_release(&repo, "release-2", "second");
+    let mut server = serve(&second);
+    let port = server.ready().port;
+    let (_, page) = answer(port, "/");
+    assert!(page.ends_with("second</body></html>"), "{page}");
+    assert_eq!(
+        get(port, "/assets/app-first.js").map(|got| got.0),
+        Some(404)
+    );
+    server.signal(libc::SIGTERM);
+    server.success();
+}

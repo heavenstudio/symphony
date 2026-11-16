@@ -42,11 +42,8 @@ fn look(store: &Store, handle: &str) -> Vec<String> {
 
 /// Whether a dispatcher holds `handle`'s lease now, by the board's clock.
 fn leased(f: &Fixture, handle: &str) -> bool {
-    let until = f.store.client().query(
-        "RETURN type::record('callback_lease', $handle).until ?? 0;",
-        json!({"handle": handle}),
-    );
-    until.unwrap().remove(0).as_f64().unwrap_or(0.0) > f.now()
+    let until = f.store.raw().row("callback_lease", handle).field("until");
+    until.unwrap().as_f64().unwrap_or(0.0) > f.now()
 }
 
 /// Where in a leased dispatch the time passes:
@@ -189,11 +186,12 @@ fn a_look_whose_lease_was_taken_while_it_built_says_nothing_and_writes_nothing()
 
 /// The keys of what waits undelivered for `handle`.
 fn undelivered(f: &Fixture, handle: &str) -> Value {
-    let keys = f.store.client().query(
-        "RETURN SELECT VALUE key FROM callback_event WHERE handle = $handle AND delivered != true;",
-        json!({"handle": handle}),
-    );
-    keys.unwrap().remove(0)
+    let waiting = (f.store.raw().table("callback_event")).matching(json!({"handle": handle}));
+    let rows = waiting.fields(&["key", "delivered"]).unwrap();
+    let rows = rows.as_array().unwrap().iter();
+    (rows.filter(|row| row["delivered"] != json!(true)))
+        .map(|row| row["key"].clone())
+        .collect()
 }
 
 /// Another dispatcher takes `handle`'s lapsed lease, as a dispatcher's take does (its revision
@@ -207,10 +205,7 @@ fn take_lease(f: &Fixture, handle: &str) {
 }
 
 fn let_go(f: &Fixture, handle: &str) {
-    let released = f.store.client().query(
-        "UPDATE type::record('callback_lease', $handle) SET until = 0 RETURN NONE;",
-        json!({"handle": handle}),
-    );
+    let released = (f.store.raw().row("callback_lease", handle)).set(json!({"until": 0}));
     released.unwrap();
 }
 
@@ -239,11 +234,14 @@ fn a_delivery_whose_lease_was_taken_before_it_began_sends_nothing() {
 
 /// How many times each PULL waiting for `handle` was tried.
 fn pull_attempts(f: &Fixture, handle: &str) -> Value {
-    let attempts = f.store.client().query(
-        "RETURN SELECT VALUE attempts FROM callback_event WHERE handle = $handle AND delivered != true AND string::starts_with(key, 'pull-');",
-        json!({"handle": handle}),
-    );
-    attempts.unwrap().remove(0)
+    let waiting = (f.store.raw().table("callback_event")).matching(json!({"handle": handle}));
+    let rows = waiting.fields(&["attempts", "key", "delivered"]).unwrap();
+    let rows = rows.as_array().unwrap().iter();
+    let pulls = rows.filter(|row| {
+        let pull = (row["key"].as_str()).is_some_and(|key| key.starts_with("pull-"));
+        row["delivered"] != json!(true) && pull
+    });
+    pulls.map(|row| row["attempts"].clone()).collect()
 }
 
 #[test]

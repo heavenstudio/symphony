@@ -3,16 +3,17 @@
 // `GET /api/task-gates` (docs/TASKS.md#gates), as the Dioxus client drew them (its
 // `task_gates.rs`, gone with its task page).
 //
-// The section reads its answer when it nears the screen, and the head, the brief and the message
-// box never wait on it: a project's answer may start its landing tool. Until it has an answer it is
-// its own outline, the card with a shadow line for each gate it expects (`Room`): as many as the
-// server last answered for the task, else as this browser last drew, else four, and none when it
-// knows there are none; so the page below does not move when the gates arrive. It reads them again
-// when the task changes, one of its runs starts or ends (`workOf`), or the page's feed counts
-// another event that may change them (`nudged`), the last answer shown meanwhile, and only the
-// latest read is drawn: a newer one aborts the one before. A task nothing gates shows no section,
-// and a read that failed says so in its place while the rest of the page works. Its head's pill
-// says what the task waits on, by its status (`waitsOn`): the gates only in review.
+// The section is a part of its page (task-live.ts's `gatesPart`, in the page's store): its answer
+// is asked as the page mounts, behind neither the page's read nor the thread's, and the head, the
+// brief and the message box never wait on it. Until it has an answer it is its own outline, the
+// card with a shadow line for each gate it expects (`Room`): as many as the server last answered
+// for the task, else as this browser last drew for it, else for the last task it drew, else four,
+// and none when it knows there are none; so the page below does not move when the gates arrive.
+// The page reads them again when the task changes, one of its runs starts or ends, or its feed
+// says what may change them, the last answer shown meanwhile. A task nothing gates shows no
+// section, and a read that failed says so in its place, tried again by itself, while the rest of
+// the page works. Its head's pill says what the task waits on, by its status (`waitsOn`): the
+// gates only in review.
 //
 // Wide, a gate is one row of bounded columns, a part wrapping within its own when its words need
 // more room, so every word shows without a hover; on a phone, three lines (its name and state, its
@@ -21,7 +22,7 @@
 // (`evidence`). Plugin text keeps its own direction. Its style is gates.css; what it knows without a
 // page is gates-model.ts.
 
-import { type CSSProperties, Fragment, useEffect, useRef, useState } from "react";
+import { type CSSProperties, Fragment, useContext, useEffect, useMemo } from "react";
 import { Button } from "./button";
 import {
   byline,
@@ -37,7 +38,6 @@ import {
   pieces,
   READING,
   Room,
-  readTaskGates,
   recall,
   seenOf,
   type Waiter,
@@ -46,13 +46,13 @@ import {
   waitsOn,
 } from "./gates-model";
 import { linkable } from "./links";
-import { useMount } from "./mount";
-import { href, scoped } from "./project";
-import { Failure, getJson, said } from "./request";
-import { currentRoute } from "./route";
+import { PartsContext, type Shown, usePart } from "./parts";
+import { href } from "./project";
+import { said } from "./request";
 import { load, save } from "./storage";
-import { useVisibility, windowWidth } from "./viewport";
-import { type Gate, type GatesSeen, TASK_GATES_PATH, type TaskGates } from "./wire";
+import { gatesPart } from "./task-live";
+import { windowWidth } from "./viewport";
+import type { Gate, GatesSeen, TaskGates } from "./wire";
 
 /** The window's width in px; none where there is no window (the unit tests' Node). */
 export function width(): number | null {
@@ -80,147 +80,73 @@ export function remember(slug: string, seen: GatesSeen): void {
   save(KEPT, keep(load(KEPT) ?? "", slug, { seen, drawn }));
 }
 
-/**
- * Once an answer is drawn: the room it took in this window, kept for the next visit, and the branch
- * it was answered for told to `onBranch` with the slug, which the page matches moved branches
- * against.
- */
-export function drawn(
-  slug: string,
-  answer: TaskGates,
-  onBranch?: (slug: string, branch: string) => void,
-): void {
+/** Once an answer is drawn: the room it took in this window, kept for the next visit. */
+export function drawn(slug: string, answer: TaskGates): void {
   remember(slug, seenOf(answer));
-  if (onBranch !== undefined && answer.branch !== "") onBranch(slug, answer.branch);
+}
+
+/** What the section has of the task's gates, from its part: the server's 404 is a task it has no
+ * gates for, and the last answer stays shown while a later read fails. */
+export function gatesShown(shown: Shown<TaskGates>): Gates {
+  if (shown.value !== undefined) return { kind: "read", answer: shown.value };
+  if (shown.missing) return gatesOf({ found: null });
+  return shown.error === null ? READING : gatesOf({ failed: said(shown.error) });
 }
 
 /**
- * Read the gates of `slug`, under the page's checkout, given up with its request once `signal`
- * ends: the server's 404 is a task it has no gates for.
+ * The room the section holds for the task `slug` until its answer: what the server last answered
+ * for it (`seen`, which its page brings) with what this browser kept for it; before the page has
+ * come, what this browser kept for it, else for the last task it drew in a window as wide, else
+ * four gates.
  */
-export async function readGates(slug: string, signal: AbortSignal): Promise<Gates> {
-  const path = `${TASK_GATES_PATH}?slug=${encodeURIComponent(slug)}`;
-  try {
-    const answer = readTaskGates(await getJson(scoped(currentRoute().scope, path), signal));
-    return gatesOf(answer === null ? { failed: WORDS.unreadable } : { found: answer });
-  } catch (failure) {
-    if (failure instanceof Failure && failure.kind === "missing") return gatesOf({ found: null });
-    return gatesOf({ failed: said(failure) });
-  }
-}
-
-/**
- * The section's reads of the task `slug`: each read drops the one still running, aborting it, so
- * only the latest is drawn (`show`), and none is once the section stops or the kind's `mount` ends.
- */
-export class GatesReader {
-  private running: AbortController | null = null;
-
-  constructor(
-    private readonly slug: string,
-    private readonly show: (gates: Gates) => void,
-    private readonly mount: AbortSignal,
-  ) {}
-
-  /** Ask for the gates, dropping the read still running; settles once this read is done. */
-  async read(): Promise<void> {
-    this.running?.abort();
-    const reading = new AbortController();
-    this.running = reading;
-    // Given up by a newer read, the section's stop, or the kind's mount ending.
-    const answer = await readGates(this.slug, AbortSignal.any([reading.signal, this.mount]));
-    if (reading.signal.aborted || this.mount.aborted) return;
-    this.running = null;
-    this.show(answer);
-  }
-
-  /** Drop the read still running: the section is gone. */
-  stop(): void {
-    this.running?.abort();
-    this.running = null;
-  }
+export function roomFor(slug: string, seen: GatesSeen | null): Room {
+  const lines = load(KEPT) ?? "";
+  const own = recall(lines, slug);
+  return Room.of(seen, seen === null ? (own ?? latest(lines, width())) : own);
 }
 
 export interface TaskGatesPanelProps {
   slug: string;
-  /** The task as its page has it: its status says what the pill names (`waitsOn`). */
-  task: Waiter;
-  /** The task's `updated`: a change reads the gates again. */
-  revision: number;
+  /** The checkout the route names (`""`, the main one). */
+  scope: string;
+  /** The task as its page has it, once it has: its status says what the pill names (`waitsOn`). */
+  task: Waiter | null;
   /** What the server last answered for the task (`TaskPage.gates`): the room held until its answer. */
   seen?: GatesSeen | null;
-  /** The task's machine work (`workOf`): a change reads the gates again. */
-  work?: number;
-  /** Bumped by the page's feed for an event that may change the gates: each reads them again. */
-  nudged?: number;
-  /** Told each answer's branch, once drawn, with the slug. */
-  onBranch?: (slug: string, branch: string) => void;
+  /** Whether the page already says it loads (`GatesViewProps.quiet`). */
+  quiet?: boolean;
 }
 
-/**
- * The gates of the task `slug`, read when the section nears the screen and again when the task
- * changes (`revision`), when its machine work does (`work`) and when the page's feed counts another
- * event that may change them (`nudged`), the last answer shown meanwhile.
- */
+/** The gates of the task `slug`, a part of its page: its outline until its answer, then the gates. */
 export function TaskGatesPanel({
   slug,
+  scope,
   task,
-  revision,
   seen = null,
-  work = 0,
-  nudged = 0,
-  onBranch,
+  quiet = false,
 }: TaskGatesPanelProps) {
-  const [gates, setGates] = useState<Gates>(READING);
-  // How many times the reader asked to read again.
-  const [retried, setRetried] = useState(0);
-  const mount = useMount();
-  const [reader] = useState(() => new GatesReader(slug, setGates, mount));
-  const [room] = useState(() => Room.of(seen, kept(slug)));
-  const [near, watch] = useVisibility(false);
-  const told = useRef(onBranch);
-  told.current = onBranch;
+  const part = gatesPart(scope, slug);
+  const parts = useContext(PartsContext);
+  const gates = gatesShown(usePart(part));
+  const said = seen === null ? "" : `${seen.count} ${seen.waiting} ${seen.unsigned}`;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the room follows what the server said, by its counts
+  const room = useMemo(() => roomFor(slug, seen), [slug, said]);
+  // Once an answer is drawn, the room it took in this window, for the next visit.
   useEffect(() => {
-    void [revision, work, nudged, retried];
-    if (near) void reader.read();
-  }, [near, reader, revision, work, nudged, retried]);
-  useEffect(() => () => reader.stop(), [reader]);
-  // Once an answer is drawn, the room it took in this window, for the next visit, and the branch it
-  // was answered for, for the page's feed.
-  useEffect(() => {
-    if (gates.kind === "read") drawn(slug, gates.answer, told.current);
+    if (gates.kind === "read") drawn(slug, gates.answer);
   }, [gates, slug]);
   return (
     <div id={`gates-${slug}`} className="task-gates-slot">
-      {!near && <div className="viewport-sentinel" aria-hidden="true" ref={watch} />}
       <GatesView
         gates={gates}
         task={task}
         now={Date.now() / 1000}
         room={room}
         width={width()}
-        onRetry={() => {
-          setGates(READING);
-          setRetried((count) => count + 1);
-        }}
+        quiet={quiet}
+        onRetry={() => void parts?.read(part)}
       />
     </div>
-  );
-}
-
-/**
- * The section on the task's ghost, before its page is read: the outline the section itself draws
- * until its answer, for the room this browser kept for the task `slug`, else the room of the last
- * task it kept one for (`latest`), else four gates (`Room.of` with nothing from the server yet), so
- * the brief under it stays put as the page comes in its place.
- */
-export function GhostGates({ slug }: { slug: string }) {
-  const [room] = useState(() => {
-    const lines = load(KEPT) ?? "";
-    return Room.of(null, recall(lines, slug) ?? latest(lines, width()));
-  });
-  return (
-    <GatesView gates={READING} task={null} now={0} room={room} width={width()} onRetry={() => {}} />
   );
 }
 
@@ -237,6 +163,8 @@ export interface GatesViewProps {
   room: Room;
   /** The window's width, in px, which the height `room` holds was drawn at. */
   width: number | null;
+  /** Whether the page already says it loads: the section's reading is then not said again. */
+  quiet?: boolean;
   onRetry: () => void;
 }
 
@@ -244,7 +172,15 @@ export interface GatesViewProps {
  * The section for `gates`, its times told against `now`: nothing for a task nothing gates. Until it
  * has an answer it holds `room`, at the height drawn before in a window `width` px wide.
  */
-export function GatesView({ gates, task, now, room, width, onRetry }: GatesViewProps) {
+export function GatesView({
+  gates,
+  task,
+  now,
+  room,
+  width,
+  quiet = false,
+  onRetry,
+}: GatesViewProps) {
   const head = (
     <h2 className="eyebrow" id="task-gates-title">
       {WORDS.title}
@@ -289,7 +225,7 @@ export function GatesView({ gates, task, now, room, width, onRetry }: GatesViewP
               <span className="gate-bar" style={bar("11em")} />
             </span>
           </div>
-          <p className="gates-said" role="status">
+          <p className="gates-said" role={quiet ? undefined : "status"}>
             {WORDS.reading}
           </p>
           <ul className="gates" aria-hidden="true">
@@ -327,6 +263,13 @@ export function GatesView({ gates, task, now, room, width, onRetry }: GatesViewP
         <section className="task-gates card" data-gates="read" aria-labelledby="task-gates-title">
           <div className="gates-head">
             {head}
+            {/* Before the task's page says who it waits on: the pill's outline, where the room
+                kept says one was drawn, so the page's coming moves nothing under the section. */}
+            {task === null && waiting > 0 && (
+              <span className="pill gates-waits gate-shadow">
+                <span className="gate-bar" style={bar("9em")} />
+              </span>
+            )}
             {waits !== null && (
               <span className={`pill ${waits.tone} gates-waits`}>
                 {WORDS.waitsOn}
