@@ -262,6 +262,10 @@ form input, form textarea, .filters input { font:inherit; font-size:var(--fs-sm)
    adds the fixed notice's lift past main's own end padding, so page-end content clears the
    notice; the lift stays outside the box whose height the page keeps (live.tsx). */
 .page-notice-reserve { margin-bottom:calc(var(--feed-notice-bottom) + var(--sp-4) - var(--page-end)); }
+/* The block the stack shares with its reserve draws nothing of its own: unseen, as the reserve
+   is, its moves while the page loads are no layout shift; the stack in it is seen. */
+.page-notice-end { visibility:hidden; }
+.page-notice-end > .stale { visibility:visible; }
 /* The notices float over the window's foot, above the dock; a phone's page's are in its flow. */
 .stale { position:fixed; bottom:var(--feed-notice-bottom); left:var(--sp-4); z-index:5; background:color-mix(in srgb, var(--c) 12%, var(--background)); }
 .notice-stack { display:grid; gap:var(--sp-2); }
