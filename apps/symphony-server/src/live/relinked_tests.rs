@@ -1,9 +1,9 @@
 //! A document page left open follows its linked tasks: the hub's board read (`Hub::board_read`,
 //! its tick's) that moves a task linking a followed document, or a task coming to link it, renders
 //! that document again and no other, and the feed the page follows it on sends its new tasks; one
-//! that moves nothing a followed document lists renders nothing and sends it nothing, and only a
-//! task coming, going or moving its slug, title, status or links has it look. Renders are counted,
-//! never timed.
+//! that moves nothing a followed document lists renders nothing and sends it nothing, and it looks
+//! at the followed documents only once a task came, went or moved its slug, title, status or links.
+//! Renders are counted, never timed.
 
 use super::{Hub, relinks};
 use crate::front::{Shared, router};
