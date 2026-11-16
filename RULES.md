@@ -394,14 +394,16 @@ scratch repository and a scratch board, never the real worktrees or the live boa
 ### `tools/a-consumers-checkout-is-read-only`
 
 A consuming project's checkout on this machine is read-only to an agent working here: it is read,
-and nothing in it is changed. What a release's refresh moves there is the release run's
-([the refresh](docs/RELEASES.md#the-refresh)).
+and nothing in it is changed but what a release's refresh moves there, which is the release run's,
+and an act there the owner's word names, which is that word's, such as a pin's commit made once
+by hand ([the refresh](docs/RELEASES.md#the-refresh)).
 
 ### `commits/only-the-land-pushes`
 
-No agent pushes. The land pushes main and the release run its tag
-([AGENTS.md](AGENTS.md#this-repository-as-its-own-project)); nothing else of a task, its branch
-included, is pushed.
+Nothing is pushed but main, by the land, and a release's tag, by the release run
+([AGENTS.md](AGENTS.md#this-repository-as-its-own-project)): nothing else of a task, its branch
+included. A consuming project's branch is pushed only on the owner's word naming that push, an
+act separate from moving its pin ([the refresh](docs/RELEASES.md#the-refresh)).
 
 ### `delete-by-name`
 
