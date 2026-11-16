@@ -106,11 +106,10 @@ export function readManifest(shell: string): Manifest {
 }
 
 /**
- * The manifest of the shell the dev server serves: the Dioxus program's kinds as the server's build
- * has them (a kind with wasm), and each kind of this checkout's `kinds` as Vite serves its entry
- * under `base`, with the stylesheet every kind of the server's build shares (package.sh puts it
- * first in each) as its one style, since Vite puts each kind's own in the page as its module asks.
- * A web kind the server's build has and the checkout does not is no more.
+ * The manifest of the shell the dev server serves: each kind of this checkout's `kinds` as Vite
+ * serves its entry under `base`, with the stylesheet every kind of the server's build shares
+ * (package.sh puts it first in each) as its one style, since Vite puts each kind's own in the page
+ * as its module asks. A kind the server's build has and the checkout does not is no more.
  */
 export function devManifest(
   served: Manifest,
@@ -119,9 +118,6 @@ export function devManifest(
 ): Manifest {
   const shared = Object.values(served)[0]?.styles.slice(0, 1) ?? [];
   const manifest: Manifest = {};
-  for (const [kind, files] of Object.entries(served)) {
-    if (files.wasm !== undefined) manifest[kind] = files;
-  }
   for (const [kind, entry] of Object.entries(kinds)) {
     manifest[kind] = { script: `${base}${entry}`, imports: [], styles: shared };
   }

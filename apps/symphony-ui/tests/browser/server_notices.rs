@@ -91,12 +91,12 @@ fn shell_loading_errors_use_the_notice_region_and_retry_in_place() {
 }
 
 /// A real failed module request with a visible alert, restored network and no loaded panel: the
-/// chat's own file, its chunk of the program (the program's script and main module are shared).
+/// chat's own file, its script.
 fn fail_panel(browser: &mut Chrome) {
-    let chunk = module(dist(), "panel").chunk().clone();
+    let script = module(dist(), "panel").script;
     browser.call(
         "Network.setBlockedURLs",
-        json!({"urls":[format!("*{chunk}")]}),
+        json!({"urls":[format!("*{script}")]}),
     );
     browser.eval("document.querySelector('#quick-open').click()");
     wait_for(

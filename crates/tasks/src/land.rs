@@ -22,10 +22,13 @@
 //!    [`unchanged_checks`]). The approval covers the branch's tip:
 //!    the commit the verdict names, else, when it names none of the branch's, every commit of the
 //!    branch made before it and before the task last went to review (the board records no tip, so
-//!    the landing says on the thread that it judged by time). A commit it does not cover refuses,
+//!    the landing says on the thread that it judged by time), or the commit the tip merges the
+//!    default branch into, by a merge that settles documents alone, the task's tests then read
+//!    at the tip whatever it needs ([`carried`]). A commit it does not cover refuses,
 //!    naming it. An approve that does not do sends the task back to review for a fresh one; a
 //!    conflict or a red on the tip as approved is said to its executor, which fixes it on the
-//!    branch and sends the task back to review itself, and so is a worktree at a commit the land
+//!    branch and sends the task back to review itself (a conflict in documents alone it settles
+//!    by one merge the approve stands over, the task left done), and so is a worktree at a commit the land
 //!    brings (on the branch, on another or detached) that holds an owner's answer no commit has
 //!    ([`Landing::owner_lines`]): the owner's answer on a card the branch posted, which a land of
 //!    its commits would leave behind. A worktree git cannot read for that refuses the land, said to
@@ -108,6 +111,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicI32, Ordering};
 use std::time::{Duration, Instant};
 
+pub mod carried;
 pub mod check_paths;
 mod moving;
 use moving::Move;
@@ -668,6 +672,9 @@ pub enum Covered {
     Named,
     /// It names none of the branch's commits, and each of the branch's `n` commits is older.
     ByTime(usize),
+    /// It names the commit the tip merges the default branch into, a merge that settles documents
+    /// alone ([`carried`]).
+    Merged(carried::Carried),
 }
 
 /// How a land found its task ready ([`needs`]).
@@ -733,6 +740,16 @@ pub fn covered(
         .collect();
     if resolved.iter().any(|sha| sha == tip) {
         return Ok(Covered::Named);
+    }
+    match carried::over(dir, base, tip, &resolved) {
+        Ok(carried) => return Ok(Covered::Merged(carried)),
+        Err(Some(why)) => {
+            return Err(format!(
+                "{slug}'s tip {} is one merge over its approved commit, but {why}",
+                short(tip)
+            ));
+        }
+        Err(None) => {}
     }
     let branch = log(dir, &format!("{base}..{tip}"))?;
     if let Some(approved) = branch.iter().find(|c| resolved.contains(&c.sha)) {
@@ -992,6 +1009,7 @@ pub fn land(
         log,
         interrupts: interrupts.as_ref(),
         recorder,
+        named: false,
         out,
     }
     .land();
@@ -1611,6 +1629,9 @@ struct Landing<'a> {
     interrupts: Option<&'a sys::Interrupts>,
     /// The `tasks` running the land, which records a review command it starts.
     recorder: Option<&'a Path>,
+    /// Whether the task's approve names the tip it lands, so a conflict in documents alone is
+    /// its executor's to settle by one merge the approve stands over ([`carried`]).
+    named: bool,
     out: &'a mut dyn Write,
 }
 
@@ -1778,7 +1799,7 @@ impl Landing<'_> {
         let branch_tip = rev(&self.main, &format!("refs/heads/{slug}"));
         // Which stamps: the assessment's on the tip it read, else beside the catalogue's defaults;
         // with no assessment, the defaults, which are `review` alone in the Symphony's catalogue.
-        let needed = Needed::of(&task, &self.main, branch_tip.as_deref())
+        let mut needed = Needed::of(&task, &self.main, branch_tip.as_deref())
             .map_err(|line| self.refuse(Refusal::here(line)))?;
         let staff = |line: String| {
             Refusal::reopening(
@@ -1864,6 +1885,12 @@ impl Landing<'_> {
             }
             None => Judged::Stamped(needed.stood(&tip)),
         };
+        self.named = matches!(judged, Judged::Approved(Covered::Named));
+        // An approve standing over a merge it did not read says the change was read; that it
+        // works as merged is the tests' to say, read at the tip whatever the task's needs name.
+        if let Judged::Approved(Covered::Merged(_)) = &judged {
+            needed.require(needs::TESTS);
+        }
         // Standing on the tip: each stamp but `review` by its reader.
         let evidence =
             needs::Evidence::of(self.store, self.env, &self.main, slug, &thread, &needed);
@@ -1881,6 +1908,7 @@ impl Landing<'_> {
                     Covered::ByTime(_) => {
                         format!("before every commit to its tip {}", short(&tip))
                     }
+                    Covered::Merged(carried) => carried.said(&default),
                 }
             ));
         }
@@ -2070,6 +2098,12 @@ impl Landing<'_> {
                  older than the approval{pushed}",
                 commits(*n),
                 if *n == 1 { "is" } else { "are" }
+            ),
+            Judged::Approved(Covered::Merged(carried)) => format!(
+                "{landed}; its approve of {} stands over the one merge {} of {default} into \
+                 it{pushed}",
+                short(&carried.approved),
+                short(&carried.merge)
             ),
             _ => line.clone(),
         };
@@ -2636,6 +2670,13 @@ impl Landing<'_> {
             )
         };
         match merging {
+            Merging::Tip(_)
+                if self.named
+                    && !files.is_empty()
+                    && files.iter().all(|f| carried::document(f)) =>
+            {
+                Refusal::to(line, "@executor", self.settle_on_branch())
+            }
             Merging::Tip(_) => Refusal::to(line, "@executor", self.fix_on_branch()),
             Merging::Origin(_) => Refusal::thread(line),
         }
@@ -3021,6 +3062,21 @@ impl Landing<'_> {
         format!(
             "Merge {default} into {slug} and fix it there, then move it back to review (`just \
              tasks move {slug} review`) and ask its reviewer to approve the new tip naming it"
+        )
+    }
+
+    /// What the executor does when the branch, its approve naming its tip, conflicts with the
+    /// default branch in documents alone ([`carried::document`]): the one merge an approve
+    /// stands over ([`carried`]), with no reviewer.
+    fn settle_on_branch(&self) -> String {
+        let (slug, default) = (self.slug, &self.settings.default_branch);
+        format!(
+            "Merge {default} into {slug} once, settling the conflict in those documents and \
+             changing nothing else, run its tests at the new tip through the project's recorded \
+             recipes, and land it again: an approve naming the commit merged into stands over \
+             that one merge, so {slug} stays as it is and no reviewer reads it again. A change \
+             beyond those conflicts, or a move back to review, asks for a fresh approve of the \
+             new tip"
         )
     }
 

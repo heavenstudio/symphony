@@ -114,6 +114,10 @@ fn constants() -> String {
         ("UPLOAD_PATH", text(api::UPLOAD_PATH)),
         ("UPLOAD_MAX_BYTES", api::UPLOAD_MAX_BYTES.to_string()),
         ("UPLOAD_ACCEPT", text(api::UPLOAD_ACCEPT)),
+        (
+            "QUICK_TASK_TITLE_MAX",
+            api::QUICK_TASK_TITLE_MAX.to_string(),
+        ),
         ("TASK_ACTION_ROUTE", text(api::TASK_ACTION_ROUTE)),
         ("TASK_GATES_PATH", text(api::TASK_GATES_PATH)),
         ("TASK_TIMELINE_PATH", text(api::TASK_TIMELINE_PATH)),
@@ -1768,6 +1772,7 @@ fn reports() -> api::ReportsPage {
             at: MONDAY + 3_600.0,
             commit: "4f1c0a9b2d3e".into(),
             subject: "settings: land without the check".into(),
+            changed: vec!["settings".into()],
         }],
         unread: vec!["/repo/.git/symphony/reports/2026-11-08.json: not read".into()],
     }

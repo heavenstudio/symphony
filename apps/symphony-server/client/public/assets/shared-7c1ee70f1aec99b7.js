@@ -1,1 +1,0 @@
-import{it as e,mt as t}from"./shared-e25b5a6e8b6c28e6.js";var n=e();function r({task:e}){return e==null?null:(0,n.jsx)(`a`,{className:`chip`,href:t(`/task/${e}`),children:e})}export{r as t};

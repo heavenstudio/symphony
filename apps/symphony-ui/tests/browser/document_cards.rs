@@ -707,6 +707,15 @@ const EXCERPT_PLACE: &str = r#"(() => {
         waiting: box.querySelectorAll('[data-pending=true]').length};
 })()"#;
 
+/// Where the card `alpha`'s show button is: the page's scroll, the card's top (its anchor's) and
+/// how far the page scrolls on, in whole pixels, to put the button's bottom at the window's bottom
+/// edge, the button whole on the screen.
+const PLACE_OF_SHOW: &str = r#"(() => {
+    const show = document.querySelector('[data-doc-key="card:alpha"] .section-prose .show-link');
+    return {scrollY, card: document.getElementById('alpha')?.getBoundingClientRect().top ?? null,
+        below: show ? Math.ceil(show.getBoundingClientRect().bottom - innerHeight) : null};
+})()"#;
+
 /// On a short window (a laptop's browser, a phone) the owner opens a card's excerpt from a button at
 /// the window's bottom edge, its box opening below the screen: the excerpt fills without being
 /// scrolled to. Its box scrolls, and so clipped the look-ahead of the parts of it that waited to
@@ -722,14 +731,33 @@ fn document_card_excerpt_opened_below_a_short_windows_fold_fills_without_a_scrol
     }));
     page.open(&site.url(&format!("/{DOC}#alpha")));
     let show = "[data-doc-key=\"card:alpha\"] .section-prose .show-link";
+    // The address names the card, so the page lands on it (`land`, assets/shell.js) once its
+    // section has drawn, in an effect that runs after the button is in the page: a scroll made
+    // before it is taken back to the card. So the reader's scroll waits for the landing, and is a
+    // wheel, the reader's own input, which ends the landing whatever still draws around the card.
     assert!(
-        page.wait_for(&crate::visible(show), SHOWN),
-        "the card alpha is drawn"
+        page.wait_for(
+            &format!(
+                "{} && {}",
+                crate::visible(show),
+                crate::document_landing::landed_on(DOC, "alpha")
+            ),
+            SHOWN
+        ),
+        "the card alpha is drawn and the page has landed on it: {}",
+        page.eval(PLACE_OF_SHOW)
     );
-    page.eval(&format!(
-        "(() => {{ const show = document.querySelector({0}); scrollBy(0, Math.ceil(show.getBoundingClientRect().bottom - innerHeight)); show.click(); }})()",
-        json!(show)
-    ));
+    let by = page.eval(&format!("{PLACE_OF_SHOW}.below"));
+    page.call(
+        "Input.dispatchMouseEvent",
+        json!({"type": "mouseWheel", "x": 378, "y": 234, "deltaX": 0, "deltaY": by}),
+    );
+    assert!(
+        page.wait_for(&format!("{PLACE_OF_SHOW}.below === 0"), SHOWN),
+        "the wheel puts the card's button at the window's bottom edge, {by} px from where the page landed: {}",
+        page.eval(PLACE_OF_SHOW)
+    );
+    page.eval(&format!("document.querySelector({}).click()", json!(show)));
     assert!(
         page.wait_for(
             "document.querySelector('[data-doc-key=\"card:alpha\"] .excerpt-box h2') !== null",

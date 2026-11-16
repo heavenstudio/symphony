@@ -1,7 +1,7 @@
 //! The Reports page's answers kept between reads, each with what it was read from ([`Seen`]): the
 //! hour of the clock, which sets the window; each day file of the window in the three folders, by
 //! what a stat says of it; the oldest roll-up file by its name, the answer's `first`; and the tip
-//! of the project's default branch, which the settings marks are read from.
+//! of the project's default branch, which the marks are read from.
 //!
 //! Every read looks at those and at nothing else: a stat of each file, the names in the roll-up's
 //! folder and one read of the branch's ref in this process, no file opened and no git started. A window
@@ -70,7 +70,7 @@ struct Window {
     answer: Answer,
 }
 
-/// The settings marks one `git log` read: those of `tip` since `since`, oldest first.
+/// The marks one `git log` read: those of `tip` since `since`, oldest first.
 struct Marks {
     tip: String,
     since: f64,
@@ -125,7 +125,7 @@ impl Kept {
         self.passes.load(Ordering::Relaxed)
     }
 
-    /// How many times git was started for the settings marks.
+    /// How many times git was started for the marks.
     #[cfg(test)]
     pub(crate) fn gits(&self) -> u64 {
         self.gits.load(Ordering::Relaxed)
@@ -182,7 +182,7 @@ impl Kept {
         answer
     }
 
-    /// The settings marks of `branch` since `since`, oldest first: the kept ones where they were
+    /// The marks of `branch` since `since`, oldest first: the kept ones where they were
     /// read from `tip` and reach back as far, else one `git log`, kept where the branch has a tip.
     fn marks(
         &self,

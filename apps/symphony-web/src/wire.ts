@@ -24,6 +24,7 @@ export const UPLOAD_PATH = "/api/upload";
 export const UPLOAD_MAX_BYTES = 10485760;
 export const UPLOAD_ACCEPT =
   "image/png,image/jpeg,image/gif,image/webp,application/pdf,text/plain,text/markdown,text/csv,application/json,.png,.jpg,.jpeg,.gif,.webp,.pdf,.txt,.md,.csv,.json,.log,.docx,.xlsx,.pptx";
+export const QUICK_TASK_TITLE_MAX = 200;
 export const TASK_ACTION_ROUTE = "/api/task-action";
 export const TASK_GATES_PATH = "/api/task-gates";
 export const TASK_TIMELINE_PATH = "/api/task-timeline";
@@ -338,6 +339,11 @@ export type ReportMark = {
    */
   commit: string;
   subject: string;
+  /**
+   * What it changed, each once: `settings`, `rules` and `skill NAME`. A server from before the
+   * instructions were marked names none, and its marks are settings changes.
+   */
+  changed: Array<string>;
 };
 
 export type RunsPage = {

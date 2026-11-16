@@ -98,13 +98,13 @@ fn ran(r: &Repo, slug: &str, commit: &str, label: &str, phase: Phase, exit: i32)
 }
 
 /// The task's tests green at `tip`.
-fn green(r: &Repo, slug: &str, tip: &str) {
+pub(super) fn green(r: &Repo, slug: &str, tip: &str) {
     ran(r, slug, tip, "cargo test -p sim", Phase::Test, 0);
 }
 
 /// The land of `slug` as `actor` from the main checkout, the recorder's runs read from the test's
 /// work folder: what it printed, and the line it ended on or the refusal.
-fn landed_by(r: &Repo, slug: &str, actor: &str) -> (String, Result<String, String>) {
+pub(super) fn landed_by(r: &Repo, slug: &str, actor: &str) -> (String, Result<String, String>) {
     let mut env = r.env(&r.root);
     env.vars
         .insert(FOLDER_VAR.into(), work(r).to_string_lossy().into_owned());
@@ -122,7 +122,7 @@ fn assert_landed(r: &Repo, slug: &str, tip: &str, result: Result<String, String>
 }
 
 /// The thread's last post: its text and to whom.
-fn told(r: &Repo, slug: &str) -> (String, Option<String>) {
+pub(super) fn told(r: &Repo, slug: &str) -> (String, Option<String>) {
     let post = r.board.store.thread(slug).unwrap().pop().unwrap();
     (post.text, post.recipient)
 }

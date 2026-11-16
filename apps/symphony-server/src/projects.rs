@@ -19,8 +19,8 @@
 //! is read again whenever its file changes, at a request or at the server's own look every
 //! [`LOOK`], and a changed root or id is served from new state.
 //!
-//! Each project's state holds the maintenance of its board, its idle sweep and its embedding
-//! catch-up ([`crate::front::maintenance`]), each on a schedule of its own: started once the
+//! Each project's state holds the maintenance of its board, its idle sweep
+//! ([`crate::front::maintenance`]), on a schedule of its own: started once the
 //! server's generation is live, its socket hand-off committed, as the starter's own are, or when
 //! the project is first served after that; stopped when it is retired or the server stops. The
 //! starter's checkout is maintained by the server's own workers, under whatever id it is
