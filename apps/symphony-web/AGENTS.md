@@ -526,7 +526,7 @@ What holds on every page, and each page's contract where its section above names
   (`reloadFor` in `src/state.ts`, remembered in `sessionStorage`); while the reader is in the
   middle of something (`engaged` in `src/route.ts`) it is held, and goes at the first event that
   can end that (`whenFree`: the focus leaving the fields, a busy region, list box or details
-  changing), never on a timer.
+  changing, or an element added or removed), never on a timer.
 - **Cache.** What a page drew is kept on the device so a return visit draws at once
   ([the client cache](../../docs/analysis/client-cache.md)). The store is `shell/cache.js`
   (`window.symphonyCache`), which `package.sh` puts first in the shell's one script: every page

@@ -331,6 +331,57 @@ export function turn(): Promise<void> {
   return new Promise((done) => setTimeout(done, 0));
 }
 
+/** A change a page's MutationObserver can be told of: an attribute's, or elements added or
+ * removed. */
+export type Mutation = { attribute: string } | { childList: true };
+
+/**
+ * The page's MutationObserver and ResizeObserver, stubbed. A mutation (`changed`) reaches only the
+ * observers whose options cover it, as the browser's does, and a resize (`resized`) only those
+ * that observe what changed size. `watched` holds each observing mutation observer's options and
+ * `sized` what each resize observer observes.
+ */
+export function observers() {
+  const watched = new Map<() => void, MutationObserverInit>();
+  const sized = new Map<() => void, unknown[]>();
+  vi.stubGlobal(
+    "MutationObserver",
+    class {
+      constructor(private readonly seen: () => void) {}
+      observe(_: unknown, options: MutationObserverInit) {
+        watched.set(this.seen, options);
+      }
+      disconnect() {
+        watched.delete(this.seen);
+      }
+    },
+  );
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      constructor(private readonly seen: () => void) {}
+      observe(target: unknown) {
+        sized.set(this.seen, [...(sized.get(this.seen) ?? []), target]);
+      }
+      disconnect() {
+        sized.delete(this.seen);
+      }
+    },
+  );
+  const covers = (options: MutationObserverInit, change: Mutation) =>
+    "childList" in change
+      ? options.childList === true
+      : options.attributes === true ||
+        (options.attributeFilter?.includes(change.attribute) ?? false);
+  const changed = (change: Mutation) => {
+    for (const [seen, options] of [...watched]) if (covers(options, change)) seen();
+  };
+  const resized = (target: unknown) => {
+    for (const [seen, targets] of [...sized]) if (targets.includes(target)) seen();
+  };
+  return { watched, sized, changed, resized };
+}
+
 /** Lets the replies given so far reach the code that awaits them, until `asked` holds `count`. */
 export async function asking(asked: unknown[], count: number): Promise<void> {
   for (let turns = 0; turns < 50 && asked.length < count; turns += 1) {

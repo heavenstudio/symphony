@@ -183,6 +183,41 @@ export function unsettled(root: Element): boolean {
   });
 }
 
+/**
+ * `settled` once nothing under `root` waits on its first screen (`unsettled`), or SETTLE_MS
+ * passed (its deadline), once: it looks at once, then at each change that can settle it or move
+ * its regions on or off the screen. Those are a region drawn or marked in it, its box resized,
+ * the page's own size changed (what draws above it, a task's gates and timeline on a phone,
+ * moves it with no change of its own), the page scrolled, or the window resized. The function it
+ * gives stops it unsettled.
+ */
+export function watchSettle(root: Element, settled: () => void): () => void {
+  const watching = new AbortController();
+  const drawn = new MutationObserver(() => look());
+  const resized = new ResizeObserver(() => look());
+  const stop = () => {
+    watching.abort();
+    drawn.disconnect();
+    resized.disconnect();
+    ended();
+  };
+  const settle = () => {
+    stop();
+    settled();
+  };
+  const look = () => {
+    if (!watching.signal.aborted && !unsettled(root)) settle();
+  };
+  const ended = deadline(SETTLE_MS, settle);
+  drawn.observe(root, { subtree: true, childList: true, attributeFilter: ["data-pending"] });
+  resized.observe(root);
+  resized.observe(document.documentElement);
+  addEventListener("scroll", look, { passive: true, signal: watching.signal });
+  addEventListener("resize", look, { signal: watching.signal });
+  look();
+  return stop;
+}
+
 export interface SettleProps {
   children: ReactNode;
   /** The outline of the page `children` make, drawn over them until they settle. */
@@ -193,9 +228,8 @@ export interface SettleProps {
 /**
  * Draw `children` hidden under `cover` until no region they reserve on the first screen
  * (`[data-pending=true]`) waits for its read any longer, until `failed`, or for SETTLE_MS at most
- * (its deadline): the reader's first screen arrives whole, and no read that lands moves it. It
- * looks once its root is drawn, then at each change that can settle it: a region drawn or marked
- * in it, its box resized, the page scrolled or the window resized.
+ * (its deadline): the reader's first screen arrives whole, and no read that lands moves it
+ * (`watchSettle`).
  */
 export function Settle({ children, cover, failed = false }: SettleProps) {
   const [id] = useState(() => `web-${settles++}`);
@@ -208,33 +242,7 @@ export function Settle({ children, cover, failed = false }: SettleProps) {
   useEffect(() => {
     const node = root.current;
     if (done || node === null) return;
-    const watching = new AbortController();
-    const drawn = new MutationObserver(() => look());
-    const resized = new ResizeObserver(() => look());
-    const stop = () => {
-      watching.abort();
-      drawn.disconnect();
-      resized.disconnect();
-      ended();
-    };
-    const settle = () => {
-      stop();
-      setSettled(true);
-    };
-    const look = () => {
-      if (!unsettled(node)) settle();
-    };
-    const ended = deadline(SETTLE_MS, settle);
-    drawn.observe(node, {
-      subtree: true,
-      childList: true,
-      attributeFilter: ["data-pending"],
-    });
-    resized.observe(node);
-    addEventListener("scroll", look, { passive: true, signal: watching.signal });
-    addEventListener("resize", look, { signal: watching.signal });
-    look();
-    return stop;
+    return watchSettle(node, () => setSettled(true));
   }, [done]);
   return (
     <div

@@ -137,8 +137,10 @@ export function engaged(): boolean {
 
 /**
  * At the next event that can end what `engaged` reads, or once `signal` ends: the focus leaving a
- * field for anything but another field, or a change of a region's `data-busy`, a list box's
- * `data-state` or a `details`' `open` anywhere in the page. What waited reads `engaged` again.
+ * field for anything but another field, a change of a region's `data-busy`, a list box's
+ * `data-state` or a `details`' `open` anywhere in the page, or an element added or removed: a
+ * busy region, an open `details` or list box, or the focused field gone with what held it, which
+ * changes no attribute and moves no focus. What waited reads `engaged` again.
  */
 export function whenFree(signal?: AbortSignal): Promise<void> {
   return new Promise((resolve) => {
@@ -156,6 +158,7 @@ export function whenFree(signal?: AbortSignal): Promise<void> {
     };
     changed.observe(document.documentElement, {
       subtree: true,
+      childList: true,
       attributeFilter: ["data-busy", "data-state", "open"],
     });
     document.addEventListener("focusout", left, true);

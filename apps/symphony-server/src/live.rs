@@ -1867,7 +1867,10 @@ fn run(
         drop(hub);
         let wake = backstop.wait(&recv, Duration::from_millis(250));
         if wake == Wake::Event {
-            backstop::debounce(&recv, backstop::QUIET, backstop::BURST);
+            // Every event within QUIET of the first is taken with it, and the pass reads then:
+            // never later than that, as the watched worktrees seldom go quiet and every live
+            // page's update waits on this pass.
+            backstop::debounce(&recv, backstop::QUIET, backstop::QUIET);
         }
         let Some(hub) = weak.upgrade() else { break };
         if *hub.draining.borrow() {

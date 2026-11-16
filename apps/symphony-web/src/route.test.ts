@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { PLAIN } from "./project";
 import { anchor, currentRoute, engaged, HOME, parseRoute, scrollAnchor, whenFree } from "./route";
+import { observers } from "./testing";
 
 const NAV = [{ label: "▤ shelf", title: "Shelf", href: "/shelf", document: "docs/SHELF.md" }];
 
@@ -149,26 +150,11 @@ describe("the page's route and its address", () => {
 describe("the wait for the reader to be free", () => {
   afterEach(() => vi.unstubAllGlobals());
 
-  /** A page whose focus moves (`focusout`) and whose watched attributes change (`changed`). */
+  /** A page whose focus moves (`focusout`) and whose elements change (`changed`). */
   function page() {
-    const watched = new Map<() => void, unknown>();
-    vi.stubGlobal(
-      "MutationObserver",
-      class {
-        constructor(private readonly seen: () => void) {}
-        observe(_: unknown, options: unknown) {
-          watched.set(this.seen, options);
-        }
-        disconnect() {
-          watched.delete(this.seen);
-        }
-      },
-    );
+    const { watched, changed } = observers();
     const doc = Object.assign(new EventTarget(), { documentElement: {} });
     vi.stubGlobal("document", doc);
-    const changed = () => {
-      for (const seen of [...watched.keys()]) seen();
-    };
     return { doc, watched, changed };
   }
 
@@ -183,14 +169,27 @@ describe("the wait for the reader to be free", () => {
     return over;
   }
 
-  it("ends at a change of a region's busy, a list box's state or a details' open", async () => {
+  it.each(["data-busy", "data-state", "open"])(
+    "ends at a change of the %s attribute anywhere in the page, and of no other",
+    async (attribute) => {
+      const { watched, changed } = page();
+      const waiting = whenFree();
+      expect(watched.size).toBe(1);
+      changed({ attribute: "class" });
+      expect(await ended(waiting)).toBe(false);
+      changed({ attribute });
+      expect(await ended(waiting)).toBe(true);
+      expect(watched.size).toBe(0);
+    },
+  );
+
+  it("ends as an element is added or removed: a busy region or the focused field gone", async () => {
     const { watched, changed } = page();
     const waiting = whenFree();
     expect([...watched.values()]).toEqual([
-      { subtree: true, attributeFilter: ["data-busy", "data-state", "open"] },
+      expect.objectContaining({ subtree: true, childList: true }),
     ]);
-    expect(await ended(waiting)).toBe(false);
-    changed();
+    changed({ childList: true });
     expect(await ended(waiting)).toBe(true);
     expect(watched.size).toBe(0);
   });

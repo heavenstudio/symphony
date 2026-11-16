@@ -77,8 +77,10 @@ impl Backstop {
 /// set), and a refresh for each would read the file half saved.
 pub(crate) const QUIET: Duration = Duration::from_millis(100);
 
-/// The longest a burst is taken for: a watcher that never goes quiet (a build writing under a
-/// watched folder) still has its changes read this often.
+/// The longest the reload's watcher takes a burst for, a binary being written read once it is
+/// quiet: a watcher that never goes quiet (a build writing under a watched folder) still has its
+/// changes read this often. The hub takes QUIET as its limit instead, so its pages' updates are
+/// never later than QUIET after the first event (`live.rs`).
 pub(crate) const BURST: Duration = Duration::from_secs(1);
 
 /// The debounce of a watching loop, the one RULES.md `code/no-timed-waits` names for a watcher's

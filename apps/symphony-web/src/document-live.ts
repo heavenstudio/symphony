@@ -64,7 +64,7 @@ import { scoped } from "./project";
 import { Failure, getDocument, getIf, getJson, said } from "./request";
 import { field, SERVER_NOTICE } from "./shared";
 import { Backoff, type Ended } from "./state";
-// biome-ignore lint/style/noRestrictedImports: no-timed-waits baseline: flushHeld looks every 400 ms whether a held section is free (whenFree and the page's changes are the events), and loadSections looks every 50 ms for sections to read and for the feed to catch up, and tries a failed read again after 1 s
+// biome-ignore lint/style/noRestrictedImports: no-timed-waits baseline: flushHeld looks every 400 ms whether a held section is free (whenFree and the page's changes are the events), loadSections looks every 50 ms for sections to read and for the feed to catch up and tries a failed read again after 1 s, and followFolder reads its folder again each FOLDER_MS, where a feed event of the folder is the wait
 import { sleep } from "./timing";
 import type {
   DocumentCard,
@@ -708,8 +708,7 @@ export async function followFolder(page: FolderLive, signal: AbortSignal): Promi
     }
     const after = [page.folder, page.missing, page.error, JSON.stringify(page.freshness)];
     if (after.some((one, at) => one !== before[at])) page.changed();
-    // no-timed-waits baseline: a folder follows no feed and reads its folder again each FOLDER_MS
-    // on the retry's wait, which no lint sees; a feed event of the folder is the wait.
-    await pause(FOLDER_MS, page.retry, signal);
+    // The baseline's plain wait (its import says why): a folder follows no feed.
+    await pause(FOLDER_MS, page.retry, signal, sleep);
   }
 }

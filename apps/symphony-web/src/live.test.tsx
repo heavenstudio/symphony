@@ -23,6 +23,7 @@ import {
   asking,
   CASES,
   memoryStorage,
+  observers,
   feeds as pageFeeds,
   reply,
   say,
@@ -241,21 +242,9 @@ describe("a page loaded again for the build the server serves", () => {
   const page = (busy = false) => {
     const reload = vi.fn();
     const reader = { busy };
-    const watched = new Set<() => void>();
+    const { watched, changed } = observers();
     vi.stubGlobal("sessionStorage", memoryStorage());
     vi.stubGlobal("location", { reload });
-    vi.stubGlobal(
-      "MutationObserver",
-      class {
-        constructor(private readonly seen: () => void) {}
-        observe() {
-          watched.add(this.seen);
-        }
-        disconnect() {
-          watched.delete(this.seen);
-        }
-      },
-    );
     const doc = Object.assign(new EventTarget(), {
       getElementById: () => null,
       documentElement: {},
@@ -268,9 +257,6 @@ describe("a page loaded again for the build the server serves", () => {
             : null,
     });
     vi.stubGlobal("document", doc);
-    const changed = () => {
-      for (const seen of [...watched]) seen();
-    };
     return { reload, reader, doc, watched, changed };
   };
 
@@ -304,18 +290,35 @@ describe("a page loaded again for the build the server serves", () => {
     flushReload();
     expect(reload).not.toHaveBeenCalled();
     // A change that leaves them in the middle of it: still held, and still watched.
-    changed();
+    changed({ attribute: "data-busy" });
     await turn();
     expect(reload).not.toHaveBeenCalled();
     expect(watched.size).toBe(1);
+    // A change no held reload waits on wakes nothing.
     reader.busy = false;
-    changed();
+    changed({ attribute: "class" });
+    await turn();
+    expect(reload).not.toHaveBeenCalled();
+    changed({ attribute: "data-busy" });
     await turn();
     expect(reload).toHaveBeenCalledTimes(1);
     // Loaded, nothing is watched any more, and nothing is held to load again.
     expect(watched.size).toBe(0);
     flushReload();
     expect(reload).toHaveBeenCalledTimes(1);
+  });
+
+  it("loads a held reload once the busy region goes, which changes no attribute", async () => {
+    const { reload, reader, watched, changed } = page(true);
+    reloadIfRedeployed("/assets/symphony-shell-g.js");
+    expect(watched.size).toBe(1);
+    // The busy region, an open details or the focused field taken out of the page with what
+    // held it: an element removed, and nothing else.
+    reader.busy = false;
+    changed({ childList: true });
+    await turn();
+    expect(reload).toHaveBeenCalledTimes(1);
+    expect(watched.size).toBe(0);
   });
 
   it("loads a held reload as the focus leaves the fields, not as it moves to another", async () => {
@@ -371,6 +374,20 @@ describe("a read's pause before it is tried again", () => {
     // A press with no pause waiting is only counted.
     retry.current += 1;
     expect(retry.current).toBe(2);
+  });
+
+  it("waits through the wait it is given, which the reader's press still ends", async () => {
+    const asked: number[] = [];
+    const given = (ms: number, signal: AbortSignal) => {
+      asked.push(ms);
+      return new Promise<void>((done) => signal.addEventListener("abort", () => done()));
+    };
+    const retry = new Retry();
+    const waiting = pause(5_000, retry, new AbortController().signal, given);
+    expect(asked).toEqual([5_000]);
+    expect(await ended(waiting)).toBe(false);
+    retry.current += 1;
+    expect(await ended(waiting)).toBe(true);
   });
 
   it("ends once its signal ends, or at once when it had, leaving no timer", async () => {

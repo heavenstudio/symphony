@@ -153,15 +153,20 @@ export class Retry {
   }
 }
 
-/** Waits `ms` before a read is tried again (`retryWait`), or less: until the reader presses Retry,
- * or `signal` ends. */
-export function pause(ms: number, retry: Retry, signal: AbortSignal): Promise<void> {
+/** Waits `ms` before a read is tried again (`wait`, a retry's by default), or less: until the
+ * reader presses Retry, or `signal` ends. */
+export function pause(
+  ms: number,
+  retry: Retry,
+  signal: AbortSignal,
+  wait: (ms: number, signal: AbortSignal) => Promise<void> = retryWait,
+): Promise<void> {
   if (signal.aborted) return Promise.resolve();
   const pressed = new AbortController();
   const end = () => pressed.abort();
   const stop = retry.heard(end);
   signal.addEventListener("abort", end, { signal: pressed.signal });
-  return retryWait(ms, pressed.signal).finally(() => {
+  return wait(ms, pressed.signal).finally(() => {
     stop();
     pressed.abort();
   });
