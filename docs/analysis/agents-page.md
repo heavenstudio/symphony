@@ -22,7 +22,9 @@ waiting on". That means three things for each orchestrator:
   executor who left, a message nobody answered.
 
 Each orchestrator is told that last list by its PULL digest (`crates/tasks/src/cli/pull.rs`), and
-nothing shows it to the owner. What waits on the owner is the queue's, not this page's.
+nothing shows it to the owner. What waits on the owner is the queue's, not this page's: his decision
+cards, and his open asks (what he said that waits on an agent's answer), which owner-asks-place
+put in the queue's *Waiting on the agent* group, each with who holds it and for how long.
 
 ## What the page shows today
 
@@ -87,7 +89,8 @@ All three draw the same facts; they differ in how much is open at once and in wh
   tools/task-waits-on gives every open task, the board's wording included: a task waiting on the
   owner names the decision card, never a person alone. The pictures predate that line, so they
   cannot tell a design task waiting on a card from one nobody is on; with it, those read "on your
-  decision NAME".
+  decision NAME". The owner's open asks an orchestrator holds are not among these groups: the
+  page leaves them to the queue, where owner-asks-place put them.
 - **A banner** while tasks wait for an orchestrator because every orchestrator is at its limit,
   with a link to those tasks on the board.
 - **Agents under no orchestrator**, together, last.
@@ -99,8 +102,8 @@ All three draw the same facts; they differ in how much is open at once and in wh
 ## The options
 
 The pictures are a throwaway HTML page over the client's own built stylesheet and today's header,
-filled with the board as read at 22:11, at 1440 wide (the whole page) and on a phone (390 wide, the
-first screen), light.
+filled with the board as read at 22:11, at 1440 wide (the whole page, the floating + hidden, as a
+whole-page shot would set it mid-page) and on a phone (390 wide, the first screen), light.
 
 ### A: a panel per orchestrator
 
@@ -170,7 +173,7 @@ the last two rows.
 | An agent's health and what it is doing | `health`, `state`, `state_detail`, `last_tool_call` | nothing |
 | The task it works, as a title and link | `task`, `role`; titles in `/api/agent-page`'s tasks | nothing |
 | Its latest message | `last_message` | nothing |
-| *Go to session* | `session_url` | nothing |
+| *Go to session* | `go`, where the server resolved the control goes (the session's web address or pane, else its parent's) | nothing |
 | An orchestrator's slots in use | `slots` (`open`, `cap`) | nothing |
 | Which orchestrator an agent works for | not sent: `parent` names one for 4 of the 16 | `orchestrator` on each agent, by `Owners::of`, else `parent` when that is an orchestrator |
 | Tasks orchestrated against the limit | `following` counts them; the limit is not sent | `orchestrates` (`open`, `limit`): `orchestration::orchestrated` and `[limits] orchestrator_tasks`, the figures of the PULL digest's `orchestrates=OPEN/LIMIT` |
@@ -194,7 +197,7 @@ line beneath them (today's second and third pictures); it is not part of this ch
 ## Not in this design
 
 - The header and its names: they keep Agents as this page's word.
-- What waits on the owner: the queue, and Home's counts.
+- What waits on the owner, his open asks included: the queue, and Home's counts.
 - Trends and cost (tokens, hours by agent): the Reports page.
 - The board's own layout and its wait line: app/board-at-a-glance and tools/task-waits-on.
 - When the page's reads start: app/board-and-agents-feed-beside-first-read.
