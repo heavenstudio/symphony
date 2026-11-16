@@ -14,20 +14,18 @@ keywords = ["symphony", "server", "review", "tasks"]
 categories = ["web-programming::http-server", "development-tools"]
 # What crates.io gets: the sources, the build script, the client it embeds (client/public: the
 # three builds the folder keeps, as they stand), the readme and the licence; never tests/ or
-# fixtures, nor `symphony-shelf` (the browser tests' server) or `symphony-ui-dev` (the client's
-# development launcher). crates/symphony/tests/packages.rs holds its `.crate` within the 10 MiB
-# crates.io takes.
+# fixtures, nor `symphony-shelf` (the browser tests' server). crates/symphony/tests/packages.rs
+# holds its `.crate` within the 10 MiB crates.io takes.
 include = [
     "src/**",
     "!src/bin/symphony-shelf.rs",
-    "!src/bin/symphony-ui-dev.rs",
     "build.rs",
     "client/public/**",
     "CRATE.md",
     "LICENSE",
 ]
 
-# One native axum server per machine, with JSON contracts in symphony-api and the Dioxus shell at /.
+# One native axum server per machine, with JSON contracts in symphony-api and the client's shell at /.
 [dependencies]
 # `ws` answers the feed on a WebSocket, which holds none of a browser's six connections a host
 # (`src/api/feed_socket.rs`).

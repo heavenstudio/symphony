@@ -12,10 +12,10 @@
 // zone holds the event's target.
 
 import { useEffect, useReducer, useRef, useState } from "react";
-import STYLE from "../../symphony-ui/assets/attach.css?inline";
 import { Button } from "./button";
 import { here, project } from "./project";
 import { load, save } from "./storage";
+import STYLE from "./styles/attach.css?inline";
 import { UPLOAD_ACCEPT, UPLOAD_MAX_BYTES, UPLOAD_PATH, type Upload } from "./wire";
 import { fixed } from "./words";
 

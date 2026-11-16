@@ -698,16 +698,15 @@ older schema or not at all, its passes fail and it is unwell and says so.
 `tasks status` also warns when the record is more than a minute old, naming the server's pid and
 whether it still runs: no dispatch pass has been recorded since.
 
-**Open tasks nobody orchestrates.** Every open task has an orchestrator
-([Tasks and roles](#tasks-and-roles)), so one with none is a defect: the record also counts the
+**Open tasks nobody orchestrates.** A task with no orchestrator waits for one under its limit
+that stays ([Tasks and roles](#tasks-and-roles)), a well state and no defect: the record counts the
 unfinished tasks with no holding orchestrator on them or above them in the board the server's clock
 read last (`unowned` in the record, `Recorder::unowned`), and `tasks status` says `open tasks no
-orchestrator holds: N, as of the newest board read` and, while N is above zero, warns of it, in its
-`--json` warnings too: `N open tasks no orchestrator holds, as of the newest board read: the next
-read of the whole board gives each to an orchestrator that stays (live past its first live line, and
-waiting, watching or holding a task), and it waits while none does`. The tick gives what it finds
-first ([Tasks and roles](#tasks-and-roles)), so the count it records is of tasks that wait for an
-orchestrator that stays. Counting reads the board the tick already read and adds no request; a
+orchestrator holds: N, as of the newest board read`, and warns of none of them. The tick gives what
+it finds first ([Tasks and roles](#tasks-and-roles)), so the count it records is of tasks that wait
+for an orchestrator that stays and holds fewer open tasks than the limit ([The limit on the tasks
+an orchestrator holds](#the-limit-on-the-tasks-an-orchestrator-holds)). Counting reads the board
+the tick already read and adds no request; a
 record written before any board read, or by a build older than the count, has none and says none. The owner's word on each of those tasks reaches
 every orchestrator ([Talking on a task](#talking-on-a-task)) until the board gives it one. The
 server's own notice and the project picker do not warn of it.
@@ -1988,14 +1987,18 @@ and B hears one `ROLE SLUG B orchestrator, STATUS (from A)`, whatever other
 role B holds there; A made the move and is not told it. HANDLE must still be there (live, stale or
 of unknown liveness); a hand-over to a session gone quiet, or leaving as it is
 written, is refused, naming its health; under a cap, so is one that would raise
-HANDLE's counted tasks past it ([Slots](#slots)). Taking the role over a holder that is
+HANDLE's counted tasks past it ([Slots](#slots)), and, as a take of the role is, one to an
+orchestrator at its limit ([The limit on the tasks an orchestrator
+holds](#the-limit-on-the-tasks-an-orchestrator-holds)). Taking the role over a holder that is
 lost or left drops that one in the same write, and the thread says `B took
 orchestrator over from A (lost)`, which A hears and B, who made it, does not; so
 does taking it again where a left holder still sits beside you. A task is its orchestrator's when that session holds the
 role on it, or on the nearest task above it that has a holder still there, and
-**every open task has an orchestrator**: one without is a bug. The board gives the role wherever
-a task would come to have none (`crates/tasks/src/orchestration.rs`,
-`crates/tasks/src/store/work/given.rs`):
+**every open task has an orchestrator**, or waits for one under its limit: the board gives the
+role wherever a task would come to have none (`crates/tasks/src/orchestration.rs`,
+`crates/tasks/src/store/work/given.rs`), to an orchestrator holding fewer open tasks than the
+limit, a red to any ([The limit on the tasks an orchestrator
+holds](#the-limit-on-the-tasks-an-orchestrator-holds)):
 
 - **Filed.** An orchestrator session that files a task with `just tasks create` holds its
   orchestrator role from that write (`created SLUG (ready); HANDLE orchestrates it`), unless the
@@ -2006,7 +2009,13 @@ a task would come to have none (`crates/tasks/src/orchestration.rs`,
   `create`) goes to the orchestrator of a task that session holds another role
   on, else to its parent session (`register --parent`) while that is a live orchestrator, else by
   the rule below; the owner's task by the rule alone. One filed under a task an orchestrator holds
-  is that one's by the tree, and nothing is written. `create` names who took it.
+  is that one's by the tree, and nothing is written. `create` names who took it. An orchestrator
+  its story names that is at its limit is passed over, and `create` says so, then who took it:
+  `created SLUG (ready); amber cannot take orchestrator on SLUG: amber orchestrates 16 open tasks,
+  the limit of 16 an orchestrator holds ([limits] orchestrator_tasks): it gains none until one of
+  them is done or cancelled or it lets one go; cobalt orchestrates it`, or `…; it waits for an
+  orchestrator under its limit that stays` with none under it; `--for` one at its limit files the
+  task the same way.
 - **Left.** A `leave` gives each open task the leaver orchestrates, and no other holder keeps, to
   another orchestrator by the rule, in the leave's own write, one thread line each:
   `B was given orchestrator from A (left)`. Only a leaver holding the orchestrator role reads the
@@ -2032,28 +2041,33 @@ a task would come to have none (`crates/tasks/src/orchestration.rs`,
 - **Released.** `release SLUG --role orchestrator`, and `release` of every role, is refused while
   it would leave open work with none and no orchestrator holds a task above it, naming
   `just tasks handover SLUG HANDLE` to the orchestrator the rule picks, or saying no other that
-  stays is there (a `leave` then leaves the work waiting).
+  stays and holds fewer open tasks than the limit is there (a `leave` then leaves the work
+  waiting). An orchestrator past its limit lets go of work not started (none of it in progress or
+  in review) and the task waits for the next under its limit.
 - **Reopened.** A done task moved back to open work after its orchestrator went is given by the
-  rule in that move.
+  rule in that move, and waits with none under its limit.
 
 A task's own story (`--for`, the filer's work, its parent session, the task above it, the one it
-had) names its orchestrator while that one is live. Otherwise the rule: the orchestrator holding the
-nearest task above it, else, among the orchestrators that stay, the one holding the fewest open
-tasks (ties by handle), one task at a time. An orchestrator **stays** when it is live, has been
+had) names its orchestrator while that one is live and under its limit. Otherwise the rule: the
+orchestrator holding the nearest task above it, else, among the orchestrators that stay and hold
+fewer open tasks than the limit, the one holding the fewest (ties by handle), one task at a time,
+each counted as it is given, so a pass fills none past the limit. An orchestrator **stays** when it is live, has been
 since past the first live line (registered 90 seconds or more before), and either listens (a native
 channel, a `just tasks wait` in progress, an `attach` monitor) or already holds the orchestrator role
 on an unfinished task. A session that only registered is given nothing by the board's own choice,
-so a throwaway that registers and goes moves nothing. With none that stays, the task is marked
-waiting (`just tasks show` says `waits for an orchestrator that stays, for N min`, and `create` that
-it waits, while any orchestrator that has not left is on the board: a new project's has none, and
-says nothing of it), and the first
-orchestrator to come to stay is given it at the next whole-board read, told in one line however
+so a throwaway that registers and goes moves nothing. With none that stays under its limit, the
+task is marked waiting (`just tasks show` says `waits for an orchestrator under its limit that
+stays, for N min`, naming the limit and the `role` command any such orchestrator takes it with,
+and `create` that it waits, while any orchestrator that has not left is on the board: a new
+project's has none, and says nothing of it), and the first
+orchestrator to come to stay, or to go under its limit, is given it at the next whole-board read, told in one line however
 many it was given: `GIVEN 2 open tasks are yours to orchestrate: sim/a, sim/b` (the first ten
 named), in its wait, its monitor or its channel. The board's gives reach their receiver as that one
 line, never a `ROLE` line per task, and a given orchestrator has orchestrated the task, for the
-fresh reviewer rule. So a task with no orchestrator is only the moment before the board gives it
-one, or the wait while none stays, and their count is a defect on the board's health ([Board
-health](#board-health)). The cap ([Slots](#slots)) refuses no give but a move's: a given task in
+fresh reviewer rule. So a task with no orchestrator is the moment before the board gives it one,
+or the wait while none under its limit stays: a well state, which every orchestrator hears and any
+under its limit takes with `just tasks role SLUG orchestrator`, counted on the board's health and
+warned of nowhere ([Board health](#board-health)). The cap ([Slots](#slots)) refuses no give but a move's: a given task in
 progress counts for its new orchestrator as it did for the one it had, and a ready one counts for
 none.
 
@@ -2116,7 +2130,7 @@ build, its output appended to `symphony/tasks/land/regenerate.log` (set aside as
   the generators so a Symphony older than keys still reads the file), a command whose last
   line names everything it reads, runs it first: a key and committed outputs it passed on
   before (`symphony/tasks/land/regenerated.json`) need nothing made. This repository's key
-  is the release snapshot's name and the React client's package's hash
+  is the hash of the client's package
   (`tools/client-key.sh`), so a land that changed no client input builds no client. A key names one generator, so the file is refused when
   two `[land] generators` share a name, keyed or not.
 - **One commit, landed in seconds, or discarded as stale.** What the generators change,
@@ -2477,6 +2491,7 @@ checkout as `on_review` is, so a branch cannot change its own (`crates/tasks/src
 ```toml
 [limits]
 orchestrator_slots = 8  # the tasks in progress an orchestrator holds (Slots, below)
+orchestrator_tasks = 16 # the open tasks an orchestrator holds the role on (The limit…, below)
 low_volume = 4          # PULL's low_volume line below this many open slots; 0 says it to none
 machine_agents = 12     # the agents this machine runs
 
@@ -2488,7 +2503,8 @@ assessor = "haiku"
 ```
 
 - **Defaults.** A key not written takes its default: `orchestrator_slots` none (no cap on an
-  orchestrator's slots), `low_volume` 4, `machine_agents` none (no limit on the agents a
+  orchestrator's slots), `orchestrator_tasks` 16, read from `[limits]` alone and at least 1,
+  `low_volume` 4, `machine_agents` none (no limit on the agents a
   machine runs), `orchestrator`, `executor` and `reviewer` none (a launch takes `[agents]
   launch`'s `model`, else the board's own, as **Models** below says), and `assessor` the
   smallest model its agent offers (Claude's `haiku`; for Codex, whose smallest the board does
@@ -2666,6 +2682,50 @@ reads no table whole (`tests/store/slots/cost.rs`). Each
 orchestrator's PULL header shows `slots=OPEN/CAP`, and the agents API its
 `slots` ([The agents API](#the-agents-api)), the slots the cap counts: no
 work in review and no red work.
+
+## The limit on the tasks an orchestrator holds
+
+An orchestrator holds the orchestrator role on at most a set number of open tasks, so one session
+does not answer for the whole board while others wait for work
+(`crates/tasks/src/orchestration.rs`, `crates/tasks/src/store/work/given.rs`). The number is the
+project's: `orchestrator_tasks` in the `[limits]` table of `symphony.toml` ([Limits and
+models](#limits-and-models)), 16 with none written, read from the main checkout as the cap is. A
+value that is no whole number, or one below 1, is said on stderr with its line and takes 16, and
+the settings check ([PROJECT_FILE](PROJECT_FILE.md#the-settings-check)) refuses it (`[limits]
+orchestrator_tasks (line 2) is "sixteen"; not a whole number`).
+
+- **What counts.** Each task not done or cancelled whose orchestrator role the session holds
+  itself: in review and blocked too, as the limit bounds what one orchestrator answers for, not
+  what is being built ([Slots](#slots)). The work under those tasks, its own by the tree, counts
+  for nothing, nor does a red ([Slots](#slots), **Red work takes no slot**), which goes to an
+  orchestrator that stays whatever it holds and is taken at any count, so no red waits.
+- **Where it bites.** At the limit, `just tasks role SLUG orchestrator` is refused, and so is a
+  hand-over to it (`handover`), one line naming the setting: `amber cannot take orchestrator on
+  sim/x: amber orchestrates 16 open tasks, the limit of 16 an orchestrator holds ([limits]
+  orchestrator_tasks): it gains none until one of them is done or cancelled or it lets one go`.
+  The board gives it none: a filing passes it over and says so ([Tasks and
+  roles](#tasks-and-roles), **Filed**), and the board's give at a leave, a reopen and every read
+  of the whole board takes the next that stays and is under it, else marks the task waiting. The
+  owner's hand-over, and a move that keeps moved work with the orchestrator it had, are held to
+  no limit, as the owner's moves and hand-overs are not to the cap.
+- **A task with no orchestrator is well.** It waits for one under its limit that stays: `just
+  tasks show` says so and names the `role` command any orchestrator under its limit takes it with,
+  every orchestrator hears it, and the board's health counts it and warns of none ([Board
+  health](#board-health)).
+- **Past the limit.** The limit takes nothing: an orchestrator holding more (one from before the
+  limit, or the limit lowered) keeps every task and works it, gains none until it is under, and is
+  told in its PULL header (`orchestrates=66/16`, shown at the limit and past it) and once in a line
+  of its own until it is under again: ``over_limit HANDLE orchestrates=66 limit=16 — 50 past it: it
+  is given no task and takes none until it is under; let the unstarted ones go with `just tasks
+  release SLUG --role orchestrator` ``. Past the limit, such a release of a task with nothing of it
+  or under it in progress or in review goes though no other orchestrator could take it: the board
+  gives it at its next read to one under its limit, and it waits while none is. Work started stays
+  its own until it is handed over or done.
+
+Two writes at once cannot both take the last place: a take and a hand-over held to the limit read
+the taker's open tasks with its slot counter, `counter:['slots', HANDLE]`, in the rule's read, and
+the board's give holds each receiver's counter as it read it before the board, so the write that
+loses is decided again on the new board.
 
 ## The pipeline alarm
 

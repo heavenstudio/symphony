@@ -156,7 +156,7 @@ wait of 120 s but in the case of that deadline. The server's test of what its ma
 reads takes the scale 20 on its board's scratch database
 (`apps/symphony-server/src/live/machine_work/tests`). The release run's test
 (`crates/symphony-build/tests/release/recorder.rs`) and the browser test of the board's Build and
-Test columns (`apps/symphony-ui/tests/browser/run_records.rs`) take both, the scale and the
+Test columns (`apps/symphony-web-tests/tests/browser/run_records.rs`) take both, the scale and the
 probe's 120 s, on their scratch boards, which every check and run of theirs inherits. Each
 waits for a record on its condition, with a backstop on the wall only a stall reaches (the
 browser test's are the Chrome driver's waits, which keep the same rule). What the scale and
@@ -284,9 +284,9 @@ operation IDs it remembers per machine is spent on live work and a project reade
 never on the recorder's history.
 
 **In this repository.** `tools/cargo.sh` sends a Cargo build (`build`, `check`,
-`clippy`, `doc`, `rustc`, `symphony-ui` but `dev`) or test (`test`, `nextest`,
-`bench`) through `tools/record.sh`, which it sources, as a run of `build`, `lint`,
-`client` or `test`, and the `lint-rs`, `test-rs`, `client-check`, `client-update`,
+`clippy`, `doc`, `rustc`) or test (`test`, `nextest`,
+`bench`) through `tools/record.sh`, which it sources, as a run of `build`, `lint`
+or `test`, and the `lint-rs`, `test-rs`, `client-check`, `client-update`,
 `size-check` and `verify` recipes run through it as one run each, of `lint`, `test`,
 `client`, `client`, `size` and `verify`. So do the docs checks a doc's evidence names
 ([CHECKS](CHECKS.md#evidence-by-kind-of-change)), `just symphony-cli docs-audit --check` and

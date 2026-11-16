@@ -1,6 +1,6 @@
 //! Headless Chrome, driven over the DevTools protocol: one browser per launch, on a profile of
 //! its own, leashed so it dies with the process that launched it however that ends. The client's
-//! browser tests (apps/symphony-ui/tests/browser) and `symphony shot` both drive it.
+//! browser tests (apps/symphony-web-tests/tests/browser) and `symphony shot` both drive it.
 //!
 //! A native leash owns and waits for Chrome: the launching program run again ([`Leash`]), which
 //! hands itself to [`leash_main`] first. EOF on its launcher's pipe terminates the browser even

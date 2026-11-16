@@ -128,7 +128,8 @@ fn crate_directories(root: &Path, app: impl AsRef<Path>) -> Result<BTreeSet<Path
     Ok(seen)
 }
 
-/// Both products and their transitive local crates, including path build dependencies.
+/// The server's package and its transitive local crates, including path build dependencies. The
+/// client is no crate: its sources are [`client_inputs`]'.
 pub fn source_directories(root: &Path) -> Result<BTreeSet<PathBuf>, String> {
     let sdk = workspace(root);
     let server = sdk.join("apps/symphony-server");
@@ -144,10 +145,6 @@ pub fn source_directories(root: &Path) -> Result<BTreeSet<PathBuf>, String> {
     };
     if sdk != root && root.join("apps/symphony-host/Cargo.toml").is_file() {
         directories.extend(crate_directories(root, "apps/symphony-host")?);
-    }
-    let ui = sdk.join("apps/symphony-ui");
-    if ui.join("Cargo.toml").is_file() {
-        directories.extend(crate_directories(root, &ui)?);
     }
     Ok(directories)
 }
@@ -174,28 +171,49 @@ pub fn workspace(root: &Path) -> PathBuf {
     }
 }
 
-const CLIENT_INPUTS: &[&str] = &[
-    "assets",
-    "bin",
-    "Dioxus.toml",
-    "index.html",
-    "bundle.sh",
-    "dx-path.sh",
-    "package.sh",
-    "tools.sh",
-    "wasm-fresh.sh",
-];
+/// The client's package in the source workspace: the web client (React, built by Vite).
+pub const CLIENT_PACKAGE: &str = "apps/symphony-web";
+
+/// What the client's package holds that is no source of its build: the packages npm installed, the
+/// install's lock, and what a build or a coverage run of a developer's own leaves there (its
+/// `.gitignore`'s entries).
+pub const CLIENT_OUTPUTS: [&str; 4] = ["node_modules", ".install", "dist", "coverage"];
+
+/// Whether `path`, under the client's package `web`, is a source of its build: not one of
+/// [`CLIENT_OUTPUTS`] or under one, and no guide (`*.md`).
+pub fn client_source(web: &Path, path: &Path) -> bool {
+    let Ok(inner) = path.strip_prefix(web) else {
+        return false;
+    };
+    let first = inner.components().next().map(|part| part.as_os_str());
+    !CLIENT_OUTPUTS
+        .iter()
+        .any(|name| first == Some(name.as_ref()))
+        && path.extension().is_none_or(|extension| extension != "md")
+}
 
 fn client_inputs(root: &Path, inputs: &mut BTreeSet<PathBuf>) -> Result<(), String> {
     let sdk = workspace(root);
-    let ui = sdk.join("apps/symphony-ui");
-    if ui.join("Cargo.toml").is_file() {
-        crate_inputs(crate_directories(root, &ui)?, inputs)?;
+    let web = sdk.join(CLIENT_PACKAGE);
+    if web.is_dir() {
+        for entry in fs::read_dir(&web).map_err(|e| format!("{}: {e}", web.display()))? {
+            let path = entry.map_err(|e| e.to_string())?.path();
+            if client_source(&web, &path) {
+                files(&path, inputs)?;
+            }
+        }
+        inputs.retain(|path| !path.starts_with(&web) || client_source(&web, path));
     }
-    for name in CLIENT_INPUTS {
-        files(&ui.join(name), inputs)?;
+    // The shell carries the server's notice styles, and the recipe, the launchers and the pinned
+    // Node's runner configure the build as well as Vite itself.
+    for name in [
+        "apps/symphony-server/src/notices.css",
+        "tools/node.sh",
+        "tools/rs-bin.sh",
+        "tools/check_lock.sh",
+    ] {
+        files(&sdk.join(name), inputs)?;
     }
-    // The recipe and cargo launcher configure the release bundle as well as dx itself.
     for name in [
         "justfile",
         "tools/rs-bin.sh",
@@ -203,8 +221,6 @@ fn client_inputs(root: &Path, inputs: &mut BTreeSet<PathBuf>) -> Result<(), Stri
         "tools/test-rs.sh",
         "tools/check_lock.sh",
         "symphony/justfile",
-        "symphony/tools/rs-bin.sh",
-        "symphony/tools/check_lock.sh",
     ] {
         files(&root.join(name), inputs)?;
     }
@@ -448,7 +464,8 @@ pub fn build(
 /// or client build recipe.
 pub fn builds_client(root: &Path) -> bool {
     workspace(root)
-        .join("apps/symphony-ui/Cargo.toml")
+        .join(CLIENT_PACKAGE)
+        .join("package.json")
         .is_file()
 }
 

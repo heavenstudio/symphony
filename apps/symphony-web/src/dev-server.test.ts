@@ -305,8 +305,8 @@ function response() {
 }
 
 const SOURCES = {
-  cache: "/checkout/apps/symphony-ui/assets/cache.js",
-  shell: "/checkout/apps/symphony-ui/assets/shell.js",
+  cache: "/checkout/apps/symphony-web/shell/cache.js",
+  shell: "/checkout/apps/symphony-web/shell/shell.js",
   read: (path: string) => (path.endsWith("cache.js") ? CACHE : SOURCE),
 };
 
@@ -451,7 +451,7 @@ describe("the dev server's settings", () => {
           strictPort: true,
           cors: false,
           proxy: { [PROXIED]: { target: "http://127.0.0.1:4321", changeOrigin: false, ws: true } },
-          fs: { allow: [".", "../symphony-ui/assets"] },
+          fs: { allow: ["."] },
         },
         plugins,
       },

@@ -527,14 +527,28 @@ fn a_rule_is_its_read_and_one_write_that_gives_back_the_task_as_written() {
     let (requests, moved) = counted(&f, || f.store.move_to("p/a", "review", &worker).unwrap());
     assert_eq!((requests, moved.status.as_str()), (2, "review"));
     assert_eq!(moved, f.store.get("p/a").unwrap());
+    // The orchestrator role given reads the taker's open tasks too, for the limit on them, between
+    // the rule's read and its write (`Store::gaining`).
     let (requests, held) = counted(&f, || {
         f.store.take_role("p/b", &orch, "orchestrator").unwrap()
     });
     assert_eq!(
         (requests, held.holders("orchestrator")),
-        (2, vec![orch.as_str()])
+        (3, vec![orch.as_str()])
     );
     assert_eq!(held, f.store.get("p/b").unwrap());
+    // A red's takes no place, so its take reads no more than the rule's read.
+    let filer = f.session(symphony_board::red::FILER);
+    f.task_with(NewTask {
+        red: Some("main".into()),
+        ..NewTask::new("tests/main-red-1", "A red", &filer)
+    });
+    let (requests, _) = counted(&f, || {
+        f.store
+            .take_role("tests/main-red-1", &orch, "orchestrator")
+            .unwrap()
+    });
+    assert_eq!(requests, 2);
 }
 
 #[test]

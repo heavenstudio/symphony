@@ -18,7 +18,7 @@ categories = ["development-tools::testing", "web-programming"]
 include = ["src/**", "README.md", "LICENSE"]
 
 # Headless Chrome on a private profile, driven over its DevTools protocol, leashed to the process
-# that launched it. The client's browser tests (apps/symphony-ui/tests/browser) and `symphony shot`
+# that launched it. The client's browser tests (apps/symphony-web-tests/tests/browser) and `symphony shot`
 # (crates/symphony) share it; the tests' own fixtures and stand-ins stay in their test target, so the
 # document CLI links only the driver.
 [dependencies]

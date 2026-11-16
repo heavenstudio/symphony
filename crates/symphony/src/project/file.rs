@@ -201,6 +201,7 @@ pub(super) struct FileModels {
 #[serde(default)]
 pub(super) struct FileLimits {
     pub(super) orchestrator_slots: Option<toml::Value>,
+    pub(super) orchestrator_tasks: Option<toml::Value>,
     pub(super) low_volume: Option<toml::Value>,
     pub(super) machine_agents: Option<toml::Value>,
     #[serde(flatten)]

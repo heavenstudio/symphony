@@ -1,0 +1,123 @@
+/* The attach control of every composer (src/attach.tsx): a picker, the files attached so far. */
+.attach {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  font-size: var(--fs-sm, 0.875rem);
+}
+.attach-pick {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 44px;
+  padding: 0 12px;
+  box-sizing: border-box;
+  color: var(--primary);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm, 6px);
+  cursor: pointer;
+}
+.attach-pick:hover {
+  background: var(--accent);
+}
+.attach-pick:focus-within {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+.attach-pick.disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+/* The input stays in the label, focusable and announced, but drawn by the label. */
+.attach-pick input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: inherit;
+}
+.attach-hint {
+  color: var(--muted-foreground);
+}
+.attach-files {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.attach-file {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+  min-height: 44px;
+  padding: 2px 2px 2px 4px;
+  box-sizing: border-box;
+  background: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm, 6px);
+}
+.attach-file img {
+  width: 40px;
+  height: 40px;
+  object-fit: cover;
+  border-radius: 4px;
+  flex: none;
+  background: #0b0b10;
+}
+.attach-icon {
+  width: 40px;
+  text-align: center;
+  font-size: 1.5rem;
+  flex: none;
+}
+.attach-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 16rem;
+}
+.attach-file button {
+  min-width: 44px;
+  min-height: 40px;
+  padding: 0;
+  font: inherit;
+  font-size: 1.25rem;
+  line-height: 1;
+  color: var(--muted-foreground);
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+.attach-file button:hover {
+  color: var(--dislike);
+}
+.attach-file.pending {
+  color: var(--muted-foreground);
+  padding: 0 12px;
+}
+.attach-trouble {
+  width: 100%;
+  margin: 0;
+  color: var(--dislike);
+}
+/* A file dragged over the composer: where it will land. */
+[data-attach][data-dropping] {
+  outline: 2px dashed var(--primary);
+  outline-offset: 4px;
+}
+/* A posted upload: a tall screenshot is shown whole in a bounded box rather than filling the thread. */
+img[src*="/artifacts/uploads/"] {
+  max-height: min(28rem, 70vh);
+  object-fit: contain;
+  object-position: left top;
+}

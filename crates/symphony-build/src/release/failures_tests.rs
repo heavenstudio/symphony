@@ -340,7 +340,7 @@ fn a_word_counts_when_it_starts_with_the_stem_never_inside_another() {
         ("error: x", "error", true),
         ("error[E0425]: cannot find value", "error", true),
         ("2 Errors", "error", true),
-        ("  0.00s ERROR dx failed", "error", true),
+        ("  0.00s ERROR vite failed", "error", true),
         ("(error)", "error", true),
         ("level=ERROR", "error", true),
         ("\"error\": \"x\"", "error", true),
@@ -373,7 +373,7 @@ fn a_tool_is_the_word_a_line_starts_with_before_its_colon_never_a_compilers() {
     for (line, tool_said) in [
         ("client-check: rebuild", Some("client-check")),
         ("size-budget: tasks 1 MiB", Some("size-budget")),
-        ("symphony_ui: x", Some("symphony_ui")),
+        ("symphony_web: x", Some("symphony_web")),
         ("docs audit: every document renders", None),
         ("error: recipe `x` failed", None),
         ("Warning: x", None),

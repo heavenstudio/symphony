@@ -9,7 +9,7 @@ use crate::alarm;
 use crate::launch::defaults::{Chosen, ROLES};
 use crate::launch::hc::Binary;
 use crate::launch::{Defaults, Machine, running};
-use crate::limits::{self, KEYS, Read};
+use crate::limits::{self, LOW, MACHINE_AGENTS, Read, SLOTS, TASKS};
 use std::path::Path;
 
 /// The width of a setting's name, the longest (`review_alarm_clear_hours`) and a space.
@@ -71,17 +71,22 @@ pub fn lines(
         |key: &str, value: String, from: String| format!("{key:<NAME$}{value:<width$} {from}");
     let held = read.limits;
     let none = |value: Option<usize>| value.map_or_else(|| "none".to_string(), |n| n.to_string());
-    lines.push(row(KEYS[0], none(held.orchestrator_slots), source(KEYS[0])));
-    lines.push(row(KEYS[1], held.low_volume.to_string(), source(KEYS[1])));
+    lines.push(row(SLOTS, none(held.orchestrator_slots), source(SLOTS)));
+    lines.push(row(
+        TASKS,
+        held.orchestrator_tasks.to_string(),
+        source(TASKS),
+    ));
+    lines.push(row(LOW, held.low_volume.to_string(), source(LOW)));
     let count = match running {
         None => String::new(),
         Some(Ok(count)) => format!("; this machine runs {count} now"),
         Some(Err(problem)) => format!("; {problem}"),
     };
     lines.push(row(
-        KEYS[2],
+        MACHINE_AGENTS,
         none(held.machine_agents),
-        format!("{}{count}", source(KEYS[2])),
+        format!("{}{count}", source(MACHINE_AGENTS)),
     ));
     let alarm = held.alarm;
     for (key, value) in alarm::KEYS

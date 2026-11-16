@@ -284,12 +284,11 @@ fn a_cargo_test_or_build_is_recorded_with_its_arguments_streams_status_and_limit
     // Run by itself, each is a run of the pipeline its command says.
     for (count, args, phase, run) in [
         (3, ["clippy", "-q"], Phase::Build, "lint"),
-        (4, ["symphony-ui", "dist"], Phase::Build, "client"),
-        (5, ["nextest", "run"], Phase::Test, "test"),
-        (6, ["check", "-q"], Phase::Build, "build"),
-        (7, ["doc", "-q"], Phase::Build, "build"),
-        (8, ["rustc", "-q"], Phase::Build, "build"),
-        (9, ["bench", "-q"], Phase::Test, "test"),
+        (4, ["nextest", "run"], Phase::Test, "test"),
+        (5, ["check", "-q"], Phase::Build, "build"),
+        (6, ["doc", "-q"], Phase::Build, "build"),
+        (7, ["rustc", "-q"], Phase::Build, "build"),
+        (8, ["bench", "-q"], Phase::Test, "test"),
     ] {
         cargo_said(&setup, setup.cargo(&args, Some(RECORDER)), &args);
         let history = setup.history(count);
@@ -310,11 +309,7 @@ fn what_is_neither_a_build_nor_a_test_or_runs_inside_a_recorded_one_or_finds_no_
     let setup = Setup::new("record-script-plain");
     let logging = logging();
     // Neither a build nor a test: the recorder named is not even asked.
-    for args in [
-        vec!["fmt", "--check"],
-        vec!["symphony-ui", "dev", "0"],
-        vec!["metadata"],
-    ] {
+    for args in [vec!["fmt", "--check"], vec!["metadata"]] {
         cargo_said(&setup, setup.cargo(&args, logging.to_str()), &args);
         assert_eq!(setup.logged(), "", "{args:?} ran its recorder");
     }
@@ -686,6 +681,10 @@ exit 0
 /// the client's own checks on its Node.
 const CLIENT_LINT: &str = "#!/bin/sh\nexit 0\n";
 
+/// The client's build's stand-in (`apps/symphony-web/build.sh`, which the `symphony-ui-dist`
+/// recipe runs): green, building nothing, as the client check's stand-in writes the client.
+const CLIENT_BUILD: &str = "#!/bin/sh\nexit 0\n";
+
 /// Cargo's stand-in: `fmt` red under `FAIL_LINT`, and held a minute under `HOLD_LINT`, once it has
 /// made the file that names; `metadata` saying no target, so the tests' lanes are the libraries'
 /// and binaries' own tests and the doc tests; `test` (the tests' build and each lane) saying the
@@ -704,7 +703,8 @@ exit 0
 
 /// A repository of the test's own holding this workspace's justfile and the scripts its recipes
 /// run, ignoring `build/` as this one does, with stand-ins for Cargo ([`RECIPES_CARGO`]), the client
-/// check ([`CLIENT_CHECK`]), the web client's checks ([`CLIENT_LINT`]) and `tools/rs-bin.sh`
+/// check ([`CLIENT_CHECK`]), the web client's checks ([`CLIENT_LINT`]), its build
+/// ([`CLIENT_BUILD`]) and `tools/rs-bin.sh`
 /// ([`RS_BIN`]): the recipes recorded by [`RECORDER`].
 struct Recipes {
     tree: PathBuf,
@@ -726,6 +726,7 @@ impl Recipes {
         }
         executable(&tree.join("tools/client-check.sh"), CLIENT_CHECK);
         executable(&tree.join("apps/symphony-web/check.sh"), CLIENT_LINT);
+        executable(&tree.join("apps/symphony-web/build.sh"), CLIENT_BUILD);
         executable(&tree.join("tools/rs-bin.sh"), RS_BIN);
         fs::write(tree.join("Cargo.toml"), "[workspace]\nmembers=[]\n").unwrap();
         fs::write(tree.join(".gitignore"), "/build/\n").unwrap();
