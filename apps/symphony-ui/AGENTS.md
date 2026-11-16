@@ -384,7 +384,8 @@ never the whole target, which the release run runs.
   (`tests/browser/skeleton.rs` counts `document.getAnimations()`). A page says once that it
   loads (one `role=status` line, the gates' outline under `aria-hidden` on a task's ghost) and is
   `aria-busy` while its ghost shows, as a column reading its first page and a `Settle` not yet
-  settled are.
+  settled are: `symphony shot` counts a page drawn only once no region busy shows on the screen,
+  so its picture is of the page and not of its ghost.
   A ghost uses its own classes, never the real ones, so a test's selector never finds it;
   the one placeholder it shares is a task's gates' outline, the section's own until its
   answer, which `GhostTask` draws for the room this browser kept (`GhostGates`, the React
