@@ -231,6 +231,7 @@ export function DocumentPage({ path, scope, embedded = false }: DocumentPageProp
             error={state !== null ? (trouble ?? "") : ""}
             documentRemoved={removed}
             device={device}
+            composer
           />
         )}
       </div>

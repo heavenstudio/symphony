@@ -36,10 +36,10 @@ export const NARROW = 240;
  * The box's height wide (the lanes, from 900 px) for a task this browser has drawn no timeline
  * of, in pixels: no most, as wide the box grows to hold the whole timeline (the owner's word on
  * inbox/timeline-should-not-be-collapsed-by-defa), but a typical whole timeline, so a first visit
- * moves the brief little when it lands: 367 to 480 px on the board's ten newest done tasks on
- * 2026-11-14, 408 the median.
+ * moves the brief little when it lands: 190 to 911 px on the board's ten newest done tasks on
+ * 2026-11-16, the builds and the tests each a lane of its own, 508 the median.
  */
-export const WIDE = 408;
+export const WIDE = 508;
 /** The least a box is reserved, whatever was kept. */
 export const LEAST = 120;
 

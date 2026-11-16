@@ -486,12 +486,24 @@ export interface PageNoticesProps {
   documentRemoved?: boolean;
   /** A page drawn from this device's cache: when it was kept, and whether the server is away. */
   device?: [number, boolean] | null;
+  /** The page ends in a composer, which on a phone the stack draws under rather than over. */
+  composer?: boolean;
 }
 
 /**
- * One out-of-flow stack for the feed's, the reads' and the server's messages. Its matching end
- * reserve cannot shrink during this mount, so clearing a message at the page's end cannot clamp
- * the reader's scroll position. A page drawn from this device says so in place of reconnecting.
+ * One stack for the feed's, the reads' and the server's messages, out of the page's flow and
+ * floating over the window's foot (`board.css`). On a phone, a page that ends in a composer (a
+ * task's, its message; a document's, its question: `composer`) draws it in its flow instead, in
+ * its reserve's room under that composer, as a band fixed over a phone's page covers whatever
+ * scrolls through it. The cost: a phone reader mid-page there sees no notice before the page's
+ * end, and what says the page is stale where acting matters is STALE's "Checking…" on Send, Ask
+ * and the page's actions. Every other page (the board, home, the queue, the agents, a folder,
+ * whose end is its entries) keeps it floating on a phone too: no composer is under it there, and
+ * it is their one sign that the page is out of date.
+ * The stack and its reserve share one block, so an in-flow stack's place is its reserve's in any
+ * parent, a grid's or a flex box's too. The reserve cannot shrink during this mount, so clearing
+ * a message at the page's end cannot clamp the reader's scroll position. A page drawn from this
+ * device says so in place of reconnecting.
  * Either sets STALE while shown, and only the notices that set it clear it.
  */
 export function PageNotices({
@@ -500,6 +512,7 @@ export function PageNotices({
   error = "",
   documentRemoved = false,
   device = null,
+  composer = false,
 }: PageNoticesProps) {
   const server = useStore(SERVER_NOTICE);
   const notices = useRef<HTMLDivElement>(null);
@@ -525,7 +538,7 @@ export function PageNotices({
   const visible = checking || error !== "" || server !== "" || documentRemoved;
   const waiting = deviceSays ?? reconnect;
   return (
-    <>
+    <div className={composer ? "page-notice-end under-composer" : "page-notice-end"}>
       <div className="stale page-notices notice-stack" hidden={!visible} ref={notices}>
         {deviceSays !== null ? (
           <p className="pill wait device-notice" role="status">
@@ -564,14 +577,15 @@ export function PageNotices({
         {documentRemoved && <p className="pill">{REMOVED_DOCUMENT_NOTICE}</p>}
         {server !== "" && <p className="pill">{server}</p>}
       </div>
-    </>
+    </div>
   );
 }
 
 /**
  * The page's measurement of its notice stack: its reserve never shrinks during the mount, and the
  * toasts sit above the stack as it is drawn (`--notice-toast-bottom`), rather than guessing how
- * many lines it takes. What it gives undoes it.
+ * many lines it takes, while it floats over the window; a stack in the page's flow (under a
+ * phone's composer) leaves them their own place above the dock. What it gives undoes it.
  */
 export function noticeGeometry(
   notice: HTMLElement | null,
@@ -587,7 +601,8 @@ export function noticeGeometry(
       reserve.style.setProperty("min-height", `${height}px`);
     }
     const box = notice.getBoundingClientRect();
-    const bottom = box.height > 0 ? innerHeight - box.top + 8 : 66;
+    const floats = box.height > 0 && getComputedStyle(notice).position === "fixed";
+    const bottom = floats ? innerHeight - box.top + 8 : 66;
     root.style.setProperty("--notice-toast-bottom", `${bottom}px`);
   };
   const observer = new ResizeObserver(sync);

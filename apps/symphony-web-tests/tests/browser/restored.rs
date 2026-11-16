@@ -965,8 +965,11 @@ fn board_fetch_and_server_notices_keep_loaded_rows_in_place_after_narrowing() {
     }
 }
 
+// A long document's end content clears the reconnect notice at a phone's width and a desk's, and
+// two real toasts show whole: above the notice where it floats over the window (1024 px), at their
+// own place above the dock where it is in the page's flow (390 px, `noticeGeometry`).
 #[test]
-fn document_page_end_and_two_real_toasts_clear_the_reconnect_notice() {
+fn document_page_end_clears_the_reconnect_notice_and_two_real_toasts_rise_over_a_floating_one() {
     let site = Site::start(dist(), &common::fixture("board.json"));
     document(
         &site,
@@ -1039,22 +1042,32 @@ fn document_page_end_and_two_real_toasts_clear_the_reconnect_notice() {
             "new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))",
         );
         let geometry = browser.eval(r#"(() => {
-            const notice=document.querySelector('.page-notices').getBoundingClientRect();
+            const stack=document.querySelector('.page-notices');
+            const notice=stack.getBoundingClientRect();
             const last=document.querySelector('[data-doc-key=intro] p:last-child').getBoundingClientRect();
             const ask=document.querySelector('#asks button[type=submit]').getBoundingClientRect();
             const toasts=[...document.querySelectorAll('#toasts .pop')].map(e=>e.getBoundingClientRect());
             const clear=b=>b.right<=notice.left || b.left>=notice.right || b.bottom<=notice.top || b.top>=notice.bottom;
+            const bottom=getComputedStyle(document.documentElement).getPropertyValue('--notice-toast-bottom');
+            const place=getComputedStyle(stack).position==='fixed'
+                ? (toasts.every(clear) ? 'above the floating notice' : 'over the floating notice')
+                : (bottom==='66px' ? 'their own' : `lifted to ${bottom}`);
             return {checks:{exact:scrollY===endScroll && document.documentElement.scrollHeight===endHeight,
                 end:scrollY===Math.max(0,document.documentElement.scrollHeight-innerHeight),
                 content:[last,ask].every(b=>b.height>0 && b.top>=0 && b.bottom<=notice.top),
-                toasts:toasts.length===2 && toasts.every(b=>b.width>0 && b.height>0 && b.top>=0 && b.bottom<=innerHeight && clear(b))},
-                notice:notice.toJSON(),toasts:toasts.map(b=>b.toJSON()),
-                bottom:getComputedStyle(document.documentElement).getPropertyValue('--notice-toast-bottom')};
+                toasts:toasts.length===2 && toasts.every(b=>b.width>0 && b.height>0 && b.top>=0 && b.bottom<=innerHeight),
+                place},
+                notice:notice.toJSON(),toasts:toasts.map(b=>b.toJSON()),bottom};
         })()"#);
+        let place = if width > 600 {
+            "above the floating notice"
+        } else {
+            "their own"
+        };
         assert_eq!(
             geometry["checks"],
-            json!({"exact":true,"end":true,"content":true,"toasts":true}),
-            "{width}px: end content and two real toasts must be visible and clear of the notice; before paint {before_paint}; painted {geometry}"
+            json!({"exact":true,"end":true,"content":true,"toasts":true,"place":place}),
+            "{width}px: end content must clear the notice, and two real toasts show whole at their place; before paint {before_paint}; painted {geometry}"
         );
         site.fail_feeds(0);
         assert!(browser.wait_for(
