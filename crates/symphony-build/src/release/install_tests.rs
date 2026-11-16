@@ -60,17 +60,26 @@ fn checkout(tree: &Tree) -> PathBuf {
     tree.path("checkout")
 }
 
-/// The release installed from `tree`'s checkout into its `machine/` by `builder`, at `commit`.
-fn run(tree: &Tree, builder: &OsString, commit: &str) -> Installed {
+/// The release `tag` installed from `tree`'s checkout into its `machine/` by `builder`, at
+/// `commit`, its log in `logs`, `current` as it was.
+fn installed(tree: &Tree, builder: &OsString, tag: &str, commit: &str, logs: &str) -> Installed {
     install(&Install {
         checkout: &tree.path("checkout"),
         machine: &tree.path("machine"),
-        tag: TAG,
+        tag,
         commit,
-        logs: &tree.path("logs"),
+        logs: &tree.path(logs),
         builder: Some(builder),
         until: Bound::until(Instant::now() + Duration::from_secs(600)),
     })
+}
+
+/// [`TAG`] installed at `commit`, then `current` pointed at it, as a refresh that nothing holds
+/// does.
+fn run(tree: &Tree, builder: &OsString, commit: &str) -> Installed {
+    let mut made = installed(tree, builder, TAG, commit, "logs");
+    point(&tree.path("machine"), &mut made);
+    made
 }
 
 /// What `machine/releases` holds, by name.
@@ -96,7 +105,7 @@ fn builds(tree: &Tree) -> Vec<String> {
 }
 
 #[test]
-fn a_green_build_is_installed_whole_with_its_manifest_and_current_points_at_it() {
+fn a_green_build_is_installed_whole_with_its_manifest_and_current_pointed_at_it() {
     let tree = Tree::new();
     checkout(&tree);
     let builder = builder(&tree, &release::BINARIES, (18, 18), 0);
@@ -192,16 +201,14 @@ fn a_failed_build_leaves_no_folder_and_current_where_it_was() {
     let machine = tree.path("machine");
     // An earlier release, which current names.
     let before = builder(&tree, &release::BINARIES, (17, 17), 0);
-    let earlier = install(&Install {
-        checkout: &tree.path("checkout"),
-        machine: &machine,
-        tag: "release-2026-11-19",
-        commit: "earlier",
-        logs: &tree.path("logs-earlier"),
-        builder: Some(&before),
-        until: Bound::until(Instant::now() + Duration::from_secs(600)),
-    });
-    assert!(earlier.ran.green());
+    let mut earlier = installed(
+        &tree,
+        &before,
+        "release-2026-11-19",
+        "earlier",
+        "logs-earlier",
+    );
+    assert!(point(&machine, &mut earlier) && earlier.ran.green());
     // The build fails, having written three binaries.
     let failing = builder(&tree, &release::BINARIES[..3], (18, 18), 101);
     let installed = run(&tree, &failing, COMMIT);
@@ -215,10 +222,56 @@ fn a_failed_build_leaves_no_folder_and_current_where_it_was() {
         )]
     );
     assert_eq!(releases(&tree), ["release-2026-11-19"]);
+    assert!(installed.manifest.is_none());
     assert_eq!(
         release::current(&machine).as_deref(),
         Some("release-2026-11-19")
     );
+    // A red install has nothing to point at: current stays, and nothing more is said.
+    let mut red = installed;
+    assert!(!point(&machine, &mut red));
+    assert_eq!(red.said.len(), 1);
+    assert_eq!(
+        release::current(&machine).as_deref(),
+        Some("release-2026-11-19")
+    );
+}
+
+#[test]
+fn an_install_points_nothing_and_a_point_that_fails_is_its_red() {
+    let tree = Tree::new();
+    checkout(&tree);
+    let machine = tree.path("machine");
+    let builder = builder(&tree, &release::BINARIES, (18, 18), 0);
+    let mut made = installed(&tree, &builder, TAG, COMMIT, "logs");
+    assert!(made.ran.green(), "{:?}", made.ran);
+    assert_eq!(releases(&tree), [TAG]);
+    assert_eq!(
+        release::current(&machine),
+        None,
+        "the install points nothing"
+    );
+    assert_eq!(made.said.len(), 2, "{:?}", made.said);
+    assert_eq!(
+        made.manifest.as_ref().map(|m| m.release.as_str()),
+        Some(TAG)
+    );
+    // A folder where the link goes: the point fails, current is not made, and the step is red.
+    fs::create_dir_all(machine.join("current")).unwrap();
+    assert!(!point(&machine, &mut made));
+    assert!(!made.ran.green());
+    let why = made.ran.error.clone().unwrap();
+    assert_eq!(
+        why,
+        format!("{} is not a link", machine.join("current").display())
+    );
+    assert_eq!(
+        made.said[2],
+        format!("{TAG} is installed, and current is as it was: {why}")
+    );
+    assert!(machine.join("current").is_dir());
+    let log = fs::read_to_string(&made.ran.log).unwrap();
+    assert!(log.ends_with(&format!("{}\n", made.said[2])), "{log}");
 }
 
 #[test]
@@ -348,21 +401,13 @@ fn the_newer_release_takes_current_and_names_the_one_before() {
     let machine = tree.path("machine");
     let builder = builder(&tree, &release::BINARIES, (18, 18), 0);
     for tag in ["release-2026-11-19", TAG] {
-        let installed = install(&Install {
-            checkout: &tree.path("checkout"),
-            machine: &machine,
-            tag,
-            commit: tag,
-            logs: &tree.path("logs").join(tag),
-            builder: Some(&builder),
-            until: Bound::until(Instant::now() + Duration::from_secs(600)),
-        });
-        assert!(installed.ran.green());
+        let mut made = installed(&tree, &builder, tag, tag, &format!("logs/{tag}"));
+        assert!(point(&machine, &mut made) && made.ran.green());
         if tag == TAG {
             assert!(
-                installed.said[2].contains("(it named release-2026-11-19, which stays installed)"),
+                made.said[2].contains("(it named release-2026-11-19, which stays installed)"),
                 "{:?}",
-                installed.said
+                made.said
             );
         }
     }
@@ -486,7 +531,7 @@ fn the_real_build_installs_this_checkouts_release() {
     let trial = checkout.join(".target/install-trial");
     let _ = fs::remove_dir_all(&trial);
     let machine = trial.join("machine");
-    let installed = install(&Install {
+    let mut installed = install(&Install {
         checkout: &checkout,
         machine: &machine,
         tag: "release-trial",
@@ -495,6 +540,7 @@ fn the_real_build_installs_this_checkouts_release() {
         builder: None,
         until: Bound::until(Instant::now() + Duration::from_secs(2 * 3600)),
     });
+    point(&machine, &mut installed);
     for line in &installed.said {
         println!("{line}");
     }

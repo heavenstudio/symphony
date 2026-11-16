@@ -1,14 +1,14 @@
 //! What a refresh reads of a board's database as it runs, never stopping or starting it:
 //! [`Home::export`], a snapshot of one of its databases, `surreal export` over the running server's
-//! own connection into a SurrealQL file, which `surreal import` restores; and [`Home::schema`], the
-//! schema its board is at. Neither needs a stop or sends a signal: a store whose server is not
-//! running is refused, and nothing is started, so a snapshot never stands in for a stop of the
-//! board's database.
+//! own connection into a SurrealQL file, which `surreal import` restores; [`Home::schema`], the
+//! schema its board is at; and [`Home::writers`], who writes it. None needs a stop or sends a
+//! signal: a store whose server is not running is refused, and nothing is started, so a snapshot
+//! never stands in for a stop of the board's database.
 
 use super::{Home, Running, ServerError, io};
 use crate::rpc::{self, Client};
 use crate::sys::command;
-use crate::{NAMESPACE, Store};
+use crate::{NAMESPACE, Store, Writer};
 use std::fs;
 use std::path::Path;
 use std::time::Duration;
@@ -57,6 +57,30 @@ impl Home {
         .map_err(|e| {
             ServerError::Io(format!(
                 "the board's schema in {NAMESPACE}/{database} at {} cannot be read: {e}",
+                running.addr
+            ))
+        })
+    }
+
+    /// Every writer's line on the board in the database `database`, as the recorded server serves
+    /// it now (`crate::store::Writer`): none for a board below the writer record or not made yet.
+    /// One read, which defines and writes nothing.
+    ///
+    /// # Errors
+    ///
+    /// When the board's database is not running, or the read fails.
+    pub fn writers(&self, database: &str) -> Result<Vec<Writer>, ServerError> {
+        let running = self.running_now()?;
+        Store::unchecked(
+            Client::new(&running.addr, NAMESPACE, database),
+            Box::new(crate::store::now),
+            Box::new(|_| true),
+            "",
+        )
+        .writers()
+        .map_err(|e| {
+            ServerError::Io(format!(
+                "the board's writers in {NAMESPACE}/{database} at {} cannot be read: {e}",
                 running.addr
             ))
         })

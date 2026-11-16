@@ -83,7 +83,7 @@ pub use work::{
     PULLABLE, ROLES, RunPlace, STATUSES, Unfresh, approved, can_transition, covered_by,
     covered_line, landing,
 };
-pub use writers::{Program, Writer};
+pub use writers::{Program, RECENT as WRITERS_RECENT, SINCE as WRITERS_SINCE, Writer};
 
 type Clock = Box<dyn Fn() -> f64 + Send + Sync>;
 type Probe = Box<dyn Fn(i64) -> bool + Send + Sync>;

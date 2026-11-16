@@ -760,19 +760,20 @@ fn show(store: &Store, c: &mut Context) -> Result<(), Stop> {
         updated: task.updated,
     };
     let stages = stages::stages(facts, &lines, store.now());
-    // The task's tokens, its subtasks' with them.
+    // The task's tokens, its subtasks' with them, and their estimated cost.
     let slugs: Vec<&str> = std::iter::once(slug.as_str())
         .chain(children.iter().map(|child| child.slug.as_str()))
         .collect();
     let spent = store.spent_on(&slugs)?;
-    let tally = crate::usage::Tally::of(&spent);
+    let prices = crate::usage::Prices::embedded();
+    let tally = crate::usage::Tally::at(&spent, prices);
     if c.parsed.flag("json") {
         let json = Py::obj(vec![
             ("task", shape::task(&task)),
             ("thread", shape::messages(&thread)),
             ("children", shape::tasks(&children)),
             ("stages", shape::stages(&stages)),
-            ("tokens", tally.json(&spent)),
+            ("tokens", tally.json(&spent, prices)),
         ]);
         c.say(&pyjson::dumps(&json));
         return Ok(());

@@ -483,7 +483,8 @@ fn each_project_fits_the_first_visit_budget_in_its_own_theme_and_the_shared_look
     }
 
     // The server's own pages, the picker and what an unknown project answers, stand in the
-    // column a project's pages stand in, their titles at the same size.
+    // column a project's pages stand in (the queue's: the board alone takes the window's width),
+    // their titles at the same size.
     let Some(mut browser) = chrome() else { return };
     browser.call(
         "Emulation.setDeviceMetricsOverride",
@@ -492,17 +493,28 @@ fn each_project_fits_the_first_visit_budget_in_its_own_theme_and_the_shared_look
     browser.open(&server.url("/alpha/tasks"));
     assert!(
         browser.wait_for(
-            "document.querySelector('main .page-head h1') !== null",
+            "document.querySelector('main .page-head h1') !== null && document.querySelector('main > .kanban') !== null",
             SHOWN
         ),
-        "/alpha/tasks drew no title: {:?}",
+        "/alpha/tasks drew no board: {:?}",
+        browser.eval("document.body.innerText")
+    );
+    let board = browser.eval(COLUMN);
+    assert_eq!(board["width"], json!(1600), "the board's column: {board}");
+    browser.open(&server.url("/alpha/queue"));
+    assert!(
+        browser.wait_for(
+            "document.querySelector('main [data-ready=queue] .page-head h1') !== null",
+            SHOWN
+        ),
+        "/alpha/queue drew no title: {:?}",
         browser.eval("document.body.innerText")
     );
     let project = browser.eval(COLUMN);
     assert_eq!(
-        project["width"],
-        json!(1488),
-        "the project's column: {project}"
+        project,
+        json!({"width": 1488, "padding": "24px", "title": board["title"]}),
+        "the project's column"
     );
     for page in ["/", "/nope/"] {
         browser.open(&server.url(page));

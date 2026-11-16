@@ -338,7 +338,6 @@ fn the_board_s_next_ghost_draws_the_columns_it_last_read_with_a_card_for_each_ta
         "the task board was never drawn: {}",
         browser.eval(PAGE)
     );
-    let link = "(() => { const link = [...document.querySelectorAll('main .page-head a')].find(a => a.textContent === 'Who is connected'); link.focus(); return document.activeElement === link; })()";
     // The next visit: its first read held, and no copy of the board on this device (its cache
     // opened late or let the board go), which would draw it at once with no ghost.
     browser.call(
@@ -351,7 +350,6 @@ fn the_board_s_next_ghost_draws_the_columns_it_last_read_with_a_card_for_each_ta
     let ghost = browser.eval(
         "[...document.querySelectorAll('.ghost-column')].map(c => [c.dataset.for, c.querySelectorAll('.ghost-card').length, Math.round(c.getBoundingClientRect().width)])",
     );
-    let focused = browser.eval(link);
     site.hold_route("/api/task-board", false);
     assert!(drawn, "no ghost of the board: {}", browser.eval(PAGE));
     assert!(
@@ -381,11 +379,6 @@ fn the_board_s_next_ghost_draws_the_columns_it_last_read_with_a_card_for_each_ta
         ghost,
         json!(counted),
         "the ghost draws the columns the board last drew, as wide, each with a card per task it counted"
-    );
-    assert_eq!(
-        (focused, browser.eval("document.activeElement?.textContent")),
-        (json!(true), json!("Who is connected")),
-        "a reader on the heading's link while the board loads keeps it"
     );
 }
 

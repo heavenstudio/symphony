@@ -42,7 +42,7 @@ import {
 import { type FrameRefresh, useFrame } from "./frame";
 import { type Journal, ReadCursor } from "./journal";
 import { type BoardRun, keepBoard, type PageBoard, PageNotices, Retry } from "./live";
-import { href, scoped } from "./project";
+import { scoped } from "./project";
 import { getIf, getJson, said } from "./request";
 import { field, holdPlace, list as items } from "./shared";
 import { tryAgain } from "./state";
@@ -1008,7 +1008,6 @@ export function TasksView({ scope, board, stale, freshness, refreshed }: TasksVi
   // A first read that failed, nothing drawn yet (a page drawn from this device is ready), says why
   // in place of the ghost, once: the notices leave it out while it stands.
   const unread = !ready && error !== "";
-  // The heading stays one node from the ghost to the board, so the link keeps its focus.
   return (
     <main
       data-ready="board"
@@ -1023,7 +1022,6 @@ export function TasksView({ scope, board, stale, freshness, refreshed }: TasksVi
       )}
       <div className="page-head">
         <h1>{PAGE_NAMES.BOARD}</h1>
-        <a href={href("/agents")}>Who is connected</a>
       </div>
       {board !== null && d !== null && unread ? (
         <UnreadBoard

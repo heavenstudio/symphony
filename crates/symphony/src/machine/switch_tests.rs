@@ -318,6 +318,45 @@ fn the_standing_says_no_release_or_a_current_naming_none_installed() {
 }
 
 #[test]
+fn the_standing_of_releases_installed_and_never_pointed_at_names_them_and_the_hold() {
+    let tree = Tree::new();
+    let machine = installed(&tree, RELEASE, PIN, symphony_board::SCHEMA);
+    installed(&tree, "release-2026-11-21", PIN, symphony_board::SCHEMA);
+    // The refresh installs them and points current at none while the switch is held.
+    fs::remove_file(machine.join(release::CURRENT)).unwrap();
+    // An install's hidden folder and a folder that is no whole release are no releases.
+    tree.write(
+        &format!("machine/releases/.{RELEASE}.1/manifest.json"),
+        "{}",
+    );
+    tree.write("machine/releases/broken/manifest.json", "{");
+    let releases = machine.join(release::RELEASES);
+    let line = |names: &str| {
+        format!(
+            "machine: current names no release, and {names} installed in {}: a project's build is \
+             the machine's server\n",
+            releases.display()
+        )
+    };
+    let alpha = project(&tree, "alpha", &[], &[]);
+    registered(&machine, &[&alpha]);
+    assert_eq!(
+        standing(&machine),
+        line(&format!("{RELEASE}, release-2026-11-21 are"))
+    );
+    let linked = project(&tree, "linked", &["shelf"], &[]);
+    registered(&machine, &[&linked]);
+    let said = standing(&machine);
+    assert!(
+        said.starts_with(&line(&format!("{RELEASE}, release-2026-11-21 are")))
+            && said.contains("\nmachine: the switch is held: linked names the linked plugin shelf"),
+        "{said}"
+    );
+    fs::remove_dir_all(releases.join("release-2026-11-21")).unwrap();
+    assert!(standing(&machine).starts_with(&line(&format!("{RELEASE} is"))));
+}
+
+#[test]
 fn the_standing_names_the_hold_or_what_makes_the_switch() {
     let tree = Tree::new();
     let machine = installed(&tree, RELEASE, PIN, symphony_board::SCHEMA);

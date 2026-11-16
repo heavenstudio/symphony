@@ -30,7 +30,7 @@ use symphony_board::rpc::Client;
 use tower::ServiceExt;
 
 /// The first bytes of a PNG three pixels wide and two high: all a render reads of a picture.
-const PNG: [u8; 24] = [
+pub(super) const PNG: [u8; 24] = [
     0x89, b'P', b'N', b'G', b'\r', b'\n', 0x1a, b'\n', 0, 0, 0, 13, b'I', b'H', b'D', b'R', 0, 0,
     0, 3, 0, 0, 0, 2,
 ];
@@ -74,7 +74,7 @@ pub(super) fn requests(store: &symphony_board::Store) -> u64 {
 }
 
 /// A FIFO at `path`: a render that reads it waits until the test writes.
-fn fifo(path: &Path) {
+pub(super) fn fifo(path: &Path) {
     use std::os::unix::ffi::OsStrExt;
     let name = std::ffi::CString::new(path.as_os_str().as_bytes()).unwrap();
     // SAFETY: name is a live, terminated path; the FIFO is this test's.
@@ -82,7 +82,7 @@ fn fifo(path: &Path) {
 }
 
 /// The write end of the FIFO at `path` once a reader has opened it, `None` before.
-fn writer(path: &Path) -> Option<std::fs::File> {
+pub(super) fn writer(path: &Path) -> Option<std::fs::File> {
     match std::fs::OpenOptions::new()
         .write(true)
         .custom_flags(libc::O_NONBLOCK)
@@ -292,7 +292,7 @@ fn first_read_across(
 }
 
 /// Whether `doc`, as the wire carries it, says `words` anywhere: a card's line among them.
-fn holds(doc: &symphony_api::Document, words: &str) -> bool {
+pub(super) fn holds(doc: &symphony_api::Document, words: &str) -> bool {
     serde_json::to_string(doc).unwrap().contains(words)
 }
 
