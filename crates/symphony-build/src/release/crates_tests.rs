@@ -1,10 +1,16 @@
 //! The published packages, crates.io's index, the changed-sources check and the release's step,
-//! against a workspace and a registry folder of the test's own and a stand-in for the cargo that
-//! publishes: nothing here reads crates.io or publishes anything.
+//! against a workspace and a registry folder of the test's own, a server of the test's own on this
+//! machine for curl's reads and a stand-in for the cargo that publishes: nothing here reads
+//! crates.io or publishes anything.
 
+use std::io::Read as _;
+use std::net::TcpListener;
 use std::os::unix::fs::PermissionsExt as _;
 use std::os::unix::process::ExitStatusExt as _;
 use std::process::ExitStatus;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::mpsc;
 
 use serde_json::json;
 
@@ -361,6 +367,198 @@ fn a_check_fails_closed_on_a_registry_it_cannot_read_or_a_package_it_cannot_fetc
     let unfetched =
         check(&root, &Registry::Folder(registry), &tree.path("t"), later()).unwrap_err();
     assert!(unfetched.contains("alpha-1.0.0.crate"), "{unfetched}");
+}
+
+/// What the test's server does with one request it read.
+enum Answer {
+    /// Closes the connection without a word: curl's empty reply.
+    Nothing,
+    /// Says nothing and keeps the connection open while the server lives.
+    Silent,
+    /// Answers this status with this body.
+    Says(u16, &'static str),
+}
+
+/// A server of the test's own on a free port of this machine: it answers each connection in turn
+/// as its answers say, then accepts no more, keeping what it holds open until it is dropped.
+struct Server {
+    base: String,
+    heard: Arc<AtomicUsize>,
+    _lives: mpsc::Sender<()>,
+}
+
+impl Server {
+    fn new(answers: Vec<Answer>) -> Server {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let heard = Arc::new(AtomicUsize::new(0));
+        let (lives, dropped) = mpsc::channel::<()>();
+        let count = Arc::clone(&heard);
+        std::thread::spawn(move || {
+            let mut held = Vec::new();
+            for answer in answers {
+                let Ok((mut stream, _)) = listener.accept() else {
+                    return;
+                };
+                let (mut request, mut byte) = (Vec::new(), [0u8; 1]);
+                while !request.ends_with(b"\r\n\r\n")
+                    && stream.read(&mut byte).is_ok_and(|read| read == 1)
+                {
+                    request.push(byte[0]);
+                }
+                count.fetch_add(1, Ordering::SeqCst);
+                match answer {
+                    Answer::Nothing => {}
+                    Answer::Silent => held.push(stream),
+                    Answer::Says(code, body) => {
+                        let _ = write!(
+                            stream,
+                            "HTTP/1.1 {code} Said\r\nContent-Length: {}\r\n\
+                             Connection: close\r\n\r\n{body}",
+                            body.len()
+                        );
+                    }
+                }
+            }
+            let _ = dropped.recv();
+            drop((listener, held));
+        });
+        Server {
+            base,
+            heard,
+            _lives: lives,
+        }
+    }
+
+    fn url(&self) -> String {
+        format!("{}/sy/mp/symphony-env", self.base)
+    }
+
+    /// How many requests it has read.
+    fn heard(&self) -> usize {
+        self.heard.load(Ordering::SeqCst)
+    }
+}
+
+/// Reads of `tries` tries, each within `each` seconds, with no pause between.
+fn reads(tries: u32, each: u64) -> Reads {
+    Reads {
+        each: Duration::from_secs(each),
+        tries,
+        pause: Duration::ZERO,
+    }
+}
+
+#[test]
+fn a_read_that_got_no_answer_or_a_servers_error_is_tried_again_and_the_next_answer_stands() {
+    let server = Server::new(vec![
+        Answer::Nothing,
+        Answer::Says(200, "{\"vers\":\"1.0.0\"}"),
+    ]);
+    assert_eq!(
+        fetched_by(reads(3, 60), &server.url(), None, bound()),
+        Ok(Some(b"{\"vers\":\"1.0.0\"}".to_vec()))
+    );
+    assert_eq!(server.heard(), 2);
+
+    let server = Server::new(vec![
+        Answer::Says(503, "busy"),
+        Answer::Says(429, "slow down"),
+        Answer::Says(404, "none"),
+    ]);
+    assert_eq!(
+        fetched_by(reads(3, 60), &server.url(), None, bound()),
+        Ok(None)
+    );
+    assert_eq!(server.heard(), 3);
+
+    let tree = Tree::new();
+    let file = tree.path("alpha-1.0.0.crate");
+    let server = Server::new(vec![Answer::Says(502, ""), Answer::Says(200, "the crate")]);
+    assert_eq!(
+        fetched_by(reads(3, 60), &server.url(), Some(&file), bound()),
+        Ok(Some(Vec::new()))
+    );
+    assert_eq!(fs::read_to_string(&file).unwrap(), "the crate");
+    assert_eq!(server.heard(), 2);
+}
+
+#[test]
+fn a_read_that_fails_each_try_says_the_last_failure_and_its_tries() {
+    let server = Server::new(vec![Answer::Nothing, Answer::Nothing, Answer::Nothing]);
+    let failed = fetched_by(reads(3, 60), &server.url(), None, bound()).unwrap_err();
+    assert!(
+        failed.starts_with(&format!("curl {} failed: curl: (52) ", server.url()))
+            && failed.ends_with(" (tried 3 times)"),
+        "{failed}"
+    );
+    assert_eq!(server.heard(), 3);
+
+    // The read the release run met: no answer within a try's time, each time.
+    let server = Server::new(vec![Answer::Silent, Answer::Silent]);
+    let failed = fetched_by(reads(2, 1), &server.url(), None, bound()).unwrap_err();
+    assert!(
+        failed.starts_with(&format!("curl {} ", server.url()))
+            && failed.ends_with(" (tried 2 times)"),
+        "{failed}"
+    );
+}
+
+#[test]
+fn a_read_is_not_tried_again_after_an_answer_that_stands_its_last_try_its_time_or_a_stop() {
+    let server = Server::new(vec![Answer::Says(404, ""), Answer::Says(200, "")]);
+    assert_eq!(
+        fetched_by(reads(3, 60), &server.url(), None, bound()),
+        Ok(None)
+    );
+    assert_eq!(server.heard(), 1, "a 404 stands");
+
+    let server = Server::new(vec![Answer::Says(400, ""), Answer::Says(200, "")]);
+    assert_eq!(
+        fetched_by(reads(3, 60), &server.url(), None, bound()),
+        Err(format!("{} answered 400", server.url()))
+    );
+    assert_eq!(
+        server.heard(),
+        1,
+        "an answer that is no server's error stands"
+    );
+
+    let server = Server::new(vec![Answer::Says(503, ""), Answer::Says(200, "")]);
+    assert_eq!(
+        fetched_by(reads(1, 60), &server.url(), None, bound()),
+        Err(format!("{} answered 503", server.url()))
+    );
+    assert_eq!(server.heard(), 1, "one try is all one try makes");
+
+    let server = Server::new(vec![Answer::Nothing, Answer::Says(200, "")]);
+    let paused = Reads {
+        pause: Duration::from_secs(600),
+        ..reads(3, 60)
+    };
+    let failed = fetched_by(paused, &server.url(), None, Bound::until(later())).unwrap_err();
+    assert!(
+        failed.starts_with(&format!("curl {} failed: curl: (52) ", server.url()))
+            && !failed.contains("tried"),
+        "a pause past the bound is not waited for: {failed}"
+    );
+    assert_eq!(server.heard(), 1);
+
+    let server = Server::new(vec![Answer::Silent, Answer::Says(200, "")]);
+    let stop = || true;
+    let failed = fetched_by(
+        reads(3, 60),
+        &server.url(),
+        None,
+        Bound::hearing(later(), &stop),
+    )
+    .unwrap_err();
+    assert!(
+        failed.starts_with(&format!("curl {} was stopped after ", server.url()))
+            && failed.ends_with(" s: the run was told to stop"),
+        "a run told to stop tries no more: {failed}"
+    );
+    assert!(server.heard() <= 1);
 }
 
 fn status(code: i32) -> ExitStatus {
