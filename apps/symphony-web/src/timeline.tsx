@@ -65,6 +65,8 @@ const STYLE_ID = "timeline-style";
 export const NO_ANSWER = "the server did not answer in time";
 /** What a read says of an answer that is no timeline this client can read. */
 export const NOT_A_TIMELINE = "the server's answer is not a timeline";
+/** What a read says where the server has no timeline for the task: nothing tries it again. */
+export const NO_TIMELINE = "the board has no timeline for this task";
 
 /** Put the timeline's style sheet in the page once: no first visit carries it. */
 export function putStyle(): void {
@@ -103,10 +105,11 @@ export interface Seen {
  * What the timeline's place shows of its `part` at `clock` (this browser's, in ms): the answer,
  * its `now` moved on by this browser's clock since it was first drawn (`seen`), as the server's
  * own is not read again while nothing changed; why its read failed, only where no timeline is
- * shown; nothing before either.
+ * shown, or that the server has none (which nothing tries again); nothing before either.
  */
 export function shownOf(part: Answer<unknown>, seen: Seen | null, clock: number): Shown {
   if (part.value === undefined) {
+    if (part.missing) return { error: NO_TIMELINE, final: true };
     return part.error === null ? null : { error: readFailed(part.error) };
   }
   const timeline = readTimeline(part.value);
@@ -597,6 +600,9 @@ export function TimelineView({ timeline, onDrawn }: ViewProps): JSX.Element {
   const body = useRef<HTMLDivElement>(null);
   const said = useRef(onDrawn);
   said.current = onDrawn;
+  // Before the first draw is measured, which the sheet lays out: an answer may be there as the
+  // chunk comes.
+  useLayoutEffect(putStyle, []);
   useEffect(() => watchCrossings(() => setCrossings((count) => count + 1)), []);
   // biome-ignore lint/correctness/useExhaustiveDependencies: measured again for each answer drawn and each crossing of 900 px
   useLayoutEffect(() => {
@@ -659,7 +665,13 @@ export function TimelineHost({ slug, part, read, onDrawn }: HostProps): JSX.Elem
   }, [slug, every]);
   if (shown === null) return null;
   if ("error" in shown) {
-    return <TimelineFailed error={shown.error} retry={() => void asked.current()} />;
+    return (
+      <TimelineFailed
+        error={shown.error}
+        again={shown.final !== true}
+        retry={() => void asked.current()}
+      />
+    );
   }
   return <TimelineView timeline={shown.timeline} onDrawn={onDrawn} />;
 }
@@ -668,11 +680,20 @@ export function TimelineHost({ slug, part, read, onDrawn }: HostProps): JSX.Elem
  * A read that failed with no timeline shown, said in the box's place quietly with its Try again
  * (`retry`): the page's own errors are its notice stack's, drawn once outside its flow.
  */
-export function TimelineFailed({ error, retry }: { error: string; retry: () => void }) {
+export function TimelineFailed({
+  error,
+  again = true,
+  retry,
+}: {
+  error: string;
+  /** Whether the read is tried again by itself. */
+  again?: boolean;
+  retry: () => void;
+}) {
   return (
     <div className="tl-drawn tl-failed">
       <p className="tl-note">
-        {`${failed(error)} `}
+        {`${failed(error, again)} `}
         <Button type="button" onClick={retry}>
           Try again
         </Button>

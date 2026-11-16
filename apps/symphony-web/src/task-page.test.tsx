@@ -396,6 +396,9 @@ describe("a task's page before its parts answer", () => {
     expect(waiting).toContain('<article class="task" data-slug="fixture/task" aria-busy="true">');
     // Said once that the task loads; each part is its own outline.
     expect(waiting.split("Loading task…")).toHaveLength(2);
+    expect(waiting.split('role="status"')).toHaveLength(2);
+    expect(waiting).toContain('<p class="gates-said">Reading the gates…</p>');
+    expect(waiting).toContain('<span class="status-text">Loading the thread…</span>');
     expect(waiting).toContain('class="card ghost-head"');
     expect(waiting).toContain('data-gates="reading"');
     expect(waiting).toContain('id="timeline-slot"');
@@ -457,6 +460,8 @@ describe("a task's page before its parts answer", () => {
     expect(failed).toContain("<p>The server answered 500. Trying again…</p>");
     expect(failed).toContain(">Retry</button>");
     expect(failed).not.toContain("Loading task…");
+    // With no word that the task loads, a part still read says its own.
+    expect(failed).toContain('<p class="gates-said" role="status">Reading the gates…</p>');
     expect(failed).not.toContain("ghost-head");
     expect(failed).not.toContain("ghost-brief");
     // The thread, the gates' outline and the timeline's box stand as their own reads do.
@@ -607,7 +612,7 @@ describe("a task's ghost", () => {
 
   it("says the thread loads over its messages' and its composer's outlines", () => {
     const drawn = html(<GhostThread />);
-    expect(drawn).toContain("Loading the thread…");
+    expect(drawn).toContain('<span class="status-text" role="status">Loading the thread…</span>');
     expect(drawn.split('class="ghost-entry"')).toHaveLength(4);
     expect(drawn).toContain('class="ghost-composer"');
   });

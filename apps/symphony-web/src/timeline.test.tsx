@@ -10,6 +10,7 @@ import {
   isWide,
   measured,
   NO_ANSWER,
+  NO_TIMELINE,
   NOT_A_TIMELINE,
   putStyle,
   readAgain,
@@ -25,7 +26,7 @@ import {
   TimelineView,
   watchCrossings,
 } from "./timeline";
-import { lanes, readTimeline, stops } from "./timeline-layout";
+import { failed, lanes, nextRead, readTimeline, stops } from "./timeline-layout";
 import { NOT_IN_TIME } from "./trouble";
 import type { TaskTimeline } from "./wire";
 
@@ -425,9 +426,11 @@ describe("the timeline's host", () => {
     vi.stubGlobal("innerWidth", 1200);
     const onDrawn = vi.fn();
     renderToStaticMarkup(<TimelineView timeline={pictures()} onDrawn={onDrawn} />);
-    expect([react.layouts.length, react.effects.length]).toEqual([1, 1]);
+    // The style sheet is put before the draw is measured, which it lays out.
+    expect([react.layouts.length, react.effects.length]).toEqual([2, 1]);
+    expect(react.layouts[0]).toBe(putStyle);
     // No element was drawn here: nothing to measure, nothing said.
-    react.layouts[0]?.();
+    react.layouts[1]?.();
     expect(onDrawn).not.toHaveBeenCalled();
     const stop = react.effects[0]?.();
     expect(typeof stop).toBe("function");
@@ -450,6 +453,14 @@ describe("the timeline's reads", () => {
 
   it("shows nothing before an answer, why a read failed with none, and the answer once there", () => {
     expect(shownOf(NOTHING, null, 0)).toBeNull();
+    // The server has no timeline for the task: said, and nothing tries it again.
+    const none = shownOf({ ...NOTHING, answered: true, missing: true }, null, 0);
+    expect(none).toEqual({ error: NO_TIMELINE, final: true });
+    expect(nextRead(none)).toBeNull();
+    expect(failed(NO_TIMELINE, false)).toBe(
+      "The timeline could not be read: the board has no timeline for this task.",
+    );
+    expect(failed("", false)).toBe("The timeline could not be read.");
     expect(shownOf({ ...NOTHING, error: new TypeError("Failed to fetch") }, null, 0)).toEqual({
       error: "Failed to fetch",
     });

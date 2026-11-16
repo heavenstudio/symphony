@@ -120,8 +120,11 @@ before compression. A request whose `If-None-Match` names it is answered `304` w
 keeping the tag and `no-store` (`src/api/validated.rs`, applied where every read leaves
 `api::answer`). A document, its outline and its sections' bodies carry the feed's cursor
 (`version`), which moves with every change on the board, so their tag is of the JSON with the
-cursor left out: it moves only with the document. A page whose kept copy is still current takes
-the cursor from `/api/board`. The browser keeps no copy of its own: the client's cache keeps
+cursor left out: it moves only with the document. Every JSON read names the feed's cursor it
+was read at in a header (`symphony_api::VERSION_HEADER`), on its `200` and its `304` alike: the
+server takes the cursor before it reads the answer, so every event at or before it is in the
+answer, and a page drops what its feed says of a read at or before the read's cursor
+(`api::cursor`). The browser keeps no copy of its own: the client's cache keeps
 the body and sends the tag back (docs/analysis/client-cache.md). An error carries no tag, and the
 feed's stream is never read whole.
 

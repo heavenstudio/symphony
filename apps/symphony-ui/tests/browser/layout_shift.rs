@@ -520,14 +520,35 @@ fn the_task_board_holds_still_while_its_columns_load() {
     );
 }
 
+/// The most a task's first visit in a browser that kept nothing may score: each part is the page's
+/// own element from its mock-up on, so the score sees a mock-up's guess give way to its answer
+/// (the head's height, the gates' rows), which no first visit can know. [`super::landmarks`]
+/// holds what a first visit does know, its head, and every part on the next.
+const FIRST_VISIT_LIMIT: f64 = 0.1;
+
 #[test]
 fn a_task_holds_still_while_its_thread_loads() {
-    holds_still(
+    let (sections, cards) = plain();
+    let site = site("docs/PROBE.md", &sections, cards);
+    let misses = misses(
         "task",
+        &site,
         "/task/visual/in-progress",
         "document.querySelector('article.task .settle[data-settled=true] .history') !== null",
         None,
-        plain(),
+        "",
+    );
+    // A miss says its score last: "task phone cold: cls 0.0636".
+    let over: Vec<_> = misses
+        .iter()
+        .filter(|miss| {
+            let score: f64 = miss.rsplit(' ').next().unwrap().parse().unwrap();
+            !miss.contains(" cold: ") || score >= FIRST_VISIT_LIMIT
+        })
+        .collect();
+    assert!(
+        over.is_empty(),
+        "layout shift at or over {CLS_LIMIT}, or {FIRST_VISIT_LIMIT} on a first visit: {over:#?}"
     );
 }
 

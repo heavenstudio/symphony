@@ -221,25 +221,22 @@ describe("the timeline's box", () => {
 });
 
 describe("the timeline's chunk", () => {
-  it("is imported once the page has settled, each box waiting told when it comes", async () => {
-    const settled: (() => void)[] = [];
+  it("is imported once for every box waiting, each told when it comes", async () => {
     const notice = { remove: vi.fn() };
-    aPage({ reviewSettled: (then: () => void) => settled.push(then) }, notice);
+    aPage({}, notice);
+    const chunk = vi.fn(() => ({ TimelineHost: DrawnHost }));
+    vi.doMock("./timeline", chunk);
+    const TimelineHost = DrawnHost;
     const slot = await aSlot();
     const first = vi.fn();
     const second = vi.fn();
     slot.whenImported(first);
     slot.whenImported(second);
-    // One import for every box, asked once the page has settled: however long that takes, with the
-    // chunk itself at hand, nothing is told before.
-    expect(settled).toHaveLength(1);
-    const { TimelineHost } = await import("./timeline");
-    vi.useFakeTimers();
-    await vi.advanceTimersByTimeAsync(60_000);
     expect(first).not.toHaveBeenCalled();
     expect(slot.loadedHost()).toBeNull();
-    settled[0]?.();
     await slot.importTimeline();
+    // One import for both.
+    expect(chunk).toHaveBeenCalledTimes(1);
     expect(first).toHaveBeenCalledTimes(1);
     expect(first).toHaveBeenCalledWith(TimelineHost);
     expect(second).toHaveBeenCalledWith(TimelineHost);
@@ -250,11 +247,11 @@ describe("the timeline's chunk", () => {
     const later = vi.fn();
     slot.whenImported(later)();
     expect(later).toHaveBeenCalledWith(TimelineHost);
-    slot.importTimeline();
-    expect(settled).toHaveLength(1);
+    await slot.importTimeline();
+    expect(chunk).toHaveBeenCalledTimes(1);
   });
 
-  it("is imported at once in a page whose shell has no settling, and a box that left is not told", async () => {
+  it("a box that left is not told", async () => {
     aPage();
     const slot = await aSlot();
     const left = vi.fn();
@@ -267,13 +264,9 @@ describe("the timeline's chunk", () => {
   });
 
   it("a chunk that does not come is said with its retry, which imports it at once", async () => {
-    const settled: (() => void)[] = [];
     const alarm = vi.fn();
     const gone = vi.fn(async () => false);
-    aPage({
-      reviewSettled: (then: () => void) => settled.push(then),
-      reviewShell: { gone, alarm },
-    });
+    aPage({ reviewShell: { gone, alarm } });
     const failure = vi.spyOn(console, "error").mockImplementation(() => {});
     vi.doMock("./timeline", () => {
       throw new Error("The chunk is gone");
@@ -281,19 +274,17 @@ describe("the timeline's chunk", () => {
     const slot = await aSlot();
     const told = vi.fn();
     slot.whenImported(told);
-    settled[0]?.();
     await vi.waitFor(() => expect(alarm).toHaveBeenCalledTimes(1));
     expect(gone).toHaveBeenCalledTimes(1);
     expect(alarm).toHaveBeenCalledWith("timeline-error", SAID, RETRY, expect.any(Function));
     expect(failure).toHaveBeenCalledWith(SAID, expect.any(Error));
     expect(told).not.toHaveBeenCalled();
     expect(slot.loadedHost()).toBeNull();
-    // The retry asks at once, without waiting for the page to settle again.
+    // The retry asks again.
     vi.doUnmock("./timeline");
     const retry = alarm.mock.calls[0]?.[3] as () => void;
     retry();
     await vi.waitFor(() => expect(told).toHaveBeenCalledTimes(1));
-    expect(settled).toHaveLength(1);
   });
 
   it("a chunk that does not come says nothing where the page's build is gone", async () => {
@@ -313,26 +304,21 @@ describe("the timeline's chunk", () => {
     expect(failure).not.toHaveBeenCalled();
   });
 
-  it("is not fetched for a box that left before the page settled, and the next box asks again", async () => {
-    const settled: (() => void)[] = [];
-    aPage({ reviewSettled: (then: () => void) => settled.push(then) });
+  it("is not fetched for a box that left before its import began, and the next box asks again", async () => {
+    aPage();
     const chunk = vi.fn(() => ({ TimelineHost: DrawnHost }));
     vi.doMock("./timeline", chunk);
     const slot = await aSlot();
     const left = vi.fn();
     slot.whenImported(left)();
-    const attempt = slot.importTimeline();
-    settled[0]?.();
-    await attempt;
-    // The page stopped before it settled: nothing fetched, nobody told.
+    await slot.importTimeline();
+    // The page stopped before the import began: nothing fetched, nobody told.
     expect(chunk).not.toHaveBeenCalled();
     expect(left).not.toHaveBeenCalled();
     expect(slot.loadedHost()).toBeNull();
-    // The next box's page settles in its turn, and its box is told.
+    // The next box asks in its turn, and is told.
     const next = vi.fn();
     slot.whenImported(next);
-    expect(settled).toHaveLength(2);
-    settled[1]?.();
     await slot.importTimeline();
     expect(chunk).toHaveBeenCalledTimes(1);
     expect(next).toHaveBeenCalledWith(DrawnHost);
@@ -369,28 +355,22 @@ describe("the timeline's chunk", () => {
     await vi.waitFor(() => expect(failure).toHaveBeenCalledTimes(1));
   });
 
-  it("draws the timeline in the root the box's style lays out, its heights kept after each draw", async () => {
-    const storage = aPage();
-    vi.doMock("./timeline", () => ({ TimelineHost: DrawnHost }));
+  it("asks for no chunk while its part has nothing to draw", async () => {
+    aPage();
+    const chunk = vi.fn(() => ({ TimelineHost: DrawnHost }));
+    vi.doMock("./timeline", chunk);
     const slot = await aSlot();
-    // The box nears the screen: it asks for the chunk.
-    renderToStaticMarkup(<slot.TimelineSlot slug="tools/new" scope="" />);
-    expect(react.effects).toHaveLength(1);
-    const leave = react.effects[0]?.();
-    await vi.waitFor(() => expect(slot.loadedHost()).not.toBeNull());
-    leave?.();
-    // Drawn again, the timeline is in its root, and its height is kept for the next visit.
+    // The box nears the screen with no answer and no failure yet: its placeholder alone.
     const html = renderToStaticMarkup(<slot.TimelineSlot slug="tools/new" scope="" />);
-    expect(html).toContain(
-      '</div><div id="timeline-root"><i data-slug="tools/new" data-part="null"></i></div></div></section>',
-    );
-    expect(storage.getItem(key("tools/new"))).toBe(`213,${WIDE}`);
-    // With the chunk come, the box asks for nothing more.
-    expect(react.effects[1]?.()).toBeUndefined();
+    expect(html).not.toContain("timeline-root");
+    expect(react.effects).toHaveLength(1);
+    expect(react.effects[0]?.()).toBeUndefined();
+    await slot.importTimeline();
+    expect(chunk).not.toHaveBeenCalled();
   });
 
-  it("gives the timeline its part of the page's store, asked whether or not the chunk has come", async () => {
-    aPage();
+  it("gives the timeline its part of the page's store, drawn in the root the box's style lays out, its heights kept", async () => {
+    const storage = aPage();
     const asked: string[] = [];
     vi.stubGlobal("fetch", async (url: string) => {
       asked.push(url);
@@ -420,11 +400,16 @@ describe("the timeline's chunk", () => {
       );
     // Before the chunk: the placeholder, the answer already held.
     expect(inPage()).not.toContain("timeline-root");
-    react.effects.at(-1)?.();
+    const leave = react.effects.at(-1)?.();
     await vi.waitFor(() => expect(slot.loadedHost()).not.toBeNull());
+    leave?.();
+    // Drawn again, the timeline is in its root, and its height is kept for the next visit.
     expect(inPage()).toContain(
-      '<div id="timeline-root"><i data-slug="tools/new" data-part="{&quot;now&quot;:7}"></i></div>',
+      '</div><div id="timeline-root"><i data-slug="tools/new" data-part="{&quot;now&quot;:7}"></i></div></div></section>',
     );
+    expect(storage.getItem(key("tools/new"))).toBe(`213,${WIDE}`);
+    // With the chunk come, the box asks for nothing more.
+    expect(react.effects.at(-1)?.()).toBeUndefined();
     expect(asked).toHaveLength(1);
     mount.abort();
   });

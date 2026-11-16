@@ -116,10 +116,10 @@ export function GhostComposer() {
 }
 
 /** A task's thread and composer while the thread loads: messages, then the composer. */
-export function GhostThread() {
+export function GhostThread({ quiet = false }: { quiet?: boolean }) {
   return (
     <>
-      <span className="status-text" role="status">
+      <span className="status-text" role={quiet ? undefined : "status"}>
         Loading the thread…
       </span>
       <div className="ghost-history">
@@ -741,6 +741,8 @@ export function TaskDetail({
     brief: drawnHeight(`brief ${slug}`),
   }));
   const drawn = page !== null;
+  // The page says once that the task loads: its parts' own mock-ups do not say theirs beside it.
+  const waiting = !drawn && pageFailed === "";
   // The head's and the brief's heights, for their mock-ups on the next visit.
   useEffect(() => {
     if (!drawn) return;
@@ -785,6 +787,7 @@ export function TaskDetail({
         scope={scope}
         task={page?.task ?? null}
         seen={page?.gates ?? null}
+        quiet={waiting}
       />
       {page !== null && page.children_count > 0 && (
         <NearViewport id={`subtasks-${slug}`} height={60} onEnter={() => onChildren(false)}>
@@ -822,7 +825,7 @@ export function TaskDetail({
       <h2>Thread</h2>
       {/* The thread and the composer under it wait under their ghost until the thread on the first
           screen is in, whatever the head and the brief do meanwhile. */}
-      <Settle failed={failed} cover={<GhostThread />}>
+      <Settle failed={failed} cover={<GhostThread quiet={waiting} />}>
         <NearViewport id={`thread-region-${slug}`} height={200}>
           <div id="task-thread" data-pending={`${!loaded}`}>
             {older && <Button onClick={() => onHistory(true)}>Load earlier messages</Button>}

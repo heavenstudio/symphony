@@ -1,10 +1,9 @@
 // The task page's place for its timeline: a box as tall as the timeline was when this browser last
 // drew it for the task (else a default), placeholder rows drawn in it, in which the timeline
 // (timeline.tsx, a chunk of its own) is drawn once it has come. The box imports the chunk once it
-// nears the screen and the page has settled (the shell's `reviewSettled`: no read in flight for
-// half a second, and the browser idle), so the page's first visit carries none of the timeline's
-// code or style, and nothing outside the box moves when the timeline arrives as tall as it was
-// drawn last. On a phone the box keeps that height when a read adds a step to it; wide it grows to
+// nears the screen and its part of the page has something to draw, behind no other read and no
+// set wait, so the page's first draw carries none of the timeline's code or style, and nothing
+// outside the box moves when the timeline arrives as tall as it was drawn last. On a phone the box keeps that height when a read adds a step to it; wide it grows to
 // hold the whole timeline. Its style is timeline-slot.css, which the task page's kind imports.
 
 import {
@@ -138,22 +137,16 @@ export function loadedHost(): Host | null {
 const LEFT = Symbol("no box waits");
 
 /**
- * Import the timeline's chunk, unless it has come or is on its way: once the page has settled
- * (`settle`, the shell's `reviewSettled` when it has one), at once for a retry, and only while a
- * box still waits for it then (a page that stopped meanwhile fetches nothing). Each box waiting is
- * told when it comes. One that does not come is said with its retry while a box still waits for
- * it, after the shell has said whether the page's build is gone (the page then loads again), and
- * the next box asks again. The attempt, which ends once all that is done (the one on its way, when
- * one is).
+ * Import the timeline's chunk, unless it has come or is on its way, and only while a box still
+ * waits for it (a page that stopped meanwhile fetches nothing). Each box waiting is told when it
+ * comes. One that does not come is said with its retry while a box still waits for it, after the
+ * shell has said whether the page's build is gone (the page then loads again), and the next box
+ * asks again. The attempt, which ends once all that is done (the one on its way, when one is).
  */
-export function importTimeline(settle = true): Promise<void> {
+export function importTimeline(): Promise<void> {
   if (host !== null) return Promise.resolve();
   if (attempt !== null) return attempt;
-  const settled = snapshot("reviewSettled");
-  const ready = new Promise<void>((resolve) =>
-    settle && typeof settled === "function" ? settled(resolve) : resolve(),
-  );
-  attempt = ready
+  attempt = Promise.resolve()
     .then(
       async (): Promise<Host | typeof LEFT> =>
         waiting.size === 0 ? LEFT : (await import("./timeline")).TimelineHost,
@@ -172,7 +165,7 @@ export function importTimeline(settle = true): Promise<void> {
         const shell = snapshot("reviewShell") as Shell | undefined;
         if ((await shell?.gone()) || waiting.size === 0) return;
         console.error(SAID, error);
-        shell?.alarm(FAILURE, SAID, RETRY, () => void importTimeline(false));
+        shell?.alarm(FAILURE, SAID, RETRY, () => void importTimeline());
       },
     );
   return attempt;
@@ -206,7 +199,8 @@ export function boxStyle(narrow: number, wide: number): CSSProperties {
 /**
  * The box of the task `slug`: its placeholder rows until the timeline draws; the timeline's answer,
  * a part of the page asked as the box mounts (task-live.ts's `timelinePart`); the timeline's chunk,
- * imported once the box nears the screen; and the timeline drawn in it from that answer.
+ * imported once the box nears the screen and its part has something to draw (an answer, or why
+ * there is none), behind nothing else; and the timeline drawn in it from that answer.
  */
 function SlotBox({ slug, scope }: { slug: string; scope: string }) {
   const [[narrow, wide]] = useState(() => reserved(slug));
@@ -218,10 +212,11 @@ function SlotBox({ slug, scope }: { slug: string; scope: string }) {
   const { key } = part;
   // biome-ignore lint/correctness/useExhaustiveDependencies: a part is its key
   const read = useCallback(() => parts?.read(part) ?? Promise.resolve(), [parts, key]);
+  const some = answer.value !== undefined || answer.error !== null || answer.missing;
   useEffect(() => {
-    if (!shown || Timeline !== null) return;
+    if (!shown || !some || Timeline !== null) return;
     return whenImported((chunk) => setTimeline(() => chunk));
-  }, [shown, Timeline]);
+  }, [shown, some, Timeline]);
   const rows = placeholders(Math.max(narrow, wide));
   return (
     <section className="tl" id="timeline" aria-labelledby="timeline-title">

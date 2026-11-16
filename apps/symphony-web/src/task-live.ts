@@ -474,14 +474,16 @@ export class LiveTask {
   }
 
   /**
-   * What the page says went wrong: the board's own state, else why a read of the page or the
-   * thread fails (a page drawn from this device says the server is not reachable instead), else
-   * why a read the reader asked for failed.
+   * What the page says went wrong: the board's own state, else why a read of the page, the
+   * thread or the owner's offer fails (the gates and the timeline say theirs in their place; a
+   * page drawn from this device says the server is not reachable instead), else why a read the
+   * reader asked for failed.
    */
   error(): string {
     if (this.notice !== "") return this.notice;
     if (shown(this.parts.fresh) === null) {
-      for (const part of [this.pagePart, this.threadPart] as Part<unknown, TaskEvent>[]) {
+      const noticed = [this.pagePart, this.threadPart, offerPart(this.scope, this.slug)];
+      for (const part of noticed as Part<unknown, TaskEvent>[]) {
         const { error } = this.parts.shown(part);
         if (error !== null) return said(error);
       }

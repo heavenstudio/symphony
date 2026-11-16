@@ -710,6 +710,26 @@ describe("a task's page opened", () => {
     expect(task.error()).toBe("The task's thread is not readable");
   });
 
+  it("says the failure of the owner's offer while its read fails, and no more once it answers", async () => {
+    let refused = 1;
+    const { task } = live(
+      serves((url) =>
+        url === OFFER_URL ? (refused-- > 0 ? answer(503) : answer(200, OFFER, "", 1)) : null,
+      ),
+    );
+    task.open();
+    task.parts.open(offerPart("", "w/a"));
+    await pass();
+    expect([task.drawn(), shownIds(task), task.error()]).toEqual([
+      true,
+      [1],
+      "The server answered 503",
+    ]);
+    await pass(1_000);
+    expect(task.error()).toBe("");
+    await settled();
+  });
+
   it("tries a read with no answer in time again by itself", async () => {
     let unanswered = 1;
     const { task, asked } = live(

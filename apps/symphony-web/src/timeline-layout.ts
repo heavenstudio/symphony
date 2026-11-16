@@ -1133,16 +1133,16 @@ export function legendStates(drawn: Lanes): GateState[] {
 export const AGAIN = "Trying again…";
 
 /** What a read that failed says, from the reason it failed for: its first line, the way the gates
- * and a page that did not load say theirs, and when it is tried again. */
-export function failed(why: string): string {
+ * and a page that did not load say theirs, and that it is tried again where it is (`again`). */
+export function failed(why: string, again = true): string {
   const first = trimmed(why.split("\n")[0] ?? "").replace(/\.+$/, "");
-  return first === ""
-    ? `The timeline could not be read. ${AGAIN}`
-    : `The timeline could not be read: ${first}. ${AGAIN}`;
+  const said =
+    first === "" ? "The timeline could not be read." : `The timeline could not be read: ${first}.`;
+  return again ? `${said} ${AGAIN}` : said;
 }
 
 /** What the timeline's place shows: nothing yet, a timeline, or why its read failed. */
-export type Shown = null | { timeline: TaskTimeline } | { error: string };
+export type Shown = null | { timeline: TaskTimeline } | { error: string; final?: true };
 
 /**
  * Seconds until the timeline asks to be read again after `shown`: its own `every` while its task

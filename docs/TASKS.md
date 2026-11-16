@@ -2174,13 +2174,15 @@ for each gate it expects: the shape of the last answer the server gave for the
 task (how many gates, how many waited on, how many with no who and when, whose
 rows draw none), which the task page carries (`TaskPage::gates`) and the server
 forgets once the task closes, else what this browser last drew, at the height it
-drew it, else four, and nothing when it knows there are none. It is read when it
-nears the screen and again when the task's record changes, one of its builds or
-tests starts or ends, the branch it was answered for has a new tip (the feed's
-`branches` region, the branches whose refs moved), a verdict lands on its thread
-or a card in a document it links comes or goes; never for a plain post. The page's
-feed counts those events for the task it shows, and the section reads again when
-the count grows. A newer read aborts the one before.
+drew it, else four, and nothing when it knows there are none. It is read as the
+page mounts, behind no other read, and again when the task's record changes, one
+of its builds or tests starts or ends, the branch it was answered for has a new
+tip (the feed's `branches` region, the branches whose refs moved), a verdict lands
+on its thread or a card in a document it links comes or goes; never for a plain
+post. It is read once at a time: an event that asks while a read is out joins it,
+and the section is read once more after it only when the answer was read before
+that event (the cursor every JSON read names, `symphony_api::VERSION_HEADER`). A
+read that fails is tried again by itself, the last answer shown meanwhile.
 
 The Symphony answers its own. A top-level task that is open, or that has an assessment
 ([Needed stamps](#needed-stamps)), has a gate for each stamp of the project's catalogue, in
@@ -2864,16 +2866,18 @@ subtasks, above the brief:
 board) answers the wire type `TaskTimeline` of `symphony_api::timeline`, built by
 `crates/symphony/src/timeline.rs` from the task alone, never the whole board, from
 one read of its thread and of the recorder's history that the gates answer shares.
-The page reads it once its box nears the screen, again at once when the task
+The page reads it as it mounts, behind no other read (the timeline's code alone
+waits for its box to near the screen), again at once when the task
 changes, and each `every` seconds (a minute) while the task is open and the page is
 shown, since a build or a gate moves without the task changing; a hidden page reads
 nothing, and once shown again reads once. Each read names the last answer's
 validator, which leaves out the answer's `now`, so a minute in which nothing moved is
 a `304` and the page counts `now` on by its own clock. A read that fails leaves the
 last answer shown; with none, the box says why in a sentence, grows to show its Try
-again, and reads again a minute on. Only the box of the task the page shows draws
-its timeline: an answer that arrives after the page moved to another task, or after
-its box closed, is dropped. Every time is server time in seconds; `zone` gives the server's
+again, and is read again by itself, a second on, then two, doubling to thirty,
+until it answers. Only the box of the task the page shows draws
+its timeline: an answer that arrives after the page moved to another task is
+dropped. Every time is server time in seconds; `zone` gives the server's
 offset from UTC at the task's making and at each change of it after (summer time),
 so each time reads on the server's local clock as it then stood, the thread's.
 
@@ -2918,8 +2922,8 @@ drawn there taking a typical whole timeline's, 408 px. The whole of the lanes' p
 focus is on (a click focuses one too) is said in the legend's place while one has it, so
 the box does not grow for it.
 The timeline itself is a chunk of its own (`apps/symphony-web/src/timeline.tsx`),
-which its box loads once it nears the screen and the page has settled, so the page's
-first visit does not wait for it. On a phone it is a list: a row per
+which its box loads once it nears the screen and its read has something to draw, so the
+page's first draw does not wait for it. On a phone it is a list: a row per
 stage with its start, its label, its length and a bar as long, the wait in it drawn
 lighter; under each stage the builds, tests and gate changes that began in it (the
 review gate's are its rounds), a build or test named by its recipe, the machine's by

@@ -113,10 +113,18 @@ export interface TaskGatesPanelProps {
   task: Waiter | null;
   /** What the server last answered for the task (`TaskPage.gates`): the room held until its answer. */
   seen?: GatesSeen | null;
+  /** Whether the page already says it loads (`GatesViewProps.quiet`). */
+  quiet?: boolean;
 }
 
 /** The gates of the task `slug`, a part of its page: its outline until its answer, then the gates. */
-export function TaskGatesPanel({ slug, scope, task, seen = null }: TaskGatesPanelProps) {
+export function TaskGatesPanel({
+  slug,
+  scope,
+  task,
+  seen = null,
+  quiet = false,
+}: TaskGatesPanelProps) {
   const part = gatesPart(scope, slug);
   const parts = useContext(PartsContext);
   const gates = gatesShown(usePart(part));
@@ -135,6 +143,7 @@ export function TaskGatesPanel({ slug, scope, task, seen = null }: TaskGatesPane
         now={Date.now() / 1000}
         room={room}
         width={width()}
+        quiet={quiet}
         onRetry={() => void parts?.read(part)}
       />
     </div>
@@ -154,6 +163,8 @@ export interface GatesViewProps {
   room: Room;
   /** The window's width, in px, which the height `room` holds was drawn at. */
   width: number | null;
+  /** Whether the page already says it loads: the section's reading is then not said again. */
+  quiet?: boolean;
   onRetry: () => void;
 }
 
@@ -161,7 +172,15 @@ export interface GatesViewProps {
  * The section for `gates`, its times told against `now`: nothing for a task nothing gates. Until it
  * has an answer it holds `room`, at the height drawn before in a window `width` px wide.
  */
-export function GatesView({ gates, task, now, room, width, onRetry }: GatesViewProps) {
+export function GatesView({
+  gates,
+  task,
+  now,
+  room,
+  width,
+  quiet = false,
+  onRetry,
+}: GatesViewProps) {
   const head = (
     <h2 className="eyebrow" id="task-gates-title">
       {WORDS.title}
@@ -206,7 +225,7 @@ export function GatesView({ gates, task, now, room, width, onRetry }: GatesViewP
               <span className="gate-bar" style={bar("11em")} />
             </span>
           </div>
-          <p className="gates-said" role="status">
+          <p className="gates-said" role={quiet ? undefined : "status"}>
             {WORDS.reading}
           </p>
           <ul className="gates" aria-hidden="true">
@@ -244,6 +263,13 @@ export function GatesView({ gates, task, now, room, width, onRetry }: GatesViewP
         <section className="task-gates card" data-gates="read" aria-labelledby="task-gates-title">
           <div className="gates-head">
             {head}
+            {/* Before the task's page says who it waits on: the pill's outline, where the room
+                kept says one was drawn, so the page's coming moves nothing under the section. */}
+            {task === null && waiting > 0 && (
+              <span className="pill gates-waits gate-shadow">
+                <span className="gate-bar" style={bar("9em")} />
+              </span>
+            )}
             {waits !== null && (
               <span className={`pill ${waits.tone} gates-waits`}>
                 {WORDS.waitsOn}

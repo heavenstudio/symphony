@@ -115,6 +115,12 @@ describe("the section", () => {
     expect(html).toContain(
       '<div class="gates-head"><h2 class="eyebrow" id="task-gates-title">Gates</h2><span class="pill gate-missing gates-waits">waits on <span dir="auto">certificate</span></span><span class="gates-counts">2 met · 1 waived · 1 missing</span></div>',
     );
+    // Read before the task's page: the pill's outline where the room kept says one was drawn,
+    // none where it says nothing waited.
+    expect(shown(read(pictured()), room(4, 1), null, null)).toContain(
+      '<h2 class="eyebrow" id="task-gates-title">Gates</h2><span class="pill gates-waits gate-shadow"><span class="gate-bar" style="--w:9em"></span></span><span class="gates-counts">2 met · 1 waived · 1 missing</span>',
+    );
+    expect(shown(read(pictured()), room(4, 0), null, null)).not.toContain("gates-waits");
     const drawnRows = rows(html);
     expect(drawnRows).toHaveLength(4);
     expect(drawnRows[0]).toBe(
@@ -308,10 +314,11 @@ describe("the panel", () => {
     expect(html).toContain('data-gates="read"');
     expect(rows(html)).toHaveLength(4);
     expect(html).toContain("gates-waits");
-    // Before the task's page has come, the gates are drawn all the same, without the pill.
+    // Before the task's page has come, the gates are drawn all the same, the pill its outline.
     const alone = await inPage(() => reply(200, fixture), null);
     expect(rows(alone.html)).toHaveLength(4);
-    expect(alone.html).not.toContain("gates-waits");
+    expect(alone.html).toContain('<span class="pill gates-waits gate-shadow">');
+    expect(alone.html).not.toContain("waits on");
   });
 
   it("draws nothing for a task the server has no gates for, and says a failed read in its place", async () => {
@@ -566,8 +573,10 @@ describe("the pill", () => {
     }
   });
 
-  it("is not drawn for a task the section is not told of", () => {
-    expect(shown(stamped, DEFAULT_ROOM, null, null)).not.toContain("gates-waits");
+  it("is its outline for a task the section is not told of yet, and says nothing", () => {
+    const untold = shown(stamped, DEFAULT_ROOM, null, null);
+    expect(untold).toContain('<span class="pill gates-waits gate-shadow">');
+    expect(untold).not.toContain("waits on");
   });
 });
 

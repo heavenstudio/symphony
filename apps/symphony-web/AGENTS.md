@@ -368,24 +368,45 @@ beside code, a quote, a mockup, a picture, a heading, a table and a title, on a 
 
 The kind `task` (`src/kinds/task.tsx`) draws `/task/SLUG`: one live task per checkout, which
 follows the route from task to task within the kind (`review:navigate`) and keeps one feed, as the
-Dioxus program's page did. `src/task-live.ts` holds what it reads and follows (`LiveTask`, on
-`live.tsx`'s `keepBoard`): the page and the thread's newest page kept on this device
-(`taskItem`) and drawn at once on a return, each checked with its copy's tag once the board's
-version is read and asked again until it answers, the feed opened beside those checks and never
-after them (its `views.read` gives the board's loop nothing to wait for), so a round's reads
-start from what the page showed before them and an answer to an older page read is dropped; the
-rest of the thread, the subtasks and the landing the task offers read when the page asks; each
-feed event applied as one change, the page read again only when its brief, status or subtasks
-moved, those reads one after another
-(`refreshAfter`), and the events heard while a read was out replayed onto its answer. Its guards
-are `src/task-read.ts`. `src/task-page.tsx` draws the head (the owner's priority and cancel, the
+Dioxus program's page did. Each part of the page is a read of its own in the page's store
+(`src/parts.ts`, `Parts`), named by a key and drawn by the component that names it (`usePart`):
+the task's page (head, facts, brief), its thread's newest page, its gates, the landing it offers
+and its timeline (`src/task-live.ts`'s `pagePart`, `threadPart`, `gatesPart`, `offerPart`,
+`timelinePart`). Each is asked as the page mounts, behind no other read, the board's among them;
+the page and the thread are kept on this device (`taskItem`) and drawn at once on a return,
+marked stale, then checked with their copy's tag. The store reads a key once however many
+components name it (an ask while its read is out joins it), tries a failed read again on the
+feed's waits (`tryAgain`) while the other parts draw, and ends a part's reads when the route
+leaves its task (`drop`) or the page goes.
+
+Every JSON read's answer names the feed's cursor it was read at (`VERSION_HEADER`, read with
+`request.ts`'s `getAt`): every event at or before it is in the answer. So the reads and the feed
+start in any order, and the store places each against the other: a feed event at or before a
+part's answer is dropped, one after it is applied to the part or reads it again, as the part says
+(`hear`); an answer is drawn with the events heard since it was asked, and after its cursor,
+applied to it again; a part is read once more only where the store cannot tell what it missed
+(its cursor is before the version the feed opened from, the server named none while the feed
+opened, or the events it would need are no longer among the 128 kept); and when the feed opens
+again, only the parts answered at another version than it opens from are read (`since`).
+`LiveTask` (`src/task-live.ts`, on `live.tsx`'s `keepBoard`, whose `views.read` gives the board's
+loop nothing to wait for) hears the feed into the store and reads again the parts an event names
+without carrying: the gates for a verdict, a card in a document the task links, a new tip of
+their branch or a run of the task's; the offer, the gates and the timeline when the task itself
+changed. What no key names stays the page's own: the thread's earlier pages and its catch-up
+after a gap, and the subtasks, read into the page as their section nears the screen. Its guards
+are `src/task-read.ts`.
+
+`src/task-page.tsx` draws the head (the owner's priority and cancel, the
 roles with each holder's Go to session, `src/session.tsx`), the gates (`src/gates.tsx`, their
 logic `src/gates-model.ts`, the links they may draw `src/links.ts`), the subtasks, the timeline's
-box, the brief, the thread and its composer, and before its read the page's ghost, each part at
-the height this browser last drew it. The timeline (`src/timeline.tsx`, its layout
+box, the brief, the thread and its composer, each from its own part as soon as that is there and
+as its own mock-up until then, in the page's one frame: the head and the brief at the height this
+browser last drew them, the gates' outline, the timeline's box, the thread's and the composer's
+ghosts, so a part that comes moves none of the others, and none waits a set time. A part whose
+read fails says so in its own place while the rest draw. The timeline (`src/timeline.tsx`, its layout
 `src/timeline-layout.ts`) is a chunk of its own, which its box (`src/timeline-slot.tsx`) imports
-once it nears the screen and the page has settled (the shell's `reviewSettled`), so a first visit
-carries none of it; its style comes with it. The gates' and the box's styles (`src/gates.css`,
+once it nears the screen and its part has something to draw (an answer, or why there is none),
+behind no other read, so the page's first draw carries none of it; its style comes with it. The gates' and the box's styles (`src/gates.css`,
 `src/timeline-slot.css`) are the kind's own.
 
 ## Moving a page kind
