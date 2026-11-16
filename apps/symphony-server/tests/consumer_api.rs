@@ -20,6 +20,7 @@ use symphony_server::{binary, development, home, repo, sys};
 #[test]
 fn the_names_consumers_call_keep_their_shapes() {
     let _: fn(&'static [&'static dyn symphony_plugin::Plugin], &[String]) -> i32 = binary::run;
+    // The retired client's dev server: a stub that refuses, until the consumer's binary goes.
     let _: fn(&[String]) -> Result<(), String> = development::main;
     let _: fn(&Path) -> Result<repo::Checkout, String> = repo::checkout;
     let _: fn(i64) -> bool = sys::pid_alive;

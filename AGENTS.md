@@ -1,8 +1,8 @@
 # Symphony
 
-The app's workspace owns its server, its two web clients and its Mac app under `apps/` (the React
-one, `apps/symphony-web`, which draws every page now, and the Dioxus one, whose build is the
-stylesheets every page shares; the Mac app, `apps/symphony-desktop`, a thin shell over each
+The app's workspace owns its server, its web client and its Mac app under `apps/` (the client,
+`apps/symphony-web`, React and TypeScript built by Vite, its browser tests a package of their own,
+`apps/symphony-web-tests`; the Mac app, `apps/symphony-desktop`, a thin shell over each
 server's own pages, `publish = false`, whose window crates no other package links), and the review
 library, its own build and release commands (`crates/symphony-build`), wire types, task board,
 working-directory scanner, headless Chrome driver and the tests' CPU meters and waits
@@ -55,8 +55,8 @@ sources, the Mac app, the build and release commands (`symphony-build`) and the 
   [MACHINE_WORK](docs/MACHINE_WORK.md) and [RUNS](docs/RUNS.md); what a task proves is
   [CHECKS](docs/CHECKS.md); releases are [RELEASES](docs/RELEASES.md).
 
-Read [the client guide](apps/symphony-ui/AGENTS.md), [the React client's
-guide](apps/symphony-web/AGENTS.md), [the Mac app's guide](apps/symphony-desktop/AGENTS.md) and
+Read [the client's guide](apps/symphony-web/AGENTS.md), [the Mac app's
+guide](apps/symphony-desktop/AGENTS.md) and
 [the board guide](crates/tasks/AGENTS.md) before editing those packages. A consuming project
 applies its own Rust, review and resource policy.
 Never run a shared-service restart as a test: use a private port and scratch board.
@@ -64,7 +64,7 @@ Never run a shared-service restart as a test: use a private port and scratch boa
 ### Building and testing
 
 Use `just lint-rs`, `just test-rs`, `just symphony-ui-dist` and `just symphony-ui-dev`
-from this folder; `just lint-rs` runs `just client-lint` as well, the React client's checks on
+from this folder; `just lint-rs` runs `just client-lint` as well, the client's checks on
 its pinned Node ([its guide](apps/symphony-web/AGENTS.md)). `tools/cargo.sh` runs ordinary Cargo
 in this workspace, preserving its arguments, streams, status and inherited limits. A build or test
 goes through `tools/record.sh`, as do the `lint-rs`, `test-rs`, `client-check`, `client-update`
@@ -75,8 +75,7 @@ columns, or runs as it is where none answers
 [RUNS](docs/RUNS.md#logs)). It uses this folder's `.target/` unless `CARGO_TARGET_DIR` names
 another: a linked worktree's starts as a copy-on-write clone of the main checkout's compiled
 dependencies (`tools/seed-target.sh`), never one folder for two worktrees, where Cargo names their
-packages alike and each runs the other's build. The toolchain pin is `rust-toolchain.toml`, the
-wasm target in it. The workspace supplies no project gate planner, test selection, certificate or
+packages alike and each runs the other's build. The toolchain pin is `rust-toolchain.toml`. The workspace supplies no project gate planner, test selection, certificate or
 shared slot pool: the containing project keeps its own for its own consumers.
 
 `tools/rs-bin.sh NAME` runs a declared workspace binary, asking Cargo to build it first only when
@@ -95,8 +94,8 @@ API alone, so neither the library every project links nor its `symphony` compile
 
 ### The client's distribution
 
-`just client-update` builds the client (the React client's kinds, over the stylesheets every page
-shares, which dx builds from the Dioxus package) and publishes its bundle, one shell and one
+`just client-update` builds the client (one Vite build of `apps/symphony-web`: its kinds over the
+stylesheet every page shares) and publishes its bundle, one shell and one
 `builds.json` under
 `apps/symphony-server/client/public/`, which the server package embeds at build time. A branch
 commits no distribution, whatever it changed: the regenerator a land starts rebuilds it from
@@ -107,9 +106,8 @@ candidate's fix that changes what the client is built from: no regenerator build
 so that branch commits the distribution its own sources make, and the land keeps main's side of it
 ([RELEASES](docs/RELEASES.md#the-release-candidate)). `just client-check` rebuilds into a
 separate folder and compares every path and byte with the committed distribution. How the build
-stays the same from any checkout (its release snapshot, dx's one path, the builds a distribution
-keeps) is [the client guide's](apps/symphony-ui/AGENTS.md) and [the React client's
-guide's](apps/symphony-web/AGENTS.md).
+stays the same from any checkout, and the builds a distribution keeps, is [the client's
+guide's](apps/symphony-web/AGENTS.md#the-build-and-the-distribution).
 
 `just verify` runs every check the release run does, each step with a log of its own
 (`tools/verify.sh`): the release run's full verification, never a task's gate
@@ -118,12 +116,11 @@ guide's](apps/symphony-web/AGENTS.md).
 ### What it needs installed
 
 Local acceptance requires a working Chrome executable (installed, or named with `SYMPHONY_CHROME`,
-so a missing browser cannot pass as acceptance not run) and the React client's pinned Node (on
+so a missing browser cannot pass as acceptance not run) and the client's pinned Node (on
 PATH, or fnm to fetch it once: `tools/node.sh`); the consuming project's binaries are not
-prerequisites. The client build needs Git, Bash, jq, curl and a C/C++ build toolchain, and native
-board fixtures need lsof and the pinned SurrealDB (`tools/surreal.sh`, or `SYMPHONY_SURREAL`). A
-Linux build host makes the release snapshots' parent folder first (`sudo install -d -m 1777
-/private/tmp`). This repository has no hosted GitHub CI requirement.
+prerequisites. The client build needs Git, Bash and jq, and native
+board fixtures need lsof and the pinned SurrealDB (`tools/surreal.sh`, or `SYMPHONY_SURREAL`).
+This repository has no hosted GitHub CI requirement.
 
 ## This repository as its own project
 

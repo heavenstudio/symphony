@@ -155,7 +155,7 @@ wait of 120 s but in the case of that deadline. The server's test of what its ma
 reads takes the scale 20 on its board's scratch database
 (`apps/symphony-server/src/live/machine_work/tests`). The release run's test
 (`crates/symphony-build/tests/release/recorder.rs`) and the browser test of the board's Build and
-Test columns (`apps/symphony-ui/tests/browser/run_records.rs`) take both, the scale and the
+Test columns (`apps/symphony-web-tests/tests/browser/run_records.rs`) take both, the scale and the
 probe's 120 s, on their scratch boards, which every check and run of theirs inherits. Each
 waits for a record on its condition, with a backstop on the wall only a stall reaches (the
 browser test's are the Chrome driver's waits, which keep the same rule). What the scale and
@@ -211,8 +211,11 @@ writes nothing.
    its last tool call ran in. That session is the one live session whose subagent's
    last tool call ran in this linked worktree. Two live there give no session. The
    main checkout places no one: every agent runs its board commands there.
-3. **Branch.** The checkout's branch, when it is the slug of a task that is not done
-   or cancelled. An executor's worktree is on its task's branch.
+3. **Branch.** The checkout's branch, when it is the slug of a task, whatever its
+   status. An executor's worktree is on its task's branch, and stays its task's once
+   an approve left the task done: an executor holds no done task, so what it runs
+   there after a land's conflict (main merged, its tests run at the merged tip) is
+   credited by the branch, with no task to name.
 4. **Claude Code session.** The live full session bound by the Claude Code session
    the command runs in (`CLAUDE_CODE_SESSION_ID`), and the task it holds. A subagent
    shares its parent's id, so a subagent not yet placed would be credited to its
@@ -280,9 +283,9 @@ operation IDs it remembers per machine is spent on live work and a project reade
 never on the recorder's history.
 
 **In this repository.** `tools/cargo.sh` sends a Cargo build (`build`, `check`,
-`clippy`, `doc`, `rustc`, `symphony-ui` but `dev`) or test (`test`, `nextest`,
-`bench`) through `tools/record.sh`, which it sources, as a run of `build`, `lint`,
-`client` or `test`, and the `lint-rs`, `test-rs`, `client-check`, `client-update`,
+`clippy`, `doc`, `rustc`) or test (`test`, `nextest`,
+`bench`) through `tools/record.sh`, which it sources, as a run of `build`, `lint`
+or `test`, and the `lint-rs`, `test-rs`, `client-check`, `client-update`,
 `size-check` and `verify` recipes run through it as one run each, of `lint`, `test`,
 `client`, `client`, `size` and `verify`. So do the docs checks a doc's evidence names
 ([CHECKS](CHECKS.md#evidence-by-kind-of-change)), `just symphony-cli docs-audit --check` and

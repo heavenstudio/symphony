@@ -148,15 +148,19 @@ FOR $s IN $seen {
     IF (SELECT VALUE last_seen FROM ONLY type::record('session', $s.handle)) != $s.last_seen { THROW 'stale' };
 };";
 
-/// A pass's writes, after its [`FENCES`]: each receiver still there, fenced as a recipient is; each
-/// give's role, version, slot counter and line, sent by `$sender`; each mark set or lifted. Needs
-/// `$receivers`, `$gives`, `$marks`, `$unmarks`, `$sender` and `$now`.
+/// A pass's writes, after its [`FENCES`]: each receiver still there, fenced as a recipient is, its
+/// slot counter where it was read (`Pass::guard`); each give's role, version, slot counter and
+/// line, sent by `$sender`; each mark set or lifted. Needs `$receivers`, `$counters`, `$gives`,
+/// `$marks`, `$unmarks`, `$sender` and `$now`.
 pub(in crate::store) fn gives() -> String {
     format!(
         "
 FOR $handle IN $receivers {{
     IF !record::exists(type::record('session', $handle)) OR type::record('session', $handle).left_at != NONE {{ THROW 'stale' }};
     {FENCE_RECIPIENT}
+}};
+FOR $c IN $counters {{
+    IF ((SELECT VALUE last FROM ONLY type::record('counter', $c.key)) ?? 0) != $c.last {{ THROW 'stale' }};
 }};
 FOR $g IN $gives {{
     FOR $h IN $g.drop {{ DELETE type::record('role', [$g.slug, $h, 'orchestrator']) RETURN NONE; }};
@@ -175,6 +179,15 @@ FOR $slug IN $unmarks {{
         logged("$g.slug", "$sender", "'system'", "$g.line", "NONE")
     )
 }
+
+/// What `Store::gaining` reads of `$handle`: its slot counter, and the status and red mark of each
+/// task it holds the orchestrator role on, by `role_handle` and then by id.
+pub(in crate::store) const GAINING: &str =
+    "LET $mine = (SELECT VALUE slug FROM role WHERE handle = $handle AND role = 'orchestrator');
+RETURN {
+    last: (SELECT VALUE last FROM ONLY type::record('counter', ['slots', $handle])) ?? 0,
+    tasks: (SELECT status, fields._board.red AS red FROM $mine.map(|$s| type::record('task', $s))),
+};";
 
 /// Sets `$slug`'s priority to `$priority` and says so, with the one it replaced, on its thread
 /// (`$missing` refuses a task not there), by `$actor`: a session's write when `acts`, else the

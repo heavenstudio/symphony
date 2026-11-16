@@ -4,6 +4,7 @@ import {
   answerMs,
   cursorOf,
   Failure,
+  getAt,
   getDocument,
   getIf,
   getJson,
@@ -242,6 +243,28 @@ describe("a document's read", () => {
     await expect(getDocument("/api/document", "", STAYS)).rejects.toEqual(
       new Failure("uncertain", UNREACHABLE, "Failed to fetch"),
     );
+  });
+
+  it("as any read naming its cursor, names it on every answer and fails a 404 as missing", async () => {
+    fetched.mockResolvedValue(answer(200, { n: 1 }, { ETag: '"g1"', [VERSION_HEADER]: "7" }));
+    expect(await getAt("/api/task-gates?slug=a", "", STAYS)).toEqual({
+      answer: { same: false, value: { n: 1 }, etag: '"g1"' },
+      cursor: 7,
+    });
+    fetched.mockResolvedValue(
+      new Response(null, { status: 304, headers: { [VERSION_HEADER]: "8" } }),
+    );
+    expect(await getAt("/api/task-gates?slug=a", '"g1"', STAYS)).toEqual({
+      answer: { same: true },
+      cursor: 8,
+    });
+    // A server that names none, or names what is no cursor.
+    fetched.mockResolvedValue(answer(200, { n: 1 }, { [VERSION_HEADER]: "soon" }));
+    expect((await getAt("/api/task-gates?slug=a", "", STAYS)).cursor).toBeNull();
+    fetched.mockResolvedValue(answer(404, { error: "No such task." }));
+    await expect(getAt("/api/task-gates?slug=a", "", STAYS)).rejects.toMatchObject({
+      kind: "missing",
+    });
   });
 
   it("is given up, its fetch aborted, once the signal it was given ends: a failure, not none", async () => {

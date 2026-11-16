@@ -472,8 +472,8 @@ mod tests {
     #[test]
     fn a_process_found_by_its_working_folder_says_that_folder_and_one_found_by_a_file_none() {
         let listing = "p10\nczsh\nfcwd\nn/wt/release\n\
-                       p11\ncchrome_crashpad_handler\nfcwd\nn/wt/release/apps/symphony-ui\n\
-                       p12\ncvim\nf7r\nn/wt/release/apps/symphony-ui/src/a.rs\n\
+                       p11\ncchrome_crashpad_handler\nfcwd\nn/wt/release/apps/symphony-web\n\
+                       p12\ncvim\nf7r\nn/wt/release/apps/symphony-web/src/a.rs\n\
                        p13\ncsh\nfcwd\nn/wt/release/working in/x\n";
         let found = inside_of(listing, Path::new("/wt/release"), 1);
         let folders: Vec<Option<&str>> = found.iter().map(Inside::working_in).collect();
@@ -481,7 +481,7 @@ mod tests {
             folders,
             [
                 Some(""),
-                Some("apps/symphony-ui"),
+                Some("apps/symphony-web"),
                 None,
                 Some("working in/x")
             ]

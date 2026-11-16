@@ -222,7 +222,7 @@ fn the_audit_judges_the_documents_what_the_symphony_delivers_and_its_guides() {
         "RULES.md",
         "crates/tasks/AGENTS.md",
         "apps/symphony-server/README.md",
-        "apps/symphony-ui/src/components/README.md",
+        "apps/symphony-web/src/styles/README.md",
     ] {
         assert!(audited(file) && beside_documents(file), "{file}");
     }

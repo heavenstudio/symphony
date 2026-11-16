@@ -21,8 +21,8 @@ pub(crate) use covered::covered_command;
 pub use covered::{COVERED, CoveredLine, covered_by, covered_line, landing};
 
 mod given;
-pub use given::Given;
 pub(super) use given::Pass;
+pub use given::{Filed, Given};
 
 mod moves;
 use moves::Moving;
@@ -446,7 +446,9 @@ impl Store {
     /// 1. the handle `place` names, and the task it holds, else its branch's;
     /// 2. else the one live session whose in-process binding (the beat hook's) places its last tool
     ///    call in the run's linked worktree, and the task it holds, else the branch's;
-    /// 3. else, for the task, the checkout's branch when it is the slug of an open task;
+    /// 3. else, for the task, the checkout's branch when it is a task's slug, whatever its status:
+    ///    an approved task's executor holds none, and what it runs on the branch after a land's
+    ///    conflict (main merged, its tests run at the merged tip) is the task's;
     /// 4. else, with no session placed there either, the live full session bound by the Claude Code
     ///    session the run is in, and the task it holds: a subagent shares its parent's id, so a task
     ///    found only through it never beats the branch's.
@@ -497,9 +499,8 @@ impl Store {
             slugs.dedup();
             top_in(&tree, &slugs).cloned()
         };
-        let open = |status: String| !crate::health::FINISHED.contains(&status.as_str());
         let branch = (place.branch)
-            .filter(|_| found.branch.is_some_and(open))
+            .filter(|_| found.branch.is_some())
             .map(str::to_owned);
         let here: Vec<&Seen> = found.here.iter().filter(live).collect();
         let called: Vec<&Seen> = found.called.iter().filter(live).collect();

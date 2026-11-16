@@ -13,7 +13,7 @@ use std::time::Duration;
 
 /// How long one focus or one screen read may take, all its calls together (a focus is up to
 /// three: `agent.focus`, `pane.focus` and `open -a`): under the 15 s a page waits for its answer
-/// (`apps/symphony-ui/src/request.rs`), so the call has ended, its child killed, before the page
+/// (`ANSWER_MS`, `apps/symphony-web/src/request.ts`), so the call has ended, its child killed, before the page
 /// gives up and lets the button be pressed again.
 pub const DEADLINE: Duration = Duration::from_secs(10);
 

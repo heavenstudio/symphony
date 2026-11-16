@@ -214,6 +214,7 @@ default and is said on stderr.
 | Key | Default | What it sets |
 | --- | --- | --- |
 | `orchestrator_slots` | `[board] orchestrator_slots`, else none | the tasks in progress an orchestrator holds |
+| `orchestrator_tasks` | `16` | the open tasks an orchestrator holds the orchestrator role on, at which the board gives it no more and its take or a hand-over to it is refused, a red apart ([TASKS](TASKS.md#the-limit-on-the-tasks-an-orchestrator-holds)); at least `1` |
 | `low_volume` | `4` | PULL's low-volume line below this many open slots; `0` says it to none |
 | `machine_agents` | none: no limit | the agents this machine runs, past which a launch is refused |
 

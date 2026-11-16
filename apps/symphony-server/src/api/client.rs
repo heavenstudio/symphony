@@ -135,8 +135,8 @@ fn file_type(extension: &str) -> (&'static str, bool) {
 }
 
 /// Whether the build file at `relative` is named by its content, so its bytes never change under
-/// that name: under `assets/`, the last `-` part of its name before the extension is dx's hash
-/// (`dxh` and hex digits) or `package.sh`'s (sixteen hex digits).
+/// that name: under `assets/`, the last `-` part of its name before the extension is the build's
+/// hash (sixteen hex digits).
 fn content_hashed(relative: &str) -> bool {
     let Some(file) = relative.strip_prefix("assets/") else {
         return false;
@@ -146,13 +146,10 @@ fn content_hashed(relative: &str) -> bool {
     let Some((_, hash)) = stem.rsplit_once('-') else {
         return false;
     };
-    let hex = |digits: &str| {
-        !digits.is_empty()
-            && digits
-                .bytes()
-                .all(|digit| digit.is_ascii_digit() || (b'a'..=b'f').contains(&digit))
-    };
-    hash.strip_prefix("dxh").is_some_and(hex) || (hash.len() == 16 && hex(hash))
+    hash.len() == 16
+        && hash
+            .bytes()
+            .all(|digit| digit.is_ascii_digit() || (b'a'..=b'f').contains(&digit))
 }
 
 fn client_unbuilt(shared: &Shared) -> Response {

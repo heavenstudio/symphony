@@ -358,6 +358,26 @@ fn cursor_is_not_content(f: &Fixture, documents: &[(String, Response)], board: &
             "{route}: a 304 names the cursor it was read at: {cached:?}"
         );
     }
-    // Only a document's reads name a cursor apart.
-    assert!(!board.headers.contains_key(symphony_api::VERSION_HEADER));
+    // Every other JSON read names the cursor too, read before its answer was: the board's own
+    // version is at it or after it, and a `304` names it as a `200` does.
+    let now = get(f, "/api/board", &[]);
+    assert!(named(board) < named(&now), "the cursor moved: {now:?}");
+    assert!(
+        named(&now) <= now.json()["version"].as_u64().unwrap(),
+        "a read's cursor is read before its answer: {now:?}"
+    );
+    let route = format!("/api/task-history?slug={TASK}");
+    let thread = get(f, &route, &[]);
+    let cached = f
+        .request(
+            "GET",
+            &route,
+            &[("If-None-Match", thread.header("etag"))],
+            &[],
+        )
+        .status(304);
+    assert!(
+        named(&cached) >= named(&thread),
+        "{route}: a 304 names the cursor it was read at: {cached:?}"
+    );
 }

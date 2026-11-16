@@ -652,12 +652,24 @@ fn create(store: &Store, c: &mut Context) -> Result<(), Stop> {
         Some(arm) => store.create_in_arm(&new, arm)?,
         None => store.create(&new)?,
     };
-    // Every open task has an orchestrator: the filer when it is one, else the board gives it. One
-    // line says who, or that it waits for one that stays, where any orchestrator is on the board.
-    let role = match store.give_filed(&t.slug, &new.by, for_orchestrator.as_deref()) {
-        Ok(Some(to)) => format!("; {to} orchestrates it"),
-        Ok(None) if !any_orchestrator(store)? => String::new(),
-        Ok(None) => "; it waits for an orchestrator that stays".to_string(),
+    // The filer orchestrates it when it is an orchestrator under the limit on its open tasks, else
+    // the board gives it. One line says who, and why the filer or the orchestrator `--for` names was
+    // passed over, or that it waits for one under its limit that stays, where any orchestrator is
+    // on the board.
+    let role = match store.give_filed_saying(&t.slug, &new.by, for_orchestrator.as_deref()) {
+        Ok(filed) => {
+            let passed = filed
+                .passed
+                .map(|why| format!("; {why}"))
+                .unwrap_or_default();
+            match filed.orchestrator {
+                Some(to) => format!("{passed}; {to} orchestrates it"),
+                None if !any_orchestrator(store)? => passed,
+                None => {
+                    format!("{passed}; it waits for an orchestrator under its limit that stays")
+                }
+            }
+        }
         Err(error) => format!(
             "; no orchestrator was given it yet ({error}): the board gives it at its next read"
         ),
@@ -777,9 +789,14 @@ fn show(store: &Store, c: &mut Context) -> Result<(), Stop> {
     };
     if let Some(at) = waiting {
         let minutes = ((store.now() - at) / 60.0).max(0.0).floor();
+        let limit = store.limits().orchestrator_tasks;
         c.say(&format!(
-            "  waits for an orchestrator that stays, for {minutes} min: the first live past its \
-             first live line that waits, watches or holds a task is given it"
+            "  waits for an orchestrator under its limit that stays, for {minutes} min: the first \
+             live past its first live line that waits, watches or holds a task, and orchestrates \
+             fewer than {limit} open tasks ([limits] orchestrator_tasks), is given it, and any \
+             such orchestrator takes it with: {} role {} orchestrator",
+            store.board_command(),
+            task.slug
         ));
     }
     let parent: Vec<String> = task.parent.iter().cloned().collect();

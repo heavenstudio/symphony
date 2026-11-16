@@ -304,7 +304,7 @@ fn standalone_sources_are_owned_and_missing_sources_never_search_a_hostile_paren
     );
     tree.write("own/apps/symphony-server/src/lib.rs", "// owned\n");
     tree.write("own/crates/leaf/Cargo.toml", "[package]\n");
-    tree.write("own/apps/symphony-ui/Cargo.toml", "[package]\n");
+    tree.write("own/apps/symphony-web/package.json", "{}\n");
     tree.write(
         "own/symphony/apps/symphony-server/Cargo.toml",
         "[package]\n",
@@ -313,7 +313,7 @@ fn standalone_sources_are_owned_and_missing_sources_never_search_a_hostile_paren
     let own = own.canonicalize().unwrap();
     assert_eq!(
         directories,
-        ["apps/symphony-server", "apps/symphony-ui", "crates/leaf"]
+        ["apps/symphony-server", "crates/leaf"]
             .map(|p| own.join(p))
             .into()
     );
@@ -362,7 +362,7 @@ fn a_client_build_starts_from_the_installed_builds_and_the_list_of_them() {
         "installed module",
     );
     tree.write(
-        "home/client/public/assets/chunks/old-dxh789.js",
+        "home/client/public/assets/chunks/old-789789789789789a.js",
         "installed chunk",
     );
     tree.write("home/client/public/builds.json", "{\"builds\": []}");
@@ -375,7 +375,7 @@ fn a_client_build_starts_from_the_installed_builds_and_the_list_of_them() {
         "installed module"
     );
     assert_eq!(
-        tree.read("stage/public/assets/chunks/old-dxh789.js"),
+        tree.read("stage/public/assets/chunks/old-789789789789789a.js"),
         "installed chunk"
     );
     // An installed client listing no builds copies no list, and none installed copies nothing.

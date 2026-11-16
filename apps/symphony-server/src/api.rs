@@ -67,7 +67,12 @@ pub(crate) const READS: &[&str] = &[
 type Request = axum::http::Request<()>;
 
 /// What the server reads answer for `request`. Every JSON read leaves here with its validator
-/// (`validated`), so a read added later has one too.
+/// (`validated`), so a read added later has one too, and naming the feed's cursor it was read at
+/// ([`symphony_api::VERSION_HEADER`]), on its `200` and its `304` alike. The cursor is read
+/// before the answer is: every event at or before it is in the answer, and one after it may be,
+/// so a page drops what its feed says of a read at or before the read's cursor and applies the
+/// rest, whichever of its reads and its feed it started first. A document's reads name their own,
+/// read with their content.
 pub(crate) async fn answer(shared: &Arc<Shared>, request: Request) -> Option<Response> {
     let asked: Vec<_> = request
         .headers()
@@ -75,8 +80,31 @@ pub(crate) async fn answer(shared: &Arc<Shared>, request: Request) -> Option<Res
         .iter()
         .cloned()
         .collect();
-    let response = read(shared, request).await?;
+    let cursor = cursor(shared, request.uri().path());
+    let mut response = read(shared, request).await?;
+    if let Some(cursor) = cursor
+        && validated::is_json_read(&response)
+        && !response
+            .headers()
+            .contains_key(symphony_api::VERSION_HEADER)
+    {
+        response.headers_mut().insert(
+            symphony_api::VERSION_HEADER,
+            header::HeaderValue::from(cursor),
+        );
+    }
     Some(validated::validated(&asked, response).await)
+}
+
+/// The feed's cursor now for the checkout the API route `path` names; none for any other path,
+/// for a checkout the server has no page of, and before the server has read anything.
+fn cursor(shared: &Shared, path: &str) -> Option<u64> {
+    let decoded = decode_path(path)?;
+    let (scope, route) = scope_path(&decoded);
+    if !route.starts_with("/api/") {
+        return None;
+    }
+    shared.api.get()?.cursor(scope)
 }
 
 async fn read(shared: &Arc<Shared>, request: Request) -> Option<Response> {

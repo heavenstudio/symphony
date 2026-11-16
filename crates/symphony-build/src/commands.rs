@@ -7,9 +7,7 @@ use std::io::Write;
 use std::path::Path;
 
 mod crates_check;
-mod release_inputs;
 mod size_budget;
-mod split_repair;
 mod synced;
 
 /// Its name, as its usage and its refusals say it.
@@ -26,14 +24,10 @@ const HEAD: &str = "usage: symphony-build COMMAND [ARGS]...\n\n\
 const LISTED: &str = "`symphony-build help`";
 
 /// Its commands, in the order its usage names them, each with what it does.
-const COMMANDS: [(&str, &str); 7] = [
+const COMMANDS: [(&str, &str); 5] = [
     (
         "publish-client",
         "publish a built client into the server's embedded copy",
-    ),
-    (
-        "release-inputs",
-        "list the files the client's release build reads",
     ),
     (
         "size-budget",
@@ -42,10 +36,6 @@ const COMMANDS: [(&str, &str); 7] = [
     (
         "crates-check",
         "check each published package on crates.io holds its sources",
-    ),
-    (
-        "split-repair",
-        "repair dx's --wasm-split output: safe, same bytes each build",
     ),
     (
         "synced",
@@ -59,15 +49,10 @@ const COMMANDS: [(&str, &str); 7] = [
 
 /// The usage of its commands that read no options of their own, and what their help says after
 /// their line: what `--help` or `-h` anywhere on their command line prints ([`plain_help`]).
-const PLAIN: [(&str, &str, &str); 5] = [
+const PLAIN: [(&str, &str, &str); 3] = [
     (
         "publish-client",
         "usage: symphony-build publish-client STAGE PUBLIC",
-        "",
-    ),
-    (
-        "release-inputs",
-        "usage: symphony-build release-inputs ROOT METADATA FILES COMPONENT_FILES --key|LOCK",
         "",
     ),
     (
@@ -84,16 +69,6 @@ const PLAIN: [(&str, &str, &str); 5] = [
          sources moved while its version did not is red (exit 1). A registry it cannot\n\
          read is exit 2.\n",
     ),
-    (
-        "split-repair",
-        "usage: symphony-build split-repair PROGRAM PUBLIC | --chunk MODULE",
-        "PROGRAM is the program dx linked, with its relocations; PUBLIC the folder\n\
-         dx bundle --wasm-split wrote. It writes back the merged constants the splitter\n\
-         zeroed in the main module, puts each chunk's segments in a fixed order and\n\
-         names every module and script it changed by its bytes, in place. --chunk puts\n\
-         the segments of MODULE, one wasm-opt wrote for dx, in that order before dx\n\
-         names it, and leaves a main module as it is, in place.\n",
-    ),
 ];
 
 /// `symphony-build COMMAND ARGS…`, the whole command line without the program name: one of
@@ -108,10 +83,8 @@ pub(crate) fn main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) ->
     match command {
         Some("--help" | "-h" | "help") => help(rest, out, err),
         Some("publish-client") => publish_client(rest, err),
-        Some("release-inputs") => release_inputs::main(rest, out, err),
         Some("size-budget") => size_budget::main(rest, out, err),
         Some("crates-check") => crates_check::main(rest, out, err),
-        Some("split-repair") => split_repair::main(rest, out, err),
         Some("synced") => synced::main(rest, out, err),
         Some("release") => crate::release::main(rest, out, err),
         Some(name) => {
@@ -270,7 +243,7 @@ mod tests {
         for line in listing.lines() {
             assert!(line.chars().count() <= 80, "{line}");
         }
-        assert!(listing.contains("\n  split-repair "));
+        assert!(listing.contains("\n  crates-check "));
     }
 
     #[test]
@@ -288,10 +261,8 @@ mod tests {
             build,
             [
                 "publish-client",
-                "release-inputs",
                 "size-budget",
                 "crates-check",
-                "split-repair",
                 "synced",
                 "release",
             ]
@@ -364,9 +335,9 @@ mod tests {
                 String::new()
             )
         );
-        let (code, out, err) = built(&["help", "split-repair"]);
+        let (code, out, err) = built(&["help", "crates-check"]);
         assert_eq!((code, err.as_str()), (0, ""));
-        assert!(out.ends_with("in place.\n"), "{out}");
+        assert!(out.ends_with("read is exit 2.\n"), "{out}");
         for args in [&["help", "release"][..], &["release", "--help"]] {
             let (code, out, err) = built(args);
             assert_eq!((code, err.as_str()), (0, ""), "{args:?}");
@@ -388,14 +359,6 @@ mod tests {
             (
                 "size-budget",
                 "usage: symphony-build size-budget ROOT RELEASE\n",
-            ),
-            (
-                "split-repair",
-                "usage: symphony-build split-repair PROGRAM PUBLIC | --chunk MODULE\n",
-            ),
-            (
-                "release-inputs",
-                "usage: symphony-build release-inputs ROOT METADATA FILES COMPONENT_FILES --key|LOCK\n",
             ),
         ] {
             assert_eq!(
@@ -424,9 +387,9 @@ mod tests {
             out.starts_with("usage: symphony-build synced [-h] BASE "),
             "{out}"
         );
-        // A command of the shipped binary's, and the release run's name before the rename, which
-        // nothing here runs any more.
-        for name in ["status", "nightly"] {
+        // A command of the shipped binary's, the release run's name before the rename, and the
+        // two that went with the Dioxus client's build, which nothing here runs any more.
+        for name in ["status", "nightly", "release-inputs", "split-repair"] {
             let refused = format!(
                 "symphony-build: unknown command {name:?} (`symphony-build help` lists them)\n"
             );

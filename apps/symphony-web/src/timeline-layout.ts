@@ -1128,30 +1128,29 @@ export function legendStates(drawn: Lanes): GateState[] {
 
 // The reads.
 
-/** When a read that failed with nothing shown is tried again (`nextRead`: TIMELINE_EVERY, a
- * minute), as the timeline's sentence says it. */
-export const AGAIN = "Trying again in a minute.";
+/** What a read that failed with nothing shown says of the next try, which the page's store makes
+ * by itself (parts.ts), as the timeline's sentence says it. */
+export const AGAIN = "Trying again…";
 
 /** What a read that failed says, from the reason it failed for: its first line, the way the gates
- * and a page that did not load say theirs, and when it is tried again. */
-export function failed(why: string): string {
+ * and a page that did not load say theirs, and that it is tried again where it is (`again`). */
+export function failed(why: string, again = true): string {
   const first = trimmed(why.split("\n")[0] ?? "").replace(/\.+$/, "");
-  return first === ""
-    ? `The timeline could not be read. ${AGAIN}`
-    : `The timeline could not be read: ${first}. ${AGAIN}`;
+  const said =
+    first === "" ? "The timeline could not be read." : `The timeline could not be read: ${first}.`;
+  return again ? `${said} ${AGAIN}` : said;
 }
 
 /** What the timeline's place shows: nothing yet, a timeline, or why its read failed. */
-export type Shown = null | { timeline: TaskTimeline } | { error: string };
+export type Shown = null | { timeline: TaskTimeline } | { error: string; final?: true };
 
 /**
- * Seconds until the next read after `shown`: the timeline's own `every` while its task is open; a
- * minute after a read that failed with nothing shown, so a phone back on its network reads it by
- * itself; none once the task is closed, or before any read.
+ * Seconds until the timeline asks to be read again after `shown`: its own `every` while its task
+ * is open; none once the task is closed, before any read, or after a read that failed with nothing
+ * shown, which the page's store tries again by itself.
  */
 export function nextRead(shown: Shown): number | null {
-  if (shown === null) return null;
-  if ("error" in shown) return TIMELINE_EVERY;
+  if (shown === null || "error" in shown) return null;
   const closed = shown.timeline.closed ?? null;
   return closed === null ? everySeconds(shown.timeline) : null;
 }

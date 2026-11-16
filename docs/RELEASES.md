@@ -54,7 +54,8 @@ version, under MIT: crates.io is the package manager their versions live in
   (`symphony-server`), the Chrome driver `symphony shot` drives as `symphony-chrome`, and the app's
   wire types (`symphony-api`). One version for the five, from 0.1.0, each requiring the others at
   exactly it (`=0.1.0`), so they are always taken together; below 1.0, it promises no name.
-- **The rest,** the client's sources (`symphony-ui`, which the server embeds built), the Mac app
+- **The rest,** the client's browser and build tests (`symphony-web-tests`; the client itself is
+  no Cargo package, and the server embeds it built), the Mac app
   (`symphony-desktop`), this repository's own build and release commands (`symphony-build`) and
   the tests' time (`test-time`), keep the workspace's `publish = false`.
 
@@ -79,24 +80,23 @@ each crate as one codegen unit, as the shipped binaries' size budgets assume
 binaries are 0.5 to 2.7 MB larger than the lines measure. No member carries a profile of its own,
 which Cargo would ignore with a warning on every build here. The server embeds its client at build time from
 its package's `client/public`, so an installed server serves it with no build of the client; its
-package carries every build that folder keeps, as it stands (7.6 to 8.0 MiB compressed in
-November 2026, of the 10 MiB crates.io takes). The day it would not fit, the packages test fails, and the package is cut
-to the newest build: no include list can name it, as the server's `Cargo.toml` is a release input,
-so a list that followed each build would move the next build's asset names.
+package carries every build that folder keeps, as it stands (three builds, 1.5 MB before
+compression in November 2026; crates.io takes a package of 10 MiB). The day it would not fit, the
+packages test fails, and the package is cut to the newest build.
 
 A published package's manifest says `publish = true` with a description, the repository, a readme of
 its own, keywords, categories and an `include` list (its sources, its build script, what it embeds,
 readme and LICENSE: no `tests/` folder or fixtures, and none of the binaries only this repository
-runs: `symphony-test-plugin`, `fake-hc`, `symphony-shelf`, `symphony-ui-dev`; `symphony-build`
+runs: `symphony-test-plugin`, `fake-hc`, `symphony-shelf`; `symphony-build`
 is a package of its own, unpublished).
-Its LICENSE is a copy of the root's, never a link, which the client's release inputs refuse
-(`symphony-api` and `symphony-blocks` are among them). Its readme stands alone, with no link into
+Its LICENSE is a copy of the root's, never a link, which a package cannot carry out of the
+workspace. Its readme stands alone, with no link into
 this repository, which is private; the server's is `CRATE.md`, as its `README.md` is its guide. It
 names a published sibling by `path` and `version`, and an unpublished one only as a development
 dependency, by `path` alone, which publishing drops. A file a package's code reads from outside it
 is a copy in the package, since the package must build alone: the server's `board.css` and
-`frame.css` of the client's (the client reads its own through `asset!`, which takes no file outside
-its crate) and the Chrome driver's `fixture_process.sh` of `tools/` (where the board's fixtures find
+`frame.css` of the client's (`apps/symphony-web/src/styles/`, which the client's build reads in
+its own package) and the Chrome driver's `fixture_process.sh` of `tools/` (where the board's fixtures find
 the source root by it). `crates/symphony/tests/packages.rs` holds which members are published, that
 each carries all of this, that each copy is its file byte for byte, and that the server's `.crate`
 is one crates.io takes.
@@ -215,7 +215,7 @@ project is given and neither the library nor the shipped `symphony` compiles
    checkout for 7 days), and marked in its git admin folder (`symphony-release`, holding the
    checkout's real path). Each run resets it to the candidate and removes every untracked and
    ignored file but `.target/`, so the build stays incremental; a `.target/` built on for 7 days
-   is cleared. It resets nothing else. The React client's `node_modules` goes with the ignored
+   is cleared. It resets nothing else. The client's `node_modules` goes with the ignored
    files, so each run installs it again from npm's cache on the machine (a network
    fetch only for what that cache lacks), and the run needs the client's pinned Node, on PATH or
    by fnm ([its guide](../apps/symphony-web/AGENTS.md#the-tools)), as it needs Chrome. A link in that place, a path that is, holds or lies inside
@@ -226,8 +226,8 @@ project is given and neither the library nor the shipped `symphony` compiles
    anything, any process but the run's own that `lsof` sees working in the checkout, or holding a
    file inside it open, stops the run. The run names it by its pid and command, and one working in
    a package's folder by that package too, since cargo runs a package's tests there and what one of
-   them left works there (`working in apps/symphony-ui, where cargo runs the tests of the package
-   symphony-ui`): that is as near to the test that left it as the run can tell. It could change
+   them left works there (`working in apps/symphony-web-tests, where cargo runs the tests of the package
+   symphony-web-tests`): that is as near to the test that left it as the run can tell. It could change
    the checkout under the run's checks. It may be anyone's: a shell, a terminal tab, an editor's
    terminal, a Finder window or a `tail -f` left there counts as much as what an earlier check
    left. So the red `run` it files is
