@@ -191,7 +191,7 @@ fn recorded_work_and_a_project_readers_work_are_one_machines_and_either_malforme
     std::fs::write(common.join("native.json"), input("running")).unwrap();
     let folder = work::in_common(&common);
     let _held = running(&folder, &"a".repeat(32), "tools/recorded");
-    let mut sampler = Sampler::new(&root, None);
+    let mut sampler = super::reading(&root, None);
     sampler.identity = Some(Ok("machine-a".into()));
     let snapshot = sampler
         .scan(&root, Some(&common), &[record("task-a")])

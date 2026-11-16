@@ -35,9 +35,19 @@ pub fn machine_in<'a>(env: &'a Env, common: &Path) -> Probes<'a> {
     machine_with_common(env, Ok(common.to_path_buf()))
 }
 
-/// One read-only native scan through the existing bounded child/pipe owner. The reader is an
-/// already installed local executable; this never builds a launcher or forwards caller capabilities.
-pub fn native_inventory(env: &Env, reader: &Path, common: &Path) -> Answer<Vec<u8>> {
+/// How long the Symphony's tick gives a native inventory reader to answer ([`native_inventory`]),
+/// so a reader that hangs never holds the tick: past it the reader is killed and its scan unknown.
+pub const NATIVE_READER_WAIT: Duration = Duration::from_secs(2);
+
+/// One read-only native scan through the existing bounded child/pipe owner, its answer given up and
+/// the reader killed once `limit` has passed. The reader is an already installed local executable;
+/// this never builds a launcher or forwards caller capabilities.
+pub fn native_inventory(
+    env: &Env,
+    reader: &Path,
+    common: &Path,
+    limit: Duration,
+) -> Answer<Vec<u8>> {
     let vars = env
         .vars
         .iter()
@@ -54,7 +64,7 @@ pub fn native_inventory(env: &Env, reader: &Path, common: &Path) -> Answer<Vec<u
         .args(["machine-work", "--common-dir"])
         .arg(common)
         .current_dir(&env.cwd);
-    let output = within(&mut command, Duration::from_secs(2))?;
+    let output = within(&mut command, limit)?;
     if !output.status.success() || output.stdout.len() > super::machine_work::native::MAX_BYTES {
         return Err("native inventory reader failed or exceeded its output bound".into());
     }
