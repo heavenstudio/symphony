@@ -411,3 +411,115 @@ fn full_task_build_test_columns_keep_counts_readable_cards_and_owned_keyboard_to
     );
     screenshot(&mut chrome, "board-mobile-disconnected");
 }
+
+/// What a window shows of the board's pipeline (`scroller` the board's own, or its ghost's): how
+/// many columns it holds, how many show whole, whether it scrolls sideways and whether the page
+/// does.
+fn pipeline_shown(scroller: &str, columns: &str) -> String {
+    format!(
+        "(() => {{ const board = document.querySelector('{scroller}'), box = board.getBoundingClientRect();
+            const columns = [...board.querySelectorAll('{columns}')];
+            return {{columns: columns.length,
+                whole: columns.filter(column => {{ const edges = column.getBoundingClientRect();
+                    return edges.left >= box.left - 1 && edges.right <= box.right + 1; }}).length,
+                scrolls: board.scrollWidth > board.clientWidth,
+                page: document.documentElement.scrollWidth > innerWidth}}; }})()"
+    )
+}
+
+/// The width of the page's `main`, padding included.
+const MAIN_WIDTH: &str = "Math.round(document.querySelector('main').getBoundingClientRect().width)";
+
+/// A window wide enough for the pipeline's eight columns (2388 px, and the page's padding) shows
+/// every one of them with no sideways scroll, its ghost too: the board alone takes the window's
+/// width, where every other page keeps the frame's 1440 px. A narrower window shows what it holds
+/// and scrolls the pipeline alone, never the page. The board's heading has no Who is connected of
+/// its own: the header's Agents link leads there.
+#[test]
+fn a_window_wide_enough_shows_every_board_column_with_no_sideways_scroll() {
+    let site = site();
+    let listing = listing();
+    site.set_json("/api/task-board", &listing);
+    site.set_json("/api/machine-work", &listing["machine_work"]);
+    let Some(mut chrome) = chrome() else { return };
+    let size = |chrome: &mut crate::Chrome, width: u32| {
+        chrome.call(
+            "Emulation.setDeviceMetricsOverride",
+            json!({"width":width,"height":1000,"deviceScaleFactor":1,"mobile":false}),
+        );
+    };
+    size(&mut chrome, 2560);
+    chrome.open(&site.url("/tasks"));
+    ready(&mut chrome);
+    let board = pipeline_shown(".board-scroll", ".pipeline > .column");
+    assert_eq!(
+        chrome.eval(&board),
+        json!({"columns": 8, "whole": 8, "scrolls": false, "page": false}),
+        "a window 2560 px wide shows every column whole, scrolling nothing"
+    );
+    assert_eq!(
+        chrome.eval(MAIN_WIDTH),
+        json!(2560),
+        "the board takes the window's width"
+    );
+    assert_eq!(
+        chrome.eval(
+            "[document.querySelector('main a[href$=\"/agents\"]') === null, document.querySelector('header a[href$=\"/agents\"]') !== null]"
+        ),
+        json!([true, true]),
+        "the board's page links no agents page of its own, and the header's Agents link stays"
+    );
+
+    size(&mut chrome, 1920);
+    assert!(
+        chrome.wait_for(&format!("({board}).whole === 6"), SHOWN),
+        "a window 1920 px wide shows the six columns it holds: {}",
+        chrome.eval(&board)
+    );
+    assert_eq!(
+        chrome.eval(&board),
+        json!({"columns": 8, "whole": 6, "scrolls": true, "page": false}),
+        "the pipeline scrolls for the two it cannot hold, the page never"
+    );
+
+    // Every other page keeps its reading width: the queue's main is the frame's 1440 px and its
+    // padding.
+    size(&mut chrome, 2560);
+    chrome.open(&site.url("/queue"));
+    assert!(
+        chrome.wait_for(
+            "document.querySelector('main [data-ready=queue]') !== null",
+            SHOWN
+        ),
+        "the queue was never drawn"
+    );
+    assert_eq!(
+        chrome.eval(MAIN_WIDTH),
+        json!(1488),
+        "the queue keeps its width"
+    );
+
+    // The board's next ghost, its first read held and no copy on this device, is as wide.
+    chrome.call(
+        "Page.addScriptToEvaluateOnNewDocument",
+        json!({ "source": crate::NO_STORE }),
+    );
+    site.hold_route("/api/task-board", true);
+    chrome.open(&site.url("/tasks"));
+    let drawn = chrome.wait_for(
+        "document.querySelectorAll('.ghost-pipeline > .ghost-column').length === 8",
+        SHOWN,
+    );
+    let ghost = chrome.eval(&pipeline_shown(".ghost-pipeline", ".ghost-column"));
+    let wide = chrome.eval(MAIN_WIDTH);
+    site.hold_route("/api/task-board", false);
+    assert!(drawn, "no ghost of the board's eight columns: {ghost}");
+    assert_eq!(
+        (ghost, wide),
+        (
+            json!({"columns": 8, "whole": 8, "scrolls": false, "page": false}),
+            json!(2560)
+        ),
+        "the ghost shows every column whole, as wide as the window"
+    );
+}
