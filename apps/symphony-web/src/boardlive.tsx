@@ -293,6 +293,9 @@ export class LiveBoard {
   /** What a failed read last had the page say (`d.error`): a column's answer takes that away, and
    * never the board's own notice of its state. */
   private said = "";
+  /** How many times the counts were answered (`d.counted`) when the last check began: while they
+   * still are, the check asks for them again until one answers, whoever's read failed. */
+  private uncounted: number | null = null;
   /** How many times the reader pressed Retry, which the board's loop waits on. */
   readonly retry = new Retry();
   /** A column's read, one function for the page's life: a column drawn again for it would be. */
@@ -503,10 +506,11 @@ export class LiveBoard {
 
   /**
    * Read the counts of the page's view; an answer a newer view or count read replaced is dropped.
-   * A failure says why, and that the read is tried again when it is (`trying`: the check's), not
-   * when nothing asks again (a refresh's, a search's, the feed's open).
+   * A failure says why, and that the counts are tried again while they are: until the last check
+   * has its counts, it asks again (`uncounted`), whichever read failed (its own, a refresh's, a
+   * search's, the feed's open); after, nothing does until the next event or check.
    */
-  async counts(trying = false): Promise<void> {
+  async counts(): Promise<void> {
     const { d } = this;
     d.countRequest += 1;
     const request = d.countRequest;
@@ -525,7 +529,7 @@ export class LiveBoard {
       }
       if (this.signal.aborted || d.view !== view || d.countRequest !== request) return;
       if (read === null) {
-        this.unanswered(COUNTS, trying ? failedRead(why, true) : why);
+        this.unanswered(COUNTS, this.uncounted === d.counted ? failedRead(why, true) : why);
         return;
       }
       const [list, fresh] = read;
@@ -714,6 +718,7 @@ export class LiveBoard {
     const round = d.round;
     const current = () => !this.signal.aborted && d.round === round;
     const { worked, counted } = d;
+    this.uncounted = counted;
     const firsts = d.drawn.map((status) =>
       this.untilAnswered(current, async () => {
         const answeredNow = () => !d.drawn.includes(status);
@@ -730,7 +735,7 @@ export class LiveBoard {
       }),
       this.untilAnswered(current, async () => {
         if (d.counted !== counted) return true;
-        await this.counts(true);
+        await this.counts();
         return d.counted !== counted;
       }),
     );

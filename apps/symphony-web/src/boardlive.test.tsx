@@ -435,18 +435,38 @@ describe("the live board's counts", () => {
     expect(host.redraw).toHaveBeenCalled();
     const device = live(() => answer(503));
     device.board.fresh = { ...device.board.fresh, saved: 1, unanswered: ["counts"] };
-    await device.board.counts(true);
+    await device.board.check();
     expect(device.d.error).toBe("");
   });
 
-  it("say they try again when the check tries them again", async () => {
-    const { board, d } = live(() => answer(503, { error: "the board is down" }));
-    await board.counts(true);
-    expect(d.error).toBe("the board is down (the server answered 503). Trying again…");
+  it("say they try again while the check still asks for them, whoever's read failed", async () => {
+    let up = false;
+    const { board, d } = live((url) => {
+      if (url === "/api/machine-work") return answer(200, NO_WORK);
+      return up ? answer(200, listing([], [["ready", 1]])) : answer(503, { error: "down" });
+    });
+    await board.check();
+    expect(d.error).toBe("down (the server answered 503). Trying again…");
     expect(board.fresh.failing).toEqual(["counts"]);
+    // The feed's open reads them too: the check still asks again after it, so it says so.
+    await board.counts();
+    expect(d.error).toBe("down (the server answered 503). Trying again…");
+    // The check's next try answers, and what was said goes.
+    up = true;
+    await pass(1_000);
+    expect(d.counted).toBe(1);
+    expect(d.error).toBe("");
+    // Once the check has its counts, a refresh's read that fails is asked again by nothing.
+    up = false;
+    await board.counts();
+    expect(d.error).toBe("down (the server answered 503)");
     // Unreachable, it says to check the connection, and still that it tries again.
-    const away = live(() => Promise.reject(new TypeError("Failed to fetch")));
-    await away.board.counts(true);
+    const away = live((url) =>
+      url === "/api/machine-work"
+        ? answer(200, NO_WORK)
+        : Promise.reject(new TypeError("Failed to fetch")),
+    );
+    await away.board.check();
     expect(away.d.error).toBe(
       "The server could not be reached; check the connection. Trying again…",
     );
