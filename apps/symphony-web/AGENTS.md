@@ -970,8 +970,11 @@ What holds on every page, and each page's contract where its section above names
   what an HTML document does is the server's and the browser tests'.
   The feed opts into
   one `document=PATH` and its requested `sections=JSON_LIST`; a stream without
-  a document receives no document payloads. Changing the requested keys reopens
-  the stream at its current cursor. A body response waits for that cursor and
+  a document receives no document payloads. It names the sections near the screen and those
+  whose bodies the page holds (`followed`): on a return visit the second are the ones drawn from
+  this device, there before the outline's check answers, so a return opens one stream, naming its
+  sections, though their slots name themselves only a frame or more later. A section near the
+  screen the stream does not name reopens it at its current cursor. A body response waits for that cursor and
   never overwrites a newer document change; a reconnect invalidates outstanding
   reads. Drafts and verdict retry ids are saved locally. Busy sections retain
   their markup while their source positions advance; the queued markup applies
