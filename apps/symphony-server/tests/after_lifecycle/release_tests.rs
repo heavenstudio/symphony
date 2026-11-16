@@ -251,19 +251,16 @@ fn the_release_server_follows_current_and_one_that_does_not_start_leaves_it_serv
     let next = until("the release release-3 to answer", || {
         front(port).filter(|front| front.release.as_deref() == Some("release-3") && front.ready)
     });
-    repo.adopt();
     assert_ne!(next.pid, first.pid);
+    // The replaced server records its successor once that one said it is ready, which it answers
+    // from before: the record is waited for, then the successor owned for the case's cleanup.
+    let recorded = until("the record to name the release release-3", || {
+        Some(record(&repo)).filter(|recorded| recorded["release"] == "release-3")
+    });
+    assert_eq!(recorded["pid"], next.pid, "{recorded}");
+    repo.adopt();
     let (_, page) = answer(port, "/alpha/");
     assert!(page.ends_with("third</body></html>"), "{page}");
-    let recorded = record(&repo);
-    assert_eq!(
-        (&recorded["pid"], &recorded["release"]),
-        (
-            &serde_json::json!(next.pid),
-            &serde_json::json!("release-3")
-        ),
-        "{recorded}"
-    );
     until("the replaced release's server to end", || {
         (!symphony_server::sys::pid_alive(first.pid)).then_some(())
     });
