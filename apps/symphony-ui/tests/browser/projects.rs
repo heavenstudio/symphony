@@ -971,7 +971,8 @@ const BRAND: &str = r#"(async () => {
 /// a theme's name takes the wordmark's place, and a theme's icon the mark's, on the page the
 /// client draws and on the one the server draws. A page with no icon of its theme's links the
 /// Symphony's, inline for the tab and by its address for a phone's home screen; the icon the
-/// address answers by itself is the Symphony's. On a phone the first row stays one row.
+/// address answers by itself is the Symphony's. On a phone the first row stays one row, from
+/// 320 wide up.
 #[test]
 fn the_header_and_the_icons_are_the_symphonys_until_a_theme_has_its_own() {
     let board = ScratchBoard::start();
@@ -1061,14 +1062,32 @@ fn the_header_and_the_icons_are_the_symphonys_until_a_theme_has_its_own() {
         json!({"type":"image/svg+xml","fermata":true})
     );
     // On a phone the mark and the name, the switch and the two buttons share the first row, the
-    // pages under them, a name too long for it cut short.
-    browser.call(
-        "Emulation.setDeviceMetricsOverride",
-        json!({"width":390,"height":844,"deviceScaleFactor":1,"mobile":true}),
-    );
-    for (id, cut) in [("alpha", false), ("lantern", true)] {
+    // pages under them, at every width from the suite's narrowest phone up: two rows and never
+    // more. The name gives way first, cut short in the room the row leaves, the mark whole
+    // beside it. Whether a name is cut is asserted where no font's width decides it: the
+    // wordmark whole at 390, every name cut at 320.
+    for (width, id, cut) in [
+        (320, "alpha", Some(true)),
+        (320, "lantern", Some(true)),
+        (360, "alpha", None),
+        (360, "lantern", None),
+        (375, "alpha", None),
+        (375, "lantern", None),
+        (390, "alpha", Some(false)),
+        (390, "lantern", None),
+    ] {
+        browser.call(
+            "Emulation.setDeviceMetricsOverride",
+            json!({"width":width,"height":844,"deviceScaleFactor":1,"mobile":true}),
+        );
         browser.open(&server.url(&format!("/{id}/")));
-        assert!(browser.wait_for(client, SHOWN), "{id}");
+        assert!(browser.wait_for(client, SHOWN), "{id} at {width}");
+        let seen = browser.eval(
+            "(name => name.scrollWidth > name.clientWidth)(document.querySelector('.app-brand span'))",
+        );
+        if let Some(cut) = cut {
+            assert_eq!(seen, json!(cut), "{id} at {width}: the name cut");
+        }
         assert_eq!(
             browser.eval(
                 r#"(() => {
@@ -1081,13 +1100,14 @@ fn the_header_and_the_icons_are_the_symphonys_until_a_theme_has_its_own() {
                         inOrder: first.every((e, at) => at === 0 || box(e).left >= box(first[at - 1]).right),
                         pagesBelow: box(document.querySelector('.app-pages')).top >= box(first[3]).bottom,
                         headerUnder100: box(document.querySelector('.app-header')).height < 100,
-                        cut: name.scrollWidth > name.clientWidth,
+                        markWhole: box(document.querySelector('.app-brand .app-mark')).width >= 20,
+                        nameShows: name.clientWidth >= 16,
                         fits: document.documentElement.scrollWidth <= innerWidth,
                     };
                 })()"#
             ),
-            json!({"oneRow":true,"inOrder":true,"pagesBelow":true,"headerUnder100":true,"cut":cut,"fits":true}),
-            "{id}"
+            json!({"oneRow":true,"inOrder":true,"pagesBelow":true,"headerUnder100":true,"markWhole":true,"nameShows":true,"fits":true}),
+            "{id} at {width}"
         );
     }
 }
