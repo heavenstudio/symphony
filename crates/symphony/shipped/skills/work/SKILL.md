@@ -12,8 +12,7 @@ build or approval policy.
 
 Those instructions are the project's guide (its `AGENTS.md`), the rules it names and the guide of
 each package the task touches, and `project.md` beside this file where the project has one: its
-own standing instructions for an executor, which no prompt repeats. Read them before the stage
-page of step 3. The prompt holds nothing more but what is this task's alone.
+own standing instructions for an executor. Read them before the stage page of step 3.
 
 1. Reuse HANDLE from the prompt, the task's reservation or `TASKS_SESSION`; with none, register
    with `just tasks register --kind worker`.

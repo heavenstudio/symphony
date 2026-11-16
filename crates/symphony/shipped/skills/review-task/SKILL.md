@@ -13,7 +13,7 @@ assumes no certificate or landing system.
 
 Those rules are the project's guide (its `AGENTS.md`), the rules it names and the guide of each
 package the change touches, and `project.md` beside this file where the project has one: its own
-standing instructions for a reviewer, which no prompt repeats. Read them before step 3.
+standing instructions for a reviewer. Read them before step 3.
 
 1. Reuse HANDLE from the prompt; with none, register with `just tasks register --kind reviewer`.
    Pass it on every board command as `just tasks … --as HANDLE`, the handle last. A session with

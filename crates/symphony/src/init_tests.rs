@@ -978,20 +978,24 @@ fn every_shipped_skill_is_a_skill_with_front_matter_and_no_stamp_of_its_own() {
 const PROJECT_PAGE: &str = "project.md";
 
 /// A project's standing instructions for a role are its own page beside the role's skill: each
-/// role's skill names the page, no skill ships one, and a run neither writes over the project's,
-/// counts it as an edit to the skill, nor removes it.
+/// role's skill names the page, and so does the orchestrator's, which says where an instruction
+/// goes; no other skill names it, in any spelling, and none ships one; and a run neither writes
+/// over the project's, counts it as an edit to the skill, nor removes it.
 #[test]
 fn a_projects_page_beside_a_role_skill_is_named_by_the_skill_and_left_as_written() {
     let shipped = Shipped::builtin();
     let roles = ["work", "review-task", "assess-task"];
     for skill in &shipped.skills {
-        let names = skill.files[0].1.contains(&format!("`{PROJECT_PAGE}`"));
-        assert_eq!(
-            names,
-            roles.contains(&skill.name.as_str()),
-            "{}",
-            skill.name
-        );
+        let name = skill.name.as_str();
+        let names = |text: &str| text.contains(PROJECT_PAGE);
+        if roles.contains(&name) || name == "task-orchestrator" {
+            assert!(names(&skill.files[0].1), "{name} does not name the page");
+        } else {
+            assert!(
+                skill.files.iter().all(|(_, text)| !names(text)),
+                "{name} names the page"
+            );
+        }
         assert!(
             skill.files.iter().all(|(file, _)| file != PROJECT_PAGE),
             "{} ships the project's page",
