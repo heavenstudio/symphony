@@ -35,13 +35,14 @@ button:hover { border-color:var(--muted-foreground); }
 button.primary { background:var(--primary); border-color:var(--primary); color:var(--primary-foreground); font-weight:600; }
 button:disabled { opacity:.6; cursor:default; }
 /* A control sinks under a press, and a long press on it selects none of its label. Its target
-   keeps the whole box: a layer as much larger as the press shrinks it, and its borders more (a
-   tile's top is 3px), so a press held near its edge still lands on it. The layer's anchor is the
-   control, relative unless its own sheet positions it. */
+   keeps its box: a layer (1/.97 - 1)/2 larger each side, which the press's shrink maps exactly
+   onto the unpressed padding box, so a press held near its edge still lands on it and nothing
+   reaches past the control to scroll the box that holds it. The layer's anchor is the control,
+   relative unless its own sheet positions it. */
 button, .tile, a.go { -webkit-user-select:none; user-select:none; }
 :is(button, .tile, a.go):not(:disabled):active { transform:scale(.97); }
 :where(button, .tile, a.go):where(:active) { position:relative; }
-:is(button, .tile, a.go):not(:disabled):active::after { content:""; position:absolute; inset:calc(-1.6% - 4px); }
+:is(button, .tile, a.go):not(:disabled):active::after { content:""; position:absolute; inset:-1.5464%; }
 textarea { display:block; box-sizing:border-box; width:100%; min-height:100px; resize:vertical; }
 input, select { max-width:100%; box-sizing:border-box; }
 label { display:block; } html:root :focus-visible { outline:2px solid var(--ring, var(--primary)); outline-offset:2px; }

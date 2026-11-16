@@ -1,8 +1,9 @@
 //! What a touch screen needs of the pages, read in the release client: a text field is drawn at
 //! 16px there, as iOS zooms into a smaller one when it takes focus and does not zoom back out, and
 //! keeps its size on a desk; a press is the control's own, which sinks it, never the browser's tap
-//! flash or a selected label, though a press held near its edge still lands on it, and a hover
-//! that moves or raises a thing is a pointer's alone.
+//! flash or a selected label, though a press held near its edge still lands on it and one flush in
+//! a scrolling box gives it nothing to scroll, and a hover that moves or raises a thing is a
+//! pointer's alone.
 use super::components::site;
 use super::{SHOWN, chrome, chrome::Chrome};
 use serde_json::{Value, json};
@@ -264,4 +265,49 @@ fn a_press_held_near_a_controls_edge_still_clicks_it() {
         json!(["tile"]),
         "a press held near the tile's edge clicks the tile"
     );
+}
+
+/// A box that scrolls, its contents exactly filling it, with a button of `class` flush against
+/// its right and bottom edges: where the button's middle is, and the box's scroll and client size.
+const FLUSH_BOX: &str = "(kind => {document.getElementById('press-box')?.remove();const box=document.createElement('div');box.id='press-box';\
+    box.style.cssText='position:fixed;left:20px;top:20px;width:200px;height:120px;overflow:auto;z-index:10000;background:var(--card)';\
+    box.innerHTML='<p style=\"margin:0;height:84px\">Above</p><button type=\"button\" style=\"display:block;width:100%;height:36px;margin:0\">Flush</button>';\
+    box.querySelector('button').className=kind;document.body.append(box);const at=box.querySelector('button').getBoundingClientRect();\
+    return {x:at.left+at.width/2,y:at.top+at.height/2,scroll:[box.scrollWidth,box.scrollHeight],client:[box.clientWidth,box.clientHeight]};})";
+
+#[test]
+fn a_press_on_a_control_flush_in_a_scrolling_box_adds_no_scroll() {
+    let site = site();
+    let Some(mut page) = chrome() else { return };
+    device(&mut page, false);
+    open(&mut page, &site, "/", ".tile");
+    // A plain button, bordered, and a component button, borderless.
+    for class in ["", "dx-button"] {
+        let at = page.eval(&format!("{FLUSH_BOX}({})", json!(class)));
+        assert_eq!(
+            at["scroll"], at["client"],
+            "{class:?}: nothing scrolls at rest: {at}"
+        );
+        let mouse = |kind: &str| json!({"type":kind,"x":at["x"],"y":at["y"],"button":"left","clickCount":1});
+        page.call("Input.dispatchMouseEvent", mouse("mousePressed"));
+        assert!(
+            page.wait_for(
+                &format!(
+                    "(button => getComputedStyle(button).transform === {} && button.getAnimations().length === 0)(document.querySelector('#press-box button'))",
+                    json!(PRESSED)
+                ),
+                SHOWN
+            ),
+            "{class:?}: the button sinks under the press: {}",
+            look(&mut page, "#press-box button", "transform")
+        );
+        assert_eq!(
+            page.eval(
+                "(box => [box.scrollWidth, box.scrollHeight])(document.getElementById('press-box'))"
+            ),
+            at["scroll"],
+            "{class:?}: the press adds nothing for the box to scroll"
+        );
+        page.call("Input.dispatchMouseEvent", mouse("mouseReleased"));
+    }
 }
