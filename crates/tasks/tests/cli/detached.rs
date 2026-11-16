@@ -166,13 +166,10 @@ fn api(env: &Env, program: &Path, call: &Value) -> Ran {
 /// This host's dispatch lease as it stands.
 fn lease(case: &Case) -> Value {
     case.store()
-        .client()
-        .query(
-            "RETURN SELECT until, asked, served FROM ONLY type::record('callback_lease', ['dispatch', $host]);",
-            json!({"host": hostname()}),
-        )
+        .raw()
+        .row("callback_lease", json!(["dispatch", hostname()]))
+        .fields(&["until", "asked", "served"])
         .unwrap()
-        .remove(0)
 }
 
 /// Wait until `done`, which a detached dispatcher brings about, up to the backstop of the minute it
@@ -190,11 +187,9 @@ fn a_post_queues_its_line_answers_and_the_dispatcher_it_starts_outwaits_a_dead_h
     // A dispatcher that died holding this host's lease: the one the post starts asks it for a
     // pass and waits.
     case.store()
-        .client()
-        .query(
-            "UPSERT type::record('callback_lease', ['dispatch', $host]) SET until = $now + 3600, revision = 1, asked = 0, served = 0 RETURN NONE;",
-            json!({"host": hostname(), "now": NOW}),
-        )
+        .raw()
+        .row("callback_lease", json!(["dispatch", hostname()]))
+        .put(json!({"until": NOW + 3600.0, "revision": 1, "asked": 0, "served": 0}))
         .unwrap();
     let ran = say(
         &case,
@@ -219,13 +214,19 @@ fn a_post_queues_its_line_answers_and_the_dispatcher_it_starts_outwaits_a_dead_h
     // The command queued the post for its recipient before it answered, and delivered nothing.
     let queued = case
         .store()
-        .client()
-        .query(
-            "RETURN type::record('callback_event', [$handle, $key]).delivered ?? false;",
-            json!({"handle": recipient, "key": format!("message-{id}")}),
+        .raw()
+        .row(
+            "callback_event",
+            json!([recipient, format!("message-{id}")]),
         )
-        .unwrap()
-        .remove(0);
+        .field("delivered")
+        .unwrap();
+    // A row that says nothing of its delivery was not delivered.
+    let queued = if queued.is_null() {
+        json!(false)
+    } else {
+        queued
+    };
     assert_eq!(queued, json!(false));
     until(
         || lease(&case)["asked"] == json!(1),
@@ -233,11 +234,9 @@ fn a_post_queues_its_line_answers_and_the_dispatcher_it_starts_outwaits_a_dead_h
     );
     // The dead holder's lease lapses: the waiting dispatcher takes the host over and delivers.
     case.store()
-        .client()
-        .query(
-            "UPDATE type::record('callback_lease', ['dispatch', $host]) SET until = 0 RETURN NONE;",
-            json!({"host": hostname()}),
-        )
+        .raw()
+        .row("callback_lease", json!(["dispatch", hostname()]))
+        .set(json!({"until": 0}))
         .unwrap();
     let lines = listener.until(&format!("MSG #{id} "), Duration::from_secs(60));
     let delivered = lines

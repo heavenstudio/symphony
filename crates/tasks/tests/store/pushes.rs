@@ -444,10 +444,8 @@ fn a_channel_another_process_listens_on_starts_from_the_whole_digest() {
         o.drain(&f, &barrier, &orch);
         if elsewhere {
             // The registration as a listener in another process made it.
-            let other = f.store.client().query(
-                "UPDATE type::record('callback_state', $handle) SET owner = { pid: 1, started: 'before' } RETURN NONE;",
-                serde_json::json!({"handle": orch}),
-            );
+            let owner = serde_json::json!({"owner": {"pid": 1, "started": "before"}});
+            let other = (f.store.raw().row("callback_state", orch.as_str())).set(owner);
             other.unwrap();
         }
         let moved = Listener::new(&format!("{}-moved", f.store.client().database()));

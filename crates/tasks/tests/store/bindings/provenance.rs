@@ -12,22 +12,14 @@ fn legacy_bindings_without_provenance_can_be_classified_once_and_retried() {
         let f = Fixture::empty();
         let h = f.session("worker");
         // A supported legacy row carries its agent id before binding metadata existed.
-        f.store
-            .client()
-            .query(
-                "UPDATE type::record('session', $handle) SET agent = 'legacy-key' RETURN NONE;",
-                json!({"handle": h}),
-            )
+        (f.store.raw().row("session", h.as_str()))
+            .set(json!({"agent": "legacy-key"}))
             .unwrap();
-        let unknown = f
-            .store
-            .client()
-            .query(
-                "RETURN type::record('callback_state', ['binding', 'legacy-key']).in_process;",
-                json!({}),
-            )
+        let unknown = (f.store.raw())
+            .row("callback_state", json!(["binding", "legacy-key"]))
+            .field("in_process")
             .unwrap();
-        assert_eq!(unknown, vec![serde_json::Value::Null]);
+        assert_eq!(unknown, serde_json::Value::Null);
         let last_seen = f.store.session(&h).unwrap().row.last_seen;
         f.advance(10.0);
         assert!(f.store.bind_agent("legacy-key", &h, full).unwrap());
@@ -85,30 +77,20 @@ fn a_target_proven_full_after_the_snapshot_rejects_takeover_transactionally() {
     assert_eq!(binding.agent, "full-key");
     assert!(!binding.in_process, "{binding:?}");
     assert_eq!(f.store.handle_for_agent("sub-key").unwrap(), None);
-    let leaked = f
-        .store
-        .client()
-        .query(
-            "RETURN type::record('callback_state', ['binding', 'sub-key']).in_process;",
-            json!({}),
-        )
+    let leaked = (f.store.raw())
+        .row("callback_state", json!(["binding", "sub-key"]))
+        .field("in_process")
         .unwrap();
     assert_eq!(
         leaked,
-        vec![serde_json::Value::Null],
+        serde_json::Value::Null,
         "rejected transaction left metadata"
     );
-    let counter = f
-        .store
-        .client()
-        .query(
-            "RETURN record::exists(type::record('counter', ['agent', 'sub-key']));",
-            json!({}),
-        )
+    let counter = (f.store.raw().row("counter", json!(["agent", "sub-key"])))
+        .exists()
         .unwrap();
-    assert_eq!(
-        counter,
-        vec![json!(false)],
+    assert!(
+        !counter,
         "the rejected transaction rolled back its guard write"
     );
 }
@@ -196,14 +178,9 @@ fn a_native_callback_registered_after_the_snapshot_is_retained_on_retry() {
     });
     assert!(!late.bind_agent("sub-key", &h, false).unwrap());
     assert_eq!(f.store.session(&h).unwrap().row.agent, None);
-    let channel = f
-        .store
-        .client()
-        .query(
-            "RETURN type::record('callback_state', $handle).address;",
-            json!({"handle":h}),
-        )
+    let channel = (f.store.raw().row("callback_state", h.as_str()))
+        .field("address")
         .unwrap();
-    assert_eq!(channel, vec![json!(address)]);
+    assert_eq!(channel, json!(address));
     assert!(f.store.agent_bindings().unwrap().is_empty());
 }

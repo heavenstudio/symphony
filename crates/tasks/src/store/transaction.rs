@@ -1,7 +1,14 @@
 //! Transaction execution: the schema guard a write starts with, answer decoding and durable
 //! post-commit dispatch.
+//!
+//! The one place the store sends anything to its database: every statement the store's modules
+//! name ([`super::surreal`]) goes out through [`Store::run_transaction`], [`Store::read`],
+//! [`Store::bounded_read`] or, for the open's own and a writer's line, [`Store::request`] and
+//! [`Store::define`].
 
+use super::surreal as sql;
 use super::{Error, Failure, REFUSED, Store};
+use crate::rpc::DbError;
 use crate::schema;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
@@ -89,13 +96,10 @@ impl Store {
             }
             Run::Unguarded => ("", false),
         };
-        let results = self.client.query(
-            &format!("BEGIN TRANSACTION;\n{guard}\n{body}\nCOMMIT TRANSACTION;"),
-            vars,
-        )?;
+        let results = self.client.query(&sql::transaction(guard, body), vars)?;
         // The write has committed. Delivery failure must never turn it into a failed write that a
         // caller might repeat. The shared server also drains this durable outbox after a crash.
-        if dispatch && body.contains("CREATE type::record('message',") {
+        if dispatch && sql::posts(body) {
             self.after_write();
         }
         let answer = results
@@ -109,6 +113,24 @@ impl Store {
                 "an answer not in the board's shape: {e}"
             )))
         })
+    }
+}
+
+impl Store {
+    /// `sql`'s statements as they are, in no transaction of the store's and behind no guard, each
+    /// statement's answer in order: the open's reads of a board that may not be made yet, the
+    /// analyzers an index needs committed first, and a writer's line, which builds of other
+    /// schemas write too ([`super::writers`]).
+    #[track_caller]
+    pub(super) fn request(&self, sql: &str, vars: Value) -> Result<Vec<Value>, DbError> {
+        self.client.query(sql, vars)
+    }
+
+    /// The board's namespace and database, made if they are not there yet.
+    #[track_caller]
+    pub(super) fn define(&self) -> Result<(), DbError> {
+        (self.client).define_then(sql::NOTHING, Value::Object(serde_json::Map::new()))?;
+        Ok(())
     }
 }
 

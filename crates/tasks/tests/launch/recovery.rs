@@ -230,10 +230,14 @@ fn recovery_leaves_answered_present_and_unrecorded_conversations_alone() {
         }
         w.f.advance(31.0 * 60.0);
         if case.starts_with("native") || case == "unknown-open" {
-            w.store().client().query(
-                "UPSERT type::record('callback_state', $handle) SET handle = $handle, address = 'codex:alive-thread', host = 'this-host', confirmed_until = $until, lease = $until RETURN NONE;",
-                serde_json::json!({"handle":s.handle, "until":w.f.now()+if case == "unknown-open" { -1.0 } else { 390.0 }}),
-            ).unwrap();
+            let until = w.f.now() + if case == "unknown-open" { -1.0 } else { 390.0 };
+            (w.store().raw())
+                .row("callback_state", serde_json::json!(s.handle))
+                .put(serde_json::json!({
+                    "handle": s.handle, "address": "codex:alive-thread", "host": "this-host",
+                    "confirmed_until": until, "lease": until,
+                }))
+                .unwrap();
         }
         let mut warnings = Vec::new();
         assert!(

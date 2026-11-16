@@ -132,14 +132,12 @@ impl Project {
 
     /// The schema version the project's board records.
     fn version(&self) -> Option<i64> {
-        Client::new(&self.home().recorded().unwrap().addr, "sf", "tasks")
-            .query(
-                "RETURN (SELECT VALUE version FROM ONLY meta:schema);",
-                serde_json::json!({}),
-            )
+        let client = Client::new(&self.home().recorded().unwrap().addr, "sf", "tasks");
+        symphony_board::Raw::on(&client)
+            .row("meta", "schema")
+            .field("version")
             .unwrap()
-            .last()
-            .and_then(serde_json::Value::as_i64)
+            .as_i64()
     }
 
     /// Wait for the hub to say why it reads no board in words that start with `start` (not that it

@@ -2262,11 +2262,9 @@ mod tests {
             assert_eq!(stale.tasks[0].roles[0].health, "stale");
             assert_ne!(first.version, stale.version);
             f.store
-                .client()
-                .query(
-                    "UPDATE task SET title = 'A changed title' RETURN NONE;",
-                    serde_json::json!({}),
-                )
+                .raw()
+                .table("task")
+                .set(serde_json::json!({"title": "A changed title"}))
                 .unwrap();
             hub.board_read(&f.store).unwrap();
             assert_eq!(

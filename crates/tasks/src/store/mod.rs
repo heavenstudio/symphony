@@ -39,6 +39,7 @@ mod opening;
 mod pool;
 mod pull_account;
 mod queued_lines;
+mod raw;
 mod reading;
 mod report_lines;
 pub(crate) mod search;
@@ -48,15 +49,16 @@ mod settings;
 mod snapshot;
 mod stage_lines;
 mod stamp;
+mod surreal;
 mod transaction;
 pub(crate) mod unanswered;
 mod waits;
 mod work;
-mod write;
 mod writers;
 
 use beside::Beside;
-use write::{ACT, WRITE};
+use surreal::reading::{native_bounds, reading};
+use surreal::session_read;
 
 pub(crate) use crate::stages::{BLOCK_LINE, UNBLOCK_LINE};
 pub use asks::{ASK_KINDS, Ask, LATE_SECONDS, NewAsk};
@@ -66,7 +68,8 @@ pub use cap::STATEMENTS as SLOT_READS;
 pub use launches::NewLaunch;
 pub use messages::reviewer_verdict;
 pub use opening::Opening;
-use reading::{HELD, NATIVE_PRESENCE, native_bounds, native_health};
+pub use raw::{Raw, Rows as RawRows};
+use reading::native_health;
 pub use report_lines::{ReportRead, ReportTask};
 pub use search::SearchHit;
 pub use sessions::{Beat, Binding, KINDS, NewSession, Pick};
@@ -75,8 +78,8 @@ pub use stamp::TaskStamp;
 pub use unanswered::{LOOKUP_WAIT as UNANSWERED_WAIT, LOOKUP_WAIT_VAR as UNANSWERED_WAIT_VAR};
 pub use waits::{AssessmentReceipt, AssessmentState};
 pub use work::{
-    BEFORE_WORK, COVERED, CoveredLine, Filed, GAINING, Given, Held, LANDS_FROM, Landed, NewTask,
-    PIPELINE, PULLABLE, ROLES, RunPlace, STATUSES, Unfresh, approved, can_transition, covered_by,
+    BEFORE_WORK, COVERED, CoveredLine, Filed, Given, Held, LANDS_FROM, Landed, NewTask, PIPELINE,
+    PULLABLE, ROLES, RunPlace, STATUSES, Unfresh, approved, can_transition, covered_by,
     covered_line, landing,
 };
 pub use writers::{Program, Writer};
@@ -311,11 +314,7 @@ impl Store {
 
     /// Eligibility without transferring briefs, roles or session health for the entire board.
     pub(crate) fn task_slugs(&self, status: Option<&str>) -> Result<Vec<String>, Error> {
-        let sql = if status.is_some() {
-            "RETURN SELECT VALUE slug FROM task WHERE status = $status;"
-        } else {
-            "RETURN SELECT VALUE slug FROM task;"
-        };
+        let sql = surreal::task_slugs(status.is_some());
         self.retrying(|| self.transact(sql, json!({"status":status})))
     }
 
@@ -360,7 +359,7 @@ impl Store {
 
     /// The tasks another session could take over if `handle` were gone.
     pub fn claimable(&self, handle: &str) -> Result<Vec<String>, Error> {
-        let sql = format!("RETURN {CLAIMABLE};");
+        let sql = surreal::claimable();
         let mut slugs: Vec<String> = self
             .retrying(|| self.transact(&sql, json!({"handle": handle, "executing": EXECUTING})))?;
         slugs.sort();
@@ -374,9 +373,8 @@ impl Store {
             known: bool,
             messages: Vec<MessageRow>,
         }
-        let sql = "RETURN { known: record::exists(type::record('task', $slug)),
-                            messages: (SELECT * OMIT id FROM message:[$slug, NONE]..[$slug, ..]) };";
-        let thread: Thread = self.retrying(|| self.transact(sql, json!({"slug": slug})))?;
+        let thread: Thread =
+            self.retrying(|| self.transact(surreal::THREAD, json!({"slug": slug})))?;
         if !thread.known {
             return Err(refused(format!("no task {}", repr(slug))));
         }
@@ -391,11 +389,8 @@ impl Store {
             unknown: Vec<String>,
             threads: Vec<Vec<MessageRow>>,
         }
-        let sql = "RETURN {
-    unknown: $slugs.filter(|$slug| !record::exists(type::record('task', $slug))),
-    threads: $slugs.map(|$slug| (SELECT * OMIT id FROM message:[$slug, NONE]..[$slug, ..])),
-};";
-        let read: Threads = self.retrying(|| self.transact(sql, json!({"slugs": slugs})))?;
+        let read: Threads =
+            self.retrying(|| self.transact(surreal::THREADS, json!({"slugs": slugs})))?;
         if let Some(slug) = read.unknown.first() {
             return Err(refused(format!("no task {}", repr(slug))));
         }
@@ -678,26 +673,12 @@ impl Store {
             }
             let (view, change) = (&ruled.view, &ruled.change);
             let version = view.snap.tasks.first().map_or(0, |t| t.version);
-            let mut body = String::from(WRITE);
-            if change.reason.is_some() {
-                body.push('\n');
-                body.push_str(&work::reason_written());
-            }
-            if change.needs.is_some() {
-                body.push_str(work::NEEDS_WRITTEN);
-            }
-            if change.status.is_some() {
-                body.push_str(&format!(
-                    "{}\n{}",
-                    cap::HOLDING,
-                    work::block_cancelled_dependencies(
-                        change.status.as_deref() == Some("cancelled")
-                    )
-                ));
-            }
-            if !ruled.slots.is_empty() {
-                body.push_str(cap::GUARD);
-            }
+            let body = surreal::rule(
+                change.reason.is_some(),
+                change.needs.is_some(),
+                (change.status.as_deref()).map(|status| status == "cancelled"),
+                !ruled.slots.is_empty(),
+            );
             let mut vars = change.vars(slug, actor, version, view.now);
             vars["slots"] = Value::Array(ruled.slots);
             self.written(&body, vars, slug)
@@ -707,7 +688,7 @@ impl Store {
     /// `which` with every session: what a rule decides on, the cap's ledger and a whole board read.
     #[track_caller]
     fn view(&self, which: &Which) -> Result<View, Failure> {
-        let (read, vars) = Self::reading(which, Sessions::Whole);
+        let (read, vars) = reading(which, Sessions::Whole);
         let snap: Snapshot = self.transact(&read, vars)?;
         Ok(View::new(self, snap))
     }
@@ -716,7 +697,7 @@ impl Store {
     /// and the asker of `Which::Pullable`, may be asked of it.
     #[track_caller]
     fn shown(&self, which: &Which) -> Result<View, Failure> {
-        let (read, vars) = Self::reading(which, Sessions::Shown);
+        let (read, vars) = reading(which, Sessions::Shown);
         let snap: Snapshot = self.transact(&read, vars)?;
         Ok(View::new(self, snap))
     }
@@ -725,16 +706,12 @@ impl Store {
     /// left it, in the write's one round trip. `body` ends without a `RETURN`.
     #[track_caller]
     fn written(&self, body: &str, mut vars: Value, slug: &str) -> Result<Task, Failure> {
-        let (read, more) = Self::reading(&Which::Slug(slug), Sessions::Shown);
+        let (read, more) = reading(&Which::Slug(slug), Sessions::Shown);
         if let (Some(vars), Value::Object(more)) = (vars.as_object_mut(), more) {
             vars.extend(more);
         }
         // Include recipient presence in the write's existing result instead of a separate read.
-        let snap: Snapshot = self.transact_dispatch(
-            &format!("{body}\nLET $has_callbacks = array::len(SELECT handle FROM callback_state WHERE address != NONE AND type::record('session', handle).left_at = NONE LIMIT 1) > 0;\n{read}"),
-            vars,
-            false,
-        )?;
+        let snap: Snapshot = self.transact_dispatch(&surreal::written(body, &read), vars, false)?;
         if snap.has_callbacks {
             self.after_write();
         }
@@ -783,40 +760,12 @@ fn retried<T>(
     }
 }
 
-/// One session, `$handle`, and whether it holds work another could take over (a `Found`). Needs
-/// `$executing`.
-fn session_read() -> String {
-    format!(
-        "LET $c = (SELECT address, confirmed_until FROM ONLY type::record('callback_state', $handle));
-         RETURN {{ session: (SELECT * OMIT id FROM ONLY type::record('session', $handle)), held: {CLAIMABLE},
-             native_until: IF string::starts_with($c.address ?? '', 'codex:') {{ $c.confirmed_until ?? 0 }} ELSE {{ NONE }} }};"
-    )
-}
-
 #[derive(Deserialize)]
 struct Found {
     session: Option<SessionRow>,
     held: Vec<String>,
     native_until: Option<f64>,
 }
-
-/// A role row's condition that its work is one another session could take over
-/// (`health::claimable`, in the database): its task executed and in `$executing`, or reviewed and in
-/// review. A macro, so a query can join it in with `concat!`.
-macro_rules! holding {
-    () => {
-        "((role = 'executor' AND type::record('task', slug).status IN $executing)
-      OR (role = 'reviewer' AND type::record('task', slug).status = 'review'))"
-    };
-}
-pub(crate) use holding;
-
-/// The tasks `$handle` holds that another could take over.
-const CLAIMABLE: &str = concat!(
-    "(SELECT VALUE slug FROM role WHERE handle = $handle AND ",
-    holding!(),
-    ")"
-);
 
 enum Which<'a> {
     All,
@@ -1218,20 +1167,6 @@ impl Store {
         matches!(error, Error::Refused(why)
             if *why == unknown_actor(&self.board_command(), handle) || *why == left_actor(handle))
     }
-}
-
-/// Statements that put a line on a task's thread at `$now`, each argument a SurrealQL expression. A line is
-/// never dated before the one numbered ahead of it when that one is less than a minute ahead (a write reads
-/// its clock at most `PATIENCE` before it commits); one further ahead came from a wrong clock, and the
-/// lines after it keep their own dates rather than all take its.
-fn logged(slug: &str, sender: &str, kind: &str, text: &str, recipient: &str) -> String {
-    format!(
-        "LET $counted = (UPSERT ONLY counter:message SET last += 1, ts = IF ts != NONE AND ts > $now AND ts <= $now + 60 {{ ts }} ELSE {{ $now }});
-LET $sid = $counted.last;
-LET $ts = $counted.ts;
-CREATE type::record('message', [{slug}, $sid]) SET sid = $sid, slug = {slug}, sender = {sender}, recipient = {recipient},
-    kind = {kind}, text = {text}, ts = $ts RETURN NONE;"
-    )
 }
 
 fn message(row: MessageRow) -> Message {

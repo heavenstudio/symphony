@@ -1,43 +1,15 @@
 //! What a task waits on, changed after it was made: a dependent of a superseded task follows its
 //! successor, and once nothing it waits on is cancelled it leaves the block a cancellation put it in.
 
-use super::cap::GUARD;
+use super::surreal::depends as sql;
 use super::work::{BLOCK_LINE, OWNER, no_task};
-use super::{ACT, Error, Failure, Opens, STATUSES, Store, Task, Which, logged, refused};
+use super::{Error, Failure, Opens, STATUSES, Store, Task, Which, refused};
 use crate::slots::OPEN;
 use crate::stages::UNBLOCK_LINE;
 use serde::Deserialize;
 use serde_json::json;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fmt::Write as _;
-
-/// Every task's status, every dependency, the count of changes to them, and the task's own version,
-/// thread and executor, as `change_depends` decides on them.
-const READ: &str = "RETURN {
-    tasks: (SELECT VALUE [slug, status] FROM task),
-    deps: (SELECT VALUE [slug, target] FROM link WHERE kind = 'dep'),
-    edits: (SELECT VALUE last FROM ONLY counter:depends) ?? 0,
-    version: (SELECT VALUE version FROM ONLY type::record('task', $slug)),
-    lines: (SELECT VALUE text FROM message:[$slug, NONE]..[$slug, ..] WHERE kind = 'system'),
-    executing: array::len(SELECT VALUE handle FROM role WHERE slug = $slug AND role = 'executor') > 0,
-};";
-
-/// Stale unless no dependency changed anywhere, the task is the version read and what it still
-/// waits on has the status read; then the links change, and the task with them.
-const CHANGE: &str = "
-IF ((SELECT VALUE last FROM ONLY counter:depends) ?? 0) != $edits { THROW 'stale' };
-IF (SELECT VALUE version FROM ONLY type::record('task', $slug)) != $version { THROW 'stale' };
-FOR $dep IN $watch {
-    IF (SELECT VALUE status FROM ONLY type::record('task', $dep.slug)) != $dep.status { THROW 'stale' };
-};
-UPSERT counter:depends SET last += 1 RETURN NONE;
-FOR $target IN $drop { DELETE type::record('link', [$slug, 'dep', $target]); };
-FOR $target IN $add {
-    UPSERT type::record('link', [$slug, 'dep', $target])
-        CONTENT { slug: $slug, kind: 'dep', target: $target } RETURN NONE;
-};
-UPDATE type::record('task', $slug) SET status = $status ?? status, updated = $now, version += 1 RETURN NONE;
-DELETE type::record('counter', ['hold', $slug]) RETURN NONE;";
 
 /// What put a blocked task in `blocked`, read back from its thread.
 #[derive(Debug, PartialEq)]
@@ -122,12 +94,7 @@ impl Store {
         if let Some(both) = add.intersection(&remove).next() {
             return Err(refused(format!("{both} cannot be both added and removed")));
         }
-        let act = if by == OWNER { "" } else { ACT };
-        let body = format!(
-            "{act}{CHANGE}\n{}\nIF $back != NONE {{\n{}\n}};",
-            logged("$slug", "$actor", "'system'", "$said", "NONE"),
-            logged("$slug", "$actor", "'system'", "$back", "NONE")
-        );
+        let acts = by != OWNER;
         let mut said = format!("{by} changed its dependencies:");
         for (verb, slugs) in [("removed", &remove), ("added", &add)] {
             if !slugs.is_empty() {
@@ -137,7 +104,7 @@ impl Store {
         }
         let said = said.trim_end_matches(';').to_string();
         self.retrying(|| {
-            let read: Read = self.transact(READ, json!({"slug": slug}))?;
+            let read: Read = self.transact(sql::READ, json!({"slug": slug}))?;
             let statuses: HashMap<&str, &str> = (read.tasks.iter())
                 .map(|(slug, status)| (slug.as_str(), status.as_str()))
                 .collect();
@@ -237,11 +204,7 @@ impl Store {
                     "slots": slots,
                 }),
             );
-            if guarded {
-                self.written(&format!("{body}{GUARD}"), vars, slug)
-            } else {
-                self.written(&body, vars, slug)
-            }
+            self.written(&sql::change(acts, guarded), vars, slug)
         })
     }
 }

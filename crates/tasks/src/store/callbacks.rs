@@ -8,11 +8,11 @@
 
 use super::callback_peer::{self as peer, Owner};
 use super::callback_state::{State, stored_seen};
-use super::launches::{HOLDS, held};
+use super::launches::held;
 use super::pull_account::{Account, PullPlan};
 use super::queued_lines::{Hearing, Queued, Rescoped};
-use super::write::FENCE_RECIPIENT;
-use super::{ACT, Error, Store, logged, refused};
+use super::surreal::callbacks as sql;
+use super::{Error, Store, refused};
 use crate::cli::agents::{Answer, Pane};
 use crate::cli::{attach, probes, pull};
 use serde::{Deserialize, Serialize};
@@ -162,22 +162,7 @@ impl Store {
         let text = format!("AGENT from {sender} to {handle} — {text}");
         let board_command = self.board_command();
         let key: String = self.retrying(|| self.transact(
-            &format!("{ACT}
-LET $recipient = (SELECT left_at FROM ONLY type::record('session', $handle));
-IF $recipient = NONE {{ THROW string::concat('refused: no session ', $handle); }};
-IF $recipient.left_at != NONE {{ THROW string::concat('refused: session ', $handle, ' has left'); }};
-{FENCE_RECIPIENT}
-IF $actor = $handle {{ RETURN ''; }};
-LET $channel = (SELECT address, owner FROM ONLY type::record('callback_state', $handle));
-LET $address = $channel.address ?? '';
-LET $agent = type::record('session', $handle).agent;
-LET $in_process = IF $agent = NONE {{ false }} ELSE {{ type::record('callback_state', ['binding', $agent]).in_process ?? true }};
-IF $address = '' OR $in_process OR (string::starts_with($address, 'uds:') AND $channel.owner = NONE) {{ THROW $no_channel; }};
-LET $counted = (UPSERT ONLY type::record('counter', ['callback-event', $handle]) SET last = (last ?? 0) + 1);
-LET $key = string::concat('agent-', <string>$counted.last);
-CREATE type::record('callback_event', [$handle, $key]) SET key = $key, handle = $handle,
-    text = $text, sequence = $counted.last, attempts = 0, delivered = false RETURN NONE;
-RETURN $key;"),
+            &sql::send_agent(),
             self.acting(sender, self.now(), json!({"handle":handle, "text":text,
                 "no_channel":format!("refused: {handle} has no native channel; have it run {board_command} callback --as {handle}, or send on a task with {board_command} say SLUG TEXT --to {handle} (it can read {board_command} inbox --as {handle})") })),
         ))?;
@@ -188,10 +173,7 @@ RETURN $key;"),
             "message {key} is queued for {handle}; callback dispatch failed: {error}; do not resend"
         )))?;
         // Delivered rows may already have been pruned by another dispatcher or the sweep.
-        self.retrying(|| self.transact(
-            "RETURN !record::exists(type::record('callback_event', [$handle, $key])) OR type::record('callback_event', [$handle, $key]).delivered = true;",
-            json!({"handle":handle, "key":key}),
-        ))
+        self.retrying(|| self.transact(sql::AGENT_DELIVERED, json!({"handle":handle, "key":key})))
     }
 
     /// Register an explicit native channel, or unregister with None. Tokens never enter the board.
@@ -250,38 +232,7 @@ RETURN $key;"),
                 }
             }
         }
-        let body = format!("{ACT}
-UPSERT callback_state:chat SET revision = (revision ?? 0) + 1, waiting = array::complement(waiting ?? [], [$actor]) RETURN NONE;
-LET $agent = type::record('session', $actor).agent;
-LET $binding = IF $agent = NONE {{ NONE }} ELSE {{ type::record('callback_state', ['binding', $agent]).in_process }};
-IF $address != NONE AND $agent != NONE AND $binding = NONE {{ THROW string::concat('refused: binding provenance is not recorded yet; retry just tasks callback --as ', $actor, ' so the current hook can classify the session'); }};
-IF $address != NONE AND $agent != NONE AND $binding = true {{ THROW 'refused: in-process agent binding cannot register a callback; use just tasks inbox'; }};
-LET $other = (SELECT VALUE handle FROM callback_state WHERE address = $address AND handle != $actor AND type::record('session', handle).left_at = NONE ORDER BY handle LIMIT 1)[0];
-IF $address != NONE AND $other != NONE {{ THROW string::concat('refused: callback address already held by ', $other, '; in-process subagents use just tasks inbox'); }};
-LET $old = (SELECT VALUE address FROM ONLY type::record('callback_state', $actor));
-LET $old_owner = (SELECT VALUE owner FROM ONLY type::record('callback_state', $actor));
-IF $old != $address AND ($old = NONE OR $address = NONE OR $old_owner = NONE OR $old_owner != $owner) {{
-    UPDATE type::record('callback_state', $actor) SET pull_entries = NONE, pull_said = NONE, pull_withheld = [], pull_awaiting = NONE, pull_queued = NONE RETURN NONE;
-    UPDATE callback_event SET delivered = true, text = '' WHERE handle = $actor AND delivered != true AND pull_entries != NONE RETURN NONE;
-}};
-IF $address != NONE AND ($old != $address OR ($chat AND !$if_free)) {{
-    UPDATE callback_event SET attempts = 0, retry_at = 0, capacity_limited = false WHERE handle = $actor AND delivered != true RETURN NONE;
-}};
-LET $occupied = array::len(SELECT handle FROM callback_state WHERE chat = true AND address != NONE AND type::record('session', handle).left_at = NONE AND handle != $actor) > 0;
-LET $take = $chat AND (!$if_free OR !$occupied);
-IF $take {{
-    UPDATE callback_state SET chat = false WHERE chat = true RETURN NONE;
-    UPDATE callback_event SET delivered = true, text = '' WHERE handle != $actor AND string::starts_with(key, 'chat-') RETURN NONE;
-}};
-IF $address = NONE {{ UPDATE callback_event SET delivered = true, text = '' WHERE handle = $actor AND string::starts_with(key, 'chat-') RETURN NONE; }};
-UPSERT type::record('callback_state', $actor) SET handle = $actor, address = $address, host = $host, chat_fallback = $chat AND $if_free,
-    registration_revision = (registration_revision ?? 0) + 1, registration_nonce = rand::string(32),
-    owner = $owner, confirmed_until = 0, chat_resume = false, terminal = $terminal,
-    chat = IF $address = NONE {{ false }} ELSE IF $take {{ true }} ELSE {{ chat ?? false }} RETURN NONE;
-IF $address != NONE AND string::starts_with($address, 'codex:') {{
-    UPDATE task_session SET claude_session = $address WHERE handle = $actor AND closed = NONE AND claude_session = 'codex:' RETURN NONE;
-}};
-RETURN NONE;");
+        let body = sql::register();
         self.retrying(|| {
             self.transact::<Value>(
                 &body,
@@ -319,12 +270,8 @@ RETURN NONE;");
     /// handle. A waiter that stops waiting holds it while it stays live, so what the owner says
     /// waits for its next read rather than for nobody.
     fn waiting_orchestrator(&self) -> Result<Option<String>, Error> {
-        let waiting: Vec<crate::rows::SessionRow> = self.retrying(|| self.read(
-            "LET $waiting = (SELECT VALUE waiting FROM ONLY callback_state:chat) ?? [];
-             RETURN SELECT * OMIT id FROM $waiting.map(|$h| type::record('session', $h))
-                WHERE kind = 'orchestrator' AND left_at = NONE AND type::record('callback_state', handle).address = NONE;",
-            json!({}),
-        ))?;
+        let waiting: Vec<crate::rows::SessionRow> =
+            self.retrying(|| self.read(sql::WAITING_ORCHESTRATORS, json!({})))?;
         let live = |s: &&crate::rows::SessionRow| {
             crate::health::health(s, self.now(), &self.host, &*self.pid_alive, false)
                 == crate::Health::Live
@@ -344,12 +291,7 @@ RETURN NONE;");
     }
 
     fn session_kind(&self, handle: &str) -> Result<Option<String>, Error> {
-        self.retrying(|| {
-            self.read(
-                "RETURN (SELECT VALUE kind FROM ONLY type::record('session', $handle));",
-                json!({"handle":handle}),
-            )
-        })
+        self.retrying(|| self.read(sql::SESSION_KIND, json!({"handle":handle})))
     }
 
     /// The owner's chat events no session received: what an orchestrator reads on demand while
@@ -365,12 +307,7 @@ RETURN NONE;");
             key: String,
             text: String,
         }
-        let chat: Vec<Chat> = self.retrying(|| {
-            self.read(
-                "RETURN SELECT key, text FROM chat_event WHERE delivered = false ORDER BY key NUMERIC;",
-                json!({}),
-            )
-        })?;
+        let chat: Vec<Chat> = self.retrying(|| self.read(sql::UNHEARD_CHAT, json!({})))?;
         Ok(chat
             .into_iter()
             .map(|c| (format!("chat-{}", c.key), c.text))
@@ -390,12 +327,7 @@ RETURN NONE;");
     }
 
     fn stored_callbacks(&self) -> Result<Vec<Callback>, Error> {
-        self.retrying(|| self.read(
-            "RETURN SELECT handle, address, host, terminal, registration_revision ?? 0 AS registration_revision, registration_nonce, chat ?? false AS chat, chat_fallback ?? false AS chat_fallback, owner, confirmed_until ?? 0 AS confirmed_until,
-                (SELECT * OMIT id FROM ONLY type::record('session', $parent.handle)) AS session, chat_resume ?? false AS chat_resume, pane_watch ?? {} AS pane_watch,
-                IF type::record('session', handle).agent = NONE { false } ELSE { type::record('callback_state', ['binding', type::record('session', handle).agent]).in_process ?? true } AS in_process
-             FROM callback_state WHERE address != NONE AND type::record('session', handle).left_at = NONE;", json!({}),
-        ))
+        self.retrying(|| self.read(sql::REGISTRATIONS, json!({})))
     }
 
     /// Reads use only the last recorded evidence. They neither connect nor retire registrations.
@@ -432,7 +364,7 @@ RETURN NONE;");
 
     /// [`Store::clear_callback`] by the close holding the handle's session as `hold`
     /// ([`Store::take_session`]): refused, retiring nothing, once the hold is another's
-    /// ([`HOLDS`]).
+    /// ([`super::surreal::launches::HOLDS`]).
     pub(crate) fn clear_callback_held(
         &self,
         callback: &Callback,
@@ -453,17 +385,10 @@ RETURN NONE;");
             "terminal":callback.terminal, "revision":callback.registration_revision,
             "nonce":callback.registration_nonce,
         });
-        let mut guard = "";
         if let Some(hold) = hold {
             held(&mut vars, &callback.handle, hold);
-            guard = HOLDS;
         }
-        let body = format!("{guard}
-             LET $state = (SELECT address, owner, terminal, registration_revision ?? 0 AS revision, registration_nonce AS nonce FROM ONLY type::record('callback_state', $handle));
-             IF $state.address != $address OR $state.owner != $owner OR $state.terminal != $terminal OR $state.revision != $revision OR $state.nonce != $nonce {{ RETURN false }};
-             DELETE type::record('callback_state', $handle) RETURN NONE;
-             UPDATE callback_event SET delivered = true, text = '' WHERE handle = $handle AND string::starts_with(key, 'chat-') RETURN NONE;
-             RETURN true;");
+        let body = sql::retire(hold.is_some());
         let retired = self.retrying(|| self.transact::<bool>(&body, vars.clone()))?;
         if retired {
             eprintln!(
@@ -550,40 +475,28 @@ RETURN NONE;");
     }
 
     fn prune_callbacks(&self) -> Result<(), Error> {
-        self.retrying(|| self.transact::<Value>(
-            "DELETE callback_event WHERE delivered = true OR (string::starts_with(key, 'chat-') AND type::record('chat_event', string::slice(key, 5)).delivered = true) RETURN NONE;
-             LET $agents = array::distinct(SELECT VALUE agent FROM session WHERE agent != NONE AND left_at = NONE);
-             DELETE callback_state WHERE in_process != NONE AND record::id(id)[1] NOT IN $agents RETURN NONE;
-             RETURN NONE;", json!({}),
-        )).map(|_| ())
+        self.retrying(|| self.transact::<Value>(sql::PRUNE, json!({})))
+            .map(|_| ())
     }
 
     // A liveness probe recovers transport failures, not an event already found too large on its
     // own. Keep that event's attempt budget even if another message later blocks the listener.
     fn callback_seen(&self, callback: &Callback) -> Result<bool, Error> {
         self.retrying(|| self.transact(
-            "IF type::record('callback_state', $handle).address != $address OR type::record('callback_state', $handle).owner != $owner OR type::record('session', $handle).left_at != NONE { RETURN false; };
-             LET $blocked = type::record('callback_state', $handle).blocked ?? false;
-             LET $resume = type::record('callback_state', $handle).chat_resume ?? false;
-             LET $seat = type::record('callback_state', $handle).chat_resume_seat ?? true;
-             LET $occupied = array::len(SELECT handle FROM callback_state WHERE chat = true AND address != NONE AND handle != $handle AND type::record('session', handle).left_at = NONE) > 0;
-             IF $resume AND (!$seat OR !$occupied) {
-                UPDATE type::record('callback_state', $handle) SET chat = $seat, chat_fallback = chat_resume_fallback ?? false, chat_resume = false RETURN NONE;
-             };
-             UPDATE type::record('callback_state', $handle) SET confirmed_until = $until, blocked = false RETURN NONE;
-             IF $blocked { UPDATE callback_event SET attempts = 0, retry_at = 0 WHERE handle = $handle AND delivered != true AND capacity_limited != true RETURN NONE; };
-             UPDATE type::record('session', $handle) SET last_seen = math::max([last_seen, $now]) RETURN NONE;
-             RETURN true;",
+            sql::SEEN,
             json!({"handle":callback.handle, "address":callback.address, "owner":callback.owner, "now":self.now(),
                 "until":self.now() + crate::launch::reap::REAP_SECONDS + crate::health::LIVE_SECONDS}),
         ))
     }
 
     fn callback_blocked(&self, callback: &Callback) -> Result<(), Error> {
-        self.retrying(|| self.transact::<Value>(
-            "UPDATE type::record('callback_state', $handle) SET blocked = true WHERE address = $address AND owner = $owner AND (blocked ?? false) = false RETURN NONE; RETURN NONE;",
+        self.retrying(|| {
+            self.transact::<Value>(
+            sql::BLOCKED,
             json!({"handle":callback.handle, "address":callback.address, "owner":callback.owner}),
-        )).map(|_| ())
+        )
+        })
+        .map(|_| ())
     }
 
     /// Failed or pending non-message events also remain readable through the ordinary inbox, and,
@@ -591,11 +504,8 @@ RETURN NONE;");
     /// received ([`Store::unheard_owner_events`]).
     pub fn callback_inbox(&self, handle: &str) -> Result<Vec<(String, String)>, Error> {
         let chat = self.reads_chat(handle)?;
-        let events: Vec<Event> = self.retrying(|| self.transact(
-            "RETURN SELECT * OMIT id FROM callback_event WHERE handle = $handle AND delivered != true AND message = NONE
-                AND (!string::starts_with(key, 'chat-') OR ($chat AND type::record('chat_event', string::slice(key, 5)).delivered != true)) ORDER BY sequence, key NUMERIC;",
-            json!({"handle":handle, "chat":chat}),
-        ))?;
+        let events: Vec<Event> =
+            self.retrying(|| self.transact(sql::INBOX, json!({"handle":handle, "chat":chat})))?;
         let mut events: Vec<(String, String)> = (events.into_iter())
             .map(|event| (event.key, event.text))
             .collect();
@@ -614,14 +524,13 @@ RETURN NONE;");
             .filter(|_| chat)
             .filter_map(|key| key.strip_prefix("chat-"))
             .collect();
-        self.retrying(|| self.transact::<Value>(
-            &format!("{ACT}\nLET $pull = (SELECT pull_entries, pull_withheld, pull_said, sequence FROM callback_event WHERE handle = $actor AND key IN $keys AND pull_entries != NONE ORDER BY sequence DESC LIMIT 1)[0];
-                IF $pull != NONE {{ UPDATE type::record('callback_state', $actor) SET pull_unanswered = array::union(pull_unanswered ?? [], $pull.pull_entries.filter(|$entry| $entry[0] = 'unanswered' AND $entry NOT IN ($pull.pull_withheld ?? []))), pull_entries = $pull.pull_entries, pull_withheld = $pull.pull_withheld ?? [], pull_said = $pull.pull_said, pull_awaiting = NONE, pull_queued = NONE RETURN NONE; }};
-                FOR $key IN $keys {{ UPDATE type::record('callback_event', [$actor, $key]) SET delivered = true RETURN NONE; }};
-                FOR $key IN $chats {{ UPDATE type::record('chat_event', $key) SET delivered = true, text = '' RETURN NONE; }};
-                UPDATE callback_event SET text = '' WHERE handle = $actor AND delivered = true AND string::starts_with(key, 'chat-') RETURN NONE; RETURN NONE;"),
-            self.acting(handle, self.now(), json!({"keys":keys, "chats":chats})),
-        )).map(|_| ())
+        self.retrying(|| {
+            self.transact::<Value>(
+                &sql::ack(),
+                self.acting(handle, self.now(), json!({"keys":keys, "chats":chats})),
+            )
+        })
+        .map(|_| ())
     }
 
     /// One look for `handle`, a session with no channel (`tasks wait`): what a dispatch would queue
@@ -650,29 +559,12 @@ RETURN NONE;");
             waiting: bool,
         }
         // A read, once the reader has its state row and is on the chat seat's waiting list.
-        let read = || {
-            self.read::<Reader>(
-                "RETURN {
-                    session: (SELECT * OMIT id FROM ONLY type::record('session', $handle)),
-                    state: (SELECT address, pane_watch FROM ONLY type::record('callback_state', $handle)),
-                    waiting: $handle IN ((SELECT VALUE waiting FROM ONLY callback_state:chat) ?? []),
-                };",
-                json!({"handle":handle}),
-            )
-        };
+        let read = || self.read::<Reader>(sql::READER, json!({"handle":handle}));
         let mut reader = self.retrying(read)?;
         let here = reader.session.as_ref().is_some_and(|s| s.left_at.is_none());
         let unaddressed = reader.state.as_ref().is_none_or(|s| s.address.is_none());
         if here && unaddressed && (reader.state.is_none() || !reader.waiting) {
-            self.retrying(|| self.transact::<Value>(
-                "IF type::record('session', $handle).left_at = NONE AND type::record('callback_state', $handle).address = NONE {
-                    IF !record::exists(type::record('callback_state', $handle)) {
-                        CREATE type::record('callback_state', $handle) SET handle = $handle RETURN NONE;
-                    };
-                    UPSERT callback_state:chat SET waiting = array::union(waiting ?? [], [$handle]) RETURN NONE;
-                 }; RETURN NONE;",
-                json!({"handle":handle}),
-            ))?;
+            self.retrying(|| self.transact::<Value>(sql::WAIT, json!({"handle":handle})))?;
             reader = self.retrying(read)?;
         }
         let state = reader.state.unwrap_or(State {
@@ -744,7 +636,7 @@ RETURN NONE;");
     }
 
     /// [`Store::owner_callback`], and in the same write the ask the save opens or joins
-    /// ([`super::asks::OWNER_SAVE`]): once per key, so a save handed over again changes nothing. A
+    /// ([`super::surreal::asks::OWNER_SAVE`]): once per key, so a save handed over again changes nothing. A
     /// save with no words to deliver (empty `text`: a rejection with no note) delivers no event and
     /// only opens its ask.
     pub fn owner_save(
@@ -760,7 +652,7 @@ RETURN NONE;");
         vars["key"] = key.into();
         vars["text"] = text.into();
         vars["asking"] = ask.is_some().into();
-        self.retrying(|| self.transact::<Value>(&super::asks::OWNER_SAVE, vars.clone()))?;
+        self.retrying(|| self.transact::<Value>(&super::surreal::asks::OWNER_SAVE, vars.clone()))?;
         self.dispatch_or_hand_off()
     }
 
@@ -953,13 +845,7 @@ RETURN NONE;");
         // from here, before a digest that may take longer than the lease to build.
         let acquired: Option<u64> = self.retrying(|| {
                 self.transact(
-                    "LET $s = (SELECT address, lease, revision FROM ONLY type::record('callback_state', $handle));
-                 LET $lease = (SELECT * FROM ONLY type::record('callback_lease', $handle));
-                 IF ($s.address = NONE AND !$collect) OR type::record('session', $handle).left_at != NONE { RETURN NONE; };
-                 IF math::max([$s.lease ?? 0, $lease.until ?? 0]) > $now { RETURN NONE; };
-                 LET $revision = math::max([$lease.revision ?? 0, $s.revision ?? 0]) + 1;
-                 UPSERT type::record('callback_lease', $handle) SET until = $now + $lease_seconds, revision = $revision RETURN NONE;
-                 RETURN $revision;",
+                    sql::TAKE_LEASE,
                     json!({"handle":handle, "now":self.now(), "lease_seconds":CALLBACK_LEASE_SECONDS, "collect":collect}),
                 )
         })?;
@@ -967,10 +853,12 @@ RETURN NONE;");
             return Ok(false);
         };
         let delivered = send(revision);
-        let released = self.retrying(|| self.transact::<Value>(
-            "UPDATE type::record('callback_lease', $handle) SET until = 0 WHERE revision = $revision RETURN NONE; RETURN NONE;",
-            json!({"handle":handle, "revision":revision}),
-        ));
+        let released = self.retrying(|| {
+            self.transact::<Value>(
+                sql::RELEASE_LEASE,
+                json!({"handle":handle, "revision":revision}),
+            )
+        });
         let held = delivered?;
         released?;
         Ok(held)
@@ -998,14 +886,7 @@ RETURN NONE;");
             state,
             checked_pull,
             queued,
-        } = self.retrying(|| {
-            self.read(
-                "RETURN { state: (SELECT * OMIT id FROM ONLY type::record('callback_state', $handle)), checked_pull: type::record('callback_lease', $handle).pull ?? 0,
-                    queued: (SELECT key, text, sequence, pull_entries, pull_withheld, pull_said FROM callback_event WHERE handle = $handle AND delivered != true
-                        AND (string::starts_with(key, 'pull-') OR string::starts_with(key, 'event-') OR (string::starts_with(key, 'pane-') AND string::starts_with(text, 'BLOCKED ')))) };",
-                json!({"handle":handle}),
-            )
-        })?;
+        } = self.retrying(|| self.read(sql::STORED, json!({"handle":handle})))?;
         let Some(mut state) = state else {
             return Ok((true, f64::INFINITY));
         };
@@ -1301,13 +1182,8 @@ RETURN NONE;");
                 key: String,
                 text: String,
             }
-            let chat: Vec<Chat> = self.retrying(|| {
-                self.read(
-                    "RETURN SELECT key, text FROM chat_event WHERE delivered = false
-                        AND !record::exists(type::record('callback_event', [$handle, string::concat('chat-', key)])) ORDER BY key NUMERIC;",
-                    json!({"handle":handle}),
-                )
-            })?;
+            let chat: Vec<Chat> =
+                self.retrying(|| self.read(sql::UNQUEUED_CHAT, json!({"handle":handle})))?;
             for event in chat {
                 events.push(Event {
                     key: format!("chat-{}", event.key),
@@ -1365,10 +1241,12 @@ RETURN NONE;");
                 // Fresh command Stores share this deadline even when the digest has no new
                 // entry. Its scheduling checkpoint belongs to the small lease, not Seen.
                 let revision = lease.expect("a timed checkpoint holds a lease");
-                self.retrying(|| self.transact::<Value>(
-                    "UPDATE type::record('callback_lease', $handle) SET pull = $now WHERE revision = $revision RETURN NONE; RETURN NONE;",
-                    json!({"handle":handle, "revision":revision, "now":self.now()}),
-                ))?;
+                self.retrying(|| {
+                    self.transact::<Value>(
+                        sql::PULL_CHECKED,
+                        json!({"handle":handle, "revision":revision, "now":self.now()}),
+                    )
+                })?;
             }
             if visit.pass == Pass::Observe || !self.callback_pending(handle, callback.chat)? {
                 return Ok((true, pull_at));
@@ -1399,50 +1277,7 @@ RETURN NONE;");
             .map(|line| line.key.as_str())
             .collect();
         let accounted = self.retrying(|| self.transact::<Accounted>(
-            &format!("LET $marker = {board_marker};
-             LET $held = type::record('callback_lease', $handle).revision = $revision;
-             LET $current = array::len($waiting.filter(|$key| record::exists(type::record('callback_event', [$handle, $key]))
-                AND type::record('callback_event', [$handle, $key]).delivered != true)) = array::len($waiting);
-             IF $held AND $current {{
-             IF $pull_kept != NONE {{
-                DELETE callback_event WHERE handle = $handle AND delivered != true AND string::starts_with(key, 'pull-') AND key != $pull_kept RETURN NONE;
-                UPDATE type::record('callback_event', [$handle, $pull_kept]) SET text = $pull_text, pull_entries = $pull_awaiting.entries,
-                    pull_withheld = $pull_awaiting.withheld, pull_said = $pull_said WHERE delivered != true RETURN NONE;
-             }};
-             IF $replace_pull {{ DELETE callback_event WHERE handle = $handle AND delivered != true AND string::starts_with(key, 'pull-') RETURN NONE; }};
-             FOR $key IN $rescoped.dropped {{ DELETE type::record('callback_event', [$handle, $key]) WHERE delivered != true RETURN NONE; }};
-             FOR $line IN $rescoped.rewritten {{ UPDATE type::record('callback_event', [$handle, $line[0]]) SET text = $line[1] WHERE delivered != true RETURN NONE; }};
-             FOR $new IN $events.filter(|$event| string::starts_with($event.key, 'event-') AND string::starts_with($event.text, 'NEW ')) {{
-                LET $prefix = string::concat('NEW ', string::split($new.text, ' ')[1], ' ready — ');
-                DELETE callback_event WHERE handle = $handle AND delivered != true AND string::starts_with(key, 'event-') AND string::starts_with(text, $prefix) RETURN NONE;
-             }};
-             FOR $event IN $events {{
-                IF !record::exists(type::record('callback_event', [$handle, $event.key])) {{
-                    LET $counted = (UPSERT ONLY type::record('counter', ['callback-event', $handle]) SET last = (last ?? 0) + 1);
-                    CREATE type::record('callback_event', [$handle, $event.key]) CONTENT $event RETURN NONE;
-                    UPDATE type::record('callback_event', [$handle, $event.key]) SET sequence = $counted.last RETURN NONE;
-                }};
-             }};
-             IF $computed {{ UPDATE type::record('callback_lease', $handle) SET pull = $pull WHERE revision = $revision RETURN NONE; }};
-             LET $before = (SELECT seen, narrowing, unknown_children, statuses, pull_queued, inbox_cursor, message_cursor, delivery_version, registration_revision, observed_registration FROM ONLY type::record('callback_state', $handle));
-             IF $before.seen != $seen OR $before.narrowing != $narrowing OR $before.unknown_children != $unknown_children OR $before.statuses != $statuses
-                OR $before.pull_queued != $pull_queued OR $before.inbox_cursor != $inbox_cursor
-                OR ($before.message_cursor ?? 0) < $message_cursor OR $before.delivery_version = NONE
-                OR ($before.registration_revision ?? 0) != ($before.observed_registration ?? 0) OR $computed {{
-             UPDATE type::record('callback_state', $handle) SET seen = $seen, narrowing = $narrowing, unknown_children = $unknown_children, snapshot_sequence = $snapshot_sequence, statuses = $statuses, revision = $revision, pull = $pull, pull_queued = $pull_queued,
-                observed_registration = registration_revision ?? 0,
-                pull_entries = IF $legacy_upgrade {{ $pull_account.recorded ?? pull_entries ?? [] }}
-                    ELSE IF $computed AND pull_entries != NONE {{
-                        array::union(pull_entries.filter(|$entry| $entry IN $pull_current AND $entry NOT IN $pull_account.untold), $pull_account.unheard)
-                    }} ELSE {{ pull_entries }},
-                pull_withheld = IF $computed {{ $pull_account.withheld }} ELSE {{ pull_withheld }},
-                pull_awaiting = IF $computed {{ $pull_awaiting }} ELSE {{ pull_awaiting }},
-                message_cursor = math::max([message_cursor ?? 0, $message_cursor]),
-                inbox_cursor = $inbox_cursor,
-                delivery_version = delivery_version ?? 1 RETURN NONE;
-             }};
-             }};
-             RETURN {{ held: $held, current: $current, marker: {{ before: $marker, after: {board_marker} }} }};", board_marker = crate::schema::BOARD_MARKER),
+            &sql::account(),
             json!({"handle":handle, "waiting":waiting, "events":events, "seen":stored_seen, "narrowing":narrowing, "unknown_children":unknown_children, "snapshot_sequence":sequence, "statuses":statuses, "revision":revision,
                 "pull":if due {self.now()} else {state.pull}, "legacy_upgrade":legacy_upgrade,
                 "pull_queued":account.as_ref().map_or(&state.pull_queued, |a| &a.queued),
@@ -1491,11 +1326,12 @@ RETURN NONE;");
     }
 
     fn callback_pending(&self, handle: &str, chat: bool) -> Result<bool, Error> {
-        self.retrying(|| self.read(
-            "RETURN array::len(SELECT key FROM callback_event WHERE handle = $handle AND delivered != true AND attempts < 3 AND (retry_at = NONE OR retry_at <= $now)
-                AND (!string::starts_with(key, 'chat-') OR ($chat AND type::record('chat_event', string::slice(key, 5)).delivered != true)) LIMIT 1) > 0;",
-            json!({"handle":handle, "chat":chat, "now":self.now()}),
-        ))
+        self.retrying(|| {
+            self.read(
+                sql::PENDING,
+                json!({"handle":handle, "chat":chat, "now":self.now()}),
+            )
+        })
     }
 
     /// Send what waits for `handle` by `send`, in batches, and record each batch's outcome, under
@@ -1513,12 +1349,7 @@ RETURN NONE;");
     ) -> Result<bool, Error> {
         let now = self.now();
         let pending: Option<Vec<Event>> = self.retrying(|| self.transact(
-            "IF type::record('callback_lease', $handle).revision != $revision { RETURN NONE; };
-             UPDATE type::record('callback_lease', $handle) SET until = $now + $lease_seconds RETURN NONE;
-             UPDATE callback_event SET delivered = true WHERE handle = $handle AND delivered != true AND message != NONE AND record::exists(type::record('delivery', [message, $handle])) RETURN NONE;
-             DELETE callback_event WHERE handle = $handle AND delivered = true RETURN NONE;
-             RETURN SELECT * OMIT id FROM callback_event WHERE handle = $handle AND delivered != true AND attempts < 3 AND (retry_at = NONE OR retry_at <= $now)
-                AND (!string::starts_with(key, 'chat-') OR ($chat AND type::record('chat_event', string::slice(key, 5)).delivered != true)) ORDER BY sequence, key NUMERIC;",
+            sql::DUE,
             json!({"handle":handle, "chat":callback.chat, "now":now, "revision":revision, "lease_seconds":CALLBACK_LEASE_SECONDS}),
         ))?;
         let Some(pending) = pending else {
@@ -1573,17 +1404,7 @@ RETURN NONE;");
             .rev()
             .find(|event| event.pull_entries.is_some());
         let moved = self.retrying(|| self.transact::<Moved>(
-            &format!("LET $marker = {board_marker};
-             FOR $key IN $keys {{
-                UPDATE type::record('callback_event', [$handle, $key]) SET attempts += 1, delivered = $success, retry_at = $now + 5,
-                    capacity_limited = $capacity OR (capacity_limited ?? false) RETURN NONE;
-             }};
-             IF $success {{
-                IF $pull != NONE {{ UPDATE type::record('callback_state', $handle) SET pull_unanswered = array::union(pull_unanswered ?? [], $pull.pull_entries.filter(|$entry| $entry[0] = 'unanswered' AND $entry NOT IN ($pull.pull_withheld ?? []))), pull_entries = $pull.pull_entries, pull_withheld = $pull.pull_withheld ?? [], pull_said = $pull.pull_said, pull_awaiting = NONE, pull_queued = NONE RETURN NONE; }};
-                FOR $message IN $messages {{ UPSERT type::record('delivery', [$message, $handle]) SET message = $message, handle = $handle, acked = $now RETURN NONE; }};
-                FOR $key IN $chat {{ UPDATE type::record('chat_event', $key) SET delivered = true, text = '' RETURN NONE; }};
-                UPDATE callback_event SET text = '' WHERE handle = $handle AND delivered = true AND string::starts_with(key, 'chat-') RETURN NONE;
-             }}; RETURN {{ before: $marker, after: {board_marker} }};", board_marker = crate::schema::BOARD_MARKER),
+            &sql::record_delivery(),
             json!({"handle":handle, "keys":keys, "messages":messages, "chat":chat_keys, "success":success, "now":self.now(),
                 "capacity":capacity, "pull":pull}),
         ))?;
@@ -1602,21 +1423,16 @@ RETURN NONE;");
             {
                 // An unreachable recipient must not keep the chat seat indefinitely. A registered
                 // orchestrator fallback can take over; otherwise the app explicitly says queued.
-                self.retrying(|| self.transact::<Value>(
-                    "LET $state = (SELECT address, owner, chat, chat_fallback, chat_resume FROM ONLY type::record('callback_state', $handle));
-                     IF $state.address = $address AND $state.owner = $owner AND !($state.chat_resume ?? false) {
-                        UPDATE type::record('callback_state', $handle) SET chat = false, chat_fallback = false, chat_resume = true,
-                            chat_resume_seat = $state.chat ?? false, chat_resume_fallback = $state.chat_fallback ?? false RETURN NONE;
-                     }; RETURN NONE;",
+                self.retrying(|| {
+                    self.transact::<Value>(
+                    sql::YIELD_CHAT_SEAT,
                     json!({"handle":handle, "address":callback.address, "owner":callback.owner}),
-                ))?;
+                )
+                })?;
             }
             for event in pending.iter().filter(|event| event.attempts == 2) {
                 if let Some(slug) = &event.slug {
-                    let body = format!(
-                        "{}\nRETURN NONE;",
-                        logged("$slug", "'callbacks'", "'system'", "$text", "NONE")
-                    );
+                    let body = sql::failure_logged();
                     // No reentrant dispatch from a delivery diagnostic.
                     self.retrying(|| {
                         self.run_transaction::<Value>(&body, json!({

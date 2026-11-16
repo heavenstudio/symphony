@@ -6,8 +6,9 @@
 
 use serde_json::{Value, json};
 
+use super::surreal::fields as sql;
 use super::work::OWNER;
-use super::{ACT, Error, REFUSED, Store, Task, logged, refused, repr};
+use super::{Error, REFUSED, Store, Task, refused, repr};
 
 impl Store {
     /// Set the field `name` of `plugin` on the task `slug` to `value`, a number or text, recording
@@ -46,16 +47,7 @@ impl Store {
                 )));
             }
         };
-        let act = if handle == OWNER { "" } else { ACT };
-        let body = format!(
-            "{act}
-IF !record::exists(type::record('task', $slug)) {{ THROW $missing }};
-UPDATE type::record('task', $slug) MERGE {{ fields: $patch }} RETURN NONE;
-UPDATE type::record('task', $slug) SET version += 1 RETURN NONE;
-LET $said = $actor + ' set ' + $label + ' to ' + $shown;
-{}",
-            logged("$slug", "$actor", "'system'", "$said", "NONE")
-        );
+        let body = sql::set_field(handle != OWNER);
         self.retrying(|| {
             let vars = self.acting(
                 handle,

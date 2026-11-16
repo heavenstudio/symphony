@@ -46,14 +46,11 @@ impl Board {
 
     /// The schema version the board records.
     fn version(&self) -> Option<i64> {
-        self.client()
-            .query(
-                "RETURN (SELECT VALUE version FROM ONLY meta:schema);",
-                serde_json::json!({}),
-            )
+        symphony_board::Raw::on(&self.client())
+            .row("meta", "schema")
+            .field("version")
             .unwrap()
-            .last()
-            .and_then(serde_json::Value::as_i64)
+            .as_i64()
     }
 }
 

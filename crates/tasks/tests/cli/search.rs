@@ -77,13 +77,14 @@ fn search_keeps_relevance_order_and_list_fields_and_filters_before_limiting() {
 
 /// The rows of each table the deleted search by meaning wrote, which the schema still defines.
 fn derived_rows(c: &Case) -> Vec<Value> {
-    c.store()
-        .client()
-        .query(
-            "RETURN count(SELECT id FROM task_chunk); RETURN count(SELECT id FROM task_embedding_source); RETURN count(SELECT id FROM task_embedding_checkpoint);",
-            serde_json::json!({}),
-        )
-        .unwrap()
+    let store = c.store();
+    [
+        "task_chunk",
+        "task_embedding_source",
+        "task_embedding_checkpoint",
+    ]
+    .map(|table| serde_json::json!(store.raw().table(table).count().unwrap()))
+    .to_vec()
 }
 
 /// A board an older build left its search by meaning's rows on (chunks with their vectors under
@@ -99,19 +100,27 @@ fn a_board_holding_old_embeddings_opens_and_searches_by_words_alone() {
 
     let mut vector = vec![0.0_f32; 384];
     vector[0] = 1.0;
-    c.store()
-        .client()
-        .query(
-            "CREATE type::record('task_chunk', ['engine/jump', 'brief', 0]) SET slug = 'engine/jump', source = 'brief', source_hash = 'old', text_hash = 'old', text = 'Jump drive The engine hums', model = $model, embedding = $vector;
-             CREATE type::record('task_chunk', ['other/a', 'brief', 0]) SET slug = 'other/a', source = 'brief', source_hash = 'old', text_hash = 'old', text = 'an engine only this chunk names', model = $model, embedding = $vector;
-             CREATE type::record('task_embedding_source', ['engine/jump', 'brief']) SET slug = 'engine/jump', source = 'brief', source_hash = 'old', model = $model, parts = 1;
-             CREATE type::record('task_embedding_source', ['other/a', 'brief']) SET slug = 'other/a', source = 'brief', source_hash = 'old', model = $model, parts = 1;
-             CREATE task_embedding_checkpoint:board SET snapshot = {model: $model, sources: 2};",
-            serde_json::json!({
-                "model": "BAAI/bge-small-en-v1.5@5c38ec7c:cls-l2:chunks510:v1",
-                "vector": vector,
-            }),
-        )
+    let model = "BAAI/bge-small-en-v1.5@5c38ec7c:cls-l2:chunks510:v1";
+    let store = c.store();
+    let raw = store.raw();
+    for (slug, text) in [
+        ("engine/jump", "Jump drive The engine hums"),
+        ("other/a", "an engine only this chunk names"),
+    ] {
+        raw.row("task_chunk", serde_json::json!([slug, "brief", 0]))
+            .create(serde_json::json!({
+                "slug": slug, "source": "brief", "source_hash": "old", "text_hash": "old",
+                "text": text, "model": model, "embedding": vector,
+            }))
+            .unwrap();
+        raw.row("task_embedding_source", serde_json::json!([slug, "brief"]))
+            .create(serde_json::json!({
+                "slug": slug, "source": "brief", "source_hash": "old", "model": model, "parts": 1,
+            }))
+            .unwrap();
+    }
+    raw.row("task_embedding_checkpoint", "board")
+        .create(serde_json::json!({"snapshot": {"model": model, "sources": 2}}))
         .unwrap();
     let held = vec![
         serde_json::json!(2),

@@ -45,11 +45,10 @@ fn a_write_sent_again_on_a_held_connection_is_counted_and_runs_on_the_server() {
         [(0, BUMP.to_owned()), (0, BUMP.to_owned())],
         "both writes, on the held connection"
     );
-    let bumped = board
-        .query(
-            "RETURN (SELECT VALUE n FROM ONLY bump:count) ?? 0;",
-            json!({}),
-        )
-        .unwrap();
-    assert_eq!(bumped[0].as_u64(), Some(2), "each write ran on the server");
+    let bumped = f.store.raw().row("bump", "count").field("n");
+    assert_eq!(
+        bumped.unwrap().as_u64(),
+        Some(2),
+        "each write ran on the server"
+    );
 }

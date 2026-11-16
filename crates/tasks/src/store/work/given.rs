@@ -22,15 +22,14 @@
 //! none, that task is marked waiting ([`orchestration::WAITING`]), once, and the mark goes when it
 //! is given or somebody's again. The limit is fenced as the cap is: a pass holds each receiver's
 //! slot counter as it read it before the board, and a take or hand-over of the role that the limit
-//! holds reads the taker's open tasks and its counter together ([`GAINING`], `Store::gaining`), so
+//! holds reads the taker's open tasks and its counter together (`surreal::work::GAINING`, `Store::gaining`), so
 //! two writes that each saw a place cannot both fill it.
 
 use crate::health::FINISHED;
-use crate::orchestration::{self, Owners, Pool, WAITING};
-use crate::red::FIELDS;
+use crate::orchestration::{self, Owners, Pool};
 use crate::store::messages::BOARD;
-use crate::store::write::FENCE_RECIPIENT;
-use crate::store::{ACT, Board, Error, Failure, Store, Task, Which, logged};
+use crate::store::surreal::work as sql;
+use crate::store::{Board, Error, Failure, Store, Task, Which};
 use serde_json::{Value, json};
 use std::collections::{BTreeSet, HashMap};
 
@@ -224,57 +223,6 @@ impl Pass {
     }
 }
 
-/// What [`Store::gaining`] reads of `$handle`: its slot counter, and the status and red mark of each
-/// task it holds the orchestrator role on, by `role_handle` and then by id.
-pub const GAINING: &str =
-    "LET $mine = (SELECT VALUE slug FROM role WHERE handle = $handle AND role = 'orchestrator');
-RETURN {
-    last: (SELECT VALUE last FROM ONLY type::record('counter', ['slots', $handle])) ?? 0,
-    tasks: (SELECT status, fields._board.red AS red FROM $mine.map(|$s| type::record('task', $s))),
-};";
-
-/// The checks a pass's write makes first, before any statement of its own moves a version or a
-/// `last_seen`: each task as read, each dropped holder as read. Needs `$fenced` and `$seen`.
-pub(in crate::store) const FENCES: &str = "
-FOR $g IN $fenced {
-    IF (SELECT VALUE version FROM ONLY type::record('task', $g.slug)) != $g.version { THROW 'stale' };
-};
-FOR $s IN $seen {
-    IF (SELECT VALUE last_seen FROM ONLY type::record('session', $s.handle)) != $s.last_seen { THROW 'stale' };
-};";
-
-/// A pass's writes, after its [`FENCES`]: each receiver still there, fenced as a recipient is, its
-/// slot counter where it was read ([`Pass::guard`]); each give's role, version, slot counter and
-/// line, sent by `$sender`; each mark set or lifted. Needs `$receivers`, `$counters`, `$gives`,
-/// `$marks`, `$unmarks`, `$sender` and `$now`.
-pub(in crate::store) fn gives() -> String {
-    format!(
-        "
-FOR $handle IN $receivers {{
-    IF !record::exists(type::record('session', $handle)) OR type::record('session', $handle).left_at != NONE {{ THROW 'stale' }};
-    {FENCE_RECIPIENT}
-}};
-FOR $c IN $counters {{
-    IF ((SELECT VALUE last FROM ONLY type::record('counter', $c.key)) ?? 0) != $c.last {{ THROW 'stale' }};
-}};
-FOR $g IN $gives {{
-    FOR $h IN $g.drop {{ DELETE type::record('role', [$g.slug, $h, 'orchestrator']) RETURN NONE; }};
-    UPSERT type::record('role', [$g.slug, $g.to, 'orchestrator'])
-        CONTENT {{ slug: $g.slug, handle: $g.to, role: 'orchestrator', since: $now }} RETURN NONE;
-    UPDATE type::record('task', $g.slug) SET version += 1 RETURN NONE;
-    UPSERT type::record('counter', ['slots', $g.to]) SET last += 1 RETURN NONE;
-    {}
-}};
-FOR $slug IN $marks {{
-    UPDATE type::record('task', $slug) SET version += 1, fields.{FIELDS}.{WAITING} = $now RETURN NONE;
-}};
-FOR $slug IN $unmarks {{
-    UPDATE type::record('task', $slug) SET version += 1, fields.{FIELDS}.{WAITING} = NONE RETURN NONE;
-}};",
-        logged("$g.slug", "$sender", "'system'", "$g.line", "NONE")
-    )
-}
-
 impl Store {
     /// The whole board as one read gives it, with each task's version.
     pub(in crate::store) fn board_versions(&self) -> Result<(Board, Versions), Failure> {
@@ -297,8 +245,7 @@ impl Store {
             return Ok(());
         }
         let session = by.filter(|by| *by != OWNER);
-        let act = if session.is_some() { ACT } else { "" };
-        let body = format!("{act}{FENCES}{}\nRETURN NONE;", gives());
+        let body = sql::give_pass(session.is_some());
         let now = (self.clock)();
         let sender = by.unwrap_or(BOARD);
         let vars = match session {
@@ -333,7 +280,7 @@ impl Store {
             #[serde(default)]
             red: Option<Value>,
         }
-        let mine: Mine = self.read(GAINING, json!({"handle": to}))?;
+        let mine: Mine = self.read(sql::GAINING, json!({"handle": to}))?;
         let held = (mine.tasks.iter())
             .filter(|t| !FINISHED.contains(&t.status.as_str()))
             .filter(|t| t.red.as_ref().is_none_or(Value::is_null))
@@ -357,7 +304,7 @@ impl Store {
     /// to hold its receivers' where it read them ([`Pass::guard`]).
     pub(in crate::store) fn slot_counters(&self) -> Result<Vec<(String, i64)>, Failure> {
         self.read(
-            &format!("RETURN ({});", crate::store::cap::COUNTERS),
+            &format!("RETURN ({});", crate::store::surreal::cap::COUNTERS),
             json!({}),
         )
     }
@@ -372,13 +319,7 @@ impl Store {
         let candidates = orchestration::candidates(board, except, now);
         let listening: BTreeSet<String> = match candidates.is_empty() {
             true => BTreeSet::new(),
-            false => self.read(
-                "RETURN array::union(
-                    (SELECT VALUE handle FROM $candidates.map(|$h| type::record('callback_state', $h)) WHERE address != NONE),
-                    ((SELECT VALUE waiting FROM ONLY callback_state:chat) ?? []).filter(|$h| $h IN $candidates)
-                );",
-                json!({"candidates": candidates}),
-            )?,
+            false => self.read(sql::LISTENING, json!({"candidates": candidates}))?,
         };
         Ok(Pool::of(board, except, &listening, now).within(self.limits().orchestrator_tasks))
     }
