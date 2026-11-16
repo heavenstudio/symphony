@@ -479,6 +479,66 @@ fn the_warm_up_waits_for_the_page_s_own_data() {
     );
 }
 
+/// Holds the page's lookups in the device's cache (shell/cache.js, `read`) until the test calls
+/// `window.__answer()`, as a store slow to open and answer is on a loaded machine: set before the
+/// shell takes the store's `read` as one of the page's reads. `window.__lookups` counts them.
+const SLOW_STORE: &str = r"
+let store, held = [];
+window.__lookups = 0;
+window.__answer = () => { const go = held; held = null; go.forEach(answer => answer()); };
+Object.defineProperty(window, 'symphonyCache', {
+    configurable: true,
+    get: () => store,
+    set(value) {
+        const read = value.read;
+        value.read = (...args) => {
+            window.__lookups++;
+            if (held === null) return read(...args);
+            return new Promise(done => held.push(() => done(read(...args))));
+        };
+        store = value;
+    },
+});
+";
+
+#[test]
+fn the_warm_up_waits_for_the_page_s_lookups_in_the_device_s_cache() {
+    let site = site();
+    let Some(mut browser) = chrome() else { return };
+    // The board has answered and the page waits on what this device kept of it before it asks for
+    // its counts and columns: no read of the server is in flight, and the page has no data yet.
+    browser.call(
+        "Page.addScriptToEvaluateOnNewDocument",
+        json!({ "source": SLOW_STORE }),
+    );
+    browser.open(&site.url("/tasks"));
+    assert!(browser.wait_for(
+        "document.documentElement.dataset.navigation === 'ready' && window.__lookups > 0",
+        SHOWN
+    ));
+    asked(&mut browser, &site, "/api/board", 1);
+    browser.pump(Duration::from_secs(2));
+    assert_eq!(
+        browser.eval(PREFETCHING),
+        json!(false),
+        "nothing is warmed while the page waits on its lookup in the device's cache"
+    );
+    assert_eq!(
+        asked(&mut browser, &site, "/api/task-board", 0),
+        0,
+        "the page asks for its counts only once its lookup answers"
+    );
+    browser.eval("window.__answer()");
+    assert!(browser.wait_for(
+        "document.querySelector('[data-slug=\"tools/example\"]') !== null",
+        SHOWN
+    ));
+    assert!(
+        browser.wait_for(PREFETCHING, SHOWN),
+        "the warm-up follows the page's data"
+    );
+}
+
 /// Wraps `fetch` before the shell does: the page's reads in flight are `window.__reads` (each
 /// one's path), and `window.__ended` the path of each read that ended, in order, and whether it
 /// was answered.
