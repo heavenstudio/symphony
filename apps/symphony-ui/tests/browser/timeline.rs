@@ -876,9 +876,7 @@ fn a_timeline_that_cannot_be_read_says_so_in_its_box_and_try_again_reads_it() {
     failed_read(&mut chrome);
     assert_eq!(
         shown(&mut chrome, "#timeline-slot .tl-failed"),
-        [
-            "The timeline could not be read: Board snapshot unavailable. Trying again… Try again"
-        ]
+        ["The timeline could not be read: Board snapshot unavailable. Trying again… Try again"]
     );
     let tap = chrome.eval(TRY_AGAIN);
     assert_eq!(
