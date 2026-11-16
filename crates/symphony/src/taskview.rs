@@ -13,6 +13,7 @@ use crate::{clock, dashboard, render::Render};
 
 mod connect;
 pub use connect::{connect, connect_in, connect_running, read_failure, serve};
+pub(crate) use connect::served_journal;
 
 pub fn snapshot(store: &symphony_board::Store) -> Result<(Tasks, i64), symphony_board::Error> {
     let board = store.board()?;

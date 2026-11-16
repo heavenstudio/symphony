@@ -1576,9 +1576,13 @@ fn report(root: &Path, message: &str) {
         std::process::id(),
         NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     );
+    // The app's session is found on the store it files on, held to the project as every reach in
+    // this process is (`crate::taskview::serve`): a `tasks` run in the folder would look the board
+    // up for itself, and without the folder's `.git` find the board of the checkout above it.
     let filed = (|| {
-        let by = app_actor(root)?;
-        crate::taskview::connect(root)?
+        let store = crate::taskview::connect(root)?;
+        let by = crate::verdicts::app_handle(&store).map_err(|e| e.to_string())?;
+        store
             .create(&symphony_board::NewTask {
                 slug,
                 title: "Symphony could not commit an owner verdict cleanly".into(),
@@ -2554,3 +2558,6 @@ mod history_tests;
 
 #[cfg(test)]
 mod uploads_tests;
+
+#[cfg(test)]
+mod report_tests;

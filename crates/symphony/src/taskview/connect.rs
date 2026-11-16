@@ -3,7 +3,8 @@
 //! Every reach goes through [`open`], which holds a folder this process serves ([`serve`]) to the
 //! repository found from it when it began to serve it: a reach made after a caller's check that the
 //! folder still holds its project, once its `.git` went, is refused as gone, and never walks up to
-//! the board of the checkout that holds the folder, whatever the caller.
+//! the board of the checkout that holds the folder, whatever the caller. Its project's journal is
+//! held the same way ([`served_journal`]).
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -25,9 +26,17 @@ pub fn read_failure(error: &str, unreachable: &str) -> (u16, String) {
     }
 }
 
-/// The folders this process serves, each with the repository (its common dir) the board's lookup
-/// from it found when it began to serve it, none for a folder no repository held then.
-static SERVED: Mutex<BTreeMap<PathBuf, Option<PathBuf>>> = Mutex::new(BTreeMap::new());
+/// A folder this process serves, as it was found when it began to serve it ([`serve`]).
+struct Served {
+    /// The repository (its common dir) the board's lookup from the folder found, none for a folder
+    /// no repository held.
+    repository: Option<PathBuf>,
+    /// The journal of its project's chat and asks ([`crate::asks::default_path`]).
+    journal: PathBuf,
+}
+
+/// The folders this process serves, by their path.
+static SERVED: Mutex<BTreeMap<PathBuf, Served>> = Mutex::new(BTreeMap::new());
 
 /// Begin to serve the folder `root`: from here on, for the life of this process, every reach of its
 /// board from that path, spelled as here ([`connect`], [`connect_in`], [`connect_running`]), the
@@ -38,14 +47,20 @@ static SERVED: Mutex<BTreeMap<PathBuf, Option<PathBuf>>> = Mutex::new(BTreeMap::
 /// is a repository no more, a reach is refused as a folder that is gone, saying
 /// [`symphony_board::project::GONE`], and starts or reads no board
 /// ([`symphony_board::cli::held_board`]). A folder no repository holds now is held to nothing, as a
-/// folder this process does not serve: its reach is refused only once it is gone. Served again, the
-/// folder is held to what the lookup finds then.
+/// folder this process does not serve: its reach is refused only once it is gone. Its project's
+/// journal is the one found from it now, too ([`crate::asks::default_path`]), never one found from
+/// the folder again, which without its `.git` is the journal of the checkout that holds it. Served
+/// again, the folder is held to what the lookups find then.
 pub fn serve(root: &Path) -> Option<PathBuf> {
     let repository = symphony_board::project::locate_quick(root).map(|place| place.common);
-    SERVED
-        .lock()
-        .unwrap_or_else(PoisonError::into_inner)
-        .insert(root.to_path_buf(), repository.clone());
+    let journal = crate::asks::found_path(root);
+    SERVED.lock().unwrap_or_else(PoisonError::into_inner).insert(
+        root.to_path_buf(),
+        Served {
+            repository: repository.clone(),
+            journal,
+        },
+    );
     repository
 }
 
@@ -56,8 +71,17 @@ fn held(root: &Path) -> Option<PathBuf> {
         .lock()
         .unwrap_or_else(PoisonError::into_inner)
         .get(root)
-        .cloned()
-        .flatten()
+        .and_then(|served| served.repository.clone())
+}
+
+/// The journal of the project whose folder `root` this process serves, as it was found when it
+/// began to serve it ([`serve`]); none for a folder it does not serve.
+pub(crate) fn served_journal(root: &Path) -> Option<PathBuf> {
+    SERVED
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .get(root)
+        .map(|served| served.journal.clone())
 }
 
 /// The board of the project at `root`, as this process's environment reaches it.
