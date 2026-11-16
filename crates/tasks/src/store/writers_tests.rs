@@ -147,7 +147,7 @@ fn a_program_is_named_by_its_file_name_and_this_process_by_its_executable() {
 #[test]
 fn the_opening_read_is_a_read_and_the_lines_write_a_write() {
     use crate::rpc::Kind;
-    assert_eq!(Kind::of(OPENING), Kind::Read);
-    assert_eq!(Kind::of(LINES), Kind::Read);
-    assert_eq!(Kind::of(WRITE_LINE), Kind::Write);
+    assert_eq!(Kind::of(sql::OPENING), Kind::Read);
+    assert_eq!(Kind::of(sql::LINES), Kind::Read);
+    assert_eq!(Kind::of(sql::WRITE_LINE), Kind::Write);
 }

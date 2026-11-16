@@ -585,8 +585,9 @@ fn letting_the_orchestrator_role_go_is_refused_while_it_leaves_open_work_with_no
         refused(f.store.release("tools/a", &amber, Some("orchestrator"))),
         format!(
             "{amber} cannot let go of orchestrator on tools/a: tools/a would have no orchestrator, \
-             and no other orchestrator that stays is there to take it: it stays {amber}'s \
-             (`{board} leave` leaves it waiting for the next orchestrator)"
+             and no other orchestrator that stays and holds fewer open tasks than the limit is \
+             there to take it: it stays {amber}'s (`{board} leave` leaves it waiting for the next \
+             orchestrator)"
         )
     );
     // Finished, it still keeps the open work below it: that goes first.
@@ -599,8 +600,9 @@ fn letting_the_orchestrator_role_go_is_refused_while_it_leaves_open_work_with_no
         refused(f.store.release("tools/a", &amber, Some("orchestrator"))),
         format!(
             "{amber} cannot let go of orchestrator on tools/a: tools/a/part would have no \
-             orchestrator, and no other orchestrator that stays is there to take it: it stays \
-             {amber}'s (`{board} leave` leaves it waiting for the next orchestrator)"
+             orchestrator, and no other orchestrator that stays and holds fewer open tasks than \
+             the limit is there to take it: it stays {amber}'s (`{board} leave` leaves it waiting \
+             for the next orchestrator)"
         )
     );
     f.store
@@ -788,12 +790,9 @@ fn a_given_orchestrator_counts_as_having_orchestrated_the_task_for_its_review() 
     let given = f.store.give_unowned(Some(&cobalt)).unwrap();
     assert_eq!(given.gave, [("tools/a".to_string(), cobalt.clone())]);
     // The role row gone, the line alone says cobalt orchestrated it.
-    f.store
-        .client()
-        .write(
-            "DELETE role WHERE slug = 'tools/a' AND handle = $handle",
-            serde_json::json!({"handle": cobalt}),
-        )
+    (f.store.raw().table("role"))
+        .matching(serde_json::json!({"slug": "tools/a", "handle": cobalt}))
+        .delete()
         .unwrap();
     let held = f.store.ever_held("tools/a").unwrap();
     let thread = f.said("tools/a");

@@ -10,7 +10,6 @@ mod hour;
 mod pending;
 use codex::sweep_stopped_before_its_kill;
 
-use crate::common::RawWrite;
 use crate::{Folder, Hooked, World, git};
 use serde_json::{Value, json};
 use std::cell::{Cell, RefCell};
@@ -26,7 +25,7 @@ use symphony_board::launch::reap::{
     self, Closed, IDLE_ONCE, Kept, REAP_SECONDS, Reap, Sweep, lock_path, state_path,
 };
 use symphony_board::launch::{Ask, LaunchError, Processes, restore as restore_session};
-use symphony_board::{Error, NewLaunch, NewSession, NewTask, Store};
+use symphony_board::{Error, NewLaunch, NewSession, NewTask, Raw, Store};
 use symphony_board::{Health, cli};
 
 /// Why a sweep closes the terminal of an agent idle with its work finished.
@@ -1503,11 +1502,9 @@ fn a_worker_becoming_a_protected_session_during_the_sweep_is_kept() {
         let terminal = w.agent(Agent::named(&handle));
         w.sweep();
         let (swept, warned) = sweep_changing(&w, 1, || {
-            w.f.other_client()
-                .write(
-                    "UPDATE type::record('session', $handle) SET kind = $kind RETURN NONE;",
-                    json!({"handle":handle, "kind":kind}),
-                )
+            Raw::on(&w.f.other_client())
+                .row("session", json!(handle))
+                .set(json!({"kind": kind}))
                 .unwrap();
         });
         assert_eq!(w.store().session(&handle).unwrap().row.kind, kind);
@@ -1636,11 +1633,9 @@ fn a_close_whose_record_fails_is_not_closed_and_the_sweep_goes_on() {
         reads.set(reads.get() + 1);
         if reads.get() == 2 {
             // Final eligibility was confirmed; the board then refuses its close record.
-            client
-                .write(
-                    "DELETE type::record('session', $handle);",
-                    json!({"handle": removed}),
-                )
+            Raw::on(&client)
+                .row("session", json!(removed))
+                .delete()
                 .unwrap();
         }
         (machine.processes)(pid)

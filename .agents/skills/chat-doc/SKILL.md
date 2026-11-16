@@ -2,7 +2,7 @@
 name: chat-doc
 description: Register as the Symphony chat recipient and answer each owner callback on its ask, card or callout. Trigger on "connect to the chat", "listen to the docs", "I'll chat with you in the app", "watch my review", or /chat-doc.
 ---
-<!-- symphony-stamp: b085525bd1533190 files=SKILL.md -->
+<!-- symphony-stamp: 2df09d551c919083 files=SKILL.md -->
 
 # Chat with the owner through the Symphony
 
@@ -32,8 +32,8 @@ native channel. No file watcher or agent monitor discovers these messages.
 
 4. **If the app itself is not running**, start it only under the destination project's authorization and service policy;
    callbacks originate in successful saves, so the app must be running.
-   The server and its Dioxus client are the Symphony's, not the project's
-   (`apps/symphony-server`, `crates/symphony` and `apps/symphony-ui` in its
+   The server and its web client are the Symphony's, not the project's
+   (`apps/symphony-server`, `crates/symphony` and `apps/symphony-web` in its
    repository). A server change needs a rebuild and
    restart; coordinate the shared server's restart with its owner. Exercise
    changes privately with `just symphony --port N`, never stop their process.

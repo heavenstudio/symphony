@@ -1,26 +1,27 @@
 # apps/symphony-web/
 
-The Symphony's web client in React and TypeScript, built by Vite. It takes the pages over from
-the Dioxus client ([its guide](../symphony-ui/AGENTS.md)) a page kind at a time: a kind moves
-whole, feature for feature, in one landing, and its Dioxus sources leave in the same commit. The
-review queue (`/queue`) is the first kind it serves, Reports (`/reports`) the second, home
-(`/`, the kind `review`) the third, the documents (`/docs/`, each document, folder and HTML
-document an entrypoint serves, the kind `docs`) the fourth, the task board (`/tasks`, the kind
-`board`) the fifth, the agents page (`/agents`, the kind `agents`) the sixth and a task's page with
-its timeline (`/task/SLUG`, the kind `task`) the seventh. The menus (a select's popup and the
-picture viewer, the persistent kind `overlay`) are the eighth and the panel (the chat and its
-sheets, the toasts and the pending bar, the persistent kind `panel`) the ninth, each mounted beside
-every page: no kind is left the Dioxus client's, whose build is the stylesheets every page shares.
-Runs (`/runs`, the kind `runs`) was built here from the start, with no Dioxus page before
-it. The board's task card is a
-component of its own (`src/taskcard.tsx`), which the agents page draws too, and whose status words
-and machine work a task's page draws. Like that
-client it reads the server's JSON API and never runs server code or inserts server-rendered HTML.
+The Symphony's web client in React and TypeScript, built by Vite: every page and everything a
+page mounts. Its page kinds are the review queue (`/queue`), Reports (`/reports`), Runs (`/runs`),
+home (`/`, the kind `review`), the documents (`/docs/`, each document, folder and HTML document an
+entrypoint serves, the kind `docs`), the task board (`/tasks`, the kind `board`), the agents page
+(`/agents`) and a task's page with its timeline (`/task/SLUG`, the kind `task`); the menus (a
+select's popup and the picture viewer, the persistent kind `overlay`) and the panel (the chat and
+its sheets, the toasts and the pending bar, the persistent kind `panel`) are mounted beside every
+page. The board's task card is a component of its own (`src/taskcard.tsx`), which the agents page
+draws too, and whose status words and machine work a task's page draws. The client reads the
+server's JSON API, whose wire types are `crates/symphony-api`, and never runs server code or
+inserts server-rendered HTML; no HTML fragment crosses that boundary.
 
-**Where a UI improvement is built.** A UI improvement (a new control, a redesign, a change of
-look or behaviour) is built on its page once that page's kind has moved here, in this package,
-never on its Dioxus page: until the kind moves, the improvement waits for it. The one exception is
-a fix on a Dioxus page for a bug that loses data or blocks use, which is made where the page is.
+The package holds the kinds (`src/`, an entry each under `src/kinds/`), the stylesheets
+(`src/styles/`), the shell every page boots from and the device cache's store (`shell/`), and the
+build (`build.sh`, `package.sh`). Its browser tests are a package of their own,
+`apps/symphony-web-tests`. The pages were ported from a Dioxus client, retired since: where a
+comment in `src/` says a thing is drawn or read as the Dioxus page did, it records where a rule
+came from, and the rule is this client's now.
+
+Nothing renders or loads until it is near the viewport: `NearViewport` (`src/viewport.tsx`) for
+sections, plus native `loading=lazy`. Once revealed, content stays mounted, to preserve forms and
+reading position. Closed panels and collapsed card bodies load only when opened.
 
 ## The tools
 
@@ -54,6 +55,8 @@ lockfile written again, in a task of their own.
   domains on, the formatter at two spaces and 100 columns). It was chosen over ESLint with
   typescript-eslint, whose TypeScript support ends below the TypeScript this package pins, and it
   is one tool and one file for both jobs. `biome ci --error-on-warnings` makes a warning an error.
+  Two style rules are off under `src/styles/` alone, the sheets carried whole from the retired
+  client ([their README](src/styles/README.md)).
 - **Vitest** runs the unit tests, with `@vitest/coverage-v8` for their coverage.
 
 `just client-lint` (`check.sh`) runs the wire types' check and the tests of the example that
@@ -66,7 +69,7 @@ task's gate and the release run's lint both do. `just client-wire` writes the wi
 `src/wire.ts` holds the TypeScript of the types the client reads from `crates/symphony-api` and
 the constants it names (the feed's path and events, the Symphony's routes, the cache's format), as
 that crate's `typescript` example prints them through ts-rs (the derives sit behind the crate's
-`typescript` feature, which no build of the server or the Dioxus client turns on). It is never
+`typescript` feature, which no build of the server turns on). It is never
 edited by hand: `just client-wire` writes it, and `just client-lint` fails when the committed file
 is not what the Rust types print (`crates/symphony-blocks`' block types too, behind its own
 `typescript` feature). `src/wire.cases.json` comes from the same example: what the functions of
@@ -84,13 +87,13 @@ change outside the functions named (a helper they call that is not listed), and 
 lists on which the two disagree. Each function is read from its `fn` line to the line at its
 indentation that closes it, rustfmt's form, which `cargo fmt --check` holds, so no brace in a
 string, a character or a comment cuts it short (the reader's tests, which `just client-lint` runs:
-`just test-rs -p symphony-api --features typescript --example typescript`). TypeScript that carries the Dioxus client's own Rust
-(`apps/symphony-ui`), not this crate's, is held by the browser parity tests alone.
+`just test-rs -p symphony-api --features typescript --example typescript`). TypeScript that carries no Rust
+of that crate's (a rule ported from the retired client) is held by its unit tests and the browser tests.
 
 A read is checked where it arrives (`readQueue`, `readPageBoard`, `readReports`, `readRunsPage`,
 `document-read.ts`, of the checks `blocks-read.ts` exports): a guard checks the fields the page
 draws, each of its type, and nothing else, so a field a newer server adds, or one it drops that
-the page does not draw, changes nothing, as the Dioxus client's serde reads skip
+the page does not draw, changes nothing, as a serde read skips
 unknown fields. A kind of block, text span or media the client does not know passes too, its
 fields unread, and is said where it stands as unsupported content (`blocks-read.ts`, `blocks.tsx`,
 `media.tsx`), the rest of the page drawn: the kit's lists grow in a minor, so a newer server may
@@ -131,29 +134,44 @@ browser's storage held in memory by `testing.ts`; what reads the page's elements
 layer) is given a small tree of elements of its test's own (`media-layer.test.ts`). Time is
 Vitest's fake timers, never the clock.
 What only a browser shows (effects, the feed, the layout, the moves between kinds) is the headless
-browser target's (`apps/symphony-ui/tests/browser`, [CHECKS](../../docs/CHECKS.md#the-browser-target-by-page)),
-which opens a moved page as it opened the Dioxus one and is its parity check. A kind's entry
+browser target's (`apps/symphony-web-tests/tests/browser`, [CHECKS](../../docs/CHECKS.md#the-browser-target-by-page)),
+which drives headless Chrome over its DevTools protocol against the release build, served as the
+server serves it (`just test-rs -p symphony-web-tests --test browser -- FILTER…`: the tests of the
+pages and controls a change touched, never the whole target, which the release run runs). It
+builds the client once per run into `build/symphony-ui/` unless `SYMPHONY_UI_DIST` names a built
+distribution's `public/`; it needs Chrome (installed, or named with `SYMPHONY_CHROME`), and owns
+each browser's temporary profile, process group and shutdown. A kind's entry
 (`src/kinds/`) and the generated types are left out of the coverage, which `npm.sh run test`
 prints.
 
 ## The build and the distribution
 
-`apps/symphony-ui/bundle.sh` builds this client as its kind `web` (`npm.sh run build`, into the
-build's own folder), beside the shared stylesheets dx builds (`styles`), and `package.sh` puts
-both in one distribution: it copies Vite's assets into the stage, so one `builds.json` names every
-file of the build, and adds each kind to the shell's manifest from Vite's (`.vite/manifest.json`):
-its script and its styles, the shared sheet first and then the CSS its entry imports, and no wasm.
-It refuses a build whose web kind left no Vite manifest. Files are named `NAME-HASH16.EXT`
-with a hex hash, as the server caches such a name for good. No path, clock or environment enters
-the bytes: the build script sets `NODE_ENV=production` (a shell's `development` would build
-React's development code) and Vite reads no `.env` file (`envDir: false`), which
-`tests/wasm_build.rs` holds, so the build is the same from any checkout and shell. It builds from
-the checkout, not from the release snapshot the Dioxus build uses, and `tools/client-key.sh` adds
-this package's hash (every file git lists here but its guides) to the snapshot's name, so the
-regenerator rebuilds the distribution when either changes. The server embeds the files as it
-embeds the rest, and needs no Node to run.
+`just symphony-ui-dist [OUT]` (`build/symphony-ui`, the page in its `public/`) runs `build.sh OUT`:
+one Vite build of this package (`npm.sh run build`, into `OUT/.modules/web`), then `package.sh`,
+the manifest step. Two builds into one OUT take turns (`tools/check_lock.sh`). `package.sh` copies
+Vite's assets into a stage, so one `builds.json` names every file of the build, and writes the
+shell's manifest from Vite's (`.vite/manifest.json`): each kind's script, the chunks it imports and
+its styles, the shared stylesheet first and then the CSS its chunks and its entry carry. The
+shared stylesheet is the build's entry for `src/styles/shared.css`, which imports its sheets in
+the order written there (the board's, the controls' theme, the frame's, then the shared
+controls'): the order of the cascade is stated in that file, never derived from a file's name. The
+shell is the manifest's line, then the device cache's store and `shell/shell.js`, minified by the
+minifier Vite ships (`shell/minify.js`), named by its bytes, with the server's notice styles'
+hash as its last line. The step refuses a build with no Vite manifest, no shared stylesheet or no
+kind, and publishes nothing then. `symphony-build publish-client` exchanges the stage with
+`OUT/public` whole. Files are named `NAME-HASH16.EXT` with a hex hash, as the server caches such a
+name for good. No path, clock or environment enters the bytes: the build script sets
+`NODE_ENV=production` (a shell's `development` would build React's development code) and Vite
+reads no `.env` file (`envDir: false`), which `apps/symphony-web-tests/tests/build.rs` holds with
+the rest of the build, so the build is the same from any checkout and shell.
+`tools/client-key.sh` prints the build's key, the hash of every file git lists in this package but
+its guides and of the notice styles, so the regenerator rebuilds the distribution when one
+changes. The server embeds the files as it embeds the rest, and needs no Node to run. The build
+needs Git, Bash, jq, the pinned Node and a Rust toolchain for the publisher.
+`report.sh OUT` prints what each kind of the build in OUT makes a browser fetch
+([Budget](#what-the-pages-keep)).
 
-The shell imports a kind of this client with `import()` in place of the Dioxus glue's init: its
+The shell imports a kind with `import()`: its
 entry exports `run`, which mounts the kind in `#review-root-NAME` and draws it before it settles,
 and `stop`, which aborts the kind's mount and unmounts it, its feed and reads with it. What the
 kinds share (React, the frame) Vite puts in a chunk their entries import, named after one of its
@@ -173,9 +191,8 @@ touches the page, the window, the storage or the address, a signal that ends wit
 it: an effect's own (its cleanup aborts it), or, for a handler or a read with no cleanup of its own
 (a click's post, a document's versions read), the kind's mount (`useMount()`, `src/mount.ts`, which
 `stop` aborts). A kind the shell stopped does nothing more: Later answered after the reader left
-moves no one, and a late read writes nothing over the next kind's. A Dioxus page had this from
-its framework, a spawned task dying with its component; here each such wait says it. The device
-cache's store is the shell's (`assets/cache.js`, `symphonyCache`, which `src/cache.ts` names what
+moves no one, and a late read writes nothing over the next kind's. The device
+cache's store is the shell's (`shell/cache.js`, `symphonyCache`, which `src/cache.ts` names what
 to keep in), and it opens every IndexedDB transaction: this client opens none of its own.
 
 A move between two kinds stops one and runs the other; a move within a kind is the shell's
@@ -193,8 +210,8 @@ which the shell mounts in `#overlay-root` on the first select or picture and kee
 page after: a select's popup (`select-popup.tsx`, the primitives' listbox, placed by
 `popup-position.ts` and matched as typed by `typeahead.ts`) and the picture viewer
 (`picture-viewer.tsx`, the primitives' dialog with its focus trap). A request is data, never a
-component: the shell's `reviewOverlay({kind, owner, …, callback})`, which a select field of either
-client and the media layer send alike, answered through its callback (a select by the value chosen
+component: the shell's `reviewOverlay({kind, owner, …, callback})`, which a select field
+and the media layer send alike, answered through its callback (a select by the value chosen
 or none, the viewer by the step asked, 0 to close) and closed by its owner. A page that shows media
 mounts the media layer (`media-layer.ts`) before it: started by the first media it shows, it scales
 the mockups' frames, loads a viewer's script, runs the views' buttons and opens a picture in the
@@ -208,32 +225,33 @@ what asked (`getJson(url, signal)`, `getIf(url, etag, signal)` and `getDocument`
 `exchange`), so a read the feed's news replaces, or one a page left behind, is aborted rather than
 answered into nothing, and its caller still checks that signal after each wait, as an answer may
 come first. A post takes none: the server may have acted on it. A text box (`textarea.tsx`) hears each
-`input` event as its change, as the Dioxus box's `oninput` did: React's `onChange` compares the
+`input` event as its change: React's `onChange` compares the
 box with the value it last saw, and so misses a value a script set before firing `input`.
 
 Styles are the existing sheets, used as they are: the project's `theme.css`, inlined by the
-server, the shared sheet of the Dioxus build (the frame, the components, the board's rules), whose
-class names this client's markup uses, and the kind's own sheet, imported by its module
+server, the shared sheet (`src/styles/shared.css`: the frame, the controls, the board's rules), whose
+class names the markup uses, and the kind's own sheet, imported by its module
 (`src/queue.css`, `src/docs.css`; the menus' `src/overlay.css`: the popup's and the dialog's rules
 as the components' sheets wrote them, their CSS-module suffixes gone, and the picture viewer's,
 moved there from the media sheet; the panel's `src/panel.css`: the `+` sheet's tabs and its
 collapse button's tip as the components' tabs and tooltip sheets write them, the sheets' own rules
 being the shared sheet's). The media sheet,
-`apps/symphony-ui/assets/media.css`, which the shared sheet leaves out, is the media layer's,
+`src/styles/media.css`, which the shared sheet leaves out, is the media layer's,
 imported by `media-layer.ts`, so home, the documents, a task's page and the chat take it as one
 file under the layer's name. The task board and the agents page have
-no sheet of their own: their rules are the shared sheet's (`apps/symphony-ui/assets/board.css`),
-whose task card rules the agents page's cards use too. A component drawn by a Dioxus component
-library keeps its markup and class
-(`button.tsx` draws the shared Button's `dx-button`).
+no sheet of their own: their rules are the shared sheet's (`src/styles/board.css`),
+whose task card rules the agents page's cards use too. The attach control's sheet
+(`src/styles/attach.css`) comes inside `src/attach.tsx`, which the first composer to mount puts in
+the page, so no first visit carries a byte of it. The server's own pages inline `board.css`'s
+tokens and `frame.css` from copies in its package (`apps/symphony-server/src/`), which it carries
+to crates.io: a change to either is copied there too, and `crates/symphony/tests/packages.rs`
+fails until it is.
 
-Blocks are drawn as the Dioxus client draws them (`blocks.tsx`, `media.tsx`) but in two ways React
-has its own. A presentation's style is written as given, by a ref (`writtenStyle`): React's `style`
+Blocks are drawn by `blocks.tsx` and `media.tsx`, with two rules React does not give. A presentation's style is written as given, by a ref (`writtenStyle`): React's `style`
 takes an object, which it sets property by property, and would lose a value marked `!important` or
-a declaration after a comment. As the Dioxus interpreter writes a style, a property the element
+a declaration after a comment. A property the element
 already had and the written style does not set (a centred container's `text-align`) is kept. A
-`javascript:` address in an href or a src is replaced by React 19 with one that throws, where the
-Dioxus client writes it as given: a difference in the safe direction, kept.
+`javascript:` address in an href or a src is replaced by React 19 with one that throws.
 
 ## The dev server
 
@@ -249,7 +267,7 @@ the pages, the API, the feed (its WebSocket's upgrade too, `ws`) and the build's
 no CORS header
 (`cors: false`, where Vite's default lets a page on any loopback port read every answer), so a page
 of another origin reads through it no more than from the server. What it makes itself is the page's
-shell script: this checkout's shell (`apps/symphony-ui/assets/cache.js` and `shell.js`,
+shell script: this checkout's shell (`shell/cache.js` and `shell/shell.js`,
 unminified) with Vite's client first, and each of `KINDS` as its entry under Vite (one the
 server's build has as another client's or not at all among them) with the server's shared
 stylesheet, each kind's own styles kept before the project's theme as the built shell keeps them;
@@ -263,7 +281,7 @@ one more script put in a page Vite does not serve, and it keeps a component's st
 edit to a module that exports components alone, which few of these do, and most pages here draw
 again at once from the device's cache and keep their drafts on every input. What only a build
 makes it does not show: the shared stylesheet is the server's build's (an edit to the
-Dioxus client's sheets, `board.css` among them, shows once `just symphony-ui-dist` has built them
+sheets under `src/styles/` it joins, `board.css` among them, shows once `just symphony-ui-dist` has built them
 and the server serves that build, `SYMPHONY_UI_DIST` naming its `public/` for another project),
 React is its development build, and the bytes are no build's. No build, regenerator or check runs
 it (its files count in the regenerator's key, as every file of this package does);
@@ -299,8 +317,8 @@ every window by its chart's id and name (`reports-hidden`, a key a line): a hidd
 the plot, the readout and the table, and the axis scales to the series shown (`scaleOf`), so
 hiding a large one makes the rest larger; a period stays hatched only when no series, hidden or
 not, recorded it. A tap or the arrow keys pick a period, the same on every chart, and its readout
-says every value as text; each chart's table holds every period. Figures are written as the
-Dioxus page wrote them, a tie rounded to the even digit as Rust's `{:.N}` does (`fixed`,
+says every value as text; each chart's table holds every period. Figures are written with
+a tie rounded to the even digit, as Rust's `{:.N}` does (`fixed`,
 `words.ts`, which home's percentages use too). The
 series take `--chart-1` to `--chart-5` (`src/reports.css`), set at no specificity so a theme's
 own win, with their own steps in the dark. Charts below the screen mount through
@@ -354,7 +372,7 @@ the board is back reads the first page again, merged into what is drawn, both cu
 lost agents kept, and the events heard during a read are replayed onto its answer (`ReadCursor`,
 `src/journal.ts`, the board's as well and no other kind's, so they alone carry it). It keeps
 nothing on the device. Its text orders and trims as Rust's does (`textOrder` by UTF-8
-bytes, `whiteSpace` for `trim`), so its lists and lines are the Dioxus page's.
+bytes, `whiteSpace` for `trim`), so its lists and lines are the server's.
 
 ## The documents
 
@@ -369,12 +387,13 @@ sections near the screen read and kept, and the document's feed followed. A sect
 not change draws nothing again, and typed words live outside the page's markup: a section's
 editor (`editor.tsx`: a card's verdict under its tap, a message, a comment), a question and its
 follow-ups (`asks.tsx`), each draft saved on this device on every input with its files
-(`attach.tsx`, the same rows the Dioxus composers keep). A link's excerpt, once opened, draws its
+(`attach.tsx`: `POST /api/upload` answers a line for each file, which the posted text carries,
+docs/REVIEW.md, "Attaching files"). A link's excerpt, once opened, draws its
 blocks whole at once (`ExcerptBody` under `AtOnce`, `viewport.tsx`), no part of it waiting to come
 near the screen: opening it asked for them, and its box, which scrolls, would clip the sentinel's
 look-ahead, leaving a box opened below the screen empty until it was scrolled to. A card's Later
 is the queue's (`postpone.tsx`), the related tasks and a branch's differences are `related.tsx`'s.
-Its own styles are `src/docs.css`, the Dioxus client's documents sheet moved here. Once a landing
+Its own styles are `src/docs.css`. Once a landing
 has ended, the browser's own scroll anchoring holds the reader's place while the sections around
 it draw, and a change to a margin of the part being read (or to any box around what Chrome
 anchors on, a focused field first) stops it for that frame, so everything drawn above lands on the
@@ -385,31 +404,58 @@ and last blocks, which the outline carries for each section (`ends`,
 `symphony_api::Section::ends_of`). A section in an outline kept from before it carried them reads
 as opening and closing with no listed block, so its neighbour may move once as it draws, until
 the next read replaces that copy
-(`tests/browser/document_landing.rs` reads a paragraph, a list, a table, the intro and a card
+(`apps/symphony-web-tests/tests/browser/document_landing.rs` reads a paragraph, a list, a table, the intro and a card
 beside code, a quote, a mockup, a picture, a heading, a table and a title, on a desk and a phone).
 
 ## A task's page
 
 The kind `task` (`src/kinds/task.tsx`) draws `/task/SLUG`: one live task per checkout, which
-follows the route from task to task within the kind (`review:navigate`) and keeps one feed.
-`src/task-live.ts` holds what it reads and follows (`LiveTask`, on
-`live.tsx`'s `keepBoard`): the page and the thread's newest page kept on this device
-(`taskItem`) and drawn at once on a return, each checked with its copy's tag once the board's
-version is read and asked again until it answers, the feed opened beside those checks and never
-after them (its `views.read` gives the board's loop nothing to wait for), so a round's reads
-start from what the page showed before them and an answer to an older page read is dropped; the
-rest of the thread, the subtasks and the landing the task offers read when the page asks; each
-feed event applied as one change, the page read again only when its brief, status or subtasks
-moved, those reads one after another
-(`refreshAfter`), and the events heard while a read was out replayed onto its answer. Its guards
-are `src/task-read.ts`. `src/task-page.tsx` draws the head (the owner's priority and cancel, the
+follows the route from task to task within the kind (`review:navigate`) and keeps one feed. Each part of the page is a read of its own in the page's store
+(`src/parts.ts`, `Parts`), named by a key and drawn by the component that names it (`usePart`):
+the task's page (head, facts, brief), its thread's newest page, its gates, the landing it offers
+and its timeline (`src/task-live.ts`'s `pagePart`, `threadPart`, `gatesPart`, `offerPart`,
+`timelinePart`). Each is asked as the page mounts, behind no other read, the board's among them;
+the page and the thread are kept on this device (`taskItem`) and drawn at once on a return,
+marked stale, then checked with their copy's tag. The store reads a key once however many
+components name it (an ask while its read is out joins it), tries a failed read again on the
+feed's waits (`tryAgain`) while the other parts draw, and ends a part's reads when the route
+leaves its task (`drop`) or the page goes.
+
+Every JSON read's answer names the feed's cursor it was read at (`VERSION_HEADER`, read with
+`request.ts`'s `getAt`): every event at or before it is in the answer. So the reads and the feed
+start in any order, and the store places each against the other: a feed event at or before a
+part's answer is dropped, one after it is applied to the part or reads it again, as the part says
+(`hear`); an answer is drawn with the events heard since it was asked, and after its cursor,
+applied to it again; a part is read once more only where the store cannot tell what it missed
+(its cursor is before the version the feed opened from, the server named none while the feed
+opened, or the events it would need are no longer among the 128 kept); and when the feed opens
+again, only the parts answered at another version than it opens from are read (`since`).
+`LiveTask` (`src/task-live.ts`, on `live.tsx`'s `keepBoard`, whose `views.read` gives the board's
+loop nothing to wait for) hears the feed into the store and reads again the parts an event names
+without carrying: the gates for a verdict, a card in a document the task links, a new tip of
+their branch or a run of the task's; the offer, the gates and the timeline when the task itself
+changed. What no key names stays the page's own: the thread's earlier pages and its catch-up
+after a gap, and the subtasks, read into the page as their section nears the screen. Its guards
+are `src/task-read.ts`.
+
+`src/task-page.tsx` draws the head (the owner's priority and cancel, the
 roles with each holder's Go to session, `src/session.tsx`), the gates (`src/gates.tsx`, their
 logic `src/gates-model.ts`, the links they may draw `src/links.ts`), the subtasks, the timeline's
-box, the brief, the thread and its composer, and before its read the page's ghost, each part at
-the height this browser last drew it. The timeline (`src/timeline.tsx`, its layout
+box, the brief, the thread and its composer, each from its own part as soon as that is there and
+as its own mock-up until then, in the page's one frame: the head and the brief at the height this
+browser last drew them, the gates' outline, the timeline's box, the thread's and the composer's
+ghosts, and none waits a set time. On a visit after the first a part that comes moves none of
+the others: each mock-up is as tall as this browser last drew its part. On a first visit a
+mock-up is a guess (the head's and the brief's heights of the last task drawn, else a typical
+one's; the gates' outline of four signed gates, one waited on, which the page's own count
+replaces if the page comes first), so a head, a brief or gates of another shape move what is
+below them once, as its answer comes. The store asks the reads in the order their parts were
+opened (the page and the thread, then the gates, the offer and the timeline as they mount), each
+after its own lookup on this device alone, so the server hears of the head before what is below
+it. A part whose read fails says so in its own place while the rest draw. The timeline (`src/timeline.tsx`, its layout
 `src/timeline-layout.ts`) is a chunk of its own, which its box (`src/timeline-slot.tsx`) imports
-once it nears the screen and the page has settled (the shell's `reviewSettled`), so a first visit
-carries none of it; its style comes with it. The gates' and the box's styles (`src/gates.css`,
+once it nears the screen and its part has something to draw (an answer, or why there is none),
+behind no other read, so the page's first draw carries none of it; its style comes with it. The gates' and the box's styles (`src/gates.css`,
 `src/timeline-slot.css`) are the kind's own.
 
 ## The panel
@@ -439,17 +485,518 @@ already kept under, so all three stay. Its media layer (`reachOf`) takes the cha
 each opening in the menus' viewer, and on the task board and the agents page, which mount none of
 their own, the page's media too.
 
-## Moving a page kind
+## What the pages keep
+
+What holds on every page, and each page's contract where its section above names only its code.
+
+- **The feed.** The pages follow `crates/symphony-api`'s feed contract (`src/feed.ts` and
+  `src/live.tsx`). A stream
+  is lost when it errs, when it says nothing (not even the server's ping) for
+  two and a half of the board's `ping_ms` (at most 5 s, so 12.5 s: the owner
+  reads the board from a phone over the tailnet, where a stream goes silent
+  but open on every network change), or when it sends an event the client
+  cannot read. Then the client closes it, marks the page stale
+  (`main[data-feed=stale]`, a notice), waits 1 s doubling to 30 s (the waits
+  start again only after a stream held 30 s), fetches the board again (it
+  replaces the one shown whatever its version) and opens a new stream from it;
+  the board is live again once that stream opens. It never resumes by
+  `Last-Event-ID`. It is followed on a WebSocket (`src/feed.ts`): an event stream
+  holds one of the browser's six connections to the server (HTTP/1.1) for as long as it is open,
+  and six tabs of one server on streams would leave a seventh none for its reads, where the
+  browser counts WebSockets apart (`apps/symphony-web-tests/tests/browser/tabs.rs`). A page that goes away closes its
+  stream: on
+  `pagehide`, which every browser fires as a page is left, for good or into
+  its back/forward cache, and on Chrome's `freeze` of a background tab. A kept
+  page's open stream would hold its socket, and the server its subscription, for as long as it is
+  kept. Once back
+  (`pageshow`, `resume`) it reads at once, with no wait, from a fresh board as
+  after a lost stream: the server it left may have restarted meanwhile. Hiding
+  alone (another tab in front) closes nothing: the home page notifies from the
+  background. A board
+  or a `client` change naming another build than the
+  page's own module script loads the page again, once per build
+  (`reloadFor` in `src/state.ts`, remembered in `sessionStorage`).
+- **Cache.** What a page drew is kept on the device so a return visit draws at once
+  ([the client cache](../../docs/analysis/client-cache.md)). The store is `shell/cache.js`
+  (`window.symphonyCache`), which `package.sh` puts first in the shell's one script: every page
+  kind shares it, and it opens every IndexedDB transaction. `src/cache.ts` and
+  `src/cache-document.ts` reach it: an
+  `Item` is what a visit opens (`board(scope)`, `task(scope, slug)`, `document(path,
+  entrypoint)`) and goes whole; its parts are the reads its page drew, each kept with the
+  server's tag (`ETag`) and the time it was kept (`Kept`, never later than the page's clock).
+  One IndexedDB database for the origin, keyed by project. A visit (`visitLater`) once per page open
+  counts a visit: one, halving every three days; a visited page's first keep counts that visit
+  too, so its item ranks the same whichever of the two comes first. Each project keeps 30 tasks
+  in 2 MB and 20 documents in 6 MB, 8 MB in all; the board's reads are outside them, and the
+  origin keeps 32 MB in all. An item unused for 14 days goes (one last used by a clock ahead of
+  the page's is taken as used now), and one larger alone than its caps is never kept. Over a cap
+  the lowest ranked goes first: a page read ahead (`keep(…, ahead)`) before any visited page, a
+  project's entrypoint page (`pinned`) last, otherwise the task opened longest ago (a newly
+  opened task always enters), the least and least lately visited document, and over the
+  origin's cap the item used longest ago. Every call names `symphony_api::CACHE_FORMAT`: a store
+  of another format is cleared when it opens, a part kept under another is a miss, and a value
+  the page cannot read is forgotten (`readKept`). Without IndexedDB, or in the development
+  runtime, which has no shell, every read misses and nothing is kept. A database that does not
+  open within 500 ms leaves the calls until it opens without the cache; the pages after it,
+  which the shell changes without a reload, use it once it opens. A page that goes away
+  (`pagehide`, `freeze`) aborts the store's open transactions and starts none until it is back
+  (`pageshow`, `resume`), as it closes its feed's stream: a page kept for back and forward runs
+  none of its callbacks, so a transaction left between two of them would hold its locks, and
+  Chrome evicts the kept page (IgnoreEventAndEvict) once the next page's first call asks for them.
+  `apps/symphony-web-tests/tests/browser/cache_store.rs` drives the store alone in headless Chrome, no release build
+  needed, and reports its coverage. Each case starts on a deleted database once the store has
+  opened its new one (a scratch item kept, then forgotten), so a loaded machine's slow open
+  never runs a case without the cache; the pages that test the deadline keep the store's 500 ms
+  against their own opens.
+- **A return visit.** Home, the queue and the task board each draw what they kept of
+  `Item::board(scope)` before the server answers, then check it. `/api/board` (part `board`) is
+  drawn and still read fresh, with no tag, since its `version` starts the feed; nothing else is
+  read before it. Every other kept read then goes at once with `If-None-Match` naming the kept
+  copy's tag and `cache: "no-store"` (`getIf`, `src/request.ts`): a `304` is the
+  copy, a `200` replaces it on the page and on the device. The queue keeps `/api/queue` (`queue`,
+  `QUEUE` in `src/cache.ts`). The task board keeps its
+  default view only (no search, the last 24 hours, stages by the machine's activity): the counts
+  (`counts`), each column's first page (`column:STATUS`) and the machine's work (`work`), never a
+  search, another window or a Load more page; a column drawn from the device is checked at once,
+  not after its 250 ms. Its listings are read with `work=0`, which places tasks by the machine's
+  Build and Test work as before and leaves that work out of the body, whose heartbeats would
+  otherwise change every listing's tag; the work is read apart (`/api/machine-work`) and followed
+  by the feed. The header's reads are never kept. A check that fails is asked again, waiting
+  longer each time (`Backoff`, `src/state.ts`), until it answers: the counts, each column drawn from the
+  device and the work (`LiveBoard.check` in `src/boardlive.tsx`), the queue
+  (`src/queue.tsx`); the feed's `machine-work`
+  event, which carries the whole work, answers for the work's read. Once every column drawn from
+  the device has answered, a task it drew that no fresh answer (a column, a feed `task` event)
+  listed is dropped, whichever stage the work places it in by then. `Freshness` (`src/cache.ts`) says what
+  a page drawn from the device shows: `main[data-feed=stale][data-cache=device]` and the notice
+  "Shown from this device, saved 14:32. Checking for changes…" (the oldest copy drawn), "Not
+  reachable: …" while a read fails and the feed is not open, cleared once every drawn read has
+  answered and the feed is open. A task's page ([below](#a-tasks-page)) keeps `taskItem(scope, slug)` (`src/cache.ts`):
+  its page (`page`, `/api/task-page`) and its thread's newest page (`thread`,
+  `/api/task-history` without `before`). Opened, it counts a visit and draws them at once unless
+  it shows that task already. Both are checked together, each asked again until it answers
+  (`LiveTask`, `src/task-live.ts`): once `/api/board` is read on the page's first open, at
+  once for a task opened in place from another. A thread answered `200` replaces the messages the
+  device drew and keeps those the feed brought meanwhile (`newest`). Until the
+  page's check answers, a page drawn from the device reads no other part of the task: the
+  newest messages when no thread was kept, the subtasks and earlier messages wait for it, and
+  the feed replays what changed after the board's version. The landing offer, the gates and the
+  timeline, which it never keeps, it reads at once. A task the server no longer has (`404`) says so and
+  is forgotten. Never kept: earlier thread pages, the landing offer (`/api/task-offer`, read on
+  every visit), the subtasks' further pages and the brief's later chunks. `/agents` draws
+  nothing from the device.
+  A document keeps `documentItem(path, false)` (`src/cache-document.ts`): its
+  outline (`outline`, `/api/document?view=outline`) and the bodies of the sections it drew
+  (`sections`, one map by key, each with its card and thread and the validator it was taken
+  under, `KeptBody`). A section's validator is its outline `hash` and, for a card, its thread's
+  hash (`DocumentOutline::thread_hashes`: a thread is no part of its section's hash); a section
+  showing a difference from main is never kept. Opened, the page counts a visit and draws the
+  outline and every body current by it at once (`fromDevice`, `src/document-live.ts`), then
+  reads the outline naming its copy's tag (`getDocument`, `src/request.ts`). The server tags a document read
+  without the feed's cursor, so an unchanged document is a `304` however the board moved, and
+  names the cursor in a header (`symphony_api::VERSION_HEADER`), on the `304` too, from which the
+  feed opens. The bodies the server's outline names alike stay and are read no more
+  (`Bodies`), on a reconnect as on a return; the others are read as the page
+  wants them, and no body is read before the outline answers. A body the feed changed is kept
+  again only once a later outline names it. An entrypoint's own page, the main checkout's, is kept
+  pinned (`documentItem("docs/", true)`): its folder (`folder`, a `304` while unchanged, the
+  server's tag leaving out its intro's cursor) and its intro's outline and bodies in the one item,
+  so it outlives the documents visited once. No other folder page is kept. A document the server no
+  longer has says so and is forgotten. Never kept: versions, diffs, asks and the history.
+  `STALE` (`src/shared.ts`), which `PageNotices` (`src/live.tsx`) sets
+  while that notice or the reconnecting one
+  shows, holds the owner's actions (verdicts, messages, comments, questions, priority, cancel,
+  landing, Later):
+  disabled, saying "Checking…"; drafts stay editable. `apps/symphony-web-tests/tests/browser/cache_pages.rs`,
+  `cache_tasks.rs` and `cache_documents.rs` hold the reads back on the stand-in
+  (`Site::hold_route`, which answers `If-None-Match` as the server does and logs each answer;
+  `Site::set_document` serves a document's outline, its first part and its sections by their keys
+  as the server does).
+  Once a page has its data, its feed is open and the browser is idle, the shell reads ahead the
+  first 8 task and document links on the screen in its `main` (`ahead` in `shell/shell.js` and
+  `shell/cache.js`; [Read ahead](../../docs/analysis/client-cache.md#read-ahead)): one after
+  another, at `priority: "low"`, marked `Purpose: prefetch`, naming any tag kept, and kept
+  unvisited. A task is its page and its thread's newest page; a document its first part
+  (`/api/document?view=first`: the head, every heading among it, and the leading sections whole
+  within `symphony_api::AHEAD_BYTES`; the server does not follow it), whose contents and bodies a
+  visit draws at once, so nothing moves when its outline answers, and keeps as its own
+  (`split`, `src/cache-document.ts`). Never on save-data or a 3g or slower link, never a link that acts, a
+  search, the page itself, a folder or another checkout's page. The stand-in logs a read of the
+  API marked as a prefetch apart from the page's own (`Site::read_ahead`, `asked_ahead`;
+  `requests`, `targets` and `answers` leave it out), so a test counting a page's reads is not
+  raced by the reads ahead; `apps/symphony-web-tests/tests/browser/cache_ahead.rs` covers them.
+- **Budget.** `/` and `/tasks` each have a 300 KB first-visit gzip budget and
+  a 20 KB return-visit budget (`apps/symphony-web-tests/tests/browser/`, restored after the port;
+  both the owner's, the first-visit cap raised by the owner to 300 KB, and
+  never loosened by an agent). Home's first visit is held
+  to 115,000 bytes (`HOME_FIRST_VISIT_BYTES`), the task board's, the same way, to 125,000
+  (`TASKS_FIRST_VISIT_BYTES`) and a task's page's to 145,000 (`TASK_FIRST_VISIT_BYTES`), each
+  lowered by its move and again once the chat moved and no kind was left to move, never raised.
+  A visit counts each response the page loaded at what Chrome's
+  network events say it took on the wire, gzip body and response head: the
+  HTML, the shell, the kind's scripts, the style sheets, API replies
+  (refusals too) and the live feed's head and content messages, as the page
+  reads them. The stand-in server sends the build as the server does, gzipped
+  at the best level by the first request for each file and kept for the test
+  run, and the page and API replies at the default level
+  (`apps/symphony-web-tests/tests/browser/site.rs`): a start reads the shell alone, and a run gzips
+  the files its pages ask for, the whole published folder, older builds kept
+  and all, only for the canonical-entry test's report.
+  It leaves out document-content images, browser-cache hits and
+  the feed's keep-alive pings, which arrive every `ping_ms` for as long as the
+  page is open and are reported beside the total: leaving the pings out is
+  the owner's choice, as the caps are.
+  Other page kinds are reported separately for review.
+  On the fixture (`entry_pages_fit_the_first_visit_budget_and_deferred_kinds_are_reported` prints
+  each page's requests) a first visit to `/` takes 112,520 bytes, `/tasks` 121,442, `/agents`
+  115,511, `/queue` 108,081, `/reports` 112,514, `/runs` 106,760, `/docs/` 139,015, a document
+  140,676 and a task's page 142,233, and a return that finds what it kept unchanged 2,031, 2,442,
+  2,307, 2,272, 574, 984, 574, 1,677 and 2,285. A first visit to a kind is its entry and its
+  sheets, the chunk every kind shares (React and the frame) and the pieces it shares with some of
+  the others (the board's feed and keep; the card and the task readers of the board and the agents
+  page; the media layer's chunk and sheet, home's, the documents', a task's page's and the chat's),
+  beside the HTML, the shell and the page's reads; a move to another kind takes its entry and the
+  pieces no kind before it took (`apps/symphony-web-tests/tests/browser/preload.rs`). A task's page's timeline, a chunk of
+  its own, comes once its box nears the screen and its part has something to draw
+  ([A task's page](#a-tasks-page)), and is reported apart from its first visit: 12,355 bytes. The
+  reads ahead start only once the page's own reads have answered (`cache_ahead.rs`) and go marked
+  as prefetches, so the budget counts them outside the first visit, with the warmed modules
+  (`prefetched_bytes`). Once a page has its data and is idle, the shell warms the chat's files
+  (its entry, the chunks it imports and its sheets the page has not) and then the menus' (the
+  same of theirs): 27,541 bytes outside home's first visit, and neither the chat's first open nor
+  the menus' transfers anything more. Later visits reuse cached imports. The home budget test
+  is independent of the canonical-entry test, which gives every kind a fresh
+  browser profile and reports the complete published output.
+  Measure loaded resources, including API data, rather than summing every
+  deferred module or an older build's file kept in the published output.
+  The 300,000 and 20,000 byte limits are the owner's; a lower first-visit
+  line needs an architectural change the owner approves.
+  `report.sh OUT` prints the bundle report of the build in OUT, read from Vite's manifest
+  (`src/bundle-report.ts`): each kind's first visit, the shared stylesheet, its sheets, its script
+  and the chunks it imports, and apart what it imports later, file by file as built and gzipped,
+  then the build's every file once. It says what a build's files weigh and why a kind grew; the
+  budget test stays the measure of a visit, as it counts the page, the shell and the reads too.
+- **Controls and themes.** The shared controls (`src/button.tsx`, `src/input.tsx`,
+  `src/textarea.tsx`, `src/select.tsx`, `src/tabs.tsx`, `src/tooltip.tsx`) draw the markup and
+  classes of DioxusLabs/dioxus-components at revision 9a758255 (`dx-button`, `dx-input`, …), whose
+  sheets this package carries under `src/styles/` with its licences
+  ([its README](src/styles/README.md) records the local adaptations). A select's popup and the
+  picture dialog are the menus' (`src/overlay.tsx`). The header's Appearance button opens the
+  panel's `#appearance-panel` (`src/appearance.tsx`, as the bell opens activity's), whose theme
+  menu imports a shadcn/tweakcn registry JSON file's `cssVars.theme`, `cssVars.light` and
+  `cssVars.dark`, including fonts and radius. `src/theme.ts` validates token declarations; the
+  shell restores their saved CSS before mounting a page. Status tokens such as `like`, `question`
+  and `live` keep their defaults unless the imported file sets them. UI colours use the canonical
+  shadcn token names; `src/styles/controls-theme.css` maps those names to the copied controls'
+  palette. Extend the shared controls for new fields.
+- **Task views.** The task board (`/tasks`, `src/board.tsx` over `src/boardlive.tsx`, its card
+  `src/taskcard.tsx`), the agents page ([below](#the-agents-page)) and a task's page
+  ([below](#a-tasks-page); the gates' and the timeline's contract,
+  [TASKS](../../docs/TASKS.md#gates) and [the timeline](../../docs/TASKS.md#the-timeline)). The
+  board fetches counts first, then nearby column pages; finished work defaults to 24 hours, with
+  a week switch and older paging. A feed event that changes what a view lists (a task, a message
+  while searching, the counts) reads the counts again 750 ms on, then the columns, each its first
+  page as long as the rows it shows (the listing's `rows`), so the pages Load more brought, and the
+  reader's place deep in them, stay (`apps/symphony-web-tests/tests/browser/board_place.rs`); the machine's
+  work does only when it puts a task in another stage (`MachineWork::places_alike`), not at each
+  heartbeat. An answer is dropped only for another view (search, window, connection, board
+  version, `BoardData.view` in `src/boardlive.tsx`) or a newer read of the same part, never for an event
+  that came while it was read: the events since are replayed onto it, and the refresh reads again
+  (app/board-search-slow-to-fill: a loaded machine's work, every second, kept a search's columns
+  grey for 5 to 60 s; `apps/symphony-web-tests/tests/browser/board_search.rs` counts a search's reads). Composer drafts are local to
+  their component and saved through `src/storage.ts`, never replaced by a
+  snapshot. Routes use `src/route.ts`, and requests `src/request.ts`, so a stalled save times
+  out with its draft kept.
+- **Visibility.** `NearViewport` (`src/viewport.tsx`) uses the shared visibility latch, with a CSS sentinel
+  extending 600 px around its placeholder. The latch owns an IntersectionObserver until
+  revelation or teardown, and reattaches after props replace its node. Markers include the
+  page kind so the persistent panel cannot select a page's sentinel. A slot uses
+  `content-visibility: auto` only once no sentinel is left in it, its own or a nested
+  slot's (a column's rows): paint containment would clip the look-ahead. A slot that is
+  or sits in a list item never does: paint containment would clip the item's
+  marker, and layout containment would put it on a line of its own
+  (`apps/symphony-web-tests/tests/browser/look_parity/list_and_queue_spacing.rs`). Mounted rows
+  and sections keep an intrinsic size; a region keeps its children once revealed so
+  scrolling preserves forms and reading position.
+- **Loading.** A region is reserved before its read arrives, never left to grow when it
+  lands, and drawn meanwhile as a ghost of what it will hold: each box as the real one
+  (border, radius, padding, size: a `ghost-*` class shares the real class's rule) with a
+  `span.bone` bar at each line of text in it, at that line's height, not one grey slab. A
+  card, a row, a message, a column, a page each has its ghost beside its component (`GhostCard`,
+  `GhostRow`, `GhostEntry`, `GhostTask`, `GhostDocument`, `GhostQueue`, `GhostBoard`); a
+  `NearViewport` takes its `ghost`, else draws the lines of text its height holds
+  (`viewport::Skeleton`, `lines_for`), and a picture still to come is its box, filled. Bars
+  take the theme's `--skeleton` colour, shimmering in `--skeleton-shine` only under
+  `prefers-reduced-motion: no-preference`, and only in a ghost that waits for its read (a page's
+  `Settle` cover, a column reading its first page, a section, a thread): a `NearViewport`
+  placeholder waits only to come within its sentinel's reach, where its content takes its place,
+  so its bars are still (`.viewport-placeholder` in `src/styles/board.css`). Chrome runs an animation off the
+  screen every frame, under `content-visibility` too, so a page at rest animates nothing
+  (`apps/symphony-web-tests/tests/browser/skeleton.rs` counts `document.getAnimations()`). A page says once that it
+  loads (one `role=status` line, the gates' outline under `aria-hidden` on a task's ghost) and is
+  `aria-busy` while it loads, as a column reading its first page and a `Settle` not yet settled
+  are, and no longer once its read failed (`data-ready=failed`), when it says so, drawn:
+  `symphony shot` counts a page drawn only once no region busy shows on the screen, so its picture
+  is of the page and not of its ghost, and a page left busy after it failed would hold the shot to
+  its timeout.
+  A ghost uses its own classes, never the real ones, so a test's selector never finds it;
+  the one placeholder it shares is a task's gates' outline, the section's own until its
+  answer, which `GhostTask` draws for the room this browser kept (`GhostGates`,
+  `src/gates.tsx`).
+  The board, the queue and a task page draw a return visit from this device's cache (`cache`,
+  `main[data-cache=device]`) with no ghost once its store answers; theirs shows on a visit the
+  device has no copy for (a first one, a store that opened late or let the page go), and the
+  browser tests of their next ghost turn the store off (`NO_STORE` in `apps/symphony-web-tests/tests/browser/main.rs`).
+  What a first visit cannot know a ghost keeps from the last one, per project in the
+  browser: the board's columns and counts, kept once the server has answered both its counts and
+  the machine's work that places its build and test columns (`SHAPE`, `boardShape` and
+  `keepShape` in `src/board.tsx`; none kept is every column with a card) and
+  the rows of each column's first page as they stood in a window as wide, each one's pitch and
+  its rows of chips (phases, links, roles), a drawn card's or the place a row still waiting holds
+  (`CARDS`, `keptCards`, `drawnRows` there; a card's ghost draws a pill per row of chips and the
+  title lines its pitch has room for); the queue's rows
+  per group (`ROWS` in `src/queue.tsx`) and each
+  group's height; a task's head, title, facts and brief at the height drawn in a window as wide
+  (`drawnHeight`, `rememberDrawn` in `src/viewport.tsx`), and its gates' room
+  (`kept`, `remember` in `src/gates.tsx`). A
+  task never opened at that width takes the last task's (`recallHeight` falls back to the
+  newest part of the same kind); with none, a head with a facts line and
+  a title of one line wide, two on a phone, four gates and a brief of seven lines. A brief kept
+  shorter than those seven lines draws only the bars its box shows whole (`GhostBrief`,
+  `src/task-page.tsx`). The timeline's box takes the height `reserved` gives it
+  (`src/timeline-slot.tsx`). What is kept is measured
+  as it draws, every 100 ms, and kept again when it changed (the board's `keepRows`, the task
+  page's `rememberDrawn`), until no region in it still waits within the sentinel's reach of
+  the screen (`waitsNear`, for a column of the board's own scroller) or
+  every row of a column has drawn (the board's `keepsWatching`), for
+  `KEEP_MS` (30 s) at most, a bound on the work alone: on a loaded machine or a slow
+  phone rows draw many seconds after their data. A
+  region still waiting carries `data-pending=true`: a `NearViewport` placeholder, a document's
+  section, a column's first page, a task's thread. What a page already knows shows at once
+  (a task's head and brief, a document's head and outline); `Settle` (`src/viewport.tsx`) keeps only
+  the part still reading (a task's thread and composer, a document's body) hidden under its
+  ghost (`cover`) until no such region shows on its first screen, its read fails, or
+  `SETTLE_MS` (3 s) passes; a hidden control takes no focus, so a
+  browser test waits for `visible(SELECTOR)` before it focuses one. The task board shows its
+  heading (one node from ghost to board, so its link keeps focus) and controls at once, each
+  column reserving a card's box per row of its first page (`PAGE` in `src/board.tsx`), at the
+  pitch kept for its place, else `ROW`, a typical card (a title of two lines, a row of links and
+  one of roles; its ghost draws no role chip in a column no agent has taken up, `unstaffed`),
+  and showing Load more only once its first
+  page is in; a row of that page still waiting to be drawn holds what its own card will take,
+  its ghost as tall (`rowCard`, `rowHeight` in `src/cardheight.ts`). A first read that fails
+  with nothing drawn yet (a board not made, say) is said in place of the board's ghost, which
+  would wait for ever, in the read's words with a retry (`UnreadBoard`); the page reads
+  again by itself too. A live update that adds or
+  removes a row calls `holdPlace(ROWS)` (`src/shared.ts`, the shell's
+  `reviewHoldPlace`) before it
+  sets its data: once the reader has scrolled the box around what they read or the page, the
+  focused field, else the first of ROWS on the screen, stays where it was while the update
+  and any placeholder within the sentinel's reach draw, until the reader's own scroll, click
+  or key; a reader at the top sees what lands at the top.
+  `apps/symphony-web-tests/tests/browser/layout_shift.rs` fails a page whose cold or warm load scores a layout
+  shift of 0.05 or more, on a phone or wide. That score sees only elements already drawn
+  that move, not a ghost's box against the new element in its place. A task's parts are the
+  page's own elements from their mock-ups on, so the score does see a part's guess give way to
+  its answer there, and the file holds a first visit in each order the page's and the gates'
+  answers can come in, one route held until the other's answer is drawn. A task with the gates
+  the outline guesses for a task this browser knows nothing of (four signed gates, one waited
+  on) stays under 0.05 in both. A task of another shape (two gates, one unsigned) stays under
+  0.05 on a return and on a wide first visit, and on a phone's first visit moves what is under
+  its gates once: it is held under 0.14 with the page's answer first (it scores 0.1399) and
+  under 0.064 with the gates' first (0.0636). Those two limits only go down; the board task
+  `app/task-first-visit-holds-still` brings them to 0.05. For every other ghost:
+  `apps/symphony-web-tests/tests/browser/landmarks.rs` compares each region's place on the ghost and on the page,
+  on a first visit and the next, on a board, a queue and tasks shaped as the live ones (a
+  later card, a later queue group, the board's lower row, a task opened first and after
+  another), and prints each offset as a `LANDMARKS` line; it measures the board and the queue
+  again with every `IntersectionObserver` callback 800 ms late. No scrollbar takes room there
+  (`NO_SCROLLBARS`), so the kind Chrome draws cannot change every region's width. `apps/symphony-web-tests/tests/browser/skeleton.rs`
+  covers the rest.
+- **The page.** `package.sh` writes the shell, whose single history adapter is
+  `shell/shell.js`: the page kinds' manifest on its first line (`const modules =
+  …;`), then the store and that script minified by the minifier Vite ships (`shell/minify.js`).
+  Every kind names its script, the chunks that script imports (`imports`) and its styles:
+  the shell imports that script, a module exporting `run` and `stop`, with a module preload of
+  each chunk it has not asked for yet beside it. Its
+  `html[data-navigation]` is `loading` until the shell's navigation finishes,
+  then `ready`, or `failed` if the page cannot load. It preserves a scroll made
+  after the new page mounts instead of applying its late top reset. A scroll to the
+  element the address names, its own or a web kind's (`route.ts`), is held there while
+  the page draws around it (`land`): the sections a landing brings near draw after
+  it, often taller than their ghosts, and the browser's own scroll anchoring holds nothing
+  under a page's ghost (`.settle`). A landing is one hold for each navigation. It ends
+  when it goes quiet (nothing moved and nothing waiting or busy within reach for four
+  frames, or 1800 at most), at the reader's input that scrolls (a wheel, a touch that
+  moves, a press on the page's scrollbar, a scroll key; not a click, a tap, a selection
+  or another key) and at any scroll that moves the page and the element alike (find in
+  the page, a focus, a script). Only the next navigation lands again: a later call (a
+  section's read in, an outline read again) does nothing once it has ended.
+  Compilation leaves `OUT/public` serving its last build;
+  packaging assembles beside it and `symphony-build publish-client` atomically exchanges the
+  complete directories (macOS/Linux). Failed builds leave the published client
+  intact; the next package removes abandoned staging folders. The stage holds its
+  build alone, its files named in its `builds.json` by its shell; `publish-client`
+  keeps it and the two builds published before it over the folder, newest first in
+  the folder's `builds.json`, copying in what the stage lacks and removing every
+  other file (`KEEP`, `crates/symphony/src/cli/publish.rs`), so an open page's
+  deferred import finds its build two publications on. Once its build is gone, an
+  import that fails asks for the page's own shell past the cache: a 404 loads the
+  page again, onto the build served, once per build in the tab's storage
+  (`gone` in `shell/shell.js`); anything else says the failure with its retry.
+  A kind's `stop` unmounts it and awaits its cleanup before another kind starts, its feed and
+  event subscriptions among it. Back and forward use this same adapter. The persistent panel remains mounted once opened,
+  retaining chat, task form and conversation state across kinds. The initial
+  frame stores raw API snapshots until a deferred component needs their
+  typed data; activity and pending controls load on interaction, and new
+  activity can load the panel to show a toast. No HTML fragments cross this
+  boundary. A click on `+` or the bell draws its sheet at once from the shell
+  (`#panel-loading`: the frame's own `#quick-sheet` or `#activity-panel`, with a
+  status line and no spinner) until the panel mounts or fails. The sheet takes the
+  focus (`+` hides at desktop width) and Escape closes it, giving the focus back to
+  its opener; its status is filled a frame after the sheet is in the page, so a
+  screen reader announces it. The panel's own sheet takes the focus over. A
+  select's popup and the picture viewer are drawn by the menus, the persistent
+  kind `overlay` (`src/overlay.tsx`, mounted in `#overlay-root`), never the
+  chat's: the chat's select field and its media layer ask for them by data through the shell's
+  `reviewOverlay`, as every page does. The chat is the persistent kind `panel`
+  (`src/panel.tsx`), mounted in `#quick-root`. A task's timeline is a chunk its box imports
+  ([A task's page](#a-tasks-page)).
+  The shell requests a kind's script, a module preload of each chunk it imports and its styles
+  together. Once the first page has its data (the shell
+  counts the page's `fetch` reads in flight, and waits until none has been for half
+  a second, and after a read that got no answer until one does) and the browser is
+  idle, it prefetches the persistent kinds' files at the lowest priority, nothing evaluated,
+  each one the page has not linked: the chat's script, the chunks it imports and its styles
+  first, the menus' once the chat's script (or the chat's own load, when a click came first) is
+  in, so no two share a slow link. A browser asking to save data, or reporting a
+  2g link, warms nothing; the browser tests count those prefetches apart from a
+  first visit.
+  The style sheets every kind loads
+  are one `shared-<hash>.css`, first in each kind's list of the manifest, and the
+  kind's own follow it: a first visit asks for them once, and every kind caches
+  the same file. Its sheets and their order are `src/styles/shared.css`'s. The pictures' styles
+  (`src/styles/media.css`) stay out of it: they are the media
+  layer's sheet, which home, the documents, a task's page and the chat take as one file, and the
+  queue, Reports and the task board, which show no picture, none. The server's own pages inline
+  `board.css`'s tokens and `frame.css` from copies in its package
+  (`apps/symphony-server/src/`), which it carries to crates.io: a change to either
+  is copied there too, and `crates/symphony/tests/packages.rs` fails until it is.
+- **Projects on one origin.** The projects
+  of the machine's one server share its origin, so every key the browser
+  stores takes the page's project id first (`stored`, `src/project.ts`,
+  `alpha:review-quick-draft`; the shell's `stored` for the saved theme); a
+  server of its own keeps its keys as they are. Every link the client draws, and
+  the address of a document's or a card's picture, is written under the project's
+  base (`href`, `src/project.ts`, `/alpha/task/…`), so a new tab, a copied link or image
+  address or a long-press opens what a click does; the shell follows a link under
+  the base in place and adds nothing to it, leaves any other to the browser, and
+  the project switch's `/` alone leaves the project.
+- **Media.** Typed document images carry real dimensions and thumbnail URLs from the
+  API (home's pictures reserve a square). The shared visibility
+  latch defers native media shells and gallery rows. The media layer that sizes mounted frames
+  and opens pictures at `data-full` in the menus' viewer is
+  `src/media-layer.ts`: each page that shows media mounts it, and the chat
+  mounts one for its own pictures on every page and for the page's media on the task board and
+  the agents page, which have none of their own; it is in the chunks of each, so it loads, or
+  fails, with them. Mockups stay at 1280x800,
+  scaled by their card's width, with only `allow-scripts` in their sandbox. Never add
+  `allow-same-origin`.
+  A file a plugin's renderer draws in a viewer is a `Media::Viewer`, drawn by
+  `FileViewer` (`src/media.tsx`) from its `symphony_api::Viewer` data alone: the custom
+  element (its markup from `Viewer::element_html`, every value escaped), its
+  caption, a button per view and the download link. The client holds no
+  viewer's code: the module script the viewer names is loaded once, on the first
+  mounted stage naming it, and is absent from the shell's preloads; a view's
+  button sets the attributes it lists on the element and calls the method it
+  names. A plugin's pages are the
+  `ProjectView`'s `nav` items the served page inlines (`PROJECT_ELEMENT`): each
+  reads its document through the documents' page (`src/document-page.tsx`), as a `/shelf` page reads
+  `docs/SHELF.md`. A `Media::Gallery` holds its items (name, file `src`,
+  `poster`), served under the plugin's route, `/x/shelf/`, and the viewer they
+  open in. Its grid has only small pictures until an item opens; one selected
+  item is mounted at a time, and closing it unmounts the viewer.
+  The server warms read snapshots before announcing its URL, and a gallery
+  plugin warms the selected checkout's gallery cache at startup and when a
+  folder its watch names changes. Startup logs separate gallery, document and
+  board time; requests never walk model history or other checkouts to build
+  the gallery.
+  `DocumentPicture` (`src/media.tsx`) preserves typed document image
+  dimensions, presentation and `data-full`; until its latch opens its `img` holds
+  the empty picture `WAITING` as its src, never none, so it is a sized picture
+  from its first frame and the latch only changes that node's src, keeping a keyboard
+  focus on it. A src-less img is drawn as its alt text, and Chrome rebuilds its box
+  when a src comes: a rebuild asked for in the frame an ancestor slot takes
+  `content-visibility: auto` is lost, so the picture never loads (a folded card
+  opened by a click). The picture viewer skips a waiting img. `MediaView` renders native
+  media from either `Block::Media` or `Span::Media`.
+  A document's questions and follow-ups (`src/asks.tsx`) are read
+  with `format=blocks`, no rendered HTML on that path.
+  A document's questions and the `+` sheet's chat read again when the page's feed
+  says so (the chat by `concernsThread`, `src/panel-model.ts`): its `asks` region names a moved thread (by id
+  and document path) or a new chat recipient, or a stream opens, first or after a loss. A
+  document page that opens its stream again for other sections, from the cursor of the last
+  event it heard, missed nothing, and reads nothing again (`followDocument`). The page
+  module forwards that region to every module as a `review:asks` event; a read
+  that fails tries again every 3 s until one answers, and none polls. A document's
+  question read the next one replaces aborts its fetch (`getJson`'s signal): a fetch whose
+  body the page never reads stays in flight in Chrome's eyes for as long as the
+  page is open, and `symphony shot` waits on it.
+  The media style is `src/styles/media.css`; every observer and listener the layer adds is owned
+  by the kind's mount and ends with it.
+- **Documents.** The page's contract ([The documents](#the-documents) names its code).
+  `document-live.ts` reads `/api/document?view=outline`: section keys,
+  source positions and anchors, the kinds of each section's first and last blocks (`ends`), with
+  short card summaries. `NearViewport`
+  mounts each block once near the screen; a collapsed
+  card requests its body only when opened. Mounted blocks request their bodies
+  and threads together from `/api/section?format=blocks&keys=JSON_LIST`. Excerpts
+  request `format=blocks` too; reads without it retain the legacy HTML/media
+  response for compatible API callers. Canonical `/docs/` pages use the client;
+  old `/app/docs/` and `/doc/docs/` bookmarks redirect there.
+  Only Markdown files, HTML documents and folders are client routes; raw files keep normal links.
+  An HTML document (docs/PROJECT_FILE.md "HTML documents") is no fragment: its
+  page loads the file whole into one frame whose sandbox allows its scripts alone
+  (`SANDBOX`, `document-page.tsx`; never `allow-same-origin`, top navigation, forms or popups), so it runs
+  in an opaque origin with no reach into the app's storage, cookies, feed, API or page. The
+  document's route is the app's page whatever headers ask for it (a browser sends no fetch
+  metadata to a plain-http address but loopback's); the frame, and a Markdown document's mockup
+  frame, load the file's address, the route with `?raw` (`symphony_api::file_address`), which the
+  server answers with the file under a policy that keeps its loads to its entrypoint and opens no
+  connection (`html_document`, `apps/symphony-server/src/media_files.rs`), and a route with no
+  such document with its Not found, which the frame shows. The frame is as wide as the page
+  and as tall as the window below the header, scrolling inside itself; the page has the header and nothing of the
+  Markdown view (outline, cards, notes, editing, versions, cache or feed), and no reads of its own:
+  what an HTML document does is the server's and the browser tests'.
+  The feed opts into
+  one `document=PATH` and its requested `sections=JSON_LIST`; a stream without
+  a document receives no document payloads. Changing the requested keys reopens
+  the stream at its current cursor. A body response waits for that cursor and
+  never overwrites a newer document change; a reconnect invalidates outstanding
+  reads. Drafts and verdict retry ids are saved locally. Busy sections retain
+  their markup while their source positions advance; the queued markup applies
+  when the form or excerpt is free. The owner's own saved answer on a card
+  releases that card (`release`, `held`, `settle`, `src/document.ts`): its mark,
+  line and the register's regroup show at once, an open excerpt beside it or
+  not. The release lasts until the card shows one more line of the owner's than
+  its latest copy had when the save was sent, so an agent's reply the feed
+  brings first does not end it. A closed
+  draft holds its card only once the card is gone, never the register's order.
+  Content is `symphony_api::Block` and `Span`, drawn by
+  `BlocksView` and `SpansView` (`src/blocks.tsx`). Server reads
+  prepare media and scoped URLs before `symphony::blocks::parse`; HTML fields
+  belong only to that internal pipeline and are excluded from JSON. Links
+  carry typed excerpt targets; SVGs are primitive data. Unsupported source
+  markup stays visible as an Unknown node with a server warning. `symphony blocks`
+  prints a real-document census and checks that the data survives serialization.
+
+## Adding a page kind
 
 1. Draw the page in a module of its own (`src/NAME.tsx`), its reads guarded and its pure parts
-   exported for the unit tests, with an entry in `src/kinds/NAME.tsx` and the name in `KINDS`.
-2. Take the Dioxus kind out of `apps/symphony-ui` (its sources where nothing else uses them, its
-   feature, its place in `bundle.sh`'s and `package.sh`'s kinds and `tests/wasm_build.rs`), and
-   move its style sheet here.
-3. Run its browser tests against the built distribution, change none to pass, and take its
-   pictures beside the Dioxus page's, desktop and phone, light and dark. Where a list reorders
-   under the reader, Chrome's scroll anchoring may leave the two pages at different places, as
-   each framework's keyed diff moves other nodes (React keeps the one it moves least, so the page
-   follows it): that is the browser's, not a parity break, and `overflow-anchor: none` shows the
-   two alike.
-4. Hold its first visit to the cap its page has, and lower a cap the move earns, in that commit.
+   exported for the unit tests, with an entry in `src/kinds/NAME.tsx` and the name in `KINDS`
+   (`vite.config.ts`); its route is the shell's (`shell/shell.js`) and, for a route the Symphony
+   answers itself, `symphony_api::SYMPHONY_ROUTES`.
+2. Give it browser tests in `apps/symphony-web-tests/tests/browser`, and name it in the build
+   test's kinds (`tests/build.rs`) with the sheets it loads.
+3. Report its first visit beside the other kinds' (the budget test prints each page's requests),
+   and hold it to a cap where the owner sets one.

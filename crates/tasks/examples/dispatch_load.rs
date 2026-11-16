@@ -384,11 +384,8 @@ fn main() -> Result<(), Failed> {
         );
     }
     let board = set_up(&options, &store)?;
-    let messages_before: Value = store
-        .client()
-        .query("RETURN count(SELECT id FROM message);", json!({}))
-        .map_err(|e| e.to_string())?
-        .remove(0);
+    let messages_before = (store.raw().table("message").count()).map_err(|e| e.to_string())?;
+    let messages_before: Value = json!(messages_before);
     eprintln!(
         "{} recipients registered on a board of {messages_before} messages; {} writers start",
         options.recipients, options.writers

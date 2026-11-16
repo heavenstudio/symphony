@@ -1196,9 +1196,9 @@ describe("a task's timeline laid out", () => {
   });
 
   it("a failed read says its reason's first line as a sentence, never a stack", () => {
-    // Each says when it is tried again: a minute after a failure (`nextRead`).
+    // Each says it is tried again, which the page's store does by itself.
     expect(TIMELINE_EVERY).toBe(60);
-    const again = (said: string) => `${said} Trying again in a minute.`;
+    const again = (said: string) => `${said} Trying again…`;
     expect(failed("Failed to fetch")).toBe(
       again("The timeline could not be read: Failed to fetch."),
     );
@@ -1215,7 +1215,7 @@ describe("a task's timeline laid out", () => {
     expect(failed("a. b...")).toBe(again("The timeline could not be read: a. b."));
   });
 
-  it("the next read is the timeline's own while open, a minute after a failure, none once closed", () => {
+  it("the next read is the timeline's own while open, none once closed or after a failure", () => {
     const read = (timeline: TaskTimeline) => nextRead({ timeline });
     expect(read({ ...pictures(), every: 45 })).toBe(45);
     expect(read({ ...pictures(), every: 0 })).toBe(TIMELINE_EVERY);
@@ -1223,7 +1223,8 @@ describe("a task's timeline laid out", () => {
     delete unsaid.every;
     expect(read(unsaid)).toBe(TIMELINE_EVERY);
     expect(read({ ...pictures(), closed: pictures().now })).toBeNull();
-    expect(nextRead({ error: "Failed to fetch" })).toBe(TIMELINE_EVERY);
+    // A failed read is the page's store's to try again.
+    expect(nextRead({ error: "Failed to fetch" })).toBeNull();
     expect(nextRead(null)).toBeNull();
     // A browser's timer waits an `i32` of ms at most.
     expect(LONGEST_WAIT).toBe(2 ** 31 - 1);

@@ -277,29 +277,24 @@ fn repeated_unknown_or_older_samples_do_not_rewrite_binding_metadata() {
     s.reading(0.0, place, read("boot-1", 100.0));
     f.store.client().query("DEFINE EVENT binding_writes ON callback_state WHEN true THEN { UPSERT callback_audit:writes SET count = (count ?? 0) + 1; };", json!({})).unwrap();
     let writes = || {
-        f.store
-            .client()
-            .query("RETURN callback_audit:writes.count;", json!({}))
+        (f.store.raw().row("callback_audit", "writes"))
+            .field("count")
             .unwrap()
     };
     s.reading(1.0, place, None);
-    assert_eq!(writes(), vec![json!(1)]);
+    assert_eq!(writes(), json!(1));
     s.reading(1.0, place, None);
     s.reading(1.0, place, read("boot-1", 99.0));
     s.reading(1.0, place, read("boot-1", 100.0));
     assert_eq!(
         writes(),
-        vec![json!(1)],
+        json!(1),
         "uncertainty and watermark are already kept"
     );
     s.reading(1.0, place, read("boot-1", 101.0));
-    assert_eq!(writes(), vec![json!(2)], "new evidence is written");
+    assert_eq!(writes(), json!(2), "new evidence is written");
     s.reading(1.0, place, read("boot-1", 101.0));
-    assert_eq!(
-        writes(),
-        vec![json!(2)],
-        "a duplicate reading is already kept"
-    );
+    assert_eq!(writes(), json!(2), "a duplicate reading is already kept");
 }
 
 #[test]

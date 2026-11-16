@@ -579,8 +579,7 @@ version = \"0.1.0\"
 workspace = true
 ";
 
-/// A package with an example its tests run, a default feature and a test's dependency, as
-/// apps/symphony-ui has.
+/// A package with an example its tests run, a default feature and a test's dependency.
 const UI: &str = "\
 [package]
 name = \"ui\"

@@ -33,6 +33,7 @@ fn a_model_nobody_has_heard_of_passes_as_any_text_does() {
          reviewer = \"opus-of-next-year\"\nassessor = \"\"\n",
         "[agents.launch]\ndefault = \"an agent nobody wrote yet\"\neffort = \"immense\"\n",
         "[limits]\norchestrator_slots = 3\n\n[releases]\nevery_landings = 7\n",
+        "[limits]\norchestrator_tasks = 16\n",
     ] {
         let (code, out, err) = check(&root, text);
         assert_eq!((code, err.as_str()), (0, ""), "{text}");
@@ -59,6 +60,14 @@ fn a_value_of_the_wrong_type_is_refused_naming_the_file() {
         ("[releases]\nevery_landings = \"often\"\n", "invalid type"),
         ("[land]\npush = \"yes\"\n", "expected a boolean"),
         ("[limits]\norchestrator_slots = \"three\"\n", "[limits]"),
+        (
+            "[limits]\norchestrator_tasks = \"sixteen\"\n",
+            "[limits] orchestrator_tasks (line 2) is \"sixteen\"; not a whole number",
+        ),
+        (
+            "[limits]\norchestrator_tasks = 0\n",
+            "an orchestrator holds at least one task",
+        ),
         ("[agents.models\n", "symphony.toml"),
     ] {
         let (code, out, err) = check(&root, text);

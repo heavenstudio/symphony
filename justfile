@@ -25,7 +25,6 @@ _lint-rs:
     @tools/cargo.sh fmt --all --check
     @tools/cargo.sh clippy --workspace --all-targets --locked -- -D warnings
     @tools/cargo.sh clippy -p symphony-api --features typescript --all-targets --locked -- -D warnings
-    @PATH="$(pwd)/apps/symphony-ui/bin:$PATH" tools/cargo.sh symphony-ui clippy
     @just --justfile {{quote(justfile())}} client-lint
 
 # The web client's checks (apps/symphony-web/check.sh): its wire types against crates/symphony-api's
@@ -48,12 +47,10 @@ test-rs *ARGS:
 settings-check:
     @{{record}} --pipeline settings test "just settings-check" tools/rs-bin.sh symphony settings-check
 
-symphony-ui-dist OUT="build/symphony-ui" KIND="all" OPT="z":
-    #!/usr/bin/env bash
-    set -euo pipefail
-    out={{quote(OUT)}}
-    if [[ "$out" != /* ]]; then out="$PWD/$out"; fi
-    PATH="$PWD/apps/symphony-ui/bin:$PATH" tools/cargo.sh symphony-ui dist "$out" {{quote(KIND)}} {{quote(OPT)}}
+# The client's build (apps/symphony-web/build.sh): one Vite build of the web client and its shell,
+# published into OUT/public, OUT named from this folder.
+symphony-ui-dist OUT="build/symphony-ui":
+    @{{record}} --pipeline client build "just symphony-ui-dist" bash apps/symphony-web/build.sh {{quote(OUT)}}
 
 # apps/symphony-web/dev.js (its guide's "The dev server"), on loopback port PORT (0 for any), over
 # a server of your own (`just symphony --port 0`) on port SERVER; 8765 it refuses as either.
@@ -112,7 +109,7 @@ release *ARGS:
 agent-send *ARGS:
     @tools/rs-bin.sh agent-send "$@"
 
-# Rebuild the client's kinds and its shared stylesheet and refuse drift from the client embedded at this pin.
+# Rebuild the client and refuse drift from the client embedded at this pin.
 client-check OUT="build/verified-client":
     @{{record}} --pipeline client --step client-check build "just client-check" just --justfile {{quote(justfile())}} _client-check {{quote(OUT)}}
 

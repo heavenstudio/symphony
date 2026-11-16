@@ -411,12 +411,8 @@ impl Fixture {
 
     /// Seed legacy child-review state for compatibility tests; new slices cannot enter it.
     pub fn historical_review(&self, slug: &str) {
-        self.store
-            .client()
-            .write(
-                "UPDATE type::record('task', $slug) SET status = 'review'",
-                serde_json::json!({"slug": slug}),
-            )
+        (self.store.raw().row("task", slug))
+            .set(serde_json::json!({"status": "review"}))
             .unwrap();
     }
 

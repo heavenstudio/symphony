@@ -1,5 +1,5 @@
-# The Symphony's wire types: the JSON apps/symphony-server sends and apps/symphony-ui reads.
-# serde only, so the server and the wasm client build the same types.
+# The Symphony's wire types: the JSON apps/symphony-server sends and apps/symphony-web reads.
+# serde only: the server builds them, and the client reads them generated as TypeScript.
 [package]
 name = "symphony-api"
 version = "0.1.0"

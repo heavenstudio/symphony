@@ -1,6 +1,6 @@
 /* The panel's own rules: the `+` sheet's tabs and the tip of its collapse button, as the pinned
  * dioxus-components tabs and tooltip sheets write them. The sheet's, the activity list's, the
- * toasts' and the pending bar's rules are the shared sheet's (apps/symphony-ui/assets/frame.css). */
+ * toasts' and the pending bar's rules are the shared sheet's (styles/frame.css). */
 
 .dx-tabs {
   display: flex;

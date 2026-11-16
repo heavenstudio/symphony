@@ -38,13 +38,14 @@
 # too: it waits for them to end, prints what they wrote and exits 128 and the signal's number.
 #
 # The lanes share no port or store: every server, store and browser a test starts takes a port the
-# system picks and a folder of its own. The one test writing the build folder, wasm_build, whose
-# `tools/rs-bin.sh --build symphony-build` links that binary there again, is in `rest` with
+# system picks and a folder of its own. The one target writing the build folder, the client's `build`
+# (apps/symphony-web-tests), whose `tools/rs-bin.sh --build symphony-build` links that binary there
+# again, is in `rest` with
 # standalone, which copies the build folder whole, and with every target of symphony-build and
 # symphony-app, whose tests run that binary and whose binaries a lane's cargo links again as it
 # starts: no other lane starts one. The browser's lane writes the build folder too when
-# SYMPHONY_UI_DIST names no client: its own client build (`cargo symphony-ui dist`,
-# apps/symphony-ui/bundle.sh) runs `tools/rs-bin.sh --build symphony-build`, which can link that
+# SYMPHONY_UI_DIST names no client: its own client build (apps/symphony-web/build.sh)
+# runs `tools/rs-bin.sh --build symphony-build`, which can link that
 # binary there again while `rest` runs it. Verify names the client its client check built, so only
 # a verify whose client check built none leaves it to the browser's lane. The binaries the tests would otherwise build for themselves, each under
 # its case's clock, are the build's own: SYMPHONY_TEST_TASKS_BINARY names its `tasks`,

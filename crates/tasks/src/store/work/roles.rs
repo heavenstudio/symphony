@@ -177,7 +177,8 @@ impl Store {
                 });
                 change.say = Say::system(format!("{handle}{JOINED}{role}"));
                 // The open work it takes on, the task's and the work below it nobody else
-                // orchestrates: the new orchestrator's slots.
+                // orchestrates: the new orchestrator's slots. And the task itself, one more of the
+                // open tasks it holds the role on, at most the limit of them but for a red.
                 if single {
                     change.opens = Some(Opens {
                         orchestrator: Some(handle.into()),
@@ -187,6 +188,10 @@ impl Store {
                         ),
                         ..Opens::default()
                     });
+                    if !crate::red::marked(&task.fields) {
+                        let what = format!("{handle} cannot take orchestrator on {slug}");
+                        change.gains = Some((handle.into(), what));
+                    }
                 }
             }
             if !took.is_empty() {
@@ -258,6 +263,12 @@ impl Store {
                     since: view.now,
                     expires: None,
                 });
+                // One more open task `to` holds the role on, refused at the limit as its own take
+                // would be; the owner's hand-over, and a red, are not held to it.
+                if capped && !crate::red::marked(&task.fields) {
+                    let what = format!("{from} cannot hand {slug} to {to}");
+                    change.gains = Some((to.into(), what));
+                }
             }
             change.say = Say::system(orchestration::handed_line(from, to));
             change.opens = capped.then(|| Opens {
@@ -276,8 +287,10 @@ impl Store {
     /// left is ready again. Letting go of the orchestrator role is refused while it would leave open
     /// work with no orchestrator, the task's or the work below it the role keeps ([`orchestration::orphaned`]),
     /// unless an orchestrator holds a task above it: the refusal names the hand-over to the
-    /// orchestrator rule 4 picks among those that stay ([`orchestration::Pool`]), or says none is
-    /// there to take it.
+    /// orchestrator rule 4 picks among those that stay under the limit ([`orchestration::Pool`]),
+    /// or says none is there to take it. One past the limit on the open tasks it orchestrates
+    /// (`[limits] orchestrator_tasks`) lets go of work none of which is in progress or in review,
+    /// which the board gives to one under it or leaves waiting ([`orchestration::WAITING`]).
     pub fn release(&self, slug: &str, handle: &str, role: Option<&str>) -> Result<Task, Error> {
         // Only a holder of the role reads the board for it; a task not found is the rule's to refuse.
         if role.is_none_or(|role| role == "orchestrator") {
@@ -335,32 +348,49 @@ impl Store {
     }
 
     /// Refused when `handle` letting go of its orchestrator role on `slug` would leave open work
-    /// with no orchestrator ([`Store::release`]). `every`: the release lets every role go, so the
-    /// refusal says how to let another go alone.
+    /// with no orchestrator ([`Store::release`]), but by an orchestrator past the limit on the open
+    /// tasks it holds the role on (`[limits] orchestrator_tasks`) letting go of work none of which
+    /// has started (in progress or in review): that work then waits for an orchestrator under its
+    /// limit, which the board gives it to at its next read, as a task with none is a well state.
+    /// `every`: the release lets every role go, so the refusal says how to let another go alone.
     fn keeps_orchestrated(&self, slug: &str, handle: &str, every: bool) -> Result<(), Error> {
         let board = self.board()?;
         let holds = |t: &Task, r: &crate::Role| {
             t.slug == slug && r.handle == handle && r.role == "orchestrator"
         };
-        let orphans = orchestration::orphaned(&board.tasks, holds);
-        if orphans.is_empty() {
+        let left = orchestration::orphans(&board.tasks, holds);
+        if left.is_empty() {
             return Ok(());
         }
+        let past =
+            orchestration::orchestrated(&board.tasks, handle) > self.limits().orchestrator_tasks;
+        let started = (board.tasks.iter())
+            .filter(|t| left.contains(t.slug.as_str()))
+            .any(|t| crate::slots::OPEN.contains(&t.status.as_str()));
+        if past && !started {
+            return Ok(());
+        }
+        let orphans = orchestration::orphaned(&board.tasks, holds);
         let named: Vec<&str> = orphans.iter().map(|t| t.slug.as_str()).collect();
         let command = self.board_command();
         let cannot = format!(
             "{handle} cannot let go of orchestrator on {slug}: {} would have no orchestrator",
             named.join(", ")
         );
+        let task = board.tasks.iter().find(|t| t.slug == slug);
         let mut pool = self.retrying(|| self.pool(&board, &[handle]))?;
-        let mut refusal = match pool.pick() {
+        let to = match task {
+            Some(task) => pool.pick_for(task),
+            None => pool.pick(),
+        };
+        let mut refusal = match to {
             Some(to) => format!("{cannot}; hand it over instead: {command} handover {slug} {to}"),
             None => format!(
-                "{cannot}, and no other orchestrator that stays is there to take it: it stays \
-                 {handle}'s (`{command} leave` leaves it waiting for the next orchestrator)"
+                "{cannot}, and no other orchestrator that stays and holds fewer open tasks than \
+                 the limit is there to take it: it stays {handle}'s (`{command} leave` leaves it \
+                 waiting for the next orchestrator)"
             ),
         };
-        let task = board.tasks.iter().find(|t| t.slug == slug);
         let roles = task.into_iter().flat_map(|t| t.roles.iter());
         let other = roles.filter(|r| r.handle == handle && r.role != "orchestrator");
         if let Some(other) = other.map(|r| r.role.as_str()).next().filter(|_| every) {

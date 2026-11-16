@@ -5,11 +5,11 @@
 //! screen never close.
 
 use super::{Agent, How, restore};
-use crate::common::RawWrite;
 use crate::{Hooked, World};
 use serde_json::json;
 use std::cell::Cell;
 use std::collections::BTreeMap;
+use symphony_board::Raw;
 use symphony_board::launch::reap::{
     CHANGED, Closed, IDLE_HOUR, Kept, REAP_SECONDS, Sweep, TOOL_CALL,
 };
@@ -277,11 +277,9 @@ fn a_tool_call_in_the_hour_or_a_change_of_its_tasks_status_starts_the_hour_again
     let started = w.f.now();
     w.sweep();
     // It worked between two sweeps, each finding it at its prompt: its agent beat half an hour in.
-    w.f.other_client()
-        .write(
-            "UPDATE type::record('session', $handle) SET last_tool = $at RETURN NONE;",
-            json!({"handle": executor, "at": started + IDLE_HOUR / 2.0}),
-        )
+    Raw::on(&w.f.other_client())
+        .row("session", json!(executor))
+        .set(json!({"last_tool": started + IDLE_HOUR / 2.0}))
         .unwrap();
     w.f.advance(IDLE_HOUR - REAP_SECONDS);
     assert_eq!(
@@ -416,11 +414,9 @@ fn a_tool_call_a_post_or_a_move_while_the_close_looks_keeps_the_terminal_its_rec
                 }
                 match meanwhile {
                     Meanwhile::ToolCall => {
-                        w.f.other_client()
-                            .write(
-                                "UPDATE type::record('session', $handle) SET last_tool = $at RETURN NONE;",
-                                json!({"handle": handle, "at": w.f.now()}),
-                            )
+                        Raw::on(&w.f.other_client())
+                            .row("session", json!(handle))
+                            .set(json!({"last_tool": w.f.now()}))
                             .unwrap();
                     }
                     Meanwhile::Post => {

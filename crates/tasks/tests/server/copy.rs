@@ -201,7 +201,7 @@ fn a_refused_copy_of_a_quarter_board_leaves_the_board_and_its_index_as_they_were
     }
     assert_eq!(store.dump().unwrap(), small);
     assert_eq!(
-        one(&store, "RETURN count(SELECT id FROM task_chunk);"),
+        json!(store.raw().table("task_chunk").count().unwrap()),
         json!(1)
     );
     assert_eq!(

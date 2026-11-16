@@ -2,7 +2,7 @@
 
 `just symphony` runs this server. The native read models live in `crates/symphony`, and
 their serde-only wire records in `crates/symphony-api`. All routes run natively:
-the Dioxus SPA, reads, saves and media, under each project's `/<id>/` on the one server and
+the client, reads, saves and media, under each project's `/<id>/` on the one server and
 at `/` on a server of its own.
 
 ## Projects
@@ -121,15 +121,18 @@ before compression. A request whose `If-None-Match` names it is answered `304` w
 keeping the tag and `no-store` (`src/api/validated.rs`, applied where every read leaves
 `api::answer`). A document, its outline and its sections' bodies carry the feed's cursor
 (`version`), which moves with every change on the board, so their tag is of the JSON with the
-cursor left out: it moves only with the document. An outline's check that names the tag of the
-copy the hub follows for that page is answered `304` at the feed's cursor without rendering the
-document: the hub renders that copy again when anything a render reads that it tracks changed,
-and makes its outline's tag once for each copy (`Hub::outline_kept`). A check with another tag
-or none, of a document not followed yet, of a copy whose tasks are no longer the ones that link
-it on the board as last read (a board read asks for no refresh), or of one that names a file
-from outside the entrypoints' folders by its change time and size, which no refresh watches,
-renders as a read does. A page whose kept copy is still current takes
-the cursor from `/api/board`. The browser keeps no copy of its own: the client's cache keeps
+cursor left out: it moves only with the document. An outline's check that names the tag of the copy
+the hub follows for that page is answered `304` at the feed's cursor without rendering the
+document: the hub renders that copy again when anything a render reads that it tracks changed, and
+makes its outline's tag once for each copy (`Hub::outline_kept`). A check with another tag or none,
+of a document not followed yet, of a copy whose tasks are no longer the ones that link it on the
+board as last read (a board read asks for no refresh), or of one that names a file from outside the
+entrypoints' folders by its change time and size, which no refresh watches, renders as a read does.
+A page whose kept copy is still current takes the cursor from `/api/board`. Every JSON read names
+the feed's cursor it was read at in a header (`symphony_api::VERSION_HEADER`), on its `200` and its
+`304` alike: the server takes the cursor before it reads the answer, so every event at or before it
+is in the answer, and a page drops what its feed says of a read at or before the read's cursor
+(`api::cursor`). The browser keeps no copy of its own: the client's cache keeps
 the body and sends the tag back (docs/analysis/client-cache.md). An error carries no tag, and the
 feed's stream is never read whole.
 
@@ -182,8 +185,8 @@ selects another folder. A private server on the main checkout leaves the
 shared app's `artifacts/docs-app.port` record alone. A project's page serves the
 shell with revalidation by its ETag, as is any client file not named by its
 content. A file named by its content, an `assets/` name whose last `-` part is
-dx's `dxh…` hash or the packager's sixteen hex digits (the shell script, every
-page module, wasm and stylesheet), is cached for a year as immutable, so a
+the build's sixteen hex digits (the shell script, every page module and stylesheet), is
+cached for a year as immutable, so a
 return visit revalidates the page alone (`src/api/client.rs`). Snapshots and the
 page are gzipped per request. A client file is gzipped once per content, at the
 best level, by the first request that takes gzip; later requests, from any

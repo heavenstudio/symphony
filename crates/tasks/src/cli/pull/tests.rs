@@ -49,8 +49,82 @@ fn digest(executing: usize, lists: &[(&'static str, &[&str])]) -> Digest {
         low_volume: crate::limits::LOW_VOLUME,
         alarm: None,
         volume: BTreeMap::from([("keen".to_string(), 9)]),
+        orchestrated: BTreeMap::from([("keen".to_string(), 3)]),
+        limit: crate::limits::ORCHESTRATOR_TASKS,
         scoped: true,
     }
+}
+
+#[test]
+fn an_orchestrator_at_the_limit_sees_it_in_the_header_and_past_it_is_told_by_how_many_once() {
+    let under = digest(1, &[]);
+    assert!(
+        !under.lines()[0].contains("orchestrates="),
+        "{:?}",
+        under.lines()
+    );
+    assert!(!under.entries().iter().any(|(name, _)| name == OVER_LIMIT));
+    let at_limit = |held: usize| Digest {
+        orchestrated: BTreeMap::from([("keen".to_string(), held)]),
+        ..digest(1, &[])
+    };
+    let full = at_limit(16);
+    assert!(
+        full.lines()[0].ends_with(" orchestrates=16/16"),
+        "{:?}",
+        full.lines()
+    );
+    assert_eq!(
+        full.lines().len(),
+        1,
+        "at the limit, no line: {:?}",
+        full.lines()
+    );
+    let over = at_limit(66);
+    let lines = over.lines();
+    assert!(lines[0].ends_with(" orchestrates=66/16"), "{lines:?}");
+    assert_eq!(
+        lines[1],
+        "  over_limit keen orchestrates=66 limit=16 — 50 past it: it is given no task and takes \
+         none until it is under; let the unstarted ones go with `just tasks release SLUG --role \
+         orchestrator`"
+    );
+    let said = over.said();
+    assert!(
+        said.entries
+            .contains(&(OVER_LIMIT.to_string(), "keen".to_string()))
+    );
+    // Told once: the next look, one task fewer, says the count that moved and no line again.
+    let next = at_limit(65);
+    let changes = next.changes_since(&said, &told(&said));
+    assert_eq!(changes, ["PULL orchestrates=65/16 (was 66/16)"]);
+    assert!(
+        next.event_lines_since(&told(&said))
+            .iter()
+            .all(|l| !l.contains(OVER_LIMIT))
+    );
+    // Under it again: resolved, and the header leaves the count out.
+    let back = at_limit(15);
+    let changes = back.changes_since(&next.said(), &told(&said));
+    assert_eq!(
+        changes,
+        [
+            "PULL orchestrates=none (was 65/16)",
+            "  resolved over_limit keen",
+        ]
+    );
+    assert!(!back.lines()[0].contains("orchestrates="));
+    // Moving under it says nothing of it.
+    let fewer = at_limit(14).changes_since(&back.said(), &told(&said));
+    assert_eq!(fewer, ["PULL counts unchanged"]);
+    // An unscoped digest says it of nobody's header.
+    let whole = Digest {
+        scoped: false,
+        orchestrated: BTreeMap::from([("keen".to_string(), 20), ("amber".to_string(), 2)]),
+        ..digest(1, &[])
+    };
+    assert!(!whole.lines()[0].contains("orchestrates="));
+    assert!(whole.over_limit_lines().is_empty());
 }
 
 fn backlog(n: usize) -> Vec<String> {

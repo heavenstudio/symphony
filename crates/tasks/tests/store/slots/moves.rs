@@ -105,9 +105,8 @@ fn a_landings_hold_keeps_its_tasks_slot_and_returns_it_to_work_at_the_cap() {
 
 /// Whether the board keeps a hold on `slug`.
 fn hold_kept(store: &Store, slug: &str) -> bool {
-    let sql = "RETURN record::exists(type::record('counter', ['hold', $slug]));";
-    let answer = store.client().query(sql, json!({"slug": slug})).unwrap();
-    answer == [json!(true)]
+    let hold = store.raw().row("counter", json!(["hold", slug]));
+    hold.exists().unwrap()
 }
 
 #[test]

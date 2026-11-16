@@ -63,14 +63,10 @@ fn tasks(repo: &Repository, args: &[&str], input: &str) -> String {
 
 /// This host's dispatch lease as it stands: who took it last (`revision`) and until when.
 fn lease(store: &Store) -> Value {
-    store
-        .client()
-        .query(
-            "RETURN (SELECT revision, until, asked FROM ONLY type::record('callback_lease', ['dispatch', $host])) ?? {};",
-            json!({"host": hostname()}),
-        )
-        .unwrap()
-        .remove(0)
+    let lease = (store.raw()).row("callback_lease", json!(["dispatch", hostname()]));
+    let lease = lease.fields(&["revision", "until", "asked"]).unwrap();
+    // No lease yet reads as one that says nothing.
+    if lease.is_null() { json!({}) } else { lease }
 }
 
 /// Waits until `recipient` has heard `text` and the dispatcher of write number `nth` has let this

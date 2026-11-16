@@ -1,5 +1,5 @@
 //! The command line, keys, readiness and report of `symphony shot`, without a browser. The browser
-//! cases (a real page, its pictures, its clean failures) are in apps/symphony-ui/tests/browser/shot.rs.
+//! cases (a real page, its pictures, its clean failures) are in apps/symphony-web-tests/tests/browser/shot.rs.
 
 use super::*;
 

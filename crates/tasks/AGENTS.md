@@ -53,7 +53,9 @@ read before, in one small read, `copy.rs` the whole-board copy, `opening.rs` how
 the schema rule, `transaction.rs` the schema guard every write starts with, `writers.rs` the line
 each program that opens a board to write keeps, which `tasks migrate` reads before it moves one
 ([TASKS](../../docs/TASKS.md#who-writes-a-board)). `lib.rs`'s doc states
-the rule of every write. `schema.rs` is the tables, the indexes, the version and its migration
+the rule of every write. `store/surreal/` is every statement the store sends, a module beside each
+store module, and `store/raw.rs` (`Store::raw`) a board's rows as a test sets and reads them
+([the seam](#the-stores-statements-live-in-one-place)). `schema.rs` is the tables, the indexes, the version and its migration
 steps; `live.rs` which builds may move a project's live board, and `live/seen.rs` the highest schema
 it was seen at. `rpc.rs` (with `rpc/read.rs`) and `cbor.rs` are the client: SurrealDB's RPC in CBOR
 over plain HTTP.
@@ -113,7 +115,8 @@ the stamps' catalogue and readers ([TASKS](../../docs/TASKS.md#needed-stamps)), 
 
 `slots.rs` with `store/cap.rs` is the cap on an orchestrator's open work
 ([TASKS](../../docs/TASKS.md#slots)); `orchestration.rs` with `store/work/given.rs` one orchestrator
-per task; `limits.rs` the project's `[limits]` and the alarm's thresholds, read again when the file
+per task, and the limit on the open tasks one holds
+([TASKS](../../docs/TASKS.md#the-limit-on-the-tasks-an-orchestrator-holds)); `limits.rs` the project's `[limits]` and the alarm's thresholds, read again when the file
 changes ([TASKS](../../docs/TASKS.md#limits-and-models)); `alarm.rs` and `alarm/` the pipeline
 alarm, `cli/pull/pipeline.rs` as PULL says it ([TASKS](../../docs/TASKS.md#the-pipeline-alarm));
 `store/work/moves.rs` a move that names where it goes from; `health.rs` a session's health, derived
@@ -231,6 +234,18 @@ fenced on the task versions and the lost holders' last beats it read (`given::FE
 what a reader derived (`Store::record_fixed`) moves no task version, so it never fences a concurrent
 move as stale. A plain `Store::create` gives no orchestrator: a new way to file goes through
 `Store::give_filed`, as the command line's and the API's `create` do.
+
+### The store's statements live in one place
+
+The store's modules hold the rules: what is read, what is decided, the variables a statement is
+handed and the shape of its answer. The statement's text is `store/surreal/`'s, under a name the
+store's module asks for whole (a constant, or a function of the few values its text turns on), so
+no SurrealQL is written anywhere else but in the files `store/surreal/fence_tests.rs` lists with
+their reasons (the schema, the client, the server's reclaim), and nothing reaches the client but
+through `store/transaction.rs`. A new statement goes there; a test that needs a row no command
+writes, or reads one, asks `Store::raw` by table, id and equal fields and writes no statement of
+its own, and one that must (the engine itself is its subject) is in the list
+`tests/store/raw_fence.rs` holds. That is what lets another database answer the same names.
 
 ### Delivery never loses a line
 
