@@ -401,13 +401,14 @@ fn the_lanes_say_each_part_to_assistive_technology_and_the_keyboard_walks_them()
 }
 
 /// Open the task's page with its timeline's read held, and leave it held: once the box's
-/// placeholder is drawn, where the page's parts stand ([`places`]).
+/// placeholder is drawn, where the page's parts stand ([`places`]). The timeline's chunk is asked
+/// for once its part has something to draw, so none has come.
 fn placeholder_drawn(chrome: &mut super::chrome::Chrome, site: &Site) -> Value {
     site.hold_route(symphony_api::TASK_TIMELINE_PATH, true);
     chrome.open(&site.url(TASK));
     assert!(
         chrome.wait_for(
-            "document.querySelector('.task-body') !== null && document.querySelectorAll('#timeline-slot .tl-sk-row').length > 0 && document.getElementById('timeline-root') !== null",
+            "document.querySelector('.task-body') !== null && document.querySelectorAll('#timeline-slot .tl-sk-row').length > 0 && document.getElementById('timeline-root') === null",
             SHOWN
         ),
         "the box's placeholder was not drawn: {:?}",
@@ -761,8 +762,10 @@ fn the_timeline_reads_each_minute_only_while_shown_and_open_and_stops_when_left(
         json!([13, null])
     );
     site.fail_route(symphony_api::TASK_TIMELINE_PATH, false);
+    // The read that failed is tried again by itself, the minute's wait left running.
+    wait_reads(&mut chrome, &site, "visual%2Fin-progress", 5);
 
-    // The task changes: its timeline is read again at once.
+    // The task changes: its timeline is read again at once, the minute's wait still running.
     let mut page = look_parity::responses()["/api/task-page"].clone();
     page["task"]["updated"] = json!(2.0);
     site.set_json("/api/task-page", &page);
@@ -771,12 +774,8 @@ fn the_timeline_reads_each_minute_only_while_shown_and_open_and_stops_when_left(
         4183,
         &json!({"version":4183,"changes":[{"region":"task","data":{"key":SLUG,"value":page["task"]}}]}).to_string(),
     );
-    assert!(
-        chrome.wait_for("window.minuteTimers === 5", SHOWN),
-        "the task's change did not read its timeline again: {:?}",
-        site.targets()
-    );
-    assert_eq!(reads(&site), 5);
+    wait_reads(&mut chrome, &site, "visual%2Fin-progress", 6);
+    assert_eq!(chrome.eval("window.minuteTimers"), json!(4));
 
     // Left for the board, the timeline is gone and reads no more.
     chrome.eval("document.querySelector('header a[href=\"/tasks\"]').click()");
@@ -789,13 +788,13 @@ fn the_timeline_reads_each_minute_only_while_shown_and_open_and_stops_when_left(
     chrome.eval("new Promise(resolve => setTimeout(resolve, 300))");
     assert_eq!(
         (reads(&site), chrome.eval("window.minuteTimers")),
-        (5, json!(5))
+        (6, json!(4))
     );
 
     // Back on the task, read again; once the task is done, no minute after.
     chrome.eval("history.back()");
-    assert!(chrome.wait_for("window.minuteTimers === 6", SHOWN));
-    assert_eq!(reads(&site), 6);
+    assert!(chrome.wait_for("window.minuteTimers === 5", SHOWN));
+    assert_eq!(reads(&site), 7);
     let mut done = timed(fixture());
     done["closed"] = done["now"].clone();
     site.set_json(symphony_api::TASK_TIMELINE_PATH, &done);
@@ -811,7 +810,7 @@ fn the_timeline_reads_each_minute_only_while_shown_and_open_and_stops_when_left(
             reads(&site),
             chrome.eval("[window.minuteTimers, window.minute]")
         ),
-        (7, json!([6, null]))
+        (8, json!([5, null]))
     );
 }
 
@@ -845,7 +844,7 @@ fn a_timeline_that_cannot_be_read_says_so_in_its_box_and_try_again_reads_it() {
     // at its centre lands on it.
     assert_eq!(
         shown(&mut chrome, "#timeline-slot .tl-failed"),
-        ["The timeline could not be read: Failed to fetch. Trying again in a minute. Try again"]
+        ["The timeline could not be read: Failed to fetch. Trying again… Try again"]
     );
     let tap = chrome.eval(TRY_AGAIN);
     assert_eq!(
@@ -862,7 +861,8 @@ fn a_timeline_that_cannot_be_read_says_so_in_its_box_and_try_again_reads_it() {
         );
     }
     assert!(chrome.wait_for("document.querySelectorAll('.tl-drawn .tl-row').length === 13 && !document.querySelector('.tl-failed')", SHOWN));
-    assert_eq!(reads(&site), before + 1);
+    // The tap's read, or the one the page was making by itself, which the tap joins.
+    assert!(reads(&site) > before);
     // The tap was the timeline's alone: no control of the page's opened.
     assert_eq!(
         chrome.eval("['quick-open', 'bell'].map(id => document.getElementById(id).getAttribute('aria-expanded'))"),
@@ -876,9 +876,7 @@ fn a_timeline_that_cannot_be_read_says_so_in_its_box_and_try_again_reads_it() {
     failed_read(&mut chrome);
     assert_eq!(
         shown(&mut chrome, "#timeline-slot .tl-failed"),
-        [
-            "The timeline could not be read: Board snapshot unavailable. Trying again in a minute. Try again"
-        ]
+        ["The timeline could not be read: Board snapshot unavailable. Trying again… Try again"]
     );
     let tap = chrome.eval(TRY_AGAIN);
     assert_eq!(

@@ -519,11 +519,6 @@ function settled(then) {
   );
 }
 
-// A task page's timeline box loads the timeline's chunk once the page has drawn its data and the
-// browser is idle (apps/symphony-web/src/timeline-slot.tsx), as a persistent module's files are
-// warmed: the page's own reads first.
-window.reviewSettled = settled;
-
 // Once the first page has drawn its data (none of its reads in flight for half a second, the last
 // of them answered) and the browser is idle, the persistent modules' files go into the HTTP cache
 // at the lowest priority, nothing evaluated, so a first open waits on no network: the chat's first,

@@ -696,12 +696,23 @@ fn a_ghost_card_is_as_tall_as_the_card_of_a_task_with_a_title_of_two_lines() {
 #[test]
 fn a_task_before_its_read_draws_its_head_and_brief_cards_its_thread_and_its_composer() {
     let site = site();
-    site.hold_route("/api/task-page", true);
+    // Each part is its mock-up until its own read answers: the page's and the thread's held.
+    let held = ["/api/task-page", "/api/task-history"];
+    for route in held {
+        site.hold_route(route, true);
+    }
     let Some(mut browser) = open(&site, TASK, 390, 844) else {
-        site.hold_route("/api/task-page", false);
+        for route in held {
+            site.hold_route(route, false);
+        }
         return;
     };
-    let drawn = browser.wait_for("document.querySelector('main .ghost-head') !== null", SHOWN);
+    // The thread stands below a phone's first screen, so its cover lifts at once: its own
+    // mock-up is two messages' outlines and the composer's, each drawn as it nears the screen.
+    let drawn = browser.wait_for(
+        "document.querySelector('main .ghost-head') !== null && document.querySelector('article.task .settle[data-settled=true]') !== null && document.querySelector('article.task .ghost-composer') !== null",
+        SHOWN,
+    );
     // The real head's box and title, laid out beside the ghost as the page will draw them.
     let ghost = browser.eval(&format!(
         "(() => {{ const head = document.querySelector('main .ghost-head'), page = head.parentElement;
@@ -714,11 +725,13 @@ fn a_task_before_its_read_draws_its_head_and_brief_cards_its_thread_and_its_comp
                 said: [...document.querySelectorAll('main [role=status]')].filter(status => !status.closest('[aria-hidden=true]')).map(status => status.textContent),
                 busy: page.getAttribute('aria-busy')}}; }})()"
     ));
-    site.hold_route("/api/task-page", false);
+    for route in held {
+        site.hold_route(route, false);
+    }
     assert!(drawn, "no ghost of the task: {}", browser.eval(PAGE));
     assert_eq!(
         ghost,
-        json!({"cards": 4, "pills": 2, "entries": 3, "fields": 4, "head": [], "title": 2,
+        json!({"cards": 4, "pills": 2, "entries": 2, "fields": 4, "head": [], "title": 2,
             "said": ["Loading task…"], "busy": "true"}),
         "the ghost draws the task's head card as the real one, its title two lines of the title's height on a phone, then its gates, timeline, brief, thread and composer, and says once that the task loads"
     );

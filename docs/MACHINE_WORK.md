@@ -211,8 +211,11 @@ writes nothing.
    its last tool call ran in. That session is the one live session whose subagent's
    last tool call ran in this linked worktree. Two live there give no session. The
    main checkout places no one: every agent runs its board commands there.
-3. **Branch.** The checkout's branch, when it is the slug of a task that is not done
-   or cancelled. An executor's worktree is on its task's branch.
+3. **Branch.** The checkout's branch, when it is the slug of a task, whatever its
+   status. An executor's worktree is on its task's branch, and stays its task's once
+   an approve left the task done: an executor holds no done task, so what it runs
+   there after a land's conflict (main merged, its tests run at the merged tip) is
+   credited by the branch, with no task to name.
 4. **Claude Code session.** The live full session bound by the Claude Code session
    the command runs in (`CLAUDE_CODE_SESSION_ID`), and the task it holds. A subagent
    shares its parent's id, so a subagent not yet placed would be credited to its

@@ -436,9 +436,13 @@ fn task_page_gates_draw_only_the_latest_read_and_a_failed_read_leaves_the_page_w
         "the read dropped was aborted, not left waiting: {asked:?}"
     );
 
-    // A read that fails says so in its place, and the page goes on working.
+    // A read that fails while the gates are shown leaves them shown, and is tried again.
     site.fail_route(GATES, true);
     push(&site, 4184, task_changed(3.0));
+    wait_reads(&mut page, &site, 3);
+    drawn(&mut page, 4);
+    // One that fails with none to show says so in its place, and the page goes on working.
+    page.open(&site.url(PAGE));
     assert!(
         page.wait_for(
             "document.querySelector('.task-gates[data-gates=failed]') !== null",
@@ -567,7 +571,7 @@ fn task_page_gates_read_again_on_the_events_that_change_them_and_never_on_a_plai
 }
 
 #[test]
-fn task_page_gates_are_not_read_until_the_card_nears_the_screen() {
+fn task_page_gates_are_read_as_the_page_mounts_however_far_below_the_screen() {
     let site = site(&pictured());
     // A head 150 dependencies tall puts the gates far below a phone's screen.
     site.set_json(
@@ -588,16 +592,18 @@ fn task_page_gates_are_not_read_until_the_card_nears_the_screen() {
         SHOWN
     ));
     frames(&mut page);
-    pause(&mut page, 800);
     assert_eq!(
         page.eval("Math.round(document.querySelector('.task-gates-slot').getBoundingClientRect().top) > innerHeight + 600"),
         json!(true),
         "the card is far below the screen"
     );
-    assert_eq!(reads(&site), 0, "nothing asked for gates nobody can see");
-    page.eval("document.querySelector('.task-gates-slot').scrollIntoView()");
-    wait_reads(&mut page, &site, 1);
+    // A part of the page, read as it mounts behind nothing: drawn before the reader gets there.
     drawn(&mut page, 4);
+    assert_eq!(reads(&site), 1, "one read, with no scroll");
+    page.eval("document.querySelector('.task-gates-slot').scrollIntoView()");
+    frames(&mut page);
+    pause(&mut page, 400);
+    assert_eq!(reads(&site), 1, "nearing the screen asks nothing more");
 }
 
 /// The brief's top on the page, in px from the document's start.

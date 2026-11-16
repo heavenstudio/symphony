@@ -29,19 +29,21 @@ struct Page {
     regions: &'static [(&'static str, &'static str, &'static str)],
 }
 
-/// A task page's regions: its head, gates, timeline, brief and thread.
+/// A task page's regions: its head, gates, timeline, brief and thread. The gates, the timeline's
+/// box and the thread's heading are the page's own from its first draw, each part its mock-up
+/// until its read answers; the head and the brief are their ghosts until the page's read does.
 const TASK_REGIONS: &[(&str, &str, &str)] = &[
     ("head", "main .ghost-head", "article.task > .task-head"),
     ("gates", "main .task-gates", "article.task .task-gates"),
     (
         "timeline",
-        "main .ghost-tl-box",
+        "article.task #timeline-slot",
         "article.task #timeline-slot",
     ),
     ("brief", "main .ghost-brief", "article.task > .task-body"),
     (
         "thread",
-        "main .ghost-tl ~ .ghost-heading",
+        "article.task > h2:not([id])",
         "article.task > h2:not([id])",
     ),
 ];
