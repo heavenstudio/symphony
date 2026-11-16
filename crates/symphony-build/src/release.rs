@@ -734,6 +734,16 @@ fn status(
     }
     let _ = write!(out, "{}", record::publish_status(&runs, now));
     let _ = write!(out, "{}", record::refresh_status(&runs, now));
+    // Whether the machine's server is the release `current` names, or what holds it on a
+    // project's build ([`symphony::machine::switch`]).
+    match symphony::machine::dir() {
+        Ok(machine) => {
+            let _ = write!(out, "{}", symphony::machine::switch::standing(&machine));
+        }
+        Err(problem) => {
+            let _ = writeln!(out, "machine: {problem}");
+        }
+    }
     0
 }
 

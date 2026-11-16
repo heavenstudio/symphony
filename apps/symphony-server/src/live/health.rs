@@ -10,6 +10,9 @@
 //! project has less free than `SYMPHONY_LOW_DISK_GB` ([`symphony_board::board_health::disk`]),
 //! every page says that too. None of it reads the board. While the project's settings do not load,
 //! every page says so and why, as the project is served with the defaults ([`Hub::tell_project`]).
+//! While the board is at a schema ahead of this build's, which it reads and never writes, every
+//! page says so ([`Hub::read_ahead`]); while this project holds the machine's server on a
+//! project's build, the one server tells its pages so ([`Hub::tell_machine`]).
 
 use super::Hub;
 use std::collections::BTreeMap;
@@ -28,6 +31,11 @@ pub(crate) struct Notices {
     health: String,
     /// The disk running low ([`Low::notice`]).
     disk: String,
+    /// What the machine's server is to this project ([`Hub::tell_machine`]).
+    machine: String,
+    /// The board's schema while it is ahead of this build's, and what the pages say of it
+    /// ([`Hub::read_ahead`]).
+    ahead: (Option<i64>, String),
     /// The project file as the hub last found it ([`stamp`]): an edit to it renders main's
     /// documents again, whether the settings still load or not ([`Hub::tell_project`]).
     project_file: Stamp,
@@ -66,6 +74,8 @@ impl Notices {
         [
             self.update.as_str(),
             self.project.as_str(),
+            self.machine.as_str(),
+            self.ahead.1.as_str(),
             self.health.as_str(),
             self.disk.as_str(),
         ]
@@ -173,6 +183,34 @@ impl Hub {
         self.server_notice.send_replace(notices.said());
     }
 
+    /// Tell every page, on the server's notice, what the machine's server is to this project when
+    /// that changes: `said`, nothing while there is nothing to say ([`crate::projects`]).
+    pub(crate) fn tell_machine(&self, said: String) {
+        let mut notices = self.notices.lock().unwrap_or_else(PoisonError::into_inner);
+        if notices.machine != said {
+            notices.machine = said;
+            self.server_notice.send_replace(notices.said());
+        }
+    }
+
+    /// The board's schema when it is ahead of this build's, read on `store` once a tick: the hub
+    /// then reads it and writes nothing to it, as the schema rule refuses a reader's every write
+    /// on it ([`symphony_board::Store`]), and every page says so, until it is not. A read that
+    /// fails keeps what the last one found.
+    pub(crate) fn read_ahead(&self, store: &symphony_board::Store) -> Option<i64> {
+        let found = store.board_version();
+        let mut notices = self.notices.lock().unwrap_or_else(PoisonError::into_inner);
+        let Ok(found) = found else {
+            return notices.ahead.0;
+        };
+        let ahead = found.filter(|found| *found > symphony_board::SCHEMA);
+        if notices.ahead.0 != ahead {
+            notices.ahead = (ahead, ahead.map(read_only).unwrap_or_default());
+            self.server_notice.send_replace(notices.said());
+        }
+        ahead
+    }
+
     /// What the project picker says of this project's board now: nothing while it is well.
     pub(crate) fn health_notice(&self) -> String {
         self.board_notice(self.now())
@@ -195,6 +233,15 @@ impl Hub {
             None => notice(self.health.failing(now)),
         }
     }
+}
+
+/// What a page says of a board at `schema`, ahead of this build's, which it reads and never writes.
+pub(crate) fn read_only(schema: i64) -> String {
+    format!(
+        "The task board is at schema {schema}, ahead of this Symphony's {}: it is read, and nothing \
+         is written to it from here, until a Symphony at schema {schema} serves it.",
+        symphony_board::SCHEMA
+    )
 }
 
 /// What a page says of a project whose settings do not load, `why` the load's words.

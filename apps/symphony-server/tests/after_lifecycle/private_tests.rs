@@ -131,47 +131,10 @@ fn a_server_ends_with_its_named_test_process_even_while_its_parent_lives() {
     assert!(front(actual.port).is_none());
 }
 
-/// A release installed in `repo`'s machine folder as an install leaves it: this build of the
-/// server, a stand-in for each other binary, and a client of a page and one build file, each
-/// saying `mark`. The server in it, through the `current` link.
+/// A release installed in `repo`'s machine folder as an install leaves it
+/// ([`super::release_tests::installed`]): the server in it, through the `current` link.
 fn installed_release(repo: &Repo, name: &str, mark: &str) -> PathBuf {
-    use symphony::machine::release::{self, BINARIES, Built, Serves, Version};
-    let build = repo.base.join(format!("{name}-build"));
-    fs::create_dir_all(build.join("bin")).unwrap();
-    for binary in BINARIES {
-        let to = build.join("bin").join(binary);
-        if binary == "symphony-server" {
-            fs::copy(fixture::APP, &to).unwrap();
-        } else {
-            write(&to, "#!/bin/sh\n");
-            fs::set_permissions(&to, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
-        }
-    }
-    write(
-        &build.join("client/index.html"),
-        &format!(
-            "<html><head><script type=\"module\" src=\"/assets/app-{mark}.js\"></script></head>\
-             <body>{mark}</body></html>"
-        ),
-    );
-    write(
-        &build.join(format!("client/assets/app-{mark}.js")),
-        &format!("console.log('{mark}')"),
-    );
-    let version = Version { major: 0, minor: 0 };
-    let built = Built {
-        release: name,
-        commit: "0000000",
-        serves: Serves {
-            schema: symphony_board::SCHEMA,
-            protocol: version,
-            tasks_api: version,
-        },
-        binaries: &build.join("bin"),
-        client: &build.join("client"),
-    };
-    release::install(&repo.home, &built).unwrap();
-    release::point(&repo.home, name).unwrap();
+    super::release_tests::installed(repo, name, mark, None);
     repo.home.join("current/bin/symphony-server")
 }
 

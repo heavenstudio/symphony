@@ -3,6 +3,37 @@ use super::*;
 /// A test's machine folder, beside the project's install folder ([`FOLDER`]).
 const MACHINE: &str = "machine";
 
+/// The record names the release the server is, when it is one, beside what [`Running`] reads; a
+/// project's build's record names none, and a binary outside a release is none.
+#[test]
+fn a_record_names_the_release_its_server_is_and_a_projects_build_none() {
+    let tree = crate::testing::Tree::new();
+    let home = Home::new(
+        &tree.path(MACHINE),
+        Path::new("/bin/symphony-server"),
+        Path::new("/r"),
+        0,
+        vec![],
+    );
+    std::fs::create_dir_all(tree.path(MACHINE)).unwrap();
+    let running = Running {
+        port: 41003,
+        pid: 43,
+        root: "/r".into(),
+    };
+    home.record(&running, Some("release-2026-11-20")).unwrap();
+    let text = std::fs::read_to_string(tree.path(MACHINE).join(ADDRESS)).unwrap();
+    assert_eq!(
+        text,
+        r#"{"port":41003,"pid":43,"root":"/r","release":"release-2026-11-20"}"#
+    );
+    assert_eq!(home.recorded(), Some(running.clone()));
+    home.record(&running, None).unwrap();
+    let text = std::fs::read_to_string(tree.path(MACHINE).join(ADDRESS)).unwrap();
+    assert_eq!(text, r#"{"port":41003,"pid":43,"root":"/r"}"#);
+    assert_eq!(release_of(Path::new("/bin/symphony-server")), None);
+}
+
 #[test]
 fn server_records_prefer_the_machine_folder_and_read_the_predecessor_once() {
     let tree = crate::testing::Tree::new();
@@ -190,6 +221,7 @@ fn status(pid: i64) -> symphony_api::Front {
         pin: 0,
         schema: 0,
         projects: Vec::new(),
+        release: None,
     }
 }
 

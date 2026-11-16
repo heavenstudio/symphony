@@ -118,8 +118,29 @@ pub(crate) fn one(
         _ if if_up => Ok(Started::NotUp),
         _ => {
             register(&machine, &entry)?;
-            let running = crate::cli::startup("ensure shared server", || home.ensure())
-                .map_err(|e| e.to_string())?;
+            let registry = Registry::read(&machine)?;
+            let release = machine::switch::to_start(&machine, &registry, &entry);
+            // A start by a release's own binary runs that release's server: never while something
+            // holds the switch, as the project holding it would be refused on its pages.
+            if release.is_none()
+                && let Some(ours) = &ours.release
+            {
+                return Err(machine::switch::refused(&machine, &registry, ours));
+            }
+            if let Some((_, build)) = &release
+                && ours.release != build.release
+            {
+                eprintln!(
+                    "· the machine's Symphony starts as the release {}, which serves every \
+                     registered project",
+                    build.release.as_deref().unwrap_or_default()
+                );
+            }
+            let running = crate::cli::startup("ensure shared server", || match &release {
+                Some((server, _)) => home.ensure_from(server),
+                None => home.ensure(),
+            })
+            .map_err(|e| e.to_string())?;
             Ok(Started::Serving(running, entry.id))
         }
     }
@@ -313,6 +334,7 @@ mod tests {
             pin: 1,
             schema: 1,
             projects: Vec::new(),
+            release: None,
         }
     }
 
@@ -337,6 +359,7 @@ mod tests {
             schema: 1,
             by: "/shelf".into(),
             worktree: None,
+            release: None,
         };
         let old = recorded(10, "/main");
         let new = || Some(recorded(20, "/shelf"));

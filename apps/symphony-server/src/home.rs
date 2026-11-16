@@ -10,6 +10,8 @@
 //! at once start one. That is also the restart: a server that was killed is started again, on the
 //! same port. A record that lies (garbage, a dead pid, a port the server is not on) is mended from the
 //! server's own command line, or replaced by the server it starts. `--stop` ends it ([`Home::stop`]).
+//! The record also names the release installed on the machine the server is, when it is one
+//! ([`Home::record`]): what `just release --status` reads ([`symphony::machine::switch`]).
 
 use crate::probe;
 use crate::sys::{Taken, pid_alive, signal};
@@ -83,6 +85,22 @@ pub struct Running {
     pub port: u16,
     pub pid: i64,
     pub root: String,
+}
+
+/// The record as the machine folder keeps it: the server, and the release it runs when it is one,
+/// which a reader of [`Running`] alone passes over.
+#[derive(Serialize)]
+struct Record<'a> {
+    #[serde(flatten)]
+    running: &'a Running,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    release: Option<&'a str>,
+}
+
+/// The release installed on the machine the server binary `exe` is of, when it is one
+/// ([`symphony::machine::release::of_binary`]).
+pub(crate) fn release_of(exe: &Path) -> Option<String> {
+    symphony::machine::release::of_binary(exe).map(|(_, manifest)| manifest.release)
 }
 
 /// Where the one server keeps its record, its lock and its log, and how it is started.
@@ -189,6 +207,12 @@ impl Home {
     /// only if it answers as itself (a record can name any port, and any pid), and a record that
     /// names this folder's server wrongly is mended from that server's own command line.
     pub fn ensure(&self) -> Result<Running, ServerError> {
+        self.ensure_from(&self.exe)
+    }
+
+    /// [`Home::ensure`], a server started being `exe serve`: the server of the release installed on
+    /// the machine, say, in place of this build's ([`symphony::machine::switch::to_start`]).
+    pub fn ensure_from(&self, exe: &Path) -> Result<Running, ServerError> {
         if let Some(running) = self.up() {
             return Ok(running);
         }
@@ -200,7 +224,8 @@ impl Home {
         if let Some(running) = found {
             if self.answers(&running) {
                 if self.recorded().as_ref() != Some(&running) {
-                    self.record(&running)?;
+                    let release = probe::front(running.port, self.look).and_then(|f| f.release);
+                    self.record(&running, release.as_deref())?;
                 }
                 return Ok(running);
             }
@@ -211,7 +236,7 @@ impl Home {
                 self.dir.join(LOG).display()
             )));
         }
-        self.start()
+        self.start(exe)
     }
 
     /// Stop this folder's server, if it runs, and forget its record: what it was, if anything. It is
@@ -395,8 +420,9 @@ impl Home {
         })
     }
 
-    /// Start the server, detached, wait until it and its app answer, and record it. Under the lock.
-    fn start(&self) -> Result<Running, ServerError> {
+    /// Start the server `exe`, detached, wait until it and its app answer, and record it, with the
+    /// release it is when it is one. Under the lock.
+    fn start(&self, exe: &Path) -> Result<Running, ServerError> {
         let log = self.dir.join(LOG);
         let from = fs::metadata(&log).map_or(0, |meta| meta.len());
         let out = OpenOptions::new()
@@ -405,7 +431,7 @@ impl Home {
             .open(&log)
             .map_err(io("could not open", &log))?;
         let err = out.try_clone().map_err(io("could not open", &log))?;
-        let mut command = Command::new(&self.exe);
+        let mut command = Command::new(exe);
         command
             .arg("serve")
             .arg("--home")
@@ -439,7 +465,7 @@ impl Home {
         // by init.
         command.new_session();
         let mut child = crate::cli::startup("spawn detached server", || command.spawn())
-            .map_err(io("could not start", &self.exe))?;
+            .map_err(io("could not start", exe))?;
         let pid = i64::from(child.id());
         let server = Taken::of(pid);
         // Port 0 is the server's to pick: it binds first and says which it got, so nothing else
@@ -487,7 +513,7 @@ impl Home {
                 log.display()
             )));
         }
-        self.record(&running)?;
+        self.record(&running, release_of(exe).as_deref())?;
         Ok(running)
     }
 
@@ -527,11 +553,17 @@ impl Home {
         up
     }
 
-    /// Write the record whole, so a reader never sees half of it.
-    pub(crate) fn record(&self, running: &Running) -> Result<(), ServerError> {
+    /// Write the record whole, so a reader never sees half of it: `running`, and `release`, the
+    /// release installed on the machine it is, when it is one.
+    pub(crate) fn record(
+        &self,
+        running: &Running,
+        release: Option<&str>,
+    ) -> Result<(), ServerError> {
         let address = self.dir.join(ADDRESS);
         let next = self.dir.join(format!("{ADDRESS}.{}", std::process::id()));
-        let text = serde_json::to_string(running).expect("a record serialises");
+        let text =
+            serde_json::to_string(&Record { running, release }).expect("a record serialises");
         let result = fs::write(&next, text)
             .map_err(io("could not write", &next))
             .and_then(|()| fs::rename(&next, &address).map_err(io("could not write", &address)));
