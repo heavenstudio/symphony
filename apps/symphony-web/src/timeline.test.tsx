@@ -26,7 +26,7 @@ import {
   TimelineView,
   watchCrossings,
 } from "./timeline";
-import { failed, lanes, nextRead, readTimeline, stops } from "./timeline-layout";
+import { failed, lanes, nextRead, readTimeline, stops, WORDED_ROWS } from "./timeline-layout";
 import { NOT_IN_TIME } from "./trouble";
 import type { TaskTimeline } from "./wire";
 
@@ -148,9 +148,12 @@ describe("the timeline drawn", () => {
     expect(drawn).toContain("> · machine 1 h 33 m, queued 26 m<");
     expect(count(drawn, '<li class="tl-row')).toBe(13);
     expect(count(drawn, 'class="tl-row tl-sub tl-event"')).toBe(2);
-    for (const lane of ["stage", "executor", "reviewer", "runs"]) {
+    // The builds and the tests, each a lane of its own.
+    for (const lane of ["stage", "executor", "reviewer", "builds", "tests"]) {
       expect(drawn).toContain(`data-lane="${lane}"`);
     }
+    expect(drawn).toContain("<b>Builds</b><small>studio</small>");
+    expect(drawn).toContain("<b>Tests</b><small>studio</small>");
     expect(count(drawn, 'class="tl-lane tl-gate"')).toBe(4);
     // What runs now: striped in the list and in its lane, and the legend says so.
     expect(count(drawn, "tl-work tl-running")).toBe(1);
@@ -161,12 +164,23 @@ describe("the timeline drawn", () => {
     expect(drawn).toContain(">approved<");
     expect(drawn).toContain('class="tl-g tl-g-waived"');
     expect(drawn).toContain("--c:var(--question)");
-    // The keyboard stops at the first part, its words read aloud; the rest by the arrow keys.
+    // The keyboard stops at the first part, its words read aloud; the rest by the arrow keys. Each
+    // of the five runs' rows in the list takes a tap's focus, in no tab order.
     expect(count(drawn, 'tabindex="0"')).toBe(1);
-    expect(count(drawn, 'tabindex="-1"')).toBe(stops(lanes(pictures())) - 1);
+    expect(count(drawn, 'tabindex="-1"')).toBe(stops(lanes(pictures())) - 1 + 5);
+    expect(count(drawn, 'class="tl-row tl-sub" style="--c:var(--like)" title="')).toBe(4);
     expect(drawn).toContain(
       'id="tl-stop-0" tabindex="0" role="img" aria-label="ready 41 m, from 09:02 to 09:43"',
     );
+    // A run's part in its lane and its row in the list say its command, its wait and its run
+    // time, apart: the row under its bar too, which the style sheet shows while it has the focus.
+    const verify =
+      "Test, just verify · waited 6 m · ran 24 m · green · at 9ac5149 by quiet-wren on studio";
+    expect(drawn).toContain(`title="${verify}" tabindex="-1"><span class="tl-at">10:52</span>`);
+    expect(drawn).toContain(`<span class="tl-facts" aria-hidden="true">${verify}</span></li>`);
+    expect(count(drawn, 'class="tl-facts"')).toBe(5);
+    expect(drawn).toContain(`title="${verify}" id="tl-stop-`);
+    expect(drawn).toContain(`role="img" aria-label="${verify}"`);
     expect(drawn).toContain('aria-label="nightly met from 09:02: ');
     // A round's wait is drawn, not stopped at: its reviewer's time after it says all of it.
     expect(drawn).toContain(
@@ -257,9 +271,46 @@ describe("the timeline drawn", () => {
 
   it("with no run kept there is no machine time, no runs lane and nothing running", () => {
     const drawn = html({ ...pictures(), runs: [] });
-    for (const part of ["achine", 'data-lane="runs"', "tl-running", "running now"]) {
+    for (const part of ["achine", 'data-lane="builds"', 'data-lane="tests"', "tl-running"]) {
       expect(drawn).not.toContain(part);
     }
+    expect(drawn).not.toContain("running now");
+    // No row in the list takes a tap's focus or says more under its bar: only a run's does.
+    expect(count(drawn, 'tabindex="-1"')).toBe(stops(lanes({ ...pictures(), runs: [] })) - 1);
+    expect(drawn).not.toContain("tl-facts");
+  });
+
+  it("a task of builds alone draws a builds lane and no tests lane, and the other way round", () => {
+    const runs = pictures().runs;
+    const builds = html({ ...pictures(), runs: runs.filter((run) => run.phase === "build") });
+    expect(builds).toContain('data-lane="builds"');
+    expect(builds).not.toContain('data-lane="tests"');
+    const tests = html({ ...pictures(), runs: runs.filter((run) => run.phase !== "build") });
+    expect(tests).toContain('data-lane="tests"');
+    expect(tests).not.toContain('data-lane="builds"');
+  });
+
+  it("a lane of more rows than WORDED_ROWS is marked for its thin rows, and no other lane", () => {
+    expect(html(pictures())).not.toContain("data-dense");
+    // The fixture's verify, run again a minute apart from 10:52, each going on until the last has
+    // begun: each takes a row of its own.
+    const verify = pictures().runs[1];
+    if (verify === undefined) throw new Error("the fixture has no verify");
+    const again = Array.from({ length: WORDED_ROWS + 1 }, (_, at) => ({
+      ...verify,
+      queued: verify.queued + at * 60,
+      started: verify.queued + at * 60 + 1,
+      ended: verify.queued + 600,
+    }));
+    const drawn = html({
+      ...pictures(),
+      runs: [pictures().runs[0], ...again] as (typeof verify)[],
+    });
+    expect(drawn).toContain(
+      `<div class="tl-lane" data-lane="tests" data-dense="" style="--rows:${WORDED_ROWS + 1}">`,
+    );
+    expect(drawn).toContain('<div class="tl-lane" data-lane="builds" style="--rows:1">');
+    expect(count(drawn, "data-dense")).toBe(1);
   });
 
   it("offers all of a clipped list, the latest again once shown, and the focused part's detail", () => {
@@ -324,6 +375,36 @@ describe("the timeline drawn", () => {
     const gate = stopped(`tl-stop-${count - 1}`);
     gate.onFocus?.();
     expect((at.focus as ReturnType<typeof vi.fn>).mock.lastCall?.[1]).toMatch(/^review met from /);
+  });
+
+  it("a run's row in the list takes a tap's focus and holds all of the run; a stage's neither", () => {
+    const at = spiedStops();
+    const tree = TimelineDrawn({
+      timeline: pictures(),
+      all: false,
+      clipped: false,
+      detail: "",
+      stops: at,
+      toggle: () => {},
+    });
+    const rows = elements(tree, (one) => one.type === "li" && one.props.title !== undefined);
+    const focusable = rows.filter((row) => row.props.tabIndex === -1);
+    // The five runs, of thirteen rows; no gate change and no stage.
+    expect([rows.length, focusable.length]).toEqual([13, 5]);
+    expect(focusable.every((row) => row.props.className === "tl-row tl-sub")).toBe(true);
+    expect(rows.filter((row) => row.props.tabIndex !== undefined)).toEqual(focusable);
+    // Each holds its words, its title's, the last thing in it; no other row holds any.
+    const facts = (row: ReactElement<Props>) =>
+      elements(row.props.children, (one) => one.props.className === "tl-facts");
+    expect(focusable.map((row) => facts(row)[0]?.props.children)).toEqual(
+      focusable.map((row) => row.props.title),
+    );
+    expect(focusable[0]?.props.title).toBe(
+      "Build, just lint-rs · waited 3 m · ran 4 m · green · at 9ac5149 by quiet-wren on studio",
+    );
+    expect(rows.filter((row) => facts(row).length > 0)).toEqual(focusable);
+    // A row's focus is the style sheet's: it moves no stop and tells no detail.
+    expect(focusable.every((row) => row.props.onFocus === undefined)).toBe(true);
   });
 });
 
