@@ -1,10 +1,10 @@
 //! A green release's install on the machine: the release built by a stand-in for cargo in the
-//! run's own checkout, installed whole in a temporary machine folder with its manifest, `current`
-//! pointed at it; a build that fails leaves no folder and is the refresh's red, which a later
-//! refresh that installs closes.
+//! run's own checkout, installed whole in a temporary machine folder with its manifest, and
+//! `current` pointed at it where no project is registered to hold it; a build that fails leaves no
+//! folder and `current` where it was, and is the refresh's red, which a later refresh that installs
+//! closes.
 
 use std::fs;
-use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 
 use super::consumers::register;
@@ -16,44 +16,15 @@ const RELEASE: &str = "release-2026-11-12";
 /// What names the stand-in for cargo.
 const BUILDER: &str = "SYMPHONY_RELEASE_BUILDER";
 
-/// A stand-in for cargo in the fixture's folder: it counts its runs in `builds`, exits 101 while
-/// `build-red` is there, and otherwise writes the four binaries into the build folder it is given,
-/// the server and the board each answering what the install asks.
+/// The refresh's stand-in for cargo ([`super::refresh::builder`]), building releases at schema 18.
 fn builder(fixture: &Fixture) -> String {
-    let path = fixture.root.join("cargo-stand-in");
-    let script = format!(
-        "#!/bin/sh\necho \"$PWD $*\" >> '{root}/builds'\n\
-         [ ! -e '{root}/build-red' ] || {{ echo 'error: could not compile'; exit 101; }}\n\
-         out=\"$CARGO_TARGET_DIR/release\"\nmkdir -p \"$out\"\n\
-         printf '#!/bin/sh\\necho %s\\n' \
-         \"'{{\\\"protocol\\\":{{\\\"major\\\":0,\\\"minor\\\":3}},\\\"schema\\\":18,\\\"pin\\\":1}}'\" \
-         > \"$out/symphony-server\"\n\
-         printf '#!/bin/sh\\necho %s\\n' \
-         \"'{{\\\"ok\\\":{{\\\"api\\\":{{\\\"major\\\":1,\\\"minor\\\":14}},\\\"schema\\\":18}}}}'\" \
-         > \"$out/tasks\"\n\
-         printf '#!/bin/sh\\n' > \"$out/agent-send\"\nprintf '#!/bin/sh\\n' > \"$out/symphony\"\n\
-         chmod +x \"$out\"/*\n",
-        root = fixture.root.display()
-    );
-    fs::write(&path, script).unwrap();
-    fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
-    path.to_string_lossy().into_owned()
+    super::refresh::builder(fixture, 18)
 }
 
-/// The fixture with the refresh on, no project registered, and a client's distribution on its
-/// main: the commit a run releases.
+/// The fixture with the refresh on and no project registered: the commit a run releases.
 fn installing() -> (Fixture, String) {
-    let (fixture, _) = refreshing();
+    let (fixture, commit) = refreshing();
     register(&fixture, &[]);
-    fixture.write(
-        "apps/symphony-server/client/public/assets/app.js",
-        "app()\n",
-    );
-    let commit = fixture.land(
-        "apps/symphony-server/client/public/index.html",
-        Some("<html></html>\n"),
-        "the client's distribution",
-    );
     (fixture, commit)
 }
 
@@ -189,6 +160,10 @@ fn a_build_that_fails_leaves_no_folder_and_a_red_refresh_which_the_next_install_
         "{out}"
     );
     assert!(out.contains("release: refresh-install red ("), "{out}");
+    assert!(
+        out.contains("release: refresh: current is as it was: it names no release\n"),
+        "{out}"
+    );
     assert!(
         !releases.join(RELEASE).exists() && !machine(&fixture).join("current").exists(),
         "a failed build installs nothing"

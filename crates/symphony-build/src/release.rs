@@ -5,10 +5,12 @@
 //! judged by checks this repository owns, never by a consuming project's suite. Every red check,
 //! and a run that stopped short of deciding, is a task on the board ([`board`]); when every check
 //! is green it tags the commit as the next release (`release-YYYY-MM-DD`, [`tags`]) with what it
-//! holds ([`notes`]) and pushes that one tag, then installs it on the machine ([`install`]) and
-//! refreshes the projects the machine serves to it ([`refresh`], [`consumers`]). `--commit COMMIT`
-//! does the same out of cycle for a commit already on the remote's main and past the newest release. A run of main's tip red in a check holds that
-//! commit as the release candidate ([`candidate`]) while its reds are fixed: until each is answered
+//! holds ([`notes`]) and pushes that one tag, then installs it on the machine ([`install`]),
+//! moves each registered project's board to its schema under the writer rule and points `current`
+//! at it ([`refresh`]), writing no project's checkout. `--commit COMMIT` does the same out of
+//! cycle for a commit already on the remote's main and past the newest release. A run of main's
+//! tip red in a check holds that commit as the release candidate ([`candidate`]) while its reds
+//! are fixed: until each is answered
 //! no run checks main's tip, and then the candidate is rerun, with what its fixes changed, and
 //! released or held again. Each run is recorded in the git common dir ([`record`]), which
 //! `--status` reads; `--schedule` prints the entry that runs it each day ([`schedule`]), which the
@@ -32,7 +34,6 @@ mod board;
 pub(crate) mod cadence;
 mod candidate;
 mod checks;
-mod consumers;
 pub(crate) mod crates;
 mod failures;
 mod git;
@@ -40,7 +41,6 @@ mod gone;
 mod group;
 mod install;
 mod notes;
-mod pin;
 mod place;
 mod record;
 mod refresh;
@@ -84,9 +84,10 @@ const HELP: &str =
 checkout outside the repository's folder, building and testing nothing of the projects this \
 machine serves; each red check filed on the board as tests/release-red-NAME, and a green commit \
 tagged release-YYYY-MM-DD and pushed, then the machine refreshed to it: the release built and \
-installed in the machine folder, each project's pin moved \
-on a branch through its own commit gate, its main fast-forwarded to it in its main checkout \
-when that is on its main and clean, and its board moved to the schema of the pin its main locks. \
+installed in the machine folder; while no registered project names a linked plugin, each \
+project's board moved to the release's schema, snapshotted first, once every writer seen there in \
+the last week is a release's own or at that schema, and then current pointed at it, which the \
+machine's server follows; no project's checkout, branch or pin is written. \
 A run red in a check holds its commit as the release candidate, the local branch \
 release-candidate, until its reds' own lands answer them; then it is rerun, and main's tip is run \
 only once none is held (docs/RELEASES.md).
@@ -109,8 +110,9 @@ options:
                         86400)
   --status              print the newest release, the last run and its age, the release
                         candidate, the landings since the last release and what the next run
-                        waits for, the last publication on crates.io and the last refresh; run
-                        nothing
+                        waits for, the last publication on crates.io, the last refresh, and the
+                        release current names, the machine's server and what holds the switch;
+                        run nothing
   --schedule            print the schedule entry that runs `just release` each day; install nothing
   --at HH:MM            the time of day --schedule names (default: 03:00)
   --due [SLUG COMMIT]   start a run only when [releases] every_landings tasks have landed since
@@ -122,8 +124,7 @@ options:
   --refresh             refresh the machine to the newest release here again, checking nothing,
                         after publishing on crates.io what it left while [releases] publish is
                         on: an orchestrator's retry of a red or interrupted refresh or a failed
-                        upload, or of one a project's own gate, hooks or main checkout stopped,
-                        once that is met
+                        upload, or of one a writer behind the release held, once it is rebuilt
   --rerun               rerun the release candidate now, once every red of it is answered: each
                         check or step that was red, did not run or whose inputs changed; refused
                         while none is held or a red waits
@@ -145,9 +146,12 @@ const LATE_SECONDS: f64 = 15.0 * 60.0;
 const FINISH: Duration = Duration::from_secs(5 * 60);
 /// Why a check is red without having run.
 const NOT_STARTED: &str = "the run's time was up before it started";
-/// The time a release's refresh has, past its run's checks: a project's commit gate and its board's
-/// move each run within it.
-const REFRESH: Duration = Duration::from_secs(2 * 3600);
+/// The time a release's install has, past its run's checks: the release build of its four binaries
+/// at the machine's load, and the questions put to them.
+const INSTALL: Duration = Duration::from_secs(3600);
+/// The time the rest of a release's refresh has, past its install: each board's snapshot and move,
+/// and the wait for the machine's server to follow `current`.
+const REFRESH: Duration = Duration::from_secs(3600);
 /// The time a release's publication on crates.io has, past its push: cargo's build of each package
 /// it uploads, the upload and cargo's wait for crates.io's index to list it.
 const PUBLISH: Duration = Duration::from_secs(3600);
@@ -1396,94 +1400,79 @@ impl Refreshing<'_> {
         Ok(place)
     }
 
-    /// The release `tag` (`commit`) installed on the machine by the run `id` ([`install`]), each
-    /// line of it said: built in the run's own checkout, brought to `commit` first. None on the
-    /// tests' clock without their stand-in for cargo, so no test builds the workspace.
+    /// The release `tag` (`commit`) installed on the machine folder `machine` by the run `id`
+    /// ([`install`]), built in the run's own checkout, brought to `commit` first, within
+    /// [`INSTALL`] from now, which the lock's word is made to cover. None on the tests' clock
+    /// without their stand-in for cargo, so no test builds the workspace.
     fn install(
         &self,
         id: &str,
         tag: &str,
         commit: &str,
-        until: Bound<'_>,
+        machine: &Path,
         out: &mut dyn Write,
     ) -> Option<install::Installed> {
         let builder = std::env::var_os(install::BUILDER);
         if std::env::var_os(CLOCK).is_some() && builder.is_none() {
             return None;
         }
+        self.hold_for(INSTALL);
+        let until = Bound::hearing(Instant::now() + INSTALL, self.heard);
         let logs = record::logs(self.folder, id);
-        let never = |why: String| {
-            let _ = fs::create_dir_all(&logs);
-            install::Installed {
-                said: vec![format!("not installed: {why}")],
-                ran: Ran::never(&install::step(tag), &install::log(&logs), why),
+        let _ = fs::create_dir_all(&logs);
+        let named = install::step(tag);
+        Some(match self.checkout_at(commit, until, out) {
+            Err(why) => install::never(&named, &install::log(&logs), why),
+            Ok(place) => install::install(&install::Install {
+                checkout: &place.checkout,
+                machine,
+                tag,
+                commit,
+                logs: &logs,
+                builder: builder.as_deref(),
+                until,
+            }),
+        })
+    }
+
+    /// The machine refreshed to the release `tag` (`commit`) by the run `id`: the release installed
+    /// on it first ([`Refreshing::install`]), then the switch, the boards, `current` and the
+    /// machine's server ([`refresh::release`]) within [`REFRESH`] from the install's end, which the
+    /// lock's word is made to cover, so no later run takes it for stuck. Nothing past the install
+    /// on the tests' clock without their stand-in for cargo: there is no release to bring it to.
+    fn to(&self, id: &str, tag: &str, commit: &str, out: &mut dyn Write) -> record::Refresh {
+        let machine = match symphony::machine::dir() {
+            Ok(machine) => machine,
+            Err(why) => {
+                let logs = record::logs(self.folder, id);
+                let _ = fs::create_dir_all(&logs);
+                let named = install::step(tag);
+                let why = format!("the machine folder cannot be named: {why}");
+                let installed = install::never(&named, &install::log(&logs), why);
+                return refresh::unreached(tag, installed, out);
             }
         };
-        let installed = match symphony::machine::dir() {
-            Err(why) => never(format!("the machine folder cannot be named: {why}")),
-            Ok(machine) => match self.checkout_at(commit, until, out) {
-                Err(why) => never(why),
-                Ok(place) => install::install(&install::Install {
-                    checkout: &place.checkout,
-                    machine: &machine,
-                    tag,
-                    commit,
-                    logs: &logs,
-                    builder: builder.as_deref(),
-                    until,
-                }),
+        match self.install(id, tag, commit, &machine, out) {
+            Some(installed) => self.refresh(id, tag, commit, &machine, installed, out),
+            None => record::Refresh {
+                release: tag.to_string(),
+                ..record::Refresh::default()
             },
-        };
-        for line in &installed.said {
-            let _ = writeln!(out, "release: refresh: {line}");
         }
-        let ran = &installed.ran;
-        let why = (ran.error.as_ref()).map_or_else(String::new, |why| format!(": {why}"));
-        let _ = writeln!(
-            out,
-            "release: {} {} ({:.0} s){why}; log {}",
-            ran.name,
-            if ran.green() { "green" } else { "red" },
-            ran.seconds,
-            ran.log.display()
-        );
-        Some(installed)
     }
 
-    /// The machine refreshed to the release `tag` (`commit`) by the run `id`, within [`REFRESH`]
-    /// from now, which the lock's word is made to cover, so no later run takes it for stuck: the
-    /// release installed on the machine first ([`Refreshing::install`]), its step and lines the
-    /// refresh's first, then each project.
-    fn to(&self, id: &str, tag: &str, commit: &str, out: &mut dyn Write) -> record::Refresh {
-        self.hold_for(REFRESH);
-        let until = Bound::hearing(Instant::now() + REFRESH, self.heard);
-        let installed = self.install(id, tag, commit, until, out);
-        let mut refresh = self.projects(id, tag, commit, until, out);
-        if let Some(installed) = installed {
-            refresh.steps.insert(0, installed.ran);
-            refresh.said.splice(0..0, installed.said);
-        }
-        refresh
-    }
-
-    /// [`Refreshing::to`]'s projects: each one the machine serves refreshed to the release, by
-    /// `until`.
-    fn projects(
+    /// [`Refreshing::to`] once the install `installed` ended.
+    fn refresh(
         &self,
         id: &str,
         tag: &str,
         commit: &str,
-        until: Bound<'_>,
+        machine: &Path,
+        installed: install::Installed,
         out: &mut dyn Write,
     ) -> record::Refresh {
-        let name = (self.options.worktree.file_name())
-            .map_or_else(|| "release".into(), |name| name.to_string_lossy());
-        let trees = place::real(
-            &self
-                .options
-                .worktree
-                .with_file_name(format!("{name}-refresh")),
-        );
+        self.hold_for(REFRESH);
+        let until = Bound::hearing(Instant::now() + REFRESH, self.heard);
         let logs = record::logs(self.folder, id);
         let surreal = symphony_board::server::Home::in_common(&self.repo.common, None)
             .surreal()
@@ -1491,15 +1480,14 @@ impl Refreshing<'_> {
         let against = refresh::Against {
             root: &self.repo.root,
             ours: &self.repo.common,
-            main: &self.repo.main,
+            machine,
             tag,
             commit,
-            trees: &trees,
             logs: &logs,
             surreal: Some(&surreal),
             until,
         };
-        refresh::release(&against, out)
+        refresh::release(&against, installed, out)
     }
 }
 

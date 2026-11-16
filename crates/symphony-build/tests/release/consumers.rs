@@ -1,8 +1,8 @@
 //! The projects the machine serves, as a release run meets them: a release is judged by the checks
 //! this repository owns, so a project that builds on the fixture's Symphony is never copied, built
 //! or tested before the tag, and a Symphony change that breaks it is released all the same; the
-//! project's own gate finds that when its pin moves ([`super::refresh`]). The projects themselves
-//! are scratch repositories the refresh tests share.
+//! project's own gate finds that when its own landing moves its pin. The projects themselves are
+//! scratch repositories the refresh tests share ([`super::refresh`]).
 
 use std::fs;
 use std::path::{Path, PathBuf};

@@ -121,13 +121,13 @@ pub(crate) struct Carried {
     pub(crate) run: String,
 }
 
-/// What a refresh step its project's own commit gate, hooks or main checkout stopped short ended
-/// as: green here, filed nowhere (docs/RELEASES.md).
+/// What a refresh step ends as when its project finishes it (writers of its board to rebuild, a
+/// board from before the writer record): green here, filed nowhere (docs/RELEASES.md).
 pub(crate) const THEIRS: &str = "the project's to finish";
 
-/// A release's refresh: the release, one step for each project the machine serves that builds on
-/// the Symphony (its pin and its board), what it said, the shared server's line last, and the
-/// steps among them that are their projects' to finish.
+/// A release's refresh: the release, its install's step and one for each project whose board it
+/// judged, what it said, the machine's server's line last, and the steps among them that are their
+/// projects' to finish.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub(crate) struct Refresh {
     pub(crate) release: String,
@@ -135,8 +135,8 @@ pub(crate) struct Refresh {
     pub(crate) steps: Vec<Ran>,
     #[serde(default)]
     pub(crate) said: Vec<String>,
-    /// The steps, by name, its project's own commit gate refused or whose main its hooks or its
-    /// main checkout kept from the move: each green, its line in `said` saying what finishes it.
+    /// The steps, by name, whose board its project finishes: each green, its line in `said` saying
+    /// what finishes it.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(crate) theirs: Vec<String>,
 }
@@ -643,9 +643,9 @@ pub(crate) fn status(runs: &[Run], releases: &[(Release, String)], now: f64) -> 
 }
 
 /// What `--status` says of the newest refresh among `runs` at `now`: its release, which run made
-/// it and when, and how many of its steps are left to their projects, then each line it said (a
-/// project's pin and board, the shared server), each red step with how it ended and each step that
-/// is its project's to finish, then what finishes those ([`BY_HAND`]).
+/// it and when, and how many of its steps are left to their projects, then each line it said (the
+/// install, the switch, each board, `current` and the machine's server), each red step with how it
+/// ended and each step that is its project's to finish, then what finishes those ([`BY_HAND`]).
 pub(crate) fn refresh_status(runs: &[Run], now: f64) -> String {
     let Some((run, refresh)) =
         (runs.iter().rev()).find_map(|run| Some((run, run.refreshed.as_ref()?)))
@@ -712,13 +712,12 @@ pub(crate) fn publish_status(runs: &[Run], now: f64) -> String {
     text
 }
 
-/// What a refresh leaves to the projects whose own gate, hooks or main checkout stopped it, which
-/// `--status` says under it.
-const BY_HAND: &str = "  by hand: a project whose own gate refused the move meets that itself; one \
-                       whose hooks kept the move from its main lands its branch symphony/RELEASE \
-                       through its own landing; a main checkout off its default branch or with \
-                       tracked edits is put right by its owner; then an orchestrator's `just \
-                       release --refresh` finishes the rest\n";
+/// What a refresh leaves to the projects whose boards it could not move, which `--status` says
+/// under it.
+const BY_HAND: &str = "  by hand: each writer named behind the release is rebuilt at its schema and \
+                       run once, which records it; a board from before the writer record is \
+                       brought up by its own `just tasks migrate` in its main checkout; then an \
+                       orchestrator's `just release --refresh` finishes the rest\n";
 
 /// The push that delivers the release `tag` to `remote`, and nothing else.
 pub(crate) fn push_line(remote: &str, tag: &str) -> String {
@@ -1215,25 +1214,23 @@ mod tests {
                 green("refresh-gamma"),
             ],
             said: vec![
-                "alpha: its pin is on the branch symphony/release-2026-11-12".into(),
-                "gamma: the project's to finish: its main checkout is on the branch elsewhere"
-                    .into(),
+                "alpha: its board moved from schema 18 to 19".into(),
+                "gamma: the project's to finish: its board stays at schema 18".into(),
             ],
             theirs: vec!["refresh-gamma".into()],
         });
         let after = run("after", "release", "red", NOW - 60.0);
-        let by_hand = "  by hand: a project whose own gate refused the move meets that itself; one \
-                       whose hooks kept the move from its main lands its branch symphony/RELEASE \
-                       through its own landing; a main checkout off its default branch or with \
-                       tracked edits is put right by its owner; then an orchestrator's `just \
-                       release --refresh` finishes the rest\n";
+        let by_hand = "  by hand: each writer named behind the release is rebuilt at its schema \
+                       and run once, which records it; a board from before the writer record is \
+                       brought up by its own `just tasks migrate` in its main checkout; then an \
+                       orchestrator's `just release --refresh` finishes the rest\n";
         assert_eq!(
             refresh_status(&[older, newer.clone(), after], NOW),
             format!(
                 "last refresh: red, 1 step left to its project, of release-2026-11-12 by the run \
                  newer, {} (1 h ago)\n  \
-                 alpha: its pin is on the branch symphony/release-2026-11-12\n  \
-                 gamma: the project's to finish: its main checkout is on the branch elsewhere\n  \
+                 alpha: its board moved from schema 18 to 19\n  \
+                 gamma: the project's to finish: its board stays at schema 18\n  \
                  refresh-beta red: exit 101; log /l\n  \
                  refresh-gamma the project's to finish, filed nowhere here; log /l\n\
                  {by_hand}",
@@ -1275,7 +1272,7 @@ mod tests {
         let mut green = run("green", "release", "green", NOW - 60.0);
         green.refreshed = Some(Refresh {
             release: "release-2026-11-12".into(),
-            said: vec!["alpha: its board is at schema 17, its pin's: nothing to move".into()],
+            said: vec!["alpha: its board is at schema 19: nothing to move".into()],
             ..Refresh::default()
         });
         assert!(!refresh_status(&[green], NOW).contains("by hand"));
