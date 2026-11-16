@@ -2,7 +2,9 @@
 // crates/symphony-blocks) and every element is chosen here, one component per kind, as the Dioxus
 // client's block_view.rs draws them. A plugin renders to these blocks, never HTML, so a plugin's
 // content is drawn by them whatever plugin made it. Each switch over the kinds ends in a value of
-// type `never`: a kind the Rust adds fails the type check until it is drawn here.
+// type `never`: a kind the Rust adds fails the type check until it is drawn here. A kind a newer
+// server sends this client (the kit's lists grow in a minor, docs/PLUGIN_PROTOCOL.md) is said
+// where it stands, as unsupported content, and the rest of the page is drawn.
 
 import { createContext, type ReactNode, useContext, useState } from "react";
 import { Button } from "./button";
@@ -83,10 +85,15 @@ export function SpansView({ spans }: { spans: Span[] }) {
   ));
 }
 
-/** No kind is left undrawn: a kind the Rust adds fails the type check where this is called. */
-function undrawn(kind: never): null {
-  void kind;
-  return null;
+/**
+ * The `type` of a block or span of no kind the wire types know. No kind they know is left undrawn:
+ * a kind the Rust adds fails the type check where this is called, as what reaches it then is no
+ * longer `never`. What does reach it is a kind a newer server sent; one whose `type` is no text,
+ * which no read lets through, is `unnamed`.
+ */
+function unknownKind(kind: never): string {
+  const type = (kind as { type?: unknown }).type;
+  return typeof type === "string" ? type : "unnamed";
 }
 
 function BlockView({ block }: { block: Block }) {
@@ -197,7 +204,7 @@ function BlockView({ block }: { block: Block }) {
         </Unknown>
       );
     default:
-      return undrawn(block);
+      return <Unknown description={unknownKind(block)} attributes={[]} />;
   }
 }
 
@@ -270,7 +277,11 @@ function SpanView({ span }: { span: Span }) {
         </span>
       );
     default:
-      return undrawn(span);
+      return (
+        <span className="unknown-block" role="alert">
+          Unsupported {unknownKind(span)}
+        </span>
+      );
   }
 }
 

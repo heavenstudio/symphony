@@ -134,6 +134,12 @@ fn BlockView(block: Block) -> Element {
         Block::Unknown { tag, text } => {
             rsx! { view::Unknown { description: tag, attributes: Vec::new(), p { "{text}" } } }
         }
+        // The kit's lists grow in a minor, so no match outside it covers them whole
+        // (`crates/symphony-api/tests/vocabulary_drawn.rs` holds every kind to an arm here): a
+        // kind with none is said where it stands.
+        _ => {
+            rsx! { view::Unknown { description: "a later kind".to_string(), attributes: Vec::new() } }
+        }
     }
 }
 
@@ -176,6 +182,7 @@ fn SpanView(span: Span) -> Element {
         Span::Unknown { tag, text } => {
             rsx! { span { class: "unknown-block", role: "alert", "Unsupported {tag}: {text}" } }
         }
+        _ => rsx! { span { class: "unknown-block", role: "alert", "Unsupported content" } },
     }
 }
 
@@ -280,6 +287,7 @@ fn ContainerView(tag: ContainerKind, presentation: Presentation, blocks: Vec<Blo
         ContainerKind::Footer => rsx! { footer { ..attrs, {content} } },
         ContainerKind::Address => rsx! { address { ..attrs, {content} } },
         ContainerKind::Center => rsx! { div { style: "text-align:center", ..attrs, {content} } },
+        _ => rsx! { div { ..attrs, {content} } },
     };
     rsx! { {shown} PresentationWarnings { presentation } }
 }
@@ -324,6 +332,7 @@ fn InlineView(tag: InlineKind, presentation: Presentation, spans: Vec<Span>) -> 
         InlineKind::Insert => rsx! { ins { ..attrs, {content} } },
         InlineKind::Underline => rsx! { u { ..attrs, {content} } },
         InlineKind::Abbreviation => rsx! { abbr { ..attrs, {content} } },
+        _ => rsx! { span { ..attrs, {content} } },
     };
     rsx! { {shown} PresentationWarnings { presentation } }
 }
@@ -400,6 +409,8 @@ fn ShapeView(shape: VectorShape) -> Element {
         VectorKind::Line => rsx! { line { ..attrs } },
         VectorKind::Polyline => rsx! { polyline { ..attrs } },
         VectorKind::Polygon => rsx! { polygon { ..attrs } },
+        // A shape with no element here draws nothing.
+        _ => rsx! {},
     }
 }
 

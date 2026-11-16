@@ -1,9 +1,12 @@
 // The check a read that carries blocks passes where it arrives (a task's brief and messages, a
 // document's sections, the chat's answers): every field the block components draw, each of its
-// type, and nothing else, as Rust's serde reads them. A field a newer server adds changes nothing;
-// a kind or a word the client does not know fails the whole read, as serde fails it in the Dioxus
-// client, and the page says so and reads again. Each table of kinds and words names every one the
-// wire types know, which the type check holds. The checks it is made of are the other reads' too
+// type, and nothing else, as Rust's serde reads them. A field a newer server adds changes nothing,
+// and neither does a kind of block, span or media it adds (a minor of the plugin kit,
+// docs/PLUGIN_PROTOCOL.md): it passes with its fields unread, and the components say it where it
+// stands as content this client cannot draw. A word the client does not know (a callout's kind, a
+// figure's size, a tag, a shape) fails the whole read, as does a kind that is no text, and the
+// page says so and reads again. Each table of kinds and words names every one the wire types know,
+// which the type check holds. The checks it is made of are the other reads' too
 // (`document-read.ts`).
 
 import type {
@@ -252,7 +255,10 @@ const SPANS: Record<Span["type"], Record<string, Check>> = {
   unknown: { tag: isText, text: isText },
 };
 
-/** Whether `value` is of a kind `kinds` names, tagged by its `tag` field, with its fields. */
+/**
+ * Whether `value` is tagged with a kind by its `tag` field: one `kinds` names, with its fields, or
+ * one it does not name, a later kind this client draws as unsupported, whatever its fields.
+ */
 function tagged(
   value: unknown,
   tag: string,
@@ -260,8 +266,9 @@ function tagged(
 ): boolean {
   if (!isRecord(value)) return false;
   const kind = value[tag];
-  const fields = typeof kind === "string" && Object.hasOwn(kinds, kind) ? kinds[kind] : undefined;
-  return fields !== undefined && shaped(fields)(value);
+  if (typeof kind !== "string") return false;
+  const fields = Object.hasOwn(kinds, kind) ? kinds[kind] : undefined;
+  return fields === undefined || shaped(fields)(value);
 }
 
 export function isMedia(value: unknown): value is Media {
