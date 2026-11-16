@@ -683,11 +683,15 @@ pass of it is counted, and the picker says plainly that it has no task board. So
 folder is gone, or no longer holds the repository its server found there: the server says so once
 in its log, then reads, maintains and records nothing more of it, answers its pages' reads and saves
 with that refusal before any route runs, and never looks for its board in the folders above it,
-another repository's (`Hub::holds_its_project`, `symphony_board::project::at`). The hub's own
-reaches of its board are held to the repository it found when it began to serve the folder
-(`symphony_board::project::held`), so a `.git` removed after its check leads them to no other
-board, and a board's start, stop or hold makes no folder at or above the repository's common dir
-again; a start whose board folder goes while its server starts (SurrealDB makes every missing
+another repository's (`Hub::holds_its_project`, `symphony_board::project::at`). Every connect to
+its board the server's own process makes from the folder, through `symphony::taskview` (the hub's
+tick, its refreshes and branch scan, its chat journal's flush, a route's read or save), is held to
+the repository it found when it began to serve the folder (`symphony::taskview::serve`,
+`symphony_board::project::held`), so a `.git` removed after a check leads none of them to another
+board, and the flush reads the journal the project had then. Not held: a route that finds the
+project's journal from the folder again (the asks read, a chat save), and a child process the
+server runs in the folder (a `tasks` command, a sweep), which looks the board up itself. A board's
+start, stop or hold makes no folder at or above the repository's common dir again; a start whose board folder goes while its server starts (SurrealDB makes every missing
 folder of its store's path) ends that server and records none. A board whose store is there is never no board: when the SurrealDB
 that serves it is missing (a version bump before the new binary is fetched, `SYMPHONY_SURREAL` naming a file that is not there), or its server answers with an
 older schema or not at all, its passes fail and it is unwell and says so.
@@ -2358,6 +2362,18 @@ landing](#the-default-landing)).
   when an assessment reads the brief alone); and `CHECK PATHS`, the paths the branch changes
   since it left the default branch that `[land] check_paths` names, which the `review` guideline asks
   for, so an assessor need not find the tests in a diff.
+- **`just tasks runs SLUG [--tip SHA]`** prints what the recorder kept of the task at its
+  branch's tip in the main checkout, or at the commit `--tip` names there, read as the `tests`
+  stamp reads it (`crates/tasks/src/cli/commands/runs.rs`): `TIP`; `RUNS`, a row for each build
+  and test command the task and the work under it ran there, its newest run's result (`green`,
+  `red`, `running`, `queued`), when, how long, who, why it is red, and how many runs of it came
+  before there; `TESTS`, the `tests` stamp met or not with its reader's line; `CHECK`, the
+  project's `[verdicts] check` as the task page's check gate reads it, its newest run there by
+  anyone or `no run`; and `ELSEWHERE`, how many of the task's runs are at other commits, none of
+  them the tip's. It is what a reviewer reads in place of building again (RULES.md
+  `workflow/no-second-build-in-review`, [CHECKS](CHECKS.md#no-second-build-in-review)), and what
+  an executor reads before it asks for review. It is refused for a task the board does not hold,
+  outside a checkout of its repository, and with no tip to read.
 - **The needs** are the board's own field `fields._board.needs`, out of `just tasks field`'s
   reach as the red and fast-fix marks are: the stamps, the tip the assessment read (none, from
   the brief), who made it and why. `just tasks needs SLUG STAMP… [--tip TIP] --why WHY --as

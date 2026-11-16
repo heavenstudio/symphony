@@ -86,6 +86,14 @@ pub(super) fn without_cursor(value: &mut serde_json::Value) -> Tagged {
     }
 }
 
+/// The validator of `document`'s outline as `/api/document?view=outline` sends it: what
+/// [`without_cursor`] makes of that answer, so a check answered before its body is made names the
+/// body as the answer that made it did.
+pub(super) fn outline_tag(document: symphony_api::Document) -> String {
+    let mut value = serde_json::json!(symphony::docview::outline(document));
+    without_cursor(&mut value).tag
+}
+
 /// The validator of a task's timeline, leaving out its `now`: the server's clock at the read,
 /// which the client moves on by its own clock while the rest stays the same. The page reads the
 /// timeline each minute, and is answered `304` until the task's history or its gates change.

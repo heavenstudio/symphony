@@ -53,12 +53,11 @@ fn the_doubled_listing_names_each_task_two_orchestrators_hold() {
     }
     // Seeded as the board held them before the rule: a second row written beside the first.
     c.store()
-        .client()
-        .query(
-            "CREATE type::record('role', ['scratch/double', $h, 'orchestrator'])
-                CONTENT { slug: 'scratch/double', handle: $h, role: 'orchestrator', since: 0 } RETURN NONE;",
-            json!({"h": b}),
-        )
+        .raw()
+        .row("role", json!(["scratch/double", b, "orchestrator"]))
+        .create(json!({
+            "slug": "scratch/double", "handle": b, "role": "orchestrator", "since": 0,
+        }))
         .unwrap();
     let out = c.ok(&a, &["list", "--doubled"]);
     assert_eq!(out.lines().count(), 1, "{out}");

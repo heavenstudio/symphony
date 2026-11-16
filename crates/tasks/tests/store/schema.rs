@@ -6,10 +6,10 @@
 //! build migrated is refused at its next write.
 
 use crate::common::{HOST, NOW, client, refused};
-use serde_json::{Value, json};
+use serde_json::json;
 use symphony_board::rows::Dump;
 use symphony_board::rpc::Client;
-use symphony_board::{Error, NewTask, Opening, Program, Schema, Store};
+use symphony_board::{Error, NewTask, Opening, Program, Raw, Schema, Store};
 
 /// The store `how` opens on `client`, its clock at `NOW` and no process alive.
 fn opened(client: Client, how: &Opening) -> Result<Store, Error> {
@@ -23,13 +23,8 @@ fn again(client: &Client) -> Client {
 
 /// The version `meta:schema` records.
 fn version(client: &Client) -> Option<i64> {
-    let found = client
-        .query(
-            "RETURN (SELECT VALUE version FROM ONLY meta:schema);",
-            json!({}),
-        )
-        .unwrap();
-    found.last().and_then(Value::as_i64)
+    let found = Raw::on(client).row("meta", "schema").field("version");
+    found.unwrap().as_i64()
 }
 
 /// The tables the database holds.
@@ -186,10 +181,8 @@ fn a_newer_build_migrates_an_older_board_once_its_steps_and_version_together() {
         assert!(store.is_ok(), "{:?}", store.as_ref().err());
     }
     assert_eq!(version(&client), Some(runs.version()));
-    let ran = client
-        .query("RETURN count(SELECT * FROM fixture_run);", json!({}))
-        .unwrap();
-    assert_eq!(ran.last(), Some(&json!(1)), "the steps ran once");
+    let ran = Raw::on(&client).table("fixture_run").count().unwrap();
+    assert_eq!(ran, 1, "the steps ran once");
     // What the board held before is still there, read by the newer build.
     let store = opened_at_once.into_iter().next().unwrap().unwrap();
     assert_eq!(store.get("old/one").unwrap().title, "Made at this version");

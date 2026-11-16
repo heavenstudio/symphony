@@ -6,7 +6,7 @@ use crate::gate::Gate;
 use symphony_board::Health;
 use symphony_board::health::LIVE_SECONDS;
 use symphony_board::rows::{MessageRow, SessionRow, TaskRow};
-use symphony_board::{NewSession, NewTask, Store, Task, rpc};
+use symphony_board::{NewSession, NewTask, Raw, Store, Task, rpc};
 
 fn a_board_of(tasks: usize) -> Seed {
     let mut seed = Seed::default()
@@ -383,8 +383,9 @@ fn claimed_mid_read<T: Send>(read: impl FnOnce(&Store) -> T + Send) -> T {
         let opening = gate.opening();
         let reading = scope.spawn(|| read(&f.store));
         gate.reached(); // the read is in its stall
-        board
-            .write("UPSERT gate:read SET held = false;", serde_json::json!({}))
+        Raw::on(&board)
+            .row("gate", "read")
+            .put(serde_json::json!({"held": false}))
             .unwrap(); // the claim's own read does not stall
         other.claim("sim/jump", "amber-heron").unwrap();
         assert!(
@@ -597,12 +598,11 @@ fn a_definition_that_fails_leaves_no_board_taken_for_made() {
         );
     made.expect("the database kept meeting other writes")
         .unwrap();
-    client
-        .query(
-            "CREATE task:a SET sid = 1; CREATE task:b SET sid = 1;",
-            serde_json::json!({}),
-        )
-        .unwrap();
+    for row in ["a", "b"] {
+        (Raw::on(&client).row("task", row))
+            .create(serde_json::json!({"sid": 1}))
+            .unwrap();
+    }
     assert!(Store::open(client).is_err());
     for _ in 0..2 {
         let again = Store::open(rpc::Client::new(&addr, "sf", &db));

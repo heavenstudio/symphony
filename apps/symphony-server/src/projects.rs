@@ -291,10 +291,10 @@ impl Projects {
         if self.warming == Warming::AsRead
             && refused.is_none()
             && !Arc::ptr_eq(&shared, &self.starter)
-            && let Ok(runtime) = tokio::runtime::Handle::try_current()
+            && tokio::runtime::Handle::try_current().is_ok()
         {
             let warming = shared.clone();
-            runtime.spawn(async move {
+            crate::spawn::task(async move {
                 if let Err(why) = crate::api::warm(&warming).await {
                     eprintln!("· {}: read data could not be warmed: {why}", warming.base);
                 }
@@ -363,7 +363,7 @@ async fn dispatch(
     let ip = peer.ip();
     let starter = projects.starter.clone();
     let allowed = ip.is_loopback()
-        || tokio::task::spawn_blocking(move || starter.gate.allows(ip))
+        || crate::spawn::blocking(move || starter.gate.allows(ip))
             .await
             .unwrap_or(false);
     if !allowed {
@@ -383,7 +383,7 @@ async fn dispatch(
             .unwrap_or("")
             .to_string();
         let starter = projects.starter.clone();
-        let named = tokio::task::spawn_blocking(move || starter.allows_host(&host))
+        let named = crate::spawn::blocking(move || starter.allows_host(&host))
             .await
             .unwrap_or(false);
         if !named {
@@ -395,7 +395,7 @@ async fn dispatch(
         }
     }
     let reading = projects.clone();
-    let Ok(served) = tokio::task::spawn_blocking(move || reading.served()).await else {
+    let Ok(served) = crate::spawn::blocking(move || reading.served()).await else {
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     };
     if path == symphony_api::FRONT_PATH {

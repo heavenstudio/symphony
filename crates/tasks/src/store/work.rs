@@ -1,16 +1,16 @@
 //! Tasks: making them, the tree of subtasks, joining and releasing them, moving them along, landing
 //! them.
 
-use super::cap::{GUARD, UNHOLD};
 use super::messages::BOARD;
+use super::surreal::work as sql;
 use super::{
-    ACT, Change, Error, Failure, Message, Opens, REFUSED, Say, Store, Task, Which, left_actor,
-    logged, refused, repr, unknown_actor,
+    Change, Error, Failure, Message, Opens, REFUSED, Say, Store, Task, Which, left_actor, refused,
+    repr, unknown_actor,
 };
 use crate::alarm::{NOTHING, UNDER, WAS};
 use crate::health::Health;
 use crate::slots::OPEN;
-use crate::stages::{self, ARROW, MOVED};
+use crate::stages;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::cell::RefCell;
@@ -22,13 +22,12 @@ pub use covered::{COVERED, CoveredLine, covered_by, covered_line, landing};
 
 mod given;
 pub use given::Given;
-pub(super) use given::{FENCES, Pass, gives};
+pub(super) use given::Pass;
 
 mod moves;
 use moves::Moving;
 
 mod needs;
-pub(super) use needs::NEEDS_WRITTEN;
 
 mod owner_task;
 
@@ -193,12 +192,6 @@ pub(super) fn reason_line(status: &str, reason: &str) -> String {
     format!("{status}: {}", reason.trim())
 }
 
-/// A move's write of its reason's line (`$move_reason`, [`reason_line`]) by `$actor` on `$slug`,
-/// after the move's own line.
-pub(super) fn reason_written() -> String {
-    logged("$slug", "$actor", "'msg'", "$move_reason", "NONE")
-}
-
 /// Whether `move` may take a task from `current` to `target`. `done` is only reached by a verdict, a
 /// landing, `done` on a subtask or a close as covered by another's landing ([`Store::close_covered`]);
 /// it is left only by an approved task no landing has closed, back to review ([`approved`], [`Store::move_to`]).
@@ -268,43 +261,6 @@ pub(super) fn no_task(slug: &str) -> Error {
     refused(format!("no task {}", repr(slug)))
 }
 
-/// The task, its dependencies and parent there, its assignee a session, and a slug nobody took.
-const CREATE: &str = "
-IF record::exists(type::record('task', $slug)) { THROW $taken };
-FOR $other IN $needed { IF !record::exists(type::record('task', $other.slug)) { THROW $other.missing }; };
-IF $assignee != NONE AND !record::exists(type::record('session', $assignee)) { THROW $unassignable };
-LET $sid = (UPSERT ONLY counter:task SET last += 1).last;
-CREATE type::record('task', $slug) CONTENT {
-    sid: $sid, slug: $slug, title: $title, body: $body, status: $status, priority: $priority, parent: $parent,
-    created_by: $actor, created: $now, updated: $now, instruction: $instruction,
-} RETURN NONE;
-IF $assignee != NONE {
-    CREATE type::record('role', [$slug, $assignee, 'reserved'])
-        CONTENT { slug: $slug, handle: $assignee, role: 'reserved', since: $now } RETURN NONE;
-};
-FOR $link IN $links {
-    UPSERT type::record('link', [$slug, $link.kind, $link.target])
-        CONTENT { slug: $slug, kind: $link.kind, target: $link.target } RETURN NONE;
-};";
-
-/// Every task's slug and parent: the tree, read whole.
-const TREE: &str = "SELECT VALUE [slug, parent] FROM task";
-
-/// The tree as `set_parent` decides on it, and the count of moves it was read at.
-const TREE_READ: &str = "RETURN {
-    tree: (SELECT VALUE [slug, parent] FROM task),
-    moves: (SELECT VALUE last FROM ONLY counter:tree) ?? 0,
-    me: (SELECT left_at FROM ONLY type::record('session', $actor)),
-    known: record::exists(type::record('session', $actor)),
-};";
-
-/// No task moved under another since the tree was read.
-const MOVE_UNDER: &str = "
-IF ((SELECT VALUE last FROM ONLY counter:tree) ?? 0) != $moves { THROW 'stale' };
-UPSERT counter:tree SET last += 1 RETURN NONE;
-UPDATE type::record('task', $slug) SET parent = $parent, updated = $now, version += 1 RETURN NONE;
-DELETE type::record('counter', ['hold', $slug]) RETURN NONE;";
-
 /// slug -> parent, for every task.
 pub(super) type Tree = HashMap<String, Option<String>>;
 
@@ -332,36 +288,6 @@ pub struct RunPlace<'a> {
     pub claude: Option<&'a str>,
     /// Its checkout's branch.
     pub branch: Option<&'a str>,
-}
-
-/// What [`Store::run_for`] reads, in one statement: the sessions (not left) whose in-process
-/// binding places their last tool call in the run's checkout (`here`), the full session its Claude
-/// Code session binds (`called`), each with what its health is judged on, the roles any of them or
-/// the handle asked holds on work another session could take over, the tree, and the branch's task's
-/// status.
-fn run_for_read() -> String {
-    format!(
-        "
-LET $here = IF $checkout = NONE {{ [] }} ELSE {{
-    (SELECT handle, last_seen, busy_until, pid, host FROM session WHERE left_at = NONE AND agent != NONE
-        AND type::record('callback_state', ['binding', agent]).in_process = true
-        AND type::record('callback_state', ['binding', agent]).worktree = $checkout)
-}};
-LET $called = IF $claude = NONE {{ [] }} ELSE {{
-    (SELECT handle, last_seen, busy_until, pid, host FROM session WHERE left_at = NONE AND agent = $claude
-        AND (type::record('callback_state', ['binding', agent]).in_process ?? false) = false)
-}};
-LET $who = array::union(array::union(IF $asked = NONE {{ [] }} ELSE {{ [$asked] }}, $here.handle),
-    $called.handle);
-RETURN {{
-    here: $here,
-    called: $called,
-    held: (SELECT handle, slug FROM role WHERE handle IN $who AND {}),
-    tree: ({TREE}),
-    branch: IF $branch = NONE {{ NONE }} ELSE {{ type::record('task', $branch).status }},
-}};",
-        super::holding!()
-    )
 }
 
 /// A session [`Store::run_for`] read, with what its health is judged on.
@@ -399,35 +325,6 @@ fn ancestors_in(tree: &Tree, slug: &str) -> Result<Vec<String>, Error> {
 
 pub(super) use crate::stages::BLOCK_LINE;
 
-/// Cancellation does not satisfy a prerequisite. Block its unfinished dependents, or the task
-/// being created/moved if one of its prerequisites was cancelled earlier, in the same transaction.
-/// Already blocked work still needs each new cancellation's reason on its thread. The line ends with
-/// the status the dependent held, `(was ready)`, which `depends` gives it back.
-pub(super) fn block_cancelled_dependencies(cancelling: bool) -> String {
-    // Ordinary moves/creates use link_slug's index; only cancellation needs the reverse lookup.
-    let scope = if cancelling {
-        "target = $slug"
-    } else {
-        "slug = $slug"
-    };
-    format!(
-        "LET $blocked_links = SELECT slug, target FROM link WHERE kind = 'dep'
-            AND {scope}
-            AND type::record('task', target).status = 'cancelled'
-            AND type::record('task', slug).status NOT IN ['done', 'cancelled']
-            ORDER BY slug, target;
-FOR $dependent IN array::distinct($blocked_links.slug) {{
-    LET $cancelled = $blocked_links.filter(|$link| $link.slug = $dependent).target;
-    LET $was = (SELECT VALUE status FROM ONLY type::record('task', $dependent));
-    UPDATE type::record('task', $dependent) SET status = 'blocked', updated = $now, version += 1 RETURN NONE;
-    DELETE type::record('counter', ['hold', $dependent]) RETURN NONE;
-    LET $reason = '{BLOCK_LINE}' + array::join($cancelled, ', ') + ' (was ' + $was + ')';
-    {}
-}};",
-        logged("$dependent", "$actor", "'system'", "$reason", "NONE")
-    )
-}
-
 impl Store {
     /// Set a task's priority, recording the actor and both values without changing its other fields.
     pub fn set_priority(&self, slug: &str, priority: i64, handle: &str) -> Result<Task, Error> {
@@ -436,16 +333,7 @@ impl Store {
         }
         // Read the old value and write its replacement and history in the same transaction. A
         // concurrent edit conflicts and retries, so history always names the value replaced.
-        let act = if handle == OWNER { "" } else { ACT };
-        let body = format!(
-            "{act}
-LET $task = (SELECT priority FROM ONLY type::record('task', $slug));
-IF $task = NONE {{ THROW $missing }};
-UPDATE type::record('task', $slug) SET priority = $priority, version += 1 RETURN NONE;
-LET $said = $actor + ' changed priority p' + <string>$task.priority + ' → p' + <string>$priority;
-{}",
-            logged("$slug", "$actor", "'system'", "$said", "NONE")
-        );
+        let body = sql::set_priority(handle != OWNER);
         self.retrying(|| {
             let vars = self.acting(
                 handle,
@@ -473,22 +361,7 @@ LET $said = $actor + ' changed priority p' + <string>$task.priority + ' → p' +
         if title.is_empty() {
             return Err(refused("a task needs a title".into()));
         }
-        let act = if handle == OWNER { "" } else { ACT };
-        let body = format!(
-            "{act}
-LET $task = (SELECT title FROM ONLY type::record('task', $slug));
-IF $task = NONE {{ THROW $missing }};
-FOR $link IN $links {{
-    UPSERT type::record('link', [$slug, 'doc', $link])
-        CONTENT {{ slug: $slug, kind: 'doc', target: $link }} RETURN NONE;
-}};
-UPDATE type::record('task', $slug) SET title = $title, version += 1 RETURN NONE;
-IF $task.title != $title {{
-    LET $said = $actor + ' retitled it: ' + $task.title + ' → ' + $title;
-    {}
-}};",
-            logged("$slug", "$actor", "'system'", "$said", "NONE")
-        );
+        let body = sql::amend(handle != OWNER);
         self.retrying(|| {
             let vars = self.acting(
                 handle,
@@ -517,13 +390,9 @@ IF $task.title != $title {{
             me: Option<Value>,
             known: bool,
         }
-        let act = if by == OWNER { "" } else { ACT };
-        let body = format!(
-            "{act}{MOVE_UNDER}\n{}",
-            logged("$slug", "$actor", "'system'", "$said", "NONE")
-        );
+        let acts = by != OWNER;
         self.retrying(|| {
-            let read: Read = self.transact(TREE_READ, json!({"actor": by}))?;
+            let read: Read = self.transact(sql::TREE_READ, json!({"actor": by}))?;
             if by != OWNER {
                 if !read.known {
                     return Err(Failure::Stop(refused(unknown_actor(&self.board_command(), by))));
@@ -547,29 +416,25 @@ IF $task.title != $title {{
             let kept = self.kept_at_move(&tree, slug, parent)?;
             let to = kept.as_ref().and_then(|pass| pass.given.gave.first()).map(|(_, to)| to);
             let slots = self.reparenting(slug, parent, by, to.map(String::as_str))?;
-            let guard = if slots.is_empty() { "" } else { GUARD };
+            let guarded = !slots.is_empty();
             let vars = self.acting(
                 by,
                 (self.clock)(),
                 json!({"slug": slug, "parent": parent, "moves": read.moves, "said": said, "slots": slots}),
             );
             let Some(pass) = kept else {
-                return self.written(&format!("{body}{guard}"), vars, slug);
+                return self.written(&sql::set_parent(acts, guarded, false), vars, slug);
             };
             // The give's fences go before the move moves the task's version.
-            let (sender, act) = if by == OWNER { (BOARD, "") } else { (by, ACT) };
-            let body = format!(
-                "{act}{FENCES}{MOVE_UNDER}\n{}{guard}{}",
-                logged("$slug", "$actor", "'system'", "$said", "NONE"),
-                gives()
-            );
+            let sender = if by == OWNER { BOARD } else { by };
+            let body = sql::set_parent(acts, guarded, true);
             self.written(&body, pass.vars(sender, vars), slug)
         })
     }
 
     /// The parent, its parent, … up to the root, nearest first.
     pub fn ancestors(&self, slug: &str) -> Result<Vec<String>, Error> {
-        let read = format!("RETURN {TREE};");
+        let read = sql::tree();
         let tree: Vec<(String, Option<String>)> =
             self.retrying(|| self.transact(&read, json!({})))?;
         ancestors_in(&tree.into_iter().collect(), slug)
@@ -608,7 +473,7 @@ IF $task.title != $title {{
         let vars = json!({"asked": place.handle, "checkout": place.checkout,
             "claude": place.claude, "branch": place.branch,
             "executing": crate::health::EXECUTING});
-        let read = run_for_read();
+        let read = sql::run_for_read();
         let found: Found = self.retrying(|| self.transact(&read, vars.clone()))?;
         let now = self.now();
         let live = |seen: &&Seen| {
@@ -874,31 +739,16 @@ IF $task.title != $title {{
         };
         // As in set_priority, status validation, the update and history share one transaction.
         // A concurrent edit conflicts and retries without extending the shared agent write path.
-        let body = format!(
-            "LET $task = (SELECT status, instruction, parent FROM ONLY type::record('task', $slug));
-IF $task = NONE {{ THROW $missing }};
-IF $task.status NOT IN $from {{
-    LET $refusal = $cannot + $task.status + ' to ' + $status;
-    THROW $refusal;
-}};
-IF $status = 'review' AND ($task.instruction OR $task.parent != NONE) {{ THROW $instruction }};
-UPDATE type::record('task', $slug) SET status = $status, updated = $now, version += 1 RETURN NONE;
-{UNHOLD}
-LET $said = $actor + '{MOVED}' + $task.status + '{ARROW}' + $status;
-{}\n{}\n{}",
-            logged("$slug", "$actor", "'system'", "$said", "NONE"),
-            if reason.is_some() {
-                reason_written()
-            } else {
-                String::new()
-            },
-            block_cancelled_dependencies(cancelling)
-        );
         self.retrying(|| {
             // A red's close holds the counters it changes as a start does, capped store or not,
             // judged on the task as read: a red marked since is read and decided again.
             let closed = self.closing_slots(slug, status)?;
-            let body = closed.guarding(&body);
+            let body = sql::move_as_owner(
+                reason.is_some(),
+                cancelling,
+                closed.fenced(),
+                closed.guarded(),
+            );
             let vars = self.acting(
                 OWNER,
                 (self.clock)(),
@@ -1082,16 +932,6 @@ LET $said = $actor + '{MOVED}' + $task.status + '{ARROW}' + $status;
             lines: Vec<Line>,
             holders: Vec<Holder>,
         }
-        let read = "RETURN {
-            known: record::exists(type::record('task', $slug)),
-            below: (SELECT slug, instruction FROM task WHERE parent = $slug),
-            lines: (SELECT sender, text FROM message:[$slug, NONE]..[$slug, ..]
-                WHERE kind = 'system' AND (string::starts_with(text, sender + ' claimed it')
-                    OR text = sender + ' joined as executor'
-                    OR string::contains(text, ' orchestrator'))),
-            holders: (SELECT handle, role FROM role
-                WHERE slug = $slug AND role IN ['executor', 'orchestrator']),
-        };";
         let mut held = Held::default();
         let mut seen: HashSet<String> = HashSet::new();
         // Each task to read, and whether its executors are the task's: all but an instruction's.
@@ -1100,7 +940,8 @@ LET $said = $actor + '{MOVED}' + $task.status + '{ARROW}' + $status;
             if !seen.insert(at.clone()) {
                 continue;
             }
-            let read: Read = self.retrying(|| self.transact(read, json!({"slug": at})))?;
+            let read: Read =
+                self.retrying(|| self.transact(sql::EVER_HELD, json!({"slug": at})))?;
             let root = at == slug;
             if root && !read.known {
                 return Err(no_task(slug));

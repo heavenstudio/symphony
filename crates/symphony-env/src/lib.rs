@@ -44,6 +44,9 @@ pub const CHROME: Var = Var::new("SYMPHONY_CHROME");
 pub const CHROME_LEASH: Var = Var::new("SYMPHONY_CHROME_LEASH");
 /// The client a foreground server serves, in place of the embedded one.
 pub const UI_DIST: Var = Var::new("SYMPHONY_UI_DIST");
+/// Set for a release's build of the server, which then embeds no client: installed on the machine
+/// it serves the release's client from the folder beside it. The server's build script reads it.
+pub const CLIENT_BESIDE: Var = Var::new("SYMPHONY_CLIENT_BESIDE");
 /// The one server's port, a test's own.
 pub const PORT: Var = Var::new("SYMPHONY_PORT");
 /// Times the server's stages.
@@ -76,12 +79,13 @@ pub const READ_AUDIT_REPORT: Var = Var::new("SYMPHONY_READ_AUDIT_REPORT");
 pub const LOW_DISK_GB: Var = Var::new("SYMPHONY_LOW_DISK_GB");
 
 /// Every variable above.
-pub const ALL: [Var; 20] = [
+pub const ALL: [Var; 21] = [
     SURREAL,
     GIT_COMMON_DIR,
     CHROME,
     CHROME_LEASH,
     UI_DIST,
+    CLIENT_BESIDE,
     PORT,
     PROFILE,
     STARTUP_TRACE,

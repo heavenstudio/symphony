@@ -67,7 +67,7 @@ fn every_snapshot_read_is_a_read_and_binds_its_bounds() {
         Which::Pullable("someone"),
     ] {
         for sessions in [Sessions::Whole, Sessions::Shown] {
-            let (read, vars) = Store::reading(&which, sessions);
+            let (read, vars) = reading(&which, sessions);
             assert_eq!(
                 crate::rpc::Kind::of(&read),
                 crate::rpc::Kind::Read,
@@ -100,9 +100,9 @@ fn a_read_of_the_sessions_shown_reads_them_by_id_and_never_the_table() {
         Which::Linked("docs/x.md"),
         Which::Pullable("someone"),
     ] {
-        let (whole, _) = Store::reading(&which, Sessions::Whole);
+        let (whole, _) = reading(&which, Sessions::Whole);
         assert!(whole.contains(TABLE) && !whole.contains(BY_ID), "{whole}");
-        let (shown, _) = Store::reading(&which, Sessions::Shown);
+        let (shown, _) = reading(&which, Sessions::Shown);
         assert!(!shown.contains(TABLE) && shown.contains(BY_ID), "{shown}");
         let asker = "array::concat($view_roles.handle, [$handle])";
         assert_eq!(

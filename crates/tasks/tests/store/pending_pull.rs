@@ -24,22 +24,24 @@ pub(super) struct Waiting {
 }
 
 pub(super) fn waiting_pull(outage: &Outage) -> Option<Waiting> {
-    let found = outage.fixture.store.client().query(
-        "RETURN SELECT key, text, attempts FROM callback_event WHERE handle = $handle AND delivered != true AND string::starts_with(key, 'pull-');",
-        json!({"handle":outage.former}),
-    );
-    let mut waiting: Vec<Waiting> = serde_json::from_value(found.unwrap().remove(0)).unwrap();
+    let events = outage.fixture.store.raw().table("callback_event");
+    let found = (events.matching(json!({"handle": outage.former})))
+        .fields(&["key", "text", "attempts", "delivered"])
+        .unwrap();
+    let mut waiting: Vec<Waiting> = (found.as_array().unwrap().iter())
+        .filter(|event| event["delivered"] != json!(true))
+        .filter(|event| event["key"].as_str().unwrap().starts_with("pull-"))
+        .map(|event| serde_json::from_value(event.clone()).unwrap())
+        .collect();
     assert!(waiting.len() < 2, "{waiting:?}");
     waiting.pop()
 }
 
 /// What the last PULL `handle` acknowledged said, as its callback state records it.
 pub(super) fn said(fixture: &super::common::Fixture, handle: &str) -> Said {
-    let said = fixture.store.client().query(
-        "RETURN (SELECT VALUE pull_said FROM ONLY type::record('callback_state', $handle));",
-        json!({"handle":handle}),
-    );
-    serde_json::from_value(said.unwrap().remove(0)).expect("a PULL it acknowledged said this")
+    let said = fixture.store.raw().row("callback_state", handle);
+    let said = said.field("pull_said").unwrap();
+    serde_json::from_value(said).expect("a PULL it acknowledged said this")
 }
 
 /// The former orchestrator's digest now, as its PULL says it: what changed since the PULL it

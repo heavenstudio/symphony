@@ -20,11 +20,10 @@
 //! is given or somebody's again.
 
 use crate::health::FINISHED;
-use crate::orchestration::{self, Owners, Pool, WAITING};
-use crate::red::FIELDS;
+use crate::orchestration::{self, Owners, Pool};
 use crate::store::messages::BOARD;
-use crate::store::write::FENCE_RECIPIENT;
-use crate::store::{ACT, Board, Error, Failure, Store, Task, Which, logged};
+use crate::store::surreal::work as sql;
+use crate::store::{Board, Error, Failure, Store, Task, Which};
 use serde_json::{Value, json};
 use std::collections::{BTreeSet, HashMap};
 
@@ -191,44 +190,6 @@ impl Pass {
     }
 }
 
-/// The checks a pass's write makes first, before any statement of its own moves a version or a
-/// `last_seen`: each task as read, each dropped holder as read. Needs `$fenced` and `$seen`.
-pub(in crate::store) const FENCES: &str = "
-FOR $g IN $fenced {
-    IF (SELECT VALUE version FROM ONLY type::record('task', $g.slug)) != $g.version { THROW 'stale' };
-};
-FOR $s IN $seen {
-    IF (SELECT VALUE last_seen FROM ONLY type::record('session', $s.handle)) != $s.last_seen { THROW 'stale' };
-};";
-
-/// A pass's writes, after its [`FENCES`]: each receiver still there, fenced as a recipient is; each
-/// give's role, version, slot counter and line, sent by `$sender`; each mark set or lifted. Needs
-/// `$receivers`, `$gives`, `$marks`, `$unmarks`, `$sender` and `$now`.
-pub(in crate::store) fn gives() -> String {
-    format!(
-        "
-FOR $handle IN $receivers {{
-    IF !record::exists(type::record('session', $handle)) OR type::record('session', $handle).left_at != NONE {{ THROW 'stale' }};
-    {FENCE_RECIPIENT}
-}};
-FOR $g IN $gives {{
-    FOR $h IN $g.drop {{ DELETE type::record('role', [$g.slug, $h, 'orchestrator']) RETURN NONE; }};
-    UPSERT type::record('role', [$g.slug, $g.to, 'orchestrator'])
-        CONTENT {{ slug: $g.slug, handle: $g.to, role: 'orchestrator', since: $now }} RETURN NONE;
-    UPDATE type::record('task', $g.slug) SET version += 1 RETURN NONE;
-    UPSERT type::record('counter', ['slots', $g.to]) SET last += 1 RETURN NONE;
-    {}
-}};
-FOR $slug IN $marks {{
-    UPDATE type::record('task', $slug) SET version += 1, fields.{FIELDS}.{WAITING} = $now RETURN NONE;
-}};
-FOR $slug IN $unmarks {{
-    UPDATE type::record('task', $slug) SET version += 1, fields.{FIELDS}.{WAITING} = NONE RETURN NONE;
-}};",
-        logged("$g.slug", "$sender", "'system'", "$g.line", "NONE")
-    )
-}
-
 impl Store {
     /// The whole board as one read gives it, with each task's version.
     pub(in crate::store) fn board_versions(&self) -> Result<(Board, Versions), Failure> {
@@ -251,8 +212,7 @@ impl Store {
             return Ok(());
         }
         let session = by.filter(|by| *by != OWNER);
-        let act = if session.is_some() { ACT } else { "" };
-        let body = format!("{act}{FENCES}{}\nRETURN NONE;", gives());
+        let body = sql::give_pass(session.is_some());
         let now = (self.clock)();
         let sender = by.unwrap_or(BOARD);
         let vars = match session {
@@ -272,13 +232,7 @@ impl Store {
         let candidates = orchestration::candidates(board, except, now);
         let listening: BTreeSet<String> = match candidates.is_empty() {
             true => BTreeSet::new(),
-            false => self.read(
-                "RETURN array::union(
-                    (SELECT VALUE handle FROM $candidates.map(|$h| type::record('callback_state', $h)) WHERE address != NONE),
-                    ((SELECT VALUE waiting FROM ONLY callback_state:chat) ?? []).filter(|$h| $h IN $candidates)
-                );",
-                json!({"candidates": candidates}),
-            )?,
+            false => self.read(sql::LISTENING, json!({"candidates": candidates}))?,
         };
         Ok(Pool::of(board, except, &listening, now))
     }

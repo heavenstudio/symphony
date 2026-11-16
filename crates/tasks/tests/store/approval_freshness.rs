@@ -31,14 +31,8 @@ fn watch(f: &Fixture, handle: &str) -> PaneWatch {
 }
 
 fn watch_store(store: &Store, handle: &str) -> PaneWatch {
-    let mut values = store
-        .client()
-        .query(
-            "RETURN (SELECT VALUE pane_watch FROM ONLY type::record('callback_state', $handle));",
-            json!({"handle":handle}),
-        )
-        .unwrap();
-    serde_json::from_value(values.remove(0)).unwrap()
+    let watch = (store.raw().row("callback_state", handle)).field("pane_watch");
+    serde_json::from_value(watch.unwrap()).unwrap()
 }
 
 fn pending(f: &Fixture, handle: &str) -> Vec<Value> {
@@ -46,9 +40,15 @@ fn pending(f: &Fixture, handle: &str) -> Vec<Value> {
 }
 
 fn pending_store(store: &Store, handle: &str) -> Vec<Value> {
-    store.client().query(
-        "RETURN SELECT key, text, attempts, sequence FROM callback_event WHERE handle = $handle AND delivered != true ORDER BY sequence;",
-        json!({"handle":handle})).unwrap()[0].as_array().unwrap().clone()
+    let waiting = (store.raw().table("callback_event")).matching(json!({"handle": handle}));
+    let fields = ["key", "text", "attempts", "sequence", "delivered"];
+    let mut rows = waiting.fields(&fields).unwrap().as_array().unwrap().clone();
+    rows.retain(|row| row["delivered"] != json!(true));
+    rows.sort_by_key(|row| row["sequence"].as_i64());
+    for row in &mut rows {
+        row.as_object_mut().unwrap().remove("delivered");
+    }
+    rows
 }
 
 fn seed(f: &Fixture, handle: &str, key: &str, text: &str) {
@@ -248,8 +248,11 @@ fn legacy_nonclock_transport_preserves_unrelated_prose() {
     }
     let f = Fixture::empty();
     let (orch, worker, o) = waiting_worker(&f);
-    f.store.client().query("UPDATE type::record('callback_state', $handle) SET pane_watch = $watch RETURN NONE;",
-        json!({"handle":orch, "watch":{"blocked":{worker.clone():{"task":"tests/pane", "pane":"t2"}}, "unanswered":false}})).unwrap();
+    let pane_watch = json!({"blocked":{worker.clone():{"task":"tests/pane", "pane":"t2"}},
+        "unanswered":false});
+    (f.store.raw().row("callback_state", orch.as_str()))
+        .set(json!({"pane_watch": pane_watch}))
+        .unwrap();
     let legacy =
         format!("BLOCKED {worker} tests/pane t2 — its terminal waits on an approval or a question");
     seed(&f, &orch, "pane-899-0", &legacy);

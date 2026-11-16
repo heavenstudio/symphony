@@ -1,4 +1,4 @@
-# symphony-stamp: 47fb94ea159c0e4a
+# symphony-stamp: 68591d7664649908
 # The Symphony's commands, which `symphony init` installs and keeps current: the task board
 # (`just tasks`), messages between agents (`just agent-send`), the server (`just symphony`), the
 # document CLI (`just symphony-cli`) and its review commands (`just symphony-status`,
@@ -15,8 +15,10 @@
 set allow-duplicate-recipes
 
 # Runs the project's build of a binary: this checkout's `.target/bin/NAME` link, else the main
-# checkout's (from a linked worktree), else NAME on PATH.
-_symphony_run := 'symphony_run() { n=$1; shift; m=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null); case $m in */.git) m=${m%/.git};; *) m=;; esac; for b in ".target/bin/$n" ${m:+"$m/.target/bin/$n"}; do if [ -x "$b" ]; then exec "$b" "$@"; fi; done; if b=$(command -v "$n"); then exec "$b" "$@"; fi; echo "no $n binary: link the project build of $n at .target/bin/$n, or put $n on PATH" >&2; exit 127; }; symphony_run'
+# checkout's (from a linked worktree), else the release the machine runs (`current/bin/NAME` in the
+# machine folder: SYMPHONY_MACHINE_DIR, else the platform's data folder for the Symphony), else NAME
+# on PATH. A project with no build of its own so runs the release.
+_symphony_run := 'symphony_run() { n=$1; shift; m=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null); case $m in */.git) m=${m%/.git};; *) m=;; esac; for b in ".target/bin/$n" ${m:+"$m/.target/bin/$n"}; do if [ -x "$b" ]; then exec "$b" "$@"; fi; done; d=${SYMPHONY_MACHINE_DIR:-}; if [ -z "$d" ] && [ -n "${HOME:-}" ]; then case $(uname -s) in Darwin) d="$HOME/Library/Application Support/Symphony";; *) d="$HOME/.local/share/symphony"; case ${XDG_DATA_HOME:-} in /*) d="$XDG_DATA_HOME/symphony";; esac;; esac; fi; case $d in /*) b="$d/current/bin/$n"; if [ -x "$b" ]; then exec "$b" "$@"; fi;; esac; if b=$(command -v "$n"); then exec "$b" "$@"; fi; echo "no $n binary: link the project build of $n at .target/bin/$n, install a release on the machine, or put $n on PATH" >&2; exit 127; }; symphony_run'
 
 # Refuses the board's recorder (`tasks run`, its command first after any `--database NAME`, as
 # `tasks` reads it), which runs whatever command it is handed: the allow rules let an agent run

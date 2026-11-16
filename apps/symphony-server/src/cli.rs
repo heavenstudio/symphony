@@ -47,6 +47,7 @@ usage: symphony-server [--open] [--if-up] [--shared] [--host H]... [--root DIR] 
        symphony-server --stop
        symphony-server project add [DIR]
        symphony-server --version
+       symphony-server --serves
 
 The Symphony (`just symphony`): one server per machine, under a lock in the machine folder, serving
 every registered project at `/<id>/` and each of its worktrees at `/<id>/@<tree id>/`. A start
@@ -74,6 +75,9 @@ when that server serves its project, and otherwise starts, registers and replace
   project add  register DIR's project (default: here) with the one server, and say whether the
                running server can serve it; run in a linked worktree, it registers none of that
                worktree's own repository
+
+  --serves     what this build serves, as one line of JSON: the plugin protocol's major and minor
+               and the board schema
 
 The one server ignores --host and an in-repository --root; use --port to customize a server.
 ";
@@ -221,6 +225,22 @@ fn scratch(exe: &Path, args: &[String], database: &str, asks: &Path) -> i32 {
         .unwrap_or(2)
 }
 
+/// The flag that asks what this build serves ([`serves`]).
+const SERVES: &str = "--serves";
+
+/// What this build serves, as one line of JSON: the plugin protocol it speaks
+/// (docs/PLUGIN_PROTOCOL.md) and the board schema it reads and writes. A release's install asks
+/// the server it built, never the sources, and writes the answer in the release's manifest
+/// (docs/RELEASES.md, "The install").
+pub fn serves() -> String {
+    let protocol = symphony_plugin::protocol::PROTOCOL;
+    serde_json::json!({
+        "protocol": {"major": protocol.major, "minor": protocol.minor},
+        "schema": symphony_board::SCHEMA,
+    })
+    .to_string()
+}
+
 /// The whole of `symphony-server`: the exit code.
 pub fn main(args: &[String]) -> i32 {
     if symphony::cli::version(
@@ -229,6 +249,10 @@ pub fn main(args: &[String]) -> i32 {
         env!("CARGO_PKG_VERSION"),
         &mut std::io::stdout(),
     ) {
+        return 0;
+    }
+    if matches!(args, [only] if only == SERVES) {
+        println!("{}", serves());
         return 0;
     }
     // Keep scratch runs explicit and self-contained without mutating the process environment

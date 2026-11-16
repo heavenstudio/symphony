@@ -543,15 +543,7 @@ fn a_board_of_schema_16_gains_the_ask_table_with_every_row_kept() {
     assert!(!tables(&f.store).contains(&"ask".to_string()));
     let upgraded = f.other();
     assert!(tables(&upgraded).contains(&"ask".to_string()));
-    let version = upgraded
-        .client()
-        .query(
-            "RETURN (SELECT VALUE version FROM ONLY meta:schema);",
-            json!({}),
-        )
-        .unwrap()
-        .pop()
-        .unwrap();
+    let version = (upgraded.raw().row("meta", "schema").field("version")).unwrap();
     assert_eq!(version, json!(Schema::this_build().version()));
     assert_eq!(upgraded.dump().unwrap(), original);
     assert_eq!(upgraded.open_ask(&verdict("why?")).unwrap().id, 1);
@@ -559,14 +551,8 @@ fn a_board_of_schema_16_gains_the_ask_table_with_every_row_kept() {
 
 /// The chat event `key` as the board holds it: its words and whether it was delivered.
 fn chat_event(f: &Fixture, key: &str) -> serde_json::Value {
-    f.store
-        .client()
-        .query(
-            "RETURN (SELECT text, delivered FROM ONLY type::record('chat_event', $key));",
-            json!({"key": key}),
-        )
-        .unwrap()
-        .pop()
+    (f.store.raw().row("chat_event", key))
+        .fields(&["text", "delivered"])
         .unwrap()
 }
 

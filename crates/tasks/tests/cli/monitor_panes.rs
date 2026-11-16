@@ -254,12 +254,8 @@ fn ordinary_inbox_renders_legacy_pane_observations_without_a_clock_tick() {
     drop(listener);
     fs::remove_file(&socket).unwrap();
     let queued = legacy_inbox(&board, &orch, &child);
-    let watch_before = board
-        .client()
-        .query(
-            "RETURN type::record('callback_state', $handle).pane_watch;",
-            json!({"handle":orch}),
-        )
+    let watch_before = (board.raw().row("callback_state", orch.as_str()))
+        .field("pane_watch")
         .unwrap();
     assert_eq!(
         inbox_subprocess(&m, &orch),
@@ -276,24 +272,14 @@ fn ordinary_inbox_renders_legacy_pane_observations_without_a_clock_tick() {
         acknowledged,
         "only original callback keys are acknowledged"
     );
-    let delivery = board
-        .client()
-        .query(
-            "RETURN SELECT message, handle FROM delivery WHERE handle = $handle;",
-            json!({"handle":orch}),
-        )
+    let delivery = (board.raw().table("delivery"))
+        .matching(json!({"handle":orch}))
+        .fields(&["message", "handle"])
         .unwrap();
+    assert_eq!(delivery, json!([{"message":queued.message, "handle":orch}]));
     assert_eq!(
-        delivery[0],
-        json!([{"message":queued.message, "handle":orch}])
-    );
-    assert_eq!(
-        board
-            .client()
-            .query(
-                "RETURN type::record('callback_state', $handle).pane_watch;",
-                json!({"handle":orch})
-            )
+        (board.raw().row("callback_state", orch.as_str()))
+            .field("pane_watch")
             .unwrap(),
         watch_before
     );

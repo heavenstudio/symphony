@@ -87,11 +87,12 @@ impl Hub {
     /// repository still ([`symphony_board::project::is_repository`]). A folder removed, emptied or
     /// left without its `.git` leads that lookup up to whatever checkout holds it, whose board is
     /// another repository's; a `.git` a board's start under way made again holds only the board's
-    /// folders. A folder no repository held then is held while it is there. The hub's own reaches
-    /// are held to the same repository ([`taskview::connect_held`]), so a removal after this check
-    /// leads them to no other board.
+    /// folders. A folder no repository held then is held while it is there. Every reach of its
+    /// board from the folder in this process, the hub's and any route's after this check, is held to
+    /// the same repository ([`taskview::serve`]), so a removal after this check leads none to
+    /// another board.
     ///
-    /// [`taskview::connect_held`]: symphony::taskview::connect_held
+    /// [`taskview::serve`]: symphony::taskview::serve
     pub(crate) fn holds_its_project(&self) -> bool {
         self.root.is_dir()
             && self.repository.as_ref().is_none_or(|repository| {

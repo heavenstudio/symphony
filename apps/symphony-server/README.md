@@ -10,7 +10,8 @@ at `/` on a server of its own.
 The one server (`serve --home`) keeps its record (`server.json`), log, lease and lock in the
 machine folder: `~/Library/Application Support/Symphony/` on macOS, `$XDG_DATA_HOME/symphony`
 elsewhere, `SYMPHONY_MACHINE_DIR` when set (every test sets a temporary one). The registry
-beside them (`projects.json`) holds each project's root, id and `symphony.toml`; `symphony
+beside them (`projects.json`) holds each project's root, id and `symphony.toml`, and the
+releases installed on the machine are there too (`releases/NAME/`, with the `current` link); `symphony
 project add [DIR]` writes it, and every start runs it. The build and client stay in the
 starter's install folder (`--install`, `symphony/server/` in its git common dir), where a record
 an older server left is read once; a project's own state (asks, thumbnails,
@@ -120,10 +121,17 @@ before compression. A request whose `If-None-Match` names it is answered `304` w
 keeping the tag and `no-store` (`src/api/validated.rs`, applied where every read leaves
 `api::answer`). A document, its outline and its sections' bodies carry the feed's cursor
 (`version`), which moves with every change on the board, so their tag is of the JSON with the
-cursor left out: it moves only with the document. Every JSON read names the feed's cursor it
-was read at in a header (`symphony_api::VERSION_HEADER`), on its `200` and its `304` alike: the
-server takes the cursor before it reads the answer, so every event at or before it is in the
-answer, and a page drops what its feed says of a read at or before the read's cursor
+cursor left out: it moves only with the document. An outline's check that names the tag of the copy
+the hub follows for that page is answered `304` at the feed's cursor without rendering the
+document: the hub renders that copy again when anything a render reads that it tracks changed, and
+makes its outline's tag once for each copy (`Hub::outline_kept`). A check with another tag or none,
+of a document not followed yet, of a copy whose tasks are no longer the ones that link it on the
+board as last read (a board read asks for no refresh), or of one that names a file from outside the
+entrypoints' folders by its change time and size, which no refresh watches, renders as a read does.
+A page whose kept copy is still current takes the cursor from `/api/board`. Every JSON read names
+the feed's cursor it was read at in a header (`symphony_api::VERSION_HEADER`), on its `200` and its
+`304` alike: the server takes the cursor before it reads the answer, so every event at or before it
+is in the answer, and a page drops what its feed says of a read at or before the read's cursor
 (`api::cursor`). The browser keeps no copy of its own: the client's cache keeps
 the body and sends the tag back (docs/analysis/client-cache.md). An error carries no tag, and the
 feed's stream is never read whole.
@@ -165,7 +173,12 @@ The server package embeds its committed `client/public` distribution: the curren
 the two published before it, as its `builds.json` names them. A direct
 `symphony-server --port N` uses it when the default local build directory is absent.
 An explicit install or `SYMPHONY_UI_DIST` never falls back, and a present local
-bundle keeps its strict errors. `just client-update` in the Symphony workspace
+bundle keeps its strict errors. A release's build of the server (`SYMPHONY_CLIENT_BESIDE=1`)
+embeds no client: run from the release's folder in the machine folder
+(`releases/NAME/bin/symphony-server`, through `current` or not), it serves that release's
+`client/HASH/` from beside it, whatever else is named
+([RELEASES](../../docs/RELEASES.md#the-install)). `symphony-server --serves` prints, as one line
+of JSON, the plugin protocol and the board schema the build serves. `just client-update` in the Symphony workspace
 refreshes the real distribution before committing client changes. Its default
 root is the checkout's top level even when the command starts in a subfolder; `--root`
 selects another folder. A private server on the main checkout leaves the

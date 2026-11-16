@@ -1,9 +1,10 @@
 //! Where the reader is on the task board (the React client's `src/boardplace.ts`), kept through
 //! what moves it (app/board-scroll-and-focus-followups): a card the feed files above the reader,
-//! in their column or another, moves nothing on their screen, wherever a touch screen's last tap
-//! left the pointer, and deep in a column Load more brought to its end, where the refresh after
-//! each filing keeps every row (app/board-keeps-its-place-deep-in-a-loaded-column), and one that
-//! changed nothing there transfers no body
+//! in their column or another, moves nothing on their screen, however late the page's tasks run,
+//! wherever a touch screen's last tap left the pointer, and deep in a column Load more brought to
+//! its end, where the refresh after each filing keeps every row
+//! (app/board-keeps-its-place-deep-in-a-loaded-column), and one that changed nothing there
+//! transfers no body
 //! (app/deep-column-refresh-answers-304-when-unchanged); a focused card the feed moves to another
 //! column keeps the focus, on the same link; and Back from a task draws the board where the reader
 //! left it, sideways, down its columns and down the page, the card it kept moved or gone meanwhile
@@ -202,12 +203,58 @@ fn scroll_top(page: &mut Chrome) -> f64 {
         .unwrap()
 }
 
+/// A page script under which, once the test sets `window.__late` to a count of frames, every task
+/// of React's scheduler (a `MessageChannel` message, one posted before as well) runs that many
+/// frames after it comes, as a slow phone's or a loaded machine's renderer runs its frames before
+/// a task waiting for it. `window.__channels` counts the channels whose messages it takes, React's
+/// scheduler's the client's one.
+const LATE_TASKS: &str = r#"window.__late = 0;
+window.__channels = 0;
+(() => {
+    const Channel = window.MessageChannel;
+    const receive = Object.getOwnPropertyDescriptor(MessagePort.prototype, "onmessage");
+    window.MessageChannel = class extends Channel {
+        constructor() {
+            super();
+            const port = this.port1;
+            let handler = null;
+            Object.defineProperty(port, "onmessage", {
+                get: () => handler,
+                set: given => {
+                    handler = given;
+                    if (typeof given !== "function") return receive.set.call(port, given);
+                    window.__channels += 1;
+                    receive.set.call(port, event => {
+                        let left = window.__late;
+                        (function wait() { if (left-- > 0) requestAnimationFrame(wait); else given.call(port, event); })();
+                    });
+                },
+            });
+        }
+    };
+})();"#;
+
 /// A task filed above the reader keeps their column where it was on their screen: on a desk with
 /// the pointer over Ready, one filed at Ready's top, then one at the top of Concept, the column
 /// before it, which the browser's own scroll anchoring holds; on a phone, where Ready fills the
 /// board's width, one at its top.
 #[test]
 fn a_task_filed_above_the_reader_moves_nothing_in_their_column() {
+    filed_above_the_reader(0);
+}
+
+/// The same while every task React's scheduler posts runs twelve frames late ([`LATE_TASKS`]), as
+/// on a slow phone or a loaded machine: the board draws the filing within the event that brings
+/// it, so the shell's hold of the reader's place, which ends after four frames with nothing moved,
+/// starts from the filed row in the page, never from before it.
+#[test]
+fn a_task_filed_above_the_reader_moves_nothing_while_the_pages_tasks_run_late() {
+    filed_above_the_reader(12);
+}
+
+/// [`a_task_filed_above_the_reader_moves_nothing_in_their_column`], with React's scheduler's tasks
+/// running `late` frames late from each filing until the reader's place is seen held.
+fn filed_above_the_reader(late: u32) {
     let desk: &[(&str, &str)] = &[
         ("place/filed-ready", "ready"),
         ("place/filed-concept", "concept"),
@@ -219,8 +266,20 @@ fn a_task_filed_above_the_reader_moves_nothing_in_their_column() {
         let mut board = tasks();
         let served = site(&board);
         let Some(mut page) = chrome() else { return };
+        page.call(
+            "Page.addScriptToEvaluateOnNewDocument",
+            json!({ "source": LATE_TASKS }),
+        );
         let mut version = version();
         open(&mut page, &served, width, height);
+        if late > 0 {
+            assert!(
+                page.eval("window.__channels")
+                    .as_u64()
+                    .is_some_and(|channels| channels > 0),
+                "{width}px: React's scheduler takes no task through the page script's channel, so none would run late"
+            );
+        }
         scroll_board(&mut page, first, 1500);
         if width >= 600 {
             let card = page.eval(&format!(
@@ -238,6 +297,7 @@ fn a_task_filed_above_the_reader_moves_nothing_in_their_column() {
             let filed = task(slug, status, 0, json!([]));
             board.push(filed.clone());
             version += 1;
+            page.eval(&format!("window.__late = {late}"));
             push(
                 &served,
                 version,
@@ -249,6 +309,7 @@ fn a_task_filed_above_the_reader_moves_nothing_in_their_column() {
                 "{width}px: {slug} filed moved Ready's first card on the screen from {before} to {}",
                 page.eval(&first_on_screen("ready"))
             );
+            page.eval("window.__late = 0");
             // The board scrolled by the row filed above the reader in their column, and by none for
             // one filed in another, though the browser's own anchoring held that one's column: the
             // hold of the reader's took the board back.

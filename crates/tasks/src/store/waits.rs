@@ -6,8 +6,9 @@
 
 use serde_json::json;
 
+use super::surreal::waits as sql;
 use super::work::OWNER;
-use super::{ACT, Error, REFUSED, Store, Task, logged, refused, repr};
+use super::{Error, REFUSED, Store, Task, refused, repr};
 use crate::alarm::{ASSESSED, FIXED, Tip, WAITS, WAITS_SET, Waits, Written};
 use crate::red::FIELDS;
 
@@ -41,12 +42,8 @@ struct SourceObservation {
 impl Store {
     /// One snapshot of the task's assessment fence. It writes and migrates nothing.
     pub fn assessment_state(&self, slug: &str) -> Result<AssessmentState, Error> {
-        let states: Vec<AssessmentState> = self.retrying(|| {
-            self.read(
-                "SELECT slug, status, version FROM type::record('task', $slug);",
-                json!({"slug": slug}),
-            )
-        })?;
+        let states: Vec<AssessmentState> =
+            self.retrying(|| self.read(sql::ASSESSMENT_STATE, json!({"slug": slug})))?;
         states
             .into_iter()
             .next()
@@ -132,32 +129,7 @@ impl Store {
                 "a landing's assessment must have an identity".into(),
             ));
         }
-        let act = if handle == OWNER { "" } else { ACT };
-        let body = format!(
-            "IF !record::exists(type::record('task', $slug)) {{ THROW $missing }};
-LET $board = type::record('task', $slug).fields.{FIELDS};
-LET $seen = $board.assessments[$assessment][$record];
-IF $seen = NONE AND !($board.{WAITS} = $record AND $board.{ASSESSED}.id = $assessment) {{
-{act}
-IF $source_error != NONE {{ THROW $source_error }};
-IF !$source_current {{ THROW $source_changed }};
-IF $checked AND (type::record('task', $slug).status != $expected_status OR type::record('task', $slug).version != $expected_version) {{ THROW $changed }};
-IF $board.{ASSESSED}.id != NONE AND $board.{WAITS} != NONE {{
-    UPDATE type::record('task', $slug) SET
-        fields.{FIELDS}.assessments[$board.{ASSESSED}.id][$board.{WAITS}] = {{
-            at: $board.{ASSESSED}.at, sid: $board.{ASSESSED}.sid
-        }} RETURN NONE;
-}};
-UPDATE type::record('task', $slug) MERGE {{ fields: $patch }} RETURN NONE;
-UPDATE type::record('task', $slug) SET version += 1 RETURN NONE;
-LET $said = $actor + $set + $record;
-{}
-UPDATE type::record('task', $slug) SET
-    fields.{FIELDS}.{ASSESSED} = {{ id: $assessment, at: $ts, sid: $sid }},
-    fields.{FIELDS}.assessments[$assessment][$record] = {{ at: $ts, sid: $sid }} RETURN NONE;
-}};",
-            logged("$slug", "$actor", "'system'", "$said", "NONE")
-        );
+        let body = sql::record(handle != OWNER);
         self.retrying(|| {
             let observed = match source.as_mut().map_or(Ok(true), |check| check()) {
                 Ok(current) => SourceObservation { current, unavailable: None },
@@ -210,13 +182,7 @@ UPDATE type::record('task', $slug) SET
                 "invalid rework occurrence or end: {record:?}, {first:?}"
             )));
         }
-        let kept = format!("fields.{FIELDS}.{FIXED}[$judged][$written]");
-        let body = format!(
-            "IF record::exists(type::record('task', $slug)) {{
-    UPDATE type::record('task', $slug) MERGE {{ fields: $patch }} WHERE {kept} = NONE RETURN NONE;
-}};
-RETURN (SELECT VALUE {kept} FROM ONLY type::record('task', $slug));"
-        );
+        let body = sql::fixed();
         let written = record.key();
         let vars = json!({
             "slug": slug,

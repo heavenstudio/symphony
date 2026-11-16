@@ -357,13 +357,8 @@ fn a_codex_record_still_unknown_when_it_closes_takes_the_thread_registered_meanw
     let h = f.session("worker");
     codex_launch(&f, &h);
     // Registered without completing the record, as a write racing the launch's could leave it.
-    f.store
-        .client()
-        .query(
-            "UPSERT type::record('callback_state', $handle) SET handle = $handle, \
-             address = 'codex:0abc-12', host = 'this-host' RETURN NONE;",
-            serde_json::json!({"handle": h}),
-        )
+    (f.store.raw().row("callback_state", h.as_str()))
+        .put(serde_json::json!({"handle": h, "address": "codex:0abc-12", "host": "this-host"}))
         .unwrap();
     assert_eq!(
         f.store.task_sessions("sim/jump").unwrap()[0].claude_session,
