@@ -875,9 +875,13 @@ fn the_command_installs_and_reports_and_refuses_what_it_does_not_know() {
         "{out}"
     );
     assert!(out.ends_with(&format!("\n\n{TRUST}\n")), "{out}");
+    // As `main` reads them: this process's machine folder and search path.
     let warned = heartbeat_warning(
         &tree.root,
-        &builds::Beyond::path(std::env::var_os("PATH").as_deref()),
+        &builds::Beyond {
+            machine: crate::machine::dir().ok(),
+            path: std::env::var_os("PATH"),
+        },
     )
     .map_or_else(String::new, |warning| format!("symphony init: {warning}\n"));
     assert_eq!(err, warned);
@@ -2025,6 +2029,44 @@ fn the_warning_names_the_missing_builds_and_what_goes_without_them() {
     assert_eq!(
         heartbeat_warning(&tree.root, &builds::Beyond::path(Some(&path))),
         None
+    );
+}
+
+#[test]
+fn a_release_installed_on_the_machine_is_the_beats_tasks_and_never_the_hooks_symphony() {
+    // A project with no build of its own, and a release holding both binaries: its recipes run
+    // the release, but the hooks' shell finds `symphony` by the links and the search path alone.
+    let tree = Tree::new();
+    program(&tree, "machine/releases/release-1/bin/symphony");
+    program(&tree, "machine/releases/release-1/bin/tasks");
+    std::os::unix::fs::symlink("releases/release-1", tree.path("machine/current")).unwrap();
+    let project = tree.path("lamp");
+    std::fs::create_dir_all(&project).unwrap();
+    let released = |path: Option<&std::ffi::OsStr>| builds::Beyond {
+        machine: Some(tree.path("machine")),
+        path: path.map(std::ffi::OsStr::to_os_string),
+    };
+    assert_eq!(
+        heartbeat_warning(&project, &released(None)).unwrap(),
+        "warning: symphony has no build at .target/bin/ or on PATH: no tool call counts as a \
+         beat and the memory guard refuses nothing until it does (see Next)"
+    );
+    // The recipes do find it there: no step asks for a link.
+    assert_eq!(
+        unfound(&project, &["symphony", "tasks"], &released(None)),
+        [] as [&str; 0]
+    );
+    // With `symphony` where the hooks look, the beat's `tasks` is the release's: nothing to warn.
+    program(&tree, "bin/symphony");
+    let path = tree.path("bin").into_os_string();
+    assert_eq!(heartbeat_warning(&project, &released(Some(&path))), None);
+    program(&tree, "lamp/.target/bin/symphony");
+    assert_eq!(heartbeat_warning(&project, &released(None)), None);
+    // Without the release, the same project lacks `tasks` as well.
+    assert_eq!(
+        heartbeat_warning(&project, &builds::Beyond::default()).unwrap(),
+        "warning: tasks has no build at .target/bin/ or on PATH: no tool call counts as a beat \
+         until it does (see Next)"
     );
 }
 

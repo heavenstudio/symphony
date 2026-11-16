@@ -1349,10 +1349,21 @@ fn registered(root: &Path, folder: &Path) -> bool {
         .is_ok_and(|registry| registry.projects.iter().any(|entry| entry.root == main))
 }
 
-/// The warning a run at `root` ends with when the heartbeat has no build to run there, found as the
-/// hooks find it, past its links in `beyond`.
+/// The warning a run at `root` ends with when the heartbeat has no build to run there, each found
+/// as the hooks find it, past its links in `beyond`: `symphony` as the hooks' own shell does
+/// ([`find_symphony`]: the links, then the search path, never the machine's release), and `tasks`
+/// as the beat does ([`builds::find`], the machine's release before the search path). So a project
+/// with no build of its own is warned though a release is installed: its recipes run the release,
+/// and its hooks run nothing.
 pub fn heartbeat_warning(root: &Path, beyond: &builds::Beyond) -> Option<String> {
-    let missing = unfound(root, &HEARTBEAT_BUILDS, beyond);
+    let shell = builds::Beyond::path(beyond.path.as_deref());
+    let missing: Vec<&str> = HEARTBEAT_BUILDS
+        .into_iter()
+        .filter(|name| {
+            let past = if *name == "symphony" { &shell } else { beyond };
+            builds::find(root, name, past).is_none()
+        })
+        .collect();
     if missing.is_empty() {
         return None;
     }
