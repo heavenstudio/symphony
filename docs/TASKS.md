@@ -1815,6 +1815,8 @@ afterwards, and runs the check, the docs audit, on what it made ([below](#the-re
   under an approve that names the tip is
   said to `@executor`, which merges the default branch into its branch once, settling
   the conflict in those documents and changing nothing else, runs its tests at the new tip
+  (the task's by its branch, done as it is, with nothing named:
+  [MACHINE_WORK](MACHINE_WORK.md#recording-builds-and-tests), "For which task")
   and lands it again: the task stays done, its approve standing over that one merge
   ([above](#the-default-landing), "An approve over one merge"), and a move back to review
   would ask for a fresh one. Any other conflict, one under an approve that names no commit
