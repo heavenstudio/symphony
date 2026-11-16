@@ -24,7 +24,10 @@ that format at run time.
 
 ## Checks
 
-The sheets are formatted and linted with the rest of the package. Two style rules are off for this
+The sheets are formatted and linted with the rest of the package, but `board.css` and `frame.css`
+are not formatted: the server inlines its copies of them in its own pages as they are written
+(`apps/symphony-server/src/`), a rule a line, and a formatter's lines would be bytes of every such
+page. Two style rules are off for this
 folder alone (`biome.json`): the order of selectors by specificity and `!important`, as these
 sheets were carried whole from the client they were written for, and their rules' order is the
 cascade the browser tests hold.

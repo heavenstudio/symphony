@@ -7,6 +7,10 @@
   "linter": { "domains": { "react": "recommended", "test": "recommended" } },
   "overrides": [
     {
+      "includes": ["src/styles/board.css", "src/styles/frame.css"],
+      "formatter": { "enabled": false }
+    },
+    {
       "includes": ["src/styles/**"],
       "linter": {
         "rules": {
