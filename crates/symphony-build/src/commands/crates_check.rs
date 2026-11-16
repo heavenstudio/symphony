@@ -4,7 +4,8 @@
 //! A version crates.io lacks has nothing to compare with; one it holds is packaged here and
 //! compared with that version's sources there, and one whose sources moved while its version did
 //! not is red, since a version is published once (exit 1). It only reads crates.io. A registry it
-//! cannot read, or a package it cannot make, is exit 2: it fails closed.
+//! cannot read, or a package it cannot make, is exit 2: it fails closed. A read of crates.io that
+//! got no answer, or a server's error, is tried again first, three tries in all.
 #![forbid(unsafe_code)]
 
 use std::io::Write;
