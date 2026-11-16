@@ -27,38 +27,20 @@ their dated history work is in [REVIEW](REVIEW.md).
 
 ## Waiting on an agent
 
-### Page loading
+### The header
 
-- [x] **components-draw-when-data-arrives** — Each part of a page (a task's thread, its gates, a chart) would draw the moment its own data arrives, the copy from this device first, and redraw itself when newer data comes, with no part waiting for a slower one. Several pages do this already, each in its own hand-written way; Reports, the queue and home still arrive whole, and most pages start their reads one step later than they need to. How should a part get its data? A: one small piece of our own code that every page uses; each part asks the server for its own data, and the live channel tells a part when it has newer data to fetch. Reports' charts arrive in three groups. Nothing more to download. B: the same, built on the TanStack Query library: 10 kB more on each first visit, for features we already have or do not use. C: the same, but the data itself travels on the live channel, the streaming you described, in place of separate requests: a new protocol, and an unchanged part can no longer be answered with nothing. Recommended: A. Approve and say A, B or C in the note, or comment. [[analysis/components-draw-when-their-data-arrives#The choice]]
-  [2026-11-15 12:16] agent — Posted for the board task `app/components-draw-when-their-data-arrives`, from your words: "each component should be able to render itself once the data it needs is available".
+- [-] **phone-header-one-row** — On a phone the header would be one row instead of two: the mark and name, a menu button that names the page you are on (☰ Board), ◑ and the bell. The page links and Projects move into that menu, which opens under the button over the page, so nothing below it moves. The header goes from 97 px to 53 px tall, so every page starts 44 px higher. Wider than a phone nothing changes. It changes **header-on-a-phone**, which keeps every page in view on a second row. Approve, or comment. [[analysis/phone-header#The proposal]]
+  [2026-11-16 22:15] agent — Posted for the board task `app/phone-header-is-one-row`, from your words on its inbox item: "Navigation should also be made even smaller on mobile, possibly using hambúrguer menus".
+  [2026-11-16 22:15] agent — The board, then a document, light then dark. Each shows today, the one row, and the one row with its menu open: ![The board on a phone, light: today, one row, menu open](analysis/phone-header/board-light.webp) ![The board on a phone, dark: today, one row, menu open](analysis/phone-header/board-dark.webp) ![A document on a phone, light: today, one row, menu open](analysis/phone-header/doc-light.webp) ![A document on a phone, dark: today, one row, menu open](analysis/phone-header/doc-dark.webp)
 
-    **Today.** A task's page, the task board and a document already draw part by part. What holds their parts back is mostly the order the page asks in: nearly every page reads the board first and only then asks for anything else, though that read gives it one number. On a task's page under load the server answers the thread in 71 ms, the page in 146 and the gates in 252, and the page asks for them one after another. Three tasks in flight each fix one such order by hand.
+    **How the menu works.** A tap on the button, or Enter, opens it; Tab moves into it. Escape or a tap anywhere else closes it, and so does following a link. The page you are on is lit in it, as in today's row. Projects, which leaves this project for the list of all projects, is its first line.
 
-    **What you would see under A.** A task's thread, head and gates each appear as their own answer comes, not in a fixed order; every page starts all its reads at once. Reports draws its flow, decisions and code charts first, then the agents' charts, then the board's health, and each group refreshes when its own data changes, not every five minutes. Placeholders keep each part's place, so nothing jumps.
+    **What it costs.** Changing page takes two taps instead of one. Activity loses its word on a phone and keeps its bell and its unread dot.
 
-    **What each costs.**
-    - **A:** about 300 lines of our own and their tests, 143 bytes on a first visit (measured on a probe), one small addition to the server's answers, and Reports' answer split in three. It takes out the read ordering each page writes by hand today.
-    - **B:** the same work plus the library: 10,028 bytes on every first visit, over half the room a task's page has under its cap. It adds retries, deduplication and re-reading on focus, which A's code has or the live channel replaces. Its own way of keeping data on the device would replace the device cache you approved with a weaker one, so it would be used beside ours, as a second cache.
-    - **C:** no separate requests, one channel. But today an unchanged part is answered with nothing, which is what makes a return visit cheap, and on the channel that is lost unless we build it again; the channel sends everything to every page, so it would need subscriptions; and a page's reads would stop whenever the channel reconnects.
+    **Not pictured.** At 320 wide the row still fits with the name whole, where today the name is cut short. At desk width the header is the same, pixel for pixel. The server's own pages (the project list, a missing page) get the same menu. A theme with the compact header keeps its one scrolling row. The same board task builds it after your answer.
 
-    **GraphQL** has a feature for exactly this (`@defer`). It is still outside the released GraphQL specification and neither Rust library serves it, and the rest of your earlier reasoning stands, so it is not offered.
-
-    **Not yet known.** How much sooner a task's parts appear with their reads side by side: about 150 ms sooner for the thread and the gates under load, from the server's times added up, not measured in a browser. The first step measures it before any other page moves.
-
-    **Why A.** The pattern you asked for is mostly there; what is missing is one place that does it, and A is that and little else. The live channel already is the data channel that tells a part when to refresh.
-
-    **The order.** The shared code and a task's page first, then the pages that follow the board, Reports, a document, runs; each measured before and after under load.
-
-    **Earlier verdicts checked.** **graphql** (A: keep the JSON reads, the live feed and the device cache, "let's keep it simple for now") decides against a GraphQL client, so none is an option here; it did not weigh a library over the reads as they are, which its card named as open if ever needed, so B is asked. **client-cache** (approved) keeps what a page drew on the device and checks it by checksum: A and C keep it whole, and B would use it beside the library's cache. **client-framework** (B, then React) named no data layer. None of them answers this card.
-  [2026-11-15 12:27] owner · approved — A. Code from tanstack can be compared agains the current one so that missing optmizations can be added. If too much is missing, then using a library could be more efficient assuming it is well maintained. Another aspect is that components could load their own "mockups" with the mocked line elements and etc while they wait to get their data. For example individual charts in the reports page could draw an empty chart and animate once data arrives or have a mocked box there.
-  [2026-11-15 12:30] agent — Recorded: A. Four corrections to the card as you read it, from its review; none changes A.
-
-    - **The 150 ms** is for the first visit to a task this device has not kept. On a return visit the page already asks for its parts side by side: the thread comes about 2 ms sooner, the gates no sooner, and the page is fully checked only when the gates' own read answers, which none of the options shortens (the board task `perf/task-gates-kept-by-tip` does).
-    - **A's cost** also includes a word on the live channel whenever the server writes a report's day file or a run, and Reports and the runs page opening a live channel, which they do not follow today.
-    - **The 143 bytes** is the probe's small store. The real one is not measured.
-    - **`@defer` at its sources:** GraphQL.js calls it "pending GraphQL specification work"; async-graphql removed it after its 1.x line and says it returns once it is a standard ([its issue 403](https://github.com/async-graphql/async-graphql/issues/403)); Juniper's request has been open since 2020 ([its issue 734](https://github.com/graphql-rust/juniper/issues/734)).
-
-    Your two asks are taken into the implementation's first task, filed when this lands: TanStack Query's code compared with ours for the optimizations ours lacks, with a library taken if too much is missing and it is well maintained; and each component drawing its own mock-up while it waits, such as a chart's empty frame that fills when its data arrives.
+    **Earlier verdicts checked.** **header-on-a-phone** chose two rows with every page in view; pages behind a button is another choice than the one it describes, so it is asked here and not recorded on it. **header-page-names** (the names and their order), **header-appearance** (the ◑ button) and **symphony-mark** (the fermata and its name) are kept as they are. None of them decides whether the pages go behind a menu.
+  [2026-11-16 22:30] owner · rejected — Symphony title should be omitted, only the icon should show for mobile
 
 ### Board
 
@@ -252,6 +234,127 @@ their dated history work is in [REVIEW](REVIEW.md).
   [2026-11-11 19:13] agent — Done on `tools/orphan-processes`: the Symphony no longer looks for copies of itself or for test databases. The census, the notice at the top of every page, the `symphony-server orphans` command and the starter's line about leftovers are gone, with their tests and docs; no notice moved to the live feed. The repairs at the source stay: the database of a board in the temporary folder or under `artifacts/` ends when the process that started it ends, even when that process is killed, and the two test fixtures that start a database themselves end it the same way. The server's status still sends `orphans`, always 0, so a starter built before this can still read it.
 
 ## Resolved
+
+### Page loading
+
+- [x] **components-draw-when-data-arrives** — Each part of a page (a task's thread, its gates, a chart) would draw the moment its own data arrives, the copy from this device first, and redraw itself when newer data comes, with no part waiting for a slower one. Several pages do this already, each in its own hand-written way; Reports, the queue and home still arrive whole, and most pages start their reads one step later than they need to. How should a part get its data? A: one small piece of our own code that every page uses; each part asks the server for its own data, and the live channel tells a part when it has newer data to fetch. Reports' charts arrive in three groups. Nothing more to download. B: the same, built on the TanStack Query library: 10 kB more on each first visit, for features we already have or do not use. C: the same, but the data itself travels on the live channel, the streaming you described, in place of separate requests: a new protocol, and an unchanged part can no longer be answered with nothing. Recommended: A. Approve and say A, B or C in the note, or comment. [[analysis/components-draw-when-their-data-arrives#The choice]]
+  [2026-11-15 12:16] agent — Posted for the board task `app/components-draw-when-their-data-arrives`, from your words: "each component should be able to render itself once the data it needs is available".
+
+    **Today.** A task's page, the task board and a document already draw part by part. What holds their parts back is mostly the order the page asks in: nearly every page reads the board first and only then asks for anything else, though that read gives it one number. On a task's page under load the server answers the thread in 71 ms, the page in 146 and the gates in 252, and the page asks for them one after another. Three tasks in flight each fix one such order by hand.
+
+    **What you would see under A.** A task's thread, head and gates each appear as their own answer comes, not in a fixed order; every page starts all its reads at once. Reports draws its flow, decisions and code charts first, then the agents' charts, then the board's health, and each group refreshes when its own data changes, not every five minutes. Placeholders keep each part's place, so nothing jumps.
+
+    **What each costs.**
+    - **A:** about 300 lines of our own and their tests, 143 bytes on a first visit (measured on a probe), one small addition to the server's answers, and Reports' answer split in three. It takes out the read ordering each page writes by hand today.
+    - **B:** the same work plus the library: 10,028 bytes on every first visit, over half the room a task's page has under its cap. It adds retries, deduplication and re-reading on focus, which A's code has or the live channel replaces. Its own way of keeping data on the device would replace the device cache you approved with a weaker one, so it would be used beside ours, as a second cache.
+    - **C:** no separate requests, one channel. But today an unchanged part is answered with nothing, which is what makes a return visit cheap, and on the channel that is lost unless we build it again; the channel sends everything to every page, so it would need subscriptions; and a page's reads would stop whenever the channel reconnects.
+
+    **GraphQL** has a feature for exactly this (`@defer`). It is still outside the released GraphQL specification and neither Rust library serves it, and the rest of your earlier reasoning stands, so it is not offered.
+
+    **Not yet known.** How much sooner a task's parts appear with their reads side by side: about 150 ms sooner for the thread and the gates under load, from the server's times added up, not measured in a browser. The first step measures it before any other page moves.
+
+    **Why A.** The pattern you asked for is mostly there; what is missing is one place that does it, and A is that and little else. The live channel already is the data channel that tells a part when to refresh.
+
+    **The order.** The shared code and a task's page first, then the pages that follow the board, Reports, a document, runs; each measured before and after under load.
+
+    **Earlier verdicts checked.** **graphql** (A: keep the JSON reads, the live feed and the device cache, "let's keep it simple for now") decides against a GraphQL client, so none is an option here; it did not weigh a library over the reads as they are, which its card named as open if ever needed, so B is asked. **client-cache** (approved) keeps what a page drew on the device and checks it by checksum: A and C keep it whole, and B would use it beside the library's cache. **client-framework** (B, then React) named no data layer. None of them answers this card.
+  [2026-11-15 12:27] owner · approved — A. Code from tanstack can be compared agains the current one so that missing optmizations can be added. If too much is missing, then using a library could be more efficient assuming it is well maintained. Another aspect is that components could load their own "mockups" with the mocked line elements and etc while they wait to get their data. For example individual charts in the reports page could draw an empty chart and animate once data arrives or have a mocked box there.
+  [2026-11-15 12:30] agent — Recorded: A. Four corrections to the card as you read it, from its review; none changes A.
+
+    - **The 150 ms** is for the first visit to a task this device has not kept. On a return visit the page already asks for its parts side by side: the thread comes about 2 ms sooner, the gates no sooner, and the page is fully checked only when the gates' own read answers, which none of the options shortens (the board task `perf/task-gates-kept-by-tip` does).
+    - **A's cost** also includes a word on the live channel whenever the server writes a report's day file or a run, and Reports and the runs page opening a live channel, which they do not follow today.
+    - **The 143 bytes** is the probe's small store. The real one is not measured.
+    - **`@defer` at its sources:** GraphQL.js calls it "pending GraphQL specification work"; async-graphql removed it after its 1.x line and says it returns once it is a standard ([its issue 403](https://github.com/async-graphql/async-graphql/issues/403)); Juniper's request has been open since 2020 ([its issue 734](https://github.com/graphql-rust/juniper/issues/734)).
+
+    Your two asks are taken into the implementation's first task, filed when this lands: TanStack Query's code compared with ours for the optimizations ours lacks, with a library taken if too much is missing and it is well maintained; and each component drawing its own mock-up while it waits, such as a chart's empty frame that fills when its data arrives.
+- [r] **client-shared-runtime** — You chose to share the runtime between the client's page modules; it works, but not for every page within your caps. Today 57 % of the client's code is a copy of code another module holds, and a first visit to Reports loads the whole task pages' module, 557,536 bytes. With one shared part, Reports drops to 286,100. But the shared part holds code a given page never uses: shared with the board, `/tasks` grew from 295,837 to 360,579 bytes on a first visit, over its 300,000 cap. Which pages should share? A: every page but home and the board, which keep their own modules and caps. Reports 286,100; a task page and `/agents` 7,460 more; the published client about 2.4 MB smaller, 4.7 MB once the documents and the queue join (it is 20.56 MB of a 20.75 MB line). B: all eight, about 7 MB smaller and cheap moves between every page, but the board's cap raised to about 365,000 and likely home's (estimated 291,000 against its 300,000). C: only inside the task pages' module: Reports the same, nothing else shared, and the published client 0.5 MB larger, past its line, so it cannot land alone. Recommended: A. Approve and say A, B or C in the note, or comment. [[analysis/client-shared-runtime#The choice]]
+  [2026-11-13 17:58] agent — Posted for the board task `perf/client-shared-runtime-investigation`. The prototype is the branch `perf/client-shared-runtime-prototype`, never landed. Whichever you choose, two faults in the build tool's splitter come first: it blanks some text in the shared part (every task page showed "Page unavailable" until the prototype repaired it), and it writes its files differently on every build, which the client check refuses. The first step of the work is a step of our build that repairs both, until the tool does; the analysis says how.
+  [2026-11-13 18:17] owner · approved — A
+  [2026-11-13 18:20] agent — Recorded: A, every page but home and the board ("A"). Since the card was posted, the review of the analysis corrected three things it said. None changes A, and the analysis now says each:
+
+    - **Reports' 557,536 bytes** are its whole first visit; the task pages' module and its script are 534,635 of them.
+    - **Home under B** was estimated at about 291,000, about 9 KB under its 300,000 cap, not likely over it as the card said. The board's cap would still have had to rise to about 365,000.
+    - **A's cost in time** is one request more on a shared page, for its part. This machine's load hid it, so it is measured on a quiet machine as the evidence of A's second step.
+
+    The analysis lists A's five steps in order, the splitter's repair first.
+  [2026-11-13 20:43] agent · resolved
+- [r] **skeleton-first-visit** — The first time a browser opens a task's page at a width, the page's outline cannot know the task's title, facts, gates or brief, so what follows them moves when the page arrives. Every later visit lands within 1 px either way. What should the first outline guess? A: fixed guesses: a title of one line wide and two on a phone, one line of facts, four gates and a brief of seven lines. B: the sizes of the last task this browser drew at that width, and A's guesses only before any. Recommended: B. Approve and say A or B in the note, or comment.
+  [2026-11-12 08:01] agent — Base: the task's page loading on a phone today, then loaded. ![The task loading on a phone today, then loaded](analysis/skeleton-first-visit-base.webp)
+  [2026-11-12 08:01] agent — The same task's first visit on a phone, then loaded, under each: ![A browser that drew no task, with fixed guesses, then loaded: A](analysis/skeleton-first-visit-a.webp) ![A browser that drew another task first, with its sizes, then loaded: B](analysis/skeleton-first-visit-b.webp)
+  [2026-11-12 08:01] agent — Posted for the board task `app/skeleton-loading`, which builds B. Measured on two tasks of different titles, facts, gates and briefs, each opened first in a browser that drew no task (A) and after the other task (B), on a phone and wide. How far each part lands from its outline:
+
+    | part | A, fixed guesses | B, the last task's sizes |
+    |---|---|---|
+    | gates, under the head | 47 to 112 px | 37 to 65 px |
+    | timeline box | 26 to 48 px | 6 to 23 px |
+    | brief | 26 to 48 px | 6 to 23 px |
+    | thread | 38 to 586 px | 116 to 324 px |
+
+    On a phone the first screen shows the head and the gates; wide, the top of the timeline box as well. The brief and the thread are below it.
+
+    **A, fixed guesses.** Every first visit outlines the same made-up task; what moves is how far a task is from it. Nothing is read.
+
+    **B, the last task's sizes.** A first visit outlines the task drawn before it; what moves is how far two tasks in a row differ. Nothing more is kept: it reads the newest of the sizes the browser keeps for each task's next visit.
+
+    The task's pictures on **skeleton-loading-outline**, on a phone and wide, light and dark, show it today, under A, under B, on the next visit and loaded, in that order.
+
+    **Why B.** It lands what the first screen shows closer: the gates within 65 px against 112, and the timeline box within 23 px against 48. The thread, off the first screen, lands closer under A for one test task and under B for the other.
+  [2026-11-12 08:20] owner · approved — B
+  [2026-11-12 08:20] agent — B it is, and it is the build on `app/skeleton-loading`: the first time a browser opens a task's page at a width, its outline takes the head, title, facts, gates and brief of the last task that browser drew at that width; a browser that drew no task there yet uses the fixed guesses. Every later visit of the task takes its own, within 1 px. It goes back to review with the rest of the task.
+  [2026-11-12 20:35] agent · resolved
+- [r] **skeleton-loading-outline** — Replaces: skeleton-loading-look. While a page loads, each placeholder has the outline of what it stands for: a card, column, message or row is drawn as its real box (border, corners, padding, size), with a pale bar where each line of its text will go, at that line's height; pills, fields, headings and ranks have their own shapes, and a picture still to come is its box, filled. The task board shows its heading and filters at once, with a bar in the Status and Finished tasks boxes, over columns topped with their status colours: each column shows a card for each task the last visit counted there (one before any visit), and a column no agent has taken up shows cards without a role chip. A task shows its head (a title of two lines on a phone), its gates, its brief and its thread; a document its path, title and links, its outline (the On this page button on a phone) and its body; the queue its group cards, topic chips and ranked rows; the chat two messages. The light passes over the bars every 1.8 s (still bars for anyone who turns motion off). On a repeat visit each part lands within 1 px of its outline, as the browser keeps what it last drew. On a first visit what the page cannot know yet still moves: a task's gates, brief or title of another length move what follows them (the test task's thread lands 313 px higher on a phone, 177 px wide), and the board's lower row moves with its columns' heights (19 px). Is this the look? Approve, or comment with what to change.
+  [2026-11-12 02:43] agent — Posted for the board task `app/skeleton-loading`. Each picture is before, now and loaded, side by side, light above dark, with motion off.
+
+    The task board, on a phone and wide: ![The task board loading on a phone](analysis/skeleton-outline-tasks-phone.webp) ![The task board loading, wide](analysis/skeleton-outline-tasks-wide.webp)
+
+    A task, on a phone and wide: ![A task loading on a phone](analysis/skeleton-outline-task-phone.webp) ![A task loading, wide](analysis/skeleton-outline-task-wide.webp) Then with its head in and its thread still reading, before and now: ![A task's thread loading on a phone](analysis/skeleton-outline-task-part-phone.webp) ![A task's thread loading, wide](analysis/skeleton-outline-task-part-wide.webp)
+
+    A document, on a phone and wide: ![A document loading on a phone](analysis/skeleton-outline-document-phone.webp) ![A document loading, wide](analysis/skeleton-outline-document-wide.webp) Then with its head in and its body still reading, before and now: ![A document's body loading on a phone](analysis/skeleton-outline-document-part-phone.webp) ![A document's body loading, wide](analysis/skeleton-outline-document-part-wide.webp)
+
+    The queue: ![The queue loading on a phone](analysis/skeleton-outline-queue-phone.webp) ![The queue loading, wide](analysis/skeleton-outline-queue-wide.webp)
+
+    The chat: ![The chat loading on a phone](analysis/skeleton-outline-chat-phone.webp) ![The chat loading, wide](analysis/skeleton-outline-chat-wide.webp)
+
+    **Layout shift**, the worse of a first and a repeat visit, phone / wide, before → now: document 0.171 / 0.124 → 0 / 0; chat 0.143 / 0.030 → 0 / 0; task 0.107 / 0.075 → 0 / 0; register 0.050 / 0.079 → 0 / 0.006; task board 0.018 / 0.048 → 0.002 / 0.001; home and the activity panel 0 before and now (under 0.05 is good).
+  [2026-11-12 03:57] agent — Updated for the gates card that now sits under a task's head. A task's placeholder now includes that card too, with a line for each gate this browser last saw (four the first time), so the brief stays put as the page arrives. The task again, before, now and loaded, against main as it is now:
+
+    ![A task loading on a phone, with its gates](analysis/skeleton-outline-gates-task-phone.webp) ![A task loading, wide, with its gates](analysis/skeleton-outline-gates-task-wide.webp) Then with its head in and its thread still reading, before and now: ![A task's thread loading on a phone](analysis/skeleton-outline-gates-task-part-phone.webp) ![A task's thread loading, wide](analysis/skeleton-outline-gates-task-part-wide.webp)
+
+    The task board and the other pages look as above, and the layout shift is unchanged: a task 0 / 0 with its gates in.
+  [2026-11-12 06:01] agent — Reworded after review. "Nothing moves" was wrong: the layout-shift score cannot see a placeholder replaced by the real page, as every real element is new. Now each part is measured where its outline stood and where the page draws it, on the test pages:
+
+    - **Repeat visit:** every part of the task, board, document and queue within 1 px, phone and wide.
+    - **First visit:** the document and the queue within 1 px. The board's lower row (backlog, blocked, cancelled) 19 px up, as its columns' heights are not known yet. A task's gates 32 px up on a phone (the test task's title is one line, not two), its brief 222 px up on a phone and 87 px wide, and its thread 313 px and 177 px (four gates and seven lines of brief outlined, against its two and one).
+
+    Changed to match the page: columns topped with their status colour; a bar in the Status and Finished tasks boxes; a card per task the last visit counted, and one per column before any visit; no role chip in a column no agent has taken up; a task title of two lines on a phone; the On this page button on a phone; a task's head and brief at the height this browser last drew them; columns 280 px wide on a phone, as the board's.
+
+    Each picture is before, the first visit, the next visit (the board and a task) and loaded, light above dark, motion off. The yellow Reconnecting notice under a document's placeholder shows on main too.
+
+    The task board: ![The task board loading on a phone](analysis/skeleton-shape-tasks-phone.webp) ![The task board loading, wide](analysis/skeleton-shape-tasks-wide.webp)
+
+    A task: ![A task loading on a phone](analysis/skeleton-shape-task-phone.webp) ![A task loading, wide](analysis/skeleton-shape-task-wide.webp) Then with its head in and its thread still reading, before and now: ![A task's thread loading on a phone](analysis/skeleton-shape-task-part-phone.webp) ![A task's thread loading, wide](analysis/skeleton-shape-task-part-wide.webp)
+
+    A document: ![A document loading on a phone](analysis/skeleton-shape-document-phone.webp) ![A document loading, wide](analysis/skeleton-shape-document-wide.webp)
+
+    The queue: ![The queue loading on a phone](analysis/skeleton-shape-queue-phone.webp) ![The queue loading, wide](analysis/skeleton-shape-queue-wide.webp)
+  [2026-11-12 06:32] owner · approved
+  [2026-11-12 08:01] agent — Corrected after a second review: the card claimed more than its test measured, on test pages of one task per column. Now measured on pages shaped as the live ones: columns of 1 to 20 tasks whose titles take one to three lines, cards with and without a chip row, three queue groups of one, no and three rows, and two tasks of different titles, facts, gates and briefs. Each part is measured where its outline stood and where the page draws it, on a phone and wide.
+
+    - **Next visit: every part within 1 px.** The board's filters, pipeline, its fourth concept card and its lower row; each queue group; a document's head, outline and body; a task's head, gates, timeline box, brief and thread. For this the browser now keeps each column's first 16 cards (height, and whether it has a chip row), each queue group's rows and height, and a task's title, facts and gates as well as its head and brief.
+    - **First visit:** a document within 1 px; the board's filters and pipeline, the queue's first group and a task's head within 1 px. The rest cannot be known yet and moves: the board's lower row 258 px down on a phone and 379 px wide, as each column outlines one card; the queue's second group 313 px up and its third 413 px up, as it outlines four rows and two for one and none; a task's parts by what its title, facts, gates and brief differ from the outline, for which there is a choice on **skeleton-first-visit**.
+    - **"No role chip" was wrong:** that row also holds a card's linked documents, on 5 of the live board's 6 design cards and 5 of its 9 ready ones. Each card now outlines its chip row as it was last drawn.
+    - The timeline box that now sits on a task's page is outlined at the height the page will give it.
+
+    Each picture is before, the first visit, then for a task its first visit after another task, the next visit (the board, a task and the queue) and loaded, light above dark, motion off.
+
+    The task board: ![The task board loading on a phone](analysis/skeleton-kept-tasks-phone.webp) ![The task board loading, wide](analysis/skeleton-kept-tasks-wide.webp)
+
+    A task: ![A task loading on a phone](analysis/skeleton-kept-task-phone.webp) ![A task loading, wide](analysis/skeleton-kept-task-wide.webp)
+
+    The queue: ![The queue loading on a phone](analysis/skeleton-kept-queue-phone.webp) ![The queue loading, wide](analysis/skeleton-kept-queue-wide.webp)
+
+    A document: ![A document loading on a phone](analysis/skeleton-kept-document-phone.webp) ![A document loading, wide](analysis/skeleton-kept-document-wide.webp)
+  [2026-11-12 20:35] agent · resolved
 
 ### Delivery to projects
 
@@ -869,97 +972,6 @@ their dated history work is in [REVIEW](REVIEW.md).
 
     The task-page halves of tools/stage-times and tools/review-as-stamps are replaced by these; both threads say so.
   [2026-11-11 14:37] agent · resolved
-
-### Page loading
-
-- [r] **client-shared-runtime** — You chose to share the runtime between the client's page modules; it works, but not for every page within your caps. Today 57 % of the client's code is a copy of code another module holds, and a first visit to Reports loads the whole task pages' module, 557,536 bytes. With one shared part, Reports drops to 286,100. But the shared part holds code a given page never uses: shared with the board, `/tasks` grew from 295,837 to 360,579 bytes on a first visit, over its 300,000 cap. Which pages should share? A: every page but home and the board, which keep their own modules and caps. Reports 286,100; a task page and `/agents` 7,460 more; the published client about 2.4 MB smaller, 4.7 MB once the documents and the queue join (it is 20.56 MB of a 20.75 MB line). B: all eight, about 7 MB smaller and cheap moves between every page, but the board's cap raised to about 365,000 and likely home's (estimated 291,000 against its 300,000). C: only inside the task pages' module: Reports the same, nothing else shared, and the published client 0.5 MB larger, past its line, so it cannot land alone. Recommended: A. Approve and say A, B or C in the note, or comment. [[analysis/client-shared-runtime#The choice]]
-  [2026-11-13 17:58] agent — Posted for the board task `perf/client-shared-runtime-investigation`. The prototype is the branch `perf/client-shared-runtime-prototype`, never landed. Whichever you choose, two faults in the build tool's splitter come first: it blanks some text in the shared part (every task page showed "Page unavailable" until the prototype repaired it), and it writes its files differently on every build, which the client check refuses. The first step of the work is a step of our build that repairs both, until the tool does; the analysis says how.
-  [2026-11-13 18:17] owner · approved — A
-  [2026-11-13 18:20] agent — Recorded: A, every page but home and the board ("A"). Since the card was posted, the review of the analysis corrected three things it said. None changes A, and the analysis now says each:
-
-    - **Reports' 557,536 bytes** are its whole first visit; the task pages' module and its script are 534,635 of them.
-    - **Home under B** was estimated at about 291,000, about 9 KB under its 300,000 cap, not likely over it as the card said. The board's cap would still have had to rise to about 365,000.
-    - **A's cost in time** is one request more on a shared page, for its part. This machine's load hid it, so it is measured on a quiet machine as the evidence of A's second step.
-
-    The analysis lists A's five steps in order, the splitter's repair first.
-  [2026-11-13 20:43] agent · resolved
-- [r] **skeleton-first-visit** — The first time a browser opens a task's page at a width, the page's outline cannot know the task's title, facts, gates or brief, so what follows them moves when the page arrives. Every later visit lands within 1 px either way. What should the first outline guess? A: fixed guesses: a title of one line wide and two on a phone, one line of facts, four gates and a brief of seven lines. B: the sizes of the last task this browser drew at that width, and A's guesses only before any. Recommended: B. Approve and say A or B in the note, or comment.
-  [2026-11-12 08:01] agent — Base: the task's page loading on a phone today, then loaded. ![The task loading on a phone today, then loaded](analysis/skeleton-first-visit-base.webp)
-  [2026-11-12 08:01] agent — The same task's first visit on a phone, then loaded, under each: ![A browser that drew no task, with fixed guesses, then loaded: A](analysis/skeleton-first-visit-a.webp) ![A browser that drew another task first, with its sizes, then loaded: B](analysis/skeleton-first-visit-b.webp)
-  [2026-11-12 08:01] agent — Posted for the board task `app/skeleton-loading`, which builds B. Measured on two tasks of different titles, facts, gates and briefs, each opened first in a browser that drew no task (A) and after the other task (B), on a phone and wide. How far each part lands from its outline:
-
-    | part | A, fixed guesses | B, the last task's sizes |
-    |---|---|---|
-    | gates, under the head | 47 to 112 px | 37 to 65 px |
-    | timeline box | 26 to 48 px | 6 to 23 px |
-    | brief | 26 to 48 px | 6 to 23 px |
-    | thread | 38 to 586 px | 116 to 324 px |
-
-    On a phone the first screen shows the head and the gates; wide, the top of the timeline box as well. The brief and the thread are below it.
-
-    **A, fixed guesses.** Every first visit outlines the same made-up task; what moves is how far a task is from it. Nothing is read.
-
-    **B, the last task's sizes.** A first visit outlines the task drawn before it; what moves is how far two tasks in a row differ. Nothing more is kept: it reads the newest of the sizes the browser keeps for each task's next visit.
-
-    The task's pictures on **skeleton-loading-outline**, on a phone and wide, light and dark, show it today, under A, under B, on the next visit and loaded, in that order.
-
-    **Why B.** It lands what the first screen shows closer: the gates within 65 px against 112, and the timeline box within 23 px against 48. The thread, off the first screen, lands closer under A for one test task and under B for the other.
-  [2026-11-12 08:20] owner · approved — B
-  [2026-11-12 08:20] agent — B it is, and it is the build on `app/skeleton-loading`: the first time a browser opens a task's page at a width, its outline takes the head, title, facts, gates and brief of the last task that browser drew at that width; a browser that drew no task there yet uses the fixed guesses. Every later visit of the task takes its own, within 1 px. It goes back to review with the rest of the task.
-  [2026-11-12 20:35] agent · resolved
-- [r] **skeleton-loading-outline** — Replaces: skeleton-loading-look. While a page loads, each placeholder has the outline of what it stands for: a card, column, message or row is drawn as its real box (border, corners, padding, size), with a pale bar where each line of its text will go, at that line's height; pills, fields, headings and ranks have their own shapes, and a picture still to come is its box, filled. The task board shows its heading and filters at once, with a bar in the Status and Finished tasks boxes, over columns topped with their status colours: each column shows a card for each task the last visit counted there (one before any visit), and a column no agent has taken up shows cards without a role chip. A task shows its head (a title of two lines on a phone), its gates, its brief and its thread; a document its path, title and links, its outline (the On this page button on a phone) and its body; the queue its group cards, topic chips and ranked rows; the chat two messages. The light passes over the bars every 1.8 s (still bars for anyone who turns motion off). On a repeat visit each part lands within 1 px of its outline, as the browser keeps what it last drew. On a first visit what the page cannot know yet still moves: a task's gates, brief or title of another length move what follows them (the test task's thread lands 313 px higher on a phone, 177 px wide), and the board's lower row moves with its columns' heights (19 px). Is this the look? Approve, or comment with what to change.
-  [2026-11-12 02:43] agent — Posted for the board task `app/skeleton-loading`. Each picture is before, now and loaded, side by side, light above dark, with motion off.
-
-    The task board, on a phone and wide: ![The task board loading on a phone](analysis/skeleton-outline-tasks-phone.webp) ![The task board loading, wide](analysis/skeleton-outline-tasks-wide.webp)
-
-    A task, on a phone and wide: ![A task loading on a phone](analysis/skeleton-outline-task-phone.webp) ![A task loading, wide](analysis/skeleton-outline-task-wide.webp) Then with its head in and its thread still reading, before and now: ![A task's thread loading on a phone](analysis/skeleton-outline-task-part-phone.webp) ![A task's thread loading, wide](analysis/skeleton-outline-task-part-wide.webp)
-
-    A document, on a phone and wide: ![A document loading on a phone](analysis/skeleton-outline-document-phone.webp) ![A document loading, wide](analysis/skeleton-outline-document-wide.webp) Then with its head in and its body still reading, before and now: ![A document's body loading on a phone](analysis/skeleton-outline-document-part-phone.webp) ![A document's body loading, wide](analysis/skeleton-outline-document-part-wide.webp)
-
-    The queue: ![The queue loading on a phone](analysis/skeleton-outline-queue-phone.webp) ![The queue loading, wide](analysis/skeleton-outline-queue-wide.webp)
-
-    The chat: ![The chat loading on a phone](analysis/skeleton-outline-chat-phone.webp) ![The chat loading, wide](analysis/skeleton-outline-chat-wide.webp)
-
-    **Layout shift**, the worse of a first and a repeat visit, phone / wide, before → now: document 0.171 / 0.124 → 0 / 0; chat 0.143 / 0.030 → 0 / 0; task 0.107 / 0.075 → 0 / 0; register 0.050 / 0.079 → 0 / 0.006; task board 0.018 / 0.048 → 0.002 / 0.001; home and the activity panel 0 before and now (under 0.05 is good).
-  [2026-11-12 03:57] agent — Updated for the gates card that now sits under a task's head. A task's placeholder now includes that card too, with a line for each gate this browser last saw (four the first time), so the brief stays put as the page arrives. The task again, before, now and loaded, against main as it is now:
-
-    ![A task loading on a phone, with its gates](analysis/skeleton-outline-gates-task-phone.webp) ![A task loading, wide, with its gates](analysis/skeleton-outline-gates-task-wide.webp) Then with its head in and its thread still reading, before and now: ![A task's thread loading on a phone](analysis/skeleton-outline-gates-task-part-phone.webp) ![A task's thread loading, wide](analysis/skeleton-outline-gates-task-part-wide.webp)
-
-    The task board and the other pages look as above, and the layout shift is unchanged: a task 0 / 0 with its gates in.
-  [2026-11-12 06:01] agent — Reworded after review. "Nothing moves" was wrong: the layout-shift score cannot see a placeholder replaced by the real page, as every real element is new. Now each part is measured where its outline stood and where the page draws it, on the test pages:
-
-    - **Repeat visit:** every part of the task, board, document and queue within 1 px, phone and wide.
-    - **First visit:** the document and the queue within 1 px. The board's lower row (backlog, blocked, cancelled) 19 px up, as its columns' heights are not known yet. A task's gates 32 px up on a phone (the test task's title is one line, not two), its brief 222 px up on a phone and 87 px wide, and its thread 313 px and 177 px (four gates and seven lines of brief outlined, against its two and one).
-
-    Changed to match the page: columns topped with their status colour; a bar in the Status and Finished tasks boxes; a card per task the last visit counted, and one per column before any visit; no role chip in a column no agent has taken up; a task title of two lines on a phone; the On this page button on a phone; a task's head and brief at the height this browser last drew them; columns 280 px wide on a phone, as the board's.
-
-    Each picture is before, the first visit, the next visit (the board and a task) and loaded, light above dark, motion off. The yellow Reconnecting notice under a document's placeholder shows on main too.
-
-    The task board: ![The task board loading on a phone](analysis/skeleton-shape-tasks-phone.webp) ![The task board loading, wide](analysis/skeleton-shape-tasks-wide.webp)
-
-    A task: ![A task loading on a phone](analysis/skeleton-shape-task-phone.webp) ![A task loading, wide](analysis/skeleton-shape-task-wide.webp) Then with its head in and its thread still reading, before and now: ![A task's thread loading on a phone](analysis/skeleton-shape-task-part-phone.webp) ![A task's thread loading, wide](analysis/skeleton-shape-task-part-wide.webp)
-
-    A document: ![A document loading on a phone](analysis/skeleton-shape-document-phone.webp) ![A document loading, wide](analysis/skeleton-shape-document-wide.webp)
-
-    The queue: ![The queue loading on a phone](analysis/skeleton-shape-queue-phone.webp) ![The queue loading, wide](analysis/skeleton-shape-queue-wide.webp)
-  [2026-11-12 06:32] owner · approved
-  [2026-11-12 08:01] agent — Corrected after a second review: the card claimed more than its test measured, on test pages of one task per column. Now measured on pages shaped as the live ones: columns of 1 to 20 tasks whose titles take one to three lines, cards with and without a chip row, three queue groups of one, no and three rows, and two tasks of different titles, facts, gates and briefs. Each part is measured where its outline stood and where the page draws it, on a phone and wide.
-
-    - **Next visit: every part within 1 px.** The board's filters, pipeline, its fourth concept card and its lower row; each queue group; a document's head, outline and body; a task's head, gates, timeline box, brief and thread. For this the browser now keeps each column's first 16 cards (height, and whether it has a chip row), each queue group's rows and height, and a task's title, facts and gates as well as its head and brief.
-    - **First visit:** a document within 1 px; the board's filters and pipeline, the queue's first group and a task's head within 1 px. The rest cannot be known yet and moves: the board's lower row 258 px down on a phone and 379 px wide, as each column outlines one card; the queue's second group 313 px up and its third 413 px up, as it outlines four rows and two for one and none; a task's parts by what its title, facts, gates and brief differ from the outline, for which there is a choice on **skeleton-first-visit**.
-    - **"No role chip" was wrong:** that row also holds a card's linked documents, on 5 of the live board's 6 design cards and 5 of its 9 ready ones. Each card now outlines its chip row as it was last drawn.
-    - The timeline box that now sits on a task's page is outlined at the height the page will give it.
-
-    Each picture is before, the first visit, then for a task its first visit after another task, the next visit (the board, a task and the queue) and loaded, light above dark, motion off.
-
-    The task board: ![The task board loading on a phone](analysis/skeleton-kept-tasks-phone.webp) ![The task board loading, wide](analysis/skeleton-kept-tasks-wide.webp)
-
-    A task: ![A task loading on a phone](analysis/skeleton-kept-task-phone.webp) ![A task loading, wide](analysis/skeleton-kept-task-wide.webp)
-
-    The queue: ![The queue loading on a phone](analysis/skeleton-kept-queue-phone.webp) ![The queue loading, wide](analysis/skeleton-kept-queue-wide.webp)
-
-    A document: ![A document loading on a phone](analysis/skeleton-kept-document-phone.webp) ![A document loading, wide](analysis/skeleton-kept-document-wide.webp)
-  [2026-11-12 20:35] agent · resolved
 
 ### Artifacts in a clone
 

@@ -1606,9 +1606,9 @@ fn a_land_pushes_main_alone_to_origin() {
 }
 
 #[test]
-fn a_landing_line_names_the_tokens_its_task_took_by_role_and_round() {
+fn a_landing_line_names_the_tokens_its_task_took_by_role_and_round_and_their_cost() {
     use symphony_board::Beat;
-    use symphony_board::usage::{Spent, Tokens};
+    use symphony_board::usage::{Prices, Spent, Tokens, price};
     let r = Repo::new();
     manifest(&r, "");
     remote(&r);
@@ -1619,18 +1619,19 @@ fn a_landing_line_names_the_tokens_its_task_took_by_role_and_round() {
         r.board.session("worker"),
         r.board.session("reviewer"),
     );
+    let worth = |input, read, output, calls| Tokens {
+        input,
+        cache_write_5m: 1_000,
+        cache_write_1h: 0,
+        cache_read: read,
+        output,
+        calls,
+    };
     let spend = |key: &str, input, read, output, calls| {
         let spent = Spent {
             model: "claude-opus-5-5".into(),
             speed: "standard".into(),
-            tokens: Tokens {
-                input,
-                cache_write_5m: 1_000,
-                cache_write_1h: 0,
-                cache_read: read,
-                output,
-                calls,
-            },
+            tokens: worth(input, read, output, calls),
         };
         store
             .agent_beat_spending(key, &Beat::default(), None, None, &[spent])
@@ -1649,12 +1650,20 @@ fn a_landing_line_names_the_tokens_its_task_took_by_role_and_round() {
     store.verdict(SLUG, &rev, "approve", "good").unwrap();
     let line = landed(&r, SLUG, &orch).1.unwrap();
     let merge = head(&r.root, "main");
+    // Their cost, at the prices every build embeds.
+    let prices = Prices::embedded();
+    let mut cost = prices.cost("claude-opus-5-5", "standard", &worth(10, 50_000, 500, 4));
+    cost.add(&prices.cost("claude-opus-5-5", "standard", &worth(5, 19_000, 100, 2)));
+    assert!(cost.total() > 0 && cost.unpriced.is_empty());
     assert_eq!(
         line,
         format!(
             "landed {SLUG} on main at {}; 71.6k tokens in 6 calls (executor 51.5k, reviewer \
-             20.1k; round 1 51.5k, round 2 20.1k); pushed to origin",
-            &merge[..12]
+             20.1k; round 1 51.5k, round 2 20.1k), {} estimated at API list prices read {}; \
+             pushed to origin",
+            &merge[..12],
+            price::dollars(cost.total()),
+            prices.read
         )
     );
     // The thread's landed line says the same, before how the approval was judged.

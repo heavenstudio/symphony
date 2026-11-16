@@ -9,12 +9,15 @@
 //! and the moves into review the task's thread holds then, so a round is the work between two moves
 //! to review ([`crate::Store::agent_beat_spending`]). `tasks show` sums a task's rows by role and
 //! by round ([`Tally::of`]), the agents API a session's ([`crate::Store::spent_by`]), and a land
-//! names them in its closing line ([`said`]).
+//! names them in its closing line ([`said`]); each beside its cost, estimated at the API list
+//! prices of the price table ([`price`]).
 
+pub mod price;
 pub mod transcript;
 
 use crate::pyjson::Py;
 use crate::rows::UsageRow;
+pub use price::{Cost, Prices};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -77,6 +80,21 @@ impl Tokens {
     }
 }
 
+/// Tokens, and what they cost at the price table's prices.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Spend {
+    pub tokens: Tokens,
+    pub cost: Cost,
+}
+
+impl Spend {
+    /// `other`'s added to this.
+    pub fn add(&mut self, other: &Spend) {
+        self.tokens.add(&other.tokens);
+        self.cost.add(&other.cost);
+    }
+}
+
 impl UsageRow {
     /// The row's tokens.
     pub fn tokens(&self) -> Tokens {
@@ -87,6 +105,15 @@ impl UsageRow {
             cache_read: self.cache_read,
             output: self.output,
             calls: self.calls,
+        }
+    }
+
+    /// The row's tokens and what they cost at `prices`' price of its model and speed.
+    pub fn spend(&self, prices: &Prices) -> Spend {
+        let tokens = self.tokens();
+        Spend {
+            cost: prices.cost(&self.model, &self.speed, &tokens),
+            tokens,
         }
     }
 }
@@ -109,62 +136,83 @@ pub fn merged(spent: impl IntoIterator<Item = Spent>) -> Vec<Spent> {
         .collect()
 }
 
-/// A task's rows summed: all told, by role and by round.
+/// A task's rows summed, each with its cost at the price table's prices: all told, by role and by
+/// round.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Tally {
-    pub total: Tokens,
+    pub total: Spend,
     /// By role, in the order of [`ROLE_ORDER`], then by name.
-    pub roles: Vec<(String, Tokens)>,
+    pub roles: Vec<(String, Spend)>,
     /// By round, the first first.
-    pub rounds: Vec<(i64, Tokens)>,
+    pub rounds: Vec<(i64, Spend)>,
+    /// The day the table's prices were read ([`Prices::read`]).
+    pub prices: String,
 }
 
 /// The roles a tally lists first, in this order.
 const ROLE_ORDER: [&str; 4] = ["executor", "reviewer", "reserved", "orchestrator"];
 
 impl Tally {
-    /// `rows` summed.
+    /// `rows` summed, at the prices every build embeds.
     pub fn of(rows: &[UsageRow]) -> Tally {
-        let mut total = Tokens::default();
-        let mut roles: BTreeMap<(usize, &str), Tokens> = BTreeMap::new();
-        let mut rounds: BTreeMap<i64, Tokens> = BTreeMap::new();
+        Tally::at(rows, Prices::embedded())
+    }
+
+    /// `rows` summed, at `prices`.
+    pub fn at(rows: &[UsageRow], prices: &Prices) -> Tally {
+        let mut total = Spend::default();
+        let mut roles: BTreeMap<(usize, &str), Spend> = BTreeMap::new();
+        let mut rounds: BTreeMap<i64, Spend> = BTreeMap::new();
         for row in rows {
-            let tokens = row.tokens();
-            total.add(&tokens);
+            let spend = row.spend(prices);
+            total.add(&spend);
             let rank = ROLE_ORDER
                 .iter()
                 .position(|role| *role == row.role)
                 .unwrap_or(ROLE_ORDER.len());
-            roles.entry((rank, &row.role)).or_default().add(&tokens);
-            rounds.entry(row.round).or_default().add(&tokens);
+            roles.entry((rank, &row.role)).or_default().add(&spend);
+            rounds.entry(row.round).or_default().add(&spend);
         }
         Tally {
             total,
             roles: (roles.into_iter())
-                .map(|((_, role), tokens)| (role.to_string(), tokens))
+                .map(|((_, role), spend)| (role.to_string(), spend))
                 .collect(),
             rounds: rounds.into_iter().collect(),
+            prices: prices.read.clone(),
         }
     }
 
     /// Whether nothing was recorded.
     pub fn is_empty(&self) -> bool {
-        self.total == Tokens::default()
+        self.total.tokens == Tokens::default()
     }
 
     /// The JSON `tasks show --json` gives: the sums, and the rows themselves, which carry the model
-    /// and speed a price is read by.
-    pub fn json(&self, rows: &[UsageRow]) -> Py {
+    /// and speed a price is read by, each beside its cost.
+    pub fn json(&self, rows: &[UsageRow], prices: &Prices) -> Py {
+        let cost = |cost: &Cost| cost.json(&prices.read);
         let roles = (self.roles.iter())
-            .map(|(role, tokens)| Py::obj(vec![("role", Py::str(role)), ("tokens", tokens.json())]))
+            .map(|(role, spend)| {
+                Py::obj(vec![
+                    ("role", Py::str(role)),
+                    ("tokens", spend.tokens.json()),
+                    ("cost", cost(&spend.cost)),
+                ])
+            })
             .collect();
         let rounds = (self.rounds.iter())
-            .map(|(round, tokens)| {
-                Py::obj(vec![("round", Py::Int(*round)), ("tokens", tokens.json())])
+            .map(|(round, spend)| {
+                Py::obj(vec![
+                    ("round", Py::Int(*round)),
+                    ("tokens", spend.tokens.json()),
+                    ("cost", cost(&spend.cost)),
+                ])
             })
             .collect();
         let rows = (rows.iter())
             .map(|row| {
+                let spend = row.spend(prices);
                 Py::obj(vec![
                     ("handle", Py::str(&row.handle)),
                     ("slug", Py::str(&row.slug)),
@@ -172,26 +220,55 @@ impl Tally {
                     ("model", Py::str(&row.model)),
                     ("speed", Py::str(&row.speed)),
                     ("round", Py::Int(row.round)),
-                    ("tokens", row.tokens().json()),
+                    ("tokens", spend.tokens.json()),
+                    ("cost", cost(&spend.cost)),
                     ("first", Py::Float(row.first)),
                     ("last", Py::Float(row.last)),
                 ])
             })
             .collect();
         Py::obj(vec![
-            ("total", self.total.json()),
+            ("total", self.total.tokens.json()),
+            ("cost", cost(&self.total.cost)),
             ("by_role", Py::List(roles)),
             ("by_round", Py::List(rounds)),
             ("rows", Py::List(rows)),
         ])
     }
 
-    /// The lines `tasks show` prints: none when nothing was recorded.
+    /// The lines `tasks show` prints: the tokens, then their estimated cost, each all told, by role
+    /// and by round; none when nothing was recorded.
     pub fn lines(&self) -> Vec<String> {
         if self.is_empty() {
             return Vec::new();
         }
-        let t = &self.total;
+        let t = &self.total.tokens;
+        let c = &self.total.cost;
+        let cost = if c.total() == 0 && !c.unpriced.is_empty() {
+            format!(
+                "Cost: unpriced: the API list prices read {} have none for {}",
+                self.prices,
+                c.unpriced_said(" · ")
+            )
+        } else {
+            let mut cost = format!(
+                "Cost: {}, estimated at API list prices read {} (input {} · cache write {} · \
+                 cache read {} · output {})",
+                price::dollars(c.total()),
+                self.prices,
+                price::dollars(c.input),
+                price::dollars(c.cache_write_5m + c.cache_write_1h),
+                price::dollars(c.cache_read),
+                price::dollars(c.output)
+            );
+            if !c.unpriced.is_empty() {
+                cost.push_str(&format!(
+                    "; none for {}, in no figure",
+                    c.unpriced_said(" · ")
+                ));
+            }
+            cost
+        };
         vec![
             format!(
                 "Tokens: {} in {} (input {} · cache write {} · cache read {} · output {})",
@@ -202,40 +279,74 @@ impl Tally {
                 amount(t.cache_read),
                 amount(t.output)
             ),
-            format!("  by role: {}", self.by_role(" · ")),
-            format!("  by round: {}", self.by_round(" · ")),
+            format!(
+                "  by role: {}",
+                self.by_role(" · ", |s| amount(s.tokens.total()))
+            ),
+            format!(
+                "  by round: {}",
+                self.by_round(" · ", |s| amount(s.tokens.total()))
+            ),
+            cost,
+            format!("  by role: {}", self.by_role(" · ", |s| s.cost.said())),
+            format!("  by round: {}", self.by_round(" · ", |s| s.cost.said())),
         ]
     }
 
-    fn by_role(&self, between: &str) -> String {
+    fn by_role(&self, between: &str, said: impl Fn(&Spend) -> String) -> String {
         (self.roles.iter())
-            .map(|(role, tokens)| format!("{role} {}", amount(tokens.total())))
+            .map(|(role, spend)| format!("{role} {}", said(spend)))
             .collect::<Vec<_>>()
             .join(between)
     }
 
-    fn by_round(&self, between: &str) -> String {
+    fn by_round(&self, between: &str, said: impl Fn(&Spend) -> String) -> String {
         (self.rounds.iter())
-            .map(|(round, tokens)| match round {
-                0 => format!("no task {}", amount(tokens.total())),
-                n => format!("round {n} {}", amount(tokens.total())),
+            .map(|(round, spend)| match round {
+                0 => format!("no task {}", said(spend)),
+                n => format!("round {n} {}", said(spend)),
             })
             .collect::<Vec<_>>()
             .join(between)
     }
 }
 
-/// What a landing's closing line says of its task's tokens, after `; `: none when nothing was
-/// recorded. Each amount carries its unit, so no number in it reads as a commit.
+/// What a landing's closing line says of its task's tokens and their estimated cost, after `; `:
+/// none when nothing was recorded. Each amount carries its unit, so no number in it reads as a
+/// commit.
 pub fn said(rows: &[UsageRow]) -> Option<String> {
-    let tally = Tally::of(rows);
+    said_at(rows, Prices::embedded())
+}
+
+/// [`said`], at `prices`.
+pub fn said_at(rows: &[UsageRow], prices: &Prices) -> Option<String> {
+    let tally = Tally::at(rows, prices);
     (!tally.is_empty()).then(|| {
+        let c = &tally.total.cost;
+        let cost = match (c.total(), c.unpriced.is_empty()) {
+            (0, false) => format!(
+                "no API list price read {} for {}",
+                tally.prices,
+                c.unpriced_said(", ")
+            ),
+            (pico, true) => format!(
+                "{} estimated at API list prices read {}",
+                price::dollars(pico),
+                tally.prices
+            ),
+            (pico, false) => format!(
+                "{} estimated at API list prices read {}, none for {}",
+                price::dollars(pico),
+                tally.prices,
+                c.unpriced_said(", ")
+            ),
+        };
         format!(
-            "{} tokens in {} ({}; {})",
-            amount(tally.total.total()),
-            calls(tally.total.calls),
-            tally.by_role(", "),
-            tally.by_round(", ")
+            "{} tokens in {} ({}; {}), {cost}",
+            amount(tally.total.tokens.total()),
+            calls(tally.total.tokens.calls),
+            tally.by_role(", ", |s| amount(s.tokens.total())),
+            tally.by_round(", ", |s| amount(s.tokens.total())),
         )
     })
 }
@@ -276,12 +387,28 @@ mod tests {
         }
     }
 
+    /// A table that prices `claude-opus-5-5` high enough for a few tokens to show in cents: a
+    /// thousandth of a dollar an input token, two and three thousandths a cache write, a
+    /// ten-thousandth a cache read and a cent an output token.
+    fn prices() -> Prices {
+        Prices::parse(
+            "read = \"2026-01-02\"\npage = \"https://example.com/pricing\"\n[[price]]\n\
+             model = \"claude-opus-5-5\"\ninput = 1000\ncache_write_5m = 2000\n\
+             cache_write_1h = 3000\ncache_read = 100\noutput = 10000\n",
+        )
+        .unwrap()
+    }
+
     fn row(role: &str, round: i64, t: Tokens) -> UsageRow {
+        on("claude-opus-5-5", role, round, t)
+    }
+
+    fn on(model: &str, role: &str, round: i64, t: Tokens) -> UsageRow {
         UsageRow {
             handle: "amber-heron".into(),
             slug: "sim/jump".into(),
             role: role.into(),
-            model: "claude-opus-5-5".into(),
+            model: model.into(),
             speed: "standard".into(),
             round,
             input: t.input,
@@ -345,31 +472,133 @@ mod tests {
             row("worker", 0, tokens(0, 0, 500, 5, 1)),
             row("executor", 2, tokens(3, 300, 3_000, 30, 2)),
         ];
-        let tally = Tally::of(&rows);
-        assert_eq!(tally.total, tokens(6, 2_400, 24_500, 245, 7));
-        let roles: Vec<(&str, u64)> = (tally.roles.iter())
-            .map(|(role, t)| (role.as_str(), t.total()))
+        let tally = Tally::at(&rows, &prices());
+        assert_eq!(tally.total.tokens, tokens(6, 2_400, 24_500, 245, 7));
+        let roles: Vec<(&str, u64, String)> = (tally.roles.iter())
+            .map(|(role, s)| (role.as_str(), s.tokens.total(), s.cost.said()))
             .collect();
         assert_eq!(
             roles,
-            [("executor", 25_535), ("reviewer", 1_111), ("worker", 505)]
+            [
+                ("executor", 25_535, "$9.21".to_string()),
+                ("reviewer", 1_111, "$0.40".to_string()),
+                ("worker", 505, "$0.10".to_string())
+            ]
         );
         let rounds: Vec<(i64, u64)> = (tally.rounds.iter())
-            .map(|(round, t)| (*round, t.total()))
+            .map(|(round, s)| (*round, s.tokens.total()))
             .collect();
         assert_eq!(rounds, [(0, 505), (1, 23_313), (2, 3_333)]);
+        // Input 6 at $0.001 = $0.006, cache writes 2,400 at $0.002 = $4.80, reads 24,500 at
+        // $0.0001 = $2.45, output 245 at $0.01 = $2.45: $9.706 all told.
+        assert_eq!(tally.total.cost.total(), 9_706_000_000_000);
         assert_eq!(
             tally.lines(),
             [
                 "Tokens: 27.1k in 7 calls (input 6 · cache write 2.4k · cache read 24.5k · output 245)",
                 "  by role: executor 25.5k · reviewer 1.1k · worker 505",
                 "  by round: no task 505 · round 1 23.3k · round 2 3.3k",
+                "Cost: $9.71, estimated at API list prices read 2026-01-02 (input $0.01 · cache \
+                 write $4.80 · cache read $2.45 · output $2.45)",
+                "  by role: executor $9.21 · reviewer $0.40 · worker $0.10",
+                "  by round: no task $0.10 · round 1 $8.40 · round 2 $1.20",
             ]
         );
         assert_eq!(
-            said(&rows).unwrap(),
+            said_at(&rows, &prices()).unwrap(),
             "27.1k tokens in 7 calls (executor 25.5k, reviewer 1.1k, worker 505; no task 505, \
-             round 1 23.3k, round 2 3.3k)"
+             round 1 23.3k, round 2 3.3k), $9.71 estimated at API list prices read 2026-01-02"
+        );
+    }
+
+    #[test]
+    fn a_model_with_no_price_is_named_beside_the_cost_and_in_no_figure() {
+        let rows = [
+            row("executor", 1, tokens(0, 0, 0, 100, 1)),
+            on(
+                "gpt-6.1-sol",
+                "executor",
+                1,
+                tokens(1_000, 0, 50_000, 500, 4),
+            ),
+            on("gpt-6.1-sol", "reviewer", 2, tokens(10, 0, 0, 0, 1)),
+        ];
+        let tally = Tally::at(&rows, &prices());
+        assert_eq!(
+            tally.lines()[3..],
+            [
+                "Cost: $1.00, estimated at API list prices read 2026-01-02 (input $0.00 · cache \
+                 write $0.00 · cache read $0.00 · output $1.00); none for gpt-6.1-sol 51.5k \
+                 tokens, in no figure",
+                "  by role: executor $1.00 + unpriced · reviewer unpriced",
+                "  by round: round 1 $1.00 + unpriced · round 2 unpriced",
+            ]
+        );
+        assert_eq!(
+            said_at(&rows, &prices()).unwrap(),
+            "51.6k tokens in 6 calls (executor 51.6k, reviewer 10; round 1 51.6k, round 2 10), \
+             $1.00 estimated at API list prices read 2026-01-02, none for gpt-6.1-sol 51.5k tokens"
+        );
+        let none = &rows[1..];
+        assert_eq!(
+            Tally::at(none, &prices()).lines()[3],
+            "Cost: unpriced: the API list prices read 2026-01-02 have none for gpt-6.1-sol 51.5k \
+             tokens"
+        );
+        assert_eq!(
+            said_at(none, &prices()).unwrap(),
+            "51.5k tokens in 5 calls (executor 51.5k, reviewer 10; round 1 51.5k, round 2 10), no \
+             API list price read 2026-01-02 for gpt-6.1-sol 51.5k tokens"
+        );
+    }
+
+    #[test]
+    fn a_tally_prices_each_row_by_its_own_model_and_speed() {
+        let mut fast = row("executor", 1, tokens(0, 0, 0, 100, 1));
+        fast.speed = "fast".into();
+        let rows = [row("executor", 1, tokens(0, 0, 0, 100, 1)), fast];
+        let tally = Tally::at(&rows, &prices());
+        // The fixture has no fast price for Opus: its row is unpriced, never at the standard one.
+        assert_eq!(tally.total.cost.said(), "$1.00 + unpriced");
+        assert_eq!(
+            tally.total.cost.unpriced_said(", "),
+            "claude-opus-5-5 fast 100 tokens"
+        );
+        // The embedded table is what `of` and `said` price at.
+        assert_eq!(Tally::of(&rows).prices, Prices::embedded().read);
+        assert_eq!(said(&rows), said_at(&rows, Prices::embedded()));
+    }
+
+    #[test]
+    fn the_json_carries_each_sums_cost_and_each_rows() {
+        let rows = [
+            row("executor", 1, tokens(0, 0, 0, 100, 1)),
+            on("gpt-6.1-sol", "reviewer", 2, tokens(10, 0, 0, 0, 1)),
+        ];
+        let prices = prices();
+        let json = crate::pyjson::dumps_line(&Tally::at(&rows, &prices).json(&rows, &prices));
+        let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(value["cost"]["dollars"], 1.0);
+        assert_eq!(value["cost"]["prices"], "2026-01-02");
+        assert_eq!(value["cost"]["unpriced"][0]["model"], "gpt-6.1-sol");
+        assert_eq!(value["by_role"][0]["role"], "executor");
+        assert_eq!(value["by_role"][0]["cost"]["output"], 1.0);
+        assert_eq!(value["by_role"][1]["cost"]["dollars"], 0.0);
+        assert_eq!(
+            value["by_round"][1]["cost"]["unpriced"][0]["tokens"]["input"],
+            10
+        );
+        assert_eq!(value["rows"][0]["cost"]["dollars"], 1.0);
+        assert_eq!(value["rows"][1]["cost"]["unpriced"][0]["speed"], "standard");
+        let keys: Vec<&str> = (value["rows"][0].as_object().unwrap().keys())
+            .map(String::as_str)
+            .collect();
+        assert_eq!(
+            keys,
+            [
+                "handle", "slug", "role", "model", "speed", "round", "tokens", "cost", "first",
+                "last"
+            ]
         );
     }
 
@@ -377,7 +606,7 @@ mod tests {
     fn nothing_recorded_says_nothing() {
         assert!(Tally::of(&[]).lines().is_empty());
         assert_eq!(said(&[]), None);
-        let json = crate::pyjson::dumps(&Tally::of(&[]).json(&[]));
+        let json = crate::pyjson::dumps(&Tally::of(&[]).json(&[], Prices::embedded()));
         assert!(json.contains("\"by_role\": []"), "{json}");
     }
 
