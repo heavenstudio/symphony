@@ -754,8 +754,8 @@ A step moves what it can and nothing more:
   is built from and where that checkout's main stands. Nothing here stops, signals or restarts it.
   A release's server is said as that release, its reload following `current` (below), and nothing
   of it is waited for. A project's build's own reload (`apps/symphony-server/src/reload.rs`)
-  fingerprints the checkout it serves, its
-  `Cargo.lock` and sources: once that changes it builds and installs a new server
+  fingerprints the checkout it serves, its `Cargo.lock` and sources: once that changes it builds
+  and installs a new server
   (`crates/symphony/src/reload.rs`, `cargo install --force --root` into its install folder) and
   hands its sockets to it by exec. A build or a hand-over that fails leaves the previous one
   serving and says on its notice why, and when it tries that version again: 5 minutes after its
@@ -847,9 +847,9 @@ current -> releases/release-2026-11-20
 - **The manifest.** What the release serves is asked of the binaries that build made, never read from
   the program that installs, which a retry runs from a later main: `symphony-server --serves`
   prints its plugin protocol, its board schema and the Symphony pin it serves, and `tasks api`
-  answers the method `version` with its api version and its schema. A server and a board built at different schemas are never
-  installed. Each binary is an artifact with its size in bytes, and the client one, with the
-  bytes and the count of its files.
+  answers the method `version` with its api version and its schema. A server and a board built at
+  different schemas are never installed. Each binary is an artifact with its size in bytes, and
+  the client one, with the bytes and the count of its files.
 - **Whole or not there.** The folder is written under a temporary name beside it
   (`.NAME.installing.PID`) and renamed into place, so `releases/NAME/` is either the whole release
   or absent. A build that fails, a binary that is missing or cannot say what it serves, or a
@@ -894,7 +894,11 @@ process, and a registered project naming a linked plugin holds the switch: the r
 installed and a project's build is the machine's server, each project naming a linked plugin says
 so on its pages, naming the command that lets it go, and `just release --status` says which holds
 it. A start that finds no server running starts the release's server when it serves every
-registered project, at its pin and board schema or older; a running project's build keeps
+registered project, at its pin and board schema or older. While something holds the switch, a
+start by the release's own binary (`just symphony` in a project with no build of its own) starts
+nothing: it registers its project and names, in one line, the project that holds the switch and
+that `just symphony` in that project's checkout, by its own build, starts the machine's server.
+A running project's build keeps
 serving until a stop and a start make the release its successor, which is the owner's word for
 the shared server ([AGENTS](../AGENTS.md)). No start replaces a release's server. A board one
 schema ahead of the release (main's build moved it first) is read by its server, which writes

@@ -5,7 +5,9 @@
 //! nothing holds it, a start of the one server that finds none running starts the server of the
 //! release `current` names in place of its own build ([`to_start`]), so no project's build is the
 //! machine's server; a project's build already running is switched by a stop and a start, an act
-//! of its own, as no start replaces a running server with a release's. The refresh reads the same
+//! of its own, as no start replaces a running server with a release's. While something holds it,
+//! a start by the release's own binary (`just symphony` in a project with no build of its own)
+//! starts nothing and names the project that holds it ([`refused`]). The refresh reads the same
 //! rule before it points `current`.
 
 use std::path::{Path, PathBuf};
@@ -56,10 +58,25 @@ pub fn held(registry: &Registry) -> Option<Hold> {
     })
 }
 
+/// What holds the switch to the release `build` in `registry`: the first project naming a linked
+/// plugin ([`held`]), as the refresh reads it, else the first project the release is too old for
+/// (its pin or its board schema). That project's id and root, and why, in words.
+pub fn holding(build: &Build, registry: &Registry) -> Option<(String, PathBuf, String)> {
+    if let Some(hold) = held(registry) {
+        let why = hold.said();
+        return Some((hold.id, hold.root, why));
+    }
+    registry.projects.iter().find_map(|entry| {
+        let lack = build.lacks(entry)?;
+        let why = format!("its server {}", lack.said(build, &entry.id));
+        Some((entry.id.clone(), entry.root.clone(), why))
+    })
+}
+
 /// The server a start of the one server for `entry` runs in `machine` when none runs, in place of
 /// its own build: that of the release `current` names, installed whole, by its own folder's path,
 /// when it serves `entry` and every other project of `registry`; none otherwise, and the start runs
-/// its own build.
+/// its own build ([`refused`] when its own build is a release's).
 pub fn to_start(machine: &Path, registry: &Registry, entry: &Entry) -> Option<(PathBuf, Build)> {
     let manifest = release::current_installed(machine)?;
     let build = Build::released(&manifest, &entry.root);
@@ -67,6 +84,38 @@ pub fn to_start(machine: &Path, registry: &Registry, entry: &Entry) -> Option<(P
         let server = release::binary(machine, &manifest.release, release::SERVER);
         (server, build)
     })
+}
+
+/// Why a start of the one server by the release `ours`'s own binary (what `just symphony` runs in
+/// a project with no build of its own) starts nothing in `machine` when none runs and
+/// [`to_start`] names no server: the release would serve the machine while something holds the
+/// switch, refusing the project that holds it. One line, naming that project and the command that
+/// starts the machine's server from its checkout.
+pub fn refused(machine: &Path, registry: &Registry, ours: &str) -> String {
+    let Some(manifest) = release::current_installed(machine) else {
+        return format!(
+            "the machine's Symphony is not started from the release {ours}: {} names no release \
+             installed whole in {}, and a release's server is started only as the release it names",
+            machine.join(release::CURRENT).display(),
+            machine.join(release::RELEASES).display()
+        );
+    };
+    let build = Build::released(&manifest, machine);
+    match holding(&build, registry) {
+        Some((id, root, why)) => format!(
+            "the machine's Symphony is not started from the release {}, as the switch to it is \
+             held: {why}; `just symphony` in {}, by {id}'s own build, starts the machine's server",
+            manifest.release,
+            root.display()
+        ),
+        // Nothing holds it, yet the release served no start: `current` moved between the reads.
+        None => format!(
+            "the machine's Symphony is not started from the release {}: {} moved as it was read; \
+             `just symphony` again judges it anew",
+            manifest.release,
+            machine.join(release::CURRENT).display()
+        ),
+    }
 }
 
 /// The one server as the machine folder records it (`server.json`).
@@ -136,12 +185,7 @@ pub fn standing(machine: &Path) -> String {
             return said;
         }
     };
-    // A linked plugin first, as the refresh reads it; then a project the release is too old for.
-    let lacking = (registry.projects.iter()).find_map(|entry| {
-        let lack = build.lacks(entry)?;
-        Some(format!("its server {}", lack.said(&build, &entry.id)))
-    });
-    match held(&registry).map(|hold| hold.said()).or(lacking) {
+    match holding(&build, &registry).map(|(_, _, why)| why) {
         Some(why) => said.push_str(&format!(
             "machine: the switch to {release} is held: {why}\n"
         )),

@@ -195,6 +195,99 @@ fn a_release_not_installed_whole_is_never_started() {
 }
 
 #[test]
+fn a_linked_plugin_holds_the_switch_before_a_project_the_release_is_too_old_for() {
+    let tree = Tree::new();
+    let machine = installed(&tree, RELEASE, 0, symphony_board::SCHEMA);
+    let build = Build::released(&release::current_installed(&machine).unwrap(), &machine);
+    let alpha = project(&tree, "alpha", &[], &[]);
+    let served = project(&tree, "served", &["map"], &["map"]);
+    let linked = project(&tree, "linked", &["shelf"], &[]);
+    // The release at pin 0 is too old for every project: the first is named, with its lack.
+    let Some((id, root, why)) = holding(&build, &registry(&[&served, &alpha])) else {
+        panic!("a release at pin 0 serves no project");
+    };
+    assert_eq!((id.as_str(), &root), ("served", &served.root));
+    assert_eq!(
+        why,
+        format!(
+            "its server is the release {RELEASE}, at Symphony pin 0, older than served's {PIN}"
+        )
+    );
+    // A linked plugin anywhere in the registry is named first, as the refresh reads it.
+    let Some((id, root, why)) = holding(&build, &registry(&[&alpha, &linked])) else {
+        panic!("a linked plugin holds the switch");
+    };
+    assert_eq!((id.as_str(), &root), ("linked", &linked.root));
+    assert!(
+        why.starts_with("linked names the linked plugin shelf, "),
+        "{why}"
+    );
+    // A release at this pin holds nothing for projects it serves.
+    let tree = Tree::new();
+    let machine = installed(&tree, RELEASE, PIN, symphony_board::SCHEMA);
+    let build = Build::released(&release::current_installed(&machine).unwrap(), &machine);
+    let alpha = project(&tree, "alpha", &[], &[]);
+    let served = project(&tree, "served", &["map"], &["map"]);
+    assert_eq!(holding(&build, &registry(&[&alpha, &served])), None);
+}
+
+#[test]
+fn a_start_by_a_release_while_the_switch_is_held_is_refused_naming_the_holder_and_its_command() {
+    let tree = Tree::new();
+    let machine = installed(&tree, RELEASE, PIN, symphony_board::SCHEMA);
+    let alpha = project(&tree, "alpha", &[], &[]);
+    let linked = project(&tree, "linked", &["shelf"], &[]);
+    assert_eq!(
+        refused(&machine, &registry(&[&alpha, &linked]), RELEASE),
+        format!(
+            "the machine's Symphony is not started from the release {RELEASE}, as the switch to it \
+             is held: linked names the linked plugin shelf, and a release's server serves a plugin \
+             only from its process: a [plugins.process] command for it in {} lets the release \
+             serve every project (docs/PLUGIN_PROTOCOL.md); `just symphony` in {}, by linked's own \
+             build, starts the machine's server",
+            linked.root.join(FILE).display(),
+            linked.root.display()
+        )
+    );
+    // A project the release is too old for holds it the same way.
+    let tree = Tree::new();
+    let machine = installed(&tree, RELEASE, 0, symphony_board::SCHEMA);
+    let alpha = project(&tree, "alpha", &[], &[]);
+    assert_eq!(
+        refused(&machine, &registry(&[&alpha]), RELEASE),
+        format!(
+            "the machine's Symphony is not started from the release {RELEASE}, as the switch to it \
+             is held: its server is the release {RELEASE}, at Symphony pin 0, older than alpha's \
+             {PIN}; `just symphony` in {}, by alpha's own build, starts the machine's server",
+            alpha.root.display()
+        )
+    );
+    // Nothing holding it: current moved between the reads, and a start again judges it anew.
+    let tree = Tree::new();
+    let machine = installed(&tree, RELEASE, PIN, symphony_board::SCHEMA);
+    assert_eq!(
+        refused(&machine, &registry(&[]), RELEASE),
+        format!(
+            "the machine's Symphony is not started from the release {RELEASE}: {} moved as it was \
+             read; `just symphony` again judges it anew",
+            machine.join(release::CURRENT).display()
+        )
+    );
+    // No release installed whole: a release's server starts only as the one current names.
+    fs::remove_file(release::folder(&machine, RELEASE).join("bin/symphony-server")).unwrap();
+    assert_eq!(
+        refused(&machine, &registry(&[]), "release-2026-11-01"),
+        format!(
+            "the machine's Symphony is not started from the release release-2026-11-01: {} names \
+             no release installed whole in {}, and a release's server is started only as the \
+             release it names",
+            machine.join(release::CURRENT).display(),
+            machine.join(release::RELEASES).display()
+        )
+    );
+}
+
+#[test]
 fn the_standing_says_no_release_or_a_current_naming_none_installed() {
     let tree = Tree::new();
     let machine = tree.path("machine");

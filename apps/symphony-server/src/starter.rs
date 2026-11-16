@@ -120,6 +120,13 @@ pub(crate) fn one(
             register(&machine, &entry)?;
             let registry = Registry::read(&machine)?;
             let release = machine::switch::to_start(&machine, &registry, &entry);
+            // A start by a release's own binary runs that release's server: never while something
+            // holds the switch, as the project holding it would be refused on its pages.
+            if release.is_none()
+                && let Some(ours) = &ours.release
+            {
+                return Err(machine::switch::refused(&machine, &registry, ours));
+            }
             if let Some((_, build)) = &release
                 && ours.release != build.release
             {

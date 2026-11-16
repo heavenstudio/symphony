@@ -270,6 +270,63 @@ fn the_release_server_follows_current_and_one_that_does_not_start_leaves_it_serv
 }
 
 #[test]
+fn a_start_by_the_release_while_a_project_holds_the_switch_starts_nothing_and_names_the_holder() {
+    let repo = Repo::new("release refused");
+    installed(&repo, "release-1", "first", None);
+    write(
+        &repo.main.join("symphony.toml"),
+        "[project]\nid = \"alpha\"\n",
+    );
+    let pantry = repo.external("pantry");
+    write(
+        &pantry.join("symphony.toml"),
+        "[project]\nid = \"pantry\"\n[plugins]\ncrates = [\"fixture-shelf\"]\n",
+    );
+    symphony::machine::Registry::change(&repo.home, |registry| {
+        registry.add(symphony::machine::Entry::of(&pantry)?)
+    })
+    .unwrap();
+    // What `just symphony` runs in a project with no build of its own: the release, through
+    // `current`, with no server running.
+    let mut start = repo.run({
+        let mut command = Command::new(repo.home.join("current/bin/symphony-server"));
+        command
+            .current_dir(&repo.main)
+            .env_clear()
+            .envs(repo.environment())
+            .stdin(Stdio::null());
+        command
+    });
+    assert_eq!(start.wait().code(), Some(2));
+    let registered = symphony::machine::Registry::read(&repo.home).unwrap();
+    let held = (registered.projects.iter())
+        .find(|entry| entry.id == "pantry")
+        .unwrap();
+    let said = start.output();
+    assert!(
+        said.contains(&format!(
+            "✖ Symphony: the machine's Symphony is not started from the release release-1, as the \
+             switch to it is held: pantry names the linked plugin fixture-shelf, and a release's \
+             server serves a plugin only from its process: a [plugins.process] command for it in \
+             {} lets the release serve every project (docs/PLUGIN_PROTOCOL.md); `just symphony` \
+             in {}, by pantry's own build, starts the machine's server\n",
+            held.root.join("symphony.toml").display(),
+            held.root.display()
+        )),
+        "{said}"
+    );
+    // Nothing started: no record, and no server answers for the machine.
+    assert!(repo.record().is_none());
+    assert!(!repo.home.join("server.log").exists());
+    // The starting project is registered beside the holder, for the holder's build to serve.
+    let mut ids: Vec<&str> = (registered.projects.iter())
+        .map(|entry| entry.id.as_str())
+        .collect();
+    ids.sort_unstable();
+    assert_eq!(ids, ["alpha", "pantry"]);
+}
+
+#[test]
 fn a_project_naming_a_linked_plugin_holds_the_switch_on_its_pages_and_in_the_status() {
     const SHELF: &str = env!("CARGO_BIN_EXE_symphony-shelf");
     let repo = Repo::new("release held");

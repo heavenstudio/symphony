@@ -114,7 +114,8 @@ pub struct Front {
     #[serde(default)]
     pub orphans: usize,
     /// The plugins the host binary compiles, by name: the one server serves a project only when
-    /// it holds every plugin the project names.
+    /// it holds every plugin the project names linked, one with no `[plugins.process]` command
+    /// (a plugin that answers from its process any host serves); a release's server compiles none.
     #[serde(default)]
     pub plugins: Vec<String>,
     /// The Symphony version the host was built at, its pin; 0 from a server before pins.

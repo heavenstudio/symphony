@@ -38,10 +38,13 @@ ahead, whose board it reads and writes nothing to. A start that finds no server 
 the server of the release `current` names, by its own folder's path
 (`releases/NAME/bin/symphony-server`), when that release serves every registered project, and its
 own build otherwise (`symphony::machine::switch`); the record (`server.json`) names the release
-its server is. No start replaces a release's server: a project naming a linked plugin is
-registered and refused, its pages naming the `[plugins.process]` command that lets the release
-serve it, and a project at a newer pin or schema is refused until `current` names a release that
-serves it.
+its server is. A start whose own build is a release's (`just symphony` in a project with no build
+of its own) starts nothing while a project holds the switch: it registers its project and says,
+in one line, which project holds it and that `just symphony` in that project's checkout, by its
+own build, starts the machine's server. No start replaces a release's server: a project naming a
+linked plugin is registered and refused, its pages naming the `[plugins.process]` command that
+lets the release serve it, and a project at a newer pin or schema is refused until `current`
+names a release that serves it.
 
 While a project's build is the machine's server, a start judges it by the plugins it compiles:
 served, when it holds the project's linked plugins at the project's pin and schema or newer;
@@ -65,10 +68,9 @@ notice. A starter's request to hand over is refused, said in the log. The releas
 the client it serves, are read once, as it starts.
 
 A project's build as the shared server watches main's server sources and transitive local crate
-sources. It builds
-through the command main's `[project] cargo` names (when unset, `tools/cargo.sh` in Symphony's
-own workspace and plain `cargo` elsewhere) under `symphony/server/reload-build.lock`, while
-continuing to serve.
+sources. It builds through the command main's `[project] cargo` names (when unset,
+`tools/cargo.sh` in Symphony's own workspace and plain `cargo` elsewhere) under
+`symphony/server/reload-build.lock`, while continuing to serve.
 The replacement inherits every listening socket and the `server.lock` lease, warms its read
 hub, then acknowledges readiness on a private pipe. Only then does the old generation stop
 accepting, finish its feeds, and drain its save workers without a timeout and its accepted
@@ -185,9 +187,9 @@ A missing task returns 404; an unavailable board returns 503 while the document
 board continues without task counts. A board one schema ahead of the build's (main's build moved
 it on before a release caught up) is read, and nothing is written to it from the server: its ticks
 dispatch no callback, give no work and keep no owner's asks, the schema rule refuses every other
-write, and every page says so on the notice until the board and the build agree. A board that took a read and answered it
-later than the 3 s wait, on its one resend too, is slow: 504, "the task board is
-slow", never "cannot be reached". The wait bounds the board tick, which shares the
+write, and every page says so on the notice until the board and the build agree. A board that
+took a read and answered it later than the 3 s wait, on its one resend too, is slow: 504, "the
+task board is slow", never "cannot be reached". The wait bounds the board tick, which shares the
 data worker's thread with document refreshes, and bounds each sending's whole
 answer, so a read sent twice stays inside the client's 15 s request limit. Native routes apply both
 the peer gate and the Host check; sandboxed frames cannot read the API.
@@ -209,8 +211,9 @@ embeds no client: run from the release's folder in the machine folder
 (`releases/NAME/bin/symphony-server`, through `current` or not), it serves that release's
 `client/HASH/` from beside it, whatever else is named
 ([RELEASES](../../docs/RELEASES.md#the-install)). `symphony-server --serves` prints, as one line
-of JSON, the plugin protocol, the board schema and the Symphony pin the build serves. `just client-update` in the Symphony workspace
-refreshes the real distribution before committing client changes. Its default
+of JSON, the plugin protocol, the board schema and the Symphony pin the build serves.
+`just client-update` in the Symphony workspace refreshes the real distribution before committing
+client changes. Its default
 root is the checkout's top level even when the command starts in a subfolder; `--root`
 selects another folder. A private server on the main checkout leaves the
 shared app's `artifacts/docs-app.port` record alone. A project's page serves the
