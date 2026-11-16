@@ -120,6 +120,7 @@ pub use aside::{SWEPT, swept};
 pub use command::{Request, command, command_connect};
 
 use crate::health::FINISHED;
+use crate::maps::Collect as _;
 use crate::rows::TaskSessionRow;
 use crate::{Error, Session, Store, Task, sys};
 use build_output::Cleared;
@@ -523,7 +524,11 @@ impl<'a> Index<'a> {
             sessions_at: BTreeMap::new(),
             beats_at: BTreeMap::new(),
             launched_at: BTreeMap::new(),
-            tasks: facts.tasks.iter().map(|t| (t.slug.as_str(), t)).collect(),
+            tasks: facts
+                .tasks
+                .iter()
+                .map(|t| (t.slug.as_str(), t))
+                .collect_map(),
             spelled: BTreeMap::new(),
         };
         for task in &facts.tasks {

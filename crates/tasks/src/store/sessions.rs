@@ -5,6 +5,7 @@ use super::surreal::sessions as sql;
 use super::work::Pass;
 use super::{Beside, Error, Failure, Found, REFUSED, Session, Store, refused, repr};
 use crate::health::{self, EXECUTING};
+use crate::maps::Collect as _;
 use crate::orchestration;
 use crate::rows::SessionRow;
 use crate::sys::Boottime;
@@ -442,7 +443,7 @@ impl Store {
             agent: String,
         }
         let bound: Vec<Bound> = self.retrying(|| self.transact(sql::BOUND_AGENTS, json!({})))?;
-        Ok(bound.into_iter().map(|b| (b.handle, b.agent)).collect())
+        Ok(bound.into_iter().map(|b| (b.handle, b.agent)).collect_map())
     }
 
     /// Handle -> the key whose tool calls beat for it, with what its binding keeps (whether it is an

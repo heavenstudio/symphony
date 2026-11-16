@@ -104,14 +104,15 @@ fn listed(labels: &[&str]) -> String {
 }
 
 /// The task's runs among `runs` (those whose task `ours` names) that name a commit, oldest first,
-/// and of them the newest at `tip` of each command, in the order each was first run there.
+/// and of them the newest at `tip` of each command, in the order each was first run there. `ours`
+/// is a `dyn`, so this sort is compiled once and not again for each caller's closure.
 fn newest_at<'a>(
     runs: &'a [Record],
     tip: &str,
-    ours: impl Fn(&str) -> bool,
+    ours: &dyn Fn(&str) -> bool,
 ) -> (Vec<&'a Record>, Vec<&'a Record>) {
     let mut mine: Vec<&Record> = (runs.iter())
-        .filter(|run| run.commit.is_some() && run.task.as_deref().is_some_and(&ours))
+        .filter(|run| run.commit.is_some() && run.task.as_deref().is_some_and(ours))
         .collect();
     mine.sort_by(|a, b| began(a).total_cmp(&began(b)));
     let mut newest: Vec<&Record> = Vec::new();
@@ -128,7 +129,7 @@ fn newest_at<'a>(
 /// them), is red, with why: what keeps the `tests` stamp from standing while nothing still runs,
 /// and what a run of the same command, green, at the tip clears.
 pub fn reds(runs: &[Record], tip: &str, ours: impl Fn(&str) -> bool) -> Vec<(String, String)> {
-    let (_, newest) = newest_at(runs, tip, ours);
+    let (_, newest) = newest_at(runs, tip, &ours);
     (newest.iter())
         .filter(|run| run.state == Step::Finished)
         .filter_map(|run| red(run).map(|why| (run.label.clone(), why)))
@@ -156,7 +157,7 @@ pub struct AtTip<'a> {
 /// The task's runs among `runs` (those whose task `ours` names) at `tip`, each command's newest
 /// with the runs of it there before, and its runs at other commits apart ([`AtTip`]).
 pub fn at_tip<'a>(runs: &'a [Record], tip: &str, ours: impl Fn(&str) -> bool) -> AtTip<'a> {
-    let (mine, newest) = newest_at(runs, tip, ours);
+    let (mine, newest) = newest_at(runs, tip, &ours);
     let here = |run: &&Record| run.commit.as_deref() == Some(tip);
     let commands = (newest.into_iter())
         .map(|newest| Command {
@@ -188,7 +189,7 @@ pub fn newest_of<'a>(runs: &'a [Record], tip: &str, label: &str) -> Option<&'a R
 /// while one is red ([`reds`]), still going or queued, or none ran at the tip, the last run
 /// elsewhere named.
 pub fn tests(runs: &[Record], tip: &str, ours: impl Fn(&str) -> bool) -> Reading {
-    let (mine, newest) = newest_at(runs, tip, ours);
+    let (mine, newest) = newest_at(runs, tip, &ours);
     let at_tip = short(tip);
     let Some(last) = newest.iter().max_by(|a, b| began(a).total_cmp(&began(b))) else {
         return match mine.last() {

@@ -6,6 +6,7 @@ use crate::cli::agents::{Probes, View, describe_board};
 use crate::cli::pull::viewed;
 use crate::cli::text::event;
 use crate::health::Health;
+use crate::maps::Collect as _;
 use crate::{Error, Store, Task};
 use std::cell::OnceCell;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
@@ -112,11 +113,9 @@ fn look(
     }
     let pull = match w.pull_every {
         Some(every) if kind == "orchestrator" => {
-            let statuses: BTreeMap<String, String> = board
-                .tasks
-                .iter()
+            let statuses = (board.tasks.iter())
                 .map(|t| (t.slug.clone(), t.status.clone()))
-                .collect();
+                .collect_map();
             let stamp = store.now();
             let due = memory.last_pull.is_none_or(|last| stamp - last >= every);
             (due || statuses != memory.last_statuses || pull_changed(memory.seen.as_ref(), &now))

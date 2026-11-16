@@ -62,6 +62,7 @@ mod pipeline;
 
 use crate::alarm::{Alarm, Thresholds, Tips};
 use crate::health::Health;
+use crate::maps::Collect as _;
 use crate::orchestration::{Owners, claimable_work};
 use crate::red::UNSTAFFED_SECONDS;
 use crate::store::unanswered::Pending;
@@ -267,7 +268,7 @@ impl Digest {
         Said {
             counts: (self.counts().into_iter())
                 .map(|(name, value, _)| (name.to_string(), value))
-                .collect(),
+                .collect_map(),
             entries: self.entries(),
             liveness_unknown: self.liveness_unknown.clone(),
         }
@@ -710,14 +711,14 @@ pub(crate) fn digest_on(
                 holdings.get(&session.row.handle).map_or(0, BTreeSet::len),
             )
         })
-        .collect();
+        .collect_map();
     let orchestrated = orchestrators
         .map(|session| {
             let handle = session.row.handle.clone();
             let count = crate::orchestration::orchestrated(tasks, &handle);
             (handle, count)
         })
-        .collect();
+        .collect_map();
     let liveness_unknown = tasks
         .iter()
         .flat_map(|t| {
