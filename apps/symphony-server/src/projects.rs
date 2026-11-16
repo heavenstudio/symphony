@@ -390,7 +390,8 @@ fn lacking(build: &Build, starter_id: &str, entry: &Entry) -> Option<String> {
 
 /// What the pages of `entry` say of the machine's server while it is a project's build and
 /// `installed` is the release the machine's `current` names: that `entry` holds it there, when it
-/// names a linked plugin ([`switch::held`]); nothing otherwise.
+/// names a linked plugin ([`switch::held`]), its project file named as its own
+/// ([`switch::Hold::said_on_its_pages`]); nothing otherwise.
 fn holding(installed: Option<&symphony::machine::release::Manifest>, entry: &Entry) -> String {
     let Some(installed) = installed else {
         return String::new();
@@ -402,7 +403,7 @@ fn holding(installed: Option<&symphony::machine::release::Manifest>, entry: &Ent
         format!(
             "The machine's Symphony stays a project's build, not the release {}: {}.",
             installed.release,
-            hold.said()
+            hold.said_on_its_pages()
         )
     })
     .unwrap_or_default()

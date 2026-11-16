@@ -213,9 +213,8 @@ embeds no client: run from the release's folder in the machine folder
 ([RELEASES](../../docs/RELEASES.md#the-install)). `symphony-server --serves` prints, as one line
 of JSON, the plugin protocol, the board schema and the Symphony pin the build serves.
 `just client-update` in the Symphony workspace refreshes the real distribution before committing
-client changes. Its default
-root is the checkout's top level even when the command starts in a subfolder; `--root`
-selects another folder. A private server on the main checkout leaves the
+client changes. Its default root is the checkout's top level even when the command starts in a
+subfolder; `--root` selects another folder. A private server on the main checkout leaves the
 shared app's `artifacts/docs-app.port` record alone. A project's page serves the
 shell with revalidation by its ETag, as is any client file not named by its
 content. A file named by its content, an `assets/` name whose last `-` part is

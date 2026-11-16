@@ -358,7 +358,8 @@ fn a_project_naming_a_linked_plugin_holds_the_switch_on_its_pages_and_in_the_sta
         "/pantry",
         "The machine's Symphony stays a project's build, not the release release-1: pantry names \
          the linked plugin fixture-shelf, and a release's server serves a plugin only from its \
-         process: a [plugins.process] command for it in ",
+         process: a [plugins.process] command for it in its symphony.toml lets the release serve \
+         every project (docs/PLUGIN_PROTOCOL.md).",
     );
     let standing = symphony::machine::switch::standing(&repo.home);
     let registered = symphony::machine::Registry::read(&repo.home).unwrap();

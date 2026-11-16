@@ -131,6 +131,13 @@ fn a_hold_names_its_project_its_plugins_and_where_their_commands_go() {
          its process: a [plugins.process] command for it in /work/pantry/symphony.toml lets the \
          release serve every project (docs/PLUGIN_PROTOCOL.md)"
     );
+    // Its own pages name the file as its own; the status and a start keep its path.
+    assert_eq!(
+        one.said_on_its_pages(),
+        "pantry names the linked plugin shelf, and a release's server serves a plugin only from \
+         its process: a [plugins.process] command for it in its symphony.toml lets the release \
+         serve every project (docs/PLUGIN_PROTOCOL.md)"
+    );
     let two = Hold {
         plugins: vec!["shelf".into(), "map".into()],
         ..one

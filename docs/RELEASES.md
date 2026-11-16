@@ -755,9 +755,8 @@ A step moves what it can and nothing more:
   A release's server is said as that release, its reload following `current` (below), and nothing
   of it is waited for. A project's build's own reload (`apps/symphony-server/src/reload.rs`)
   fingerprints the checkout it serves, its `Cargo.lock` and sources: once that changes it builds
-  and installs a new server
-  (`crates/symphony/src/reload.rs`, `cargo install --force --root` into its install folder) and
-  hands its sockets to it by exec. A build or a hand-over that fails leaves the previous one
+  and installs a new server (`crates/symphony/src/reload.rs`, `cargo install --force --root` into
+  its install folder) and hands its sockets to it by exec. A build or a hand-over that fails leaves the previous one
   serving and says on its notice why, and when it tries that version again: 5 minutes after its
   first failure, the wait doubling with each failure of it in a row up to an hour, so a hand-over
   that failed under load is tried again though the sources do not change again. A build that
@@ -898,12 +897,12 @@ registered project, at its pin and board schema or older. While something holds 
 start by the release's own binary (`just symphony` in a project with no build of its own) starts
 nothing: it registers its project and names, in one line, the project that holds the switch and
 that `just symphony` in that project's checkout, by its own build, starts the machine's server.
-A running project's build keeps
-serving until a stop and a start make the release its successor, which is the owner's word for
-the shared server ([AGENTS](../AGENTS.md)). No start replaces a release's server. A board one
-schema ahead of the release (main's build moved it first) is read by its server, which writes
-nothing to it and says so on every page until a release at that schema serves it; a board two
-ahead, or a project at a newer pin, is refused until `current` names a release that serves it.
+A running project's build keeps serving until a stop and a start make the release its successor,
+which is the owner's word for the shared server ([AGENTS](../AGENTS.md)). No start replaces a
+release's server. A board one schema ahead of the release (main's build moved it first) is read
+by its server, which writes nothing to it and says so on every page until a release at that schema
+serves it; a board two ahead, or a project at a newer pin, is refused until `current` names a
+release that serves it.
 
 ## Who runs it
 

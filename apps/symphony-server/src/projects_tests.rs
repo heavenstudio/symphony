@@ -1366,14 +1366,12 @@ fn a_project_naming_a_linked_plugin_says_it_holds_the_machine_on_a_projects_buil
     };
     assert_eq!(holding(None, &linked), "", "no release is installed");
     assert_eq!(holding(Some(&manifest), &processes), "");
+    // Its own pages name its project file as its own, never by the checkout's path.
     assert_eq!(
         holding(Some(&manifest), &linked),
-        format!(
-            "The machine's Symphony stays a project's build, not the release release-1: linked \
-             names the linked plugin shelf, and a release's server serves a plugin only from its \
-             process: a [plugins.process] command for it in {} lets the release serve every \
-             project (docs/PLUGIN_PROTOCOL.md).",
-            linked.root.join("symphony.toml").display()
-        )
+        "The machine's Symphony stays a project's build, not the release release-1: linked names \
+         the linked plugin shelf, and a release's server serves a plugin only from its process: a \
+         [plugins.process] command for it in its symphony.toml lets the release serve every \
+         project (docs/PLUGIN_PROTOCOL.md)."
     );
 }

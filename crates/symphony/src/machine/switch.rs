@@ -27,8 +27,20 @@ pub struct Hold {
 }
 
 impl Hold {
-    /// The hold, in one line: who holds it, by which plugins, and what lets it go.
+    /// The hold, in one line: who holds it, by which plugins, and what lets it go, its project file
+    /// by its path, as the status and a start say it.
     pub fn said(&self) -> String {
+        self.told(&self.root.join(crate::project::FILE).display().to_string())
+    }
+
+    /// The hold as the holding project's own pages say it: its project file named as its own
+    /// (`its symphony.toml`), as the reader of its pages knows where its checkout is.
+    pub fn said_on_its_pages(&self) -> String {
+        self.told(&format!("its {}", crate::project::FILE))
+    }
+
+    /// The hold's line, its project file named `file`.
+    fn told(&self, file: &str) -> String {
         let (plugins, them) = if self.plugins.len() == 1 {
             ("plugin", "it")
         } else {
@@ -36,11 +48,10 @@ impl Hold {
         };
         format!(
             "{} names the linked {plugins} {}, and a release's server serves a plugin only from its \
-             process: a [plugins.process] command for {them} in {} lets the release serve every \
+             process: a [plugins.process] command for {them} in {file} lets the release serve every \
              project (docs/PLUGIN_PROTOCOL.md)",
             self.id,
             self.plugins.join(", "),
-            self.root.join(crate::project::FILE).display()
         )
     }
 }
