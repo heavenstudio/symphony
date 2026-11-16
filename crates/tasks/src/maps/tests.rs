@@ -32,7 +32,8 @@ fn no_pairs_make_an_empty_map() {
 
 #[test]
 fn an_adapted_iterator_is_collected_as_its_pairs() {
-    let map = (pairs().iter())
+    let pairs = pairs();
+    let map = (pairs.iter())
         .filter(|(_, value)| value % 2 == 0)
         .map(|(key, value)| (key.as_str(), value * 10))
         .collect_map();
