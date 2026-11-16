@@ -310,7 +310,8 @@ impl OrderExpiry {
 impl Hub {
     /// The hub of the project at `root`, which this process serves from now on
     /// ([`taskview::serve`]): every reach of the board from `root` here, the hub's and any route's,
-    /// is held to the repository found there now.
+    /// is held to the repository found there now, and every journal found from it is the one
+    /// found now.
     pub(crate) fn new(root: &Path, ui_dist: &Path) -> Self {
         let native_reader = machine_work::READER_ENV.os();
         let repository = taskview::serve(root);
