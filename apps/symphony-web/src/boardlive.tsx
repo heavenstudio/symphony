@@ -452,7 +452,9 @@ export class LiveBoard {
    * The board's listings leave the machines' work out (`work=0`): every recorder's heartbeat moves
    * it, so a listing with it would never be answered `304`. The page reads it here once the
    * board's version is read, and follows the feed's `machine-work` events after; an event applied
-   * while the read was out is newer than its answer.
+   * while the read was out is newer than its answer. Only the check reads it, which tries a failed
+   * read again until the work is answered, so a failure says it tries again; one after the feed's
+   * event answered for it says nothing, as nothing tries it again.
    */
   async machineWork(): Promise<void> {
     const { d } = this;
@@ -469,7 +471,7 @@ export class LiveBoard {
     }
     if (this.signal.aborted) return;
     if (work === null) {
-      this.unanswered(WORK, why);
+      if (d.worked === worked) this.unanswered(WORK, failedRead(why, true));
       return;
     }
     if (d.worked === worked) {
@@ -499,8 +501,12 @@ export class LiveBoard {
     save(SHAPE, keepShape(shape));
   }
 
-  /** Read the counts of the page's view; an answer a newer view or count read replaced is dropped. */
-  async counts(): Promise<void> {
+  /**
+   * Read the counts of the page's view; an answer a newer view or count read replaced is dropped.
+   * A failure says why, and that the read is tried again when it is (`trying`: the check's), not
+   * when nothing asks again (a refresh's, a search's, the feed's open).
+   */
+  async counts(trying = false): Promise<void> {
     const { d } = this;
     d.countRequest += 1;
     const request = d.countRequest;
@@ -519,7 +525,7 @@ export class LiveBoard {
       }
       if (this.signal.aborted || d.view !== view || d.countRequest !== request) return;
       if (read === null) {
-        this.unanswered(COUNTS, why);
+        this.unanswered(COUNTS, trying ? failedRead(why, true) : why);
         return;
       }
       const [list, fresh] = read;
@@ -724,7 +730,7 @@ export class LiveBoard {
       }),
       this.untilAnswered(current, async () => {
         if (d.counted !== counted) return true;
-        await this.counts();
+        await this.counts(true);
         return d.counted !== counted;
       }),
     );
