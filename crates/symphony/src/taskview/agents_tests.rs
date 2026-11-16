@@ -159,7 +159,7 @@ fn machine_work_board_projection_serializes_on_the_typed_wire_without_changing_l
 }
 
 #[test]
-fn the_typed_wire_carries_what_an_agents_calls_took_and_none_for_one_that_took_nothing() {
+fn the_typed_wire_carries_an_agents_tokens_and_cost_and_none_for_one_that_took_nothing() {
     use symphony_board::cli::{agents, machine_work as work};
     use symphony_board::usage::{Spent, Tokens};
     let f = Fixture::empty();
@@ -217,6 +217,34 @@ fn the_typed_wire_carries_what_an_agents_calls_took_and_none_for_one_that_took_n
         }))
     );
     assert_eq!(tokens(&quiet), Some(None));
+    // Their cost reaches the wire as the board priced it, with the day its prices were read.
+    let prices = symphony_board::usage::Prices::embedded();
+    let priced = prices.cost(
+        "claude-opus-5-5",
+        "standard",
+        &Tokens {
+            input: 12,
+            cache_write_5m: 3_400,
+            cache_write_1h: 560,
+            cache_read: 78_900,
+            output: 1_200,
+            calls: 7,
+        },
+    );
+    let cost = |handle: &str| {
+        (typed.agents.iter())
+            .find(|agent| agent.handle == handle)
+            .and_then(|agent| agent.cost.clone())
+    };
+    let wired = cost(&spender).unwrap();
+    let board: symphony_api::AgentCost = serde_json::from_str(&symphony_board::pyjson::dumps_line(
+        &priced.json(&prices.read),
+    ))
+    .unwrap();
+    assert_eq!(wired, board);
+    assert!(wired.dollars > 0.0 && wired.unpriced.is_empty());
+    assert_eq!(wired.prices, prices.read);
+    assert_eq!(cost(&quiet), None);
 }
 
 /// The agents view asks hc for its terminals with this process's environment as the board reads
