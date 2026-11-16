@@ -285,6 +285,16 @@ export class DocumentLive extends Model {
     return this.wanted.size > 0 && [...this.wanted].every((key) => this.loaded.has(key));
   }
 
+  /**
+   * The sections the feed is to name, whose bodies it then brings with their changes: those near
+   * the screen and those whose bodies the page holds. On a return visit the second are the ones
+   * drawn from this device, there before the outline's check answers, while the first name
+   * themselves only once their slots have come near the screen, a frame or more later.
+   */
+  followed(): Set<string> {
+    return new Set([...this.wanted, ...this.loaded]);
+  }
+
   /** What holds the shown page now, against `latest` (`held`, document.ts). */
   held(latest: DocumentState["latest"]): Set<string> {
     const [engaged, drafts] = busy();
@@ -341,10 +351,10 @@ export class DocumentLive extends Model {
         for (const [key, ids] of Object.entries(anchors)) put(all, key, ids);
         this.anchors = all;
       }
-      // A section the page holds whose text the change left as it was keeps its body; any other
-      // section the page wants, the change bringing no body, is read again.
+      // A section the page holds whose text the change left as it was keeps its body; any other,
+      // the change bringing no body, is read again once the page wants it.
       const sections = (delta.sections ?? []).map((section) => {
-        if (section.blocks.length > 0 || !this.wanted.has(section.key)) return section;
+        if (section.blocks.length > 0) return section;
         const before = this.state?.latest.sections.find((old) => old.key === section.key);
         if (before !== undefined && before.hash === section.hash && before.blocks.length > 0) {
           return { ...section, blocks: before.blocks, comparison: before.comparison ?? null };
@@ -575,8 +585,10 @@ export function took(page: DocumentLive, asked: ReadonlySet<string>, read: Docum
 const QUIET_MS = 12_500;
 
 /**
- * Follow the document's feed from the page's cursor, for the sections it wants (opened again when
- * it wants others), until the stream is lost or the page goes away. How it ended.
+ * Follow the document's feed from the page's cursor, for the sections it wants and holds
+ * (`followed`; opened again once it wants one the stream does not name), until the stream is lost
+ * or the page goes away. How it ended. A return visit opens it once: the sections near the screen
+ * are those drawn from this device, which it names from the start.
  *
  * Only its first open tells the frame the stream opened, which reads the asks, the chat and the
  * metadata again: one the page opened again itself names the cursor of the last event it heard,
@@ -585,7 +597,7 @@ const QUIET_MS = 12_500;
 async function followDocument(page: DocumentLive, signal: AbortSignal): Promise<Ended> {
   let openedAt: number | null = null;
   subscribe: for (;;) {
-    const subscribed = page.wanted;
+    const subscribed = page.followed();
     const url = `${scoped(page.scope, FEED_PATH)}?since=${page.cursor}&document=${encodeURIComponent(page.name)}&sections=${keysQuery(subscribed)}`;
     const inbox = new Inbox<Heard>();
     const close = openFeed(url, (heard) => inbox.push(heard));
@@ -596,7 +608,7 @@ async function followDocument(page: DocumentLive, signal: AbortSignal): Promise<
         let said = await inbox.next(200, signal);
         if (signal.aborted) return "away";
         if (said === null) {
-          if (!sameSet(page.wanted, subscribed)) continue subscribe;
+          if ([...page.wanted].some((key) => !subscribed.has(key))) continue subscribe;
           if (Date.now() - lastWord < QUIET_MS) continue;
           said = { kind: "lost" };
         }
