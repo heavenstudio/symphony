@@ -379,6 +379,32 @@ temporary machine folder). State shared by design, such as the board in the git 
 correct as it is, and only a truly single resource is serialised, under a lock named for it. The
 git stash is shared too: commit to your branch instead.
 
+### `tools/the-machine-is-shared`
+
+Many agents share this machine, and its disk is limited. A long command is started in the
+background and waited for, never started again while it still runs: a second start doubles the
+load and finishes later. No agent copies a build folder, and an agent removes the `build/` output
+of its worktree when its work there is done.
+
+### `tools/no-sweep-on-live-state`
+
+A sweep or a migration an agent runs, to try a change or to see what it does, runs against a
+scratch repository and a scratch board, never the real worktrees or the live board.
+
+### `tools/a-consumers-checkout-is-read-only`
+
+A consuming project's checkout on this machine is read-only to an agent working here: it is read,
+and nothing in it is changed but what a release's refresh moves there, which is the release run's,
+and an act there the owner's word names, which is that word's, such as a pin's commit made once
+by hand ([the refresh](docs/RELEASES.md#the-refresh)).
+
+### `commits/only-the-land-pushes`
+
+Nothing is pushed but main, by the land, and a release's tag, by the release run
+([AGENTS.md](AGENTS.md#this-repository-as-its-own-project)): nothing else of a task, its branch
+included. A consuming project's branch is pushed only on the owner's word naming that push, an
+act separate from moving its pin ([the refresh](docs/RELEASES.md#the-refresh)).
+
 ### `delete-by-name`
 
 `rm -f` names every file it removes, never a glob. An agent stops only a run it started, by the

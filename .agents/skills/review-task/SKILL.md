@@ -2,7 +2,7 @@
 name: review-task
 description: Review one task in the board's review column, independently of its author: read its diff against its recorded evidence, run only what that leaves open and record a verdict naming the tip read. A reviewer's whole prompt is `/review-task SLUG HANDLE` (Codex `$review-task SLUG HANDLE`), never /work. Trigger on /review-task SLUG or $review-task SLUG.
 ---
-<!-- symphony-stamp: 2a44ace31bc8391b files=SKILL.md -->
+<!-- symphony-stamp: 27cc9bffd6ebe9cf files=SKILL.md -->
 
 # /review-task SLUG HANDLE
 
@@ -14,7 +14,7 @@ assumes no certificate or landing system.
 
 Those rules are the project's guide (its `AGENTS.md`), the rules it names and the guide of each
 package the change touches, and `project.md` beside this file where the project has one: its own
-standing instructions for a reviewer, which no prompt repeats. Read them before step 3.
+standing instructions for a reviewer. Read them before step 3.
 
 1. Reuse HANDLE from the prompt; with none, register with `just tasks register --kind reviewer`.
    Pass it on every board command as `just tasks … --as HANDLE`, the handle last. A session with
