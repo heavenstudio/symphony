@@ -60,9 +60,10 @@ machine_work_reader`, a project-relative path; none when unset), or the absolute
 inventory of one machine. The project's own tool commands prepare the executable
 it names. The selected path is retained; sampling never
 searches caches or invokes a build or source hash. A named reader must answer; the
-prepared path may hold none. An unsupported reader, an invalid response or an
-unreadable record leaves observations unknown. A machine is first claimed (its ID
-made) once something was recorded or a project reader answered.
+prepared path may hold none. An unsupported reader, one with no answer within 2 s
+(it is ended then, so a reader that hangs never holds the tick), an invalid
+response or an unreadable record leaves observations unknown. A machine is first
+claimed (its ID made) once something was recorded or a project reader answered.
 
 ## Recording builds and tests
 
