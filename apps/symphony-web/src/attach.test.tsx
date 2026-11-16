@@ -15,7 +15,7 @@ import {
   tooLarge,
   upload,
 } from "./attach";
-import { reply, server } from "./testing";
+import { reply, server, until } from "./testing";
 import { UPLOAD_ACCEPT, UPLOAD_MAX_BYTES, type Upload } from "./wire";
 
 afterEach(() => {
@@ -81,7 +81,7 @@ describe("an upload", () => {
     const fetched = vi.fn(globalThis.fetch);
     vi.stubGlobal("fetch", fetched);
     const sent = upload(file);
-    await vi.waitFor(() => expect(asked).toHaveLength(1));
+    await until(() => expect(asked).toHaveLength(1));
     expect(asked[0]?.url).toBe("/api/upload?name=a%20b.png");
     expect(fetched.mock.calls[0]?.[1]).toMatchObject({
       method: "POST",
@@ -98,7 +98,7 @@ describe("an upload", () => {
     const fetched = vi.fn(globalThis.fetch);
     vi.stubGlobal("fetch", fetched);
     void upload(new File(["?"], "notes"));
-    await vi.waitFor(() => expect(fetched).toHaveBeenCalled());
+    await until(() => expect(fetched).toHaveBeenCalled());
     expect(fetched.mock.calls[0]?.[1]?.headers).toEqual({
       "Content-Type": "application/octet-stream",
     });
@@ -113,7 +113,7 @@ describe("an upload", () => {
     ] as const) {
       const asked = server();
       const sent = upload(file);
-      await vi.waitFor(() => expect(asked).toHaveLength(1));
+      await until(() => expect(asked).toHaveLength(1));
       asked[0]?.answer(answer);
       await expect(sent).rejects.toThrow(said);
     }
