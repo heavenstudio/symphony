@@ -51,7 +51,11 @@ tip, posts the evidence naming it and moves to review
 ([after main moves](docs/CHECKS.md#after-main-moves)). From then on it never merges main because
 main moved. Main always moves: a task that fetches main, builds and measures finds main moved
 again by the time that ends, a loop with no end, and each merge after an approve asks for a fresh
-one. It lands once its stamps stand on its tip and it merges without conflict. It merges main
+one, but the one merge of main that settles a land's conflict where every conflicted path is a
+document (a `*.md` file that is no skill, guide or rules) and changes nothing else: its approve
+stands over that merge, and it lands on its tests green at the merged tip
+([the default landing](docs/TASKS.md#the-default-landing)). It lands once its stamps stand on
+its tip and it merges without conflict. It merges main
 again only when its land reports a conflict, or when a reviewer asks for it by naming what main
 gained that breaks the change or that the change breaks. A reviewer never sends a branch back
 only because main moved. A figure a guide quotes (a page's first-visit bytes, a size) is measured

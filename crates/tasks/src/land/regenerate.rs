@@ -504,6 +504,7 @@ pub fn run(store: &Store, env: &Env, out: &mut dyn Write) -> Result<String, Stri
             log,
             interrupts: interrupts.as_ref(),
             recorder: None,
+            named: false,
             out: &mut *out,
         };
         let mut regenerator = Regenerator {
