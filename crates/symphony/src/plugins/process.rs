@@ -302,6 +302,10 @@ fn waited(process: &mut dyn Handle) -> Option<String> {
         if Instant::now() >= deadline {
             return None;
         }
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "no-timed-waits baseline: looks again for a process's answer until a deadline, where its pipe is the event"
+        )]
         std::thread::sleep(Duration::from_millis(2));
     }
 }
@@ -823,6 +827,10 @@ impl Remote {
                 drop(input);
                 let deadline = Instant::now() + GRACE;
                 while !lock(&connection.waiting).ending && Instant::now() < deadline {
+                    #[expect(
+                        clippy::disallowed_methods,
+                        reason = "no-timed-waits baseline: looks again for a flag another thread sets, where a condvar is the event"
+                    )]
                     std::thread::sleep(Duration::from_millis(2));
                 }
                 self.end(
@@ -1152,6 +1160,7 @@ impl Remote {
         let _ = std::thread::Builder::new()
             .name(format!("plugin {} call {id}", self.name))
             .spawn(move || {
+                #[expect(clippy::disallowed_methods, reason = "no-timed-waits baseline: a thread sleeps out a call's deadline, where a deadline on the wait itself is the bound")]
                 std::thread::sleep(cancel);
                 this.after_cancel(&cancelled, id);
             });

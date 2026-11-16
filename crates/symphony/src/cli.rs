@@ -391,6 +391,10 @@ pub fn end_with_parent() {
     }
     std::thread::spawn(move || {
         while std::os::unix::process::parent_id() == parent {
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "no-timed-waits baseline: looks again whether its parent has ended, where a pipe from the parent closing is the event"
+            )]
             std::thread::sleep(PARENT_LOOK);
         }
         let _in_hand = IN_HAND.lock().unwrap_or_else(PoisonError::into_inner);

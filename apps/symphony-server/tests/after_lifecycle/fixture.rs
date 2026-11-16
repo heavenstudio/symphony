@@ -316,6 +316,7 @@ fn poll_for<T>(
         if elapsed(&began) >= backstop {
             return None;
         }
+        #[expect(clippy::disallowed_methods, reason = "no-timed-waits baseline: a test looks again for its condition by hand, where test_time::wait::until is the helper")]
         std::thread::sleep(Duration::from_millis(10));
     }
 }

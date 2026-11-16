@@ -81,6 +81,7 @@ pub mod stamps;
 mod store;
 pub mod sweep;
 pub mod sys;
+pub mod usage;
 
 #[path = "cli/api/assessment/publication.rs"]
 pub mod assessment_publication;
@@ -218,7 +219,7 @@ fn copy(
     let store = Store::open_as(client, &opening).map_err(|e| e.to_string())?;
     store.copy(&dump).map_err(|e| e.to_string())?;
     Ok(Some(format!(
-        "{} tasks, {} links, {} sessions, {} roles, {} messages, {} deliveries, {} barred keys, {} task sessions, {} delivery keys, {} asks into {NAMESPACE}/{db} at {addr}",
+        "{} tasks, {} links, {} sessions, {} roles, {} messages, {} deliveries, {} barred keys, {} task sessions, {} delivery keys, {} asks, {} usage rows into {NAMESPACE}/{db} at {addr}",
         dump.tasks.len(),
         dump.task_links.len(),
         dump.sessions.len(),
@@ -229,6 +230,7 @@ fn copy(
         dump.task_sessions.len(),
         dump.delivery_keys.len(),
         dump.asks.len(),
+        dump.usages.len(),
     )))
 }
 

@@ -3098,7 +3098,15 @@
             "slots": { "open": 3, "cap": 8 },
             "session_url": "https://example.com/s",
             "in_process": true,
-            "go": { "handle": "birch", "url": "https://example.com/s", "pane": "w1:p2" }
+            "go": { "handle": "birch", "url": "https://example.com/s", "pane": "w1:p2" },
+            "tokens": {
+              "input": 12,
+              "cache_write_5m": 3400,
+              "cache_write_1h": 560,
+              "cache_read": 78900,
+              "output": 1200,
+              "calls": 7
+            }
           },
           {
             "handle": "birch",
@@ -3124,7 +3132,8 @@
             "slots": null,
             "session_url": null,
             "in_process": false,
-            "go": null
+            "go": null,
+            "tokens": null
           }
         ]
       },
@@ -3200,7 +3209,15 @@
         "slots": { "open": 3, "cap": 8 },
         "session_url": "https://example.com/s",
         "in_process": true,
-        "go": { "handle": "birch", "url": "https://example.com/s", "pane": "w1:p2" }
+        "go": { "handle": "birch", "url": "https://example.com/s", "pane": "w1:p2" },
+        "tokens": {
+          "input": 12,
+          "cache_write_5m": 3400,
+          "cache_write_1h": 560,
+          "cache_read": 78900,
+          "output": 1200,
+          "calls": 7
+        }
       }
     },
     "bareAgent": {
@@ -3227,7 +3244,8 @@
       "slots": null,
       "session_url": null,
       "in_process": false,
-      "go": null
+      "go": null,
+      "tokens": null
     },
     "agentProbes": { "panes": "ok", "herdr": "ok", "slots": "unavailable" },
     "agentFocus": { "said": "Shown in the Herdr app" },

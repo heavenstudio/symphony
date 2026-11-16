@@ -207,6 +207,10 @@ fn follow_server(
             if proxy.send_event(Message::Heard(notices)).is_err() {
                 return;
             }
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "no-timed-waits baseline: the Mac app reads the server's notices each period, where the feed's event is the wait"
+            )]
             std::thread::sleep(next);
         }
     });

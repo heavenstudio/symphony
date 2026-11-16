@@ -5,8 +5,9 @@
 // page button. Escape closes a sheet the focus is in, unless a control in it takes that Escape itself.
 
 import { useEffect, useRef } from "react";
-import { sleep } from "./feed";
 import { remember, snapshot } from "./shared";
+// biome-ignore lint/style/noRestrictedImports: no-timed-waits baseline: focusFirst looks again every 20 ms for the element to focus, where its mount is the event
+import { sleep } from "./timing";
 
 /** The first element `selector` finds that is drawn (has a box), as an element focus can take. */
 function shown(selector: string): HTMLElement | null {

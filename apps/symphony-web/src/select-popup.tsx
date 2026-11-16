@@ -10,6 +10,7 @@
 
 import { type KeyboardEvent, type PointerEvent, useEffect, useRef, useState } from "react";
 import { anchor } from "./popup-position";
+import { debounce } from "./timing";
 import { bestMatch, Keyboard, TYPEAHEAD_MS } from "./typeahead";
 
 /** The next option after `current` among `count`, round the list; the first with none. */
@@ -69,7 +70,7 @@ export function SelectPopup({ id, label, value, options, onChange, onClose }: Se
   const [open, setOpen] = useState(true);
   const [focused, setFocused] = useState<number | null>(null);
   const list = useRef<HTMLDivElement>(null);
-  const search = useRef({ typed: "", timer: 0, keyboard: new Keyboard() });
+  const search = useRef({ typed: "", resting: new AbortController(), keyboard: new Keyboard() });
   // The option a pointer went down on, and where: only a release on that same option chooses.
   const down = useRef<{ key: string; at: [number, number] } | null>(null);
   // The option a finger's or a pen's tap chose, waiting for the tap's own click (`choosesOnClick`).
@@ -77,7 +78,7 @@ export function SelectPopup({ id, label, value, options, onChange, onClose }: Se
 
   // Placed beside the trigger now and as the page or the viewport moves, until it closes.
   useEffect(() => anchor(id, popup), [id, popup]);
-  useEffect(() => () => clearTimeout(search.current.timer), []);
+  useEffect(() => () => search.current.resting.abort(), []);
   // The list holds the focus until an option takes it.
   useEffect(() => {
     if (!open) return;
@@ -112,11 +113,14 @@ export function SelectPopup({ id, label, value, options, onChange, onClose }: Se
       event.stopPropagation();
     } else if (typesLetter(key)) {
       const kept = search.current;
-      clearTimeout(kept.timer);
+      kept.resting.abort();
       kept.typed += key;
-      kept.timer = setTimeout(() => {
-        kept.typed = "";
-      }, TYPEAHEAD_MS);
+      // What was typed is forgotten once the keys rest for TYPEAHEAD_MS: a later key starts again.
+      const resting = new AbortController();
+      kept.resting = resting;
+      void debounce(TYPEAHEAD_MS, resting.signal).then(() => {
+        if (!resting.signal.aborted) kept.typed = "";
+      });
       const match = bestMatch(
         kept.keyboard,
         kept.typed,

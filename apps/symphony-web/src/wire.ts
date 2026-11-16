@@ -749,6 +749,11 @@ export type Agent = {
    * none when nothing is known.
    */
   go: SessionGo | null;
+  /**
+   * What its model calls took, all told, as its board's heartbeat recorded them; none before
+   * any was, or from a board that records none.
+   */
+  tokens: AgentTokens | null;
 };
 
 export type HeldTask = { slug: string; role: string; status: string };
@@ -758,6 +763,33 @@ export type AgentRun = { recipe: string; phase: string; since: number | null };
 export type AgentSaid = { slug: string; ts: number; text: string };
 
 export type AgentSlots = { open: number; cap: number };
+
+export type AgentTokens = {
+  /**
+   * Input read neither from the cache nor into it.
+   */
+  input: number;
+  /**
+   * Input written into the cache for five minutes.
+   */
+  cache_write_5m: number;
+  /**
+   * Input written into the cache for an hour.
+   */
+  cache_write_1h: number;
+  /**
+   * Input read from the cache.
+   */
+  cache_read: number;
+  /**
+   * Output, thinking included.
+   */
+  output: number;
+  /**
+   * The model calls counted.
+   */
+  calls: number;
+};
 
 export type SessionGo = {
   /**

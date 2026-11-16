@@ -27,6 +27,10 @@ fn since(before: Duration, after: Duration) -> Duration {
 #[test]
 fn a_busy_loop_is_charged_to_its_thread_and_a_sleep_is_not() {
     let (_, busy) = spent(|| spin(STEPS));
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "test-time's own: the meter's subject is a sleep, which takes no CPU"
+    )]
     let ((), slept) = spent(|| std::thread::sleep(Duration::from_millis(300)));
     eprintln!("cpu: {STEPS} steps took {busy:?}, a 300 ms sleep {slept:?}");
     assert!(busy >= Duration::from_millis(1), "{STEPS} steps: {busy:?}");
@@ -76,6 +80,10 @@ fn a_childs_work_is_read_while_it_waits_and_at_its_reap_and_its_wait_is_not() {
     stdout.read_line(&mut line).unwrap();
     assert_eq!(line, "worked\n");
     let worked = of(child.id()).unwrap();
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "test-time's own: the meter's subject is a child that sleeps, which takes no CPU"
+    )]
     std::thread::sleep(Duration::from_millis(300));
     let waited = of(child.id()).unwrap();
     child.stdin.take().unwrap().write_all(b"\n").unwrap();

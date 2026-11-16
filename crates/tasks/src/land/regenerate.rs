@@ -1653,6 +1653,10 @@ pub fn settled(
         if standing.current || !standing.making || !waiting(&standing) {
             return Ok(standing);
         }
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "no-timed-waits baseline: looks again for the regenerator's status each period, which no event announces"
+        )]
         std::thread::sleep(every);
     }
 }

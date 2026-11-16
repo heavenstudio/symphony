@@ -56,7 +56,15 @@ lockfile written again, in a task of their own.
   typescript-eslint, whose TypeScript support ends below the TypeScript this package pins, and it
   is one tool and one file for both jobs. `biome ci --error-on-warnings` makes a warning an error.
   Two style rules are off under `src/styles/` alone, the sheets carried whole from the retired
-  client ([their README](src/styles/README.md)).
+  client ([their README](src/styles/README.md)). Three more keep RULES.md `code/no-timed-waits`:
+  `noRestrictedGlobals` refuses a bare `setTimeout` or `setInterval` outside `src/timing.ts`,
+  the plugin `no-timed-waits.grit` one reached through an object (`window.setTimeout`), and
+  `noRestrictedImports` `src/timing.ts`'s `sleep`. A wait is for its event (a socket's message,
+  `pageshow`, a `MutationObserver`'s change, the reader's press); a number paces one only through
+  `src/timing.ts`'s helpers: `retryWait` (the retry's wait, `Backoff`'s in `state.ts`),
+  `debounce`, `deadline` (a bound on a wait for an event) and `tick` (a clock), and a unit test
+  yields a turn through `turn()` in `src/testing.ts`. A site kept is a `biome-ignore` whose
+  reason begins `no-timed-waits baseline:`.
 - **Vitest** runs the unit tests, with `@vitest/coverage-v8` for their coverage.
 
 `just client-lint` (`check.sh`) runs the wire types' check and the tests of the example that
@@ -132,7 +140,16 @@ DOM and no DOM library: markup is drawn with `react-dom/server` and compared as 
 that needs a global (`localStorage`, `fetch`, `location`) stubs it with `vi.stubGlobal`, the
 browser's storage held in memory by `testing.ts`; what reads the page's elements (the media
 layer) is given a small tree of elements of its test's own (`media-layer.test.ts`). Time is
-Vitest's fake timers, never the clock.
+Vitest's fake timers, never the clock. A test's or a hook's one time is the run's backstop of two
+minutes (`BACKSTOP_MS`, `src/unit-run.ts`, in place of Vitest's 5 s), which only a stall reaches
+(a machine asleep, a process stopped). A test waits for a condition with `until` (`testing.ts`),
+whose one time is that backstop too, never with `vi.waitFor` or `vi.waitUntil`, whose own second
+of real time a loaded machine reaches and which fails as the condition's assertion would:
+`unit-run.test.ts` fails on either. The run's own report, beside Vitest's, says each test or hook
+that ran out of its time as a stall, with the load average. It also names each test file the run asked for and did
+not run or finish, and fails the run. Such a file is one whose worker never started: Vitest's own
+waits for that (60 s and 90 s, which no setting changes) are reached only by a stall too, and its
+summary leaves the file out of its count.
 What only a browser shows (effects, the feed, the layout, the moves between kinds) is the headless
 browser target's (`apps/symphony-web-tests/tests/browser`, [CHECKS](../../docs/CHECKS.md#the-browser-target-by-page)),
 which drives headless Chrome over its DevTools protocol against the release build, served as the
@@ -515,7 +532,10 @@ What holds on every page, and each page's contract where its section above names
   background. A board
   or a `client` change naming another build than the
   page's own module script loads the page again, once per build
-  (`reloadFor` in `src/state.ts`, remembered in `sessionStorage`).
+  (`reloadFor` in `src/state.ts`, remembered in `sessionStorage`); while the reader is in the
+  middle of something (`engaged` in `src/route.ts`) it is held, and goes at the first event that
+  can end that (`whenFree`: the focus leaving the fields, a busy region, list box or details
+  changing, or an element added or removed), never on a timer.
 - **Cache.** What a page drew is kept on the device so a return visit draws at once
   ([the client cache](../../docs/analysis/client-cache.md)). The store is `shell/cache.js`
   (`window.symphonyCache`), which `package.sh` puts first in the shell's one script: every page
@@ -970,8 +990,11 @@ What holds on every page, and each page's contract where its section above names
   what an HTML document does is the server's and the browser tests'.
   The feed opts into
   one `document=PATH` and its requested `sections=JSON_LIST`; a stream without
-  a document receives no document payloads. Changing the requested keys reopens
-  the stream at its current cursor. A body response waits for that cursor and
+  a document receives no document payloads. It names the sections near the screen and those
+  whose bodies the page holds (`followed`): on a return visit the second are the ones drawn from
+  this device, there before the outline's check answers, so a return opens one stream, naming its
+  sections, though their slots name themselves only a frame or more later. A section near the
+  screen the stream does not name reopens it at its current cursor. A body response waits for that cursor and
   never overwrites a newer document change; a reconnect invalidates outstanding
   reads. Drafts and verdict retry ids are saved locally. Busy sections retain
   their markup while their source positions advance; the queued markup applies

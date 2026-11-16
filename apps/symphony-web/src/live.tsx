@@ -27,14 +27,15 @@ import {
   shown,
   visitLater,
 } from "./cache";
-import { back, type Heard, Inbox, openFeed, sleep } from "./feed";
+import { back, type Heard, Inbox, openFeed } from "./feed";
 import { type FrameRefresh, useFrame } from "./frame";
 import { scoped } from "./project";
 import { getIf, said } from "./request";
-import { engaged } from "./route";
+import { engaged, whenFree } from "./route";
 import { field, list, SERVER_NOTICE, STALE, useStore } from "./shared";
 import { Backoff, type Ended, reloadFor } from "./state";
 import { loadForTab, saveForTab } from "./storage";
+import { retryWait } from "./timing";
 import { failed as failedRead, ready, Trouble } from "./trouble";
 import { Skeleton } from "./viewport";
 import { BOARD_PATH, FEED_PATH } from "./wire";
@@ -65,15 +66,19 @@ export function readPageBoard(value: unknown): PageBoard | null {
 }
 
 let deferredBuild: string | null = null;
+/** Whether a reload held back waits for the reader to be done (`whenFree`). */
+let watching = false;
 
 /**
  * Load the page again when the server serves another client build than this page's own (the
  * shell's module script), once per build; while the reader is in the middle of something, once
- * they are not (`flushReload`). Without the tab's storage to remember it in, never.
+ * they are not (`flushReload`, at each event `whenFree` hears that can end it). Without the tab's
+ * storage to remember it in, never.
  */
 export function reloadIfRedeployed(served: string): void {
   if (engaged()) {
     deferredBuild = served;
+    void watchHeld();
     return;
   }
   const own =
@@ -101,24 +106,70 @@ export function flushReload(): void {
   }
 }
 
+/** The held reload tried at each event that can end the reader's work, until it is gone: one
+ * watch at a time, however many reloads were held meanwhile. */
+async function watchHeld(): Promise<void> {
+  if (watching) return;
+  watching = true;
+  try {
+    while (deferredBuild !== null) {
+      await whenFree();
+      flushReload();
+    }
+  } finally {
+    watching = false;
+  }
+}
+
 /** Mark that the board is drawn (`board-ready`), as a page that follows it does once it is read. */
 export function markBoardReady(): void {
   performance.mark(READY_MARK);
 }
 
-/** Waits `ms` before a read is tried again, or less once the reader presses Retry. */
-export async function pause(
-  ms: number,
-  retry: { current: number },
-  signal: AbortSignal,
-): Promise<void> {
-  const asked = retry.current;
-  let left = ms;
-  while (left > 0 && retry.current === asked && !signal.aborted) {
-    const step = Math.min(left, 200);
-    await sleep(step, signal);
-    left -= step;
+/**
+ * How many times the reader pressed Retry (`current`, which a press counts up), and the waits a
+ * press ends at once.
+ */
+export class Retry {
+  private count = 0;
+  private readonly presses = new Set<() => void>();
+
+  get current(): number {
+    return this.count;
   }
+
+  /** A press: the count moves on, and every wait `pause` began for it ends. */
+  set current(count: number) {
+    this.count = count;
+    for (const pressed of [...this.presses]) pressed();
+  }
+
+  /** `pressed` called at each press from now on, until the function it gives is called. */
+  heard(pressed: () => void): () => void {
+    this.presses.add(pressed);
+    return () => {
+      this.presses.delete(pressed);
+    };
+  }
+}
+
+/** Waits `ms` before a read is tried again (`wait`, a retry's by default), or less: until the
+ * reader presses Retry, or `signal` ends. */
+export function pause(
+  ms: number,
+  retry: Retry,
+  signal: AbortSignal,
+  wait: (ms: number, signal: AbortSignal) => Promise<void> = retryWait,
+): Promise<void> {
+  if (signal.aborted) return Promise.resolve();
+  const pressed = new AbortController();
+  const end = () => pressed.abort();
+  const stop = retry.heard(end);
+  signal.addEventListener("abort", end, { signal: pressed.signal });
+  return wait(ms, pressed.signal).finally(() => {
+    stop();
+    pressed.abort();
+  });
 }
 
 /** What the page under the board shows of it, and hears of its feed. */
@@ -279,7 +330,7 @@ export function BoardPage<B extends PageBoard = PageBoard>({
   const [trouble, setTrouble] = useState<string | null>(null);
   const [freshness, setFreshness] = useState<Freshness>(FRESH);
   const [refreshed, setRefreshed] = useState(0);
-  const retry = useRef(0);
+  const [retry] = useState(() => new Retry());
   const movesRef = useRef(moves);
   movesRef.current = moves;
   const applyRef = useRef(apply);
@@ -309,12 +360,8 @@ export function BoardPage<B extends PageBoard = PageBoard>({
     };
     const run = { board, show, setStale, setTrouble, retry, views, read: readRef.current };
     void keepBoard(scope, item, run, signal);
-    const minutes = setInterval(flushReload, 60_000);
-    return () => {
-      controller.abort();
-      clearInterval(minutes);
-    };
-  }, [scope, kept, frame]);
+    return () => controller.abort();
+  }, [scope, kept, frame, retry]);
   const onPage = drawnBoard !== null;
   useEffect(() => {
     if (onPage) markBoardReady();
@@ -352,8 +399,8 @@ export interface BoardRun<B extends PageBoard = PageBoard> {
   show(read: B): void;
   setStale(stale: boolean): void;
   setTrouble(said: string): void;
-  /** How many times the reader pressed Retry. */
-  retry: { current: number };
+  /** How many times the reader pressed Retry, each press ending the pause between two reads. */
+  retry: Retry;
   views: Views;
   /** The board as the page reads it (`readPageBoard` by default). */
   read?: (value: unknown) => B | null;
@@ -362,7 +409,7 @@ export interface BoardRun<B extends PageBoard = PageBoard> {
 /** The loop's waits: until the page is back, and between one try and the next. */
 export interface BoardWaits {
   back(signal: AbortSignal): Promise<void>;
-  pause(ms: number, retry: { current: number }, signal: AbortSignal): Promise<void>;
+  pause(ms: number, retry: Retry, signal: AbortSignal): Promise<void>;
 }
 
 /**

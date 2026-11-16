@@ -61,6 +61,29 @@ pub struct Agent {
     /// none when nothing is known.
     #[serde(default)]
     pub go: Option<SessionGo>,
+    /// What its model calls took, all told, as its board's heartbeat recorded them; none before
+    /// any was, or from a board that records none.
+    #[serde(default)]
+    pub tokens: Option<AgentTokens>,
+}
+
+/// Tokens of the four kinds a price tells apart, and the model calls they came from: the board's
+/// `usage::Tokens`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
+pub struct AgentTokens {
+    /// Input read neither from the cache nor into it.
+    pub input: u64,
+    /// Input written into the cache for five minutes.
+    pub cache_write_5m: u64,
+    /// Input written into the cache for an hour.
+    pub cache_write_1h: u64,
+    /// Input read from the cache.
+    pub cache_read: u64,
+    /// Output, thinking included.
+    pub output: u64,
+    /// The model calls counted.
+    pub calls: u64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

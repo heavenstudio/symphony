@@ -4,8 +4,9 @@
 //! server's reads held back, a document draws its outline and the bodies of the sections it drew
 //! before any answer, marked as possibly out of date, its card's verdicts waiting and its note
 //! editable. Then it reads its outline naming its copy's tag: an unchanged document is a `304`
-//! however far the feed's cursor moved, its feed opened from the cursor that answer names, and no
-//! section is read again (a `304` naming no cursor reads the outline again whole at once, with no
+//! however far the feed's cursor moved, its feed opened once, from the cursor that answer names,
+//! naming every section drawn from this device even when the answer comes before they name
+//! themselves near the screen, and no section is read again (a `304` naming no cursor reads the outline again whole at once, with no
 //! error shown); a section edited while away, or a card whose thread was answered, is read
 //! alone, redrawn and kept. A document gone while away says so and is forgotten. An entrypoint's
 //! folder page is kept pinned, its intro with it, so it outlives the documents visited once over
@@ -235,6 +236,19 @@ fn feed_cursors(site: &Site) -> Vec<String> {
         .collect()
 }
 
+/// The sections each feed request named, in order.
+fn feed_sections(site: &Site) -> Vec<Vec<String>> {
+    site.targets()
+        .iter()
+        .filter(|target| target.starts_with(symphony_api::FEED_PATH))
+        .map(|target| {
+            query(target, "sections")
+                .and_then(|keys| serde_json::from_str(&keys).ok())
+                .unwrap_or_default()
+        })
+        .collect()
+}
+
 /// A feed event retitling the document `path`: once the page shows it, the page has followed its
 /// feed past the outline's answer, every section read it would make made.
 pub(super) fn retitled(chrome: &mut Chrome, site: &Site, path: &str, version: u64, title: &str) {
@@ -304,6 +318,30 @@ fn a_warm_document_draws_its_outline_and_sections_before_any_answer_and_an_uncha
         ),
         json!("kept note"),
         "the note typed meanwhile"
+    );
+}
+
+#[test]
+fn a_warm_document_checked_at_once_opens_one_feed_naming_the_sections_it_drew_from_this_device() {
+    let site = site();
+    let Some(mut chrome) = crate::chrome() else {
+        return;
+    };
+    visit(&mut chrome, &site);
+    chrome.open("about:blank");
+    let feeds = feed_sections(&site).len();
+    // Nothing held: the 304 comes back as fast as the stand-in answers, before the sections' slots
+    // have come near the screen and named themselves.
+    let before = answered(&site);
+    chrome.open(&site.url(&format!("/{DOC}")));
+    shows(&mut chrome, LIVE, "the warm visit, checked");
+    retitled(&mut chrome, &site, DOC, 4183, "Kept, retitled");
+    outline_once(&since(&site, &before, "/api/document"), 304);
+    let opened = &feed_sections(&site)[feeds..];
+    assert_eq!(
+        opened,
+        [vec!["card:palette", "intro", "lamps"]],
+        "one feed, naming every section this device drew from the start: {opened:?}"
     );
 }
 

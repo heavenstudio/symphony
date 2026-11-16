@@ -52,6 +52,10 @@ pub(crate) fn queue_until(
                     Err(format!("codex queue exited {status}"))
                 };
             }
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "no-timed-waits baseline: looks again for its child's end, where a wait on the child under a deadline is the event"
+            )]
             None if !due(started.elapsed()) => std::thread::sleep(Duration::from_millis(20)),
             None => {
                 let _ = child.kill();

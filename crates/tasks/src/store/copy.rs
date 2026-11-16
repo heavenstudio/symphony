@@ -98,6 +98,19 @@ impl Store {
                     &|r| r["sid"].clone(),
                 ),
             ),
+            (
+                "usage",
+                keyed(values(&dump.usages), &|r| {
+                    json!([
+                        r["handle"],
+                        r["slug"],
+                        r["role"],
+                        r["model"],
+                        r["speed"],
+                        r["round"]
+                    ])
+                }),
+            ),
         ];
         let last = dump.messages.iter().map(|m| m.id).max().unwrap_or(0);
         let last_task = dump.tasks.iter().map(|t| t.id).max().unwrap_or(0);

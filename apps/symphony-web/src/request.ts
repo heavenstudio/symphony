@@ -5,6 +5,7 @@
 // draft it kept.
 
 import { here, project } from "./project";
+import { deadline } from "./timing";
 import { NOT_IN_TIME, answered as refusedRead, UNREACHABLE } from "./trouble";
 import { VERSION_HEADER } from "./wire";
 
@@ -55,17 +56,17 @@ export type Answer =
   /** The body as the browser parsed it, and the tag the server answered it with. */
   | { same: false; value: unknown; etag: string };
 
-/** `answer`, or `null` when `ms` passed first. */
+/** `answer`, or `null` when `ms` passed first (the answer's deadline). */
 export function inTime<T>(answer: Promise<T>, ms: number): Promise<{ value: T } | null> {
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => resolve(null), ms);
+    const ended = deadline(ms, () => resolve(null));
     answer.then(
       (value) => {
-        clearTimeout(timer);
+        ended();
         resolve({ value });
       },
       (error: unknown) => {
-        clearTimeout(timer);
+        ended();
         reject(error);
       },
     );

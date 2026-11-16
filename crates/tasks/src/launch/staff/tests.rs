@@ -166,6 +166,7 @@ fn idle(handle: &str, kind: &str, worktree: &str) -> agents::Agent {
         slots: None,
         session_url: None,
         in_process: false,
+        tokens: None,
     }
 }
 

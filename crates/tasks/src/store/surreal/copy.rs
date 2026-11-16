@@ -14,6 +14,7 @@ pub(in crate::store) const DUMP: &str = "RETURN {
     task_sessions: (SELECT * OMIT id FROM task_session ORDER BY slug, handle),
     delivery_keys: (SELECT * OMIT id FROM delivery_key ORDER BY slug, key),
     asks: (SELECT * OMIT id FROM ask ORDER BY sid),
+    usages: (SELECT * OMIT id FROM usage ORDER BY handle, slug, role, model, speed, round),
 };";
 
 /// The names of the database's tables.

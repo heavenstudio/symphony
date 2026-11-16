@@ -1,0 +1,11 @@
+// RULES.md `code/no-timed-waits`: a timer reached through an object (`window.setTimeout`,
+// `globalThis.setInterval`, `self.setTimeout`), which Biome's noRestrictedGlobals, reading bare
+// names alone, does not see. src/timing.ts calls the bare names, so none is allowed here.
+language js
+
+or {
+  `$owner.setTimeout`,
+  `$owner.setInterval`
+} as $timer where {
+  register_diagnostic(span=$timer, message="RULES.md code/no-timed-waits: wait for the event itself, or through a helper of src/timing.ts")
+}

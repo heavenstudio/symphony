@@ -771,6 +771,10 @@ fn follows(machine: &Path, against: &Against<'_>) -> Result<Front, Duration> {
         if Instant::now() >= until || against.until.interrupted() {
             return Err(until.saturating_duration_since(began));
         }
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "no-timed-waits baseline: looks again for the reloaded server, which no event announces"
+        )]
         std::thread::sleep(RELOAD_LOOK.min(until.saturating_duration_since(Instant::now())));
     }
 }

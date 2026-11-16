@@ -8,7 +8,7 @@
 import { flushSync } from "react-dom";
 import type { FrameRefresh } from "./frame";
 import { type Journal, ReadCursor } from "./journal";
-import { type BoardRun, keepBoard, type PageBoard } from "./live";
+import { type BoardRun, keepBoard, type PageBoard, Retry } from "./live";
 import { scoped } from "./project";
 import { getJson, said } from "./request";
 import { whiteSpace } from "./session";
@@ -511,7 +511,7 @@ export interface AgentsHost {
 export class LiveAgents {
   readonly d = emptyAgents();
   /** How many times the reader pressed Retry, which the board's loop waits on. */
-  readonly retry = { current: 0 };
+  readonly retry = new Retry();
   /** A read of the first page again is under way, and another was asked for meanwhile. */
   private reading = false;
   private again = false;

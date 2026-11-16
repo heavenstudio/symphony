@@ -19,6 +19,10 @@ fn a_close_waits_for_the_save_in_flight_and_names_what_it_waits_on() {
     };
     assert_eq!(stages.recv().unwrap(), "the save in flight");
     // A negative assertion, never the synchronization: the close may not end while the save runs.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "no-timed-waits baseline: a test holds for a length of time to show the close waits for the save"
+    )]
     std::thread::sleep(Duration::from_millis(200));
     assert!(!closing.is_finished(), "a close returned during a save");
     drop(in_flight);

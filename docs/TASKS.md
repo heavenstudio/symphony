@@ -1142,7 +1142,9 @@ makes no calls; while a live process it started works in that recorded linked
 worktree it reads `running_test` in the agents API, and is neither stale, lost
 nor orphaning its task ([The agents API](#the-agents-api)).
 A subagent that stops makes no more calls, leaves nothing working there, and
-ages to stale and lost as before.
+ages to stale and lost as before. Each beat also hands the board the tokens the
+session's own transcript gained since its last beat, in the beat's one write
+([Where the tokens go](#where-the-tokens-go)).
 
 Orchestrators can share the board, each holding its own slug prefixes. A decision
 one side makes that the other must act on becomes a short board task for that side,
@@ -1201,7 +1203,9 @@ rest of its document is the board's.
    "last_message": {"slug": "sim/jump", "ts": 1789999800.0, "text": "the ring is at 900"},
    "slots": null,                                     # an orchestrator's: {"open": 3, "cap": 8}
    "session_url": "https://claude.ai/code/session_01…",  # the web address its session gave, else null
-   "in_process": false}]}                             # a subagent running inside its parent's session
+   "in_process": false,                               # a subagent running inside its parent's session
+   "tokens": {"input": 12, "cache_write_5m": 3400, "cache_write_1h": 560,
+              "cache_read": 78900, "output": 1200, "calls": 7}}]}   # what its calls took, else null
 ```
 
 `state` is `working`, `running_test` (a run of its own holds a test slot, `phase: holding`, or is queued for one,
@@ -1221,8 +1225,9 @@ an orchestrator fallback. `slots` is, under a project cap ([Slots](#slots)), the
 tasks an orchestrator (or any session holding open work's slot) holds against the
 cap, and `null` otherwise. `session_url` is the web address the session gave
 ([Going to a session](#going-to-a-session)), else `null`; `in_process` says the agent runs inside
-another session, a subagent bound to its parent's, with no pane of its own. No credentials appear in
-this API.
+another session, a subagent bound to its parent's, with no pane of its own. `tokens` is what the
+handle's model calls took, all told, by kind, as its beats recorded them, else `null` (none recorded;
+[Where the tokens go](#where-the-tokens-go)). No credentials appear in this API.
 
 The rules a port must copy, in this order:
 
@@ -1910,7 +1915,10 @@ afterwards, and runs the check, the docs audit, on what it made ([below](#the-re
   with the command to retry; a merge with `origin` that conflicts is said to
   `@orchestrator` too.
 - **Closed and swept.** `landed` writes the line `landed SLUG on main at SHA`, with the
-  generated paths it took from main and whether it pushed, and closes the approved
+  generated paths it took from main, the tokens the task and its subtasks took where the
+  board recorded any (`; 71.6k tokens in 6 calls (executor 51.5k, reviewer 20.1k; round 1
+  51.5k, round 2 20.1k)`, [Where the tokens go](#where-the-tokens-go)) and whether it
+  pushed, and closes the approved
   task, which stays done; a task sent back to review since stays there. The land then
   starts the sweep detached, which removes the task's finished worktrees after it, its
   output in `symphony/tasks/sweep.log` (`land SLUG: its finished worktrees are swept in the
@@ -3004,6 +3012,94 @@ top-level tasks made since the window's start and the done ones written since
 by its own range of keys with the posts left out, never a thread at a time.
 With the read that opens the board that is two requests whatever the board
 holds (`tests/cli/stats.rs` counts them over 300 tasks).
+
+## Where the tokens go
+
+The heartbeat records what agents' model calls take (`crates/tasks/src/usage.rs`, the `usage`
+table, schema 19). Each beat of the hook ([Sessions](#sessions)) reads what the session's own
+transcript gained since its last beat: a subagent's `SESSION/subagents/agent-ID.jsonl` (the
+event's `agent_transcript_path`, else beside its `transcript_path`), never its parent's; a full
+session's `transcript_path`. The kinds a price tells apart are kept apart: `input` (Claude Code's
+`input_tokens`, the uncached remainder), `cache_write_5m` and `cache_write_1h` (the cache writes
+by lifetime, `cache_creation.ephemeral_5m_input_tokens` and `ephemeral_1h_input_tokens`; what the
+split leaves, or all of it with none, is the five-minute kind), `cache_read` and `output`, with
+the model calls counted as `calls`, by `message.model` and `usage.speed` (`standard`, or `fast`,
+priced apart). Claude Code writes a message's usage on each of its lines, so a message id counts
+once; a `<synthetic>` message is no call. A fork (a subagent whose `agent-ID.meta.json` beside
+its transcript says `"isFork": true`) begins its transcript with its parent's history, under the
+parent's message ids, which the parent's beats count: read from its start, it is passed over up
+to the tool result answering the parent's call that made the fork (the meta's `toolUseId`), and
+counted from there.
+
+The board adds what a beat read in the beat's own one transaction to the row of the handle bound
+to the key, the task and role it works then, the model, the speed and the round. The task is
+the one the agents API shows it working: an open task it executes before one it reviews before
+one reserved for it, then by priority and slug; orchestrating is no task's work, so a session
+working none spends on no task (slug `""`, round 0) in its kind (`worker`, `orchestrator`). The
+round is 1 and the moves into review the task's thread holds then (`HANDLE moved it FROM →
+review`): the first round is the work up to the first review, and the review of round *n*'s work
+and the fixes after it are round *n + 1*. A beat with nobody bound to its key (a subagent before
+its first board command) leaves what it read waiting, and the first beat after a board command
+binds it hands it on: a subagent's work before it named its handle is that handle's.
+
+What a key read is kept in its ledger, `symphony/tasks/usage/KEY.json` in the git common dir
+(`TASKS_USAGE` names another folder; a board `TASKS_SERVER` names reads no transcript without
+it): the offset after the last whole line read, the last 32 message ids counted and what the
+board has not taken. So a beat reads only what the transcript gained, at most 32 MiB of it (a
+long transcript met first is read over as many beats), and a line still being written waits for
+the next. A beat holds the key's `KEY.lock` while it reads and writes: a beat of the same key
+meanwhile reads nothing, and the next one reads what it left. A ledger that does not parse
+starts again at the transcript's end, so what cannot be read is lost, never counted twice; the
+ledger is replaced whole (written beside it, then renamed). A ledger is removed only once nothing
+wrote to it for 7 days and the transcript it names is gone, so a session resumed after a week
+reads on from where it stopped; one that does not parse is kept. Reading fails quietly: a
+transcript or ledger that cannot be read hands nothing, and the beat goes on.
+
+What is not recorded:
+
+- **Codex.** A Codex session runs no Claude hook, so it has no beat to record by: its tokens
+  wait for a beat of its own.
+- **A session with a monitor** (an orchestrator in a terminal the board launched) is never bound
+  to its key, so its beats record nothing.
+- **The last answer.** The beat runs at a tool call, so the reply after a session's last tool
+  call is never read: replayed through the beats they would have had, a subagent's run of 242
+  calls (46.7 MB of transcript) left the board 241 calls and 99.8 % of the transcript's tokens,
+  and one of 2,705 calls (75.1 MB) 2,704 and 99.95 %, the last reply's being the rest; a parent
+  and its four forks, short-lived, bound to one handle, 189 of 194 calls and 96.6 %.
+- A beat run through `just tasks beat` (its event one an agent wrote, not the hook's) reads no
+  transcript.
+- **A beat that timed out after its write**, the other way round, is recorded twice: when its
+  board call outlasts the beat's 2 s wait (a loaded machine) after the server committed it, the
+  beat keeps what it read as not taken, and the next beat hands it again. A transaction retried
+  on a conflict is safe, as the conflict aborted it.
+
+`just tasks show SLUG` sums the task's rows, its subtasks' with them, under its stages line:
+
+```
+  Tokens: 71.6k in 6 calls (input 120 · cache write 4.5k · cache read 65k · output 2k)
+    by role: executor 51.5k · reviewer 20.1k
+    by round: round 1 51.5k · round 2 20.1k
+```
+
+each amount in three figures at most (`950`, `12.3k`, `7.8M`), rounded down; a task with none
+prints no lines. `--json` carries them as `tokens`: `total`, `by_role` (`[{"role", "tokens"}]`),
+`by_round` (`[{"round", "tokens"}]`) and the `rows` themselves (`handle`, `slug`, `role`,
+`model`, `speed`, `round`, `tokens`, `first`, `last`), from which a price is read by model and
+speed; each `tokens` is `{"input", "cache_write_5m", "cache_write_1h", "cache_read", "output",
+"calls"}`. The agents API gives each agent's `tokens`, all its rows summed ([The agents
+API](#the-agents-api)). A landing's closing line names the task's after the commit (`landed
+SLUG on main at SHA; 71.6k tokens in 6 calls (executor 51.5k, reviewer 20.1k; round 1 51.5k,
+round 2 20.1k)`), each amount with its unit, so no number in it reads as a commit. A copy of
+the board carries the rows (`Dump.usages`). The pages draw none of it yet.
+
+The table moves the board to schema 19, which a build on schema 18 reads unharmed (the
+Symphony, the shared server among them): it opens a board one schema ahead to read
+(`schema::decide`'s `Opened::Ahead`), and none of its reads or its dump names `usage`; what it
+would write waits or is refused until it reloads, as for any server one schema behind ([Who
+writes a board](#who-writes-a-board)). As a writer (every `tasks` command, `list`, `show` and
+`agents` included) an 18 build is refused before any write, naming itself as the program to
+rebuild. Its beat writes nothing either, so an agent whose hook runs an 18 build reads quiet
+while it works until that link is renewed.
 
 ## The timeline
 
