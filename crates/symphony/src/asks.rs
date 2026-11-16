@@ -616,13 +616,20 @@ impl AskStore {
     }
 }
 
-/// `ASKS_DB` when set, else `asks/asks.db` in the artifacts folder (`[project] artifacts`, else
-/// `artifacts/`, read alone: [`symphony_board::project::artifacts`]) of the main checkout every
-/// worktree of `root`'s repository shares, else under `root`.
+/// `ASKS_DB` when set, else, for a folder this process serves, the journal found from it when it
+/// began to serve it ([`crate::taskview::serve`]), else the one found from it now ([`found_path`]).
 pub fn default_path(root: &Path, asks_db: Option<&str>) -> PathBuf {
     if let Some(db) = asks_db.filter(|db| !db.is_empty()) {
         return PathBuf::from(db);
     }
+    crate::taskview::served_journal(root).unwrap_or_else(|| found_path(root))
+}
+
+/// `asks/asks.db` in the artifacts folder (`[project] artifacts`, else `artifacts/`, read alone:
+/// [`symphony_board::project::artifacts`]) of the main checkout every worktree of `root`'s
+/// repository shares, else under `root`. A folder left without its `.git` finds the repository of
+/// the checkout that holds it, and so that checkout's journal.
+pub(crate) fn found_path(root: &Path) -> PathBuf {
     let mut base = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
     let common = symphony_board::sys::output(crate::children::git().arg("-C").arg(root).args([
         "rev-parse",
