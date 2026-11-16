@@ -3,8 +3,10 @@
 // `reviewOverlay` (select.tsx, media-layer.ts), a select's popup or the picture viewer. A request is
 // data and one callback, left on the window (`reviewOverlayRequest`) with `review:overlay` said:
 // the popup answers with the value chosen, or nothing once it closes; the viewer with a direction,
-// 0 to close. A request of another owner replaces the one drawn, drawn afresh.
+// 0 to close. A request of another owner replaces the one drawn, drawn afresh, and so does each
+// opening; a select's popup whose request went stays drawn, closed, until its exit has played.
 
+import { useState } from "react";
 import { type Photo, PictureViewer } from "./picture-viewer";
 import { SelectPopup } from "./select-popup";
 import { field, list, snapshot, useWindowEvents } from "./shared";
@@ -68,21 +70,48 @@ export function answer(request: unknown, value: unknown): void {
   if (typeof callback === "function") callback(value);
 }
 
+type Select = Extract<Drawn, { kind: "select" }>;
+
+/** Each request's opening, so a popup drawn again for the same owner is drawn afresh. */
+const openings = new WeakMap<object, number>();
+let opened = 0;
+
+/** The key a select's popup is drawn under: its owner's, and its opening's. */
+export function openingKey(request: unknown, owner: string): string {
+  if (typeof request !== "object" || request === null) return owner;
+  let opening = openings.get(request);
+  if (opening === undefined) {
+    opening = ++opened;
+    openings.set(request, opening);
+  }
+  return `${owner}:${opening}`;
+}
+
 /** The overlay's host: the request on the window, drawn again each time the shell says it moved. */
 export function OverlayHost() {
   useWindowEvents(OVERLAY_EVENTS);
   const request = snapshot("reviewOverlayRequest");
   const shown = drawn(request);
-  if (shown?.kind === "select") {
+  // The select drawn last, kept while its popup leaves; anything else drawn forgets it.
+  const [last, setLast] = useState<{ request: unknown; select: Select } | null>(null);
+  if (shown?.kind === "select" ? last?.request !== request : shown !== null && last !== null) {
+    setLast(shown?.kind === "select" ? { request, select: shown } : null);
+  }
+  const leaving = shown === null ? last : null;
+  const current = shown?.kind === "select" ? { request, select: shown } : leaving;
+  if (current) {
+    const { select } = current;
     return (
       <SelectPopup
-        key={shown.owner}
-        id={shown.id}
-        label={shown.label}
-        value={shown.value}
-        options={shown.options}
-        onChange={(value) => answer(request, value)}
-        onClose={() => answer(request, null)}
+        key={openingKey(current.request, select.owner)}
+        id={select.id}
+        label={select.label}
+        value={select.value}
+        options={select.options}
+        onChange={(value) => answer(current.request, value)}
+        onClose={() => answer(current.request, null)}
+        closed={leaving !== null}
+        onLeft={leaving ? () => setLast(null) : undefined}
       />
     );
   }

@@ -18,7 +18,8 @@ the upstream dialog's focus trap ported as `trapFocus`.
 
 The adaptations bind radii and fonts to theme tokens and default a button to Outline. A button is
 2.25rem tall at the theme's radius with a pointer, as a plain button is (`board.css`), and its
-focus is the page's one outline: no control draws a second ring of shadow. `controls-theme.css`
+focus is the page's one outline: no control draws a second ring of shadow. A button eases only
+what its states change (its colours, shadow, opacity and its press's scale), never `all`. `controls-theme.css`
 maps the shadcn registry's `cssVars` names to the palette these sheets read; `../theme.ts` imports
 that format at run time.
 
