@@ -48,8 +48,8 @@ pub(in crate::store) fn reading(which: &Which, sessions: Sessions) -> (String, V
         ),
         Which::Linked(doc) => (
             "SELECT * OMIT id FROM array::distinct(SELECT VALUE slug FROM link
-                 WHERE kind = 'doc' AND (target = $doc OR string::starts_with(target, $doc + '#')))
-                 .map(|$s| type::record('task', $s)) ORDER BY priority, slug",
+                     WHERE kind = 'doc' AND (target = $doc OR string::starts_with(target, $doc + '#')))
+                     .map(|$s| type::record('task', $s)) ORDER BY priority, slug",
             SCOPED,
             "true",
             json!({"doc": doc}),
@@ -58,7 +58,7 @@ pub(in crate::store) fn reading(which: &Which, sessions: Sessions) -> (String, V
     let (deps, mine) = match which {
         Which::Slug(_) | Which::Starting(_) | Which::Pullable(_) => (
             "(SELECT slug, kind, target FROM link WHERE slug IN $slugs AND kind = 'dep'
-              AND type::record('task', target).status NOT IN [NONE, 'done'] ORDER BY target)",
+                  AND type::record('task', target).status NOT IN [NONE, 'done'] ORDER BY target)",
             if matches!(which, Which::Pullable(_)) {
                 "(SELECT VALUE slug FROM role WHERE handle = $handle)"
             } else {
@@ -93,28 +93,28 @@ pub(in crate::store) fn reading(which: &Which, sessions: Sessions) -> (String, V
     native_bounds(&mut vars);
     let read = format!(
         "LET $tasks = ({pick});
-         LET $slugs = $tasks.slug;
-         LET $slot_wanted = $slugs;
-         LET $view_roles = (SELECT slug, handle, role, since, expires FROM role{scope} ORDER BY since, handle);
-         LET $shown_sessions = {shown};
-         {HELD}
-         {slot_lets}
-         RETURN {{
-             tasks: $tasks,
-             branches: ({}),
-             links: (SELECT slug, kind, target FROM link{scope} ORDER BY target),
-             roles: $view_roles,
-             sessions: (SELECT * OMIT id FROM {sessions} ORDER BY connected, handle),
-             held: $held,
-             latest: (SELECT VALUE last FROM ONLY counter:message) ?? 0,
-             callback_sequence: $callback_sequence ?? 0,
-             has_callbacks: $has_callbacks ?? false,
-             native_presence: {NATIVE_PRESENCE},
-             open_deps: {deps},
-             known: {known},
-             mine: {mine},
-             {slots}
-         }};", super::branches::OF_TASKS
+             LET $slugs = $tasks.slug;
+             LET $slot_wanted = $slugs;
+             LET $view_roles = (SELECT slug, handle, role, since, expires FROM role{scope} ORDER BY since, handle);
+             LET $shown_sessions = {shown};
+             {HELD}
+             {slot_lets}
+             RETURN {{
+                 tasks: $tasks,
+                 branches: ({}),
+                 links: (SELECT slug, kind, target FROM link{scope} ORDER BY target),
+                 roles: $view_roles,
+                 sessions: (SELECT * OMIT id FROM {sessions} ORDER BY connected, handle),
+                 held: $held,
+                 latest: (SELECT VALUE last FROM ONLY counter:message) ?? 0,
+                 callback_sequence: $callback_sequence ?? 0,
+                 has_callbacks: $has_callbacks ?? false,
+                 native_presence: {NATIVE_PRESENCE},
+                 open_deps: {deps},
+                 known: {known},
+                 mine: {mine},
+                 {slots}
+             }};", super::branches::OF_TASKS
     );
     (read, vars)
 }
