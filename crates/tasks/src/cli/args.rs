@@ -194,7 +194,6 @@ const COMMANDS: &[Command] = &[
             choice("--status", "status", STATUSES),
             opt("--limit", "limit", Takes::Value(Ty::Int)),
             opt("--json", "json", Takes::Bool),
-            choice("--mode", "mode", &["keyword", "vector", "hybrid", "exact"]),
         ],
     },
     Command {
@@ -204,17 +203,6 @@ const COMMANDS: &[Command] = &[
             AS,
             opt("--days", "days", Takes::Value(Ty::Int)),
             opt("--json", "json", Takes::Bool),
-        ],
-    },
-    Command {
-        name: "embed",
-        pos: &[],
-        opts: &[
-            opt("--maintenance", "maintenance", Takes::Bool),
-            opt("--threads", "threads", Takes::Value(Ty::Int)),
-            AS,
-            opt("--task", "task", STR),
-            opt("--batch-size", "batch_size", Takes::Value(Ty::Int)),
         ],
     },
     plain("next", &[]),

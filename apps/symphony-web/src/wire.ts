@@ -339,6 +339,11 @@ export type ReportMark = {
    */
   commit: string;
   subject: string;
+  /**
+   * What it changed, each once: `settings`, `rules` and `skill NAME`. A server from before the
+   * instructions were marked names none, and its marks are settings changes.
+   */
+  changed: Array<string>;
 };
 
 export type RunsPage = {

@@ -123,7 +123,10 @@ export interface Axis {
   hours: number[];
   /** The periods labelled under the plot, each with its label. */
   ticks: [number, string][];
-  /** The settings changes: where each stands across the plot (0 to 100), its period and what it says. */
+  /**
+   * The changes of the settings and the agents' instructions: where each stands across the plot (0
+   * to 100), its period and what it says (`settings changed, SUBJECT (HASH)`).
+   */
   marks: [number, number, string][];
 }
 
@@ -560,7 +563,7 @@ export function Readout({ chart, axis, at }: { chart: ChartData; axis: Axis; at:
         .filter(([, period]) => period === at)
         .map(([, , text]) => (
           <p key={text} className="chart-mark-note">
-            {`Settings changed: ${text}`}
+            {`${text.charAt(0).toUpperCase()}${text.slice(1)}`}
           </p>
         ))}
     </div>
