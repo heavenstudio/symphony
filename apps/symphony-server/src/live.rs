@@ -624,26 +624,38 @@ impl Hub {
     /// with no render. `tag_of` makes a document's outline's tag, and is run once for each copy
     /// placed.
     ///
-    /// The copy is the hub's own record of everything a render reads that it tracks: a refresh
+    /// The copy is the hub's own record of what a render reads from the checkout: a refresh
     /// renders it again once a file of its checkout's documents, the project's settings, its one
-    /// cards, its linking tasks or, on a branch's page, main's baseline changed
-    /// ([`Hub::refresh_page_read`]), and its sections are read from it too
-    /// ([`Hub::document_sections`]). So the check says what a page left open shows: an edit the
-    /// watcher has not told yet arrives on the feed from the cursor given here.
+    /// cards or, on a branch's page, main's baseline changed ([`Hub::refresh_page_read`]), and
+    /// its sections are read from it too ([`Hub::document_sections`]). So the check says what a
+    /// page left open shows: an edit the watcher has not told yet arrives on the feed from the
+    /// cursor given here.
     ///
-    /// `None`, and the check renders as [`Hub::document`] does, for a document the page does not
-    /// follow yet or holds as missing, and for a copy naming a file from outside the entrypoints'
-    /// folders by its validator ([`symphony::docview::names_files_outside`]), whose change no
-    /// refresh sees.
+    /// `None`, and the check renders as [`Hub::document`] does, which publishes what it finds:
+    /// for a document the page does not follow yet or holds as missing; for a copy whose tasks
+    /// are no longer the ones that link it on the board as last read, as a board read asks for no
+    /// refresh; and for a copy naming a file from outside the entrypoints' folders by its
+    /// validator ([`symphony::docview::names_files_outside`]), whose change no refresh sees.
     pub fn outline_kept(
         &self,
         scope: &str,
         rel: &str,
         tag_of: impl FnOnce(symphony_api::Document) -> String,
     ) -> Option<(String, u64)> {
-        // The copy the page holds now, with the read it came from, and its tag when one was made.
+        let root = if scope.is_empty() {
+            self.root.clone()
+        } else {
+            self.tree(scope)?
+        };
+        // The tasks that link the document on the board as last read, as a render lists them: no
+        // refresh follows a board read, so the copy's are compared at each check.
+        let board = self.tasks_read().ok();
+        let linked =
+            symphony::docview::linked(&root, rel, board.as_ref().map_or(&[], |board| &board.tasks));
+        // The copy the page holds now, its tasks still the board's, and the read it came from.
         let held = |page: &Page| -> Option<u64> {
-            (!page.missing.contains(rel) && page.documents.contains_key(rel))
+            let document = page.documents.get(rel)?;
+            (!page.missing.contains(rel) && document.tasks == linked)
                 .then(|| page.copied.get(rel).copied())
                 .flatten()
         };
@@ -664,11 +676,6 @@ impl Hub {
             (read, page.documents.get(rel)?.clone())
         };
         // Made outside the lock: the outline is the whole document written out.
-        let root = if scope.is_empty() {
-            self.root.clone()
-        } else {
-            self.tree(scope)?
-        };
         let project = symphony::project::Project::of(&root);
         let tag = (!symphony::docview::names_files_outside(&document, &project, scope))
             .then(|| tag_of(document));

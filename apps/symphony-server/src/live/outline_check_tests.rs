@@ -163,35 +163,102 @@ fn a_document_a_refresh_rendered_again_is_answered_with_its_new_outline() {
     assert_eq!(renders(&hub), rendered);
 }
 
-#[test]
-fn a_document_whose_linking_task_moved_is_answered_with_its_new_outline() {
-    let tree = Tree::new();
-    let root = repository(&tree);
-    let f = Fixture::new(Seed::default().task("tools/topic", "ready").link(
-        "tools/topic",
-        "doc",
-        "docs/TOPIC.md",
-    ));
-    let (hub, ask) = serving(&root);
-    observe(&hub, &f.store, &[]);
-    let first = ask(OUTLINE, None);
-    assert!(says(&first, "\"ready\""), "the outline names its tasks");
-    let named = tag(&first);
-    assert_eq!(ask(OUTLINE, Some(&named)).0, StatusCode::NOT_MODIFIED);
-
-    // No file changed: the board did, and the refresh renders the document it links again.
+/// The board's `query`, run on the fixture's board, then read by the hub as its loop reads it: a
+/// board read alone, which asks for no refresh of the documents.
+fn board_moves(hub: &Hub, f: &Fixture, query: &str) {
     f.store
         .client()
-        .query(
-            "UPDATE task SET status = 'in_progress' WHERE slug = 'tools/topic' RETURN NONE;",
-            serde_json::json!({}),
-        )
+        .query(query, serde_json::json!({}))
         .unwrap();
+    observe(hub, &f.store, &[]);
+}
+
+#[test]
+fn a_document_whose_linking_task_moved_on_the_board_alone_is_answered_with_its_new_outline() {
+    let tree = Tree::new();
+    let root = repository(&tree);
+    tree.write("main/docs/OTHER.md", "# Other\n\nNo task links it.\n");
+    let f = Fixture::new(
+        Seed::default()
+            .task("tools/topic", "ready")
+            .link("tools/topic", "doc", "docs/TOPIC.md")
+            .task("tools/later", "ready")
+            .task("tools/unlinked", "ready"),
+    );
+    let (hub, ask) = serving(&root);
     observe(&hub, &f.store, &[]);
-    hub.refresh_docs(Some(&BTreeSet::new())).unwrap();
-    let moved = ask(OUTLINE, Some(&named));
-    assert_eq!(moved.0, StatusCode::OK);
-    assert!(says(&moved, "in_progress"));
+    let other = "/api/document?path=docs/OTHER.md&view=outline";
+    let first = ask(OUTLINE, None);
+    assert!(says(&first, "\"ready\""), "the outline names its tasks");
+    let mut named = tag(&first);
+    let unlinked = tag(&ask(other, None));
+    assert_eq!(ask(OUTLINE, Some(&named)).0, StatusCode::NOT_MODIFIED);
+
+    // Each is a change of the board alone: no file, no ref, and no refresh of the documents.
+    let moves = [
+        (
+            "its status",
+            "UPDATE task SET status = 'in_progress' WHERE slug = 'tools/topic' RETURN NONE;",
+            "in_progress",
+        ),
+        (
+            "its title",
+            "UPDATE task SET title = 'Retitled since' WHERE slug = 'tools/topic' RETURN NONE;",
+            "Retitled since",
+        ),
+        (
+            "another task linking it",
+            "CREATE link CONTENT { slug: 'tools/later', kind: 'doc', target: 'docs/TOPIC.md' } \
+             RETURN NONE;",
+            "tools/later",
+        ),
+    ];
+    for (case, query, words) in moves {
+        board_moves(&hub, &f, query);
+        let published = hub.pages.read().unwrap()[""].history.len();
+        let rendered = renders(&hub);
+        let moved = ask(OUTLINE, Some(&named));
+        assert_eq!(moved.0, StatusCode::OK, "{case}");
+        assert!(says(&moved, words), "{case}: the new outline");
+        assert_eq!(renders(&hub), rendered + 1, "{case}: rendered once");
+        {
+            let pages = hub.pages.read().unwrap();
+            let page = &pages[""];
+            assert_eq!(page.history.len(), published + 1, "{case}");
+            let event = page.history.back().unwrap();
+            assert!(
+                event.json.contains("\"document\"") && event.json.contains(words),
+                "{case}: open pages are told: {}",
+                event.json
+            );
+        }
+        assert_ne!(tag(&moved), named, "{case}");
+        named = tag(&moved);
+        // The copy that render placed lists the board's tasks: its check renders nothing.
+        assert_eq!(
+            ask(OUTLINE, Some(&named)).0,
+            StatusCode::NOT_MODIFIED,
+            "{case}"
+        );
+        assert_eq!(renders(&hub), rendered + 1, "{case}");
+        // A document none of those tasks links is answered from its copy throughout.
+        assert_eq!(
+            ask(other, Some(&unlinked)).0,
+            StatusCode::NOT_MODIFIED,
+            "{case}"
+        );
+        assert_eq!(renders(&hub), rendered + 1, "{case}");
+    }
+
+    // A task that links nothing of it moved: the check is answered from the copy.
+    board_moves(
+        &hub,
+        &f,
+        "UPDATE task SET status = 'in_progress' WHERE slug = 'tools/unlinked' RETURN NONE;",
+    );
+    let rendered = renders(&hub);
+    assert_eq!(ask(OUTLINE, Some(&named)).0, StatusCode::NOT_MODIFIED);
+    assert_eq!(renders(&hub), rendered);
 }
 
 #[test]

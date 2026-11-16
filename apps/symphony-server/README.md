@@ -124,9 +124,10 @@ cursor left out: it moves only with the document. An outline's check that names 
 copy the hub follows for that page is answered `304` at the feed's cursor without rendering the
 document: the hub renders that copy again when anything a render reads that it tracks changed,
 and makes its outline's tag once for each copy (`Hub::outline_kept`). A check with another tag
-or none, of a document not followed yet, or of one that names a file from outside the
-entrypoints' folders by its change time and size, which no refresh watches, renders as a read
-does. A page whose kept copy is still current takes
+or none, of a document not followed yet, of a copy whose tasks are no longer the ones that link
+it on the board as last read (a board read asks for no refresh), or of one that names a file
+from outside the entrypoints' folders by its change time and size, which no refresh watches,
+renders as a read does. A page whose kept copy is still current takes
 the cursor from `/api/board`. The browser keeps no copy of its own: the client's cache keeps
 the body and sends the tag back (docs/analysis/client-cache.md). An error carries no tag, and the
 feed's stream is never read whole.
