@@ -26,7 +26,7 @@ import {
   TaskMessage,
   TaskPageView,
 } from "./task-page";
-import { aRole, aTask, memoryStorage, reply } from "./testing";
+import { aRole, aTask, memoryStorage, reply, until } from "./testing";
 import type { Block, TaskBrief, TaskEntry, TaskPage } from "./wire";
 import { CHECKING } from "./words";
 import { NO_WORK } from "./work";
@@ -145,7 +145,7 @@ async function opened(route: Route, slug = "fixture/task") {
   const mount = new AbortController();
   const task = new LiveTask("", slug, HOST, mount.signal);
   task.open();
-  await vi.waitFor(() => {
+  await until(() => {
     for (const part of [task.pagePart, task.threadPart]) {
       const shown = task.parts.shown(part as typeof task.pagePart);
       expect(shown.answered || shown.error !== null).toBe(true);
@@ -379,7 +379,7 @@ describe("a task's page", () => {
     // None before its answer, nor outside a page's store.
     expect(detail({}, "composer", parts)).not.toContain("Land it");
     parts.open(part);
-    await vi.waitFor(() => expect(parts.shown(part).answered).toBe(true));
+    await until(() => expect(parts.shown(part).answered).toBe(true));
     expect(asked).toEqual(["/api/task-offer?slug=fixture%2Ftask"]);
     expect(detail({}, "composer", parts)).toContain("✓ Land it");
     expect(detail({}, "composer")).not.toContain("Land it");

@@ -8,6 +8,10 @@
 // - Each test or hook that ran out of its time, which under the run's wall-clock backstop is a
 //   stall, with the load average as the timeout was heard (docs/CHECKS.md, "Time in tests").
 //
+// It reads a run as unsharded, as every run here is: Vitest reports a sharded run's every file
+// before it keeps its shard's, so under `--shard` this report would name the other shards' files
+// and fail the run.
+//
 // No kind imports this module, so no build carries it. Vitest's main process runs it, and Vitest
 // runs its tests.
 

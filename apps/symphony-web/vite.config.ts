@@ -69,10 +69,11 @@ export default defineConfig({
   },
   test: {
     include: ["src/**/*.test.{ts,tsx}"],
-    // A test waits on its condition, never for a time of its own (time is Vitest's fake timers).
-    // The one time a test or a hook has is a backstop only a stall reaches (a machine asleep, a
-    // process stopped). The report beside Vitest's says each one that ran out as a stall, with the
-    // load average, and names each test file the run did not run (src/unit-run.ts).
+    // A test waits on its condition, never for a time of its own (time is Vitest's fake timers, a
+    // wait for a condition testing.ts's `until`). The one time a test, a hook or a wait has is a
+    // backstop only a stall reaches (a machine asleep, a process stopped). The report beside
+    // Vitest's says each one that ran out as a stall, with the load average, and names each test
+    // file the run did not run (src/unit-run.ts).
     testTimeout: BACKSTOP_MS,
     hookTimeout: BACKSTOP_MS,
     reporters: ["default", new UnitRunReport()],

@@ -286,3 +286,33 @@ describe("the unit run's report", () => {
     expect(() => unit.onTestRunEnd([], [], "failed")).not.toThrow();
   });
 });
+
+describe("the unit run's waits", () => {
+  // Every module of the package's sources as its text, but the one that holds the wait and this one
+  // (a glob leaves out the module it is in).
+  const sources = import.meta.glob<string>(["./**/*.{ts,tsx}", "!./testing.ts"], {
+    query: "?raw",
+    import: "default",
+    eager: true,
+  });
+  // Vitest's own waits for a condition, whose time is a second of real time unless given one. Each
+  // name is joined here, so this file's text holds no call of them.
+  const VITESTS = new RegExp(`\\bvi\\s*\\.\\s*(?:${["waitFor", "waitUntil"].join("|")})\\s*\\(`);
+  const call = (name: string, between = "") => ["vi", `${between}${name}(() => ready)`].join(".");
+
+  it("are the backstop's, through testing.ts, never Vitest's own second", () => {
+    expect(Object.keys(sources)).toEqual(
+      expect.arrayContaining(["./document-live.test.ts", "./timeline-slot.test.tsx"]),
+    );
+    expect(Object.keys(sources)).not.toContain("./testing.ts");
+    const bare = Object.keys(sources).filter((file) => VITESTS.test(sources[file] ?? ""));
+    expect(bare).toEqual([]);
+  });
+
+  it("are told apart from a wait that is no Vitest's", () => {
+    expect(VITESTS.test(`await ${call("waitFor")};`)).toBe(true);
+    expect(VITESTS.test(`await ${call("waitUntil", " ")};`)).toBe(true);
+    expect(VITESTS.test("await until(() => ready);")).toBe(false);
+    expect(VITESTS.test(`await ${call("waitForever")};`)).toBe(false);
+  });
+});

@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { memoryStorage } from "./testing";
+import { memoryStorage, until } from "./testing";
 import type { HostProps } from "./timeline";
 import {
   boxStyle,
@@ -259,7 +259,7 @@ describe("the timeline's chunk", () => {
     const leave = slot.whenImported(left);
     slot.whenImported(staying);
     leave();
-    await vi.waitFor(() => expect(staying).toHaveBeenCalledTimes(1));
+    await until(() => expect(staying).toHaveBeenCalledTimes(1));
     expect(left).not.toHaveBeenCalled();
   });
 
@@ -274,7 +274,7 @@ describe("the timeline's chunk", () => {
     const slot = await aSlot();
     const told = vi.fn();
     slot.whenImported(told);
-    await vi.waitFor(() => expect(alarm).toHaveBeenCalledTimes(1));
+    await until(() => expect(alarm).toHaveBeenCalledTimes(1));
     expect(gone).toHaveBeenCalledTimes(1);
     expect(alarm).toHaveBeenCalledWith("timeline-error", SAID, RETRY, expect.any(Function));
     expect(failure).toHaveBeenCalledWith(SAID, expect.any(Error));
@@ -284,7 +284,7 @@ describe("the timeline's chunk", () => {
     vi.doUnmock("./timeline");
     const retry = alarm.mock.calls[0]?.[3] as () => void;
     retry();
-    await vi.waitFor(() => expect(told).toHaveBeenCalledTimes(1));
+    await until(() => expect(told).toHaveBeenCalledTimes(1));
   });
 
   it("a chunk that does not come says nothing where the page's build is gone", async () => {
@@ -336,7 +336,7 @@ describe("the timeline's chunk", () => {
     const slot = await aSlot();
     const leave = slot.whenImported(vi.fn());
     const attempt = slot.importTimeline();
-    await vi.waitFor(() => expect(gone).toHaveBeenCalledTimes(1));
+    await until(() => expect(gone).toHaveBeenCalledTimes(1));
     leave();
     answer(false);
     await attempt;
@@ -352,7 +352,7 @@ describe("the timeline's chunk", () => {
     });
     const slot = await aSlot();
     slot.whenImported(vi.fn());
-    await vi.waitFor(() => expect(failure).toHaveBeenCalledTimes(1));
+    await until(() => expect(failure).toHaveBeenCalledTimes(1));
   });
 
   it("asks for no chunk while its part has nothing to draw", async () => {
@@ -390,7 +390,7 @@ describe("the timeline's chunk", () => {
     const parts = new Parts(mount.signal);
     const part = timelinePart("", "tools/new");
     parts.open(part);
-    await vi.waitFor(() => expect(parts.shown(part).answered).toBe(true));
+    await until(() => expect(parts.shown(part).answered).toBe(true));
     expect(asked).toEqual(["/api/task-timeline?slug=tools%2Fnew"]);
     const inPage = () =>
       renderToStaticMarkup(
@@ -401,7 +401,7 @@ describe("the timeline's chunk", () => {
     // Before the chunk: the placeholder, the answer already held.
     expect(inPage()).not.toContain("timeline-root");
     const leave = react.effects.at(-1)?.();
-    await vi.waitFor(() => expect(slot.loadedHost()).not.toBeNull());
+    await until(() => expect(slot.loadedHost()).not.toBeNull());
     leave?.();
     // Drawn again, the timeline is in its root, and its height is kept for the next visit.
     expect(inPage()).toContain(

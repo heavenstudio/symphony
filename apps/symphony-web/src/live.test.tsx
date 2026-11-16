@@ -17,7 +17,16 @@ import {
   reloadIfRedeployed,
 } from "./live";
 import { SERVER_NOTICE } from "./shared";
-import { asking, CASES, memoryStorage, feeds as pageFeeds, reply, say, server } from "./testing";
+import {
+  asking,
+  CASES,
+  memoryStorage,
+  feeds as pageFeeds,
+  reply,
+  say,
+  server,
+  until,
+} from "./testing";
 import { CACHE_FORMAT, FEED_EVENT } from "./wire";
 
 afterEach(() => {
@@ -451,7 +460,7 @@ describe("the board's loop", () => {
     const run = loop();
     const delta = { version: 8, changes: [] };
     await following(run, opened, { version: 7, changes: [] }, delta);
-    await vi.waitFor(() => expect(run.frame.heard).toHaveBeenCalledTimes(1));
+    await until(() => expect(run.frame.heard).toHaveBeenCalledTimes(1));
     expect(run.frame.heard).toHaveBeenCalledWith(delta);
     run.page.abort();
     await run.done;
