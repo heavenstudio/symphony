@@ -3,8 +3,8 @@
 //! [`Span`] and what they hold, never rendered HTML), what a page draws that markup cannot
 //! ([`Media`] and its [`Viewer`]), a board field's value ([`FieldValue`]), a task's gate ([`Gate`]),
 //! a home region ([`Region`]), a card's pictures ([`Picture`]), a navigation entry ([`NavItem`]) and
-//! a board action's offer ([`TaskOffer`]). Serde only, so one definition builds for the server, a
-//! plugin's process and the wasm client.
+//! a board action's offer ([`TaskOffer`]). Serde only, so one definition builds for the server and a
+//! plugin's process, and is written out as the client's TypeScript.
 //!
 //! The kit is `symphony-plugin`, this crate and `symphony-docs`, one version for the three
 //! (`symphony_plugin`'s doc says what each holds); this crate depends on no other workspace crate.

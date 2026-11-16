@@ -2,7 +2,7 @@
 
 `just symphony` runs this server. The native read models live in `crates/symphony`, and
 their serde-only wire records in `crates/symphony-api`. All routes run natively:
-the Dioxus SPA, reads, saves and media, under each project's `/<id>/` on the one server and
+the client, reads, saves and media, under each project's `/<id>/` on the one server and
 at `/` on a server of its own.
 
 ## Projects
@@ -185,8 +185,8 @@ selects another folder. A private server on the main checkout leaves the
 shared app's `artifacts/docs-app.port` record alone. A project's page serves the
 shell with revalidation by its ETag, as is any client file not named by its
 content. A file named by its content, an `assets/` name whose last `-` part is
-dx's `dxh…` hash or the packager's sixteen hex digits (the shell script, every
-page module, wasm and stylesheet), is cached for a year as immutable, so a
+the build's sixteen hex digits (the shell script, every page module and stylesheet), is
+cached for a year as immutable, so a
 return visit revalidates the page alone (`src/api/client.rs`). Snapshots and the
 page are gzipped per request. A client file is gzipped once per content, at the
 best level, by the first request that takes gzip; later requests, from any

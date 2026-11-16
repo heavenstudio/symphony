@@ -1,11 +1,14 @@
 import { defineConfig } from "vitest/config";
 
 // The web client's kinds, each an entry the shell imports by the name the shell's manifest gives it
-// (apps/symphony-ui/package.sh): `src/kinds/NAME.tsx` exports the kind's `run` and `stop`. The
-// menus (`overlay`) and the chat (`panel`) are no page's but the shell's persistent kinds every page
-// mounts beside its own.
+// (package.sh): `src/kinds/NAME.tsx` exports the kind's `run` and `stop`. The menus (`overlay`) and
+// the chat (`panel`) are no page's but the shell's persistent kinds every page mounts beside its
+// own.
 const PAGES = ["agents", "board", "docs", "queue", "reports", "review", "runs", "task"];
 const KINDS = [...PAGES, "overlay", "panel"].sort();
+// The stylesheet every kind shares, an entry of its own and no kind: its sheets in the order
+// `src/styles/shared.css` writes, one minified file package.sh puts first in every kind's styles.
+const SHARED_STYLES = "src/styles/shared.css";
 
 export default defineConfig({
   // No public folder: the server serves the files package.sh publishes (the dev server's own
@@ -15,7 +18,7 @@ export default defineConfig({
   // development build). The build's own NODE_ENV is production, set by its script (package.json).
   envDir: false,
   build: {
-    // The browsers the Dioxus kinds already ask for (wasm, ES modules, top-level await).
+    // The browsers the shell already asks for (ES modules, top-level await).
     target: "es2023",
     // Vite's manifest, which package.sh reads to put each kind's script and styles in the shell's.
     manifest: true,
@@ -24,7 +27,10 @@ export default defineConfig({
     modulePreload: false,
     reportCompressedSize: false,
     rolldownOptions: {
-      input: Object.fromEntries(KINDS.map((kind) => [kind, `src/kinds/${kind}.tsx`])),
+      input: {
+        ...Object.fromEntries(KINDS.map((kind) => [kind, `src/kinds/${kind}.tsx`])),
+        shared: SHARED_STYLES,
+      },
       // A kind's entry keeps its exports, which the shell calls (an app build drops them, as a page
       // loaded by a script tag has no use for them).
       preserveEntrySignatures: "strict",

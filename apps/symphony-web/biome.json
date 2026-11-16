@@ -4,5 +4,20 @@
   "vcs": { "enabled": true, "clientKind": "git", "useIgnoreFile": true },
   "files": { "includes": ["**", "!package-lock.json"] },
   "formatter": { "indentStyle": "space", "indentWidth": 2, "lineWidth": 100 },
-  "linter": { "domains": { "react": "recommended", "test": "recommended" } }
+  "linter": { "domains": { "react": "recommended", "test": "recommended" } },
+  "overrides": [
+    {
+      "includes": ["src/styles/board.css", "src/styles/frame.css"],
+      "formatter": { "enabled": false }
+    },
+    {
+      "includes": ["src/styles/**"],
+      "linter": {
+        "rules": {
+          "style": { "noDescendingSpecificity": "off" },
+          "complexity": { "noImportantStyles": "off" }
+        }
+      }
+    }
+  ]
 }

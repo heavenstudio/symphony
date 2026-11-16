@@ -349,10 +349,8 @@ fn the_build_only_commands_are_unknown_to_the_shipped_binary() {
     let (_, listing, _) = cli(&["help"]);
     for name in [
         "publish-client",
-        "release-inputs",
         "size-budget",
         "crates-check",
-        "split-repair",
         "synced",
         "release",
         "nightly",

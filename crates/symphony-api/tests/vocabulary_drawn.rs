@@ -2,9 +2,9 @@
 //! kinds. The kit's lists grow in a minor (`docs/PLUGIN_PROTOCOL.md`, *Versions*), so they are
 //! `#[non_exhaustive]` and each match outside the kit ends with `_`: the compiler does not refuse
 //! a build in which a kind has no arm. This reads the sources in its place: a variant of a list
-//! that a match below does not name fails here, naming the variant and the function. The React
-//! client's own check is its type check and `blocks.test.tsx`, over the types `just client-wire`
-//! writes from these same lists.
+//! that a match below does not name fails here, naming the variant and the function. The client
+//! is no Rust: its own check is its type check and `blocks.test.tsx`, over the types
+//! `just client-wire` writes from these same lists.
 
 /// The variants of the enum `name` in `source`, as rustfmt writes it: each line one step in from
 /// the `pub enum` line that starts with a capital letter, up to the line that closes it.
@@ -74,12 +74,10 @@ const WRITE: &str = include_str!("../../symphony/src/blocks/write.rs");
 const LEGACY: &str = include_str!("../../symphony/src/docview/legacy.rs");
 const DOCVIEW: &str = include_str!("../../symphony/src/docview.rs");
 const RENDER_MEDIA: &str = include_str!("../../symphony/src/render/media.rs");
-const BLOCK_VIEW: &str = include_str!("../../../apps/symphony-ui/src/block_view.rs");
-const MEDIA_VIEW: &str = include_str!("../../../apps/symphony-ui/src/media.rs");
 
 /// Each match of this workspace on a list of the kit that grows: the list, the source that
 /// defines it, the file of the match, that file's source and the function holding the match.
-const MATCHES: [(&str, &str, &str, &str, &str); 16] = [
+const MATCHES: [(&str, &str, &str, &str, &str); 10] = [
     (
         "Block",
         BLOCKS,
@@ -149,48 +147,6 @@ const MATCHES: [(&str, &str, &str, &str, &str); 16] = [
         "crates/symphony/src/render/media.rs",
         RENDER_MEDIA,
         "fn drawn(",
-    ),
-    (
-        "Block",
-        BLOCKS,
-        "apps/symphony-ui/src/block_view.rs",
-        BLOCK_VIEW,
-        "fn BlockView(",
-    ),
-    (
-        "Span",
-        BLOCKS,
-        "apps/symphony-ui/src/block_view.rs",
-        BLOCK_VIEW,
-        "fn SpanView(",
-    ),
-    (
-        "ContainerKind",
-        BLOCKS,
-        "apps/symphony-ui/src/block_view.rs",
-        BLOCK_VIEW,
-        "fn ContainerView(",
-    ),
-    (
-        "InlineKind",
-        BLOCKS,
-        "apps/symphony-ui/src/block_view.rs",
-        BLOCK_VIEW,
-        "fn InlineView(",
-    ),
-    (
-        "VectorKind",
-        BLOCKS,
-        "apps/symphony-ui/src/block_view.rs",
-        BLOCK_VIEW,
-        "fn ShapeView(",
-    ),
-    (
-        "Media",
-        MEDIA,
-        "apps/symphony-ui/src/media.rs",
-        MEDIA_VIEW,
-        "fn MediaView(",
     ),
 ];
 

@@ -1272,7 +1272,7 @@ mod tests {
         let mut stopped = night(&[]);
         stopped.stopped = Some(
             "after `verify` ended red (exit 1), /wt/release is in use by process 10 \
-             (chrome_crashpad_handler), working in apps/symphony-ui",
+             (chrome_crashpad_handler), working in apps/symphony-web",
         );
         stopped.for_owner = true;
         // As the run keeps a check a look stopped it after: its red steps alone.
@@ -1290,7 +1290,7 @@ mod tests {
         let run = board.thread("tests/release-red-run").join("\n");
         assert!(
             run.contains(
-                "working in apps/symphony-ui\n\nThe reds its checks found before it stopped are \
+                "working in apps/symphony-web\n\nThe reds its checks found before it stopped are \
                  tasks of their own, not this one's: tests/release-red-verify-tests.\n\nUntil a run \
                  gets through"
             ),
@@ -1305,7 +1305,7 @@ mod tests {
         );
         assert!(
             board.thread("tests/release-red-run")[1].ends_with(
-                "working in apps/symphony-ui The reds its checks found before it stopped are \
+                "working in apps/symphony-web The reds its checks found before it stopped are \
                  tasks of their own, not this one's: tests/release-red-verify-tests."
             ),
             "{:?}",

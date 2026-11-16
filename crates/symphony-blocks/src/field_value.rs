@@ -148,7 +148,7 @@ mod tests {
         }
     }
 
-    /// What the browser's reader (serde-wasm-bindgen) and `serde_json` without `arbitrary_precision`
+    /// What a reader of plain values and `serde_json` without `arbitrary_precision`
     /// hand: a plain number or a string, never the map.
     #[test]
     fn a_plain_number_or_string_reads_as_a_number_or_text() {

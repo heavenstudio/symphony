@@ -1,0 +1,12 @@
+/* The stylesheet every page shares: one file, which the shell links first for every kind
+ * (package.sh). Its sheets come in the order written here, which is the order of the cascade (of
+ * two rules of equal weight the later sheet's wins): the board's, the controls' theme, the
+ * frame's, then the shared controls' (a text area, a text field, a button, a select's closed
+ * field). A sheet added takes its place in this list. */
+@import "./board.css";
+@import "./controls-theme.css";
+@import "./frame.css";
+@import "./textarea.css";
+@import "./input.css";
+@import "./button.css";
+@import "./select-trigger.css";

@@ -31,8 +31,8 @@ fn files(root: &Path, directory: &Path, found: &mut Vec<(String, PathBuf)>) -> i
 
 /// Clippy's `max-include-file-size` (its default; clippy.toml leaves it): `large_include_file`
 /// fires on an `include_bytes!` of a file longer than this, so the manifest expects the lint only
-/// while the distribution holds such a file, the Dioxus program's wasm once and none since its pages
-/// moved to the React client.
+/// while the distribution holds such a file: none today, the largest being the chunk every kind
+/// shares.
 const INCLUDE_LIMIT: u64 = 1_000_000;
 
 /// What a release's build sets (non-empty) so the server embeds no client: installed on the
@@ -75,7 +75,7 @@ fn generate(root: &Path) -> io::Result<String> {
     let mut generated = String::new();
     for (_, file) in &assets {
         if fs::metadata(file)?.len() > INCLUDE_LIMIT {
-            generated.push_str("#[expect(clippy::large_include_file, reason = \"The server embeds the actual client WASM so installed consumers need no client compiler or source checkout\")]\n");
+            generated.push_str("#[expect(clippy::large_include_file, reason = \"The server embeds the actual client so installed consumers need no client compiler or source checkout\")]\n");
             break;
         }
     }
@@ -131,18 +131,18 @@ mod tests {
         assert!(!generate(&root).unwrap().contains(EXPECTATION));
         tree.write("release/index.html", "protocol input only");
         let at_limit = "x".repeat(usize::try_from(INCLUDE_LIMIT).unwrap());
-        tree.write("release/assets/program.wasm", &at_limit);
+        tree.write("release/assets/program.js", &at_limit);
         let manifest = generate(&root).unwrap();
         assert!(!manifest.contains(EXPECTATION), "{manifest}");
         assert!(
             manifest.starts_with("pub(super) static FILES"),
             "{manifest}"
         );
-        tree.write("release/assets/program.wasm", &format!("{at_limit}x"));
+        tree.write("release/assets/program.js", &format!("{at_limit}x"));
         let manifest = generate(&root).unwrap();
         assert!(manifest.starts_with(EXPECTATION), "{manifest}");
         assert_eq!(manifest.matches(EXPECTATION).count(), 1, "{manifest}");
-        tree.write("release/assets/second.wasm", &format!("{at_limit}x"));
+        tree.write("release/assets/second.js", &format!("{at_limit}x"));
         let manifest = generate(&root).unwrap();
         assert_eq!(manifest.matches(EXPECTATION).count(), 1, "{manifest}");
     }

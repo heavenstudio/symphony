@@ -17,7 +17,7 @@ case "$name" in
     symphony-build) package=symphony-build; member=crates/symphony-build ;;
     tasks|agent-send|tasks-copy|tasks-reclaim) package=symphony-board; member=crates/tasks; board=yes ;;
     fake-hc) package=symphony-board; member=crates/tasks ;;
-    symphony-server|symphony-shelf|symphony-ui-dev) package=symphony-server; member=apps/symphony-server ;;
+    symphony-server|symphony-shelf) package=symphony-server; member=apps/symphony-server ;;
     symphony-desktop) package=symphony-desktop; member=apps/symphony-desktop ;;
     *) printf 'symphony rs-bin: no declared binary %s in %s\n' "$name" "$root" >&2; exit 2 ;;
 esac

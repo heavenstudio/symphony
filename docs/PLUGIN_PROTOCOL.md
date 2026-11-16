@@ -306,8 +306,8 @@ request: a plugin of 0.2 is asked them card by card, and answers the same.
 
   The compiler does not refuse a build of this workspace in which a kind has no arm, as each
   match outside the kit ends with `_`, so tests do. `crates/symphony-api/tests/vocabulary_drawn.rs` reads each list from the kit's source
-  and fails on a variant that a match on it in the server, the wire types or the Dioxus client
-  does not name. The React client is held by its types, written from the same lists: its
+  and fails on a variant that a match on it in the server or the wire types
+  does not name. The client is held by its types, written from the same lists: its
   switches end in a value of type `never` and its tables name every kind, so a kind it does not
   draw fails its type check, and `blocks.test.tsx` fails until the sample the wire types' example
   writes holds the kind and it is drawn. A kind a client does not know, sent by a newer server, is
