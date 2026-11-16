@@ -425,8 +425,15 @@ logic `src/gates-model.ts`, the links they may draw `src/links.ts`), the subtask
 box, the brief, the thread and its composer, each from its own part as soon as that is there and
 as its own mock-up until then, in the page's one frame: the head and the brief at the height this
 browser last drew them, the gates' outline, the timeline's box, the thread's and the composer's
-ghosts, so a part that comes moves none of the others, and none waits a set time. A part whose
-read fails says so in its own place while the rest draw. The timeline (`src/timeline.tsx`, its layout
+ghosts, and none waits a set time. On a visit after the first a part that comes moves none of
+the others: each mock-up is as tall as this browser last drew its part. On a first visit a
+mock-up is a guess (the head's and the brief's heights of the last task drawn, else a typical
+one's; the gates' outline of four signed gates, one waited on, which the page's own count
+replaces if the page comes first), so a head, a brief or gates of another shape move what is
+below them once, as its answer comes. The store asks the reads in the order their parts were
+opened (the page and the thread, then the gates, the offer and the timeline as they mount), each
+after its own lookup on this device alone, so the server hears of the head before what is below
+it. A part whose read fails says so in its own place while the rest draw. The timeline (`src/timeline.tsx`, its layout
 `src/timeline-layout.ts`) is a chunk of its own, which its box (`src/timeline-slot.tsx`) imports
 once it nears the screen and its part has something to draw (an answer, or why there is none),
 behind no other read, so the page's first draw carries none of it; its style comes with it. The gates' and the box's styles (`src/gates.css`,

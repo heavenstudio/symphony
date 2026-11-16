@@ -443,7 +443,11 @@ never the whole target, which the release run runs.
   or key; a reader at the top sees what lands at the top.
   `tests/browser/layout_shift.rs` fails a page whose cold or warm load scores a layout
   shift of 0.05 or more, on a phone or wide. That score sees only elements already drawn
-  that move, not a ghost's box against the new element in its place:
+  that move, not a ghost's box against the new element in its place. A task's parts are the
+  page's own elements from their mock-ups on, so the score does see a part's guess give way to
+  its answer there: its task has the gates the outline guesses for a task this browser knows
+  nothing of (four signed gates, one waited on), and a first visit to a task of another shape
+  moves what is under its gates, which the score would count. For every other ghost:
   `tests/browser/landmarks.rs` compares each region's place on the ghost and on the page,
   on a first visit and the next, on a board, a queue and tasks shaped as the live ones (a
   later card, a later queue group, the board's lower row, a task opened first and after

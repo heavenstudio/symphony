@@ -292,15 +292,23 @@ pub(super) fn site(path: &str, sections: &[Value], cards: Value) -> Site {
     let mut responses = look_parity::responses();
     // The task's gates as the server answers them, short enough for a line each on a phone, and
     // with its page what the server answered last (`GatesSeen`), the room they hold until then.
+    // Four gates, one waited on, each with who and when: what a task has under the default
+    // catalogue, and so what the section's outline holds for a task this browser knows nothing of
+    // (`DEFAULT_ROOM`). The gates are read beside the page, so on a first visit their outline
+    // has no count of the page's to go by; a task of another shape moves what is under its gates
+    // then, which `landmarks` prints.
     let task = "visual/in-progress";
+    let gate = |name: &str, state: &str, by: &str, detail: &str| json!({"name":name,"state":state,"by":by,"at":1_794_363_240.0,"detail":detail});
     responses.insert(
         "/api/task-gates".into(),
         json!({"slug":task,"branch":task,"gates":[
-            {"name":"review","state":"missing","detail":"Not reviewed yet"},
-            {"name":"nightly","state":"met","by":"nightly","at":1_794_363_240.0,"detail":"Green on main a71f0d2"}]}),
+            gate("review", "missing", "lucid-heron", "Changes asked in round 1"),
+            gate("tests", "met", "studio", "Green at a71f0d2"),
+            gate("pictures", "met", "quiet-wren", "Attached at a71f0d2"),
+            gate("nightly", "met", "nightly", "Green on main a71f0d2")]}),
     );
     if let Some(page) = responses.get_mut("/api/task-page") {
-        page["gates"] = json!({"count":2,"waiting":1,"unsigned":1});
+        page["gates"] = json!({"count":4,"waiting":1,"unsigned":0});
     }
     for (route, value) in responses {
         if route != "/api/board" {
@@ -520,35 +528,14 @@ fn the_task_board_holds_still_while_its_columns_load() {
     );
 }
 
-/// The most a task's first visit in a browser that kept nothing may score: each part is the page's
-/// own element from its mock-up on, so the score sees a mock-up's guess give way to its answer
-/// (the head's height, the gates' rows), which no first visit can know. [`super::landmarks`]
-/// holds what a first visit does know, its head, and every part on the next.
-const FIRST_VISIT_LIMIT: f64 = 0.1;
-
 #[test]
 fn a_task_holds_still_while_its_thread_loads() {
-    let (sections, cards) = plain();
-    let site = site("docs/PROBE.md", &sections, cards);
-    let misses = misses(
+    holds_still(
         "task",
-        &site,
         "/task/visual/in-progress",
         "document.querySelector('article.task .settle[data-settled=true] .history') !== null",
         None,
-        "",
-    );
-    // A miss says its score last: "task phone cold: cls 0.0636".
-    let over: Vec<_> = misses
-        .iter()
-        .filter(|miss| {
-            let score: f64 = miss.rsplit(' ').next().unwrap().parse().unwrap();
-            !miss.contains(" cold: ") || score >= FIRST_VISIT_LIMIT
-        })
-        .collect();
-    assert!(
-        over.is_empty(),
-        "layout shift at or over {CLS_LIMIT}, or {FIRST_VISIT_LIMIT} on a first visit: {over:#?}"
+        plain(),
     );
 }
 
