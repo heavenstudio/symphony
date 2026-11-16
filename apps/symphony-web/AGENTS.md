@@ -899,8 +899,10 @@ What holds on every page, and each page's contract where its section above names
   ([A task's page](#a-tasks-page)).
   The shell requests a kind's script, a module preload of each chunk it imports and its styles
   together. Once the first page has its data (the shell
-  counts the page's `fetch` reads in flight, and waits until none has been for half
-  a second, and after a read that got no answer until one does) and the browser is
+  counts the page's reads in flight, its `fetch` reads and its lookups in the device's cache
+  (`symphonyCache.read`), which a page awaits before it asks the server for the rest, and waits
+  until none has been for half a second, and after a read that got no answer until one does)
+  and the browser is
   idle, it prefetches the persistent kinds' files at the lowest priority, nothing evaluated,
   each one the page has not linked: the chat's script, the chunks it imports and its styles
   first, the menus' once the chat's script (or the chat's own load, when a click came first) is
