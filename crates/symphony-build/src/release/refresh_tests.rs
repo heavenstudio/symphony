@@ -143,6 +143,19 @@ fn what_holds_the_release_is_a_lagging_writer_or_the_refreshs_own_red_and_never_
 }
 
 #[test]
+fn a_release_at_currents_schema_or_behind_it_says_which_and_moves_no_board() {
+    assert_eq!(
+        no_move("release-2", 19, 19),
+        "release-2 serves board schema 19, as the release current names serves 19: no board moves"
+    );
+    assert_eq!(
+        no_move("release-2", 18, 19),
+        "release-2 serves board schema 18, behind the release current names, which serves 19: no \
+         board moves, as none moves back"
+    );
+}
+
+#[test]
 fn a_running_database_older_than_the_pins_is_one_the_move_would_replace() {
     assert!(older("3.2.9", "3.3.0"));
     assert!(older("v2.3.0", "3.0.0"));

@@ -260,15 +260,7 @@ fn boards(
     out: &mut dyn Write,
 ) -> bool {
     if let Some(kept) = kept.filter(|kept| target <= *kept) {
-        say(
-            refresh,
-            out,
-            format!(
-                "{} serves board schema {target}, as the release current names serves {kept}: no \
-                 board moves",
-                against.tag
-            ),
-        );
+        say(refresh, out, no_move(against.tag, target, kept));
         return true;
     }
     let mut judged = Vec::new();
@@ -330,6 +322,22 @@ fn boards(
         steps.push(ran);
     }
     kept_by.is_none()
+}
+
+/// Why the release `tag`, serving board schema `target`, moves no board where the release
+/// `current` names serves `kept`, at `target` or past it: no board moves back.
+fn no_move(tag: &str, target: i64, kept: i64) -> String {
+    if target == kept {
+        format!(
+            "{tag} serves board schema {target}, as the release current names serves {kept}: no \
+             board moves"
+        )
+    } else {
+        format!(
+            "{tag} serves board schema {target}, behind the release current names, which serves \
+             {kept}: no board moves, as none moves back"
+        )
+    }
 }
 
 /// The git common dir of `entry`'s repository, when the refresh judges its board: never this

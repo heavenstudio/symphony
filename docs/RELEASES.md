@@ -659,7 +659,9 @@ Once a release's tag is pushed, the run does this, in order:
   held: …`), as `--status` does. The machine's server is then a project's build at that project's
   own pin, and a board moved past it would leave that server only reading it.
 - **The boards.** A release that keeps the board schema of the release `current` names moves no
-  board (`RELEASE serves board schema N, as the release current names serves N: no board moves`).
+  board (`RELEASE serves board schema N, as the release current names serves N: no board moves`),
+  and nor does one behind it, as no board moves back (`RELEASE serves board schema N, behind the
+  release current names, which serves M: no board moves, as none moves back`).
   One that raises it, or the first, with no `current`, judges the live board of each project in the
   registry, this repository's aside (its board moves with its own main), one step `refresh-ID` for
   each. A project whose id is not a plain name, whose checkout is gone, or that is not a git

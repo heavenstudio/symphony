@@ -423,7 +423,7 @@ scratch repository and a scratch board, never the real worktrees or the live boa
 A consuming project's checkout on this machine is read-only to an agent working here: it is read,
 and nothing in it is changed but what a release's refresh moves there, which is the release run's,
 and an act there the owner's word names, which is that word's, such as a pin's commit made once
-by hand ([the refresh](docs/RELEASES.md#the-refresh)).
+by hand ([its card](docs/DECISIONS.md#consumer-manifest-line)).
 
 ### `commits/only-the-land-pushes`
 
