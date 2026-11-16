@@ -40,8 +40,11 @@ sources, the Mac app, the build and release commands (`symphony-build`) and the 
   never listed or read. The Symphony's own routes (`symphony_api::SYMPHONY_ROUTES`, which
   `assets/shell.js` repeats) win over every entrypoint.
 - **The one server** serves every project the machine folder's registry holds, each under
-  `/<id>/`, and the host rule decides whether a start's build serves, waits for or replaces the
-  running one ([the server guide](apps/symphony-server/README.md), `crates/symphony/src/machine/`).
+  `/<id>/`. It is the server of the release installed on the machine (`current`) while every
+  registered project's plugins answer from a process, which any host serves, and a project's build
+  while one names a plugin linked into its host; the host rule decides whether a start serves,
+  waits or replaces, and no start replaces a release's server, which follows `current` by its own
+  reload ([the server guide](apps/symphony-server/README.md), `crates/symphony/src/machine/`).
   A start in a linked worktree never starts, registers with or replaces the one server
   (`apps/symphony-server/src/starter.rs`): `just symphony --port 0` there runs a server of its
   own, and `--shared` is the owner's word. A project's state stays in its checkout: paths under its
@@ -171,8 +174,8 @@ not a question in chat.
 
 **Releases.** A land starts a release run (`just release`, below) once `[releases]
 every_landings` tasks (20) have landed since the last release or run ([the
-cadence](docs/RELEASES.md#the-cadence)), and a green release refreshes the machine: the release installed in the machine folder
-([the install](docs/RELEASES.md#the-install)), each consuming
+cadence](docs/RELEASES.md#the-cadence)), and a green release refreshes the machine: the release
+installed in the machine folder ([the install](docs/RELEASES.md#the-install)), each consuming
 project's pin, main and board, and the shared server by its own reload ([the
 refresh](docs/RELEASES.md#the-refresh)). Running a release run or `--commit` by hand, installing
 its schedule and turning `[releases] publish` on are the owner's call; an orchestrator reruns

@@ -13,6 +13,7 @@ fn build(plugins: &[&str], pin: u32, schema: i64) -> Build {
         schema,
         by: "/work/host".into(),
         worktree: None,
+        release: None,
     }
 }
 
@@ -294,11 +295,202 @@ fn a_build_reads_its_own_plugins_pin_and_schema_and_a_server_its_front() {
         pin: 3,
         schema: 4,
         projects: vec!["there".into()],
+        release: None,
     };
     assert_eq!(
         Build::of(&front),
         build(&["shelf"], 3, 4).with_by("/work/there")
     );
+}
+
+/// `build` as the server of the release `name`.
+fn release(name: &str, pin: u32, schema: i64) -> Build {
+    Build {
+        release: Some(name.into()),
+        ..build(&[], pin, schema)
+    }
+}
+
+/// The entry of a project in `tree` whose file names `plugins`, those of `processes` with a
+/// command, at `pin` and `schema`.
+fn project(
+    tree: &Tree,
+    id: &str,
+    plugins: &[&str],
+    processes: &[&str],
+    pin: u32,
+    schema: i64,
+) -> Entry {
+    let names: Vec<String> = plugins.iter().map(|name| format!("\"{name}\"")).collect();
+    let mut file = format!(
+        "[project]\nid = \"{id}\"\n[plugins]\ncrates = [{}]\n",
+        names.join(", ")
+    );
+    if !processes.is_empty() {
+        file.push_str("[plugins.process]\n");
+        for name in processes {
+            file.push_str(&format!("{name} = [\"bin/{name}\"]\n"));
+        }
+    }
+    tree.write(&format!("{id}/{}", crate::project::FILE), &file);
+    Entry {
+        root: tree.path(id),
+        ..entry(id, plugins, pin, schema)
+    }
+}
+
+#[test]
+fn any_host_serves_a_plugin_that_answers_from_its_process_and_lacks_only_a_linked_one() {
+    let tree = Tree::new();
+    let processes = project(
+        &tree,
+        "processes",
+        &["shelf", "map"],
+        &["shelf", "map"],
+        1,
+        6,
+    );
+    let linked = project(&tree, "linked", &["shelf", "map"], &["shelf"], 1, 6);
+    for host in [build(&[], 1, 6), release("release-1", 1, 6)] {
+        assert_eq!(host.lacks(&processes), None, "{host:?}");
+        assert_eq!(
+            host.lacks(&linked),
+            Some(Lack::Plugins(vec!["map".into()])),
+            "{host:?}"
+        );
+    }
+    assert_eq!(linked.linked(), ["map"]);
+    assert_eq!(build(&["map"], 1, 6).lacks(&linked), None);
+}
+
+#[test]
+fn a_release_reads_a_board_one_schema_ahead_and_refuses_two_or_a_newer_pin() {
+    let host = release("release-1", 2, 6);
+    assert_eq!(host.lacks(&entry("ahead", &[], 2, 7)), None);
+    assert_eq!(host.lacks(&entry("two", &[], 2, 8)), Some(Lack::Schema(8)));
+    assert_eq!(host.lacks(&entry("pinned", &[], 3, 6)), Some(Lack::Pin(3)));
+    // A project's build reads none ahead.
+    assert_eq!(
+        build(&[], 2, 6).lacks(&entry("ahead", &[], 2, 7)),
+        Some(Lack::Schema(7))
+    );
+}
+
+#[test]
+fn no_start_replaces_a_release_and_each_lack_says_what_serves_the_project() {
+    let running = release("release-1", 1, 6);
+    // Even a build that compiles the plugin and serves every project waits.
+    let ours = build(&["shelf"], 1, 6);
+    let shelved = entry("shelf-project", &["shelf"], 1, 6);
+    let Verdict::Waits(why) = judge(&running, &ours, &shelved, &registry(&[])) else {
+        panic!("a linked plugin waits on a release");
+    };
+    assert_eq!(
+        why,
+        "the running Symphony is the release release-1, which serves a plugin only from its \
+         process: shelf-project names the plugin shelf linked, and no start replaces a release's \
+         server: a [plugins.process] command for shelf in /work/shelf-project/symphony.toml lets \
+         it serve shelf-project (docs/PLUGIN_PROTOCOL.md)"
+    );
+    for (bumped, lacks) in [
+        (
+            entry("plain", &[], 2, 6),
+            "is the release release-1, at Symphony pin 1, older than plain's 2",
+        ),
+        (
+            entry("plain", &[], 1, 8),
+            "is the release release-1, which reads board schema 6 and one ahead, older than \
+             plain's 8",
+        ),
+    ] {
+        let Verdict::Refuse(why) = judge(&running, &build(&[], 2, 8), &bumped, &registry(&[]))
+        else {
+            panic!("a newer project is refused by a release");
+        };
+        assert_eq!(
+            why,
+            format!(
+                "the running Symphony {lacks}, and no start replaces a release's server: it \
+                 serves plain once a release that does is installed, which its reload follows"
+            )
+        );
+    }
+    assert_eq!(
+        judge(&running, &ours, &entry("ahead", &[], 1, 7), &registry(&[])),
+        Verdict::Serves
+    );
+}
+
+#[test]
+fn a_start_of_a_release_never_replaces_a_running_project_build() {
+    let running = build(&["shelf"], 1, 6);
+    let ours = release("release-2", 2, 6);
+    let bumped = entry("plain", &[], 2, 6);
+    let Verdict::Refuse(why) = judge(&running, &ours, &bumped, &registry(&[])) else {
+        panic!("a release's start does not replace a project's build");
+    };
+    assert_eq!(
+        why,
+        "the running Symphony is at Symphony pin 1, older than plain's 2: a start of a release \
+         never replaces a running Symphony: `just symphony --stop`, then `just symphony` in \
+         /work/plain, serves every registered project from the release"
+    );
+    // Where the release cannot serve every project, the project naming its plugin says so.
+    let Verdict::Refuse(why) = judge(
+        &running,
+        &ours,
+        &bumped,
+        &registry(&[entry("shelved", &["shelf"], 1, 6)]),
+    ) else {
+        panic!("a release lacking a registered plugin does not replace");
+    };
+    assert_eq!(
+        why,
+        "the running Symphony is at Symphony pin 1, older than plain's 2: a start of a release \
+         never replaces a running Symphony, and this one is the release release-2, which serves \
+         a plugin only from its process: shelved names the plugin shelf linked: /work/host must \
+         bump its Symphony, then run `just symphony` there"
+    );
+}
+
+#[test]
+fn a_release_build_is_its_manifest_and_a_running_one_its_front() {
+    let version = super::super::release::Version { major: 0, minor: 3 };
+    let manifest = Manifest {
+        release: "release-9".into(),
+        commit: "abc".into(),
+        serves: super::super::release::Serves {
+            schema: 6,
+            protocol: version,
+            tasks_api: version,
+            pin: 2,
+        },
+        client: "client/0".into(),
+        artifacts: Vec::new(),
+    };
+    let released = Build::released(&manifest, Path::new("/work/alpha"));
+    assert_eq!(
+        released,
+        Build {
+            by: "/work/alpha".into(),
+            ..release("release-9", 2, 6)
+        }
+    );
+    let front = symphony_api::Front {
+        pid: 1,
+        port: 2,
+        root: "/work/there".into(),
+        ready: true,
+        app: None,
+        tailnet: None,
+        orphans: 0,
+        plugins: Vec::new(),
+        pin: 2,
+        schema: 6,
+        projects: Vec::new(),
+        release: Some("release-9".into()),
+    };
+    assert_eq!(Build::of(&front).release.as_deref(), Some("release-9"));
 }
 
 impl Build {

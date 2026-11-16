@@ -1,10 +1,12 @@
 // What the unit tests share: the cases crates/symphony-api writes (wire.cases.json, `just
-// client-wire`), a browser's storage held in memory, and a server whose answers the test gives.
+// client-wire`), a browser's storage held in memory, a server whose answers the test gives, and the
+// one wait for a condition (`until`).
 // The tests run in Node, without a DOM: markup is drawn with react-dom/server, and the page's
 // globals are stubbed where a test needs one.
 
 import { isValidElement, type ReactElement, type ReactNode } from "react";
 import { expect, vi } from "vitest";
+import { BACKSTOP_MS } from "./unit-run";
 import type {
   Agent,
   Block,
@@ -321,6 +323,18 @@ export const reply = (status: number, body: unknown, etag?: string) =>
     status,
     headers: etag === undefined ? {} : { ETag: etag },
   });
+
+/**
+ * Waits until `condition` holds, its assertions passing, as `vi.waitFor` does: it looks again every
+ * 50 ms of real time, moving Vitest's fake timers on as far between looks where they are on. Its one
+ * time is the unit run's backstop (`BACKSTOP_MS`), never `vi.waitFor`'s own second, which a loaded
+ * machine reaches and which fails as the condition's assertion would. The test's own backstop, which
+ * started first, runs out first, and the run says it as a stall (src/unit-run.ts). Every test waits
+ * so: unit-run.test.ts fails on a `vi.waitFor` or `vi.waitUntil` anywhere else.
+ */
+export function until<T>(condition: () => T | Promise<T>): Promise<T> {
+  return vi.waitFor(condition, { timeout: BACKSTOP_MS });
+}
 
 /**
  * One turn of the event loop: what the code under test queued before it (a reply, a promise's

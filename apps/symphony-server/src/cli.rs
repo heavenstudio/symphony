@@ -76,8 +76,8 @@ when that server serves its project, and otherwise starts, registers and replace
                running server can serve it; run in a linked worktree, it registers none of that
                worktree's own repository
 
-  --serves     what this build serves, as one line of JSON: the plugin protocol's major and minor
-               and the board schema
+  --serves     what this build serves, as one line of JSON: the plugin protocol's major and minor,
+               the board schema and the Symphony pin
 
 The one server ignores --host and an in-repository --root; use --port to customize a server.
 ";
@@ -229,14 +229,15 @@ fn scratch(exe: &Path, args: &[String], database: &str, asks: &Path) -> i32 {
 const SERVES: &str = "--serves";
 
 /// What this build serves, as one line of JSON: the plugin protocol it speaks
-/// (docs/PLUGIN_PROTOCOL.md) and the board schema it reads and writes. A release's install asks
-/// the server it built, never the sources, and writes the answer in the release's manifest
-/// (docs/RELEASES.md, "The install").
+/// (docs/PLUGIN_PROTOCOL.md), the board schema it reads and writes and its Symphony pin
+/// (`symphony::machine::PIN`). A release's install asks the server it built, never the sources,
+/// and writes the answer in the release's manifest (docs/RELEASES.md, "The install").
 pub fn serves() -> String {
     let protocol = symphony_plugin::protocol::PROTOCOL;
     serde_json::json!({
         "protocol": {"major": protocol.major, "minor": protocol.minor},
         "schema": symphony_board::SCHEMA,
+        "pin": symphony::machine::PIN,
     })
     .to_string()
 }
@@ -383,7 +384,11 @@ fn start(options: Options) -> i32 {
             return 2;
         }
     };
-    let exe = match std::env::current_exe() {
+    // A release's server, run through the machine's `current`, starts by its own folder's path, so
+    // the server it starts stays that release when the link moves.
+    let released = symphony::machine::release::this()
+        .map(|(release, _)| release.join("bin").join(symphony::machine::release::SERVER));
+    let exe = match released.map_or_else(std::env::current_exe, Ok) {
         Ok(exe) => exe,
         Err(why) => {
             eprintln!("✖ Symphony: cannot find this program: {why}");

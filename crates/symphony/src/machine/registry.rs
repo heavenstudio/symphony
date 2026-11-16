@@ -65,6 +65,18 @@ impl Entry {
     pub fn holds(&self) -> bool {
         self.root.is_dir() && Project::load(&self.root).is_ok_and(|project| project.id == self.id)
     }
+
+    /// The plugins it names that are linked into the host: each one its file gives no
+    /// `[plugins.process]` command, read from the file as it is now
+    /// ([`crate::project::PluginProcess::named_at`]), so a command written since it registered
+    /// counts at once. A plugin that answers from a process any host serves.
+    pub fn linked(&self) -> Vec<String> {
+        let processes = crate::project::PluginProcess::named_at(&self.root);
+        (self.plugins.iter())
+            .filter(|name| !processes.contains(name))
+            .cloned()
+            .collect()
+    }
 }
 
 /// What [`Registry::add`] did.

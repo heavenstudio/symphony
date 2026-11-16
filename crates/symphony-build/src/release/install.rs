@@ -187,9 +187,11 @@ fn served(manifest: &Manifest) -> String {
         schema,
         protocol,
         tasks_api,
+        pin,
     } = manifest.serves;
     format!(
-        "{} serves board schema {schema}, plugin protocol {}.{} and tasks api {}.{}",
+        "{} serves board schema {schema}, plugin protocol {}.{} and tasks api {}.{}, at Symphony \
+         pin {pin}",
         manifest.release, protocol.major, protocol.minor, tasks_api.major, tasks_api.minor
     )
 }
@@ -303,10 +305,15 @@ fn read_serves(server: &str, board: &str) -> Result<Serves, String> {
              {theirs}: one release holds one schema"
         ));
     }
+    // A server built before it said its pin says none: 0, older than every project's.
+    let pin = (said.get("pin").and_then(Value::as_u64)).map_or(Ok(0), |pin| {
+        u32::try_from(pin).map_err(|_| format!("the release's symphony-server names the pin {pin}"))
+    })?;
     Ok(Serves {
         schema: ours,
         protocol: version(&said["protocol"], "plugin protocol")?,
         tasks_api: version(&board["api"], "tasks api")?,
+        pin,
     })
 }
 

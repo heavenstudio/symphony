@@ -364,11 +364,15 @@ fn replace(
         if installed && let Err(why) = stamp_install(&install, fingerprint) {
             eprintln!("· Symphony reload: could not stamp installed binary: {why}");
         }
-        home.record(&Running {
-            port: serve.port,
-            pid: i64::from(child.id()),
-            root: serve.root.display().to_string(),
-        })
+        let release = crate::home::release_of(exe);
+        home.record(
+            &Running {
+                port: serve.port,
+                pid: i64::from(child.id()),
+                root: serve.root.display().to_string(),
+            },
+            release.as_deref(),
+        )
         .map_err(|e| e.to_string())?;
         if let Some(client) = &client
             && let Err(why) = client.stamp()
@@ -389,11 +393,15 @@ fn replace(
             .recording
             .reopen(symphony_board::sweep::trigger::now());
         // The old server is still accepting. Restore its publication if the child failed after it.
-        let _ = home.record(&Running {
-            port: serve.port,
-            pid: i64::from(std::process::id()),
-            root: serve.root.display().to_string(),
-        });
+        let ours = symphony::machine::release::this().map(|(_, manifest)| &manifest.release);
+        let _ = home.record(
+            &Running {
+                port: serve.port,
+                pid: i64::from(std::process::id()),
+                root: serve.root.display().to_string(),
+            },
+            ours.map(String::as_str),
+        );
         return Err(why);
     }
     if let Some(client) = &mut client {
@@ -449,6 +457,29 @@ fn watch_with<W: Watcher + Send + 'static>(
     mut retry: Retry,
 ) -> Option<std::thread::JoinHandle<()>> {
     let lease = setup.lease?;
+    // A release's server builds nothing: it follows the machine's `current` link.
+    if let (Some((_, manifest)), Some(machine)) =
+        (symphony::machine::release::this(), serve.home.clone())
+    {
+        let release = manifest.release.clone();
+        return Some(crate::front::worker(
+            crate::front::RELOAD_WORKER,
+            move || {
+                follow(
+                    &serve,
+                    &Follow {
+                        machine,
+                        release,
+                        sockets,
+                        lease,
+                    },
+                    &shared,
+                    period.min(FOLLOW),
+                    retry,
+                );
+            },
+        ));
+    }
     let reload = move || {
         let (send, recv) = mpsc::sync_channel(1);
         let directories = Arc::new(Mutex::new(BTreeSet::<PathBuf>::new()));
@@ -624,6 +655,99 @@ fn watch_with<W: Watcher + Send + 'static>(
         }
     };
     Some(crate::front::worker(crate::front::RELOAD_WORKER, reload))
+}
+
+/// How often a release's server reads where the machine's `current` link points: one `readlink`.
+const FOLLOW: Duration = Duration::from_secs(1);
+
+/// What a release's server hands over when the machine's `current` moves: the machine folder, the
+/// release it runs, its listening sockets and its lease.
+struct Follow {
+    machine: PathBuf,
+    release: String,
+    sockets: Vec<OwnedFd>,
+    lease: File,
+}
+
+/// The reload of the server of the release `follow.release`: every `period`, whether the
+/// machine's `current` names another release, and when it does, the hand-off to that release's
+/// server, by its own folder's path, with no build. A release not installed whole, or whose server
+/// does not become ready, leaves this one serving, said on the notice, and is tried again when
+/// `retry` says; `current` named back at this release clears the notice. A starter's request to
+/// hand over is refused, said in the log: no start replaces a release's server
+/// ([`symphony::machine::host`]).
+fn follow(serve: &Serve, follow: &Follow, shared: &Shared, period: Duration, mut retry: Retry) {
+    let Follow {
+        machine,
+        release,
+        sockets,
+        lease,
+    } = follow;
+    let mut attempted: Option<String> = None;
+    while !shared.wait(period) {
+        if shared
+            .handover
+            .swap(false, std::sync::atomic::Ordering::SeqCst)
+        {
+            match crate::host::Handover::take(machine) {
+                Some(Ok(request)) => eprintln!(
+                    "· Symphony hand-off refused: this server is the release {release}, which only \
+                     its reload replaces, following {}; {} asked for {}",
+                    machine.join(symphony::machine::release::CURRENT).display(),
+                    request.root.display(),
+                    request.exe.display()
+                ),
+                Some(Err(why)) => eprintln!("· Symphony hand-off refused: {why}"),
+                None => {}
+            }
+        }
+        let Some(next) = symphony::machine::release::current(machine) else {
+            continue;
+        };
+        if &next == release {
+            if attempted.take().is_some()
+                && let Some(hub) = shared.api.get()
+            {
+                hub.tell_update(String::new());
+            }
+            continue;
+        }
+        if attempted.as_deref() == Some(next.as_str()) && !retry.again(&next) {
+            continue;
+        }
+        attempted = Some(next.clone());
+        eprintln!("· Symphony reload: current names {next}; handing over to its server");
+        let result = to_release(machine, &next)
+            .and_then(|exe| replace(serve, &exe, sockets, lease, &next, shared, None))
+            .map_err(|why| {
+                let again = retry.failed(&next);
+                format!(
+                    "The release {next} did not take over: {}. It is tried again at about {again}.",
+                    reason(&why)
+                )
+            });
+        if replaced(shared, result) {
+            return;
+        }
+    }
+}
+
+/// The server of the release `name` in `machine`, by its own folder's path, when the release is
+/// installed whole; why not otherwise.
+fn to_release(machine: &Path, name: &str) -> Result<PathBuf, String> {
+    use symphony::machine::release;
+    match release::installed(machine, name)? {
+        Some(_) => {
+            let exe = release::binary(machine, name, release::SERVER);
+            symphony::builds::runnable(&exe)
+                .then_some(exe.clone())
+                .ok_or_else(|| format!("{} does not run", exe.display()))
+        }
+        None => Err(format!(
+            "{} holds no manifest",
+            release::folder(machine, name).display()
+        )),
+    }
 }
 
 /// Why an update failed, ending where the notice's next sentence starts: a build that said nothing

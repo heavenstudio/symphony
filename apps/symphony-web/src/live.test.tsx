@@ -29,6 +29,7 @@ import {
   say,
   server,
   turn,
+  until,
 } from "./testing";
 import { CACHE_FORMAT, FEED_EVENT } from "./wire";
 
@@ -590,7 +591,7 @@ describe("the board's loop", () => {
     const run = loop();
     const delta = { version: 8, changes: [] };
     await following(run, opened, { version: 7, changes: [] }, delta);
-    await vi.waitFor(() => expect(run.frame.heard).toHaveBeenCalledTimes(1));
+    await until(() => expect(run.frame.heard).toHaveBeenCalledTimes(1));
     expect(run.frame.heard).toHaveBeenCalledWith(delta);
     run.page.abort();
     await run.done;

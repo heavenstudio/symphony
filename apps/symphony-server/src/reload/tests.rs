@@ -1349,3 +1349,52 @@ fn a_kept_build_says_so_in_one_line() {
     assert!(!was);
     assert!(told.is_empty(), "{told:?}");
 }
+
+/// The release a reload hands over to is its own folder's server, and only one installed whole:
+/// a folder without its manifest, or whose server does not run, is said why.
+#[test]
+fn a_reload_hands_over_only_to_a_release_installed_whole_by_its_own_folder() {
+    use symphony::machine::release;
+    let tree = Tree::new();
+    let machine = tree.path("machine");
+    let why = super::to_release(&machine, "release-1").unwrap_err();
+    assert_eq!(
+        why,
+        format!(
+            "{} holds no manifest",
+            release::folder(&machine, "release-1").display()
+        )
+    );
+    // Never run here: plain files of their own, which the test may change.
+    let build = tree.path("build");
+    for binary in release::BINARIES {
+        let path = tree.write(&format!("build/{binary}"), "#!/bin/sh\n");
+        std::fs::set_permissions(&path, std::os::unix::fs::PermissionsExt::from_mode(0o755))
+            .unwrap();
+    }
+    tree.write("client/index.html", "<p>");
+    let version = release::Version { major: 0, minor: 3 };
+    release::install(
+        &machine,
+        &release::Built {
+            release: "release-1",
+            commit: "abc",
+            serves: release::Serves {
+                schema: symphony_board::SCHEMA,
+                protocol: version,
+                tasks_api: version,
+                pin: symphony::machine::PIN,
+            },
+            binaries: &build,
+            client: &tree.path("client"),
+        },
+    )
+    .unwrap();
+    let server = release::folder(&machine, "release-1").join("bin/symphony-server");
+    assert_eq!(super::to_release(&machine, "release-1"), Ok(server.clone()));
+    std::fs::set_permissions(&server, std::os::unix::fs::PermissionsExt::from_mode(0o644)).unwrap();
+    assert_eq!(
+        super::to_release(&machine, "release-1"),
+        Err(format!("{} does not run", server.display()))
+    );
+}

@@ -10,7 +10,9 @@
 //! schema of the build that registered it: the host rule reads them ([`Registry::add`]).
 //!
 //! The releases installed on the machine live there too, `releases/NAME/`, with the `current` link
-//! naming the one the machine runs ([`release`]).
+//! naming the one the machine runs ([`release`]). Which build is the one server, and which projects
+//! it serves, is the host rule ([`host`]); when that build is the release's, the switch
+//! ([`switch`]).
 
 pub mod command;
 mod folder;
@@ -18,6 +20,7 @@ pub mod host;
 mod identity;
 mod registry;
 pub mod release;
+pub mod switch;
 
 pub use folder::dir;
 pub use identity::{installation_id, installation_id_in};

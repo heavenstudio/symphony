@@ -20,6 +20,9 @@ mod private_tests;
 #[path = "after_lifecycle/board_schema_tests.rs"]
 mod board_schema_tests;
 
+#[path = "after_lifecycle/release_tests.rs"]
+mod release_tests;
+
 #[path = "after_lifecycle/worktree_tests.rs"]
 mod worktree_tests;
 
