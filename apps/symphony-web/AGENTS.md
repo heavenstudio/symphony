@@ -668,17 +668,17 @@ What holds on every page, and each page's contract where its section above names
   the owner's choice, as the caps are.
   Other page kinds are reported separately for review.
   On the fixture (`entry_pages_fit_the_first_visit_budget_and_deferred_kinds_are_reported` prints
-  each page's requests) a first visit to `/` takes 112,520 bytes, `/tasks` 121,442, `/agents`
-  115,511, `/queue` 108,081, `/reports` 112,514, `/runs` 106,760, `/docs/` 139,015, a document
-  140,676 and a task's page 142,233, and a return that finds what it kept unchanged 2,031, 2,442,
-  2,307, 2,272, 574, 984, 574, 1,677 and 2,285. A first visit to a kind is its entry and its
+  each page's requests) a first visit to `/` takes 113,361 bytes, `/tasks` 122,311, `/agents`
+  116,347, `/queue` 108,915, `/reports` 113,344, `/runs` 111,216, `/docs/` 139,904, a document
+  141,589 and a task's page 143,419, and a return that finds what it kept unchanged 2,103, 2,586,
+  2,403, 2,368, 646, 1,080, 646, 820 and 2,405. A first visit to a kind is its entry and its
   sheets, the chunk every kind shares (React and the frame) and the pieces it shares with some of
   the others (the board's feed and keep; the card and the task readers of the board and the agents
   page; the media layer's chunk and sheet, home's, the documents', a task's page's and the chat's),
   beside the HTML, the shell and the page's reads; a move to another kind takes its entry and the
   pieces no kind before it took (`apps/symphony-web-tests/tests/browser/preload.rs`). A task's page's timeline, a chunk of
   its own, comes once its box nears the screen and its part has something to draw
-  ([A task's page](#a-tasks-page)), and is reported apart from its first visit: 12,355 bytes. The
+  ([A task's page](#a-tasks-page)), and is reported apart from its first visit: 12,309 bytes. The
   reads ahead start only once the page's own reads have answered (`cache_ahead.rs`) and go marked
   as prefetches, so the budget counts them outside the first visit, with the warmed modules
   (`prefetched_bytes`). Once a page has its data and is idle, the shell warms the chat's files
