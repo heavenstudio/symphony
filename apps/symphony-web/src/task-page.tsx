@@ -948,7 +948,7 @@ export function TaskPageView({ live, stale, freshness }: TaskPageViewProps) {
         // What the device drew is not the machines' work now: shown as out of touch until read.
         <LiveTaskPage live={live} connected={!stale && device === null} />
       )}
-      <PageNotices reconnecting={stale && onPage} error={error} device={device} />
+      <PageNotices reconnecting={stale && onPage} error={error} device={device} composer />
     </main>
   );
 }

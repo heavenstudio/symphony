@@ -4,6 +4,7 @@ use crate::common::NOW;
 use crate::{Case, git, scratch};
 use std::fs;
 use symphony_board::sys::local_minute;
+use symphony_board::usage::Prices;
 use symphony_board::{Message, NewLaunch, Role, Session, Task};
 
 #[test]
@@ -141,6 +142,36 @@ const STAGES: &str = r#"{
    "since": 1800000000.0
   },
   "closed": null
+ }"#;
+
+/// `show --json`'s `tokens` for a task none of whose sessions' beats spent any: every sum zero,
+/// priced at the table every build embeds, which says the day its prices were read.
+fn no_tokens() -> String {
+    NO_TOKENS.replace("READ", &Prices::embedded().read)
+}
+
+const NO_TOKENS: &str = r#"{
+  "total": {
+   "input": 0,
+   "cache_write_5m": 0,
+   "cache_write_1h": 0,
+   "cache_read": 0,
+   "output": 0,
+   "calls": 0
+  },
+  "cost": {
+   "dollars": 0.0,
+   "input": 0.0,
+   "cache_write_5m": 0.0,
+   "cache_write_1h": 0.0,
+   "cache_read": 0.0,
+   "output": 0.0,
+   "unpriced": [],
+   "prices": "READ"
+  },
+  "by_role": [],
+  "by_round": [],
+  "rows": []
  }"#;
 
 #[test]
@@ -402,6 +433,7 @@ fn json_is_the_records_as_python_lays_them_out() {
             ("thread", py::list(thread, 1)),
             ("children", py::list(children, 1)),
             ("stages", stages(&orch)),
+            ("tokens", no_tokens()),
         ],
         0,
     );
