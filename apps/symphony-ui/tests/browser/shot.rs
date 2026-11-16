@@ -464,6 +464,61 @@ fn a_page_busy_on_the_screen_is_waited_for_and_one_busy_off_it_is_not() {
     );
 }
 
+/// A page whose first read failed is drawn saying so, never busy: the runs, a run's page and
+/// Reports, each read refused, are shot saying they could not be read (`data-ready=failed`), with
+/// no region busy left on the page, which would hold the shot to its timeout.
+#[test]
+fn a_page_whose_first_read_failed_is_shot_saying_so() {
+    let site = site();
+    let Some(chrome) = chrome::find() else {
+        eprintln!("no Chrome on this machine (SYMPHONY_CHROME names one): shot not run");
+        return;
+    };
+    for path in [
+        symphony_api::RUNS_PATH,
+        symphony_api::RUN_PATH,
+        symphony_api::REPORTS_PATH,
+    ] {
+        site.fail_route(path, true);
+    }
+    let scratch = Scratch::new("failed");
+    let run = format!("/runs?run={:032x}", 1);
+    for (n, (page, said_so)) in [
+        ("/runs", "The runs could not be read"),
+        (run.as_str(), "The run could not be read"),
+        ("/reports", "The reports could not be read"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let out = scratch.join(&format!("failed-{n}.png"));
+        let eval = format!(
+            "[document.querySelectorAll('[data-ready=failed]').length, \
+             document.querySelectorAll('[aria-busy=true]').length, \
+             document.body.innerText.includes({})]",
+            json!(said_so)
+        );
+        let output = shot(
+            &chrome,
+            &[
+                &site.url(page),
+                "--out",
+                out.to_str().unwrap(),
+                "--eval",
+                &eval,
+            ],
+        )
+        .output()
+        .unwrap();
+        assert!(output.status.success(), "{page}: {}", said(&output));
+        assert_eq!(
+            printed(&output)[0],
+            json!([1, 0, true]),
+            "{page}: drawn failed, nothing busy, saying {said_so:?}"
+        );
+    }
+}
+
 /// `--attach` stores each picture the run saved, by its content, in the uploads of the main
 /// checkout of the repository the shot runs in, and prints the line a thread post carries for it,
 /// in the order taken; the pictures stay where they were saved.

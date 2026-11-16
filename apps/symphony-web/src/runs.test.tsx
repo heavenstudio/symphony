@@ -35,6 +35,7 @@ import {
   type RunTold,
   RunView,
   type RunViewProps,
+  RunWaiting,
   readEarlier,
   readNow,
   readOlder,
@@ -1001,6 +1002,18 @@ describe("a run's page", () => {
         {...fields}
       />,
     );
+
+  it("is its ghost, busy, until its first answer, and once that read failed says so, not busy", () => {
+    const loading = renderToStaticMarkup(<RunWaiting error={null} onRetry={() => {}} />);
+    expect(loading).toMatch(/^<div class="runs run-page" data-ready="loading" aria-busy="true">/);
+    expect(loading).toContain("Loading the run…");
+    // A failed page is drawn, not busy: `symphony shot` pictures what it says.
+    const failed = renderToStaticMarkup(<RunWaiting error="Gone." onRetry={() => {}} />);
+    expect(failed).toMatch(/^<div class="runs run-page" data-ready="failed" aria-busy="false">/);
+    expect(failed).toContain("The run could not be read");
+    expect(failed).toContain("Gone.");
+    expect(failed).not.toContain("Loading the run…");
+  });
 
   it("says how it went, its facts, its steps as bars, the tests it failed and its suites", () => {
     const html = view();
