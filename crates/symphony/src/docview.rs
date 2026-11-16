@@ -782,5 +782,8 @@ fn media_urls(media: &mut Media) -> Vec<&mut String> {
                     .flat_map(|item| std::iter::once(&mut item.src).chain(item.poster.iter_mut())),
             )
             .collect(),
+        // A kind a later minor of the kit adds names its URLs here before a branch's page shows it
+        // (`crates/symphony-api/tests/vocabulary_drawn.rs` holds every kind to an arm).
+        _ => Vec::new(),
     }
 }

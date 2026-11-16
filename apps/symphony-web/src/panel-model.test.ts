@@ -260,10 +260,14 @@ describe("the chat's conversation", () => {
       { ...ask, status: 1 },
       { ...ask, messages: [{ ...message, seq: "1" }] },
       { ...ask, messages: [{ ...message, by: undefined }] },
-      { ...ask, messages: [{ ...message, blocks: [{ type: "x" }] }] },
+      { ...ask, messages: [{ ...message, blocks: [{ type: 7 }] }] },
+      { ...ask, messages: [{ ...message, blocks: [{ type: "code" }] }] },
     ]) {
       expect(readAskReply({ ask: wrong }), JSON.stringify(wrong)).toBeNull();
     }
+    // A block of a kind a newer server sends is the chat's to say, not a failed read.
+    const newer = { ...ask, messages: [{ ...message, blocks: [{ type: "marquee" }] }] };
+    expect(readAskReply({ ask: newer })?.ask).toEqual(newer);
     const { blocks: ___, ...bare } = message as typeof message & { blocks?: unknown };
     expect(readAskReply({ ask: { ...ask, messages: [bare] } })?.ask.messages).toEqual([bare]);
   });

@@ -25,122 +25,6 @@ fn filler(c: &Case) {
     }
 }
 
-#[test]
-fn embedding_maintenance_validates_session_batch_size_and_task_before_loading_a_model() {
-    let c = Case::new();
-    let missing = c.run_as("", &["embed"], "");
-    assert_eq!(missing.code, 2);
-    assert!(missing.err.contains("no session"));
-    let actor = c.register("worker");
-    for size in ["0", "65", "-1"] {
-        let ran = c.run_as(&actor, &["embed", "--batch-size", size], "");
-        assert_eq!(ran.code, 1);
-        assert!(ran.err.contains("--batch-size must be between 1 and 64"));
-        let threads = c.run_as(&actor, &["embed", "--threads", size], "");
-        assert_eq!(threads.code, 1);
-        assert!(threads.err.contains("--threads must be between 1 and 64"));
-    }
-    let ran = c.run_as(&actor, &["embed", "--task", "missing/task"], "");
-    assert_eq!(ran.code, 1);
-    assert!(ran.err.contains("no task 'missing/task'"), "{}", ran.err);
-}
-
-#[test]
-fn embedding_maintenance_reuses_current_chunks_without_loading_a_model_or_requiring_an_agent() {
-    use symphony_board::embedding::{DIMENSIONS, MODEL_ID, REVISION, text_hash};
-    let mut c = Case::new();
-    let root = crate::scratch("embedding-maintenance");
-    c.env.cwd = crate::repository(&root);
-    // A regression that loads the runtime fails its checksum before it can use the network.
-    let cache = root.join(".git/symphony/models").join(REVISION);
-    std::fs::create_dir_all(&cache).unwrap();
-    std::fs::write(
-        cache.join("model.onnx"),
-        "model loading is forbidden in this test",
-    )
-    .unwrap();
-    create(&c, "cached/task", "Engine task", "", 2);
-    let mut vector = vec![0.0_f32; DIMENSIONS];
-    vector[0] = 1.0;
-    c.store().client().query(
-        "CREATE type::record('task_chunk', ['cached/task', 'brief', 0]) SET slug = 'cached/task', source = 'brief', source_hash = $hash, text_hash = $chunk_hash, text = 'Engine task', model = $model, embedding = $vector; CREATE type::record('task_embedding_source', ['cached/task', 'brief']) SET slug = 'cached/task', source = 'brief', source_hash = $hash, model = $model, parts = 1;",
-        serde_json::json!({"hash":text_hash("Engine task\n"),"chunk_hash":text_hash("Engine task"),"model":MODEL_ID,"vector":vector}),
-    ).unwrap();
-    for _ in 0..2 {
-        let ran = c.run_as("", &["embed", "--maintenance"], "");
-        assert_eq!(ran.code, 0, "{}", said(&ran));
-        assert!(
-            ran.out
-                .contains("embedded 0 tasks, 0 changed sources, 0 chunks"),
-            "{}",
-            said(&ran)
-        );
-        assert!(!cache.join("tokenizer.json").exists());
-    }
-    let store = c.store();
-    let key = text_hash(&format!(
-        "{}\n{}\n{}",
-        store.client().addr(),
-        symphony_board::NAMESPACE,
-        store.client().database()
-    ));
-    let writer = std::fs::OpenOptions::new()
-        .read(true)
-        .write(true)
-        .open(
-            root.join(".git/symphony/models")
-                .join(format!("maintenance-{key}.lock")),
-        )
-        .unwrap();
-    writer.lock().unwrap();
-    let busy = c.run_as("", &["embed", "--maintenance"], "");
-    assert_eq!(busy.code, 0, "{}", said(&busy));
-    assert!(
-        busy.out.contains("an embedding pass is already running"),
-        "{}",
-        said(&busy)
-    );
-    let actor = c.register("worker");
-    let refused = c.run_as(&actor, &["embed"], "");
-    assert_eq!(refused.code, 1, "{}", said(&refused));
-    assert!(
-        refused
-            .err
-            .contains("another embedding pass is already running"),
-        "{}",
-        said(&refused)
-    );
-    // Unlocked, not only closed: a child another test forked shares the lock until it execs.
-    writer.unlock().unwrap();
-    drop(writer);
-    let owner = c.run_as("owner", &["embed", "--maintenance"], "");
-    assert_eq!(owner.code, 1, "{}", said(&owner));
-    assert!(
-        owner.err.contains("the owner acts from the Symphony"),
-        "{}",
-        said(&owner)
-    );
-    create(&c, "new/task", "A new task", "new knowledge", 2);
-    let selected = c.run_as("", &["embed", "--maintenance", "--task", "cached/task"], "");
-    assert_eq!(selected.code, 0, "{}", said(&selected));
-    assert!(
-        selected
-            .out
-            .contains("embedded 0 tasks, 0 changed sources, 0 chunks"),
-        "{}",
-        said(&selected)
-    );
-    let changed = c.run_as("", &["embed", "--maintenance"], "");
-    assert_eq!(changed.code, 2, "{}", said(&changed));
-    assert!(
-        changed.err.contains("SHA-256 mismatch"),
-        "{}",
-        said(&changed)
-    );
-    assert!(!cache.join("tokenizer.json").exists());
-    std::fs::remove_dir_all(root).unwrap();
-}
-
 fn json(c: &Case, args: &[&str]) -> Value {
     let mut args = args.to_vec();
     args.push("--json");
@@ -156,10 +40,6 @@ fn search_keeps_relevance_order_and_list_fields_and_filters_before_limiting() {
     let reserved = c.register("worker");
     c.store().reserve("z-title", &reserved, 60.0).unwrap();
     let rows = json(&c, &["search", "needle"]);
-    // No repository/model cache is available in this fixture: fallback must stay fully local
-    // to the keyword store, preserve every JSON field and never try to load/download a model.
-    assert_eq!(json(&c, &["search", "needle", "--mode", "hybrid"]), rows);
-    assert_eq!(json(&c, &["search", "needle", "--mode", "keyword"]), rows);
     let rows = rows["tasks"].as_array().unwrap();
     assert_eq!(rows.len(), 2);
     assert_eq!(rows[0]["slug"], "needle");
@@ -193,6 +73,90 @@ fn search_keeps_relevance_order_and_list_fields_and_filters_before_limiting() {
         c.ok("owner", &["search", "needle", "--limit", "1"]),
         "p4 blocked     needle                       Exact identifier\n  title: Exact identifier\n"
     );
+}
+
+/// The rows of each table the deleted search by meaning wrote, which the schema still defines.
+fn derived_rows(c: &Case) -> Vec<Value> {
+    c.store()
+        .client()
+        .query(
+            "RETURN count(SELECT id FROM task_chunk); RETURN count(SELECT id FROM task_embedding_source); RETURN count(SELECT id FROM task_embedding_checkpoint);",
+            serde_json::json!({}),
+        )
+        .unwrap()
+}
+
+/// A board an older build left its search by meaning's rows on (chunks with their vectors under
+/// the HNSW index, their sources, the pass's checkpoint) opens, takes writes and searches by words
+/// as one without them: the rows are neither read nor removed, and a chunk's text is no match.
+#[test]
+fn a_board_holding_old_embeddings_opens_and_searches_by_words_alone() {
+    let c = Case::new();
+    filler(&c);
+    create(&c, "engine/jump", "Jump drive", "The engine hums", 2);
+    let before = json(&c, &["search", "engine"]);
+    assert_eq!(before["tasks"].as_array().unwrap().len(), 1);
+
+    let mut vector = vec![0.0_f32; 384];
+    vector[0] = 1.0;
+    c.store()
+        .client()
+        .query(
+            "CREATE type::record('task_chunk', ['engine/jump', 'brief', 0]) SET slug = 'engine/jump', source = 'brief', source_hash = 'old', text_hash = 'old', text = 'Jump drive The engine hums', model = $model, embedding = $vector;
+             CREATE type::record('task_chunk', ['other/a', 'brief', 0]) SET slug = 'other/a', source = 'brief', source_hash = 'old', text_hash = 'old', text = 'an engine only this chunk names', model = $model, embedding = $vector;
+             CREATE type::record('task_embedding_source', ['engine/jump', 'brief']) SET slug = 'engine/jump', source = 'brief', source_hash = 'old', model = $model, parts = 1;
+             CREATE type::record('task_embedding_source', ['other/a', 'brief']) SET slug = 'other/a', source = 'brief', source_hash = 'old', model = $model, parts = 1;
+             CREATE task_embedding_checkpoint:board SET snapshot = {model: $model, sources: 2};",
+            serde_json::json!({
+                "model": "BAAI/bge-small-en-v1.5@5c38ec7c:cls-l2:chunks510:v1",
+                "vector": vector,
+            }),
+        )
+        .unwrap();
+    let held = vec![
+        serde_json::json!(2),
+        serde_json::json!(2),
+        serde_json::json!(1),
+    ];
+    assert_eq!(derived_rows(&c), held);
+
+    // The same answer, to the field, and in text as before.
+    assert_eq!(json(&c, &["search", "engine"]), before);
+    assert_eq!(
+        c.ok("owner", &["search", "engine"]),
+        "p2 ready       engine/jump                  Jump drive\n  body: The engine hums\n"
+    );
+    // The board takes writes beside the old rows, and searches what they wrote.
+    create(&c, "engine/warp", "Warp engine", "", 2);
+    c.store()
+        .say("other/b", "owner", "the engine room is cold", None)
+        .unwrap();
+    let found = json(&c, &["search", "engine"]);
+    let mut slugs: Vec<_> = found["tasks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|row| row["slug"].as_str().unwrap())
+        .collect();
+    slugs.sort_unstable();
+    assert_eq!(slugs, ["engine/jump", "engine/warp", "other/b"]);
+    assert_eq!(derived_rows(&c), held, "ignored, never removed");
+
+    // The modes and the catch-up are gone from the command line, refused as any unknown word is.
+    for mode in ["keyword", "vector", "hybrid", "exact"] {
+        let ran = c.run_as("owner", &["search", "engine", "--mode", mode], "");
+        assert_eq!(ran.code, 2, "{}", said(&ran));
+        assert!(
+            ran.err.contains("unrecognized arguments: --mode"),
+            "{}",
+            said(&ran)
+        );
+        assert!(ran.out.is_empty(), "{}", said(&ran));
+    }
+    let ran = c.run_as("owner", &["embed", "--maintenance"], "");
+    assert_eq!(ran.code, 2, "{}", said(&ran));
+    assert!(ran.err.contains("no command 'embed'"), "{}", said(&ran));
+    assert_eq!(derived_rows(&c), held);
 }
 
 #[test]
@@ -342,17 +306,15 @@ fn search_caps_query_bytes_and_terms_including_analyzer_boundaries() {
             "search query must contain at most 32 terms",
         ),
     ] {
-        for mode in ["keyword", "vector", "hybrid", "exact"] {
-            for json in [false, true] {
-                let mut args = vec!["search", &query, "--mode", mode];
-                if json {
-                    args.push("--json");
-                }
-                let ran = c.run_as("owner", &args, "");
-                assert_eq!(ran.code, 1, "{} bytes: {}", query.len(), ran.err);
-                assert!(ran.out.is_empty());
-                assert_eq!(ran.err, format!("✖ {message}\n"));
+        for json in [false, true] {
+            let mut args = vec!["search", &query];
+            if json {
+                args.push("--json");
             }
+            let ran = c.run_as("owner", &args, "");
+            assert_eq!(ran.code, 1, "{} bytes: {}", query.len(), ran.err);
+            assert!(ran.out.is_empty());
+            assert_eq!(ran.err, format!("✖ {message}\n"));
         }
     }
 }

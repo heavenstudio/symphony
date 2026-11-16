@@ -42,10 +42,6 @@ serde_json = { version = "1", features = ["arbitrary_precision", "float_roundtri
 # The project file: `[project] id` (src/project.rs), and `[board] on_review`, the command a task
 # moving to review starts (src/on_review.rs).
 toml.workspace = true
-# Local meaning search, approved by tasks-search-embedding-model (A, 2026-10-29).
-tokenizers.workspace = true
-tract-onnx.workspace = true
-tract-linalg.workspace = true
 sha2.workspace = true
 # `tasks run` becomes the command it records and watches it from a process of its own, where it
 # cannot, runs it as a child (src/cli/recorder.rs); the machine id is read without following a link;

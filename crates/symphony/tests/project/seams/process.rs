@@ -533,6 +533,12 @@ fn a_plugins_process_gives_its_navigation_and_theme_from_its_declaration_with_no
     assert!(piped.theme("other").is_none());
     // The project's theme package is the process's.
     assert_eq!(symphony::theme::Package::of(&project).name, "Every");
+    // A name the package gives is the theme's own: the header opens with it.
+    assert_eq!(
+        symphony::theme::Package::of(&project).wordmark(),
+        Some("Every")
+    );
+    assert_eq!(project.view().wordmark, "Every");
     assert!(symphony::theme::problems(&project).is_empty());
     assert!(lines(&symphony::plugins::record(&project, &tree.root)).is_empty());
 }

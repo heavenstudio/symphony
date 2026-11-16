@@ -104,8 +104,8 @@ neither serves no `.html` file, as its patterns serve none they leave out.
 | Key | Default | What it sets |
 | --- | --- | --- |
 | `package` | the Symphony's own | a theme package a selected plugin brings, by name |
-| `name` | the package's, else the project's | the name in the header and the tab |
-| `icon` | the package's, else none | the icon of the header and the tab |
+| `name` | the package's, else the project's | the name in the tab, and in the header once the theme has a name or an icon of its own; with neither, the header says Symphony |
+| `icon` | the package's, else the Symphony's mark, the fermata | the icon of the header and the tab |
 | `stylesheet` | none | a stylesheet served after the package's |
 | `tokens` | none | `[theme.tokens]`: the package's tokens set over, by name (`primary = "#a33"`) |
 | `layouts` | none | `[theme.layouts]`: a variant for each region, `header` (`default`, `compact`) and `home` (`default`, `focus`) |
