@@ -1,10 +1,12 @@
 //! The project file's `[board]` table: the board's export, what a finished worktree may hold, the
 //! guide task messages render as part of, what the board starts when a task moves to review and
 //! once one lands, the cap on an orchestrator's open tasks, when the pipeline alarm raises, the
-//! size past which the sweep asks for a check of the evidence it set aside, and the project's own
-//! tools the board reads beside its own: a machine-work reader, a folder of test-slot locks and a
-//! folder of landing assessments. A path there is project-relative, and one under `.git/` names the
-//! repository's common git folder; none is the Symphony's default, which reads nothing there.
+//! size past which the sweep asks for a check of the evidence it set aside, the folder of the
+//! machine's PostgreSQL programs, and the project's own tools the board reads beside its own: a
+//! machine-work reader, a folder of test-slot locks and a folder of landing assessments. A path
+//! there is project-relative, and one under `.git/` names the repository's common git folder, but
+//! PostgreSQL's, which is the machine's and absolute; none is the Symphony's default, which reads
+//! nothing there.
 
 use serde::Deserialize;
 use std::collections::BTreeMap;
@@ -101,6 +103,18 @@ impl Board {
                 "[board] swept_cap_gb is {gb}; it is a number of gigabytes over 0"
             ));
         }
+        // The folder of the machine's PostgreSQL programs, which the board reads itself
+        // (`symphony_board::server::postgres::programs`): the machine's own, so an absolute path,
+        // never one inside the project; checked here so a project's lint refuses what the board
+        // would not take.
+        if let Some(folder) = &file.postgresql
+            && !std::path::Path::new(folder).is_absolute()
+        {
+            return Err(format!(
+                "[board] postgresql is {folder:?}; it is the absolute folder of the machine's \
+                 PostgreSQL programs"
+            ));
+        }
         Ok(Board {
             export: inside("[board] export", file.export)?,
             disposable: file.disposable,
@@ -137,6 +151,7 @@ pub(super) struct FileBoard {
     slot_locks: Option<String>,
     assessments: Option<String>,
     swept_cap_gb: Option<f64>,
+    postgresql: Option<String>,
     #[serde(flatten)]
     pub(super) unknown: super::file::Unknown,
 }

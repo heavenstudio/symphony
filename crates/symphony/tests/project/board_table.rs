@@ -1,6 +1,6 @@
 //! `symphony.toml`'s `[board]` table: the guide, what a review starts, the cap on an
-//! orchestrator's open tasks, when the pipeline alarm raises and the cap on the evidence the sweep
-//! sets aside, each key's default and what it refuses.
+//! orchestrator's open tasks, when the pipeline alarm raises, the cap on the evidence the sweep
+//! sets aside and the folder of the machine's PostgreSQL, each key's default and what it refuses.
 
 use super::manifest::{parsed, refused};
 
@@ -110,4 +110,35 @@ fn the_board_table_takes_the_cap_on_what_the_sweep_sets_aside_as_the_board_reads
         refused("[board]\nswept_cap_gb = 0\n")
             .contains("[board] swept_cap_gb is 0; it is a number of gigabytes over 0")
     );
+}
+
+#[test]
+fn the_board_table_takes_the_folder_of_the_machines_postgresql_as_the_board_reads_it() {
+    // The board reads the folder itself; the project takes what it takes and refuses what it
+    // refuses: a folder of the machine's, so absolute, never one inside the project.
+    let named = "[board]\npostgresql = \"/opt/homebrew/opt/postgresql@18/bin\"\n";
+    for (text, folder) in [
+        ("", None),
+        (named, Some("/opt/homebrew/opt/postgresql@18/bin")),
+    ] {
+        assert!(parsed(text).is_ok(), "{text}");
+        let root = std::env::temp_dir().join(format!(
+            "symphony-postgresql-{}-{}",
+            std::process::id(),
+            text.len()
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("symphony.toml"), text).unwrap();
+        assert_eq!(
+            symphony_board::server::postgres::programs(&root),
+            Ok(folder.map(std::path::PathBuf::from)),
+            "{text}"
+        );
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+    assert!(refused("[board]\npostgresql = \"pg/bin\"\n").contains(
+        "[board] postgresql is \"pg/bin\"; it is the absolute folder of the machine's \
+             PostgreSQL programs"
+    ));
+    assert!(refused("[board]\npostgresql = 18\n").contains("postgresql"));
 }

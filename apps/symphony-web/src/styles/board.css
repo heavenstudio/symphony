@@ -266,8 +266,14 @@ form input, form textarea, .filters input { font:inherit; font-size:var(--fs-sm)
 .feed-notice-space { display:flex; visibility:hidden; }
 /* The final invisible notice reserves its wrapped height in both feed states. Its margin
    adds the fixed notice's lift past main's own end padding, so page-end content clears the
-   notice; the lift stays outside the box whose height the page keeps (live.rs). */
+   notice; the lift stays outside the box whose height the page keeps (live.tsx). */
 .page-notice-reserve { margin-bottom:calc(var(--feed-notice-bottom) + var(--sp-4) - var(--page-end)); }
+/* The block the stack shares with its reserve draws nothing of its own: unseen, as the reserve
+   is, its moves while the page loads are no layout shift; the stack in it is seen. */
+.page-notice-end { visibility:hidden; }
+.page-notice-end > .stale { visibility:visible; }
+/* The notices float over the window's foot, above the dock; on a phone, a page's that ends in a
+   composer are in its flow, under it (below). */
 .stale { position:fixed; bottom:var(--feed-notice-bottom); left:var(--sp-4); z-index:5; background:color-mix(in srgb, var(--c) 12%, var(--background)); }
 .notice-stack { display:grid; gap:var(--sp-2); }
 .notice-stack[hidden] { display:none; }
@@ -405,6 +411,13 @@ a.bar:hover { background:var(--background); }
   .filters:not([data-open=true]) { display:none; }
   .board-scroll, .ghost-pipeline { max-height:max(280px,calc(100dvh - 323px - var(--board-dock,0px))); }
   .filters[data-open=true] + .kanban > .board-scroll { max-height:max(280px,calc(100dvh - 472px - var(--board-dock,0px))); }
+  /* A page that ends in a composer has its notices in its flow, under it: a band fixed over a
+     phone's page covers whatever scrolls through it, the composer among it. Drawn at their own
+     place, the top of the block they share with their reserve (live.tsx), they stand in its room
+     and take none of their own, so a notice coming or going moves nothing, whatever lays out the
+     page around that block; they pass under the header and the dock as the page does. Every
+     other page's float, as wide: nothing is under them to clear, and they are its one sign. */
+  .page-notice-end.under-composer > .stale { position:absolute; bottom:auto; left:auto; z-index:auto; }
 }
 /* The focus home: the next card and the queue, without the tiles and the progress. */
 html[data-layout-home=focus] .dash > .tiles, html[data-layout-home=focus] .dash > .dash-grid { display:none; }

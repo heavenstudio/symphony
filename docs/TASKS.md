@@ -2391,9 +2391,10 @@ landing](#the-default-landing)).
   `default_branch` (the branch tasks land on), `[plugins]`'s `crates` and `process` (the code
   and the command that answer for the project), `[verdicts]`, `[land]` and `[releases]`, which
   `[land] check_paths` names, `[stamps]`, and `[board]`'s `on_review`, `on_land`,
-  `machine_work_reader` (an executable the server runs) and `assessments` (where a project's
-  landing assessments are read). Every other key is a name, a number, a switch or a folder
-  nothing runs. The `tests` reader takes
+  `machine_work_reader` (an executable the server runs), `postgresql` (the folder whose
+  PostgreSQL programs the board runs) and `assessments` (where a project's landing assessments
+  are read). Every other key is a name, a number, a switch or a folder of no program the
+  Symphony runs. The `tests` reader takes
   any green test run at the tip: that the run is the settings check is the assessment's reason
   and the thread's evidence.
 - **`just tasks stamps [SLUG]`** prints the catalogue, where it was read and each stamp's
@@ -3220,7 +3221,7 @@ adds a step moves nothing either: the steps fit the box, what does not fit fadin
 From 900 px wide, where the lanes replace the list, the timeline is shown whole, with no
 "Show all" (the owner's choice: a collapse there saves little room and hides the lanes):
 the box grows to hold every lane and keeps that height for the next visit, a task never
-drawn there taking a typical whole timeline's, 408 px. The whole of the lanes' part the
+drawn there taking a typical whole timeline's, 508 px. The whole of the lanes' part the
 focus is on (a click focuses one too) is said in the legend's place while one has it, so
 the box does not grow for it.
 The timeline itself is a chunk of its own (`apps/symphony-web/src/timeline.tsx`),
@@ -3228,15 +3229,23 @@ which its box loads once it nears the screen and its read has something to draw,
 page's first draw does not wait for it. On a phone it is a list: a row per
 stage with its start, its label, its length and a bar as long, the wait in it drawn
 lighter; under each stage the builds, tests and gate changes that began in it (the
-review gate's are its rounds), a build or test named by its recipe, the machine's by
+review gate's are its rounds), a build or test named by its command, the machine's by
 what it ran and its commit; the verdict after a review's bar, and a striped bar for a
 run going on now; a stage left within half a minute has no row. From 900 px wide it
-draws lanes over the same hours: the stage, the executor, the reviewer, builds and
-tests (runs that overlap a row each), and a thin row per gate, each state by its
-pattern as well as its colour (met solid, missing dotted, waived dashed, held
-double), with a line at now. A word in the lanes is drawn only where it fits; every
+draws lanes over the same hours: the stage, the executor, the reviewer, the builds and
+the tests, each a lane of its own (a row each for runs that overlap, or where one is
+queued so soon after another's end, half a percent of the hours drawn, that the two
+would read as one bar: no two runs are drawn as one; a lane that needs more than six
+rows, a burst of runs on a timeline of days, draws them thin with no words under them),
+and a thin row per gate, each state by its pattern as well as its colour (met solid,
+missing dotted, waived dashed, held double), with a line at now. A word in the lanes is drawn only where it fits; every
 part of them is said to assistive technology and reached by the arrow keys, and the
-list stays for assistive technology beside them. The pictures it follows are
+list stays for assistive technology beside them. A run's words name its command, its
+wait to start and its run time apart (to the second under a minute), how it ended, its
+commit, who ran it and where: a pointer resting on its part reads them; wide, its part
+in its lane with the focus (the arrow keys, a click or a tap) says them in the legend's
+place, and on a phone its row a tap focused says them under its bar, growing upward in
+a box that clips, the rows under it where they were. The pictures it follows are
 `docs/analysis/reports-timeline-phone.svg` and
 `docs/analysis/reports-timeline-wide.svg`.
 

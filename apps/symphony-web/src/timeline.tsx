@@ -334,17 +334,32 @@ function BarView({ bar, word }: { bar: Bar; word: [string, string] | null }) {
   );
 }
 
+/** A build's or a test's row: a tap (or a script) puts the focus on it, in no tab order, the lanes'
+ * parts being the keyboard's; while it has it, the style sheet shows all of the run under its bar. */
+const isRun = (row: Row) => row.sub && !row.event;
+
 function RowView({ row }: { row: Row }) {
   const kind = !row.sub ? "tl-row" : row.event ? "tl-row tl-sub tl-event" : "tl-row tl-sub";
+  const run = isRun(row);
   return (
     <>
       {row.day !== null && <li className="tl-day">{row.day}</li>}
-      <li className={kind} style={style({ "--c": `var(--${row.tone})` })} title={row.title}>
+      <li
+        className={kind}
+        style={style({ "--c": `var(--${row.tone})` })}
+        title={row.title}
+        tabIndex={run ? -1 : undefined}
+      >
         <span className="tl-at">{row.at}</span>
         <span className="tl-mark" aria-hidden="true" />
         <span className="tl-label">{row.label}</span>
         {row.took !== null && <span className="tl-took">{row.took}</span>}
         {row.bar !== null && <BarView bar={row.bar} word={row.word} />}
+        {run && (
+          <span className="tl-facts" aria-hidden="true">
+            {row.title}
+          </span>
+        )}
       </li>
     </>
   );
@@ -405,6 +420,7 @@ function LanesView({ lanes, at }: { lanes: Lanes; at: Stops }) {
       key={lane.key}
       className="tl-lane"
       data-lane={lane.key}
+      data-dense={lane.dense ? "" : undefined}
       style={style({ "--rows": String(lane.rows) })}
     >
       <span className="tl-name">

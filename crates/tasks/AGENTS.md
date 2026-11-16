@@ -139,7 +139,10 @@ and never stored; `stages.rs` where a task's time went
 release and reclaim takes, `ending.rs` the asks to end, `apart.rs` a start off a reader's thread,
 `left.rs` the private replay's record, `snapshot.rs` the snapshots, `hold.rs`, `reclaim.rs`,
 `storage.rs` the SurrealKV settings, `export.rs` what a refresh reads of a running board, and
-`scratch.rs` a fixture's supervised server. `port.rs` is a child server's loopback port.
+`scratch.rs` a fixture's supervised server. `postgres.rs` is the board's PostgreSQL beside it,
+the machine's own from `[board] postgresql`, which `Home` starts and stops for a scratch board
+alone, on a socket under `/tmp` and no TCP; no board reads from it yet. `port.rs` is a child
+server's loopback port.
 `board_health.rs` is the query log and the hour the Symphony serves
 ([TASKS](../../docs/TASKS.md#board-health)). The owner's side is TASKS's [stuck
 servers](../../docs/TASKS.md#stuck-servers) and [a board that went
@@ -365,7 +368,10 @@ refused unless its SHA-256 is the pinned one; `SYMPHONY_SURREAL` names another b
 `server/fetch_tests.rs` holds the project's fetch line to the script's pin. A fixture board under
 the temporary folder or a checkout's `artifacts/` is a scratch place: its server is supervised and
 ends with the process that started it (`server/scratch.rs`), and a fixture repository there is its
-own project, so no test reaches the board around it.
+own project, so no test reaches the board around it. The PostgreSQL tests (`tests/server/postgres.rs`)
+run the machine's PostgreSQL that this repository's `symphony.toml` names (`[board] postgresql`;
+`brew install postgresql@18` on a Mac), each on a scratch board of its own, started and stopped
+by the test.
 
 ### The command line's tests
 

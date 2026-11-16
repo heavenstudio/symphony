@@ -1,8 +1,8 @@
 //! The CPU a piece of work took: its user and system time, which a loaded machine does not stretch
 //! as it stretches a wall. [`thread`] and [`process`] read this process's own clocks, [`spent`] what
-//! a closure took on the calling thread, [`of`] a live process by its id, [`reap`] a child at its
-//! end with every child it reaped, as `wait4` reports it, and [`children`] what the children this
-//! process reaped took in all.
+//! a closure took on the calling thread, [`of`] a live process by its id and [`reaped`] what the
+//! children it reaped took, [`reap`] a child at its end with every child it reaped, as `wait4`
+//! reports it, and [`children`] what the children this process reaped took in all.
 
 use std::io;
 use std::process::ExitStatus;
@@ -52,6 +52,23 @@ pub fn children() -> Duration {
 /// process that is gone, or one this user may not read, is an error.
 #[cfg(target_os = "macos")]
 pub fn of(pid: u32) -> io::Result<Duration> {
+    let info = rusage_of(pid)?;
+    ticked(u128::from(info.ri_user_time) + u128::from(info.ri_system_time))
+}
+
+/// The CPU the children `pid`, a live process, has reaped took, with every child they reaped: a
+/// server that answers from processes of its own, each ended once its work is done, holds their
+/// CPU here once it has waited for them, where [`of`] reads none of it. Not its own threads'. A
+/// process that is gone, or one this user may not read, is an error.
+#[cfg(target_os = "macos")]
+pub fn reaped(pid: u32) -> io::Result<Duration> {
+    let info = rusage_of(pid)?;
+    ticked(u128::from(info.ri_child_user_time) + u128::from(info.ri_child_system_time))
+}
+
+/// What the kernel keeps of the live process `pid`'s use (`proc_pid_rusage`).
+#[cfg(target_os = "macos")]
+fn rusage_of(pid: u32) -> io::Result<libc::rusage_info_v2> {
     let raw = libc::pid_t::try_from(pid).map_err(io::Error::other)?;
     // SAFETY: plain data, for which all zeroes is a value.
     let mut info: libc::rusage_info_v2 = unsafe { std::mem::zeroed() };
@@ -60,8 +77,13 @@ pub fn of(pid: u32) -> io::Result<Duration> {
     if read != 0 {
         return Err(io::Error::last_os_error());
     }
-    // The kernel counts it in the machine's ticks (`task_power_info`), not nanoseconds.
-    let ticks = u128::from(info.ri_user_time) + u128::from(info.ri_system_time);
+    Ok(info)
+}
+
+/// `ticks` of the machine's as a duration: the kernel counts a process's CPU in them
+/// (`task_power_info`), its reaped children's too, not in nanoseconds.
+#[cfg(target_os = "macos")]
+fn ticked(ticks: u128) -> io::Result<Duration> {
     let (numer, denom) = timebase();
     let nanos = u64::try_from(ticks * numer / denom).map_err(io::Error::other)?;
     Ok(Duration::from_nanos(nanos))
@@ -95,9 +117,22 @@ fn timebase() -> (u128, u128) {
 /// `/proc/PID/stat` in the clock's ticks. A process that is gone is an error.
 #[cfg(target_os = "linux")]
 pub fn of(pid: u32) -> io::Result<Duration> {
+    stat_of(pid, stat_ticks)
+}
+
+/// The CPU the children `pid`, a live process, has reaped took, with every child they reaped,
+/// from `/proc/PID/stat`'s `cutime` and `cstime`: not its own threads'. A process that is gone is
+/// an error.
+#[cfg(target_os = "linux")]
+pub fn reaped(pid: u32) -> io::Result<Duration> {
+    stat_of(pid, stat_reaped_ticks)
+}
+
+/// The ticks `read` takes from `pid`'s stat line, as a duration.
+#[cfg(target_os = "linux")]
+fn stat_of(pid: u32, read: fn(&str) -> Option<u64>) -> io::Result<Duration> {
     let stat = std::fs::read_to_string(format!("/proc/{pid}/stat"))?;
-    let ticks =
-        stat_ticks(&stat).ok_or_else(|| io::Error::other(format!("a stat line: {stat}")))?;
+    let ticks = read(&stat).ok_or_else(|| io::Error::other(format!("a stat line: {stat}")))?;
     Ok(Duration::from_nanos(
         ticks * 1_000_000_000 / ticks_a_second(),
     ))
@@ -121,9 +156,22 @@ fn ticks_a_second() -> u64 {
 /// the first field and utime and stime the twelfth and thirteenth (`proc(5)`'s 14 and 15).
 #[cfg(any(target_os = "linux", test))]
 fn stat_ticks(stat: &str) -> Option<u64> {
+    stat_pair(stat, 11)
+}
+
+/// A stat line's reaped children's user and system ticks, `cutime` and `cstime`: the fourteenth
+/// and fifteenth fields after the command (`proc(5)`'s 16 and 17).
+#[cfg(any(target_os = "linux", test))]
+fn stat_reaped_ticks(stat: &str) -> Option<u64> {
+    stat_pair(stat, 13)
+}
+
+/// The sum of the two fields from `at` on after a stat line's command's last parenthesis.
+#[cfg(any(target_os = "linux", test))]
+fn stat_pair(stat: &str, at: usize) -> Option<u64> {
     let after = stat.rsplit_once(')')?.1;
     let fields: Vec<&str> = after.split_whitespace().collect();
-    Some(fields.get(11)?.parse::<u64>().ok()? + fields.get(12)?.parse::<u64>().ok()?)
+    Some(fields.get(at)?.parse::<u64>().ok()? + fields.get(at + 1)?.parse::<u64>().ok()?)
 }
 
 /// Waits for `pid`, a child of this process, to end and reaps it: how it ended and the CPU it took

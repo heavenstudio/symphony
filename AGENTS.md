@@ -120,7 +120,10 @@ so a missing browser cannot pass as acceptance not run) and the client's pinned 
 PATH, or fnm to fetch it once: `tools/node.sh`); the consuming project's binaries are not
 prerequisites. The client build needs Git, Bash and jq, and native
 board fixtures need lsof and the pinned SurrealDB (`tools/surreal.sh`, or `SYMPHONY_SURREAL`).
-This repository has no hosted GitHub CI requirement.
+The board's server tests (`just test-rs -p symphony-board --test server`, and so the release run)
+need the machine's PostgreSQL in the folder `symphony.toml`'s `[board] postgresql` names
+(`brew install postgresql@18` on a Mac): without it each PostgreSQL test fails naming the folder,
+the key and that install. This repository has no hosted GitHub CI requirement.
 
 ## This repository as its own project
 
@@ -214,9 +217,9 @@ known, each value of its type, each required value there; a model is any text, n
 list), recorded as a test run, which is the `tests` stamp. Its assessor names `tests` alone, and
 no reviewer reads it. A setting the Symphony does not read yet is code, and `[project]`'s
 `cargo` and `default_branch`, `[plugins]`'s `crates` and `process`, `[verdicts]`, `[land]`,
-`[releases]`, `[stamps]` and `[board]`'s `on_review`, `on_land`, `machine_work_reader` and
-`assessments` hold commands or programs the Symphony runs, or decide what lands: those keep
-`review`
+`[releases]`, `[stamps]` and `[board]`'s `on_review`, `on_land`, `machine_work_reader`,
+`postgresql` and `assessments` hold commands or programs the Symphony runs, or decide what
+lands: those keep `review`
 ([TASKS](docs/TASKS.md#needed-stamps), [PROJECT_FILE](docs/PROJECT_FILE.md#the-settings-check)).
 
 ## Agent integration
