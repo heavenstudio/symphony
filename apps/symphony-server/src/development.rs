@@ -1,6 +1,6 @@
 //! The entry of the retired client's dev server, kept by name alone: a consuming project's host
 //! still calls [`main`] from a binary of its own (`tests/consumer_api.rs` holds its shape), and a
-//! release moves a consumer's pin without its code, so the name goes only once that binary has.
+//! release changes none of a consumer's code, so the name goes only once that binary has.
 //! It starts nothing and refuses, naming what took its place: the web client's dev server
 //! (`apps/symphony-web/dev.js`, the recipe `symphony-ui-dev SERVER [PORT]`).
 
