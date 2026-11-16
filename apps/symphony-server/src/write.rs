@@ -87,7 +87,7 @@ pub(crate) async fn answer(shared: &Arc<Shared>, request: Request) -> Response {
         }
     };
     let shared = shared.clone();
-    match tokio::task::spawn_blocking(move || {
+    match crate::spawn::blocking(move || {
         let saves = shared
             .saves
             .get_or_init(|| symphony::save::Saves::start(&shared.root));
@@ -156,7 +156,7 @@ fn allowed(
         .map(|v| v.to_str().unwrap_or("").to_string());
     let check = shared.clone();
     async move {
-        tokio::task::spawn_blocking(move || {
+        crate::spawn::blocking(move || {
             if !check.allows_host(&host) {
                 return Err(HOST_REFUSED);
             }
@@ -212,8 +212,7 @@ async fn upload(shared: &Arc<Shared>, request: Request) -> Response {
         }
     }
     let root = shared.root.clone();
-    match tokio::task::spawn_blocking(move || symphony::uploads::store(&root, &name, &bytes)).await
-    {
+    match crate::spawn::blocking(move || symphony::uploads::store(&root, &name, &bytes)).await {
         Ok(Ok(stored)) => {
             ([(header::CACHE_CONTROL, "no-store")], Json(stored.wire())).into_response()
         }

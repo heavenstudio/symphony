@@ -381,7 +381,7 @@ async fn judge(
     let ip = peer.ip();
     let allowed = ip.is_loopback() || {
         let shared = shared.clone();
-        tokio::task::spawn_blocking(move || shared.gate.allows(ip))
+        crate::spawn::blocking(move || shared.gate.allows(ip))
             .await
             .unwrap_or(false)
     };
@@ -843,9 +843,9 @@ fn stop_when(
     signal: impl Future<Output = ()> + Send + 'static,
 ) -> tokio::task::JoinHandle<()> {
     let shared = shared.clone();
-    tokio::spawn(async move {
+    crate::spawn::task(async move {
         signal.await;
-        let _ = tokio::task::spawn_blocking(move || shared.stop()).await;
+        let _ = crate::spawn::blocking(move || shared.stop()).await;
     })
 }
 
@@ -997,11 +997,11 @@ async fn start(mut serve: Serve, open: bool) -> Result<Started, i32> {
     for listener in listeners {
         let shared = shared.clone();
         let app = app.clone();
-        serving.push(tokio::spawn(async move {
+        serving.push(crate::spawn::task(async move {
             connections::serve(listener, app, shared).await;
         }));
     }
-    let ready = tokio::task::spawn_blocking(move || {
+    let ready = crate::spawn::blocking(move || {
         reload.ready()?;
         Ok::<_, String>(reload)
     })
@@ -1068,7 +1068,7 @@ fn handover_when_asked(shared: &Arc<Shared>) {
         return;
     };
     let shared = shared.clone();
-    tokio::spawn(async move {
+    crate::spawn::task(async move {
         loop {
             tokio::select! {
                 () = shared.until_stopped() => return,
@@ -1103,7 +1103,7 @@ impl Started {
         let others = match projects {
             Some(projects) => {
                 stages("the other projects");
-                tokio::task::spawn_blocking(move || projects.stop())
+                crate::spawn::blocking(move || projects.stop())
                     .await
                     .unwrap_or_default()
             }
@@ -1128,7 +1128,7 @@ impl Started {
         }
         let draining = shared.clone();
         let closing = stages.clone();
-        let _ = tokio::task::spawn_blocking(move || {
+        let _ = crate::spawn::blocking(move || {
             if let Some(saves) = draining.saves.get() {
                 saves.close_saying(|stage| closing(stage));
             }

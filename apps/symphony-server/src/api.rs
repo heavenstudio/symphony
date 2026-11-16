@@ -139,7 +139,7 @@ async fn read(shared: &Arc<Shared>, request: Request) -> Option<Response> {
         .unwrap_or("")
         .to_string();
     let check = shared.clone();
-    let allowed = tokio::task::spawn_blocking(move || check.allows_host(&host))
+    let allowed = crate::spawn::blocking(move || check.allows_host(&host))
         .await
         .unwrap_or(false);
     if !allowed {
@@ -245,7 +245,7 @@ async fn read(shared: &Arc<Shared>, request: Request) -> Option<Response> {
             ));
         };
         return Some(
-            match tokio::task::spawn_blocking(move || reports::answer(&hub, grain, days)).await {
+            match crate::spawn::blocking(move || reports::answer(&hub, grain, days)).await {
                 Ok(answer) => {
                     let mut response =
                         no_store(([(header::CONTENT_TYPE, "application/json")], answer.body));
@@ -280,7 +280,7 @@ async fn read(shared: &Arc<Shared>, request: Request) -> Option<Response> {
             ));
         };
         return Some(
-            match tokio::task::spawn_blocking(move || run_log::answer(&hub, &run, asked)).await {
+            match crate::spawn::blocking(move || run_log::answer(&hub, &run, asked)).await {
                 Ok(Ok(log)) => no_store(Json(log)),
                 Ok(Err((status, why))) => error(status, why),
                 Err(e) => error(
@@ -310,7 +310,7 @@ async fn read(shared: &Arc<Shared>, request: Request) -> Option<Response> {
             ));
         };
         return Some(
-            match tokio::task::spawn_blocking(move || runs::answer(&hub, &filters)).await {
+            match crate::spawn::blocking(move || runs::answer(&hub, &filters)).await {
                 Ok(Ok(page)) => no_store(Json(page)),
                 Ok(Err((status, why))) => error(status, why),
                 Err(e) => error(
@@ -334,7 +334,7 @@ async fn read(shared: &Arc<Shared>, request: Request) -> Option<Response> {
             ));
         };
         return Some(
-            match tokio::task::spawn_blocking(move || runs::answer_run(&hub, &run)).await {
+            match crate::spawn::blocking(move || runs::answer_run(&hub, &run)).await {
                 Ok(Ok(page)) => no_store(Json(page)),
                 Ok(Err((status, why))) => error(status, why),
                 Err(e) => error(
@@ -378,7 +378,7 @@ async fn read(shared: &Arc<Shared>, request: Request) -> Option<Response> {
     };
     let check = hub.clone();
     let selected = scope.to_string();
-    if let Err(e) = tokio::task::spawn_blocking(move || check.ensure_page(&selected))
+    if let Err(e) = crate::spawn::blocking(move || check.ensure_page(&selected))
         .await
         .unwrap_or_else(|e| Err(e.to_string()))
     {
@@ -390,9 +390,7 @@ async fn read(shared: &Arc<Shared>, request: Request) -> Option<Response> {
     if path == symphony_api::AGENT_SCREEN_PATH {
         let handle = query(&request, "handle").unwrap_or_default();
         return Some(
-            match tokio::task::spawn_blocking(move || crate::session_go::screen(&hub, &handle))
-                .await
-            {
+            match crate::spawn::blocking(move || crate::session_go::screen(&hub, &handle)).await {
                 Ok(Ok(screen)) => no_store(Json(screen)),
                 Ok(Err((code, why))) => error(code, why),
                 Err(e) => error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
@@ -443,7 +441,7 @@ async fn read(shared: &Arc<Shared>, request: Request) -> Option<Response> {
         let scope = scope.to_string();
         let path = path.to_string();
         let rel = rel.to_string();
-        let response = tokio::task::spawn_blocking(move || {
+        let response = crate::spawn::blocking(move || {
             document_response(&shared, &hub, &root, &scope, &path, &rel, &request)
         })
         .await;
@@ -462,7 +460,7 @@ async fn read(shared: &Arc<Shared>, request: Request) -> Option<Response> {
             let scores = if path == "/api/task-board" && !search.is_empty() {
                 let reading = hub.clone();
                 let needle = search.clone();
-                match tokio::task::spawn_blocking(move || {
+                match crate::spawn::blocking(move || {
                     // On the store the task pages' reads share, never a board opened anew.
                     let store = reading.reader()?;
                     let hits = store.search(&needle);
@@ -539,7 +537,7 @@ async fn read(shared: &Arc<Shared>, request: Request) -> Option<Response> {
             let local = (agent_page || detail) && crate::session_go::local(shared, &request).await;
             let gates = path == symphony_api::TASK_GATES_PATH;
             let timeline = path == symphony_api::TASK_TIMELINE_PATH;
-            match tokio::task::spawn_blocking(move || {
+            match crate::spawn::blocking(move || {
                 if agents {
                     // The agents and their work as the hub's board tick last read them: while the
                     // board cannot be read, neither can they, as with its tasks.
@@ -1000,7 +998,7 @@ async fn plugin_response(shared: &Shared, root: &Path, path: &str, request: &Req
         return error(StatusCode::NOT_FOUND, "no such route");
     };
     let (checkout, route, rest) = (root.to_path_buf(), route.to_string(), rest.to_string());
-    let reply = tokio::task::spawn_blocking(move || {
+    let reply = crate::spawn::blocking(move || {
         symphony::plugins::Plugins::of(&checkout)
             .route(&route)?
             .serve(&checkout, &rest)
