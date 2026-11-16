@@ -33,6 +33,21 @@ import { freshnessWord, NO_WORK, phaseLabel, scopedPhases } from "./work";
 
 const SAMPLES = CASES.samples;
 
+// React's `flushSync` stood in for, as no DOM runs here: whether a draw comes within it.
+const react = vi.hoisted(() => ({ flushing: false }));
+
+vi.mock("react-dom", async (original) => ({
+  ...(await original<typeof import("react-dom")>()),
+  flushSync: <R>(draw: () => R): R => {
+    react.flushing = true;
+    try {
+      return draw();
+    } finally {
+      react.flushing = false;
+    }
+  },
+}));
+
 /** The agents page as the server writes it, with every field. */
 const PAGE = readAgentPage(SAMPLES.agentPage) as AgentPageRead;
 
@@ -736,6 +751,19 @@ describe("a feed event on the agents page", () => {
     expect(d.tasks.map((task) => task.slug)).toContain("w/c");
     expect(host.redraw).toHaveBeenCalledTimes(1);
     expect(held).toHaveBeenCalledWith("[id^=message-], [id^=child-], [data-slug]");
+  });
+
+  it("holds the reader's place, then draws the change at once, within the event", () => {
+    const { agents, held, host } = shown([anAgent("amber")], [aTask("w/a")]);
+    const order: string[] = [];
+    held.mockImplementation(() => order.push("held"));
+    host.redraw.mockImplementation(() => order.push(react.flushing ? "drawn" : "drawn later"));
+    agents.heard(event(["task", { key: "w/b", value: aTask("w/b") }]));
+    // An event that changes nothing the page shows neither holds nor draws.
+    agents.heard(event(["task-fields", { key: "w/x", fields: { title: "Elsewhere" } }]));
+    agents.heard(event(["agent", { key: "birch", value: anAgent("birch") }]));
+    expect(order).toEqual(["held", "drawn", "held", "drawn"]);
+    expect(react.flushing).toBe(false);
   });
 
   it("changes the fields of a task it lists, and its holders' health", () => {

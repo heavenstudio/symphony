@@ -819,7 +819,9 @@ export function ReportsView({
   device = null,
   now = new Date(),
 }: ReportsViewProps) {
-  const busy = page === null || page.grain !== grain || page.days !== days;
+  // Busy while the window asked for is on its way, and no longer once its read failed: the page
+  // then says so, drawn, and a region busy on the screen would hold `symphony shot` to its timeout.
+  const busy = (page === null || page.grain !== grain || page.days !== days) && error === null;
   const kept = page !== null ? device : null;
   return (
     <div

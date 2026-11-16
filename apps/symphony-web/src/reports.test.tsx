@@ -661,11 +661,14 @@ describe("the page's view", () => {
     const why = "The server could not be reached";
     let html = view(null, why);
     expect(html).toContain('data-ready="failed"');
+    // A failed page is drawn, not busy: `symphony shot` pictures what it says.
+    expect(html).toContain('aria-busy="false"');
     expect(html).toContain(
       'role="alert">The reports could not be read. The server could not be reached; check the connection. Trying again…</p>',
     );
     html = view(page(), why);
     expect(html).toContain('data-ready="reports"');
+    expect(html).toContain('aria-busy="false"');
     expect(html).toContain("The reports could not be read");
     expect(html).toContain("chart-slot");
   });
@@ -790,13 +793,19 @@ describe("the page's view", () => {
     expect(changes(0)).not.toContain("reports-marks");
   });
 
-  it("is busy while the window asked for is not the one shown", () => {
+  it("is busy while the window asked for is not the one shown, until its read fails", () => {
     const html = renderToStaticMarkup(
       <ReportsView grain="week" days={84} page={page()} onAsk={() => {}} />,
     );
     expect(html).toContain('aria-busy="true"');
     expect(html).toContain('data-ready="reports"');
     expect(html).toContain('aria-pressed="true" data-days="84"');
+    const failed = renderToStaticMarkup(
+      <ReportsView grain="week" days={84} page={page()} error="Gone." onAsk={() => {}} />,
+    );
+    expect(failed).toContain('aria-busy="false"');
+    expect(failed).toContain('data-ready="reports"');
+    expect(failed).toContain("The reports could not be read");
   });
 
   it("says when the first roll-up comes while there is none", () => {
