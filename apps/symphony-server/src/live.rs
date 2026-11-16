@@ -106,6 +106,10 @@ pub(crate) struct Page {
     /// Documents a first read placed though a refresh that renders anew began after it, as it had
     /// read again once already: the next refresh renders them whatever changed.
     stale: BTreeSet<String>,
+    /// The tag of each document's outline as its copy in `documents` makes it, with the read that
+    /// copy came from ([`Hub::outline_kept`]): made at the first check of each copy, and `None`
+    /// for a copy whose check renders.
+    outlines: Mutex<BTreeMap<String, (u64, Option<String>)>>,
     missing: BTreeSet<String>,
     /// When the documents its queue came from began to be read, in seconds since the epoch: an
     /// owner's ask said after it is not in it yet ([`symphony::owner_asks`]).
@@ -217,6 +221,9 @@ pub(crate) struct Hub {
     /// renders. `pages` is taken only to place a copy, so the board, the feed and the project
     /// list, which read `pages`, never wait on a render either.
     reads: AtomicU64,
+    /// How many times a document was rendered ([`Hub::render_document`]): what a test counts to
+    /// see that a read rendered nothing.
+    renders: AtomicU64,
     /// The store the page reads of the board share ([`Hub::reader`]), once one has been opened.
     reader: Mutex<Option<Arc<symphony_board::Store>>>,
     /// How [`Hub::reader`] opens the board: [`taskview::connect_held`], held to `repository`, or a
@@ -358,6 +365,7 @@ impl Hub {
             chat: Mutex::new(None),
             low_disk: health::low_disk(root),
             reads: AtomicU64::new(0),
+            renders: AtomicU64::new(0),
             reader: Mutex::new(None),
             connect_reader: Box::new(move |root| {
                 taskview::connect_held(root, repository.as_deref())
@@ -491,6 +499,8 @@ impl Hub {
         rel: &str,
         scope: &str,
     ) -> Result<symphony_api::Document, String> {
+        self.renders
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let board = self.tasks_read().ok();
         let (cards, drafts) = if scope.is_empty() {
             (self.one_cards(rel), BTreeSet::new())
@@ -607,6 +617,72 @@ impl Hub {
 
     pub fn document(&self, scope: &str, rel: &str) -> Result<symphony_api::Document, String> {
         self.rendered(scope, rel, true)
+    }
+
+    /// The tag of `rel`'s outline as the copy `scope`'s page follows makes it, and the feed's
+    /// cursor it stands at: what an outline's check that names that tag is answered `304` by,
+    /// with no render. `tag_of` makes a document's outline's tag, and is run once for each copy
+    /// placed.
+    ///
+    /// The copy is the hub's own record of everything a render reads that it tracks: a refresh
+    /// renders it again once a file of its checkout's documents, the project's settings, its one
+    /// cards, its linking tasks or, on a branch's page, main's baseline changed
+    /// ([`Hub::refresh_page_read`]), and its sections are read from it too
+    /// ([`Hub::document_sections`]). So the check says what a page left open shows: an edit the
+    /// watcher has not told yet arrives on the feed from the cursor given here.
+    ///
+    /// `None`, and the check renders as [`Hub::document`] does, for a document the page does not
+    /// follow yet or holds as missing, and for a copy naming a file from outside the entrypoints'
+    /// folders by its validator ([`symphony::docview::names_files_outside`]), whose change no
+    /// refresh sees.
+    pub fn outline_kept(
+        &self,
+        scope: &str,
+        rel: &str,
+        tag_of: impl FnOnce(symphony_api::Document) -> String,
+    ) -> Option<(String, u64)> {
+        // The copy the page holds now, with the read it came from, and its tag when one was made.
+        let held = |page: &Page| -> Option<u64> {
+            (!page.missing.contains(rel) && page.documents.contains_key(rel))
+                .then(|| page.copied.get(rel).copied())
+                .flatten()
+        };
+        let made = |page: &Page, read: u64| -> Option<Option<String>> {
+            let outlines = page.outlines.lock().unwrap_or_else(|e| e.into_inner());
+            outlines
+                .get(rel)
+                .filter(|(of, _)| *of == read)
+                .map(|(_, tag)| tag.clone())
+        };
+        let (read, document) = {
+            let pages = self.pages.read().unwrap_or_else(|e| e.into_inner());
+            let page = pages.get(scope)?;
+            let read = held(page)?;
+            if let Some(tag) = made(page, read) {
+                return tag.map(|tag| (tag, page.board.version));
+            }
+            (read, page.documents.get(rel)?.clone())
+        };
+        // Made outside the lock: the outline is the whole document written out.
+        let root = if scope.is_empty() {
+            self.root.clone()
+        } else {
+            self.tree(scope)?
+        };
+        let project = symphony::project::Project::of(&root);
+        let tag = (!symphony::docview::names_files_outside(&document, &project, scope))
+            .then(|| tag_of(document));
+        let pages = self.pages.read().unwrap_or_else(|e| e.into_inner());
+        let page = pages.get(scope)?;
+        // A copy placed meanwhile is another document: its own check makes its tag.
+        if held(page) != Some(read) {
+            return None;
+        }
+        page.outlines
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(rel.into(), (read, tag.clone()));
+        tag.map(|tag| (tag, page.board.version))
     }
 
     /// `rel` rendered as [`Hub::document`] renders it, for a page reading it ahead
@@ -1220,6 +1296,7 @@ impl Hub {
                     copied: BTreeMap::new(),
                     renews_from: 0,
                     stale: BTreeSet::new(),
+                    outlines: Mutex::default(),
                     missing: BTreeSet::new(),
                     read_at,
                     held: snapshot.held,
@@ -2089,6 +2166,9 @@ mod read_paths_tests;
 
 #[cfg(test)]
 mod refresh_tests;
+
+#[cfg(test)]
+mod outline_check_tests;
 
 #[cfg(test)]
 mod feed_deltas_tests;

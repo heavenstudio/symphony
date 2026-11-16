@@ -734,6 +734,16 @@ fn document_response(
             Err((status, why)) => error(status, why),
         };
     }
+    // An outline's check that names the tag of the copy the hub follows is answered from it, at
+    // the feed's cursor, with no render: the validator turns it into the `304`.
+    if path == "/api/document"
+        && query(request, "view").as_deref() == Some("outline")
+        && request.headers().contains_key(header::IF_NONE_MATCH)
+        && let Some((tag, cursor)) = hub.outline_kept(scope, rel, validated::outline_tag)
+        && matches_etag(request, &tag)
+    {
+        return document_read(tag, Vec::new(), Some(cursor));
+    }
     let result = match path {
         // What a page reads ahead of a document it links to: its first part, within the cap, or
         // nothing when its head alone is over it. Read ahead, the document is not followed.
@@ -813,22 +823,27 @@ fn document_response(
         // content: their tag leaves it out, and a header names it, on the `304` too.
         Ok(mut value) if matches!(path, "/api/document" | "/api/section" | "/api/folder") => {
             let tagged = validated::without_cursor(&mut value);
-            let mut response =
-                no_store(([(header::CONTENT_TYPE, "application/json")], tagged.body));
-            response
-                .extensions_mut()
-                .insert(validated::Content(tagged.tag));
-            if let Some(cursor) = tagged.cursor {
-                response.headers_mut().insert(
-                    symphony_api::VERSION_HEADER,
-                    header::HeaderValue::from(cursor),
-                );
-            }
-            response
+            document_read(tagged.tag, tagged.body, tagged.cursor)
         }
         Ok(value) => no_store(Json(value)),
         Err(e) => error(StatusCode::NOT_FOUND, e),
     }
+}
+
+/// A document read's answer: its `body` named by `tag`, its content's validator
+/// ([`validated::Content`]), and the feed's cursor it was read at in a header of its own. A check
+/// that names `tag` leaves as a `304` without `body` ([`validated::validated`]), so one answered
+/// before its body was made carries none.
+fn document_read(tag: String, body: Vec<u8>, cursor: Option<u64>) -> Response {
+    let mut response = no_store(([(header::CONTENT_TYPE, "application/json")], body));
+    response.extensions_mut().insert(validated::Content(tag));
+    if let Some(cursor) = cursor {
+        response.headers_mut().insert(
+            symphony_api::VERSION_HEADER,
+            header::HeaderValue::from(cursor),
+        );
+    }
+    response
 }
 
 fn ask_response(

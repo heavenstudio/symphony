@@ -22,6 +22,8 @@ mod legacy;
 mod linked_tests;
 #[cfg(test)]
 mod outline_tests;
+#[cfg(test)]
+mod outside_tests;
 mod regroup;
 
 pub use legacy::legacy_html;
@@ -759,6 +761,62 @@ pub fn scope_fragment(html: &mut String, media: &mut [Media], scope: &str) {
     for src in media.iter_mut().flat_map(media_urls) {
         *src = scoped(src, scope);
     }
+}
+
+/// Whether `document`, rendered for `scope`'s page, names by its validator
+/// ([`crate::assets::validator`]) a file no entrypoint of `project` serves: a picture or a script
+/// from outside the documents' folders. Such a file changes what the document renders to while no
+/// file under an entrypoint does, so a reader that keeps a render until one of those changes
+/// renders this document each time instead.
+pub fn names_files_outside(
+    document: &Document,
+    project: &crate::project::Project,
+    scope: &str,
+) -> bool {
+    static LOADED: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r#"\s(?:src|data-full|data-module|poster|href)="([^"]*)""#)
+            .expect("loaded URL pattern")
+    });
+    let own = format!("/@{scope}/");
+    let outside = |url: &str| {
+        let url = crate::markup::unescape(url);
+        let url = url.split('#').next().unwrap_or_default();
+        let Some((path, query)) = url.split_once('?') else {
+            return false;
+        };
+        if !query.split('&').any(|pair| pair.starts_with("v=")) {
+            return false;
+        }
+        let route = match path.strip_prefix(&own) {
+            Some(inside) if !scope.is_empty() => inside,
+            _ => path.trim_start_matches('/'),
+        };
+        project.serving(route).is_none()
+    };
+    let fragments = document
+        .sections
+        .iter()
+        .map(|section| (&section.html, &section.media))
+        .chain(
+            document
+                .threads
+                .values()
+                .map(|thread| (&thread.html, &thread.media)),
+        );
+    for (html, media) in fragments {
+        if LOADED.captures_iter(html).any(|found| outside(&found[1])) {
+            return true;
+        }
+        let mut media = media.clone();
+        if media
+            .iter_mut()
+            .flat_map(media_urls)
+            .any(|url| outside(url))
+        {
+            return true;
+        }
+    }
+    false
 }
 
 /// Every URL a media item loads: its files, their posters and its viewer's script, which a branch's
