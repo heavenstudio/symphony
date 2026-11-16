@@ -236,7 +236,8 @@ drawn while it waits.
   not the server's work. The large register's outline took the server 204 ms to its first byte
   (median of five, 152 to 317), and a `304` for it would still wait that long; the page is drawn
   meanwhile. A later step can check before building: a document by its file's content, a task by
-  its `updated`.
+  its `updated`. As built, a document's outline is checked before building, against the copy the
+  server's hub follows ([the server guide](../../apps/symphony-server/README.md)).
 - The feed's `version` cannot be the checksum: it moves with every change anywhere on the board,
   so on a busy board nothing would ever answer `304`. On the private server it went from 2 to 24
   in its first minutes with no task edited: all 22 events were agents' health changing as the
