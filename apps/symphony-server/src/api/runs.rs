@@ -18,8 +18,13 @@
 //! must still be the run kept there; a line changed under its offset has its day parsed again, and
 //! the answer made again once. A file that only grew since, on the same inode, still holding the
 //! last line read where it was, is read on from there: a closed day is parsed once, today's a line
-//! at a time as the recorder writes them; any other change parses the file again. It keeps the
-//! days of the window alone.
+//! at a time as the recorder writes them; any other change parses the file again. An earlier line
+//! changed in place as the file grew, the last line read left where it was, is seen only once an
+//! answer reads it back or the file is parsed again: the recorder only appends, so only a hand edit
+//! makes one, and seeing it on each growth would read the whole file each time. A day is read, and
+//! its runs folded into the answer, under the index's lock: an answer that asks for a day another
+//! is reading waits for it and takes what it kept, so each byte appended is parsed once however
+//! many answers ask. It keeps the days of the window alone.
 
 use axum::http::StatusCode;
 use std::collections::{BTreeSet, HashMap, HashSet};
@@ -37,7 +42,8 @@ use symphony_api::{
 const DAY: f64 = 86_400.0;
 
 /// What the reads keep of the day files between them: each file's runs by the path read, with what
-/// its status said when it was read. One is held by each project's hub ([`crate::live::Hub`]).
+/// its status said when it was read, read and folded into an answer under its lock alone
+/// ([`day_file`]). One is held by each project's hub ([`crate::live::Hub`]).
 #[derive(Default)]
 pub(crate) struct Index {
     days: Mutex<HashMap<PathBuf, Kept>>,
@@ -47,9 +53,10 @@ pub(crate) struct Index {
 }
 
 /// A day file's runs as kept, and the length, modification time and inode it was read at.
+#[derive(Default)]
 struct Kept {
     seen: Seen,
-    day: Arc<Day>,
+    day: Day,
 }
 
 /// What a day file's status says of its bytes: its length, modification time (s, ns), inode and
@@ -161,20 +168,6 @@ impl Day {
 impl Index {
     fn days(&self) -> std::sync::MutexGuard<'_, HashMap<PathBuf, Kept>> {
         self.days.lock().unwrap_or_else(PoisonError::into_inner)
-    }
-
-    /// The runs kept of `path` read at `seen`; else what was kept of it at another, taken out to be
-    /// read on, or none.
-    fn kept(&self, path: &Path, seen: Seen) -> Result<Arc<Day>, Option<Kept>> {
-        let mut days = self.days();
-        match days.get(path) {
-            Some(kept) if kept.seen == seen => Ok(kept.day.clone()),
-            _ => Err(days.remove(path)),
-        }
-    }
-
-    fn keep(&self, path: &Path, seen: Seen, day: Arc<Day>) {
-        self.days().insert(path.to_owned(), Kept { seen, day });
     }
 
     fn forget(&self, path: &Path) {
@@ -302,24 +295,25 @@ fn day_path(runs: &Path, day: f64) -> PathBuf {
     runs.join(format!("{}.jsonl", run_day(day)))
 }
 
-/// A day file as one answer read it: its path, the descriptor its status was taken on, which its
-/// answered lines are read again through, and its runs as kept for that status.
+/// A day file as one answer read it: its path, and the descriptor its status was taken on, which
+/// its answered lines are read again through.
 struct Opened {
     path: PathBuf,
     file: File,
-    day: Arc<Day>,
 }
 
-/// The day file of the UTC day starting at `day` in `runs`, open, and its runs, each once, its
-/// bytes taken from `budget` whether `index` kept its runs, they are read on or parsed now; none
-/// when there is none. A link, a FIFO or anything but a regular file, one larger than
-/// [`RUNS_FILE_BYTES`] or than what is left of `budget`, or one that cannot be read, is refused in a
-/// sentence naming it by its name alone (the server's folders are not the page's to know).
+/// The day file of the UTC day starting at `day` in `runs`, open, its runs, each once, handed to
+/// `answer` under `index`'s lock, and its bytes taken from `budget` whether `index` kept its runs,
+/// they are read on or parsed now; none when there is none. A link, a FIFO or anything but a
+/// regular file, one larger than [`RUNS_FILE_BYTES`] or than what is left of `budget`, or one that
+/// cannot be read, is refused in a sentence naming it by its name alone (the server's folders are
+/// not the page's to know).
 fn day_file(
     index: &Index,
     runs: &Path,
     day: f64,
     budget: &mut u64,
+    answer: &mut dyn FnMut(&Day),
 ) -> Result<Option<Opened>, String> {
     let path = day_path(runs, day);
     let name = format!("{}.jsonl", run_day(day));
@@ -366,13 +360,21 @@ fn day_file(
         meta.ino(),
         meta.dev(),
     );
-    let before = match index.kept(&path, seen) {
-        Ok(day) => return Ok(Some(Opened { path, file, day })),
-        Err(before) => before,
-    };
-    let (mut day, from) = before
-        .and_then(|before| grown(before, &file, seen))
-        .unwrap_or_default();
+    // Under the lock to the end: an answer that asks for the day meanwhile waits, and takes what
+    // this one kept.
+    let mut days = index.days();
+    if let Some(kept) = days.get(&path)
+        && kept.seen == seen
+    {
+        answer(&kept.day);
+        return Ok(Some(Opened { path, file }));
+    }
+    // Out of the map until it is read, so nothing is kept of a file that does not read.
+    let mut kept = days.remove(&path).unwrap_or_default();
+    let from = grown(&kept, &file, seen).unwrap_or_else(|| {
+        kept.day = Day::default();
+        0
+    });
     // The bytes the status counted, no more: a line the recorder appends meanwhile changes the
     // length, so the next read reads on to it.
     let mut bytes = Vec::new();
@@ -381,23 +383,23 @@ fn day_file(
         .seek(SeekFrom::Start(from))
         .and_then(|_| reader.take(size - from).read_to_end(&mut bytes))
     {
-        return gone(format!("{name}: {e}"));
+        return Err(format!("{name}: {e}"));
     }
     #[cfg(test)]
     index
         .parsed
         .fetch_add(bytes.len() as u64, std::sync::atomic::Ordering::Relaxed);
-    day.fold_in(&bytes, from);
-    let day = Arc::new(day);
-    index.keep(&path, seen, day.clone());
-    Ok(Some(Opened { path, file, day }))
+    kept.day.fold_in(&bytes, from);
+    kept.seen = seen;
+    answer(&kept.day);
+    days.insert(path.clone(), kept);
+    Ok(Some(Opened { path, file }))
 }
 
-/// The runs kept `before` of the file `file`, whose status is now `seen`, to be read on from where
-/// they were read to: when the file only grew since, on the same inode and device, and still holds
-/// the last line read where it was. None when it is to be parsed whole, as it is too while another
-/// answer still holds them.
-fn grown(before: Kept, file: &File, seen: Seen) -> Option<(Day, u64)> {
+/// Where the runs kept `before` of the file `file`, whose status is now `seen`, are read on from:
+/// where they were read to, when the file only grew since, on the same inode and device, and still
+/// holds the last line read where it was. None when it is to be parsed whole.
+fn grown(before: &Kept, file: &File, seen: Seen) -> Option<u64> {
     let (size, .., inode, device) = seen;
     let (read, .., was_inode, was_device) = before.seen;
     let (at, kept) = before.day.last?;
@@ -406,10 +408,7 @@ fn grown(before: Kept, file: &File, seen: Seen) -> Option<(Day, u64)> {
     }
     let mut last = vec![0; usize::try_from(read - at).ok()?];
     file.read_exact_at(&mut last, at).ok()?;
-    if hash(&last) != kept {
-        return None;
-    }
-    Some((Arc::try_unwrap(before.day).ok()?, read))
+    (hash(&last) == kept).then_some(read)
 }
 
 /// A run as one answer found it: its id, its key, and the day it was read from, by its place among
@@ -512,12 +511,13 @@ fn page_once(index: &Index, runs: &Path, filters: &Filters, now: f64) -> (RunsPa
     let mut pipelines = BTreeSet::new();
     let mut unread = Vec::new();
     while day >= first {
-        match day_file(index, runs, day, &mut budget) {
-            Ok(Some(read)) => {
-                pipelines.extend(read.day.pipelines.iter().cloned());
-                merge(&mut seen, days.len(), &read.day, |_, _| true);
-                days.push(read);
-            }
+        let at = days.len();
+        let read = day_file(index, runs, day, &mut budget, &mut |read| {
+            pipelines.extend(read.pipelines.iter().cloned());
+            merge(&mut seen, at, read, |_, _| true);
+        });
+        match read {
+            Ok(Some(opened)) => days.push(opened),
             Ok(None) => {}
             Err(why) => unread.push(why),
         }
@@ -648,13 +648,14 @@ fn run_once(
     let mut asked: Option<f64> = None;
     let mut day = today;
     while day >= first && asked.is_none_or(|asked| day >= asked) {
-        match day_file(index, runs, day, &mut budget) {
-            Ok(Some(read)) => {
-                merge(&mut lines, days.len(), &read.day, |run, key| {
-                    run == id || key.parent.is_some()
-                });
-                days.push(read);
-            }
+        let at = days.len();
+        let read = day_file(index, runs, day, &mut budget, &mut |read| {
+            merge(&mut lines, at, read, |run, key| {
+                run == id || key.parent.is_some()
+            });
+        });
+        match read {
+            Ok(Some(opened)) => days.push(opened),
             Ok(None) => {}
             Err(why) => unread.push(why),
         }

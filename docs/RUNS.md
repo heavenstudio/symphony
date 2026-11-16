@@ -337,9 +337,12 @@ and the steps' order read, and where its line is in the file. An answer's lines 
 again from the file, and a line no longer the run kept there has its day parsed again. A
 file that only grew, on the same inode and still holding the last line read, is read on
 from there, and any other change parses it again: a closed day is parsed once, today's a
-line at a time as the recorder writes them. It keeps the days of the 14-day window
-alone, and nothing of a file gone or refused (`apps/symphony-server/src/api/runs.rs`,
-`Index`).
+line at a time as the recorder writes them, however many answers read it at once (one
+waits for the other and takes what it kept). An earlier line changed in place as the file
+grew, the last line read left where it was, is seen only once an answer reads it back or
+the file is parsed again: the recorder only appends, so only a hand edit makes one. It
+keeps the days of the 14-day window alone, and nothing of a file gone or refused
+(`apps/symphony-server/src/api/runs.rs`, `Index`).
 
 ## The roll-up
 
