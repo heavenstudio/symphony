@@ -2,7 +2,7 @@
 name: work
 description: Do one task from the board by its description alone, a stage at a time: start (claim it, then question it), build, and finish by the step the description names. An executor's whole prompt is `/work SLUG HANDLE` (Codex `$work SLUG HANDLE`); a reviewer's is the review-task skill's. Trigger on /work SLUG or $work SLUG.
 ---
-<!-- symphony-stamp: 1d764b397d97db2d files=SKILL.md,start.md,build.md,connected.md,finish.md,rare-endings.md -->
+<!-- symphony-stamp: 8882a86c75eb37b6 files=SKILL.md,start.md,build.md,connected.md,finish.md,rare-endings.md -->
 
 # /work SLUG HANDLE
 
@@ -13,8 +13,7 @@ build or approval policy.
 
 Those instructions are the project's guide (its `AGENTS.md`), the rules it names and the guide of
 each package the task touches, and `project.md` beside this file where the project has one: its
-own standing instructions for an executor, which no prompt repeats. Read them before the stage
-page of step 3. The prompt holds nothing more but what is this task's alone.
+own standing instructions for an executor. Read them before the stage page of step 3.
 
 1. Reuse HANDLE from the prompt, the task's reservation or `TASKS_SESSION`; with none, register
    with `just tasks register --kind worker`.

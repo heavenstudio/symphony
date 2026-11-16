@@ -238,6 +238,14 @@ pub(crate) async fn answer(
     path: &str,
     request: &axum::http::Request<()>,
 ) -> Response {
+    // The address's own icon is the project's `tools/static/icon.svg`, else the Symphony's, whose
+    // home-screen size is asked for by pages that show the Symphony's alone.
+    if path == "/favicon.ico"
+        && (crate::mark::touch(request.uri().query())
+            || !root.join("tools/static/icon.svg").is_file())
+    {
+        return crate::mark::answer(request.uri().query());
+    }
     let file;
     let (base, relative) = if path == "/favicon.ico" {
         (root.join("tools/static"), "icon.svg")

@@ -100,7 +100,12 @@
   ],
   "first": 1799280000.0,
   "marks": [
-    { "at": 1799913600.0, "commit": "4f1c0a9b2d3e", "subject": "settings: land without the check" }
+    {
+      "at": 1799913600.0,
+      "commit": "4f1c0a9b2d3e",
+      "subject": "settings: land without the check",
+      "changed": ["settings", "skill work"]
+    }
   ],
   "unread": [
     "/repo/.git/symphony/health/2027-01-15.jsonl: not a regular file"

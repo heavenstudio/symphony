@@ -122,6 +122,14 @@ fn drawn(src: &str, label: &str, ctx: &Ctx<'_>) -> Option<String> {
             }),
         ),
         Ok(Drawing::Blocks(blocks)) => blocks_html(ctx, renderer.name(), blocks),
+        // A way of drawing a later minor of the kit adds, with nothing here that draws it yet.
+        Ok(_) => blocks_html(
+            ctx,
+            renderer.name(),
+            vec![crate::plugins::error(
+                "this Symphony cannot show how its renderer draws it",
+            )],
+        ),
         Err(problem) => blocks_html(ctx, renderer.name(), vec![crate::plugins::error(&problem)]),
     })
 }

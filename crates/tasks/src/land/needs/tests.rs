@@ -120,6 +120,18 @@ fn the_lands_line_says_what_it_needs_from_where_and_each_stamp_standing() {
 }
 
 #[test]
+fn a_stamp_required_beside_the_needs_is_added_once() {
+    let mut unassessed = Needed::of(&task(Vec::new()), &nowhere(), Some(TIP)).unwrap();
+    unassessed.require(TESTS);
+    unassessed.require(TESTS);
+    assert_eq!(unassessed.stamps, ["review", "tests"]);
+    assert!(unassessed.told(), "the land says what it needs");
+    let mut named = needed(&["tests", "review"], Some(TIP));
+    named.require(TESTS);
+    assert_eq!(named.stamps, ["tests", "review"]);
+}
+
+#[test]
 fn a_landing_by_its_needed_stamps_names_them_and_the_whole_tip_they_stood_on() {
     let stood = needed(&["tests"], Some(TIP)).stood(TIP);
     assert_eq!(stood, format!("; its needs (tests) stood at {TIP}"));

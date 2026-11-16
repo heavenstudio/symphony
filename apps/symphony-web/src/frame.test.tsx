@@ -20,6 +20,12 @@ const draw = (path: string, scope = "") =>
     </Frame>,
   );
 
+/** The Symphony's mark, the fermata, as the header draws it. */
+const MARK =
+  '<svg class="app-mark" viewBox="4.5 9.5 23 14.4" aria-hidden="true">' +
+  '<path d="M5 21A11 11 0 0 1 27 21H24.6A8.6 7.2 0 0 0 7.4 21Z"></path>' +
+  '<circle cx="16" cy="19.6" r="2.9"></circle></svg>';
+
 beforeEach(() => vi.resetModules());
 afterEach(() => vi.unstubAllGlobals());
 
@@ -38,6 +44,43 @@ describe("the frame", () => {
     expect(markup).toContain('aria-expanded="false"');
     expect(markup).not.toContain("Unread activity");
     expect(markup).not.toContain("pending-nav");
+  });
+
+  it("opens the header with the Symphony's mark and wordmark, which are no link", () => {
+    page();
+    expect(draw("queue")).toContain(
+      `<header class="app-header" id="top"><span class="app-brand">${MARK}` +
+        '<span class="app-wordmark">Symphony</span></span><nav class="app-pages"',
+    );
+  });
+
+  it.each([
+    [
+      "its theme's icon and name in their place",
+      { wordmark: "Lantern <Works>", mark: "look/icon.svg" },
+      '<img class="app-mark" src="/lantern/look/icon.svg" alt=""/>' +
+        '<span class="app-name">Lantern &lt;Works&gt;</span>',
+    ],
+    [
+      "the Symphony's mark beside a theme's name alone",
+      { wordmark: "Lantern" },
+      `${MARK}<span class="app-name">Lantern</span>`,
+    ],
+  ])("opens a project's header with %s, under its base", async (_, brand, drawn) => {
+    page();
+    const view = { name: "Lantern", register: "", base: "/lantern", ...brand };
+    vi.stubGlobal("document", { getElementById: () => ({ textContent: JSON.stringify(view) }) });
+    const { Frame } = await import("./frame");
+    const markup = renderToStaticMarkup(
+      <Frame route={{ path: "queue", scope: "", document: false, folder: false }}>
+        <p>page</p>
+      </Frame>,
+    );
+    expect(markup).toContain(
+      `<header class="app-header" id="top"><span class="app-brand">${drawn}</span>` +
+        '<a href="/" data-native="true" class="project-switch">Projects</a>',
+    );
+    expect(markup).not.toContain("app-wordmark");
   });
 
   it("keeps the Symphony's own pages global under a checkout, its documents the checkout's", () => {

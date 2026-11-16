@@ -10,13 +10,18 @@
 //! over every target), so a change that would break a consumer in what this file holds fails a
 //! task's gate rather than a run later.
 //!
-//! Each enum whose variants are held here is also matched by every variant, with no `_` arm. That
+//! Each enum whose variants are held here, but the kit's that grow in a minor (below), is also
+//! matched by every variant, with no `_` arm. That
 //! match is this repository's own choice, wider than a consumer's use unless it matches the enum
 //! whole (a plugin's route test matches `Reply` so): a tripwire, so a variant added fails this file
 //! and whoever adds it reads what the consumers do with that enum. One that matches it whole
 //! breaks, and the variant waits for a consumer release plan; otherwise the match takes the new
 //! variant. A variant that only the match names may be renamed or removed along with it; one built,
-//! compared or matched beside it is a consumer's.
+//! compared or matched beside it is a consumer's. The kit's enums that grow in a minor (`Block`,
+//! `Span`, `Media`, the words they carry and `Drawing`, `docs/PLUGIN_PROTOCOL.md`, *Versions*) are
+//! `#[non_exhaustive]`, so a match outside the kit, a consumer's too, ends with `_` and a variant
+//! added breaks none: theirs here ends with `_` as well, and still fails for a variant renamed or
+//! removed. `Reply` is not marked, as a consumer's route test matches it whole.
 //!
 //! The guards are this file and `tests/consumer_api.rs` in `crates/tasks` (`symphony_board`),
 //! `apps/symphony-server`, `crates/process-cwd` and `crates/repository-read`: every package a
@@ -431,6 +436,7 @@ fn the_names_consumers_call_keep_their_shapes() {
         | Block::Thread { .. }
         | Block::Comment { .. }
         | Block::Unknown { .. } => {}
+        _ => {}
     };
     let _ = |span: Span| match span {
         Span::Text { .. }
@@ -448,9 +454,11 @@ fn the_names_consumers_call_keep_their_shapes() {
         | Span::Graphic { .. }
         | Span::Blocks { .. }
         | Span::Unknown { .. } => {}
+        _ => {}
     };
     let _ = |media: Media| match media {
         Media::Mockup { .. } | Media::Viewer { .. } | Media::Gallery { .. } => {}
+        _ => {}
     };
     let _ = |size: FigureSize| match size {
         FigureSize::Small
@@ -460,6 +468,7 @@ fn the_names_consumers_call_keep_their_shapes() {
         | FigureSize::Cell
         | FigureSize::Slot
         | FigureSize::Wide => {}
+        _ => {}
     };
     let _ = |tag: ContainerKind| match tag {
         ContainerKind::Div
@@ -471,6 +480,7 @@ fn the_names_consumers_call_keep_their_shapes() {
         | ContainerKind::Footer
         | ContainerKind::Address
         | ContainerKind::Center => {}
+        _ => {}
     };
     let _ = |kind: InlineKind| match kind {
         InlineKind::Span
@@ -485,6 +495,7 @@ fn the_names_consumers_call_keep_their_shapes() {
         | InlineKind::Insert
         | InlineKind::Underline
         | InlineKind::Abbreviation => {}
+        _ => {}
     };
 
     // What its route and its renderer answer: its route builds `Reply::File`, and its route's test
@@ -500,6 +511,7 @@ fn the_names_consumers_call_keep_their_shapes() {
     };
     let _ = |drawing: Drawing| match drawing {
         Drawing::Blocks(_) | Drawing::Viewer(_) => {}
+        _ => {}
     };
     let _ = |text: &'static str| Card {
         slug: text,

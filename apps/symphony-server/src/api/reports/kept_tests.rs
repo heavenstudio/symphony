@@ -146,6 +146,7 @@ fn a_commit_on_the_default_branch_has_the_marks_read_again() {
     let marks = page_of(&second).marks;
     assert_eq!(marks.len(), 1, "{marks:?}");
     assert_eq!(marks[0].subject, "Settings begin");
+    assert_eq!(marks[0].changed, ["settings"]);
     assert_ne!(second.tag, first.tag);
     assert_eq!(read(&kept), (2, 2));
     // One that changes another file moves the tip, so git is asked, and leaves the answer as it
@@ -154,11 +155,27 @@ fn a_commit_on_the_default_branch_has_the_marks_read_again() {
     let third = ask();
     assert_eq!((&third.body, &third.tag), (&second.body, &second.tag));
     assert_eq!(read(&kept), (3, 3));
+    // One that changes a skill and the rules is a mark that names them, after the settings'.
+    std::fs::create_dir_all(root.join(".agents/skills/work")).unwrap();
+    std::fs::write(root.join("RULES.md"), "# Rules\n").unwrap();
+    commit(".agents/skills/work/SKILL.md", "# work\n", "The work skill");
+    let fourth = page_of(&ask()).marks;
+    assert_eq!(
+        fourth
+            .iter()
+            .map(|mark| (mark.subject.as_str(), mark.changed.join(", ")))
+            .collect::<Vec<_>>(),
+        [
+            ("Settings begin", "settings".to_string()),
+            ("The work skill", "rules, skill work".to_string())
+        ]
+    );
+    assert_eq!(read(&kept), (4, 4));
     // A branch that is not the default one is none of it.
     git(&root, &["checkout", "-b", "side"]);
     commit(symphony::project::FILE, "# side\n", "Side settings");
     ask();
-    assert_eq!(read(&kept), (3, 3));
+    assert_eq!(read(&kept), (4, 4));
 }
 
 #[test]
@@ -192,7 +209,7 @@ fn an_answer_whose_marks_could_not_be_read_is_not_kept() {
         first
             .unread
             .iter()
-            .any(|line| line.starts_with("settings marks: ")),
+            .any(|line| line.starts_with("settings and instructions marks: ")),
         "{:?}",
         first.unread
     );

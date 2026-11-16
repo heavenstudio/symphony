@@ -27,6 +27,9 @@ pub fn spans_html(spans: &[Span], media: &mut dyn FnMut(Media) -> usize) -> Stri
     writer.out
 }
 
+/// What stands for a block or span of a kind this writer has no arm for.
+const UNWRITTEN: &str = "<span>Unsupported document content</span>";
+
 struct Writer<'a> {
     out: String,
     media: &'a mut dyn FnMut(Media) -> usize,
@@ -247,6 +250,10 @@ impl Writer<'_> {
             Block::Unknown { text, .. } => {
                 self.out.push_str(&format!("<p>{}</p>", escape(text)));
             }
+            // The kit's lists grow in a minor, so no match outside it covers them whole
+            // (`crates/symphony-api/tests/vocabulary_drawn.rs` holds every kind to an arm here): a kind with
+            // none is said where it stands, never dropped.
+            _ => self.out.push_str(UNWRITTEN),
         }
     }
 
@@ -282,6 +289,7 @@ impl Writer<'_> {
             Media::Mockup { .. } => "mockup",
             Media::Viewer { .. } => "viewer",
             Media::Gallery { .. } => "gallery",
+            _ => "unknown",
         };
         let index = (self.media)(media.clone());
         self.out.push_str(&format!(
@@ -355,6 +363,7 @@ impl Writer<'_> {
             }
             Span::Blocks { blocks } => self.blocks(blocks),
             Span::Unknown { text, .. } => self.out.push_str(&escape(text)),
+            _ => self.out.push_str(UNWRITTEN),
         }
     }
 
@@ -413,6 +422,8 @@ impl Writer<'_> {
                 VectorKind::Line => "line",
                 VectorKind::Polyline => "polyline",
                 VectorKind::Polygon => "polygon",
+                // A shape with no element here draws nothing.
+                _ => continue,
             };
             self.out.push('<');
             self.out.push_str(tag);
@@ -435,6 +446,7 @@ fn container_tag(tag: ContainerKind) -> &'static str {
         ContainerKind::Footer => "footer",
         ContainerKind::Address => "address",
         ContainerKind::Center => "center",
+        _ => "div",
     }
 }
 
@@ -452,6 +464,7 @@ fn inline_tag(tag: InlineKind) -> &'static str {
         InlineKind::Insert => "ins",
         InlineKind::Underline => "u",
         InlineKind::Abbreviation => "abbr",
+        _ => "span",
     }
 }
 

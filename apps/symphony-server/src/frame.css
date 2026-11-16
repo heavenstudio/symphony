@@ -43,6 +43,36 @@
   border-color: var(--border);
   margin-right: 8px;
 }
+/* The header opens with a mark and a name: the Symphony's fermata in the theme's primary and its
+   wordmark in a serif the system has, so no font is loaded; a theme's own icon and name take
+   their places. */
+.app-brand {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-right: 12px;
+  font-size: 1.125rem;
+  font-weight: 600;
+  white-space: nowrap;
+  color: var(--foreground);
+}
+.app-brand .app-mark {
+  flex: none;
+  width: 26px;
+  height: 16px;
+  fill: var(--primary);
+}
+.app-brand img.app-mark {
+  width: 22px;
+  height: 22px;
+  border-radius: 5px;
+}
+.app-brand .app-wordmark {
+  font-family: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+}
 .app-header .crumbs {
   display: block;
   margin: 0 0 0 8px;
@@ -481,6 +511,29 @@ html {
   .app-header > a {
     padding: 4px 10px;
   }
+  /* The mark and the name a step smaller. The brand asks the row for its mark alone and takes
+     what the switch and the buttons leave, up to its own width, so the first row stays one down
+     to 320 wide: the name gives way first, cut short at its ellipsis. */
+  .app-brand {
+    flex: 1 1 22px;
+    min-width: 22px;
+    max-width: max-content;
+    margin-right: 8px;
+    font-size: 1rem;
+  }
+  .app-brand .app-mark {
+    width: 22px;
+    height: 14px;
+  }
+  .app-brand img.app-mark {
+    width: 20px;
+    height: 20px;
+  }
+  .app-brand span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
   .app-header .crumbs {
     display: none;
   }
@@ -530,6 +583,9 @@ html[data-layout-header="compact"] .app-header > a,
 html[data-layout-header="compact"] .app-pages > a {
   flex: none;
   padding: 3px 8px;
+}
+html[data-layout-header="compact"] .app-brand {
+  flex: none;
 }
 /* The pages keep their width there, so a row too long for the window scrolls rather than drawing
    them over the buttons. */

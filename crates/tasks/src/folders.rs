@@ -11,8 +11,6 @@ pub const SURREAL: &str = "symphony/surreal";
 /// The shared server's install, the record of one started before the machine folder, and the
 /// verdict journals and their locks.
 pub const SERVER: &str = "symphony/server";
-/// The board's embedding model.
-pub const MODELS: &str = "symphony/models";
 /// The recorded runs' day files and their logs.
 pub const RUNS: &str = "symphony/runs";
 
@@ -22,7 +20,7 @@ mod tests {
 
     #[test]
     fn every_folder_is_its_own_in_the_one_folder_of_symphonys() {
-        let all = [TASKS, SURREAL, SERVER, MODELS, RUNS];
+        let all = [TASKS, SURREAL, SERVER, RUNS];
         for folder in all {
             let (top, name) = folder.split_once('/').expect("a folder under symphony/");
             assert_eq!(top, "symphony", "{folder}");

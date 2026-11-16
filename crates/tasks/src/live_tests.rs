@@ -699,7 +699,7 @@ fn a_process_cargo_or_nextest_started_is_each_caller_whose_own_parent_is_named_s
         started_by_cargo(
             &[
                 caller(10, "sh", 11),
-                caller(11, "search_bench", 22),
+                caller(11, "dispatch_load", 22),
                 caller(22, "zsh", 1)
             ],
             folder

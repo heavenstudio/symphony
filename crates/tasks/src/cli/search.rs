@@ -3,9 +3,8 @@
 use super::commands::{Context, Stop};
 use super::shape;
 use super::text::roles_text;
-use crate::embedding::{Bge, Embedder, MODEL_ID};
+use crate::Store;
 use crate::pyjson::{self, Py};
-use crate::{SearchHit, Store};
 use std::collections::{BTreeMap, BTreeSet};
 
 pub(super) fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
@@ -15,46 +14,8 @@ pub(super) fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
         .filter(|limit| *limit > 0)
         .ok_or_else(|| Stop::Refused("--limit must be a positive integer".into()))?;
     let query = p.or("query", "");
-    let mode = p.or("mode", "keyword");
-    let keyword = if matches!(mode, "keyword" | "hybrid") {
-        store.search(query)?
-    } else {
-        crate::store::search::validate_query(query)?;
-        Vec::new()
-    };
+    let hits = store.search(query)?;
     let eligible: BTreeSet<_> = store.task_slugs(p.get("status"))?.into_iter().collect();
-    let keyword: Vec<_> = keyword
-        .into_iter()
-        .filter(|h| eligible.contains(&h.slug))
-        .collect();
-    let vectors = if mode != "keyword"
-        && store.has_embeddings(MODEL_ID)?
-        && query.chars().any(char::is_alphanumeric)
-    {
-        let common = crate::git::common_dir(&c.env.cwd).map_err(|e| Stop::Board(e.to_string()))?;
-        let mut embedder = Bge::load(&common).map_err(Stop::Board)?;
-        let vector = embedder.query(query).map_err(Stop::Board)?;
-        store.vector_search(
-            &vector,
-            MODEL_ID,
-            p.get("status"),
-            limit.max(100),
-            mode == "exact",
-        )?
-    } else {
-        Vec::new()
-    };
-    let hits = match mode {
-        "keyword" => keyword,
-        "hybrid" => crate::embedding::fuse(&keyword, &vectors, query),
-        _ => vectors
-            .iter()
-            .map(|v| SearchHit {
-                slug: v.slug.clone(),
-                score: v.score,
-            })
-            .collect(),
-    };
     // Filtering comes before the limit; never reorder the store's relevance ranking by priority.
     let selected: Vec<_> = hits
         .iter()
@@ -72,16 +33,7 @@ pub(super) fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
         .filter_map(|hit| tasks.get(&hit.slug).map(|task| (hit, task)))
         .collect();
     let slugs: Vec<_> = hits.iter().map(|(hit, _)| hit.slug.as_str()).collect();
-    let mut sources = store.search_sources(query, &slugs)?;
-    for hit in &vectors {
-        sources
-            .entry(hit.slug.clone())
-            .or_insert(crate::store::search::SearchSource {
-                slug: hit.slug.clone(),
-                source: hit.source.clone(),
-                text: hit.text.clone(),
-            });
-    }
+    let sources = store.search_sources(query, &slugs)?;
     // Rows as `list --json` lists them, when each task took its status too.
     let since = if p.flag("json") {
         let named: Vec<String> = hits.iter().map(|(hit, _)| hit.slug.clone()).collect();

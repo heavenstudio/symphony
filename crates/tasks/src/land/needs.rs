@@ -66,6 +66,14 @@ impl Needed {
         self.stamps.iter().any(|stamp| stamp == name)
     }
 
+    /// The stamp `name` needed too, whatever the assessment and the catalogue name: the tests of
+    /// a tip whose approve stands over a merge it did not read ([`super::carried`]).
+    pub fn require(&mut self, name: &str) {
+        if !self.has(name) {
+            self.stamps.push(name.to_string());
+        }
+    }
+
     /// Whether the land says what the task needs: it was assessed, or needs more than `review`,
     /// the one stamp a land went by before stamps.
     pub fn told(&self) -> bool {
