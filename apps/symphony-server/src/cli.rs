@@ -386,11 +386,8 @@ fn start(options: Options) -> i32 {
     };
     // A release's server, run through the machine's `current`, starts by its own folder's path, so
     // the server it starts stays that release when the link moves.
-    let released = symphony::machine::release::this().map(|(release, _)| {
-        release
-            .join("bin")
-            .join(symphony::machine::release::SERVER)
-    });
+    let released = symphony::machine::release::this()
+        .map(|(release, _)| release.join("bin").join(symphony::machine::release::SERVER));
     let exe = match released.map_or_else(std::env::current_exe, Ok) {
         Ok(exe) => exe,
         Err(why) => {
