@@ -182,6 +182,11 @@ A move between two kinds stops one and runs the other; a move within a kind is t
 `review:navigate`, which `route.ts` follows. The header, the panel's `+` and bell and the feed are
 the frame's (`src/frame.tsx`), which every page kind draws; the panel and its sheets are this
 client's persistent kind `panel` ([The panel](#the-panel)), which the shell mounts beside any page.
+The header opens with the Symphony's mark, the fermata, and its wordmark, or in the place of each
+the icon and the name the project's theme has of its own (`ProjectView`'s `mark` and `wordmark`,
+which the server decides), as the server's own pages open theirs
+(`apps/symphony-server/src/mark.rs`, whose tests hold the two marks alike); it is no link, so the
+keyboard's first stop stays the project switch.
 
 The menus are this client's persistent kind `overlay` (`src/kinds/overlay.tsx`, `src/overlay.tsx`),
 which the shell mounts in `#overlay-root` on the first select or picture and keeps beside every
