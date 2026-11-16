@@ -404,14 +404,16 @@ fn a_full_page_shot_takes_the_whole_document() {
     );
 }
 
-/// A page whose region on the screen says it is busy (`aria-busy`, as a Symphony page's ghost does
-/// until its reads are in) for ninety frames after it loads, with nothing in flight meanwhile; one
-/// region busy below the window and one scrolled out of the box that clips it, neither ever done.
+/// A page whose region on the screen, in a box that clips it, says it is busy (`aria-busy`, as a
+/// Symphony page's ghost does until its reads are in) for ninety frames after it loads, with
+/// nothing in flight meanwhile; three regions busy off the screen, none ever done: one below the
+/// window, one beside it and one scrolled out of the box that clips it.
 const BUSY: &str = r#"<!doctype html><title>busy</title>
-<main id="ghost" aria-busy="true"><p>Loading…</p></main>
+<div style="overflow: hidden"><main id="ghost" aria-busy="true"><p>Loading…</p></main></div>
 <div style="height: 100px; overflow: auto"><div style="height: 400px"></div><section aria-busy="true">Scrolled out of its box</section></div>
 <div style="height: 2000px"></div>
 <section aria-busy="true">Below the window</section>
+<section aria-busy="true" style="position: absolute; top: 0; left: 3000px">Beside the window</section>
 <script>
 window.__frames = 0;
 (function frame() {
@@ -420,10 +422,11 @@ window.__frames = 0;
 })();
 </script>"#;
 
-/// The shot counts a page drawn only once no region on the screen says it is busy, however long
-/// that takes with nothing in flight, as a loaded machine's board stays under its ghost a while
-/// after its first read answers; a region busy off the screen, which draws only once the reader
-/// goes to it, it does not wait for.
+/// The shot counts a page drawn only once no region on the screen says it is busy, one in a box
+/// that clips it among them, however long that takes with nothing in flight, as a loaded machine's
+/// board stays under its ghost a while after its first read answers; a region busy off the screen,
+/// below the window, beside it or out of its box, which draws only once the reader goes to it, it
+/// does not wait for.
 #[test]
 fn a_page_busy_on_the_screen_is_waited_for_and_one_busy_off_it_is_not() {
     let site = site();
@@ -456,8 +459,8 @@ fn a_page_busy_on_the_screen_is_waited_for_and_one_busy_off_it_is_not() {
             lines[0][1].as_u64().unwrap_or(0) >= 90,
             &lines[0][2]
         ),
-        (&json!("false"), true, &json!(2)),
-        "the region on the screen done after its ninety frames, the two off it still busy: {lines:?}"
+        (&json!("false"), true, &json!(3)),
+        "the region on the screen done after its ninety frames, the three off it still busy: {lines:?}"
     );
 }
 
