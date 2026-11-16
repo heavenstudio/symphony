@@ -56,6 +56,8 @@ function listing(tasks: Task[], counts: [string, number][] = [], more: Partial<T
     counts,
     lifecycle_counts: [],
     next: null,
+    orchestrators: [],
+    unstarted: 0,
     ...more,
   };
 }

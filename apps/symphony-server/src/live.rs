@@ -2036,6 +2036,8 @@ fn shown_alike(a: &symphony_api::Task, b: &symphony_api::Task) -> bool {
         roles,
         instruction,
         fields,
+        waits_on,
+        from,
     } = a;
     *slug == b.slug
         && *title == b.title
@@ -2050,6 +2052,8 @@ fn shown_alike(a: &symphony_api::Task, b: &symphony_api::Task) -> bool {
         && *depends == b.depends
         && *instruction == b.instruction
         && *fields == b.fields
+        && *waits_on == b.waits_on
+        && *from == b.from
         && roles_alike(roles, &b.roles)
 }
 
@@ -2114,6 +2118,13 @@ fn task_changes(changes: &mut Vec<Value>, old: &[symphony_api::Task], new: &[sym
             }
             if before.parent != after.parent {
                 fields.parent = Some(after.parent.clone().unwrap_or_default());
+            }
+            // What it waits on, which a holder's health can change too; none is one of no kind.
+            if before.waits_on != after.waits_on {
+                fields.waits_on = Some(after.waits_on.clone().unwrap_or_default());
+            }
+            if before.from != after.from {
+                fields.from = Some(after.from.clone().unwrap_or_default());
             }
             // A change of what no field carries (a plugin's board fields, which no page draws)
             // sends nothing.

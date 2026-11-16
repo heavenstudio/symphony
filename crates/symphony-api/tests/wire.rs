@@ -19,6 +19,8 @@ mod machine_work;
 mod reader_tests;
 #[path = "wire/section_ends.rs"]
 mod section_ends;
+#[path = "wire/waits_on.rs"]
+mod waits_on;
 
 fn fixture(name: &str) -> String {
     let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));

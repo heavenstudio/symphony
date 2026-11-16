@@ -562,6 +562,16 @@ export type TaskListing = {
    */
   lifecycle_counts: Array<[string, number]>;
   next: string | null;
+  /**
+   * Each session holding the orchestrator role on an open task, by handle, whatever the
+   * listing selects: the board says once when none is live.
+   */
+  orchestrators: Array<Orchestrator>;
+  /**
+   * The board's ready tasks no live executor holds with nothing open before them, whatever the
+   * listing selects ([`crate::Tasks::unstarted`]).
+   */
+  unstarted: number;
 };
 
 export type Task = {
@@ -582,7 +592,39 @@ export type Task = {
    * The plugins' board fields: plugin name, then field name, then its value.
    */
   fields?: { [key in string]: { [key in string]: FieldValue } };
+  /**
+   * What an open task waits on; none for a closed one, or from a server before it.
+   */
+  waits_on?: WaitsOn | null;
+  /**
+   * The status a task the board holds blocked was blocked from, where it is known. A block that
+   * names nothing is not blocked on the wire: the task is sent in that status, `from` beside it,
+   * and its [`WaitsOn`] says no reason is recorded (docs/TASKS.md, what a task waits on).
+   */
+  from?: string | null;
 };
+
+export type WaitsOn = {
+  /**
+   * One of [`WAITS_KINDS`]. A client that does not know a kind draws it as `nobody`.
+   */
+  kind: string;
+  /**
+   * Who or what: the holder at work (`amber-heron`, `amber-heron (stale)`), the decision's
+   * name, the checks' names, the task's slug; empty where the kind names nothing.
+   */
+  who: string;
+  /**
+   * Why, in a few words: the role at work, a block's own words, what a landing lacks.
+   */
+  why: string;
+  /**
+   * When the task took the status it holds, in seconds since the epoch.
+   */
+  since: number;
+};
+
+export type Orchestrator = { handle: string; health: string };
 
 export type Role = {
   handle: string;
@@ -610,6 +652,14 @@ export type TaskFields = {
   depends?: Array<string> | null;
   roles?: Array<Role> | null;
   instruction?: boolean | null;
+  /**
+   * Present only when what it waits on changes; one of no kind (empty) clears it.
+   */
+  waits_on?: WaitsOn | null;
+  /**
+   * Present only when the status it was blocked from changes. Empty string clears it.
+   */
+  from?: string | null;
 };
 
 export type MachineWork = {

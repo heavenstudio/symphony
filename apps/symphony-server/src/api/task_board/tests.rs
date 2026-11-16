@@ -38,6 +38,8 @@ fn fixture() -> (Tasks, MachineWork) {
             version: String::new(),
             tasks: records,
             sessions: vec![],
+            orchestrators: vec![],
+            unstarted: 0,
         },
         work,
     )
@@ -164,6 +166,8 @@ async fn listing_of(records: &[symphony_api::Task], query: &str) -> TaskListing 
         version: String::new(),
         tasks: records.to_vec(),
         sessions: vec![],
+        orchestrators: vec![],
+        unstarted: 0,
     };
     let response = project(
         &request,
@@ -359,6 +363,8 @@ async fn subtasks_and_task_groups_leave_out_finished_instructions_to_staff_their
             task("alone", "ready", None, false),
         ],
         sessions: vec![],
+        orchestrators: vec![],
+        unstarted: 0,
     };
     let read = |query: &str| {
         let request = Request::builder()

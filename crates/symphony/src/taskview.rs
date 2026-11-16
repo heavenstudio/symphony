@@ -33,6 +33,8 @@ pub fn snapshot_board(board: &symphony_board::Board) -> (Tasks, i64) {
             version,
             tasks,
             sessions,
+            orchestrators: Vec::new(),
+            unstarted: 0,
         },
         board.latest_message,
     )
@@ -190,6 +192,8 @@ fn task(t: &symphony_board::Task) -> Task {
         roles: t.roles.iter().map(role).collect(),
         instruction: t.instruction,
         fields: fields(&t.fields),
+        waits_on: None,
+        from: None,
     }
 }
 

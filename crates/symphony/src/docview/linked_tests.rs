@@ -21,6 +21,8 @@ fn task(slug: &str, links: &[&str]) -> Task {
         roles: Vec::new(),
         instruction: false,
         fields: Default::default(),
+        waits_on: None,
+        from: None,
     }
 }
 

@@ -26,6 +26,8 @@ fn task(fields: BTreeMap<String, BTreeMap<String, FieldValue>>) -> Task {
         }],
         instruction: false,
         fields,
+        waits_on: None,
+        from: None,
     }
 }
 
