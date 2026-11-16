@@ -172,16 +172,29 @@ reads nothing of its board.
 The record arrives with schema 18, a raise of its own, and a build below it keeps no line, so the
 move to 18 names no one: a board at 17 has no table of writers to read. In this repository main's
 build moves the board at its first board command once the raise lands, as for any schema here,
-with no migrate and no writer check. A consuming project's board is moved by the refresh of the
-first release that carries 18 ([RELEASES](RELEASES.md#the-refresh)): its `just tasks migrate`
-runs whenever the schema the project's pin locks is above its board's, and moves the board without
-naming anyone. From then on every program of the project's still built at its old pin (a linked
-`tasks` or `agent-send` not rebuilt, a program of its own that opens the board through the board's
-crate) is refused the board, naming itself as the program to rebuild; the project rebuilds each at
-its new pin right after the refresh, and each keeps its line once it has run. From 18 on, every
-build that can write a board keeps its line, so each later move names the writers it would leave
-behind, the refresh's migrate included: that move stops, naming them, until each is rebuilt and
-run once.
+with no migrate and no writer check. A consuming project's board below 18 is brought up by its own
+`just tasks migrate` in its main checkout, never by a release's refresh, which finds no record
+there to judge ([RELEASES](RELEASES.md#the-refresh)): that move names no one. From then on every
+program of the project's still built below 18 (a linked `tasks` or `agent-send` not rebuilt, a
+program of its own that opens the board through the board's crate) is refused the board, naming
+itself as the program to rebuild; the project rebuilds each, and each keeps its line once it has
+run. From 18 on, every build that can write a board keeps its line, so each later move names the
+writers it would leave behind.
+
+From 18 on, a release's refresh moves a consuming project's board to the release's schema, by the
+release's own `tasks migrate` run in the project's main checkout, its store snapshotted first:
+where a project's default branch commits no board source, its live board is moved only from its
+main checkout, by whichever build runs there (`crates/tasks/src/live.rs`). The refresh reads the
+lines first and moves the board only when every writer seen there in the last week is a release's
+own (a binary of a release installed in the machine folder, `releases/NAME/bin/`, on this host,
+which the `current` the refresh then points takes on) or was built at the release's schema; when
+the only writers behind are a release's own, its migrate runs with `--leave-behind`, naming them.
+Any other writer behind holds the release: the refresh names each to rebuild, moves no board of
+any project and leaves `current` where it was, until each is rebuilt and run once and the
+refresh's retry moves them all. Every board is snapshotted before the first moves; a migrate that
+fails stops the rest, the boards moved before it staying at the release's schema until the retry
+finishes the others ([RELEASES](RELEASES.md#the-refresh)). A release that keeps the schema
+`current` names moves no board.
 
 The store takes about what it holds. Every server the board starts keeps each
 value beside its key, where compaction drops the versions a rewrite leaves, and
@@ -1195,7 +1208,10 @@ rest of its document is the board's.
    "session_url": "https://claude.ai/code/session_01…",  # the web address its session gave, else null
    "in_process": false,                               # a subagent running inside its parent's session
    "tokens": {"input": 12, "cache_write_5m": 3400, "cache_write_1h": 560,
-              "cache_read": 78900, "output": 1200, "calls": 7}}]}   # what its calls took, else null
+              "cache_read": 78900, "output": 1200, "calls": 7},  # what its calls took, else null
+   "cost": {"dollars": 0.061308, "input": 4.8e-05, "cache_write_5m": 0.017,
+            "cache_write_1h": 0.00448, "cache_read": 0.01578, "output": 0.024,
+            "unpriced": [], "prices": "2026-11-16"}}]}  # their estimated cost, else null
 ```
 
 `state` is `working`, `running_test` (a run of its own holds a test slot, `phase: holding`, or is queued for one,
@@ -1217,7 +1233,9 @@ cap, and `null` otherwise. `session_url` is the web address the session gave
 ([Going to a session](#going-to-a-session)), else `null`; `in_process` says the agent runs inside
 another session, a subagent bound to its parent's, with no pane of its own. `tokens` is what the
 handle's model calls took, all told, by kind, as its beats recorded them, else `null` (none recorded;
-[Where the tokens go](#where-the-tokens-go)). No credentials appear in this API.
+[Where the tokens go](#where-the-tokens-go)), and `cost` what they cost, estimated at API list
+prices, else `null` ([What the tokens cost](#what-the-tokens-cost)). No credentials appear in this
+API.
 
 The rules a port must copy, in this order:
 
@@ -3071,16 +3089,18 @@ What is not recorded:
     by round: round 1 51.5k · round 2 20.1k
 ```
 
-each amount in three figures at most (`950`, `12.3k`, `7.8M`), rounded down; a task with none
-prints no lines. `--json` carries them as `tokens`: `total`, `by_role` (`[{"role", "tokens"}]`),
-`by_round` (`[{"round", "tokens"}]`) and the `rows` themselves (`handle`, `slug`, `role`,
-`model`, `speed`, `round`, `tokens`, `first`, `last`), from which a price is read by model and
-speed; each `tokens` is `{"input", "cache_write_5m", "cache_write_1h", "cache_read", "output",
-"calls"}`. The agents API gives each agent's `tokens`, all its rows summed ([The agents
-API](#the-agents-api)). A landing's closing line names the task's after the commit (`landed
-SLUG on main at SHA; 71.6k tokens in 6 calls (executor 51.5k, reviewer 20.1k; round 1 51.5k,
-round 2 20.1k)`), each amount with its unit, so no number in it reads as a commit. A copy of
-the board carries the rows (`Dump.usages`). The pages draw none of it yet.
+each amount in three figures at most (`950`, `12.3k`, `7.8M`), rounded down, and their cost
+below them ([What the tokens cost](#what-the-tokens-cost)); a task with none prints no lines.
+`--json` carries them as `tokens`: `total`, `by_role` (`[{"role", "tokens", "cost"}]`),
+`by_round` (`[{"round", "tokens", "cost"}]`) and the `rows` themselves (`handle`, `slug`,
+`role`, `model`, `speed`, `round`, `tokens`, `cost`, `first`, `last`), with the `cost` of the
+total beside it; each `tokens` is `{"input", "cache_write_5m", "cache_write_1h", "cache_read",
+"output", "calls"}`. The agents API gives each agent's `tokens` and `cost`, all its rows summed
+([The agents API](#the-agents-api)). A landing's closing line names the task's after the commit
+(`landed SLUG on main at SHA; 71.6k tokens in 6 calls (executor 51.5k, reviewer 20.1k; round 1
+51.5k, round 2 20.1k), $0.08 estimated at API list prices read 2026-11-16`), each amount with
+its unit, so no number in it reads as a commit. A copy of the board carries the rows
+(`Dump.usages`). The pages draw none of it yet.
 
 The table moves the board to schema 19, which a build on schema 18 reads unharmed (the
 Symphony, the shared server among them): it opens a board one schema ahead to read
@@ -3090,6 +3110,55 @@ writes a board](#who-writes-a-board)). As a writer (every `tasks` command, `list
 `agents` included) an 18 build is refused before any write, naming itself as the program to
 rebuild. Its beat writes nothing either, so an agent whose hook runs an 18 build reads quiet
 while it works until that link is renewed.
+
+## What the tokens cost
+
+Wherever the tokens show, their cost shows beside them, in US dollars, estimated as if the calls
+were paid at the providers' API list prices: a subscription is not billed by the token, but a
+cache read, a cache write and an uncached input token are priced so far apart that a count of
+tokens alone does not say what the work took. Every figure says it is an estimate, and the day
+the prices were read.
+
+The prices are one table, `crates/tasks/src/usage/prices.toml`, embedded in every build of
+`tasks` and of the Symphony, so an installed binary has it and reads nothing from disk, and an
+edit takes effect with the next build. It holds the day its prices were read (`read`), the page
+they were read from (`page`), and a row for each model id and speed (`standard`, or `fast` where
+the provider prices it apart) with its US dollars per million tokens of each kind: `input`,
+`cache_write_5m`, `cache_write_1h`, `cache_read` and `output`, each as the page gives it, never
+as a multiple of another (a cache read is 0.025 of the input price on Claude Fable 5.2 and 0.05
+on Claude Opus 5.5). The file's own header says how to edit it, and the board crate's price tests
+read it as the builds do: a table that does not read prices nothing, so every model reads
+unpriced rather than at a wrong price. It is one price for each model and speed, so an edit
+reprices every call recorded, the earlier ones too.
+
+A row of the board's `usage` table is priced by its exact model and speed
+(`crates/tasks/src/usage/price.rs`). A model or a speed the table has no row for is unpriced: its
+tokens are named beside the cost and are in no dollar figure, never priced at zero. Fast mode has
+rows of its own; Claude Haiku 5.5 is priced at its price for prompts up to 100,000 tokens, as no
+call's prompt size is kept. Money is counted exactly, in millionths of a millionth of a dollar,
+and each figure is rounded to the cent where it is said, half a cent up, so the four kinds'
+figures may not add up to the total's by a cent.
+
+`just tasks show SLUG` prints the cost under the tokens, all told with its four kinds (the two
+cache writes as one), by role and by round:
+
+```
+  Cost: $0.08, estimated at API list prices read 2026-11-16 (input $0.00 · cache write $0.02 · cache read $0.01 · output $0.04)
+    by role: executor $0.05 · reviewer $0.02
+    by round: round 1 $0.05 · round 2 $0.02
+```
+
+Where some tokens were unpriced, the first line ends `; none for gpt-x 1.2M tokens, in no
+figure` (a speed other than `standard` after the model), and a role or round that holds some
+reads `$1.23 + unpriced`, or `unpriced` where none of its tokens had a price; where none of the
+task's had one, the line is `Cost: unpriced: the API list prices read 2026-11-16 have none for
+gpt-x 1.2M tokens`. Each `cost` in `--json` and in the agents API is `{"dollars", "input",
+"cache_write_5m", "cache_write_1h", "cache_read", "output", "unpriced": [{"model", "speed",
+"tokens"}], "prices"}`: the dollars of the priced tokens all told and by kind, the tokens no price
+was found for, and `prices`, the day the table's prices were read; an agent with no tokens has
+`cost: null`. A landing's closing line says `$0.08 estimated at API list prices read 2026-11-16`
+after the tokens, then `, none for gpt-x 1.2M tokens` where some were unpriced, or `no API list
+price read 2026-11-16 for gpt-x 1.2M tokens` in its place where none had a price.
 
 ## The timeline
 

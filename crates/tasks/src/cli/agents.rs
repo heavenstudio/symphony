@@ -24,7 +24,10 @@
 //!     "session_url",                  # the web address its session gave, else null
 //!     "in_process",                   # a subagent: it has no pane, its parent's session holds it
 //!     "tokens": {"input", "cache_write_5m", "cache_write_1h", "cache_read", "output", "calls"}
-//!         | null}]}                   # what its model calls took, all told, as its beats said
+//!         | null,                     # what its model calls took, all told, as its beats said
+//!     "cost": {"dollars", "input", "cache_write_5m", "cache_write_1h", "cache_read", "output",
+//!              "unpriced": [{"model", "speed", "tokens"}], "prices"}
+//!         | null}]}                   # their cost estimated at API list prices read on `prices`
 //! ```
 //!
 //! `state` is one of `working`, `running_test` (its worktree holds a test slot or is queued for one;
@@ -40,7 +43,7 @@ mod place;
 use crate::health::Health;
 use crate::pyjson::Py;
 use crate::rows::TaskSessionRow;
-use crate::usage::Tokens;
+use crate::usage::{Cost, Prices, Tokens};
 use crate::{Binding, Error, Session, Store, Task};
 pub use place::{Began, PROCESS, PROCESS_SCAN_SECONDS, Process, ProcessScan};
 use place::{Stay, resolve, waited_on};
@@ -170,6 +173,9 @@ pub struct Agent {
     /// What its model calls took, all told, as its beats recorded them ([`crate::usage`]); none
     /// before one recorded any.
     pub tokens: Option<Tokens>,
+    /// What those tokens cost, estimated at the API list prices every build embeds
+    /// ([`crate::usage::price`]); none beside no tokens.
+    pub cost: Option<Cost>,
 }
 
 /// The open slots a session holds against the cap.
@@ -274,6 +280,10 @@ impl Agent {
             (
                 "tokens",
                 self.tokens.as_ref().map_or(Py::Null, Tokens::json),
+            ),
+            (
+                "cost",
+                (self.cost.as_ref()).map_or(Py::Null, |c| c.json(&Prices::embedded().read)),
             ),
         ])
     }
@@ -573,14 +583,18 @@ pub fn describe_board_observed(
             session_url: web.get(handle).cloned(),
             in_process: bindings.get(handle).is_some_and(|b| b.in_process),
             tokens: None,
+            cost: None,
         });
     }
-    // What each listed agent's model calls took, all told, in one read: a view without it still
-    // answers, with none.
+    // What each listed agent's model calls took, all told, and their cost, in one read: a view
+    // without it still answers, with none.
     let handles: Vec<&str> = agents.iter().map(|a| a.handle.as_str()).collect();
     let mut spent = store.spent_by(&handles).unwrap_or_default();
     for agent in &mut agents {
-        agent.tokens = spent.remove(&agent.handle);
+        if let Some(spend) = spent.remove(&agent.handle) {
+            agent.tokens = Some(spend.tokens);
+            agent.cost = Some(spend.cost);
+        }
     }
     Ok(View {
         machine_work,

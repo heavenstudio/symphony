@@ -429,13 +429,47 @@ describe("the live board's counts", () => {
   it("say why they could not be read, unless the page shows this device's copy", async () => {
     const { board, d, host } = live(() => answer(503, { error: "the board is down" }));
     await board.counts();
-    expect(d.error).toContain("the board is down");
+    // A read nothing tries again (a refresh's, a search's, the feed's open) says its reason alone.
+    expect(d.error).toBe("the board is down (the server answered 503)");
     expect(board.fresh.failing).toEqual(["counts"]);
     expect(host.redraw).toHaveBeenCalled();
     const device = live(() => answer(503));
     device.board.fresh = { ...device.board.fresh, saved: 1, unanswered: ["counts"] };
-    await device.board.counts();
+    await device.board.check();
     expect(device.d.error).toBe("");
+  });
+
+  it("say they try again while the check still asks for them, whoever's read failed", async () => {
+    let up = false;
+    const { board, d } = live((url) => {
+      if (url === "/api/machine-work") return answer(200, NO_WORK);
+      return up ? answer(200, listing([], [["ready", 1]])) : answer(503, { error: "down" });
+    });
+    await board.check();
+    expect(d.error).toBe("down (the server answered 503). Trying again…");
+    expect(board.fresh.failing).toEqual(["counts"]);
+    // The feed's open reads them too: the check still asks again after it, so it says so.
+    await board.counts();
+    expect(d.error).toBe("down (the server answered 503). Trying again…");
+    // The check's next try answers, and what was said goes.
+    up = true;
+    await pass(1_000);
+    expect(d.counted).toBe(1);
+    expect(d.error).toBe("");
+    // Once the check has its counts, a refresh's read that fails is asked again by nothing.
+    up = false;
+    await board.counts();
+    expect(d.error).toBe("down (the server answered 503)");
+    // Unreachable, it says to check the connection, and still that it tries again.
+    const away = live((url) =>
+      url === "/api/machine-work"
+        ? answer(200, NO_WORK)
+        : Promise.reject(new TypeError("Failed to fetch")),
+    );
+    await away.board.check();
+    expect(away.d.error).toBe(
+      "The server could not be reached; check the connection. Trying again…",
+    );
   });
 
   it("say so of an answer that is no listing", async () => {
@@ -497,11 +531,74 @@ describe("the live board's machine work", () => {
     expect(board.fresh.unanswered).toEqual([]);
   });
 
-  it("says why it could not be read", async () => {
+  it("says why it could not be read, and that it tries again: only the check reads it", async () => {
     const { board, d } = live(() => answer(200, { machines: 1 }));
     await board.machineWork();
-    expect(d.error).toBe("The machines' work is not readable");
+    expect(d.error).toBe("The machines' work is not readable. Trying again…");
     expect(board.fresh.failing).toEqual(["work"]);
+    const refused = live(() => answer(503));
+    await refused.board.machineWork();
+    expect(refused.d.error).toBe("The server answered 503. Trying again…");
+  });
+
+  it("says nothing of a failure once the feed answered for the work meanwhile", async () => {
+    const held = later<Response>();
+    const { board, d, host } = live(() => held.promise);
+    const read = board.machineWork();
+    expect(board.heard(event(["machine-work", building("w/a")]))).toBe(true);
+    host.redraw.mockClear();
+    held.settle(answer(503));
+    await read;
+    // The feed's work stays, and nothing tries the read again: no failure is said.
+    expect(d.work).toEqual(building("w/a"));
+    expect(d.error).toBe("");
+    expect(board.fresh.failing).toEqual([]);
+    expect(host.redraw).not.toHaveBeenCalled();
+  });
+
+  it("takes back what a failure said once the feed answers for the work, not the board's notice", async () => {
+    const { board, d, host } = live(() => answer(503));
+    await board.machineWork();
+    expect(d.error).toBe("The server answered 503. Trying again…");
+    host.redraw.mockClear();
+    // The feed's work is the work drawn: nothing else draws again for it, the words' going does.
+    expect(board.heard(event(["machine-work", NO_WORK]))).toBe(true);
+    expect(d.error).toBe("");
+    expect(board.fresh.failing).toEqual([]);
+    expect(host.redraw).toHaveBeenCalledTimes(1);
+    // The board's own notice of its state is no read's failure: the work's answer leaves it.
+    await board.machineWork();
+    expect(board.heard(event(["tasks-status", { available: false }]))).toBe(true);
+    expect(d.error).toBe(statusNotice(false, false));
+    expect(board.heard(event(["machine-work", building("w/a")]))).toBe(true);
+    expect(board.fresh.failing).toEqual([]);
+    expect(d.error).toBe(statusNotice(false, false));
+  });
+
+  it("takes back what a failure said once the check's next try answers", async () => {
+    const first = later<Response>();
+    let works = 0;
+    const { board, d, host } = live((url) => {
+      if (url !== "/api/machine-work") return answer(200, listing([], [["ready", 1]]));
+      works += 1;
+      return works === 1 ? first.promise : answer(200, NO_WORK);
+    });
+    const checking = board.check();
+    await pass();
+    // The counts answered first, so nothing else takes the words away.
+    expect(d.counted).toBe(1);
+    first.settle(answer(503));
+    await checking;
+    expect(d.error).toBe("The server answered 503. Trying again…");
+    host.redraw.mockClear();
+    await pass(1_000);
+    expect(works).toBe(2);
+    expect(d.worked).toBe(1);
+    expect(d.error).toBe("");
+    expect(board.fresh.failing).toEqual([]);
+    expect(host.redraw).toHaveBeenCalled();
+    await pass(60_000);
+    expect(works).toBe(2);
   });
 });
 
@@ -1314,6 +1411,8 @@ describe("the live board's check", () => {
     await board.check();
     expect(urls(asked)).toEqual(["/api/machine-work", COUNTS_URL]);
     expect(d.counted).toBe(0);
+    // Said as a read the page tries again, which it is.
+    expect(d.error).toBe("The server answered 503. Trying again…");
     await pass(1000);
     expect(tries).toBe(2);
     await pass(1999);
@@ -1321,6 +1420,7 @@ describe("the live board's check", () => {
     await pass(1);
     expect(tries).toBe(3);
     expect(d.counted).toBe(1);
+    expect(d.error).toBe("");
     await pass(60_000);
     expect(tries).toBe(3);
   });
@@ -1387,9 +1487,8 @@ describe("the task board's page", () => {
     const html = renderToStaticMarkup(<TasksPage scope="" />);
     expect(html).toMatch(/^<main data-ready="board" data-feed="live" aria-busy="true">/);
     expect(html).toContain('<span class="status-text" role="status">Loading tasks…</span>');
-    expect(html).toContain(
-      '<div class="page-head"><h1>Board</h1><a href="/agents">Who is connected</a></div>',
-    );
+    // The heading alone: the header's Agents link leads where its Who is connected did.
+    expect(html).toContain('<div class="page-head"><h1>Board</h1></div>');
     expect(html).toContain('class="ghost-kanban"');
     expect(html).toContain('class="stale page-notices notice-stack" hidden=""');
   });

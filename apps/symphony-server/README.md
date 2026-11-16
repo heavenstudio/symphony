@@ -154,11 +154,11 @@ keeping the tag and `no-store` (`src/api/validated.rs`, applied where every read
 (`version`), which moves with every change on the board, so their tag is of the JSON with the
 cursor left out: it moves only with the document. An outline's check that names the tag of the copy
 the hub follows for that page is answered `304` at the feed's cursor without rendering the
-document: the hub renders that copy again when anything a render reads that it tracks changed, and
-makes its outline's tag once for each copy (`Hub::outline_kept`). A check with another tag or none,
-of a document not followed yet, of a copy whose tasks are no longer the ones that link it on the
-board as last read (a board read asks for no refresh), or of one that names a file from outside the
-entrypoints' folders by its change time and size, which no refresh watches, renders as a read does.
+document: the hub renders that copy again when anything a render reads that it tracks changed, its
+linking tasks among them, which a board read keeps current (`Hub::update_board`), and makes its
+outline's tag once for each copy (`Hub::outline_kept`). A check with another tag or none, of a
+document not followed yet, or of one that names a file from outside the entrypoints' folders by its
+change time and size, which no refresh watches, renders as a read does.
 A page whose kept copy is still current takes the cursor from `/api/board`. Every JSON read names
 the feed's cursor it was read at in a header (`symphony_api::VERSION_HEADER`), on its `200` and its
 `304` alike: the server takes the cursor before it reads the answer, so every event at or before it
@@ -190,9 +190,8 @@ it on before a release caught up) is read, and nothing is written to it from the
 dispatch no callback, give no work and keep no owner's asks, the schema rule refuses every other
 write, and every page says so on the notice until the board and the build agree. A board that
 took a read and answered it later than the 3 s wait, on its one resend too, is slow: 504, "the
-task board is slow", never "cannot be reached". The wait bounds the board tick, which shares the
-data worker's thread with document refreshes, and bounds each sending's whole
-answer, so a read sent twice stays inside the client's 15 s request limit. Native routes apply both
+task board is slow", never "cannot be reached". The wait bounds the board tick and each sending's
+whole answer, so a read sent twice stays inside the client's 15 s request limit. Native routes apply both
 the peer gate and the Host check; sandboxed frames cannot read the API.
 
 `just symphony` installs the release client with the shared server, in
@@ -278,7 +277,10 @@ are ignored by the current board client.
 
 One filesystem watcher handles registers, branch discovery and the client
 build for every connection. One shared board reader checks database changes
-each second; clients do no version polling. Recent deltas are retained for the
+each second, on a thread of its own beside the document refreshes, so neither waits on the
+other: a refresh keeps the board's counts the last tick gave its page, never older ones it read
+first, and the hub's stop ends the reader's wait between two checks at once. Clients do no
+version polling. Recent deltas are retained for the
 snapshot/subscribe gap. An expired cursor returns 409, or closes an already
 open stream, so the client fetches a fresh snapshot. `Last-Event-ID` is not a
 resume mechanism across server starts. Named `ping` events follow the client
@@ -288,7 +290,10 @@ Worktree index locks and reflogs do not invalidate document snapshots. A page fo
 document a visit read, and a refresh renders those again only once the page's own files changed
 (main's: a file below its documents' folders or what its plugins watch, a lost event, or its
 project file edited, whether its settings still load or not): a ref, a worktree's record or a
-branch's edit renders none of main's but one whose cards or linking tasks moved. Text and
+branch's edit renders none of main's but one whose cards or linking tasks moved. A board read
+that finds a task's slug, title, status or links moved renders again, on every page, the
+followed documents whose linking tasks it moved and no other, so a page left open follows its
+related tasks with no file changed. Text and
 parsed registers reuse unchanged files, checking inode, size, modification and
 change times so atomic replacement and a restored mtime still invalidate them.
 Schema validators are reused by schema contents. Unchanged feed lists skip diff
@@ -320,7 +325,8 @@ before a refresh that renders anew reads again, as that refresh rendered only wh
 A cold server publishes its document hub and URL, then activates the first board
 read in the hub's owned worker. Data reads activate and await that first result; an unavailable board
 keeps its existing error response, a panic in that read answers as an unavailable board, and
-shutdown releases waiting reads before joining the worker. A reload replacement awaits the first board result before
+shutdown releases waiting reads before joining the worker, which ends once its board reader and
+document refreshes have. A reload replacement awaits the first board result before
 acknowledging handover. The server publishes its bound-port hint before warmup.
 Auto-port discovery also reads bounded owned announcements and probes the known
 ports before scanning processes. Cold homes and known free ports need no census;

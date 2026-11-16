@@ -100,11 +100,13 @@ pub(crate) struct Page {
     /// render begun before it places nothing.
     copied: BTreeMap<String, u64>,
     /// Where the last refresh that renders anew (its files changed, or main's one cards moved)
-    /// began, in [`Hub::reads`]' numbers: a first read of a document begun before it reads again,
-    /// as that refresh renders only the documents followed when it listed them.
+    /// or board read whose tasks moved ([`Hub::render_relinked`]) began, in [`Hub::reads`]'
+    /// numbers: a first read of a document begun before it reads again, as each renders only the
+    /// documents followed when it listed them.
     renews_from: u64,
-    /// Documents a first read placed though a refresh that renders anew began after it, as it had
-    /// read again once already: the next refresh renders them whatever changed.
+    /// Documents a first read placed though a refresh that renders anew, or a board read whose
+    /// tasks moved, began after it, as it had read again once already: the next refresh renders
+    /// them whatever changed.
     stale: BTreeSet<String>,
     /// The tag of each document's outline as its copy in `documents` makes it, with the read that
     /// copy came from ([`Hub::outline_kept`]): made at the first check of each copy, and `None`
@@ -182,6 +184,9 @@ pub(crate) struct Hub {
     /// `pages` where both are held, never before.
     task_asks: Mutex<task_asks::Asked>,
     worker: Mutex<Option<std::thread::JoinHandle<()>>>,
+    /// What the board's ticks wait on between two reads, on their own thread ([`run`]): [`Hub::stop`]
+    /// drops it, as the hub's own drop does, and that wakes the wait at once.
+    ticks: Mutex<Option<mpsc::Sender<()>>>,
     /// The board's health over the last hour: the clock's dispatch passes, the idle sweeps and
     /// every request this process sent the board ([`symphony_board::board_health`]).
     pub(crate) health: symphony_board::board_health::Recorder,
@@ -348,6 +353,7 @@ impl Hub {
             task_activity: Mutex::new(None),
             task_asks: Mutex::default(),
             worker: Mutex::new(None),
+            ticks: Mutex::new(None),
             health: symphony_board::board_health::Recorder::default(),
             agent_activity: Mutex::new(None),
             report_folders: OnceLock::new(),
@@ -627,16 +633,16 @@ impl Hub {
     ///
     /// The copy is the hub's own record of what a render reads from the checkout: a refresh
     /// renders it again once a file of its checkout's documents, the project's settings, its one
-    /// cards or, on a branch's page, main's baseline changed ([`Hub::refresh_page_read`]), and
-    /// its sections are read from it too ([`Hub::document_sections`]). So the check says what a
-    /// page left open shows: an edit the watcher has not told yet arrives on the feed from the
-    /// cursor given here.
+    /// cards or, on a branch's page, main's baseline changed ([`Hub::refresh_page_read`]), a board
+    /// read once a task that links it, or comes to, moved ([`Hub::update_board`]), and its
+    /// sections are read from it too ([`Hub::document_sections`]). So the check says what a page
+    /// left open shows: an edit the watcher has not told yet, or a board read has not rendered
+    /// yet, arrives on the feed from the cursor given here.
     ///
     /// `None`, and the check renders as [`Hub::document`] does, which publishes what it finds:
-    /// for a document the page does not follow yet or holds as missing; for a copy whose tasks
-    /// are no longer the ones that link it on the board as last read, as a board read asks for no
-    /// refresh; and for a copy naming a file from outside the entrypoints' folders by its
-    /// validator ([`symphony::docview::names_files_outside`]), whose change no refresh sees.
+    /// for a document the page does not follow yet or holds as missing, and for a copy naming a
+    /// file from outside the entrypoints' folders by its validator
+    /// ([`symphony::docview::names_files_outside`]), whose change no refresh sees.
     pub fn outline_kept(
         &self,
         scope: &str,
@@ -648,17 +654,12 @@ impl Hub {
         } else {
             self.tree(scope)?
         };
-        // The tasks that link the document on the board as last read, as a render lists them: no
-        // refresh follows a board read, so the copy's are compared at each check.
-        let board = self.tasks_read().ok();
-        let linked =
-            symphony::docview::linked(&root, rel, board.as_ref().map_or(&[], |board| &board.tasks));
-        // The copy the page holds now, its tasks still the board's, and the read it came from.
+        // The copy the page holds now, and the read it came from.
         let held = |page: &Page| -> Option<u64> {
-            let document = page.documents.get(rel)?;
-            (!page.missing.contains(rel) && document.tasks == linked)
-                .then(|| page.copied.get(rel).copied())
-                .flatten()
+            if !page.documents.contains_key(rel) || page.missing.contains(rel) {
+                return None;
+            }
+            page.copied.get(rel).copied()
         };
         let made = |page: &Page, read: u64| -> Option<Option<String>> {
             let outlines = page.outlines.lock().unwrap_or_else(|e| e.into_inner());
@@ -733,10 +734,11 @@ impl Hub {
             }
             let mut pages = self.pages.write().unwrap_or_else(|e| e.into_inner());
             let page = pages.get_mut(scope).ok_or_else(removed)?;
-            // A refresh that renders anew begun since this read did, which listed the documents to
-            // render without this one, as none followed it: what this read read may be gone. It
-            // reads once again; behind a second such refresh it is placed and left to the next, so
-            // no reader renders on while the files keep changing.
+            // A refresh that renders anew, or a board read whose tasks moved, begun since this read
+            // did, which listed the documents to render without this one, as none followed it:
+            // what this read read, its files or its tasks, may be gone. It reads once again; behind
+            // a second such refresh it is placed and left to the next, so no reader renders on
+            // while the files or the board keep changing.
             let behind = read < page.renews_from && !page.documents.contains_key(rel);
             if behind && std::mem::take(&mut read_again) {
                 continue;
@@ -1112,9 +1114,6 @@ impl Hub {
             }
         };
         let board = self.tasks_read().ok();
-        if let Some(tasks) = &board {
-            snapshot.board.counts.tasks = Some(taskview::counts(tasks));
-        }
         let cards_moved = cards_before.as_ref().is_some_and(|before| {
             !Arc::ptr_eq(before, &snapshot.pages) && **before != *snapshot.pages
         });
@@ -1132,8 +1131,10 @@ impl Hub {
             .unwrap_or_else(|e| e.into_inner())
             .get_mut(scope)
             .map(|page| {
+                // A board read's listing, which the ticks make beside this refresh, may have
+                // marked a later read since this one began: the mark only moves forward.
                 if let Some(begun) = begun {
-                    page.renews_from = begun;
+                    page.renews_from = page.renews_from.max(begun);
                 }
                 let stale = std::mem::take(&mut page.stale);
                 page.documents
@@ -1166,15 +1167,7 @@ impl Hub {
             })
             .map(|(rel, _, _)| rel)
             .collect();
-        // They are read again before `pages` is taken, each numbered as its read begins.
-        let rendered: Vec<_> = followed
-            .into_iter()
-            .map(|rel| {
-                let read = self.reads.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                let doc = self.render_document(root, &rel, scope);
-                (rel, read, doc)
-            })
-            .collect();
+        let rendered = self.render_again(root, scope, followed);
         let mut pages = self.pages.write().unwrap_or_else(|e| e.into_inner());
         // Preferences can change while a watched source snapshot is being prepared.
         if scope.is_empty() {
@@ -1190,6 +1183,13 @@ impl Hub {
                     .collect();
                 snapshot.queue.waiting = waiting;
             }
+            // The board's task counts are the ticks' ([`Hub::update_board`], [`Hub::board_error`]),
+            // which run beside this refresh: the page keeps the ones they last gave it, never ones
+            // read before these renders. A page made anew takes the last board read's.
+            snapshot.board.counts.tasks = match pages.get(scope) {
+                Some(page) => page.board.counts.tasks.clone(),
+                None => board.as_deref().map(taskview::counts),
+            };
         } else if let Some(main) = pages.get("") {
             snapshot.board = main.board.clone();
             snapshot.queue = main.queue.clone();
@@ -1214,33 +1214,7 @@ impl Hub {
             }
             sort_activity(&mut combined);
             let mut changes = board_changes(&page.board, &snapshot.board);
-            for (rel, read, rendered) in rendered {
-                // A reader's render begun after this one placed the newer copy meanwhile.
-                if page.copied.get(&rel).is_some_and(|copied| *copied > read) {
-                    continue;
-                }
-                page.copied.insert(rel.clone(), read);
-                match rendered {
-                    Ok(doc) => {
-                        if let Some(delta) = document_change(page, &rel, &doc) {
-                            changes.push(json!({"region":"document", "data":delta}));
-                        }
-                        page.documents.insert(rel, doc);
-                    }
-                    // A page made again since its documents were listed follows none of them.
-                    Err(_) => {
-                        if let Some(doc) = page.documents.get(&rel)
-                            && page.missing.insert(rel.clone())
-                        {
-                            changes.push(
-                                json!({"region":"document", "data":symphony_api::DocumentChange {
-                                    path:doc.path.clone(), removed:true, ..Default::default()
-                                }}),
-                            );
-                        }
-                    }
-                }
-            }
+            place(page, rendered, &mut changes);
             diff_items(
                 &mut changes,
                 "queue-item",
@@ -1313,6 +1287,66 @@ impl Hub {
             );
         }
         Ok(())
+    }
+
+    /// The followed documents `followed` of the checkout at `root` rendered again for `scope`'s
+    /// page, each numbered as its read begins ([`Hub::reads`]): read before `pages` is taken, and
+    /// placed under it ([`place`]).
+    fn render_again(&self, root: &Path, scope: &str, followed: Vec<String>) -> Vec<Rendered> {
+        followed
+            .into_iter()
+            .map(|rel| {
+                let read = self.reads.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                let doc = self.render_document(root, &rel, scope);
+                (rel, read, doc)
+            })
+            .collect()
+    }
+
+    /// Each page's followed documents that the board's `tasks` link otherwise than its copy says,
+    /// rendered again ([`Hub::render_again`]), by the page's scope: a board read changes no file,
+    /// so no refresh renders them. Read once the hub holds `tasks`, so each render lists them.
+    ///
+    /// Listed under the lock the first reads place under, as a refresh lists: a first read begun
+    /// before may have read the board before `tasks`, and reads again ([`Page::renews_from`]).
+    fn render_relinked(&self, tasks: &[symphony_api::Task]) -> BTreeMap<String, Vec<Rendered>> {
+        let begun = self.reads.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let listed: Vec<(String, Followed)> = self
+            .pages
+            .write()
+            .unwrap_or_else(|e| e.into_inner())
+            .iter_mut()
+            .map(|(scope, page)| {
+                // A refresh beside the ticks may have marked a later read: it only moves forward.
+                page.renews_from = page.renews_from.max(begun);
+                let followed = page
+                    .documents
+                    .iter()
+                    .filter(|(rel, _)| !page.missing.contains(*rel))
+                    .map(|(rel, doc)| (rel.clone(), doc.tasks.clone()))
+                    .collect();
+                (scope.clone(), followed)
+            })
+            .collect();
+        listed
+            .into_iter()
+            .filter_map(|(scope, followed)| {
+                let root = if scope.is_empty() {
+                    self.root.clone()
+                } else {
+                    self.tree(&scope)?
+                };
+                let moved: Vec<String> = followed
+                    .into_iter()
+                    .filter(|(rel, held)| *held != symphony::docview::linked(&root, rel, tasks))
+                    .map(|(rel, _)| rel)
+                    .collect();
+                (!moved.is_empty()).then(|| {
+                    let rendered = self.render_again(&root, &scope, moved);
+                    (scope, rendered)
+                })
+            })
+            .collect()
     }
 
     fn publish(&self, page: &mut Page, changes: Vec<Value>) {
@@ -1438,6 +1472,13 @@ impl Hub {
         if held.error.is_some() {
             changed.push(json!({"region":"tasks-status", "data":{"available":true}}));
         }
+        // A document rendered while the board was not read yet, or could not be read, lists none of
+        // its tasks, however little the board moved since.
+        let relinked = held.error.is_some()
+            || held
+                .last
+                .as_ref()
+                .is_none_or(|old| !Arc::ptr_eq(old, &next) && relinks(&old.tasks, &next.tasks));
         if let Some(old) = &held.last {
             task_changes(&mut changed, &old.tasks, &next.tasks);
             // A holder's health is no task's change: it moves no column's count.
@@ -1513,9 +1554,17 @@ impl Hub {
         }
         *old_agents = Some(agents);
         drop(old_agents);
+        let mut rendered = if relinked {
+            measured("relinked documents", || self.render_relinked(&next.tasks))
+        } else {
+            BTreeMap::new()
+        };
         let mut pages = self.pages.write().unwrap_or_else(|e| e.into_inner());
-        for page in pages.values_mut() {
+        for (scope, page) in pages.iter_mut() {
             let mut changes = changed.clone();
+            if let Some(rendered) = rendered.remove(scope) {
+                place(page, rendered, &mut changes);
+            }
             let counts = Some(taskview::counts(&next));
             if page.board.counts.tasks != counts {
                 page.board.counts.tasks = counts;
@@ -1778,6 +1827,55 @@ fn tree_inputs(root: &Path) -> Vec<(String, RecursiveMode)> {
         .collect()
 }
 
+/// A followed document rendered again ([`Hub::render_again`]): its path, the read it came from
+/// ([`Hub::reads`]) and what the render made of it.
+type Rendered = (String, u64, Result<symphony_api::Document, String>);
+
+/// The documents a page follows and is not holding as missing, each with the tasks its copy lists
+/// ([`Hub::render_relinked`]).
+type Followed = Vec<(String, Vec<symphony_api::DocumentTask>)>;
+
+/// Place each of `rendered` in `page`, unless a render begun after it placed its copy first, and
+/// add to `changes` what each changes on the page's open documents.
+fn place(page: &mut Page, rendered: Vec<Rendered>, changes: &mut Vec<Value>) {
+    for (rel, read, rendered) in rendered {
+        // A reader's render begun after this one placed the newer copy meanwhile.
+        if page.copied.get(&rel).is_some_and(|copied| *copied > read) {
+            continue;
+        }
+        page.copied.insert(rel.clone(), read);
+        match rendered {
+            Ok(doc) => {
+                if let Some(delta) = document_change(page, &rel, &doc) {
+                    changes.push(json!({"region":"document", "data":delta}));
+                }
+                page.documents.insert(rel, doc);
+            }
+            // A page made again since its documents were listed follows none of them.
+            Err(_) => {
+                if let Some(doc) = page.documents.get(&rel)
+                    && page.missing.insert(rel.clone())
+                {
+                    changes.push(
+                        json!({"region":"document", "data":symphony_api::DocumentChange {
+                            path:doc.path.clone(), removed:true, ..Default::default()
+                        }}),
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// Whether a document's tasks can read otherwise on `new` than on `old`
+/// ([`symphony::docview::linked`]): a task came or went, or moved its slug, title, status or links.
+fn relinks(old: &[symphony_api::Task], new: &[symphony_api::Task]) -> bool {
+    old.len() != new.len()
+        || old.iter().zip(new).any(|(a, b)| {
+            (&a.slug, &a.title, &a.status, &a.links) != (&b.slug, &b.title, &b.status, &b.links)
+        })
+}
+
 fn document_change(
     page: &mut Page,
     rel: &str,
@@ -1823,57 +1921,99 @@ fn document_change(
         .and_then(|before| symphony::docview::changes(before, doc))
 }
 
+/// The hub's two loops once its first board read is done: the board's ticks on a thread of their
+/// own, so a document refresh never holds a tick back nor a tick a refresh, and the documents'
+/// refreshes on this one. It returns once both have ended: the ticks when the hub stops, goes or
+/// loses its project; the documents when the hub drains or goes, or once the ticks have ended, so a
+/// project lost ends both.
 fn run(
     weak: Weak<Hub>,
     recv: mpsc::Receiver<()>,
-    mut watcher: impl Watcher,
-    mut watched: BTreeSet<PathBuf>,
-    mut backstop: Backstop,
+    watcher: impl Watcher,
+    watched: BTreeSet<PathBuf>,
+    backstop: Backstop,
+    board: Option<symphony_board::Store>,
+    connect: impl FnMut(&Path) -> Result<symphony_board::Store, String> + Send,
+) {
+    let (stop, stopped) = mpsc::channel();
+    {
+        let Some(hub) = weak.upgrade() else { return };
+        let mut held = hub.ticks.lock().unwrap_or_else(|e| e.into_inner());
+        // A stop sets `draining` before it takes what this holds, so one already past its take is
+        // seen here, and neither loop starts.
+        if *hub.draining.borrow() {
+            return;
+        }
+        *held = Some(stop);
+    }
+    let weak = &weak;
+    std::thread::scope(|scope| {
+        let ticking = scope.spawn(move || ticks(weak, &stopped, board, connect));
+        documents(weak, &recv, watcher, watched, backstop, || {
+            ticking.is_finished()
+        });
+    });
+}
+
+/// The board's ticks, one an interval, independent of client count: the board read (the chat
+/// journal, callbacks, the give, the agents probe), the queue's expired postponements (with backoff
+/// on store errors), the hourly roll-up, the asks file and the project's settings. Between two it
+/// waits on `stopped`, which the hub's stop and its drop end at once, the first tick right away.
+fn ticks(
+    weak: &Weak<Hub>,
+    stopped: &mpsc::Receiver<()>,
     mut board: Option<symphony_board::Store>,
     mut connect: impl FnMut(&Path) -> Result<symphony_board::Store, String>,
 ) {
-    let mut last_board = Instant::now() - BOARD_INTERVAL;
     let mut expiry = OrderExpiry::default();
-    while let Some(hub) = weak.upgrade() {
-        if *hub.draining.borrow() {
+    let mut wait = Duration::ZERO;
+    while let Err(mpsc::RecvTimeoutError::Timeout) = stopped.recv_timeout(wait) {
+        let started = Instant::now();
+        let Some(hub) = weak.upgrade() else { break };
+        // A project removed under the server: nothing more is read or recorded for it.
+        if !hub.holds_its_project() {
+            hub.lose();
             break;
         }
-        // One central task-board read per interval, independent of client count. Expired
-        // postponements refresh the shared cached queue here, with backoff on store errors;
-        // other document and worktree changes come from watcher events and the backstop's sweep.
-        if last_board.elapsed() >= BOARD_INTERVAL {
-            last_board = Instant::now();
-            // A project removed under the server: nothing more is read or recorded for it.
-            if !hub.holds_its_project() {
-                hub.lose();
-                break;
-            }
-            expiry.tick(&hub.root, symphony::postpone::now(), || {
-                hub.refresh_order("")
-            });
-            if board.is_none() {
-                board = hub.reconnect(&mut connect);
-            }
-            if let Some(store) = &board
-                && let Err(e) = measured("board tick", || hub.board_read(store))
-            {
-                hub.board_error(e);
-                board = None;
-            }
-            measured("reports tick", || hub.reports_tick(board.as_ref()));
-            measured("asks tick", || hub.asks_tick());
-            measured("project tick", || hub.tell_project());
+        expiry.tick(&hub.root, symphony::postpone::now(), || {
+            hub.refresh_order("")
+        });
+        if board.is_none() {
+            board = hub.reconnect(&mut connect);
         }
-        drop(hub);
-        let wake = backstop.wait(&recv, Duration::from_millis(250));
+        if let Some(store) = &board
+            && let Err(e) = measured("board tick", || hub.board_read(store))
+        {
+            hub.board_error(e);
+            board = None;
+        }
+        measured("reports tick", || hub.reports_tick(board.as_ref()));
+        measured("asks tick", || hub.asks_tick());
+        measured("project tick", || hub.tell_project());
+        wait = BOARD_INTERVAL.saturating_sub(started.elapsed());
+    }
+}
+
+/// The documents' refreshes, from watcher events, the backstop's sweep and the rescans the ticks and
+/// the reads ask for, until the hub drains or goes, or `ticks_ended` says the ticks have ended.
+fn documents(
+    weak: &Weak<Hub>,
+    recv: &mpsc::Receiver<()>,
+    mut watcher: impl Watcher,
+    mut watched: BTreeSet<PathBuf>,
+    mut backstop: Backstop,
+    ticks_ended: impl Fn() -> bool,
+) {
+    loop {
+        let wake = backstop.wait(recv, Duration::from_millis(250));
         if wake == Wake::Event {
             // Every event within QUIET of the first is taken with it, and the pass reads then:
             // never later than that, as the watched worktrees seldom go quiet and every live
             // page's update waits on this pass.
-            backstop::debounce(&recv, backstop::QUIET, backstop::QUIET);
+            backstop::debounce(recv, backstop::QUIET, backstop::QUIET);
         }
         let Some(hub) = weak.upgrade() else { break };
-        if *hub.draining.borrow() {
+        if *hub.draining.borrow() || ticks_ended() {
             break;
         }
         // A task finished or came back since the last scan: its branch's cards come or go. A
@@ -2181,6 +2321,9 @@ mod refresh_tests;
 mod outline_check_tests;
 
 #[cfg(test)]
+mod relinked_tests;
+
+#[cfg(test)]
 mod feed_deltas_tests;
 
 #[cfg(test)]
@@ -2194,6 +2337,9 @@ mod timeline_tests;
 
 #[cfg(test)]
 mod reports_tests;
+
+#[cfg(test)]
+mod ticks_tests;
 
 #[cfg(test)]
 mod tests {

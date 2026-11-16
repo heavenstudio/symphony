@@ -668,10 +668,10 @@ What holds on every page, and each page's contract where its section above names
   the owner's choice, as the caps are.
   Other page kinds are reported separately for review.
   On the fixture (`entry_pages_fit_the_first_visit_budget_and_deferred_kinds_are_reported` prints
-  each page's requests) a first visit to `/` takes 112,520 bytes, `/tasks` 121,442, `/agents`
-  115,511, `/queue` 108,081, `/reports` 112,514, `/runs` 106,760, `/docs/` 139,015, a document
-  140,676 and a task's page 142,233, and a return that finds what it kept unchanged 2,031, 2,442,
-  2,307, 2,272, 574, 984, 574, 1,677 and 2,285. A first visit to a kind is its entry and its
+  each page's requests) a first visit to `/` takes 113,361 bytes, `/tasks` 122,311, `/agents`
+  116,347, `/queue` 108,915, `/reports` 113,344, `/runs` 111,216, `/docs/` 139,904, a document
+  141,589 and a task's page 143,419, and a return that finds what it kept unchanged 2,103, 2,586,
+  2,403, 2,368, 646, 1,080, 646, 820 and 2,405. A first visit to a kind is its entry and its
   sheets, the chunk every kind shares (React and the frame) and the pieces it shares with some of
   the others (the board's feed and keep; the card and the task readers of the board and the agents
   page; the media layer's chunk and sheet, home's, the documents', a task's page's and the chat's),
@@ -722,7 +722,10 @@ What holds on every page, and each page's contract where its section above names
   `src/taskcard.tsx`), the agents page ([below](#the-agents-page)) and a task's page
   ([below](#a-tasks-page); the gates' and the timeline's contract,
   [TASKS](../../docs/TASKS.md#gates) and [the timeline](../../docs/TASKS.md#the-timeline)). The
-  board fetches counts first, then nearby column pages; finished work defaults to 24 hours, with
+  board alone takes the window's whole width, where every other page keeps the frame's 1440 px
+  (`main` in `src/styles/board.css`): its pipeline's columns keep their 288 px, which
+  `src/cardheight.ts` repeats, and its scroller scrolls sideways only when the window cannot
+  hold them all. The board fetches counts first, then nearby column pages; finished work defaults to 24 hours, with
   a week switch and older paging. A feed event that changes what a view lists (a task, a message
   while searching, the counts) reads the counts again 750 ms on, then the columns, each its first
   page as long as the rows it shows (the listing's `rows`), so the pages Load more brought, and the
@@ -807,7 +810,7 @@ What holds on every page, and each page's contract where its section above names
   ghost (`cover`) until no such region shows on its first screen, its read fails, or
   `SETTLE_MS` (3 s) passes; a hidden control takes no focus, so a
   browser test waits for `visible(SELECTOR)` before it focuses one. The task board shows its
-  heading (one node from ghost to board, so its link keeps focus) and controls at once, each
+  heading and controls at once, each
   column reserving a card's box per row of its first page (`PAGE` in `src/board.tsx`), at the
   pitch kept for its place, else `ROW`, a typical card (a title of two lines, a row of links and
   one of roles; its ghost draws no role chip in a column no agent has taken up, `unstaffed`),

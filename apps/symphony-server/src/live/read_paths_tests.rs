@@ -1,8 +1,8 @@
 //! What a page's read costs the hub: a document's render holds no lock the board, the feed and the
 //! project list read under, waits on no refresh's renders, and still publishes what it finds
 //! before handing out its version, the copy kept being the one whose read began last, and a first
-//! read that a refresh rendering anew began after reads again once, then is left to the next
-//! refresh; a document, folder or agents read
+//! read that a refresh rendering anew, or a board read moving its tasks, began after reads again
+//! once, then is left to the next refresh; a document, folder or agents read
 //! reads no board; the task pages' reads and the task board's search share one store of the board,
 //! dropped only once the board failed a read; a document read ahead (`view=first`) is neither
 //! followed nor published.
@@ -30,7 +30,7 @@ use symphony_board::rpc::Client;
 use tower::ServiceExt;
 
 /// The first bytes of a PNG three pixels wide and two high: all a render reads of a picture.
-const PNG: [u8; 24] = [
+pub(super) const PNG: [u8; 24] = [
     0x89, b'P', b'N', b'G', b'\r', b'\n', 0x1a, b'\n', 0, 0, 0, 13, b'I', b'H', b'D', b'R', 0, 0,
     0, 3, 0, 0, 0, 2,
 ];
@@ -74,7 +74,7 @@ pub(super) fn requests(store: &symphony_board::Store) -> u64 {
 }
 
 /// A FIFO at `path`: a render that reads it waits until the test writes.
-fn fifo(path: &Path) {
+pub(super) fn fifo(path: &Path) {
     use std::os::unix::ffi::OsStrExt;
     let name = std::ffi::CString::new(path.as_os_str().as_bytes()).unwrap();
     // SAFETY: name is a live, terminated path; the FIFO is this test's.
@@ -82,7 +82,7 @@ fn fifo(path: &Path) {
 }
 
 /// The write end of the FIFO at `path` once a reader has opened it, `None` before.
-fn writer(path: &Path) -> Option<std::fs::File> {
+pub(super) fn writer(path: &Path) -> Option<std::fs::File> {
     match std::fs::OpenOptions::new()
         .write(true)
         .custom_flags(libc::O_NONBLOCK)
@@ -292,7 +292,7 @@ fn first_read_across(
 }
 
 /// Whether `doc`, as the wire carries it, says `words` anywhere: a card's line among them.
-fn holds(doc: &symphony_api::Document, words: &str) -> bool {
+pub(super) fn holds(doc: &symphony_api::Document, words: &str) -> bool {
     serde_json::to_string(doc).unwrap().contains(words)
 }
 
@@ -459,6 +459,51 @@ fn a_first_read_begun_before_its_one_card_moved_and_placed_after_that_refresh_re
             answer
         ),
         "the page follows the card read before the branch's line"
+    );
+}
+
+#[test]
+fn a_first_read_begun_before_a_board_read_moved_its_linking_task_reads_again() {
+    let tree = Tree::new();
+    let root = repository(&tree);
+    tree.write("main/docs/SLOW.md", "# Slow\n\n![Held](held.png)\n");
+    let f = Fixture::new(Seed::default().task("tools/slow", "ready").link(
+        "tools/slow",
+        "doc",
+        "docs/SLOW.md",
+    ));
+    let hub = Hub::new(&root, &root.join("build/client"));
+    hub.refresh_page("", &root).unwrap();
+    observe(&hub, &f.store, &[]);
+    let status = |doc: &symphony_api::Document| {
+        doc.tasks
+            .iter()
+            .map(|task| task.status.clone())
+            .collect::<Vec<_>>()
+    };
+    // The board read lists the documents the page follows while the first read, which took the
+    // board's tasks before it, is out: this one is not among them yet.
+    let (read_while_held, read) =
+        first_read_across(&hub, "docs/SLOW.md", &root.join("docs/held.png"), || {
+            f.store
+                .client()
+                .query(
+                    "UPDATE task SET status = 'in_progress' WHERE slug = 'tools/slow' RETURN NONE;",
+                    serde_json::json!({}),
+                )
+                .unwrap();
+            observe(&hub, &f.store, &[]);
+        });
+    assert!(read_while_held, "the board read waited on the first read");
+    assert_eq!(
+        status(&read),
+        ["in_progress"],
+        "the first read handed out the tasks it read before the board's"
+    );
+    assert_eq!(
+        status(&hub.pages.read().unwrap()[""].documents["docs/SLOW.md"]),
+        ["in_progress"],
+        "the page follows the tasks read before the board's"
     );
 }
 

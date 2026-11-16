@@ -8,7 +8,8 @@
 //! of its own, as no start replaces a running server with a release's. While something holds it,
 //! a start by the release's own binary (`just symphony` in a project with no build of its own)
 //! starts nothing and names the project that holds it ([`refused`]). The refresh reads the same
-//! rule before it points `current`.
+//! rule: while it holds, a release is installed and `current` is not pointed at it, which
+//! [`standing`] says with the project that holds it.
 
 use std::path::{Path, PathBuf};
 
@@ -144,18 +145,35 @@ struct Record {
 /// what holds the switch, or what makes it. It reads the folder alone: no server is asked.
 pub fn standing(machine: &Path) -> String {
     let Some(manifest) = release::current_installed(machine) else {
-        return match release::current(machine) {
-            Some(name) => format!(
+        if let Some(name) = release::current(machine) {
+            return format!(
                 "machine: {} names {name}, which is not installed whole in {}\n",
                 machine.join(release::CURRENT).display(),
                 machine.join(release::RELEASES).display()
-            ),
-            None => format!(
+            );
+        }
+        let installed = installed_releases(machine);
+        if installed.is_empty() {
+            return format!(
                 "machine: no release is installed in {}: a project's build is the machine's \
                  server\n",
                 machine.display()
-            ),
-        };
+            );
+        }
+        // Installed and never pointed at: what the refresh does while the switch is held.
+        let mut said = format!(
+            "machine: current names no release, and {} installed in {}: a project's build is the \
+             machine's server\n",
+            match installed.as_slice() {
+                [one] => format!("{one} is"),
+                many => format!("{} are", many.join(", ")),
+            },
+            machine.join(release::RELEASES).display()
+        );
+        if let Some(hold) = Registry::read(machine).ok().as_ref().and_then(held) {
+            said.push_str(&format!("machine: the switch is held: {}\n", hold.said()));
+        }
+        return said;
     };
     let build = Build::released(&manifest, machine);
     let Manifest { release, .. } = manifest;
@@ -210,6 +228,21 @@ pub fn standing(machine: &Path) -> String {
         )),
     }
     said
+}
+
+/// The releases installed whole in `machine`, by name.
+fn installed_releases(machine: &Path) -> Vec<String> {
+    let Ok(entries) = std::fs::read_dir(machine.join(release::RELEASES)) else {
+        return Vec::new();
+    };
+    let mut names: Vec<String> = (entries.flatten())
+        .filter_map(|entry| entry.file_name().into_string().ok())
+        // An install's temporary folder is hidden: never a release until it is renamed.
+        .filter(|name| !name.starts_with('.'))
+        .filter(|name| matches!(release::installed(machine, name), Ok(Some(_))))
+        .collect();
+    names.sort();
+    names
 }
 
 #[cfg(test)]

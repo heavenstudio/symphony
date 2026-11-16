@@ -26,12 +26,12 @@
 //! The guards are this file and `tests/consumer_api.rs` in `crates/tasks` (`symphony_board`),
 //! `apps/symphony-server`, `crates/process-cwd` and `crates/repository-read`: every package a
 //! consumer's code calls. Not held by any of them, and the project's to meet when it moves its pin
-//! (its own gate builds it on the new one, docs/RELEASES.md, *The refresh*): the signature of a
+//! (its own gate builds it on the new one, docs/RELEASES.md, *A release*): the signature of a
 //! function a guard names alone, and a field it reads or a method it calls on a value that is not
 //! named in a guard.
 //!
-//! A release's refresh moves a consumer's pin in a commit that touches only its `Cargo.toml` and
-//! `Cargo.lock`, so a consumer's code never changes with a release: a name or signature here that a
+//! A consumer takes a release by moving its pin in its own landing, and nothing here changes its
+//! code, so a consumer's code never changes with a release: a name or signature here that a
 //! consumer uses changes only with a consumer release plan (the consumer's code moved first,
 //! against a release that still has the old name). New behaviour goes behind the name a consumer
 //! calls, or beside it under a new one; a trait gains a method only with a default. A lint that

@@ -260,6 +260,21 @@ describe("a read of a document's asks", () => {
     // A reply naming no recipient is a chat nobody receives.
     expect(shown.recipient).toHaveBeenCalledWith(null);
     expect(shown.trouble).toHaveBeenLastCalledWith(null);
+    // The read that answered waits for the feed's news: no retry, and no read's own deadline, is
+    // left set.
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("leaves no timer set once its first read answered", async () => {
+    vi.useFakeTimers();
+    const asked = server();
+    const done = readAsksUntilAnswered(ENDPOINT, new AbortController().signal, shownOf());
+    await vi.advanceTimersByTimeAsync(0);
+    asked[0]?.answer(reply(200, { asks: [ask()], recipient: "teal-lynx" }));
+    await done;
+    expect(vi.getTimerCount()).toBe(0);
+    await vi.advanceTimersByTimeAsync(RETRY_MS);
+    expect(asked).toHaveLength(1);
   });
 
   it("shows and asks nothing more once its page left, while it read or while it waited", async () => {

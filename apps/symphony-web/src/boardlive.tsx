@@ -42,7 +42,7 @@ import {
 import { type FrameRefresh, useFrame } from "./frame";
 import { type Journal, ReadCursor } from "./journal";
 import { type BoardRun, keepBoard, type PageBoard, PageNotices, Retry } from "./live";
-import { href, scoped } from "./project";
+import { scoped } from "./project";
 import { getIf, getJson, said } from "./request";
 import { field, holdPlace, list as items } from "./shared";
 import { tryAgain } from "./state";
@@ -293,6 +293,9 @@ export class LiveBoard {
   /** What a failed read last had the page say (`d.error`): a column's answer takes that away, and
    * never the board's own notice of its state. */
   private said = "";
+  /** How many times the counts were answered (`d.counted`) when the last check began: while they
+   * still are, the check asks for them again until one answers, whoever's read failed. */
+  private uncounted: number | null = null;
   /** How many times the reader pressed Retry, which the board's loop waits on. */
   readonly retry = new Retry();
   /** A column's read, one function for the page's life: a column drawn again for it would be. */
@@ -441,6 +444,18 @@ export class LiveBoard {
     }
   }
 
+  /**
+   * The read of `part` was answered: what a failed read said goes once none fails any more, never
+   * the board's own notice of its state, which no read said. Whether it went, to be drawn.
+   */
+  answeredRead(part: string): boolean {
+    this.freshen((f) => answered(f, part));
+    const { d } = this;
+    if (this.fresh.failing.length > 0 || d.error === "" || d.error !== this.said) return false;
+    d.error = "";
+    return true;
+  }
+
   /** Keep a fresh answer of the default view as `part`'s copy, on the page and on this device. */
   keep(part: string, list: TaskListing, fresh: { etag: string; value: unknown } | null): void {
     if (fresh === null) return;
@@ -452,7 +467,10 @@ export class LiveBoard {
    * The board's listings leave the machines' work out (`work=0`): every recorder's heartbeat moves
    * it, so a listing with it would never be answered `304`. The page reads it here once the
    * board's version is read, and follows the feed's `machine-work` events after; an event applied
-   * while the read was out is newer than its answer.
+   * while the read was out is newer than its answer. Only the check reads it, which tries a failed
+   * read again until the work is answered, so a failure says it tries again; one after the feed's
+   * event answered for it says nothing, as nothing tries it again. Once the work is answered, by
+   * the next try or by the feed's event (`heard`), what the failure said goes (`answeredRead`).
    */
   async machineWork(): Promise<void> {
     const { d } = this;
@@ -469,7 +487,7 @@ export class LiveBoard {
     }
     if (this.signal.aborted) return;
     if (work === null) {
-      this.unanswered(WORK, why);
+      if (d.worked === worked) this.unanswered(WORK, failedRead(why, true));
       return;
     }
     if (d.worked === worked) {
@@ -479,7 +497,7 @@ export class LiveBoard {
       keepLater(this.item, WORK, "", value);
       this.host.redraw();
     }
-    this.freshen((f) => answered(f, WORK));
+    if (this.answeredRead(WORK)) this.host.redraw();
   }
 
   /**
@@ -499,7 +517,12 @@ export class LiveBoard {
     save(SHAPE, keepShape(shape));
   }
 
-  /** Read the counts of the page's view; an answer a newer view or count read replaced is dropped. */
+  /**
+   * Read the counts of the page's view; an answer a newer view or count read replaced is dropped.
+   * A failure says why, and that the counts are tried again while they are: until the last check
+   * has its counts, it asks again (`uncounted`), whichever read failed (its own, a refresh's, a
+   * search's, the feed's open); after, nothing does until the next event or check.
+   */
   async counts(): Promise<void> {
     const { d } = this;
     d.countRequest += 1;
@@ -519,7 +542,7 @@ export class LiveBoard {
       }
       if (this.signal.aborted || d.view !== view || d.countRequest !== request) return;
       if (read === null) {
-        this.unanswered(COUNTS, why);
+        this.unanswered(COUNTS, this.uncounted === d.counted ? failedRead(why, true) : why);
         return;
       }
       const [list, fresh] = read;
@@ -683,9 +706,8 @@ export class LiveBoard {
         }
         this.rememberShape();
       }
-      this.freshen((f) => answered(f, part));
-      // What a failed read said goes once none fails any more.
-      if (this.fresh.failing.length === 0 && d.error === this.said) d.error = "";
+      // What a failed read said goes once none fails any more; drawn below either way.
+      this.answeredRead(part);
       const queued = !more && hasNext && d.pendingMore.includes(status);
       d.pendingMore = d.pendingMore.filter((one) => one !== status);
       this.host.redraw();
@@ -708,6 +730,7 @@ export class LiveBoard {
     const round = d.round;
     const current = () => !this.signal.aborted && d.round === round;
     const { worked, counted } = d;
+    this.uncounted = counted;
     const firsts = d.drawn.map((status) =>
       this.untilAnswered(current, async () => {
         const answeredNow = () => !d.drawn.includes(status);
@@ -790,8 +813,9 @@ export class LiveBoard {
     const worked = d.worked;
     const refresh = this.apply(value);
     if (refresh === null) return false;
-    // The event carries the machines' whole work: it answers for the work's read.
-    if (d.worked !== worked) this.freshen((f) => answered(f, WORK));
+    // The event carries the machines' whole work: it answers for the work's read, and what that
+    // read's failure said goes with it, as nothing tries it again.
+    if (d.worked !== worked && this.answeredRead(WORK)) this.host.redraw();
     if (refresh && !this.pending) {
       this.pending = true;
       void this.refreshing();
@@ -1008,7 +1032,6 @@ export function TasksView({ scope, board, stale, freshness, refreshed }: TasksVi
   // A first read that failed, nothing drawn yet (a page drawn from this device is ready), says why
   // in place of the ghost, once: the notices leave it out while it stands.
   const unread = !ready && error !== "";
-  // The heading stays one node from the ghost to the board, so the link keeps its focus.
   return (
     <main
       data-ready="board"
@@ -1023,7 +1046,6 @@ export function TasksView({ scope, board, stale, freshness, refreshed }: TasksVi
       )}
       <div className="page-head">
         <h1>{PAGE_NAMES.BOARD}</h1>
-        <a href={href("/agents")}>Who is connected</a>
       </div>
       {board !== null && d !== null && unread ? (
         <UnreadBoard
