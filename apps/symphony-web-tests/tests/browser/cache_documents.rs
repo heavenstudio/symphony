@@ -316,6 +316,7 @@ fn a_304_naming_no_cursor_reads_the_outline_again_whole_at_once_and_says_nothing
         "/api/document",
         &crate::site::outline_of(&document(DOC, "Kept", 4182)),
     );
+    site.names_no_cursor("/api/document");
     let Some(mut chrome) = crate::chrome() else {
         return;
     };

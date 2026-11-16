@@ -190,7 +190,8 @@ fn a_web_page_takes_its_pictures_up_itself_and_opens_them_in_the_menus_viewer() 
     chrome.save_data();
     let chat = module(dist(), "panel");
     chrome.open(&site.url("/task/visual/in-progress"));
-    shows(&mut chrome, "article.task");
+    // The brief is a part of its own, drawn when its read answers, after the article shows.
+    shows(&mut chrome, "main img[alt=near]");
     chrome.eval("document.querySelector('main img[alt=near]').scrollIntoView({block:'center'})");
     assert!(
         chrome.wait_for(
@@ -251,7 +252,9 @@ fn a_chat_picture_opens_in_the_viewer_on_every_page() {
             follow(&mut chrome, path);
             shows(&mut chrome, ready);
         }
-        // Scrolled to in the thread, as a reader would: the picture loads as it comes into view.
+        // Scrolled to in the thread, as a reader would, once the conversation's read has drawn
+        // it there: the picture loads as it comes into view.
+        shows(&mut chrome, CHAT_PICTURE);
         chrome.eval(&format!(
             "document.querySelector({}).scrollIntoView({{block:'center'}})",
             json!(CHAT_PICTURE)

@@ -250,6 +250,9 @@ struct Shared {
     dropped_routes: BTreeSet<String>,
     /// Routes whose answers send their head and half their body, then hold the rest.
     stalled_bodies: BTreeSet<String>,
+    /// The routes answered as a server built before every JSON read named the feed's cursor
+    /// answers them ([`Site::names_no_cursor`]).
+    no_cursor: BTreeSet<String>,
     /// Each feed stream ends as soon as it opens.
     ending_feeds: bool,
     /// The feed's pings have stopped, its streams left open.
@@ -372,6 +375,7 @@ impl Site {
             turns: HashMap::new(),
             dropped_routes: BTreeSet::new(),
             stalled_bodies: BTreeSet::new(),
+            no_cursor: BTreeSet::new(),
             ending_feeds: false,
             silent: false,
             retired: BTreeSet::new(),
@@ -656,6 +660,17 @@ impl Site {
             shared.stalled_bodies.remove(path);
             self.released.notify_all();
         }
+    }
+
+    /// Answer a route's requests as an older server does: the feed's cursor in no header of its
+    /// answers, a `304` among them, where the stand-in otherwise names it on every JSON read of
+    /// the API as the server does.
+    pub fn names_no_cursor(&self, path: &str) {
+        self.shared
+            .lock()
+            .unwrap()
+            .no_cursor
+            .insert(path.to_owned());
     }
 
     /// Close a route's requests without an answer, so the page's read of it fails.
@@ -1318,10 +1333,16 @@ fn serve(
             return;
         }
         // As the server (apps/symphony-server/src/api.rs, `answer`): every JSON read of the API
-        // names the feed's cursor it was read at, which is read before its answer.
+        // names the feed's cursor it was read at, which is read before its answer. A route a
+        // test answers as an older server does names none (`Site::names_no_cursor`).
         let cursor = path
             .starts_with("/api/")
-            .then(|| shared.lock().unwrap().board["version"].as_u64())
+            .then(|| {
+                let shared = shared.lock().unwrap();
+                (!shared.no_cursor.contains(&path))
+                    .then(|| shared.board["version"].as_u64())
+                    .flatten()
+            })
             .flatten();
         let own_headers = |body: &Body| match cursor {
             Some(cursor) if body.headers.is_empty() && body.content_type == "application/json" => {
