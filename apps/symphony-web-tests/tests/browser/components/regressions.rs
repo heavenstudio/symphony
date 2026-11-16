@@ -268,6 +268,106 @@ fn a_tap_that_chooses_a_priority_over_send_sends_nothing() {
     );
 }
 
+/// The option of the open popup whose text is `text`, as a script names it.
+fn option_named(text: &str) -> String {
+    format!(
+        "[...document.querySelectorAll('[role=listbox] [role=option]')].find(option => option.textContent.trim() === {})",
+        json!(text)
+    )
+}
+
+/// Whether the popup is open with the option of `text` holding the focus as its focused one.
+fn holds(text: &str) -> String {
+    format!(
+        "(() => {{ const option = {}; return document.querySelector('[role=listbox][data-state=open]') !== null
+            && document.activeElement === option && option.tabIndex === 0; }})()",
+        option_named(text)
+    )
+}
+
+/// The Add task form's priority chose `text`, its popup gone and its trigger given the focus back.
+fn chose(page: &mut crate::Chrome, trigger: &str, text: &str, how: &str) {
+    assert!(
+        page.wait_for(
+            &format!(
+                "document.querySelector({0})?.textContent.trim() === {1} && document.querySelector('[role=listbox]') === null && document.activeElement === document.querySelector({0})",
+                json!(trigger),
+                json!(text)
+            ),
+            SHOWN
+        ),
+        "{how} never chose {text}: {}",
+        page.eval(&format!(
+            "({{trigger: document.querySelector({}).textContent.trim(), popup: document.querySelector('[role=listbox]')?.dataset.state ?? null, active: document.activeElement?.outerHTML.slice(0, 120)}})",
+            json!(trigger)
+        ))
+    );
+}
+
+/// An assistive technology's activation of an option chooses it (app/phone-board-followups), as
+/// each engine sends one (`apps/symphony-web/src/select-popup.tsx`'s header). Blink's, for TalkBack
+/// or any other's default action, focuses the option first, as a screen reader moving among the
+/// options does (VoiceOver on the Mac, its keyboard focus following its cursor): the popup stays
+/// open with that option focused, where before the focus leaving the list closed it, and the
+/// mouse's press, release and click Blink sends then choose it. Gecko's is a click with no pointer
+/// before it, as a script's `click()` is: it chooses, where before only a tap's click did.
+#[test]
+fn an_assistive_technologys_activation_of_an_option_chooses_it() {
+    let site = site();
+    let Some(mut page) = chrome() else { return };
+    page.open(&site.url("/"));
+    open_panel(&mut page);
+    task_tab(&mut page);
+    let trigger = "#quick-sheet button[aria-haspopup=listbox]";
+    assert_eq!(
+        page.eval(&format!(
+            "document.querySelector({}).textContent.trim()",
+            json!(trigger)
+        )),
+        json!("p2"),
+        "the setup: the form starts at p2"
+    );
+    let open = |page: &mut crate::Chrome| {
+        page.eval(&format!(
+            "document.querySelector({}).focus()",
+            json!(trigger)
+        ));
+        key(page, "Enter", "Enter", 13);
+        popup_ready(page);
+    };
+    // Blink: the reader's moves among the options, then its activation of p1.
+    open(&mut page);
+    for text in ["p0", "p1"] {
+        page.eval(&format!("{}.focus()", option_named(text)));
+        assert!(
+            page.wait_for(&holds(text), SHOWN),
+            "the popup let go of the focus moved onto {text}: {}",
+            page.eval("({popup: document.querySelector('[role=listbox]')?.dataset.state ?? null, active: document.activeElement?.outerHTML.slice(0, 120)})")
+        );
+    }
+    page.eval(&format!(
+        "(() => {{ const option = {}, box = option.getBoundingClientRect();
+            const at = {{bubbles: true, cancelable: true, composed: true, button: 0, clientX: box.x + box.width / 2, clientY: box.y + box.height / 2}};
+            const pointer = {{...at, pointerId: 1, pointerType: 'mouse', isPrimary: true}};
+            option.dispatchEvent(new PointerEvent('pointerdown', {{...pointer, buttons: 1}}));
+            option.dispatchEvent(new MouseEvent('mousedown', {{...at, buttons: 1}}));
+            option.dispatchEvent(new PointerEvent('pointerup', pointer));
+            option.dispatchEvent(new MouseEvent('mouseup', at));
+            option.dispatchEvent(new MouseEvent('click', at)); }})()",
+        option_named("p1")
+    ));
+    chose(&mut page, trigger, "p1", "Blink's activation");
+    // Gecko: the click alone.
+    open(&mut page);
+    page.eval(&format!("{}.click()", option_named("p3")));
+    chose(
+        &mut page,
+        trigger,
+        "p3",
+        "a click with no pointer before it",
+    );
+}
+
 #[test]
 fn a_long_recipient_list_scrolls_each_option_into_view_and_repositions_on_resize() {
     let site = site();
