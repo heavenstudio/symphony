@@ -91,7 +91,12 @@ A read is checked where it arrives (`readQueue`, `readPageBoard`, `readReports`,
 `document-read.ts`, of the checks `blocks-read.ts` exports): a guard checks the fields the page
 draws, each of its type, and nothing else, so a field a newer server adds, or one it drops that
 the page does not draw, changes nothing, as the Dioxus client's serde reads skip
-unknown fields. A read the guard refuses is a failed read, said and retried as any other. A feed
+unknown fields. A kind of block, text span or media the client does not know passes too, its
+fields unread, and is said where it stands as unsupported content (`blocks-read.ts`, `blocks.tsx`,
+`media.tsx`), the rest of the page drawn: the kit's lists grow in a minor, so a newer server may
+send one ([PLUGIN_PROTOCOL](../../docs/PLUGIN_PROTOCOL.md#versions)). A word it does not know (a
+figure's size, a tag, a shape) and a kind that is no text still fail the read.
+A read the guard refuses is a failed read, said and retried as any other. A feed
 event of a region or kind the page does not know is not its own, and is left alone.
 `JSON.parse` costs no code per field, so a field the page does not draw, a task's plugins' board
 fields among them, costs it nothing to receive: its types say what the server sends, and its
@@ -177,6 +182,11 @@ A move between two kinds stops one and runs the other; a move within a kind is t
 `review:navigate`, which `route.ts` follows. The header, the panel's `+` and bell and the feed are
 the frame's (`src/frame.tsx`), which every page kind draws; the panel and its sheets are this
 client's persistent kind `panel` ([The panel](#the-panel)), which the shell mounts beside any page.
+The header opens with the Symphony's mark, the fermata, and its wordmark, or in the place of each
+the icon and the name the project's theme has of its own (`ProjectView`'s `mark` and `wordmark`,
+which the server decides), as the server's own pages open theirs
+(`apps/symphony-server/src/mark.rs`, whose tests hold the two marks alike); it is no link, so the
+keyboard's first stop stays the project switch.
 
 The menus are this client's persistent kind `overlay` (`src/kinds/overlay.tsx`, `src/overlay.tsx`),
 which the shell mounts in `#overlay-root` on the first select or picture and keeps beside every

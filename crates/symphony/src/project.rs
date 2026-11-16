@@ -527,14 +527,18 @@ impl Project {
         }
     }
 
-    /// The project as the client's header and home read it: its theme package's name, its register
+    /// The project as the client's header and home read it: its theme package's name, what its
+    /// header opens with where that is not the Symphony's own mark and wordmark, its register
     /// (by its route when an entrypoint holds it, as every link names a document), its plugins'
     /// navigation and its entrypoints' URLs, at the server's root (the server sets the base). Its
     /// review guide, and whether its register's file is there, only the project's folder can show:
     /// [`Project::view_at`] reads them.
     pub fn view(&self) -> symphony_api::ProjectView {
+        let package = crate::theme::Package::of(self);
         symphony_api::ProjectView {
-            name: crate::theme::Package::of(self).name,
+            wordmark: package.wordmark().unwrap_or_default().to_string(),
+            mark: package.mark().to_string(),
+            name: package.name,
             base: String::new(),
             register: self
                 .route(&self.register)

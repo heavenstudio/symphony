@@ -99,6 +99,8 @@ pub fn MediaView(media: Media) -> Element {
             rsx! { FileViewer { src, caption: label, viewer, poster } }
         }
         Media::Gallery { items, viewer } => rsx! { Gallery { items, viewer } },
+        // A kind a later minor of the kit adds, with no drawing here yet.
+        _ => rsx! { span { class: "unknown-block", role: "alert", "Unsupported media" } },
     }
 }
 

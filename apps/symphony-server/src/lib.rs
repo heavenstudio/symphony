@@ -21,6 +21,7 @@ pub mod home;
 pub mod host;
 mod live;
 pub mod log;
+mod mark;
 mod media_files;
 mod pages;
 pub mod probe;
