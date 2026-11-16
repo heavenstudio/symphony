@@ -229,7 +229,10 @@ fn a_served_folder_left_without_its_git_reaches_no_board_above_it() {
         (symphony_board::cli::held_running_board, "running_board"),
     ];
     for (case, filed) in [("filed", true), ("unfiled", false)] {
-        tree.write(&format!("artifacts/{case}/.git/HEAD"), "ref: refs/heads/main\n");
+        tree.write(
+            &format!("artifacts/{case}/.git/HEAD"),
+            "ref: refs/heads/main\n",
+        );
         if filed {
             tree.write(
                 &format!("artifacts/{case}/symphony.toml"),

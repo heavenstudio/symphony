@@ -91,10 +91,8 @@ pub fn connect_in(
 /// How a reach finds the board of the project whose folder its `Env` runs in, held to the
 /// repository it is handed ([`symphony_board::cli::held_board`],
 /// [`symphony_board::cli::held_running_board`]).
-type Reach = fn(
-    &symphony_board::cli::Env,
-    Option<&Path>,
-) -> Result<symphony_board::cli::Reached, String>;
+type Reach =
+    fn(&symphony_board::cli::Env, Option<&Path>) -> Result<symphony_board::cli::Reached, String>;
 
 /// The board `reach` finds for the project at `root` under `env`, held to the repository `root` is
 /// served from ([`serve`]), opened to read as [`connect_in`] says.
