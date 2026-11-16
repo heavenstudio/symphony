@@ -1387,9 +1387,8 @@ describe("the task board's page", () => {
     const html = renderToStaticMarkup(<TasksPage scope="" />);
     expect(html).toMatch(/^<main data-ready="board" data-feed="live" aria-busy="true">/);
     expect(html).toContain('<span class="status-text" role="status">Loading tasks…</span>');
-    expect(html).toContain(
-      '<div class="page-head"><h1>Board</h1><a href="/agents">Who is connected</a></div>',
-    );
+    // The heading alone: the header's Agents link leads where its Who is connected did.
+    expect(html).toContain('<div class="page-head"><h1>Board</h1></div>');
     expect(html).toContain('class="ghost-kanban"');
     expect(html).toContain('class="stale page-notices notice-stack" hidden=""');
   });

@@ -356,7 +356,7 @@ fn went_back(live: &Live, found: Option<i64>) -> Result<(), Failure> {
 
 /// Whether the server said `said` of a request in a namespace, or in the database `database`, it
 /// does not hold yet: a board no one has opened. These are the pinned server's words.
-fn undefined(said: &str, database: &str) -> bool {
+pub(super) fn undefined(said: &str, database: &str) -> bool {
     said == format!("The database '{database}' does not exist")
         || said
             .strip_prefix("The namespace '")

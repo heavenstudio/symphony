@@ -1,6 +1,6 @@
-//! A snapshot of a board's database as it runs ([`Home::export`]) and its schema
-//! ([`Home::schema`]): what it holds, written whole, from the recorded server without stopping it;
-//! a board whose database is not running is refused and nothing is started.
+//! A snapshot of a board's database as it runs ([`Home::export`]), its schema ([`Home::schema`])
+//! and its writers ([`Home::writers`]): what it holds, written whole, from the recorded server
+//! without stopping it; a board whose database is not running is refused and nothing is started.
 
 use crate::common::Scratch;
 use std::fs;
@@ -30,6 +30,18 @@ fn a_running_board_is_exported_whole_and_its_server_keeps_serving() {
         home.schema("never_made").unwrap(),
         None,
         "a database never made has no schema"
+    );
+    // Its writers, read as it runs: the one that opened it to write, by its own path and schema.
+    let writers = home.writers("tasks").unwrap();
+    assert_eq!(writers.len(), 1, "{writers:?}");
+    let program = symphony_board::Program::this();
+    assert_eq!(
+        (&writers[0].program, &writers[0].path, writers[0].schema),
+        (&program.name, &program.path, symphony_board::SCHEMA)
+    );
+    assert!(
+        home.writers("never_made").unwrap().is_empty(),
+        "a database never made has no writer"
     );
     let file = s.dir.join("snapshots/before.surql");
     let read = home.export("tasks", &file).unwrap();
@@ -62,6 +74,10 @@ fn a_board_whose_database_is_not_running_is_refused_and_nothing_starts() {
     );
     assert!(matches!(
         home.schema("tasks"),
+        Err(ServerError::NotUp(why)) if why.contains("is not running (no address is recorded)")
+    ));
+    assert!(matches!(
+        home.writers("tasks"),
         Err(ServerError::NotUp(why)) if why.contains("is not running (no address is recorded)")
     ));
     assert!(!s.dir.join("server.json").exists(), "nothing was started");

@@ -1,6 +1,7 @@
 //! A green release's install on the machine (docs/RELEASES.md, "The install"), the first step of
 //! its refresh, `refresh-install`: the release built once, for every project, and put in the
-//! machine folder where the recipes of a project with no build of its own find it.
+//! machine folder, where the recipes of a project with no build of its own find it once `current`
+//! names it.
 //!
 //! In the run's own checkout, at the release's commit and in its build folder, it builds the
 //! release profile of the four binaries a project runs (`symphony-server`, `tasks`, `agent-send`,
@@ -13,12 +14,12 @@
 //! and its `tasks api` version (`tasks api`, the method `version`).
 //!
 //! Then it installs them as `releases/NAME/` in the machine folder, whole
-//! ([`symphony::machine::release::install`]), and points the machine's `current` link at it
-//! ([`symphony::machine::release::point`]). A build or an install that fails leaves no folder and
+//! ([`symphony::machine::release::install`]). A build or an install that fails leaves no folder and
 //! `current` where it was, and is the refresh's red, filed on the Symphony's board; `just release
 //! --refresh` is the retry. A release already installed whole from the same commit is not built
-//! again: the retry points `current` at it. No server follows `current` yet: the machine's server
-//! is still a project's build, and nothing here starts, stops or signals one.
+//! again. The install points nothing: the refresh points `current` at the release ([`point`]) only
+//! once nothing holds the switch and every board it moves has moved (`super::refresh`), a failure
+//! to point being this step's red. Nothing here starts, stops or signals a server.
 
 use std::fs;
 use std::io::Write;
@@ -68,10 +69,12 @@ pub(crate) struct Install<'a> {
     pub(crate) until: Bound<'a>,
 }
 
-/// An install's end: its step, green or red, and what it said.
+/// An install's end: its step, green or red, what it said, and the manifest of the release it
+/// installed or found installed already, none when it is red.
 pub(crate) struct Installed {
     pub(crate) ran: Ran,
     pub(crate) said: Vec<String>,
+    pub(crate) manifest: Option<Manifest>,
 }
 
 /// The step as the record and a red task say it.
@@ -84,7 +87,7 @@ pub(crate) fn log(logs: &Path) -> PathBuf {
     logs.join(format!("{STEP}.log"))
 }
 
-/// The release of `install` built, installed in the machine folder and `current` pointed at it.
+/// The release of `install` built and installed in the machine folder, `current` as it was.
 pub(crate) fn install(install: &Install<'_>) -> Installed {
     let log = log(install.logs);
     let _ = fs::create_dir_all(install.logs);
@@ -92,16 +95,20 @@ pub(crate) fn install(install: &Install<'_>) -> Installed {
     // A retry: the release is there whole. Never built again, never written into.
     match release::installed(install.machine, install.tag) {
         Ok(Some(manifest)) if manifest.commit == install.commit => {
-            let mut said = vec![format!(
+            let said = vec![format!(
                 "{} is installed already in {}: {}",
                 install.tag,
                 release::folder(install.machine, install.tag).display(),
                 manifest.sizes()
             )];
-            let mut ran = done(&named, &log, 0.0);
+            // The step first: it starts the log, which the line then follows.
+            let ran = done(&named, &log, 0.0);
             append(&log, &said[0]);
-            pointed(install, &mut ran, &mut said);
-            return Installed { ran, said };
+            return Installed {
+                ran,
+                said,
+                manifest: Some(manifest),
+            };
         }
         Ok(Some(manifest)) => {
             let why = format!(
@@ -139,7 +146,11 @@ pub(crate) fn install(install: &Install<'_>) -> Installed {
             ran.ended(),
             install.machine.join(release::RELEASES).display()
         )];
-        return Installed { ran, said };
+        return Installed {
+            ran,
+            said,
+            manifest: None,
+        };
     }
     let binaries = target.join("release");
     let made = serves(&binaries, install).and_then(|serves| {
@@ -163,10 +174,14 @@ pub(crate) fn install(install: &Install<'_>) -> Installed {
                 install.tag,
                 install.machine.join(release::RELEASES).display()
             )];
-            return Installed { ran, said };
+            return Installed {
+                ran,
+                said,
+                manifest: None,
+            };
         }
     };
-    let mut said = vec![
+    let said = vec![
         format!(
             "installed {} in {}, built in {:.0} s: {}",
             install.tag,
@@ -177,8 +192,11 @@ pub(crate) fn install(install: &Install<'_>) -> Installed {
         served(&manifest),
     ];
     append(&log, &said.join("\n"));
-    pointed(install, &mut ran, &mut said);
-    Installed { ran, said }
+    Installed {
+        ran,
+        said,
+        manifest: Some(manifest),
+    }
 }
 
 /// What `manifest`'s release serves, in one line.
@@ -196,31 +214,37 @@ fn served(manifest: &Manifest) -> String {
     )
 }
 
-/// Point `current` at `install`'s release and say so in `said`; a failure turns `ran` red.
-fn pointed(install: &Install<'_>, ran: &mut Ran, said: &mut Vec<String>) {
-    match release::point(install.machine, install.tag) {
+/// Point `machine`'s `current` at the release `installed` holds, and say so among its lines:
+/// whether it did. A failure turns its step red, `current` as it was; a red install points nothing.
+pub(crate) fn point(machine: &Path, installed: &mut Installed) -> bool {
+    let Some(tag) = (installed.manifest.as_ref()).map(|manifest| manifest.release.clone()) else {
+        return false;
+    };
+    let pointed = match release::point(machine, &tag) {
         Ok(before) => {
             let was = match before.as_deref() {
-                Some(before) if before == install.tag => " (as it did)".to_string(),
+                Some(before) if before == tag => " (as it did)".to_string(),
                 Some(before) => format!(" (it named {before}, which stays installed)"),
                 None => " (it named no release)".to_string(),
             };
-            said.push(format!(
-                "{} names {}{was}: a project with no build of its own runs it",
-                install.machine.join(release::CURRENT).display(),
-                install.tag
+            installed.said.push(format!(
+                "{} names {tag}{was}: a project with no build of its own runs it",
+                machine.join(release::CURRENT).display(),
             ));
+            true
         }
         Err(why) => {
-            let log = ran.log.clone();
-            fail(ran, &log, &why);
-            said.push(format!(
-                "{} is installed, and current is as it was: {why}",
-                install.tag
+            let log = installed.ran.log.clone();
+            fail(&mut installed.ran, &log, &why);
+            (installed.said).push(format!(
+                "{tag} is installed, and current is as it was: {why}"
             ));
+            false
         }
-    }
-    append(&ran.log, said.last().map_or("", String::as_str));
+    };
+    let last = installed.said.last().map_or("", String::as_str);
+    append(&installed.ran.log, last);
+    pointed
 }
 
 /// The build of the release's binaries as `named`, into `target`, by `builder` in cargo's place
@@ -358,10 +382,11 @@ fn done(named: &Step, log: &Path, seconds: f64) -> Ran {
 }
 
 /// `named` red before anything was built, for `why`, said too.
-fn never(named: &Step, log: &Path, why: String) -> Installed {
+pub(crate) fn never(named: &Step, log: &Path, why: String) -> Installed {
     Installed {
         said: vec![format!("not installed: {why}")],
         ran: Ran::never(named, log, why),
+        manifest: None,
     }
 }
 
