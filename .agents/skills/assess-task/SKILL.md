@@ -2,7 +2,7 @@
 name: assess-task
 description: Assess one task for the stamps its land needs, from the project's catalogue, its diff and its brief, independently of who filed, orchestrated or executed it. An assessor's whole prompt is `/assess-task SLUG HANDLE` (Codex `$assess-task SLUG HANDLE`), never /work or /review-task. Trigger on /assess-task SLUG or $assess-task SLUG.
 ---
-<!-- symphony-stamp: b987c0c7e2eb21ab files=SKILL.md -->
+<!-- symphony-stamp: db37479184f3fe1d files=SKILL.md -->
 
 # /assess-task SLUG HANDLE
 
@@ -43,9 +43,9 @@ told.
      anything else: code (which settings exist or how one is read), a value that is a command
      or a program the Symphony runs or that decides what lands (`[project]`'s `cargo` and
      `default_branch`, `[plugins]`'s `crates` and `process`, `[verdicts]`, `[land]`,
-     `[releases]`, `[stamps]`, `[board]`'s `on_review`, `on_land`, `machine_work_reader` and
-     `assessments`; `CHECK PATHS` names `[verdicts]`, `[land]` and `[releases]`), or words that
-     say more than the new values.
+     `[releases]`, `[stamps]`, `[board]`'s `on_review`, `on_land`, `machine_work_reader`,
+     `postgresql` and `assessments`; `CHECK PATHS` names `[verdicts]`, `[land]` and
+     `[releases]`), or words that say more than the new values.
    - **What `tests` asks for.** Where you name `tests`, WHY names the run or runs that prove
      this change, the ones closest to what the diff changed (for a change of settings, the
      settings check alone), never a suite that has nothing to do with it.

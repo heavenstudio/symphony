@@ -150,16 +150,23 @@ mod tests {
 
     #[test]
     fn the_lifeline_is_one_per_process_and_its_reader_waits_while_this_process_runs() {
-        use std::io::Read as _;
+        use std::os::fd::AsRawFd as _;
         let lifeline = Lifeline::of_this_process().unwrap();
         assert!(std::ptr::eq(lifeline, Lifeline::of_this_process().unwrap()));
         let reader = lifeline.reader().unwrap();
-        crate::sys::set_nonblocking(&reader, true).unwrap();
-        let mut byte = [0];
-        let read = (&reader).read(&mut byte);
+        // Polled, never made non-blocking: every clone of the reader is one open pipe, which every
+        // scratch server's supervisor this process started reads, and a watchdog that met a
+        // non-blocking read would take it for the lifeline's end and end its server.
+        let mut watched = libc::pollfd {
+            fd: reader.as_raw_fd(),
+            events: libc::POLLIN,
+            revents: 0,
+        };
+        // SAFETY: one pollfd, live for the call; a timeout of 0 returns at once.
+        let ready = unsafe { libc::poll(&raw mut watched, 1, 0) };
         assert_eq!(
-            read.map_err(|e| e.kind()),
-            Err(std::io::ErrorKind::WouldBlock),
+            (ready, watched.revents),
+            (0, 0),
             "the writer is held: no end, and nothing written"
         );
     }

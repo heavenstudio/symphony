@@ -1,7 +1,8 @@
 //! The board's server: found where it says it is, started when it is not (on a reserved port, and on
 //! another when that one was taken), and the git common dir it keeps its data in; what its store
-//! takes on disk, and the reclaim that rebuilds it; and, in a repository of its own, a write's
-//! delivery by the detached dispatcher it starts.
+//! takes on disk, and the reclaim that rebuilds it; in a repository of its own, a write's
+//! delivery by the detached dispatcher it starts; and the board's PostgreSQL beside it, started
+//! and stopped on scratch boards.
 
 #![expect(
     clippy::disallowed_methods,
@@ -30,6 +31,7 @@ mod listeners;
 mod no_lsof;
 mod own_board;
 mod port;
+mod postgres;
 mod reclaim;
 mod sessionless;
 mod snapshot;

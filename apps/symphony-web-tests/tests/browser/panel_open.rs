@@ -3,7 +3,8 @@
 //! requested together; once a page is idle the persistent modules' files are warmed into the HTTP
 //! cache, outside the first visit's transfer, each once and none the page has; an open chat reads
 //! its thread when the page's feed says it moved, never on a timer. On the board, whose page has
-//! no media layer, the chat's own takes its thread's media up, from the files the chat came with.
+//! no media layer, the chat's own takes its thread's media up, from the files the chat came with,
+//! and on the queue, Reports and Runs, which have none either, it scales the chat's mockup.
 
 use super::{
     SHOWN, assets::module, chrome, chrome::Chrome, completed_requests, dist, needed_bytes,
@@ -885,6 +886,58 @@ fn the_board_s_chat_takes_its_thread_s_media_up_with_the_files_it_came_with() {
         files,
         "the chat's media layer is in the files it came with: nothing more is fetched for it"
     );
+}
+
+#[test]
+fn the_chat_s_mockup_is_scaled_on_the_pages_with_no_media_layer_of_their_own() {
+    let site = site();
+    let mut thread = chat(&["First question", "A mockup"]);
+    thread["ask"]["messages"][1]["blocks"] =
+        json!([{"type":"media","media":{"kind":"mockup","src":"/mockup.html","label":"Mockup"}}]);
+    site.set_json("/api/ask", &thread);
+    site.set_file(
+        "/mockup.html",
+        b"<!doctype html><title>Mockup</title>".to_vec(),
+        "text/html",
+    );
+    let Some(mut browser) = chrome() else { return };
+    // Each page opens on the chat's thread 7, its sheet closed until "+" is clicked.
+    browser.call(
+        "Page.addScriptToEvaluateOnNewDocument",
+        json!({"source": "localStorage.setItem('review-quick-draft', JSON.stringify({open: false, task: false, ask: 7}));"}),
+    );
+    // No kind of these pages mounts a media layer: the chat's panel runs their views.
+    for route in ["/queue", "/reports", "/runs"] {
+        browser.open(&site.url(route));
+        assert!(
+            browser.wait_for(
+                "document.documentElement.dataset.navigation === 'ready' && document.querySelector('#quick-open') !== null",
+                SHOWN
+            ),
+            "{route}: the page is never drawn"
+        );
+        browser.eval("document.querySelector('#quick-open').click()");
+        assert!(
+            browser.wait_for(
+                "document.querySelector('#quick-root .mockup-shell') !== null",
+                SHOWN
+            ),
+            "{route}: the chat never draws its thread: {}",
+            browser.eval("document.getElementById('quick-sheet')?.innerText ?? null")
+        );
+        // The mockup shows once it is scrolled to in the thread, as a reader would.
+        browser.eval(
+            "document.querySelector('#quick-root .mockup-shell').scrollIntoView({block:'center'})",
+        );
+        assert!(
+            browser.wait_for(
+                "document.querySelector('#quick-root .mockup-frame iframe')?.getAttribute('style')?.includes('transform:scale(') === true",
+                SHOWN
+            ),
+            "{route}: no media layer scales the chat's mockup: {:?}",
+            browser.eval("document.querySelector('#quick-root .mockup-shell')?.outerHTML ?? null"),
+        );
+    }
 }
 
 /// Wait for the page's idle warm-up to start (once its own reads are over; up to 10 s, for a

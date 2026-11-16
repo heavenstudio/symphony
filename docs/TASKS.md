@@ -2391,9 +2391,10 @@ landing](#the-default-landing)).
   `default_branch` (the branch tasks land on), `[plugins]`'s `crates` and `process` (the code
   and the command that answer for the project), `[verdicts]`, `[land]` and `[releases]`, which
   `[land] check_paths` names, `[stamps]`, and `[board]`'s `on_review`, `on_land`,
-  `machine_work_reader` (an executable the server runs) and `assessments` (where a project's
-  landing assessments are read). Every other key is a name, a number, a switch or a folder
-  nothing runs. The `tests` reader takes
+  `machine_work_reader` (an executable the server runs), `postgresql` (the folder whose
+  PostgreSQL programs the board runs) and `assessments` (where a project's landing assessments
+  are read). Every other key is a name, a number, a switch or a folder of no program the
+  Symphony runs. The `tests` reader takes
   any green test run at the tip: that the run is the settings check is the assessment's reason
   and the thread's evidence.
 - **`just tasks stamps [SLUG]`** prints the catalogue, where it was read and each stamp's

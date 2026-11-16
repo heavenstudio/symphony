@@ -45,12 +45,19 @@ const item = (id: string, fields: Record<string, unknown> = {}) => ({
 });
 
 describe("the panel's media layer", () => {
-  it("answers for the chat's pictures on every page, and for the page's on the board's", () => {
+  it("answers for the chat's pictures on every page, and for every view on a page with no layer", () => {
     const chat = "#quick-sheet .quick-message img";
-    for (const path of ["", "docs/a.md", "task/x", "queue", "reports"]) {
-      expect(reachOf({ ...HOME, path }), path).toEqual({ pictures: chat, views: false });
+    const own = [
+      HOME,
+      { ...HOME, scope: "wt" },
+      { ...HOME, path: "docs/a.md", document: true },
+      { ...HOME, path: "docs", document: true, folder: true },
+      { ...HOME, path: "task/x" },
+    ];
+    for (const route of own) {
+      expect(reachOf(route), route.path).toEqual({ pictures: chat, views: false });
     }
-    for (const path of ["tasks", "agents"]) {
+    for (const path of ["tasks", "agents", "queue", "reports", "runs"]) {
       expect(reachOf({ ...HOME, path }), path).toEqual({
         pictures: `main img, ${chat}`,
         views: true,
