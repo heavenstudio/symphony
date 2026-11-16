@@ -281,8 +281,8 @@ never on the recorder's history.
 
 **In this repository.** `tools/cargo.sh` sends a Cargo build (`build`, `check`,
 `clippy`, `doc`, `rustc`) or test (`test`, `nextest`,
-`bench`) through `tools/record.sh`, which it sources, as a run of `build`, `lint`,
-`client` or `test`, and the `lint-rs`, `test-rs`, `client-check`, `client-update`,
+`bench`) through `tools/record.sh`, which it sources, as a run of `build`, `lint`
+or `test`, and the `lint-rs`, `test-rs`, `client-check`, `client-update`,
 `size-check` and `verify` recipes run through it as one run each, of `lint`, `test`,
 `client`, `client`, `size` and `verify`. Inside a recorded run only a step a recipe names
 is recorded again: `verify` records `lint-rs` as its step `lint`, `client-check` as

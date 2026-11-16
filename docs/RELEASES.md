@@ -80,24 +80,23 @@ each crate as one codegen unit, as the shipped binaries' size budgets assume
 binaries are 0.5 to 2.7 MB larger than the lines measure. No member carries a profile of its own,
 which Cargo would ignore with a warning on every build here. The server embeds its client at build time from
 its package's `client/public`, so an installed server serves it with no build of the client; its
-package carries every build that folder keeps, as it stands (7.6 to 8.0 MiB compressed in
-November 2026, of the 10 MiB crates.io takes). The day it would not fit, the packages test fails, and the package is cut
-to the newest build: no include list can name it, as the server's `Cargo.toml` is a release input,
-so a list that followed each build would move the next build's asset names.
+package carries every build that folder keeps, as it stands (three builds, 1.5 MB before
+compression in November 2026; crates.io takes a package of 10 MiB). The day it would not fit, the
+packages test fails, and the package is cut to the newest build.
 
 A published package's manifest says `publish = true` with a description, the repository, a readme of
 its own, keywords, categories and an `include` list (its sources, its build script, what it embeds,
 readme and LICENSE: no `tests/` folder or fixtures, and none of the binaries only this repository
-runs: `symphony-test-plugin`, `fake-hc`, `symphony-shelf`, `symphony-ui-dev`; `symphony-build`
+runs: `symphony-test-plugin`, `fake-hc`, `symphony-shelf`; `symphony-build`
 is a package of its own, unpublished).
-Its LICENSE is a copy of the root's, never a link, which the client's release inputs refuse
-(`symphony-api` and `symphony-blocks` are among them). Its readme stands alone, with no link into
+Its LICENSE is a copy of the root's, never a link, which a package cannot carry out of the
+workspace. Its readme stands alone, with no link into
 this repository, which is private; the server's is `CRATE.md`, as its `README.md` is its guide. It
 names a published sibling by `path` and `version`, and an unpublished one only as a development
 dependency, by `path` alone, which publishing drops. A file a package's code reads from outside it
 is a copy in the package, since the package must build alone: the server's `board.css` and
-`frame.css` of the client's (the client reads its own through `asset!`, which takes no file outside
-its crate) and the Chrome driver's `fixture_process.sh` of `tools/` (where the board's fixtures find
+`frame.css` of the client's (`apps/symphony-web/src/styles/`, which the client's build reads in
+its own package) and the Chrome driver's `fixture_process.sh` of `tools/` (where the board's fixtures find
 the source root by it). `crates/symphony/tests/packages.rs` holds which members are published, that
 each carries all of this, that each copy is its file byte for byte, and that the server's `.crate`
 is one crates.io takes.
