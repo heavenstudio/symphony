@@ -643,42 +643,74 @@ describe("the notices' geometry", () => {
     expect(noticeGeometry(null, null)).toBeUndefined();
   });
 
-  it("keeps the reserve as tall as it grew, and the toasts above the stack", () => {
-    const box = (height: number, top = 0) => ({
-      getBoundingClientRect: () => ({ height, top }),
-      style: { setProperty: vi.fn() },
-    });
-    const notice = box(40, 700);
-    const reserve = box(40);
-    const root = { setProperty: vi.fn(), removeProperty: vi.fn() };
-    const observed: unknown[] = [];
-    let resized = () => {};
+  const box = (height: number, top = 0) => ({
+    getBoundingClientRect: () => ({ height, top }),
+    style: { setProperty: vi.fn() },
+  });
+
+  /**
+   * The page's globals as `noticeGeometry` reads them: its root's style, the stack placed by
+   * `placed.position` (the sheet's `fixed` wide, `absolute` on a phone), a window 800 px tall, and
+   * `resized()` running the observer's measurement again.
+   */
+  const page = (placed: { position: string }) => {
+    const geometry = {
+      root: { setProperty: vi.fn(), removeProperty: vi.fn() },
+      observed: [] as unknown[],
+      resized: () => {},
+    };
     vi.stubGlobal(
       "ResizeObserver",
       class {
         constructor(sync: () => void) {
-          resized = sync;
+          geometry.resized = sync;
         }
         observe(element: unknown) {
-          observed.push(element);
+          geometry.observed.push(element);
         }
         disconnect() {}
       },
     );
-    vi.stubGlobal("document", { documentElement: { style: root } });
+    vi.stubGlobal("document", { documentElement: { style: geometry.root } });
+    vi.stubGlobal("getComputedStyle", () => ({ position: placed.position }));
     vi.stubGlobal("innerHeight", 800);
     vi.stubGlobal("addEventListener", vi.fn());
     vi.stubGlobal("removeEventListener", vi.fn());
+    return geometry;
+  };
+
+  it("keeps the reserve as tall as it grew, and the toasts above the stack", () => {
+    const notice = box(40, 700);
+    const reserve = box(40);
+    const geometry = page({ position: "fixed" });
     const undo = noticeGeometry(notice as never, reserve as never);
-    expect(observed).toEqual([notice, reserve]);
+    expect(geometry.observed).toEqual([notice, reserve]);
     expect(reserve.style.setProperty).toHaveBeenCalledWith("min-height", "40px");
-    expect(root.setProperty).toHaveBeenCalledWith("--notice-toast-bottom", "108px");
+    expect(geometry.root.setProperty).toHaveBeenCalledWith("--notice-toast-bottom", "108px");
     reserve.getBoundingClientRect = () => ({ height: 20, top: 0 });
     notice.getBoundingClientRect = () => ({ height: 0, top: 0 });
-    resized();
+    geometry.resized();
     expect(reserve.style.setProperty).toHaveBeenCalledTimes(1);
-    expect(root.setProperty).toHaveBeenLastCalledWith("--notice-toast-bottom", "66px");
+    expect(geometry.root.setProperty).toHaveBeenLastCalledWith("--notice-toast-bottom", "66px");
     undo?.();
-    expect(root.removeProperty).toHaveBeenCalledWith("--notice-toast-bottom");
+    expect(geometry.root.removeProperty).toHaveBeenCalledWith("--notice-toast-bottom");
+  });
+
+  it("leaves the toasts their own place while the stack is in the page's flow", () => {
+    const notice = box(40, 700);
+    const reserve = box(60);
+    const placed = { position: "absolute" };
+    const geometry = page(placed);
+    noticeGeometry(notice as never, reserve as never);
+    expect(geometry.root.setProperty).toHaveBeenLastCalledWith("--notice-toast-bottom", "66px");
+    expect(reserve.style.setProperty).toHaveBeenCalledWith("min-height", "60px");
+    // The window widened past a phone's: the stack floats again, and the toasts go above it.
+    placed.position = "fixed";
+    geometry.resized();
+    expect(geometry.root.setProperty).toHaveBeenLastCalledWith("--notice-toast-bottom", "108px");
+    placed.position = "absolute";
+    geometry.resized();
+    expect(geometry.root.setProperty).toHaveBeenLastCalledWith("--notice-toast-bottom", "66px");
+    expect(reserve.style.setProperty).toHaveBeenCalledTimes(1);
   });
 });

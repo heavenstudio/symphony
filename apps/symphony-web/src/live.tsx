@@ -489,9 +489,12 @@ export interface PageNoticesProps {
 }
 
 /**
- * One out-of-flow stack for the feed's, the reads' and the server's messages. Its matching end
- * reserve cannot shrink during this mount, so clearing a message at the page's end cannot clamp
- * the reader's scroll position. A page drawn from this device says so in place of reconnecting.
+ * One stack for the feed's, the reads' and the server's messages: out of the page's flow wide,
+ * floating over the window's foot, and in it on a phone, drawn in its reserve's room under the
+ * page's end content, so no part of a phone's page, its composer included, scrolls under it
+ * (`board.css`). Its matching end reserve cannot shrink during this mount, so clearing a message at
+ * the page's end cannot clamp the reader's scroll position. A page drawn from this device says so
+ * in place of reconnecting.
  * Either sets STALE while shown, and only the notices that set it clear it.
  */
 export function PageNotices({
@@ -571,7 +574,8 @@ export function PageNotices({
 /**
  * The page's measurement of its notice stack: its reserve never shrinks during the mount, and the
  * toasts sit above the stack as it is drawn (`--notice-toast-bottom`), rather than guessing how
- * many lines it takes. What it gives undoes it.
+ * many lines it takes, while it floats over the window; a stack in the page's flow, a phone's,
+ * leaves them their own place above the dock. What it gives undoes it.
  */
 export function noticeGeometry(
   notice: HTMLElement | null,
@@ -587,7 +591,8 @@ export function noticeGeometry(
       reserve.style.setProperty("min-height", `${height}px`);
     }
     const box = notice.getBoundingClientRect();
-    const bottom = box.height > 0 ? innerHeight - box.top + 8 : 66;
+    const floats = box.height > 0 && getComputedStyle(notice).position === "fixed";
+    const bottom = floats ? innerHeight - box.top + 8 : 66;
     root.style.setProperty("--notice-toast-bottom", `${bottom}px`);
   };
   const observer = new ResizeObserver(sync);

@@ -1,8 +1,32 @@
 //! What the stale notice and its invisible reserve leave clear: the header, fixed controls and
-//! page-end content, at each width and across the phone breakpoint.
-use super::{SHOWN, chrome, look_parity, site, wait_for_board, wait_for_feed};
+//! page-end content, at each width and across the phone breakpoint, and on a phone the composer
+//! wherever the page is scrolled.
+use super::{
+    SHOWN, chrome, chrome::Chrome, document_landing::TWO_FRAMES, look_parity, restored, site,
+    site::Site, wait_for_board, wait_for_feed,
+};
 use serde_json::{Value, json};
 
+/// The stale notice against the header and the fixed controls: whether it is shown whole in the
+/// window, whether the header's links all are, and the controls it lies over.
+const AGAINST_THE_CONTROLS: &str = r#"(() => {
+    const pill = document.querySelector('main[data-feed=stale] .stale').getBoundingClientRect();
+    const links = [...document.querySelectorAll('.app-header a')];
+    const controls = [...links, ...document.querySelectorAll('.app-header button, #quick-open, .frame-pending')];
+    const overlaps = controls.filter(control => {
+        const box = control.getBoundingClientRect();
+        return box.width > 0 && box.height > 0 && pill.left < box.right && pill.right > box.left && pill.top < box.bottom && pill.bottom > box.top;
+    }).map(control => control.id || control.textContent.trim());
+    return {
+        visible: pill.width > 0 && pill.height > 0 && pill.left >= 0 && pill.right <= innerWidth && pill.top >= 0 && pill.bottom <= innerHeight,
+        headerLinksPresent: links.length >= 5 && links.every(link => { const box = link.getBoundingClientRect(); return box.width > 0 && box.height > 0 && box.top >= 0 && box.bottom <= innerHeight; }),
+        overlaps
+    };
+})()"#;
+
+// At each width the page's top shows every header link and its end the stale notice whole, which
+// lies over no header link nor fixed control at either: wide it floats over the window's foot, and
+// on a phone it is in the page's flow, read at its end.
 #[test]
 fn a_stale_notice_leaves_header_and_fixed_controls_uncovered() {
     let site = site();
@@ -29,24 +53,21 @@ fn a_stale_notice_leaves_header_and_fixed_controls_uncovered() {
             "Emulation.setDeviceMetricsOverride",
             json!({"width":width,"height":900,"deviceScaleFactor":1,"mobile":false}),
         );
-        chrome.eval("scrollTo(0,0); new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))");
+        chrome.eval(&format!("scrollTo(0,0); {TWO_FRAMES}"));
+        let top = chrome.eval(AGAINST_THE_CONTROLS);
         assert_eq!(
-            chrome.eval(r#"(() => {
-                const pill = document.querySelector('main[data-feed=stale] .stale').getBoundingClientRect();
-                const links = [...document.querySelectorAll('.app-header a')];
-                const controls = [...links, ...document.querySelectorAll('.app-header button, #quick-open, .frame-pending')];
-                const overlaps = controls.filter(control => {
-                    const box = control.getBoundingClientRect();
-                    return box.width > 0 && box.height > 0 && pill.left < box.right && pill.right > box.left && pill.top < box.bottom && pill.bottom > box.top;
-                }).map(control => control.id || control.textContent.trim());
-                return {
-                    visible: pill.width > 0 && pill.height > 0 && pill.left >= 0 && pill.right <= innerWidth && pill.top >= 0 && pill.bottom <= innerHeight,
-                    headerLinksPresent: links.length >= 5 && links.every(link => { const box = link.getBoundingClientRect(); return box.width > 0 && box.height > 0 && box.top >= 0 && box.bottom <= innerHeight; }),
-                    overlaps
-                };
-            })()"#),
-            json!({"visible":true,"headerLinksPresent":true,"overlaps":[]}),
-            "at {width}px, the stale notice must leave visible header links and fixed controls uncovered"
+            (&top["headerLinksPresent"], &top["overlaps"]),
+            (&json!(true), &json!([])),
+            "at {width}px, the page's top must show its header links, the stale notice over none of them nor a fixed control: {top}"
+        );
+        chrome.eval(&format!(
+            "scrollTo(0,document.documentElement.scrollHeight); {TWO_FRAMES}"
+        ));
+        let end = chrome.eval(AGAINST_THE_CONTROLS);
+        assert_eq!(
+            (&end["visible"], &end["overlaps"]),
+            (&json!(true), &json!([])),
+            "at {width}px, the page's end must show the stale notice, over no header link nor fixed control: {end}"
         );
     }
 }
@@ -227,4 +248,186 @@ fn a_task_page_error_is_a_notice_and_clearing_it_on_reconnect_keeps_the_page_end
         json!(true),
         "clearing the error must keep the page end and never clamp the scroll"
     );
+}
+
+/// The held-switch notice as the server says it on the holder's pages: six lines at 390 px.
+const HELD: &str = "The machine's Symphony stays a project's build, not the release release-1: pantry names the linked plugin fixture-shelf, and a release's server serves a plugin only from its process: a [plugins.process] command for it in its symphony.toml lets the release serve every project (docs/PLUGIN_PROTOCOL.md).";
+
+/// The two pages with a composer at their end: a task's, its thread's, and a document's, its
+/// questions'.
+const COMPOSED: [&str; 2] = ["/task/visual/in-progress", "/docs/PROBE.md"];
+
+/// The page's composer: a task's message form, else a document's question form.
+const COMPOSER: &str =
+    "(document.querySelector('#task-send') ?? document.querySelector('#asks form'))";
+
+/// `page` of [`COMPOSED`] on a fresh stand-in, `width` by `height`, drawn with its composer and
+/// following its feed, so the server's notice reaches it.
+fn composed(page: &str, width: u32, height: u32) -> Option<(Site, Chrome)> {
+    let site = site();
+    let responses = look_parity::responses();
+    for path in ["/api/task-page", "/api/task-history"] {
+        site.set_json(path, &responses[path]);
+    }
+    restored::document(
+        &site,
+        vec![json!({"type":"paragraph","spans":[{"type":"text","text":"What the pantry keeps."}]})],
+    );
+    let mut chrome = chrome()?;
+    chrome.call(
+        "Emulation.setDeviceMetricsOverride",
+        json!({"width":width,"height":height,"deviceScaleFactor":1,"mobile":width <= 600}),
+    );
+    chrome.open(&site.url(page));
+    assert!(
+        chrome.wait_for(
+            &format!("{COMPOSER}?.querySelector('button[type=submit]') != null"),
+            SHOWN
+        ),
+        "{page} never drew its composer: {}",
+        chrome.eval("document.body.innerText")
+    );
+    wait_for_feed(&site).expect("the page never followed the feed");
+    Some((site, chrome))
+}
+
+/// Wait until the page shows `count` notices, then for two frames, so the stack's measurement
+/// (`noticeGeometry`, on its resize observer) has run.
+fn notices_shown(chrome: &mut Chrome, count: usize) {
+    assert!(
+        chrome.wait_for(
+            &format!(
+                "document.querySelectorAll('.page-notices:not([hidden]) > p').length === {count}"
+            ),
+            SHOWN
+        ),
+        "the page never showed {count} notices: {}",
+        chrome.eval("document.querySelector('.page-notices')?.innerText")
+    );
+    chrome.eval(TWO_FRAMES);
+}
+
+/// Every scroll of the page from its top to its end, 20 px apart, at which a notice shown lies
+/// over a part of the composer (its textarea, Attach, its Send or Ask), with the parts it covers.
+/// Each scroll is read as laid out; the page is left at its end.
+const COVERED: &str = r#"(() => {
+    const form = (document.querySelector('#task-send') ?? document.querySelector('#asks form'));
+    const parts = {textarea: form.querySelector('textarea'), attach: form.querySelector('.attach-pick'), send: form.querySelector('button[type=submit]')};
+    const notices = [...document.querySelectorAll('.page-notices:not([hidden]) > p')];
+    const end = Math.max(0, document.documentElement.scrollHeight - innerHeight);
+    const covered = [];
+    for (let y = 0; ; y = Math.min(y + 20, end)) {
+        scrollTo(0, y);
+        const under = Object.entries(parts).filter(([, part]) => {
+            const b = part.getBoundingClientRect();
+            return notices.some(notice => {
+                const n = notice.getBoundingClientRect();
+                return n.left < b.right && n.right > b.left && n.top < b.bottom && n.bottom > b.top;
+            });
+        }).map(([name]) => name);
+        if (under.length > 0) covered.push([scrollY, under]);
+        if (y === end) break;
+    }
+    return {notices: notices.length, scrolls: end > 0, covered};
+})()"#;
+
+/// At the page's end: whether it is there, every notice shown whole in the window, and under the
+/// composer.
+const AT_THE_END: &str = r#"(() => {
+    const form = (document.querySelector('#task-send') ?? document.querySelector('#asks form')).getBoundingClientRect();
+    const notices = [...document.querySelectorAll('.page-notices:not([hidden]) > p')].map(notice => notice.getBoundingClientRect());
+    return {
+        atEnd: scrollY === Math.max(0, document.documentElement.scrollHeight - innerHeight),
+        shown: notices.length > 0 && notices.every(n => n.height > 0 && n.top >= 0 && n.bottom <= innerHeight && n.left >= 0 && n.right <= innerWidth),
+        underTheComposer: notices.every(n => n.top >= form.bottom),
+    };
+})()"#;
+
+// On a phone the notices are in the page's flow, under its end content, so the long held-switch
+// notice, then it and the reconnecting one, lie over no part of a task's or a document's composer
+// wherever the page is scrolled, and are read whole at the page's end. Clearing both there keeps
+// the page's end and its scroll: the reserve they stood in keeps its height.
+#[test]
+fn at_390_px_no_notice_covers_the_composer_of_a_task_or_a_document() {
+    let end = json!({"atEnd": true, "shown": true, "underTheComposer": true});
+    for page in COMPOSED {
+        let Some((site, mut chrome)) = composed(page, 390, 844) else {
+            return;
+        };
+        site.server_notice(HELD);
+        notices_shown(&mut chrome, 1);
+        assert_eq!(
+            chrome.eval(COVERED),
+            json!({"notices": 1, "scrolls": true, "covered": []}),
+            "{page}: the held-switch notice covers the composer"
+        );
+        assert_eq!(chrome.eval(AT_THE_END), end, "{page}: one notice");
+        site.fail_feeds(usize::MAX);
+        site.drop_feeds();
+        notices_shown(&mut chrome, 2);
+        assert_eq!(
+            chrome.eval(COVERED),
+            json!({"notices": 2, "scrolls": true, "covered": []}),
+            "{page}: the held-switch and the reconnecting notices cover the composer"
+        );
+        assert_eq!(chrome.eval(AT_THE_END), end, "{page}: two notices");
+        chrome.eval(
+            "window.endScroll = scrollY; window.endHeight = document.documentElement.scrollHeight",
+        );
+        site.fail_feeds(0);
+        notices_shown(&mut chrome, 1);
+        wait_for_feed(&site).expect("the page never followed the feed again");
+        site.server_notice("");
+        assert!(
+            chrome.wait_for(
+                "document.querySelector('.page-notices')?.hidden === true",
+                SHOWN
+            ),
+            "{page}: the notices never went: {}",
+            chrome.eval("document.querySelector('.page-notices')?.innerText")
+        );
+        chrome.eval(TWO_FRAMES);
+        assert_eq!(
+            chrome.eval(
+                "scrollY === endScroll && document.documentElement.scrollHeight === endHeight"
+            ),
+            json!(true),
+            "{page}: clearing the notices at the page's end must keep its end and never clamp its scroll"
+        );
+    }
+}
+
+/// Where the notices stand in the window: placed as the sheet places them, their gap to its foot
+/// and its left, and whether the toasts are set above them.
+const FLOATING: &str = r#"(() => {
+    const stack = document.querySelector('.page-notices');
+    const box = stack.getBoundingClientRect();
+    return {
+        position: getComputedStyle(stack).position,
+        foot: Math.round(innerHeight - box.bottom),
+        left: Math.round(box.left),
+        toasts: getComputedStyle(document.documentElement).getPropertyValue('--notice-toast-bottom') === `${innerHeight - box.top + 8}px`,
+    };
+})()"#;
+
+// Past a phone's width the notices float over the window's foot as before, from the first width
+// past it to a wide desk: 132 px over its foot and 16 px from its left, wherever the page is
+// scrolled, with the toasts above them.
+#[test]
+fn past_a_phones_width_the_notices_float_over_the_windows_foot() {
+    let floating = json!({"position": "fixed", "foot": 132, "left": 16, "toasts": true});
+    for width in [601, 1440] {
+        let Some((site, mut chrome)) = composed(COMPOSED[0], width, 900) else {
+            return;
+        };
+        site.server_notice(HELD);
+        notices_shown(&mut chrome, 1);
+        for scroll in [
+            "scrollTo(0, 0)",
+            "scrollTo(0, document.documentElement.scrollHeight)",
+        ] {
+            chrome.eval(scroll);
+            assert_eq!(chrome.eval(FLOATING), floating, "{width} px, {scroll}");
+        }
+    }
 }
