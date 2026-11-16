@@ -336,20 +336,24 @@ const COVERED: &str = r#"(() => {
 const AT_THE_END: &str = r#"(() => {
     const form = (document.querySelector('#task-send') ?? document.querySelector('#asks form')).getBoundingClientRect();
     const notices = [...document.querySelectorAll('.page-notices:not([hidden]) > p')].map(notice => notice.getBoundingClientRect());
+    const stack = document.querySelector('.page-notices').getBoundingClientRect();
+    const reserve = document.querySelector('.page-notice-reserve').getBoundingClientRect();
     return {
         atEnd: scrollY === Math.max(0, document.documentElement.scrollHeight - innerHeight),
         shown: notices.length > 0 && notices.every(n => n.height > 0 && n.top >= 0 && n.bottom <= innerHeight && n.left >= 0 && n.right <= innerWidth),
         underTheComposer: notices.every(n => n.top >= form.bottom),
+        inTheReserve: Math.round(stack.top) === Math.round(reserve.top) && Math.round(stack.bottom) <= Math.round(reserve.bottom),
     };
 })()"#;
 
 // On a phone the notices are in the page's flow, under its end content, so the long held-switch
 // notice, then it and the reconnecting one, lie over no part of a task's or a document's composer
-// wherever the page is scrolled, and are read whole at the page's end. Clearing both there keeps
-// the page's end and its scroll: the reserve they stood in keeps its height.
+// wherever the page is scrolled, and are read whole at the page's end, standing in their
+// reserve's room. Clearing both there keeps the page's end and its scroll: the reserve they stood
+// in keeps its height.
 #[test]
 fn at_390_px_no_notice_covers_the_composer_of_a_task_or_a_document() {
-    let end = json!({"atEnd": true, "shown": true, "underTheComposer": true});
+    let end = json!({"atEnd": true, "shown": true, "underTheComposer": true, "inTheReserve": true});
     for page in COMPOSED {
         let Some((site, mut chrome)) = composed(page, 390, 844) else {
             return;
@@ -362,6 +366,17 @@ fn at_390_px_no_notice_covers_the_composer_of_a_task_or_a_document() {
             "{page}: the held-switch notice covers the composer"
         );
         assert_eq!(chrome.eval(AT_THE_END), end, "{page}: one notice");
+        // A page laid out as a grid (Reports' sections are) leaves the stack in its reserve's room:
+        // it is placed in the block it shares with the reserve, never by the page around it.
+        chrome.eval("document.querySelector('main').style.display = 'grid'");
+        chrome.eval(TWO_FRAMES);
+        assert_eq!(
+            chrome.eval(AT_THE_END)["inTheReserve"],
+            json!(true),
+            "{page}: the stack left its reserve in a grid"
+        );
+        chrome.eval("document.querySelector('main').style.display = ''");
+        chrome.eval(TWO_FRAMES);
         site.fail_feeds(usize::MAX);
         site.drop_feeds();
         notices_shown(&mut chrome, 2);

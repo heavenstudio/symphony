@@ -262,7 +262,7 @@ form input, form textarea, .filters input { font:inherit; font-size:var(--fs-sm)
    adds the fixed notice's lift past main's own end padding, so page-end content clears the
    notice; the lift stays outside the box whose height the page keeps (live.tsx). */
 .page-notice-reserve { margin-bottom:calc(var(--feed-notice-bottom) + var(--sp-4) - var(--page-end)); }
-/* The notices float over the window's foot, above the dock; a phone's are in the page's flow. */
+/* The notices float over the window's foot, above the dock; a phone's page's are in its flow. */
 .stale { position:fixed; bottom:var(--feed-notice-bottom); left:var(--sp-4); z-index:5; background:color-mix(in srgb, var(--c) 12%, var(--background)); }
 .notice-stack { display:grid; gap:var(--sp-2); }
 .notice-stack[hidden] { display:none; }
@@ -391,10 +391,11 @@ a.bar:hover { background:var(--background); }
   .board-scroll, .ghost-pipeline { max-height:max(280px,calc(100dvh - 323px - var(--board-dock,0px))); }
   .filters[data-open=true] + .kanban > .board-scroll { max-height:max(280px,calc(100dvh - 472px - var(--board-dock,0px))); }
   /* The page's notices are in its flow, under its end content: a band fixed over a phone's page
-     covers whatever scrolls through it, the composer among it. Drawn at their own place, just
-     before their reserve, they stand in its room and take none of their own, so a notice coming
-     or going moves nothing; they pass under the header and the dock as the page does. */
-  .stale { position:absolute; bottom:auto; left:auto; z-index:auto; }
+     covers whatever scrolls through it, the composer among it. Drawn at their own place, the top
+     of the block they share with their reserve (live.tsx), they stand in its room and take none
+     of their own, so a notice coming or going moves nothing, whatever lays out the page around
+     that block; they pass under the header and the dock as the page does. */
+  .page-notice-end > .stale { position:absolute; bottom:auto; left:auto; z-index:auto; }
 }
 /* The focus home: the next card and the queue, without the tiles and the progress. */
 html[data-layout-home=focus] .dash > .tiles, html[data-layout-home=focus] .dash > .dash-grid { display:none; }

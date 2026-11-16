@@ -492,9 +492,10 @@ export interface PageNoticesProps {
  * One stack for the feed's, the reads' and the server's messages: out of the page's flow wide,
  * floating over the window's foot, and in it on a phone, drawn in its reserve's room under the
  * page's end content, so no part of a phone's page, its composer included, scrolls under it
- * (`board.css`). Its matching end reserve cannot shrink during this mount, so clearing a message at
- * the page's end cannot clamp the reader's scroll position. A page drawn from this device says so
- * in place of reconnecting.
+ * (`board.css`). The two share one block, so the stack's place is its reserve's in any parent, a
+ * grid's or a flex box's too. Its matching end reserve cannot shrink during this mount, so
+ * clearing a message at the page's end cannot clamp the reader's scroll position. A page drawn
+ * from this device says so in place of reconnecting.
  * Either sets STALE while shown, and only the notices that set it clear it.
  */
 export function PageNotices({
@@ -528,7 +529,7 @@ export function PageNotices({
   const visible = checking || error !== "" || server !== "" || documentRemoved;
   const waiting = deviceSays ?? reconnect;
   return (
-    <>
+    <div className="page-notice-end">
       <div className="stale page-notices notice-stack" hidden={!visible} ref={notices}>
         {deviceSays !== null ? (
           <p className="pill wait device-notice" role="status">
@@ -567,7 +568,7 @@ export function PageNotices({
         {documentRemoved && <p className="pill">{REMOVED_DOCUMENT_NOTICE}</p>}
         {server !== "" && <p className="pill">{server}</p>}
       </div>
-    </>
+    </div>
   );
 }
 

@@ -67,6 +67,13 @@ describe("the page's notices", () => {
     expect(markup).toContain(`<p class="pill">${FEED_NOTICE}</p>`);
   });
 
+  it("share one block with their reserve, the stack first, so its place is the reserve's", () => {
+    const markup = notices({ reconnecting: true });
+    expect(markup).toMatch(
+      /^<div class="page-notice-end"><div class="stale page-notices notice-stack">.*<\/div><div class="feed-notice-space page-notice-reserve notice-stack" aria-hidden="true">.*<\/div><\/div>$/,
+    );
+  });
+
   it("say the feed reconnects, a read's error and the server's notice", () => {
     SERVER_NOTICE.set("Restarting");
     const markup = notices({ reconnecting: true, error: "No answer" });
