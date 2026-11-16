@@ -1,21 +1,24 @@
 //! The board's ticks on a thread of their own, beside the document refreshes: a tick due while a
 //! refresh is held mid-render is published before that refresh ends, a refresh that read the board
 //! before a tick places no older task counts than the tick sent, and the ticks' thread ends when the
-//! hub stops, or when its project goes, the document loop with it.
+//! hub stops, or when its project goes, the document loop with it; a run that begins after its hub
+//! stopped or went starts neither.
 
 use super::Hub;
 use super::read_paths_tests::{PNG, fifo, holds, observe, writer};
+use crate::backstop::Backstop;
 use crate::testing::{
     Tree,
     board::{Fixture, Seed},
     repository,
 };
+use notify::Watcher as _;
 use serde_json::Value;
 use std::collections::BTreeSet;
 use std::io::Write;
 use std::path::Path;
-use std::sync::Arc;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Weak, mpsc};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
@@ -271,4 +274,55 @@ fn a_project_removed_under_its_hub_ends_its_ticks_and_its_document_loop_with_no_
     .unwrap();
     assert_eq!(hub.tasks_read().err(), Some(hub.gone()));
     hub.stop();
+}
+
+/// The hub's loops run on `hub`, on a thread of their own, with no board yet, so a first tick would
+/// reach for one: whether one did, once the run returned.
+fn reached_after_run(hub: Weak<Hub>) -> bool {
+    let reached = Arc::new(AtomicBool::new(false));
+    let reach = Arc::clone(&reached);
+    // Kept until the run returns, so the document loop would wait on it rather than end.
+    let (_events, recv) = mpsc::sync_channel(1);
+    let watcher = notify::NullWatcher::new(|_| {}, notify::Config::default()).unwrap();
+    let running = std::thread::spawn(move || {
+        super::run(
+            hub,
+            recv,
+            watcher,
+            BTreeSet::new(),
+            Backstop::new(crate::backstop::PERIOD),
+            None,
+            move |_: &Path| {
+                reach.store(true, Ordering::SeqCst);
+                Err("no board in this test".to_string())
+            },
+        );
+    });
+    test_time::until_true("the run to return", BACKSTOP, || running.is_finished()).unwrap();
+    running.join().unwrap();
+    reached.load(Ordering::SeqCst)
+}
+
+#[test]
+fn a_run_whose_hub_stopped_or_went_before_it_began_starts_neither_loop() {
+    let tree = Tree::new();
+    let root = repository(&tree);
+    let hub = Arc::new(Hub::new(&root, &root.join("build/client")));
+    // The stop came while the first board read was under way, before the loops began.
+    hub.stop();
+    assert!(
+        !reached_after_run(Arc::downgrade(&hub)),
+        "a tick reached for the board after the stop"
+    );
+    assert!(
+        hub.ticks.lock().unwrap().is_none(),
+        "the run kept a stop signal no stop will take"
+    );
+
+    let gone = Arc::downgrade(&hub);
+    drop(hub);
+    assert!(
+        !reached_after_run(gone),
+        "a tick reached for the board of a hub gone"
+    );
 }
