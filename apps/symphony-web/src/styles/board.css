@@ -34,9 +34,14 @@ button { box-sizing:border-box; min-height:2.25rem; font-size:var(--fs-sm); font
 button:hover { border-color:var(--muted-foreground); }
 button.primary { background:var(--primary); border-color:var(--primary); color:var(--primary-foreground); font-weight:600; }
 button:disabled { opacity:.6; cursor:default; }
-/* A control sinks under a press, and a long press on it selects none of its label. */
+/* A control sinks under a press, and a long press on it selects none of its label. Its target
+   keeps the whole box: a layer as much larger as the press shrinks it, and its borders more (a
+   tile's top is 3px), so a press held near its edge still lands on it. The layer's anchor is the
+   control, relative unless its own sheet positions it. */
 button, .tile, a.go { -webkit-user-select:none; user-select:none; }
 :is(button, .tile, a.go):not(:disabled):active { transform:scale(.97); }
+:where(button, .tile, a.go):where(:active) { position:relative; }
+:is(button, .tile, a.go):not(:disabled):active::after { content:""; position:absolute; inset:calc(-1.6% - 4px); }
 textarea { display:block; box-sizing:border-box; width:100%; min-height:100px; resize:vertical; }
 input, select { max-width:100%; box-sizing:border-box; }
 label { display:block; } html:root :focus-visible { outline:2px solid var(--ring, var(--primary)); outline-offset:2px; }
@@ -246,8 +251,9 @@ th + th, td + td { border-left:1px solid var(--border); }
 tr:last-child > td { border-bottom:0; }
 th { background:var(--muted); font-size:var(--fs-sm); font-weight:650; vertical-align:bottom; }
 form input, form textarea, .filters input { font:inherit; font-size:var(--fs-sm); }
-/* iOS zooms into a field under 16px when it takes focus, and does not zoom back out. */
-@media (pointer: coarse) { :is(input:not([type=file]), textarea, select) { font-size:16px; } }
+/* iOS zooms into a field under 16px when it takes focus, and does not zoom back out: on a touch
+   screen a field is 16px whatever a page's own sheet, linked after this one, sets (runs.css). */
+@media (pointer: coarse) { :is(input:not([type=file]), textarea, select) { font-size:16px !important; } }
 /* Matching metrics keep page-end controls above even a wrapped notice at every width. */
 .stale, .feed-notice-space { width:max-content; max-width:calc(100vw - 2 * var(--sp-4)); box-sizing:border-box; margin:0; white-space:normal; }
 .feed-notice-space { display:flex; visibility:hidden; }

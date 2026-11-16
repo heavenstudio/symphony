@@ -1,7 +1,8 @@
 //! What a touch screen needs of the pages, read in the release client: a text field is drawn at
 //! 16px there, as iOS zooms into a smaller one when it takes focus and does not zoom back out, and
 //! keeps its size on a desk; a press is the control's own, which sinks it, never the browser's tap
-//! flash or a selected label, and a hover that moves or raises a thing is a pointer's alone.
+//! flash or a selected label, though a press held near its edge still lands on it, and a hover
+//! that moves or raises a thing is a pointer's alone.
 use super::components::site;
 use super::{SHOWN, chrome, chrome::Chrome};
 use serde_json::{Value, json};
@@ -65,6 +66,16 @@ fn a_text_field_is_sixteen_pixels_on_a_touch_screen_and_keeps_its_size_on_a_desk
             [search, composer],
             [size; 2],
             "touch {touch}: the board's search field and a task's composer, in px"
+        );
+        // A page's own sheet, linked after the shared one, sizes its fields too: the runs page's
+        // two selects and two search fields.
+        page.open(&site.url("/runs"));
+        font_size(&mut page, ".runs-filters input[name=branch]");
+        let runs: Vec<f64> = serde_json::from_value(page.eval("[...document.querySelectorAll('.runs-filters select, .runs-filters input')].map(e => parseFloat(getComputedStyle(e).fontSize))"))
+            .expect("the runs filters' font sizes");
+        assert_eq!(
+            runs, [size; 4],
+            "touch {touch}: the runs filters' Pipeline, Result, Task and Branch, in px"
         );
     }
 }
@@ -205,4 +216,52 @@ fn a_hover_that_moves_or_raises_a_thing_is_a_pointers_alone() {
             "a mouse's hover moves or raises {selector}"
         );
     }
+}
+
+#[test]
+fn a_press_held_near_a_controls_edge_still_clicks_it() {
+    let site = site();
+    let Some(mut page) = chrome() else { return };
+    device(&mut page, false);
+    open(&mut page, &site, "/", ".tile");
+    // Each click is kept, its tile or tag, and goes no further: no tile navigates.
+    page.eval("window.clicks = []; document.addEventListener('click', event => { window.clicks.push(event.target.closest('.tile') ? 'tile' : event.target.tagName); event.preventDefault(); event.stopPropagation(); }, true)");
+    // 2px inside a tile's left edge, which the press's shrink moves past (1.5% of its width).
+    let at = page.eval("(box => ({x: box.left + 2, y: box.top + box.height / 2, width: box.width}))(document.querySelector('.tile').getBoundingClientRect())");
+    assert!(
+        at["width"].as_f64().unwrap() * 0.015 > 2.0,
+        "the tile is wide enough for the shrink to pass the press: {at}"
+    );
+    let mouse =
+        |kind: &str| json!({"type":kind,"x":at["x"],"y":at["y"],"button":"left","clickCount":1});
+    page.call("Input.dispatchMouseEvent", mouse("mousePressed"));
+    // Held until the shrink is whole: the release lands where the tile's edge has moved from.
+    assert!(
+        page.wait_for(
+            &format!(
+                "(tile => getComputedStyle(tile).transform === {} && tile.getAnimations().length === 0)(document.querySelector('.tile'))",
+                json!(PRESSED)
+            ),
+            SHOWN
+        ),
+        "the tile sinks under the press: {}",
+        look(&mut page, ".tile", "transform")
+    );
+    assert!(
+        page.eval(&format!(
+            "document.querySelector('.tile').getBoundingClientRect().left > {}",
+            at["x"]
+        )) == json!(true),
+        "the shrunk tile's drawn edge has passed the press"
+    );
+    page.call("Input.dispatchMouseEvent", mouse("mouseReleased"));
+    assert!(
+        page.wait_for("window.clicks.length > 0", SHOWN),
+        "the release clicks"
+    );
+    assert_eq!(
+        page.eval("window.clicks"),
+        json!(["tile"]),
+        "a press held near the tile's edge clicks the tile"
+    );
 }
