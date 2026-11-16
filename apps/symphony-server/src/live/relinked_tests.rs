@@ -162,10 +162,7 @@ fn tasks(listed: &[(&str, &str, &str)]) -> Value {
 
 /// The board's `query`, run on the fixture's board.
 fn moves(f: &Fixture, query: &str) {
-    f.store
-        .client()
-        .query(query, json!({}))
-        .unwrap();
+    f.store.client().query(query, json!({})).unwrap();
 }
 
 fn board() -> Fixture {
@@ -362,7 +359,53 @@ fn a_document_the_page_holds_as_missing_is_not_rendered_for_its_tasks() {
     );
     let rendered = served.renders();
     served.hub.board_read(&f.store).unwrap();
-    assert_eq!(served.renders(), rendered, "its file is gone: nothing to show");
+    assert_eq!(
+        served.renders(),
+        rendered,
+        "its file is gone: nothing to show"
+    );
+}
+
+#[test]
+fn a_board_read_and_a_refresh_beside_it_only_move_the_first_reads_mark_forward() {
+    let tree = Tree::new();
+    let root = repository(&tree);
+    let f = board();
+    let served = Served::new(&root);
+    served.hub.board_read(&f.store).unwrap();
+    served.open("", TOPIC);
+    // One of the two, on its own thread, marked a read after the other began listing.
+    let ahead = served.hub.reads.load(Ordering::SeqCst) + 1_000;
+    let mark = || served.hub.pages.read().unwrap()[""].renews_from;
+    served
+        .hub
+        .pages
+        .write()
+        .unwrap()
+        .get_mut("")
+        .unwrap()
+        .renews_from = ahead;
+
+    moves(
+        &f,
+        "UPDATE task SET status = 'in_progress' WHERE slug = 'tools/topic' RETURN NONE;",
+    );
+    let rendered = served.renders();
+    served.hub.board_read(&f.store).unwrap();
+    assert_eq!(
+        served.renders(),
+        rendered + 1,
+        "the board read listed and rendered"
+    );
+    assert_eq!(mark(), ahead, "the board read's mark");
+
+    tree.write("main/docs/TOPIC.md", "# Topic\n\nEdited since.\n");
+    served
+        .hub
+        .refresh_docs(Some(&std::collections::BTreeSet::from([root.join(TOPIC)])))
+        .unwrap();
+    assert_eq!(served.renders(), rendered + 2, "the refresh rendered anew");
+    assert_eq!(mark(), ahead, "the refresh's mark");
 }
 
 /// A task as the board's read sends it, of `status`, linking `links`.

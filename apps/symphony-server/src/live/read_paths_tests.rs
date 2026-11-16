@@ -467,11 +467,11 @@ fn a_first_read_begun_before_a_board_read_moved_its_linking_task_reads_again() {
     let tree = Tree::new();
     let root = repository(&tree);
     tree.write("main/docs/SLOW.md", "# Slow\n\n![Held](held.png)\n");
-    let f = Fixture::new(
-        Seed::default()
-            .task("tools/slow", "ready")
-            .link("tools/slow", "doc", "docs/SLOW.md"),
-    );
+    let f = Fixture::new(Seed::default().task("tools/slow", "ready").link(
+        "tools/slow",
+        "doc",
+        "docs/SLOW.md",
+    ));
     let hub = Hub::new(&root, &root.join("build/client"));
     hub.refresh_page("", &root).unwrap();
     observe(&hub, &f.store, &[]);

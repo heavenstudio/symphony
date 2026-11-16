@@ -1131,8 +1131,10 @@ impl Hub {
             .unwrap_or_else(|e| e.into_inner())
             .get_mut(scope)
             .map(|page| {
+                // A board read's listing, which the ticks make beside this refresh, may have
+                // marked a later read since this one began: the mark only moves forward.
                 if let Some(begun) = begun {
-                    page.renews_from = begun;
+                    page.renews_from = page.renews_from.max(begun);
                 }
                 let stale = std::mem::take(&mut page.stale);
                 page.documents
@@ -1315,7 +1317,8 @@ impl Hub {
             .unwrap_or_else(|e| e.into_inner())
             .iter_mut()
             .map(|(scope, page)| {
-                page.renews_from = begun;
+                // A refresh beside the ticks may have marked a later read: it only moves forward.
+                page.renews_from = page.renews_from.max(begun);
                 let followed = page
                     .documents
                     .iter()
