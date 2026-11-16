@@ -4,8 +4,13 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 pub(super) fn source_event(root: &Path, directories: &BTreeSet<PathBuf>, path: &Path) -> bool {
-    if path.starts_with(root.join("symphony/apps/symphony-ui"))
-        || path.starts_with(root.join("apps/symphony-ui"))
+    // The client's package, but what its installs and builds write there.
+    let client = |sdk: &Path| {
+        let web = sdk.join(symphony::reload::CLIENT_PACKAGE);
+        path == web || symphony::reload::client_source(&web, path)
+    };
+    if client(root)
+        || client(&root.join("symphony"))
         || path.starts_with(root.join("apps/symphony-server/client/public"))
         || path.starts_with(root.join("symphony/apps/symphony-server/client/public"))
         || [

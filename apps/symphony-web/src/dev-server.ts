@@ -14,13 +14,10 @@ export const SHARED_PORT = 8765;
 /** What the dev server proxies: every request outside [`BASE`]. */
 export const PROXIED = "^/(?!@symphony-web/)";
 
-/** The files outside this package the kinds import (the Dioxus client's media and attach sheets). */
-const OUTSIDE = ["../symphony-ui/assets"];
-
-/** The shell's sources in the Dioxus client (package.sh's order), from this package's folder. */
+/** The shell's sources (package.sh's order), from this package's folder. */
 export const SHELL_SOURCES = {
-  cache: "../symphony-ui/assets/cache.js",
-  shell: "../symphony-ui/assets/shell.js",
+  cache: "shell/cache.js",
+  shell: "shell/shell.js",
 } as const;
 
 /** The shell's line package.sh writes the kinds' manifest in. */
@@ -274,7 +271,7 @@ export function devConfig(root: string, args: DevArgs, plugins: Plugin[]): Inlin
       strictPort: true,
       cors: false,
       proxy: { [PROXIED]: { target: origin(args.server), changeOrigin: false, ws: true } },
-      fs: { allow: [".", ...OUTSIDE] },
+      fs: { allow: ["."] },
     },
     plugins,
   };

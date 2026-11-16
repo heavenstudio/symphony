@@ -560,10 +560,7 @@ mod tests {
 
         // A source kit: its reload builds and stamps the client, so an older client sends its
         // start to build, and a current one does not.
-        tree.write(
-            "main/symphony/apps/symphony-ui/Cargo.toml",
-            "[package]\nname = 'symphony-ui'\n",
-        );
+        tree.write("main/symphony/apps/symphony-web/package.json", "{}\n");
         assert!(symphony::reload::builds_client(&root));
         assert_eq!(stamped_start(&serve, &lease), None);
         client_stamp(&symphony::reload::client_fingerprint(&root).unwrap());

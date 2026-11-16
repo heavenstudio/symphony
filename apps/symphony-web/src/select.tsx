@@ -1,4 +1,4 @@
-// A select field, drawn as the chat's (apps/symphony-ui's `components/select/deferred.rs`): the
+// A select field, drawn as the chat's was (the copied components' deferred select): the
 // page draws its trigger, and opening it asks the overlay module, this client's persistent kind
 // `overlay`, which the shell loads on a first use or ahead once the page is idle, for its popup
 // (`window.reviewOverlay`, shell.js).

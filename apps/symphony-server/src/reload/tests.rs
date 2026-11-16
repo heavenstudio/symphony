@@ -139,13 +139,13 @@ fn client_fingerprint_and_events_cover_assets_config_and_transitive_crates() {
     let root = repository(&tree);
     tree.write(
         "main/symphony/apps/symphony-server/Cargo.toml",
-        "[package]\nname = \"symphony-server\"\n",
+        "[package]\nname = \"symphony-server\"\n[dependencies]\nwire = { path = \"../../../crates/wire\" }\n",
     );
     tree.write(
         "main/symphony/apps/symphony-server/src/main.rs",
         "fn main() {}\n",
     );
-    tree.write("main/symphony/apps/symphony-ui/Cargo.toml", "[package]\nname = \"symphony-ui\"\n[dependencies]\nwire = { path = \"../../../crates/wire\" }\n");
+    tree.write("main/symphony/apps/symphony-web/package.json", "{}\n");
     tree.write(
         "main/crates/wire/Cargo.toml",
         "[package]\nname = \"wire\"\n[build-dependencies]\nleaf = { path = \"../leaf\" }\n",
@@ -176,37 +176,46 @@ fn client_fingerprint_and_events_cover_assets_config_and_transitive_crates() {
         &directories,
         &root.join("apps/symphony-host/src/bin/symphony-server.rs")
     ));
-    for file in [
-        "symphony/apps/symphony-ui/src/main.rs",
-        "symphony/apps/symphony-ui/assets/docs.css",
-        "symphony/apps/symphony-ui/Dioxus.toml",
-        "symphony/apps/symphony-ui/index.html",
-        "symphony/apps/symphony-ui/bin/cargo-symphony-ui",
-        "symphony/apps/symphony-ui/bundle.sh",
-        "symphony/apps/symphony-ui/dx-path.sh",
-        "symphony/apps/symphony-ui/package.sh",
-        "symphony/apps/symphony-ui/tools.sh",
-        "symphony/apps/symphony-ui/wasm-fresh.sh",
-        "crates/wire/src/lib.rs",
-        "crates/leaf/src/lib.rs",
-        "crates/leaf/build.rs",
-        "Cargo.toml",
-        "Cargo.lock",
-        "symphony/Cargo.toml",
-        "symphony/Cargo.lock",
-        "symphony/.cargo/config.toml",
-        "symphony/justfile",
-        "symphony/tools/rs-bin.sh",
-        "symphony/tools/check_lock.sh",
-        "rust-toolchain.toml",
-        ".cargo/config.toml",
-        "justfile",
-        "tools/rs-bin.sh",
+    // Each build input, and whether the client's build reads it: the web client's package but
+    // what its installs and builds write there, the shell's notice styles, the launchers and the
+    // workspace's settings. The server's crates are its own build's alone.
+    for (file, client) in [
+        ("symphony/apps/symphony-web/src/kinds/board.tsx", true),
+        ("symphony/apps/symphony-web/src/styles/frame.css", true),
+        ("symphony/apps/symphony-web/shell/shell.js", true),
+        ("symphony/apps/symphony-web/package.json", true),
+        ("symphony/apps/symphony-web/package-lock.json", true),
+        ("symphony/apps/symphony-web/vite.config.ts", true),
+        ("symphony/apps/symphony-web/.node-version", true),
+        ("symphony/apps/symphony-web/build.sh", true),
+        ("symphony/apps/symphony-web/package.sh", true),
+        ("symphony/apps/symphony-web/npm.sh", true),
+        ("symphony/apps/symphony-server/src/notices.css", true),
+        ("symphony/tools/node.sh", true),
+        ("crates/wire/src/lib.rs", false),
+        ("crates/leaf/src/lib.rs", false),
+        ("crates/leaf/build.rs", false),
+        ("Cargo.toml", true),
+        ("Cargo.lock", true),
+        ("symphony/Cargo.toml", true),
+        ("symphony/Cargo.lock", true),
+        ("symphony/.cargo/config.toml", true),
+        ("symphony/justfile", true),
+        ("symphony/tools/rs-bin.sh", true),
+        ("symphony/tools/check_lock.sh", true),
+        ("rust-toolchain.toml", true),
+        (".cargo/config.toml", true),
+        ("justfile", true),
+        ("tools/rs-bin.sh", true),
     ] {
         let all_before = symphony::reload::fingerprint(&root).unwrap();
         tree.write(&format!("main/{file}"), "changed build input\n");
         let after = symphony::reload::client_fingerprint(&root).unwrap();
-        assert_ne!(before, after, "client identity must include {file}");
+        assert_eq!(
+            before != after,
+            client,
+            "client identity and {file}: the client's build reads it, or does not"
+        );
         assert_ne!(
             all_before,
             symphony::reload::fingerprint(&root).unwrap(),
@@ -218,9 +227,30 @@ fn client_fingerprint_and_events_cover_assets_config_and_transitive_crates() {
         );
         before = after;
     }
+    // What an install, a build or a coverage run writes in the client's package, its guides and
+    // its browser tests' package are no input of its build, and wake no reload.
+    for file in [
+        "symphony/apps/symphony-web/node_modules/vite/package.json",
+        "symphony/apps/symphony-web/.install/lock",
+        "symphony/apps/symphony-web/dist/assets/board.js",
+        "symphony/apps/symphony-web/coverage/index.html",
+        "symphony/apps/symphony-web/AGENTS.md",
+        "symphony/apps/symphony-web/src/styles/README.md",
+        "symphony/apps/symphony-web-tests/tests/browser/main.rs",
+    ] {
+        tree.write(&format!("main/{file}"), "not a client input\n");
+        assert_eq!(
+            before,
+            symphony::reload::client_fingerprint(&root).unwrap(),
+            "{file} must not rebuild the client"
+        );
+        assert!(
+            !source_event(&root, &directories, &root.join(file)),
+            "watch must not wake for {file}"
+        );
+    }
     for file in [
         "symphony/apps/symphony-server/src/main.rs",
-        "symphony/apps/symphony-ui/tests/view.rs",
         "docs/TOPIC.md",
         "crates/unrelated/src/lib.rs",
     ] {
@@ -231,7 +261,7 @@ fn client_fingerprint_and_events_cover_assets_config_and_transitive_crates() {
             "{file} must not rebuild the client"
         );
     }
-    std::fs::remove_file(root.join("symphony/apps/symphony-ui/assets/docs.css")).unwrap();
+    std::fs::remove_file(root.join("symphony/apps/symphony-web/src/styles/frame.css")).unwrap();
     assert_ne!(
         before,
         symphony::reload::client_fingerprint(&root).unwrap(),
@@ -322,15 +352,16 @@ fn idle_source_watch_follows_build_inputs_and_recovers_an_incomplete_graph() {
         ("symphony/crates/tasks/build.rs", true),
         ("symphony/crates/tasks/src/new/module.rs", true),
         ("symphony/apps/symphony-server/src/api.rs", true),
-        ("symphony/apps/symphony-ui/src/main.rs", true),
-        ("symphony/apps/symphony-ui/assets/docs.css", true),
-        ("symphony/apps/symphony-ui/Dioxus.toml", true),
-        ("symphony/apps/symphony-ui/index.html", true),
-        ("symphony/apps/symphony-ui/bin/cargo-symphony-ui", true),
-        ("symphony/apps/symphony-ui/bundle.sh", true),
-        ("symphony/apps/symphony-ui/package.sh", true),
-        ("symphony/apps/symphony-ui/tools.sh", true),
-        ("symphony/apps/symphony-ui/wasm-fresh.sh", true),
+        ("symphony/apps/symphony-web/src/kinds/board.tsx", true),
+        ("symphony/apps/symphony-web/src/styles/frame.css", true),
+        ("symphony/apps/symphony-web/shell/shell.js", true),
+        ("symphony/apps/symphony-web/package-lock.json", true),
+        ("symphony/apps/symphony-web/vite.config.ts", true),
+        ("symphony/apps/symphony-web/build.sh", true),
+        ("symphony/apps/symphony-web/package.sh", true),
+        ("symphony/apps/symphony-web/node_modules/vite/index.js", false),
+        ("symphony/apps/symphony-web/.install/lock", false),
+        ("symphony/apps/symphony-web/AGENTS.md", false),
         ("symphony/crates/symphony-api/src/lib.rs", true),
         ("tools/rs-bin.sh", true),
         ("justfile", true),
@@ -601,10 +632,11 @@ fn standalone_source_watch_includes_client_assets_and_its_own_build_scripts() {
     let root = Path::new("/standalone");
     let directories = BTreeSet::from([root.join("apps/symphony-server")]);
     for (path, expected) in [
-        ("apps/symphony-ui/assets/frame.css", true),
+        ("apps/symphony-web/src/styles/frame.css", true),
+        ("apps/symphony-web/node_modules/vite/index.js", false),
         ("apps/symphony-server/client/public/index.html", true),
         (
-            "apps/symphony-server/client/public/assets/current.wasm",
+            "apps/symphony-server/client/public/assets/current.js",
             true,
         ),
         ("tools/rs-bin.sh", true),
