@@ -288,7 +288,10 @@ Worktree index locks and reflogs do not invalidate document snapshots. A page fo
 document a visit read, and a refresh renders those again only once the page's own files changed
 (main's: a file below its documents' folders or what its plugins watch, a lost event, or its
 project file edited, whether its settings still load or not): a ref, a worktree's record or a
-branch's edit renders none of main's but one whose cards or linking tasks moved. Text and
+branch's edit renders none of main's but one whose cards or linking tasks moved. A board read
+that finds a task's slug, title, status or links moved renders again, on every page, the
+followed documents whose linking tasks it moved and no other, so a page left open follows its
+related tasks with no file changed. Text and
 parsed registers reuse unchanged files, checking inode, size, modification and
 change times so atomic replacement and a restored mtime still invalidate them.
 Schema validators are reused by schema contents. Unchanged feed lists skip diff

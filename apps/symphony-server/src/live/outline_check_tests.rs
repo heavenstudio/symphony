@@ -164,7 +164,8 @@ fn a_document_a_refresh_rendered_again_is_answered_with_its_new_outline() {
 }
 
 /// The board's `query`, run on the fixture's board, then read by the hub as its loop reads it: a
-/// board read alone, which asks for no refresh of the documents.
+/// board read alone, which asks for no refresh of the documents and renders again only those whose
+/// linking tasks moved.
 fn board_moves(hub: &Hub, f: &Fixture, query: &str) {
     f.store
         .client()
@@ -214,24 +215,21 @@ fn a_document_whose_linking_task_moved_on_the_board_alone_is_answered_with_its_n
         ),
     ];
     for (case, query, words) in moves {
-        board_moves(&hub, &f, query);
-        let published = hub.pages.read().unwrap()[""].history.len();
         let rendered = renders(&hub);
+        board_moves(&hub, &f, query);
+        // The board read rendered the copy again and told open pages.
+        assert_eq!(renders(&hub), rendered + 1, "{case}: rendered once");
+        let published = hub.pages.read().unwrap()[""].history.len();
+        // A return visit's check names the old copy's tag: it reads, and finds nothing new to tell.
         let moved = ask(OUTLINE, Some(&named));
         assert_eq!(moved.0, StatusCode::OK, "{case}");
         assert!(says(&moved, words), "{case}: the new outline");
-        assert_eq!(renders(&hub), rendered + 1, "{case}: rendered once");
-        {
-            let pages = hub.pages.read().unwrap();
-            let page = &pages[""];
-            assert_eq!(page.history.len(), published + 1, "{case}");
-            let event = page.history.back().unwrap();
-            assert!(
-                event.json.contains("\"document\"") && event.json.contains(words),
-                "{case}: open pages are told: {}",
-                event.json
-            );
-        }
+        assert_eq!(renders(&hub), rendered + 2, "{case}: a read renders");
+        assert_eq!(
+            hub.pages.read().unwrap()[""].history.len(),
+            published,
+            "{case}: the board read told it already"
+        );
         assert_ne!(tag(&moved), named, "{case}");
         named = tag(&moved);
         // The copy that render placed lists the board's tasks: its check renders nothing.
@@ -240,14 +238,14 @@ fn a_document_whose_linking_task_moved_on_the_board_alone_is_answered_with_its_n
             StatusCode::NOT_MODIFIED,
             "{case}"
         );
-        assert_eq!(renders(&hub), rendered + 1, "{case}");
+        assert_eq!(renders(&hub), rendered + 2, "{case}");
         // A document none of those tasks links is answered from its copy throughout.
         assert_eq!(
             ask(other, Some(&unlinked)).0,
             StatusCode::NOT_MODIFIED,
             "{case}"
         );
-        assert_eq!(renders(&hub), rendered + 1, "{case}");
+        assert_eq!(renders(&hub), rendered + 2, "{case}");
     }
 
     // A task that links nothing of it moved: the check is answered from the copy.

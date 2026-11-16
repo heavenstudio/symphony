@@ -100,11 +100,13 @@ pub(crate) struct Page {
     /// render begun before it places nothing.
     copied: BTreeMap<String, u64>,
     /// Where the last refresh that renders anew (its files changed, or main's one cards moved)
-    /// began, in [`Hub::reads`]' numbers: a first read of a document begun before it reads again,
-    /// as that refresh renders only the documents followed when it listed them.
+    /// or board read whose tasks moved ([`Hub::render_relinked`]) began, in [`Hub::reads`]'
+    /// numbers: a first read of a document begun before it reads again, as each renders only the
+    /// documents followed when it listed them.
     renews_from: u64,
-    /// Documents a first read placed though a refresh that renders anew began after it, as it had
-    /// read again once already: the next refresh renders them whatever changed.
+    /// Documents a first read placed though a refresh that renders anew, or a board read whose
+    /// tasks moved, began after it, as it had read again once already: the next refresh renders
+    /// them whatever changed.
     stale: BTreeSet<String>,
     /// The tag of each document's outline as its copy in `documents` makes it, with the read that
     /// copy came from ([`Hub::outline_kept`]): made at the first check of each copy, and `None`
@@ -627,16 +629,16 @@ impl Hub {
     ///
     /// The copy is the hub's own record of what a render reads from the checkout: a refresh
     /// renders it again once a file of its checkout's documents, the project's settings, its one
-    /// cards or, on a branch's page, main's baseline changed ([`Hub::refresh_page_read`]), and
-    /// its sections are read from it too ([`Hub::document_sections`]). So the check says what a
-    /// page left open shows: an edit the watcher has not told yet arrives on the feed from the
-    /// cursor given here.
+    /// cards or, on a branch's page, main's baseline changed ([`Hub::refresh_page_read`]), a board
+    /// read once a task that links it, or comes to, moved ([`Hub::update_board`]), and its
+    /// sections are read from it too ([`Hub::document_sections`]). So the check says what a page
+    /// left open shows: an edit the watcher has not told yet, or a board read has not rendered
+    /// yet, arrives on the feed from the cursor given here.
     ///
     /// `None`, and the check renders as [`Hub::document`] does, which publishes what it finds:
-    /// for a document the page does not follow yet or holds as missing; for a copy whose tasks
-    /// are no longer the ones that link it on the board as last read, as a board read asks for no
-    /// refresh; and for a copy naming a file from outside the entrypoints' folders by its
-    /// validator ([`symphony::docview::names_files_outside`]), whose change no refresh sees.
+    /// for a document the page does not follow yet or holds as missing, and for a copy naming a
+    /// file from outside the entrypoints' folders by its validator
+    /// ([`symphony::docview::names_files_outside`]), whose change no refresh sees.
     pub fn outline_kept(
         &self,
         scope: &str,
@@ -648,17 +650,12 @@ impl Hub {
         } else {
             self.tree(scope)?
         };
-        // The tasks that link the document on the board as last read, as a render lists them: no
-        // refresh follows a board read, so the copy's are compared at each check.
-        let board = self.tasks_read().ok();
-        let linked =
-            symphony::docview::linked(&root, rel, board.as_ref().map_or(&[], |board| &board.tasks));
-        // The copy the page holds now, its tasks still the board's, and the read it came from.
+        // The copy the page holds now, and the read it came from.
         let held = |page: &Page| -> Option<u64> {
-            let document = page.documents.get(rel)?;
-            (!page.missing.contains(rel) && document.tasks == linked)
-                .then(|| page.copied.get(rel).copied())
-                .flatten()
+            if !page.documents.contains_key(rel) || page.missing.contains(rel) {
+                return None;
+            }
+            page.copied.get(rel).copied()
         };
         let made = |page: &Page, read: u64| -> Option<Option<String>> {
             let outlines = page.outlines.lock().unwrap_or_else(|e| e.into_inner());
@@ -733,10 +730,11 @@ impl Hub {
             }
             let mut pages = self.pages.write().unwrap_or_else(|e| e.into_inner());
             let page = pages.get_mut(scope).ok_or_else(removed)?;
-            // A refresh that renders anew begun since this read did, which listed the documents to
-            // render without this one, as none followed it: what this read read may be gone. It
-            // reads once again; behind a second such refresh it is placed and left to the next, so
-            // no reader renders on while the files keep changing.
+            // A refresh that renders anew, or a board read whose tasks moved, begun since this read
+            // did, which listed the documents to render without this one, as none followed it:
+            // what this read read, its files or its tasks, may be gone. It reads once again; behind
+            // a second such refresh it is placed and left to the next, so no reader renders on
+            // while the files or the board keep changing.
             let behind = read < page.renews_from && !page.documents.contains_key(rel);
             if behind && std::mem::take(&mut read_again) {
                 continue;
@@ -1166,15 +1164,7 @@ impl Hub {
             })
             .map(|(rel, _, _)| rel)
             .collect();
-        // They are read again before `pages` is taken, each numbered as its read begins.
-        let rendered: Vec<_> = followed
-            .into_iter()
-            .map(|rel| {
-                let read = self.reads.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                let doc = self.render_document(root, &rel, scope);
-                (rel, read, doc)
-            })
-            .collect();
+        let rendered = self.render_again(root, scope, followed);
         let mut pages = self.pages.write().unwrap_or_else(|e| e.into_inner());
         // Preferences can change while a watched source snapshot is being prepared.
         if scope.is_empty() {
@@ -1214,33 +1204,7 @@ impl Hub {
             }
             sort_activity(&mut combined);
             let mut changes = board_changes(&page.board, &snapshot.board);
-            for (rel, read, rendered) in rendered {
-                // A reader's render begun after this one placed the newer copy meanwhile.
-                if page.copied.get(&rel).is_some_and(|copied| *copied > read) {
-                    continue;
-                }
-                page.copied.insert(rel.clone(), read);
-                match rendered {
-                    Ok(doc) => {
-                        if let Some(delta) = document_change(page, &rel, &doc) {
-                            changes.push(json!({"region":"document", "data":delta}));
-                        }
-                        page.documents.insert(rel, doc);
-                    }
-                    // A page made again since its documents were listed follows none of them.
-                    Err(_) => {
-                        if let Some(doc) = page.documents.get(&rel)
-                            && page.missing.insert(rel.clone())
-                        {
-                            changes.push(
-                                json!({"region":"document", "data":symphony_api::DocumentChange {
-                                    path:doc.path.clone(), removed:true, ..Default::default()
-                                }}),
-                            );
-                        }
-                    }
-                }
-            }
+            place(page, rendered, &mut changes);
             diff_items(
                 &mut changes,
                 "queue-item",
@@ -1313,6 +1277,65 @@ impl Hub {
             );
         }
         Ok(())
+    }
+
+    /// The followed documents `followed` of the checkout at `root` rendered again for `scope`'s
+    /// page, each numbered as its read begins ([`Hub::reads`]): read before `pages` is taken, and
+    /// placed under it ([`place`]).
+    fn render_again(&self, root: &Path, scope: &str, followed: Vec<String>) -> Vec<Rendered> {
+        followed
+            .into_iter()
+            .map(|rel| {
+                let read = self.reads.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                let doc = self.render_document(root, &rel, scope);
+                (rel, read, doc)
+            })
+            .collect()
+    }
+
+    /// Each page's followed documents that the board's `tasks` link otherwise than its copy says,
+    /// rendered again ([`Hub::render_again`]), by the page's scope: a board read changes no file,
+    /// so no refresh renders them. Read once the hub holds `tasks`, so each render lists them.
+    ///
+    /// Listed under the lock the first reads place under, as a refresh lists: a first read begun
+    /// before may have read the board before `tasks`, and reads again ([`Page::renews_from`]).
+    fn render_relinked(&self, tasks: &[symphony_api::Task]) -> BTreeMap<String, Vec<Rendered>> {
+        let begun = self.reads.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let listed: Vec<(String, Vec<(String, Vec<symphony_api::DocumentTask>)>)> = self
+            .pages
+            .write()
+            .unwrap_or_else(|e| e.into_inner())
+            .iter_mut()
+            .map(|(scope, page)| {
+                page.renews_from = begun;
+                let followed = page
+                    .documents
+                    .iter()
+                    .filter(|(rel, _)| !page.missing.contains(*rel))
+                    .map(|(rel, doc)| (rel.clone(), doc.tasks.clone()))
+                    .collect();
+                (scope.clone(), followed)
+            })
+            .collect();
+        listed
+            .into_iter()
+            .filter_map(|(scope, followed)| {
+                let root = if scope.is_empty() {
+                    self.root.clone()
+                } else {
+                    self.tree(&scope)?
+                };
+                let moved: Vec<String> = followed
+                    .into_iter()
+                    .filter(|(rel, held)| *held != symphony::docview::linked(&root, rel, tasks))
+                    .map(|(rel, _)| rel)
+                    .collect();
+                (!moved.is_empty()).then(|| {
+                    let rendered = self.render_again(&root, &scope, moved);
+                    (scope, rendered)
+                })
+            })
+            .collect()
     }
 
     fn publish(&self, page: &mut Page, changes: Vec<Value>) {
@@ -1438,6 +1461,12 @@ impl Hub {
         if held.error.is_some() {
             changed.push(json!({"region":"tasks-status", "data":{"available":true}}));
         }
+        // A document rendered while the board was unread lists none of its tasks.
+        let relinked = held.error.is_some()
+            || held
+                .last
+                .as_ref()
+                .is_none_or(|old| !Arc::ptr_eq(old, &next) && relinks(&old.tasks, &next.tasks));
         if let Some(old) = &held.last {
             task_changes(&mut changed, &old.tasks, &next.tasks);
             // A holder's health is no task's change: it moves no column's count.
@@ -1513,9 +1542,17 @@ impl Hub {
         }
         *old_agents = Some(agents);
         drop(old_agents);
+        let mut rendered = if relinked {
+            measured("relinked documents", || self.render_relinked(&next.tasks))
+        } else {
+            BTreeMap::new()
+        };
         let mut pages = self.pages.write().unwrap_or_else(|e| e.into_inner());
-        for page in pages.values_mut() {
+        for (scope, page) in pages.iter_mut() {
             let mut changes = changed.clone();
+            if let Some(rendered) = rendered.remove(scope) {
+                place(page, rendered, &mut changes);
+            }
             let counts = Some(taskview::counts(&next));
             if page.board.counts.tasks != counts {
                 page.board.counts.tasks = counts;
@@ -1776,6 +1813,51 @@ fn tree_inputs(root: &Path) -> Vec<(String, RecursiveMode)> {
         .chain(outside)
         .map(|below| (below, RecursiveMode::Recursive))
         .collect()
+}
+
+/// A followed document rendered again ([`Hub::render_again`]): its path, the read it came from
+/// ([`Hub::reads`]) and what the render made of it.
+type Rendered = (String, u64, Result<symphony_api::Document, String>);
+
+/// Place each of `rendered` in `page`, unless a render begun after it placed its copy first, and
+/// add to `changes` what each changes on the page's open documents.
+fn place(page: &mut Page, rendered: Vec<Rendered>, changes: &mut Vec<Value>) {
+    for (rel, read, rendered) in rendered {
+        // A reader's render begun after this one placed the newer copy meanwhile.
+        if page.copied.get(&rel).is_some_and(|copied| *copied > read) {
+            continue;
+        }
+        page.copied.insert(rel.clone(), read);
+        match rendered {
+            Ok(doc) => {
+                if let Some(delta) = document_change(page, &rel, &doc) {
+                    changes.push(json!({"region":"document", "data":delta}));
+                }
+                page.documents.insert(rel, doc);
+            }
+            // A page made again since its documents were listed follows none of them.
+            Err(_) => {
+                if let Some(doc) = page.documents.get(&rel)
+                    && page.missing.insert(rel.clone())
+                {
+                    changes.push(
+                        json!({"region":"document", "data":symphony_api::DocumentChange {
+                            path:doc.path.clone(), removed:true, ..Default::default()
+                        }}),
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// Whether a document's tasks can read otherwise on `new` than on `old`
+/// ([`symphony::docview::linked`]): a task came or went, or moved its slug, title, status or links.
+fn relinks(old: &[symphony_api::Task], new: &[symphony_api::Task]) -> bool {
+    old.len() != new.len()
+        || old.iter().zip(new).any(|(a, b)| {
+            (&a.slug, &a.title, &a.status, &a.links) != (&b.slug, &b.title, &b.status, &b.links)
+        })
 }
 
 fn document_change(
@@ -2179,6 +2261,9 @@ mod refresh_tests;
 
 #[cfg(test)]
 mod outline_check_tests;
+
+#[cfg(test)]
+mod relinked_tests;
 
 #[cfg(test)]
 mod feed_deltas_tests;
