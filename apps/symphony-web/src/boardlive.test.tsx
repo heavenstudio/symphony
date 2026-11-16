@@ -555,6 +555,51 @@ describe("the live board's machine work", () => {
     expect(board.fresh.failing).toEqual([]);
     expect(host.redraw).not.toHaveBeenCalled();
   });
+
+  it("takes back what a failure said once the feed answers for the work, not the board's notice", async () => {
+    const { board, d, host } = live(() => answer(503));
+    await board.machineWork();
+    expect(d.error).toBe("The server answered 503. Trying again…");
+    host.redraw.mockClear();
+    // The feed's work is the work drawn: nothing else draws again for it, the words' going does.
+    expect(board.heard(event(["machine-work", NO_WORK]))).toBe(true);
+    expect(d.error).toBe("");
+    expect(board.fresh.failing).toEqual([]);
+    expect(host.redraw).toHaveBeenCalledTimes(1);
+    // The board's own notice of its state is no read's failure: the work's answer leaves it.
+    await board.machineWork();
+    expect(board.heard(event(["tasks-status", { available: false }]))).toBe(true);
+    expect(d.error).toBe(statusNotice(false, false));
+    expect(board.heard(event(["machine-work", building("w/a")]))).toBe(true);
+    expect(board.fresh.failing).toEqual([]);
+    expect(d.error).toBe(statusNotice(false, false));
+  });
+
+  it("takes back what a failure said once the check's next try answers", async () => {
+    const first = later<Response>();
+    let works = 0;
+    const { board, d, host } = live((url) => {
+      if (url !== "/api/machine-work") return answer(200, listing([], [["ready", 1]]));
+      works += 1;
+      return works === 1 ? first.promise : answer(200, NO_WORK);
+    });
+    const checking = board.check();
+    await pass();
+    // The counts answered first, so nothing else takes the words away.
+    expect(d.counted).toBe(1);
+    first.settle(answer(503));
+    await checking;
+    expect(d.error).toBe("The server answered 503. Trying again…");
+    host.redraw.mockClear();
+    await pass(1_000);
+    expect(works).toBe(2);
+    expect(d.worked).toBe(1);
+    expect(d.error).toBe("");
+    expect(board.fresh.failing).toEqual([]);
+    expect(host.redraw).toHaveBeenCalled();
+    await pass(60_000);
+    expect(works).toBe(2);
+  });
 });
 
 describe("the live board's reads", () => {

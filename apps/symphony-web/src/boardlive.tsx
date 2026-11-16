@@ -444,6 +444,18 @@ export class LiveBoard {
     }
   }
 
+  /**
+   * The read of `part` was answered: what a failed read said goes once none fails any more, never
+   * the board's own notice of its state, which no read said. Whether it went, to be drawn.
+   */
+  answeredRead(part: string): boolean {
+    this.freshen((f) => answered(f, part));
+    const { d } = this;
+    if (this.fresh.failing.length > 0 || d.error === "" || d.error !== this.said) return false;
+    d.error = "";
+    return true;
+  }
+
   /** Keep a fresh answer of the default view as `part`'s copy, on the page and on this device. */
   keep(part: string, list: TaskListing, fresh: { etag: string; value: unknown } | null): void {
     if (fresh === null) return;
@@ -457,7 +469,8 @@ export class LiveBoard {
    * board's version is read, and follows the feed's `machine-work` events after; an event applied
    * while the read was out is newer than its answer. Only the check reads it, which tries a failed
    * read again until the work is answered, so a failure says it tries again; one after the feed's
-   * event answered for it says nothing, as nothing tries it again.
+   * event answered for it says nothing, as nothing tries it again. Once the work is answered, by
+   * the next try or by the feed's event (`heard`), what the failure said goes (`answeredRead`).
    */
   async machineWork(): Promise<void> {
     const { d } = this;
@@ -484,7 +497,7 @@ export class LiveBoard {
       keepLater(this.item, WORK, "", value);
       this.host.redraw();
     }
-    this.freshen((f) => answered(f, WORK));
+    if (this.answeredRead(WORK)) this.host.redraw();
   }
 
   /**
@@ -693,9 +706,8 @@ export class LiveBoard {
         }
         this.rememberShape();
       }
-      this.freshen((f) => answered(f, part));
-      // What a failed read said goes once none fails any more.
-      if (this.fresh.failing.length === 0 && d.error === this.said) d.error = "";
+      // What a failed read said goes once none fails any more; drawn below either way.
+      this.answeredRead(part);
       const queued = !more && hasNext && d.pendingMore.includes(status);
       d.pendingMore = d.pendingMore.filter((one) => one !== status);
       this.host.redraw();
@@ -801,8 +813,9 @@ export class LiveBoard {
     const worked = d.worked;
     const refresh = this.apply(value);
     if (refresh === null) return false;
-    // The event carries the machines' whole work: it answers for the work's read.
-    if (d.worked !== worked) this.freshen((f) => answered(f, WORK));
+    // The event carries the machines' whole work: it answers for the work's read, and what that
+    // read's failure said goes with it, as nothing tries it again.
+    if (d.worked !== worked && this.answeredRead(WORK)) this.host.redraw();
     if (refresh && !this.pending) {
       this.pending = true;
       void this.refreshing();
