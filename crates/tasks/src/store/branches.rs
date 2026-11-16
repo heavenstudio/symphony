@@ -1,12 +1,9 @@
 //! Recorded executor branches shared by board snapshots, cap reads and landing queries.
 
+use super::surreal::branches as sql;
 use super::{Error, Store, Task};
 use serde::Deserialize;
 use serde_json::json;
-
-pub(super) const OF_TASKS: &str = "SELECT slug, branch, handle, started FROM task_session WHERE slug IN $slot_wanted AND role = 'executor' AND branch != ''";
-pub(super) const ON_BRANCHES: &str =
-    "SELECT VALUE slug FROM task_session WHERE branch IN $slot_wanted AND role = 'executor'";
 
 #[derive(Clone, Deserialize)]
 pub(super) struct Recorded {
@@ -35,7 +32,7 @@ impl Store {
     pub fn tasks_for_branch(&self, branch: &str) -> Result<Vec<Task>, Error> {
         let candidates: Vec<String> = self.retrying(|| {
             self.transact(
-                &format!("RETURN array::union([$branch], ({ON_BRANCHES}));"),
+                &sql::on_branch(),
                 json!({"branch": branch, "slot_wanted": [branch]}),
             )
         })?;

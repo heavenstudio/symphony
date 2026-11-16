@@ -19,8 +19,8 @@ use serde::Deserialize;
 use serde_json::json;
 use std::collections::BTreeSet;
 use std::sync::{Arc, Mutex};
-use symphony_board::NewTask;
 use symphony_board::rpc::Client;
+use symphony_board::{NewTask, Raw};
 
 /// A digest entry: its list, and the slug or handle it names.
 type Entry = (String, String);
@@ -63,11 +63,9 @@ fn older_dispatch(outage: &Outage, older: Older) {
         fixture, former, ..
     } = outage;
     let client = fixture.store.client();
-    let found = client.query(
-        "RETURN SELECT pull_entries, pull_queued FROM ONLY type::record('callback_state', $handle);",
-        json!({"handle":former}),
-    );
-    let before: Recorded = serde_json::from_value(found.unwrap().remove(0)).unwrap();
+    let found = (fixture.store.raw().row("callback_state", former.as_str()))
+        .fields(&["pull_entries", "pull_queued"]);
+    let before: Recorded = serde_json::from_value(found.unwrap()).unwrap();
     let whole = symphony_board::cli::pull::digest(&fixture.store, &[], None, fixture.now(), &[]);
     let whole = whole.unwrap();
     let entries = whole.entries();
@@ -288,15 +286,11 @@ fn work_the_first_pull_withheld_is_counted_after_a_hand_over_whoever_acknowledge
         theirs_in_review(&outage);
         // Another dispatcher holds the former's lease while it registers, and its listener is
         // gone before the first PULL is sent: that PULL waits, and nothing is recorded as told.
-        let client = fixture.store.client();
-        let lease =
-            "UPSERT type::record('callback_lease', $handle) SET until = $until RETURN NONE;";
-        let held = json!({"handle":former, "until":fixture.now() + 60.0});
-        client.query(lease, held).unwrap();
+        let lease = || fixture.store.raw().row("callback_lease", former.as_str());
+        let held = json!({"until": fixture.now() + 60.0});
+        lease().put(held).unwrap();
         drop(listen(fixture, former));
-        client
-            .query(lease, json!({"handle":former, "until":0}))
-            .unwrap();
+        lease().put(json!({"until": 0})).unwrap();
         fixture.store.dispatch_callbacks_snapshot().unwrap();
         let pull = waiting_pull(&outage).expect("the first PULL waits");
         assert!(!pull.text.contains("scratch/theirs"), "{first:?}: {pull:?}");
@@ -351,11 +345,8 @@ fn an_inbox_receipt_of_a_pull_keeps_what_it_withheld_untold() {
 
 /// The entries `handle`'s callback record holds as told, of either generation's acknowledgement.
 fn recorded(client: &Client, handle: &str) -> BTreeSet<Entry> {
-    let found = client.query(
-        "RETURN type::record('callback_state', $handle).pull_entries;",
-        json!({"handle":handle}),
-    );
-    serde_json::from_value(found.unwrap().remove(0)).unwrap()
+    let found = Raw::on(client).row("callback_state", handle);
+    serde_json::from_value(found.field("pull_entries").unwrap()).unwrap()
 }
 
 /// What a leased dispatch met: the entries an inbox receipt during it recorded as told, the keys it
@@ -424,11 +415,9 @@ fn an_inbox_receipt_while_a_dispatch_builds_the_digest_again_is_never_undone() {
         let dispatcher = fixture.busy(move || {
             let mut during = during.lock().unwrap();
             let lease = || {
-                let until = client.query(
-                    "RETURN type::record('callback_lease', $handle).until ?? 0;",
-                    json!({"handle":recipient}),
-                );
-                until.unwrap().remove(0).as_f64() != Some(0.0)
+                let until = Raw::on(&client).row("callback_lease", recipient.as_str());
+                let until = until.field("until").unwrap();
+                !until.is_null() && until.as_f64() != Some(0.0)
             };
             if during.read_again || !lease() {
                 return;
@@ -444,11 +433,11 @@ fn an_inbox_receipt_while_a_dispatch_builds_the_digest_again_is_never_undone() {
                         AfterReceipt::SweptHere => sweep_presence(&here, round.clone()),
                         AfterReceipt::SweptElsewhere => sweep_presence(&other, round.clone()),
                     }
-                    let there = client.query(
-                        "RETURN $keys.filter(|$key| record::exists(type::record('callback_event', [$handle, $key])));",
-                        json!({"handle":recipient, "keys":keys}),
-                    );
-                    during.remaining = serde_json::from_value(there.unwrap().remove(0)).unwrap();
+                    let there = |key: &&String| {
+                        let event = json!([recipient, key]);
+                        (Raw::on(&client).row("callback_event", event).exists()).unwrap()
+                    };
+                    during.remaining = keys.iter().filter(there).cloned().collect();
                 }
                 Some(_) => during.read_again = board,
                 None => {}

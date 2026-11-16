@@ -2,9 +2,10 @@
 //! version, then the board taken as it is, migrated forward once, or refused before any write. A
 //! writer keeps its line in the board's writers as it opens ([`super::writers`]).
 
+use super::surreal as sql;
 use super::transaction::Run;
 use super::writers::{self, Line, Program};
-use super::{Clock, Error, Failure, Probe, STALE, Store, now, sessions};
+use super::{Clock, Error, Failure, Probe, Store, now, sessions};
 use crate::live::{self, Live};
 use crate::rpc::{Client, DbError};
 use crate::schema::{self, Access, Opened, Schema};
@@ -298,10 +299,10 @@ impl Store {
     }
 
     /// As [`Store::board_schema`], with `program`'s line in the board's writers on this host, in the
-    /// same one read ([`writers::OPENING`]).
+    /// same one read ([`sql::writers::OPENING`]).
     fn board_opening(&self, program: &Program) -> Result<(Option<i64>, bool, Line), Failure> {
         let vars = writers::opening_vars(program, &self.host);
-        match self.client.query(writers::OPENING, vars) {
+        match self.request(sql::writers::OPENING, vars) {
             Ok(answer) => {
                 let (found, line) = writers::opened(&answer);
                 Ok((found, true, line))
@@ -316,7 +317,7 @@ impl Store {
     /// The board's schema version (none for a board not made yet), and whether its namespace and
     /// database are on the server: one read in them, which defines nothing.
     fn board_schema(&self) -> Result<(Option<i64>, bool), Failure> {
-        match self.client.query(BOARD_SCHEMA, json!({})) {
+        match self.request(sql::opening::BOARD_SCHEMA, json!({})) {
             Ok(found) => Ok((found.last().and_then(Value::as_i64), true)),
             Err(DbError::Failed(said)) if undefined(&said, self.client.database()) => {
                 Ok((None, false))
@@ -332,14 +333,10 @@ impl Store {
     /// one another open finished first is read again rather than run twice.
     fn migrate(&self, schema: &Schema, found: Option<i64>, defined: bool) -> Result<(), Failure> {
         if !defined {
-            self.client.define_then("RETURN NONE;", json!({}))?;
+            self.define()?;
         }
-        self.client.query(schema::ANALYZERS, json!({}))?;
-        let steps = format!(
-            "LET $found = {BOARD_SCHEMA_VALUE};\nIF $found != $was {{ THROW '{STALE}' }};\n{}\n\
-             UPSERT meta:schema SET version = $version RETURN NONE;\nRETURN NONE;",
-            schema.steps()
-        );
+        self.request(schema::ANALYZERS, json!({}))?;
+        let steps = sql::opening::migration(schema.steps());
         self.run_transaction::<Value>(
             &steps,
             json!({"version": schema.version(), "was": found}),
@@ -366,19 +363,10 @@ fn undefined(said: &str, database: &str) -> bool {
             .is_some_and(|name| name.ends_with("' does not exist"))
 }
 
-/// The board's schema version, or NONE before its tables are made.
-macro_rules! board_schema {
-    () => {
-        "IF (INFO FOR DB).tables.meta = NONE { NONE } ELSE { (SELECT VALUE version FROM ONLY meta:schema) }"
-    };
-}
-const BOARD_SCHEMA_VALUE: &str = board_schema!();
-/// [`BOARD_SCHEMA_VALUE`] as a read of its own.
-const BOARD_SCHEMA: &str = concat!("RETURN ", board_schema!(), ";");
-
 #[cfg(test)]
 mod tests {
-    use super::{BOARD_SCHEMA, undefined};
+    use super::sql::opening::BOARD_SCHEMA;
+    use super::undefined;
 
     #[test]
     fn only_a_namespace_or_this_database_not_on_the_server_reads_as_a_board_not_made_yet() {
@@ -401,7 +389,7 @@ mod tests {
     fn the_schema_version_check_is_a_read() {
         assert_eq!(crate::rpc::Kind::of(BOARD_SCHEMA), crate::rpc::Kind::Read);
         assert_eq!(
-            crate::rpc::Kind::of(super::writers::OPENING),
+            crate::rpc::Kind::of(super::sql::writers::OPENING),
             crate::rpc::Kind::Read
         );
     }

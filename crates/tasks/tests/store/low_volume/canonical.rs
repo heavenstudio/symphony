@@ -1,7 +1,7 @@
 //! Consumer acceptance on the delivered held-aware parent-feature observation.
 
 use super::*;
-use crate::common::{HOST, NOW, RawWrite};
+use crate::common::{HOST, NOW};
 use crate::relay::Relay;
 use std::collections::BTreeSet;
 use symphony_board::{Error, Health, NewLaunch, Store};
@@ -35,12 +35,8 @@ fn a_held_only_count_change_reaches_the_account_without_a_board_marker_or_ready_
     let before = marker();
     let board = f.store.board().unwrap();
     // End this hold's validity without changing any ordinary PULL or ownership input.
-    f.store
-        .client()
-        .write(
-            "UPDATE type::record('counter', ['hold', 'held/3']) SET ts += 1 RETURN NONE;",
-            json!({}),
-        )
+    (f.store.raw().row("counter", json!(["hold", "held/3"])))
+        .add("ts", 1)
         .unwrap();
     assert_eq!(marker(), before);
     assert_eq!(f.store.board().unwrap(), board);
@@ -54,21 +50,13 @@ fn a_held_only_count_change_reaches_the_account_without_a_board_marker_or_ready_
     );
     f.store.dispatch_callbacks().unwrap();
     assert!(warnings(&listener.drain(&f, &worker, &orch)).is_empty());
-    f.store
-        .client()
-        .write(
-            "UPDATE type::record('counter', ['hold', 'held/3']) SET ts -= 1 RETURN NONE;",
-            json!({}),
-        )
+    (f.store.raw().row("counter", json!(["hold", "held/3"])))
+        .add("ts", -1)
         .unwrap();
     f.store.dispatch_callbacks().unwrap();
     assert!(warnings(&listener.drain(&f, &worker, &orch)).is_empty());
-    f.store
-        .client()
-        .write(
-            "UPDATE type::record('counter', ['hold', 'held/3']) SET ts += 1 RETURN NONE;",
-            json!({}),
-        )
+    (f.store.raw().row("counter", json!(["hold", "held/3"])))
+        .add("ts", 1)
         .unwrap();
     f.store.dispatch_callbacks().unwrap();
     assert_eq!(warnings(&listener.drain(&f, &worker, &orch)).len(), 1);
@@ -103,26 +91,17 @@ fn an_observation_pass_cannot_hide_a_hold_only_crossing_behind_its_sequence_gate
     let sequence = before[0]
         .as_u64()
         .expect("the canonical marker is unsigned");
-    f.store.client().write(
-        "UPDATE type::record('callback_state', $handle) SET snapshot_sequence = $sequence RETURN NONE;",
-        json!({"handle":orch, "sequence":sequence}),
-    ).unwrap();
+    (f.store.raw().row("callback_state", orch.as_str()))
+        .set(json!({"snapshot_sequence": sequence}))
+        .unwrap();
     assert_eq!(
-        f.store
-            .client()
-            .query(
-                "RETURN type::record('callback_state', $handle).snapshot_sequence;",
-                json!({"handle":orch})
-            )
+        (f.store.raw().row("callback_state", orch.as_str()))
+            .field("snapshot_sequence")
             .unwrap(),
-        before
+        before[0]
     );
-    f.store
-        .client()
-        .write(
-            "UPDATE type::record('counter', ['hold', 'held/3']) SET ts += 1 RETURN NONE;",
-            json!({}),
-        )
+    (f.store.raw().row("counter", json!(["hold", "held/3"])))
+        .add("ts", 1)
         .unwrap();
     deferred
         .owner_callback("volume-sentinel", "Retained")
@@ -232,11 +211,18 @@ fn unknown_owners_keep_valid_blocked_holds_in_consumer_counts() {
     for n in 0..4 {
         held(&f, &orch, &worker, &format!("held/{n}"));
     }
-    f.store.client().write(
-        "UPSERT type::record('callback_state', $handle) SET handle = $handle, address = 'codex:abcdef01', host = $host, confirmed_until = $until, lease = $lease RETURN NONE;
-         UPDATE type::record('session', $handle) SET last_seen = $seen RETURN NONE;",
-        json!({"handle":orch,"host":HOST,"until":NOW-1.0,"lease":NOW+1000.0,"seen":NOW-500.0}),
-    ).unwrap();
+    (f.store.raw().row("callback_state", orch.as_str()))
+        .put(json!({
+            "handle": orch,
+            "address": "codex:abcdef01",
+            "host": HOST,
+            "confirmed_until": NOW - 1.0,
+            "lease": NOW + 1000.0,
+        }))
+        .unwrap();
+    (f.store.raw().row("session", orch.as_str()))
+        .set(json!({"last_seen": NOW - 500.0}))
+        .unwrap();
     assert_eq!(f.health(&orch), Health::Unknown);
     let capped = f.other().capping(Some(8));
     let board = f.store.board().unwrap();
@@ -250,12 +236,8 @@ fn unknown_owners_keep_valid_blocked_holds_in_consumer_counts() {
             .contains(&("low_volume".into(), orch.clone()))
     );
     let observed = symphony_board::cli::attach::observe(&f.store, &orch, "orchestrator").unwrap();
-    f.store
-        .client()
-        .write(
-            "UPDATE type::record('counter', ['hold', 'held/3']) SET ts += 1 RETURN NONE;",
-            json!({}),
-        )
+    (f.store.raw().row("counter", json!(["hold", "held/3"])))
+        .add("ts", 1)
         .unwrap();
     let later = symphony_board::cli::attach::observe(&f.store, &orch, "orchestrator").unwrap();
     assert_ne!(observed.staffing, later.staffing);
@@ -286,17 +268,15 @@ fn failed_holdings_are_errors_and_do_not_clear_the_delivered_account() {
     let listener = listen(&f, &orch);
     assert!(!listener.text().contains("low_volume "));
     let receipt = || {
-        f.store.client().query("RETURN SELECT pull_entries, pull_withheld, pull_awaiting FROM ONLY type::record('callback_state', $handle);", json!({"handle":orch})).unwrap()
+        (f.store.raw().row("callback_state", orch.as_str()))
+            .fields(&["pull_entries", "pull_withheld", "pull_awaiting"])
+            .unwrap()
     };
     let before = receipt();
-    assert_eq!(before[0]["pull_entries"], json!([]));
+    assert_eq!(before["pull_entries"], json!([]));
     // A malformed private counter key fails only the canonical slot read, not Board.
-    f.store
-        .client()
-        .write(
-            "CREATE type::record('counter', ['slots', 7]) SET last = 0 RETURN NONE;",
-            json!({}),
-        )
+    (f.store.raw().row("counter", json!(["slots", 7])))
+        .create(json!({"last": 0}))
         .unwrap();
     assert!(f.store.board().is_ok());
     assert!(matches!(f.store.slot_holdings(), Err(Error::Db(_))));
@@ -306,12 +286,8 @@ fn failed_holdings_are_errors_and_do_not_clear_the_delivered_account() {
     assert!(f.store.dispatch_callbacks().is_err());
     assert_eq!(receipt(), before);
     assert!(f.store.callback_inbox(&orch).unwrap().is_empty());
-    f.store
-        .client()
-        .write(
-            "DELETE type::record('counter', ['slots', 7]) RETURN NONE;",
-            json!({}),
-        )
+    (f.store.raw().row("counter", json!(["slots", 7])))
+        .delete()
         .unwrap();
     f.store.dispatch_callbacks().unwrap();
     assert!(warnings(&listener.drain(&f, &worker, &orch)).is_empty());

@@ -243,7 +243,6 @@ fn same_time_occurrences_stay_distinct_in_the_digest_cache_and_before_its_window
 
 #[test]
 fn historical_timestamp_ends_need_a_unique_matching_thread_occurrence() {
-    use crate::common::RawWrite;
     use serde_json::json;
     for evidence in ["unique", "ambiguous", "malformed", "empty"] {
         let c = Case::new();
@@ -260,11 +259,13 @@ fn historical_timestamp_ends_need_a_unique_matching_thread_occurrence() {
         };
         // A historical board kept no sequence beside the standing assessment, only time-keyed
         // saved ends. The real thread still contains the unique sequence of every occurrence.
-        c.f.other_client().write(
-            "UPDATE task:⟨sim/review-0⟩ SET fields._board.fixed = $fixed,
-                fields._board.assessed = $assessed RETURN NONE;",
-            json!({"fixed": {"asked": {at.to_string(): saved}}, "assessed": {"id": "historical", "at": at}}),
-        ).unwrap();
+        symphony_board::Raw::on(&c.f.other_client())
+            .row("task", "sim/review-0")
+            .set(json!({
+                "fields._board.fixed": {"asked": {at.to_string(): saved}},
+                "fields._board.assessed": {"id": "historical", "at": at},
+            }))
+            .unwrap();
         let d = c.digest_at(at + 26.0 * HOUR);
         let expected = if evidence == "unique" {
             (10, 4)

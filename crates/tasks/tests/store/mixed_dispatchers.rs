@@ -112,13 +112,10 @@ pub(super) fn older_record(fixture: &Fixture, handle: &str) -> Value {
 pub(super) fn older_fields(fixture: &Fixture, handle: &str) -> Value {
     let state = fixture
         .store
-        .client()
-        .query(
-            "RETURN SELECT seen, statuses, pull_entries FROM ONLY type::record('callback_state', $handle);",
-            json!({"handle":handle}),
-        )
-        .unwrap()
-        .remove(0);
+        .raw()
+        .row("callback_state", handle)
+        .fields(&["seen", "statuses", "pull_entries"])
+        .unwrap();
     let entries: BTreeSet<(String, String)> =
         serde_json::from_value(state["pull_entries"].clone()).unwrap();
     json!({"seen": state["seen"], "statuses": state["statuses"], "pull_entries": entries})
@@ -126,13 +123,15 @@ pub(super) fn older_fields(fixture: &Fixture, handle: &str) -> Value {
 
 /// An older dispatcher's look and write: what it told is in what it records.
 fn written_by_an_older_dispatcher(fixture: &Fixture, handle: &str) {
-    fixture.store
-        .client()
-        .query(
-            "UPDATE type::record('callback_state', $handle) SET seen = $record.seen, statuses = $record.statuses,
-                pull_entries = $record.pull_entries, pull_queued = NONE RETURN NONE;",
-            json!({"handle":handle, "record":older_record(fixture, handle)}),
-        )
+    let record = older_record(fixture, handle);
+    fixture
+        .store
+        .raw()
+        .row("callback_state", handle)
+        .set(json!({
+            "seen": record["seen"], "statuses": record["statuses"],
+            "pull_entries": record["pull_entries"], "pull_queued": null,
+        }))
         .unwrap();
 }
 

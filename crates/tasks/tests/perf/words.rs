@@ -17,6 +17,7 @@ use crate::board::{Board, board};
 use crate::cpu;
 use serde_json::{Value, json};
 use std::time::{Duration, Instant};
+use symphony_board::Raw;
 use symphony_board::rpc::{Client, DbError};
 
 /// A sender the generated board has no message of.
@@ -27,22 +28,22 @@ const PAST_EVERY_ID: i64 = 1_000_000_000;
 
 /// A message of [`RARE`] with id `sid` on a thread of its own, `kind` a post or a verdict.
 fn word(client: &Client, slug: &str, sid: i64, kind: &str) {
-    (client.query(
-        "CREATE type::record('message', [$slug, $sid]) SET sid = $sid, slug = $slug, sender = $sender,
-            recipient = NONE, kind = $kind, text = 'a rare word', ts = 0.0 RETURN NONE;",
-        json!({"slug": slug, "sid": sid, "sender": RARE, "kind": kind}),
-    ))
-    .unwrap_or_else(|why| panic!("{RARE}'s word {sid} on {slug}: {why:?}"));
+    (Raw::on(client).row("message", json!([slug, sid])))
+        .create(json!({
+            "sid": sid, "slug": slug, "sender": RARE, "recipient": null, "kind": kind,
+            "text": "a rare word", "ts": 0.0,
+        }))
+        .unwrap_or_else(|why| panic!("{RARE}'s word {sid} on {slug}: {why:?}"));
 }
 
 /// The word `said` names for [`RARE`], as `[sid, slug]`, or none.
 fn rare_word(client: &Client) -> Value {
-    let mut answers = (client.query(
-        "RETURN (SELECT VALUE [sid, slug] FROM ONLY type::record('said', [$sender]));",
-        json!({"sender": RARE}),
-    ))
-    .unwrap();
-    answers.pop().unwrap_or(Value::Null)
+    let word = Raw::on(client).row("said", json!([RARE]));
+    let word = word.fields(&["sid", "slug"]).unwrap();
+    if word.is_null() {
+        return Value::Null;
+    }
+    json!([word["sid"], word["slug"]])
 }
 
 /// The CPU the board's server took for the delete of message `[slug, sid]`, its event's look back
@@ -53,10 +54,9 @@ fn rare_word(client: &Client) -> Value {
 fn deleted(board: &Board, slug: &str, sid: i64) -> (Duration, Duration) {
     let (wall, cpu) = board.bill(|| {
         let began = Instant::now();
-        (board.client().query(
-            "DELETE type::record('message', [$slug, $sid]) RETURN NONE;",
-            json!({"slug": slug, "sid": sid}),
-        ))
+        (Raw::on(&board.client())
+            .row("message", json!([slug, sid]))
+            .delete())
         .unwrap_or_else(|why| panic!("the delete of {RARE}'s word {sid} on {slug}: {why:?}"));
         began.elapsed()
     });
@@ -65,12 +65,7 @@ fn deleted(board: &Board, slug: &str, sid: i64) -> (Duration, Duration) {
 
 /// How many rows `table` holds.
 fn rows(client: &Client, table: &str) -> Value {
-    let mut answers = (client.query(
-        &format!("RETURN count(SELECT VALUE id FROM {table});"),
-        json!({}),
-    ))
-    .unwrap();
-    answers.pop().unwrap_or(Value::Null)
+    json!(Raw::on(client).table(table).count().unwrap())
 }
 
 /// A rare sender's newest word deleted gives way to its only other word, a verdict with the

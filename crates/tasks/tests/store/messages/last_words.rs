@@ -5,10 +5,10 @@
 //! store of schema 12 does; and a board written before it was has it once opened.
 
 use crate::common::{Fixture, NOW, Seed};
-use serde_json::{Value, json};
+use serde_json::json;
 use std::collections::BTreeMap;
-use symphony_board::Message;
 use symphony_board::rows::MessageRow;
+use symphony_board::{Message, RawRows};
 
 /// Each sender's last word as `last_messages` read it before `said` (976dbd5), from every message:
 /// the greatest `[sid, slug]` of the sender's posts and verdicts.
@@ -55,25 +55,29 @@ fn agrees(board: &Fixture, step: &str, sender: &str, text: Option<&str>) {
     assert_eq!(text_of(&read, sender).as_deref(), text, "after {step}");
 }
 
-/// `UPDATE` or `DELETE` of message `word`, as a hand at the server could: the board never edits a
-/// message, and deletes them only all at once, in a copy.
-fn write(board: &Fixture, sql: &str, word: &Message, other: &str) {
-    (board.store.client())
-        .query(
-            sql,
-            json!({"slug": word.slug, "sid": word.id, "other": other}),
-        )
-        .unwrap();
+/// The row of message `word`, to set or delete as a hand at the server could: the board never
+/// edits a message, and deletes them only all at once, in a copy.
+fn row<'a>(board: &'a Fixture, word: &Message) -> RawRows<'a> {
+    (board.store.raw()).row("message", json!([word.slug, word.id]))
+}
+
+/// The messages of `board` whose id is `sid`, on any thread.
+fn with_id(board: &Fixture, sid: i64) -> RawRows<'_> {
+    (board.store.raw().table("message")).matching(json!({"sid": sid}))
 }
 
 /// A message `sender` said on `slug` with id `sid`, made by its own request.
 fn create(board: &Fixture, slug: &str, sid: i64, sender: &str, kind: &str) {
-    (board.store.client())
-        .query(
-            "CREATE type::record('message', [$slug, $sid]) SET sid = $sid, slug = $slug, sender = $sender,
-                recipient = NONE, kind = $kind, text = $slug + ' ' + $kind, ts = $now RETURN NONE;",
-            json!({"slug": slug, "sid": sid, "sender": sender, "kind": kind, "now": NOW}),
-        )
+    (board.store.raw().row("message", json!([slug, sid])))
+        .create(json!({
+            "sid": sid,
+            "slug": slug,
+            "sender": sender,
+            "recipient": null,
+            "kind": kind,
+            "text": format!("{slug} {kind}"),
+            "ts": NOW,
+        }))
         .unwrap();
 }
 
@@ -140,11 +144,8 @@ fn a_copy_holding_words_with_no_sender_names_their_word() {
     agrees(&board, "the copy", "", Some("tools/a 3"));
     agrees(&board, "the copy", key_written, Some("tools/z 2"));
     let delete = |slug: &str, id: i64| {
-        (board.store.client())
-            .query(
-                "DELETE type::record('message', [$slug, $id]);",
-                json!({"slug": slug, "id": id}),
-            )
+        (board.store.raw().row("message", json!([slug, id])))
+            .delete()
             .unwrap();
     };
     delete("tools/a", 3);
@@ -164,8 +165,8 @@ fn a_deleted_word_gives_way_to_the_later_thread_of_two_at_one_id() {
         create(&board, "tools/a", 7, "writer", kinds[1]);
         create(&board, "tools/m", 9, "writer", "msg");
         agrees(&board, "the posts", "writer", Some("tools/m msg"));
-        (board.store.client())
-            .query("DELETE message:['tools/m', 9];", json!({}))
+        (board.store.raw().row("message", json!(["tools/m", 9])))
+            .delete()
             .unwrap();
         let later = format!("tools/z {}", kinds[0]);
         agrees(
@@ -197,26 +198,19 @@ fn every_message_deleted_with_the_last_words_named_leaves_none_then_the_copied_o
     let dump = board.store.dump().unwrap();
     board.store.say("sim/jump", &writer, "third", None).unwrap();
     agrees(&board, "the posts", &writer, Some("third"));
-    (board.store.client())
-        .query("DELETE message RETURN NONE;", json!({}))
-        .unwrap();
+    board.store.raw().table("message").delete().unwrap();
     agrees(&board, "every message deleted", &writer, None);
     agrees(&board, "every message deleted", &other, None);
     // Each row keyed as the copy keys it: its record id `[slug, id]`, SQLite's id as `sid`.
-    let rows: Vec<Value> = (dump.messages.iter())
-        .map(|message| {
-            let mut row = serde_json::to_value(message).unwrap();
-            row["id"] = json!([message.slug, message.id]);
-            row["sid"] = json!(message.id);
-            row
-        })
-        .collect();
-    (board.store.client())
-        .query(
-            "INSERT INTO message $rows RETURN NONE;",
-            json!({"rows": rows}),
-        )
-        .unwrap();
+    for message in &dump.messages {
+        let mut row = serde_json::to_value(message).unwrap();
+        row.as_object_mut().unwrap().remove("id");
+        row["sid"] = json!(message.id);
+        (board.store.raw())
+            .row("message", json!([message.slug, message.id]))
+            .create(row)
+            .unwrap();
+    }
     agrees(&board, "the copied messages made", &writer, Some("second"));
     agrees(
         &board,
@@ -249,18 +243,15 @@ fn a_deleted_last_word_gives_the_word_before_it() {
         .say("sim/land", &other, "the other again", None)
         .unwrap();
     let third = board.store.say("sim/jump", &writer, "third", None).unwrap();
-    let delete = "DELETE type::record('message', [$slug, $sid]);";
     agrees(&board, "the posts", &writer, Some("third"));
-    write(&board, delete, &third, "");
+    row(&board, &third).delete().unwrap();
     agrees(&board, "its newest deleted", &writer, Some("second"));
-    write(&board, delete, &first, "");
+    row(&board, &first).delete().unwrap();
     agrees(&board, "an older one deleted", &writer, Some("second"));
-    write(
-        &board,
-        "DELETE message WHERE slug = 'sim/land';",
-        &first,
-        "",
-    );
+    (board.store.raw().table("message"))
+        .matching(json!({"slug": "sim/land"}))
+        .delete()
+        .unwrap();
     agrees(&board, "a thread deleted", &other, Some("from the other"));
     agrees(&board, "a thread deleted", &writer, None);
 }
@@ -277,12 +268,7 @@ fn a_word_edited_to_another_kind_counts_as_that_kind() {
         .store
         .say("sim/jump", &writer, "second", None)
         .unwrap();
-    write(
-        &board,
-        "UPDATE type::record('message', [$slug, $sid]) SET kind = 'system';",
-        &second,
-        "",
-    );
+    (row(&board, &second).set(json!({"kind": "system"}))).unwrap();
     agrees(
         &board,
         "its newest made a record line",
@@ -291,36 +277,21 @@ fn a_word_edited_to_another_kind_counts_as_that_kind() {
     );
     create(&board, "sim/jump", second.id + 1, &writer, "system");
     agrees(&board, "a newer record line", &writer, Some("first"));
-    write(
-        &board,
-        "UPDATE message SET kind = 'msg' WHERE sid = $sid + 1;",
-        &second,
-        "",
-    );
+    (with_id(&board, second.id + 1).set(json!({"kind": "msg"}))).unwrap();
     agrees(
         &board,
         "the record line made a post",
         &writer,
         Some("sim/jump system"),
     );
-    write(
-        &board,
-        "UPDATE message SET kind = 'verdict' WHERE sid = $sid + 1;",
-        &second,
-        "",
-    );
+    (with_id(&board, second.id + 1).set(json!({"kind": "verdict"}))).unwrap();
     agrees(
         &board,
         "the post made a verdict",
         &writer,
         Some("sim/jump system"),
     );
-    write(
-        &board,
-        "UPDATE message SET text = 'said again' WHERE sid = $sid + 1;",
-        &second,
-        "",
-    );
+    (with_id(&board, second.id + 1).set(json!({"text": "said again"}))).unwrap();
     agrees(
         &board,
         "the verdict's text edited",
@@ -345,12 +316,7 @@ fn a_word_given_another_sender_moves_to_that_sender() {
         .store
         .say("sim/jump", &writer, "second", None)
         .unwrap();
-    write(
-        &board,
-        "UPDATE type::record('message', [$slug, $sid]) SET sender = $other;",
-        &second,
-        &other,
-    );
+    (row(&board, &second).set(json!({"sender": other}))).unwrap();
     agrees(
         &board,
         "its newest given to the other",
@@ -363,12 +329,7 @@ fn a_word_given_another_sender_moves_to_that_sender() {
         &other,
         Some("second"),
     );
-    write(
-        &board,
-        "UPDATE type::record('message', [$slug, $sid]) SET sender = $other;",
-        &second,
-        &writer,
-    );
+    (row(&board, &second).set(json!({"sender": writer}))).unwrap();
     agrees(&board, "given back", &writer, Some("second"));
     agrees(&board, "given back", &other, Some("from the other"));
 }
@@ -391,11 +352,9 @@ fn a_board_from_before_the_last_words_were_kept_has_them_once_opened() {
         .unwrap();
     agrees(&board, "the posts", &writer, Some("second"));
     let was = last_words(&board);
-    (board.store.client())
-        .query(
-            "DELETE said; UPDATE meta:schema SET version = 12;",
-            json!({}),
-        )
+    board.store.raw().table("said").delete().unwrap();
+    (board.store.raw().row("meta", "schema"))
+        .set(json!({"version": 12}))
         .unwrap();
     assert_eq!(
         last_words(&board),

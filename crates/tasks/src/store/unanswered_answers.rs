@@ -1,39 +1,16 @@
 //! One recipient's answer records after one post, and their actual task ancestry: what recovery
 //! reads again, and its reservation checks once more, before it resumes a conversation.
 
-use super::{ANSWER_SQL, Error, Store, recovery_error};
+use super::{Error, Store, recovery_error, sql};
 use crate::store::work::{Tree, above};
 use serde_json::json;
 use std::collections::BTreeSet;
 
 pub(super) type Answer = (i64, String);
 
-/// Equality on the first two index columns leaves only this sender/kind's sequence suffix.
-/// Keep the original action predicate, including deliberate releases and role acquisitions.
-pub(super) fn read() -> String {
-    format!(
-        "array::sort(array::flatten(['msg', 'verdict', 'system'].map(|$kind| \
-({}).filter(|$row| $row.eligible).map(|$row| [$row.sid, $row.slug]))))",
-        select()
-    )
-}
-
-pub(super) fn select() -> String {
-    // Closures run through the legacy planner. Putting ANSWER_SQL's string predicates in WHERE
-    // makes it abandon the index for a full table scan, even with WITH INDEX. Compute eligibility
-    // on the indexed suffix instead; read() filters it before returning only row identities.
-    format!(
-        "SELECT sid, slug, ({ANSWER_SQL}) AS eligible FROM message WITH INDEX message_sender \
-WHERE sender = $handle AND kind = $kind AND sid > $post"
-    )
-}
-
 pub(super) fn rows(store: &Store, handle: &str, post: i64) -> Result<Vec<Answer>, Error> {
     store
-        .bounded_read(
-            &format!("RETURN {};", read()),
-            json!({"handle":handle, "post":post}),
-        )
+        .bounded_read(&sql::answer_rows(), json!({"handle":handle, "post":post}))
         .map_err(recovery_error)
 }
 
@@ -53,10 +30,7 @@ pub(super) fn parents(
     let mut wanted: BTreeSet<_> = rows.iter().map(|(_, slug)| slug.clone()).collect();
     while !wanted.is_empty() {
         let edges: Vec<(String, Option<String>)> = store
-            .bounded_read(
-                "RETURN $slugs.map(|$slug| [$slug, type::record('task', $slug).parent ?? NULL]);",
-                json!({"slugs":wanted}),
-            )
+            .bounded_read(sql::PARENTS, json!({"slugs":wanted}))
             .map_err(recovery_error)?;
         tree.extend(edges.iter().cloned());
         wanted = edges

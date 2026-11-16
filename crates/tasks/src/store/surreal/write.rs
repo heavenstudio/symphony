@@ -19,10 +19,10 @@ IF record::exists($session_fence) {
 }
 
 /// A checked recipient or binding target, without advancing its heartbeat.
-pub(super) const FENCE_RECIPIENT: &str = fence!("$handle");
+pub(in crate::store) const FENCE_RECIPIENT: &str = fence!("$handle");
 
 /// Authorize a machine-authored notice without fabricating a tool call.
-pub(super) const AUTHORIZE: &str = concat!(
+pub(in crate::store) const AUTHORIZE: &str = concat!(
     "LET $me = (SELECT left_at FROM ONLY type::record('session', $actor));
 IF $me = NONE { THROW $unknown_actor };
 IF $me.left_at != NONE { THROW $left_actor };",
@@ -30,7 +30,7 @@ IF $me.left_at != NONE { THROW $left_actor };",
 );
 
 /// Authorize, fence departure, and record the actor's activity.
-pub(super) const ACT: &str = concat!(
+pub(in crate::store) const ACT: &str = concat!(
     "LET $me = (SELECT left_at FROM ONLY type::record('session', $actor));
 IF $me = NONE { THROW $unknown_actor };
 IF $me.left_at != NONE { THROW $left_actor };",
@@ -39,7 +39,7 @@ IF $me.left_at != NONE { THROW $left_actor };",
 );
 
 /// Fence the actor, gone witnesses and incoming role holders before changing their task.
-pub(super) const WRITE: &str = concat!(
+pub(in crate::store) const WRITE: &str = concat!(
     "
 LET $me = (SELECT left_at FROM ONLY type::record('session', $actor));
 IF $me = NONE OR $me.left_at != NONE { THROW 'stale' };

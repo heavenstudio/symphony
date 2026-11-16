@@ -1,7 +1,7 @@
 //! The combined structural and session marker identifies cached board inputs.
 
-use super::{Board, Error, Sessions, Snapshot, Store, View, Which};
-use crate::schema::BOARD_MARKER;
+use super::surreal::snapshot as sql;
+use super::{Board, Error, Snapshot, Store, View};
 use serde_json::json;
 
 impl Store {
@@ -18,8 +18,7 @@ impl Store {
         {
             return Ok((Self::board_view(View::new(self, snapshot.clone())), marker));
         }
-        let (read, vars) = Self::reading(&Which::All, Sessions::Whole);
-        let body = format!("LET $callback_sequence = {BOARD_MARKER};\n{read}");
+        let (body, vars) = sql::board();
         let snapshot: Snapshot = self.retrying(|| self.transact(&body, vars.clone()))?;
         let sequence = snapshot.callback_sequence;
         *cached = Some(snapshot.clone());
@@ -27,7 +26,7 @@ impl Store {
     }
 
     pub(super) fn board_marker(&self) -> Result<u64, Error> {
-        self.retrying(|| self.read(&format!("RETURN {BOARD_MARKER};"), json!({})))
+        self.retrying(|| self.read(&sql::marker(), json!({})))
     }
 
     /// Read cached board inputs, refreshing only when a committed board mutation moved the marker.

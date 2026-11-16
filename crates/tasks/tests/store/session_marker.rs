@@ -52,11 +52,10 @@ fn beats_refresh_cached_health_without_the_shared_counter_board_write() {
     let after = markers(&f);
     assert_eq!(after, (before.0, before.1 + 1));
     assert_eq!(
-        f.store
-            .client()
-            .query("RETURN counter:board.last;", json!({}))
+        (f.store.raw().row("counter", "board"))
+            .field("last")
             .unwrap(),
-        vec![json!(i64::MIN)],
+        json!(i64::MIN),
         "a beat never rewrites the retired scalar"
     );
     let board = reader.clock_board().unwrap();
@@ -102,10 +101,7 @@ fn deleting_and_recreating_sessions_never_reuses_a_cached_marker() {
     f.store.copy(&seed.dump).unwrap();
     let initial = reader.clock_board().unwrap();
     let before = markers(&f);
-    f.store
-        .client()
-        .query("DELETE session:worker;", json!({}))
-        .unwrap();
+    f.store.raw().row("session", "worker").delete().unwrap();
     let deleted = markers(&f);
     assert_eq!(deleted, (before.0, before.1 + 1));
     let after_delete = reader.clock_board().unwrap();
@@ -155,15 +151,9 @@ fn an_upgraded_legacy_actor_can_write_before_its_first_sharded_beat() {
         .set_field("tools/held", "game", "race", &json!("started"), "legacy")
         .unwrap();
     assert_eq!(task.fields["game"]["race"], json!("started"));
-    let revision = f
-        .store
-        .client()
-        .query(
-            "RETURN SELECT last, writes FROM ONLY session_revision:legacy;",
-            json!({}),
-        )
-        .unwrap()
-        .remove(0);
+    let revision = (f.store.raw().row("session_revision", "legacy"))
+        .fields(&["last", "writes"])
+        .unwrap();
     assert_eq!(
         revision,
         json!({"last": 0, "writes": 1}),
@@ -358,10 +348,9 @@ fn a_notification_fences_its_actor_without_fabricating_a_heartbeat() {
 #[test]
 fn a_departure_after_the_direct_message_recipient_guard_refuses_the_message() {
     let f = Fixture::new(Seed::default().session("actor").session("recipient"));
-    f.store.client().query(
-        "CREATE callback_state:recipient CONTENT { handle: 'recipient', address: 'codex:recipient-probe' };",
-        json!({}),
-    ).unwrap();
+    (f.store.raw().row("callback_state", "recipient"))
+        .create(json!({"handle": "recipient", "address": "codex:recipient-probe"}))
+        .unwrap();
     let gate = Gate::new();
     paused_at(&f, &gate, "callback_event", "$event = 'CREATE'");
     f.advance(1.0);
@@ -384,14 +373,14 @@ fn a_departure_after_the_direct_message_recipient_guard_refuses_the_message() {
 #[test]
 fn same_key_classification_rechecks_a_concurrently_remapped_target() {
     let f = Fixture::new(Seed::default().session("target"));
-    f.store
-        .client()
-        .query(
-            "UPDATE session:target SET agent = 'old-key';
-         CREATE callback_state:['binding', 'new-key'] CONTENT { in_process: false };",
-            json!({}),
-        )
+    (f.store.raw().row("session", "target"))
+        .set(json!({"agent": "old-key"}))
         .unwrap();
+    (f.store
+        .raw()
+        .row("callback_state", json!(["binding", "new-key"])))
+    .create(json!({"in_process": false}))
+    .unwrap();
     let gate = Gate::new();
     paused_at(
         &f,
@@ -408,9 +397,8 @@ fn same_key_classification_rechecks_a_concurrently_remapped_target() {
             s.bind_agent("old-key", "target", false)
         },
         || {
-            f.store
-                .client()
-                .query("UPDATE session:target SET agent = 'new-key';", json!({}))
+            (f.store.raw().row("session", "target"))
+                .set(json!({"agent": "new-key"}))
                 .unwrap();
             let after = markers(&f);
             assert_eq!(
@@ -423,17 +411,13 @@ fn same_key_classification_rechecks_a_concurrently_remapped_target() {
     assert!(!result.unwrap(), "a full-session key may not be replaced");
     let target = f.store.session("target").unwrap().row;
     assert_eq!(target.agent.as_deref(), Some("new-key"));
-    let provenance = f
-        .store
-        .client()
-        .query(
-            "RETURN type::record('callback_state', ['binding', 'old-key']).in_process;",
-            json!({}),
-        )
+    let provenance = (f.store.raw())
+        .row("callback_state", json!(["binding", "old-key"]))
+        .field("in_process")
         .unwrap();
     assert_eq!(
         provenance,
-        vec![serde_json::Value::Null],
+        serde_json::Value::Null,
         "losing classification must not publish stale provenance"
     );
 }

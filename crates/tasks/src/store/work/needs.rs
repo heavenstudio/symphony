@@ -10,10 +10,6 @@ use crate::stamps::{Catalogue, Needs};
 use crate::store::{Change, Error, Say, Store, Task, refused};
 use crate::{Held, Unfresh};
 
-/// The write of [`Change::needs`] after the rule's own ([`super::super::WRITE`]).
-pub(in crate::store) const NEEDS_WRITTEN: &str =
-    "\nUPDATE type::record('task', $slug) SET fields._board.needs = $needs RETURN NONE;";
-
 /// The refusal of `handle`'s needs on `slug`, for what makes it no assessor of it (`why`).
 fn unfresh(slug: &str, handle: &str, why: Unfresh) -> String {
     let did = match why {

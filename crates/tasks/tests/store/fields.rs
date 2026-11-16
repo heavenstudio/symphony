@@ -3,17 +3,11 @@
 
 use super::common::{Fixture, RawWrite, Seed, refused};
 use serde_json::{Value, json};
+use symphony_board::Raw;
 
 /// The task's raw record, as a reader of any version reads it.
 fn record(f: &Fixture, slug: &str) -> Value {
-    f.other_client()
-        .query(
-            "SELECT * OMIT id FROM ONLY type::record('task', $slug);",
-            json!({"slug": slug}),
-        )
-        .unwrap()
-        .pop()
-        .unwrap()
+    Raw::on(&f.other_client()).row("task", slug).get().unwrap()
 }
 
 fn defines_fields(f: &Fixture) -> bool {
@@ -25,14 +19,10 @@ fn defines_fields(f: &Fixture) -> bool {
 }
 
 fn schema_version(f: &Fixture) -> Value {
-    f.other_client()
-        .query(
-            "RETURN (SELECT VALUE version FROM ONLY meta:schema);",
-            json!({}),
-        )
-        .unwrap()
-        .pop()
-        .unwrap()
+    let version = Raw::on(&f.other_client())
+        .row("meta", "schema")
+        .field("version");
+    version.unwrap()
 }
 
 #[test]

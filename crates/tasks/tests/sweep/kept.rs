@@ -10,7 +10,7 @@
 //! space used becomes a problems requiring it to be remove"): an open task tied to it, a post on an
 //! open task's thread or a document on main naming a path under it; only the rest are suggested.
 
-use crate::common::{RawWrite as _, Seed};
+use crate::common::Seed;
 use crate::{Repo, git, text, write};
 use std::collections::BTreeMap;
 use std::fs;
@@ -258,12 +258,8 @@ fn past_its_cap_what_still_references_a_folder_is_in_use_and_only_the_rest_is_su
         r.assert_removed(wt, &said);
     }
     // a's task is open again.
-    store
-        .client()
-        .write(
-            "UPDATE type::record('task', $slug) SET status = 'in_progress'",
-            serde_json::json!({"slug": "sim/a"}),
-        )
+    (store.raw().row("task", "sim/a"))
+        .set(serde_json::json!({"status": "in_progress"}))
         .unwrap();
     let said = r.sweep();
     let shown = |name: &str| size::shown(size::bytes(&swept(&r).join(name)));
