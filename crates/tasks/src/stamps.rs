@@ -78,7 +78,8 @@ const OWN: [Own; 4] = [
                   which is code; a value of the project file that is a command or a program the \
                   Symphony runs or that decides what lands ([project] cargo and default_branch, \
                   [plugins] crates and process, [verdicts], [land], [releases], [stamps], [board] \
-                  on_review, on_land, machine_work_reader and assessments); a change that does \
+                  on_review, on_land, machine_work_reader, postgresql and assessments); a change \
+                  that does \
                   more than one thing, or one the assessor cannot place",
         skips: "documents alone (a design, a reference page, a record); the values the project \
                 file gives settings the Symphony already reads (a model, an agent, a limit, a \

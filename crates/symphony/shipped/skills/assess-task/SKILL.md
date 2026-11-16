@@ -42,9 +42,9 @@ told.
      anything else: code (which settings exist or how one is read), a value that is a command
      or a program the Symphony runs or that decides what lands (`[project]`'s `cargo` and
      `default_branch`, `[plugins]`'s `crates` and `process`, `[verdicts]`, `[land]`,
-     `[releases]`, `[stamps]`, `[board]`'s `on_review`, `on_land`, `machine_work_reader` and
-     `assessments`; `CHECK PATHS` names `[verdicts]`, `[land]` and `[releases]`), or words that
-     say more than the new values.
+     `[releases]`, `[stamps]`, `[board]`'s `on_review`, `on_land`, `machine_work_reader`,
+     `postgresql` and `assessments`; `CHECK PATHS` names `[verdicts]`, `[land]` and
+     `[releases]`), or words that say more than the new values.
    - **What `tests` asks for.** Where you name `tests`, WHY names the run or runs that prove
      this change, the ones closest to what the diff changed (for a change of settings, the
      settings check alone), never a suite that has nothing to do with it.

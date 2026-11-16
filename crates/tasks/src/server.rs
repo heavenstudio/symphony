@@ -31,6 +31,9 @@
 //! A board kept in a scratch place ([`scratch`]: under the temporary folder or a checkout's
 //! `artifacts/`) is a fixture's: its server is not detached but supervised ([`OWNED_START`]), and
 //! ends when the process that started it ends, however it ends.
+//!
+//! Beside SurrealDB, the board's PostgreSQL ([`postgres`]) starts and stops for a board in a
+//! scratch place alone, under the same starters' lock; no live board reads from it yet.
 
 use crate::port::{self, NotStarted, Start};
 use crate::rpc;
@@ -50,6 +53,8 @@ mod fetch_tests;
 mod hold;
 mod left;
 pub use left::{LEFT_STOPS, LeftReplay};
+pub mod postgres;
+pub use postgres::{Postgres, Serving};
 mod reclaim;
 mod scratch;
 pub mod snapshot;

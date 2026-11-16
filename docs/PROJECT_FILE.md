@@ -189,6 +189,7 @@ A generator, in `[land] generators` or `[verdicts] generators`, usually written 
 | `review_alarm_hours` | `4` | the hours review must stay over the ratio to raise it |
 | `review_alarm_clear_hours` | `1` | the hours review must stay at or under it to clear it |
 | `swept_cap_gb` | `5` | the gigabytes the evidence kept of removed worktrees may hold before the sweep asks for a check by hand |
+| `postgresql` | none: no PostgreSQL | the absolute folder of the machine's PostgreSQL programs, installed by its package manager, which only a scratch board's server starts so far ([DECISIONS](DECISIONS.md#postgresql-binary-source)) |
 | `machine_wip` | none | `[board.machine_wip.MACHINE]`, advice per machine, as below |
 | `machine_work_reader` | none | the project's own machine-work reader, an executable the server runs ([MACHINE_WORK](MACHINE_WORK.md)) |
 | `slot_locks` | none | the folder of the project's test-slot locks, which the agents view probes; under `.git/`, the git common dir |
