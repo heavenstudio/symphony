@@ -2,7 +2,7 @@
 //!
 //! A rule that may start work ([`super::Opens`]) reads, in the same transaction as its task, what
 //! the cap decides on (`Which::Starting`): every slot counter (`counter:['slots', HANDLE]`), the
-//! open tasks through `task_status`, the holds ([`HOLDS`]) and their tasks by id, and their
+//! open tasks through `task_status`, the holds ([`sql::HOLDS`]) and their tasks by id, and their
 //! orchestrator and executor roles through `role_slug`. Then, by id, the tasks above them and the
 //! tasks they review, a level a round trip, with their roles. Each task comes with its red mark
 //! ([`crate::red`]), so red work is told apart where the tree is read. Nothing reads a table whole.
@@ -28,7 +28,8 @@
 //! transaction that reads the open tasks and the holds, so a start that wrote after that read is
 //! caught by the write, and one that wrote before it is in what was read.
 
-use super::branches::{self, OF_TASKS, ON_BRANCHES, Recorded};
+use super::branches::{self, Recorded};
+use super::surreal::cap as sql;
 use super::{Change, Error, Failure, Opens, Store, View, Which, refused};
 use crate::slots::{self, OPEN};
 use serde::Deserialize;
@@ -38,78 +39,15 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 mod ledger;
 use ledger::Observation;
 
+pub use super::surreal::cap::STATEMENTS;
+
 /// Rounds of reads by id above the open tasks: deeper than any tree the board holds.
 const DEPTH: usize = 32;
-
-/// The open tasks, through `task_status`, each with its red mark ([`crate::red`]).
-pub const OPEN_TASKS: &str = "SELECT slug, parent, status, instruction, fields._board.red AS red FROM task WHERE status IN $slot_statuses";
-/// The tasks `$slot_wanted` names, by id.
-pub const BY_ID: &str = "SELECT slug, parent, status, instruction, fields._board.red AS red FROM $slot_wanted.map(|$s| type::record('task', $s))";
-/// Their roles, through `role_slug`: a task holds a handful, and naming the two the cap reads would
-/// let the server take an index of every row holding one of them instead.
-pub const ROLES_OF: &str = "SELECT slug, handle, role FROM role WHERE slug IN $slot_wanted";
-/// Every slot counter, a range of record ids.
-pub const COUNTERS: &str =
-    "SELECT VALUE [record::id(id)[1], last] FROM counter:['slots', NONE]..['slots', ..]";
-/// Every red's counter ([`crate::slots::reds`]), a range of record ids.
-pub const RED_COUNTERS: &str =
-    "SELECT VALUE [record::id(id)[1], last] FROM counter:['red', NONE]..['red', ..]";
-/// Every hold, its task and the stamp it was made at, a range of record ids.
-pub const HOLDS: &str =
-    "SELECT VALUE [record::id(id)[1], ts] FROM counter:['hold', NONE]..['hold', ..]";
-/// The tasks `$slot_holds` holds, by id, with the stamp each hold must match.
-pub const HELD_TASKS: &str = "SELECT slug, parent, status, instruction, fields._board.red AS red, updated FROM $slot_holds.map(|$h| type::record('task', $h[0]))";
-
-/// Every statement the cap sends, which `tests/store/slots/cost.rs` has the server plan.
-pub const STATEMENTS: [&str; 9] = [
-    OPEN_TASKS,
-    BY_ID,
-    ROLES_OF,
-    COUNTERS,
-    HOLDS,
-    HELD_TASKS,
-    RED_COUNTERS,
-    OF_TASKS,
-    ON_BRANCHES,
-];
-
-/// The shared slot inputs before a snapshot's `RETURN`. `wanted` names the task being changed
-/// (`[$slug]`) or every task in a whole-board holdings observation (`$slugs`).
-pub(super) fn lets(wanted: &str) -> String {
-    format!(
-        "LET $slot_open = ({OPEN_TASKS}); LET $slot_holds = ({HOLDS}); LET $slot_held = ({HELD_TASKS});
-         LET $slot_wanted = array::union(array::union($slot_open.slug, $slot_held.slug), {wanted});"
-    )
-}
-
-/// The shared snapshot field for admission and read-only holdings.
-pub(super) fn field() -> String {
-    format!(
-        "slots: {{ open: $slot_open, holds: $slot_holds, held: $slot_held, roles: ({ROLES_OF}), counted: ({COUNTERS}), reds: ({RED_COUNTERS}) }},"
-    )
-}
 
 /// The variables [`lets`] and [`field`] read beside the wanted tasks.
 pub(super) fn vars() -> Value {
     json!({"slot_statuses": OPEN})
 }
-
-/// The write's hold on each counter it read (`$slots`: its key, `['slots', HANDLE]` or `['red',
-/// SLUG]`, and `last`): stale if another write moved it since, then moved on.
-pub(super) const GUARD: &str = "
-FOR $s IN $slots {
-    IF ((SELECT VALUE last FROM ONLY type::record('counter', $s.key)) ?? 0) != $s.last { THROW 'stale' };
-    UPSERT type::record('counter', $s.key) SET last = $s.last + 1 RETURN NONE;
-};";
-
-/// The end of `$slug`'s hold, in a write that moves it or changes its parent or dependencies.
-pub(super) const UNHOLD: &str = "DELETE type::record('counter', ['hold', $slug]) RETURN NONE;";
-
-/// A rule's write's part in a hold: a move (`$status`) ends one, and the hold's own move (`$hold`)
-/// makes one, stamped with the task's `updated` as the write left it (`$updated`).
-pub(super) const HOLDING: &str = "
-IF $status { DELETE type::record('counter', ['hold', $slug]) RETURN NONE; };
-IF $hold { UPSERT type::record('counter', ['hold', $slug]) SET last = 0, ts = $updated RETURN NONE; };";
 
 /// The change a write moving `slug` into `status` makes under the cap, read in `view`, when it
 /// closes an open red ([`crate::red`]): never refused, it holds the counters it changes
@@ -149,29 +87,27 @@ pub(super) struct Ruled {
 /// An owner's close as the cap judged it ([`Store::closing_slots`]).
 #[derive(Default)]
 pub(super) struct Closed {
-    /// The task's version as read, which the write must still find ([`FENCE`]); none for a move
-    /// that reads nothing, into an open status.
+    /// The task's version as read, which the write must still find ([`sql::FENCE`]); none for a
+    /// move that reads nothing, into an open status.
     pub(super) version: Option<i64>,
     /// The counters its write holds ([`GUARD`]).
     pub(super) slots: Vec<Value>,
 }
 
 impl Closed {
-    /// `body` fenced on the version read and guarded by the counters held, as this close needs.
-    pub(super) fn guarding(&self, body: &str) -> String {
-        let fence = if self.version.is_some() { FENCE } else { "" };
-        let guard = if self.slots.is_empty() { "" } else { GUARD };
-        format!("{fence}{body}{guard}")
+    /// Whether this close's write is fenced on the version read ([`sql::FENCE`]).
+    pub(super) fn fenced(&self) -> bool {
+        self.version.is_some()
+    }
+
+    /// Whether this close's write holds counters ([`GUARD`]).
+    pub(super) fn guarded(&self) -> bool {
+        !self.slots.is_empty()
     }
 }
 
-/// A write's refusal to go on from a task that moved since the read its counters were judged
-/// on (`$version`): a red marked since, whose close then holds counters, among them. The board
-/// reads and decides again.
-pub(super) const FENCE: &str = "IF (SELECT VALUE version FROM ONLY type::record('task', $slug)) != $version { THROW 'stale' };\n";
-
-/// The version of `slug` as `view` read it, for a write to fence on ([`FENCE`]). A task not on the
-/// board is refused at the read: no write goes on unfenced to find one filed since, a red with
+/// The version of `slug` as `view` read it, for a write to fence on ([`sql::FENCE`]). A task not on
+/// the board is refused at the read: no write goes on unfenced to find one filed since, a red with
 /// work started under it that its counters, judged on nothing, would let count past the cap.
 fn version_read(view: &View, slug: &str) -> Result<i64, Failure> {
     let read = view.snap.tasks.iter().find(|task| task.row.slug == slug);
@@ -375,7 +311,7 @@ impl Store {
     /// What a move of `slug` into `status` holds, for a write that reads nothing the cap decides
     /// on, the owner's: no counters unless it closes an open red ([`closing`]), whether this store
     /// caps starts or not, since a store that does may have read the board before it; and, for a
-    /// close, the task's version they were judged at, which the write fences on ([`FENCE`]), a
+    /// close, the task's version they were judged at, which the write fences on ([`sql::FENCE`]), a
     /// task not on the board refused at that read ([`version_read`]). A move into an open status
     /// reads nothing.
     pub(super) fn closing_slots(&self, slug: &str, status: &str) -> Result<Closed, Failure> {

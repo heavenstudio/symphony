@@ -1,20 +1,12 @@
 //! Task creation and its optional immutable owner-save receipt share one transaction.
 
-use super::red::{FILED, filing, named};
+use super::red::{filing, named};
 use super::{
-    ACT, BEFORE_WORK, CREATE, Error, NewTask, OWNER, REFUSED, Store, Task,
-    block_cancelled_dependencies, logged, no_task, plain_slug, refused, repr,
+    BEFORE_WORK, Error, NewTask, OWNER, REFUSED, Store, Task, no_task, plain_slug, refused, repr,
+    sql,
 };
 use serde_json::{Value, json};
 use std::fmt::Write as _;
-
-/// A red task's mark, written with the task by its filer alone ([`super::red`]).
-const RED: &str = "UPDATE type::record('task', $slug) SET fields._board.red = $red RETURN NONE;";
-/// A fast fix's mark, the risk its filer recorded, written with the task ([`crate::fast_fix`]).
-const FAST_FIX: &str =
-    "UPDATE type::record('task', $slug) SET fields._board.fast_fix = $fast_fix RETURN NONE;";
-/// The arm a task is filed on, written with the task ([`crate::arm`]).
-const ARM: &str = "UPDATE type::record('task', $slug) SET fields._board.arm = $arm RETURN NONE;";
 
 impl Store {
     /// A new task, on the record. `assignee`: a session reserved without a lapse.
@@ -27,6 +19,13 @@ impl Store {
     pub fn create_in_arm(&self, new: &NewTask, arm: &str) -> Result<Task, Error> {
         let arm = crate::arm::named(arm).map_err(refused)?;
         self.create_with_receipt(new, None, Some(arm))
+    }
+
+    /// The slugs of the owner's tasks saved under `receipt` ([`Store::create_owner_task`]), two
+    /// at most: none when the save never reached the board, one when it did, and two when the
+    /// receipt does not say which task it made.
+    pub fn owner_saved(&self, receipt: &str) -> Result<Vec<String>, Error> {
+        self.retrying(|| self.read(sql::OWNER_SAVED, json!({"receipt": receipt})))
     }
 
     /// Create an owner's task with an opaque save receipt in the task's private fields.
@@ -112,24 +111,13 @@ impl Store {
         if let Some(assignee) = &new.assignee {
             let _ = write!(said, " for {assignee}");
         }
-        let act = if new.by == OWNER { "" } else { ACT };
-        let stamp = if receipt.is_some() {
-            "UPDATE type::record('task', $slug) SET fields._symphony.owner_save = $owner_save RETURN NONE;"
-        } else {
-            ""
-        };
-        let marked = if red.is_some() {
-            format!("{FILED}\n{RED}")
-        } else {
-            String::new()
-        };
-        let fast = if fast_fix.is_some() { FAST_FIX } else { "" };
-        let arm_mark = if arm.is_some() { ARM } else { "" };
-        let body = format!(
-            "{act}{CREATE}\n{stamp}\n{marked}\n{fast}\n{arm_mark}\n{}\n{}",
-            logged("$slug", "$actor", "'system'", "$said", "NONE"),
-            block_cancelled_dependencies(false)
-        );
+        let body = sql::create(&sql::Creating {
+            acts: new.by != OWNER,
+            receipt: receipt.is_some(),
+            red: red.is_some(),
+            fast_fix: fast_fix.is_some(),
+            arm: arm.is_some(),
+        });
         let mut vars = self.acting(
             &new.by,
             (self.clock)(),

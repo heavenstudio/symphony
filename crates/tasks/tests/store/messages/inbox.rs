@@ -197,7 +197,7 @@ fn acknowledged_key_selection_fits_the_shared_store_wait() {
     // This is INBOX's production fragment. Opaque integer references keep the CPU case data-only.
     let query = concat!(
         "LET $candidates = $candidate_entries; LET $acked = $ack_entries;\n",
-        include_str!("../../../src/store/inbox_unread.surql"),
+        include_str!("../../../src/store/surreal/inbox_unread.surql"),
         "\nRETURN $wanted;"
     );
     let client = Client::new(&addr, "sf", "inbox_keys").waiting(test_time::backstop(STORE_WAIT));

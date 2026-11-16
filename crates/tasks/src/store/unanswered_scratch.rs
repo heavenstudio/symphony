@@ -151,7 +151,7 @@ fn recipient_suffix_uses_sender_kind_and_sequence_index_bounds() {
     );
     for kind in ["msg", "verdict", "system"] {
         let vars = json!({"handle":pending.handle, "kind":kind, "post":cursor.id});
-        let query = answers::select();
+        let query = sql::answers_select();
         let plan = f
             .store
             .client()

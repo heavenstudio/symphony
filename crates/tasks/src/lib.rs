@@ -91,10 +91,10 @@ pub use store::{
     ASK_KINDS, Ask, AssessmentReceipt, AssessmentState, BEFORE_WORK, Beat, Binding, Board, COVERED,
     Callback, ChatSeat, CoveredLine, EmbeddingStats, Error, Given, HandOff, Held, KINDS,
     LANDS_FROM, LATE_SECONDS, Landed, Message, NewAsk, NewLaunch, NewSession, NewTask, Opening,
-    PIPELINE, PULLABLE, Pick, Presence, Program, ROLES, ReportRead, ReportTask, Role, SLOT_READS,
-    STATUSES, SearchHit, Session, StageRecord, Store, Task, UNANSWERED_WAIT, UNANSWERED_WAIT_VAR,
-    Unfresh, VectorHit, VectorSearchProfile, Writer, approved, can_transition, covered_by,
-    covered_line, landing, reviewer_verdict,
+    PIPELINE, PULLABLE, Pick, Presence, Program, ROLES, Raw, RawRows, ReportRead, ReportTask, Role,
+    SLOT_READS, STATUSES, SearchHit, Session, StageRecord, Store, Task, UNANSWERED_WAIT,
+    UNANSWERED_WAIT_VAR, Unfresh, VectorHit, VectorSearchProfile, Writer, approved, can_transition,
+    covered_by, covered_line, landing, reviewer_verdict,
 };
 
 /// The board schema this build reads and writes: the one server serves no project whose

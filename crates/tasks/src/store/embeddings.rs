@@ -1,6 +1,7 @@
 //! Catch-up is explicit, never a side effect of a board write. Hashes are checked again on reads,
 //! so an edit racing inference cannot make obsolete text appear as a current vector hit.
 use super::copy::CHUNK_BYTES;
+use super::surreal::embeddings as sql;
 use super::*;
 use crate::cbor;
 use crate::embedding::{Chunk, DIMENSIONS, Embedder, text_hash};
@@ -98,28 +99,20 @@ impl Store {
         progress: &mut dyn FnMut(usize, usize),
     ) -> Result<EmbeddingStats, Error> {
         validate_batch_size(batch_size)?;
-        let checkpoint: Checkpoint = self.retrying(|| self.transact(
-            "LET $digest = crypto::sha256(<string> {model: $model,
-                message: {last: (SELECT VALUE last FROM ONLY counter:message) ?? 0,
-                    ts: (SELECT VALUE ts FROM ONLY counter:message) ?? 0},
-                tasks: (SELECT slug, updated, version FROM task ORDER BY slug)});
-             RETURN {digest: $digest,
-                current: (SELECT VALUE digest FROM ONLY task_embedding_checkpoint:board) = $digest};",
-            json!({"model": embedder.model_id()}),
-        ))?;
+        let checkpoint: Checkpoint = self
+            .retrying(|| self.transact(sql::CHECKPOINT, json!({"model": embedder.model_id()})))?;
         if checkpoint.current {
             return Ok(EmbeddingStats::default());
         }
         let stats = self.catch_up_embeddings(embedder, None, batch_size, progress)?;
-        let _: Value = self.retrying(|| self.transact(
-            "UPSERT task_embedding_checkpoint:board CONTENT {digest: $digest} RETURN NONE; RETURN NONE;",
-            json!({"digest": checkpoint.digest}),
-        ))?;
+        let _: Value = self.retrying(|| {
+            self.transact(sql::KEEP_CHECKPOINT, json!({"digest": checkpoint.digest}))
+        })?;
         Ok(stats)
     }
 
     fn embedding_sources(&self) -> Result<Vec<Source>, Error> {
-        self.read_embedding_sources(SOURCES, json!({}))
+        self.read_embedding_sources(sql::SOURCES, json!({}))
     }
 
     fn embedding_sources_named(&self, keys: &[(String, String)]) -> Result<Vec<Source>, Error> {
@@ -141,17 +134,13 @@ impl Store {
             return Ok(Vec::new());
         }
         self.read_embedding_sources(
-            "LET $brief_records = $brief_slugs.map(|$slug| type::record('task', $slug));
-             LET $message_records = $message_keys.map(|$key| type::record('message', $key));
-             LET $briefs = SELECT slug, 'brief' AS source, title, body AS text FROM $brief_records;
-             LET $messages = SELECT slug, string::concat('message:', <string> sid) AS source, text FROM $message_records WHERE kind != 'system';
-             RETURN { briefs: $briefs, messages: $messages };",
+            sql::SOURCES_NAMED,
             json!({"brief_slugs": briefs, "message_keys": messages}),
         )
     }
 
-    fn read_embedding_sources(&self, sql: &str, vars: Value) -> Result<Vec<Source>, Error> {
-        let sources: Sources = self.retrying(|| self.transact(sql, vars.clone()))?;
+    fn read_embedding_sources(&self, read: &str, vars: Value) -> Result<Vec<Source>, Error> {
+        let sources: Sources = self.retrying(|| self.transact(read, vars.clone()))?;
         let mut sources: Vec<_> = sources.briefs.into_iter().chain(sources.messages).collect();
         // SurrealDB string::concat has a 1 MiB output ceiling. Board briefs can exceed it;
         // assemble the source here without truncating their knowledge or their hash.
@@ -180,13 +169,12 @@ impl Store {
             .iter()
             .map(|s| (s.slug.clone(), s.source.clone()))
             .collect();
-        let cached: Vec<Cached> = self
-            .retrying(|| self.transact("RETURN SELECT * FROM task_embedding_source;", json!({})))?;
+        let cached: Vec<Cached> = self.retrying(|| self.transact(sql::CACHED, json!({})))?;
         let cached: BTreeMap<_, _> = cached
             .into_iter()
             .map(|r| ((r.slug.clone(), r.source.clone()), r))
             .collect();
-        let parts: Vec<Parts> = self.retrying(|| self.transact("RETURN SELECT slug, source, count() AS parts FROM task_chunk GROUP BY slug, source;", json!({})))?;
+        let parts: Vec<Parts> = self.retrying(|| self.transact(sql::PARTS, json!({})))?;
         let parts: BTreeMap<_, _> = parts
             .into_iter()
             .map(|p| ((p.slug, p.source), p.parts))
@@ -197,10 +185,8 @@ impl Store {
             .filter(|key| !keys.contains(*key))
             .collect();
         if !removed.is_empty() {
-            let _: Value = self.retrying(|| self.transact(
-                "DELETE task_chunk WHERE [slug, source] IN $removed RETURN NONE; DELETE task_embedding_source WHERE [slug, source] IN $removed RETURN NONE; DELETE task_embedding_checkpoint RETURN NONE; RETURN NONE;",
-                json!({"removed": removed}),
-            ))?;
+            let _: Value =
+                self.retrying(|| self.transact(sql::FORGET, json!({"removed": removed})))?;
         }
         let mut pending = Vec::new();
         for source in sources {
@@ -298,8 +284,7 @@ impl Store {
         let mut vars = json!({"slug":source.slug,"source":source.source,"hash":hash,"model":model});
         if cbor::encode(&json!({"chunks":rows})).len() <= CHUNK_BYTES {
             vars["chunks"] = json!(rows);
-            let _: Value =
-                self.retrying(|| self.transact(&format!("{PUBLISH}\nRETURN NONE;"), vars.clone()))?;
+            let _: Value = self.retrying(|| self.transact(&sql::publish(), vars.clone()))?;
             return Ok(());
         }
         // Reuse the board copy's bounded staging requests. Even a very long source publishes
@@ -308,14 +293,12 @@ impl Store {
             "embedding_{:016x}",
             RandomState::new().hash_one(std::process::id())
         );
-        let staged = self.stage(&staging, &[("chunks",rows)]).and_then(|()| {
-            let sql = format!("LET $chunks = (SELECT VALUE row FROM {staging}_chunks);\n{PUBLISH}\nREMOVE TABLE {staging}_chunks; RETURN NONE;");
-            let _: Value = self.retrying(|| self.transact(&sql, vars.clone()))?;
+        let staged = self.stage(&staging, &[("chunks", rows)]).and_then(|()| {
+            let publish = sql::publish_staged(&staging);
+            let _: Value = self.retrying(|| self.transact(&publish, vars.clone()))?;
             Ok(())
         });
-        staged.map_err(|error| {
-            self.cleanup_staging(&format!("REMOVE TABLE IF EXISTS {staging}_chunks;"), error)
-        })
+        staged.map_err(|error| self.cleanup_staging(&sql::remove_staged(&staging), error))
     }
 
     /// Chunk neighbours fold to one task row by best cosine distance. Adaptive overfetch prevents
@@ -373,7 +356,7 @@ impl Store {
             self.transact(
                 // HNSW can return older-model neighbours before the WHERE filter. A task-only
                 // catch-up leaves those in the index, so the bound must cover every model.
-                "RETURN (SELECT count() AS total FROM task_chunk GROUP ALL)[0].total ?? 0;",
+                sql::TOTAL,
                 json!({}),
             )
         })?;
@@ -386,27 +369,17 @@ impl Store {
         let mut hashes: BTreeMap<(String, String), Option<String>> = BTreeMap::new();
         let mut count = limit.saturating_mul(8).max(40).min(total);
         loop {
-            let sql = if exact || status.is_some() {
-                let filter = if status.is_some() {
-                    " AND slug IN $eligible"
-                } else {
-                    ""
-                };
-                format!(
-                    "RETURN SELECT slug, source, source_hash, text, 1 - vector::similarity::cosine(embedding, $vector) AS distance FROM task_chunk WHERE model = $model{filter} ORDER BY distance ASC, slug ASC;"
-                )
+            let neighbours = if exact || status.is_some() {
+                sql::exact_neighbours(status.is_some())
             } else {
-                format!(
-                    "RETURN SELECT slug, source, source_hash, text, vector::distance::knn() AS distance FROM task_chunk WHERE embedding <|{count}, {}|> $vector AND model = $model ORDER BY distance ASC, slug ASC;",
-                    count.max(100)
-                )
+                sql::nearest_neighbours(count)
             };
             let started = Instant::now();
             let mut vars = json!({"vector": vector, "model": model});
             if status.is_some() {
                 vars["eligible"] = json!(eligible);
             }
-            let rows: Vec<ChunkHit> = self.retrying(|| self.transact(&sql, vars.clone()))?;
+            let rows: Vec<ChunkHit> = self.retrying(|| self.transact(&neighbours, vars.clone()))?;
             profile.neighbours_s += started.elapsed().as_secs_f64();
             let started = Instant::now();
             // For an unfiltered query the SQL need not test every neighbour against the entire
@@ -473,12 +446,7 @@ impl Store {
     }
 
     pub fn has_embeddings(&self, model: &str) -> Result<bool, Error> {
-        self.retrying(|| {
-            self.transact(
-                "RETURN count(SELECT id FROM task_chunk WHERE model = $model LIMIT 1) > 0;",
-                json!({"model": model}),
-            )
-        })
+        self.retrying(|| self.transact(sql::HAS, json!({"model": model})))
     }
 }
 
@@ -502,19 +470,3 @@ fn valid_vector(vector: &[f32]) -> Result<(), Error> {
     }
     Ok(())
 }
-
-const SOURCES: &str = "
-LET $briefs = SELECT slug, 'brief' AS source, title, body AS text FROM task;
-LET $messages = SELECT slug, string::concat('message:', <string> sid) AS source, text FROM message WHERE kind != 'system';
-RETURN { briefs: $briefs, messages: $messages };
-";
-
-const PUBLISH: &str = "
-DELETE task_embedding_checkpoint RETURN NONE;
-DELETE task_chunk WHERE slug = $slug AND source = $source RETURN NONE;
-FOR $chunk IN $chunks {
-    CREATE type::record('task_chunk', [$slug, $source, $chunk.part]) SET slug = $slug, source = $source,
-        source_hash = $hash, text_hash = $chunk.text_hash, model = $model, text = $chunk.text, embedding = $chunk.embedding RETURN NONE;
-};
-UPSERT type::record('task_embedding_source', [$slug, $source]) SET slug = $slug, source = $source, source_hash = $hash, model = $model, parts = array::len($chunks) RETURN NONE;
-";

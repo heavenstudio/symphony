@@ -1,6 +1,7 @@
 //! The copy of a whole board: a dump (every row, table by table, [`Dump`]) written in one
 //! transaction, replacing what the board held, and read back in the same shape.
 
+use super::surreal::copy as sql;
 use super::transaction::Run;
 use super::{Error, Store, values};
 use crate::cbor;
@@ -13,17 +14,12 @@ impl Store {
     /// Remove every copy's staging table (`copy_…`): what a copy killed while it staged leaves. Only for
     /// a caller that knows no copy runs meanwhile.
     pub fn remove_staging(&self) -> Result<(), Error> {
-        let tables: Vec<String> = self
-            .retrying(|| self.transact("RETURN object::keys((INFO FOR DB).tables);", json!({})))?;
-        let remove: String = tables
-            .iter()
-            .filter(|table| {
-                table.starts_with("copy_")
-                    && table.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
-            })
-            .map(|table| format!("REMOVE TABLE IF EXISTS {table};"))
-            .collect();
-        self.staging_write(&remove, json!({}))
+        let tables: Vec<String> = self.retrying(|| self.transact(sql::TABLES, json!({})))?;
+        let staged = tables.iter().map(String::as_str).filter(|table| {
+            table.starts_with("copy_")
+                && table.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+        });
+        self.staging_write(&sql::remove_tables(staged), json!({}))
     }
 
     /// Make the board `dump`, replacing whatever was there. The rows go up in requests the server takes
@@ -111,34 +107,16 @@ impl Store {
             "copy_{:016x}",
             RandomState::new().hash_one(std::process::id())
         );
+        let names: Vec<&str> = tables.iter().map(|(table, _)| *table).collect();
         let copied = self.stage(&staging, &tables).and_then(|()| {
-            let mut swap = String::new();
-            // Each sender's last word goes with the messages, before them, so their deletion
-            // finds no word to look past; the copied messages' events name them again.
-            swap.push_str("DELETE said RETURN NONE;\n");
-            for (table, _) in &tables {
-                let _ = writeln!(
-                    swap,
-                    "DELETE {table}; INSERT INTO {table} (SELECT VALUE row FROM {staging}_{table}) RETURN NONE; REMOVE TABLE {staging}_{table};"
-                );
-            }
-            // These caches describe the replaced board and are rebuilt by catch-up. Keep the
-            // reset in the swap transaction so a refused copy preserves the current index.
-            swap.push_str("DELETE task_chunk RETURN NONE; DELETE task_embedding_source RETURN NONE; DELETE task_embedding_checkpoint RETURN NONE;\n");
-            swap.push_str("UPSERT counter:message SET last = $last, ts = $last_ts RETURN NONE;\nUPSERT counter:task SET last = $last_task RETURN NONE;\nUPSERT counter:ask SET last = $last_ask RETURN NONE;\n");
-            swap.push_str("RETURN NONE;");
+            let swap = sql::swap(&staging, &names);
             let vars = json!({
                 "last": last, "last_ts": last_ts, "last_task": last_task, "last_ask": last_ask,
             });
-            self.retrying(|| self.transact::<Value>(&swap, vars.clone())).map(|_| ())
+            self.retrying(|| self.transact::<Value>(&swap, vars.clone()))
+                .map(|_| ())
         });
-        copied.map_err(|error| {
-            let remove: String = tables
-                .iter()
-                .map(|(table, _)| format!("REMOVE TABLE IF EXISTS {staging}_{table};"))
-                .collect();
-            self.cleanup_staging(&remove, error)
-        })
+        copied.map_err(|error| self.cleanup_staging(&sql::remove_staged(&staging, &names), error))
     }
 
     /// Every row of `tables` into schemaless tables named `{staging}_{table}`, each request at most
@@ -146,13 +124,10 @@ impl Store {
     /// moves them in. Each request starts with the schema guard in its transaction, so a migration
     /// between requests refuses the next batch before it writes.
     pub(super) fn stage(&self, staging: &str, tables: &[(&str, Vec<Value>)]) -> Result<(), Error> {
-        let define: String = tables
-            .iter()
-            .map(|(table, _)| format!("DEFINE TABLE {staging}_{table} SCHEMALESS;"))
-            .collect();
-        self.staging_write(&define, json!({}))?;
+        let names: Vec<&str> = tables.iter().map(|(table, _)| *table).collect();
+        self.staging_write(&sql::define_staged(staging, &names), json!({}))?;
         for (table, rows) in tables {
-            let insert = format!("INSERT INTO {staging}_{table} $rows RETURN NONE;");
+            let insert = sql::insert_staged(staging, table);
             let (mut chunk, mut bytes) = (Vec::new(), 0);
             for row in rows {
                 let size = cbor::encode(row).len();
@@ -171,19 +146,15 @@ impl Store {
     }
 
     /// Staging has no callback work, but each mutation must be fenced in its own transaction.
-    fn staging_write(&self, body: &str, vars: Value) -> Result<(), Error> {
-        self.retrying(|| {
-            self.run_transaction::<Value>(
-                &format!("{body}\nRETURN NONE;"),
-                vars.clone(),
-                Run::Staging,
-            )
-        })
-        .map(|_| ())
+    /// `request` is a staging request whole, as its statement's name gives it.
+    fn staging_write(&self, request: &str, vars: Value) -> Result<(), Error> {
+        self.retrying(|| self.run_transaction::<Value>(request, vars.clone(), Run::Staging))
+            .map(|_| ())
     }
 
     /// Keep the original failure and report cleanup's failure too. A newer writer owns any staging
-    /// left after a migration; this store may not remove it.
+    /// left after a migration; this store may not remove it. `remove` is the staging request that
+    /// removes what was staged.
     pub(super) fn cleanup_staging(&self, remove: &str, mut error: Error) -> Error {
         if let Err(cleanup) = self.staging_write(remove, json!({})) {
             let (Error::Refused(message) | Error::Db(message)) = &mut error;
@@ -195,22 +166,9 @@ impl Store {
     /// Every row of the board, in the shape the copy reads, each table in the order of its key: what a
     /// copy wrote, read back.
     pub fn dump(&self) -> Result<Dump, Error> {
-        self.retrying(|| self.transact(DUMP, json!({})))
+        self.retrying(|| self.transact(sql::DUMP, json!({})))
     }
 }
 
 /// The most a copy sends in one request: the server takes 4 MiB (`SURREAL_HTTP_MAX_RPC_BODY_SIZE`).
 pub(super) const CHUNK_BYTES: usize = 1 << 20;
-
-const DUMP: &str = "RETURN {
-    tasks: (SELECT * OMIT id, version FROM task ORDER BY sid),
-    task_links: (SELECT * OMIT id FROM link ORDER BY slug, kind, target),
-    sessions: (SELECT * OMIT id FROM session ORDER BY handle),
-    roles: (SELECT * OMIT id FROM role ORDER BY slug, handle, role),
-    messages: (SELECT * OMIT id FROM message ORDER BY sid),
-    deliveries: (SELECT * OMIT id FROM delivery ORDER BY message, handle),
-    barred_keys: (SELECT * OMIT id FROM barred_key ORDER BY key),
-    task_sessions: (SELECT * OMIT id FROM task_session ORDER BY slug, handle),
-    delivery_keys: (SELECT * OMIT id FROM delivery_key ORDER BY slug, key),
-    asks: (SELECT * OMIT id FROM ask ORDER BY sid),
-};";
