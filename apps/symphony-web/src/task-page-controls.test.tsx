@@ -696,26 +696,21 @@ describe("the brief read on", () => {
   });
 });
 
-/** A live task as the page reads it: `d` as given, each of its calls a spy. */
-function aLive(d: Record<string, unknown>, fields: Record<string, unknown> = {}): LiveTask {
+/** A live task as the page reads it: what `fields` say of it, each of its calls a spy. */
+function aLive(fields: Record<string, unknown> = {}): LiveTask {
+  const nothing = { value: undefined, stale: false, error: null, missing: false, answered: false };
   return {
     slug: "w/a",
-    d: {
-      page: null,
-      missing: null,
-      error: "",
-      entries: [],
-      before: null,
-      threadLoaded: false,
-      approval: null,
-      gatesNudged: 0,
-      ...d,
-    },
-    gatesAnswered: vi.fn(),
+    scope: "",
+    page: () => null,
+    missing: () => false,
+    thread: () => nothing,
+    error: () => "",
+    parts: { shown: () => nothing },
+    pagePart: { key: "page w/a" },
     history: vi.fn(async () => {}),
     children: vi.fn(async () => {}),
-    offer: vi.fn(async () => {}),
-    refresh: vi.fn(async () => {}),
+    again: vi.fn(),
     drawn: () => true,
     boardShown: true,
     trouble: null,
@@ -726,42 +721,45 @@ function aLive(d: Record<string, unknown>, fields: Record<string, unknown> = {})
 
 describe("the page's wiring", () => {
   it("hands each of the task's asks to its live task", () => {
-    const live = aLive({ page: { task: { slug: "w/a" }, machine_work: {}, children: [] } });
+    const live = aLive({
+      page: () => ({ task: { slug: "w/a" }, machine_work: {}, children: [] }),
+    });
     const node = LiveTaskPage({ live, connected: true }) as ReactElement<{
-      children: ReactElement;
+      children: ReactElement<{ children: ReactElement }>;
     }>;
-    const detail = node.props.children.props as Record<string, (...args: unknown[]) => void>;
-    detail.onBranch?.("w/a", "app/w/a");
+    // The page's store around the task's detail.
+    const detail = node.props.children.props.children.props as Record<
+      string,
+      (...args: unknown[]) => void
+    >;
     detail.onHistory?.(true);
     detail.onChildren?.(false);
-    detail.onOffer?.();
-    expect(live.gatesAnswered).toHaveBeenCalledWith("w/a", "app/w/a");
+    detail.onRetry?.();
     expect(live.history).toHaveBeenCalledWith(true);
     expect(live.children).toHaveBeenCalledWith(false);
-    expect(live.offer).toHaveBeenCalledTimes(1);
+    expect(live.again).toHaveBeenCalledTimes(1);
   });
 
-  it("reads a missing or failed task again when asked", () => {
-    for (const d of [{ missing: "w/a" }, { error: "The server answered 500" }]) {
-      const live = aLive(d);
-      const node = LiveTaskPage({ live, connected: true }) as ReactElement<{
-        children: ReactElement<{ retry: () => void }>;
-      }>;
-      node.props.children.props.retry();
-      expect(live.refresh, JSON.stringify(d)).toHaveBeenCalledTimes(1);
-    }
+  it("reads a missing task again when asked", () => {
+    const live = aLive({ missing: () => true });
+    const node = LiveTaskPage({ live, connected: true }) as ReactElement<{
+      children: ReactElement<{ retry: () => void }>;
+    }>;
+    node.props.children.props.retry();
+    expect(live.again).toHaveBeenCalledTimes(1);
   });
 
   it("marks the board drawn once, and tries a failed board again when asked", () => {
     const marked = vi.spyOn(performance, "mark");
-    const shown = draw(TaskPageView, { live: aLive({}), stale: false, freshness: FRESH });
+    const shown = draw(TaskPageView, { live: aLive(), stale: false, freshness: FRESH });
     shown.effects[0]?.();
     expect(marked.mock.calls.map((call) => call[0])).toContain("board-ready");
     marked.mockClear();
-    const live = aLive(
-      {},
-      { drawn: () => false, boardShown: false, trouble: "The server answered 500" },
-    );
+    const live = aLive({
+      drawn: () => false,
+      boardShown: false,
+      trouble: "The server answered 500",
+    });
     const failed = draw(TaskPageView, { live, stale: false, freshness: FRESH });
     failed.effects[0]?.();
     expect(marked).not.toHaveBeenCalled();

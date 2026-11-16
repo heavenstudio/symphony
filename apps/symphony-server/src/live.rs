@@ -601,6 +601,13 @@ impl Hub {
         self.refresh_page(scope, &root)
     }
 
+    /// The feed's cursor of the checkout `scope` names: the version of the last event published
+    /// for its pages; none for a checkout with no page.
+    pub fn cursor(&self, scope: &str) -> Option<u64> {
+        let pages = self.pages.read().unwrap_or_else(|e| e.into_inner());
+        pages.get(scope).map(|page| page.board.version)
+    }
+
     pub fn problem(&self, scope: &str) -> Option<String> {
         self.invalid
             .read()

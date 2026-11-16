@@ -1318,6 +1318,18 @@ fn serve(
             hold_feed(reader, shared, held);
             return;
         }
+        // As the server (apps/symphony-server/src/api.rs, `answer`): every JSON read of the API
+        // names the feed's cursor it was read at, which is read before its answer.
+        let cursor = path
+            .starts_with("/api/")
+            .then(|| shared.lock().unwrap().board["version"].as_u64())
+            .flatten();
+        let own_headers = |body: &Body| match cursor {
+            Some(cursor) if body.headers.is_empty() && body.content_type == "application/json" => {
+                format!("{}: {cursor}\r\n", symphony_api::VERSION_HEADER)
+            }
+            _ => body.headers.clone(),
+        };
         let board;
         let html_page;
         let overridden = turn.or_else(|| {
@@ -1390,7 +1402,9 @@ fn serve(
                 out.write_all(
                     format!(
                         "HTTP/1.1 304 Not Modified\r\nETag: {}\r\nCache-Control: {}\r\n{}\r\n",
-                        body.etag, body.cache, body.headers
+                        body.etag,
+                        body.cache,
+                        own_headers(body)
                     )
                     .as_bytes(),
                 )
@@ -1408,7 +1422,7 @@ fn serve(
                     body.bytes.len(),
                     body.cache,
                     body.etag,
-                    body.headers
+                    own_headers(body)
                 );
                 let half = if shared.lock().unwrap().stalled_bodies.contains(&path) {
                     body.bytes.len() / 2

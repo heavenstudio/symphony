@@ -520,15 +520,184 @@ fn the_task_board_holds_still_while_its_columns_load() {
     );
 }
 
+const TASK: &str = "/task/visual/in-progress";
+const TASK_READY: &str =
+    "document.querySelector('article.task .settle[data-settled=true] .history') !== null";
+
+/// Which of a task's two answers that size what is under its head comes first on a first visit:
+/// the page's (its head, its brief, its count of gates) or the gates' own. The other's route is
+/// held until the first is drawn, so the order is the test's and never the machine's.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Order {
+    name: &'static str,
+    held: &'static str,
+    drawn: &'static str,
+}
+
+const PAGE_FIRST: Order = Order {
+    name: "the page before the gates",
+    held: "/api/task-gates",
+    drawn: "document.querySelector('article.task .task-head h1') !== null",
+};
+const GATES_FIRST: Order = Order {
+    name: "the gates before the page",
+    held: "/api/task-page",
+    drawn: "document.querySelector('article.task .task-gates[data-gates=read]') !== null",
+};
+
+/// The score of a first visit to the task (a fresh profile) at `width`, its answers in `order`.
+fn first_visit(page: &str, site: &Site, width: Width, order: Order) -> Option<f64> {
+    let mut browser = chrome()?;
+    browser.call(
+        "Emulation.setDeviceMetricsOverride",
+        json!({"width": width.width, "height": width.height, "deviceScaleFactor": 1, "mobile": width.mobile}),
+    );
+    browser.call(
+        "Page.addScriptToEvaluateOnNewDocument",
+        json!({ "source": RECORD }),
+    );
+    site.hold_route(order.held, true);
+    browser.open(&site.url(TASK));
+    let first = browser.wait_for(order.drawn, SHOWN);
+    site.hold_route(order.held, false);
+    assert!(
+        first,
+        "{page}, {}: the first answer was never drawn: {:?}",
+        order.name,
+        browser.eval("document.body.innerText.slice(0, 2000)")
+    );
+    assert!(
+        browser.wait_for(
+            &format!("document.documentElement.dataset.navigation === 'ready' && ({TASK_READY})"),
+            SHOWN
+        ),
+        "{page}, {}: the task never showed its thread",
+        order.name
+    );
+    browser.eval(SETTLED);
+    let loads = Loads {
+        cold: shifts(&mut browser, 0),
+        warm: Vec::new(),
+    };
+    eprintln!(
+        "{}",
+        report(&format!("{page}, {},", order.name), width, &loads)
+    );
+    Some(cls(&loads.cold))
+}
+
+/// The first visits that reach `limit(width, order)` or more, in each order at each width.
+fn first_visit_misses(page: &str, site: &Site, limit: impl Fn(Width, Order) -> f64) -> Vec<String> {
+    let mut misses = Vec::new();
+    for width in [PHONE, WIDE] {
+        for order in [PAGE_FIRST, GATES_FIRST] {
+            let Some(score) = first_visit(page, site, width, order) else {
+                return misses;
+            };
+            let limit = limit(width, order);
+            if score >= limit {
+                misses.push(format!(
+                    "{page} {}, {}: cls {score:.4}, limit {limit}",
+                    width.name, order.name
+                ));
+            }
+        }
+    }
+    misses
+}
+
+/// A site whose task has the gates of the default catalogue: four, one waited on, each with who
+/// and when, which is what the section's outline holds for a task this browser knows nothing of
+/// (`DEFAULT_ROOM`).
+fn default_task() -> Site {
+    let (sections, cards) = plain();
+    let site = site("docs/PROBE.md", &sections, cards);
+    let task = "visual/in-progress";
+    let gate = |name: &str, state: &str, by: &str, detail: &str| json!({"name":name,"state":state,"by":by,"at":1_794_363_240.0,"detail":detail});
+    site.set_json(
+        "/api/task-gates",
+        &json!({"slug":task,"branch":task,"gates":[
+            gate("review", "missing", "lucid-heron", "Changes asked in round 1"),
+            gate("tests", "met", "studio", "Green at a71f0d2"),
+            gate("pictures", "met", "quiet-wren", "Attached at a71f0d2"),
+            gate("nightly", "met", "nightly", "Green on main a71f0d2")]}),
+    );
+    let mut page = look_parity::responses()["/api/task-page"].clone();
+    page["gates"] = json!({"count":4,"waiting":1,"unsigned":0});
+    site.set_json("/api/task-page", &page);
+    site
+}
+
+/// A task of the shape the outline guesses holds still on every visit: its answers as they come,
+/// and on a first visit in each order they can come in.
 #[test]
 fn a_task_holds_still_while_its_thread_loads() {
-    holds_still(
-        "task",
-        "/task/visual/in-progress",
-        "document.querySelector('article.task .settle[data-settled=true] .history') !== null",
-        None,
-        plain(),
+    let site = default_task();
+    let mut misses = misses("task", &site, TASK, TASK_READY, None, "");
+    misses.extend(first_visit_misses("task", &site, |_, _| CLS_LIMIT));
+    assert!(
+        misses.is_empty(),
+        "layout shift at or over {CLS_LIMIT}: {misses:#?}"
     );
+}
+
+/// A phone's first visit to a task of another shape, the page's answer drawn before the gates':
+/// it scores 0.1399. The board task `app/task-first-visit-holds-still` brings it down to
+/// `CLS_LIMIT`; until then it only goes down.
+const PHONE_PAGE_FIRST_LIMIT: f64 = 0.14;
+/// The same visit with the gates' answer drawn before the page's: it scores 0.0636. The board
+/// task `app/task-first-visit-holds-still` brings it down to `CLS_LIMIT`.
+const PHONE_GATES_FIRST_LIMIT: f64 = 0.064;
+
+/// What a first visit to a task of another shape than the outline's guess scores less than: on a
+/// phone what its order measures, wide the limit of every page (0.0309 and 0.0284 there).
+fn another_shape_limit(width: Width, order: Order) -> f64 {
+    if !width.mobile {
+        CLS_LIMIT
+    } else if order == PAGE_FIRST {
+        PHONE_PAGE_FIRST_LIMIT
+    } else {
+        PHONE_GATES_FIRST_LIMIT
+    }
+}
+
+/// A task of another shape than the outline's guess (the shared fixture's two gates, one of them
+/// unsigned, where the guess is four signed) holds still on a return visit, and on a first one
+/// moves what is under its gates once, by less than its order's limit.
+#[test]
+fn a_task_of_another_shape_moves_less_than_its_first_visits_limits() {
+    let (sections, cards) = plain();
+    let site = site("docs/PROBE.md", &sections, cards);
+    let mut misses = Vec::new();
+    for width in [PHONE, WIDE] {
+        let Some(loads) = measure(&site, TASK, TASK_READY, width, None, "") else {
+            return;
+        };
+        eprintln!("{}", report("task of another shape", width, &loads));
+        // As the answers come, a first visit is one of the two orders or both in one frame.
+        let limit =
+            another_shape_limit(width, PAGE_FIRST).max(another_shape_limit(width, GATES_FIRST));
+        let cold = cls(&loads.cold);
+        if cold >= limit {
+            misses.push(format!(
+                "{} cold, as the answers come: cls {cold:.4}, limit {limit}",
+                width.name
+            ));
+        }
+        let warm = cls(&loads.warm);
+        if warm >= CLS_LIMIT {
+            misses.push(format!(
+                "{} warm: cls {warm:.4}, limit {CLS_LIMIT}",
+                width.name
+            ));
+        }
+    }
+    misses.extend(first_visit_misses(
+        "task of another shape",
+        &site,
+        another_shape_limit,
+    ));
+    assert!(misses.is_empty(), "layout shift over a limit: {misses:#?}");
 }
 
 #[test]

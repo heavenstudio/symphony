@@ -443,7 +443,16 @@ never the whole target, which the release run runs.
   or key; a reader at the top sees what lands at the top.
   `tests/browser/layout_shift.rs` fails a page whose cold or warm load scores a layout
   shift of 0.05 or more, on a phone or wide. That score sees only elements already drawn
-  that move, not a ghost's box against the new element in its place:
+  that move, not a ghost's box against the new element in its place. A task's parts are the
+  page's own elements from their mock-ups on, so the score does see a part's guess give way to
+  its answer there, and the file holds a first visit in each order the page's and the gates'
+  answers can come in, one route held until the other's answer is drawn. A task with the gates
+  the outline guesses for a task this browser knows nothing of (four signed gates, one waited
+  on) stays under 0.05 in both. A task of another shape (two gates, one unsigned) stays under
+  0.05 on a return and on a wide first visit, and on a phone's first visit moves what is under
+  its gates once: it is held under 0.14 with the page's answer first (it scores 0.1399) and
+  under 0.064 with the gates' first (0.0636). Those two limits only go down; the board task
+  `app/task-first-visit-holds-still` brings them to 0.05. For every other ghost:
   `tests/browser/landmarks.rs` compares each region's place on the ghost and on the page,
   on a first visit and the next, on a board, a queue and tasks shaped as the live ones (a
   later card, a later queue group, the board's lower row, a task opened first and after

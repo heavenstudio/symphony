@@ -428,17 +428,18 @@ fn a_check_that_fails_is_asked_again_until_it_answers_and_a_board_that_fails_is_
     };
     visit(&mut chrome, &site);
     let saved = oldest(&mut chrome);
-    // The board does not answer: the copy stays drawn, saying so.
+    // Neither the board nor the page's check answers: the copy stays drawn, saying so. (The
+    // page's check waits for no board, so one that answered would leave nothing to check.)
+    let target = target("/api/task-page", SLUG);
+    let before = answered(&site);
+    site.fail_route(&target, true);
     site.fail_route("/api/board", true);
     return_held(&mut chrome, &site, &[]);
     let unreachable = notice(&mut chrome, saved, true);
     from_the_device(&mut chrome, &unreachable);
     actions_wait(&mut chrome);
-    // The board answers and the feed opens, but the page's check fails: the page is checking, and
-    // asks again, waiting longer each time.
-    let target = target("/api/task-page", SLUG);
-    let before = answered(&site);
-    site.fail_route(&target, true);
+    // The board answers and the feed opens, but the page's check still fails: the page is
+    // checking, and asks again, waiting longer each time.
     site.fail_route("/api/board", false);
     let checking = notice(&mut chrome, saved, false);
     from_the_device(&mut chrome, &checking);
