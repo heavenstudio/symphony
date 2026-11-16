@@ -1,32 +1,12 @@
 //! What the stale notice and its invisible reserve leave clear: the header, fixed controls and
-//! page-end content, at each width and across the phone breakpoint, and on a phone the composer
-//! wherever the page is scrolled.
+//! page-end content, at each width and across the phone breakpoint; on a phone, the composer
+//! wherever the page is scrolled, while a page with none keeps its notices on screen.
 use super::{
-    SHOWN, chrome, chrome::Chrome, document_landing::TWO_FRAMES, look_parity, restored, site,
-    site::Site, wait_for_board, wait_for_feed,
+    SHOWN, cache_documents, chrome, chrome::Chrome, document_landing::TWO_FRAMES, look_parity,
+    restored, site, site::Site, wait_for_board, wait_for_feed,
 };
 use serde_json::{Value, json};
 
-/// The stale notice against the header and the fixed controls: whether it is shown whole in the
-/// window, whether the header's links all are, and the controls it lies over.
-const AGAINST_THE_CONTROLS: &str = r#"(() => {
-    const pill = document.querySelector('main[data-feed=stale] .stale').getBoundingClientRect();
-    const links = [...document.querySelectorAll('.app-header a')];
-    const controls = [...links, ...document.querySelectorAll('.app-header button, #quick-open, .frame-pending')];
-    const overlaps = controls.filter(control => {
-        const box = control.getBoundingClientRect();
-        return box.width > 0 && box.height > 0 && pill.left < box.right && pill.right > box.left && pill.top < box.bottom && pill.bottom > box.top;
-    }).map(control => control.id || control.textContent.trim());
-    return {
-        visible: pill.width > 0 && pill.height > 0 && pill.left >= 0 && pill.right <= innerWidth && pill.top >= 0 && pill.bottom <= innerHeight,
-        headerLinksPresent: links.length >= 5 && links.every(link => { const box = link.getBoundingClientRect(); return box.width > 0 && box.height > 0 && box.top >= 0 && box.bottom <= innerHeight; }),
-        overlaps
-    };
-})()"#;
-
-// At each width the page's top shows every header link and its end the stale notice whole, which
-// lies over no header link nor fixed control at either: wide it floats over the window's foot, and
-// on a phone it is in the page's flow, read at its end.
 #[test]
 fn a_stale_notice_leaves_header_and_fixed_controls_uncovered() {
     let site = site();
@@ -53,21 +33,24 @@ fn a_stale_notice_leaves_header_and_fixed_controls_uncovered() {
             "Emulation.setDeviceMetricsOverride",
             json!({"width":width,"height":900,"deviceScaleFactor":1,"mobile":false}),
         );
-        chrome.eval(&format!("scrollTo(0,0); {TWO_FRAMES}"));
-        let top = chrome.eval(AGAINST_THE_CONTROLS);
+        chrome.eval("scrollTo(0,0); new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))");
         assert_eq!(
-            (&top["headerLinksPresent"], &top["overlaps"]),
-            (&json!(true), &json!([])),
-            "at {width}px, the page's top must show its header links, the stale notice over none of them nor a fixed control: {top}"
-        );
-        chrome.eval(&format!(
-            "scrollTo(0,document.documentElement.scrollHeight); {TWO_FRAMES}"
-        ));
-        let end = chrome.eval(AGAINST_THE_CONTROLS);
-        assert_eq!(
-            (&end["visible"], &end["overlaps"]),
-            (&json!(true), &json!([])),
-            "at {width}px, the page's end must show the stale notice, over no header link nor fixed control: {end}"
+            chrome.eval(r#"(() => {
+                const pill = document.querySelector('main[data-feed=stale] .stale').getBoundingClientRect();
+                const links = [...document.querySelectorAll('.app-header a')];
+                const controls = [...links, ...document.querySelectorAll('.app-header button, #quick-open, .frame-pending')];
+                const overlaps = controls.filter(control => {
+                    const box = control.getBoundingClientRect();
+                    return box.width > 0 && box.height > 0 && pill.left < box.right && pill.right > box.left && pill.top < box.bottom && pill.bottom > box.top;
+                }).map(control => control.id || control.textContent.trim());
+                return {
+                    visible: pill.width > 0 && pill.height > 0 && pill.left >= 0 && pill.right <= innerWidth && pill.top >= 0 && pill.bottom <= innerHeight,
+                    headerLinksPresent: links.length >= 5 && links.every(link => { const box = link.getBoundingClientRect(); return box.width > 0 && box.height > 0 && box.top >= 0 && box.bottom <= innerHeight; }),
+                    overlaps
+                };
+            })()"#),
+            json!({"visible":true,"headerLinksPresent":true,"overlaps":[]}),
+            "at {width}px, the stale notice must leave visible header links and fixed controls uncovered"
         );
     }
 }
@@ -443,6 +426,61 @@ fn past_a_phones_width_the_notices_float_over_the_windows_foot() {
         ] {
             chrome.eval(scroll);
             assert_eq!(chrome.eval(FLOATING), floating, "{width} px, {scroll}");
+        }
+    }
+}
+
+/// Whether every notice shown is whole in the window.
+const ON_SCREEN: &str = "[...document.querySelectorAll('.page-notices:not([hidden]) > p')].every(notice => { const box = notice.getBoundingClientRect(); return box.height > 0 && box.top >= 0 && box.bottom <= innerHeight && box.left >= 0 && box.right <= innerWidth; })";
+
+// The pages that end in no composer keep their notices floating on a phone as wide, over the
+// window's foot wherever the page is scrolled: the board, read in its own scroller, home, the
+// queue, the agents page and a folder, whose end is its entries. In the page's flow there, the
+// held-switch and the reconnecting notices would show only past the whole page, and they are its
+// one sign that it is out of date.
+#[test]
+fn on_a_phone_the_pages_without_a_composer_keep_their_notices_on_screen() {
+    let floating = json!({"position": "fixed", "foot": 132, "left": 16, "toasts": true});
+    for page in ["/tasks", "/", "/queue", "/agents", "/docs/"] {
+        let site = site();
+        if page == "/docs/" {
+            // The folder follows its intro's feed: an intro of its own, read as the server reads one.
+            let intro = cache_documents::document("docs/README.md", "Documents", 4182);
+            site.set_document(&intro);
+            let mut outline = intro.clone();
+            for section in outline["sections"].as_array_mut().unwrap() {
+                section["blocks"] = json!([]);
+            }
+            outline["threads"] = json!({});
+            site.set_json(
+                "/api/folder",
+                &json!({"path": "docs", "title": "Documents", "crumbs": [], "docs": 1, "intro": outline,
+                        "entries": [{"kind": "document", "path": "docs/PROBE.md", "title": "Probe", "docs": 1, "waiting": 0, "summary": ""}]}),
+            );
+        }
+        let Some(mut chrome) = chrome() else { return };
+        chrome.call(
+            "Emulation.setDeviceMetricsOverride",
+            json!({"width":390,"height":844,"deviceScaleFactor":1,"mobile":true}),
+        );
+        chrome.open(&site.url(page));
+        wait_for_feed(&site).expect("the page never followed the feed");
+        site.server_notice(HELD);
+        notices_shown(&mut chrome, 1);
+        site.fail_feeds(usize::MAX);
+        site.drop_feeds();
+        notices_shown(&mut chrome, 2);
+        for scroll in [
+            "scrollTo(0, 0)",
+            "scrollTo(0, document.documentElement.scrollHeight)",
+        ] {
+            chrome.eval(scroll);
+            chrome.eval(TWO_FRAMES);
+            assert_eq!(
+                (chrome.eval(FLOATING), chrome.eval(ON_SCREEN)),
+                (floating.clone(), json!(true)),
+                "{page}, {scroll}: the notices must float whole over the window's foot"
+            );
         }
     }
 }

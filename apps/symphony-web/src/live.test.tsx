@@ -74,6 +74,15 @@ describe("the page's notices", () => {
     );
   });
 
+  it("are marked to go under the composer only on a page that ends in one", () => {
+    expect(notices({ reconnecting: true, composer: true })).toMatch(
+      /^<div class="page-notice-end under-composer"><div class="stale page-notices/,
+    );
+    expect(notices({ reconnecting: true, composer: false })).toMatch(
+      /^<div class="page-notice-end"><div class="stale page-notices/,
+    );
+  });
+
   it("say the feed reconnects, a read's error and the server's notice", () => {
     SERVER_NOTICE.set("Restarting");
     const markup = notices({ reconnecting: true, error: "No answer" });
