@@ -1553,7 +1553,7 @@ owner's, a dependency change that unblocks it, a land) drops the record. The lib
 `Store::move_on` and `Store::hold_blocked_on` take the thing, as `tasks api`'s `move` and `hold`
 take `on` and `why` (api version 15); without one they block as before and record nothing, and
 the Symphony's own callers name theirs: the default landing's hold is `check:owner`, the owner's
-approve of the tip ([below](#the-default-landing)). A cancellation's block is read from the
+approve of the tip ([below](#the-default-landing)), which the line reads as his decision. A cancellation's block is read from the
 task's links instead, its cancelled dependencies.
 
 **The line.** Each open task waits on one thing, said as `KIND · WHO · WHY` since the time it took
@@ -1563,7 +1563,9 @@ its status (`crates/tasks/src/waits_on.rs`), KIND one of:
   review its reviewer, or an executor of a slice under it;
 - `decision`, `check`, `task` or `parked`: what its block names, a dependency still open, the
   stamps its landing lacks, or a review waiting on the owner's sign-off ([above](#tasks-and-roles):
-  the cards it posted, or `sign-off` where a project's owner gate holds it with none);
+  the cards it posted, or `sign-off` where a project's owner gate holds it with none). What waits
+  on the owner is a decision, never a check: a block on `check:owner`, or a landing lacking the
+  owner's stamp alone, waits on `decision`, named by his approve of the tip and never by him;
 - `queued`: nothing missing and nobody to blame, as a ready task waiting to be staffed or one in
   review that waits only to land;
 - `nobody`: what the board can name no one for, a lost or left executor (`executor X lost`), a
@@ -1748,8 +1750,8 @@ afterwards, and runs the check, the docs audit, on what it made ([below](#the-re
   `@executor`, at that tip; `review`, or an assessment of another tip, to `@orchestrator`, to
   start an assessor or staff a fresh reviewer; one waiting on `owner` alone, to
   `@orchestrator`, holds the task blocked from review (`Store::hold_blocked_on`, keeping its
-  slot, on `check:owner`, the owner's approve of the tip: [what a task waits
-  on](#what-a-task-waits-on)), or leaves it done by its approve, until the owner approves the tip
+  slot, on `check:owner`, the owner's approve of the tip, which reads as his decision: [what a
+  task waits on](#what-a-task-waits-on)), or leaves it done by its approve, until the owner approves the tip
   on the task's page. A land of a task that needed no review says on its landing line the stamps and the
   whole tip they stood on (`landed SLUG on main at MERGE; its needs (tests) stood at SHA`),
   the commit it vouched for, as an approve names one.

@@ -345,6 +345,41 @@ fn a_block_reads_what_its_record_names() {
 }
 
 #[test]
+fn a_block_on_the_owners_stamp_waits_on_his_decision_named_by_his_approve_never_by_him() {
+    let board = [
+        // The default landing's hold.
+        blocked_on(
+            task("held", "blocked"),
+            "check:owner",
+            Some("the owner's approve of 0123abc"),
+        ),
+        blocked_on(task("held-bare", "blocked"), "check:owner", None),
+        // Another stamp is a check still.
+        blocked_on(task("owners", "blocked"), "check:owners", None),
+    ];
+    assert_eq!(
+        read(&board, "held"),
+        says(
+            DECISION,
+            "the owner's approve of 0123abc",
+            "its landing waits on it"
+        )
+    );
+    assert_eq!(
+        read(&board, "held-bare"),
+        says(DECISION, OWNER_APPROVE, "its landing waits on it")
+    );
+    assert_eq!(
+        read(&board, "owners"),
+        says(CHECK, "owners", "a check to give")
+    );
+    assert_eq!(
+        said(&line_of(&board, "held").unwrap(), 90.0),
+        "Waits: on decision: the owner's approve of 0123abc · its landing waits on it · 90 s"
+    );
+}
+
+#[test]
 fn a_block_that_names_nothing_reads_no_reason_and_is_not_blocked_on_the_wire() {
     let board = [
         task("bare", "blocked"),
@@ -408,6 +443,28 @@ fn a_landing_record_reads_as_the_checks_it_lacks_changes_as_its_executors_work()
     );
     let bare = line_of(&board, "held-for-nothing").unwrap();
     assert!(bare.unnamed, "{bare:?}");
+}
+
+#[test]
+fn a_landing_that_lacks_the_owners_stamp_alone_waits_on_his_decision() {
+    let board = [
+        landing(task("in-review", "review"), "0123abc: owner"),
+        // A consumer's landing held it blocked for the owner's stamp alone.
+        landing(task("held", "blocked"), "0123abc: owner"),
+        // With another stamp still to give, a check comes first.
+        landing(task("and-tests", "review"), "0123abc: owner, tests"),
+    ];
+    for slug in ["in-review", "held"] {
+        assert_eq!(
+            read(&board, slug),
+            says(DECISION, OWNER_APPROVE, "its landing lacks it"),
+            "{slug}"
+        );
+    }
+    assert_eq!(
+        read(&board, "and-tests"),
+        says(CHECK, "owner, tests", "its landing lacks them")
+    );
 }
 
 #[test]

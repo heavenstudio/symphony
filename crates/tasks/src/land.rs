@@ -1961,7 +1961,8 @@ impl Landing<'_> {
     /// said on the thread to its executor when a stamp of its is missing. One waiting on the owner
     /// alone is said to its orchestrator, and waits: held blocked from review
     /// ([`Store::hold_blocked_on`], which keeps its slot, the block naming the owner's stamp,
-    /// `check:owner`), blocked or done as it is (a task its approve left done stays done, the
+    /// `check:owner`, which the line reads as his decision, [`crate::waits_on::OWNER_APPROVE`]),
+    /// blocked or done as it is (a task its approve left done stays done, the
     /// approve standing), the owner giving the stamp on its page.
     fn lacks(&self, task: &Task, tip: &str, missing: &[needs::Missing]) -> Stop {
         let slug = self.slug;

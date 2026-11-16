@@ -11,7 +11,7 @@
 
 use crate::alarm::{self, Assessed, Waits, Written};
 use crate::health::{EXECUTING, FINISHED};
-use crate::land::needs::REVIEW;
+use crate::land::needs::{OWNER, REVIEW};
 use crate::{Health, Task};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -20,9 +20,11 @@ use std::fmt;
 
 /// Someone there holds the role the stage needs: its executor, or its reviewer in review.
 pub const WORKING: &str = "working";
-/// A decision the owner has to make: a card, or the owner's sign-off.
+/// A decision the owner has to make: a card, the owner's sign-off, or his approve of the tip (the
+/// `owner` stamp, alone what a block or a landing waits on: [`OWNER_APPROVE`]).
 pub const DECISION: &str = "decision";
-/// A check or stamp: one a block names, or what its landing lacks.
+/// A check or stamp someone other than the owner gives: one a block names, or what its landing
+/// lacks.
 pub const CHECK: &str = "check";
 /// Another task still open: a dependency, or one a block names.
 pub const TASK: &str = "task";
@@ -42,6 +44,9 @@ pub const BLOCKED: &str = "blocked";
 pub const WHY_LIMIT: usize = 120;
 /// What a block that names nothing waits on.
 pub const NO_REASON: &str = "no reason recorded";
+/// The decision a task waits on when the owner's stamp is all it lacks (`check:owner`, the
+/// default landing's hold, or a landing's record naming `owner` alone): his approve, never him.
+pub const OWNER_APPROVE: &str = "the owner's approve of its tip";
 /// The things a block names, as a refusal says them.
 pub const THINGS: &str = "decision:NAME, check:NAME, task:SLUG or parked";
 
@@ -388,6 +393,11 @@ fn blocked(task: &Task, look: &Look<'_>, landing: Option<&Landing<'_>>) -> Line 
         let said = |or: &str| record.why.clone().unwrap_or_else(|| or.into());
         return match thing {
             Thing::Decision(name) => Line::new(DECISION, name, said("the owner's decision")),
+            // The owner's stamp is the owner's to give: what waits on him is a decision, named by
+            // his approve, never by him (the default landing's hold names it so).
+            Thing::Check(OWNER) => {
+                Line::new(DECISION, said(OWNER_APPROVE), "its landing waits on it")
+            }
             Thing::Check(name) => Line::new(CHECK, name, said("a check to give")),
             Thing::Parked => Line::new(PARKED, "", said("parked on purpose")),
             Thing::Task(slug) => match look.task(slug).map(|t| t.status.as_str()) {
@@ -407,11 +417,20 @@ fn blocked(task: &Task, look: &Look<'_>, landing: Option<&Landing<'_>>) -> Line 
         return cancelled_line(&cancelled);
     }
     if let Some(landing) = landing.filter(|l| !l.names.is_empty()) {
-        return Line::new(CHECK, landing.names.join(", "), "its landing lacks them");
+        return lacking(&landing.names);
     }
     Line {
         unnamed: true,
         ..Line::new(NOBODY, "", NO_REASON)
+    }
+}
+
+/// What a landing that lacks the stamps `names` waits on: the owner's approve alone is his
+/// decision ([`OWNER_APPROVE`]); any other stamp is a check someone gives first.
+fn lacking(names: &[&str]) -> Line {
+    match names {
+        [OWNER] => Line::new(DECISION, OWNER_APPROVE, "its landing lacks it"),
+        _ => Line::new(CHECK, names.join(", "), "its landing lacks them"),
     }
 }
 
@@ -445,9 +464,7 @@ fn in_review(task: &Task, look: &Look<'_>, landing: Option<&Landing<'_>>) -> Lin
             "its tip is newer than its landing's last look",
         ),
         Some(landing) if landing.names.contains(&REVIEW) => reviewer(),
-        Some(landing) if !landing.names.is_empty() => {
-            Line::new(CHECK, landing.names.join(", "), "its landing lacks them")
-        }
+        Some(landing) if !landing.names.is_empty() => lacking(&landing.names),
         Some(_) => Line::new(QUEUED, "", "nothing missing: it waits to land"),
         None => reviewer(),
     }
