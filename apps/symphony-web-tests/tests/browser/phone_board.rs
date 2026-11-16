@@ -2,9 +2,11 @@
 //! `src/board.tsx` and `src/boardswipe.ts`), app/phone-board-slides-a-column-at-a-time: one column
 //! on the screen at a time, each as wide as the board's scroller, and a swipe lands on the next
 //! one whole, a long or fast flick too, deep down a column as at its top, and a tap begins no
-//! swipe that would hold the next scroll, a focus move's, to one column; the search and the
-//! filters wait behind a button of their own, shut as the board opens, which a wider window does
-//! not draw. Each waits on what the page shows, never on a pause.
+//! swipe that would hold the next scroll, a focus move's, to one column; a column's heading stays
+//! at the board's top as the reader scrolls down it, saying which of the pipeline's columns it is
+//! (app/phone-board-followups); the search and the filters wait behind a button of their own, shut
+//! as the board opens, which a wider window does not draw. Each waits on what the page shows,
+//! never on a pause.
 
 use serde_json::{Value, json};
 
@@ -331,6 +333,100 @@ fn a_swipe_deep_down_a_column_lands_on_the_next_one_short_or_empty() {
             &format!("ArrowLeft from the rail {top} px down"),
         );
     }
+}
+
+/// The heading of the column of `status`: how far its top stands below the board's, its foot on
+/// the page, the place it says among the pipeline's columns, whether that shows, and whether the
+/// heading is what the page draws at its middle, over the cards scrolling under it.
+fn heading(status: &str) -> String {
+    format!(
+        "(() => {{ const board = document.querySelector('.board-scroll').getBoundingClientRect(),
+            head = document.querySelector('.column[data-status={status}] > h2'), box = head.getBoundingClientRect(),
+            place = head.querySelector('.column-place');
+            const seen = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
+            return {{below: Math.round(box.top - board.top), foot: box.bottom, place: place?.textContent ?? null,
+                shown: place?.checkVisibility() === true, onTop: head.contains(seen)}}; }})()"
+    )
+}
+
+/// On a phone a column's heading stays at the board's top while the reader scrolls down the
+/// column, drawn over the cards, and says which of the pipeline's columns it is, the rail among
+/// them; a card scrolled into view (a focus moved to it here) lands below it, not under it. A desk
+/// shows its columns side by side, their headings where they were and no place. Before, 400 px
+/// down Ready its heading had scrolled away with the column's top, and nothing on the screen said
+/// which column it was or how many there were.
+#[test]
+fn a_phones_column_heading_stays_at_the_board_top_saying_which_column_it_is() {
+    let site = site_of(&listing_of(&[
+        ("concept", 3),
+        ("design", 0),
+        ("ready", 12),
+        ("in_progress", 30),
+        ("review", 5),
+    ]));
+    let Some(mut page) = chrome() else { return };
+    open_on_a_phone(&mut page, &site);
+    page.eval(LANDINGS);
+    // Ready's first cards drawn, as a column's are once they come on the screen.
+    reveal(&mut page, "ready", 2, 0);
+    let card = ".column[data-status=ready] [data-slug='phone/ready-3'] .taskcard-title";
+    assert!(
+        page.wait_for(
+            &format!("document.querySelector({}) !== null", json!(card)),
+            SHOWN
+        ),
+        "Ready's cards never drew"
+    );
+    reveal(&mut page, "ready", 2, 400);
+    let ready = page.eval(&heading("ready"));
+    assert_eq!(
+        (
+            &ready["below"],
+            &ready["place"],
+            &ready["shown"],
+            &ready["onTop"]
+        ),
+        (&json!(0), &json!("3 of 6"), &json!(true), &json!(true)),
+        "400 px down Ready its heading stands at the board's top, over the cards, saying 3 of 6: {ready}"
+    );
+    // A card above the screen, given the focus, comes into view below the heading.
+    reveal(&mut page, "ready", 2, 900);
+    page.eval(&format!("document.querySelector({}).focus()", json!(card)));
+    let foot = page.eval(&heading("ready"))["foot"].clone();
+    assert!(
+        page.wait_for(
+            &format!(
+                "(() => {{ const card = document.querySelector({}).closest('.taskcard').getBoundingClientRect();
+                    const board = document.querySelector('.board-scroll').getBoundingClientRect();
+                    return document.activeElement.matches({}) && card.top >= {foot} && card.top < board.bottom; }})()",
+                json!(card),
+                json!(card),
+            ),
+            SHOWN
+        ),
+        "the focused card never stood below Ready's heading: {}",
+        page.eval(&format!(
+            "[document.querySelector({}).closest('.taskcard').getBoundingClientRect().top, {}]",
+            json!(card),
+            heading("ready")
+        ))
+    );
+    reveal(&mut page, "build-test", 4, 400);
+    let rail = page.eval(&heading("build-test"));
+    assert_eq!(
+        (&rail["below"], &rail["place"], &rail["onTop"]),
+        (&json!(0), &json!("5 of 6"), &json!(true)),
+        "the rail's heading stands at the board's top too, saying 5 of 6: {rail}"
+    );
+    viewport(&mut page, 1280, 800);
+    assert!(
+        page.wait_for(
+            "innerWidth === 1280 && [...document.querySelectorAll('.column-place')].every(place => !place.checkVisibility()) && [...document.querySelectorAll('.pipeline > .column > h2')].every(head => getComputedStyle(head).position === 'static')",
+            SHOWN
+        ),
+        "a desk says no place and keeps its headings in their columns: {}",
+        page.eval(&heading("ready"))
+    );
 }
 
 /// Whether the reader sees what `selector` names.

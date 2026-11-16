@@ -4,10 +4,19 @@
 // arrows, Home and End move it among the options, round the list, and typing moves it to the
 // option nearest what was typed (`typeahead.ts`); Enter or Space chooses the focused option, as a
 // press released on the option it went down on does (a finger's or a pen's on its click, so the
-// click lands on the option and nothing under it, `choosesOnClick`); Escape, or the focus leaving
-// the list, closes it. It is drawn beside its field's trigger (`popup-position.ts`), whose page
-// gives the trigger its focus back, and drawn closed while its exit plays (overlay.css), which its
-// host waits for before it lets it go (`onLeft`).
+// click lands on the option and nothing under it, `choosesOnClick`), and as a click does with no
+// pointer released before it (`clickChooses`), an assistive technology's activation; Escape, or
+// the focus leaving the list, closes it, and the focus moving among its options, as a screen
+// reader moves it, does not. It is drawn beside its field's trigger (`popup-position.ts`), whose
+// page gives the trigger its focus back, and drawn closed while its exit plays (overlay.css),
+// which its host waits for before it lets it go (`onLeft`).
+//
+// What an assistive technology sends to activate an option, from the engines' own sources: Blink,
+// for TalkBack or any other's default action, focuses the option, then sends a mouse's pointerdown,
+// mousedown, pointerup and mouseup at its middle, then its click; WebKit on iOS, for VoiceOver,
+// sends a touch (pointer events of a touch) where a page hears touches, as this one does, else a
+// mouse's down and up, then the click; WebKit on the Mac a mouse's pointer events and the click;
+// Gecko's activation, as a script's `click()`, is the click alone.
 
 import { type KeyboardEvent, type PointerEvent, useEffect, useRef, useState } from "react";
 import { anchor } from "./popup-position";
@@ -50,6 +59,29 @@ export function choosesOnClick(pointerType: string): boolean {
   return pointerType === "touch" || pointerType === "pen";
 }
 
+/** A pointer released on an option since the last press: whether that release chose by the
+ * option's click (a finger's or a pen's tap, `choosesOnClick`). */
+export interface Released {
+  key: string;
+  chooses: boolean;
+}
+
+/** Whether a click on the option `clicked` chooses it, after `released`, the pointer released since
+ * the last press, if any: the click of a tap on that option does, the click after any other
+ * release does not (a mouse's chose at its release; a touch that moved, or a press released on
+ * another option, chose nothing), and a click with no release before it, as an assistive
+ * technology's or a script's is, does while the popup is open. */
+export function clickChooses(released: Released | null, clicked: string, open: boolean): boolean {
+  if (released === null) return open;
+  return released.chooses && released.key === clicked;
+}
+
+/** Whether the focus that left `from` went to `to` within it: moved among the list's options, or
+ * to the list, it has not left the popup. */
+export function staysWithin(from: Node | null, to: EventTarget | null): boolean {
+  return from !== null && to instanceof Node && from.contains(to);
+}
+
 /** The list hidden until it is placed: measured before it is first painted. */
 const HIDDEN = { position: "fixed", visibility: "hidden" } as const;
 
@@ -88,8 +120,8 @@ export function SelectPopup({
   const search = useRef({ typed: "", resting: new AbortController(), keyboard: new Keyboard() });
   // The option a pointer went down on, and where: only a release on that same option chooses.
   const down = useRef<{ key: string; at: [number, number] } | null>(null);
-  // The option a finger's or a pen's tap chose, waiting for the tap's own click (`choosesOnClick`).
-  const tap = useRef<string | null>(null);
+  // The pointer released since the last press, which the next click is judged by (`clickChooses`).
+  const released = useRef<Released | null>(null);
 
   // Placed beside the trigger now and as the page or the viewport moves, until it closes.
   useEffect(() => anchor(id, popup), [id, popup]);
@@ -161,23 +193,24 @@ export function SelectPopup({
     if (event.button !== 0) return;
     event.preventDefault();
     down.current = { key: pressed, at: [event.clientX, event.clientY] };
-    tap.current = null;
+    released.current = null;
   };
   const release = (event: PointerEvent<HTMLDivElement>, chosen: string) => {
     if (event.button !== 0) return;
     const from = down.current;
     down.current = null;
-    if (from?.key !== chosen) return;
-    if (tapped(from.at, [event.clientX, event.clientY], event.pointerType === "touch")) {
-      if (choosesOnClick(event.pointerType)) tap.current = chosen;
-      else choose(chosen);
-    }
+    const tap =
+      from?.key === chosen &&
+      tapped(from.at, [event.clientX, event.clientY], event.pointerType === "touch");
+    const onClick = tap && choosesOnClick(event.pointerType);
+    released.current = { key: chosen, chooses: onClick };
+    if (tap && !onClick) choose(chosen);
   };
-  // The click of the tap that chose `clicked`; any other click, a script's among them, is nothing.
+  // A click on `clicked`, judged by the pointer released before it, if any, which it spends.
   const clicked = (clicked: string) => {
-    if (tap.current !== clicked) return;
-    tap.current = null;
-    choose(clicked);
+    const before = released.current;
+    released.current = null;
+    if (clickChooses(before, clicked, !shut)) choose(clicked);
   };
 
   return (
@@ -196,13 +229,22 @@ export function SelectPopup({
         onAnimationEnd={(event) => {
           if (shut && event.target === event.currentTarget) onLeft?.();
         }}
+        onFocus={(event) => {
+          // The list's own focus, from an option (a press on its edge): no option holds it now.
+          if (event.target === event.currentTarget && focused !== null) setFocused(null);
+        }}
         onBlur={(event) => {
           // The list's own blur: an option's comes here too, and is its own (below).
-          if (event.target === event.currentTarget && focused === null) close();
+          if (
+            event.target === event.currentTarget &&
+            focused === null &&
+            !staysWithin(event.currentTarget, event.relatedTarget)
+          )
+            close();
         }}
       >
         {options.map(([key, text], index) => (
-          // biome-ignore lint/a11y/useKeyWithClickEvents: the click only ends a finger's or a pen's tap; the keyboard chooses with Enter or Space on the list (`onKeyDown`).
+          // biome-ignore lint/a11y/useKeyWithClickEvents: the click ends a finger's or a pen's tap, or is an assistive technology's activation; the keyboard chooses with Enter or Space on the list (`onKeyDown`).
           <div
             key={key}
             role="option"
@@ -218,8 +260,13 @@ export function SelectPopup({
             onPointerCancel={() => {
               down.current = null;
             }}
-            onBlur={() => {
-              if (focused === index) {
+            onFocus={() => {
+              // Given the focus by another than the list's keys, a screen reader's move among them.
+              if (focused !== index) setFocused(index);
+            }}
+            onBlur={(event) => {
+              // Gone to another option, that one takes it (above); to the list, the list does.
+              if (focused === index && !staysWithin(list.current, event.relatedTarget)) {
                 setFocused(null);
                 close();
               }

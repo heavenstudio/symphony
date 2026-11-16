@@ -33,6 +33,7 @@ import {
   searched,
   stageCounts,
   statusLabel,
+  stopPlace,
   TaskBoard,
   type TaskBoardProps,
   TaskColumn,
@@ -107,6 +108,26 @@ const board = (props: Partial<TaskBoardProps>) =>
 const columns = (html: string) => [...html.matchAll(/data-status="([^"]*)"/g)].map((m) => m[1]);
 /** The rows a mounted column holds, in order, by their tasks' slugs. */
 const columnRows = (html: string) => [...html.matchAll(/id="row-([^"]*)"/g)].map((m) => m[1]);
+/** Each column's status and the place its heading says it has among the pipeline's columns, in
+ * order: null where it says none. */
+const places = (html: string) =>
+  [...html.matchAll(/data-status="([^"]*)"[\s\S]*?<\/h2>/g)].map((m) => [
+    m[1],
+    /<span class="column-place" aria-hidden="true">([^<]*)<\/span><\/h2>$/.exec(m[0])?.[1] ?? null,
+  ]);
+
+describe("a pipeline column's place", () => {
+  it("is where it stands among the pipeline's columns, counted from one", () => {
+    const stops = ["ready", "build-test", "review"];
+    expect(stops.map((stop) => stopPlace(stops, stop))).toEqual(["1 of 3", "2 of 3", "3 of 3"]);
+  });
+
+  it("is none for a pipeline of one column, or a column off it", () => {
+    expect(stopPlace(["ready"], "ready")).toBeUndefined();
+    expect(stopPlace(["ready", "review"], "backlog")).toBeUndefined();
+    expect(stopPlace([], "ready")).toBeUndefined();
+  });
+});
 
 describe("the board's columns", () => {
   // No machine reports the project's work: Build and Test are one narrow rail, said once, and a
@@ -197,6 +218,39 @@ describe("the board's columns", () => {
     expect(split).toContain('review <span class="count">1</span>');
     expect(columnRows(split)).toEqual(["w/b"]);
     expect(split).not.toContain("Load more tasks");
+  });
+
+  it("each say, in the pipeline, which of its columns they are, the rail among them", () => {
+    const tasks = [aTask("w/a", { status: "review" })];
+    const unreported = board({ statuses: LIFECYCLE, tasks, signoff: ["w/a"] });
+    expect(places(unreported)).toEqual([
+      ["signoff", null],
+      ["concept", "1 of 7"],
+      ["design", "2 of 7"],
+      ["ready", "3 of 7"],
+      ["in_progress", "4 of 7"],
+      ["build-test", "5 of 7"],
+      ["review", "6 of 7"],
+      ["done", "7 of 7"],
+      ["backlog", null],
+      ["blocked", null],
+      ["cancelled", null],
+    ]);
+    expect(unreported).toContain(
+      '<h2>build · test<span class="column-place" aria-hidden="true">5 of 7</span></h2>',
+    );
+    const machines = places(board({ statuses: LIFECYCLE, work: reported() }));
+    expect(machines.slice(3, 8)).toEqual([
+      ["in_progress", "4 of 8"],
+      ["build", "5 of 8"],
+      ["test", "6 of 8"],
+      ["review", "7 of 8"],
+      ["done", "8 of 8"],
+    ]);
+    expect(places(board({ counts: [["ready", 3]] }))).toEqual([
+      ["ready", "1 of 2"],
+      ["build-test", "2 of 2"],
+    ]);
   });
 
   it("are the pipeline's in a scroller the keyboard reaches, the rest after it", () => {

@@ -10,10 +10,12 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, type Mock, vi } from "vitest";
 import {
   choosesOnClick,
+  clickChooses,
   nextIndex,
   previousIndex,
   SelectPopup,
   type SelectPopupProps,
+  staysWithin,
   tapped,
   typesLetter,
 } from "./select-popup";
@@ -67,10 +69,30 @@ vi.mock("./popup-position", () => ({
   },
 }));
 
+/** A node of the page, as far as the popup asks one: what it holds. */
+class Box {
+  constructor(readonly inside: Box[] = []) {}
+  contains(other: unknown): boolean {
+    return other === this || this.inside.some((box) => box.contains(other));
+  }
+}
+
+/** A node of the page outside the popup. */
+const elsewhere = () => new Box() as unknown as Node;
+
+/** The popup's list, as its ref holds it, with an element for each of its three options. */
+function placed() {
+  const options = [new Box(), new Box(), new Box()];
+  const list = new Box(options);
+  runtime.refs[0] = { current: list };
+  return { list: list as unknown as Node, options: options as unknown as Node[] };
+}
+
 beforeEach(() => {
   runtime.refs = [];
   anchored.calls = [];
   anchored.released = 0;
+  vi.stubGlobal("Node", Box);
 });
 
 afterEach(() => {
@@ -168,6 +190,25 @@ describe("what a key or a pointer means", () => {
     expect(tapped([10, 10], [200, 200], false)).toBe(true);
     expect(tapped([10, 10], [13, 14], true)).toBe(true);
     expect(tapped([10, 10], [14, 14], true)).toBe(false);
+  });
+
+  it("chooses on a click its tap's, or one with no release before it while open", () => {
+    expect(clickChooses({ key: "1", chooses: true }, "1", true)).toBe(true);
+    expect(clickChooses({ key: "1", chooses: true }, "1", false)).toBe(true);
+    expect(clickChooses({ key: "1", chooses: true }, "0", true)).toBe(false);
+    expect(clickChooses({ key: "1", chooses: false }, "1", true)).toBe(false);
+    expect(clickChooses(null, "1", true)).toBe(true);
+    expect(clickChooses(null, "1", false)).toBe(false);
+  });
+
+  it("keeps the focus within what holds it, the node itself among it, and nothing else", () => {
+    const { list, options } = placed();
+    expect(staysWithin(list, options[1] ?? null)).toBe(true);
+    expect(staysWithin(list, list)).toBe(true);
+    expect(staysWithin(list, elsewhere())).toBe(false);
+    expect(staysWithin(list, null)).toBe(false);
+    expect(staysWithin(list, {} as EventTarget)).toBe(false);
+    expect(staysWithin(null, list)).toBe(false);
   });
 });
 
@@ -378,32 +419,104 @@ describe("a select's popup used", () => {
       // Released, the popup stays open for the tap's click, which another option's is not.
       expect(given.onChange).not.toHaveBeenCalled();
       expect(given.onClose).not.toHaveBeenCalled();
-      handler(element, option(0), "onClick")({});
-      expect(given.onChange).not.toHaveBeenCalled();
       handler(element, option(1), "onClick")({});
       expect(given.onChange).toHaveBeenCalledExactlyOnceWith("1");
       expect(given.onClose).toHaveBeenCalledOnce();
-      // The tap's click is spent: another click is nothing.
-      handler(element, option(1), "onClick")({});
+      // Chosen, the popup is drawn closed: another click on it is nothing.
+      handler(draw(given, [false, null]).element, option(1), "onClick")({});
       expect(given.onChange).toHaveBeenCalledOnce();
+      // Another option's click after a tap is not the tap's.
+      const other = props();
+      const again = draw(other, [true, null]).element;
+      handler(again, option(1), "onPointerDown")(pointer(10, 40, 0, pointerType));
+      handler(again, option(1), "onPointerUp")(pointer(11, 41, 0, pointerType));
+      handler(again, option(0), "onClick")({});
+      expect(other.onChange).not.toHaveBeenCalled();
     }
   });
 
-  it("takes a click with no tap before it, or after a press since, for nothing", () => {
+  it("takes the click after a mouse's release, a touch that moved, or a press let go elsewhere, for nothing", () => {
     const given = props();
     const { element } = draw(given, [true, null]);
-    // A script's click, or a mouse's after its release chose.
+    // A mouse pressed on one option and released on another: its click is on neither, and a
+    // click on the one released on is not a choice.
+    handler(element, option(0), "onPointerDown")(pointer(10, 10));
+    handler(element, option(1), "onPointerUp")(pointer(10, 40));
     handler(element, option(1), "onClick")({});
-    expect(given.onChange).not.toHaveBeenCalled();
-    // A tap whose click never came, then a press on another option that scrolled away.
-    handler(element, option(1), "onPointerDown")(pointer(10, 40, 0, "touch"));
-    handler(element, option(1), "onPointerUp")(pointer(10, 40, 0, "touch"));
+    // A touch that moved further than a tap, whose click a browser sends all the same.
     handler(element, option(2), "onPointerDown")(pointer(10, 70, 0, "touch"));
-    handler(element, option(2), "onPointerUp")(pointer(10, 120, 0, "touch"));
-    handler(element, option(1), "onClick")({});
+    handler(element, option(2), "onPointerUp")(pointer(10, 80, 0, "touch"));
+    handler(element, option(2), "onClick")({});
+    // A release with no press before it.
+    handler(element, option(2), "onPointerUp")(pointer(10, 70));
     handler(element, option(2), "onClick")({});
     expect(given.onChange).not.toHaveBeenCalled();
     expect(given.onClose).not.toHaveBeenCalled();
+  });
+
+  it("chooses on a click with no pointer released before it, as an assistive technology's, while open", () => {
+    const given = props();
+    // Gecko's activation, or a script's click(): the click alone.
+    handler(draw(given, [true, null]).element, option(0), "onClick")({});
+    expect(given.onChange).toHaveBeenCalledExactlyOnceWith("0");
+    expect(given.onClose).toHaveBeenCalledOnce();
+    // A click once spent leaves the next to stand alone: a tap's click, then a click of its own.
+    const afterTap = props();
+    const { element } = draw(afterTap, [true, null]);
+    handler(element, option(1), "onPointerDown")(pointer(10, 40, 0, "touch"));
+    handler(element, option(1), "onPointerUp")(pointer(10, 40, 0, "touch"));
+    handler(element, option(0), "onClick")({});
+    expect(afterTap.onChange).not.toHaveBeenCalled();
+    handler(element, option(2), "onClick")({});
+    expect(afterTap.onChange).toHaveBeenCalledExactlyOnceWith("2");
+    // Closed, a click alone chooses nothing.
+    const closed = props({ closed: true });
+    handler(draw(closed, [true, null]).element, option(0), "onClick")({});
+    expect(closed.onChange).not.toHaveBeenCalled();
+  });
+
+  // Each engine's activation of an option, as its own sources send it (the module's header).
+  it("chooses once for each engine's activation of an option, its popup open until it chooses", () => {
+    // Blink, for TalkBack or any assistive technology's default action: the option focused first,
+    // then a mouse's press and release at its middle, then its click.
+    const blink = props();
+    const { list, options } = placed();
+    const first = draw(blink, [true, null]);
+    handler(
+      first.element,
+      isList,
+      "onBlur",
+    )({
+      target: list,
+      currentTarget: list,
+      relatedTarget: options[1],
+    });
+    handler(first.element, option(1), "onFocus")({});
+    expect(first.setFocused).toHaveBeenCalledExactlyOnceWith(1);
+    expect(blink.onClose).not.toHaveBeenCalled();
+    const focused = draw(blink, [true, 1]).element;
+    handler(focused, option(1), "onPointerDown")(pointer(60, 40));
+    handler(focused, option(1), "onPointerUp")(pointer(60, 40));
+    expect(blink.onChange).toHaveBeenCalledExactlyOnceWith("1");
+    handler(draw(blink, [false, 1]).element, option(1), "onClick")({});
+    expect(blink.onChange).toHaveBeenCalledOnce();
+    expect(blink.onClose).toHaveBeenCalledOnce();
+    // WebKit on iOS, for VoiceOver, on a page that hears touches: a touch, then the click.
+    const ios = props();
+    const touched = draw(ios, [true, null]).element;
+    handler(touched, option(2), "onPointerDown")(pointer(60, 70, 0, "touch"));
+    handler(touched, option(2), "onPointerUp")(pointer(60, 70, 0, "touch"));
+    expect(ios.onChange).not.toHaveBeenCalled();
+    handler(touched, option(2), "onClick")({});
+    expect(ios.onChange).toHaveBeenCalledExactlyOnceWith("2");
+    // WebKit on the Mac: a mouse's pointer events, then the click.
+    const mac = props();
+    const pressed = draw(mac, [true, null]).element;
+    handler(pressed, option(0), "onPointerDown")(pointer(60, 10));
+    handler(pressed, option(0), "onPointerUp")(pointer(60, 10));
+    handler(draw(mac, [false, null]).element, option(0), "onClick")({});
+    expect(mac.onChange).toHaveBeenCalledExactlyOnceWith("0");
+    expect(mac.onClose).toHaveBeenCalledOnce();
   });
 
   it("closes once the focus leaves the list, or the option that held it", () => {
@@ -418,9 +531,48 @@ describe("a select's popup used", () => {
     handler(focused.element, isList, "onBlur")({ target: own, currentTarget: own });
     handler(focused.element, option(0), "onBlur")({});
     expect(focused.setOpen).not.toHaveBeenCalled();
-    handler(focused.element, option(1), "onBlur")({});
+    handler(focused.element, option(1), "onBlur")({ relatedTarget: elsewhere() });
     expect(focused.setFocused).toHaveBeenCalledWith(null);
     expect(focused.setOpen).toHaveBeenCalledWith(false);
+  });
+
+  it("stays open as the focus moves among its options or to the list, as a screen reader moves it", () => {
+    const given = props();
+    const { list, options } = placed();
+    // From the list to an option, which then holds it.
+    const opened = draw(given, [true, null]);
+    handler(
+      opened.element,
+      isList,
+      "onBlur",
+    )({
+      target: list,
+      currentTarget: list,
+      relatedTarget: options[2],
+    });
+    handler(opened.element, option(2), "onFocus")({});
+    expect(opened.setFocused).toHaveBeenCalledExactlyOnceWith(2);
+    // From one option to another: the one it left lets go of nothing, the other takes it.
+    const moved = draw(given, [true, 2]);
+    handler(moved.element, option(2), "onBlur")({ relatedTarget: options[0] });
+    handler(moved.element, option(0), "onFocus")({});
+    expect(moved.setFocused).toHaveBeenCalledExactlyOnceWith(0);
+    // From an option to the list itself (a press on its edge): no option holds it.
+    const edge = draw(given, [true, 0]);
+    handler(edge.element, option(0), "onBlur")({ relatedTarget: list });
+    handler(edge.element, isList, "onFocus")({ target: options[0], currentTarget: list });
+    expect(edge.setFocused).not.toHaveBeenCalled();
+    handler(edge.element, isList, "onFocus")({ target: list, currentTarget: list });
+    expect(edge.setFocused).toHaveBeenCalledExactlyOnceWith(null);
+    // The focus the popup gives itself moves nothing.
+    const onOption = draw(given, [true, 1]);
+    handler(onOption.element, option(1), "onFocus")({});
+    const onList = draw(given, [true, null]);
+    handler(onList.element, isList, "onFocus")({ target: list, currentTarget: list });
+    for (const set of [onOption.setFocused, onList.setFocused, onOption.setOpen, onList.setOpen])
+      expect(set).not.toHaveBeenCalled();
+    expect(given.onClose).not.toHaveBeenCalled();
+    expect(given.onChange).not.toHaveBeenCalled();
   });
 
   it("is anchored beside its trigger until it goes, its search forgotten with it", async () => {
