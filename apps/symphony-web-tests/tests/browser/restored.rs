@@ -943,7 +943,9 @@ fn board_fetch_and_server_notices_keep_loaded_rows_in_place_after_narrowing() {
         site.fail_route("/api/task-board", true);
         site.fail_feeds(usize::MAX);
         site.drop_feeds();
-        assert!(browser.wait_for("document.querySelector('main')?.dataset.feed==='stale' && document.querySelector('.page-notices [role=alert]')?.textContent==='Board snapshot unavailable (the server answered 500)'", SHOWN), "the real board-fetch alert was not reached: {}", browser.eval("document.body.innerText"));
+        // Every read that fails here (the check's counts, each column's first page) is one the
+        // page tries again by itself, and says so.
+        assert!(browser.wait_for("document.querySelector('main')?.dataset.feed==='stale' && document.querySelector('.page-notices [role=alert]')?.textContent==='Board snapshot unavailable (the server answered 500). Trying again…'", SHOWN), "the real board-fetch alert was not reached: {}", browser.eval("document.body.innerText"));
         assert_notice_surface(&mut browser, ".page-notices [role=alert]", "alert");
         assert_eq!(browser.eval("scrollY===keptScroll && JSON.stringify(keptBoard.getBoundingClientRect().toJSON())===keptBox && [...document.querySelectorAll('.taskcard')].every((e,i)=>e===keptRows[i]) && keptRows.map(e=>e.dataset.slug).join(',')===keptIds"), json!(true), "{width}px: failed snapshots must retain all eighteen row identities, the board height and reading offset");
         browser.eval("scrollTo(0,document.documentElement.scrollHeight);new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))");
