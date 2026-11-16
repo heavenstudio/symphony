@@ -127,6 +127,10 @@ pub struct Front {
     /// server of its own, which serves its one checkout at `/`.
     #[serde(default)]
     pub projects: Vec<String>,
+    /// The release installed on the machine it runs, when it is one: no start replaces it, and its
+    /// reload follows the machine's `current` link; none for a project's build.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub release: Option<String>,
 }
 
 /// The route that answers a [`Board`].

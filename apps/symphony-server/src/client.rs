@@ -70,17 +70,14 @@ mod tests;
 
 /// Read the foreground override separately from an installed server's explicit bundle. A server
 /// run from a release installed on the machine serves that release's client, from the folder
-/// beside it, whatever else is named ([`released`]).
+/// beside it, whatever else is named: the release this process is, found once
+/// ([`symphony::machine::release::this`]), so every project it serves later is served the same
+/// client however the machine's `current` moved since.
 pub(crate) fn selection(root: &Path, install: Option<&Path>) -> (PathBuf, bool) {
-    let beside = std::env::current_exe().ok().and_then(|exe| released(&exe));
+    let beside = symphony::machine::release::this()
+        .and_then(|(release, manifest)| symphony::machine::release::client_of(release, manifest));
     if let Some(client) = beside {
         return (client, false);
     }
     select(root, install, symphony_env::UI_DIST.os().map(PathBuf::from))
-}
-
-/// The client of the release the server at `binary` is installed in, `client/HASH/` beside its
-/// `bin/` ([`symphony::machine::release::client_beside`]); none for a build anywhere else.
-pub(crate) fn released(binary: &Path) -> Option<PathBuf> {
-    symphony::machine::release::client_beside(binary)
 }

@@ -1276,3 +1276,104 @@ fn a_page_load_is_a_navigation_and_a_fetch_is_not() {
     ));
     assert!(!navigation(&Method::GET, &headers(&[])));
 }
+
+/// A project in `tree` naming `plugins`, those of `processes` with a `[plugins.process]` command.
+fn plugged(tree: &Tree, id: &str, plugins: &[&str], processes: &[&str]) -> Entry {
+    let names: Vec<String> = plugins.iter().map(|name| format!("\"{name}\"")).collect();
+    let mut file = format!(
+        "[project]\nid = \"{id}\"\n[plugins]\ncrates = [{}]\n",
+        names.join(", ")
+    );
+    if !processes.is_empty() {
+        file.push_str("[plugins.process]\n");
+        for name in processes {
+            file.push_str(&format!("{name} = [\"bin/{name}\"]\n"));
+        }
+    }
+    tree.write(&format!("{id}/docs/README.md"), "# Docs\n");
+    tree.write(&format!("{id}/symphony.toml"), &file);
+    Entry::of(&tree.path(id)).unwrap()
+}
+
+/// The server of the release `name`, at this build's pin and board schema.
+fn released(name: &str) -> Build {
+    Build {
+        release: Some(name.into()),
+        plugins: Vec::new(),
+        ..Build::this(Path::new("/work/alpha"))
+    }
+}
+
+#[test]
+fn a_release_serves_process_plugins_and_names_the_command_a_linked_one_needs() {
+    let tree = Tree::new();
+    let processes = plugged(&tree, "processes", &["shelf"], &["shelf"]);
+    let linked = plugged(&tree, "linked", &["shelf", "map"], &["shelf"]);
+    let release = released("release-1");
+    assert_eq!(lacking(&release, "alpha", &processes), None);
+    assert_eq!(
+        lacking(&release, "alpha", &linked),
+        Some(format!(
+            "this Symphony is the release release-1, which serves a plugin only from its process: \
+             linked names the plugin map linked: a [plugins.process] command for map in {}, then \
+             `just symphony` in its checkout, lets this server serve it (docs/PLUGIN_PROTOCOL.md)",
+            linked.root.join("symphony.toml").display()
+        ))
+    );
+    // A project's build without the plugin still names the build that holds it.
+    let plain = Build {
+        release: None,
+        ..release.clone()
+    };
+    assert!(lacking(&plain, "alpha", &linked).is_some_and(|why| {
+        why.ends_with("run `just symphony` in linked's checkout, whose build holds them")
+    }));
+    // A project newer than the release waits for a release that serves it.
+    let newer = Entry {
+        pin: release.pin + 1,
+        ..processes.clone()
+    };
+    assert_eq!(
+        lacking(&release, "alpha", &newer),
+        Some(format!(
+            "this Symphony is the release release-1, at Symphony pin {}, older than processes's \
+             {}: this server serves processes once the machine's `current` names a release that \
+             does, which its reload follows",
+            release.pin,
+            release.pin + 1
+        ))
+    );
+}
+
+#[test]
+fn a_project_naming_a_linked_plugin_says_it_holds_the_machine_on_a_projects_build() {
+    use symphony::machine::release::{Manifest, Serves, Version};
+    let tree = Tree::new();
+    let linked = plugged(&tree, "linked", &["shelf"], &[]);
+    let processes = plugged(&tree, "processes", &["shelf"], &["shelf"]);
+    let version = Version { major: 0, minor: 3 };
+    let manifest = Manifest {
+        release: "release-1".into(),
+        commit: "abc".into(),
+        serves: Serves {
+            schema: symphony_board::SCHEMA,
+            protocol: version,
+            tasks_api: version,
+            pin: symphony::machine::PIN,
+        },
+        client: "client/0".into(),
+        artifacts: Vec::new(),
+    };
+    assert_eq!(holding(None, &linked), "", "no release is installed");
+    assert_eq!(holding(Some(&manifest), &processes), "");
+    assert_eq!(
+        holding(Some(&manifest), &linked),
+        format!(
+            "The machine's Symphony stays a project's build, not the release release-1: linked \
+             names the linked plugin shelf, and a release's server serves a plugin only from its \
+             process: a [plugins.process] command for it in {} lets the release serve every \
+             project (docs/PLUGIN_PROTOCOL.md).",
+            linked.root.join("symphony.toml").display()
+        )
+    );
+}

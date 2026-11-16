@@ -29,15 +29,43 @@ A navigation to a path of today
 the starter's; other requests on such a path are answered by that project in place. A
 project whose root is gone, or whose plugins the running build lacks, answers 503 saying why.
 
-The running server compiles every registered project's plugins. A start judges it
-(`symphony::machine::host`): served, when it holds the project's plugins at the project's pin
-and schema or newer; waiting, when it lacks a plugin, naming the project whose build holds them;
-refused, registering nothing, when the project's pin or schema is newer than the running
-build's and the start's build cannot replace it. A project with no plugins never replaces it. A start whose build holds every registered plugin replaces it by
-hand-off: it writes `handover.json` (its executable, root and install folder) in the machine
-folder and sends `SIGUSR1`; the server hands its sockets to that build as a reload does.
+A start judges the running server by the host rule (`symphony::machine::host`). A build serves a
+project's plugin when the plugin answers from a process of its own (`[plugins.process]`,
+[PLUGIN_PROTOCOL](../../docs/PLUGIN_PROTOCOL.md#the-host)), or when it compiles the plugin. The
+server of a release installed on the machine compiles none: it serves every project whose plugins
+all answer from a process, at its pin and board schema or older, and a project one board schema
+ahead, whose board it reads and writes nothing to. A start that finds no server running starts
+the server of the release `current` names, by its own folder's path
+(`releases/NAME/bin/symphony-server`), when that release serves every registered project, and its
+own build otherwise (`symphony::machine::switch`); the record (`server.json`) names the release
+its server is. No start replaces a release's server: a project naming a linked plugin is
+registered and refused, its pages naming the `[plugins.process]` command that lets the release
+serve it, and a project at a newer pin or schema is refused until `current` names a release that
+serves it.
 
-The shared server watches main's server sources and transitive local crate sources. It builds
+While a project's build is the machine's server, a start judges it by the plugins it compiles:
+served, when it holds the project's linked plugins at the project's pin and schema or newer;
+waiting, when it lacks one, naming the project whose build holds them; refused, registering
+nothing, when the project's pin or schema is newer than the running build's and the start's build
+cannot replace it. A project with no plugins, and a start of a release, never replaces it. A start
+whose build holds every registered linked plugin replaces it by hand-off: it writes
+`handover.json` (its executable, root and install folder) in the machine folder and sends
+`SIGUSR1`; the server hands its sockets to that build as a reload does. While a release is
+installed, every project naming a linked plugin says on its pages that it holds the machine's
+server on a project's build, naming the command that lets it go, and `just release --status` says
+the same ([RELEASES](../../docs/RELEASES.md#status)); a stop and a start then make the release
+the machine's server once nothing holds it.
+
+A release's server builds nothing and watches no source: once a second it reads where the
+machine's `current` link points, and when it names another release, hands its sockets to that
+release's server, by its own folder's path, as a reload below hands them. A release not installed
+whole, or whose server does not become ready, leaves the running one serving, said on the notice
+and tried again on the waits below; `current` pointed back at the running release clears the
+notice. A starter's request to hand over is refused, said in the log. The release a server is, and
+the client it serves, are read once, as it starts.
+
+A project's build as the shared server watches main's server sources and transitive local crate
+sources. It builds
 through the command main's `[project] cargo` names (when unset, `tools/cargo.sh` in Symphony's
 own workspace and plain `cargo` elsewhere) under `symphony/server/reload-build.lock`, while
 continuing to serve.
@@ -151,7 +179,10 @@ insertions and removals do not shift an integer offset past an unread record.
 Document and picture links in those snapshots retain the branch prefix. Removed worktrees
 return 404. Empty or missing task slugs return 400 before reading the board.
 A missing task returns 404; an unavailable board returns 503 while the document
-board continues without task counts. A board that took a read and answered it
+board continues without task counts. A board one schema ahead of the build's (main's build moved
+it on before a release caught up) is read, and nothing is written to it from the server: its ticks
+dispatch no callback, give no work and keep no owner's asks, the schema rule refuses every other
+write, and every page says so on the notice until the board and the build agree. A board that took a read and answered it
 later than the 3 s wait, on its one resend too, is slow: 504, "the task board is
 slow", never "cannot be reached". The wait bounds the board tick, which shares the
 data worker's thread with document refreshes, and bounds each sending's whole
@@ -175,7 +206,7 @@ embeds no client: run from the release's folder in the machine folder
 (`releases/NAME/bin/symphony-server`, through `current` or not), it serves that release's
 `client/HASH/` from beside it, whatever else is named
 ([RELEASES](../../docs/RELEASES.md#the-install)). `symphony-server --serves` prints, as one line
-of JSON, the plugin protocol and the board schema the build serves. `just client-update` in the Symphony workspace
+of JSON, the plugin protocol, the board schema and the Symphony pin the build serves. `just client-update` in the Symphony workspace
 refreshes the real distribution before committing client changes. Its default
 root is the checkout's top level even when the command starts in a subfolder; `--root`
 selects another folder. A private server on the main checkout leaves the

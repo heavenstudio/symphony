@@ -259,6 +259,7 @@ impl Shared {
             pin: build.pin,
             schema: build.schema,
             projects: Vec::new(),
+            release: build.release,
             pid: self.pid,
             port: self.port,
             root: self.root.display().to_string(),
@@ -867,6 +868,10 @@ struct Started {
 
 /// Listen, start the owned workers and print the URL; a failed start is its exit status.
 async fn start(mut serve: Serve, open: bool) -> Result<Started, i32> {
+    // The release this server is, read once, now: what it serves and follows for its life.
+    if let Some((_, manifest)) = symphony::machine::release::this() {
+        eprintln!("· Symphony: the server of the release {}", manifest.release);
+    }
     let mut reload = match crate::reload::setup(&serve) {
         Ok(setup) => setup,
         Err(why) => {

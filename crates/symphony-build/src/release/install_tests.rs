@@ -30,7 +30,7 @@ fn builder(tree: &Tree, binaries: &[&str], (server, board): (i64, i64), status: 
         let body = match *binary {
             "symphony-server" => format!(
                 "[ \"$1\" = --serves ] || exit 9; echo '{{\"protocol\":{{\"major\":0,\"minor\":3}},\
-                 \"schema\":{server}}}'"
+                 \"schema\":{server},\"pin\":1}}'"
             ),
             "tasks" => format!(
                 "[ \"$1\" = api ] || exit 9; grep -q '\"method\": \"version\"' || exit 8; echo \
@@ -130,6 +130,7 @@ fn a_green_build_is_installed_whole_with_its_manifest_and_current_points_at_it()
                 major: 1,
                 minor: 14
             },
+            pin: 1,
         }
     );
     let paths: Vec<&str> = (manifest.artifacts.iter())
@@ -161,7 +162,10 @@ fn a_green_build_is_installed_whole_with_its_manifest_and_current_points_at_it()
     );
     assert_eq!(
         installed.said[1],
-        format!("{TAG} serves board schema 18, plugin protocol 0.3 and tasks api 1.14")
+        format!(
+            "{TAG} serves board schema 18, plugin protocol 0.3 and tasks api 1.14, at Symphony \
+             pin 1"
+        )
     );
     assert_eq!(
         installed.said[2],
@@ -368,9 +372,12 @@ fn the_newer_release_takes_current_and_names_the_one_before() {
 
 #[test]
 fn what_the_binaries_say_is_read_whole_or_refused() {
-    let server = r#"{"protocol":{"major":0,"minor":3},"schema":18}"#;
+    let server = r#"{"protocol":{"major":0,"minor":3},"schema":18,"pin":1}"#;
     let board = r#"{"ok": {"api": {"major": 1, "minor": 14}, "schema": 18}}"#;
-    assert!(read_serves(server, board).is_ok());
+    assert_eq!(read_serves(server, board).map(|serves| serves.pin), Ok(1));
+    // A server built before it said its pin is read at pin 0, older than every project's.
+    let unpinned = r#"{"protocol":{"major":0,"minor":3},"schema":18}"#;
+    assert_eq!(read_serves(unpinned, board).map(|serves| serves.pin), Ok(0));
     for (server, board, why) in [
         (
             "nonsense",
@@ -407,6 +414,11 @@ fn what_the_binaries_say_is_read_whole_or_refused() {
             server,
             r#"{"ok": {"api": {"major": -1, "minor": 14}, "schema": 18}}"#,
             "the release's build names no tasks api major",
+        ),
+        (
+            r#"{"protocol":{"major":0,"minor":3},"schema":18,"pin":4294967296}"#,
+            board,
+            "the release's symphony-server names the pin 4294967296",
         ),
     ] {
         let refused = read_serves(server, board).unwrap_err();
@@ -492,6 +504,7 @@ fn the_real_build_installs_this_checkouts_release() {
         .unwrap()
         .unwrap();
     assert_eq!(manifest.serves.schema, symphony_board::SCHEMA);
+    assert_eq!(manifest.serves.pin, symphony::machine::PIN);
     assert_eq!(
         manifest.serves.protocol.minor,
         symphony_plugin::protocol::PROTOCOL.minor

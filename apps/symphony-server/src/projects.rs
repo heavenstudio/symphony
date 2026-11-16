@@ -19,6 +19,12 @@
 //! is read again whenever its file changes, at a request or at the server's own look every
 //! [`LOOK`], and a changed root or id is served from new state.
 //!
+//! A project this build cannot serve by the host rule (`symphony::machine::host`) is refused, its
+//! pages saying why and what serves it: for a release's server, the `[plugins.process]` command a
+//! linked plugin needs, or the release `current` must name. While a project's build serves and a
+//! release is installed, each project naming a linked plugin says on its pages that it holds the
+//! machine on a project's build (`symphony::machine::switch`), read again with the registry.
+//!
 //! Each project's state holds the maintenance of its board, its idle sweep
 //! ([`crate::front::maintenance`]), on a schedule of its own: started once the
 //! server's generation is live, its socket hand-off committed, as the starter's own are, or when
@@ -37,7 +43,7 @@ use axum::extract::{ConnectInfo, Request, State};
 use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, Uri, header};
 use axum::response::{IntoResponse, Json, Response};
 use symphony::entrypoint::below;
-use symphony::machine::{Entry, PROJECTS, Registry};
+use symphony::machine::{Entry, PROJECTS, Registry, switch};
 use tower::ServiceExt;
 
 use crate::front::Shared;
@@ -160,8 +166,27 @@ impl Projects {
             let _within = runtime.as_ref().map(tokio::runtime::Handle::enter);
             while !projects.starter.wait(LOOK) {
                 drop(projects.read());
+                projects.tell_switch();
             }
         })
+    }
+
+    /// Tell each project served whose hub is up what the machine's server is to it
+    /// ([`switch`]): while this server is a project's build and the machine has a release
+    /// installed, each project naming a linked plugin holds the machine on a project's build, and
+    /// its pages say so; nothing otherwise. A release's server refuses such a project, whose page
+    /// says why ([`Projects::refused`]).
+    fn tell_switch(&self) {
+        let served = self.served();
+        let installed = (self.build.release.is_none())
+            .then(|| symphony::machine::release::current_installed(&self.machine))
+            .flatten();
+        for project in &served {
+            let Some(hub) = project.shared.api.get() else {
+                continue;
+            };
+            hub.tell_machine(holding(installed.as_ref(), &project.entry));
+        }
     }
 
     /// Start the maintenance of each other project served now, once: none once the server stopped
@@ -314,22 +339,7 @@ impl Projects {
         if entry.root != self.starter_root && !entry.root.is_dir() {
             return Some("its folder is gone: run `just symphony` in its new folder".to_string());
         }
-        let lack = self.build.lacks(entry)?;
-        let fix = match lack {
-            Lack::Plugins(_) => format!(
-                "run `just symphony` in {}'s checkout, whose build holds them",
-                entry.id
-            ),
-            Lack::Pin(_) | Lack::Schema(_) => format!(
-                "{}, which started this Symphony, must bump its Symphony, then run `just \
-                 symphony` there",
-                self.starter_id
-            ),
-        };
-        Some(format!(
-            "this Symphony {}: {fix}",
-            lack.said(&self.build, &entry.id)
-        ))
+        lacking(&self.build, &self.starter_id, entry)
     }
 
     /// The project today's paths belong to: the starter's checkout under whatever id it is
@@ -344,6 +354,58 @@ impl Projects {
                     .find(|served| served.entry.id == self.starter_id)
             })
     }
+}
+
+/// Why `build`, the server `starter_id` started, cannot serve `entry`, naming what fixes it; none
+/// when it can. A release's server is replaced by no start, so its fixes are a plugin's process
+/// command and a release that serves the project.
+fn lacking(build: &Build, starter_id: &str, entry: &Entry) -> Option<String> {
+    let lack = build.lacks(entry)?;
+    let fix = match (&lack, &build.release) {
+        (Lack::Plugins(_), None) => format!(
+            "run `just symphony` in {}'s checkout, whose build holds them",
+            entry.id
+        ),
+        (Lack::Plugins(names), Some(_)) => format!(
+            "a [plugins.process] command for {} in {}, then `just symphony` in its checkout, lets \
+             this server serve it (docs/PLUGIN_PROTOCOL.md)",
+            names.join(", "),
+            entry.root.join(symphony::project::FILE).display()
+        ),
+        (Lack::Pin(_) | Lack::Schema(_), None) => format!(
+            "{starter_id}, which started this Symphony, must bump its Symphony, then run `just \
+             symphony` there"
+        ),
+        (Lack::Pin(_) | Lack::Schema(_), Some(_)) => format!(
+            "this server serves {} once the machine's `current` names a release that does, which \
+             its reload follows",
+            entry.id
+        ),
+    };
+    Some(format!(
+        "this Symphony {}: {fix}",
+        lack.said(build, &entry.id)
+    ))
+}
+
+/// What the pages of `entry` say of the machine's server while it is a project's build and
+/// `installed` is the release the machine's `current` names: that `entry` holds it there, when it
+/// names a linked plugin ([`switch::held`]); nothing otherwise.
+fn holding(installed: Option<&symphony::machine::release::Manifest>, entry: &Entry) -> String {
+    let Some(installed) = installed else {
+        return String::new();
+    };
+    let held = switch::held(&Registry {
+        projects: vec![entry.clone()],
+    });
+    held.map(|hold| {
+        format!(
+            "The machine's Symphony stays a project's build, not the release {}: {}.",
+            installed.release,
+            hold.said()
+        )
+    })
+    .unwrap_or_default()
 }
 
 /// The one server's routes: every request, before any project's. Its own JSON answers say
