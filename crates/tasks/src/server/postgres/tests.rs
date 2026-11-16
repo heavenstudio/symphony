@@ -205,3 +205,169 @@ fn programs_that_are_not_there_are_refused_naming_the_setting_and_the_install() 
     assert!(refused.contains("[board] postgresql"), "{refused}");
     assert!(refused.contains("brew install postgresql@18"), "{refused}");
 }
+
+/// A scratch board of this test's own under the temporary folder, served by stand-ins for
+/// PostgreSQL's programs: each of `programs` a shell script by its name. Removed when it goes.
+struct StandIn {
+    dir: PathBuf,
+    pg: Postgres,
+}
+
+impl StandIn {
+    fn new(name: &str, programs: &[(&str, &str)]) -> StandIn {
+        let dir = std::env::temp_dir().join(format!("pg-stand-in-{}-{name}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let bin = dir.join("bin");
+        fs::create_dir_all(&bin).unwrap();
+        for (program, script) in programs {
+            let path = bin.join(program);
+            fs::write(&path, format!("#!/bin/sh\n{script}\n")).unwrap();
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let pg = Home::new(&dir.join("board"), Path::new("/s"))
+            .telling(|_| {})
+            .postgresql(&bin);
+        StandIn { dir, pg }
+    }
+
+    fn refused(&self) -> String {
+        self.pg.ensure().unwrap_err().to_string()
+    }
+}
+
+impl Drop for StandIn {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir(self.pg.socket());
+        let _ = fs::remove_dir_all(&self.dir);
+    }
+}
+
+/// A `postgres` that says `release`, and does `serving` when it is started on its data.
+fn postgres(release: &str, serving: &str) -> String {
+    format!(
+        "if [ \"$1\" = --version ]; then echo 'postgres (PostgreSQL) {release} (Homebrew)'; exit 0; fi\n{serving}"
+    )
+}
+
+/// An `initdb` that makes a data folder with no more in it than its release.
+const INITDB: &str = "mkdir -p \"$2\" && echo 18 > \"$2/PG_VERSION\"";
+
+#[test]
+fn a_release_older_than_the_oldest_or_none_is_refused_naming_it() {
+    let old = StandIn::new("old", &[("postgres", &postgres("17.2", "exit 1"))]);
+    let refused = old.refused();
+    assert!(
+        refused.contains("is PostgreSQL 17.2; the board runs on 18 or later"),
+        "{refused}"
+    );
+    assert!(
+        !old.pg.data().exists(),
+        "nothing is made for a release refused"
+    );
+    let none = StandIn::new("none", &[("postgres", "echo 'not a database'")]);
+    let refused = none.refused();
+    assert!(
+        refused.contains("said \"not a database\", no release of PostgreSQL"),
+        "{refused}"
+    );
+}
+
+#[test]
+fn an_initdb_that_fails_makes_nothing_where_a_start_looks_and_says_why_in_its_log() {
+    let failing = StandIn::new(
+        "initdb",
+        &[
+            ("postgres", &postgres("18.7", "exit 1")),
+            (
+                "initdb",
+                "mkdir -p \"$2\"; echo 'initdb: error: could not write: No space left' >&2; exit 1",
+            ),
+        ],
+    );
+    let refused = failing.refused();
+    assert!(
+        refused.contains("initdb did not make the board's PostgreSQL data"),
+        "{refused}"
+    );
+    assert!(refused.contains("No space left"), "{refused}");
+    assert!(!failing.pg.data().exists());
+    let log = fs::read_to_string(failing.pg.log()).unwrap();
+    assert!(log.contains("No space left"), "{log}");
+    // What it left beside the data is made anew by the next start, which then gets as far as the
+    // server: this stand-in has none, so it ends before it is ready.
+    let making = failing.dir.join("board/postgresql.making");
+    assert!(making.is_dir());
+    fs::write(
+        failing.pg.program("initdb"),
+        format!("#!/bin/sh\n{INITDB}\n"),
+    )
+    .unwrap();
+    fs::write(making.join("half-made"), "").unwrap();
+    let refused = failing.refused();
+    assert!(refused.contains("did not start"), "{refused}");
+    assert!(failing.pg.data().join("PG_VERSION").is_file());
+    assert!(!failing.pg.data().join("half-made").exists());
+    assert!(!making.exists());
+}
+
+#[test]
+fn a_server_that_ends_before_it_is_ready_is_said_with_what_it_logged() {
+    let ending = StandIn::new(
+        "ends",
+        &[
+            (
+                "postgres",
+                &postgres(
+                    "18.7",
+                    "echo 'FATAL:  could not create shared memory segment' >&2; exit 1",
+                ),
+            ),
+            ("initdb", INITDB),
+        ],
+    );
+    let refused = ending.refused();
+    assert!(
+        refused.contains("the board's PostgreSQL (pid "),
+        "{refused}"
+    );
+    assert!(
+        refused.contains("did not start: FATAL:  could not create shared memory segment"),
+        "{refused}"
+    );
+    // Its settings were written over the data's, and its socket's folder made private.
+    let conf = fs::read_to_string(ending.pg.data().join("postgresql.conf")).unwrap();
+    assert_eq!(conf, settings(&ending.pg.socket()));
+    let folder = fs::metadata(ending.pg.socket()).unwrap();
+    assert_eq!(folder.permissions().mode() & 0o777, 0o700);
+    // A second start takes the folder it made; nothing ran to stop.
+    assert!(ending.refused().contains("did not start"));
+    assert_eq!(ending.pg.stop().unwrap(), None);
+    assert!(!ending.pg.socket().exists());
+}
+
+#[test]
+fn a_socket_folder_another_could_reach_is_refused_before_a_server_starts() {
+    let open = StandIn::new(
+        "open-socket",
+        &[
+            ("postgres", &postgres("18.7", "echo started >&2; exit 1")),
+            ("initdb", INITDB),
+        ],
+    );
+    fs::DirBuilder::new()
+        .mode(0o755)
+        .create(open.pg.socket())
+        .unwrap();
+    fs::set_permissions(open.pg.socket(), fs::Permissions::from_mode(0o755)).unwrap();
+    let refused = open.refused();
+    assert!(
+        refused.contains("is there and is not a folder this user alone reads"),
+        "{refused}"
+    );
+    assert!(
+        !open.pg.log().exists()
+            || !fs::read_to_string(open.pg.log())
+                .unwrap()
+                .contains("started")
+    );
+}
