@@ -713,7 +713,10 @@ What holds on every page, and each page's contract where its section above names
   `src/taskcard.tsx`), the agents page ([below](#the-agents-page)) and a task's page
   ([below](#a-tasks-page); the gates' and the timeline's contract,
   [TASKS](../../docs/TASKS.md#gates) and [the timeline](../../docs/TASKS.md#the-timeline)). The
-  board fetches counts first, then nearby column pages; finished work defaults to 24 hours, with
+  board alone takes the window's whole width, where every other page keeps the frame's 1440 px
+  (`main` in `src/styles/board.css`): its pipeline's columns keep their 288 px, which
+  `src/cardheight.ts` repeats, and its scroller scrolls sideways only when the window cannot
+  hold them all. The board fetches counts first, then nearby column pages; finished work defaults to 24 hours, with
   a week switch and older paging. A feed event that changes what a view lists (a task, a message
   while searching, the counts) reads the counts again 750 ms on, then the columns, each its first
   page as long as the rows it shows (the listing's `rows`), so the pages Load more brought, and the
@@ -798,7 +801,7 @@ What holds on every page, and each page's contract where its section above names
   ghost (`cover`) until no such region shows on its first screen, its read fails, or
   `SETTLE_MS` (3 s) passes; a hidden control takes no focus, so a
   browser test waits for `visible(SELECTOR)` before it focuses one. The task board shows its
-  heading (one node from ghost to board, so its link keeps focus) and controls at once, each
+  heading and controls at once, each
   column reserving a card's box per row of its first page (`PAGE` in `src/board.tsx`), at the
   pitch kept for its place, else `ROW`, a typical card (a title of two lines, a row of links and
   one of roles; its ghost draws no role chip in a column no agent has taken up, `unstaffed`),
