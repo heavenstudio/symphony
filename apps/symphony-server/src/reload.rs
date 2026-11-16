@@ -465,7 +465,7 @@ fn watch_with<W: Watcher + Send + 'static>(
         return Some(crate::front::worker(
             crate::front::RELOAD_WORKER,
             move || {
-                follow(
+                follow::<W>(
                     &serve,
                     &Follow {
                         machine,
@@ -474,7 +474,7 @@ fn watch_with<W: Watcher + Send + 'static>(
                         lease,
                     },
                     &shared,
-                    period.min(FOLLOW),
+                    period,
                     retry,
                 );
             },
@@ -565,7 +565,7 @@ fn watch_with<W: Watcher + Send + 'static>(
             // can be lost. An idle tick checks shutdown and the hand-off flag; it does not read
             // files, hash code or spawn repository commands.
             if !initial {
-                match backstop.wait(&recv, Duration::from_millis(250)) {
+                match backstop.wait(&recv, TICK) {
                     Wake::Event => backstop::debounce(&recv, backstop::QUIET, backstop::BURST),
                     Wake::Period => {}
                     Wake::Idle => continue,
@@ -657,8 +657,50 @@ fn watch_with<W: Watcher + Send + 'static>(
     Some(crate::front::worker(crate::front::RELOAD_WORKER, reload))
 }
 
-/// How often a release's server reads where the machine's `current` link points: one `readlink`.
-const FOLLOW: Duration = Duration::from_secs(1);
+/// The longest a watching loop waits for its watcher's event before it looks for shutdown and a
+/// starter's hand-off request, neither of which wakes it.
+const TICK: Duration = Duration::from_millis(250);
+
+/// Whether a watcher's `event` in the machine folder can have moved its `current` link: a new link
+/// renamed over it ([`symphony::machine::release::point`]), a rescan, or the watcher's own error.
+fn moves_current(event: &notify::Result<notify::Event>) -> bool {
+    event.as_ref().map_or(true, |event| {
+        event.need_rescan()
+            || (!matches!(event.kind, notify::EventKind::Access(_))
+                && event.paths.iter().any(|path| {
+                    path.file_name()
+                        == Some(std::ffi::OsStr::new(symphony::machine::release::CURRENT))
+                }))
+    })
+}
+
+/// A watcher `W` of `machine`'s own entries, kept while it is followed, and the events that can
+/// have moved its `current` link, one message for a burst ([`moves_current`]). A watcher that
+/// cannot start, or cannot watch the folder, is said in the log and hears nothing: the backstop's
+/// period then reads `current` alone.
+fn watch_current<W: Watcher>(machine: &Path) -> (Option<W>, mpsc::Receiver<()>) {
+    let (send, recv) = mpsc::sync_channel(1);
+    let handler = move |event: notify::Result<notify::Event>| {
+        if moves_current(&event) {
+            let _ = send.try_send(());
+        }
+    };
+    let watcher = W::new(handler, notify::Config::default()).and_then(|mut watcher| {
+        watcher.watch(machine, RecursiveMode::NonRecursive)?;
+        Ok(watcher)
+    });
+    match watcher {
+        Ok(watcher) => (Some(watcher), recv),
+        Err(why) => {
+            eprintln!(
+                "· Symphony reload: cannot watch {} for `current` moving: {why}; it is read once \
+                 a period",
+                machine.display()
+            );
+            (None, recv)
+        }
+    }
+}
 
 /// What a release's server hands over when the machine's `current` moves: the machine folder, the
 /// release it runs, its listening sockets and its lease.
@@ -669,22 +711,46 @@ struct Follow {
     lease: File,
 }
 
-/// The reload of the server of the release `follow.release`: every `period`, whether the
-/// machine's `current` names another release, and when it does, the hand-off to that release's
-/// server, by its own folder's path, with no build. A release not installed whole, or whose server
-/// does not become ready, leaves this one serving, said on the notice, and is tried again when
-/// `retry` says; `current` named back at this release clears the notice. A starter's request to
-/// hand over is refused, said in the log: no start replaces a release's server
+/// The reload of the server of the release `follow.release`: whether the machine's `current` names
+/// another release, read at the start, as its watcher `W` hears the link move, and once a `period`
+/// as an event can be lost; when it does, the hand-off to that release's server, by its own
+/// folder's path, with no build. A release not installed whole, or whose server does not become
+/// ready, leaves this one serving, said on the notice, and is tried again when `retry` says, at the
+/// check that finds it due; `current` named back at this release clears the notice. A starter's
+/// request to hand over is refused, said in the log: no start replaces a release's server
 /// ([`symphony::machine::host`]).
-fn follow(serve: &Serve, follow: &Follow, shared: &Shared, period: Duration, mut retry: Retry) {
+fn follow<W: Watcher>(
+    serve: &Serve,
+    follow: &Follow,
+    shared: &Shared,
+    period: Duration,
+    mut retry: Retry,
+) {
     let Follow {
         machine,
         release,
         sockets,
         lease,
     } = follow;
+    // Watched before its first read, so no move after that read goes unheard.
+    let (_watcher, moved) = watch_current::<W>(machine);
+    let mut backstop = Backstop::new(period);
+    let mut initial = true;
     let mut attempted: Option<String> = None;
-    while !shared.wait(period) {
+    while !shared.stopping() {
+        // An idle tick only looks for shutdown and the hand-off flag: `current` is read at the
+        // start, at a move and once a period.
+        let look = initial
+            || match backstop.wait(&moved, TICK) {
+                // A new link and its rename are one move: read once both are done.
+                Wake::Event => {
+                    backstop::debounce(&moved, backstop::QUIET, backstop::QUIET);
+                    true
+                }
+                Wake::Period => true,
+                Wake::Idle => false,
+            };
+        initial = false;
         if shared
             .handover
             .swap(false, std::sync::atomic::Ordering::SeqCst)
@@ -700,6 +766,9 @@ fn follow(serve: &Serve, follow: &Follow, shared: &Shared, period: Duration, mut
                 Some(Err(why)) => eprintln!("· Symphony hand-off refused: {why}"),
                 None => {}
             }
+        }
+        if !look {
+            continue;
         }
         let Some(next) = symphony::machine::release::current(machine) else {
             continue;
