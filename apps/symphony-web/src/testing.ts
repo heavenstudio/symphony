@@ -161,6 +161,7 @@ export function anAgent(handle: string, fields: Partial<Agent> = {}): Agent {
     in_process: false,
     go: null,
     tokens: null,
+    cost: null,
     ...fields,
   };
 }

@@ -754,6 +754,11 @@ export type Agent = {
    * any was, or from a board that records none.
    */
   tokens: AgentTokens | null;
+  /**
+   * What those tokens cost, estimated at API list prices; none beside no tokens, or from a board
+   * that prices none.
+   */
+  cost: AgentCost | null;
 };
 
 export type HeldTask = { slug: string; role: string; status: string };
@@ -790,6 +795,28 @@ export type AgentTokens = {
    */
   calls: number;
 };
+
+export type AgentCost = {
+  /**
+   * The priced kinds all told.
+   */
+  dollars: number;
+  input: number;
+  cache_write_5m: number;
+  cache_write_1h: number;
+  cache_read: number;
+  output: number;
+  /**
+   * The tokens of each model and speed the table has no price for.
+   */
+  unpriced: Array<AgentUnpriced>;
+  /**
+   * The day the table's prices were read (`YYYY-MM-DD`): the figures are an estimate at them.
+   */
+  prices: string;
+};
+
+export type AgentUnpriced = { model: string; speed: string; tokens: AgentTokens };
 
 export type SessionGo = {
   /**
