@@ -2,9 +2,10 @@
 //! first, each run once across the days its lines are in, its steps left out, its filters and its
 //! pages, reading no further back than a full page needs; what is not read named; each file's keys
 //! kept between reads until the file changes, for the window's days alone, a file that grew read
-//! on from its last line, one that shrank, was replaced or changed under a kept offset parsed
-//! whole, each answer as a whole parse would give it; a run opened on its steps in order; and the
-//! routes refusing a bad ask before any hub and answering through one.
+//! on from its last line, once whatever other answers read it at once or hold it, one that shrank,
+//! was replaced or changed under a kept offset parsed whole, each answer as a whole parse would
+//! give it; a run opened on its steps in order; and the routes refusing a bad ask before any hub
+//! and answering through one.
 
 use super::*;
 use crate::testing::Tree;
@@ -364,7 +365,7 @@ fn a_day_file_not_read_is_named_and_days_past_the_window_are_never_read() {
 }
 
 #[test]
-fn a_day_file_is_parsed_again_only_once_its_length_or_modification_time_changed() {
+fn a_day_file_is_read_again_once_its_status_changes_or_a_line_answered_is_another_run_s() {
     let tree = Tree::new();
     let runs = tree.path("runs");
     let index = Index::default();
@@ -541,6 +542,84 @@ fn a_line_cut_short_is_parsed_again_once_it_is_whole() {
     append(&runs, TODAY, &[start("c", "test", TODAY + 30.0)], "");
     answers_as_parsed_whole(&index, &runs, &all, &id("c"));
     assert_eq!(index.parsed() - parsed, length(&runs, TODAY) - before);
+}
+
+#[test]
+fn a_day_an_answer_has_still_to_read_its_lines_from_is_read_on_by_another() {
+    let tree = Tree::new();
+    let runs = tree.path("runs");
+    let index = Index::default();
+    let all = Filters::default();
+    let verify = start("a", "verify", TODAY + 10.0);
+    write_day(&runs, TODAY, std::slice::from_ref(&verify), "");
+    // An answer that has read the day and taken its runs, and not yet read their lines back.
+    let mut budget = RUNS_READ_BYTES;
+    let mut found = Vec::new();
+    let held = day_file(&index, &runs, TODAY, &mut budget, &mut |day| {
+        found.extend(day.runs.iter().map(|(run, key)| Found {
+            run: run.clone(),
+            key: key.clone(),
+            day: 0,
+        }));
+    })
+    .unwrap()
+    .unwrap();
+    assert_eq!(index.parsed(), length(&runs, TODAY));
+    append(&runs, TODAY, &[start("b", "test", TODAY + 20.0)], "");
+    answers_as_parsed_whole(&index, &runs, &all, &id("b"));
+    assert_eq!(
+        index.parsed(),
+        length(&runs, TODAY),
+        "only the line appended is parsed"
+    );
+    assert_eq!(
+        lines_of(&[held], &found),
+        (vec![verify], Vec::new()),
+        "the first answer reads its line back all the same"
+    );
+}
+
+#[test]
+fn answers_asked_for_at_once_parse_each_byte_appended_once() {
+    let tree = Tree::new();
+    let runs = tree.path("runs");
+    let index = Index::default();
+    let all = Filters::default();
+    write_day(&runs, TODAY, &[start("a", "verify", TODAY + 10.0)], "");
+    let readers = 4;
+    for round in 0..10_u32 {
+        let name = format!("b{round}");
+        let line = start(&name, "test", TODAY + 20.0 + f64::from(round));
+        append(&runs, TODAY, &[line], "");
+        // Two lists and two pages of the run just appended, asked for together, each as a whole
+        // parse answers it.
+        let together = std::sync::Barrier::new(readers);
+        std::thread::scope(|scope| {
+            for reader in 0..readers {
+                let (index, runs, all, together) = (&index, &runs, &all, &together);
+                let run_id = id(&name);
+                scope.spawn(move || {
+                    together.wait();
+                    if reader % 2 == 0 {
+                        assert_eq!(
+                            page(index, runs, all, NOW),
+                            page(&Index::default(), runs, all, NOW)
+                        );
+                    } else {
+                        assert_eq!(
+                            run(index, runs, &run_id, NOW),
+                            run(&Index::default(), runs, &run_id, NOW)
+                        );
+                    }
+                });
+            }
+        });
+    }
+    assert_eq!(
+        index.parsed(),
+        length(&runs, TODAY),
+        "each byte parsed once, whoever asked"
+    );
 }
 
 #[test]
