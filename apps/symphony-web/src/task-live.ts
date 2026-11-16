@@ -12,6 +12,7 @@
 // any of them is asked, so each answer is at that version or after it, and an event heard before an
 // answer is applied again onto it (`replay`).
 
+import { flushSync } from "react-dom";
 import {
   answered,
   drawn,
@@ -586,7 +587,10 @@ export class LiveTask {
     d.generation += 1;
     d.events.push([d.generation, value]);
     if (d.events.length > KEPT_EVENTS) d.events.shift();
-    const reload = this.apply(value);
+    // Drawn at once, within the event, so the hold starts from the change in the page: left to
+    // React's scheduler, a later task a loaded renderer runs after its frames, the hold's four
+    // quiet frames could pass before it.
+    const reload = flushSync(() => this.apply(value));
     if (reload === null) return false;
     if (reload) void this.refreshAfter();
     return true;

@@ -14,7 +14,7 @@ use serde_json::{Value, json};
 
 use crate::chrome::Chrome;
 use crate::site::Site;
-use crate::{SHOWN, STALL, chrome, dist, wait_for_feed};
+use crate::{LATE_TASKS, LATE_TASKS_TAKEN, SHOWN, STALL, chrome, dist, wait_for_feed};
 
 /// The board's version, from which the page follows the feed: the fixture's.
 fn version() -> u64 {
@@ -203,37 +203,6 @@ fn scroll_top(page: &mut Chrome) -> f64 {
         .unwrap()
 }
 
-/// A page script under which, once the test sets `window.__late` to a count of frames, every task
-/// of React's scheduler (a `MessageChannel` message, one posted before as well) runs that many
-/// frames after it comes, as a slow phone's or a loaded machine's renderer runs its frames before
-/// a task waiting for it. `window.__channels` counts the channels whose messages it takes, React's
-/// scheduler's the client's one.
-const LATE_TASKS: &str = r#"window.__late = 0;
-window.__channels = 0;
-(() => {
-    const Channel = window.MessageChannel;
-    const receive = Object.getOwnPropertyDescriptor(MessagePort.prototype, "onmessage");
-    window.MessageChannel = class extends Channel {
-        constructor() {
-            super();
-            const port = this.port1;
-            let handler = null;
-            Object.defineProperty(port, "onmessage", {
-                get: () => handler,
-                set: given => {
-                    handler = given;
-                    if (typeof given !== "function") return receive.set.call(port, given);
-                    window.__channels += 1;
-                    receive.set.call(port, event => {
-                        let left = window.__late;
-                        (function wait() { if (left-- > 0) requestAnimationFrame(wait); else given.call(port, event); })();
-                    });
-                },
-            });
-        }
-    };
-})();"#;
-
 /// A task filed above the reader keeps their column where it was on their screen: on a desk with
 /// the pointer over Ready, one filed at Ready's top, then one at the top of Concept, the column
 /// before it, which the browser's own scroll anchoring holds; on a phone, where Ready fills the
@@ -273,10 +242,9 @@ fn filed_above_the_reader(late: u32) {
         let mut version = version();
         open(&mut page, &served, width, height);
         if late > 0 {
-            assert!(
-                page.eval("window.__channels")
-                    .as_u64()
-                    .is_some_and(|channels| channels > 0),
+            assert_eq!(
+                page.eval(LATE_TASKS_TAKEN),
+                json!(true),
                 "{width}px: React's scheduler takes no task through the page script's channel, so none would run late"
             );
         }
@@ -297,7 +265,7 @@ fn filed_above_the_reader(late: u32) {
             let filed = task(slug, status, 0, json!([]));
             board.push(filed.clone());
             version += 1;
-            page.eval(&format!("window.__late = {late}"));
+            page.eval(&format!("window.__lateTasks = {late}"));
             push(
                 &served,
                 version,
@@ -309,7 +277,7 @@ fn filed_above_the_reader(late: u32) {
                 "{width}px: {slug} filed moved Ready's first card on the screen from {before} to {}",
                 page.eval(&first_on_screen("ready"))
             );
-            page.eval("window.__late = 0");
+            page.eval("window.__lateTasks = 0");
             // The board scrolled by the row filed above the reader in their column, and by none for
             // one filed in another, though the browser's own anchoring held that one's column: the
             // hold of the reader's took the board back.

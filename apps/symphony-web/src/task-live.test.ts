@@ -26,6 +26,21 @@ import {
 } from "./wire";
 import { NO_WORK } from "./work";
 
+// React's `flushSync` stood in for, as no DOM runs here: whether a draw comes within it.
+const react = vi.hoisted(() => ({ flushing: false }));
+
+vi.mock("react-dom", async (original) => ({
+  ...(await original<typeof import("react-dom")>()),
+  flushSync: <R>(draw: () => R): R => {
+    react.flushing = true;
+    try {
+      return draw();
+    } finally {
+      react.flushing = false;
+    }
+  },
+}));
+
 /** A response as the page reads one: its status, its tag and its JSON body. */
 function answer(status: number, body: unknown = null, etag = ""): Response {
   return {
@@ -996,6 +1011,19 @@ describe("a feed event on a task's page", () => {
     expect(d.events).toHaveLength(128);
     expect(d.events[0]?.[0]).toBe(3);
     expect(d.generation).toBe(130);
+  });
+
+  it("holds the reader's place, then draws the change at once, within the event", () => {
+    const { task, held, host } = shown();
+    const order: string[] = [];
+    held.mockImplementation(() => order.push("held"));
+    host.redraw.mockImplementation(() => order.push(react.flushing ? "drawn" : "drawn later"));
+    expect(task.heard(event(["message", anEntry(1).message]))).toBe(true);
+    // Another task's message changes nothing the page draws: held, and nothing drawn.
+    expect(task.heard(event(["message", anEntry(2, "w/b").message]))).toBe(true);
+    expect(task.heard(event(["machine-work", CASES.samples.work]))).toBe(true);
+    expect(order).toEqual(["held", "drawn", "held", "held", "drawn"]);
+    expect(react.flushing).toBe(false);
   });
 
   it("loses the stream when it cannot be read, changing nothing", () => {
