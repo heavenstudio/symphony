@@ -2,8 +2,8 @@
 
 What the Agents page would show if it opened on the orchestrators rather than on task cards: three
 layouts, put to the owner on the agents-page-orchestrator-first card in
-[DECISIONS](../DECISIONS.md), and the board they were drawn from. "Read 2026-11-16" marks this
-repository's own board as the shared server answered it that evening, read only.
+[DECISIONS](../DECISIONS.md), and the board they were drawn from. Every figure is this
+repository's own board as the shared server answered it on the evening of 2026-11-16, read only.
 
 The ask is the owner's note inbox/agents-page-needs-redesign: the page looks like the task board
 rearranged, and should be more orchestrator based, with less task card information. The page was
@@ -113,8 +113,8 @@ meters stack and the waits follow the agents. Then the agents under no orchestra
 
 - **Length:** 1,639 px wide (under two screens), 3,271 on a phone (four screens), against 5,050
   and 7,143 today. The first orchestrator's load is on the first screen of both.
-- **Reads:** what the page reads today, plus each orchestrator's own task list for its waits (read
-  today when its Following fold opens), one read each.
+- **Reads:** what the page reads today, plus each orchestrator's own task list for its waits (the
+  list today's Following fold reads), one read each.
 - **Cost:** the least: one panel, drawn from the facts every option needs.
 
 ### B: needs a look first
