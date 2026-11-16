@@ -445,10 +445,11 @@ time stale and lost, the running, holding and live counts and the load, in day f
 **Money, estimated at API prices**: tokens alone are hard to weigh, as cache hits and misses
 count differently, so they are priced as if API costs were paid, at a best guess of the actual
 price. Cost is input, output, cache writes and
-cache reads, each priced apart per model from a dated price table in the repository, taken from
-the providers' published prices, and always labelled an estimate. A model the table lacks takes its
-family's newest price, marked as a guess; one with no family is shown unpriced and named. The work
-is `tools/agent-cost-estimate`, after `tools/board-token-usage`.
+cache reads, each priced apart per model and speed from one price table in the repository, taken
+from the providers' published prices with the day they were read, and always labelled an
+estimate. A model the table lacks is shown unpriced and named, and is in no dollar figure. The
+work is `tools/agent-cost-estimate` ([TASKS](../TASKS.md#what-the-tokens-cost)), after
+`tools/board-token-usage`.
 
 ### Board health over days
 

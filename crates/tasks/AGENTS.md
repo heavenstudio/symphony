@@ -30,7 +30,10 @@ own. `cli/api.rs` is `tasks api` ([TASKS](../../docs/TASKS.md#the-tasks-api)), `
 agents API ([TASKS](../../docs/TASKS.md#the-agents-api)), `cli/beat.rs` the heartbeat hook,
 `usage.rs` and `usage/transcript.rs` what its beats read of the session's own transcript, kept
 beside the bound keys and never in the database
-([TASKS](../../docs/TASKS.md#where-the-tokens-go)),
+([TASKS](../../docs/TASKS.md#where-the-tokens-go)), `usage/price.rs` what those tokens cost at the
+price table `usage/prices.toml` every build embeds, whose edit
+`just test-rs -p symphony-board --lib usage::price` reads as the builds do
+([TASKS](../../docs/TASKS.md#what-the-tokens-cost)),
 `cli/attach/` the monitor, `cli/pull.rs` the PULL digest, `cli/commands/wait.rs` `tasks wait`,
 `cli/detached.rs` the detached dispatcher a write starts, and `cli/database.rs`, `cli/snapshot.rs`,
 `cli/schema.rs` and `cli/migrate.rs` the commands of the same names. `--json` is written as the

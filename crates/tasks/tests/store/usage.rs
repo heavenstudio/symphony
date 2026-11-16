@@ -6,7 +6,7 @@
 use crate::common::{Fixture, NOW, RawWrite, Seed};
 use serde_json::json;
 use symphony_board::rows::UsageRow;
-use symphony_board::usage::{Spent, Tally, Tokens};
+use symphony_board::usage::{Cost, Prices, Spent, Tally, Tokens};
 use symphony_board::{Beat, Schema};
 
 /// `n` calls' worth on Opus at the standard speed: `n` of each kind, `n * 1000` read from the cache.
@@ -59,7 +59,15 @@ fn working() -> Fixture {
 }
 
 fn rounds(tally: &Tally) -> Vec<(i64, Tokens)> {
-    tally.rounds.clone()
+    (tally.rounds.iter())
+        .map(|(round, spend)| (*round, spend.tokens))
+        .collect()
+}
+
+fn roles(tally: &Tally) -> Vec<(String, Tokens)> {
+    (tally.roles.iter())
+        .map(|(role, spend)| (role.clone(), spend.tokens))
+        .collect()
 }
 
 fn sum(parts: &[u64]) -> Tokens {
@@ -97,13 +105,13 @@ fn a_task_worked_over_two_rounds_reads_each_rounds_cost_back() {
         [(1, sum(&[1])), (2, sum(&[2, 4])), (3, sum(&[8]))]
     );
     assert_eq!(
-        tally.roles,
+        roles(&tally),
         [
             ("executor".to_string(), sum(&[1, 4])),
             ("reviewer".to_string(), sum(&[2, 8]))
         ]
     );
-    assert_eq!(tally.total, sum(&[1, 2, 4, 8]));
+    assert_eq!(tally.total.tokens, sum(&[1, 2, 4, 8]));
     let first = rows
         .iter()
         .find(|r| (r.handle.as_str(), r.round) == ("amber-heron", 1))
@@ -172,10 +180,50 @@ fn a_session_working_no_task_spends_on_none_in_its_kind_and_an_unbound_key_on_no
         .store
         .spent_by(&["ochre-owl", "amber-heron", "nobody"])
         .unwrap();
-    assert_eq!(
-        by.into_iter().collect::<Vec<_>>(),
-        [("ochre-owl".to_string(), tokens(5))]
+    let by: Vec<(String, Tokens)> = (by.into_iter())
+        .map(|(handle, spend)| (handle, spend.tokens))
+        .collect();
+    assert_eq!(by, [("ochre-owl".to_string(), tokens(5))]);
+}
+
+#[test]
+fn what_a_session_spent_is_priced_row_by_row_at_each_rows_model_and_speed() {
+    let f = working();
+    beat(
+        &f,
+        "exec",
+        &[
+            opus(1),
+            at("claude-opus-5-5", "fast", 3),
+            at("claude-unlisted-0", "standard", 2),
+        ],
     );
+    let prices = Prices::embedded();
+    let mut cost = Cost::default();
+    for (model, speed, n) in [
+        ("claude-opus-5-5", "standard", 1),
+        ("claude-opus-5-5", "fast", 3),
+        ("claude-unlisted-0", "standard", 2),
+    ] {
+        cost.add(&prices.cost(model, speed, &tokens(n)));
+    }
+    // Fast mode is priced apart, above the standard speed.
+    assert!(
+        prices.cost("claude-opus-5-5", "fast", &tokens(1)).total()
+            > prices
+                .cost("claude-opus-5-5", "standard", &tokens(1))
+                .total()
+    );
+    let spend = f.store.spent_by(&["amber-heron"]).unwrap()["amber-heron"].clone();
+    assert_eq!(spend.tokens, sum(&[1, 3, 2]));
+    assert_eq!(spend.cost, cost);
+    assert_eq!(
+        spend.cost.unpriced.keys().collect::<Vec<_>>(),
+        [&("claude-unlisted-0".to_string(), "standard".to_string())]
+    );
+    // A task's tally prices the same rows the same way.
+    let rows = f.store.spent_on(&["sim/jump"]).unwrap();
+    assert_eq!(Tally::of(&rows).total.cost, cost);
 }
 
 /// Where one beat of `amber-heron`, holding `roles`, spends: the task and role.
