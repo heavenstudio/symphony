@@ -4,7 +4,8 @@
 //! Send stays in view, missing pages say so and every page reaches a final state, panels answer the
 //! keyboard, badges stay readable and native controls follow the scheme, in both schemes. Then the
 //! tasks page's (app/tasks-page-polish): a card opens from its title, the filter row reads clearly
-//! and the board does not jump while it loads.
+//! and the board does not jump while it loads. A select's popup grows from the edge nearest its
+//! trigger, leaves drawn and easing out, and under reduced motion only fades.
 use super::components::{appearance, key, open_panel, site, task_tab, theme_action};
 use super::{SHOWN, STALL, chrome, chrome::Chrome, dist, site::Site};
 use serde_json::{Value, json};
@@ -1674,4 +1675,112 @@ fn the_pipeline_labels_start_alike_in_their_columns() {
             .all(|label| &label[1] == first && label[2] == json!("none")),
         "{labels}"
     );
+}
+
+/// The board's Finished tasks select opened from the keyboard, its popup settled.
+fn open_finished(page: &mut Chrome) {
+    assert!(page.wait_for(
+        "document.querySelector('button[aria-label=\"Finished tasks\"]') !== null",
+        SHOWN
+    ));
+    page.eval("document.querySelector('button[aria-label=\"Finished tasks\"]').focus()");
+    key(page, " ", "Space", 32);
+    popup_ready(page);
+}
+
+/// The open popup: the side it opened on, its transform's origin as a share of its width and
+/// height, where it lies and where its trigger does.
+const POPUP: &str = "(() => {const list=document.querySelector('[role=listbox]'),box=list.getBoundingClientRect(),\
+    trigger=document.querySelector('button[aria-label=\"Finished tasks\"]').getBoundingClientRect(),\
+    [x,y]=getComputedStyle(list).transformOrigin.split(' ').map(parseFloat),share=v=>Math.round(v*100)/100;\
+    return {side:list.dataset.side,origin:[share(x/box.width),share(y/box.height)],\
+    top:box.top,bottom:box.bottom,trigger:[trigger.top,trigger.bottom]};})()";
+
+/// The open popup's entrance at its first frame, as `[transform, opacity]`, then let finish again.
+const ENTRANCE: &str = "(() => {const list=document.querySelector('[role=listbox]'),[entrance]=list.getAnimations();\
+    entrance.pause();entrance.currentTime=0;const style=getComputedStyle(list),first=[style.transform,style.opacity];\
+    entrance.finish();return first;})()";
+
+/// Watches the open popup leave: as it is drawn closed, its exit's easing and keyframes, and at
+/// the next frame whether it is still in the page to draw (`window.leaving`).
+const WATCH_EXIT: &str = "(() => {const list=document.querySelector('[role=listbox]');window.leaving=[];\
+    new MutationObserver(()=>{if(list.dataset.state!=='closed')return;const style=getComputedStyle(list);\
+    window.leaving.push([list.isConnected,style.animationName,style.animationTimingFunction]);\
+    requestAnimationFrame(()=>window.leaving.push(list.isConnected));}).observe(list,{attributes:true,attributeFilter:['data-state']});})()";
+
+/// Escape on the open popup, once it has left: what `WATCH_EXIT` saw.
+fn leave(page: &mut Chrome) -> Value {
+    page.eval(WATCH_EXIT);
+    key(page, "Escape", "Escape", 27);
+    assert!(page.wait_for("document.querySelector('[role=listbox]') === null", SHOWN));
+    page.eval("window.leaving")
+}
+
+#[test]
+fn a_select_popup_grows_from_its_trigger_leaves_easing_out_and_under_reduced_motion_only_fades() {
+    let site = site();
+    let Some(mut page) = chrome() else { return };
+    viewport(&mut page, 1280, 900);
+    page.open(&site.url("/tasks"));
+    // Below its trigger it grows from its top edge, drifting down from the trigger.
+    open_finished(&mut page);
+    let below = page.eval(POPUP);
+    assert_eq!(below["side"], json!("bottom"), "{below}");
+    assert_eq!(
+        below["origin"],
+        json!([0.5, 0]),
+        "from the middle of its top edge: {below}"
+    );
+    assert_eq!(
+        page.eval(ENTRANCE),
+        json!(["matrix(0.95, 0, 0, 0.95, 0, -1.9)", "0"]),
+        "it enters scaled down and drawn toward its trigger"
+    );
+    // Its exit is drawn, easing out, and then it goes.
+    assert_eq!(
+        leave(&mut page),
+        json!([[true, "dx-picker-out", "ease-out"], true]),
+        "the popup closed is drawn leaving"
+    );
+    // A window too short below its trigger opens it above, growing from its bottom edge.
+    let trigger_bottom = below["trigger"][1].as_f64().unwrap();
+    viewport(&mut page, 1280, (trigger_bottom + 52.0).ceil() as u32);
+    open_finished(&mut page);
+    let above = page.eval(POPUP);
+    assert_eq!(above["side"], json!("top"), "{above}");
+    assert!(
+        above["bottom"].as_f64() <= above["trigger"][0].as_f64(),
+        "it lies above its trigger: {above}"
+    );
+    assert_eq!(
+        above["origin"],
+        json!([0.5, 1]),
+        "from the middle of its bottom edge: {above}"
+    );
+    assert_eq!(
+        page.eval(ENTRANCE),
+        json!(["matrix(0.95, 0, 0, 0.95, 0, 1.9)", "0"]),
+        "it enters drawn toward its trigger, from below"
+    );
+    leave(&mut page);
+    // Under reduced motion it neither scales nor drifts: it fades in, and out.
+    page.call(
+        "Emulation.setEmulatedMedia",
+        json!({"features":[{"name":"prefers-reduced-motion","value":"reduce"}]}),
+    );
+    for height in [900, (trigger_bottom + 52.0).ceil() as u32] {
+        viewport(&mut page, 1280, height);
+        open_finished(&mut page);
+        assert_eq!(
+            page.eval(ENTRANCE),
+            json!(["matrix(1, 0, 0, 1, 0, 0)", "0"]),
+            "at {height}px it only fades in: {}",
+            page.eval(POPUP)
+        );
+        assert_eq!(
+            leave(&mut page),
+            json!([[true, "dx-picker-out", "ease-out"], true]),
+            "and fades out"
+        );
+    }
 }

@@ -454,6 +454,44 @@ describe("a select's popup used", () => {
     draw(props(), [true, 2]).effects[2]?.();
     draw(props(), [false, null]).effects[2]?.();
     expect(list.focus).toHaveBeenCalledOnce();
-    expect(opened.effects).toHaveLength(3);
+    expect(opened.effects).toHaveLength(4);
+  });
+
+  it("closed by its request, is drawn closed and takes no focus, key or choice", () => {
+    const given = props({ closed: true });
+    const list = { focus: vi.fn() };
+    runtime.refs[0] = { current: list };
+    const { element, setOpen, effects } = draw(given, [true, 1]);
+    expect(element.props["data-state"]).toBe("closed");
+    expect(elementOf(element, isList)?.props["data-state"]).toBe("closed");
+    expect(elementOf(element, isList)?.props.tabIndex).toBe(-1);
+    effects[2]?.();
+    expect(list.focus).not.toHaveBeenCalled();
+    for (const name of ["Escape", "Enter"]) handler(element, isList, "onKeyDown")(key(name));
+    expect(setOpen).not.toHaveBeenCalled();
+    expect(given.onClose).not.toHaveBeenCalled();
+    expect(given.onChange).not.toHaveBeenCalled();
+  });
+
+  it("is let go once its own exit has played, or at once with none playing", () => {
+    const onLeft = vi.fn();
+    const list = { getAnimations: () => [{ playState: "running" }] };
+    runtime.refs[0] = { current: list };
+    const { element, effects } = draw(props({ closed: true, onLeft }), [true, null]);
+    effects[3]?.();
+    expect(onLeft).not.toHaveBeenCalled();
+    const ended = handler(element, isList, "onAnimationEnd");
+    ended({ target: {}, currentTarget: list });
+    expect(onLeft).not.toHaveBeenCalled();
+    ended({ target: list, currentTarget: list });
+    expect(onLeft).toHaveBeenCalledOnce();
+    list.getAnimations = () => [{ playState: "finished" }];
+    effects[3]?.();
+    expect(onLeft).toHaveBeenCalledTimes(2);
+    // Open, neither its entrance's end nor the effect lets it go.
+    const open = draw(props({ onLeft }), [true, null]);
+    handler(open.element, isList, "onAnimationEnd")({ target: list, currentTarget: list });
+    open.effects[3]?.();
+    expect(onLeft).toHaveBeenCalledTimes(2);
   });
 });

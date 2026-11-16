@@ -21,8 +21,26 @@
   color: var(--popover-foreground);
   opacity: 0;
   pointer-events: none;
+  /* It grows from the edge nearest its trigger and drifts from it: from its top below its trigger,
+   * from its bottom above it (`data-side`, popup-position.ts). */
+  --dx-picker-scale: 0.95;
+  --dx-picker-drift: -2px;
   transform-origin: top;
   will-change: transform, opacity;
+}
+
+.dx-select-list[data-side="top"] {
+  --dx-picker-drift: 2px;
+  transform-origin: bottom;
+}
+
+/* Under reduced motion it only fades. */
+@media (prefers-reduced-motion: reduce) {
+  .dx-select-list,
+  .dx-select-list[data-side="top"] {
+    --dx-picker-scale: 1;
+    --dx-picker-drift: 0px;
+  }
 }
 
 /* The list holds focus only until an option takes it; the focused option is the indicator, so
@@ -38,14 +56,14 @@
 }
 
 .dx-select-list[data-state="closed"] {
-  animation: dx-picker-out 100ms ease-in forwards;
+  animation: dx-picker-out 100ms ease-out forwards;
   pointer-events: none;
 }
 
 @keyframes dx-picker-in {
   from {
     opacity: 0;
-    transform: scale(0.95) translateY(-2px);
+    transform: scale(var(--dx-picker-scale)) translateY(var(--dx-picker-drift));
   }
 
   to {
@@ -62,7 +80,7 @@
 
   to {
     opacity: 0;
-    transform: scale(0.95) translateY(-2px);
+    transform: scale(var(--dx-picker-scale)) translateY(var(--dx-picker-drift));
   }
 }
 
