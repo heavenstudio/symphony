@@ -10,6 +10,38 @@
 //! (`symphony_plugin`'s doc says what each holds); this crate depends on no other workspace crate.
 //! The app's own wire types, which move with the server and the client, are `symphony-api`'s, which
 //! re-exports these under the same names.
+//!
+//! The lists grow in a minor of the kit: a new kind of [`Block`], [`Span`] or [`Media`], a new
+//! word one carries ([`CalloutKind`], [`FigureSize`], [`ContainerKind`], [`InlineKind`],
+//! [`VectorKind`], [`CardState`], [`CardGroup`], [`ThreadAuthor`]) or a new [`GateState`] is no
+//! new major. So each is `#[non_exhaustive]`: a plugin makes a variant as before, and a match on
+//! one outside this crate ends with `_`. [`FieldValue`] alone is matched whole: a number or text,
+//! as JSON has them. A struct here is built by its fields, so a field added to one is a new major.
+//!
+//! ```
+//! // A plugin's match names the kinds it knows and leaves the rest, a later minor's too, to `_`.
+//! use symphony_blocks::Media;
+//! fn label(media: &Media) -> &str {
+//!     match media {
+//!         Media::Mockup { label, .. } | Media::Viewer { label, .. } => label,
+//!         _ => "",
+//!     }
+//! }
+//! let mockup = Media::Mockup { src: "a.html".into(), label: "A".into() };
+//! assert_eq!(label(&mockup), "A");
+//! ```
+//!
+//! ```compile_fail,E0004
+//! // Without the `_`, the match is refused outside this crate, though it names every kind.
+//! use symphony_blocks::Media;
+//! fn kind(media: &Media) -> &str {
+//!     match media {
+//!         Media::Mockup { .. } => "mockup",
+//!         Media::Viewer { .. } => "viewer",
+//!         Media::Gallery { .. } => "gallery",
+//!     }
+//! }
+//! ```
 
 #![forbid(unsafe_code)]
 

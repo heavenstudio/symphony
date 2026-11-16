@@ -10,15 +10,15 @@
 //! Symphony's is used. The project's own skills and guards sit beside the shipped ones and are never
 //! touched, and so is a file of the project's in a shipped skill's folder that the stamp does not
 //! name: `project.md` there is the project's standing instructions for that skill's role, which
-//! the `work`, `review-task` and `assess-task` skills read first. It writes no permission rule but the allow rules: each names a recipe `symphony.just`
-//! holds, its board and reply recipes and `land`, never the server ones ([`ALLOW`]). A rule carries
-//! no stamp, so every rule a run finds is the project's own but one a landed init wrote and this
-//! one dropped, which a run removes: an allow rule ([`RETIRED`], the env-prefixed board rule, whose
-//! `*` passed any program) or an ask rule ([`RETIRED_ASK`], those that asked before a land), an ask
-//! list they leave empty going with them. What the Symphony's default land lands is decided by its
-//! checks, every stamp the task needs standing on the tip it lands, never by a prompt; a
-//! project whose own `land` recipe replaces it gets the same allow rule, and its own landing policy
-//! decides what lands.
+//! the `work`, `review-task` and `assess-task` skills read first. It writes no permission rule but
+//! the allow rules: each names a recipe `symphony.just` holds, its board and reply recipes and
+//! `land`, never the server ones ([`ALLOW`]). A rule carries no stamp, so every rule a run finds is
+//! the project's own but one a landed init wrote and this one dropped, which a run removes: an
+//! allow rule ([`RETIRED`], the env-prefixed board rule, whose `*` passed any program) or an ask
+//! rule ([`RETIRED_ASK`], those that asked before a land), an ask list they leave empty going with
+//! them. What the Symphony's default land lands is decided by its checks, every stamp the task
+//! needs standing on the tip it lands, never by a prompt; a project whose own `land` recipe
+//! replaces it gets the same allow rule, and its own landing policy decides what lands.
 //!
 //! The recipes include the default `land` (`tasks land`), and `symphony.just` sets
 //! `allow-duplicate-recipes`, so a recipe of the project's own of the same name replaces the

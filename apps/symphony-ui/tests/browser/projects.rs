@@ -931,3 +931,183 @@ fn a_click_on_another_projects_link_from_one_served_at_its_root_loads_that_proje
         "the browser loaded pantry's own page"
     );
 }
+
+/// A project whose theme has a name and an icon of its own (a picture each fixture project
+/// holds).
+const LANTERN: &str = "[project]\nname = \"Lantern\"\nid = \"lantern\"\n\
+                       [theme]\nname = \"Lantern Works\"\nicon = \"docs/dot.svg\"\n";
+
+/// What the page's header opens with and the icons its head links: the mark's element, the
+/// address a theme's own is read from, whether it is the mark drawn in the page's primary, the
+/// name with its class and whether it is set in the wordmark's serif, whether the tab's icon is
+/// the Symphony's fermata inline with both schemes' colours, and the home screen's icon with the
+/// type its address answers.
+const BRAND: &str = r#"(async () => {
+    const brand = document.querySelector('.app-header').firstElementChild;
+    const mark = brand.querySelector('.app-mark'), name = brand.querySelector('span');
+    const probe = document.body.appendChild(document.createElement('i'));
+    probe.style.color = 'var(--primary)';
+    const primary = getComputedStyle(probe).color;
+    probe.remove();
+    const box = mark.getBoundingClientRect();
+    const icon = document.querySelector('link[rel=icon]').getAttribute('href');
+    const touch = document.querySelector('link[rel=apple-touch-icon]')?.getAttribute('href') ?? null;
+    return {
+        brand: brand.className, link: brand.closest('a') !== null || brand.querySelector('a') !== null,
+        mark: mark.tagName.toLowerCase(), src: mark.getAttribute('src'),
+        drawn: box.width > 0 && box.height > 0,
+        inPrimary: mark.tagName === 'svg' && getComputedStyle(mark).fill === primary,
+        name: name.textContent, named: name.className,
+        serif: getComputedStyle(name).fontFamily.includes('Iowan Old Style'),
+        fermata: icon.startsWith('data:image/svg+xml,')
+            && decodeURIComponent(icon).includes('M5 21A11 11 0 0 1 27 21H24.6A8.6 7.2 0 0 0 7.4 21Z')
+            && decodeURIComponent(icon).includes('prefers-color-scheme:dark'),
+        touch, touchType: touch === null ? null : (await fetch(touch)).headers.get('content-type'),
+    };
+})()"#;
+
+/// The header opens with the Symphony's mark and wordmark on the machine's own pages and on a
+/// project whose theme has no name or icon of its own, the mark in that project's primary colour;
+/// a theme's name takes the wordmark's place, and a theme's icon the mark's, on the page the
+/// client draws and on the one the server draws. A page with no icon of its theme's links the
+/// Symphony's, inline for the tab and by its address for a phone's home screen; the icon the
+/// address answers by itself is the Symphony's. On a phone the first row stays one row, from
+/// 320 wide up.
+#[test]
+fn the_header_and_the_icons_are_the_symphonys_until_a_theme_has_its_own() {
+    let board = ScratchBoard::start();
+    let server = OneServer::launch(board.address(), &[("lantern", LANTERN)]);
+    let Some(mut browser) = chrome() else { return };
+    let symphonys = |name: &str, named: &str, touch: &str| {
+        json!({
+            "brand":"app-brand","link":false,"mark":"svg","src":null,"drawn":true,"inPrimary":true,
+            "name":name,"named":named,"serif":named == "app-wordmark","fermata":true,
+            "touch":touch,"touchType":"image/png"
+        })
+    };
+    let own = json!({
+        "brand":"app-brand","link":false,"mark":"img","src":"/lantern/docs/dot.svg","drawn":true,
+        "inPrimary":false,"name":"Lantern Works","named":"app-name","serif":false,
+        "fermata":false,"touch":null,"touchType":null
+    });
+    let client = "document.documentElement.dataset.navigation === 'ready' && document.querySelector('.hero-title') !== null";
+    let served = "document.querySelector('main.server-page') !== null";
+    for (page, ready, want) in [
+        // The machine's own pages: the list, and what no project answers.
+        (
+            "/",
+            served,
+            symphonys("Symphony", "app-wordmark", "/favicon.ico?size=180"),
+        ),
+        (
+            "/nope/",
+            served,
+            symphonys("Symphony", "app-wordmark", "/favicon.ico?size=180"),
+        ),
+        // A project whose theme sets a colour alone, on a page of the client's and of the server's.
+        (
+            "/alpha/",
+            client,
+            symphonys("Symphony", "app-wordmark", "/alpha/favicon.ico?size=180"),
+        ),
+        (
+            "/alpha/no/such/page",
+            served,
+            symphonys("Symphony", "app-wordmark", "/alpha/favicon.ico?size=180"),
+        ),
+        // A theme package's name beside the Symphony's mark.
+        (
+            "/pantry/",
+            client,
+            symphonys("The Shelf", "app-name", "/pantry/favicon.ico?size=180"),
+        ),
+        // A theme's own name and icon, and nothing of the Symphony's.
+        ("/lantern/", client, own.clone()),
+        ("/lantern/no/such/page", served, own.clone()),
+    ] {
+        browser.open(&server.url(page));
+        assert!(
+            browser.wait_for(
+                &format!(
+                    "{ready} && (m => m !== null && (m.tagName !== 'IMG' || (m.complete && m.naturalWidth > 0)))\
+                     (document.querySelector('.app-header > .app-brand > .app-mark'))"
+                ),
+                SHOWN
+            ),
+            "{page} drew no mark: {}",
+            observed_page(&mut browser)
+        );
+        assert_eq!(browser.eval(BRAND), want, "{page}");
+    }
+    // The theme's icon in the tab is the file the header draws.
+    assert_eq!(
+        browser.eval("document.querySelector('link[rel=icon]').getAttribute('href').split('?')[0]"),
+        json!("/lantern/docs/dot.svg")
+    );
+    // Alpha's mark is drawn in alpha's own primary, not the Symphony's blue.
+    browser.open(&server.url("/alpha/"));
+    assert!(browser.wait_for(client, SHOWN));
+    assert_eq!(
+        browser.eval("getComputedStyle(document.querySelector('.app-brand .app-mark')).fill"),
+        json!("rgb(122, 46, 143)")
+    );
+    // The address's own icon, asked for from the list, is the Symphony's.
+    browser.open(&server.url("/"));
+    assert!(browser.wait_for(served, SHOWN));
+    assert_eq!(
+        browser.eval(
+            "fetch('/favicon.ico').then(async answer => ({type: answer.headers.get('content-type'), \
+             fermata: (await answer.text()).includes('M5 21A11 11 0 0 1 27 21H24.6A8.6 7.2 0 0 0 7.4 21Z')}))"
+        ),
+        json!({"type":"image/svg+xml","fermata":true})
+    );
+    // On a phone the mark and the name, the switch and the two buttons share the first row, the
+    // pages under them, at every width from the suite's narrowest phone up: two rows and never
+    // more. The name gives way first, cut short in the room the row leaves, the mark whole
+    // beside it. Whether a name is cut is asserted where no font's width decides it: the
+    // wordmark whole at 390, every name cut at 320.
+    for (width, id, cut) in [
+        (320, "alpha", Some(true)),
+        (320, "lantern", Some(true)),
+        (360, "alpha", None),
+        (360, "lantern", None),
+        (375, "alpha", None),
+        (375, "lantern", None),
+        (390, "alpha", Some(false)),
+        (390, "lantern", None),
+    ] {
+        browser.call(
+            "Emulation.setDeviceMetricsOverride",
+            json!({"width":width,"height":844,"deviceScaleFactor":1,"mobile":true}),
+        );
+        browser.open(&server.url(&format!("/{id}/")));
+        assert!(browser.wait_for(client, SHOWN), "{id} at {width}");
+        let seen = browser.eval(
+            "(name => name.scrollWidth > name.clientWidth)(document.querySelector('.app-brand span'))",
+        );
+        if let Some(cut) = cut {
+            assert_eq!(seen, json!(cut), "{id} at {width}: the name cut");
+        }
+        assert_eq!(
+            browser.eval(
+                r#"(() => {
+                    const box = e => e.getBoundingClientRect();
+                    const mid = e => (box(e).top + box(e).bottom) / 2;
+                    const first = ['.app-brand', '.project-switch', '#appearance', '#bell'].map(s => document.querySelector(s));
+                    const name = document.querySelector('.app-brand span');
+                    return {
+                        oneRow: first.every(e => Math.abs(mid(e) - mid(first[0])) < 2),
+                        inOrder: first.every((e, at) => at === 0 || box(e).left >= box(first[at - 1]).right),
+                        pagesBelow: box(document.querySelector('.app-pages')).top >= box(first[3]).bottom,
+                        headerUnder100: box(document.querySelector('.app-header')).height < 100,
+                        markWhole: box(document.querySelector('.app-brand .app-mark')).width >= 20,
+                        nameShows: name.clientWidth >= 16,
+                        fits: document.documentElement.scrollWidth <= innerWidth,
+                    };
+                })()"#
+            ),
+            json!({"oneRow":true,"inOrder":true,"pagesBelow":true,"headerUnder100":true,"markWhole":true,"nameShows":true,"fits":true}),
+            "{id} at {width}"
+        );
+    }
+}

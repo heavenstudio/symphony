@@ -11,7 +11,6 @@ mod beat;
 mod commands;
 mod database;
 mod detached;
-mod embedding;
 mod field;
 pub mod machine_work;
 mod migrate;
@@ -473,12 +472,6 @@ pub fn board_client(env: &Env) -> Result<Client, String> {
     Ok(reached.client)
 }
 
-/// As [`writable_board`], refused nothing here: a raw read of the live board that opens no store
-/// (`search_bench`'s), which a process Cargo runs may make.
-pub fn raw_client(env: &Env) -> Result<Client, String> {
-    reach_board(env, &env.cwd, Reaching::Raw, None).map(|reached| reached.client)
-}
-
 /// A board a run reaches, and the id of the project it is the board of: none for a server
 /// `TASKS_SERVER` names, which is no project's.
 pub struct Reached {
@@ -544,9 +537,6 @@ enum Reaching {
     Peek,
     /// A client for a store its caller opens: started if it is down.
     Client,
-    /// A client for a raw read: started if it is down, and refused nothing here, not even to a
-    /// process Cargo runs.
-    Raw,
 }
 
 /// How long the Symphony's read waits on another's start of the board's server (the starters'
@@ -564,7 +554,7 @@ fn machine(env: &Env) -> Option<PathBuf> {
 
 /// The board of the project `cwd` is in, in that project's common dir: for the Symphony's reaches,
 /// the project whose folder `cwd` is, refused when it is gone ([`crate::project::at`]). Every
-/// reach of a live board but a raw read's is refused to a process Cargo runs from that board's
+/// reach of a live board is refused to a process Cargo runs from that board's
 /// repository, or one it runs under, before its server is started
 /// ([`crate::live::cargo_refusal`]). A Symphony's reach `held` to a repository is refused any other
 /// ([`crate::project::held`]).
@@ -581,13 +571,11 @@ fn reach_board(
         ));
     }
     let guard = |live: &Option<crate::live::Live>| match live {
-        Some(live) if how != Reaching::Raw => {
-            match crate::live::cargo_refusal(live, crate::live::cargo_here()) {
-                Some(why) => Err(why),
-                None => Ok(()),
-            }
-        }
-        _ => Ok(()),
+        Some(live) => match crate::live::cargo_refusal(live, crate::live::cargo_here()) {
+            Some(why) => Err(why),
+            None => Ok(()),
+        },
+        None => Ok(()),
     };
     if let Some(addr) = env.var("TASKS_SERVER") {
         let live = crate::live::named_server(addr, db, cwd, machine(env).as_deref());

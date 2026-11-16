@@ -94,6 +94,17 @@ export type ProjectView = {
    * draws and every request it sends lies under it ([`ProjectView::here`]).
    */
   base?: string;
+  /**
+   * The name the header opens with in place of the Symphony's wordmark: the theme package's,
+   * once the project's theme has a name or an icon of its own. Empty is the Symphony's.
+   */
+  wordmark?: string;
+  /**
+   * The icon the header opens with in place of the Symphony's mark: the theme package's own,
+   * its file project-relative with no slash first, served under the base. Empty is the
+   * Symphony's.
+   */
+  mark?: string;
 };
 
 export type NavItem = {
@@ -339,6 +350,11 @@ export type ReportMark = {
    */
   commit: string;
   subject: string;
+  /**
+   * What it changed, each once: `settings`, `rules` and `skill NAME`. A server from before the
+   * instructions were marked names none, and its marks are settings changes.
+   */
+  changed: Array<string>;
 };
 
 export type RunsPage = {

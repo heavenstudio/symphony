@@ -34,6 +34,13 @@ pub(crate) const REGISTRY: &str = "SYMPHONY_CRATES_IO";
 pub(crate) const PUBLISHER: &str = "SYMPHONY_RELEASE_CARGO";
 /// How long one read of crates.io may take, unless its bound ends sooner.
 const READ: Duration = Duration::from_secs(120);
+/// How crates.io is read: each try within [`READ`], up to three, two seconds before the second and
+/// four before the third.
+const READS: Reads = Reads {
+    each: READ,
+    tries: 3,
+    pause: Duration::from_secs(2),
+};
 /// The files of a packaged crate that are not its sources, at its top: where it was packaged from,
 /// and the workspace's resolution of its dependencies when it was.
 const NOT_SOURCES: [&str; 2] = [".cargo_vcs_info.json", "Cargo.lock"];
@@ -252,13 +259,66 @@ fn lists(file: &str, version: &str) -> bool {
         .any(|entry| entry["vers"].as_str() == Some(version))
 }
 
-/// What `url` serves, by curl within `bound` and [`READ`]: into the file `to` when one is named
-/// (its bytes then none), else its bytes; none when it serves nothing there (404, or 403 as a
-/// bucket of files answers for one it lacks). Any other answer, or none, is an error.
+/// How [`fetched`] reads: each try by curl within `each`, up to `tries`, waiting `pause` times the
+/// tries made so far before the next.
+#[derive(Clone, Copy, Debug)]
+struct Reads {
+    each: Duration,
+    tries: u32,
+    pause: Duration,
+}
+
+/// How one try of a read ended.
+enum Try {
+    /// An answer that stands: what was served, none, or an error.
+    Stands(Result<Option<Vec<u8>>, String>),
+    /// No answer, or a server's error, which another try may not meet: why.
+    Again(String),
+}
+
+/// What `url` serves, by curl within `bound` as [`READS`] says: into the file `to` when one is
+/// named (its bytes then none), else its bytes; none when it serves nothing there (404, or 403 as a
+/// bucket of files answers for one it lacks). Any other answer is an error, and so is the last try
+/// of a read that got none.
 fn fetched(url: &str, to: Option<&Path>, bound: Bound<'_>) -> Result<Option<Vec<u8>>, String> {
+    fetched_by(READS, url, to, bound)
+}
+
+/// [`fetched`] by `reads`. A try that got no answer (curl failed or was stopped: a timeout, a
+/// connection refused or reset, an empty reply) or a server's error (5xx, 408, 429) is the
+/// network's or the registry's for a moment, so the read is tried again while `reads` has tries
+/// left and `bound` has time for the pause and was not told to stop; the last failure is said, with
+/// the tries it took.
+fn fetched_by(
+    reads: Reads,
+    url: &str,
+    to: Option<&Path>,
+    bound: Bound<'_>,
+) -> Result<Option<Vec<u8>>, String> {
+    let mut tried = 1;
+    loop {
+        let problem = match tried_once(url, to, reads.each, bound) {
+            Try::Stands(answer) => return answer,
+            Try::Again(problem) => problem,
+        };
+        let pause = reads.pause * tried;
+        if tried >= reads.tries || bound.interrupted() || Instant::now() + pause >= bound.until {
+            return Err(if tried == 1 {
+                problem
+            } else {
+                format!("{problem} (tried {tried} times)")
+            });
+        }
+        std::thread::sleep(pause);
+        tried += 1;
+    }
+}
+
+/// One try of [`fetched`], by curl within `each` and `bound`.
+fn tried_once(url: &str, to: Option<&Path>, each: Duration, bound: Bound<'_>) -> Try {
     let mut curl = command("curl");
     curl.args(["--silent", "--show-error", "--location", "--max-time"])
-        .arg(READ.as_secs().to_string());
+        .arg(each.as_secs_f64().to_string());
     match to {
         Some(to) => curl
             .arg("--output")
@@ -267,9 +327,12 @@ fn fetched(url: &str, to: Option<&Path>, bound: Bound<'_>) -> Result<Option<Vec<
         None => curl.args(["--write-out", "\n%{http_code}"]),
     };
     curl.arg(url);
-    let done = run(&mut curl, &format!("curl {url}"), bound.sooner(READ))?;
+    let done = match run(&mut curl, &format!("curl {url}"), bound.sooner(each)) {
+        Ok(done) => done,
+        Err(problem) => return Try::Again(problem),
+    };
     if !done.status.success() {
-        return Err(format!("curl {url} failed: {}", failure(&done.stderr)));
+        return Try::Again(format!("curl {url} failed: {}", failure(&done.stderr)));
     }
     let said = String::from_utf8_lossy(&done.stdout).into_owned();
     let (body, code) = match to {
@@ -277,9 +340,13 @@ fn fetched(url: &str, to: Option<&Path>, bound: Bound<'_>) -> Result<Option<Vec<
         None => said.rsplit_once('\n').unwrap_or(("", said.as_str())),
     };
     match code {
-        "200" => Ok(Some(body.as_bytes().to_vec())),
-        "404" | "403" => Ok(None),
-        other => Err(format!("{url} answered {other}")),
+        "200" => Try::Stands(Ok(Some(body.as_bytes().to_vec()))),
+        "404" | "403" => Try::Stands(Ok(None)),
+        "408" | "429" => Try::Again(format!("{url} answered {code}")),
+        _ if code.len() == 3 && code.starts_with('5') => {
+            Try::Again(format!("{url} answered {code}"))
+        }
+        other => Try::Stands(Err(format!("{url} answered {other}"))),
     }
 }
 

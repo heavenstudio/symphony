@@ -65,8 +65,10 @@ const OWN: [Own; 4] = [
     Own {
         name: "review",
         default: true,
-        met: "a fresh reviewer's approve naming the tip, from a session that never executed, \
-              orchestrated or filed the task",
+        met: "a fresh reviewer's approve naming the tip, or the commit the tip merges the default \
+              branch into where that merge settles conflicts in documents alone, changes \
+              nothing else and the tests are green at the tip, from a session that never \
+              executed, orchestrated or filed the task",
         applies: "code whose mistake reaches past the task, into what every agent runs or every \
                   client reads (a store, a schema, a board command, the landing, a launcher, a \
                   hook, a recipe, a wire type, a route, a shared component); a change to a test, a \

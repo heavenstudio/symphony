@@ -233,6 +233,60 @@ async fn a_documents_picture_or_link_to_a_file_of_its_checkout_reaches_its_proje
     }
 }
 
+/// The icon a browser asks the address for by itself is the Symphony's, the started project's
+/// never: a project's own (`tools/static/icon.svg`) answers only a page of that project, and the
+/// home screen's size is the Symphony's wherever it is asked.
+#[tokio::test]
+async fn the_addresss_own_icon_is_the_symphonys_and_a_projects_only_for_its_own_page() {
+    let machine = Machine::new();
+    // Alpha, the project the server was started from, has an icon of its own; beta has none.
+    machine
+        .tree
+        .write("alpha/tools/static/icon.svg", "<svg>alpha</svg>");
+    let from_alpha = ("referer", "http://127.0.0.1:1/alpha/src/picture.png");
+    let from_beta = ("referer", "http://127.0.0.1:1/beta/src/picture.png");
+    let elsewhere = ("referer", "http://other.example/alpha/");
+    for (path, headers, alphas) in [
+        ("/favicon.ico", &[][..], false),
+        ("/favicon.ico", &[elsewhere], false),
+        ("/favicon.ico", &[from_beta], false),
+        ("/beta/favicon.ico", &[], false),
+        ("/favicon.ico", &[from_alpha], true),
+        ("/alpha/favicon.ico", &[], true),
+    ] {
+        let icon = machine.get(path, headers).await;
+        assert_eq!(icon.status(), StatusCode::OK, "{path} {headers:?}");
+        assert_eq!(icon.headers()[header::CONTENT_TYPE], "image/svg+xml");
+        let icon = text(icon).await;
+        assert_eq!(icon == "<svg>alpha</svg>", alphas, "{path} {headers:?}");
+        assert_eq!(
+            icon.contains("M5 21A11 11 0 0 1 27 21H24.6A8.6 7.2 0 0 0 7.4 21Z"),
+            !alphas,
+            "{path} {headers:?}: {icon}"
+        );
+    }
+    for (path, headers) in [
+        ("/favicon.ico?size=180", &[][..]),
+        ("/favicon.ico?size=180", &[from_alpha]),
+        ("/alpha/favicon.ico?size=180", &[]),
+        ("/beta/favicon.ico?size=180", &[]),
+    ] {
+        let touch = machine.get(path, headers).await;
+        assert_eq!(touch.status(), StatusCode::OK, "{path} {headers:?}");
+        assert_eq!(touch.headers()[header::CONTENT_TYPE], "image/png", "{path}");
+    }
+    // The list is the Symphony's own page: its icons, and its mark and wordmark first.
+    let list = text(machine.get("/", &[PAGE]).await).await;
+    assert!(list.contains(&crate::mark::links("")), "{list}");
+    assert!(
+        list.contains(&format!(
+            "<header class=\"app-header\" id=\"top\">{}<nav",
+            crate::mark::brand("", "")
+        )),
+        "{list}"
+    );
+}
+
 /// An id spelled with escapes names its project (`/%61lpha/` is `/alpha/`), and the page of a
 /// mistyped one never offers the id it already spells.
 #[tokio::test]
