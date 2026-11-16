@@ -15,7 +15,7 @@
   line-height: 1.25rem;
   outline: none;
   transition-duration: 150ms;
-  transition-property: all;
+  transition-property: background-color, border-color, color, box-shadow, opacity, transform;
   transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
   white-space: nowrap;
 }
