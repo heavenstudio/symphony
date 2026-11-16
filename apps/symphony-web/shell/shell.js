@@ -40,6 +40,18 @@ window.fetch = (...args) => {
     )
     .finally(() => reads--);
 };
+// A lookup in this device's cache is one of the page's reads too: a page waits on what it kept
+// before it asks the server for the rest (the board its counts and columns), and the store can take
+// seconds to open and answer on a loaded machine or a slow phone, with no fetch in flight. Its end
+// is an answer, but never one after a read that got none.
+const lookup = symphonyCache.read;
+symphonyCache.read = (...args) => {
+  reads++;
+  return lookup(...args).finally(() => {
+    reads--;
+    answered = Math.max(answered, Date.now());
+  });
+};
 
 // The modules every page kind shares, each loaded once on its first use and kept mounted: the
 // chat and activity panel (apps/symphony-web/src/panel.tsx), and the overlay host that draws a
