@@ -875,8 +875,11 @@ fn the_command_installs_and_reports_and_refuses_what_it_does_not_know() {
         "{out}"
     );
     assert!(out.ends_with(&format!("\n\n{TRUST}\n")), "{out}");
-    let warned = heartbeat_warning(&tree.root, std::env::var_os("PATH").as_deref())
-        .map_or_else(String::new, |warning| format!("symphony init: {warning}\n"));
+    let warned = heartbeat_warning(
+        &tree.root,
+        &builds::Beyond::path(std::env::var_os("PATH").as_deref()),
+    )
+    .map_or_else(String::new, |warning| format!("symphony init: {warning}\n"));
     assert_eq!(err, warned);
     let (code, out, _) = run(&["--root", root]);
     assert_eq!((code, out.contains("skill work: current\n")), (0, true));
@@ -1431,7 +1434,10 @@ fn a_project_with_everything_in_place_has_nothing_left() {
     .write(&tree.path("machine"))
     .unwrap();
     assert_eq!(left(&tree, ""), Vec::<String>::new());
-    assert_eq!(heartbeat_warning(&tree.path("Lamp Shop"), None), None);
+    assert_eq!(
+        heartbeat_warning(&tree.path("Lamp Shop"), &builds::Beyond::default()),
+        None
+    );
     assert_eq!(
         next(&[]),
         "Next: nothing; agents can run the board (`just tasks register`)."
@@ -1458,7 +1464,7 @@ fn builds_on_the_search_path_serve_the_recipes_and_the_hooks_alike() {
     assert!(steps[0].starts_with("register the project"), "{steps:?}");
     let path = std::ffi::OsString::from(path);
     assert_eq!(
-        heartbeat_warning(&tree.path("Lamp Shop"), Some(&path)),
+        heartbeat_warning(&tree.path("Lamp Shop"), &builds::Beyond::path(Some(&path))),
         None
     );
 }
@@ -1570,10 +1576,13 @@ fn a_linked_worktree_finds_its_main_checkouts_builds_as_the_hooks_do() {
         .collect::<Vec<_>>()
     };
     assert_eq!(found(&tree.path("lamp")), Vec::<String>::new());
-    assert_eq!(heartbeat_warning(&tree.path("lamp"), None), None);
+    assert_eq!(
+        heartbeat_warning(&tree.path("lamp"), &builds::Beyond::default()),
+        None
+    );
     std::fs::remove_file(tree.path("main/.target/bin/tasks")).unwrap();
     assert_eq!(
-        heartbeat_warning(&tree.path("lamp"), None).unwrap(),
+        heartbeat_warning(&tree.path("lamp"), &builds::Beyond::default()).unwrap(),
         "warning: tasks has no build at .target/bin/ or on PATH: no tool call counts as a beat \
          until it does (see Next)"
     );
@@ -1939,27 +1948,30 @@ fn an_entrypoint_at_the_root_or_elsewhere_names_its_own_folder_and_route() {
 fn the_warning_names_the_missing_builds_and_what_goes_without_them() {
     let tree = Tree::new();
     assert_eq!(
-        heartbeat_warning(&tree.root, None).unwrap(),
+        heartbeat_warning(&tree.root, &builds::Beyond::default()).unwrap(),
         "warning: symphony and tasks have no build at .target/bin/ or on PATH: no tool call \
          counts as a beat and the memory guard refuses nothing until they do (see Next)"
     );
     program(&tree, ".target/bin/symphony");
     assert_eq!(
-        heartbeat_warning(&tree.root, None).unwrap(),
+        heartbeat_warning(&tree.root, &builds::Beyond::default()).unwrap(),
         "warning: tasks has no build at .target/bin/ or on PATH: no tool call counts as a beat \
          until it does (see Next)"
     );
     std::fs::remove_file(tree.path(".target/bin/symphony")).unwrap();
     program(&tree, ".target/bin/tasks");
     assert_eq!(
-        heartbeat_warning(&tree.root, None).unwrap(),
+        heartbeat_warning(&tree.root, &builds::Beyond::default()).unwrap(),
         "warning: symphony has no build at .target/bin/ or on PATH: no tool call counts as a \
          beat and the memory guard refuses nothing until it does (see Next)"
     );
     // On the search path it counts, as the hooks find it there.
     program(&tree, "bin/symphony");
     let path = std::ffi::OsString::from(format!("/nowhere:{}", tree.path("bin").display()));
-    assert_eq!(heartbeat_warning(&tree.root, Some(&path)), None);
+    assert_eq!(
+        heartbeat_warning(&tree.root, &builds::Beyond::path(Some(&path))),
+        None
+    );
 }
 
 #[test]

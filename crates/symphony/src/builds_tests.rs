@@ -110,8 +110,41 @@ fn the_link_wins_over_the_search_path() {
     let tree = Tree::new();
     let on = program(&tree, "path/tasks");
     let path = std::env::join_paths([tree.path("path")]).unwrap();
-    assert_eq!(find(&tree.root, "tasks", Some(&path)), Some(on));
+    let beyond = Beyond::path(Some(&path));
+    assert_eq!(find(&tree.root, "tasks", &beyond), Some(on));
     let linked_build = program(&tree, ".target/bin/tasks");
-    assert_eq!(find(&tree.root, "tasks", Some(&path)), Some(linked_build));
-    assert_eq!(find(&tree.root, "symphony", Some(&path)), None);
+    assert_eq!(find(&tree.root, "tasks", &beyond), Some(linked_build));
+    assert_eq!(find(&tree.root, "symphony", &beyond), None);
+}
+
+#[test]
+fn a_project_with_no_build_runs_the_machines_release_before_the_search_path() {
+    let tree = Tree::new();
+    let (main, linked_tree) = checkouts(&tree);
+    program(&tree, "path/tasks");
+    program(&tree, "path/symphony");
+    let built = program(&tree, "machine/releases/release-1/bin/tasks");
+    std::os::unix::fs::symlink("releases/release-1", tree.path("machine/current")).unwrap();
+    let beyond = Beyond {
+        machine: Some(tree.path("machine")),
+        path: Some(tree.path("path").into_os_string()),
+    };
+    let release = tree.path("machine/current/bin/tasks");
+    assert_eq!(
+        release.canonicalize().unwrap(),
+        built.canonicalize().unwrap()
+    );
+    assert_eq!(find(&linked_tree, "tasks", &beyond), Some(release.clone()));
+    assert_eq!(find(&main, "tasks", &beyond), Some(release));
+    assert_eq!(
+        find(&main, "symphony", &beyond),
+        Some(tree.path("path/symphony")),
+        "what the release lacks is the search path's"
+    );
+    // A project that builds its own keeps running it, from a linked worktree too.
+    program(&tree, "main/.target/bin/tasks");
+    assert_eq!(
+        find(&linked_tree, "tasks", &beyond),
+        Some(main.join(".target/bin/tasks"))
+    );
 }

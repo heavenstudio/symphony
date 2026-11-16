@@ -3,6 +3,7 @@
 
 use super::*;
 use std::sync::atomic::AtomicUsize;
+use symphony_board::builds::Beyond;
 
 /// The wall-clock backstop of every wait here: each waits on its condition, and only a stall
 /// reaches this (RULES.md `tests/no-test-fails-on-load`).
@@ -250,23 +251,24 @@ fn the_board_build_is_the_main_checkouts_link_else_the_search_paths_else_where_o
     .unwrap();
     let main = tree.path("main").canonicalize().unwrap();
     let path = tree.path("path").into_os_string();
+    let beyond = Beyond::path(Some(&path));
     let missing = format!(
-        "no build of tasks for {}: link the project's build at {}/.target/bin/tasks or put tasks \
-         on PATH",
+        "no build of tasks for {}: link the project's build at {}/.target/bin/tasks, install a \
+         release on the machine or put tasks on PATH",
         main.display(),
         main.display()
     );
-    assert_eq!(board_build_on(&tree.path("wt"), Some(&path)), Err(missing));
+    assert_eq!(board_build_on(&tree.path("wt"), &beyond), Err(missing));
     program("wt/.target/bin/tasks"); // a branch's build, never the board's
     let installed = program("path/tasks");
-    assert_eq!(board_build_on(&tree.path("wt"), Some(&path)), Ok(installed));
+    assert_eq!(board_build_on(&tree.path("wt"), &beyond), Ok(installed));
     let linked = program("main/.target/bin/tasks");
     assert_eq!(
-        board_build_on(&tree.path("wt"), Some(&path)),
+        board_build_on(&tree.path("wt"), &beyond),
         Ok(main.join(".target/bin/tasks"))
     );
     assert_eq!(
-        board_build_on(&main, None),
+        board_build_on(&main, &Beyond::default()),
         Ok(linked.canonicalize().unwrap())
     );
 }

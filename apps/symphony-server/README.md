@@ -10,7 +10,8 @@ at `/` on a server of its own.
 The one server (`serve --home`) keeps its record (`server.json`), log, lease and lock in the
 machine folder: `~/Library/Application Support/Symphony/` on macOS, `$XDG_DATA_HOME/symphony`
 elsewhere, `SYMPHONY_MACHINE_DIR` when set (every test sets a temporary one). The registry
-beside them (`projects.json`) holds each project's root, id and `symphony.toml`; `symphony
+beside them (`projects.json`) holds each project's root, id and `symphony.toml`, and the
+releases installed on the machine are there too (`releases/NAME/`, with the `current` link); `symphony
 project add [DIR]` writes it, and every start runs it. The build and client stay in the
 starter's install folder (`--install`, `symphony/server/` in its git common dir), where a record
 an older server left is read once; a project's own state (asks, thumbnails,
@@ -162,7 +163,12 @@ The server package embeds its committed `client/public` distribution: the curren
 the two published before it, as its `builds.json` names them. A direct
 `symphony-server --port N` uses it when the default local build directory is absent.
 An explicit install or `SYMPHONY_UI_DIST` never falls back, and a present local
-bundle keeps its strict errors. `just client-update` in the Symphony workspace
+bundle keeps its strict errors. A release's build of the server (`SYMPHONY_CLIENT_BESIDE=1`)
+embeds no client: run from the release's folder in the machine folder
+(`releases/NAME/bin/symphony-server`, through `current` or not), it serves that release's
+`client/HASH/` from beside it, whatever else is named
+([RELEASES](../../docs/RELEASES.md#the-install)). `symphony-server --serves` prints, as one line
+of JSON, the plugin protocol and the board schema the build serves. `just client-update` in the Symphony workspace
 refreshes the real distribution before committing client changes. Its default
 root is the checkout's top level even when the command starts in a subfolder; `--root`
 selects another folder. A private server on the main checkout leaves the

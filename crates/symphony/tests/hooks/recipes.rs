@@ -72,6 +72,160 @@ impl Project {
     }
 }
 
+/// A program at `path` that says `said` and its arguments.
+fn says(path: &Path, said: &str) {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(path, format!("#!/bin/sh\necho \"{said} $*\"\n")).unwrap();
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+}
+
+/// The release `name` installed in the machine folder `machine` as an install leaves it, holding
+/// the binaries `names`, and `current` pointed at it.
+fn release(machine: &Path, name: &str, names: &[&str]) {
+    for binary in names {
+        says(
+            &machine.join("releases").join(name).join("bin").join(binary),
+            &format!("{name} {binary}:"),
+        );
+    }
+    let _ = std::fs::remove_file(machine.join("current"));
+    std::os::unix::fs::symlink(Path::new("releases").join(name), machine.join("current")).unwrap();
+}
+
+#[test]
+fn a_project_with_no_build_runs_the_machines_release_and_one_with_a_build_runs_its_own() {
+    let project = Project::new();
+    let root = project.root.clone();
+    assert!(project.init(&["--root", "."]).status.success());
+    let machine = project.dir.path().join("machine");
+    release(&machine, "release-1", &["tasks", "symphony", "agent-send"]);
+    // No link in the checkout and none on the search path: each recipe runs the release's binary,
+    // its arguments as given, from a folder inside the project too.
+    assert_eq!(
+        project.ok(&root, "just", &["tasks", "list", "--all"], None),
+        "release-1 tasks: list --all\n"
+    );
+    std::fs::create_dir_all(root.join("docs")).unwrap();
+    assert_eq!(
+        project.ok(
+            &root.join("docs"),
+            "just",
+            &["symphony-cli", "status"],
+            None
+        ),
+        "release-1 symphony: status\n"
+    );
+    assert_eq!(
+        project.ok(&root, "just", &["symphony-status", "--lint"], None),
+        "release-1 symphony: status --lint\n"
+    );
+    assert_eq!(
+        project.ok(&root, "just", &["agent-send", "a b", "c"], None),
+        "release-1 agent-send: a b c\n"
+    );
+    // What the release does not hold is not there to run: the recipe says so.
+    let server = project.run(&root, "just", &["symphony"], None);
+    assert_eq!(server.status.code(), Some(127), "{server:?}");
+    assert!(
+        String::from_utf8_lossy(&server.stderr).starts_with("no symphony-server binary: "),
+        "{server:?}"
+    );
+    // The link moved: the next command runs the new release, nothing else told.
+    release(&machine, "release-2", &["tasks"]);
+    assert_eq!(
+        project.ok(&root, "just", &["tasks", "list"], None),
+        "release-2 tasks: list\n"
+    );
+    // The search path's comes after the release's.
+    says(&project.dir.path().join("tools/tasks"), "path tasks:");
+    assert_eq!(
+        project.ok(&root, "just", &["tasks", "list"], None),
+        "release-2 tasks: list\n"
+    );
+    // A project that builds its own keeps running it, from a linked worktree as well.
+    says(&root.join(".target/bin/tasks"), "own tasks:");
+    assert_eq!(
+        project.ok(&root, "just", &["tasks", "list"], None),
+        "own tasks: list\n"
+    );
+    let identity = [
+        "-c",
+        "user.name=Lamp",
+        "-c",
+        "user.email=lamp@example.invalid",
+    ];
+    project.ok(&root, "git", &["add", "justfile", "symphony.just"], None);
+    let commit: Vec<&str> = (identity.iter().copied())
+        .chain(["commit", "-q", "-m", "recipes"])
+        .collect();
+    project.ok(&root, "git", &commit, None);
+    let tree = project.dir.path().join("tree");
+    let add = ["worktree", "add", "-q", tree.to_str().unwrap()];
+    project.ok(&root, "git", &add, None);
+    assert_eq!(
+        project.ok(&tree, "just", &["tasks", "list"], None),
+        "own tasks: list\n"
+    );
+    // A dangling link is no release: the search path's runs.
+    std::fs::remove_file(root.join(".target/bin/tasks")).unwrap();
+    std::fs::remove_dir_all(machine.join("releases")).unwrap();
+    assert_eq!(
+        project.ok(&root, "just", &["tasks", "list"], None),
+        "path tasks: list\n"
+    );
+}
+
+#[test]
+fn with_no_machine_folder_named_the_recipes_read_the_platforms() {
+    let project = Project::new();
+    let root = project.root.clone();
+    assert!(project.init(&["--root", "."]).status.success());
+    let home = project.dir.path().join("home");
+    let (machine, data) = if cfg!(target_os = "macos") {
+        (home.join("Library/Application Support/Symphony"), None)
+    } else {
+        let data = project.dir.path().join("data");
+        (data.join("symphony"), Some(data))
+    };
+    release(&machine, "release-1", &["tasks"]);
+    let run = |edit: &dyn Fn(&mut Command)| {
+        let mut command = Command::new("just");
+        command
+            .args(["tasks", "list"])
+            .current_dir(&root)
+            .env_clear()
+            .env("PATH", &project.path)
+            .env("HOME", &home);
+        if let Some(data) = &data {
+            command.env("XDG_DATA_HOME", data);
+        }
+        edit(&mut command);
+        retain_coverage_env(&mut command);
+        command.output().unwrap()
+    };
+    let found = run(&|_| {});
+    assert_eq!(
+        String::from_utf8_lossy(&found.stdout),
+        "release-1 tasks: list\n",
+        "{found:?}"
+    );
+    // A machine folder that is named wins, and one named by a relative path is read nowhere.
+    let named = run(&|command| {
+        command.env("SYMPHONY_MACHINE_DIR", project.dir.path().join("none"));
+    });
+    assert_eq!(named.status.code(), Some(127), "{named:?}");
+    let relative = run(&|command| {
+        command.env("SYMPHONY_MACHINE_DIR", "machine");
+    });
+    assert_eq!(relative.status.code(), Some(127), "{relative:?}");
+    // With no home there is no folder to read.
+    let homeless = run(&|command| {
+        command.env_remove("HOME").env_remove("XDG_DATA_HOME");
+    });
+    assert_eq!(homeless.status.code(), Some(127), "{homeless:?}");
+}
+
 #[test]
 fn a_fresh_projects_just_list_says_what_each_installed_recipe_does_in_one_line() {
     let project = Project::new();
@@ -185,8 +339,8 @@ fn a_fresh_project_runs_the_board_through_the_recipes_init_installed() {
     // It is the whole error: `just` adds no line of its own that the recipe failed.
     assert_eq!(
         String::from_utf8_lossy(&unlinked.stderr),
-        "no tasks binary: link the project build of tasks at .target/bin/tasks, or put tasks on \
-         PATH\n",
+        "no tasks binary: link the project build of tasks at .target/bin/tasks, install a release \
+         on the machine, or put tasks on PATH\n",
         "{unlinked:?}"
     );
 

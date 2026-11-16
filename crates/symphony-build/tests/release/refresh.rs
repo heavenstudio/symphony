@@ -36,7 +36,7 @@ const RELOADED: &str = "360";
 
 /// The fixture with the refresh on and its Symphony a workspace of two packages pinning the
 /// board's SurrealDB, pushed: the commit.
-fn refreshing() -> (Fixture, String) {
+pub(super) fn refreshing() -> (Fixture, String) {
     let fixture = Fixture::new();
     fixture.write("symphony.toml", &Fixture::project_file("refresh = true\n"));
     symphony_crate(&fixture, 42);

@@ -629,7 +629,9 @@ the hour, and its green release refreshes the server and its projects
 
 A green release refreshes the machine and its clients, the projects the machine serves, the
 consuming project among them.
-Once a release's tag is pushed, the run refreshes the machine to it: one step `refresh-ID` for each
+Once a release's tag is pushed, the run refreshes the machine to it. First it installs the release
+on the machine, the step `refresh-install` ([the install](#the-install), below). Then one step
+`refresh-ID` for each
 project in the machine's registry (`projects.json`) whose `symphony.toml` names plugins, this
 repository aside, and whose packages take one of the Symphony's from git
 (`crates/symphony-build/src/release/refresh.rs`, its projects found by
@@ -645,10 +647,9 @@ the pin its main locks; and the wait for the shared server's own reload, since t
 server is built from a project's checkout. A Symphony change that breaks that project's build or
 tests is found by its own gate when it takes the branch, not by the release, and is the project's
 to meet: a step its own gate, hooks or main checkout stops is the project's to finish, never red
-here (below). That holds until the release is installed on the machine
-(`tools/machine-runs-the-release`); from then the refresh installs the release and moves each
-board, and moves no project's pin, makes no branch in a project and fast-forwards no main: a
-project moves its tags through its own landing, when it chooses.
+here (below). The release is installed on the machine as well, and no server runs from it yet: the
+machine's server is still a project's build, and each project that builds on the Symphony still
+takes the release by its pin.
 
 A step moves what it can and nothing more:
 
@@ -799,8 +800,70 @@ finish:
   here, as a run of its own under the lock, checking nothing, and finishes what the step did not:
   the move, the fast-forward, the board's move and the wait for the server.
 
-A refresh has 2 hours past the run's checks. `[releases] refresh = false` turns it off. Each
-project's step logs every command it ran (`logs/ID/refresh-ID.log`).
+A refresh has 2 hours past the run's checks, the install's build within them. `[releases] refresh
+= false` turns it off, the install with it. Each project's step logs every command it ran
+(`logs/ID/refresh-ID.log`), and the install its build's output and what it said
+(`logs/ID/refresh-install.log`).
+
+### The install
+
+A release is built once for the machine, never per project, and installed in the machine folder
+(`~/Library/Application Support/Symphony/` on macOS, `$XDG_DATA_HOME/symphony` elsewhere), beside
+the registry (`crates/symphony-build/src/release/install.rs`,
+`crates/symphony/src/machine/release.rs`):
+
+```text
+releases/release-2026-11-20/
+  manifest.json        the release and its commit, the board schema, the plugin protocol and the
+                       tasks api version it serves, each artifact's path and size
+  bin/symphony-server
+  bin/tasks
+  bin/agent-send
+  bin/symphony
+  client/HASH/         the client, named by the hash of its files
+current -> releases/release-2026-11-20
+```
+
+- **The build.** In the run's own checkout, at the release's commit and in its build folder, the
+  run builds the release profile of the four binaries (`tools/cargo.sh build --release --locked`,
+  each named with `--bin`, of the packages `symphony-server`, `symphony-board` and
+  `symphony-app`). The server
+  is built with no client compiled in (`SYMPHONY_CLIENT_BESIDE=1`, which its build script reads):
+  run from a release's folder it serves `client/HASH/` from beside it. The client is the
+  distribution the commit holds (`apps/symphony-server/client/public/`), which the release's own
+  `client-check` compared byte for byte with a build of its sources, so nothing builds it again.
+- **The manifest.** What the release serves is asked of the binaries just built, never read from
+  the program that installs, which a retry runs from a later main: `symphony-server --serves`
+  prints its plugin protocol and board schema, and `tasks api` answers the method `version` with
+  its api version and its schema. A server and a board built at different schemas are never
+  installed. Each binary is an artifact with its size in bytes, and the client one, with the
+  bytes and the count of its files.
+- **Whole or not there.** The folder is written under a temporary name beside it
+  (`.NAME.installing.PID`) and renamed into place, so `releases/NAME/` is either the whole release
+  or absent. A build that fails, a binary that is missing or cannot say what it serves, or a
+  commit with no client distribution leaves no folder and `current` where it was, and is the
+  refresh's red, filed as `refresh-install`; `just release --refresh` is the retry. A folder in
+  place is never written into, since a binary in it may be running: a retry that finds the
+  release installed from the same commit builds nothing and points `current`, and one that finds
+  that name holding another commit, or no whole release, refuses and names the folder to remove
+  by hand.
+- **`current`.** The install ends by pointing the machine's `current` link at the release: a new
+  link made beside it and renamed over the old, never the link rewritten, so a reader finds one
+  release or the other. Recipes and the board's own starts find a binary in this order: the
+  checkout's `.target/bin/NAME`, the main checkout's from a linked worktree, `current/bin/NAME`
+  in the machine folder, then `PATH` (`crates/symphony/src/builds.rs`,
+  `crates/symphony/shipped/symphony.just`). So a project with no build of its own runs the
+  release, and one that builds its own, this repository among them, keeps running its own.
+- **Earlier releases stay.** Nothing removes a release's folder. The way back is by hand, in the
+  machine folder: `ln -s releases/NAME current.new && mv -fh current.new current` on macOS
+  (`mv -fT` on Linux), which renames the new link over the old and never into the folder it
+  names, for a release whose folder is there. The next refresh points `current`
+  at the release it installs.
+
+No server follows `current`: nothing of the install starts, stops, signals or replaces a server,
+and the shared server keeps serving the build it was started from. What the install built, each
+artifact's size and how long the build took are among the refresh's lines, in the run's record
+and in `--status`.
 
 ## Who runs it
 
@@ -846,6 +909,9 @@ next run: after 13 more landings (7 of 20), or the scheduled run
 last publish: of release-2026-11-12 by the run 2026-11-12T1000-34446, 2026-11-12 10:00 (1 h ago)
   not published: [releases] publish is off
 last refresh: green, of release-2026-11-12 by the run 2026-11-12T1000-34446, 2026-11-12 10:00 (1 h ago)
+  installed release-2026-11-12 in /machine/releases/release-2026-11-12, built in 660 s: symphony-server 31,402,112 bytes, tasks 31,675,888 bytes, agent-send 5,601,824 bytes, symphony 22,668,544 bytes, client/5f0c2d9a41b7e386 6,204,518 bytes in 322 files
+  release-2026-11-12 serves board schema 18, plugin protocol 0.3 and tasks api 1.14
+  /machine/current names release-2026-11-12 (it named release-2026-11-11, which stays installed): a project with no build of its own runs it
   consumer: its pin to release-2026-11-12 is on the branch symphony/release-2026-11-12 (11bbf043d060), made through its own commit gate and not pushed
   consumer: its main is fast-forwarded to symphony/release-2026-11-12 (11bbf043d060) in its main checkout /work/consumer, through its own hooks and not pushed: its own next push carries it
   consumer: its board moved from schema 16 to 17, its store snapshotted first to /work/consumer/.git/symphony/tasks/snapshots/before-schema-17-release-2026-11-12.surql
@@ -920,7 +986,9 @@ newest release or that a check found red, never moves or deletes a tag, and push
 new tag: never the branch `release-candidate`, which it moves only from the commit it set it to
 and never while a worktree has it checked out. It resets and cleans no checkout but its own,
 removes no folder it did not make, builds and tests nothing of a consuming project's, and itself
-writes nothing to a consuming project's checkout. Its refresh writes to a project only the branch
+writes nothing to a consuming project's checkout. Its install writes in the machine folder only a
+release's own new folder under `releases/`, never one already there, and the `current` link, and
+removes there only what an install of that same release left unfinished. Its refresh writes to a project only the branch
 its pin moves on, made through the
 project's own commit gate, the worktree that makes it, removed after, the fast-forward of its main
 to that branch's one commit in a main checkout ready for it, through its own hooks, putting back
@@ -932,7 +1000,8 @@ the `surreal export` client it started. Its tests run on a repository of their o
 repository for its remote and a user git configuration that asks every push for more, a scratch
 board and a machine folder of their own, with stand-in checks (`crates/symphony-build/tests/release/`),
 and shorten the refresh's wait for the shared server with `SYMPHONY_RELEASE_RELOAD_SECONDS`,
-which no flag sets. They set its clock with `SYMPHONY_RELEASE_NOW`, which no flag sets either: a
+which no flag sets. They build nothing: a run on their clock installs only through the stand-in
+for cargo `SYMPHONY_RELEASE_BUILDER` names, which no flag sets. They set its clock with `SYMPHONY_RELEASE_NOW`, which no flag sets either: a
 run on it is refused unless it pushes nothing (`--no-push`) or every place its remote pushes to
 is a folder on this machine, so a release named for another day than the machine's never leaves
 it.

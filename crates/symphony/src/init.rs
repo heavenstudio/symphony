@@ -1020,6 +1020,17 @@ pub struct Machine<'a> {
     pub beside: Option<&'a Path>,
 }
 
+impl Machine<'_> {
+    /// What a search for a build reads past a checkout's links: this machine's folder, whose
+    /// `current` names the release it runs, and its search path.
+    pub fn beyond(&self) -> builds::Beyond {
+        builds::Beyond {
+            machine: self.folder.map(Path::to_path_buf),
+            path: self.path.map(OsStr::to_os_string),
+        }
+    }
+}
+
 /// The SurrealDB the board of the checkout at `root` would start, when it is not there to run:
 /// `named` (`SYMPHONY_SURREAL`), else the pinned one in the repository's common dir. None outside a
 /// checkout.
@@ -1084,12 +1095,12 @@ fn runners(name: &str, own: &[&str]) -> Vec<String> {
 }
 
 /// Of `names`, the builds the checkout at `root` has none of where the recipes and the hooks look
-/// ([`builds::find`]) on the search path `path`.
-fn unfound<'a>(root: &Path, names: &[&'a str], path: Option<&OsStr>) -> Vec<&'a str> {
+/// ([`builds::find`]), past its links in `beyond`.
+fn unfound<'a>(root: &Path, names: &[&'a str], beyond: &builds::Beyond) -> Vec<&'a str> {
     names
         .iter()
         .copied()
-        .filter(|name| builds::find(root, name, path).is_none())
+        .filter(|name| builds::find(root, name, beyond).is_none())
         .collect()
 }
 
@@ -1182,7 +1193,7 @@ pub fn steps(root: &Path, machine: &Machine) -> Vec<String> {
         .filter(|name| !runners(name, &own).is_empty())
         .collect();
     steps.extend(build_steps(
-        &unfound(root, &wanted, machine.path),
+        &unfound(root, &wanted, &machine.beyond()),
         &own,
         machine.beside,
     ));
@@ -1337,9 +1348,9 @@ fn registered(root: &Path, folder: &Path) -> bool {
 }
 
 /// The warning a run at `root` ends with when the heartbeat has no build to run there, found as the
-/// hooks find it on the search path `path`.
-pub fn heartbeat_warning(root: &Path, path: Option<&OsStr>) -> Option<String> {
-    let missing = unfound(root, &HEARTBEAT_BUILDS, path);
+/// hooks find it, past its links in `beyond`.
+pub fn heartbeat_warning(root: &Path, beyond: &builds::Beyond) -> Option<String> {
+    let missing = unfound(root, &HEARTBEAT_BUILDS, beyond);
     if missing.is_empty() {
         return None;
     }
@@ -1461,7 +1472,7 @@ pub fn main(args: &[String], out: &mut dyn io::Write, err: &mut dyn io::Write) -
                 beside: running.as_deref().ok().and_then(Path::parent),
             };
             let _ = writeln!(out, "\n{}\n\n{TRUST}", next(&steps(&root, &machine)));
-            if let Some(warning) = heartbeat_warning(&root, path.as_deref()) {
+            if let Some(warning) = heartbeat_warning(&root, &machine.beyond()) {
                 let _ = writeln!(err, "symphony init: {warning}");
             }
             0
