@@ -263,7 +263,7 @@ const AXIS = {
     [1, "10 Nov"],
     [2, "11 Nov"],
   ] as [number, string][],
-  marks: [[25 / 3, 0, "settings: land without the check (4f1c0a9b2d3e)"]] as [
+  marks: [[25 / 3, 0, "settings changed, settings: land without the check (4f1c0a9b2d3e)"]] as [
     number,
     number,
     string,
@@ -290,9 +290,12 @@ describe("a chart's card", () => {
     expect(html).toContain("Ready <strong>2</strong>");
     expect(html).toContain("Review <strong>1</strong>");
     expect(html).toContain("Blocked <strong>0</strong>");
-    expect(html).toContain("Settings changed: settings: land without the check (4f1c0a9b2d3e)");
+    expect(html).toContain("Settings changed, settings: land without the check (4f1c0a9b2d3e)");
+    expect(html).toContain(
+      'title="settings changed, settings: land without the check (4f1c0a9b2d3e)"',
+    );
     expect(childrenOf(Readout({ chart: openChart(), axis: AXIS, at: 0 }), "chart-mark-note")).toBe(
-      "Settings changed: settings: land without the check (4f1c0a9b2d3e)",
+      "Settings changed, settings: land without the check (4f1c0a9b2d3e)",
     );
     expect(html.match(/class="seg up/g)).toHaveLength(3);
     expect(html).toContain('class="chart-mark" style="left:8.33%"');
