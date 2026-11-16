@@ -362,7 +362,7 @@ fn a_client_build_starts_from_the_installed_builds_and_the_list_of_them() {
         "installed module",
     );
     tree.write(
-        "home/client/public/assets/chunks/old-dxh789.js",
+        "home/client/public/assets/chunks/old-789789789789789a.js",
         "installed chunk",
     );
     tree.write("home/client/public/builds.json", "{\"builds\": []}");
@@ -375,7 +375,7 @@ fn a_client_build_starts_from_the_installed_builds_and_the_list_of_them() {
         "installed module"
     );
     assert_eq!(
-        tree.read("stage/public/assets/chunks/old-dxh789.js"),
+        tree.read("stage/public/assets/chunks/old-789789789789789a.js"),
         "installed chunk"
     );
     // An installed client listing no builds copies no list, and none installed copies nothing.

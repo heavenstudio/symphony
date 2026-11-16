@@ -169,8 +169,7 @@ selects another folder. A private server on the main checkout leaves the
 shared app's `artifacts/docs-app.port` record alone. A project's page serves the
 shell with revalidation by its ETag, as is any client file not named by its
 content. A file named by its content, an `assets/` name whose last `-` part is
-the build's sixteen hex digits (the shell script, every page module and stylesheet; or the
-`dxh…` hash of a build published before the client was Vite's alone, kept until it rolls off), is
+the build's sixteen hex digits (the shell script, every page module and stylesheet), is
 cached for a year as immutable, so a
 return visit revalidates the page alone (`src/api/client.rs`). Snapshots and the
 page are gzipped per request. A client file is gzipped once per content, at the

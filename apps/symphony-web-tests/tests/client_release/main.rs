@@ -104,10 +104,13 @@ fn a_build_beyond_the_bound_or_a_file_no_kept_build_names_refuses() {
     );
     fs::remove_file(committed.join("assets/oldest-chunk.js")).unwrap();
     fs::remove_file(committed.join("assets/symphony-shell-oldest.js")).unwrap();
-    tree.write("committed/assets/chunks/old-dxh789.js", "in a folder");
+    tree.write(
+        "committed/assets/chunks/old-789789789789789a.js",
+        "in a folder",
+    );
     assert_eq!(
         refused(&check(&built, &committed)),
-        "client-check: no build the committed client keeps names assets/chunks/old-dxh789.js: run just client-update\n"
+        "client-check: no build the committed client keeps names assets/chunks/old-789789789789789a.js: run just client-update\n"
     );
     fs::remove_dir_all(committed.join("assets/chunks")).unwrap();
     fs::remove_file(committed.join("assets/older-chunk.js")).unwrap();
