@@ -22,7 +22,7 @@ use std::process::Command;
 use symphony_board::live::SOURCE;
 use symphony_board::rpc::Client;
 use symphony_board::server::Home;
-use symphony_board::{NewTask, Opening, Raw, Schema, Store};
+use symphony_board::{NewTask, Opening, Program, Raw, Schema, Store};
 
 /// This build's schema source, which the binaries under test embed.
 const OWN: &str = include_str!("../../src/schema.rs");
@@ -208,14 +208,19 @@ impl Drop for Live {
 }
 
 /// The board `client` reaches, made by the build one schema version behind, holding the task
-/// `live/one`.
+/// `live/one`: main's own `tasks` on this machine before its rebuild at this build's schema, so the
+/// line it writes (a build at schema 18 or later keeps one) is the migrate's own, which leaves it
+/// out.
 fn seed(client: Client) {
+    let tasks = Path::new(TASKS).canonicalize().unwrap();
     Store::opening(
         client,
         Box::new(|| NOW),
         Box::new(|_| false),
-        "this-host",
-        &Opening::write().at(Schema::this_build().before()),
+        &symphony_board::sys::hostname(),
+        &Opening::write()
+            .at(Schema::this_build().before())
+            .by(Program::at(&tasks)),
     )
     .unwrap()
     .create(&NewTask::new("live/one", "Made by main's build", "owner"))
