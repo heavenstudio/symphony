@@ -544,7 +544,7 @@ fn a_modules_root_hears_only_its_own_parts_events_and_the_document_hears_them_al
     ));
     // Listeners on the roots, as each module's framework listens, and one on the document. A
     // click and a key in the timeline, the task page module's own part inside its root, a click on
-    // the page's own heading and one in the chat's sheet, the program's module beside it.
+    // the page's own heading and one in the chat's sheet, the chat's module beside it.
     assert_eq!(chrome.eval(SPIES), json!(true));
     chrome.eval(
         "(() => { const click = selector => document.querySelector(selector).dispatchEvent(new MouseEvent('click', {bubbles: true, cancelable: true})); click('article.task h1'); click('#timeline-root .tl-totals'); document.getElementById('tl-stop-0').dispatchEvent(new KeyboardEvent('keydown', {key: 'Home', bubbles: true, cancelable: true})); click('#quick-root #quick-text'); })()",

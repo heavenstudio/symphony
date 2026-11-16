@@ -40,6 +40,8 @@ pub fn legacy_html(fragment: &Fragment) -> String {
                     .collect::<Vec<_>>()
                     .join(" · "),
             ),
+            // A kind a later minor of the kit adds, with no markup here yet: its placeholder stays.
+            _ => continue,
         };
         html = html.replace(
             &format!("<span class=\"media\" data-media=\"{index}\" data-kind=\"{kind}\"></span>"),

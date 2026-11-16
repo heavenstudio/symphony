@@ -21,7 +21,6 @@ use tokio::sync::watch;
 use tower_http::compression::predicate::{DefaultPredicate, Predicate};
 
 mod connections;
-mod embeddings;
 mod port_file;
 
 pub(crate) use port_file::port_file;
@@ -83,7 +82,7 @@ pub struct Shared {
     /// ([`symphony_board::recording`]).
     pub(crate) recording: Arc<symphony_board::recording::Gate>,
     pub(crate) saves: std::sync::OnceLock<symphony::save::Saves>,
-    /// The workers that maintain this project's board, its idle sweep and its embedding catch-up,
+    /// The workers that maintain this project's board, its idle sweep,
     /// when the one server serves it beside its starter's ([`crate::projects`]): joined as it stops,
     /// so none, nor any child of theirs, outlives its state. The starter's own are the server's
     /// ([`Background`]).
@@ -1146,16 +1145,14 @@ impl Started {
 }
 
 /// What the machine's one server (`home`, its machine folder) runs for each project it serves, on
-/// the wall clock: the idle sweep ([`session_maintenance`]) and the embedding catch-up
-/// ([`embeddings::start`]), each a worker of its own, so one project's hung or failing round never
-/// holds up another's. A private preview (no `home`) runs none.
+/// the wall clock: the idle sweep ([`session_maintenance`]), a worker of its own, so one project's
+/// hung or failing round never holds up another's. A private preview (no `home`) runs none.
 pub(crate) fn maintenance(
     shared: &Arc<Shared>,
     home: Option<&Path>,
 ) -> Vec<std::thread::JoinHandle<()>> {
     session_maintenance(shared, home, Stamp::now)
         .into_iter()
-        .chain(embeddings::start(shared, home, Stamp::now))
         .collect()
 }
 

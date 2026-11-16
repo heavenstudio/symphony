@@ -80,6 +80,7 @@ pub struct GatePast {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 #[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
+#[non_exhaustive]
 pub enum GateState {
     /// Not met, and something can meet it: a run, a verdict, a stamp.
     Missing,

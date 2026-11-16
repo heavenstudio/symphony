@@ -413,27 +413,182 @@ fn the_settings_marks_are_the_commits_on_the_line_that_changed_the_project_file(
         &[("symphony.toml", "[land]\ncheck = true\n")],
     );
     commit(&tree, 5.5, "elsewhere", &[("e.txt", "e\n")]);
-    let marks: Vec<(f64, String)> = settings_changes(&tree.root, "main", midnight())
-        .unwrap()
-        .into_iter()
-        .map(|commit| ((commit.at - midnight()) / HOUR, commit.subject))
-        .collect();
     assert_eq!(
-        marks,
+        marks(&tree, midnight()),
         [
-            (5.0, "settings: limits".to_string()),
-            (4.5, "Merge gates".to_string())
+            (5.0, "settings: limits".to_string(), "settings".to_string()),
+            (4.5, "Merge gates".to_string(), "settings".to_string())
         ],
         "tip first, the merge for the branch's commit, the file's first commit before the window \
          and every commit that left it alone out"
     );
     assert!(
-        settings_changes(&tree.root, "main", midnight() + DAY)
+        changes(&tree.root, "main", midnight() + DAY)
             .unwrap()
             .is_empty()
     );
-    let error = settings_changes(&tree.root, "trunk", midnight()).unwrap_err();
+    let error = changes(&tree.root, "trunk", midnight()).unwrap_err();
     assert!(error.contains("trunk"), "{error}");
+}
+
+/// The marks of `tree`'s main since `since`, tip first: each one's hour after midnight, its subject
+/// and what it changed, joined by commas.
+fn marks(tree: &Tree, since: f64) -> Vec<(f64, String, String)> {
+    changes(&tree.root, "main", since)
+        .unwrap()
+        .into_iter()
+        .map(|change| {
+            (
+                (change.commit.at - midnight()) / HOUR,
+                change.commit.subject,
+                change.changed.join(", "),
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn a_skill_a_rule_and_a_setting_are_a_mark_each_at_their_hour_and_another_file_is_none() {
+    let tree = repository();
+    commit(
+        &tree,
+        4.0,
+        "skills: the work skill asks first",
+        &[(".agents/skills/work/SKILL.md", "# work\n")],
+    );
+    commit(&tree, 5.0, "rules: one more", &[("RULES.md", "# Rules\n")]);
+    commit(
+        &tree,
+        6.0,
+        "settings: limits",
+        &[("symphony.toml", "[land]\ncheck = true\n")],
+    );
+    commit(
+        &tree,
+        7.0,
+        "guide: the board's",
+        &[("crates/tasks/AGENTS.md", "# The board\n")],
+    );
+    // None of them: a guide alone (the commit above), a source file, a document, a file named
+    // like the skills' folder and a link's own path under it, which is no file of a skill.
+    commit(
+        &tree,
+        8.0,
+        "elsewhere",
+        &[
+            ("src/lib.rs", "// code\n"),
+            ("crates/tasks/README.md", "# Read me\n"),
+            ("docs/skills.md", "# Skills\n"),
+            (".claude/skills/work", "../../.agents/skills/work\n"),
+            ("docs/RULES.md", "# Not the rules\n"),
+        ],
+    );
+    assert_eq!(
+        marks(&tree, midnight()),
+        [
+            (6.0, "settings: limits", "settings"),
+            (5.0, "rules: one more", "rules"),
+            (4.0, "skills: the work skill asks first", "skill work"),
+        ]
+        .map(|(at, subject, changed)| (at, subject.to_string(), changed.to_string())),
+    );
+}
+
+#[test]
+fn a_landing_is_one_mark_naming_each_thing_its_branch_changed_once() {
+    let tree = repository();
+    // A branch changes two files of one skill, its shipped copy, a second skill, both guides at
+    // the root, the rules and the settings, over three commits, and code; its merge lands them.
+    git(&tree.root, 4.0, &["switch", "-qc", "instructions"]);
+    commit(
+        &tree,
+        4.0,
+        "skills",
+        &[
+            (".agents/skills/work/SKILL.md", "# work\n"),
+            (".agents/skills/work/start.md", "# start\n"),
+            ("crates/app/shipped/skills/work/SKILL.md", "# work\n"),
+            ("crates/app/shipped/skills/tasks/SKILL.md", "# tasks\n"),
+        ],
+    );
+    commit(
+        &tree,
+        4.2,
+        "guides and rules",
+        &[
+            ("AGENTS.md", "# Guide\n"),
+            ("CLAUDE.md", "# Guide\n"),
+            ("RULES.md", "# Rules\n"),
+        ],
+    );
+    commit(
+        &tree,
+        4.4,
+        "settings and code",
+        &[
+            ("symphony.toml", "[land]\ncheck = false\n"),
+            ("src/lib.rs", "// code\n"),
+        ],
+    );
+    git(&tree.root, 4.5, &["switch", "-q", "main"]);
+    git(
+        &tree.root,
+        4.5,
+        &[
+            "merge",
+            "-q",
+            "--no-ff",
+            "-m",
+            "Merge instructions",
+            "instructions",
+        ],
+    );
+    assert_eq!(
+        marks(&tree, midnight()),
+        [(
+            4.5,
+            "Merge instructions".to_string(),
+            "settings, rules, skill tasks, skill work".to_string()
+        )],
+        "the merge alone, at its own hour: the settings and the rules, then the skills by name, \
+         the guides it changed unnamed"
+    );
+}
+
+#[test]
+fn the_instructions_are_the_settings_the_rules_and_each_skill_s_files_and_no_guide() {
+    for (path, named) in [
+        ("symphony.toml", Some("settings")),
+        ("RULES.md", Some("rules")),
+        (".agents/skills/work/project.md", Some("skill work")),
+        // A guide is none, at the root or in a package.
+        ("AGENTS.md", None),
+        ("CLAUDE.md", None),
+        ("apps/web/AGENTS.md", None),
+        (".agents/skills/work/SKILL.md", Some("skill work")),
+        (".agents/skills/work/notes/deep.md", Some("skill work")),
+        (".claude/skills/review/SKILL.md", Some("skill review")),
+        (
+            "crates/app/shipped/skills/tasks/start.md",
+            Some("skill tasks"),
+        ),
+        ("skills/triage/SKILL.md", Some("skill triage")),
+        // Whatever a skill's folder holds is the skill's.
+        (".agents/skills/work/AGENTS.md", Some("skill work")),
+        // No file of a skill: the folder's own files and links.
+        (".claude/skills/work", None),
+        ("skills", None),
+        ("docs/skills.md", None),
+        // The settings and the rules are the root's alone, and a name is matched whole.
+        ("crates/app/symphony.toml", None),
+        ("docs/RULES.md", None),
+        ("docs/AGENTS.md.txt", None),
+        ("agents.md", None),
+        ("src/lib.rs", None),
+        ("", None),
+    ] {
+        assert_eq!(instruction(path).as_deref(), named, "{path}");
+    }
 }
 
 /// The full name of what `rev` names in `root`.

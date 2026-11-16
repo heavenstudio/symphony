@@ -123,9 +123,9 @@ that `just tasks migrate` must not be run, and where the recovery is described
 Nothing else reads the record: `just tasks schema` reports what it says (exit 1 while the board
 went back), `just tasks snapshot` opens no board, nor do `just tasks database`, its hold and its
 release (the hold is step 2 of [the recovery](#a-board-that-went-back), so it stops a board that
-went back as any other), and a raw read (`search_bench`'s) opens no store. Otherwise the store
-adds the version it found to the record when it is higher, and the one it migrated to. A scratch
-board keeps no record, nor does a server an address names that is no project's board server.
+went back as any other). Otherwise the store adds the version it found to the record when it is
+higher, and the one it migrated to. A scratch board keeps no record, nor does a server an address
+names that is no project's board server.
 Builds from before the record neither read nor write it: the protection holds for a project only
 once each of its readers and writers runs a build that carries it, the main checkout's
 `.target/bin/tasks`, the shared Symphony server and a consuming project's host.
@@ -1761,6 +1761,32 @@ afterwards, and runs the check, the docs audit, on what it made ([below](#the-re
   each commit made before the verdict and before the task last went to review; the
   landing's line on the thread then says it judged by time. A commit after the named
   one, after the verdict, or during the review without a named tip refuses, naming it.
+- **An approve over one merge.** An approve naming a commit stands at a tip that is one
+  merge of the default branch into that commit, where the merge settles conflicts in
+  documents alone (`crates/tasks/src/land/carried.rs`): the merge an executor makes when a
+  land conflicts in a document, which no reviewer reads again. Three things hold of it. The
+  tip is a merge of two parents, the first the commit the approve names and the second a
+  commit the default branch holds, with nothing on top. Every path git's own merge of those
+  two leaves in conflict (`git merge-tree`, by its status and the paths it lists, whatever
+  the conflict: both sides changed, one deleted, a mode) is a document: a Markdown file
+  (`*.md`) the tip holds as a regular file (mode `100644`, no symbolic link or submodule)
+  that instructs no agent, so none under a `skills` folder and none named `AGENTS.md`,
+  `CLAUDE.md` or `RULES.md`, where a wrong settling misleads every agent and no test says so.
+  And the tip differs from that merge's tree in the conflicted paths alone. So what nobody
+  read is the settling of a conflict in a document: every other path, a document that did
+  not conflict among them, is as git merges what the reviewer read with what the default
+  branch landed, which is what the land itself makes of a tip. The land then needs the
+  task's `tests` green at that tip whatever its needs name, and says what it went by: `land
+  SLUG: approved by HANDLE at TIME, naming A, which stands over the one merge T of main at M
+  into it, which settles conflicts in documents alone (PATHS) and is git's own merge of the
+  two elsewhere; its tests are read at T`, the landing's line on the thread adding `its
+  approve of A stands over the one merge T of main into it`. A merge that settles a conflict
+  anywhere else (code, a file one side deleted, a guide, the rules, a skill) or changes a
+  path that did not conflict, each named with its paths, a commit on top of the merge, a
+  merge made on another commit than the approved one or of a commit the default branch does
+  not hold, and an approve naming no commit each go to the reviewer as before. The other
+  stamps read at the tip are as they were: a picture's post and the owner's approve name the
+  merge, and an assessment that read the approved commit is of another tip there.
 - **No owner's answer left behind.** A worktree at a commit the land brings (on the branch,
   on another branch or detached at one of its commits) whose documents hold an owner's dated
   line under a card that no commit has (the owner's answer on a card only the branch holds,
@@ -1772,7 +1798,7 @@ afterwards, and runs the check, the docs audit, on what it made ([below](#the-re
   worktree's HEAD and the tip hold of the documents it changed, so a line a regroup only
   moved is none. It is said to `@executor`, which commits it on the branch (from a worktree
   not on it, copying the line onto its card there) and has the new tip approved, as for a
-  conflict below. A worktree git cannot read refuses the land to the one landing alone, as
+  commit after the approved one. A worktree git cannot read refuses the land to the one landing alone, as
   it may hold the answer; the land runs again once git reads it. The answers are asked again
   once the merge is checked, before the default branch moves, so one saved meanwhile refuses
   as well. One saved while the default branch moves is said to `@orchestrator` once it moved
@@ -1781,10 +1807,18 @@ afterwards, and runs the check, the docs audit, on what it made ([below](#the-re
   that worktree meanwhile.
 - **Back to review.** An approve that does not do (someone else's to give, or not
   covering the tip) sends the task back to review, said to `@orchestrator` or
-  `@reviewer`. A conflict or a red check on the merge of the tip as approved is said to
-  `@executor`, which merges the default branch into its branch and fixes it there, then
-  moves the task back to review itself (`just tasks move SLUG review`) for a fresh
-  approve naming the new tip, and the land runs again. The one done task that may go
+  `@reviewer`. A conflict in documents alone (every conflicted path a document, as above)
+  under an approve that names the tip is
+  said to `@executor`, which merges the default branch into its branch once, settling
+  the conflict in those documents and changing nothing else, runs its tests at the new tip
+  and lands it again: the task stays done, its approve standing over that one merge
+  ([above](#the-default-landing), "An approve over one merge"), and a move back to review
+  would ask for a fresh one. Any other conflict, one under an approve that names no commit
+  or stands over a merge already, or a red check on the merge of the tip as
+  approved, is said to `@executor`, which merges the default branch into its branch and
+  fixes it there, then moves the task back to review itself (`just tasks move SLUG
+  review`) for a fresh approve naming the new tip, and the land runs again. The one done
+  task that may go
   back is an approved one no landing has closed whose tip the default branch does not
   hold (one landed or merged by hand stays done, and what it still needs is a new
   task), moved by its executor, reviewer or orchestrator; the command line and the API
@@ -1801,7 +1835,8 @@ afterwards, and runs the check, the docs audit, on what it made ([below](#the-re
   the release run's `--due`, reads the land afterwards and moves the candidate to the newest
   commit of the branch an approve named, or the tip the landing line says its needed stamps
   stood on, that holds the candidate and the fix alone. A conflict goes back to `@executor` as
-  above, who merges the default branch then and asks for a fresh approve; the candidate keeps
+  above, who merges the default branch then and lands again on its approve where the merge
+  settles documents alone, or asks for a fresh approve; the candidate keeps
   the commit approved before that merge, and one that needed no review has none, and drops
   it. A red whose fix landed with another
   red's task is closed as covered by that landing ([above](#a-task-another-landing-covers)),
@@ -2206,7 +2241,9 @@ why.
   own commands in `crates/tasks` read the verdict words apart): met by an `approve`
   in the last round that names the tip, missing until then, the earlier rounds its
   past; an approve naming another commit, or none, is missing, naming what it
-  approved. A task done with no round, its assessment not having waived `review`,
+  approved, the commit a merge of the default branch was made on among them: only the
+  land, which reads the repository, tells that an approve stands over that merge
+  ([the default landing](#the-default-landing)). A task done with no round, its assessment not having waived `review`,
   landed without review: missing. A task done by a covered close
   ([below](#a-task-another-landing-covers)) says so.
 - **tests**: the board's recorder's runs ([MACHINE_WORK](MACHINE_WORK.md#recording-builds-and-tests))
@@ -2247,6 +2284,24 @@ A task with work of its own to check has one more of the Symphony's:
   task whose branch holds no commit of its own (no such branch, one made at the default
   branch and not yet committed to, or one already landed there), for an instruction
   subtask, whose work lands with its task, or for a project with no check.
+
+The server keeps what its own gates are read from, each part by what tells it has not moved
+(`crates/symphony/src/gates/inputs.rs`), and puts the gates together from them on every read:
+
+- the task, its thread and the tasks under it, by the task's stamp on the board
+  (`Store::task_stamp`): its row, links, roles and executors' recorded branches, the tasks
+  right under it and its thread's newest line, in one small read;
+- the recorder's runs, by their files: the history and each operation's record are read again
+  once the file is another, by its length, when it changed and its inode, and an unfinished
+  operation's lease is asked on every read;
+- the stamps catalogue, by the commit the main checkout's head is at;
+- whether the tip holds work of its own, by that tip and the default branch's.
+
+So a read with nothing new asks the board once, for the stamp, resolves the three refs, and reads
+nothing else again; a post, a role, a recorded run, a new tip or a commit on the default branch
+shows at the next read. One thing shows later: a task moved under one of the task's subtasks
+joins the runs its `tests` stamp counts at the task's next post, role, status or subtask. The
+land reads its own, never what the page keeps.
 
 A project's plugin answers its own through the gates seam (`symphony_plugin::Gates`,
 `Plugin::gates`) as the same typed data, so every project's gates are drawn the
@@ -2334,7 +2389,11 @@ A task's own executor and reviewer need no subtask: the task's brief and thread 
 whole assignment. The executor's whole prompt is `/work SLUG HANDLE`
 (`.agents/skills/work/SKILL.md`) and a reviewer's `/review-task SLUG HANDLE`
 (`.agents/skills/review-task/SKILL.md`), on the task itself, never a brief in a file;
-anything more for either goes on the task's thread (`--to @executor`, `--to @reviewer`). A
+anything more for either that is this task's alone goes on the task's thread (`--to @executor`,
+`--to @reviewer`). What a project tells every executor or every reviewer is no part of a prompt
+either: it is the project's guides and rules, and for one role alone a `project.md` of the
+project's own beside that role's skill (`.agents/skills/work/project.md`), which the skill reads
+first and `symphony init` never writes. A
 reviewer takes the reviewer's role on the task, so its verdicts are that task's review rounds,
 and each later round goes to the same reviewer, resumed with the new tip on the thread (a
 subagent by its parent, a `claude -p` run by `--resume`, a terminal by `just tasks launch SLUG

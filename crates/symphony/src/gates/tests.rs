@@ -279,7 +279,14 @@ fn a_task_done_by_a_covered_close_shows_it_never_landed_without_review_nor_appro
 
 /// A run of `label` as the board's recorder keeps it: `id` its operation, finished with `exit`
 /// unless `state` says otherwise.
-fn run(id: u8, label: &str, branch: &str, commit: &str, state: Step, exit: Option<i32>) -> Record {
+pub(super) fn run(
+    id: u8,
+    label: &str,
+    branch: &str,
+    commit: &str,
+    state: Step,
+    exit: Option<i32>,
+) -> Record {
     let started = 1000.0 * f64::from(id);
     Record {
         version: 1,
@@ -1311,7 +1318,7 @@ fn kept_theirs_reads_only_what_is_kept_and_known_asking_nothing() {
 }
 
 /// `git` with `args` in `root`, its output trimmed.
-fn git(root: &Path, args: &[&str]) -> String {
+pub(super) fn git(root: &Path, args: &[&str]) -> String {
     let done = symphony_board::sys::output(
         symphony_board::sys::Command::new("git")
             .args([

@@ -835,6 +835,9 @@ fn edge(block: &Block, last: bool) -> Option<String> {
         Block::SettledCard { .. } => "settled-card",
         Block::Thread { .. } => "thread",
         Block::Unknown { .. } => "unknown",
+        // The kit's lists grow in a minor, so no match outside it covers them whole
+        // (`tests/vocabulary_drawn.rs` holds every kind to an arm here).
+        _ => "later",
     };
     Some(kind.into())
 }

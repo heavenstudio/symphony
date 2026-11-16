@@ -23,7 +23,6 @@ mod dispatch_commit;
 mod dispatch_holder;
 mod dispatch_later;
 mod done;
-mod embeddings;
 mod fast_fix;
 mod fields;
 #[path = "../../../../tools/test-support/script_process_cwd.rs"]
@@ -63,6 +62,7 @@ mod sessions;
 mod shown_sessions;
 mod slots;
 mod slow_builds;
+mod stamp;
 mod start;
 mod subtask_roles;
 mod tree;

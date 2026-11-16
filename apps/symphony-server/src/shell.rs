@@ -1,10 +1,11 @@
 //! The page the server serves for every client route: the client's shell with its project in it.
-//! The head takes the project's theme package: its name as the title, its icon, its tokens inline,
+//! The head takes the project's theme package: its name as the title, its icon (the Symphony's
+//! own, [`crate::mark`], where the package has none), its tokens inline,
 //! its stylesheets after them (the shell puts each page kind's styles before these, so the package
 //! wins), and its layout variants on the root element, which the client's styles select. The body
 //! takes the project's view ([`symphony_api::PROJECT_ELEMENT`]), under the base the one server
 //! serves it at, and on a page the server draws itself ([`crate::pages`]) that page's notice. With
-//! no package the Symphony's defaults stand.
+//! no package the Symphony's defaults stand, its mark as the icon among them.
 
 use std::path::Path;
 
@@ -15,6 +16,10 @@ use symphony::theme::Package;
 
 /// What marks the theme's elements in the head, where the shell puts page styles before them.
 pub(crate) const THEME_MARK: &str = "data-symphony-theme";
+
+/// The icon link of a shell, which names no icon: the page served takes the theme's in its place,
+/// else the Symphony's.
+pub(crate) const NO_ICON: &str = "<link rel=\"icon\" href=\"data:,\">";
 
 /// The opening of the shell's notice region, which a banner goes at the start of.
 pub(crate) const REGION: &str = "<section id=\"shell-notices\" aria-label=\"Server notices\">";
@@ -35,14 +40,15 @@ pub(crate) fn page(shell: &str, root: &Path, base: &str, banner: &str) -> String
     {
         page.replace_range(open..close, &escape(&package.name));
     }
-    if let Some(icon) = &package.icon
-        && let Some(at) = page.find("<link rel=\"icon\" href=\"data:,\">")
-    {
-        let link = format!(
-            "<link rel=\"icon\" href=\"{}\">",
-            escape(&versioned(root, base, icon))
-        );
-        page.replace_range(at..at + "<link rel=\"icon\" href=\"data:,\">".len(), &link);
+    if let Some(at) = page.find(NO_ICON) {
+        let link = match &package.icon {
+            Some(icon) => format!(
+                "<link rel=\"icon\" href=\"{}\">",
+                escape(&versioned(root, base, icon))
+            ),
+            None => crate::mark::links(base),
+        };
+        page.replace_range(at..at + NO_ICON.len(), &link);
     }
     if let Some(at) = page.find("</head>") {
         page.insert_str(at, &head(root, base, &package));

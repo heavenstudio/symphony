@@ -25,163 +25,39 @@ mkdir -p "$stage/assets"
 # the swap: publish-client keeps the builds published just before it over the folder, as that
 # folder's builds.json names them (crates/symphony/src/cli/publish.rs).
 manifest='{}'
-# The minifier dx fetched to minify each module's glue: the program's chunk loader and the shell go
-# through it too.
+# The minifier dx fetched to minify a module's glue, which minifies the shell.
 esbuild="$(find "${DX_HOME:?package.sh runs from bundle.sh, which names DX_HOME}/tools" -path '*/esbuild-*/esbuild')"
 if [ -z "$esbuild" ] || [ "$(printf '%s\n' "$esbuild" | wc -l | tr -d ' ')" != 1 ] || [ ! -x "$esbuild" ]; then
     echo "symphony-ui: expected one esbuild under $DX_HOME/tools, found: ${esbuild:-none}" >&2
     exit 2
 fi
-# The program's kind (src/split.rs), the chat every page mounts, which no page kind is: one script
-# and main module, and a chunk. The menus every page mounts too (a select's popup, the picture
-# viewer) are the web client's persistent kind `overlay`, placed with its other kinds below.
-program_kinds=(panel)
-# Its chunks: the kind's and the media layer's, which no kind is (the shell's manifest never names
-# it) and the chat loads once it shows media.
-program_chunks=("${program_kinds[@]}" media)
-# Whether the wasm module $1 holds custom sections alone (a name and its bytes, never code, data or
-# a table entry): past its 8-byte header, each section is its id, its size in LEB128 and its bytes.
-custom_only() {
-    local bytes at=8 size bits byte
-    [ "$(($(wc -c < "$1")))" -le 4096 ] || return 1
-    read -r -a bytes <<< "$(od -An -v -tu1 "$1" | tr -s ' \n' '  ')"
-    [ "${bytes[*]:0:4}" = "0 97 115 109" ] || return 1
-    while [ "$at" -lt "${#bytes[@]}" ]; do
-        [ "${bytes[at]}" = 0 ] || return 1
-        at=$((at + 1))
-        size=0
-        bits=0
-        while :; do
-            [ "$at" -lt "${#bytes[@]}" ] || return 1
-            byte="${bytes[at]}"
-            at=$((at + 1))
-            size=$((size | (byte & 127) << bits))
-            bits=$((bits + 7))
-            [ "$byte" -ge 128 ] || break
-        done
-        at=$((at + size))
-    done
-    [ "$at" = "${#bytes[@]}" ]
-}
-# The program, the one kind dx builds since every other moved to the web client. The web client's
-# kinds (apps/symphony-web) are placed after the shared stylesheet, below.
-for module_kind in program; do
-    module="$out/.modules/$module_kind"
-    # dx's splitter always writes a chunk the kinds would share, `chunk_0_split`, and never fills it
-    # (wasm-split-cli 0.7.10's `build_split_chunks`): no kind loads it (chunks.js loads a kind's own
-    # chunk alone), so it is not published. One that holds anything but custom sections fails the
-    # build, as the kinds would then miss what it holds.
-    if [ "$module_kind" = program ]; then
-        for split in "$module/public/assets"/chunk_*_split-*.wasm; do
-            [ -e "$split" ] || continue
-            if ! custom_only "$split"; then
-                echo "symphony-ui: the program's shared chunk $(basename "$split") is not empty, and no kind loads it; refusing to package it" >&2
-                exit 2
-            fi
-            rm -f "$split"
-        done
-    fi
-    bash "$here/assets-copy.sh" "$module/public/assets" "$stage/assets"
-    script="$(sed -n 's/.*<script type="module"[^>]*src="\([^"]*\)".*/\1/p' "$module/public/index.html")"
-    original="$(basename "$script")"
-    wasm="$prefix/assets/$(find "$module/public/assets" -name 'symphony-ui_bg*.wasm' -exec basename {} \;)"
-    ready="globalThis.reviewModuleReady_$module_kind="
-    if [ "$module_kind" = program ]; then
-        ready=""
-        chunks='{}'
-        for kind in "${program_kinds[@]}"; do
-            ready="${ready}globalThis.reviewModuleReady_$kind="
-        done
-        for kind in "${program_chunks[@]}"; do
-            chunk="$(find "$module/public/assets" -name "module_*_$kind-*.wasm" -exec basename {} \;)"
-            if [ -z "$chunk" ] || [ "$(printf '%s\n' "$chunk" | wc -l | tr -d ' ')" != 1 ]; then
-                echo "symphony-ui: expected one chunk of $kind in the program, found: ${chunk:-none}" >&2
-                exit 2
-            fi
-            chunks="$(jq -c --arg kind "$kind" --arg chunk "$prefix/assets/$chunk" '. + {($kind): $chunk}' <<< "$chunks")"
-        done
-    fi
-    # dx starts the generated module itself. Expose that one promise to the shell (to each of the
-    # program's kinds), and make the splitter's initSync reference local to this ESM instead of
-    # overwriting another kind's. The program's chunk loader follows, with its chunks' names.
-    #
-    # The whole script is then minified again, as one module. dx minified the glue while it named
-    # each chunk by dx's hash of the bytes its splitter wrote, which differ on every build
-    # (split-repair orders them and names them by their bytes only afterwards), and esbuild hands
-    # out its short names by how often each character stands in the file, those hex digits among
-    # them: two builds of the same sources gave glue with two local names exchanged, and so another
-    # script, shell and index.html (tests/release-red-verify-client-check-3). Minified here, over
-    # the names split-repair gave, the same sources give the same script whichever names dx chose.
-    # dx's glue repeats a key in an object literal, which esbuild warns of: errors alone are said.
-    {
-        printf 'let __reviewInitSync;\n'
-        sed -E -e 's/globalThis\.__wasm_split_main_initSync/__reviewInitSync/g' \
-            -e "s/[[:alnum:]_\$]+\\(\\{module_or_path:\"[^\"]+\"\\}\\)\\.then\\(/$ready&/" \
-            "$module/public/assets/$original"
-        if [ "$module_kind" = program ]; then
-            printf '\n'
-            sed "s#__CHUNKS__#$chunks#" assets/chunks.js
-        fi
-    } | "$esbuild" --minify --format=esm --log-level=error > "$stage/module-$module_kind.js"
-    if [ "$(grep -F -o "$ready" "$stage/module-$module_kind.js" | wc -l | tr -d ' ')" != 1 ]; then
-        echo "symphony-ui: $module_kind has no unique dx initializer; refusing to package it" >&2
-        exit 2
-    fi
-    script_hash="$(shasum -a 256 "$stage/module-$module_kind.js" | cut -c1-16)"
-    script="$prefix/assets/$module_kind-$script_hash.js"
-    mv "$stage/module-$module_kind.js" "$stage/assets/$module_kind-$script_hash.js"
-    rm -f "$stage/assets/$original"
-    styles="$(find "$module/public/assets" -name '*.css' -exec basename {} \; | sort | jq -R --arg prefix "$prefix/assets/" '$prefix + .' | jq -s .)"
-    if [ "$module_kind" != program ]; then
-        manifest="$(jq --arg kind "$module_kind" --arg script "$script" --arg wasm "$wasm" --argjson styles "$styles" '. + {($kind): {script: $script, wasm: $wasm, styles: $styles}}' <<< "$manifest")"
-        continue
-    fi
-    # The program kind's styles, of the program's: those its page links in its head (dx's static
-    # head: the frame's, the board's and the controls every page draws, as no other Dioxus kind is
-    # left to load them too); the pictures' (`media-`), which it shows; then its own: the shared
-    # controls' (`style-`, components/: the CSS modules the chat puts in the page as it draws). A
-    # style none of these places is refused.
-    others="$({ grep -o '<link rel="stylesheet" href="[^"]*"' "$module/public/index.html" || true; } \
-        | sed 's#.*/##; s#"$##' | jq -R --arg prefix "$prefix/assets/" '$prefix + .' | jq -s -c .)"
-    for kind in "${program_kinds[@]}"; do
-        own="$(jq -c --arg kind "$kind" --argjson others "$others" '
-            ((({panel: ["style-"]})[$kind] // []) + ["media-"]) as $names
-            | map(select(. as $style | ($others | index($style)) != null
-                or any($names[]; . as $name | $style | split("/") | last | startswith($name))))' <<< "$styles")"
-        manifest="$(jq --arg kind "$kind" --arg script "$script" --arg wasm "$wasm" --argjson styles "$own" --arg chunk "$(jq -r --arg kind "$kind" '.[$kind]' <<< "$chunks")" '. + {($kind): {script: $script, wasm: $wasm, styles: $styles, chunk: $chunk}}' <<< "$manifest")"
-    done
-    unplaced="$(jq -r --argjson styles "$styles" '$styles - [.[].styles[]] | .[]' <<< "$manifest")"
-    if [ -n "$unplaced" ]; then
-        echo "symphony-ui: no program kind takes these styles, refusing to package them: $unplaced" >&2
-        exit 2
-    fi
-done
-# The stylesheets every kind loads are one shared file, in their order, first in each kind's list:
-# a first visit asks for it once instead of once per file, and every kind still caches the same
-# one. A kind's own stylesheets follow it, the order a visit from another kind already loads them in.
-# It is the stylesheets the program's page links in its head, in the order the program's list names
-# them: the chat's own (`style-`) stay out of it, as no page kind draws them before the chat
-# opens, and so do the pictures' (`media-`), though the chat loads them: the web client's kinds
-# take the shared file and their own, home, the documents and a task's page with their own copy of
-# them (their media layer's), the queue, Reports, the task board and the agents page, which show
-# no picture, with none, and the overlay with its own (the popup's, the viewer's).
-shared="$(jq -c --argjson others "$others" 'map(select(. as $style | ($others | index($style)) != null) | select(contains("/media-") | not))' <<< "$styles")"
-if [ "$(jq length <<< "$shared")" -gt 1 ]; then
-    jq -r --arg prefix "$prefix/assets/" '.[] | ltrimstr($prefix)' <<< "$shared" | while IFS= read -r name; do
-        cat "$stage/assets/$name"
-        printf '\n'
-    done > "$stage/shared.css"
-    shared_name="shared-$(shasum -a 256 "$stage/shared.css" | cut -c1-16).css"
-    mv "$stage/shared.css" "$stage/assets/$shared_name"
-    manifest="$(jq --argjson shared "$shared" --arg href "$prefix/assets/$shared_name" 'map_values(.styles |= [$href] + (. - $shared))' <<< "$manifest")"
-    shared="$(jq -cn --arg href "$prefix/assets/$shared_name" '[$href]')"
+# The stylesheets every kind loads are one shared file, first in each kind's list: a first visit
+# asks for it once instead of once per file, and every kind caches the same one. They are those the
+# page dx built for src/main.rs links in its head, in the order of their names, each minified and
+# named by its bytes by dx: the frame's, the controls' theme, the board's and the shared controls'.
+# Nothing else of that build is published: its script and its wasm draw nothing.
+styles_page="$out/.modules/styles/public/index.html"
+if [ ! -f "$styles_page" ]; then
+    echo "symphony-ui: the shared stylesheets' build is missing: $styles_page" >&2
+    exit 2
 fi
+names="$({ grep -o '<link rel="stylesheet" href="[^"]*"' "$styles_page" || true; } | sed 's#.*/##; s#"$##' | LC_ALL=C sort)"
+if [ -z "$names" ]; then
+    echo "symphony-ui: the shared stylesheets' build links no stylesheet: $styles_page" >&2
+    exit 2
+fi
+while IFS= read -r name; do
+    cat "$out/.modules/styles/public/assets/$name"
+    printf '\n'
+done <<< "$names" > "$stage/shared.css"
+shared_name="shared-$(shasum -a 256 "$stage/shared.css" | cut -c1-16).css"
+mv "$stage/shared.css" "$stage/assets/$shared_name"
+shared="$(jq -cn --arg href "$prefix/assets/$shared_name" '[$href]')"
 # The web client's kinds, which bundle.sh built with Vite into .modules/web: each entry of Vite's
 # manifest is a kind, its script the module the shell imports (it exports `run` and `stop`, and has
 # no wasm), its imports the chunks that script imports at any depth, which the shell preloads beside
 # it, and its styles the shared stylesheet and then the CSS its entry and the chunks it imports
-# carry, theirs first. A kind is one client's: one both build is refused, and so is a build
-# without the web client's.
+# carry, theirs first. A build without the web client's is refused.
 web="$out/.modules/web"
 if [ ! -f "$web/.vite/manifest.json" ]; then
     echo "symphony-ui: the web client's build is missing: $web/.vite/manifest.json" >&2
@@ -190,10 +66,6 @@ fi
 bash "$here/assets-copy.sh" "$web/assets" "$stage/assets"
 while IFS= read -r entry; do
     web_kind="$(jq -r --arg entry "$entry" '.[$entry].name' "$web/.vite/manifest.json")"
-    if jq -e --arg kind "$web_kind" 'has($kind)' <<< "$manifest" > /dev/null; then
-        echo "symphony-ui: $web_kind is a page kind of both clients; refusing to package it" >&2
-        exit 2
-    fi
     manifest="$(jq --arg kind "$web_kind" --arg entry "$entry" --arg prefix "$prefix/" --argjson shared "$shared" \
         --slurpfile vite "$web/.vite/manifest.json" '
         $vite[0] as $chunks
@@ -210,7 +82,7 @@ done < <(jq -r 'to_entries[] | select(.value.isEntry) | .key' "$web/.vite/manife
 # returning to any unchanged kind still uses its immutable browser-cache entries. The manifest
 # keeps its own first line, `const modules = …;`, which readers of a build look for; the rest,
 # the client cache's store (`assets/cache.js`, which every page kind shares) and then the shell,
-# is minified by the esbuild dx fetched to minify each module's glue (every first visit loads it).
+# is minified (every first visit loads it).
 if [ "$(grep -cx 'const modules = __MODULES__;' assets/shell.js)" != 1 ]; then
     echo "symphony-ui: assets/shell.js needs its manifest line, const modules = __MODULES__;" >&2
     exit 2
@@ -241,4 +113,4 @@ if [ -n "${2:-}" ]; then
 else
     "$here/../../tools/rs-bin.sh" symphony-build publish-client "$stage" "$out/public"
 fi
-echo "symphony-ui: the web client's kinds (home, the queue, Reports, Runs, the task board, the agents page, the documents, a task's page, the menus) as its own build, the program of the chat as a main module and a chunk, with the media layer's, one SPA shell: $out/public" >&2
+echo "symphony-ui: the web client's kinds (home, the queue, Reports, Runs, the task board, the agents page, the documents, a task's page, the chat, the menus) over one shared stylesheet, one SPA shell: $out/public" >&2

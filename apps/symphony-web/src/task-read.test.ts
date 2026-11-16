@@ -56,9 +56,15 @@ describe("a thread's entry", () => {
     expect(readEntry(ENTRY)).toEqual(ENTRY);
   });
 
+  it("takes a block of a kind a newer server sends, which the thread says in its place", () => {
+    const later = { ...ENTRY, blocks: [{ type: "marquee", text: "Scrolling" }] };
+    expect(readEntry(later)).toEqual(later);
+  });
+
   it("is none when one of them is not", () => {
     expect(readEntry({ ...ENTRY, stamp: 1 })).toBeNull();
-    expect(readEntry({ ...ENTRY, blocks: [{ type: "nothing" }] })).toBeNull();
+    expect(readEntry({ ...ENTRY, blocks: [{ type: 0 }] })).toBeNull();
+    expect(readEntry({ ...ENTRY, blocks: [{ type: "code" }] })).toBeNull();
     expect(readEntry({ ...ENTRY, message: {} })).toBeNull();
   });
 });

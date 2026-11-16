@@ -62,6 +62,28 @@ describe("blocks read where they arrive", () => {
     expect(readBlocks([block])).toEqual([block]);
   });
 
+  // The kit's lists of kinds grow in a minor (docs/PLUGIN_PROTOCOL.md): a kind a newer server
+  // sends is drawn as unsupported, and the blocks around it as they are.
+  it.each([
+    ["a block kind it does not know", { type: "marquee" }],
+    ["a block kind it does not know, whatever its fields", { type: "marquee", spans: 3 }],
+    ["an object's own name as a kind", { type: "constructor" }],
+    ["a kind of no letters", { type: "" }],
+    ["a span kind it does not know", paragraph([{ type: "blink", text: "x" }])],
+    ["a media kind it does not know", { type: "media", media: { kind: "sound", src: "/a" } }],
+    [
+      "a span's media of a kind it does not know",
+      paragraph([{ type: "media", media: { kind: "sound" } }]),
+    ],
+    [
+      "a kind it does not know deep in a list",
+      { type: "list", ordered: false, start: 1, items: [[paragraph([{ type: "x" }])]] },
+    ],
+  ])("take %s, which the components say", (_, block) => {
+    const blocks = [paragraph([text("fine")]), block];
+    expect(readBlocks(blocks)).toEqual(blocks);
+  });
+
   it.each([
     ["nothing", undefined],
     ["a block", paragraph([])],
@@ -73,12 +95,13 @@ describe("blocks read where they arrive", () => {
   });
 
   it.each([
-    ["a block kind it does not know", { type: "marquee" }],
-    ["an object's own name as a kind", { type: "constructor" }],
     ["a kind that is not text", { type: 1 }],
     ["no kind", { spans: [] }],
-    ["a span kind it does not know", paragraph([{ type: "blink", text: "x" }])],
-    ["a media kind it does not know", { type: "media", media: { kind: "sound", src: "/a" } }],
+    ["a null kind", { type: null }],
+    ["a span whose kind is not text", paragraph([{ type: ["blink"], text: "x" }])],
+    ["a span with no kind", paragraph([{ text: "x" }])],
+    ["media whose kind is not text", { type: "media", media: { kind: 3, src: "/a" } }],
+    ["media with no kind", { type: "media", media: { src: "/a" } }],
     [
       "a callout kind it does not know",
       { type: "callout", kind: "shout", title: [], resolved: false, blocks: [] },
@@ -147,7 +170,7 @@ describe("blocks read where they arrive", () => {
     ],
     [
       "a bad block deep in a list",
-      { type: "list", ordered: false, start: 1, items: [[paragraph([{ type: "x" }])]] },
+      { type: "list", ordered: false, start: 1, items: [[paragraph([{ type: 7 }])]] },
     ],
   ])("fail the whole read for %s", (_, block) => {
     expect(readBlocks([paragraph([text("fine")]), block])).toBeNull();
@@ -175,7 +198,12 @@ describe("blocks read where they arrive", () => {
 describe("a span or media read alone", () => {
   it("is of a kind it knows, with its fields", () => {
     expect(isSpan({ type: "line-break" })).toBe(true);
-    expect(isSpan({ type: "rule" })).toBe(false);
+    expect(isSpan({ type: "text" })).toBe(false);
+    // A kind it does not know is a later kind, said where it stands.
+    expect(isSpan({ type: "rule" })).toBe(true);
+    expect(isSpan({ type: 4 })).toBe(false);
+    expect(isMedia({ kind: "sound" })).toBe(true);
+    expect(isMedia({ src: "/a.html" })).toBe(false);
     expect(isSpan(null)).toBe(false);
     expect(isMedia({ kind: "mockup", src: "/a.html", label: "" })).toBe(true);
     expect(isMedia({ kind: "mockup", src: "/a.html" })).toBe(false);

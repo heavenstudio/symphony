@@ -244,7 +244,9 @@ export function readView(value: unknown): ProjectView {
     !items ||
     !Array.isArray(urls) ||
     !urls.every(isText) ||
-    !["guide", "base"].every((field) => view[field] === undefined || isText(view[field]))
+    !["guide", "base", "wordmark", "mark"].every(
+      (field) => view[field] === undefined || isText(view[field]),
+    )
   ) {
     return PLAIN;
   }

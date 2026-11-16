@@ -14,11 +14,10 @@ let active;
 let requested = 0;
 let switching = Promise.resolve();
 const styleLoads = new Map();
-const failed = new Set();
 const preloaded = new Set();
-// The page's own reads in flight (its modules' wasm, its data) and when the last one answered:
-// the idle warm-up waits until none has been in flight for half a second, and after a read that
-// got no answer (its time ran out, the link dropped), until one does. A read the page gave up (an
+// The page's own reads in flight (its data) and when the last one answered: the idle warm-up waits
+// until none has been in flight for half a second, and after a read that got no answer (its time
+// ran out, the link dropped), until one does. A read the page gave up (an
 // `AbortError`) is neither: the web client's reads whose time ran out fail with a `TimeoutError`
 // (apps/symphony-web/src/request.ts).
 let reads = 0, answered = 0;
@@ -29,8 +28,8 @@ window.fetch = (...args) => (reads++, read(...args).then(
 ).finally(() => reads--));
 
 // The modules every page kind shares, each loaded once on its first use and kept mounted: the
-// chat and activity panel (the program's), and the overlay host that draws a select's popup or the
-// picture viewer for any module (the web client's, apps/symphony-web/src/overlay.tsx). A select
+// chat and activity panel (apps/symphony-web/src/panel.tsx), and the overlay host that draws a
+// select's popup or the picture viewer for any module (apps/symphony-web/src/overlay.tsx). A select
 // never waits on the chat's module.
 // Each has its root, its ready flag (`reviewPanelReady`, `reviewOverlayReady`) and event
 // (`review:panel-ready`...), and its failure notice (`#panel-error`...) with a retry.
@@ -75,8 +74,8 @@ async function gone() {
     return true;
 }
 
-// The two the program's chunk loader (assets/chunks.js) says a failed load of its media layer with:
-// what the shell's own failures use, so every page's first visit carries none of the program's.
+// The two a kind's own late loads (a task page's timeline, apps/symphony-web/src/timeline-slot.tsx)
+// say a failure with: what the shell's own failures use.
 window.reviewShell = { gone, alarm };
 
 // Each of `hrefs` asked for once, by a link of `attributes`, beside the module that needs it.
@@ -89,61 +88,12 @@ function preload(hrefs, attributes) {
     }
 }
 
-async function initialize(kind) {
+// A kind (apps/symphony-web) is its script, which exports its own `run` and `stop`. The script
+// asks for the chunks it imports only once it is in: a module preload asks for them beside it.
+function initialize(kind) {
     const spec = modules[kind];
-    // A kind of the web client (apps/symphony-web) is its script, which exports its own `run` and
-    // `stop`: no wasm, no initializer to wait on. The script asks for the chunks it imports only
-    // once it is in: a module preload asks for them beside it.
-    if (!spec.wasm) {
-        preload(spec.imports, 'rel="modulepreload"');
-        return import(spec.script);
-    }
-    // The module's initializer fetches its wasm only once its script has been fetched and run, and
-    // a program kind's run its chunk (src/split.rs) only once that wasm has: a preload asks for all
-    // at once, and each fetch takes the preloaded response.
-    preload([spec.wasm, spec.chunk], 'rel="preload" as="fetch" crossorigin');
-    const module = await import(spec.script);
-    try {
-        if (failed.has(kind)) await module.default({ module_or_path: spec.wasm });
-        else await window[`reviewModuleReady_${kind}`];
-        failed.delete(kind);
-    } catch (error) { failed.add(kind); throw error; }
-    // A program kind (the chat) draws nothing before its chunk is in: awaited here, the
-    // page and the loading sheet stay until then, and a chunk that does not load rejects while they
-    // still show (chunks.js forgets the failure, so a retry fetches it again). The kind's `run` then
-    // finds the chunk in.
-    if (spec.chunk) await window.reviewChunk(kind);
-    return window[`reviewModule_${kind}`];
-}
-
-// Every module's Dioxus hears a bubbling event at its root and gives it to the element of its own
-// that bears the number in the `data-dioxus-id` nearest the event's target; each module counts
-// those numbers on its own. A root inside another's would have its events taken by the outer module
-// too, for whatever element of its own bears the same number. So what listens on a module's root
-// hears only the events of that module's own part of the page, the ones whose nearest module root
-// on their path is that root.
-// Nothing is stopped: the inner module hears the event at its own root, and the document and the
-// window after, as before.
-const moduleRoots = new WeakSet();
-function scope(mount) {
-    moduleRoots.add(mount);
-    const add = mount.addEventListener, remove = mount.removeEventListener, scoped = new WeakMap();
-    const own = event => event.composedPath().find(node => moduleRoots.has(node)) === mount;
-    mount.addEventListener = function (type, listener, options) {
-        if (!listener) return add.call(this, type, listener, options);
-        let heard = scoped.get(listener);
-        if (!heard) {
-            heard = function (event) {
-                if (!own(event)) return;
-                return typeof listener === "function" ? listener.call(this, event) : listener.handleEvent(event);
-            };
-            scoped.set(listener, heard);
-        }
-        return add.call(this, type, heard, options);
-    };
-    mount.removeEventListener = function (type, listener, options) {
-        return remove.call(this, type, (listener && scoped.get(listener)) || listener, options);
-    };
+    preload(spec.imports, 'rel="modulepreload"');
+    return import(spec.script);
 }
 
 function mountFor(kind) {
@@ -156,7 +106,6 @@ function mountFor(kind) {
         mount.hidden = !shared;
         (shared ? document.body : document.getElementById("main")).append(mount);
     }
-    if (!moduleRoots.has(mount)) scope(mount);
     return mount;
 }
 
@@ -188,9 +137,9 @@ function styles(spec) {
     return Promise.all(pending);
 }
 
-// A persistent module's script, wasm and styles are requested together; it mounts once all three
-// are in. A failure says so with a retry, and the next use tries again. `focus`: a click opened
-// the panel's sheet, which takes the focus.
+// A persistent module's script, the chunks it imports and its styles are requested together; it
+// mounts once all are in. A failure says so with a retry, and the next use tries again. `focus`: a
+// click opened the panel's sheet, which takes the focus.
 function ensure(kind, focus) {
     const shared = PERSISTENT[kind];
     const failure = `${kind}-error`;
@@ -220,8 +169,8 @@ function ensure(kind, focus) {
 // takes the focus (`+` hides at desktop width), and keeps it when redrawn; Escape closes it and
 // gives the focus back to its opener (`reviewPanelOpener`, as the frame recorded it). Its status
 // is filled a frame after the sheet is in the page, so a screen reader announces it. The real
-// panel replaces it and takes the focus into its own sheet (frame_panel.rs `take_focus`); a
-// failed load takes it down beside the retry notice. (A spinner's markup alone would cost every
+// panel replaces it and takes the focus into its own sheet (apps/symphony-web/src/panel-focus.ts);
+// a failed load takes it down beside the retry notice. (A spinner's markup alone would cost every
 // first visit some 400 gzip bytes of the owner's budget.)
 function loadingSheets(focus) {
     const old = document.getElementById("panel-loading");
@@ -448,14 +397,12 @@ function settled(then) {
 }
 
 // Once the first page has drawn its data (none of its reads in flight for half a second, the last
-// of them answered) and the
-// browser is idle, the persistent modules' files go into the HTTP cache at the lowest priority,
-// nothing evaluated, so a first open waits on no network: the chat's first (the program's script
-// and main module, and its chunk), then, once its chunk (or its own load, if a click came first)
-// is in, the menus' (the web client's script, the chunks it imports that the page has not, and its
-// styles), so no two share a slow link. A browser asking to save data, or a 2g link, skips it; the
-// first open then fetches them. A browser without idle callbacks warms them at once; one without
-// prefetch (Safari) ignores it.
+// of them answered) and the browser is idle, the persistent modules' files go into the HTTP cache
+// at the lowest priority, nothing evaluated, so a first open waits on no network: the chat's first,
+// then, once its script (or its own load, if a click came first) is in, the menus', each its
+// script, the chunks it imports that the page has not, and its styles, so no two share a slow link.
+// A browser asking to save data, or a 2g link, skips it; the first open then fetches them. A
+// browser without idle callbacks warms them at once; one without prefetch (Safari) ignores it.
 let warmed = false;
 function warm() {
     const link = navigator.connection, kinds = Object.keys(PERSISTENT);
@@ -466,11 +413,11 @@ function warm() {
         const kind = kinds.shift();
         if (!kind) return;
         if (persistent.has(kind)) return persistent.get(kind).then(next);
-        const { script, wasm, styles, chunk, imports = [] } = modules[kind];
-        for (const href of [wasm, script, chunk, ...imports, ...styles]) {
-            if (href && !document.querySelector(`link[href="${href}"]`)) document.head.insertAdjacentHTML("beforeend", `<link rel="prefetch" href="${href}">`);
+        const { script, styles, imports } = modules[kind];
+        for (const href of [script, ...imports, ...styles]) {
+            if (!document.querySelector(`link[href="${href}"]`)) document.head.insertAdjacentHTML("beforeend", `<link rel="prefetch" href="${href}">`);
         }
-        const last = document.querySelector(`link[rel=prefetch][href="${chunk || script}"]`);
+        const last = document.querySelector(`link[rel=prefetch][href="${script}"]`);
         if (last) last.onload = last.onerror = next; else next();
     }, { timeout: 5000 });
 }
@@ -597,9 +544,9 @@ async function show(generation, scroll) {
     if (!kind) { location.reload(); return; }
     if (active?.kind !== kind) {
         const spec = modules[kind];
-        // Keep the previous page while its replacement loads (its script, wasm and any chunk), and
-        // under the notice when it does not. Its styles are requested with its script and wasm;
-        // insets and row geometry must apply before page effects can anchor.
+        // Keep the previous page while its replacement loads (its script and the chunks it
+        // imports), and under the notice when it does not. Its styles are requested with its
+        // script; insets and row geometry must apply before page effects can anchor.
         const mount = mountFor(kind);
         const [imported] = await Promise.all([initialize(kind), styles(spec)]);
         if (generation !== requested) return;
