@@ -75,8 +75,7 @@ impl Hub {
     /// Whether the project has a board to maintain, as the hub knows it: none until its first
     /// board read is done, then whether its last reach found one ([`Hub::boardless`]) and its
     /// folder still holds it ([`Hub::holds_its_project`]). A board that cannot be reached now is
-    /// one, and unwell. The server's maintenance of the project (its idle sweep, its embedding
-    /// catch-up) waits on this, so it never makes a board where none is, nor runs in a folder
+    /// one, and unwell. The server's maintenance of the project (its idle sweep) waits on this, so it never makes a board where none is, nor runs in a folder
     /// whose board lookup would lead into another repository.
     pub(crate) fn has_board(&self) -> Option<bool> {
         (*self.initial_board.borrow()).then(|| !self.boardless() && self.holds_its_project())

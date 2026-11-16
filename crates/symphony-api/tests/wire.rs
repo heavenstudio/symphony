@@ -402,6 +402,11 @@ fn the_reports_page_reads_and_writes_back_as_the_same_json_its_gaps_none() {
     // A period's tasks done, each once, beside its entries into done, which count a second approve.
     let flow = page.buckets[0].flow.unwrap();
     assert_eq!((flow.entered.done, flow.done), (6, Some(5)));
+    // Each mark names what its commit changed; one from a server that named none reads with none.
+    assert_eq!(page.marks[0].changed, ["settings", "skill work"]);
+    let old: symphony_api::report_page::ReportMark =
+        serde_json::from_str(r#"{"at":1.0,"commit":"c","subject":"s"}"#).unwrap();
+    assert_eq!(old.changed, Vec::<String>::new());
     // An empty page, as a server with no file yet answers, reads with every list empty.
     let empty: ReportsPage =
         serde_json::from_str(r#"{"grain":"hour","days":1,"from":0.0,"to":3600.0}"#).unwrap();

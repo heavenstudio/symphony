@@ -3332,7 +3332,8 @@
         {
           "at": 1794186000.0,
           "commit": "4f1c0a9b2d3e",
-          "subject": "settings: land without the check"
+          "subject": "settings: land without the check",
+          "changed": ["settings"]
         }
       ],
       "unread": ["/repo/.git/symphony/reports/2026-11-08.json: not read"]
