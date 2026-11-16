@@ -65,7 +65,8 @@ from this folder; `just lint-rs` runs `just client-lint` as well, the React clie
 its pinned Node ([its guide](apps/symphony-web/AGENTS.md)). `tools/cargo.sh` runs ordinary Cargo
 in this workspace, preserving its arguments, streams, status and inherited limits. A build or test
 goes through `tools/record.sh`, as do the `lint-rs`, `test-rs`, `client-check`, `client-update`
-and `verify` recipes, each as one operation the board's recorder records for the Build and Test
+and `verify` recipes and the docs checks (`just symphony-cli docs-audit --check`,
+`status --lint`), each as one operation the board's recorder records for the Build and Test
 columns, or runs as it is where none answers
 ([MACHINE_WORK](docs/MACHINE_WORK.md#recording-builds-and-tests), its logs in
 [RUNS](docs/RUNS.md#logs)). It uses this folder's `.target/` unless `CARGO_TARGET_DIR` names

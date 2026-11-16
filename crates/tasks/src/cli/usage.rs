@@ -130,6 +130,10 @@ pub const GROUPS: &[(&str, &[(&str, &str)])] = &[
                 "the stamps a land can require, and what a task needs of them",
             ),
             (
+                "runs",
+                "what the recorder kept of a task at its tip, for its review",
+            ),
+            (
                 "asks",
                 "what the owner waits on an agent for, and who holds each",
             ),
@@ -625,6 +629,29 @@ positional arguments:
 options:
   -h, --help  show this help message and exit
   --as ACTOR
+"#,
+    ),
+    (
+        "runs",
+        "usage: just tasks runs [-h] [--as ACTOR] [--tip TIP] slug\n",
+        r#"usage: just tasks runs [-h] [--as ACTOR] [--tip TIP] slug
+
+What the recorder kept of a task at its branch's tip in the main checkout, or
+at the commit --tip names there, which its reviewer reads in place of building
+again: each build and test command the task and the work under it ran there,
+with its newest run's result, when, how long and who, and how many runs of it
+came before there; the tests stamp as its reader reads it; the project's
+[verdicts] check with its newest run there, or none; and how many of the
+task's runs are at other commits, none of them the tip's.
+
+positional arguments:
+  slug
+
+options:
+  -h, --help  show this help message and exit
+  --as ACTOR
+  --tip TIP   the commit to read at, resolved in the main checkout; left out,
+              the task's branch's tip
 "#,
     ),
     (

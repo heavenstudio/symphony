@@ -258,6 +258,11 @@ const COMMANDS: &[Command] = &[
     plain("field", &[pos("slug"), pos("name"), pos("value")]),
     plain("stamps", &[maybe("slug")]),
     Command {
+        name: "runs",
+        pos: SLUG,
+        opts: &[AS, opt("--tip", "tip", STR)],
+    },
+    Command {
         name: "needs",
         pos: &[pos("slug"), many("stamps")],
         opts: &[

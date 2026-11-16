@@ -26,6 +26,7 @@ mod finish;
 mod limits;
 mod list;
 mod panes;
+mod runs;
 mod stamps;
 mod stats;
 mod wait;
@@ -299,6 +300,7 @@ pub fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
         }
         "limits" => limits::run(store, c)?,
         "stamps" => stamps::stamps(store, c)?,
+        "runs" => runs::runs(store, c)?,
         "needs" => stamps::needs(store, c)?,
         "create" => create(store, c)?,
         "priority" => {
