@@ -1,9 +1,11 @@
 //! The tokens a beat hands the board ([`symphony_board::usage`]): added in the beat's own
 //! transaction to the handle bound to its key, on the task and role that handle works then and the
-//! task's round, and read back by task and by session.
+//! task's round, and read back by task and by session; and a board of schema 18 gaining the table
+//! with its rows kept.
 
-use crate::common::{Fixture, NOW, Seed};
-use symphony_board::Beat;
+use crate::common::{Fixture, NOW, RawWrite, Seed};
+use serde_json::json;
+use symphony_board::{Beat, Schema};
 use symphony_board::rows::UsageRow;
 use symphony_board::usage::{Spent, Tally, Tokens};
 
@@ -216,6 +218,43 @@ fn an_open_tasks_execution_comes_before_its_review_before_a_reservation_and_a_fi
     );
     assert_eq!(spends_on(&[done, reserved]), on("sim/c", "reserved"));
     assert_eq!(spends_on(&[done]), on("", "worker"));
+}
+
+#[test]
+fn a_board_of_schema_18_gains_the_usage_table_with_every_row_kept_and_a_beat_then_spends() {
+    let f = working();
+    let original = f.store.dump().unwrap();
+    assert!(original.usages.is_empty());
+    // The board as schema 18 left it: every table but `usage`, which it never had.
+    f.store
+        .client()
+        .write(
+            "BEGIN TRANSACTION; REMOVE TABLE usage; UPDATE meta:schema SET version = 18; COMMIT TRANSACTION;",
+            json!({}),
+        )
+        .unwrap();
+    let tables = |store: &symphony_board::Store| -> Vec<String> {
+        let found = store
+            .client()
+            .query("RETURN object::keys((INFO FOR DB).tables);", json!({}))
+            .unwrap();
+        serde_json::from_value(found.last().cloned().unwrap()).unwrap()
+    };
+    assert!(!tables(&f.store).contains(&"usage".to_string()));
+    let upgraded = f.other();
+    assert!(tables(&upgraded).contains(&"usage".to_string()));
+    let version = (upgraded.raw().row("meta", "schema").field("version")).unwrap();
+    assert_eq!(version, json!(Schema::this_build().version()));
+    assert_eq!(upgraded.dump().unwrap(), original);
+    f.advance(1.0);
+    let beat = Beat::default();
+    let spent = upgraded.agent_beat_spending("exec", &beat, None, None, &[opus(2)]);
+    assert_eq!(spent.unwrap().as_deref(), Some("amber-heron"));
+    let rows = upgraded.spent_on(&["sim/jump"]).unwrap();
+    let read: Vec<(&str, &str, i64, Tokens)> = (rows.iter())
+        .map(|r| (r.handle.as_str(), r.role.as_str(), r.round, r.tokens()))
+        .collect();
+    assert_eq!(read, [("amber-heron", "executor", 1, tokens(2))]);
 }
 
 #[test]

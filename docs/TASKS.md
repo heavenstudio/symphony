@@ -3006,7 +3006,7 @@ holds (`tests/cli/stats.rs` counts them over 300 tasks).
 ## Where the tokens go
 
 The heartbeat records what agents' model calls take (`crates/tasks/src/usage.rs`, the `usage`
-table, schema 18). Each beat of the hook ([Sessions](#sessions)) reads what the session's own
+table, schema 19). Each beat of the hook ([Sessions](#sessions)) reads what the session's own
 transcript gained since its last beat: a subagent's `SESSION/subagents/agent-ID.jsonl` (the
 event's `agent_transcript_path`, else beside its `transcript_path`), never its parent's; a full
 session's `transcript_path`. The kinds a price tells apart are kept apart: `input` (Claude Code's
@@ -3082,11 +3082,13 @@ SLUG on main at SHA; 71.6k tokens in 6 calls (executor 51.5k, reviewer 20.1k; ro
 round 2 20.1k)`), each amount with its unit, so no number in it reads as a commit. A copy of
 the board carries the rows (`Dump.usages`). The pages draw none of it yet.
 
-The table moves the board to schema 18, which a build on schema 17 reads unharmed (the
+The table moves the board to schema 19, which a build on schema 18 reads unharmed (the
 Symphony, the shared server among them): it opens a board one schema ahead to read
-(`schema::decide`'s `Opened::Ahead`), and none of its reads or its dump names `usage`. As a
-writer (every `tasks` command, `list`, `show` and `agents` included) a 17 build is refused before
-any write. Its beat writes nothing either, so an agent whose hook runs a 17 build reads quiet
+(`schema::decide`'s `Opened::Ahead`), and none of its reads or its dump names `usage`; what it
+would write waits or is refused until it reloads, as for any server one schema behind ([Who
+writes a board](#who-writes-a-board)). As a writer (every `tasks` command, `list`, `show` and
+`agents` included) an 18 build is refused before any write, naming itself as the program to
+rebuild. Its beat writes nothing either, so an agent whose hook runs an 18 build reads quiet
 while it works until that link is renewed.
 
 ## The timeline
