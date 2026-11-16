@@ -7,7 +7,10 @@
 //! (a gap over 1 s or a window over 5 s starts the next one). Every shift counts, the ones Chrome
 //! marks as following input too: its phone emulation marks a load's own shifts so, and a measured
 //! panel is scored from after its opening, so no shift the click itself caused is in its score.
-use super::{SHOWN, chrome, chrome::Chrome, common, dist, look_parity, site::Site};
+use super::{
+    SHOWN, chrome, chrome::Chrome, common, dist, document_landing::TWO_FRAMES, look_parity,
+    site::Site,
+};
 use serde_json::{Value, json};
 
 /// Each page reserves its regions before its data arrives, so what it already shows stays put
@@ -526,7 +529,7 @@ const TASK_READY: &str =
 
 /// Which of a task's two answers that size what is under its head comes first on a first visit:
 /// the page's (its head, its brief, its count of gates) or the gates' own. The other's route is
-/// held until the first is drawn, so the order is the test's and never the machine's.
+/// held until a frame has laid out the first, so the order is the test's and never the machine's.
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Order {
     name: &'static str,
@@ -559,6 +562,12 @@ fn first_visit(page: &str, site: &Site, width: Width, order: Order) -> Option<f6
     site.hold_route(order.held, true);
     browser.open(&site.url(TASK));
     let first = browser.wait_for(order.drawn, SHOWN);
+    // A shift is scored when a frame lays the page out, not when an answer reaches the DOM. Let go
+    // at once, the other answer can reach the DOM before that frame on a loaded renderer, and the
+    // two then move the page in one frame, which is neither order's score.
+    if first {
+        browser.eval(TWO_FRAMES);
+    }
     site.hold_route(order.held, false);
     assert!(
         first,
