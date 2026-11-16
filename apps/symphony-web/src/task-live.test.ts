@@ -1319,6 +1319,41 @@ describe("a feed event on a task's page", () => {
     expect(new Set(urls(asked))).toEqual(new Set([GATES_URL, OFFER_URL, PAGE_URL, TIMELINE_URL]));
   });
 
+  it("draws no offer asked before the task changed that lands after it, and asks again", async () => {
+    const before = later<Response>();
+    const after = later<Response>();
+    let offers = 0;
+    const { task, asked } = await shown((url) =>
+      url === OFFER_URL ? (offers++ === 0 ? before.promise : after.promise) : null,
+    );
+    const offer = offerPart("", "w/a");
+    expect(task.parts.shown(offer).value).toBeUndefined();
+    // The task changes while the offer's first read is out.
+    task.heard(next(["task", { key: "w/a", value: aTask("w/a") }]));
+    // Its answer was read before the change: the offer of the task as it was, so no payload.
+    before.settle(answer(200, OFFER, "", version - 1));
+    await pass();
+    expect(task.parts.shown(offer).value).toEqual({ ...OFFER, payload: null });
+    // (The first read was asked as the page opened, before these were counted.)
+    expect(urls(asked).filter((url) => url === OFFER_URL)).toHaveLength(1);
+    // The read after the change brings the offer that stands.
+    after.settle(answer(200, { ...OFFER, label: "Land again" }, "", version));
+    await pass();
+    expect(task.parts.shown(offer).value).toEqual({ ...OFFER, label: "Land again" });
+    expect(urls(asked).filter((url) => url === OFFER_URL)).toHaveLength(1);
+  });
+
+  it("leaves the offer and the timeline as they are for a change at or before their answers", async () => {
+    const { task, asked } = await shown();
+    const offer = offerPart("", "w/a");
+    asked.length = 0;
+    // An event the answers already hold: nothing is nulled, nothing read.
+    task.heard({ ...event(["task", { key: "w/a", value: aTask("w/a") }]), version: 1 });
+    await pass();
+    expect(task.parts.shown(offer).value).toEqual(OFFER);
+    expect(urls(asked).filter((url) => url === OFFER_URL || url === TIMELINE_URL)).toEqual([]);
+  });
+
   it("says its task was removed, and reads one filed under the slug it could not find", async () => {
     const { task, asked } = await shown();
     task.heard(next(["task", { key: "w/a", removed: true }]));

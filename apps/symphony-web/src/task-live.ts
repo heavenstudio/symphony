@@ -364,13 +364,33 @@ export function gatesPart(scope: string, slug: string): Part<TaskGates, TaskEven
   };
 }
 
-/** The landing the task `slug` offers. */
+/** Whether `changes` change the task `slug` itself: its record, or fields of it. */
+export function changesTask(slug: string, changes: TaskEvent): boolean {
+  return changes.some(
+    (change) =>
+      (change.region === "task" || change.region === "task-fields") && change.change.key === slug,
+  );
+}
+
+/**
+ * The landing the task `slug` offers. An offer is the task's as it was asked: once the task
+ * changes, none stands (its payload goes) until it is read again, for an answer asked before the
+ * change that lands after it too, which the store applies the change to.
+ */
 export function offerPart(scope: string, slug: string): Part<TaskOffer, TaskEvent> {
   return {
     key: `offer ${slug}`,
     url: scoped(scope, `/api/task-offer?slug=${named(slug)}`),
     read: readOffer,
     unreadable: "The task's offer is not readable",
+    hear: (offer, changes) =>
+      changesTask(slug, changes)
+        ? {
+            value:
+              offer === undefined || offer.payload === null ? offer : { ...offer, payload: null },
+            again: true,
+          }
+        : null,
   };
 }
 
@@ -383,6 +403,8 @@ export function timelinePart(scope: string, slug: string): Part<unknown, TaskEve
     key: `timeline ${slug}`,
     url: scoped(scope, `${TASK_TIMELINE_PATH}?slug=${named(slug)}`),
     read: (value) => value ?? null,
+    // The task's own change moves its timeline: read again, the one shown left meanwhile.
+    hear: (value, changes) => (changesTask(slug, changes) ? { value, again: true } : null),
   };
 }
 
@@ -612,16 +634,8 @@ export class LiveTask {
           break;
       }
     }
+    // The offer and the timeline hear the task's own change themselves (their parts' `hear`).
     this.parts.heard(version, changes);
-    if (own) {
-      // An offer is the task's as it was asked: none stands for the task changed since.
-      const offer = offerPart(this.scope, slug);
-      this.parts.change(offer, (held) =>
-        held.payload === null ? held : { ...held, payload: null },
-      );
-      void this.parts.read(offer, version);
-      void this.parts.read(timelinePart(this.scope, slug), version);
-    }
     if (own || gates) void this.parts.read(gatesPart(this.scope, slug), version);
     if (notice !== this.notice) {
       this.notice = notice;

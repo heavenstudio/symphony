@@ -134,6 +134,8 @@ export class Parts<E = unknown> {
   private count = 0;
   /** The version the feed last opened from; none before it opened. */
   private floor: number | null = null;
+  /** Settled once the read of the part opened last has been asked. */
+  private asked: Promise<void> = Promise.resolve();
   fresh: Freshness = FRESH;
 
   constructor(
@@ -173,7 +175,9 @@ export class Parts<E = unknown> {
 
   /**
    * Open `part`, once however many components name it: the copy this device kept of it drawn at
-   * once, marked stale, then its read, naming that copy's tag.
+   * once, marked stale, then its read, naming that copy's tag. Reads are asked in the order their
+   * parts were opened, whatever each looked up on this device first, so the parts a page opens
+   * first (those on its first screen) are the first the server hears of.
    */
   open<T>(part: Part<T, E>): void {
     if (this.entries.has(part.key) || this.signal.aborted) return;
@@ -191,23 +195,40 @@ export class Parts<E = unknown> {
       signal: AbortSignal.any([this.signal, end.signal]),
     };
     this.entries.set(part.key, entry);
-    void this.start(entry);
+    const before = this.asked;
+    let sent = () => {};
+    this.asked = new Promise<void>((resolve) => {
+      sent = resolve;
+    });
+    void this.start(entry, before, sent);
   }
 
-  private async start<T>(entry: Entry<T, E>): Promise<void> {
+  private async start<T>(
+    entry: Entry<T, E>,
+    before: Promise<void>,
+    sent: () => void,
+  ): Promise<void> {
     const { part } = entry;
-    if (part.kept) {
-      const copy = await readKept(part.kept.item, part.kept.part, part.read);
-      if (this.gone(entry)) return;
-      if (copy !== null && !entry.shown.answered && !part.absent?.(copy.value)) {
-        entry.base = copy.value;
-        entry.etag = copy.etag;
-        const value = part.merge ? part.merge(copy.value, undefined, false) : copy.value;
-        this.freshen((f) => drawn(f, part.key, copy.saved));
-        this.show(entry, { value, stale: true });
+    let reading: Promise<void> = Promise.resolve();
+    try {
+      if (part.kept) {
+        const copy = await readKept(part.kept.item, part.kept.part, part.read);
+        if (this.gone(entry)) return;
+        if (copy !== null && !entry.shown.answered && !part.absent?.(copy.value)) {
+          entry.base = copy.value;
+          entry.etag = copy.etag;
+          const value = part.merge ? part.merge(copy.value, undefined, false) : copy.value;
+          this.freshen((f) => drawn(f, part.key, copy.saved));
+          this.show(entry, { value, stale: true });
+        }
       }
+      // The parts opened before this one are asked first: each waits its own device lookup only.
+      await before;
+      reading = this.read(part);
+    } finally {
+      sent();
     }
-    await this.read(part);
+    await reading;
   }
 
   /**
@@ -379,13 +400,15 @@ export class Parts<E = unknown> {
   }
 
   /**
-   * The feed opened from `version`: a part answered at another is read again, as the feed says
-   * nothing of what came between; one whose read is out is judged when it answers.
+   * The feed opened from `version`: a part answered before it (or at no version it named) is read
+   * again, as the feed says nothing of what came between; one answered at or after it holds what
+   * the feed will say from there, and one whose read is out is judged when it answers.
    */
   since(version: number): void {
     this.floor = version;
     for (const entry of [...this.entries.values()]) {
-      if (entry.reading === null && entry.shown.answered && entry.version !== version) {
+      const behind = entry.version === null || entry.version < version;
+      if (entry.reading === null && entry.shown.answered && behind) {
         void this.read(entry.part);
       }
     }

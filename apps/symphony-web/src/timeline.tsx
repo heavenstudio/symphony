@@ -647,7 +647,10 @@ export function TimelineHost({ slug, part, read, onDrawn }: HostProps): JSX.Elem
     seen.current = { value: part.value, at: Date.now() };
   }
   // biome-ignore lint/correctness/useExhaustiveDependencies: drawn again for a new answer, a failure or a moved clock, whatever else the part says
-  const shown = useMemo(() => shownOf(part, seen.current, clock), [part.value, part.error, clock]);
+  const shown = useMemo(
+    () => shownOf(part, seen.current, clock),
+    [part.value, part.error, part.missing, clock],
+  );
   const every = nextRead(shown);
   const asked = useRef(read);
   asked.current = read;

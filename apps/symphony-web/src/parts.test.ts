@@ -510,6 +510,10 @@ describe("the feed opened from a version", () => {
     parts.since(9);
     await pass();
     expect(asked).toHaveLength(3);
+    // Nor where the feed opens from before the parts' answers, which hold what it will say.
+    parts.since(7);
+    await pass();
+    expect(asked).toHaveLength(3);
   });
 
   it("reads once more a part asked before it whose answer names an older cursor", async () => {
@@ -584,6 +588,36 @@ describe("the page's own change to a part", () => {
   });
 });
 
+describe("the order the reads are asked in", () => {
+  it("is the order the parts were opened in, whatever the device's lookup takes", async () => {
+    const { parts, asked, device } = page(() => answer(200, { n: 1 }, "", 1));
+    const lookup = later<undefined>();
+    device.read.mockImplementation(() => lookup.promise as Promise<never>);
+    parts.open(keptCount());
+    parts.open(count("other"));
+    parts.open(count("third"));
+    await pass();
+    // The part opened first still looks its copy up: those opened after it ask nothing yet.
+    expect(asked).toEqual([]);
+    lookup.settle(undefined);
+    await pass();
+    expect(asked.map(([url]) => url)).toEqual(["/api/count", "/api/other", "/api/third"]);
+  });
+
+  it("lets the parts after one dropped before it asked go on", async () => {
+    const { parts, asked, device } = page(() => answer(200, { n: 1 }, "", 1));
+    const lookup = later<undefined>();
+    device.read.mockImplementation(() => lookup.promise as Promise<never>);
+    parts.open(keptCount());
+    parts.open(count("other"));
+    parts.drop((key) => key === "count");
+    lookup.settle(undefined);
+    await pass();
+    expect(asked.map(([url]) => url)).toEqual(["/api/other"]);
+    expect(parts.shown(count("other"))).toEqual(drawnAs(1));
+  });
+});
+
 describe("parts the page shows no more", () => {
   it("end their reads, are drawn no more, and are no longer what the device's copy waits on", async () => {
     const held = later<Response>();
@@ -598,9 +632,10 @@ describe("parts the page shows no more", () => {
     expect(shownFromDevice(parts.fresh)).not.toBeNull();
     drawn.mockClear();
     parts.drop((key) => key === "count");
-    // The part kept on the device asks second, after its copy is read.
-    expect(given[1]?.aborted).toBe(true);
-    expect(given[0]?.aborted).toBe(false);
+    // Opened first, the part kept on the device is asked first, its copy read before.
+    expect(asked.map(([url]) => url)).toEqual(["/api/count", "/api/other"]);
+    expect(given[0]?.aborted).toBe(true);
+    expect(given[1]?.aborted).toBe(false);
     expect(parts.shown(part)).toEqual(NOTHING);
     expect(shownFromDevice(parts.fresh)).toBeNull();
     expect(drawn).toHaveBeenCalledTimes(1);
