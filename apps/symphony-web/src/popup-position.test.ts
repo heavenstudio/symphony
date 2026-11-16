@@ -134,6 +134,21 @@ describe("a popup placed beside its trigger", () => {
       "position:fixed;left:20px;top:70px;width:120px;min-width:0;max-height:240px;overflow-y:auto;overflow-x:hidden;margin:0;z-index:1100",
     ]);
     expect(popup.attributes.get("data-positioned")).toBe("true");
+    expect(popup.attributes.get("data-side")).toBe("bottom");
+  });
+
+  it("is marked as opened above its trigger only when it lies wholly above it", () => {
+    const popup = new Box("field-popup", { left: 0, top: 0, width: 120, height: 240 });
+    page([new Box("field", { left: 20, top: 700, width: 80, height: 36 }), popup]);
+    position("field", "field-popup");
+    expect(popup.attributes.get("style")).toContain("top:456px;");
+    expect(popup.attributes.get("data-side")).toBe("top");
+    // Too tall for either side, it is drawn whole over its trigger: it grows from its top.
+    popup.scrollHeight = 600;
+    page([new Box("field", { left: 20, top: 300, width: 80, height: 36 }), popup]);
+    position("field", "field-popup");
+    expect(popup.attributes.get("style")).toContain("top:192px;");
+    expect(popup.attributes.get("data-side")).toBe("bottom");
   });
 
   it("is placed again as wide as its scrollbar more, in the visible viewport", () => {
