@@ -42,6 +42,14 @@ pub(super) fn launch(store: &Store, c: &mut Context) -> Result<(), Stop> {
     };
     let started = launch::launch(store, &hc, &machine, &ask)?;
     let s = &started.row;
+    if started.resumed {
+        // The task's recorded reviewer, on its own agent and model: not what a launch would start.
+        c.say(&format!(
+            "resumed {}, {}'s recorded {}: pane {}, agent session {}, worktree {}",
+            s.handle, s.slug, s.role, s.pane, s.claude_session, s.worktree
+        ));
+        return Ok(());
+    }
     c.say(&format!(
         "launched {} on {} as {}: {}, pane {}, agent session {}, worktree {}",
         s.handle,
@@ -260,7 +268,7 @@ fn given_lines(given: &crate::Given, dry_run: bool) -> Vec<String> {
     if !waiting.is_empty() {
         let would = if dry_run { "would wait" } else { "wait" };
         lines.push(format!(
-            "{would} for an orchestrator that stays: {}",
+            "{would} for an orchestrator under its limit that stays: {}",
             waiting.join(", ")
         ));
     }

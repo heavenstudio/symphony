@@ -203,6 +203,32 @@ describe("content near the screen", () => {
       expect(markup).toContain("min-height:0px");
     }
   });
+
+  it("waits as any part when the address names it but it lands no more, its anchors held", () => {
+    vi.stubGlobal("location", { hash: "#part" });
+    for (const named of [{ id: "part" }, { anchors: ["part"] }]) {
+      const markup = renderToStaticMarkup(
+        <NearViewport {...named} height={64} ghost={<i>ghost</i>} lands={false}>
+          <b>content</b>
+        </NearViewport>,
+      );
+      expect(markup).not.toContain("content");
+      expect(markup).toContain("min-height:64px");
+      expect(markup.match(/id="part"/g)).toHaveLength(1);
+    }
+  });
+
+  it("is mounted at once when eager, near the screen or not", () => {
+    const markup = renderToStaticMarkup(
+      <NearViewport height={64} ghost={<i>ghost</i>} eager>
+        <b>content</b>
+      </NearViewport>,
+    );
+    expect(markup).toContain("<b>content</b>");
+    expect(markup).toContain("min-height:0px");
+    expect(markup).not.toContain("ghost");
+    expect(markup).not.toContain("viewport-sentinel");
+  });
 });
 
 /** An IntersectionObserver whose callback a test calls, and what each was asked to do. */

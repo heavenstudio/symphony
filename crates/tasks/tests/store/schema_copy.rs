@@ -7,7 +7,7 @@ use serde_json::{Value, json};
 use std::sync::{Arc, Mutex};
 use symphony_board::rows::Dump;
 use symphony_board::rpc::Client;
-use symphony_board::{Error, Opening, Schema, Store};
+use symphony_board::{Error, Opening, Raw, Schema, Store};
 
 fn opened(client: Client, how: &Opening) -> Store {
     Store::opening(
@@ -29,11 +29,7 @@ fn migrate(client: Client) -> Store {
 }
 
 fn count(client: &Client, table: &str) -> Value {
-    client
-        .query(&format!("RETURN count(SELECT * FROM {table});"), json!({}))
-        .unwrap()
-        .pop()
-        .unwrap()
+    json!(Raw::on(client).table(table).count().unwrap())
 }
 
 fn tables(client: &Client) -> Vec<String> {
@@ -90,13 +86,11 @@ fn guarded_staging_preserves_nested_nulls_in_copied_plugin_fields() {
 fn stale_remove_staging_preserves_newer_tables_even_when_migration_follows_the_table_list() {
     let f = Fixture::new(Seed::default().task("old/one", "ready"));
     let before = f.store.dump().unwrap();
-    f.store
-        .client()
-        .query(
-            "CREATE copy_abandoned:one SET kept = true; CREATE unrelated:one SET kept = true;",
-            json!({}),
-        )
-        .unwrap();
+    for table in ["copy_abandoned", "unrelated"] {
+        (f.store.raw().row(table, "one"))
+            .create(json!({"kept": true}))
+            .unwrap();
+    }
     let next = f.other_client();
     let mut pending = Some(next);
     let relay = Relay::with_before(
@@ -212,52 +206,5 @@ fn cleanup_refused_after_a_failed_swap_reports_both_causes_and_preserves_staging
     assert_eq!(staging.len(), 1);
     assert_eq!(count(f.store.client(), &staging[0]), json!(2));
     assert_table(f.store.client(), "copy_schema_probe");
-    assert_eq!(f.store.dump().unwrap(), before);
-}
-
-#[test]
-fn embedding_staging_cleanup_is_also_refused_after_a_newer_writer_migrates() {
-    let f = Fixture::new(Seed::default().task_row(symphony_board::rows::TaskRow {
-        body: format!("{}\n", "x".repeat(600_000)).repeat(3),
-        ..task("old/one", "ready")
-    }));
-    let before = f.store.dump().unwrap();
-    // The relay's callback runs on its own thread; the test reads its chosen table after it.
-    let table = Arc::new(Mutex::new(None));
-    let staged = Arc::clone(&table);
-    let mut next = Some(f.other_client());
-    let mut batches = 0;
-    let relay = Relay::with_before(
-        f.store.client().addr(),
-        0,
-        Some(Box::new(move |sql| {
-            if let Some((_, after)) = sql.split_once("INSERT INTO embedding_") {
-                if batches == 1 {
-                    *staged.lock().unwrap() = Some(format!(
-                        "embedding_{}",
-                        after.split_whitespace().next().unwrap()
-                    ));
-                    migrate(next.take().unwrap());
-                }
-                batches += 1;
-            }
-        })),
-    );
-    let writer = opened(
-        relay.client("sf", f.store.client().database()),
-        &Opening::write().of(Some("alpha")),
-    );
-    let why = refused(writer.catch_up_embeddings(
-        &mut crate::embeddings::Fake::default(),
-        None,
-        8,
-        &mut |_, _| {},
-    ));
-    refusal(&why);
-    assert!(why.contains("staging cleanup failed:"), "{why}");
-    let table = table.lock().unwrap().clone().expect("the migration ran");
-    assert_eq!(count(f.store.client(), &table), json!(2));
-    assert_eq!(count(f.store.client(), "task_chunk"), json!(0));
-    assert_eq!(count(f.store.client(), "task_embedding_source"), json!(0));
     assert_eq!(f.store.dump().unwrap(), before);
 }

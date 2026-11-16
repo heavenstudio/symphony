@@ -1,8 +1,8 @@
-//! The shared installation's idle-session sweep and embedding maintenance, on fixture launchers
-//! and clocks.
+//! The shared installation's idle-session sweep, on fixture launchers and clocks.
 
 use super::*;
 use std::sync::atomic::AtomicUsize;
+use symphony_board::builds::Beyond;
 
 /// The wall-clock backstop of every wait here: each waits on its condition, and only a stall
 /// reaches this (RULES.md `tests/no-test-fails-on-load`).
@@ -21,15 +21,6 @@ pub(super) struct SweepFixture {
 }
 
 impl SweepFixture {
-    /// A shared installation whose linked build of the board (`.target/bin/tasks`) runs `script`.
-    pub(super) fn with_embedding_launcher(script: &str) -> Self {
-        let fixture = Self::new(script);
-        let launcher = fixture.root.join(".target/bin/tasks");
-        std::fs::create_dir_all(launcher.parent().unwrap()).unwrap();
-        crate::fixture_script::write(&launcher, &format!("#!/bin/sh\n{script}\n"), false);
-        fixture
-    }
-
     /// A shared installation whose launcher runs `script`; its sweep starts with `start`. Its
     /// project's hub stands for one whose first board read is done and found a board (a board
     /// still starting), so its maintenance runs.
@@ -250,108 +241,26 @@ fn the_board_build_is_the_main_checkouts_link_else_the_search_paths_else_where_o
     .unwrap();
     let main = tree.path("main").canonicalize().unwrap();
     let path = tree.path("path").into_os_string();
+    let beyond = Beyond::path(Some(&path));
     let missing = format!(
-        "no build of tasks for {}: link the project's build at {}/.target/bin/tasks or put tasks \
-         on PATH",
+        "no build of tasks for {}: link the project's build at {}/.target/bin/tasks, install a \
+         release on the machine or put tasks on PATH",
         main.display(),
         main.display()
     );
-    assert_eq!(board_build_on(&tree.path("wt"), Some(&path)), Err(missing));
+    assert_eq!(board_build_on(&tree.path("wt"), &beyond), Err(missing));
     program("wt/.target/bin/tasks"); // a branch's build, never the board's
     let installed = program("path/tasks");
-    assert_eq!(board_build_on(&tree.path("wt"), Some(&path)), Ok(installed));
+    assert_eq!(board_build_on(&tree.path("wt"), &beyond), Ok(installed));
     let linked = program("main/.target/bin/tasks");
     assert_eq!(
-        board_build_on(&tree.path("wt"), Some(&path)),
+        board_build_on(&tree.path("wt"), &beyond),
         Ok(main.join(".target/bin/tasks"))
     );
     assert_eq!(
-        board_build_on(&main, None),
+        board_build_on(&main, &Beyond::default()),
         Ok(linked.canonicalize().unwrap())
     );
-}
-
-#[test]
-fn a_private_preview_never_starts_embedding_maintenance() {
-    let fixture = SweepFixture::with_embedding_launcher("echo wrong > started");
-    assert!(embeddings::start(&fixture.shared, None, Stamp::now).is_none());
-    assert!(!fixture.root.join("started").exists());
-}
-
-/// Subprocess entry: measure the launched process rather than reconstructing its command.
-#[test]
-fn embedding_child_resource_probe() {
-    let Ok(args) = std::env::var("SYMPHONY_EMBEDDING_RESOURCE_PROBE") else {
-        return;
-    };
-    // SAFETY: getpriority reads this process's scheduling priority without mutating it.
-    let priority = unsafe { libc::getpriority(libc::PRIO_PROCESS, 0) };
-    std::fs::write("resources", format!("{priority}\n{args}\n")).unwrap();
-    std::fs::write("resources-ready", "yes").unwrap();
-}
-
-#[test]
-fn embedding_maintenance_runs_the_linked_board_build_niced_with_one_inference_thread() {
-    // SAFETY: getpriority reads this process's inherited scheduling priority.
-    let inherited = unsafe { libc::getpriority(libc::PRIO_PROCESS, 0) };
-    let exe = std::env::current_exe().unwrap();
-    let exe = exe.to_str().unwrap().replace('\'', "'\\''");
-    let script = format!(
-        "SYMPHONY_EMBEDDING_RESOURCE_PROBE=\"$*\" exec '{exe}' --exact front::sweep_tests::embedding_child_resource_probe --nocapture"
-    );
-    let mut fixture = SweepFixture::with_embedding_launcher(&script);
-    fixture.start(embeddings::start(&fixture.shared, Some(&fixture.root), Stamp::now).unwrap());
-    fixture.wait_for("resources-ready", "yes");
-    assert_eq!(
-        std::fs::read_to_string(fixture.root.join("resources")).unwrap(),
-        format!(
-            "{}\nembed --maintenance --threads 1\n",
-            (inherited + 10).min(19)
-        ),
-        "the actual child must inherit nice +10 and select exactly one inference thread"
-    );
-}
-
-#[test]
-fn embedding_maintenance_starts_at_startup_and_retries_a_failed_pass_each_minute() {
-    let clock = TestClock::new();
-    let mut fixture = SweepFixture::with_embedding_launcher(
-        "printf '%s\\n' \"$*\" >> calls; if [ ! -f attempted ]; then touch attempted; exit 1; fi",
-    );
-    fixture.start(embeddings::start(&fixture.shared, Some(&fixture.root), clock.reader()).unwrap());
-    fixture.wait_for("calls", "embed --maintenance --threads 1\n");
-    clock.set(embeddings::INTERVAL - Duration::from_secs(1));
-    assert_eq!(
-        std::fs::read_to_string(fixture.root.join("calls")).unwrap(),
-        "embed --maintenance --threads 1\n"
-    );
-    clock.set(embeddings::INTERVAL);
-    fixture.wait_for(
-        "calls",
-        "embed --maintenance --threads 1\nembed --maintenance --threads 1\n",
-    );
-}
-
-#[test]
-fn embedding_maintenance_bounds_a_hung_pass_and_cancels_its_owned_child_on_shutdown() {
-    let clock = TestClock::new();
-    let mut fixture =
-        SweepFixture::with_embedding_launcher("printf '%s\\n' \"$$\" > entered; exec sleep 86400");
-    let announced = crate::testing::fifo(&fixture.root.join("entered"));
-    fixture.start(embeddings::start(&fixture.shared, Some(&fixture.root), clock.reader()).unwrap());
-    let first = crate::testing::entered(&announced);
-    clock.read_at(None, 1);
-    clock.set(embeddings::TIMEOUT - Duration::from_secs(1));
-    assert!(
-        sys::pid_alive(first),
-        "a first backfill gets its own runtime budget"
-    );
-    clock.set(embeddings::TIMEOUT);
-    assert!(!sys::pid_alive(first), "a hung pass is bounded");
-    let second = crate::testing::entered(&announced);
-    assert_ne!(first, second);
-    drop(fixture);
-    assert!(!sys::pid_alive(second), "shutdown ends the pass in flight");
 }
 
 #[test]
@@ -638,13 +547,12 @@ fn lines(fixture: &SweepFixture, file: &str) -> Vec<String> {
 }
 
 /// A project whose hub has not read its board, or read none there, is not maintained: its sweep
-/// and its embedding catch-up each look at a round due, again and again, and run nothing, so
-/// neither makes a board where none is. Once its hub reads one, a scratch board here, each runs at
-/// its next look.
+/// looks at a round due, again and again, and runs nothing, so it makes no board where none is.
+/// Once its hub reads one, a scratch board here, it runs at its next look.
 #[test]
 fn a_project_is_maintained_only_once_its_hub_has_read_a_board_there() {
     let mut fixture = SweepFixture::without_hub("printf '%s\\n' \"$1\" >> calls");
-    let (sweep, embed) = (TestClock::new(), TestClock::new());
+    let sweep = TestClock::new();
     let looked = |clock: &TestClock, what: &str| {
         let seen = clock.reads();
         test_time::until_true(
@@ -660,10 +568,8 @@ fn a_project_is_maintained_only_once_its_hub_has_read_a_board_there() {
         Duration::from_secs(30),
         sweep.reader(),
     ));
-    fixture.start(embeddings::start(&fixture.shared, Some(&fixture.root), embed.reader()).unwrap());
     // No hub yet: whether there is a board is not known.
     looked(&sweep, "sweep with no hub");
-    looked(&embed, "catch-up with no hub");
     assert_eq!(lines(&fixture, "calls"), Vec::<String>::new());
 
     // Its hub's reach found no board: no store, and no SurrealDB here to serve one.
@@ -680,25 +586,17 @@ fn a_project_is_maintained_only_once_its_hub_has_read_a_board_there() {
     );
     assert_eq!(hub.has_board(), Some(false));
     looked(&sweep, "sweep with no board");
-    looked(&embed, "catch-up with no board");
     assert_eq!(lines(&fixture, "calls"), Vec::<String>::new());
 
-    // The hub's next read finds a board: each runs at its next look.
+    // The hub's next read finds a board: the sweep runs at its next look.
     let board = crate::testing::board::Fixture::empty();
     hub.board_read(&board.store).unwrap();
     assert_eq!(hub.has_board(), Some(true));
     let calls = test_time::until(
-        "a sweep and a catch-up once the board is there",
+        "a sweep once the board is there",
         test_time::backstop(Duration::from_secs(15)),
-        || {
-            let calls = lines(&fixture, "calls");
-            (calls.iter().any(|call| call == "reap") && calls.iter().any(|call| call == "embed"))
-                .then_some(calls)
-        },
+        || Some(lines(&fixture, "calls")).filter(|calls| !calls.is_empty()),
     )
     .unwrap();
-    assert!(
-        calls.iter().all(|call| call == "reap" || call == "embed"),
-        "{calls:?}"
-    );
+    assert!(calls.iter().all(|call| call == "reap"), "{calls:?}");
 }

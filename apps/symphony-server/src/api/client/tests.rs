@@ -105,14 +105,12 @@ fn module(test: &str, size: usize) -> Vec<u8> {
 }
 
 #[test]
-fn a_content_hash_names_dx_and_package_assets_and_nothing_else() {
+fn a_content_hash_names_a_builds_assets_and_nothing_else() {
     for hashed in [
         "assets/board-f129bf6e05941e78.js",
         "assets/symphony-shell-4375f62f92e3d4a2.js",
-        "assets/symphony-ui_bg-dxh8d1bca92fd62af8.wasm",
-        "assets/dx-components-theme-dxh3f7454274acd8235.css",
-        "assets/app-dxh123.js",
-        "assets/chunks/old-dxh789.js",
+        "assets/theme-3f7454274acd8235.css",
+        "assets/chunks/old-789789789789789a.js",
         "assets/board-f129bf6e05941e78.min.js",
     ] {
         assert!(content_hashed(hashed), "{hashed}");
@@ -125,9 +123,8 @@ fn a_content_hash_names_dx_and_package_assets_and_nothing_else() {
         "assets/board-f129bf6e05941e78a.js",
         "assets/board-F129BF6E05941E78.js",
         "assets/board-g129bf6e05941e78.js",
-        "assets/board-dxh.js",
-        "assets/board-dxhzz.js",
-        "assets/dxh123-board.js",
+        "assets/board-123.js",
+        "assets/board-.js",
         "assets/f129bf6e05941e78.js",
         "assets/f129bf6e05941e78-board.js",
         "static/board-f129bf6e05941e78.js",
@@ -261,15 +258,12 @@ async fn hashed_files_are_cached_for_good_and_the_page_and_unhashed_files_revali
             "assets/board-f129bf6e05941e78.js",
             b"export const board = 1;",
         ),
-        (
-            "assets/frame-dxh2b1fd8a782b46c58.css",
-            b"main { margin: 0 }",
-        ),
+        ("assets/frame-2b1fd8a782b46c58.css", b"main { margin: 0 }"),
         ("assets/plain.js", b"export const plain = 1;"),
     ]);
     for (path, cache) in [
         ("/assets/board-f129bf6e05941e78.js", FOR_GOOD),
-        ("/assets/frame-dxh2b1fd8a782b46c58.css", FOR_GOOD),
+        ("/assets/frame-2b1fd8a782b46c58.css", FOR_GOOD),
         ("/assets/plain.js", "no-cache"),
         ("/", "no-cache"),
         ("/tasks", "no-cache"),
@@ -291,9 +285,9 @@ async fn a_build_file_is_gzipped_on_its_first_request_and_sent_stored_after() {
     let hash = sha256(&source);
     let (_tree, app) = serving(&[
         ("index.html", b"<html><body>shell</body></html>"),
-        ("assets/symphony-ui_bg-dxhfeed01.wasm", &source),
+        ("assets/program-feed01feed01feed.wasm", &source),
     ]);
-    let path = "/assets/symphony-ui_bg-dxhfeed01.wasm";
+    let path = "/assets/program-feed01feed01feed.wasm";
     let gzip = [("Accept-Encoding", "br;q=1, gzip;q=0.8")];
 
     let plain = send(&app, Method::GET, path, &[("Accept-Encoding", "identity")]).await;
@@ -463,13 +457,13 @@ async fn a_file_gzip_cannot_shrink_goes_as_it_is_and_is_not_tried_again() {
     let hash = sha256(&source);
     let (_tree, app) = serving(&[
         ("index.html", b"<html><body>shell</body></html>"),
-        ("assets/tiny-dxhabc.js", &source),
+        ("assets/tiny-abcabcabcabcabca.js", &source),
     ]);
     for _ in 0..2 {
         let got = send(
             &app,
             Method::GET,
-            "/assets/tiny-dxhabc.js",
+            "/assets/tiny-abcabcabcabcabca.js",
             &[("Accept-Encoding", "gzip")],
         )
         .await;
@@ -487,13 +481,13 @@ async fn pictures_and_fonts_go_as_they_are_and_the_page_is_still_compressed_per_
     let page = format!("<html><body>{}</body></html>", "Native shell. ".repeat(300));
     let (_tree, app) = serving(&[
         ("index.html", page.as_bytes()),
-        ("assets/icon-dxh1.png", &picture),
-        ("assets/face-dxh2.woff2", &font),
+        ("assets/icon-1111111111111111.png", &picture),
+        ("assets/face-2222222222222222.woff2", &font),
     ]);
     let gzip = [("Accept-Encoding", "gzip")];
     for (path, bytes, kind) in [
-        ("/assets/icon-dxh1.png", &picture, "image/png"),
-        ("/assets/face-dxh2.woff2", &font, "font/woff2"),
+        ("/assets/icon-1111111111111111.png", &picture, "image/png"),
+        ("/assets/face-2222222222222222.woff2", &font, "font/woff2"),
     ] {
         let got = send(&app, Method::GET, path, &gzip).await;
         assert_eq!(got.header("content-type"), Some(kind), "{path}");

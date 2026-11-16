@@ -8,6 +8,11 @@ import { href } from "./project";
 
 /** What a read fails with when no answer came at all: the fetch itself failed. */
 export const UNREACHABLE = "The server could not be reached";
+/** What a read fails with when the server did not answer within the limit (request.ts). Nothing
+ * was sent to act on: a write that got no answer says its own words. */
+export const NOT_IN_TIME = "The server did not answer in time";
+/** What a page that tries a failed read again by itself says after the reason. */
+export const TRYING = "Trying again…";
 
 /**
  * What a read fails with when the server answered `status`: its own `error`, when it gave one,
@@ -19,14 +24,23 @@ export function answered(status: number, error?: string): string {
 }
 
 /**
- * The sentence for a read that did not finish, from the reason the transport gave, said once.
- * Only a server that could not be reached sends the reader to the connection.
+ * The sentence for a read that did not finish, from the reason the transport gave, said once:
+ * every page's failed read says it here. A page that tries the read again by itself (`trying`)
+ * says so and asks nothing of the reader; one that does not asks them to try again. Only a
+ * server that could not be reached sends the reader to the connection.
  */
-export function failed(why: string): string {
-  const reason = why.trim().replace(/\.+$/, "");
-  if (reason === "") return "The read did not finish. Try again.";
-  if (reason === UNREACHABLE) return `${UNREACHABLE}. Check the connection and try again.`;
-  return `${reason}.`;
+export function failed(why: string, trying = false): string {
+  // A reason that says it goes on by itself (the board's own notice, a sentence said here before)
+  // says so once.
+  if (trying && why.trimEnd().endsWith("…")) return why.trim();
+  const reason = why.trim().replace(/[.…]+$/, "");
+  if (reason === "") return `The read did not finish. ${trying ? TRYING : "Try again."}`;
+  if (reason === UNREACHABLE) {
+    return trying
+      ? `${UNREACHABLE}; check the connection. ${TRYING}`
+      : `${UNREACHABLE}. Check the connection and try again.`;
+  }
+  return trying ? `${reason}. ${TRYING}` : `${reason}.`;
 }
 
 /**
@@ -43,7 +57,7 @@ export interface TroubleProps {
   text: string;
   /** Where to go instead, as a path of the site and its label. */
   back?: [string, string];
-  /** Reads again; a page that retries on its own still offers it. */
+  /** Reads again at once; a page that tries again on its own still offers it. */
   retry?: () => void;
 }
 

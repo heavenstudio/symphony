@@ -73,9 +73,13 @@ describe("an agent's row", () => {
     );
   });
 
-  it("shows its open tasks against the cap on an orchestrator's, and none without one", () => {
-    expect(row(agent({ slots: { open: 3, cap: 8 } }))).toContain("<p>open tasks: 3 of 8</p>");
-    expect(row(agent())).not.toContain("open tasks:");
+  it("shows the slots it holds against its cap on an orchestrator's, and none without one", () => {
+    // Its slots, as PULL names them: the tasks it is building, not the open tasks it follows.
+    const html = row(agent({ slots: { open: 3, cap: 8 }, following: 32 }));
+    expect(html).toContain("<p>slots: 3 of 8</p>");
+    expect(html).toContain("Following 32 open tasks");
+    expect(html).not.toContain("open tasks:");
+    expect(row(agent())).not.toContain("slots:");
   });
 
   it("says how to reach it: by its callback, or on a task while it has none", () => {
@@ -134,39 +138,24 @@ describe("an agent's row", () => {
   });
 
   it("counts the open tasks it follows in words, and following none offers nothing", () => {
-    const held = (slug: string, role: string, status: string): HeldTask => ({ slug, role, status });
-    const following = (tasks: HeldTask[]) => row(agent({ kind: "orchestrator", tasks }));
-    const none = following([
-      held("a/done", "orchestrator", "done"),
-      held("a/worked", "worker", "in_progress"),
-    ]);
-    expect(none).not.toContain("Following");
-    expect(following([held("a/one", "orchestrator", "ready")])).toContain(
-      "<details><summary>Following 1 open task</summary></details>",
-    );
-    expect(
-      following([
-        held("a/one", "orchestrator", "ready"),
-        held("a/two", "orchestrator", "review"),
-        held("a/old", "orchestrator", "cancelled"),
-      ]),
-    ).toContain(">Following 2 open tasks</summary>");
+    const following = (count: number) => row(agent({ kind: "orchestrator", following: count }));
+    expect(following(0)).not.toContain("Following");
+    expect(following(1)).toContain("<details><summary>Following 1 open task</summary></details>");
+    expect(following(2)).toContain(">Following 2 open tasks</summary>");
+    // The count is the server's, whatever roles the agent's held tasks name.
+    const executes: HeldTask = { slug: "a/w", role: "executor", status: "in_progress" };
+    expect(row(agent({ tasks: [executes] }))).not.toContain("Following");
   });
 
   it("opens its Following list: why a read failed, the tasks it follows, and more to load", () => {
-    const tasks: HeldTask[] = ["a/one", "a/two"].map((slug) => ({
-      slug,
-      role: "orchestrator",
-      status: "ready",
-    }));
     const one = aTask("a/one", { title: "One", status: "review" });
     const open = followed({ open: true, rows: [one], trouble: "Busy" });
-    const html = row(agent({ tasks }), { following: open });
+    const html = row(agent({ following: 2 }), { following: open });
     expect(html).toContain('<p role="status">Busy</p>');
     expect(html).toContain('id="following-cobalt-otter-a/one"');
     expect(html).toContain(">Load more followed tasks</button>");
     const both = followed({ open: true, rows: [one, aTask("a/two")] });
-    const all = row(agent({ tasks }), { following: both });
+    const all = row(agent({ following: 2 }), { following: both });
     expect(all).toContain('<p role="status"></p>');
     expect(all).not.toContain("Load more followed tasks");
   });
@@ -221,14 +210,13 @@ describe("an agent's row", () => {
       const html = row(agent(), { work: shown });
       expect(html.match(/data-work-kind=/g)?.length ?? 0).toBe(expected.length);
       for (const label of expected) expect(html).toContain(label);
-      expect(html).not.toContain("open tasks:");
+      expect(html).not.toContain("slots:");
     }
   });
 
   it("is drawn with its Following list closed", () => {
-    const tasks: HeldTask[] = [{ slug: "a/one", role: "orchestrator", status: "ready" }];
     const html = renderToStaticMarkup(
-      <AgentRow agent={agent({ tasks })} local={false} tasks={[]} work={NO_WORK} scope="" />,
+      <AgentRow agent={agent({ following: 1 })} local={false} tasks={[]} work={NO_WORK} scope="" />,
     );
     expect(html).toContain("<details><summary>Following 1 open task</summary></details>");
   });
@@ -411,7 +399,9 @@ describe("the agents page", () => {
       /^<main data-ready="failed" data-feed="live"><section class="trouble card"/,
     );
     expect(html).toContain("<h1>The board could not be loaded</h1>");
-    expect(html).toContain("It is also tried again on its own.");
+    expect(html).toContain(
+      "<p>The server could not be reached; check the connection. Trying again…</p>",
+    );
   });
 
   it("loads the agents once the board is read", () => {
@@ -427,6 +417,8 @@ describe("the agents page", () => {
       '<div class="task-page" data-ready="failed"><section class="trouble card"',
     );
     expect(html).toContain("<h1>The agents could not be loaded</h1>");
+    // The page reads them again by itself, and says so.
+    expect(html).toContain("<p>Busy (the server answered 503). Trying again…</p>");
     expect(html).not.toContain('role="alert"');
   });
 
@@ -484,14 +476,9 @@ describe("what a press asks for", () => {
   it("opens and closes the Following list, and reads its next page on Load more", () => {
     const following = followed();
     const toggle = vi.spyOn(following, "toggle").mockImplementation(() => {});
-    const tasks: HeldTask[] = ["a/one", "a/two"].map((slug) => ({
-      slug,
-      role: "orchestrator",
-      status: "ready",
-    }));
     const drawn = (list: Followed) =>
       AgentLines({
-        agent: agent({ tasks }),
+        agent: agent({ following: 2 }),
         local: false,
         tasks: [],
         work: NO_WORK,

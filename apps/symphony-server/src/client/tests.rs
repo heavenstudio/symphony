@@ -71,11 +71,10 @@ fn a_modules_exports_are_read_from_its_clause() {
 }
 
 /// The shipped distribution is the regenerator's, made after a land from main's sources (a branch
-/// commits none): every page kind it names has its script and, for a kind of the Dioxus client, its
-/// wasm and, for a kind of the program (apps/symphony-ui/src/split.rs), its chunk; a kind of the web
-/// client (apps/symphony-web) is a script that exports its `run` and `stop`.
+/// commits none), so it may be older than this tree: every kind it names is a script of the web
+/// client (apps/symphony-web) that exports its `run` and `stop`, which the shell runs and stops.
 #[test]
-fn shipped_shell_references_its_real_modules_and_valid_wasm() {
+fn shipped_shell_references_its_real_modules() {
     let shell =
         std::str::from_utf8(super::asset("index.html").expect("shipped release index")).unwrap();
     let script = shell
@@ -102,35 +101,18 @@ fn shipped_shell_references_its_real_modules_and_valid_wasm() {
         .map(String::as_str)
         .collect();
     keys.sort_unstable();
-    for kind in [
-        "board", "docs", "overlay", "panel", "queue", "review", "tasks", "timeline",
-    ] {
+    // The kinds the committed build and the one regenerated from this tree both have.
+    for kind in ["board", "docs", "overlay", "panel", "queue", "review"] {
         assert!(keys.contains(&kind), "no {kind} in {keys:?}");
     }
-    for module in manifest.as_object().unwrap().values() {
-        for key in ["script", "wasm", "chunk"] {
-            let Some(path) = module.get(key) else {
-                continue;
-            };
-            let path = path.as_str().unwrap().trim_start_matches('/');
-            let bytes = super::asset(path).unwrap();
-            if key != "script" {
-                assert!(bytes.starts_with(b"\0asm"), "{path}");
-            } else if module.get("wasm").is_some() {
-                assert!(
-                    std::str::from_utf8(bytes)
-                        .unwrap()
-                        .contains("reviewModuleReady_")
-                );
-            } else {
-                // A kind of the web client is its script alone, which the shell runs and stops.
-                let exported = module_exports(std::str::from_utf8(bytes).unwrap());
-                assert!(
-                    exported.contains(&"run") && exported.contains(&"stop"),
-                    "{path} exports {exported:?}"
-                );
-            }
-        }
+    for (kind, module) in manifest.as_object().unwrap() {
+        assert!(module.get("wasm").is_none(), "{kind} names a wasm");
+        let path = module["script"].as_str().unwrap().trim_start_matches('/');
+        let exported = module_exports(std::str::from_utf8(super::asset(path).unwrap()).unwrap());
+        assert!(
+            exported.contains(&"run") && exported.contains(&"stop"),
+            "{path} exports {exported:?}"
+        );
         for style in module["styles"].as_array().unwrap() {
             assert!(
                 !super::asset(style.as_str().unwrap().trim_start_matches('/'))

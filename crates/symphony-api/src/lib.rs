@@ -1,10 +1,5 @@
 //! The Symphony's wire types: the JSON the server (`apps/symphony-server`) sends and the client
-//! (`apps/symphony-ui`) reads. Serde only, so one definition builds for the server and for wasm32.
-//!
-//! One feature, off by default, changes what a reader keeps: `skip-board-fields` leaves a task's
-//! plugins' board fields out of a [`Task`] it reads ([`Task::fields`] reads as empty, so a task
-//! written back carries none). The browser's client turns it on in its wasm32 dependencies, as it
-//! reads no task's fields; a crate that reads them leaves it off.
+//! (`apps/symphony-web`) reads through its generated TypeScript. Serde only.
 //!
 //! The board view, the front page `/`:
 //!
@@ -17,6 +12,15 @@
 //!   (its data empty: the line `data:`) at least every [`Board::ping_ms`], never more than
 //!   [`PING_MAX_MS`] apart: an SSE comment never reaches a page's code, so a stream whose server
 //!   went quiet with its socket open would otherwise look live for ever.
+//! - The same `GET`, asking to upgrade (`Upgrade: websocket`), is the same stream on a WebSocket:
+//!   each event one text message, its name, a line feed, then its data (a [`FEED_EVENT`]'s
+//!   [`Delta`] or a [`SERVER_EVENT`]'s string, as JSON; nothing for a [`PING_EVENT`]), closed by
+//!   the server where the stream would end.
+//!   A browser keeps six HTTP/1.1 connections to a host and an event stream holds one while it is
+//!   open, so six tabs following the board would leave a seventh none for its reads; it counts
+//!   each WebSocket apart. The web client follows the feed so (`apps/symphony-web/src/feed.ts`). A
+//!   WebSocket has no same-origin rule for what it reads, so an upgrade whose `Origin` is not
+//!   `http://` and its own `Host` is refused (`403`), as such a write is.
 //!
 //! On one stream, versions only go up. A server that restarts counts again from its own start,
 //! so a version is never compared across streams, and nothing resumes by `Last-Event-ID`. A
@@ -32,8 +36,9 @@
 //! A field added later is `#[serde(default)]`, and a region a client does not know yet reads as
 //! [`Change::Other`], which it ignores: the server and an open client may be one build apart.
 //!
-//! The server's own route, [`FRONT_PATH`], answers a [`Front`]: the one server in front of the app,
-//! as its starters and the agents see it.
+//! The server's own routes answer before any project's: [`FRONT_PATH`] a [`Front`], the one server
+//! in front of the app, as its starters and the agents see it, and [`PROJECTS_PATH`] a
+//! [`ProjectList`], the projects it serves as the desktop app reads them ([`listing`]).
 
 #![forbid(unsafe_code)]
 
@@ -45,6 +50,7 @@ mod agents;
 pub mod gates;
 pub mod health;
 mod links;
+pub mod listing;
 mod machine_work;
 mod project;
 pub mod report_page;
@@ -58,11 +64,13 @@ pub use agent_activity::{AGENT_ACTIVITY_SCHEMA, AgentHour, AgentLine};
 pub use gates::{Gate, GatePast, GateState, GatesSeen, TASK_GATES_PATH, TaskGates};
 pub use health::{HEALTH_SCHEMA, HealthHour, HourPasses, HourRequests, HourSlowest, HourWrites};
 pub use links::{app_path, linkable};
+pub use listing::{ListedCard, ListedProject, PROJECTS_PATH, ProjectList, TaskAsks, TaskVerdict};
 pub use report_page::{Grain, REPORTS_PATH, ReportBucket, ReportsPage};
 pub use reports::{REPORT_SCHEMA, ReportDay, ReportHour, report_file};
 pub use runs::{
-    End, FailedTest, PIPELINES, RUN_LOG_MOST, RUN_LOG_PATH, RUN_LOG_TAIL, RUN_SCHEMA, RunLine,
-    RunLog, Suite, TRIGGERS, fold, run_day, run_name,
+    End, FailedTest, PIPELINES, RUN_LOG_MOST, RUN_LOG_PATH, RUN_LOG_TAIL, RUN_PATH, RUN_SCHEMA,
+    RUNS_DAYS, RUNS_FILE_BYTES, RUNS_PAGE, RUNS_PATH, RUNS_READ_BYTES, RunLine, RunLog, RunPage,
+    RunsPage, Suite, TRIGGERS, fold, run_day, run_name,
 };
 pub use runs_rollup::{RUNS_DAY_SCHEMA, RUNS_ROLLUP, RunsDay};
 pub use task_queries::{
@@ -123,11 +131,12 @@ pub struct Front {
 
 /// The route that answers a [`Board`].
 pub const BOARD_PATH: &str = "/api/board";
-/// The route of the feed: Server-Sent Events, `?since=VERSION`.
+/// The route of the feed: Server-Sent Events, or the same events on a WebSocket, `?since=VERSION`.
 pub const FEED_PATH: &str = "/api/feed";
-/// The response header a document read (`/api/document`, `/api/section`) names the feed's cursor
-/// at the read in, on its `200` and its `304` alike: a page that draws the copy it kept on a
-/// `304`, which has no body, opens the feed from it.
+/// The response header every JSON read names the feed's cursor at the read in, on its `200` and
+/// its `304` alike: every event at or before it is in the answer. A page that draws the copy it
+/// kept on a `304`, which has no body, opens the feed from it, and a page whose feed is open
+/// drops what the feed says of a read at or before the read's cursor.
 pub const VERSION_HEADER: &str = "symphony-version";
 /// A server-update failure, a JSON string (empty clears it). It does not advance the document
 /// cursor. A retiring server finishes its feed normally; reconnects fetch a fresh snapshot.
@@ -278,7 +287,7 @@ pub struct Progress {
 }
 
 /// One event of the feed: what changed since the version before.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct Delta {
     /// The version after this change: the next `since`.
@@ -289,7 +298,7 @@ pub struct Delta {
 
 /// A region of the board that moved, with its new data: `{"region": "...", "data": ...}`, the
 /// region first (as the server writes it).
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 #[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 #[serde(tag = "region", content = "data", rename_all = "kebab-case")]
 pub enum Change {
@@ -303,6 +312,10 @@ pub enum Change {
     Client {
         build: String,
     },
+    /// What the task board asks of each person, as it is from now on: sent each time it changes,
+    /// for the desktop app ([`listing`]). The web client reads none, so its wire types leave it out.
+    #[cfg_attr(feature = "typescript", ts(skip))]
+    TaskAsks(TaskAsks),
     /// A region this client does not know yet; it is ignored. Never sent, so the web client's wire
     /// types leave it out: it reads a region it does not know as any `{region, data}`.
     #[serde(skip_serializing)]
@@ -354,6 +367,7 @@ impl<'de> serde::de::Visitor<'de> for ChangeVisitor {
                         "client" => Change::Client {
                             build: map.next_value::<Build>()?.build,
                         },
+                        "task-asks" => Change::TaskAsks(map.next_value()?),
                         _ => {
                             map.next_value::<IgnoredAny>()?;
                             Change::Other
@@ -374,7 +388,7 @@ impl<'de> serde::de::Visitor<'de> for ChangeVisitor {
     }
 }
 
-const KNOWN_REGIONS: [&str; 5] = ["card", "queue", "counts", "progress", "client"];
+const KNOWN_REGIONS: [&str; 6] = ["card", "queue", "counts", "progress", "client", "task-asks"];
 
 #[expect(
     clippy::trivially_copy_pass_by_ref,
@@ -457,8 +471,7 @@ pub struct ActivityItem {
     pub answered: bool,
 }
 
-/// The task board's read records. These stay serde-only so native and wasm clients share them;
-/// a build with the feature `skip-board-fields` reads a task without its [`Task::fields`].
+/// The task board's read records. These stay serde-only.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct Task {
@@ -475,13 +488,8 @@ pub struct Task {
     pub depends: Vec<String>,
     pub roles: Vec<Role>,
     pub instruction: bool,
-    /// The plugins' board fields: plugin name, then field name, then its value. With the feature
-    /// `skip-board-fields` a task is read without them, whatever the wire holds, and the map stays
-    /// empty, so a task written back carries none: the browser's client turns it on, as it draws
-    /// no field, and so leaves out the reader of the two maps and of their values (a number's text
-    /// parser among it), about 18 KB gzipped of the board's first visit.
+    /// The plugins' board fields: plugin name, then field name, then its value.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
-    #[cfg_attr(feature = "skip-board-fields", serde(skip_deserializing))]
     pub fields: std::collections::BTreeMap<String, std::collections::BTreeMap<String, FieldValue>>,
 }
 
@@ -522,6 +530,7 @@ pub struct Tasks {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct Message {
     pub id: i64,
     pub slug: String,
@@ -535,6 +544,7 @@ pub struct Message {
 /// Task metadata and its brief. Thread pages and the landing offer are fetched separately
 /// when the owner reaches their controls.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct TaskPage {
     #[serde(default)]
     pub machine_work: MachineWork,
@@ -570,6 +580,7 @@ pub struct TaskPage {
 /// A chunk of a long brief: its blocks, the byte it ends at, the bytes still left and the
 /// revision of the brief it was cut from.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct TaskBrief {
     pub blocks: Vec<Block>,
     pub next: usize,
@@ -583,6 +594,7 @@ pub struct TaskBrief {
 pub const TASK_ACTION_ROUTE: &str = "/api/task-action";
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct TaskEntry {
     pub message: Message,
     pub stamp: String,
@@ -590,6 +602,7 @@ pub struct TaskEntry {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct TaskHistory {
     pub entries: Vec<TaskEntry>,
     pub before: Option<i64>,
@@ -764,6 +777,69 @@ pub struct Section {
     pub media: Vec<Media>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub comparison: Option<SectionComparison>,
+    /// The kinds of the first and last blocks the section draws ([`Section::ends_of`]), so the
+    /// outline tells a page how a section it has not read yet will meet its neighbours. Left out
+    /// for a section that draws nothing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ends: Option<[String; 2]>,
+}
+
+impl Section {
+    /// The kinds of the first and last blocks `blocks` draw: a block's `type`, a heading's with its
+    /// level (`heading-3`), and a container drawn with the `callout` class as a `callout`. A group
+    /// draws its blocks, so its edges are theirs; a comment draws nothing and is passed over.
+    pub fn ends_of(blocks: &[Block]) -> Option<[String; 2]> {
+        Some([edges(blocks, false)?, edges(blocks, true)?])
+    }
+}
+
+/// The kind of the first block `blocks` draw, or of the last when `last`.
+fn edges(blocks: &[Block], last: bool) -> Option<String> {
+    if last {
+        blocks.iter().rev().find_map(|block| edge(block, true))
+    } else {
+        blocks.iter().find_map(|block| edge(block, false))
+    }
+}
+
+/// The kind `block` draws as at a section's first edge, or its last when `last`.
+fn edge(block: &Block, last: bool) -> Option<String> {
+    let kind = match block {
+        Block::Group { blocks } => return edges(blocks, last),
+        Block::Comment { .. } => return None,
+        Block::Heading { level, .. } => return Some(format!("heading-{level}")),
+        Block::Container { presentation, .. }
+            if presentation
+                .class
+                .split_whitespace()
+                .any(|word| word == "callout") =>
+        {
+            "callout"
+        }
+        Block::Paragraph { .. } => "paragraph",
+        Block::List { .. } => "list",
+        Block::Table { .. } => "table",
+        Block::Code { .. } => "code",
+        Block::Quote { .. } => "quote",
+        Block::Rule => "rule",
+        Block::Callout { .. } => "callout",
+        Block::Card { .. } => "card",
+        Block::Component { .. } => "component",
+        Block::Media { .. } => "media",
+        Block::Image { .. } => "image",
+        Block::Figure { .. } => "figure",
+        Block::Caption { .. } => "caption",
+        Block::Comparison { .. } => "comparison",
+        Block::Container { .. } => "container",
+        Block::Details { .. } => "details",
+        Block::SettledCard { .. } => "settled-card",
+        Block::Thread { .. } => "thread",
+        Block::Unknown { .. } => "unknown",
+        // The kit's lists grow in a minor, so no match outside it covers them whole
+        // (`tests/vocabulary_drawn.rs` holds every kind to an arm here).
+        _ => "later",
+    };
+    Some(kind.into())
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

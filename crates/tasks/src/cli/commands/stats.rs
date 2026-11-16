@@ -43,6 +43,7 @@ pub(super) fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
                 status: r.status,
                 created: r.created,
                 executing: r.executing,
+                arm: r.arm,
                 stages,
             });
         }
@@ -137,6 +138,25 @@ fn text(s: &Summary) -> Vec<String> {
     }
     lines.push(waiting_text("Blocked", &s.blocked));
     lines.push(waiting_text("Ready with no executor", &s.unstaffed));
+    if !s.arms.is_empty() {
+        lines.push(
+            "Arms (the tasks filed with --arm; lead and review are the medians of the done):"
+                .into(),
+        );
+        let median =
+            |spread: &Option<Spread>| spread.as_ref().map_or("-".into(), |s| hours(s.median));
+        for arm in &s.arms {
+            lines.push(format!(
+                "  {:<12} tasks {} · done {} · lead {} · review {} · bounces {}",
+                arm.name,
+                arm.tasks,
+                arm.done,
+                median(&arm.lead),
+                median(&arm.review),
+                arm.bounces
+            ));
+        }
+    }
     lines
 }
 
@@ -215,5 +235,18 @@ fn json(s: &Summary) -> Py {
         ),
         ("blocked", waiting_json(&s.blocked)),
         ("ready_unstaffed", waiting_json(&s.unstaffed)),
+        (
+            "arms",
+            shape::keyed(s.arms.iter().map(|arm| {
+                let fields = vec![
+                    ("tasks", count(arm.tasks)),
+                    ("done", count(arm.done)),
+                    ("lead_seconds", opt(&arm.lead)),
+                    ("review_seconds", opt(&arm.review)),
+                    ("bounces", Py::Int(i64::from(arm.bounces))),
+                ];
+                (arm.name.clone(), Py::obj(fields))
+            })),
+        ),
     ])
 }

@@ -26,16 +26,17 @@
 //! named (`--as`, else `TASKS_SESSION`) holds (it executes it, or reviews it in review); else the
 //! one held by the one live session whose last tool call the beat hook placed in this linked
 //! worktree (never the main checkout, where every agent's board commands run); else the checkout's
-//! branch when it is the slug of an open task; else the one held by the live full session the
-//! Claude Code session ([`CLAUDE_SESSION_VAR`]) binds, which a subagent shares with its parent, so
-//! it never beats the branch. A session counts only while the board reads it live: one that
-//! finished without leaving, or went stale or lost, is passed over. Of several tasks a session
-//! holds, the one the others are under; none when the board cannot say. A command a recorder runs
-//! names its operation in [`recorded::PARENT_VAR`], so a recorder it starts records it as its
-//! parent. That read holds up no time it records: the operation is queued when `tasks run` was
-//! called, started when its command did (on macOS, when its recorder told it to exec) and ended
-//! when its end came, each seen as it happens, by a thread of its own while the board is asked; the
-//! record is written once the board answered or the wait ran out.
+//! branch when it is a task's slug, whatever its status (an approved task's executor holds none);
+//! else the one held by the live full session the Claude Code session ([`CLAUDE_SESSION_VAR`])
+//! binds, which a subagent shares with its parent, so it never beats the branch. A session counts
+//! only while the board reads it live: one that finished without leaving, or went stale or lost, is
+//! passed over. Of several tasks a session holds, the one the others are under; none when the board
+//! cannot say. A command a recorder runs names its operation in [`recorded::PARENT_VAR`], so a
+//! recorder it starts records it as its parent. That read holds up no time it records: the
+//! operation is queued when `tasks run` was called, started when its command did (on macOS, when
+//! its recorder told it to exec) and ended when its end came, each seen as it happens, by a thread
+//! of its own while the board is asked; the record is written once the board answered or the wait
+//! ran out.
 //!
 //! Nothing it records reaches the command's streams: a record it cannot write leaves the command
 //! running as it would unrecorded. A run's or a step's stdout and stderr, which its lines name a
@@ -1136,9 +1137,11 @@ impl Recording {
         let _ = recorded::sweep(&self.folder, crate::store::now());
     }
 
-    /// The line `record` says appended to the day files, when it is a run's or a step's.
+    /// The line `record` says appended to the day files, when it is a run's or a step's: an end
+    /// line with what its log, whole by then ([`Recording::logged`]), says of its tests.
     fn line(&self, record: &Record) {
         if let (Some(runs), Some(line)) = (&self.runs, crate::runs::line(record)) {
+            let line = crate::runs::with_tests(line, runs);
             let _ = crate::runs::append(runs, &line, crate::store::now(), self.wait);
         }
     }

@@ -382,11 +382,16 @@ fn a_task_filed_with_no_orchestrator_that_stays_waits_for_a_new_one_to_wait() {
         registered.out
     );
     // One is on the board now, which does not stay yet: the task is said to wait for one.
-    let waits = "  waits for an orchestrator that stays, for 0 min: the first live past its first \
-                 live line that waits, watches or holds a task is given it\n";
+    let waits = format!(
+        "  waits for an orchestrator under its limit that stays, for 0 min: the first live past \
+         its first live line that waits, watches or holds a task, and orchestrates fewer than 16 \
+         open tasks ([limits] orchestrator_tasks), is given it, and any such orchestrator takes \
+         it with: {} role sim/loose orchestrator\n",
+        c.board()
+    );
     // (`create` says it waits the same way: tests/cli/pull/wait.rs.)
     let shown = c.ok(&worker, &["show", "sim/loose"]);
-    assert!(shown.contains(waits), "{shown}");
+    assert!(shown.contains(&waits), "{shown}");
     let first = c.ok(&handle, &["wait", "--timeout", "0"]);
     assert!(!first.contains("GIVEN"), "{first}");
     assert!(

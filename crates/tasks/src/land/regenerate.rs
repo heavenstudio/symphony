@@ -53,7 +53,6 @@ use crate::sys::{self, Stdio};
 use crate::{NewSession, NewTask};
 use crate::{Store, red};
 use serde::{Deserialize, Serialize};
-use std::ffi::OsStr;
 use std::fs::{self, File, OpenOptions, TryLockError};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
@@ -308,7 +307,7 @@ pub fn start(env: &Env, main: &Path, settings: &Settings) -> Option<String> {
         // checkout's may be older than it.
         let binary = trigger::test_build(env)
             .or_else(|| std::env::current_exe().ok())
-            .or_else(|| crate::builds::of_main(main, "tasks", env.var("PATH").map(OsStr::new)))
+            .or_else(|| crate::builds::of_main(main, "tasks", &trigger::beyond(env)))
             .ok_or_else(|| crate::builds::missing(main, "tasks"))?;
         // Set aside past its bound as the sweep's log is, only here: no regenerator runs, so none
         // writes on into the file set aside.
@@ -504,6 +503,7 @@ pub fn run(store: &Store, env: &Env, out: &mut dyn Write) -> Result<String, Stri
             log,
             interrupts: interrupts.as_ref(),
             recorder: None,
+            named: false,
             out: &mut *out,
         };
         let mut regenerator = Regenerator {
@@ -1219,10 +1219,7 @@ fn replaced(
 ) -> Result<String, String> {
     let index = folder.join(format!(".regenerate-index.{}", std::process::id()));
     let indexed = |args: &[&str]| -> Result<String, String> {
-        let mut command = sys::command("git");
-        for name in GIT_VARS {
-            command.env_remove(name);
-        }
+        let mut command = sys::git();
         command
             .args(args)
             .current_dir(main)

@@ -1,8 +1,7 @@
 //! One canonical admission ledger builder, shared with the read-only holdings producer.
 
 use super::{
-    BY_ID, DEPTH, Failure, Level, OF_TASKS, ON_BRANCHES, ROLES_OF, Read, Recorded, RoleRead, Row,
-    Store, View, branches, slots,
+    DEPTH, Failure, Level, Read, Recorded, RoleRead, Row, Store, View, branches, slots, sql,
 };
 use crate::slots::{Entry, Ledger};
 use serde_json::{Value, json};
@@ -62,10 +61,7 @@ impl Observation {
                 break;
             }
             looked.extend(wanted.iter().cloned());
-            let level: Level = store.transact(
-                &format!("LET $slot_wanted = array::union($slot_wanted, ({ON_BRANCHES})); RETURN {{ tasks: ({BY_ID}), roles: ({ROLES_OF}), branches: ({OF_TASKS}) }};"),
-                json!({"slot_wanted": wanted}),
-            )?;
+            let level: Level = store.transact(&sql::level(), json!({"slot_wanted": wanted}))?;
             for row in level.tasks {
                 self.rows.entry(row.slug.clone()).or_insert(row);
             }

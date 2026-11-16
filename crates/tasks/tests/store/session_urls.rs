@@ -12,13 +12,13 @@ fn urls(f: &Fixture) -> BTreeMap<String, String> {
 }
 
 fn structure(f: &Fixture) -> u64 {
-    let value = f
-        .store
-        .client()
-        .query("RETURN counter:board_structure.last ?? 0;", json!({}))
-        .unwrap()
-        .remove(0);
-    serde_json::from_value(value).unwrap()
+    let last = (f.store.raw().row("counter", "board_structure"))
+        .field("last")
+        .unwrap();
+    if last.is_null() {
+        return 0;
+    }
+    serde_json::from_value(last).unwrap()
 }
 
 #[test]
@@ -87,12 +87,9 @@ fn an_address_the_check_refuses_an_unknown_or_a_left_session_writes_nothing() {
 /// Write `url` as `handle`'s address straight into its row, as a copied dump, a hand write or
 /// another build could, past the check a set makes.
 fn written(f: &Fixture, handle: &str, url: serde_json::Value) {
-    f.store
-        .client()
-        .query(
-            "UPSERT type::record('callback_state', ['session_url', $handle]) SET url = $url RETURN NONE;",
-            json!({"handle": handle, "url": url}),
-        )
+    (f.store.raw())
+        .row("callback_state", json!(["session_url", handle]))
+        .put(json!({"url": url}))
         .unwrap();
 }
 

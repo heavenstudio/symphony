@@ -42,10 +42,12 @@ label { display:block; } html:root :focus-visible { outline:2px solid var(--ring
 .kanban, .ghost-kanban { display:grid; grid-template-columns:minmax(0,1fr); gap:var(--sp-4); }
 .kanban > *, .ghost-kanban > * { min-width:0; }
 /* The board's scroller fits the window under what the page draws above it (the header, the
-   heading, the filters and the hint: 277 px on a desk, 395 on a phone) and over the dock while the
-   dock shows (frame.css), so its own horizontal scrollbar, at its foot, is never under the
-   prev/next bar. Its ghost is as tall. */
-:root:has(.frame-pending) { --board-dock:var(--dock); }
+   heading, the filters and the hint: 277 px on a desk, 303 to 374 in a narrow window as its filters
+   wrap, 298 on a phone with its filters shut and 447 with them open) and over the dock's band
+   (frame.css), so its own horizontal scrollbar, at its foot, is never under the prev/next bar,
+   nor under the "+", which sits in that band, at its lift, when no bar draws. Its ghost is as
+   tall. */
+:root { --board-dock:var(--dock); }
 .board-scroll { max-width:100%; min-width:0; max-height:max(320px,calc(100dvh - 320px - var(--board-dock,0px))); overflow:auto; overscroll-behavior-x:contain; scroll-snap-type:x proximity; scrollbar-color:var(--muted-foreground) var(--muted); padding-bottom:12px; border-radius:var(--r-lg); }
 .board-scroll:focus-visible { outline:2px solid var(--primary); outline-offset:4px; }
 .board-scroll-hint, .ghost-hint { margin:0; font-size:var(--fs-sm); }
@@ -176,12 +178,14 @@ li > .viewport-slot > p + p { margin-top:1em; }
 .ghost-offline { display:flex; flex-wrap:wrap; align-items:flex-start; gap:12px; } .ghost-offline > .ghost-column { flex:1 1 240px; width:auto; min-height:0; box-shadow:none; }
 .filters .ghost-field { display:block; } .ghost-field:has(> .bone) { display:flex; align-items:center; } .ghost-field > .bone { margin:0 12px; }
 .ghost-field { display:inline-block; vertical-align:middle; width:12rem; max-width:100%; height:2.25rem; border:1px solid var(--border); border-radius:var(--radius); }
+/* The button a phone shows the search and the filters behind (below): no desk draws it. */
+.dx-button.board-filters-toggle, .ghost-field.ghost-filters-toggle { display:none; }
 .ghost-head > div:first-child { font-size:var(--fs-sm); margin:0 0 4px; } .ghost-head > .ghost-meta:nth-child(3) { margin-bottom:14px; }
 .ghost-head .ghost-controls { margin-left:auto; }
 /* The role chips are a row of their own, as tall as a chip. */
 .ghost-head > .ghost-pill { display:block; width:fit-content; }
-/* A task's timeline box, as tall as its own will be (src/timeline_slot.rs, whose sheet the page
-   has only once the box is in). */
+/* A task's timeline box, as tall as its own will be (apps/symphony-web/src/timeline-slot.tsx, whose
+   sheet the page has only once the box is in). */
 .ghost-tl > .ghost-heading { margin-bottom:.2em; } .ghost-tl-box { height:var(--tl-narrow); box-sizing:border-box; overflow:hidden; display:flex; flex-direction:column; gap:var(--sp-3); }
 @media (min-width: 900px) { .ghost-tl-box { height:var(--tl-wide); } }
 .ghost-tl-box > div { display:flex; gap:var(--sp-3); }
@@ -215,7 +219,7 @@ li > .viewport-slot > p + p { margin-top:1em; }
 .quick-actions form { width:360px; max-width:calc(100vw - 24px); box-sizing:border-box; max-height:75vh; overflow:auto; margin-top:8px; }
 .quick-actions h2 { margin-top:0; } .quick-actions input { width:100%; } .quick-actions label { margin-bottom:10px; }
 
-.card { background:var(--card); border:1px solid var(--border); border-radius:var(--r-lg); box-shadow:var(--shadow-1); padding:var(--sp-4) var(--sp-5); min-width:0; }
+.card { --dot-halo:var(--card); background:var(--card); border:1px solid var(--border); border-radius:var(--r-lg); box-shadow:var(--shadow-1); padding:var(--sp-4) var(--sp-5); min-width:0; }
 .tile { display:flex; flex-direction:column; gap:2px; padding:16px 18px; text-decoration:none; color:var(--foreground); border-top:3px solid var(--tone, var(--border)); transition:transform .12s ease; min-width:0; }
 .pill { --c:var(--muted-foreground); display:inline-flex; align-items:center; gap:5px; font-size:var(--fs-xs); font-weight:600; line-height:1.6; padding:0 10px; border-radius:var(--r-pill); border:1px solid color-mix(in srgb, var(--c) 35%, transparent); background:color-mix(in srgb, var(--c) 10%, transparent); color:var(--c); text-decoration:none; white-space:nowrap; vertical-align:1px; }
 .dot { --c:var(--border); display:inline-block; width:9px; height:9px; border-radius:50%; background:var(--c); vertical-align:0; }
@@ -352,6 +356,25 @@ a.bar:hover { background:var(--background); }
   .tile:last-child:nth-child(odd) { grid-column:1 / -1; }
   .hero { padding:18px; } .hero-title { font-size:1.35em !important; }
   a.go { width:100%; justify-content:center; box-sizing:border-box; }
+}
+/* A phone, held upright: no phone is wider. */
+@media (max-width: 600px) {
+  /* One column on the screen at a time: each as wide as the board's scroller (the rail too), and a
+     swipe lands on the next one whole. apps/symphony-web/src/cardheight.ts repeats the width. Each
+     selector is as specific as the narrow window's above, its ghost's by `[data-for]`. */
+  .board-scroll, .ghost-pipeline { container-type:inline-size; }
+  .board-scroll { scroll-snap-type:x mandatory; }
+  .pipeline > .column, .pipeline > .column.rail, .ghost-pipeline > .ghost-column[data-for] { flex-basis:100cqi; width:100cqi; scroll-snap-stop:always; }
+  /* Each column as tall as the longest, so a reader scrolled down one still swipes, and steps by
+     key, to the next: Chrome snaps only to a column that reaches as far down as the board shows.
+     apps/symphony-web/src/boardswipe.ts holds a long flick to one column. */
+  .pipeline, .ghost-pipeline { align-items:stretch; }
+  /* The search and the filters are behind their button, shown only while it is pressed. */
+  .dx-button.board-filters-toggle, .ghost-field.ghost-filters-toggle { display:flex; width:fit-content; margin:0 0 16px; }
+  .ghost-field.ghost-filters-toggle { width:143px; }
+  .filters:not([data-open=true]) { display:none; }
+  .board-scroll, .ghost-pipeline { max-height:max(280px,calc(100dvh - 323px - var(--board-dock,0px))); }
+  .filters[data-open=true] + .kanban > .board-scroll { max-height:max(280px,calc(100dvh - 472px - var(--board-dock,0px))); }
 }
 /* The focus home: the next card and the queue, without the tiles and the progress. */
 html[data-layout-home=focus] .dash > .tiles, html[data-layout-home=focus] .dash > .dash-grid { display:none; }

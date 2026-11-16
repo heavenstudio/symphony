@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 #[path = "../../../tasks/tests/store/common.rs"]
 #[expect(
     dead_code,
-    reason = "the page's reads and the agents view's need only the store fixture's server and seed"
+    reason = "the page's reads, the agents view's and the activity's need only the store fixture's server and seed"
 )]
 pub(super) mod store_fixture;
 
@@ -174,6 +174,54 @@ fn a_long_briefs_page_sends_its_start_reads_only_its_rows_and_reaches_the_rest_o
         "every line of the brief is reached once, in order"
     );
     assert_ne!(short_page.brief_revision, long_page.brief_revision);
+}
+
+/// A task page counts the subtasks the board lists under it (`/api/task-board?parent=`): a slice,
+/// an errand and an open `/work`, not a finished `/work`, `/review` or `staff-review-N`.
+#[test]
+fn a_page_counts_slices_errands_and_open_work_but_no_finished_instruction_to_staff_its_task() {
+    let mut id = 0;
+    let mut child = |slug: &str, parent: &str, status: &str, instruction: bool| {
+        id += 1;
+        TaskRow {
+            id,
+            parent: Some(parent.to_owned()).filter(|p| !p.is_empty()),
+            instruction,
+            ..row(slug, status)
+        }
+    };
+    let seed = Seed::default()
+        .task_row(child("feature", "", "in_progress", false))
+        .task_row(child("feature/slice", "feature", "done", false))
+        .task_row(child("feature/visual", "feature", "done", true))
+        .task_row(child("feature/work", "feature", "in_progress", true))
+        .task_row(child("feature/review", "feature", "done", true))
+        .task_row(child(
+            "feature/staff-review-1",
+            "feature",
+            "cancelled",
+            true,
+        ))
+        .task_row(child("staffed", "", "done", false))
+        .task_row(child("staffed/work", "staffed", "done", true))
+        .task_row(child("staffed/review", "staffed", "cancelled", true));
+    let f = Fixture::new(seed);
+    let tree = Tree::new();
+    let count = |slug: &str| {
+        page(&f.store, &f.store.get(slug).unwrap(), &tree.root)
+            .unwrap()
+            .children_count
+    };
+    assert_eq!(
+        count("feature"),
+        3,
+        "the slice, the errand and the open /work"
+    );
+    assert_eq!(
+        count("staffed"),
+        0,
+        "only finished instructions to staff it"
+    );
 }
 
 #[test]

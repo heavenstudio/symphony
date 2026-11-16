@@ -194,7 +194,6 @@ const COMMANDS: &[Command] = &[
             choice("--status", "status", STATUSES),
             opt("--limit", "limit", Takes::Value(Ty::Int)),
             opt("--json", "json", Takes::Bool),
-            choice("--mode", "mode", &["keyword", "vector", "hybrid", "exact"]),
         ],
     },
     Command {
@@ -204,17 +203,6 @@ const COMMANDS: &[Command] = &[
             AS,
             opt("--days", "days", Takes::Value(Ty::Int)),
             opt("--json", "json", Takes::Bool),
-        ],
-    },
-    Command {
-        name: "embed",
-        pos: &[],
-        opts: &[
-            opt("--maintenance", "maintenance", Takes::Bool),
-            opt("--threads", "threads", Takes::Value(Ty::Int)),
-            AS,
-            opt("--task", "task", STR),
-            opt("--batch-size", "batch_size", Takes::Value(Ty::Int)),
         ],
     },
     plain("next", &[]),
@@ -239,6 +227,7 @@ const COMMANDS: &[Command] = &[
             opt("--depends", "depends", Takes::Append),
             opt("--link", "link", Takes::Append),
             opt("--no-role", "no_role", Takes::Bool),
+            opt("--arm", "arm", STR),
         ],
     },
     Command {
@@ -256,6 +245,11 @@ const COMMANDS: &[Command] = &[
     },
     plain("field", &[pos("slug"), pos("name"), pos("value")]),
     plain("stamps", &[maybe("slug")]),
+    Command {
+        name: "runs",
+        pos: SLUG,
+        opts: &[AS, opt("--tip", "tip", STR)],
+    },
     Command {
         name: "needs",
         pos: &[pos("slug"), many("stamps")],

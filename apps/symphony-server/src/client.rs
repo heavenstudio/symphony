@@ -1,4 +1,5 @@
-//! Client selection and the release assets compiled into this server's package.
+//! Client selection and the release assets compiled into this server's package: none in a release's
+//! build (`SYMPHONY_CLIENT_BESIDE`), which serves the client installed beside it.
 
 use std::path::{Path, PathBuf};
 
@@ -53,7 +54,7 @@ pub(crate) fn build(dist: &Path, embedded: bool) -> String {
     } else {
         std::fs::read_to_string(dist.join("index.html")).unwrap_or_default()
     };
-    // dx writes the module script with a hashed filename. This is exactly the path the browser
+    // The build names the shell's script by its content. This is exactly the path the browser
     // compares with Board.build.
     shell
         .split("src=\"")
@@ -67,7 +68,19 @@ pub(crate) fn build(dist: &Path, embedded: bool) -> String {
 #[cfg(test)]
 mod tests;
 
-/// Read the foreground override separately from an installed server's explicit bundle.
+/// Read the foreground override separately from an installed server's explicit bundle. A server
+/// run from a release installed on the machine serves that release's client, from the folder
+/// beside it, whatever else is named ([`released`]).
 pub(crate) fn selection(root: &Path, install: Option<&Path>) -> (PathBuf, bool) {
+    let beside = std::env::current_exe().ok().and_then(|exe| released(&exe));
+    if let Some(client) = beside {
+        return (client, false);
+    }
     select(root, install, symphony_env::UI_DIST.os().map(PathBuf::from))
+}
+
+/// The client of the release the server at `binary` is installed in, `client/HASH/` beside its
+/// `bin/` ([`symphony::machine::release::client_beside`]); none for a build anywhere else.
+pub(crate) fn released(binary: &Path) -> Option<PathBuf> {
+    symphony::machine::release::client_beside(binary)
 }

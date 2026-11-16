@@ -3,6 +3,7 @@
 //! asked, by record range or index, never every thread of the board nor a recipient's every record
 //! after each of its posts.
 
+use super::surreal::unanswered as sql;
 use super::work::{Tree, above};
 use super::{Board, Error, Failure, Health, Message, Store, Task};
 use crate::rows::MessageRow;
@@ -43,15 +44,6 @@ pub(crate) enum Asked<'a> {
     /// them, hold a system record of one (its role history) or name one in a role.
     Handles(&'a BTreeSet<String>),
 }
-
-// Deliberate state changes answer work too. Automatic departure, launch and delivery records do
-// not. Role acquisition also puts older role-addressed posts before the new holder's work.
-const ANSWER_SQL: &str = "(kind IN ['msg', 'verdict'] OR (kind = 'system' AND
-    (string::starts_with(text, sender + ' moved it ')
-    OR string::starts_with(text, sender + ' claimed it')
-    OR (string::starts_with(text, sender + ' released ') AND string::contains(text, ' (released)'))
-    OR text = sender + ' joined as reviewer'
-    OR text = sender + ' joined as executor')))";
 
 #[derive(Clone, Debug)]
 pub(crate) struct Pending {
@@ -96,8 +88,9 @@ pub(crate) fn restorable(launch: &TaskSessionRow) -> bool {
     !launch.claude_session.is_empty() && launch.claude_session != "codex:"
 }
 
-/// Review instructions launch on the child but review the parent. On the child itself the same
-/// agent executes the instruction, as `launch::take_up` records its reservation there.
+/// A reviewer's record on a review instruction, a child a launch starts no reviewer on (it sends
+/// the reviewer to the task itself), reviews the parent. On the child itself the same agent
+/// executes the instruction, holding its reservation there.
 fn recorded_role<'a>(
     launch: &'a TaskSessionRow,
     task: &Task,
@@ -120,7 +113,7 @@ fn recorded_role<'a>(
 }
 
 /// A post since this role began, with no later message, verdict or actor-authored action on its
-/// thread. Only the actions selected by ANSWER_SQL become `activity`; other system records and
+/// thread. Only the actions the lookup's reads select become `activity`; other system records and
 /// inbox acknowledgements are not answers. Sequence ids also order equal clocks.
 pub(crate) fn unanswered_post(
     post: &Message,
@@ -140,49 +133,6 @@ pub(crate) fn unanswered_post(
                 && matches!(reply.kind.as_str(), "msg" | "verdict" | "activity")
                 && reply.id > post.id
         })
-}
-
-// Each read below puts `then` after every SELECT it makes inside its closures: nothing for the
-// lookup, ` EXPLAIN` for the test of the plans those closures get (the legacy planner's, which
-// leaves an index or a range for a table scan where a top-level statement would not).
-
-/// Each handle's threads that address it or hold a system record it made, by the recipient and
-/// sender indexes: one equality on each index's first columns.
-pub(super) fn naming_sql(then: &str) -> String {
-    format!(
-        "RETURN $handles.map(|$handle| array::union(
-(SELECT VALUE slug FROM message WITH INDEX message_recipient WHERE recipient = $handle{then}),
-(SELECT VALUE slug FROM message WITH INDEX message_sender WHERE sender = $handle AND kind = 'system'{then})));"
-    )
-}
-
-/// These handles' reviewer launches, as the board lists launches. Launches have no handle index:
-/// this reads the launch table, for the rare reviewer post no launch on its task explains.
-const REVIEWER_LAUNCHES: &str = "RETURN SELECT * OMIT id FROM task_session
-WHERE handle IN $handles AND role = 'reviewer' ORDER BY started, slug, handle;";
-
-/// The asked threads and launches ([`Threads`]), by record range: a thread's messages are
-/// `message:[slug, sid]` and its launches `task_session:[slug, handle]`.
-pub(super) fn threads_sql(then: &str) -> String {
-    format!(
-        "RETURN {{
-threads: $slugs.map(|$slug| (SELECT sid, slug, sender, recipient, kind, ts,
-IF kind = 'system' {{ text }} ELSE {{ '' }} AS text
-FROM message:[$slug, NONE]..[$slug, ..] WHERE {ANSWER_SQL}
-OR (kind = 'system' AND string::starts_with(text, sender + ' released ')){then})),
-launches: array::flatten($launched.map(|$slug| (SELECT * OMIT id FROM task_session:[$slug, NONE]..[$slug, ..]{then})))
-}};"
-    )
-}
-
-/// For each ask (a recipient, the sequence it asks after and the threads below a task), the
-/// sequence ids of the recipient's answers there after it, by record range from that sequence on.
-pub(super) fn below_sql(then: &str) -> String {
-    format!(
-        "RETURN $asks.map(|$ask| {{ LET $handle = $ask.handle; LET $after = $ask.after;
-RETURN array::flatten($ask.below.map(|$slug| (SELECT VALUE sid FROM message:[$slug, $after]..[$slug, ..]
-WHERE sender = $handle AND sid > $after AND {ANSWER_SQL}{then}))); }});"
-    )
 }
 
 /// The asked tasks' threads (only the metadata of their posts, answers and releases), and the
@@ -360,7 +310,7 @@ impl Store {
     /// claims, joins and releases: its role history), by the recipient and sender indexes.
     fn threads_naming(&self, handles: &BTreeSet<String>) -> Result<BTreeSet<String>, Error> {
         let named: Vec<Vec<String>> = self
-            .bounded_read(&naming_sql(""), json!({"handles": handles}))
+            .bounded_read(&sql::naming(""), json!({"handles": handles}))
             .map_err(recovery_error)?;
         Ok(named.into_iter().flatten().collect())
     }
@@ -381,7 +331,7 @@ impl Store {
         let in_order: Vec<&str> = tasks.iter().map(|t| t.slug.as_str()).collect();
         let mut read: Threads = self
             .bounded_read(
-                &threads_sql(""),
+                &sql::threads(""),
                 json!({"slugs": in_order, "launched": launched}),
             )
             .map_err(recovery_error)?;
@@ -408,7 +358,7 @@ impl Store {
             return Ok(());
         }
         let launches: Vec<TaskSessionRow> = self
-            .bounded_read(REVIEWER_LAUNCHES, json!({"handles": handles}))
+            .bounded_read(sql::REVIEWER_LAUNCHES, json!({"handles": handles}))
             .map_err(recovery_error)?;
         for p in pending.iter_mut().filter(|p| wants(p)) {
             p.launch = launches
@@ -462,7 +412,7 @@ impl Store {
             })
             .collect();
         let found: Vec<Vec<i64>> = self
-            .bounded_read(&below_sql(""), json!({"asks": asks}))
+            .bounded_read(&sql::below(""), json!({"asks": asks}))
             .map_err(recovery_error)?;
         let latest: BTreeMap<(String, String), i64> = after
             .keys()
@@ -506,26 +456,14 @@ impl Store {
         parents: &[(String, Option<String>)],
     ) -> Result<bool, Error> {
         self.transact(
-            &format!("LET $key = type::record('unanswered_restore', [$slug, $handle, $post]);
-IF record::exists($key) {{ RETURN false; }};
-IF type::record('session', $handle).last_seen != $seen {{ RETURN false; }};
-IF {} != $answers {{ RETURN false; }};
-IF $parents.map(|$p| [$p[0], type::record('task', $p[0]).parent ?? NULL]) != $parents {{ RETURN false; }};
-LET $status = type::record('task', $slug).status;
-IF ($role = 'executor' AND $status NOT IN ['in_progress', 'blocked', 'review'])
-    OR ($role = 'reviewer' AND $status != 'review') {{ RETURN false; }};
-CREATE $key CONTENT {{ slug: $slug, handle: $handle, post: $post }} RETURN NONE;
-RETURN true;", answers::read()),
+            &sql::reserve(),
             json!({"slug": pending.slug, "handle": pending.handle, "post": pending.post.id, "seen":pending.seen, "role":pending.role, "answers":rows, "parents":parents}),
         )
         .map_err(recovery_error)
     }
 
     pub(crate) fn record_unanswered_restore(&self, slug: &str, text: &str) -> Result<(), Error> {
-        let body = format!(
-            "{}\nRETURN NONE;",
-            super::logged("$slug", "'board'", "'msg'", "$text", "'@orchestrator'")
-        );
+        let body = sql::restore_said();
         self.transact::<serde_json::Value>(
             &body,
             json!({"slug":slug, "text":text, "now":self.now()}),

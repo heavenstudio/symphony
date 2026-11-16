@@ -1,0 +1,237 @@
+//! A green release's install on the machine: the release built by a stand-in for cargo in the
+//! run's own checkout, installed whole in a temporary machine folder with its manifest, `current`
+//! pointed at it; a build that fails leaves no folder and is the refresh's red, which a later
+//! refresh that installs closes.
+
+use std::fs;
+use std::os::unix::fs::PermissionsExt;
+use std::path::PathBuf;
+
+use super::consumers::register;
+use super::refresh::refreshing;
+use super::{CHECK, Fixture, NOW};
+
+/// The release a run of the fixture's clock tags.
+const RELEASE: &str = "release-2026-11-12";
+/// What names the stand-in for cargo.
+const BUILDER: &str = "SYMPHONY_RELEASE_BUILDER";
+
+/// A stand-in for cargo in the fixture's folder: it counts its runs in `builds`, exits 101 while
+/// `build-red` is there, and otherwise writes the four binaries into the build folder it is given,
+/// the server and the board each answering what the install asks.
+fn builder(fixture: &Fixture) -> String {
+    let path = fixture.root.join("cargo-stand-in");
+    let script = format!(
+        "#!/bin/sh\necho \"$PWD $*\" >> '{root}/builds'\n\
+         [ ! -e '{root}/build-red' ] || {{ echo 'error: could not compile'; exit 101; }}\n\
+         out=\"$CARGO_TARGET_DIR/release\"\nmkdir -p \"$out\"\n\
+         printf '#!/bin/sh\\necho %s\\n' \
+         \"'{{\\\"protocol\\\":{{\\\"major\\\":0,\\\"minor\\\":3}},\\\"schema\\\":18}}'\" \
+         > \"$out/symphony-server\"\n\
+         printf '#!/bin/sh\\necho %s\\n' \
+         \"'{{\\\"ok\\\":{{\\\"api\\\":{{\\\"major\\\":1,\\\"minor\\\":14}},\\\"schema\\\":18}}}}'\" \
+         > \"$out/tasks\"\n\
+         printf '#!/bin/sh\\n' > \"$out/agent-send\"\nprintf '#!/bin/sh\\n' > \"$out/symphony\"\n\
+         chmod +x \"$out\"/*\n",
+        root = fixture.root.display()
+    );
+    fs::write(&path, script).unwrap();
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+    path.to_string_lossy().into_owned()
+}
+
+/// The fixture with the refresh on, no project registered, and a client's distribution on its
+/// main: the commit a run releases.
+fn installing() -> (Fixture, String) {
+    let (fixture, _) = refreshing();
+    register(&fixture, &[]);
+    fixture.write(
+        "apps/symphony-server/client/public/assets/app.js",
+        "app()\n",
+    );
+    let commit = fixture.land(
+        "apps/symphony-server/client/public/index.html",
+        Some("<html></html>\n"),
+        "the client's distribution",
+    );
+    (fixture, commit)
+}
+
+fn machine(fixture: &Fixture) -> PathBuf {
+    fixture.root.join("machine")
+}
+
+fn builds(fixture: &Fixture) -> Vec<String> {
+    fs::read_to_string(fixture.root.join("builds"))
+        .unwrap_or_default()
+        .lines()
+        .map(str::to_string)
+        .collect()
+}
+
+#[test]
+fn a_green_release_is_built_once_in_the_runs_checkout_and_installed_on_the_machine() {
+    let (fixture, commit) = installing();
+    let builder = builder(&fixture);
+    let (code, out, err) =
+        fixture.release_with(NOW, &["--check", CHECK], &[(BUILDER, builder.as_str())]);
+    assert_eq!(code, 0, "{out}{err}");
+    let place = machine(&fixture).join("releases").join(RELEASE);
+    assert!(
+        out.contains(&format!(
+            "release: refresh: installed {RELEASE} in {}, built in ",
+            place.display()
+        )),
+        "{out}"
+    );
+    assert!(
+        out.contains(&format!(
+            "release: refresh: {RELEASE} serves board schema 18, plugin protocol 0.3 and tasks \
+             api 1.14\n"
+        )),
+        "{out}"
+    );
+    assert!(
+        out.contains(&format!(
+            "release: refresh: {} names {RELEASE} (it named no release): a project with no build \
+             of its own runs it\n",
+            machine(&fixture).join("current").display()
+        )),
+        "{out}"
+    );
+    assert!(out.contains("release: refresh-install green ("), "{out}");
+    // Built once, in the run's own checkout, at the release's commit.
+    let built = builds(&fixture);
+    assert_eq!(built.len(), 1, "{built:?}");
+    assert!(
+        built[0].starts_with(&format!(
+            "{} build --release --locked -p symphony-server ",
+            fixture.worktree().display()
+        )),
+        "{built:?}"
+    );
+    // The folder is whole: the binaries, the client under its hash, and the manifest.
+    let manifest: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(place.join("manifest.json")).unwrap()).unwrap();
+    assert_eq!(manifest["release"], RELEASE);
+    assert_eq!(manifest["commit"], commit.as_str());
+    assert_eq!(manifest["schema"], 18);
+    assert_eq!(manifest["protocol"]["minor"], 3);
+    assert_eq!(manifest["tasks_api"]["minor"], 14);
+    let client = manifest["client"].as_str().unwrap();
+    assert_eq!(
+        fs::read_to_string(place.join(client).join("assets/app.js")).unwrap(),
+        "app()\n"
+    );
+    let artifacts = manifest["artifacts"].as_array().unwrap();
+    assert_eq!(artifacts.len(), 5);
+    for artifact in artifacts {
+        let path = place.join(artifact["path"].as_str().unwrap());
+        assert!(path.exists(), "{}", path.display());
+        assert!(artifact["size"].as_u64().unwrap() > 0, "{artifact}");
+    }
+    assert_eq!(artifacts[4]["files"], 2);
+    assert_eq!(
+        fs::read_link(machine(&fixture).join("current")).unwrap(),
+        PathBuf::from("releases").join(RELEASE)
+    );
+    let entries: Vec<String> = fs::read_dir(machine(&fixture).join("releases"))
+        .unwrap()
+        .flatten()
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(entries, [RELEASE], "nothing temporary left");
+    // The record keeps the step first among the refresh's, and the status says what it did.
+    let status = fixture.run(NOW + 60.0, &["--status"], 0);
+    assert!(
+        status.contains(&format!("  installed {RELEASE} in {}", place.display()))
+            && status.contains("last refresh: green"),
+        "{status}"
+    );
+    // A retry finds it installed: nothing is built again, though the build would now fail.
+    fs::write(fixture.root.join("build-red"), "").unwrap();
+    let (code, out, err) =
+        fixture.release_with(NOW + 120.0, &["--refresh"], &[(BUILDER, builder.as_str())]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(
+        out.contains(&format!(
+            "release: refresh: {RELEASE} is installed already in {}",
+            place.display()
+        )) && out.contains(&format!("names {RELEASE} (as it did)")),
+        "{out}"
+    );
+    assert_eq!(builds(&fixture).len(), 1);
+}
+
+#[test]
+fn a_build_that_fails_leaves_no_folder_and_a_red_refresh_which_the_next_install_closes() {
+    let (fixture, _) = installing();
+    let builder = builder(&fixture);
+    fs::write(fixture.root.join("build-red"), "").unwrap();
+    let (code, out, err) =
+        fixture.release_with(NOW, &["--check", CHECK], &[(BUILDER, builder.as_str())]);
+    assert_eq!(code, 1, "{out}{err}");
+    // The release itself is tagged and pushed: only its refresh is red.
+    assert_eq!(fixture.remote_tags(), [RELEASE]);
+    let releases = machine(&fixture).join("releases");
+    assert!(
+        out.contains(&format!(
+            "release: refresh: {RELEASE} is not installed: its build failed (exit 101), and \
+             nothing of it is in {}\n",
+            releases.display()
+        )),
+        "{out}"
+    );
+    assert!(out.contains("release: refresh-install red ("), "{out}");
+    assert!(
+        !releases.join(RELEASE).exists() && !machine(&fixture).join("current").exists(),
+        "a failed build installs nothing"
+    );
+    assert!(
+        fs::read_dir(&releases).map_or(true, |mut entries| entries.next().is_none()),
+        "no folder left"
+    );
+    assert!(
+        out.contains("release: filed tests/release-red-refresh-install"),
+        "{out}"
+    );
+    let red = &fixture.reds()["tests/release-red-refresh-install"];
+    assert!(red.red());
+    assert_eq!(
+        red.title,
+        format!("Release red: the install of {RELEASE} on the machine")
+    );
+    assert!(
+        red.body.contains("error: could not compile")
+            && red
+                .body
+                .contains("Then an orchestrator reruns the refresh, `just release --refresh`"),
+        "{}",
+        red.body
+    );
+    let status = fixture.run(NOW + 60.0, &["--status"], 0);
+    assert!(
+        status.contains("last refresh: red") && status.contains("  refresh-install red: exit 101"),
+        "{status}"
+    );
+    // The retry, once the build passes, installs it and closes the red.
+    fs::remove_file(fixture.root.join("build-red")).unwrap();
+    let (code, out, err) =
+        fixture.release_with(NOW + 120.0, &["--refresh"], &[(BUILDER, builder.as_str())]);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.contains("release: refresh-install green ("), "{out}");
+    assert!(
+        out.contains("release: closed tests/release-red-refresh-install"),
+        "{out}"
+    );
+    assert!(releases.join(RELEASE).join("manifest.json").is_file());
+    assert_eq!(builds(&fixture).len(), 2);
+}
+
+#[test]
+fn on_the_tests_clock_with_no_stand_in_nothing_is_built_or_installed() {
+    let (fixture, _) = installing();
+    let out = fixture.night(NOW, 0);
+    assert!(!out.contains("refresh-install"), "{out}");
+    assert!(!machine(&fixture).join("releases").exists());
+}

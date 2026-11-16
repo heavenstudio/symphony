@@ -1,7 +1,7 @@
-# Symphony's workspace: server, client, review library, wire types, docs checks, plugin seams, board, OS scanner, headless Chrome driver and the tests' time.
+# Symphony's workspace: server, client, review library, its own build and release commands, wire types, docs checks, plugin seams, board, OS scanner, headless Chrome driver and the tests' time.
 [workspace]
 resolver = "3"
-members = ["apps/symphony-server", "apps/symphony-ui", "crates/chrome-devtools", "crates/process-cwd", "crates/repository-read", "crates/symphony", "crates/symphony-api", "crates/symphony-args", "crates/symphony-blocks", "crates/symphony-docs", "crates/symphony-env", "crates/symphony-plugin", "crates/symphony-schema", "crates/tasks", "crates/test-time"]
+members = ["apps/symphony-desktop", "apps/symphony-server", "apps/symphony-web-tests", "crates/chrome-devtools", "crates/process-cwd", "crates/repository-read", "crates/symphony", "crates/symphony-api", "crates/symphony-args", "crates/symphony-blocks", "crates/symphony-build", "crates/symphony-docs", "crates/symphony-env", "crates/symphony-plugin", "crates/symphony-schema", "crates/tasks", "crates/test-time"]
 
 # What every member inherits. `publish = false` keeps a member off crates.io unless its own
 # manifest says `publish = true` with the metadata crates.io shows (docs/RELEASES.md, "Packages on
@@ -33,7 +33,7 @@ incremental = false
 # copies a large constant table (comrak's, regex-syntax's Unicode tables) into each unit that reads
 # it: one unit saves about 2.7 MB of symphony-server, 1.8 MB of symphony, 2.4 MB of tasks and
 # 0.5 MB of agent-send. It costs each crate's release compile (a cold release build about 30 %
-# longer); debug and test builds are unchanged, and the client's wasm-release sets the same.
+# longer); debug and test builds are unchanged.
 [profile.release]
 strip = true
 codegen-units = 1
@@ -70,14 +70,13 @@ libc = "0.2"
 regex = "1"
 serde_json = "1"
 sha2 = "0.11"
-tokenizers = { version = "=0.22.1", default-features = false, features = ["fancy-regex"] }
-tract-onnx = { version = "=0.22.5", default-features = false }
-tract-linalg = { version = "=0.22.5", default-features = false, features = ["multithread-mm"] }
 toml = { version = "1", default-features = false, features = ["parse", "serde", "std"] }
 # The wire types' TypeScript declarations, for the web client (apps/symphony-web/src/wire.ts): the
 # derive behind the `typescript` feature of symphony-api and symphony-blocks, which only the
-# generator turns on. serde-compat (its default) reads the types' serde attributes.
-ts-rs = "12.0.1"
+# generator turns on. serde-compat (its default) reads the types' serde attributes; it says
+# nothing of the one it cannot read, `#[serde(other)]` (a word a newer server sends read as a known
+# variant), which it leaves to the client's guards, as its declaration names that variant all the same.
+ts-rs = { version = "12.0.1", features = ["no-serde-warnings"] }
 
 # The lints every member inherits. `just lint-rs` runs clippy with `-D warnings`, so each `warn` below
 # is red at the gate and a warning in a plain build; `forbid` is for the few that no `expect` may
@@ -127,7 +126,7 @@ missing_panics_doc = "allow"
 # `#[must_use]` goes on the few values a caller must not drop (a guard, a verdict), not on every pure
 # function.
 must_use_candidate = "allow"
-# axum handlers and Dioxus hooks are `async` by their signatures whether or not they await.
+# axum handlers are `async` by their signatures whether or not they await.
 unused_async = "allow"
 # A `HashMap` parameter generic over its hasher is a library's concern; nothing here swaps hashers.
 implicit_hasher = "allow"
@@ -192,16 +191,3 @@ large_include_file = "warn"
 wildcard_dependencies = "warn"
 negative_feature_names = "warn"
 redundant_feature_names = "warn"
-
-# The Symphony client's web build (apps/symphony-ui/bundle.sh): dx builds a web release on the profile it
-# names after the platform, and this one is sized for a phone's first visit (apps/symphony-ui/AGENTS.md).
-[profile.wasm-release]
-inherits = "release"
-opt-level = "z"
-lto = true
-codegen-units = 1
-panic = "abort"
-debug = false
-# What the release profile strips by default when it has no debug info; its `strip = true` is the
-# native binaries'.
-strip = "debuginfo"

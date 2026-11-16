@@ -100,6 +100,7 @@ describe("the header", () => {
     expect(lit("tasks", false)).toEqual(["Board"]);
     expect(lit("task/app/x", false)).toEqual(["Board"]);
     expect(lit("reports", false)).toEqual(["Reports"]);
+    expect(lit("runs", false)).toEqual(["Runs"]);
     expect(lit("agents", false)).toEqual(["Agents"]);
   });
 
@@ -114,6 +115,7 @@ describe("the header", () => {
       "/docs/",
       "/tasks",
       "/reports",
+      "/runs",
       "/agents",
       "/shelf",
       "/maps/",
@@ -165,7 +167,15 @@ describe("a route under a checkout", () => {
 
 describe("the view the server inlined", () => {
   it("is read as it is, its left-out fields their defaults", () => {
-    const view = { name: "n", register: "r", nav: NAV, entrypoints: ["docs"], base: "/a" };
+    const view = {
+      name: "n",
+      register: "r",
+      nav: NAV,
+      entrypoints: ["docs"],
+      base: "/a",
+      wordmark: "n",
+      mark: "look/icon.svg",
+    };
     expect(readView(view)).toEqual(view);
     expect(readView({ name: "n", register: "r" })).toEqual({
       name: "n",
@@ -187,6 +197,8 @@ describe("the view the server inlined", () => {
     ["a list of other things", { name: "", register: "", entrypoints: [1] }],
     ["a base of another type", { name: "", register: "", base: 1 }],
     ["a guide of another type", { name: "", register: "", guide: false }],
+    ["a wordmark of another type", { name: "", register: "", wordmark: 1 }],
+    ["a mark of another type", { name: "", register: "", mark: {} }],
   ])("is the plain project for %s", (_, value) => {
     expect(readView(value)).toBe(PLAIN);
   });

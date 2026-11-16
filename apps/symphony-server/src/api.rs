@@ -14,12 +14,15 @@ use crate::front::Shared;
 use crate::live::Hub;
 
 mod failure;
+mod feed_socket;
 pub(crate) mod reports;
 pub(crate) mod run_log;
+pub(crate) mod runs;
 mod validated;
 mod warm;
 
 use failure::{task_failure, unavailable};
+use feed_socket::Said;
 pub(crate) use warm::{start, warm};
 
 /// Where a plugin's routes answer: `/x/<route>/<rest>`.
@@ -57,12 +60,19 @@ pub(crate) const READS: &[&str] = &[
     "/api/health",
     symphony_api::REPORTS_PATH,
     symphony_api::RUN_LOG_PATH,
+    symphony_api::RUNS_PATH,
+    symphony_api::RUN_PATH,
 ];
 
 type Request = axum::http::Request<()>;
 
 /// What the server reads answer for `request`. Every JSON read leaves here with its validator
-/// (`validated`), so a read added later has one too.
+/// (`validated`), so a read added later has one too, and naming the feed's cursor it was read at
+/// ([`symphony_api::VERSION_HEADER`]), on its `200` and its `304` alike. The cursor is read
+/// before the answer is: every event at or before it is in the answer, and one after it may be,
+/// so a page drops what its feed says of a read at or before the read's cursor and applies the
+/// rest, whichever of its reads and its feed it started first. A document's reads name their own,
+/// read with their content.
 pub(crate) async fn answer(shared: &Arc<Shared>, request: Request) -> Option<Response> {
     let asked: Vec<_> = request
         .headers()
@@ -70,8 +80,31 @@ pub(crate) async fn answer(shared: &Arc<Shared>, request: Request) -> Option<Res
         .iter()
         .cloned()
         .collect();
-    let response = read(shared, request).await?;
+    let cursor = cursor(shared, request.uri().path());
+    let mut response = read(shared, request).await?;
+    if let Some(cursor) = cursor
+        && validated::is_json_read(&response)
+        && !response
+            .headers()
+            .contains_key(symphony_api::VERSION_HEADER)
+    {
+        response.headers_mut().insert(
+            symphony_api::VERSION_HEADER,
+            header::HeaderValue::from(cursor),
+        );
+    }
     Some(validated::validated(&asked, response).await)
+}
+
+/// The feed's cursor now for the checkout the API route `path` names; none for any other path,
+/// for a checkout the server has no page of, and before the server has read anything.
+fn cursor(shared: &Shared, path: &str) -> Option<u64> {
+    let decoded = decode_path(path)?;
+    let (scope, route) = scope_path(&decoded);
+    if !route.starts_with("/api/") {
+        return None;
+    }
+    shared.api.get()?.cursor(scope)
 }
 
 async fn read(shared: &Arc<Shared>, request: Request) -> Option<Response> {
@@ -134,7 +167,7 @@ async fn read(shared: &Arc<Shared>, request: Request) -> Option<Response> {
         .unwrap_or("")
         .to_string();
     let check = shared.clone();
-    let allowed = tokio::task::spawn_blocking(move || check.allows_host(&host))
+    let allowed = crate::spawn::blocking(move || check.allows_host(&host))
         .await
         .unwrap_or(false);
     if !allowed {
@@ -222,7 +255,8 @@ async fn read(shared: &Arc<Shared>, request: Request) -> Option<Response> {
         });
     }
     // The reports are the project's day files and its git alone, the board never read: a board
-    // slow or down leaves them as they are.
+    // slow or down leaves them as they are. The answer is the hub's kept one while neither moved,
+    // sent with the tag kept beside it.
     if path == symphony_api::REPORTS_PATH {
         let asked = reports::asked(
             query(&request, "grain").as_deref(),
@@ -239,8 +273,15 @@ async fn read(shared: &Arc<Shared>, request: Request) -> Option<Response> {
             ));
         };
         return Some(
-            match tokio::task::spawn_blocking(move || reports::answer(&hub, grain, days)).await {
-                Ok(page) => no_store(Json(page)),
+            match crate::spawn::blocking(move || reports::answer(&hub, grain, days)).await {
+                Ok(answer) => {
+                    let mut response =
+                        no_store(([(header::CONTENT_TYPE, "application/json")], answer.body));
+                    response
+                        .extensions_mut()
+                        .insert(validated::Content(answer.tag));
+                    response
+                }
                 Err(e) => error(
                     StatusCode::INTERNAL_SERVER_ERROR,
                     format!("the reports could not be read: {e}"),
@@ -267,12 +308,66 @@ async fn read(shared: &Arc<Shared>, request: Request) -> Option<Response> {
             ));
         };
         return Some(
-            match tokio::task::spawn_blocking(move || run_log::answer(&hub, &run, asked)).await {
+            match crate::spawn::blocking(move || run_log::answer(&hub, &run, asked)).await {
                 Ok(Ok(log)) => no_store(Json(log)),
                 Ok(Err((status, why))) => error(status, why),
                 Err(e) => error(
                     StatusCode::INTERNAL_SERVER_ERROR,
                     format!("the log could not be read: {e}"),
+                ),
+            },
+        );
+    }
+    // The runs are the project's day files alone, the board never read.
+    if path == symphony_api::RUNS_PATH {
+        let asked = runs::asked(
+            query(&request, "pipeline").as_deref(),
+            query(&request, "end").as_deref(),
+            query(&request, "task").as_deref(),
+            query(&request, "branch").as_deref(),
+            query(&request, "before").as_deref(),
+        );
+        let filters = match asked {
+            Ok(filters) => filters,
+            Err(why) => return Some(error(StatusCode::BAD_REQUEST, why)),
+        };
+        let Some(hub) = shared.api.get().cloned() else {
+            return Some(error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "the Symphony server is starting",
+            ));
+        };
+        return Some(
+            match crate::spawn::blocking(move || runs::answer(&hub, &filters)).await {
+                Ok(Ok(page)) => no_store(Json(page)),
+                Ok(Err((status, why))) => error(status, why),
+                Err(e) => error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("the runs could not be read: {e}"),
+                ),
+            },
+        );
+    }
+    if path == symphony_api::RUN_PATH {
+        let Some(run) = query(&request, "run").filter(|run| !run.is_empty()) else {
+            return Some(error(
+                StatusCode::BAD_REQUEST,
+                "run is required: a run's id",
+            ));
+        };
+        let Some(hub) = shared.api.get().cloned() else {
+            return Some(error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "the Symphony server is starting",
+            ));
+        };
+        return Some(
+            match crate::spawn::blocking(move || runs::answer_run(&hub, &run)).await {
+                Ok(Ok(page)) => no_store(Json(page)),
+                Ok(Err((status, why))) => error(status, why),
+                Err(e) => error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("the run could not be read: {e}"),
                 ),
             },
         );
@@ -311,7 +406,7 @@ async fn read(shared: &Arc<Shared>, request: Request) -> Option<Response> {
     };
     let check = hub.clone();
     let selected = scope.to_string();
-    if let Err(e) = tokio::task::spawn_blocking(move || check.ensure_page(&selected))
+    if let Err(e) = crate::spawn::blocking(move || check.ensure_page(&selected))
         .await
         .unwrap_or_else(|e| Err(e.to_string()))
     {
@@ -323,9 +418,7 @@ async fn read(shared: &Arc<Shared>, request: Request) -> Option<Response> {
     if path == symphony_api::AGENT_SCREEN_PATH {
         let handle = query(&request, "handle").unwrap_or_default();
         return Some(
-            match tokio::task::spawn_blocking(move || crate::session_go::screen(&hub, &handle))
-                .await
-            {
+            match crate::spawn::blocking(move || crate::session_go::screen(&hub, &handle)).await {
                 Ok(Ok(screen)) => no_store(Json(screen)),
                 Ok(Err((code, why))) => error(code, why),
                 Err(e) => error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
@@ -376,7 +469,7 @@ async fn read(shared: &Arc<Shared>, request: Request) -> Option<Response> {
         let scope = scope.to_string();
         let path = path.to_string();
         let rel = rel.to_string();
-        let response = tokio::task::spawn_blocking(move || {
+        let response = crate::spawn::blocking(move || {
             document_response(&shared, &hub, &root, &scope, &path, &rel, &request)
         })
         .await;
@@ -386,18 +479,25 @@ async fn read(shared: &Arc<Shared>, request: Request) -> Option<Response> {
         });
     }
     let response = match path {
-        "/api/feed" => feed(hub, scope, &request),
+        "/api/feed" => feed(hub, scope, request).await,
         "/api/tasks" | "/api/task-board" => {
             let search = query(&request, "q")
                 .unwrap_or_default()
                 .trim()
                 .to_lowercase();
             let scores = if path == "/api/task-board" && !search.is_empty() {
-                let root = hub.root.clone();
+                let reading = hub.clone();
                 let needle = search.clone();
-                match tokio::task::spawn_blocking(move || {
-                    let store = symphony::taskview::connect(&root)?;
-                    store.search(&needle).map_err(|error| error.to_string())
+                match crate::spawn::blocking(move || {
+                    // On the store the task pages' reads share, never a board opened anew.
+                    let store = reading.reader()?;
+                    let hits = store.search(&needle);
+                    // Dropped only where the board failed the read, as the task pages drop it: a
+                    // query the search refuses (too long, too many terms) sent none.
+                    if matches!(hits, Err(symphony_board::Error::Db(_))) {
+                        reading.reader_failed(&store);
+                    }
+                    hits.map_err(|error| error.to_string())
                 })
                 .await
                 {
@@ -465,7 +565,7 @@ async fn read(shared: &Arc<Shared>, request: Request) -> Option<Response> {
             let local = (agent_page || detail) && crate::session_go::local(shared, &request).await;
             let gates = path == symphony_api::TASK_GATES_PATH;
             let timeline = path == symphony_api::TASK_TIMELINE_PATH;
-            match tokio::task::spawn_blocking(move || {
+            match crate::spawn::blocking(move || {
                 if agents {
                     // The agents and their work as the hub's board tick last read them: while the
                     // board cannot be read, neither can they, as with its tasks.
@@ -515,13 +615,12 @@ async fn read(shared: &Arc<Shared>, request: Request) -> Option<Response> {
                         })
                     } else if gates {
                         // A plugin that errs or is slow is an unknown gate, never a failed answer:
-                        // only the board's own reads fail it.
-                        store.get(&slug).map_err(task_failure).and_then(|record| {
-                            let pending = hub.pending();
-                            symphony::gates::answer(&store, &record, &root, &pending, &hub.gates)
-                                .map(|gates| no_store(Json(gates)))
-                                .map_err(|e| unavailable(&e, ""))
-                        })
+                        // only the board's own reads fail it. A read with nothing new asks the
+                        // board for the task's stamp alone (`symphony::gates::inputs`).
+                        let pending = hub.pending();
+                        symphony::gates::answer(&store, &slug, &root, &pending, &hub.gates)
+                            .map(|gates| no_store(Json(gates)))
+                            .map_err(task_failure)
                     } else if timeline {
                         // The task's own thread and run records, and its gates as the gates
                         // answer gives them: gates that cannot be read leave their lanes out.
@@ -661,6 +760,16 @@ fn document_response(
             Err((status, why)) => error(status, why),
         };
     }
+    // An outline's check that names the tag of the copy the hub follows is answered from it, at
+    // the feed's cursor, with no render: the validator turns it into the `304`.
+    if path == "/api/document"
+        && query(request, "view").as_deref() == Some("outline")
+        && request.headers().contains_key(header::IF_NONE_MATCH)
+        && let Some((tag, cursor)) = hub.outline_kept(scope, rel, validated::outline_tag)
+        && matches_etag(request, &tag)
+    {
+        return document_read(tag, Vec::new(), Some(cursor));
+    }
     let result = match path {
         // What a page reads ahead of a document it links to: its first part, within the cap, or
         // nothing when its head alone is over it. Read ahead, the document is not followed.
@@ -740,22 +849,27 @@ fn document_response(
         // content: their tag leaves it out, and a header names it, on the `304` too.
         Ok(mut value) if matches!(path, "/api/document" | "/api/section" | "/api/folder") => {
             let tagged = validated::without_cursor(&mut value);
-            let mut response =
-                no_store(([(header::CONTENT_TYPE, "application/json")], tagged.body));
-            response
-                .extensions_mut()
-                .insert(validated::Content(tagged.tag));
-            if let Some(cursor) = tagged.cursor {
-                response.headers_mut().insert(
-                    symphony_api::VERSION_HEADER,
-                    header::HeaderValue::from(cursor),
-                );
-            }
-            response
+            document_read(tagged.tag, tagged.body, tagged.cursor)
         }
         Ok(value) => no_store(Json(value)),
         Err(e) => error(StatusCode::NOT_FOUND, e),
     }
+}
+
+/// A document read's answer: its `body` named by `tag`, its content's validator
+/// ([`validated::Content`]), and the feed's cursor it was read at in a header of its own. A check
+/// that names `tag` leaves as a `304` without `body` ([`validated::validated`]), so one answered
+/// before its body was made carries none.
+fn document_read(tag: String, body: Vec<u8>, cursor: Option<u64>) -> Response {
+    let mut response = no_store(([(header::CONTENT_TYPE, "application/json")], body));
+    response.extensions_mut().insert(validated::Content(tag));
+    if let Some(cursor) = cursor {
+        response.headers_mut().insert(
+            symphony_api::VERSION_HEADER,
+            header::HeaderValue::from(cursor),
+        );
+    }
+    response
 }
 
 fn ask_response(
@@ -927,7 +1041,7 @@ async fn plugin_response(shared: &Shared, root: &Path, path: &str, request: &Req
         return error(StatusCode::NOT_FOUND, "no such route");
     };
     let (checkout, route, rest) = (root.to_path_buf(), route.to_string(), rest.to_string());
-    let reply = tokio::task::spawn_blocking(move || {
+    let reply = crate::spawn::blocking(move || {
         symphony::plugins::Plugins::of(&checkout)
             .route(&route)?
             .serve(&checkout, &rest)
@@ -1086,9 +1200,14 @@ fn events_since(
         .collect())
 }
 
-fn feed(hub: Arc<Hub>, scope: &str, request: &Request) -> Response {
+/// The feed from `?since=`: Server-Sent Events, or the same events on a WebSocket when the request
+/// asks to upgrade ([`feed_socket`]).
+async fn feed(hub: Arc<Hub>, scope: &str, request: Request) -> Response {
     use futures_util::StreamExt;
-    let Some(since) = query(request, "since").and_then(|v| v.parse::<u64>().ok()) else {
+    if let Some(refused) = feed_socket::refused(&request) {
+        return refused;
+    }
+    let Some(since) = query(&request, "since").and_then(|v| v.parse::<u64>().ok()) else {
         return error(
             StatusCode::BAD_REQUEST,
             "the feed needs ?since=VERSION from /api/board",
@@ -1101,8 +1220,8 @@ fn feed(hub: Arc<Hub>, scope: &str, request: &Request) -> Response {
     };
     let scope = scope.to_string();
     let document_filter = {
-        let path = query(request, "document").unwrap_or_default();
-        let keys = query(request, "sections")
+        let path = query(&request, "document").unwrap_or_default();
+        let keys = query(&request, "sections")
             .and_then(|keys| serde_json::from_str::<Vec<String>>(&keys).ok())
             .unwrap_or_default();
         (path, keys)
@@ -1116,14 +1235,7 @@ fn feed(hub: Arc<Hub>, scope: &str, request: &Request) -> Response {
                 return None;
             }
             let message = notices.borrow_and_update().clone();
-            Some((
-                Ok::<_, std::io::Error>(format!(
-                    "event: {}\ndata: {}\n\n",
-                    symphony_api::SERVER_EVENT,
-                    serde_json::to_string(&message).expect("a notice serializes")
-                )),
-                (notices, false),
-            ))
+            Some((Said::notice(&message), (notices, false)))
         });
     let stream = futures_util::stream::unfold(
         (
@@ -1139,11 +1251,10 @@ fn feed(hub: Arc<Hub>, scope: &str, request: &Request) -> Response {
             loop {
                 if let Some(event) = pending.pop_front() {
                     since = event.version;
-                    let item: Result<String, std::io::Error> = Ok(format!(
-                        "event: {}\nid: {since}\ndata: {}\n\n",
-                        symphony_api::FEED_EVENT,
-                        filtered_document_event(&event.json, &document_filter)
-                    ));
+                    let item = Said::delta(
+                        since,
+                        filtered_document_event(&event.json, &document_filter),
+                    );
                     deadline = tokio::time::Instant::now() + ping_after;
                     return Some((
                         item,
@@ -1166,9 +1277,7 @@ fn feed(hub: Arc<Hub>, scope: &str, request: &Request) -> Response {
                     Ok(Err(_)) => return None,
                     Err(_) => {
                         return Some((
-                            // Event::data("") writes no data field, which a browser never
-                            // dispatches. A blank data line is required for the named ping.
-                            Ok(format!("event: {}\ndata:\n\n", symphony_api::PING_EVENT)),
+                            Said::ping(),
                             (
                                 hub,
                                 scope,
@@ -1184,23 +1293,25 @@ fn feed(hub: Arc<Hub>, scope: &str, request: &Request) -> Response {
             }
         },
     );
+    // A terminal marker from the main subscription ends the whole feed. Notices must not keep an
+    // expired or removed subscription open without its normal pings.
+    let said = futures_util::stream::select(
+        stream
+            .map(Some)
+            .chain(futures_util::stream::once(std::future::ready(None))),
+        notices.map(Some),
+    )
+    .take_while(|event| std::future::ready(event.is_some()))
+    .filter_map(std::future::ready)
+    .take_until(async move {
+        let _ = draining.wait_for(|draining| *draining).await;
+    });
+    if feed_socket::asked(&request) {
+        return feed_socket::answer(request, said).await;
+    }
     let mut response = no_store((
         [(header::CONTENT_TYPE, "text/event-stream")],
-        Body::from_stream(
-            // A terminal marker from the main subscription closes the whole response. Notices
-            // must not keep an expired or removed subscription open without its normal pings.
-            futures_util::stream::select(
-                stream
-                    .map(Some)
-                    .chain(futures_util::stream::once(std::future::ready(None))),
-                notices.map(Some),
-            )
-            .take_while(|event| std::future::ready(event.is_some()))
-            .filter_map(std::future::ready)
-            .take_until(async move {
-                let _ = draining.wait_for(|draining| *draining).await;
-            }),
-        ),
+        Body::from_stream(said.map(|said| Ok::<_, std::io::Error>(said.sse()))),
     ));
     response
         .headers_mut()
@@ -1326,7 +1437,7 @@ pub(crate) fn client_page(project: &symphony_api::ProjectView, path: &str) -> bo
     // `/task` with no slug is the board, as the shell's routes read it.
     matches!(
         page,
-        "" | "/tasks" | "/task" | "/agents" | "/queue" | "/reports"
+        "" | "/tasks" | "/task" | "/agents" | "/queue" | "/reports" | "/runs"
     ) || project
         .nav
         .iter()

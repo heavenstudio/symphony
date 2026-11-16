@@ -5,16 +5,20 @@
 // column reads its first page once it comes near the screen.
 
 import { useEffect, useReducer, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import {
   boardShape,
   GhostBoard,
   keepShape,
   type OnLoad,
+  PAGE,
   recallShape,
   SHAPE,
+  stageCounts,
   TaskBoard,
   UnreadBoard,
 } from "./board";
+import { readerRows } from "./boardplace";
 import {
   answered,
   BOARD,
@@ -37,15 +41,16 @@ import {
 } from "./cache";
 import { sleep } from "./feed";
 import { type FrameRefresh, useFrame } from "./frame";
-import { holdPlace, type Journal, ReadCursor } from "./journal";
+import { type Journal, ReadCursor } from "./journal";
 import { type BoardRun, flushReload, keepBoard, type PageBoard, PageNotices } from "./live";
 import { href, scoped } from "./project";
 import { getIf, getJson, said } from "./request";
-import { field, list as items } from "./shared";
-import { Backoff } from "./state";
+import { field, holdPlace, list as items } from "./shared";
+import { tryAgain } from "./state";
 import { load, save } from "./storage";
 import {
   holderHealth,
+  isTask,
   merge,
   readItemChange,
   readListing,
@@ -53,6 +58,7 @@ import {
   readTaskChange,
 } from "./task";
 import { markTasksReady } from "./taskcard";
+import { failed as failedRead } from "./trouble";
 import type { ItemChange, MachineWork, Task, TaskChange, TaskListing } from "./wire";
 import { PAGE_NAMES } from "./wire";
 import { statusNotice } from "./words";
@@ -98,6 +104,10 @@ export interface BoardData {
   /** The copy of each of the default view's reads the page holds, by its part of the board's item
    * (`counts`, `column:ready`): the next read of it names the copy's tag, and a `304` is that copy. */
   copies: Map<string, Copy>;
+  /** The last answer of each column's long read (`rows`, `readColumn`), by its part: the next long
+   * read of the column names its tag, and a `304` is that answer. Held on the page alone, never on
+   * the device. */
+  long: Map<string, Copy>;
   /** The columns drawn from this device's cache the server has not answered yet. */
   drawn: string[];
   /** Each column checked once the board's version was read, by the generation it was checked at:
@@ -140,6 +150,7 @@ export function emptyBoard(): BoardData {
     view: 0,
     journal: { version: 0, events: [], readers: new Map() },
     copies: new Map(),
+    long: new Map(),
     drawn: [],
     checked: new Map(),
     waiting: true,
@@ -258,7 +269,8 @@ export function withListed(
 export interface BoardHost {
   /** The data changed: draw it again. */
   redraw(): void;
-  /** The board was read again: each column shown reads its first page again. */
+  /** The board was read again: each column shown reads its first page again, as long as the rows
+   * it shows (`readColumn`). */
   refresh(): void;
   /** What the page shows from this device changed. */
   freshness(f: Freshness): void;
@@ -278,6 +290,9 @@ export class LiveBoard {
   kept: Promise<void> = Promise.resolve();
   /** A refresh a feed event asked for is under way. */
   private pending = false;
+  /** What a failed read last had the page say (`d.error`): a column's answer takes that away, and
+   * never the board's own notice of its state. */
+  private said = "";
   /** How many times the reader pressed Retry, which the board's loop waits on. */
   readonly retry = { current: 0 };
   /** A column's read, one function for the page's life: a column drawn again for it would be. */
@@ -421,6 +436,7 @@ export class LiveBoard {
     this.freshen((f) => failed(f, part));
     if (shown(this.fresh) === null) {
       this.d.error = why;
+      this.said = why;
       this.host.redraw();
     }
   }
@@ -467,16 +483,19 @@ export class LiveBoard {
   }
 
   /**
-   * Keep the default view's columns and counts as the server answered them, for the next first
-   * visit's ghost (SHAPE): once both the counts and the machines' work that places its build and
-   * test columns are in, whichever comes last, and again at each answer of the counts.
+   * Keep the default view's columns and counts as the board draws them, for the next first visit's
+   * ghost (SHAPE): once both the counts and the machines' work that places its build and test
+   * columns are in, whichever comes last, and again at each answer of the counts or of a column's
+   * first page, which may bring the sign-off lane's tasks that their stages do not draw.
    */
   rememberShape(): void {
     const { d } = this;
     if (d.counted === 0 || d.worked === 0 || !keptView(d.query, d.days, d.connected ? 1 : 0)) {
       return;
     }
-    const shape = boardShape(d.counts, d.statuses, d.signoff.length, d.work.machines.length > 0);
+    const lane = d.tasks.filter((task) => isTask(task) && d.signoff.includes(task.slug));
+    const counts = stageCounts(d.counts, lane, (task) => taskStage(d.work, task, d.connected));
+    const shape = boardShape(counts, d.statuses, d.signoff.length, d.work.machines.length > 0);
     save(SHAPE, keepShape(shape));
   }
 
@@ -565,7 +584,13 @@ export class LiveBoard {
     d.requests.set(status, version);
     await sleep(250, this.signal);
     if (this.signal.aborted) return;
-    await this.readColumn(status, more, query, days, view, version);
+    const read = () => this.readColumn(status, more, query, days, view, version);
+    // A page a click asked for is read once. A first page that failed is read again by itself
+    // until it answers, or a newer read of the column or another view replaces it.
+    if (more) await read();
+    else {
+      await this.untilAnswered(() => d.view === view && d.requests.get(status) === version, read);
+    }
   }
 
   /**
@@ -584,9 +609,24 @@ export class LiveBoard {
     }
   }
 
+  /** The rows the board draws in `status`'s column: its tasks the stages place there. */
+  shownRows(status: string): number {
+    const { d } = this;
+    return d.tasks.filter((task) => isTask(task) && taskStage(d.work, task, d.connected) === status)
+      .length;
+  }
+
   /**
    * Read a page of `status`'s column, unless a later read of it or another view supersedes it
-   * (`view`, `version`: the read's). Whether the page shows the server's answer.
+   * (`view`, `version`: the read's). Whether the page shows the server's answer. A first page read
+   * again is as long as the rows the column shows, when they are more than a page (the server's
+   * `rows`): it replaces them with the same rows as they stand now, so the pages Load more brought
+   * stay, the reader's place among them with them, and the next page starts after them. Such a read
+   * is no first page this device keeps: it names the tag of the column's last long answer, which
+   * the page holds (`long`), and a `304` is that answer, so a refresh that changed nothing in the
+   * column transfers no body. While a search is active the feed's new tasks are not added to the
+   * column (`merge`'s `task` case), so the refresh reads as many rows as it showed before a filing
+   * that matches the search: the column stands one row short of its count until Load more.
    */
   async readColumn(
     status: string,
@@ -602,26 +642,32 @@ export class LiveBoard {
     if (!current()) return false;
     const part = columnPart(status);
     const activity = d.connected ? 1 : 0;
-    const kept = !more && keptView(query, days, activity);
+    const rows = more ? 0 : this.shownRows(status);
+    const long = rows > PAGE;
+    const kept = !more && !long && keptView(query, days, activity);
+    const copy = kept ? d.copies.get(part) : long ? d.long.get(part) : undefined;
     const cursor = more ? (d.cursors.get(status) ?? null) : null;
     const since = new ReadCursor(d.journal);
     try {
       const after = cursor === null ? "" : `&cursor=${encodeURIComponent(cursor)}`;
-      const path = `/api/task-board?q=${encodeURIComponent(query)}&status=${status}&days=${days}${after}&activity=${activity}&work=0`;
+      const length = long ? `&rows=${rows}` : "";
+      const path = `/api/task-board?q=${encodeURIComponent(query)}&status=${status}&days=${days}${after}${length}&activity=${activity}&work=0`;
       let read: Awaited<ReturnType<LiveBoard["readListing"]>> | null = null;
       let why = "";
       try {
-        read = await this.readListing(path, kept ? d.copies.get(part) : undefined);
+        read = await this.readListing(path, copy);
       } catch (error) {
         why = said(error);
       }
       if (!current()) return false;
       if (read === null) {
-        this.unanswered(part, why);
+        // A first page is tried again by itself (`column`, `check`), and says so.
+        this.unanswered(part, more ? why : failedRead(why, true));
         return false;
       }
       const [list, fresh] = read;
       if (kept) this.keep(part, list, fresh);
+      else if (long && fresh !== null) d.long.set(part, { etag: fresh.etag, list });
       d.fromDevice = d.fromDevice.filter((slug) => !list.tasks.some((task) => task.slug === slug));
       const hasNext = this.showColumn(status, more, list);
       this.replay(since);
@@ -635,8 +681,11 @@ export class LiveBoard {
           d.fromDevice = [];
           d.tasks = d.tasks.filter((task) => !left.includes(task.slug));
         }
-        this.freshen((f) => answered(f, part));
+        this.rememberShape();
       }
+      this.freshen((f) => answered(f, part));
+      // What a failed read said goes once none fails any more.
+      if (this.fresh.failing.length === 0 && d.error === this.said) d.error = "";
       const queued = !more && hasNext && d.pendingMore.includes(status);
       d.pendingMore = d.pendingMore.filter((one) => one !== status);
       this.host.redraw();
@@ -682,25 +731,14 @@ export class LiveBoard {
     await Promise.all(firsts);
   }
 
-  /** Try `read` until it says it was answered, waiting longer after each failure, while `current`;
-   * settles once the first try is over. */
-  untilAnswered(current: () => boolean, read: () => Promise<boolean>): Promise<void> {
-    return new Promise<void>((done) => {
-      void (async () => {
-        let answeredYet = false;
-        try {
-          answeredYet = await read();
-        } finally {
-          done();
-        }
-        const backoff = new Backoff();
-        while (!answeredYet) {
-          await sleep(backoff.after(0), this.signal);
-          if (!current()) return;
-          answeredYet = await read();
-        }
-      })();
-    });
+  /** Try `read` until it says it was answered, waiting longer after each failure (`tryAgain`),
+   * while `current`; settles once the first try is over. */
+  async untilAnswered(current: () => boolean, read: () => Promise<boolean>): Promise<void> {
+    let answeredYet = await read();
+    const again = async () => {
+      answeredYet = await read();
+    };
+    void tryAgain(() => !answeredYet && current(), again, this.signal);
   }
 
   /** The board's version was read: each column may read, and what the page drew is checked; then
@@ -800,8 +838,12 @@ export class LiveBoard {
       d.pendingMore = [];
     }
     if (changed || refresh) {
-      holdPlace("[data-slug]");
-      this.host.redraw();
+      holdPlace(readerRows());
+      // Drawn at once, within the event, so the hold starts from the change in the page. React
+      // would leave the draw to its scheduler, a later task, and a slow or loaded renderer runs
+      // frames before such a task: the hold's four quiet frames could pass first, and a row filed
+      // above the reader land with nothing holding their place.
+      flushSync(() => this.host.redraw());
     }
     return refresh;
   }

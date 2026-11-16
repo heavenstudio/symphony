@@ -30,7 +30,6 @@ mod cap;
 mod copy;
 mod depends;
 mod dispatcher;
-mod embeddings;
 mod fields;
 mod history;
 mod kept;
@@ -40,6 +39,7 @@ mod opening;
 mod pool;
 mod pull_account;
 mod queued_lines;
+mod raw;
 mod reading;
 mod report_lines;
 pub(crate) mod search;
@@ -49,35 +49,41 @@ mod settings;
 mod snapshot;
 mod spending;
 mod stage_lines;
+mod stamp;
+mod surreal;
 mod transaction;
 pub(crate) mod unanswered;
 mod waits;
 mod work;
-mod write;
+mod writers;
 
 use beside::Beside;
-use write::{ACT, WRITE};
+use surreal::reading::{native_bounds, reading};
+use surreal::session_read;
 
 pub(crate) use crate::stages::{BLOCK_LINE, UNBLOCK_LINE};
 pub use asks::{ASK_KINDS, Ask, LATE_SECONDS, NewAsk};
 pub use callbacks::{Callback, ChatSeat, Presence};
 /// Every statement the cap on an orchestrator's open tasks sends: the plan test's to plan.
 pub use cap::STATEMENTS as SLOT_READS;
-pub use embeddings::{EmbeddingStats, VectorHit, VectorSearchProfile};
 pub use launches::NewLaunch;
+pub use messages::reviewer_verdict;
 pub use opening::Opening;
-use reading::{HELD, NATIVE_PRESENCE, native_bounds, native_health};
+pub use raw::{Raw, Rows as RawRows};
+use reading::native_health;
 pub use report_lines::{ReportRead, ReportTask};
 pub use search::SearchHit;
 pub use sessions::{Beat, Binding, KINDS, NewSession, Pick};
 pub use stage_lines::StageRecord;
+pub use stamp::TaskStamp;
 pub use unanswered::{LOOKUP_WAIT as UNANSWERED_WAIT, LOOKUP_WAIT_VAR as UNANSWERED_WAIT_VAR};
 pub use waits::{AssessmentReceipt, AssessmentState};
 pub use work::{
-    BEFORE_WORK, COVERED, CoveredLine, Given, Held, LANDS_FROM, Landed, NewTask, PIPELINE,
+    BEFORE_WORK, COVERED, CoveredLine, Filed, Given, Held, LANDS_FROM, Landed, NewTask, PIPELINE,
     PULLABLE, ROLES, RunPlace, STATUSES, Unfresh, approved, can_transition, covered_by,
     covered_line, landing,
 };
+pub use writers::{Program, Writer};
 
 type Clock = Box<dyn Fn() -> f64 + Send + Sync>;
 type Probe = Box<dyn Fn(i64) -> bool + Send + Sync>;
@@ -304,16 +310,12 @@ impl Store {
     /// The tasks, or those in `status`, by priority then creation.
     pub fn tasks(&self, status: Option<&str>) -> Result<Vec<Task>, Error> {
         let which = status.map_or(Which::All, Which::Status);
-        Ok(self.retrying(|| self.view(&which))?.tasks())
+        Ok(self.retrying(|| self.shown(&which))?.tasks())
     }
 
     /// Eligibility without transferring briefs, roles or session health for the entire board.
     pub(crate) fn task_slugs(&self, status: Option<&str>) -> Result<Vec<String>, Error> {
-        let sql = if status.is_some() {
-            "RETURN SELECT VALUE slug FROM task WHERE status = $status;"
-        } else {
-            "RETURN SELECT VALUE slug FROM task;"
-        };
+        let sql = surreal::task_slugs(status.is_some());
         self.retrying(|| self.transact(sql, json!({"status":status})))
     }
 
@@ -321,11 +323,11 @@ impl Store {
         if slugs.is_empty() {
             return Ok(Vec::new());
         }
-        Ok(self.retrying(|| self.view(&Which::Slugs(slugs)))?.tasks())
+        Ok(self.retrying(|| self.shown(&Which::Slugs(slugs)))?.tasks())
     }
 
     pub fn get(&self, slug: &str) -> Result<Task, Error> {
-        let view = self.retrying(|| self.view(&Which::Slug(slug)))?;
+        let view = self.retrying(|| self.shown(&Which::Slug(slug)))?;
         view.task(slug)?;
         Ok(view.tasks().remove(0))
     }
@@ -358,7 +360,7 @@ impl Store {
 
     /// The tasks another session could take over if `handle` were gone.
     pub fn claimable(&self, handle: &str) -> Result<Vec<String>, Error> {
-        let sql = format!("RETURN {CLAIMABLE};");
+        let sql = surreal::claimable();
         let mut slugs: Vec<String> = self
             .retrying(|| self.transact(&sql, json!({"handle": handle, "executing": EXECUTING})))?;
         slugs.sort();
@@ -372,9 +374,8 @@ impl Store {
             known: bool,
             messages: Vec<MessageRow>,
         }
-        let sql = "RETURN { known: record::exists(type::record('task', $slug)),
-                            messages: (SELECT * OMIT id FROM message:[$slug, NONE]..[$slug, ..]) };";
-        let thread: Thread = self.retrying(|| self.transact(sql, json!({"slug": slug})))?;
+        let thread: Thread =
+            self.retrying(|| self.transact(surreal::THREAD, json!({"slug": slug})))?;
         if !thread.known {
             return Err(refused(format!("no task {}", repr(slug))));
         }
@@ -389,11 +390,8 @@ impl Store {
             unknown: Vec<String>,
             threads: Vec<Vec<MessageRow>>,
         }
-        let sql = "RETURN {
-    unknown: $slugs.filter(|$slug| !record::exists(type::record('task', $slug))),
-    threads: $slugs.map(|$slug| (SELECT * OMIT id FROM message:[$slug, NONE]..[$slug, ..])),
-};";
-        let read: Threads = self.retrying(|| self.transact(sql, json!({"slugs": slugs})))?;
+        let read: Threads =
+            self.retrying(|| self.transact(surreal::THREADS, json!({"slugs": slugs})))?;
         if let Some(slug) = read.unknown.first() {
             return Err(refused(format!("no task {}", repr(slug))));
         }
@@ -651,7 +649,9 @@ impl Store {
 
     /// As [`Store::rule`]; one that `starts` work ([`Opens`]) under a cap also reads what the cap
     /// decides on, in the same transaction as its task, as does a red's close ([`Store::ruled`]).
-    /// The cap is read once, so a project file changed meanwhile never splits one decision.
+    /// One that gives a session the orchestrator role ([`Change::gains`]) reads that session's open
+    /// tasks for the limit on them ([`Store::gaining`]). The cap and the limit are read once, so a
+    /// project file changed meanwhile never splits one decision.
     fn ruling(
         &self,
         slug: &str,
@@ -659,45 +659,46 @@ impl Store {
         starts: bool,
         decide: impl Fn(&View) -> Result<Change, Error>,
     ) -> Result<Task, Error> {
-        let cap = self.slots();
+        let limits = self.limits();
+        let cap = limits.orchestrator_slots;
         let which = if starts && cap.is_some() {
             Which::Starting(slug)
         } else {
             Which::Slug(slug)
         };
         self.retrying(|| {
-            let ruled = self.ruled(&which, slug, cap, &decide)?;
+            let mut ruled = self.ruled(&which, slug, cap, &decide)?;
+            if let Some((to, what)) = &ruled.change.gains {
+                let limit = limits.orchestrator_tasks;
+                self.gaining(to, what, limit, &mut ruled.slots)?;
+            }
             let (view, change) = (&ruled.view, &ruled.change);
             let version = view.snap.tasks.first().map_or(0, |t| t.version);
-            let mut body = String::from(WRITE);
-            if change.reason.is_some() {
-                body.push('\n');
-                body.push_str(&work::reason_written());
-            }
-            if change.needs.is_some() {
-                body.push_str(work::NEEDS_WRITTEN);
-            }
-            if change.status.is_some() {
-                body.push_str(&format!(
-                    "{}\n{}",
-                    cap::HOLDING,
-                    work::block_cancelled_dependencies(
-                        change.status.as_deref() == Some("cancelled")
-                    )
-                ));
-            }
-            if !ruled.slots.is_empty() {
-                body.push_str(cap::GUARD);
-            }
+            let body = surreal::rule(
+                change.reason.is_some(),
+                change.needs.is_some(),
+                (change.status.as_deref()).map(|status| status == "cancelled"),
+                !ruled.slots.is_empty(),
+            );
             let mut vars = change.vars(slug, actor, version, view.now);
             vars["slots"] = Value::Array(ruled.slots);
             self.written(&body, vars, slug)
         })
     }
 
+    /// `which` with every session: what a rule decides on, the cap's ledger and a whole board read.
     #[track_caller]
     fn view(&self, which: &Which) -> Result<View, Failure> {
-        let (read, vars) = Self::reading(which);
+        let (read, vars) = reading(which, Sessions::Whole);
+        let snap: Snapshot = self.transact(&read, vars)?;
+        Ok(View::new(self, snap))
+    }
+
+    /// `which` for an answer that is its tasks alone ([`Sessions::Shown`]): only [`View::tasks`],
+    /// and the asker of `Which::Pullable`, may be asked of it.
+    #[track_caller]
+    fn shown(&self, which: &Which) -> Result<View, Failure> {
+        let (read, vars) = reading(which, Sessions::Shown);
         let snap: Snapshot = self.transact(&read, vars)?;
         Ok(View::new(self, snap))
     }
@@ -706,16 +707,12 @@ impl Store {
     /// left it, in the write's one round trip. `body` ends without a `RETURN`.
     #[track_caller]
     fn written(&self, body: &str, mut vars: Value, slug: &str) -> Result<Task, Failure> {
-        let (read, more) = Self::reading(&Which::Slug(slug));
+        let (read, more) = reading(&Which::Slug(slug), Sessions::Shown);
         if let (Some(vars), Value::Object(more)) = (vars.as_object_mut(), more) {
             vars.extend(more);
         }
         // Include recipient presence in the write's existing result instead of a separate read.
-        let snap: Snapshot = self.transact_dispatch(
-            &format!("{body}\nLET $has_callbacks = array::len(SELECT handle FROM callback_state WHERE address != NONE AND type::record('session', handle).left_at = NONE LIMIT 1) > 0;\n{read}"),
-            vars,
-            false,
-        )?;
+        let snap: Snapshot = self.transact_dispatch(&surreal::written(body, &read), vars, false)?;
         if snap.has_callbacks {
             self.after_write();
         }
@@ -764,40 +761,12 @@ fn retried<T>(
     }
 }
 
-/// One session, `$handle`, and whether it holds work another could take over (a `Found`). Needs
-/// `$executing`.
-fn session_read() -> String {
-    format!(
-        "LET $c = (SELECT address, confirmed_until FROM ONLY type::record('callback_state', $handle));
-         RETURN {{ session: (SELECT * OMIT id FROM ONLY type::record('session', $handle)), held: {CLAIMABLE},
-             native_until: IF string::starts_with($c.address ?? '', 'codex:') {{ $c.confirmed_until ?? 0 }} ELSE {{ NONE }} }};"
-    )
-}
-
 #[derive(Deserialize)]
 struct Found {
     session: Option<SessionRow>,
     held: Vec<String>,
     native_until: Option<f64>,
 }
-
-/// A role row's condition that its work is one another session could take over
-/// (`health::claimable`, in the database): its task executed and in `$executing`, or reviewed and in
-/// review. A macro, so a query can join it in with `concat!`.
-macro_rules! holding {
-    () => {
-        "((role = 'executor' AND type::record('task', slug).status IN $executing)
-      OR (role = 'reviewer' AND type::record('task', slug).status = 'review'))"
-    };
-}
-pub(crate) use holding;
-
-/// The tasks `$handle` holds that another could take over.
-const CLAIMABLE: &str = concat!(
-    "(SELECT VALUE slug FROM role WHERE handle = $handle AND ",
-    holding!(),
-    ")"
-);
 
 enum Which<'a> {
     All,
@@ -814,6 +783,20 @@ enum Which<'a> {
     Linked(&'a str),
     /// The concept, design and ready tasks, in the order made, and what the session named holds.
     Pullable(&'a str),
+}
+
+/// The sessions a read returns. The board keeps every session it has seen, so the whole list
+/// grows with its history, and a read that only shows tasks needs the few on them.
+#[derive(Clone, Copy)]
+enum Sessions {
+    /// Every session the board has seen: a rule may ask after any handle (its actor, a hand
+    /// over's target), the cap's ledger reads every session's parent, and a board is all of them.
+    Whole,
+    /// The sessions holding a role on the tasks read, and the session `Which::Pullable` asks
+    /// for: all a task's roles' health is derived from, since health is a session's own row and
+    /// `held`, which is read whole either way. A role whose holder has no session reads lost in
+    /// both.
+    Shown,
 }
 
 /// Why one try of a call ended without its result.
@@ -836,8 +819,8 @@ impl From<DbError> for Failure {
     }
 }
 
-/// What a read gives back: the tasks asked for, their links and roles, every session, who holds
-/// claimable work, and the newest message's id.
+/// What a read gives back: the tasks asked for, their links and roles, the sessions asked for
+/// ([`Sessions`]), who holds claimable work, and the newest message's id.
 #[derive(Clone, Deserialize)]
 struct Snapshot {
     #[serde(default)]
@@ -1063,6 +1046,10 @@ struct Change {
     reason: Option<String>,
     /// Work it starts, which takes a slot of an orchestrator's under the store's cap.
     opens: Option<Opens>,
+    /// The session it gives the orchestrator role on the task, held to the limit on the open tasks
+    /// an orchestrator holds the role on (`[limits] orchestrator_tasks`, [`Store::gaining`]), and
+    /// what a refusal says cannot happen.
+    gains: Option<(String, String)>,
     /// The task's needs it writes, the board's own field ([`crate::stamps::Needs`],
     /// [`Store::set_needs`]).
     needs: Option<Value>,
@@ -1181,20 +1168,6 @@ impl Store {
         matches!(error, Error::Refused(why)
             if *why == unknown_actor(&self.board_command(), handle) || *why == left_actor(handle))
     }
-}
-
-/// Statements that put a line on a task's thread at `$now`, each argument a SurrealQL expression. A line is
-/// never dated before the one numbered ahead of it when that one is less than a minute ahead (a write reads
-/// its clock at most `PATIENCE` before it commits); one further ahead came from a wrong clock, and the
-/// lines after it keep their own dates rather than all take its.
-fn logged(slug: &str, sender: &str, kind: &str, text: &str, recipient: &str) -> String {
-    format!(
-        "LET $counted = (UPSERT ONLY counter:message SET last += 1, ts = IF ts != NONE AND ts > $now AND ts <= $now + 60 {{ ts }} ELSE {{ $now }});
-LET $sid = $counted.last;
-LET $ts = $counted.ts;
-CREATE type::record('message', [{slug}, $sid]) SET sid = $sid, slug = {slug}, sender = {sender}, recipient = {recipient},
-    kind = {kind}, text = {text}, ts = $ts RETURN NONE;"
-    )
 }
 
 fn message(row: MessageRow) -> Message {

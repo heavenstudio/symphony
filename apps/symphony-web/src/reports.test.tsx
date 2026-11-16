@@ -17,6 +17,7 @@ import {
   HIDDEN,
   hiddenSeries,
   linkedFigures,
+  openReports,
   type Page,
   parseGrain,
   paths,
@@ -26,11 +27,14 @@ import {
   rangeName,
   ranges,
   readReports,
+  reportsItem,
+  reportsWindow,
   SECTIONS,
   toggle,
 } from "./reports";
+import { Backoff } from "./state";
 import { asking, CASES, childrenOf, memoryStorage, reply, server } from "./testing";
-import type { Grain } from "./wire";
+import { CACHE_FORMAT, type Grain } from "./wire";
 
 const HOUR = 3_600;
 const DAY = 86_400;
@@ -111,7 +115,8 @@ const mondayAgents = () =>
 
 /**
  * Three days: Monday rolled up whole with its agents watched, Tuesday recorded by no source,
- * Wednesday under way, half rolled up; a settings change on Monday.
+ * Wednesday under way, half rolled up; a settings change on Monday, as a server that names what a
+ * mark changed writes it.
  */
 function wire(): Wire & { buckets: Wire[] } {
   return {
@@ -143,6 +148,7 @@ function wire(): Wire & { buckets: Wire[] } {
         at: MONDAY + 6 * HOUR,
         commit: "4f1c0a9b2d3e",
         subject: "settings: land without the check",
+        changed: ["settings"],
       },
     ],
     unread: [],
@@ -290,6 +296,14 @@ describe("the answer", () => {
     ["periods that are no list", { ...wire(), buckets: {} }],
     ["periods null", { ...wire(), buckets: null }],
     ["a settings change without its commit", { ...wire(), marks: [{ at: 1, subject: "s" }] }],
+    [
+      "a change that names what it changed by no list",
+      { ...wire(), marks: [{ at: 1, commit: "c", subject: "s", changed: "settings" }] },
+    ],
+    [
+      "a change that names something by no text",
+      { ...wire(), marks: [{ at: 1, commit: "c", subject: "s", changed: [3] }] },
+    ],
     ["a file not read named by no text", { ...wire(), unread: [3] }],
   ])("is none for %s", (_, value) => {
     expect(readReports(value)).toBeNull();
@@ -414,7 +428,7 @@ describe("the axis", () => {
     expect(period("day", MONDAY + 23 * DAY)).toBe("Wed 2 Dec");
   });
 
-  it("labels at most six periods and places each settings change", () => {
+  it("labels at most six periods and places each change, saying what it changed", () => {
     const shown = axis(page());
     expect(shown.periods).toEqual(["Mon 9 Nov", "Tue 10 Nov", "Wed 11 Nov"]);
     expect(shown.hours).toEqual([24, 24, 11]);
@@ -425,8 +439,34 @@ describe("the axis", () => {
     ]);
     expect(shown.marks).toHaveLength(1);
     const [left, at, text] = shown.marks[0] ?? [];
-    expect([at, text]).toEqual([0, "settings: land without the check (4f1c0a9b2d3e)"]);
+    expect([at, text]).toEqual([
+      0,
+      "settings changed, settings: land without the check (4f1c0a9b2d3e)",
+    ]);
     expect(left).toBeCloseTo(25 / 3, 9);
+    // A change of the instructions names each thing it changed, as the server orders them; one
+    // that names none, or comes from a server that named none, is a settings change.
+    const mark = (changed?: string[]) => ({
+      at: MONDAY + HOUR,
+      commit: "c",
+      subject: "s",
+      ...(changed ? { changed } : {}),
+    });
+    const said = (...marks: object[]) =>
+      axis(read({ ...wire(), marks })).marks.map(([, , text]) => text);
+    expect(
+      said(
+        mark(["skill work"]),
+        mark(["settings", "rules", "skill tasks", "skill work"]),
+        mark([]),
+        mark(),
+      ),
+    ).toEqual([
+      "skill work changed, s (c)",
+      "settings, rules, skill tasks, skill work changed, s (c)",
+      "settings changed, s (c)",
+      "settings changed, s (c)",
+    ]);
     const outside = { ...wire(), marks: [{ at: MONDAY - DAY, commit: "c", subject: "s" }] };
     expect(axis(read(outside)).marks).toEqual([]);
     const fortnight = {
@@ -578,6 +618,29 @@ describe("a figure's link", () => {
     expect(nothing).not.toContain("href=");
     expect(view(read({ ...unrecorded(wire()), first: null }))).not.toContain("href=");
   });
+
+  it("is the address of a chart drawn at once, which the shell then lands, the rest to come", () => {
+    vi.stubGlobal("location", { hash: "#chart-decisions" });
+    const html = view(page());
+    // The chart the address names is drawn as the report is, wherever it is on the page.
+    expect(html).toMatch(/<figure class="chart" id="chart-decisions" aria-labelledby=/);
+    expect(html.match(/id="chart-decisions"/g)).toHaveLength(1);
+    // Every other chart is its ghost until it comes near the screen, its id held there.
+    expect(html.match(/<figure class="chart"/g)).toHaveLength(1);
+    expect(html).toContain('<span id="chart-done"></span><div class="ghost-chart"');
+    // An address that names no chart draws none at once.
+    vi.stubGlobal("location", { hash: "#flow" });
+    expect(view(page())).not.toContain('<figure class="chart"');
+  });
+
+  it("lands no chart once the reader chose a window, its id still held in its ghost", () => {
+    vi.stubGlobal("location", { hash: "#chart-decisions" });
+    const html = renderToStaticMarkup(
+      <ReportsView grain="day" days={3} page={page()} onAsk={() => {}} lands={false} />,
+    );
+    expect(html).not.toContain('<figure class="chart"');
+    expect(html).toContain('<span id="chart-decisions"></span><div class="ghost-chart"');
+  });
 });
 
 describe("the page's view", () => {
@@ -598,13 +661,71 @@ describe("the page's view", () => {
     const why = "The server could not be reached";
     let html = view(null, why);
     expect(html).toContain('data-ready="failed"');
+    // A failed page is drawn, not busy: `symphony shot` pictures what it says.
+    expect(html).toContain('aria-busy="false"');
     expect(html).toContain(
-      'role="alert">The reports could not be read: The server could not be reached</p>',
+      'role="alert">The reports could not be read. The server could not be reached; check the connection. Trying again…</p>',
     );
     html = view(page(), why);
     expect(html).toContain('data-ready="reports"');
+    expect(html).toContain('aria-busy="false"');
     expect(html).toContain("The reports could not be read");
     expect(html).toContain("chart-slot");
+  });
+
+  it("marks a copy from this device and says it is checking, until a read answers", () => {
+    const now = new Date(2026, 10, 15, 16, 0);
+    const saved = new Date(2026, 10, 15, 14, 32).getTime();
+    const drawn = (device: number | null, shown: Page | null = page()) =>
+      renderToStaticMarkup(
+        <ReportsView
+          grain="day"
+          days={3}
+          page={shown}
+          device={device}
+          now={now}
+          onAsk={() => {}}
+        />,
+      );
+    let html = drawn(saved);
+    expect(html).toContain('data-ready="reports" data-cache="device"');
+    expect(html).toContain(
+      '<div class="stale page-notices notice-stack"><p class="pill wait device-notice" role="status">' +
+        "Shown from this device, saved 14:32. Checking for changes…</p></div>",
+    );
+    expect(html).toContain("chart-slot");
+    // Answered, a 304 or a new page: nothing says the device any more.
+    html = drawn(null);
+    expect(html).not.toContain("data-cache");
+    expect(html).not.toContain("device-notice");
+    // No copy drawn, nothing to mark: the ghost is no device's.
+    html = drawn(saved, null);
+    expect(html).not.toContain("data-cache");
+    expect(html).not.toContain("device-notice");
+  });
+
+  it("keeps a device's copy drawn under a failed read, said not reachable and tried again", () => {
+    const now = new Date(2026, 10, 15, 16, 0);
+    const saved = new Date(2026, 10, 14, 9, 5).getTime();
+    const html = renderToStaticMarkup(
+      <ReportsView
+        grain="day"
+        days={3}
+        page={page()}
+        error="The server could not be reached"
+        device={saved}
+        now={now}
+        onAsk={() => {}}
+      />,
+    );
+    expect(html).toContain('data-ready="reports" data-cache="device"');
+    expect(html).toContain("chart-slot");
+    expect(html).toContain(
+      'role="status">Not reachable: shown from this device, saved yesterday 09:05</p>',
+    );
+    expect(html).toContain(
+      'role="alert">The reports could not be read. The server could not be reached; check the connection. Trying again…</p>',
+    );
   });
 
   it("writes its window and a failure each as one text, as the Dioxus page does", () => {
@@ -618,19 +739,20 @@ describe("the page's view", () => {
     });
     expect(childrenOf(drawn, "reports-sub")).toBe("Days · the last 3 days · times in UTC");
     expect(childrenOf(drawn, "reports-error")).toBe(
-      "The reports could not be read: The server could not be reached",
+      "The reports could not be read. The server could not be reached; check the connection. Trying again…",
     );
   });
 
-  it("draws the figures, the settings changes and a place for every chart", () => {
+  it("draws the figures, the marked changes and a place for every chart", () => {
     const html = view(page());
     expect(html).toContain('aria-busy="false"');
     expect(html).toContain('data-ready="reports"');
     expect(html).toContain('<dt><a href="#chart-done">Done</a></dt><dd class="value">7</dd>');
     expect(html).toContain(
-      '<ul class="reports-marks" aria-label="Settings changes in the window">',
+      '<div class="reports-marks"><ul aria-label="Changes to the settings and the agents&#x27; ' +
+        'instructions in the window"><li>Mon 9 Nov: ' +
+        "settings changed, settings: land without the check (4f1c0a9b2d3e)</li></ul></div>",
     );
-    expect(html).toContain("Mon 9 Nov: settings changed, settings: land without the check");
     // Each chart mounts once it comes near the screen, its ghost in its place until then.
     expect(html.match(/class="viewport-slot chart-slot"/g)).toHaveLength(14);
     expect(html).toContain('<section class="reports-section" aria-label="Board health"><h2>');
@@ -638,13 +760,52 @@ describe("the page's view", () => {
     expect(html).not.toContain("not read");
   });
 
-  it("is busy while the window asked for is not the one shown", () => {
+  it("lists the changes newest first, folding all but the newest three", () => {
+    // `count` changes on Monday, the `n`th at `n + 1` o'clock, oldest first as the server sends
+    // them: a skill's every third, the settings' the rest.
+    const what = (n: number) => (n % 3 === 0 ? "skill work" : "settings");
+    const changes = (count: number) =>
+      view(
+        read({
+          ...wire(),
+          marks: Array.from({ length: count }, (_, n) => ({
+            at: MONDAY + (n + 1) * HOUR,
+            commit: `c${n}`,
+            subject: `change ${n}`,
+            changed: [what(n)],
+          })),
+        }),
+      );
+    const items = (...ns: number[]) =>
+      ns.map((n) => `<li>Mon 9 Nov: ${what(n)} changed, change ${n} (c${n})</li>`).join("");
+    const list =
+      '<div class="reports-marks"><ul aria-label="Changes to the settings and the agents&#x27; ' +
+      'instructions in the window">';
+    expect(changes(3)).toContain(`${list}${items(2, 1, 0)}</ul></div>`);
+    expect(changes(4)).toContain(
+      `${list}${items(3, 2, 1)}</ul><details><summary>1 more change</summary>` +
+        `<ul>${items(0)}</ul></details></div>`,
+    );
+    expect(changes(10)).toContain(
+      `${list}${items(9, 8, 7)}</ul><details><summary>7 more changes</summary>` +
+        `<ul>${items(6, 5, 4, 3, 2, 1, 0)}</ul></details></div>`,
+    );
+    expect(changes(0)).not.toContain("reports-marks");
+  });
+
+  it("is busy while the window asked for is not the one shown, until its read fails", () => {
     const html = renderToStaticMarkup(
       <ReportsView grain="week" days={84} page={page()} onAsk={() => {}} />,
     );
     expect(html).toContain('aria-busy="true"');
     expect(html).toContain('data-ready="reports"');
     expect(html).toContain('aria-pressed="true" data-days="84"');
+    const failed = renderToStaticMarkup(
+      <ReportsView grain="week" days={84} page={page()} error="Gone." onAsk={() => {}} />,
+    );
+    expect(failed).toContain('aria-busy="false"');
+    expect(failed).toContain('data-ready="reports"');
+    expect(failed).toContain("The reports could not be read");
   });
 
   it("says when the first roll-up comes while there is none", () => {
@@ -746,7 +907,7 @@ describe("the reports' read", () => {
   };
 
   it("asks for the window at once and again on its timer, naming the copy shown", async () => {
-    const { asked, told, waited, tags, done } = follow("day", 14, 4);
+    const { asked, told, waited, tags, done } = follow("day", 14, 6);
     await asking(asked, 1);
     expect(asked[0]?.url).toBe("/api/reports?grain=day&days=14");
     asked[0]?.answer(reply(200, { ...wire(), days: 14 }, "r1"));
@@ -756,15 +917,25 @@ describe("the reports' read", () => {
     asked[2]?.answer(reply(503, {}));
     await asking(asked, 4);
     asked[3]?.answer(reply(200, { grain: "month" }, "r2"));
+    await asking(asked, 5);
+    asked[4]?.answer(reply(200, { ...wire(), days: 14 }, "r3"));
+    await asking(asked, 6);
+    asked[5]?.answer(reply(503, {}));
     await done;
     expect(told).toEqual([
       ["answered", 14, "r1"],
       ["answered", null, ""],
       ["failed", "The server answered 503"],
       ["failed", "The reports' answer is not a report"],
+      ["answered", 14, "r3"],
+      ["failed", "The server answered 503"],
     ]);
-    expect(waited).toEqual([EVERY_MS, EVERY_MS, EVERY_MS, EVERY_MS]);
-    expect(tags).toHaveLength(4);
+    // A read that failed is tried again on the feed's backoff, not the timer, and an answer puts
+    // the timer back, the backoff after a failure starting again.
+    const backoff = new Backoff();
+    const first = backoff.after(0);
+    expect(waited).toEqual([EVERY_MS, EVERY_MS, first, backoff.after(0), EVERY_MS, first]);
+    expect(tags).toHaveLength(6);
   });
 
   it("stops, telling nothing and its read given up, once the page that asked is gone", async () => {
@@ -785,5 +956,174 @@ describe("the reports' read", () => {
     second.asked[0]?.answer(reply(503, {}));
     await second.done;
     expect(second.told).toEqual([]);
+  });
+});
+
+describe("a window opened", () => {
+  /** The shell's store, holding `kept` for every part, with what was asked of it. */
+  const stored = (kept: unknown) => {
+    const store = {
+      read: vi.fn(async () => kept),
+      keep: vi.fn(async () => undefined),
+      visit: vi.fn(async () => undefined),
+      forget: vi.fn(async () => undefined),
+    };
+    vi.stubGlobal("symphonyCache", store);
+    return store;
+  };
+
+  /** The window opened, its waits ending it at the `waits`th, and what the page was told. */
+  const open = (grain: Grain, days: number, waits: number, scope = "") => {
+    const asked = server();
+    const told: unknown[] = [];
+    const page = new AbortController();
+    let waited = 0;
+    const done = openReports(
+      reportsItem(scope),
+      grain,
+      days,
+      page.signal,
+      {
+        kept: (shown, saved) => told.push(["kept", shown.days, shown.buckets.length, saved]),
+        answered: (shown) => told.push(["answered", shown?.days ?? null]),
+        failed: (why) => told.push(["failed", why]),
+      },
+      async () => {
+        waited += 1;
+        if (waited === waits) page.abort();
+      },
+    );
+    return { asked, told, page, done };
+  };
+
+  it("draws the copy this device kept before any request, then asks naming its tag", async () => {
+    const store = stored({ value: { ...wire(), days: 14 }, etag: "r1", saved: 7 });
+    const { asked, told, done } = open("day", 14, 1);
+    await asking(asked, 1);
+    // The kept copy is told while the one request made is still unanswered.
+    expect(told).toEqual([["kept", 14, 3, 7]]);
+    expect(store.read).toHaveBeenCalledWith(CACHE_FORMAT, "", "reports:", "day:14");
+    expect(asked[0]?.url).toBe("/api/reports?grain=day&days=14");
+    expect(asked[0]?.named).toBe("r1");
+    // Unchanged: no body, the copy shown is current, and nothing is kept again.
+    asked[0]?.answer(new Response(null, { status: 304 }));
+    await done;
+    expect(told).toEqual([
+      ["kept", 14, 3, 7],
+      ["answered", null],
+    ]);
+    expect(store.keep).not.toHaveBeenCalled();
+    expect(asked).toHaveLength(1);
+  });
+
+  it("keeps each new answer in the window's part, and names its tag from then on", async () => {
+    const store = stored({ value: { ...wire(), days: 14 }, etag: "r1", saved: 7 });
+    const { asked, told, done } = open("day", 14, 2, "tree");
+    await asking(asked, 1);
+    const next = { ...wire(), days: 14, buckets: wire().buckets.slice(1) };
+    asked[0]?.answer(reply(200, next, "r2"));
+    await asking(asked, 2);
+    expect(asked[1]?.named).toBe("r2");
+    asked[1]?.answer(new Response(null, { status: 304 }));
+    await done;
+    expect(told).toEqual([
+      ["kept", 14, 3, 7],
+      ["answered", 14],
+      ["answered", null],
+    ]);
+    expect(store.keep).toHaveBeenCalledTimes(1);
+    const [format, project, id, kind, part, etag, value, size, ahead] = store.keep.mock
+      .calls[0] as unknown as unknown[];
+    expect([format, project, id, kind, part, etag, size, ahead]).toEqual([
+      CACHE_FORMAT,
+      "",
+      "reports:@tree/",
+      "reports",
+      "day:14",
+      "r2",
+      undefined,
+      false,
+    ]);
+    // What is kept is plain data the store can hold, each period as the server sent it, and
+    // reads back as the page it was drawn from.
+    expect(structuredClone(value)).toEqual(value);
+    expect((value as { buckets: unknown[] }).buckets).toEqual(next.buckets);
+    expect(readReports(value)).toEqual(readReports(next));
+  });
+
+  it("reads a window never kept whole, naming no tag, and keeps its answer", async () => {
+    const store = stored(null);
+    const { asked, told, done } = open("hour", 1, 1);
+    await asking(asked, 1);
+    expect(told).toEqual([]);
+    expect(asked[0]?.named).toBeNull();
+    asked[0]?.answer(reply(200, wire(), "r1"));
+    await done;
+    expect(told).toEqual([["answered", 3]]);
+    expect(store.keep).toHaveBeenCalledTimes(1);
+  });
+
+  it("reads whole, forgetting it, a copy kept in a form it cannot read", async () => {
+    const store = stored({ value: { grain: "month" }, etag: "old", saved: 7 });
+    const { asked, told, done } = open("hour", 1, 1);
+    await asking(asked, 1);
+    expect(told).toEqual([]);
+    expect(store.forget).toHaveBeenCalledWith(CACHE_FORMAT, "", "reports:");
+    expect(asked[0]?.named).toBeNull();
+    asked[0]?.answer(reply(503, {}));
+    await done;
+  });
+
+  it("leaves the kept copy shown when the read fails, and asks again with its tag", async () => {
+    const store = stored({ value: wire(), etag: "r1", saved: 7 });
+    const { asked, told, done } = open("day", 3, 2);
+    await asking(asked, 1);
+    asked[0]?.answer(reply(503, {}));
+    await asking(asked, 2);
+    expect(asked[1]?.named).toBe("r1");
+    asked[1]?.answer(new Response(null, { status: 304 }));
+    await done;
+    expect(told).toEqual([
+      ["kept", 3, 3, 7],
+      ["failed", "The server answered 503"],
+      ["answered", null],
+    ]);
+    expect(store.keep).not.toHaveBeenCalled();
+    expect(store.forget).not.toHaveBeenCalled();
+  });
+
+  it("works without the store: nothing drawn from it, the window read whole", async () => {
+    vi.stubGlobal("symphonyCache", undefined);
+    const { asked, told, done } = open("day", 3, 1);
+    await asking(asked, 1);
+    expect(asked[0]?.named).toBeNull();
+    asked[0]?.answer(reply(200, wire(), "r1"));
+    await done;
+    expect(told).toEqual([["answered", 3]]);
+  });
+
+  it("draws and asks nothing once the page that opened it is gone", async () => {
+    let give: (kept: unknown) => void = () => {};
+    vi.stubGlobal("symphonyCache", {
+      read: () =>
+        new Promise((resolve) => {
+          give = resolve;
+        }),
+    });
+    const { asked, told, page, done } = open("day", 3, 1);
+    page.abort();
+    give({ value: wire(), etag: "r1", saved: 7 });
+    await done;
+    expect(told).toEqual([]);
+    expect(asked).toHaveLength(0);
+  });
+});
+
+describe("the reports' item", () => {
+  it("is its checkout's, outside the caps, a part a window", () => {
+    expect(reportsItem("")).toEqual({ kind: "reports", id: "reports:", pinned: false });
+    expect(reportsItem("proposal~x").id).toBe("reports:@proposal~x/");
+    expect(reportsWindow("hour", 1)).toBe("hour:1");
+    expect(reportsWindow("day", 14)).not.toBe(reportsWindow("day", 1));
   });
 });

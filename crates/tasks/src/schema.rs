@@ -64,16 +64,22 @@
 //!
 //! `meta:schema` names the version defined, so opening a board already in this shape writes nothing.
 //!
+//! `writer:[host, path]` is a program that opens the board to write, the schema it was built at and
+//! when it was last seen (`store/writers.rs`), from schema 18: schemaless and with no event, as
+//! builds of other schemas write it and a line written moves no marker.
+//!
 //! The rule for writers of different versions on one board ([`decide`]): a build opens a board for
 //! writing only at its own version. A board at an older version, or none, is migrated forward once
 //! by the first newer build to open it for writing: the analyzer, then the version's steps and its
 //! record in one transaction that first checks the version it read is still the board's, before any
 //! other write. A project's live board is moved forward only by a build its main checkout says is
 //! its own ([`crate::live`]). An older build refuses a newer board before any mutation, naming the
-//! project and `just symphony`; a reader one version behind reads it. A reader never moves a board
+//! project, the program to rebuild and `just symphony`; a reader one version behind reads it. A reader never moves a board
 //! forward or makes one: a board behind it, or none, it refuses before it reads, naming `just tasks`.
 //! Every write transaction starts with the [`guard`], so a store opened before a newer build migrated
 //! stops at its next write.
+
+use crate::store::Program;
 
 /// Bumped when `DEFINE` gains a table, field, index or event: a board at an older version runs
 /// `DEFINE` once, and its `IF NOT EXISTS` adds what is new but leaves every definition already there
@@ -156,15 +162,17 @@ pub(crate) enum Opened {
     Refused(String),
 }
 
-/// The schema rule for a build of version `own` opening, for `access`, a board at `found` of the
-/// project `project` (none: a board no project names, such as a scratch one). Only a writer moves
-/// a board forward or makes one: a reader is the Symphony, whose build may be a branch's, and it
-/// would move the live board past the build its project's board command runs, which then refuses it.
+/// The schema rule for a build of version `own`, the program `program`, opening, for `access`, a
+/// board at `found` of the project `project` (none: a board no project names, such as a scratch
+/// one). Only a writer moves a board forward or makes one: a reader is the Symphony, whose build may
+/// be a branch's, and it would move the live board past the build its project's board command runs,
+/// which then refuses it.
 pub(crate) fn decide(
     found: Option<i64>,
     own: i64,
     access: Access,
     project: Option<&str>,
+    program: &Program,
 ) -> Opened {
     let named = Named::of(project);
     match (access, found) {
@@ -172,7 +180,7 @@ pub(crate) fn decide(
         (Access::Write, None) => Opened::Migrate,
         (Access::Write, Some(found)) if found < own => Opened::Migrate,
         (Access::Write, Some(found)) => {
-            let refusal = Refusal::of(project, own);
+            let refusal = Refusal::of(project, own, program);
             Opened::Refused(format!("{}{found}{}", refusal.before, refusal.after))
         }
         (Access::Read, Some(found)) if found == own + 1 => Opened::Ahead,
@@ -196,13 +204,13 @@ pub(crate) fn decide(
 }
 
 /// How a refusal names the board and its project.
-struct Named {
-    board: String,
-    project: String,
+pub(crate) struct Named {
+    pub board: String,
+    pub project: String,
 }
 
 impl Named {
-    fn of(project: Option<&str>) -> Named {
+    pub(crate) fn of(project: Option<&str>) -> Named {
         match project {
             Some(project) => Named {
                 board: format!("the {project} board"),
@@ -224,14 +232,16 @@ pub(crate) struct Refusal {
 }
 
 impl Refusal {
-    pub(crate) fn of(project: Option<&str>, own: i64) -> Refusal {
+    /// The refusal of `program`, a build of version `own`, writing a board of `project` at another.
+    pub(crate) fn of(project: Option<&str>, own: i64, program: &Program) -> Refusal {
         let named = Named::of(project);
         Refusal {
             before: format!("{} is at schema ", named.board),
             after: format!(
                 ", and this build writes only a board at its own schema, {own}: nothing was \
-                 written; `just symphony` in {} brings its Symphony to the board's schema",
-                named.project
+                 written; rebuild {} ({}) at the board's schema, and `just symphony` in {} brings \
+                 its Symphony to it",
+                program.name, program.path, named.project
             ),
         }
     }
@@ -416,6 +426,8 @@ DEFINE FIELD IF NOT EXISTS rows ON moved TYPE string;
 
 DEFINE TABLE IF NOT EXISTS meta SCHEMAFULL;
 DEFINE FIELD IF NOT EXISTS version ON meta TYPE int;
+
+DEFINE TABLE IF NOT EXISTS writer SCHEMALESS;
 
 DEFINE TABLE IF NOT EXISTS callback_state SCHEMALESS;
 DEFINE INDEX IF NOT EXISTS callback_state_address ON callback_state FIELDS address;

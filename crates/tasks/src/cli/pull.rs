@@ -36,7 +36,22 @@
 //!
 //! A task in review whose record says a reviewer asked changes of the branch's tip now is rework:
 //! the digest and the alarm count it in progress, its live executor as executing, and one nobody
-//! executes as orphaned ([`REWORK_NOTE`]).
+//! executes as orphaned ([`REWORK_NOTE`]). One whose record judged the tip now, as the repository
+//! tells it, and names neither `review` nor `changes` waits on no reviewer: the project's own review
+//! gate, as its landing keeps it, is met or not needed there and replaces the Symphony's, so it is
+//! not `review_unreviewed`. A record of another tip or of a tip the repository does not tell, or
+//! none, leaves the Symphony's: a review with no reviewer is listed.
+//!
+//! An orchestrator holding the orchestrator role on as many open tasks as the limit
+//! (`[limits] orchestrator_tasks`, [`crate::orchestration::counted`]) or more sees it in its
+//! header, `orchestrates=OPEN/LIMIT`, as it is given and takes no more; past the limit an
+//! [`OVER_LIMIT`] line says by how many and how it lets the unstarted ones go, an entry of its own,
+//! delivered once until it is under again:
+//!
+//! ```text
+//! PULL 14:05 executing=6 ready_unstaffed=2 in_progress_orphaned=0 review_unreviewed=0 landed_open=0 idle=0 orchestrates=66/16
+//!   over_limit silver-sparrow orchestrates=66 limit=16 — 50 past it: it is given no task and takes none until it is under; let the unstarted ones go with `just tasks release SLUG --role orchestrator`
+//! ```
 //!
 //! A recipient told a digest before hears the next one as what changed since the last one it
 //! received ([`Digest::changes_since`], against what that one said, [`Said`]): the header's counts
@@ -67,6 +82,8 @@ pub const ALARM_SHOWN: usize = 5;
 /// The note on a task in review whose tip a reviewer asked changes of, counted as in progress
 /// ([`crate::alarm::CHANGES`]), when nobody executes it.
 pub const REWORK_NOTE: &str = "in review; changes asked of its tip";
+/// The entry and line of an orchestrator past the limit on the open tasks it holds the role on.
+pub const OVER_LIMIT: &str = "over_limit";
 /// A count a PULL could not say, as its recipient's next one is measured against.
 pub const UNKNOWN: &str = "unknown";
 /// One successful canonical observation, retained across scheduling and recipient scoping.
@@ -124,6 +141,11 @@ pub struct Digest {
     pub alarm: Option<ReviewAlarm>,
     /// Canonical counts for active orchestrators; only the recipient remains after scoping.
     volume: BTreeMap<String, usize>,
+    /// The open tasks each active orchestrator holds the orchestrator role on itself
+    /// ([`crate::orchestration::orchestrated`]); only the recipient remains after scoping.
+    orchestrated: BTreeMap<String, usize>,
+    /// The most of them an orchestrator is given or takes (`[limits] orchestrator_tasks`).
+    pub limit: usize,
     scoped: bool,
 }
 
@@ -208,6 +230,11 @@ impl Digest {
                 entries.insert(("low_volume".into(), handle.clone()));
             }
         }
+        for (handle, count) in &self.orchestrated {
+            if *count > self.limit {
+                entries.insert((OVER_LIMIT.into(), handle.clone()));
+            }
+        }
         entries
     }
     /// Stable event content, independent of when the board was observed.
@@ -226,6 +253,10 @@ impl Digest {
             .any(|handle| seen.contains(&("low_volume".into(), handle.clone())))
         {
             lines.retain(|line| !line.starts_with("  low_volume "));
+        }
+        let over = |handle: &String| seen.contains(&(OVER_LIMIT.into(), handle.clone()));
+        if self.orchestrated.keys().any(over) {
+            lines.retain(|line| !line.starts_with(&format!("  {OVER_LIMIT} ")));
         }
         lines.extend(self.unanswered_lines(seen));
         lines
@@ -302,6 +333,12 @@ impl Digest {
                 .filter(|(handle, _)| untold(("low_volume", handle)))
                 .map(|(_, line)| line),
         );
+        out.extend(
+            self.over_limit_lines()
+                .into_iter()
+                .filter(|(handle, _)| untold((OVER_LIMIT, handle)))
+                .map(|(_, line)| line),
+        );
         let now = self.entries();
         for name in CATEGORIES {
             let added: Vec<String> = match name {
@@ -319,7 +356,7 @@ impl Digest {
         }
         for name in CATEGORIES
             .iter()
-            .chain(&["low_volume", ALARM])
+            .chain(&["low_volume", OVER_LIMIT, ALARM])
             .filter(|name| known(name))
         {
             let resolved: Vec<&str> = (said.entries.iter())
@@ -349,6 +386,10 @@ impl Digest {
             .collect();
         if let (Some(held), Some(cap)) = (self.slots, self.cap) {
             counts.push(("slots", format!("{held}/{cap}"), true));
+        }
+        // Only at the limit or past it, so a count that moves under it says nothing.
+        if let Some(held) = self.orchestrates().filter(|held| *held >= self.limit) {
+            counts.push(("orchestrates", format!("{held}/{}", self.limit), true));
         }
         if let Some(raised) = &self.alarm {
             let now = raised.alarm.counts;
@@ -384,6 +425,25 @@ impl Digest {
                 self.liveness_unknown.join(", ")
             )
         })
+    }
+
+    /// The open tasks the recipient of a scoped digest holds the orchestrator role on; none before
+    /// it is scoped, or for a recipient that is no orchestrator.
+    fn orchestrates(&self) -> Option<usize> {
+        let mut only = self.orchestrated.values().filter(|_| self.scoped);
+        only.next().copied().filter(|_| only.next().is_none())
+    }
+
+    /// The scoped digest's orchestrator past the limit on the open tasks it holds the role on,
+    /// a line saying by how many and how it lets the unstarted ones go.
+    fn over_limit_lines(&self) -> Vec<(String, String)> {
+        (self.orchestrated.iter())
+            .filter(|(_, count)| self.scoped && **count > self.limit)
+            .map(|(handle, count)| {
+                let past = count - self.limit;
+                (handle.clone(), format!("  {OVER_LIMIT} {handle} orchestrates={count} limit={} — {past} past it: it is given no task and takes none until it is under; let the unstarted ones go with `just tasks release SLUG --role orchestrator`", self.limit))
+            })
+            .collect()
     }
 
     /// The scoped digest's low-volume condition, a line for each handle it names.
@@ -475,6 +535,7 @@ impl Digest {
             self.slots = self.volume.get(handle).copied();
         }
         self.volume.retain(|recipient, _| recipient == handle);
+        self.orchestrated.retain(|recipient, _| recipient == handle);
         self.scoped = true;
         self
     }
@@ -492,6 +553,7 @@ impl Digest {
         out.extend(self.alarm_lines());
         out.extend(self.liveness_line());
         out.extend(self.low_volume_lines().into_iter().map(|(_, line)| line));
+        out.extend(self.over_limit_lines().into_iter().map(|(_, line)| line));
         for name in CATEGORIES {
             let listed: Vec<String> = if name == "idle" {
                 self.idle.iter().map(|h| format!("  idle {h}")).collect()
@@ -638,15 +700,22 @@ pub(crate) fn digest_on(
     let fixes = Fixes::new(store, tips, now);
     let waits = waiting(tasks, &fixes, now);
     let reworking = |t: &Task| waits.get(t.slug.as_str()).is_some_and(Judged::reworking);
-    let volume = board
-        .sessions
-        .iter()
-        .filter(|session| session.row.kind == "orchestrator" && session.row.left_at.is_none())
+    let orchestrators = (board.sessions.iter())
+        .filter(|session| session.row.kind == "orchestrator" && session.row.left_at.is_none());
+    let volume = orchestrators
+        .clone()
         .map(|session| {
             (
                 session.row.handle.clone(),
                 holdings.get(&session.row.handle).map_or(0, BTreeSet::len),
             )
+        })
+        .collect();
+    let orchestrated = orchestrators
+        .map(|session| {
+            let handle = session.row.handle.clone();
+            let count = crate::orchestration::orchestrated(tasks, &handle);
+            (handle, count)
         })
         .collect();
     let liveness_unknown = tasks
@@ -789,8 +858,12 @@ pub(crate) fn digest_on(
                     }
                 }
             }
+            // A review whose landing's record says it waits on no review at the tip now waits on
+            // no reviewer: the project's review gate replaces the Symphony's.
             "review"
-                if !present(t, "reviewer") && !below(t).iter().any(|c| present(c, "executor")) =>
+                if !present(t, "reviewer")
+                    && !below(t).iter().any(|c| present(c, "executor"))
+                    && !waits.get(t.slug.as_str()).is_some_and(Judged::reviewed) =>
             {
                 found
                     .entry("review_unreviewed")
@@ -827,6 +900,8 @@ pub(crate) fn digest_on(
         low_volume: limits.low_volume,
         alarm: review_alarm(store, tasks, &waits, &fixes, &limits.alarm, now)?,
         volume,
+        orchestrated,
+        limit: limits.orchestrator_tasks,
         scoped: false,
     })
 }

@@ -24,17 +24,18 @@ prose published pushed ran so started successful the this to when written
 # which the release run cuts and no project runs, with the test targets a candidate red's task
 # reruns alone, and the client a release candidate's fix commits.
 own apps/symphony-server/src/api/client.rs symphony-ui-dist
-own crates/symphony/src/cli/commands/size_budget.rs size-check
-own crates/symphony/src/release.rs release verify
-own crates/symphony/src/release/board.rs client-update release test-rs
-own crates/symphony/src/release/cadence.rs release
-own crates/symphony/src/release/candidate.rs release
-own crates/symphony/src/release/crates.rs release
-own crates/symphony/src/release/record.rs release
-own crates/symphony/src/release/refresh.rs release
-own crates/symphony/src/release/schedule.rs release
-own docs/CHECKS.md client-check client-lint client-update crates-check lint-rs release size-check test-rs verify
+own crates/symphony-build/src/commands/size_budget.rs size-check
+own crates/symphony-build/src/release.rs release verify
+own crates/symphony-build/src/release/board.rs client-update release test-rs
+own crates/symphony-build/src/release/cadence.rs release
+own crates/symphony-build/src/release/candidate.rs release
+own crates/symphony-build/src/release/crates.rs release
+own crates/symphony-build/src/release/record.rs release
+own crates/symphony-build/src/release/refresh.rs release
+own crates/symphony-build/src/release/schedule.rs release
+own docs/CHECKS.md client-check client-lint client-update crates-check lint-rs release settings-check size-check test-rs verify
 own docs/PLUGIN_PROTOCOL.md test-rs
+own docs/PROJECT_FILE.md settings-check
 own docs/RELEASES.md client-update crates-check release test-rs verify
 own docs/TASKS.md client-update
 

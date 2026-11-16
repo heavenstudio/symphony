@@ -86,6 +86,14 @@ pub(super) fn without_cursor(value: &mut serde_json::Value) -> Tagged {
     }
 }
 
+/// The validator of `document`'s outline as `/api/document?view=outline` sends it: what
+/// [`without_cursor`] makes of that answer, so a check answered before its body is made names the
+/// body as the answer that made it did.
+pub(super) fn outline_tag(document: symphony_api::Document) -> String {
+    let mut value = serde_json::json!(symphony::docview::outline(document));
+    without_cursor(&mut value).tag
+}
+
 /// The validator of a task's timeline, leaving out its `now`: the server's clock at the read,
 /// which the client moves on by its own clock while the rest stays the same. The page reads the
 /// timeline each minute, and is answered `304` until the task's history or its gates change.
@@ -102,7 +110,7 @@ pub(super) fn without_now(value: &mut serde_json::Value) -> String {
 /// Whether `response` is a JSON read: a `200` the server built as JSON and answered `no-store`
 /// with no validator of its own. A file the client or media routes serve carries its own, an
 /// error is never a read to keep, and the feed's stream is not JSON.
-fn is_json_read(response: &Response) -> bool {
+pub(super) fn is_json_read(response: &Response) -> bool {
     let headers = response.headers();
     response.status() == StatusCode::OK
         && !headers.contains_key(header::ETAG)

@@ -25,7 +25,6 @@ _lint-rs:
     @tools/cargo.sh fmt --all --check
     @tools/cargo.sh clippy --workspace --all-targets --locked -- -D warnings
     @tools/cargo.sh clippy -p symphony-api --features typescript --all-targets --locked -- -D warnings
-    @PATH="$(pwd)/apps/symphony-ui/bin:$PATH" tools/cargo.sh symphony-ui clippy
     @just --justfile {{quote(justfile())}} client-lint
 
 # The web client's checks (apps/symphony-web/check.sh): its wire types against crates/symphony-api's
@@ -42,12 +41,16 @@ client-wire:
 test-rs *ARGS:
     @{{record}} --pipeline test test "just test-rs $*" tools/cargo.sh test --locked "$@"
 
-symphony-ui-dist OUT="build/symphony-ui" KIND="all" OPT="z":
-    #!/usr/bin/env bash
-    set -euo pipefail
-    out={{quote(OUT)}}
-    if [[ "$out" != /* ]]; then out="$PWD/$out"; fi
-    PATH="$PWD/apps/symphony-ui/bin:$PATH" tools/cargo.sh symphony-ui dist "$out" {{quote(KIND)}} {{quote(OPT)}}
+# The settings check (`symphony settings-check`, docs/PROJECT_FILE.md): symphony.toml read as the
+# Symphony reads it and judged on its shape alone, recorded as a test run, which is what a change
+# of settings' values lands by in a reviewer's place (docs/TASKS.md, "Needed stamps").
+settings-check:
+    @{{record}} --pipeline settings test "just settings-check" tools/rs-bin.sh symphony settings-check
+
+# The client's build (apps/symphony-web/build.sh): one Vite build of the web client and its shell,
+# published into OUT/public, OUT named from this folder.
+symphony-ui-dist OUT="build/symphony-ui":
+    @{{record}} --pipeline client build "just symphony-ui-dist" bash apps/symphony-web/build.sh {{quote(OUT)}}
 
 # apps/symphony-web/dev.js (its guide's "The dev server"), on loopback port PORT (0 for any), over
 # a server of your own (`just symphony --port 0`) on port SERVER; 8765 it refuses as either.
@@ -71,10 +74,14 @@ _client-update:
     @just symphony-ui-dist build/shipped-client
     @tools/rs-bin.sh symphony-build publish-client build/shipped-client/public apps/symphony-server/client/public
 
-# The generic document CLI and board binaries belong to this workspace.
+# The generic document CLI and board binaries belong to this workspace. The docs checks a doc's
+# evidence names, `docs-audit --check` and `status --lint` as typed, are each a test run of the
+# pipeline `docs` through tools/record.sh, so a task's recorded runs at its tip hold them and the
+# task page's check gate reads the docs audit, the project's [verdicts] check; every other command
+# runs as it is.
 [no-exit-message]
 symphony-cli *ARGS:
-    @tools/rs-bin.sh symphony "$@"
+    @{{ if ARGS =~ '^(docs-audit --check|status --lint)$' { record + ' --pipeline docs test "just symphony-cli $*"' } else { '' } }} tools/rs-bin.sh symphony "$@"
 
 # The board but its recorder, which the Symphony's recipe refuses too (`_symphony_board`): a build
 # records itself by the binary, through tools/record.sh. Like the Symphony's, it writes only where
@@ -102,7 +109,7 @@ release *ARGS:
 agent-send *ARGS:
     @tools/rs-bin.sh agent-send "$@"
 
-# Rebuild the real modules and the program and refuse drift from the client embedded at this pin.
+# Rebuild the client and refuse drift from the client embedded at this pin.
 client-check OUT="build/verified-client":
     @{{record}} --pipeline client --step client-check build "just client-check" just --justfile {{quote(justfile())}} _client-check {{quote(OUT)}}
 

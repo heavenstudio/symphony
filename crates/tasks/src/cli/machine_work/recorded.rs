@@ -11,6 +11,9 @@
 //! operation whose lease nobody holds lost its recorder: a reader counts it as uncertainty, never
 //! as work or as done, until the next recorder's [`sweep`] keeps it and finishes it without an
 //! exit. Finished operations stay [`RETAIN`] seconds for a reader to see them finish, then go.
+//!
+//! A reader that asks often keeps what it read ([`Kept`]) and reads again only the files that are
+//! not the ones it read.
 
 use super::native::{Inventory, MAX_ROWS};
 use super::{Kind, Operation, State};
@@ -22,6 +25,10 @@ use std::fs::{self, File, OpenOptions, TryLockError};
 use std::io::{self, Read as _, Write as _};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+
+mod kept;
+
+pub use kept::{Kept, Reads};
 
 /// The work folder's name in `symphony/tasks/` of the git common dir.
 pub const FOLDER: &str = "work";

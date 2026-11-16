@@ -1,13 +1,15 @@
-//! `symphony-build publish-client STAGE PUBLIC`: a fully assembled client put in place of the one
-//! served, as a reload publishes its build: one rename, or one exchange of the folders over a
-//! client there. What it publishes keeps the stage's build and the builds published just before it
-//! over PUBLIC, [`KEEP`] in all, as the folder's `builds.json` lists them ([`retain`]). The command
-//! is `symphony-build`'s, this repository's own; a reload publishes through [`publish_client`].
+//! A fully assembled client put in place of the one served, as a reload publishes its build: one
+//! rename, or one exchange of the folders over a client there ([`publish_client`]). What
+//! `symphony-build publish-client STAGE PUBLIC` publishes ([`publish_keeping`]) keeps the stage's
+//! build and the builds published just before it over PUBLIC, [`KEEP`] in all, as the folder's
+//! `builds.json` lists them ([`retain`]). The command is `symphony-build`'s, this repository's own
+//! (crates/symphony-build); the folder's format stays here, beside the reload that copies the
+//! installed client's builds into what a build publishes over.
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use std::fs;
-use std::io::{self, Write};
+use std::io;
 use std::path::{Component, Path};
 
 /// How many client builds a published client folder keeps: the build it publishes and the two
@@ -15,7 +17,7 @@ use std::path::{Component, Path};
 /// open on an older build asks for that build's modules later, when it first shows another page
 /// kind or opens the chat, so the folder keeps them a while; but the server embeds every file
 /// kept, in its binary and in every consumer's build, about 6 MB a build. A page whose build is
-/// gone loads again onto the one served when its import fails (`apps/symphony-ui/assets/shell.js`).
+/// gone loads again onto the one served when its import fails (`apps/symphony-web/shell/shell.js`).
 /// Two previous builds is the orchestrator's choice, not the owner's, who can change it here.
 pub(crate) const KEEP: usize = 3;
 
@@ -40,24 +42,12 @@ struct Builds {
     builds: Vec<Build>,
 }
 
-/// Publish a fully assembled client with one rename, including over a nonempty directory,
-/// keeping what [`retain`] keeps.
-pub(super) fn publish_client_main(args: &[String], err: &mut dyn Write) -> i32 {
-    let [stage, public] = args else {
-        let _ = writeln!(err, "usage: symphony-build publish-client STAGE PUBLIC");
-        return 2;
-    };
-    let (stage_path, public_path) = (Path::new(stage), Path::new(public));
-    match retain(stage_path, public_path).and_then(|()| publish_client(stage_path, public_path)) {
-        Ok(()) => 0,
-        Err(error) => {
-            let _ = writeln!(
-                err,
-                "symphony-build publish-client: {stage} -> {public}: {error}"
-            );
-            1
-        }
-    }
+/// Publish the fully assembled client `stage` over `public` with one rename, including over a
+/// nonempty directory, keeping what [`retain`] keeps: what `symphony-build publish-client` does.
+/// A stage it cannot keep whole is refused, and `public` is left as it was.
+pub fn publish_keeping(stage: &Path, public: &Path) -> io::Result<()> {
+    retain(stage, public)?;
+    publish_client(stage, public)
 }
 
 /// Make `stage`, an assembled client whose `builds.json` names its own build first, the folder to

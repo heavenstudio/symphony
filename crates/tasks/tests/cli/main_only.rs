@@ -11,6 +11,7 @@ mod first;
 mod flags;
 mod rolled_back;
 mod served;
+mod writers;
 
 use crate::common::{NOW, surreal};
 use crate::{Ran, git, repository, scratch};
@@ -21,7 +22,7 @@ use std::process::Command;
 use symphony_board::live::SOURCE;
 use symphony_board::rpc::Client;
 use symphony_board::server::Home;
-use symphony_board::{NewTask, Opening, Schema, Store};
+use symphony_board::{NewTask, Opening, Raw, Schema, Store};
 
 /// This build's schema source, which the binaries under test embed.
 const OWN: &str = include_str!("../../src/schema.rs");
@@ -350,15 +351,14 @@ fn a_branch_build_moves_the_live_board_by_no_entry_and_each_refusal_names_what_d
     refused(&live.tasks(&live.main, &["migrate"]), &why);
 
     assert_eq!(live.version("tasks"), Some(before()));
+    let titles = (Raw::on(&live.client("tasks")).table("task"))
+        .fields(&["title"])
+        .unwrap();
+    let titles: Vec<serde_json::Value> = (titles.as_array().unwrap().iter())
+        .map(|row| row["title"].clone())
+        .collect();
     assert_eq!(
-        live.client("tasks")
-            .query(
-                "RETURN (SELECT VALUE title FROM task);",
-                serde_json::json!({})
-            )
-            .unwrap()
-            .last()
-            .cloned(),
+        Some(serde_json::Value::Array(titles)),
         Some(serde_json::json!(["Made by main's build"]))
     );
 }
@@ -527,8 +527,9 @@ fn migrate_takes_only_help_and_an_actor_and_says_what_it_did_to_a_scratch_board(
     let help = crate::run(&env, &["migrate", "--help"], "");
     assert_eq!(help.code, 0);
     assert!(
-        help.out
-            .starts_with("usage: just tasks migrate [-h] [--as ACTOR]\n\nMove the board forward"),
+        help.out.starts_with(
+            "usage: just tasks migrate [-h] [--leave-behind] [--as ACTOR]\n\nMove the board forward"
+        ),
         "{}",
         help.out
     );
@@ -544,7 +545,7 @@ fn migrate_takes_only_help_and_an_actor_and_says_what_it_did_to_a_scratch_board(
                 2,
                 "",
                 format!(
-                    "usage: just tasks migrate [-h] [--as ACTOR]\njust tasks migrate: error: \
+                    "usage: just tasks migrate [-h] [--leave-behind] [--as ACTOR]\njust tasks migrate: error: \
                      unrecognized arguments: {}\n",
                     args[1..].join(" ")
                 )

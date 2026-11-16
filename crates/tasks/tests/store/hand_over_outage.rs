@@ -404,12 +404,15 @@ fn a_pull_waiting_out_an_outage_names_no_session_whose_work_a_hand_over_took_awa
     outage.cut();
     // Its presence goes unconfirmed, as a native callback's sweep overdue leaves it, while it
     // shows no sign: its liveness is unknown, and its work stays held.
-    fixture.store.client().query(
-        "UPSERT type::record('callback_state', $handle) SET handle = $handle, address = 'codex:abcdef01', host = $host, confirmed_until = $until, lease = $lease RETURN NONE;
-         UPDATE type::record('session', $handle) SET last_seen = $seen RETURN NONE;",
-        json!({"handle":reviewer, "host":HOST, "until":fixture.now() - 1.0,
-            "lease":fixture.now() + 1_000_000.0, "seen":fixture.now() - 500.0}),
-    ).unwrap();
+    (fixture.store.raw().row("callback_state", reviewer.as_str()))
+        .put(
+            json!({"handle":reviewer, "address":"codex:abcdef01", "host":HOST,
+            "confirmed_until":fixture.now() - 1.0, "lease":fixture.now() + 1_000_000.0}),
+        )
+        .unwrap();
+    (fixture.store.raw().row("session", reviewer.as_str()))
+        .set(json!({"last_seen":fixture.now() - 500.0}))
+        .unwrap();
     assert_eq!(fixture.health(&reviewer), Health::Unknown);
     let free = NewTask::new("scratch/free", "Jump departure", "owner");
     elsewhere.create(&free).unwrap();

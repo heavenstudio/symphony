@@ -599,11 +599,9 @@ mod turning {
             .unwrap();
         case.verdict_task("verdicts/done", &brief(&[("lamp-a-pic", 4)]));
         case.store
-            .client()
-            .query(
-                "UPDATE type::record('task', $slug) SET status = 'done'",
-                serde_json::json!({"slug": "verdicts/done"}),
-            )
+            .raw()
+            .row("task", "verdicts/done")
+            .set(serde_json::json!({"status": "done"}))
             .unwrap();
         case.store
             .create(&NewTask {
@@ -1021,11 +1019,9 @@ mod real {
         // Made by this build, whose opening records its schema; then its store goes back one.
         let version = symphony_board::schema::VERSION;
         fixture_store(&env);
-        live_client(&env)
-            .query(
-                &format!("UPDATE meta:schema SET version = {};", version - 1),
-                serde_json::json!({}),
-            )
+        symphony_board::Raw::on(&live_client(&env))
+            .row("meta", "schema")
+            .set(serde_json::json!({"version": version - 1}))
             .unwrap();
         let common = b.tree.root.join(".git");
         let why = seen::Rollback {
@@ -1084,13 +1080,13 @@ mod real {
     /// What a refused run must leave on the board `env` reaches as it was: its schema, and how
     /// many sessions and asks it holds.
     fn held(env: &[(String, String)]) -> Vec<serde_json::Value> {
-        live_client(env)
-            .query(
-                "RETURN (SELECT VALUE version FROM ONLY meta:schema); \
-                 RETURN count(SELECT * FROM session); RETURN count(SELECT * FROM ask);",
-                serde_json::json!({}),
-            )
-            .unwrap()
+        let client = live_client(env);
+        let board = symphony_board::Raw::on(&client);
+        vec![
+            board.row("meta", "schema").field("version").unwrap(),
+            serde_json::json!(board.table("session").count().unwrap()),
+            serde_json::json!(board.table("ask").count().unwrap()),
+        ]
     }
 
     /// A board server this test started, stopped when the test ends, however it ends.

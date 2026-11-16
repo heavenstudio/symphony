@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 
 /// One gate.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct Gate {
     /// Its name, unique among a task's gates (`review`, `certificate`).
     pub name: String,
@@ -62,6 +63,7 @@ impl Gate {
 
 /// A state a gate took before its current one.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
 pub struct GatePast {
     pub state: GateState,
     /// When it took that state.
@@ -77,6 +79,8 @@ pub struct GatePast {
 /// Where a gate stands. A task's gates come in [`GateState::rank`] order, not this one.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
+#[non_exhaustive]
 pub enum GateState {
     /// Not met, and something can meet it: a run, a verdict, a stamp.
     Missing,

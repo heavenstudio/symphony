@@ -8,15 +8,19 @@
 //! The registry, `projects.json` ([`Registry`]), holds each project's main checkout, its id (the
 //! URL segment, `/<id>/`), its project file and the plugins it names, with the pin and the board
 //! schema of the build that registered it: the host rule reads them ([`Registry::add`]).
+//!
+//! The releases installed on the machine live there too, `releases/NAME/`, with the `current` link
+//! naming the one the machine runs ([`release`]).
 
 pub mod command;
 mod folder;
 pub mod host;
 mod identity;
 mod registry;
+pub mod release;
 
 pub use folder::dir;
-pub use identity::installation_id;
+pub use identity::{installation_id, installation_id_in};
 pub use registry::{Added, Entry, Registry};
 
 /// Names the machine folder in place of the platform's: a test's own, never the owner's.

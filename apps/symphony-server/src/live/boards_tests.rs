@@ -14,22 +14,37 @@ use axum::http::Request;
 use serde_json::{Value, json};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError, mpsc};
 use std::time::{Duration, Instant};
 use symphony_board::cli::Env;
 use symphony_board::rpc::Client;
 use symphony_board::server::Home;
-use symphony_board::{NewTask, Opening, Schema, Store};
+use symphony_board::{NewTask, Opening, Program, Schema, Store};
 use tower::ServiceExt;
 
 /// The wall-clock backstop of a wait here on the hub's read: only a stall reaches it (RULES.md
 /// `tests/no-test-fails-on-load`).
 const BACKSTOP: Duration = test_time::backstop(Duration::from_secs(30));
 
-/// A fixture project: its checkout, holding `symphony.toml` with its id, and its hub.
+/// What the hub's reach of a fixture's board says while its case keeps it from the board
+/// ([`Project::unreached`]).
+const UNREACHED: &str = "the case keeps its hub from its board while it ends";
+
+/// A fixture project: its checkout, holding `symphony.toml` with its id, its hub, whether that
+/// hub's reach of its board goes on ([`Project::unreached`]), and where its next reach waits
+/// ([`Project::paused`]).
 struct Project {
     root: PathBuf,
     hub: Arc<Hub>,
+    reaches: Arc<Mutex<bool>>,
+    pause: Arc<Mutex<Option<Pause>>>,
+}
+
+/// Where a hub's reach waits, once its tick's check that its folder holds its project has passed:
+/// it says it is there, and goes on once it hears.
+struct Pause {
+    there: mpsc::Sender<()>,
+    on: mpsc::Receiver<()>,
 }
 
 impl Project {
@@ -55,17 +70,60 @@ impl Project {
             .create(&NewTask::new(&format!("{id}/one"), "Made first", "owner"))
             .unwrap();
         let reach = env(&root);
+        let reaches = Arc::new(Mutex::new(true));
+        let gate = Arc::clone(&reaches);
+        let pause = Arc::new(Mutex::new(None::<Pause>));
+        let paused = Arc::clone(&pause);
         let hub = Hub::start_watching::<notify::NullWatcher>(
             &root,
             &root.join("build/client"),
             false,
             false,
             crate::backstop::PERIOD,
-            move |root| symphony::taskview::connect_in(root, reach.clone()),
+            move |root| {
+                // Held through the reach, so a case that closes the gate waits out one under way.
+                let open = gate.lock().unwrap_or_else(PoisonError::into_inner);
+                if !*open {
+                    return Err(UNREACHED.to_string());
+                }
+                if let Some(pause) = paused.lock().unwrap().take() {
+                    let _ = pause.there.send(());
+                    let _ = pause.on.recv();
+                }
+                // Held to the repository found as the hub was made, as every reach from its
+                // folder in this process is.
+                symphony::taskview::connect_in(root, reach.clone())
+            },
         )
         .unwrap();
         hub.start_initial_board();
-        Project { root, hub }
+        Project {
+            root,
+            hub,
+            reaches,
+            pause,
+        }
+    }
+
+    /// Hold the hub's next reach of its board where it waits, once its check has passed: what
+    /// returns says when it is there, and lets it go on.
+    fn paused(&self) -> (mpsc::Receiver<()>, mpsc::Sender<()>) {
+        let (there, arrived) = mpsc::channel();
+        let (go, on) = mpsc::channel();
+        *self.pause.lock().unwrap() = Some(Pause { there, on });
+        (arrived, go)
+    }
+
+    /// What `end` returns, run while the hub's reach of the board is refused, once a reach under
+    /// way has ended: a case's end, its board's server stopped and its folder removed. Between the
+    /// two the hub's next read would start the server again, as it starts a stopped board
+    /// (`each_projects_hub_reads_its_own_board_and_reconnects_when_its_server_restarts`), and that
+    /// start would write into the folder while it is removed.
+    fn unreached<T>(&self, end: impl FnOnce() -> T) -> T {
+        *self.reaches.lock().unwrap() = false;
+        let ended = end();
+        *self.reaches.lock().unwrap() = true;
+        ended
     }
 
     fn home(&self) -> Home {
@@ -74,14 +132,12 @@ impl Project {
 
     /// The schema version the project's board records.
     fn version(&self) -> Option<i64> {
-        Client::new(&self.home().recorded().unwrap().addr, "sf", "tasks")
-            .query(
-                "RETURN (SELECT VALUE version FROM ONLY meta:schema);",
-                serde_json::json!({}),
-            )
+        let client = Client::new(&self.home().recorded().unwrap().addr, "sf", "tasks");
+        symphony_board::Raw::on(&client)
+            .row("meta", "schema")
+            .field("version")
             .unwrap()
-            .last()
-            .and_then(serde_json::Value::as_i64)
+            .as_i64()
     }
 
     /// Wait for the hub to say why it reads no board in words that start with `start` (not that it
@@ -177,9 +233,10 @@ fn older_writer(root: &Path) -> Store {
     .unwrap()
 }
 
-/// The board of `root`'s project, moved forward to `schema` by a newer build as its `tasks migrate`
-/// in the project's main checkout moves it, which alone moves the live board of a project that
-/// commits no board source: reached as that command reaches it, and opened to migrate.
+/// The board of `root`'s project, moved forward to `schema` by a newer build as its `tasks migrate
+/// --leave-behind` in the project's main checkout moves it, which alone moves the live board of a
+/// project that commits no board source: reached as that command reaches it, and opened to migrate,
+/// leaving this build's writers behind.
 fn newer_migrate(root: &Path, schema: Schema) -> Store {
     let reached = symphony_board::cli::board(&env(root)).unwrap();
     Store::opening(
@@ -191,7 +248,8 @@ fn newer_migrate(root: &Path, schema: Schema) -> Store {
             .at(schema)
             .of(reached.project.as_deref())
             .live(reached.live)
-            .migrating(),
+            .migrating()
+            .leave_behind(),
     )
     .unwrap()
 }
@@ -252,14 +310,17 @@ fn a_hub_reads_on_when_a_newer_build_migrates_its_board_and_its_writes_there_are
         .say("beta/one", "owner", "from the Symphony", None)
         .unwrap_err()
         .to_string();
+    let program = Program::this();
     assert_eq!(
         why,
         format!(
             "the beta board is at schema {}, and this build writes only a board at its own \
-             schema, {}: nothing was written; `just symphony` in beta brings its Symphony to the \
-             board's schema",
+             schema, {}: nothing was written; rebuild {} ({}) at the board's schema, and `just \
+             symphony` in beta brings its Symphony to it",
             newer.version(),
-            Schema::this_build().version()
+            Schema::this_build().version(),
+            program.name,
+            program.path
         )
     );
     assert_eq!(migrated.thread("beta/one").unwrap().len(), 1);
@@ -356,10 +417,11 @@ impl Drop for Stopped {
 
 /// A project in its own repository under another checkout's artifacts, as a test's scratch
 /// projects are, removed under its hub, or left without its `.git`, once its board's server has
-/// stopped (the case that ended it stopped it): the hub says once that its folder is gone and
-/// reads nothing more, as a project with no board, so the server's maintenance of it waits. It
-/// starts no board's server, the outer checkout's least of all, whose board is made and down, and
-/// so would be started by a lookup that walked up to it.
+/// stopped (the case that ended it stopped it, nothing reaching the board in between): the hub
+/// says once that its folder is gone and reads nothing more, as a project with no board, so the
+/// server's maintenance of it waits. It starts no board's server, the outer checkout's least of
+/// all, whose board is made and down, and so would be started by a lookup that walked up to it,
+/// and none runs on its removed data.
 #[test]
 fn a_project_removed_under_its_hub_starts_and_reads_no_board_of_the_checkout_above_it() {
     type Remove = fn(&Path) -> std::io::Result<()>;
@@ -383,8 +445,12 @@ fn a_project_removed_under_its_hub_starts_and_reads_no_board_of_the_checkout_abo
         let inner = Project::made_in(&tree, "outer/artifacts/scratch/inner", "inner", writer);
         inner.reads(&["inner/one"]);
         assert!(inner.hub.holds_its_project(), "{case}");
-        inner.home().stop().unwrap();
-        remove(&inner.root).unwrap();
+        let stopped = inner.unreached(|| {
+            let stopped = inner.home().stop().unwrap();
+            remove(&inner.root).unwrap();
+            stopped
+        });
+        assert!(stopped.is_some(), "{case}: its board's server ran");
 
         let why = inner.refused("the project's folder");
         assert_eq!(why, inner.hub.gone(), "{case}");
@@ -403,12 +469,245 @@ fn a_project_removed_under_its_hub_starts_and_reads_no_board_of_the_checkout_abo
             None,
             "{case}: the outer board started"
         );
+        // A server on its data that its removal left running has no record left to say so: the
+        // process table is read.
         assert_eq!(
-            inner.home().recorded(),
+            inner.home().serving(),
             None,
-            "{case}: its own board started"
+            "{case}: its own board's server runs, started again before the removal or after it"
         );
     }
+}
+
+/// A project in its own repository under another checkout's artifacts, its `.git` removed after
+/// its hub's tick found that its folder holds it and before that tick's reach of its board looked
+/// the board up: the reach, held to the repository the hub was made for, is refused as gone, never
+/// walks up to the outer checkout's board, whose server is down and would be started, and starts
+/// its own project's none. The hub then says its folder is gone.
+#[test]
+fn a_reach_whose_projects_git_goes_after_its_hubs_check_starts_no_board_above_it() {
+    let tree = Tree::new();
+    let outer = repository_at(&tree, "outer");
+    std::fs::write(outer.join("symphony.toml"), "[project]\nid = \"outer\"\n").unwrap();
+    writer(&outer)
+        .create(&NewTask::new("outer/one", "The outer checkout's", "owner"))
+        .unwrap();
+    let outer_board = Stopped(Home::in_common(&outer.join(".git"), Some(&surreal())));
+    assert!(outer_board.0.stop().unwrap().is_some());
+    let inner = Project::made_in(&tree, "outer/artifacts/scratch/inner", "inner", writer);
+    inner.reads(&["inner/one"]);
+
+    // Its board's server stopped, the hub's next tick reaches the board again.
+    let (there, go) = inner.paused();
+    assert!(inner.home().stop().unwrap().is_some());
+    test_time::until_true("the hub to reach its board again", BACKSTOP, || {
+        there.try_recv().is_ok()
+    })
+    .unwrap();
+    std::fs::remove_dir_all(inner.root.join(".git")).unwrap();
+    go.send(()).unwrap();
+
+    let why = inner.refused(&inner.hub.gone());
+    assert_eq!(why, inner.hub.gone());
+    assert_eq!(outer_board.0.recorded(), None, "the outer board started");
+    assert_eq!(inner.home().serving(), None, "its own board's server runs");
+}
+
+/// A served project left without its `.git` after its hub's check found that its folder holds it:
+/// in its own repository under another checkout's artifacts, as a test's scratch projects are, its
+/// `.git` removed once `before` has run on it and its board's server has stopped, its hub kept from
+/// the board meanwhile and waited on until it says its folder is gone. So what a case calls next is
+/// a reach made after that check, as a tick's, a refresh's or a route's is. The outer checkout's
+/// board is made and down, served by the `surreal` pinned in its common dir as a live board's is,
+/// which a reach in this process, with no `SYMPHONY_SURREAL`, would start it on.
+struct Gitless {
+    inner: Project,
+    outer_board: Stopped,
+    outer: PathBuf,
+    /// Removed once the case's servers have stopped.
+    _tree: Tree,
+}
+
+impl Gitless {
+    fn new<T>(before: impl FnOnce(&Tree, &Project) -> T) -> (Gitless, T) {
+        let tree = Tree::new();
+        let outer = repository_at(&tree, "outer");
+        std::fs::write(outer.join("symphony.toml"), "[project]\nid = \"outer\"\n").unwrap();
+        writer(&outer)
+            .create(&NewTask::new("outer/one", "The outer checkout's", "owner"))
+            .unwrap();
+        let outer_board = Stopped(Home::in_common(&outer.join(".git"), None));
+        let pinned = outer_board.0.surreal();
+        std::fs::create_dir_all(pinned.parent().unwrap()).unwrap();
+        std::os::unix::fs::symlink(surreal(), pinned).unwrap();
+        assert!(outer_board.0.stop().unwrap().is_some());
+        let inner = Project::made_in(&tree, "outer/artifacts/scratch/inner", "inner", writer);
+        inner.reads(&["inner/one"]);
+        let made = before(&tree, &inner);
+        inner.unreached(|| {
+            inner.home().stop().unwrap();
+            std::fs::remove_dir_all(inner.root.join(".git")).unwrap();
+        });
+        inner.refused(&inner.hub.gone());
+        let case = Gitless {
+            inner,
+            outer_board,
+            outer,
+            _tree: tree,
+        };
+        (case, made)
+    }
+
+    /// Whether the outer checkout's board stayed down: no reach started it.
+    fn outer_down(&self) -> bool {
+        self.outer_board.0.recorded().is_none()
+    }
+
+    /// The words a reach of the inner project's board is refused in: its folder no longer holds
+    /// the repository it was served from.
+    fn held(&self) -> String {
+        format!(
+            "the project's folder {} no longer holds the repository it was served from, {}: {}",
+            self.inner.root.display(),
+            self.inner.root.join(".git").display(),
+            symphony_board::project::GONE
+        )
+    }
+
+    /// What the project's route answers `request` once front's check that its folder holds it has
+    /// passed: the save or the read itself, as `front::answer` calls it after that check.
+    fn past_the_check(&self, request: Request<Body>) -> (u16, Value) {
+        let shared = Shared::new(
+            1,
+            1234,
+            &self.inner.root,
+            None,
+            Gate::new(Arc::new(|_| Ok(None)), Arc::new(Instant::now)),
+        );
+        assert!(shared.api.set(self.inner.hub.clone()).is_ok());
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            let response = if crate::write::handles(&request) {
+                crate::write::answer(&shared, request).await
+            } else {
+                let (parts, _) = request.into_parts();
+                crate::api::answer(&shared, Request::from_parts(parts, ()))
+                    .await
+                    .unwrap()
+            };
+            let status = response.status().as_u16();
+            let bytes = to_bytes(response.into_body(), 1_000_000).await.unwrap();
+            let said = serde_json::from_slice(&bytes)
+                .unwrap_or_else(|_| Value::String(String::from_utf8_lossy(&bytes).into()));
+            (status, said)
+        })
+    }
+}
+
+/// The shared server's chat flush, run on its tick's store once the tick's check passed, reads the
+/// journal its project had when the hub was made and reaches the board held to that project's
+/// repository: with the `.git` gone it is refused as gone, so the owner's message waits, and it
+/// neither reads the outer checkout's journal, which a path found from the folder again would be,
+/// nor hands anything to the outer board, which it would start.
+#[test]
+fn a_chat_flush_after_its_projects_git_went_reaches_no_journal_or_board_above_it() {
+    let (case, mut flusher) = Gitless::new(|_, inner| {
+        let flusher = symphony::callbacks::Flusher::new(&inner.root);
+        symphony::callbacks::publish(&inner.root, "From the owner").unwrap();
+        flusher
+    });
+    assert_eq!(flusher.flush(&case.inner.root), Err(case.held()));
+    assert!(case.outer_down(), "the outer board started");
+    assert!(
+        !case.outer.join("artifacts/asks").exists(),
+        "the outer checkout's journal was read"
+    );
+}
+
+/// A refresh's snapshot of main's page, once a branch's card is held, names each branch's task from
+/// the board (`branches::task_names`): on a project whose `.git` went after its check, that reach
+/// is refused, the card names its branch alone, and the outer board is not started.
+#[test]
+fn a_refreshs_task_names_after_its_projects_git_went_start_no_board_above_it() {
+    let (case, cards) = Gitless::new(|tree, inner| {
+        let worktree = tree.path("inner-feature");
+        git(
+            &inner.root,
+            &[
+                "worktree",
+                "add",
+                "-q",
+                "-b",
+                "feature",
+                worktree.to_str().unwrap(),
+            ],
+        );
+        std::fs::write(
+            worktree.join("docs/TOPIC.md"),
+            "# Topic\n\n- [ ] **initial-card** — Initial question.\n\
+             - [ ] **branch-card** — The branch's question.\n",
+        )
+        .unwrap();
+        git(&worktree, &["commit", "-qam", "Ask on the branch"]);
+        symphony::branches::branch_cards(&inner.root)
+    });
+    assert!(
+        cards.iter().any(|card| !card.on_main),
+        "the branch's card is held: {cards:?}"
+    );
+    let snapshot = symphony::dashboard::snapshot(&case.inner.root, &cards, "").unwrap();
+    let card = snapshot
+        .queue
+        .waiting
+        .iter()
+        .find(|card| card.slug == "branch-card")
+        .expect("the branch's card is on main's page");
+    assert_eq!(card.task.as_deref(), Some("feature"));
+    assert!(case.outer_down(), "the outer board started");
+}
+
+/// The branch scan's read of a running board (`taskview::connect_running`), made after its check
+/// on a project whose `.git` went, is refused as gone, and never reads the outer checkout's board,
+/// running as it is.
+#[test]
+fn a_branch_scans_read_after_its_projects_git_went_reads_no_running_board_above_it() {
+    let (case, ()) = Gitless::new(|_, _| ());
+    writer(&case.outer)
+        .get("outer/one")
+        .expect("the outer board runs");
+    assert!(!case.outer_down());
+    let refused = symphony::taskview::connect_running(&case.inner.root)
+        .err()
+        .expect("the read is refused");
+    assert_eq!(refused, case.held());
+}
+
+/// A page's save and its read of the asks, each of which reaches a board for itself once front's
+/// check that the folder holds its project has passed, on a project whose `.git` went after that
+/// check: the save is refused as the board's reach is, and writes nothing above it; the read, of a
+/// hub that has no chat recipient from a board read yet, asks the board for none; neither starts
+/// the outer checkout's board.
+#[test]
+fn a_pages_save_or_asks_read_past_its_check_after_its_projects_git_went_starts_no_board_above_it() {
+    let (case, ()) = Gitless::new(|_, _| ());
+    let save = json!({ "slug": "outer/one", "priority": 0 });
+    assert_eq!(
+        case.past_the_check(asked("POST", "/api/task-priority", Some(&save))),
+        (
+            503,
+            json!({ "error": format!("the task board cannot be reached: {}", case.held()) })
+        ),
+        "the save"
+    );
+    assert!(case.outer_down(), "the save started the outer board");
+    // As a hub that has not read its board yet: the read connects for the recipient itself.
+    *case.inner.hub.chat.lock().unwrap() = None;
+    let (status, said) = case.past_the_check(asked("GET", "/api/asks?path=docs/TOPIC.md", None));
+    assert_eq!(status, 200, "{said}");
+    assert!(case.outer_down(), "the asks read started the outer board");
 }
 
 /// A page on this machine asking `method` at `uri`, with `body` as its JSON.
@@ -500,8 +799,12 @@ fn a_pages_save_or_read_on_a_project_emptied_under_its_server_reaches_no_board_a
             200,
             "{case}: its own board read while its folder holds it"
         );
-        inner.home().stop().unwrap();
-        empty(&inner.root).unwrap();
+        // Its hub kept from the board meanwhile: its next tick would start the stopped server
+        // again, which writes into the folder as it is emptied.
+        inner.unreached(|| {
+            inner.home().stop().unwrap();
+            empty(&inner.root).unwrap();
+        });
         assert_eq!(
             symphony_board::project::locate_quick(&inner.root).map(|place| place.common),
             Some(outer.canonicalize().unwrap().join(".git")),
@@ -580,6 +883,12 @@ fn a_hub_holds_its_folder_while_the_boards_lookup_from_it_finds_its_repository()
     assert!(removed.holds_its_project());
     std::fs::remove_dir_all(&root).unwrap();
     assert!(!removed.holds_its_project(), "removed");
+
+    // As a board's start under way makes it again: its store's folders alone.
+    let (remade, root) = project("remade");
+    std::fs::remove_dir_all(root.join(".git")).unwrap();
+    std::fs::create_dir_all(root.join(".git").join(symphony_board::folders::TASKS)).unwrap();
+    assert!(!remade.holds_its_project(), "its .git made again");
 
     let below = outer.join("docs");
     std::fs::create_dir_all(&below).unwrap();

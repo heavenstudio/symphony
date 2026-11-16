@@ -3,7 +3,18 @@
 // groups, and the ghost it draws before its first read, in the shape and with the cards it had.
 // What it reads and when is boardlive.tsx's.
 
-import { type CSSProperties, Fragment, memo, useEffect, useMemo, useRef, useState } from "react";
+import {
+  type CSSProperties,
+  Fragment,
+  memo,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import { focusedLink, focusedSlug, takeFocus, useKeptPlace } from "./boardplace";
+import { useOneColumnASwipe } from "./boardswipe";
 import { Button } from "./button";
 import { type Layout, layoutAt, rowHeight } from "./cardheight";
 import { sleep } from "./feed";
@@ -25,6 +36,24 @@ import { freshnessWord, PIPELINE, phaseLabels, taskStage } from "./work";
  * (`rowHeight`), near the median of a live board's cards (142 px).
  */
 export const ROW = 139;
+/** The typical card ROW stands for, as `rowHeight` reads it. */
+const TYPICAL: Parameters<typeof rowHeight>[0] = {
+  slug: "bulk/ready-1",
+  title: "Ready task number 1 in a long column",
+  priority: 3,
+  parent: null,
+  links: ["docs/DECISIONS.md"],
+  roles: [
+    { handle: "quiet-plover", role: "orchestrator", since: 0, expires: null, health: "live" },
+  ],
+};
+
+/** What a row whose card is not known yet reserves in `layout`: the typical card as it draws there,
+ * ROW in a desk's column and a narrow window's, less in a phone's wider one, where its title takes
+ * one line. */
+export function rowGuess(layout: Layout): number {
+  return rowHeight(TYPICAL, [], layout);
+}
 /** The rows of a column's page, as the server pages it, and the height of Load more under it. */
 export const PAGE = 30;
 export const MORE = 40;
@@ -81,17 +110,18 @@ function unstaffed(status: string): boolean {
 }
 
 /** The card in the place `slot` of the column `status`: as `kept` has it, else as tall as the
- * typical card ROW stands for, with its row of linked documents and, unless no agent has taken
- * the column's tasks up, its row of roles. */
-export function card(kept: Kept[], slot: number, status: string): Kept {
-  return kept[slot] ?? [ROW, unstaffed(status) ? 1 : 2];
+ * typical card ROW stands for (`guess`, as it draws in the board's layout), with its row of
+ * linked documents and, unless no agent has taken the column's tasks up, its row of roles. */
+export function card(kept: Kept[], slot: number, status: string, guess = ROW): Kept {
+  return kept[slot] ?? [guess, unstaffed(status) ? 1 : 2];
 }
 
 /** What a column of `count` tasks takes before its first page is in: a card for each row of the
- * page (PAGE at most), and the Load more button when they are more than a page. */
-export function firstPageHeight(count: number, kept: Kept[]): number {
+ * page (PAGE at most), as `kept` has it or `guess`, and the Load more button when they are more
+ * than a page. */
+export function firstPageHeight(count: number, kept: Kept[], guess = ROW): number {
   const cards = range(Math.min(count, PAGE)).reduce(
-    (sum, slot) => sum + (kept[slot]?.[0] ?? ROW),
+    (sum, slot) => sum + (kept[slot]?.[0] ?? guess),
     0,
   );
   return count > PAGE ? cards + MORE : cards;
@@ -145,6 +175,12 @@ export function keepsWatching(drawn: boolean, near: boolean, waited: number): bo
   return !drawn && near && waited < KEEP_MS;
 }
 
+/** The layout the board's cards are drawn in, in this window: its width, and the page's inside the
+ * room a scrollbar takes (none on a phone). */
+export function layoutNow(): Layout {
+  return layoutAt(innerWidth, globalThis.document?.documentElement?.clientWidth || innerWidth);
+}
+
 /** The cards this browser kept for the column `status` in a window as wide as this one. */
 function keptCards(status: string): Kept[] {
   return recallCards(load(CARDS) ?? "", status, windowWidth());
@@ -185,6 +221,23 @@ export function boardShape(
   }
   shape.push(...known.filter((status) => OFFLINE.includes(status)).map(count));
   return shape;
+}
+
+/**
+ * Each of `counts` less its tasks the board draws in the sign-off lane (`lane`, each in the stage
+ * `stage` gives it): the server counts a task waiting on the owner in its stage, so the stage's
+ * column holds, outlines and loads more of the rest alone.
+ */
+export function stageCounts(
+  counts: [string, number][],
+  lane: readonly Task[],
+  stage: (task: Task) => string,
+): [string, number][] {
+  if (lane.length === 0) return counts;
+  return counts.map(([status, count]) => [
+    status,
+    Math.max(0, count - lane.filter((task) => stage(task) === status).length),
+  ]);
 }
 
 /** The board's shape for a browser that kept none: the pipeline and the columns off it, a task in
@@ -239,7 +292,17 @@ export function GhostCard({ card }: { card: Kept }) {
 /** A column of the board's ghost: a bar for its heading, a card for each of its `count` tasks (a
  * page's at most, as `cards` kept them) and Load more's room past a page; Build and Test's lines
  * of text where they hold none. */
-function GhostColumn({ status, count, cards }: { status: string; count: number; cards: Kept[] }) {
+function GhostColumn({
+  status,
+  count,
+  cards,
+  guess,
+}: {
+  status: string;
+  count: number;
+  cards: Kept[];
+  guess: number;
+}) {
   // The rail's say of why it is one, then its link; Build's Machine context; the line an empty
   // Build or Test column shows.
   const lines =
@@ -263,7 +326,7 @@ function GhostColumn({ status, count, cards }: { status: string; count: number; 
       )}
       <div>
         {range(Math.min(count, PAGE)).map((slot) => (
-          <GhostCard key={slot} card={card(cards, slot, status)} />
+          <GhostCard key={slot} card={card(cards, slot, status, guess)} />
         ))}
         {count > PAGE && <div style={{ height: `${MORE}px` }} />}
       </div>
@@ -274,11 +337,22 @@ function GhostColumn({ status, count, cards }: { status: string; count: number; 
 /** The task board before its first read: its filters and, in the `shape` it last had, its columns
  * with a card for each task they held, each as this browser last drew it. */
 export function GhostBoard({ shape }: { shape: [string, number][] }) {
+  const guess = rowGuess(layoutNow());
   const column = ([status, count]: [string, number]) => (
-    <GhostColumn key={status} status={status} count={count} cards={keptCards(status)} />
+    <GhostColumn
+      key={status}
+      status={status}
+      count={count}
+      cards={keptCards(status)}
+      guess={guess}
+    />
   );
   return (
     <>
+      {/* A phone's button for the search and the filters (board.css), shut as the board opens. */}
+      <span className="ghost-field ghost-filters-toggle">
+        <span className="bone" style={width("16ch")} />
+      </span>
       <div className="row filters">
         <div>
           Search tasks and messages
@@ -326,7 +400,7 @@ export function UnreadBoard({ why, retry }: { why: string; retry: () => void }) 
   return (
     <section className="trouble card unread-board" role="status">
       <h2>The task board could not be read</h2>
-      <p>{failed(why)}</p>
+      <p>{failed(why, true)}</p>
       <p className="trouble-actions">
         <Button type="button" onClick={retry}>
           Retry
@@ -385,7 +459,7 @@ export async function readTree(
   scope: string,
   parent: string | null,
   cursor: string | null,
-  signal?: AbortSignal,
+  signal: AbortSignal,
 ): Promise<TaskListing | string> {
   const after = cursor === null ? "" : `&cursor=${encodeURIComponent(cursor)}`;
   const selection = parent === null ? "roots=1" : `parent=${encodeURIComponent(parent)}`;
@@ -410,29 +484,58 @@ export function grownTree(shown: Tree, read: TaskListing | string, more: boolean
   return { rows, total: read.counts.reduce((sum, [, count]) => sum + count, 0), trouble: "" };
 }
 
+/** No task groups read yet. */
+export const NO_TREE: Tree = { rows: [], total: 0, trouble: "" };
+
+/**
+ * The reads of the task groups `parent` holds (the roots for none), a page at a time, while the
+ * part that shows them is drawn (`open` until `close`) and its kind is mounted (`mount`): each
+ * answer is given to `show` as the change it makes to what the part shows, and one that comes
+ * once either has ended is dropped. Before the part is open nothing is read.
+ */
+export class TreeReads {
+  /** Where the next page starts: the last page's `next`. */
+  private cursor: string | null = null;
+  private part: AbortSignal | null = null;
+
+  constructor(
+    readonly scope: string,
+    readonly parent: string | null,
+    private readonly mount: AbortSignal,
+    private readonly show: (change: (shown: Tree) => Tree) => void,
+  ) {}
+
+  /** The part is drawn: what it reads goes on until `signal` ends. */
+  open(signal: AbortSignal): void {
+    this.part = signal;
+  }
+
+  /** Read the first page again (`more` false), or the next one; settles once it is shown or
+   * dropped. */
+  async load(more: boolean): Promise<void> {
+    const signal = this.part;
+    if (signal === null || signal.aborted || this.mount.aborted) return;
+    const read = await readTree(this.scope, this.parent, more ? this.cursor : null, signal);
+    if (signal.aborted || this.mount.aborted) return;
+    if (typeof read !== "string") this.cursor = read.next ?? null;
+    this.show((shown) => grownTree(shown, read, more));
+  }
+}
+
 /**
  * The task groups `parent` holds (the roots for none), read a page at a time while the part that
- * shows them is drawn: the first page again (`more` false), or the next one.
+ * shows them is drawn: the first page again (`more` false), or the next one (`TreeReads`).
  */
 function useTree(scope: string, parent: string | null): [Tree, (more: boolean) => void] {
-  const [tree, setTree] = useState<Tree>({ rows: [], total: 0, trouble: "" });
-  const cursor = useRef<string | null>(null);
-  const alive = useRef<AbortSignal | null>(null);
+  const [tree, setTree] = useState<Tree>(NO_TREE);
   const mount = useMount();
+  const [reads] = useState(() => new TreeReads(scope, parent, mount, setTree));
   useEffect(() => {
     const controller = new AbortController();
-    alive.current = controller.signal;
+    reads.open(controller.signal);
     return () => controller.abort();
-  }, []);
-  const load = (more: boolean) => {
-    const signal = alive.current;
-    void readTree(scope, parent, more ? cursor.current : null, signal ?? undefined).then((read) => {
-      if (signal?.aborted !== false || mount.aborted) return;
-      if (typeof read !== "string") cursor.current = read.next ?? null;
-      setTree((shown) => grownTree(shown, read, more));
-    });
-  };
-  return [tree, load];
+  }, [reads]);
+  return [tree, (more) => void reads.load(more)];
 }
 
 /** The task groups' tree: the top tasks, each opening the tasks under it. */
@@ -560,12 +663,23 @@ export interface RowProps {
 
 /**
  * A row of a column: its card once near the screen, until then as tall as that card will take
- * (`rowCard`). Drawn again only when its card would change (`sameCard`), or its layout.
+ * (`rowCard`). Drawn again only when its card would change (`sameCard`), or its layout. A row
+ * first drawn while its task's card holds the focus elsewhere is that card's new place, in the
+ * column a live update moved it to: it draws the card at once and gives the focus back to it.
  */
 export const BoardRow = memo(function BoardRow({ task, work, connected, layout }: RowProps) {
   const reserve = rowCard(task, work, connected, layout);
+  const [follows] = useState(() => focusedLink(task.slug));
+  useLayoutEffect(() => {
+    if (follows !== null) takeFocus(task.slug, follows);
+  }, [follows, task.slug]);
   return (
-    <NearViewport id={`row-${task.slug}`} height={reserve[0]} ghost={<GhostCard card={reserve} />}>
+    <NearViewport
+      id={`row-${task.slug}`}
+      height={reserve[0]}
+      ghost={<GhostCard card={reserve} />}
+      eager={follows !== null}
+    >
       <TaskCard task={task} work={work} connected={connected} />
     </NearViewport>
   );
@@ -604,7 +718,8 @@ export const TaskColumn = memo(function TaskColumn({
   const [visible, setVisible] = useState(false);
   // The layout a row's reserve is worked out for and the cards kept, read once: a window resized
   // later only misjudges rows still waiting.
-  const [layout] = useState(() => layoutAt(innerWidth));
+  const [layout] = useState(layoutNow);
+  const [guess] = useState(() => rowGuess(layout));
   const [kept] = useState(() => keptCards(status));
   // Complete totals make empty-column reads unnecessary. Retained rows still refresh so a
   // reconnect can remove stale cards, and a newly populated column must request its page.
@@ -622,7 +737,7 @@ export const TaskColumn = memo(function TaskColumn({
   // Keep unloaded columns in place while their first page is fetched: a card's box for each row of
   // the page, each as tall as this browser last drew the row in its place, and the Load more
   // button a column of more than a page will show.
-  const reserved = firstPageHeight(count, kept);
+  const reserved = firstPageHeight(count, kept, guess);
   const reading = count > 0 && tasks.length === 0;
   // Once its cards are drawn on the board as it opens, their heights for the next visit.
   const shown = tasks.length;
@@ -635,8 +750,12 @@ export const TaskColumn = memo(function TaskColumn({
     return () => controller.abort();
   }, [shown, status]);
   const ghosts = range(Math.min(count, PAGE)).map((slot) => (
-    <GhostCard key={slot} card={card(kept, slot, status)} />
+    <GhostCard key={slot} card={card(kept, slot, status, guess)} />
   ));
+  // A column not near the screen yet draws its rows at once when one of them is the new place of
+  // the card holding the focus (`BoardRow`), as a phone's column beside the one shown is.
+  const focused = visible ? null : focusedSlug();
+  const follows = focused !== null && tasks.some((task) => task.slug === focused);
   return (
     <section
       className={status === "signoff" ? "column signoff" : "column"}
@@ -656,6 +775,7 @@ export const TaskColumn = memo(function TaskColumn({
         height={reserved}
         onEnter={() => setVisible(true)}
         ghost={ghosts}
+        eager={follows}
       >
         {reading && (
           <div style={{ minHeight: `${reserved}px` }} data-pending="true">
@@ -708,6 +828,31 @@ export function windowOf(value: string): number {
   return value === "7" ? 7 : 1;
 }
 
+/** What the board's filters hold: the search typed and the window of finished tasks, in days. */
+export interface Filters {
+  search: string;
+  days: number;
+}
+
+/** The filters with `query` typed in the search: the board is read under it, in the window
+ * chosen. Every key reads, `boardlive`'s pause waiting for the next. */
+export function searched(filters: Filters, query: string, onFilter: Filter): Filters {
+  onFilter(query, filters.days);
+  return { ...filters, search: query };
+}
+
+/** The filters with the Finished tasks field's `value` chosen: the board is read in its window,
+ * under the search typed, the window already chosen too, which reads the board again. */
+export function windowChosen(filters: Filters, value: string, onFilter: Filter): Filters {
+  const days = windowOf(value);
+  onFilter(filters.search, days);
+  return { ...filters, days };
+}
+
+/** What the filters ask of the page: the board read under the search `query` in the window of
+ * `days`. */
+export type Filter = (query: string, days: number) => void;
+
 export interface TaskBoardProps {
   scope: string;
   tasks: Task[];
@@ -717,7 +862,7 @@ export interface TaskBoardProps {
   counts: [string, number][];
   statuses: string[];
   refreshed: number;
-  onFilter: (query: string, days: number) => void;
+  onFilter: Filter;
   onLoad: OnLoad;
 }
 
@@ -734,10 +879,18 @@ export function TaskBoard({
   onFilter,
   onLoad,
 }: TaskBoardProps) {
-  const [search, setSearch] = useState("");
+  const [filters, setFilters] = useState<Filters>({ search: "", days: 1 });
+  const { search, days } = filters;
   const [selected, setSelected] = useState("");
-  const [days, setDays] = useState(1);
   const [subtree, setSubtree] = useState(false);
+  // On a phone the search and the filters show only while their button is pressed (board.css); a
+  // desk shows them always, and no button.
+  const [filtering, setFiltering] = useState(false);
+  const pipeline = selected === "" || (PIPELINE as readonly string[]).includes(selected);
+  // Back to the board draws it where the reader left it.
+  const scroller = useRef<HTMLDivElement>(null);
+  useKeptPlace(scroller, pipeline);
+  useOneColumnASwipe(scroller, pipeline);
   const named = statuses.length === 0 ? counts.map(([status]) => status) : statuses;
   // With no machine reporting this project's work, nothing can place a task in Build or Test: one
   // narrow rail says so once, where two empty columns would each repeat it.
@@ -759,6 +912,12 @@ export function TaskBoard({
     return byColumn(filtered, place, kept.current);
   }, [tasks, search, selected, work, connected, signoff]);
   kept.current = columns;
+  // A stage's tasks waiting on the owner are drawn in the sign-off lane: its column counts the rest.
+  const lane = columns.get("signoff") ?? NONE;
+  const placed = useMemo(
+    () => stageCounts(counts, lane, (task) => taskStage(work, task, connected)),
+    [counts, lane, work, connected],
+  );
   const column = (status: string) => (
     <TaskColumn
       key={status}
@@ -766,7 +925,7 @@ export function TaskBoard({
       work={work}
       connected={connected}
       tasks={columns.get(status) ?? NONE}
-      count={counts.find(([one]) => one === status)?.[1] ?? 0}
+      count={placed.find(([one]) => one === status)?.[1] ?? 0}
       query={search}
       days={days}
       onLoad={onLoad}
@@ -775,7 +934,16 @@ export function TaskBoard({
   );
   return (
     <>
-      <div className="row filters">
+      <Button
+        type="button"
+        className="board-filters-toggle"
+        aria-expanded={filtering}
+        aria-controls="board-filters"
+        onClick={() => setFiltering(!filtering)}
+      >
+        Search and filters
+      </Button>
+      <div id="board-filters" className="row filters" data-open={filtering}>
         <label>
           {"Search tasks and messages "}
           <input
@@ -783,11 +951,7 @@ export function TaskBoard({
             type="search"
             placeholder="Slug or words"
             defaultValue=""
-            onInput={(event) => {
-              const query = event.currentTarget.value;
-              setSearch(query);
-              onFilter(query, days);
-            }}
+            onInput={(event) => setFilters(searched(filters, event.currentTarget.value, onFilter))}
           />
         </label>
         {/* biome-ignore lint/a11y/noLabelWithoutControl: the field's trigger, a button, is the control it labels */}
@@ -813,12 +977,7 @@ export function TaskBoard({
               ["1", "Last 24 hours"],
               ["7", "Last week"],
             ]}
-            onChange={(value) => {
-              // The window already chosen too: the board reads it again.
-              const window = windowOf(value);
-              setDays(window);
-              onFilter(search, window);
-            }}
+            onChange={(value) => setFilters(windowChosen(filters, value, onFilter))}
           />
         </label>
       </div>
@@ -841,9 +1000,10 @@ export function TaskBoard({
             Columns continue right → · Swipe, scroll, or focus the board and use arrow keys.
           </p>
         )}
-        {(selected === "" || (PIPELINE as readonly string[]).includes(selected)) && (
+        {pipeline && (
           // biome-ignore lint/a11y/useSemanticElements: the scroller is a region of its own, as the Dioxus page draws it
           <div
+            ref={scroller}
             className="board-scroll"
             // biome-ignore lint/a11y/noNoninteractiveTabindex: the keyboard scrolls the columns from it
             tabIndex={0}

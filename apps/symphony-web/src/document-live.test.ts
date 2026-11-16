@@ -20,7 +20,8 @@ import {
   took,
   vanished,
 } from "./document-live";
-import { CASES, reply } from "./testing";
+import { CASES, feeds as pageFeeds, reply, say } from "./testing";
+import { UNREACHABLE } from "./trouble";
 import type { Document, DocumentCard, DocumentOutline, Folder, Section } from "./wire";
 import { CACHE_FORMAT, FEED_EVENT, VERSION_HEADER } from "./wire";
 
@@ -132,16 +133,21 @@ interface Held {
   signal: AbortSignal | null;
 }
 
-/** The server, its answers held until a test gives them, on a page with nothing engaged. */
+/**
+ * The server, its answers held until a test gives them, on a page with nothing engaged. As the
+ * browser's fetch, a request refuses with its signal's reason once that ends before its answer.
+ */
 function serverOf(): Held[] {
   const asked: Held[] = [];
   pageWithoutWork();
   vi.stubGlobal(
     "fetch",
     (url: string, init?: RequestInit) =>
-      new Promise<Response>((answer) => {
+      new Promise<Response>((answer, refuse) => {
         const headers = (init?.headers ?? {}) as Record<string, string>;
-        asked.push({ url, headers, answer, signal: init?.signal ?? null });
+        const signal = init?.signal ?? null;
+        signal?.addEventListener("abort", () => refuse(signal.reason), { once: true });
+        asked.push({ url, headers, answer, signal });
       }),
   );
   return asked;
@@ -353,7 +359,7 @@ describe("the outline read naming its copy's tag", () => {
     current: { tag: '"o1"', outline: OUTLINE_NOW } as Copy | null,
   });
 
-  it("reads nothing again on a 304 naming no cursor once its page left", async () => {
+  it("fails, reading and changing nothing more, once its page left before its answer", async () => {
     const asked = serverOf();
     const store = deviceOf();
     const copy = held();
@@ -362,17 +368,32 @@ describe("the outline read naming its copy's tag", () => {
     await askedFor(asked, 1);
     expect(asked[0]?.signal?.aborted).toBe(false);
     left.abort();
-    // Given up on the wire as well.
+    // Given up on the wire as well, so the fetch refuses, as the browser's does.
     expect(asked[0]?.signal?.aborted).toBe(true);
-    asked[0]?.answer(answered(304, null));
-    await expect(read).resolves.toBeNull();
+    await expect(read).rejects.toMatchObject({ kind: "uncertain", text: UNREACHABLE });
     // The read is over: no second request can follow it.
     expect(asked).toHaveLength(1);
     expect(copy.current?.tag).toBe('"o1"');
     expect(store.keep).not.toHaveBeenCalled();
   });
 
-  it("keeps and changes nothing once its page left, whatever the server answered", async () => {
+  it("is none, reading nothing again, on a 304 naming no cursor its page left as it came", async () => {
+    const asked = serverOf();
+    const store = deviceOf();
+    const copy = held();
+    const left = new AbortController();
+    const read = readOutlineAt(URL, copy, item, left.signal);
+    await askedFor(asked, 1);
+    // The answer is in, but the page leaves before the read takes it up.
+    asked[0]?.answer(answered(304, null));
+    left.abort();
+    await expect(read).resolves.toBeNull();
+    expect(asked).toHaveLength(1);
+    expect(copy.current?.tag).toBe('"o1"');
+    expect(store.keep).not.toHaveBeenCalled();
+  });
+
+  it("keeps and changes nothing once its page left as the server answered, whatever it answered", async () => {
     const asked = serverOf();
     const store = deviceOf();
     const answers = [
@@ -386,8 +407,8 @@ describe("the outline read naming its copy's tag", () => {
       const left = new AbortController();
       const read = readOutlineAt(URL, copy, item, left.signal);
       await askedFor(asked, at + 1);
-      left.abort();
       asked[at]?.answer(answer);
+      left.abort();
       await expect(read).resolves.toBeNull();
       expect(copy.current).toEqual({ tag: '"o1"', outline: OUTLINE_NOW });
     }
@@ -775,26 +796,8 @@ describe("the bodies a page read", () => {
   });
 });
 
-/** The page's EventSource, each stream it opens kept in order: where, and how often closed. */
-function feeds() {
-  const opened: { url: string; closed: number; source: EventTarget }[] = [];
-  vi.stubGlobal("location", { href: "http://127.0.0.1/docs/DECISIONS.md" });
-  vi.stubGlobal(
-    "EventSource",
-    class extends EventTarget {
-      private readonly stream: (typeof opened)[number];
-      constructor(url: string) {
-        super();
-        this.stream = { url, closed: 0, source: this };
-        opened.push(this.stream);
-      }
-      close() {
-        this.stream.closed += 1;
-      }
-    },
-  );
-  return opened;
-}
+/** The page's WebSocket, each stream it opens kept in order: where, and how often closed. */
+const feeds = () => pageFeeds("http://127.0.0.1/docs/DECISIONS.md");
 
 describe("a document page's loops", () => {
   it("read the outline, follow the feed from its cursor, and read the bodies near the screen", async () => {
@@ -809,7 +812,7 @@ describe("a document page's loops", () => {
     asked[0]?.answer(answered(200, OUTLINE_NOW, '"o1"', 7));
     await askedFor(opened, 1);
     expect(opened[0]?.url).toBe(
-      "http://127.0.0.1/api/feed?since=7&document=docs%2FDECISIONS.md&sections=%5B%5D",
+      "ws://127.0.0.1/api/feed?since=7&document=docs%2FDECISIONS.md&sections=%5B%5D",
     );
     opened[0]?.source.dispatchEvent(new Event("open"));
     await vi.waitFor(() => expect(page.stale).toBe(false));
@@ -857,9 +860,7 @@ describe("a document page's loops", () => {
       /** The stream `at` opens, then says the event `version`, which moves no region. */
       const says = async (at: number, version: number) => {
         opened[at]?.source.dispatchEvent(new Event("open"));
-        opened[at]?.source.dispatchEvent(
-          new MessageEvent(FEED_EVENT, { data: JSON.stringify({ version, changes: [] }) }),
-        );
+        say(opened[at]?.source, FEED_EVENT, JSON.stringify({ version, changes: [] }));
         await vi.advanceTimersByTimeAsync(0);
         expect(page.cursor).toBe(version);
       };
@@ -913,7 +914,7 @@ describe("a document page's loops", () => {
     await askedFor(opened, 1);
     opened[0]?.source.dispatchEvent(new Event("open"));
     await vi.waitFor(() => expect(page.stale).toBe(false));
-    opened[0]?.source.dispatchEvent(new MessageEvent("delta", { data: '{"version":"x"}' }));
+    say(opened[0]?.source, FEED_EVENT, '{"version":"x"}');
     await vi.waitFor(() => expect(page.stale).toBe(true));
     expect(opened[0]?.closed).toBe(1);
     left.abort();
@@ -971,9 +972,16 @@ describe("a document page's loops", () => {
       asked[0]?.answer(answered(200, OUTLINE_NOW, '"o1"', 7));
       await vi.advanceTimersByTimeAsync(0);
       opened[0]?.source.dispatchEvent(new Event("open"));
-      await vi.advanceTimersByTimeAsync(12_000);
+      await vi.advanceTimersByTimeAsync(0);
       expect(page.stale).toBe(false);
-      await vi.advanceTimersByTimeAsync(1_000);
+      // Each timer the advance fires costs a real turn of the event loop, which a loaded machine
+      // makes slow: the clock jumps across the silence (`setSystemTime` moves the date and every
+      // waiting timer alike, firing none), so only the follow's waits on either side of 12.5 s
+      // run, not 12 s of every loop's polls.
+      vi.setSystemTime(Date.now() + 12_200);
+      await vi.advanceTimersByTimeAsync(200);
+      expect(page.stale).toBe(false);
+      await vi.advanceTimersByTimeAsync(200);
       expect(page.stale).toBe(true);
       expect(opened[0]?.closed).toBe(1);
       left.abort();
@@ -984,15 +992,35 @@ describe("a document page's loops", () => {
     }
   });
 
-  it("do nothing more once the page left before the outline answered", async () => {
+  it("say and change nothing once the page left before the outline answered", async () => {
     const asked = serverOf();
     const store = deviceOf();
     const page = pageOf();
     const left = new AbortController();
     const done = documentLive(page, left.signal);
     await askedFor(asked, 1);
+    const freshness = page.freshness;
+    const told = vi.fn();
+    page.subscribe(told);
     left.abort();
+    await done;
+    expect(asked[0]?.signal?.aborted).toBe(true);
+    expect(page.trouble).toBeNull();
+    expect(page.freshness).toEqual(freshness);
+    expect(page.state).toBeNull();
+    expect(store.keep).not.toHaveBeenCalled();
+    expect(told).not.toHaveBeenCalled();
+  });
+
+  it("do nothing more once the page left as the outline answered", async () => {
+    const asked = serverOf();
+    const store = deviceOf();
+    const page = pageOf();
+    const left = new AbortController();
+    const done = documentLive(page, left.signal);
+    await askedFor(asked, 1);
     asked[0]?.answer(answered(200, OUTLINE_NOW, '"o1"', 7));
+    left.abort();
     await done;
     expect(page.state).toBeNull();
     // Nothing kept after the page left: the device holds only what it held.
@@ -1000,7 +1028,7 @@ describe("a document page's loops", () => {
     expect(page.epoch).toBe(0);
   });
 
-  it("read nothing again once the page left before a 304 naming no cursor", async () => {
+  it("read nothing again once the page left as a 304 naming no cursor came", async () => {
     const asked = serverOf();
     const store = deviceOf({
       [`document:${PATH} ${OUTLINE}`]: { value: OUTLINE_NOW, etag: '"o1"', saved: 1_000 },
@@ -1010,8 +1038,8 @@ describe("a document page's loops", () => {
     const done = documentLive(page, left.signal);
     await askedFor(asked, 1);
     expect(asked[0]?.headers).toEqual({ "If-None-Match": '"o1"' });
-    left.abort();
     asked[0]?.answer(answered(304, null));
+    left.abort();
     await done;
     expect(asked).toHaveLength(1);
     expect(store.keep).not.toHaveBeenCalled();
@@ -1104,6 +1132,17 @@ describe("a read of the bodies near the screen", () => {
     await end();
   });
 
+  it("says and changes nothing once the page left before its bodies answered", async () => {
+    const { asked, page, end } = await reading();
+    const told = vi.fn();
+    page.subscribe(told);
+    await end();
+    expect(asked[0]?.signal?.aborted).toBe(true);
+    expect(page.trouble).toBeNull();
+    expect(page.loaded).toEqual(new Set());
+    expect(told).not.toHaveBeenCalled();
+  });
+
   it("fails on an answer it cannot read", async () => {
     const { asked, page, end } = await reading();
     asked[0]?.answer(reply(200, { version: "seven" }));
@@ -1172,11 +1211,17 @@ describe("a folder page's loop", () => {
     const done = followFolder(page, left.signal);
     await askedFor(asked, 1);
     expect(asked[0]?.signal?.aborted).toBe(false);
+    const freshness = page.freshness;
+    const told = vi.fn();
+    page.subscribe(told);
     left.abort();
     expect(asked[0]?.signal?.aborted).toBe(true);
-    asked[0]?.answer(reply(200, FOLDER, '"f1"'));
     await done;
     expect(page.folder).toBeNull();
+    expect(page.error).toBeNull();
+    expect(page.missing).toBe(false);
+    expect(page.freshness).toEqual(freshness);
+    expect(told).not.toHaveBeenCalled();
   });
 
   it("shows nothing it drew of a folder gone while away", async () => {

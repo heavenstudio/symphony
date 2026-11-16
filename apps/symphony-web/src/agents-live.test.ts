@@ -10,7 +10,6 @@ import {
   Followed,
   finished,
   followedTasks,
-  followingCount,
   followingLabel,
   happening,
   held,
@@ -34,6 +33,21 @@ import { freshnessWord, NO_WORK, phaseLabel, scopedPhases } from "./work";
 
 const SAMPLES = CASES.samples;
 
+// React's `flushSync` stood in for, as no DOM runs here: whether a draw comes within it.
+const react = vi.hoisted(() => ({ flushing: false }));
+
+vi.mock("react-dom", async (original) => ({
+  ...(await original<typeof import("react-dom")>()),
+  flushSync: <R>(draw: () => R): R => {
+    react.flushing = true;
+    try {
+      return draw();
+    } finally {
+      react.flushing = false;
+    }
+  },
+}));
+
 /** The agents page as the server writes it, with every field. */
 const PAGE = readAgentPage(SAMPLES.agentPage) as AgentPageRead;
 
@@ -52,7 +66,8 @@ describe("the agents page's reads", () => {
 
   it("read what a server leaves out as serde's defaults", () => {
     const bare = SAMPLES.bareAgent as Record<string, unknown>;
-    const { callback, chat, slots, session_url, in_process, go, parent, ...older } = bare;
+    const { following, callback, chat, slots, session_url, in_process, go, parent, ...older } =
+      bare;
     expect(readAgent(older)).toEqual(readAgent(bare));
     expect(readAgent(bare)).toMatchObject({ handle: "birch", chat: false, go: null, parent: null });
     const { machine_work, ...view } = field(SAMPLES.emptyAgentPage, "view") as Record<
@@ -74,6 +89,12 @@ describe("the agents page's reads", () => {
       ["callback", false],
       ["tasks", null],
       ["tasks", [{ slug: "w/a", role: "executor" }]],
+      ["following", null],
+      ["following", "2"],
+      // A `usize`: none below zero, none with a fraction, none past what a double holds whole.
+      ["following", -1],
+      ["following", 2.5],
+      ["following", 2 ** 53],
       ["chat", "yes"],
       ["in_process", 1],
       ["last_tool_call", "now"],
@@ -81,6 +102,8 @@ describe("the agents page's reads", () => {
       ["state_detail", { recipe: "test-rs", phase: "running", since: "1" }],
       ["last_message", { slug: "w/a", ts: "2", text: "Built." }],
       ["slots", { open: 3 }],
+      ["slots", { open: -1, cap: 8 }],
+      ["slots", { open: 3, cap: 8.5 }],
       ["go", { url: "https://example.com" }],
       ["go", { handle: "birch", pane: 2 }],
     ] as [string, unknown][]) {
@@ -94,6 +117,9 @@ describe("the agents page's reads", () => {
       url: null,
       pane: null,
     });
+    // The counts' edges serde takes.
+    const edges = { following: 0, slots: { open: 0, cap: Number.MAX_SAFE_INTEGER } };
+    expect(readAgent({ ...whole, ...edges })).toMatchObject(edges);
   });
 
   it("refuse a page or a view without what the page draws", () => {
@@ -108,6 +134,8 @@ describe("the agents page's reads", () => {
       { ...page, tasks: null },
       { ...page, tasks: [{ slug: "w/a" }] },
       { ...page, total: "2" },
+      { ...page, total: -1 },
+      { ...page, total: 1.5 },
       { ...page, next: 1 },
       { ...page, local: "yes" },
       null,
@@ -201,18 +229,12 @@ describe("an agent's line", () => {
 });
 
 describe("what an agent follows", () => {
-  const heldTask = (slug: string, role: string, status: string) => ({ slug, role, status });
-
-  it("counts the open tasks it orchestrates, in words", () => {
-    const agent = (tasks: ReturnType<typeof heldTask>[]) => anAgent("a", { tasks });
-    expect(followingCount(agent([heldTask("a/done", "orchestrator", "done")]))).toBe(0);
-    expect(followingCount(agent([heldTask("a/w", "worker", "in_progress")]))).toBe(0);
-    const two = agent([
-      heldTask("a/one", "orchestrator", "ready"),
-      heldTask("a/two", "orchestrator", "review"),
-      heldTask("a/old", "orchestrator", "cancelled"),
-    ]);
-    expect(followingCount(two)).toBe(2);
+  it("counts the open tasks it orchestrates as the server counts them, in words", () => {
+    const whole = field(SAMPLES.agentChange, "value") as Record<string, unknown>;
+    expect(readAgent(whole)?.following).toBe(2);
+    expect(readAgent({ ...whole, following: 48 })?.following).toBe(48);
+    const { following, ...older } = whole;
+    expect(readAgent(older)?.following).toBe(0);
     expect(followingLabel(1)).toBe("Following 1 open task");
     expect(followingLabel(2)).toBe("Following 2 open tasks");
   });
@@ -484,6 +506,10 @@ afterEach(() => {
 
 /** Lets `ms` pass, and what it settles run. */
 const pass = (ms = 0) => vi.advanceTimersByTimeAsync(ms);
+/** Ends the waits pending now (a retry's), and runs what they start. */
+const waitEnds = () => vi.runOnlyPendingTimersAsync();
+/** Runs every wait to its end, and those they start, until none is left: nothing tries again. */
+const settled = () => vi.runAllTimersAsync();
 
 describe("the agents' first read", () => {
   it("draws the page as the server answers it, both cursors as it says", async () => {
@@ -535,6 +561,39 @@ describe("the agents' first read", () => {
     await agents.load();
     expect(d.view).toBeNull();
     expect(host.redraw).not.toHaveBeenCalled();
+  });
+});
+
+describe("the agents' first read after the board's", () => {
+  it("is tried again by itself while it fails, until it answers", async () => {
+    let refused = 2;
+    const { agents, d, asked } = live(() =>
+      refused-- > 0 ? answer(503) : answer(200, SAMPLES.agentPage),
+    );
+    await agents.first();
+    expect(d.error).toBe("The server answered 503");
+    expect(asked).toHaveLength(1);
+    await waitEnds();
+    expect(asked).toHaveLength(2);
+    await waitEnds();
+    expect(asked).toHaveLength(3);
+    expect(d.view?.agents).toHaveLength(2);
+    expect(d.error).toBe("");
+    await settled();
+    expect(asked).toHaveLength(3);
+  });
+
+  it("stops trying once the next board read starts it again, or the page is gone", async () => {
+    const { agents, asked, page } = live(() => answer(503));
+    await agents.first();
+    await agents.first();
+    expect(asked).toHaveLength(2);
+    await waitEnds();
+    // The newer read's retry alone: the first one's stopped.
+    expect(asked).toHaveLength(3);
+    page.abort();
+    await settled();
+    expect(asked).toHaveLength(3);
   });
 });
 
@@ -694,6 +753,19 @@ describe("a feed event on the agents page", () => {
     expect(held).toHaveBeenCalledWith("[id^=message-], [id^=child-], [data-slug]");
   });
 
+  it("holds the reader's place, then draws the change at once, within the event", () => {
+    const { agents, held, host } = shown([anAgent("amber")], [aTask("w/a")]);
+    const order: string[] = [];
+    held.mockImplementation(() => order.push("held"));
+    host.redraw.mockImplementation(() => order.push(react.flushing ? "drawn" : "drawn later"));
+    agents.heard(event(["task", { key: "w/b", value: aTask("w/b") }]));
+    // An event that changes nothing the page shows neither holds nor draws.
+    agents.heard(event(["task-fields", { key: "w/x", fields: { title: "Elsewhere" } }]));
+    agents.heard(event(["agent", { key: "birch", value: anAgent("birch") }]));
+    expect(order).toEqual(["held", "drawn", "held", "drawn"]);
+    expect(react.flushing).toBe(false);
+  });
+
   it("changes the fields of a task it lists, and its holders' health", () => {
     const { agents, d, asked } = shown(
       [anAgent("amber")],
@@ -797,7 +869,7 @@ describe("the board's loop on the agents page", () => {
     const listen = { addEventListener: () => {}, removeEventListener: () => {} };
     vi.stubGlobal("window", listen);
     vi.stubGlobal("document", { ...listen, getElementById: () => null, querySelector: () => null });
-    vi.stubGlobal("EventSource", undefined);
+    vi.stubGlobal("WebSocket", undefined);
     vi.stubGlobal("location", { reload: vi.fn() });
     vi.stubGlobal("sessionStorage", { getItem: () => null, setItem: () => {} });
     const running = agents.start({ refresh: vi.fn(), connected: vi.fn(), heard: vi.fn() });

@@ -6,7 +6,7 @@ use crate::gate::Gate;
 use symphony_board::Health;
 use symphony_board::health::LIVE_SECONDS;
 use symphony_board::rows::{MessageRow, SessionRow, TaskRow};
-use symphony_board::{NewSession, NewTask, Store, Task, rpc};
+use symphony_board::{NewSession, NewTask, Raw, Store, Task, rpc};
 
 fn a_board_of(tasks: usize) -> Seed {
     let mut seed = Seed::default()
@@ -383,8 +383,9 @@ fn claimed_mid_read<T: Send>(read: impl FnOnce(&Store) -> T + Send) -> T {
         let opening = gate.opening();
         let reading = scope.spawn(|| read(&f.store));
         gate.reached(); // the read is in its stall
-        board
-            .write("UPSERT gate:read SET held = false;", serde_json::json!({}))
+        Raw::on(&board)
+            .row("gate", "read")
+            .put(serde_json::json!({"held": false}))
             .unwrap(); // the claim's own read does not stall
         other.claim("sim/jump", "amber-heron").unwrap();
         assert!(
@@ -526,14 +527,28 @@ fn a_rule_is_its_read_and_one_write_that_gives_back_the_task_as_written() {
     let (requests, moved) = counted(&f, || f.store.move_to("p/a", "review", &worker).unwrap());
     assert_eq!((requests, moved.status.as_str()), (2, "review"));
     assert_eq!(moved, f.store.get("p/a").unwrap());
+    // The orchestrator role given reads the taker's open tasks too, for the limit on them, between
+    // the rule's read and its write (`Store::gaining`).
     let (requests, held) = counted(&f, || {
         f.store.take_role("p/b", &orch, "orchestrator").unwrap()
     });
     assert_eq!(
         (requests, held.holders("orchestrator")),
-        (2, vec![orch.as_str()])
+        (3, vec![orch.as_str()])
     );
     assert_eq!(held, f.store.get("p/b").unwrap());
+    // A red's takes no place, so its take reads no more than the rule's read.
+    let filer = f.session(symphony_board::red::FILER);
+    f.task_with(NewTask {
+        red: Some("main".into()),
+        ..NewTask::new("tests/main-red-1", "A red", &filer)
+    });
+    let (requests, _) = counted(&f, || {
+        f.store
+            .take_role("tests/main-red-1", &orch, "orchestrator")
+            .unwrap()
+    });
+    assert_eq!(requests, 2);
 }
 
 #[test]
@@ -597,12 +612,11 @@ fn a_definition_that_fails_leaves_no_board_taken_for_made() {
         );
     made.expect("the database kept meeting other writes")
         .unwrap();
-    client
-        .query(
-            "CREATE task:a SET sid = 1; CREATE task:b SET sid = 1;",
-            serde_json::json!({}),
-        )
-        .unwrap();
+    for row in ["a", "b"] {
+        (Raw::on(&client).row("task", row))
+            .create(serde_json::json!({"sid": 1}))
+            .unwrap();
+    }
     assert!(Store::open(client).is_err());
     for _ in 0..2 {
         let again = Store::open(rpc::Client::new(&addr, "sf", &db));

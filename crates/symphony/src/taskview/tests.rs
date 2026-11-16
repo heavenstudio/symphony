@@ -43,6 +43,213 @@ fn project_task_counts_exclude_children_and_grandchildren() {
     );
 }
 
+/// Under its parent, a finished instruction to do or review the parent is no row of its own; a
+/// slice, an errand and any open subtask are.
+#[test]
+fn only_a_finished_instruction_to_work_on_or_review_its_parent_is_left_out_under_it() {
+    let staffing = [
+        "feature/work",
+        "feature/review",
+        "feature/staff-review-1",
+        "feature/staff-review-12",
+        "feature/part/work",
+        "work",
+    ];
+    for slug in staffing {
+        for finished in ["done", "cancelled"] {
+            assert!(
+                !listed_under_parent(slug, true, finished),
+                "{slug} {finished}"
+            );
+        }
+        for open in [
+            "concept",
+            "design",
+            "backlog",
+            "ready",
+            "in_progress",
+            "review",
+            "blocked",
+        ] {
+            assert!(listed_under_parent(slug, true, open), "{slug} {open}");
+        }
+        // A slice of that name is work on the parent's branch, listed whatever its status.
+        assert!(listed_under_parent(slug, false, "done"), "slice {slug}");
+    }
+    let errands = [
+        "feature/visual",
+        "feature/merge-main",
+        "feature/review-merge",
+        "feature/rework",
+        "feature/work-2",
+        "feature/reviews",
+        "feature/staff-review-",
+        "feature/staff-review-x",
+        "feature/staff-review-2b",
+        "feature/work/notes",
+    ];
+    for slug in errands {
+        for status in ["done", "cancelled", "ready"] {
+            assert!(listed_under_parent(slug, true, status), "{slug} {status}");
+        }
+    }
+}
+
+#[test]
+fn a_questions_task_is_open_until_it_is_done_or_cancelled() {
+    let task = |slug: &str, status: &str| Task {
+        slug: slug.into(),
+        title: slug.into(),
+        body: String::new(),
+        status: status.into(),
+        priority: 2,
+        parent: None,
+        created_by: "owner".into(),
+        created: 0.0,
+        updated: 0.0,
+        links: Vec::new(),
+        depends: Vec::new(),
+        roles: Vec::new(),
+        instruction: false,
+        fields: BTreeMap::new(),
+    };
+    let tasks: Vec<Task> = [
+        ("a", "backlog"),
+        ("b", "in_progress"),
+        ("c", "done"),
+        ("d", "review"),
+        ("e", "cancelled"),
+        ("f", "blocked"),
+    ]
+    .iter()
+    .map(|(slug, status)| task(slug, status))
+    .collect();
+    assert_eq!(open(&tasks), ["a", "b", "d", "f"]);
+    assert_eq!(open(&[]), Vec::<String>::new());
+}
+
+#[test]
+fn a_reviewers_verdict_is_news_for_every_person_and_any_other_line_is_none() {
+    let line = |kind: &str, text: &str| symphony_board::Message {
+        id: 6240,
+        slug: "tools/x".into(),
+        sender: "slate-wren".into(),
+        recipient: Some("@executor".into()),
+        kind: kind.into(),
+        text: text.into(),
+        ts: 1_763_213_045.25,
+    };
+    let given = verdict(&line("verdict", "changes: the hash moved")).unwrap();
+    assert_eq!(
+        given,
+        TaskVerdict {
+            id: 6240,
+            task: "tools/x".into(),
+            verdict: "changes".into(),
+            reviewer: "slate-wren".into(),
+            at: 1_763_213_045.25,
+        }
+    );
+    assert_eq!(verdict(&line("verdict", "done: integrated")), None);
+    assert_eq!(verdict(&line("msg", "approve")), None);
+    let questions = BTreeMap::from([("owner".to_string(), 2)]);
+    let asked = asks(questions.clone(), Some(&given));
+    assert_eq!(asked.questions, questions);
+    assert_eq!(
+        asked.verdicts.keys().collect::<Vec<_>>(),
+        PEOPLE.iter().collect::<Vec<_>>()
+    );
+    assert_eq!(asked.verdicts["owner"], given);
+    assert!(
+        asks(questions, None).verdicts.is_empty(),
+        "no verdict yet, none for anyone"
+    );
+}
+
+/// The activity list's `answered` and the questions still waiting on the owner
+/// ([`symphony_board::Store::questions_waiting`]) are one rule, written in Rust here and in the
+/// store's SurrealQL: on one board, a line both read (an agent's message to the owner on an open
+/// task) is answered in the list exactly when it is not among those waiting.
+#[test]
+fn the_activity_says_answered_of_exactly_the_owners_questions_no_longer_waiting() {
+    use super::page_tests::store_fixture::{Fixture, NOW, Seed};
+    use std::collections::BTreeSet;
+    let line = |id: i32, slug: &str, sender: &str, to: Option<&str>, kind: &str| {
+        symphony_board::rows::MessageRow {
+            id: id.into(),
+            slug: slug.into(),
+            sender: sender.into(),
+            recipient: to.map(str::to_owned),
+            kind: kind.into(),
+            text: format!("line {id}"),
+            ts: NOW + f64::from(id),
+        }
+    };
+    let (agent, owner, to_owner) = ("amber-heron", "owner", Some("owner"));
+    let lines = vec![
+        // One post of the owner's answers every question before it on its thread, none after it.
+        line(1, "q/jump", agent, to_owner, "msg"),
+        line(2, "q/jump", agent, to_owner, "msg"),
+        line(3, "q/jump", owner, None, "msg"),
+        line(4, "q/jump", agent, to_owner, "msg"),
+        // A line of the owner's of any kind answers: a move they made.
+        line(5, "q/dock", agent, to_owner, "msg"),
+        line(6, "q/dock", owner, None, "system"),
+        // One before the question, or after it on another thread, answers nothing.
+        line(7, "q/cap", owner, None, "msg"),
+        line(8, "q/cap", agent, to_owner, "msg"),
+        line(9, "q/done", owner, None, "msg"),
+        // Lines to the owner the questions leave out: a verdict, and a question on a done task.
+        line(10, "q/cap", agent, to_owner, "verdict"),
+        line(11, "q/done", agent, to_owner, "msg"),
+    ];
+    let mut seed = Seed::default()
+        .task("q/jump", "in_progress")
+        .task("q/dock", "review")
+        .task("q/cap", "blocked")
+        .task("q/done", "done");
+    seed.dump.messages.clone_from(&lines);
+    let f = Fixture::new(seed);
+    let open: Vec<String> = ["q/jump", "q/dock", "q/cap"].map(String::from).into();
+
+    let waiting: BTreeSet<i64> = (f.store.questions_waiting(owner, &open).unwrap().iter())
+        .map(|question| question.id)
+        .collect();
+    assert_eq!(waiting, BTreeSet::from([4, 8]));
+    assert_eq!(
+        questions(&f.store, &open).unwrap(),
+        BTreeMap::from([(owner.to_string(), 2)])
+    );
+    let listed: BTreeMap<i64, bool> = (activity(&f.store).unwrap().iter())
+        .map(|item| {
+            let id = item.id.strip_prefix("task#").and_then(|id| id.parse().ok());
+            (id.expect("a task message's item"), item.answered)
+        })
+        .collect();
+    assert_eq!(
+        listed.keys().copied().collect::<Vec<_>>(),
+        [1, 2, 4, 5, 8, 10, 11],
+        "the list holds every line to the owner"
+    );
+    let both: Vec<i64> = (lines.iter())
+        .filter(|line| {
+            line.recipient.as_deref() == to_owner
+                && line.kind == "msg"
+                && line.sender != owner
+                && open.contains(&line.slug)
+        })
+        .map(|line| line.id)
+        .collect();
+    assert_eq!(both, [1, 2, 4, 5, 8]);
+    for id in both {
+        assert_eq!(
+            listed[&id],
+            !waiting.contains(&id),
+            "line {id}: answered in the list, against waiting among the questions"
+        );
+    }
+}
+
 #[test]
 fn a_brief_within_the_limit_is_its_whole_reply() {
     let tree = Tree::new();

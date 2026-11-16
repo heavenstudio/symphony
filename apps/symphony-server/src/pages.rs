@@ -2,11 +2,13 @@
 //! wrong address answers. Their styles are the client's own tokens and frame (`board.css`'s
 //! `:root` blocks and `frame.css`, as every page kind loads them), the shell's notice styles and
 //! `pages.css`; a project's page also takes the project's theme package, as each of its pages
-//! does ([`crate::shell::page`]). A miss under `/api/` answers JSON, as every API error does.
+//! does ([`crate::shell::page`]). Each header opens as the client's does, with the Symphony's mark
+//! and wordmark or the theme's own ([`crate::mark`]), and a machine page's icon is the Symphony's.
+//! A miss under `/api/` answers JSON, as every API error does.
 //!
-//! `board.css` and `frame.css` here are copies of the client's (`apps/symphony-ui/assets/`), so the
-//! package crates.io gets builds alone: the client reads its own through `asset!`, which takes no
-//! file outside its crate. crates/symphony/tests/packages.rs holds each copy equal to the client's.
+//! `board.css` and `frame.css` here are copies of the client's (`apps/symphony-web/src/styles/`),
+//! so the package crates.io gets builds alone, with no file outside it.
+//! crates/symphony/tests/packages.rs holds each copy equal to the client's.
 
 use std::path::Path;
 use std::sync::LazyLock;
@@ -16,22 +18,12 @@ use axum::response::{IntoResponse, Json, Response};
 use symphony::markup::escape;
 use symphony_api::page_names;
 
-use crate::shell::{NOTICE_STYLE, REGION};
+use crate::shell::{NO_ICON, NOTICE_STYLE, REGION};
 
 const BOARD: &str = include_str!("board.css");
 const FRAME: &str = include_str!("frame.css");
 const NOTICES: &str = include_str!("notices.css");
 const PAGES: &str = include_str!("pages.css");
-
-/// The tab's icon of a page no project's theme names one for: two beamed notes on the client's
-/// primary blue.
-const ICON: &str = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 \
-                    32 32'%3E%3Crect width='32' height='32' rx='8' fill='%232f5d9e'/%3E%3Cpath \
-                    fill='%23fff' d='M12 22.5a3 3 0 1 1-2-2.83V9l12-3v12.5a3 3 0 1 1-2-2.83V10.5l-8 \
-                    2z'/%3E%3C/svg%3E";
-
-/// The icon link of a page with none yet, which [`crate::shell::page`] gives a theme's icon.
-const NO_ICON: &str = "<link rel=\"icon\" href=\"data:,\">";
 
 /// Every style the pages carry, in their head.
 static STYLE: LazyLock<String> = LazyLock::new(|| {
@@ -51,9 +43,9 @@ fn tokens(board: &str) -> &str {
     &board[start..end]
 }
 
-/// A page: the header's `links`, the crumb `crumb` (none when it is empty), `notice` in the notice
-/// region and `body` after it, titled `title`.
-fn frame(title: &str, links: &str, crumb: &str, notice: &str, body: &str) -> String {
+/// A page: its `icon` links, the header's `links`, the crumb `crumb` (none when it is empty),
+/// `notice` in the notice region and `body` after it, titled `title`.
+fn frame(title: &str, icon: &str, links: &str, crumb: &str, notice: &str, body: &str) -> String {
     let crumbs = if crumb.is_empty() {
         String::new()
     } else {
@@ -64,7 +56,7 @@ fn frame(title: &str, links: &str, crumb: &str, notice: &str, body: &str) -> Str
     };
     format!(
         "<!DOCTYPE html>\n<html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" \
-         content=\"width=device-width, initial-scale=1\"><title>{title}</title>{NO_ICON}{style}\
+         content=\"width=device-width, initial-scale=1\"><title>{title}</title>{icon}{style}\
          </head><body><div class=\"app-frame\"><header class=\"app-header\" id=\"top\">{links}\
          {crumbs}</header><main class=\"server-page\" id=\"main\">{REGION}{notice}</section>{body}\
          </main></div></body></html>\n",
@@ -92,17 +84,14 @@ fn pages(links: Vec<(String, &str)>, active: Option<&str>) -> String {
     nav
 }
 
-/// `page` with the Symphony's icon when nothing gave it one.
-fn iconed(page: String) -> String {
-    page.replacen(NO_ICON, &format!("<link rel=\"icon\" href=\"{ICON}\">"), 1)
-}
-
-/// A page of the machine's, under no project: its header's one page is the project list, lit
-/// when this page is it, and `crumb`, when there is one, names what this page is instead (a miss).
+/// A page of the machine's, under no project, in the Symphony's own look: its icon, and a header
+/// that opens with its mark and wordmark. The header's one page is the project list, lit when
+/// this page is it, and `crumb`, when there is one, names what this page is instead (a miss).
 pub(crate) fn machine(title: &str, crumb: &str, notice: &str, body: &str) -> String {
     let list = vec![("/".to_string(), page_names::PROJECTS)];
     let active = crumb.is_empty().then_some("/");
-    iconed(frame(title, &pages(list, active), crumb, notice, body))
+    let links = crate::mark::brand("", "") + &pages(list, active);
+    frame(title, &crate::mark::links(""), &links, crumb, notice, body)
 }
 
 /// A page of the project at `root`, served at `base`: its theme, and the header its client pages
@@ -130,7 +119,12 @@ fn project_page(
 ) -> String {
     let mut view = crate::api::project_view(root);
     view.base = base.to_string();
-    let mut links = String::new();
+    let icon = if view.mark.is_empty() {
+        String::new()
+    } else {
+        view.here(&format!("/{}", view.mark))
+    };
+    let mut links = crate::mark::brand(&view.wordmark, &icon);
     if !base.is_empty() {
         links.push_str(&format!(
             "<a href=\"/\" class=\"project-switch\">{}</a>",
@@ -148,9 +142,9 @@ fn project_page(
         .map(|(href, name)| (view.here(&href), name))
         .collect();
     links.push_str(&pages(all, None));
-    let shell = frame("", &links, crumb, "", body);
+    let shell = frame("", NO_ICON, &links, crumb, "", body);
     let page = crate::shell::page(&shell, root, base, notice);
-    iconed(page.replacen("<title>", &format!("<title>{} · ", escape(title)), 1))
+    page.replacen("<title>", &format!("<title>{} · ", escape(title)), 1)
 }
 
 /// A notice for the notice region: `role` `status` draws it as a warning, `alert` as a refusal;

@@ -1,8 +1,9 @@
-// A select field, drawn as the Dioxus entry's (`components/select/deferred.rs`): the page draws its
-// trigger, and opening it asks the overlay module, the Dioxus program's kind the shell loads on a
-// first use, for its popup (`window.reviewOverlay`, shell.js). The request is data and one
-// callback, which the popup answers with the value chosen, or nothing once it closes. The shell
-// answers nothing for a field whose page it leaves.
+// A select field, drawn as the chat's was (the copied components' deferred select): the
+// page draws its trigger, and opening it asks the overlay module, this client's persistent kind
+// `overlay`, which the shell loads on a first use or ahead once the page is idle, for its popup
+// (`window.reviewOverlay`, shell.js).
+// The request is data and one callback, which the popup answers with the value chosen, or nothing
+// once it closes. The shell answers nothing for a field whose page it leaves.
 
 import { useEffect, useState } from "react";
 import { useMount } from "./mount";
@@ -36,6 +37,8 @@ export function keyAction(key: string, open: boolean): "close" | "open" | "stay"
 let fields = 0;
 
 export interface SelectFieldProps {
+  /** The trigger's id, which a label names; one of the page's own otherwise. */
+  id?: string;
   label: string;
   value: string;
   /** Each option's value and text, in order. */
@@ -52,13 +55,13 @@ export class FieldControl {
   /** Whether the popup is open. */
   open = false;
   /** What the field draws: its label, value and options, and what a choice calls. */
-  field: Omit<SelectFieldProps, "disabled">;
+  field: Omit<SelectFieldProps, "disabled" | "id">;
   /** Whether the field is drawn (`start`), outside which an answer does nothing. */
   private drawn = false;
 
   constructor(
     readonly id: string,
-    field: Omit<SelectFieldProps, "disabled">,
+    field: Omit<SelectFieldProps, "disabled" | "id">,
     private readonly mount: AbortSignal,
     private readonly shown: (open: boolean) => void,
   ) {
@@ -136,6 +139,7 @@ export class FieldControl {
  * its focus back (`FieldControl`).
  */
 export function SelectField({
+  id: named,
   label,
   value,
   options,
@@ -147,7 +151,7 @@ export function SelectField({
   const [control] = useState(
     () =>
       new FieldControl(
-        `symphony-web-field-${fields++}`,
+        named ?? `symphony-web-field-${fields++}`,
         { label, value, options, onChange },
         mount,
         setOpen,

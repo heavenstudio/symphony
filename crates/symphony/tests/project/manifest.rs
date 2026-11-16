@@ -9,6 +9,7 @@ use symphony::project::{Entrypoint, FILE, PANES, Project, TRANSPORTS, slug};
 use super::Tree;
 mod limits;
 mod machine_work;
+mod settings_check;
 mod stamps;
 
 /// A project folder called `name` inside a temporary tree.
@@ -337,6 +338,10 @@ fn an_entrypoint_that_cannot_serve_is_refused_by_name() {
         (
             entry("/reports/", "spec"),
             "[[entrypoints]] /reports/ lies on /reports, a route the Symphony answers",
+        ),
+        (
+            entry("/runs/", "spec"),
+            "[[entrypoints]] /runs/ lies on /runs, a route the Symphony answers",
         ),
         (
             entry("/artifacts/uploads/x/", "spec"),

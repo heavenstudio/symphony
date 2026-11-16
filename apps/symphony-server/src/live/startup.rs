@@ -19,6 +19,8 @@ impl Hub {
         embedded_ui: bool,
         drain_chat: bool,
     ) -> Result<Arc<Self>, String> {
+        // The worker's reach is held to the repository the hub holds its folder to, as it is made
+        // ([`Hub::new`]).
         Self::start_watching::<notify::RecommendedWatcher>(
             root,
             ui_dist,

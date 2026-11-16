@@ -116,7 +116,7 @@ fn wanted(raw: &[u8], env: &HashMap<String, String>) -> bool {
 
 /// The board's binary: `TASKS_BIN`, else the project's `.target/bin/tasks` while it names a build, else
 /// its main checkout's ([`main_link`]), else the build the recipes run ([`crate::builds::find`]: the
-/// main checkout's link from a linked worktree, else `tasks` on `PATH`).
+/// main checkout's link from a linked worktree, else the machine's release's, else `tasks` on `PATH`).
 fn binary(env: &HashMap<String, String>, raw: &[u8]) -> Option<PathBuf> {
     if let Some(named) = set(env, "TASKS_BIN") {
         return Some(PathBuf::from(named));
@@ -155,8 +155,10 @@ fn binary(env: &HashMap<String, String>, raw: &[u8]) -> Option<PathBuf> {
         return Some(link);
     }
     common.as_deref().and_then(main_link).or_else(|| {
-        // As the recipes find it: the main checkout's link, else the search path's.
-        crate::builds::find(&root, TASKS, set(env, "PATH").map(std::ffi::OsStr::new))
+        // As the recipes find it: the main checkout's link, else the machine's release's, else the
+        // search path's.
+        let beyond = crate::builds::Beyond::of(|name| set(env, name).map(std::ffi::OsString::from));
+        crate::builds::find(&root, TASKS, &beyond)
     })
 }
 

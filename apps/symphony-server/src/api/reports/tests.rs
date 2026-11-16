@@ -4,7 +4,7 @@
 //! taken together) and the health lines summed a period at a time; the asked grain and days
 //! bounded; a file too large, a link, a FIFO or one that does not read named and left out; and the
 //! route, refused before any hub for a bad ask, answering the hub's folders at its clock, `304` for
-//! a body the client holds.
+//! a body the client holds, from the answer the hub kept (`kept_tests.rs`).
 
 use super::*;
 use crate::testing::Tree;
@@ -13,14 +13,14 @@ use symphony_api::reports::{Red, Round, Wait};
 use symphony_api::{HourRequests, HourSlowest, HourWrites};
 
 /// Monday 2026-11-09, 00:00 UTC.
-const MONDAY: f64 = 1_794_182_400.0;
+pub(super) const MONDAY: f64 = 1_794_182_400.0;
 
 /// Wednesday 10:30 of that week.
-fn wednesday() -> f64 {
+pub(super) fn wednesday() -> f64 {
     MONDAY + 2.0 * DAY + 10.5 * HOUR
 }
 
-fn folders(tree: &Tree) -> Folders {
+pub(super) fn folders(tree: &Tree) -> Folders {
     Folders {
         reports: Ok(tree.path("reports")),
         agents: Ok(tree.path("agents")),
@@ -34,7 +34,7 @@ fn none(_: f64) -> Result<Vec<ReportMark>, String> {
 }
 
 /// A roll-up hour at `start` with `done` tasks done and `review` held in review at its end.
-fn hour(start: f64, done: u32, review: u32) -> symphony_api::ReportHour {
+pub(super) fn hour(start: f64, done: u32, review: u32) -> symphony_api::ReportHour {
     let mut hour = symphony_api::ReportHour {
         start,
         landed: done,
@@ -48,7 +48,7 @@ fn hour(start: f64, done: u32, review: u32) -> symphony_api::ReportHour {
 }
 
 /// The day file of the day `start` begins, holding `hours`, written as the roll-up writes it.
-fn report(
+pub(super) fn report(
     tree: &Tree,
     start: f64,
     hours: Vec<symphony_api::ReportHour>,
@@ -71,7 +71,7 @@ fn report(
 /// 09:00 alone; the agents' Monday file holds 10:00 from two writers, with lines of other types and
 /// a line cut short; the health's Wednesday file holds 09:00 and the half of 10:00 so far; and a
 /// roll-up file of October, outside every window.
-fn week(tree: &Tree) {
+pub(super) fn week(tree: &Tree) {
     let mut nine = hour(MONDAY + 9.0 * HOUR, 1, 3);
     nine.decisions = Some(DecisionCounts {
         open: 4,
@@ -343,11 +343,13 @@ fn days_sum_their_hours_and_a_day_no_file_holds_is_missing_never_zero() {
                 at: MONDAY - 1.0,
                 commit: "before".into(),
                 subject: "before the window".into(),
+                changed: vec!["settings".into()],
             },
             ReportMark {
                 at: MONDAY + 8.0 * HOUR,
                 commit: "abc".into(),
                 subject: "gates".into(),
+                changed: vec!["settings".into(), "skill work".into()],
             },
         ])
     });
@@ -369,9 +371,9 @@ fn days_sum_their_hours_and_a_day_no_file_holds_is_missing_never_zero() {
     assert_eq!(
         page.marks
             .iter()
-            .map(|m| m.commit.as_str())
+            .map(|m| (m.commit.as_str(), m.changed.join(", ")))
             .collect::<Vec<_>>(),
-        ["abc"]
+        [("abc", "settings, skill work".to_string())]
     );
     let [monday, tuesday, wednesday] = page.buckets.as_slice() else {
         panic!("{:?}", page.buckets);
@@ -677,7 +679,7 @@ fn with_no_file_yet_every_period_is_missing_and_the_first_roll_up_is_none() {
     });
     assert_eq!(
         page.unread,
-        ["settings marks: git log of main failed: no such branch"]
+        ["settings and instructions marks: git log of main failed: no such branch"]
     );
 }
 
@@ -820,4 +822,7 @@ async fn the_route_refuses_a_bad_ask_first_and_answers_the_hubs_folders_at_its_c
     let tag = tag.expect("a JSON read names its body");
     let (status, _, body) = ask("/api/reports?grain=day&days=3", Some(&tag)).await;
     assert_eq!((status, body.len()), (StatusCode::NOT_MODIFIED, 0));
+    // It was answered from the kept one: its files and git were read for the first alone.
+    let kept = &shared.api.get().unwrap().reports_kept;
+    assert_eq!((kept.passes(), kept.gits()), (1, 1));
 }

@@ -2,7 +2,8 @@
 //! `/<id>/` by a router of its own, so each keeps its own watcher, feed cursor, board snapshot and
 //! branch scan (its own [`Shared`] and hub) and nothing of one is visible from another's pages.
 //!
-//! Before any project the server answers `/api/front` (itself, with the ids it serves), `/` (the
+//! Before any project the server answers `/api/front` (itself, with the ids it serves),
+//! `/api/projects` (each project's counts and task asks, as data), `/` (the
 //! project picker), `/<id>` (to `/<id>/`) and `/<id>/theme.css` (the
 //! project's theme tokens). A path of today, under no project, is the project's whose page asked
 //! for it (a same-origin Referer under `/<id>/`), else the starter's, when that project answers it
@@ -18,8 +19,8 @@
 //! is read again whenever its file changes, at a request or at the server's own look every
 //! [`LOOK`], and a changed root or id is served from new state.
 //!
-//! Each project's state holds the maintenance of its board, its idle sweep and its embedding
-//! catch-up ([`crate::front::maintenance`]), each on a schedule of its own: started once the
+//! Each project's state holds the maintenance of its board, its idle sweep
+//! ([`crate::front::maintenance`]), on a schedule of its own: started once the
 //! server's generation is live, its socket hand-off committed, as the starter's own are, or when
 //! the project is first served after that; stopped when it is retired or the server stops. The
 //! starter's checkout is maintained by the server's own workers, under whatever id it is
@@ -290,10 +291,10 @@ impl Projects {
         if self.warming == Warming::AsRead
             && refused.is_none()
             && !Arc::ptr_eq(&shared, &self.starter)
-            && let Ok(runtime) = tokio::runtime::Handle::try_current()
+            && tokio::runtime::Handle::try_current().is_ok()
         {
             let warming = shared.clone();
-            runtime.spawn(async move {
+            crate::spawn::task(async move {
                 if let Err(why) = crate::api::warm(&warming).await {
                     eprintln!("· {}: read data could not be warmed: {why}", warming.base);
                 }
@@ -362,7 +363,7 @@ async fn dispatch(
     let ip = peer.ip();
     let starter = projects.starter.clone();
     let allowed = ip.is_loopback()
-        || tokio::task::spawn_blocking(move || starter.gate.allows(ip))
+        || crate::spawn::blocking(move || starter.gate.allows(ip))
             .await
             .unwrap_or(false);
     if !allowed {
@@ -382,7 +383,7 @@ async fn dispatch(
             .unwrap_or("")
             .to_string();
         let starter = projects.starter.clone();
-        let named = tokio::task::spawn_blocking(move || starter.allows_host(&host))
+        let named = crate::spawn::blocking(move || starter.allows_host(&host))
             .await
             .unwrap_or(false);
         if !named {
@@ -394,11 +395,14 @@ async fn dispatch(
         }
     }
     let reading = projects.clone();
-    let Ok(served) = tokio::task::spawn_blocking(move || reading.served()).await else {
+    let Ok(served) = crate::spawn::blocking(move || reading.served()).await else {
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     };
     if path == symphony_api::FRONT_PATH {
         return front(&projects, &served, request.headers());
+    }
+    if path == symphony_api::PROJECTS_PATH {
+        return listing(&projects, &served);
     }
     if path == "/" {
         return home(&served);
@@ -426,6 +430,11 @@ async fn dispatch(
     }
     if let Some(plain) = respelled(&served, &path) {
         return redirect(&plain, request.uri());
+    }
+    // The address's own icon, asked for by no project's page (a file opened raw, the address
+    // itself), is the Symphony's, never the started project's.
+    if path == "/favicon.ico" && referred(request.headers(), &served).is_none() {
+        return crate::mark::answer(request.uri().query());
     }
     // A path of today is its project's only when that project answers it: a first segment no
     // project holds and no route of the Symphony's or that project's is a project id mistyped.
@@ -618,6 +627,66 @@ fn front(projects: &Projects, served: &[Served], headers: &HeaderMap) -> Respons
     Json(status).into_response()
 }
 
+/// `GET /api/projects`: the server and each project it serves as data, for the desktop app
+/// ([`symphony_api::ProjectList`]): what the project list at `/` says of each, from the hubs'
+/// memory, so it reads no board.
+fn listing(projects: &Projects, served: &[Served]) -> Response {
+    Json(symphony_api::ProjectList {
+        installation: symphony::machine::installation_id_in(&projects.machine).ok(),
+        pin: symphony::machine::PIN,
+        projects: served.iter().map(listed).collect(),
+    })
+    .into_response()
+}
+
+/// `project` as [`listing`] lists it: its refusal alone while refused, else what its hub holds,
+/// the version of its main page's feed read with that page's counts and with its task asks.
+fn listed(project: &Served) -> symphony_api::ListedProject {
+    let id = &project.entry.id;
+    let mut listed = symphony_api::ListedProject {
+        id: id.clone(),
+        name: name(project),
+        refused: project.refused.clone(),
+        unwell: None,
+        version: None,
+        waiting: None,
+        next: None,
+        asks: None,
+    };
+    let Some(hub) = project
+        .shared
+        .api
+        .get()
+        .filter(|_| project.refused.is_none())
+    else {
+        return listed;
+    };
+    let health = hub.health_notice();
+    listed.unwell = (!health.is_empty()).then_some(health);
+    // A writer's panic leaves at worst a page between two of its regions' updates, as the list's.
+    let pages = hub.pages.read().unwrap_or_else(PoisonError::into_inner);
+    if let Some(page) = pages.get("") {
+        listed.version = Some(page.board.version);
+        listed.waiting = Some(page.board.counts.waiting);
+        listed.next = page
+            .board
+            .next
+            .first()
+            .map(|card| symphony_api::ListedCard {
+                title: card.title.clone(),
+                href: format!("/{id}{}", card.href()),
+            });
+    }
+    listed.asks = hub.task_asks();
+    drop(pages);
+    listed
+}
+
+/// The name a project's pages and the list call it: its theme package's.
+fn name(project: &Served) -> String {
+    symphony::theme::Package::of(&symphony::project::Project::of(&project.entry.root)).name
+}
+
 /// `/`: always the project picker, in the app's look ([`crate::pages`]).
 fn home(served: &[Served]) -> Response {
     crate::pages::html(
@@ -662,8 +731,7 @@ fn list_row(
     boardless: bool,
 ) -> String {
     use symphony::markup::escape;
-    let name =
-        symphony::theme::Package::of(&symphony::project::Project::of(&project.entry.root)).name;
+    let name = name(project);
     let detail = match (&project.refused, counts) {
         (Some(why), _) => format!("<span class=\"refused\">{}</span>", escape(why)),
         (None, Some(counts)) => {

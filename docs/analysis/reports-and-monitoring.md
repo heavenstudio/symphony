@@ -285,11 +285,15 @@ nightly, dependency, review, adversarial, owner and holds. A plugin's gate with 
 Symphony's takes its place. Its review stamp, for example, is the approval its landing counts.
 
 **The rule: the more specific level's answer replaces the general one's**, everywhere, for the
-level that gives it. A project's gate
-replaces Symphony's same-named gate for that project everywhere the board judges it: the task page,
-the sign-off lane, the PULL digest orchestrators get, the move to blocked and the default land
-command. A project with no answer keeps Symphony's gates. The page's part is
-`tools/task-gates-seam`; the rest is `tools/project-gates-everywhere`.
+level that gives it. A project's gate replaces Symphony's same-named gate for that project
+everywhere the board judges it. The task page, its timeline and the sign-off lane read the plugin's
+answer, the lane only what the server keeps of it. The PULL digest orchestrators get runs in the
+board's own processes, which link no plugin, so it reads what the project's landing records of the
+tip: a review whose landing waits on no review there is not unreviewed
+([TASKS](../TASKS.md#the-pipeline-alarm)). The move to blocked and the land are the project's own
+`land` recipe, or the default land by the project's own stamp catalogue
+([TASKS](../TASKS.md#needed-stamps)). A project with no answer keeps Symphony's gates. The page's
+part is `tools/task-gates-seam`; the rest is `tools/project-gates-everywhere`.
 
 **Decided: A, a typed gates seam**, as the pictures below draw it.
 - A plugin trait answers a task's gates as data: name, state, by, when, commit, why, detail, link
@@ -342,7 +346,7 @@ tokens stay with it.
 - Its times are invented.
 
 The pictures are SVG written by hand. They use the client's tokens
-(`apps/symphony-ui/assets/board.css`) and the task head as `task_detail.rs` draws it, and they
+(`apps/symphony-ui/assets/board.css`) and the task head as `task_detail.rs` drew it, and they
 follow the reader's light or dark setting.
 
 The A pictures and the timeline pictures are the look the filed tasks build to; the B pictures
@@ -529,9 +533,11 @@ hours of any span sum to that span's figure (a day, a week, a local day):
 - **Waits**, each counted in the hour it ended:
   - approved to landed: the approve the landing went by, to the landing;
   - in review to a reviewer: a move into review, to the first session that joins the task as its
-    reviewer or claims a review subtask of it while it is in review; zero when a reviewer already
-    held it (so a re-review whose reviewer kept the role, the usual case, reads zero: this wait is
-    the first round's staffing), and no wait at all when none came before the task left review;
+    reviewer or claims a review subtask of it while it is in review, and no wait at all when none
+    came before the task left review: so a re-review whose reviewer kept the role, the usual case,
+    has none, as the board's lines cannot tell when that reviewer came back (its first line is its
+    verdict, which would make the wait the review itself), and this wait is the first round's
+    staffing;
   - a `changes` verdict to its executor resuming: the first claim of the task after it, or a post,
     move or verdict by a session holding its executor role then, its release left out (board lines
     alone: an executor that works without a word reads as resumed at its move to review);
@@ -571,8 +577,9 @@ those groups is counted in the hour of its minute, by whose it is and what it sa
 agent posts already out of the queue, `resolved` say, never asked the owner and is counted nowhere,
 unless it was posted auto-approved. A card waits since the line that last put it in the queue: its
 posting, an agent's answer to the owner's comment, or an agent's question. A card is named by its
-page, `docs/DECISIONS.md` for main's and `@BRANCH/docs/DECISIONS.md` for one a live branch posted;
-once its branch lands, main holds the same lines.
+page, `docs/DECISIONS.md` for main's, a live branch's copy of one of main's cards included, and
+`@BRANCH/docs/DECISIONS.md` for one only a live branch posted; once its branch lands, main holds
+the same lines.
 
 What the register's history can tell: which line took a card out of the queue, whose it was, its
 verdict word and its minute. What it cannot tell yet:

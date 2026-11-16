@@ -3,6 +3,7 @@
 
 mod inbox;
 mod last_words;
+mod questions;
 
 use crate::common::{Fixture, HOST, NOW, Seed, refused};
 use std::collections::BTreeSet;
@@ -826,12 +827,12 @@ fn a_quiet_executor_with_a_native_callback_is_reached() {
     let f = in_review();
     f.advance(LIVE_SECONDS + 1.0);
     // Registered on another host, so this board's dispatch never tries to deliver it.
-    f.store
-        .client()
-        .query(
-            "UPSERT type::record('callback_state', 'amber-heron') SET handle = 'amber-heron', address = 'codex:abcdef01', host = 'another-host' RETURN NONE;",
-            serde_json::json!({}),
-        )
+    (f.store.raw().row("callback_state", "amber-heron"))
+        .put(serde_json::json!({
+            "handle": "amber-heron",
+            "address": "codex:abcdef01",
+            "host": "another-host",
+        }))
         .unwrap();
     assert!(f.store.callbacks().unwrap().contains_key("amber-heron"));
     f.store

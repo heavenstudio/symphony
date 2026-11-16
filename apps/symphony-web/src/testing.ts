@@ -141,6 +141,7 @@ export function anAgent(handle: string, fields: Partial<Agent> = {}): Agent {
     task: null,
     role: null,
     tasks: [],
+    following: 0,
     worktree: "",
     branch: "",
     agent: null,
@@ -248,12 +249,13 @@ export function memoryStorage(refuse = false): Storage {
 }
 
 /**
- * One request the stubbed server holds: its address, its body as JSON, how to answer it, and the
- * signal that gives it up.
+ * One request the stubbed server holds: its address, its body as JSON, the tag it names
+ * (`If-None-Match`) when it names one, how to answer it, and the signal that gives it up.
  */
 export interface Asked {
   url: string;
   body: unknown;
+  named: string | null;
   answer: (response: Response) => void;
   signal: AbortSignal | null;
 }
@@ -270,10 +272,48 @@ export function server(): Asked[] {
     (url: string, init?: RequestInit) =>
       new Promise<Response>((answer) => {
         const body = typeof init?.body === "string" ? JSON.parse(init.body) : undefined;
-        asked.push({ url, body, answer, signal: init?.signal ?? null });
+        const headers = init?.headers as Record<string, string> | undefined;
+        const named = headers?.["If-None-Match"] ?? null;
+        asked.push({ url, body, named, answer, signal: init?.signal ?? null });
       }),
   );
   return asked;
+}
+
+/** One stream of the feed a page opened: where, how often it was closed, and its socket. */
+export interface Stream {
+  url: string;
+  closed: number;
+  source: EventTarget;
+}
+
+/**
+ * The page's WebSocket, on a page at `href`: each stream the feed opens, kept in order, a socket
+ * the test makes speak (`say`, and its `open` and `error` events).
+ */
+export function feeds(href: string): Stream[] {
+  const opened: Stream[] = [];
+  vi.stubGlobal("location", { href });
+  vi.stubGlobal(
+    "WebSocket",
+    class extends EventTarget {
+      private readonly stream: Stream;
+      constructor(url: string) {
+        super();
+        this.stream = { url, closed: 0, source: this };
+        opened.push(this.stream);
+      }
+      close() {
+        this.stream.closed += 1;
+      }
+    },
+  );
+  return opened;
+}
+
+/** The feed's `source` says the event `name` with `data`, as the server's socket does: one message. */
+export function say(source: EventTarget | undefined, name: string, data: string): void {
+  source?.dispatchEvent(new MessageEvent("message", { data: `${name}\n${data}` }));
 }
 
 /** A JSON reply of `status`, tagged `etag` when one is given. */

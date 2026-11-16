@@ -133,7 +133,8 @@ fn a_board_failing_every_other_tick_is_warned_of_throughout_until_a_minute_of_go
 fn a_board_not_made_or_with_no_store_nor_surrealdb_is_absent_and_any_other_failure_is_not() {
     use crate::schema::{Access, Opened, VERSION, decide};
     use crate::server::ServerError;
-    let refused = |found| match decide(found, VERSION, Access::Read, Some("demo")) {
+    let program = crate::Program::named("tasks", "/repo/.target/bin/tasks");
+    let refused = |found| match decide(found, VERSION, Access::Read, Some("demo"), &program) {
         Opened::Refused(why) => why,
         other => panic!("{other:?}"),
     };
@@ -858,11 +859,9 @@ fn a_report_counts_the_open_tasks_nobody_orchestrates_in_the_newest_board_read()
             "⚠ it is unwell".to_string(),
         ]
     );
-    // A defect, as `tasks status` reads the record: every open task has an orchestrator.
-    let defect = "2 open tasks no orchestrator holds, as of the newest board read: the next read of \
-                  the whole board gives each to an orchestrator that stays (live past its first \
-                  live line, and waiting, watching or holding a task), and it waits while none does";
-    assert_eq!(report.read_warnings(T0 + 1.0, |_| true), [defect]);
+    // No defect, as `tasks status` reads the record: each waits for an orchestrator under the limit
+    // on its open tasks that stays, a well state, counted and never warned of.
+    assert!(report.read_warnings(T0 + 1.0, |_| true).is_empty());
     assert!(
         report.warnings(T0 + 1.0).is_empty(),
         "the record's own warnings, which the server's pages show, stay its passes'"
@@ -886,14 +885,4 @@ fn a_report_counts_the_open_tasks_nobody_orchestrates_in_the_newest_board_read()
     let settled = recorder.report(T0 + 2.0);
     assert_eq!(settled.unowned, Some(0), "the newest board decides");
     assert!(settled.read_warnings(T0 + 2.0, |_| true).is_empty());
-    let mut one = settled;
-    one.unowned = Some(1);
-    assert_eq!(
-        one.read_warnings(T0 + 2.0, |_| true),
-        [
-            "1 open task no orchestrator holds, as of the newest board read: the next read of the \
-             whole board gives each to an orchestrator that stays (live past its first live line, \
-             and waiting, watching or holding a task), and it waits while none does"
-        ]
-    );
 }

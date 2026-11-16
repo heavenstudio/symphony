@@ -30,6 +30,9 @@ pub struct Agent {
     pub task: Option<String>,
     pub role: Option<String>,
     pub tasks: Vec<HeldTask>,
+    /// How many open tasks it orchestrates, which `tasks` leaves out: its Following list's count.
+    #[serde(default)]
+    pub following: usize,
     pub worktree: String,
     pub branch: String,
     pub agent: Option<String>,

@@ -1,5 +1,5 @@
-# The Symphony's wire types: the JSON apps/symphony-server sends and apps/symphony-ui reads.
-# serde only, so the server and the wasm client build the same types.
+# The Symphony's wire types: the JSON apps/symphony-server sends and apps/symphony-web reads.
+# serde only: the server builds them, and the client reads them generated as TypeScript.
 [package]
 name = "symphony-api"
 version = "0.1.0"
@@ -17,11 +17,6 @@ categories = ["web-programming", "encoding"]
 include = ["src/**", "README.md", "LICENSE"]
 
 [features]
-# Removes data: a `Task` read with it on leaves its plugins' board fields out (`Task::fields` reads as
-# empty, so a task written back carries none), and the reader of their values is not built. Only a
-# crate that reads no task's fields turns it on: the browser's client, in its wasm32 dependencies
-# (apps/symphony-ui/Cargo.toml), where that reader is about 18 KB gzipped of a page's first visit.
-skip-board-fields = []
 # The TypeScript declarations of the types the web client reads (ts-rs's derive), and the example
 # that writes them into apps/symphony-web/src/wire.ts (`just client-wire`) or checks that file
 # against them (`just client-lint`). Off for every build that runs.

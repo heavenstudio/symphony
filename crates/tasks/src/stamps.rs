@@ -24,7 +24,7 @@ use crate::sweep::git::{git, succeeds};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 pub mod read;
 
@@ -55,23 +55,36 @@ const OWN: [Own; 4] = [
               them; the executor's to produce",
         applies: "any change to code, scripts, recipes, build settings, or a file a test reads (a \
                   fixture, a shipped skill whose install is tested): the tests closest to a change \
-                  are what proves it works",
+                  are what proves it works; a change of the values the project file gives its \
+                  settings, which the settings check proves alone (`symphony settings-check`, \
+                  recorded as a test run: every table and key known, each value of its type, no \
+                  name judged against a list), with no other suite",
         skips: "documents and guides alone; pictures and other files nothing tests; a hotfix whose \
                 break no test shows in the time it has, its tests coming with its postmortem",
     },
     Own {
         name: "review",
         default: true,
-        met: "a fresh reviewer's approve naming the tip, from a session that never executed, \
-              orchestrated or filed the task",
+        met: "a fresh reviewer's approve naming the tip, or the commit the tip merges the default \
+              branch into where that merge settles conflicts in documents alone, changes \
+              nothing else and the tests are green at the tip, from a session that never \
+              executed, orchestrated or filed the task",
         applies: "code whose mistake reaches past the task, into what every agent runs or every \
                   client reads (a store, a schema, a board command, the landing, a launcher, a \
                   hook, a recipe, a wire type, a route, a shared component); a change to a test, a \
                   check, a budget or a run step, which is any path [land] check_paths names, since \
                   a loosened test is how a red turns green unfixed; a shipped skill or a rule every \
-                  agent follows; a change that does more than one thing, or one the assessor \
-                  cannot place",
-        skips: "documents alone (a design, a reference page, a record); a fix of a few lines that \
+                  agent follows; a setting the Symphony does not read yet or reads another way, \
+                  which is code; a value of the project file that is a command or a program the \
+                  Symphony runs or that decides what lands ([project] cargo and default_branch, \
+                  [plugins] crates and process, [verdicts], [land], [releases], [stamps], [board] \
+                  on_review, on_land, machine_work_reader and assessments); a change that does \
+                  more than one thing, or one the assessor cannot place",
+        skips: "documents alone (a design, a reference page, a record); the values the project \
+                file gives settings the Symphony already reads (a model, an agent, a limit, a \
+                count, a name), written, changed or removed, with the guide's and the rules' \
+                words that repeat those values and nothing else: the settings check green at the \
+                tip stands in the reviewer's place, as `tests`; a fix of a few lines that \
                 leaves the failing test its task names unchanged; a hotfix restoring something \
                 wholly broken, read afterwards as its postmortem",
     },
@@ -231,13 +244,18 @@ impl Catalogue {
     /// The catalogue of the repository the folder `dir` is in ([`Catalogue::of`] its main
     /// checkout): the Symphony's own outside a repository, or in one with no main checkout.
     pub fn at(dir: &Path) -> Result<Catalogue, String> {
-        let main = (crate::git::common_dir(dir).ok()).and_then(|common| {
-            crate::sweep::trigger::main_checkout(&common).map(Path::to_path_buf)
-        });
-        match main {
+        match Catalogue::main_of(dir) {
             Some(main) => Catalogue::of(&main),
             None => Ok(Catalogue::symphony()),
         }
+    }
+
+    /// The main checkout of the repository the folder `dir` is in, whose head's manifest
+    /// [`Catalogue::at`] reads: none outside a repository, or in one with no main checkout. A
+    /// reader that keeps a catalogue keeps it while that head is the commit it read it at.
+    pub fn main_of(dir: &Path) -> Option<PathBuf> {
+        (crate::git::common_dir(dir).ok())
+            .and_then(|common| crate::sweep::trigger::main_checkout(&common).map(Path::to_path_buf))
     }
 
     /// Its stamps' names, in order.

@@ -5,13 +5,15 @@
 // the page's first page (`/api/agent-page`); each feed event is applied where it lands, and one that
 // brings a task in, or the board back, reads the first page again, merged into what is drawn.
 
+import { flushSync } from "react-dom";
 import type { FrameRefresh } from "./frame";
-import { holdPlace, type Journal, ReadCursor } from "./journal";
+import { type Journal, ReadCursor } from "./journal";
 import { type BoardRun, keepBoard, type PageBoard } from "./live";
 import { scoped } from "./project";
 import { getJson, said } from "./request";
 import { whiteSpace } from "./session";
-import { field, list as items } from "./shared";
+import { field, holdPlace, list as items } from "./shared";
+import { tryAgain } from "./state";
 import {
   byPriority,
   holderHealth,
@@ -47,6 +49,12 @@ const UNREADABLE = "The agents page's answer is not readable";
 
 const isText = (value: unknown): value is string => typeof value === "string";
 const isNumber = (value: unknown): value is number => typeof value === "number";
+/**
+ * A number as serde reads one into a `usize`, as far as a double holds it: blocks-read.ts's
+ * `isCount`, which this page's chunks do not carry.
+ */
+const isCount = (value: unknown): value is number =>
+  Number.isSafeInteger(value) && (value as number) >= 0;
 /** As serde reads an `Option`: absent and `null` are none. */
 const absent = (value: unknown) => value === undefined || value === null;
 const optionalText = (value: unknown) => absent(value) || isText(value);
@@ -109,7 +117,7 @@ function readSaid(value: unknown): AgentSaid | null {
 
 function readSlots(value: unknown): AgentSlots | null {
   const [open, cap] = ["open", "cap"].map((key) => field(value, key));
-  return isNumber(open) && isNumber(cap) ? { open, cap } : null;
+  return isCount(open) && isCount(cap) ? { open, cap } : null;
 }
 
 function readGo(value: unknown): SessionGo | null {
@@ -137,8 +145,8 @@ const OPTIONAL_TEXTS = [
 
 /**
  * An agent as the page reads it, or none for a value serde would refuse: what a server from before
- * a field's time leaves out reads as serde's default (no callback, no chat, no slots, no address,
- * not in process, no way in).
+ * a field's time leaves out reads as serde's default (following nothing, no callback, no chat, no
+ * slots, no address, not in process, no way in).
  */
 export function readAgent(value: unknown): Agent | null {
   if (!TEXTS.every((key) => isText(field(value, key)))) return null;
@@ -147,8 +155,10 @@ export function readAgent(value: unknown): Agent | null {
   if (!Array.isArray(tasks)) return null;
   const held = tasks.map(readHeld);
   const lastTool = field(value, "last_tool_call");
+  const following = field(value, "following");
   const [chat, inProcess] = [field(value, "chat"), field(value, "in_process")];
   if (held.some((one) => one === null) || !(absent(lastTool) || isNumber(lastTool))) return null;
+  if (!(following === undefined || isCount(following))) return null;
   if (!optionalFlag(chat) || !optionalFlag(inProcess)) return null;
   const run = optional(field(value, "state_detail"), readRun);
   const message = optional(field(value, "last_message"), readSaid);
@@ -170,6 +180,7 @@ export function readAgent(value: unknown): Agent | null {
     callback: text("callback"),
     session_url: text("session_url"),
     tasks: held as HeldTask[],
+    following: (following as number | undefined) ?? 0,
     chat: chat === true,
     in_process: inProcess === true,
     state_detail: run,
@@ -203,7 +214,7 @@ export function readAgentPage(value: unknown): AgentPageRead | null {
   const total = field(value, "total");
   const next = field(value, "next");
   const local = field(value, "local");
-  if (view === null || !Array.isArray(tasks) || !isNumber(total) || !optionalText(next)) {
+  if (view === null || !Array.isArray(tasks) || !isCount(total) || !optionalText(next)) {
     return null;
   }
   if (!optionalFlag(local)) return null;
@@ -265,12 +276,6 @@ export function agentLine(agent: Agent): string {
 }
 
 const finishedStatus = (status: string) => status === "done" || status === "cancelled";
-
-/** How many open tasks an agent orchestrates, as it says it holds them. */
-export function followingCount(agent: Agent): number {
-  return agent.tasks.filter((task) => !finishedStatus(task.status) && task.role === "orchestrator")
-    .length;
-}
 
 /** The disclosure of the open tasks an agent orchestrates, counted in words. */
 export function followingLabel(count: number): string {
@@ -510,6 +515,8 @@ export class LiveAgents {
   /** A read of the first page again is under way, and another was asked for meanwhile. */
   private reading = false;
   private again = false;
+  /** The board reads so far: each starts the first page's reads anew (`first`). */
+  private round = 0;
   /** The next page of the connected agents, or of the lost ones: one function for the page's life. */
   readonly more = (lost: boolean): void => {
     void this.next(lost);
@@ -541,7 +548,7 @@ export class LiveAgents {
       views: {
         // The page keeps nothing on this device.
         freshen: () => {},
-        read: () => this.load(),
+        read: () => this.first(),
         heard: (value) => this.heard(value),
         frame,
       },
@@ -556,6 +563,19 @@ export class LiveAgents {
     } catch (failure) {
       return said(failure);
     }
+  }
+
+  /**
+   * The board was read: read the first page afresh and, while the page has no agents to show (the
+   * read failed), again, waiting longer after each failure (`tryAgain`), until it has them, the
+   * next board read starts again or the page stops. Settles once the first read is done.
+   */
+  async first(): Promise<void> {
+    this.round += 1;
+    const round = this.round;
+    await this.load();
+    const unanswered = () => this.round === round && this.d.view === null;
+    void tryAgain(unanswered, () => this.load(), this.signal);
   }
 
   /** Read the first page afresh: the agents, the tasks, the counts and both cursors as it says. */
@@ -672,7 +692,10 @@ export class LiveAgents {
     const [refresh, changed] = this.apply(changes);
     if (changed) {
       holdPlace("[id^=message-], [id^=child-], [data-slug]");
-      this.host.redraw();
+      // Drawn at once, within the event, so the hold starts from the change in the page: left to
+      // React's scheduler, a later task a loaded renderer runs after its frames, the hold's four
+      // quiet frames could pass before it.
+      flushSync(() => this.host.redraw());
     }
     if (refresh) void this.reread();
     return true;

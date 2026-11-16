@@ -269,8 +269,7 @@ impl Home {
             }
         };
         let folder = self.snapshots_folder();
-        fs::create_dir_all(&folder)
-            .map_err(|e| failed(format!("could not make {}: {e}", folder.display())))?;
+        self.make(&folder).map_err(|e| failed(e.to_string()))?;
         // Under the lock no other snapshot is being taken: a clone under way is one cut short.
         let taking = folder.join(TAKING);
         if fs::symlink_metadata(&taking).is_ok() {

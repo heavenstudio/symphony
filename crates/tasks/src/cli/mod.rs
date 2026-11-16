@@ -11,7 +11,6 @@ mod beat;
 mod commands;
 mod database;
 mod detached;
-mod embedding;
 mod field;
 pub mod machine_work;
 mod migrate;
@@ -457,7 +456,7 @@ fn boot_clock(env: &Env) -> Option<sys::Boottime> {
 /// refused it before its server is started ([`crate::live::cargo_refusal`]); the store each opens
 /// on it judges whether it may move it ([`crate::live`]).
 pub fn writable_board(env: &Env) -> Result<Reached, String> {
-    reach_board(env, &env.cwd, Reaching::Client)
+    reach_board(env, &env.cwd, Reaching::Client, None)
 }
 
 /// The client of the board [`writable_board`] reaches, for a caller that opens its own store on it
@@ -471,12 +470,6 @@ pub fn board_client(env: &Env) -> Result<Client, String> {
     let reached = writable_board(env)?;
     not_gone_back(&reached)?;
     Ok(reached.client)
-}
-
-/// As [`writable_board`], refused nothing here: a raw read of the live board that opens no store
-/// (`search_bench`'s), which a process Cargo runs may make.
-pub fn raw_client(env: &Env) -> Result<Client, String> {
-    reach_board(env, &env.cwd, Reaching::Raw).map(|reached| reached.client)
 }
 
 /// A board a run reaches, and the id of the project it is the board of: none for a server
@@ -502,13 +495,29 @@ impl Reached {
 /// runs from that project's repository is refused its live board before the server is started. A
 /// working directory that is gone is refused ([`crate::project::at`]), never walked up from.
 pub fn board(env: &Env) -> Result<Reached, String> {
-    reach_board(env, &env.cwd, Reaching::Read)
+    reach_board(env, &env.cwd, Reaching::Read, None)
+}
+
+/// The board [`board`] reaches, held to the repository whose common dir is `repository`: the one
+/// the Symphony found from `env`'s working directory when it began to serve that folder, none for a
+/// folder no repository held then. Refused, as a folder that is gone, when the lookup finds another
+/// ([`crate::project::held`]), and never started there: the board is the one in the common dir that
+/// check read, so no check before the reach is needed.
+pub fn held_board(env: &Env, repository: Option<&Path>) -> Result<Reached, String> {
+    reach_board(env, &env.cwd, Reaching::Read, repository)
 }
 
 /// The board [`board`] reaches, refused rather than started when its server is not running: what a
 /// read that can go without the board asks for.
 pub fn running_board(env: &Env) -> Result<Reached, String> {
-    reach_board(env, &env.cwd, Reaching::Peek)
+    reach_board(env, &env.cwd, Reaching::Peek, None)
+}
+
+/// The board [`running_board`] reaches, held to `repository` as [`held_board`] holds its reach:
+/// refused, as a folder that is gone, when the lookup finds another repository, and refused rather
+/// than started when its server is not running.
+pub fn held_running_board(env: &Env, repository: Option<&Path>) -> Result<Reached, String> {
+    reach_board(env, &env.cwd, Reaching::Peek, repository)
 }
 
 /// The board `env` reaches from `cwd`; a server that is not running is started if `start`, else
@@ -519,7 +528,7 @@ fn reach(env: &Env, cwd: &Path, start: bool) -> Result<Reached, String> {
     } else {
         Reaching::Running
     };
-    reach_board(env, cwd, how)
+    reach_board(env, cwd, how, None)
 }
 
 /// How a run reaches its board.
@@ -535,9 +544,6 @@ enum Reaching {
     Peek,
     /// A client for a store its caller opens: started if it is down.
     Client,
-    /// A client for a raw read: started if it is down, and refused nothing here, not even to a
-    /// process Cargo runs.
-    Raw,
 }
 
 /// How long the Symphony's read waits on another's start of the board's server (the starters'
@@ -555,10 +561,16 @@ fn machine(env: &Env) -> Option<PathBuf> {
 
 /// The board of the project `cwd` is in, in that project's common dir: for the Symphony's reaches,
 /// the project whose folder `cwd` is, refused when it is gone ([`crate::project::at`]). Every
-/// reach of a live board but a raw read's is refused to a process Cargo runs from that board's
+/// reach of a live board is refused to a process Cargo runs from that board's
 /// repository, or one it runs under, before its server is started
-/// ([`crate::live::cargo_refusal`]).
-fn reach_board(env: &Env, cwd: &Path, how: Reaching) -> Result<Reached, String> {
+/// ([`crate::live::cargo_refusal`]). A Symphony's reach `held` to a repository is refused any other
+/// ([`crate::project::held`]).
+fn reach_board(
+    env: &Env,
+    cwd: &Path,
+    how: Reaching,
+    held: Option<&Path>,
+) -> Result<Reached, String> {
     let db = env.var("TASKS_DATABASE").unwrap_or(DATABASE);
     if !rpc::plain(db) {
         return Err(format!(
@@ -566,13 +578,11 @@ fn reach_board(env: &Env, cwd: &Path, how: Reaching) -> Result<Reached, String> 
         ));
     }
     let guard = |live: &Option<crate::live::Live>| match live {
-        Some(live) if how != Reaching::Raw => {
-            match crate::live::cargo_refusal(live, crate::live::cargo_here()) {
-                Some(why) => Err(why),
-                None => Ok(()),
-            }
-        }
-        _ => Ok(()),
+        Some(live) => match crate::live::cargo_refusal(live, crate::live::cargo_here()) {
+            Some(why) => Err(why),
+            None => Ok(()),
+        },
+        None => Ok(()),
     };
     if let Some(addr) = env.var("TASKS_SERVER") {
         let live = crate::live::named_server(addr, db, cwd, machine(env).as_deref());
@@ -585,7 +595,9 @@ fn reach_board(env: &Env, cwd: &Path, how: Reaching) -> Result<Reached, String> 
     }
     // The Symphony reaches a project's board from the project's folder, which may have been removed
     // under it; a command looks from where it runs.
-    let project = if matches!(how, Reaching::Read | Reaching::Peek) {
+    let project = if let Some(repository) = held {
+        crate::project::held(cwd, machine(env).as_deref(), repository)?
+    } else if matches!(how, Reaching::Read | Reaching::Peek) {
         crate::project::at(cwd, machine(env).as_deref())?
     } else {
         crate::project::find(cwd, machine(env).as_deref())?

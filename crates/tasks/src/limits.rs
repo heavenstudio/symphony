@@ -9,6 +9,9 @@
 //!   not counted) before the board refuses it new work ([`crate::slots`]); none caps nothing.
 //!   `[board] orchestrator_slots` is read where `[limits]` names none, so a file an older build
 //!   reads keeps its cap; written in both with two values, `[limits]`'s holds and the other is said.
+//! - `orchestrator_tasks`: the open tasks an orchestrator holds the orchestrator role on itself
+//!   ([`crate::orchestration::Load`]) past which the board gives it no more and its take of the role
+//!   and a hand-over to it are refused; [`ORCHESTRATOR_TASKS`] unwritten.
 //! - `low_volume`: an orchestrator holding fewer open slots hears PULL's `low_volume` line
 //!   ([`crate::cli::pull`]); [`LOW_VOLUME`] unwritten, and 0 says it to none.
 //! - `machine_agents`: the agents running on this machine ([`crate::launch::running`]) at which
@@ -36,9 +39,15 @@ use toml::Value;
 /// The table of the project file the limits are written in.
 pub const TABLE: &str = "limits";
 /// Its keys, in the order `tasks limits` prints them.
-pub const KEYS: [&str; 3] = [SLOTS, LOW, MACHINE_AGENTS];
+pub const KEYS: [&str; 4] = [SLOTS, TASKS, LOW, MACHINE_AGENTS];
 /// The cap on an orchestrator's open tasks, in `[limits]` or `[board]` ([`crate::slots::KEY`]).
 pub const SLOTS: &str = crate::slots::KEY;
+/// The most open tasks an orchestrator holds the role on, in `[limits]` alone: no build that reads
+/// `[board]`'s cap and not `[limits]` knows it.
+pub const TASKS: &str = "orchestrator_tasks";
+/// The open tasks an orchestrator holds the role on unless the project names another number: 16, as
+/// many again as 8 slots, filed ahead of the work it builds.
+pub const ORCHESTRATOR_TASKS: usize = 16;
 /// The open slots below which an orchestrator hears PULL's `low_volume` line.
 pub const LOW: &str = "low_volume";
 /// The agents running on this machine at which a launch is refused.
@@ -51,6 +60,9 @@ pub const LOW_VOLUME: usize = 4;
 pub struct Limits {
     /// The tasks in progress an orchestrator may hold ([`crate::slots`]); none caps nothing.
     pub orchestrator_slots: Option<usize>,
+    /// The open tasks an orchestrator holds the orchestrator role on itself at which the board gives
+    /// it no more ([`crate::orchestration::Load`]).
+    pub orchestrator_tasks: usize,
     /// The open slots below which an orchestrator hears PULL's `low_volume` line.
     pub low_volume: usize,
     /// The agents running on this machine at which a launch is refused; none limits nothing.
@@ -63,6 +75,7 @@ impl Default for Limits {
     fn default() -> Limits {
         Limits {
             orchestrator_slots: None,
+            orchestrator_tasks: ORCHESTRATOR_TASKS,
             low_volume: LOW_VOLUME,
             machine_agents: None,
             alarm: Thresholds::default(),
@@ -201,6 +214,21 @@ pub fn parse(path: &str, text: &str) -> Read {
         }
         Some(Err(problem)) => read.problems.push(problem),
         None => {}
+    }
+    if let Some(value) = limits.get(TASKS) {
+        let at = setting(TABLE, TASKS);
+        match whole(value, 1) {
+            Ok(most) => {
+                read.limits.orchestrator_tasks = most;
+                read.written.insert(TASKS, at);
+            }
+            Err(why) => read.problems.push(format!(
+                "{path}: {} is {}; {}; it takes its default, {ORCHESTRATOR_TASKS}",
+                at.named(),
+                shown(value),
+                why.unwrap_or("an orchestrator holds at least one task")
+            )),
+        }
     }
     if let Some(value) = limits.get(LOW) {
         let at = setting(TABLE, LOW);

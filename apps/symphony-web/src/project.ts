@@ -144,6 +144,7 @@ export function ownPages(view: ProjectView): [string, string][] {
     [documentsHref(view), PAGE_NAMES.DOCS],
     ["/tasks", PAGE_NAMES.BOARD],
     ["/reports", PAGE_NAMES.REPORTS],
+    ["/runs", PAGE_NAMES.RUNS],
     ["/agents", PAGE_NAMES.AGENTS],
   ];
 }
@@ -179,6 +180,7 @@ export function headerLinks(view: ProjectView, path: string, document: boolean):
     document && plugin === undefined,
     path === "tasks" || path.startsWith("task/"),
     path === "reports",
+    path === "runs",
     path === "agents",
   ];
   return [
@@ -242,7 +244,9 @@ export function readView(value: unknown): ProjectView {
     !items ||
     !Array.isArray(urls) ||
     !urls.every(isText) ||
-    !["guide", "base"].every((field) => view[field] === undefined || isText(view[field]))
+    !["guide", "base", "wordmark", "mark"].every(
+      (field) => view[field] === undefined || isText(view[field]),
+    )
   ) {
     return PLAIN;
   }

@@ -9,6 +9,7 @@ fn agent(handle: &str) -> Agent {
         task: None,
         role: None,
         tasks: Vec::new(),
+        following: 0,
         worktree: String::new(),
         branch: String::new(),
         agent: None,
@@ -260,4 +261,20 @@ fn an_older_answer_without_the_session_keys_reads_as_nothing_known() {
     }
     let read: Agent = serde_json::from_value(old).unwrap();
     assert_eq!(read, agent("a"));
+}
+
+#[test]
+fn the_open_tasks_it_orchestrates_are_counted_and_an_older_answer_counts_none() {
+    let following = Agent {
+        following: 3,
+        ..agent("a")
+    };
+    let mut wire = serde_json::to_value(&following).unwrap();
+    assert_eq!(wire["following"], 3);
+    assert_eq!(
+        serde_json::from_value::<Agent>(wire.clone()).unwrap(),
+        following
+    );
+    wire.as_object_mut().unwrap().remove("following");
+    assert_eq!(serde_json::from_value::<Agent>(wire).unwrap(), agent("a"));
 }

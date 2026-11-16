@@ -1,6 +1,6 @@
 //! The Reports page's read ([`symphony_api::report_page`]): the project's day files for a window,
 //! summed a period at a time. It reads three folders of `symphony/` in the project's git common dir
-//! ([`Folders`]) and, for the settings marks, one `git log` of the default branch; never the board,
+//! ([`Folders`]) and, for the marks of a settings or instructions change, one `git log` of the default branch; never the board,
 //! so a board slow or down leaves it as it is. Each source's part of a period is none when no file
 //! holds an hour of it: missing, never a zero.
 //!
@@ -12,6 +12,9 @@
 //! hour*, says: seconds and counts added up, peaks the largest, means weighted by the seconds each
 //! line watched (by its snapshots where none watched any), and the sessions started of the line
 //! that ran latest.
+//!
+//! The answer of a window is kept between reads ([`kept`]) with what it was read from, so a read
+//! that finds none of it moved opens no file and starts no git.
 
 use std::fs::OpenOptions;
 use std::io::Read as _;
@@ -24,6 +27,9 @@ use symphony_api::report_page::{
 };
 use symphony_api::reports::{ByStatus, DecisionCounts, GitCounts, ReportDay, Spread};
 use symphony_api::{HealthHour, report_file, run_day};
+
+mod kept;
+pub(crate) use kept::{Answer, Kept};
 
 const HOUR: f64 = 3_600.0;
 const DAY: f64 = 86_400.0;
@@ -58,28 +64,29 @@ impl Folders {
     }
 }
 
-/// The page of a window of `days` by `grain` of the project `hub` serves, at its clock: its day
+/// The answer of a window of `days` by `grain` of the project `hub` serves, at its clock: its day
 /// files, from the folders found at the first read ([`crate::live::Hub::report_folders`]), and
-/// the settings marks from its default branch.
-pub(crate) fn answer(hub: &crate::live::Hub, grain: Grain, days: u32) -> ReportsPage {
+/// the marks from its default branch; the one the hub kept while none of them moved
+/// ([`Kept::answer`]).
+pub(crate) fn answer(hub: &crate::live::Hub, grain: Grain, days: u32) -> Answer {
     let folders = hub.report_folders.get_or_init(|| Folders::of(&hub.root));
-    page(folders, grain, days, hub.now(), |since| {
-        marks(&hub.root, since)
-    })
+    hub.reports_kept
+        .answer(folders, &hub.root, grain, days, hub.now())
 }
 
-/// The settings marks of the project at `root` since `since`, oldest first
-/// ([`symphony::reports::git::settings_changes`]).
-fn marks(root: &Path, since: f64) -> Result<Vec<ReportMark>, String> {
-    let branch = symphony::project::Project::of(root).default_branch.clone();
-    let commits = symphony::reports::git::settings_changes(root, &branch, since)?;
-    Ok(commits
+/// The marks of `branch`, the default branch of the project at `root`, since `since`, oldest
+/// first: each commit that changed its settings or the instructions its agents work under, from
+/// one `git log` ([`symphony::reports::git::changes`]).
+fn marks(root: &Path, branch: &str, since: f64) -> Result<Vec<ReportMark>, String> {
+    let changes = symphony::reports::git::changes(root, branch, since)?;
+    Ok(changes
         .into_iter()
         .rev()
-        .map(|commit| ReportMark {
-            at: commit.at,
-            commit: commit.hash.chars().take(12).collect(),
-            subject: commit.subject,
+        .map(|change| ReportMark {
+            at: change.commit.at,
+            commit: change.commit.hash.chars().take(12).collect(),
+            subject: change.commit.subject,
+            changed: change.changed,
         })
         .collect())
 }
@@ -144,6 +151,34 @@ pub(crate) fn periods(grain: Grain, days: u32, now: f64) -> Vec<(f64, f64)> {
         .collect()
 }
 
+/// The first second of each UTC day a window from `from` to `to` reads the files of, newest first.
+fn days_read(from: f64, to: f64) -> impl Iterator<Item = f64> {
+    let (first, last) = (day_of(from), day_of(to - 1.0));
+    std::iter::successors(Some(last), |day| Some(day - DAY)).take_while(move |day| *day >= first)
+}
+
+/// The files of the day `name` in the folders there are: the roll-up's, the agents' and the
+/// health's, in the order a page reads them.
+fn day_files(folders: &Folders, name: &str) -> [Option<PathBuf>; 3] {
+    [
+        folders
+            .reports
+            .as_ref()
+            .ok()
+            .map(|folder| folder.join(report_file(name))),
+        folders
+            .agents
+            .as_ref()
+            .ok()
+            .map(|folder| folder.join(format!("{name}.jsonl"))),
+        folders
+            .health
+            .as_ref()
+            .ok()
+            .map(|folder| folder.join(format!("{name}.jsonl"))),
+    ]
+}
+
 /// The page of a window of `days` by `grain`, read at `now` from `folders`; `marks` the settings
 /// changes since a time, or why they could not be read.
 pub(crate) fn page(
@@ -174,11 +209,9 @@ pub(crate) fn page(
         }
     }
     // Newest day first, so the bytes left go to the days nearest now.
-    let mut day = day_of(to - 1.0);
-    while day >= day_of(from) {
-        let name = run_day(day);
-        if let Ok(folder) = &folders.reports {
-            let path = folder.join(report_file(&name));
+    for day in days_read(from, to) {
+        let [report, agents, health] = day_files(folders, &run_day(day));
+        if let Some(path) = report {
             match read(&path, &mut budget) {
                 Ok(None) => {}
                 Ok(Some(text)) => match serde_json::from_str::<ReportDay>(&text) {
@@ -206,8 +239,7 @@ pub(crate) fn page(
                 Err(why) => unread.push(why),
             }
         }
-        if let Ok(folder) = &folders.agents {
-            let path = folder.join(format!("{name}.jsonl"));
+        if let Some(path) = agents {
             match read(&path, &mut budget) {
                 Ok(None) => {}
                 Ok(Some(text)) => {
@@ -225,8 +257,7 @@ pub(crate) fn page(
                 Err(why) => unread.push(why),
             }
         }
-        if let Ok(folder) = &folders.health {
-            let path = folder.join(format!("{name}.jsonl"));
+        if let Some(path) = health {
             match read(&path, &mut budget) {
                 Ok(None) => {}
                 Ok(Some(text)) => {
@@ -241,7 +272,6 @@ pub(crate) fn page(
                 Err(why) => unread.push(why),
             }
         }
-        day -= DAY;
     }
     for (_, filed, closed) in &reds {
         if let Some(at) = place(*closed) {
@@ -254,7 +284,7 @@ pub(crate) fn page(
             .filter(|mark| from <= mark.at && mark.at < to)
             .collect(),
         Err(why) => {
-            unread.push(format!("settings marks: {why}"));
+            unread.push(format!("settings and instructions marks: {why}"));
             Vec::new()
         }
     };

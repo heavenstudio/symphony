@@ -126,16 +126,8 @@ fn pathspecs(excluded: &[String]) -> Vec<String> {
 /// `git log` in the repository at `root` of `revs`, `args` before them and `paths` after them,
 /// every argument handed over as one list.
 fn log(root: &Path, args: &[&str], revs: &[String], paths: &[String]) -> Result<String, String> {
-    let mut git = crate::children::command("git");
     // The repository is the one at `root`, whatever the server was started from.
-    for name in [
-        "GIT_DIR",
-        "GIT_WORK_TREE",
-        "GIT_COMMON_DIR",
-        "GIT_NAMESPACE",
-    ] {
-        git.env_remove(name);
-    }
+    let mut git = crate::children::git();
     let mut argv = vec![
         "-c",
         "core.quotePath=false",
@@ -193,10 +185,59 @@ pub fn read(root: &Path, branch: &str, since: f64, excluded: &[String]) -> Resul
     Ok(Read { line, all })
 }
 
-/// The commits on `branch`'s line of first parents since `since` that changed the project's settings
-/// file ([`crate::project::FILE`]), a merge by what it brought against its first parent, tip first:
-/// where the Reports page marks a change of the gates and limits the file sets.
-pub fn settings_changes(root: &Path, branch: &str, since: f64) -> Result<Vec<Commit>, String> {
+/// The rules every agent of a project follows, at its root.
+pub const RULES: &str = "RULES.md";
+
+/// The folder that holds a skill a folder, wherever it is: the project's installed ones
+/// (`.agents/skills`), a package's shipped ones.
+pub const SKILLS: &str = "skills";
+
+/// What a change of `path` changes of what the agents of a project work under, the one list of the
+/// files whose changes the Reports page marks: `settings` for the project's settings file
+/// ([`crate::project::FILE`]), `rules` for [`RULES`] and `skill NAME` for a file of the skill NAME
+/// (anything under a `skills/NAME/` folder, its role pages among them); none for every other path,
+/// a link to a skill's folder (`.claude/skills/NAME`) among them. A guide (`AGENTS.md`,
+/// `CLAUDE.md`) is none: here a third of the landings change one, 69 names in a day beside 12 of
+/// skills and one of the settings (2026-11-15), which buried the marks the page is read for.
+pub fn instruction(path: &str) -> Option<String> {
+    if path == crate::project::FILE {
+        return Some("settings".to_string());
+    }
+    if path == RULES {
+        return Some("rules".to_string());
+    }
+    // The folders alone: the path's last part is the file.
+    let mut folders: Vec<&str> = path.split('/').collect();
+    folders.pop()?;
+    let skills = folders.iter().position(|folder| *folder == SKILLS)?;
+    folders
+        .get(skills + 1)
+        .map(|skill| format!("skill {skill}"))
+}
+
+/// The pathspecs of every path [`instruction`] names, so git reads no other.
+fn instructions() -> Vec<String> {
+    vec![
+        format!(":(literal){}", crate::project::FILE),
+        format!(":(literal){RULES}"),
+        format!(":(glob)**/{SKILLS}/*/**"),
+    ]
+}
+
+/// A commit that changed what the agents of a project work under.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Change {
+    pub commit: Commit,
+    /// What it changed, as [`instruction`] names each, once: the settings, the rules, then the
+    /// skills by name.
+    pub changed: Vec<String>,
+}
+
+/// The commits on `branch`'s line of first parents since `since` that changed the project's
+/// settings or the instructions its agents work under ([`instruction`]), a merge by what it brought
+/// against its first parent, tip first: where the Reports page marks a change of the gates and
+/// limits the settings file sets, of a skill or of the rules. One `git log`.
+pub fn changes(root: &Path, branch: &str, since: f64) -> Result<Vec<Change>, String> {
     let since = format!("--since=@{}", since.floor());
     let tip = format!("refs/heads/{branch}");
     let text = log(
@@ -208,19 +249,39 @@ pub fn settings_changes(root: &Path, branch: &str, since: f64) -> Result<Vec<Com
             "--name-only",
         ],
         std::slice::from_ref(&tip),
-        &[format!(":(literal){}", crate::project::FILE)],
+        &instructions(),
     )?;
-    Ok(parse(&text)
+    // The settings and the rules first, then the rest by name.
+    let rank = |name: &String| match name.as_str() {
+        "settings" => 0,
+        "rules" => 1,
+        _ => 2,
+    };
+    Ok(parse_each(&text, instruction)
         .into_iter()
-        .filter(|commit| commit.changed)
+        .filter(|(_, changed)| !changed.is_empty())
+        .map(|(commit, mut changed)| {
+            changed.sort_by(|a, b| (rank(a), a).cmp(&(rank(b), b)));
+            changed.dedup();
+            Change { commit, changed }
+        })
         .collect())
 }
 
 /// The commits of a read's `text`, in its order: after each record's head, a `--numstat` line
 /// (`added\tremoved\tpath`, `-` for a binary file's) or a `--name-only` path is a change.
 pub fn parse(text: &str) -> Vec<Commit> {
+    parse_each(text, |_| None)
+        .into_iter()
+        .map(|(commit, _)| commit)
+        .collect()
+}
+
+/// [`parse`], each commit with what `named` makes of each of its changes' lines.
+fn parse_each(text: &str, named: impl Fn(&str) -> Option<String>) -> Vec<(Commit, Vec<String>)> {
     text.split('\x1e')
         .filter_map(|record| {
+            let mut names = Vec::new();
             let mut lines = record.lines();
             let mut head = lines.next()?.splitn(4, '\x1f');
             let hash = head.next()?.trim().to_string();
@@ -248,8 +309,9 @@ pub fn parse(text: &str) -> Vec<Commit> {
                     commit.added += added;
                     commit.removed += removed;
                 }
+                names.extend(named(line));
             }
-            (!commit.hash.is_empty()).then_some(commit)
+            (!commit.hash.is_empty()).then_some((commit, names))
         })
         .collect()
 }
@@ -300,11 +362,22 @@ pub fn reached(read: &Read) -> Vec<Reached> {
         .collect()
 }
 
+/// The landing a merge's subject says, by its slug: the land's own merge ("Merge branch 'SLUG'"),
+/// or git's for one made by hand on that branch ("Merge branch 'SLUG' into BRANCH"). A merge of
+/// the default branch `branch` itself ("Merge branch 'main' into SLUG": a task catching up, which
+/// reached the line), of another repository's branch ("… of URL") or of a remote-tracking branch
+/// is none. The release run's cadence counts landings by it (`symphony-build release`).
+pub fn landing_slug<'a>(subject: &'a str, branch: &str) -> Option<&'a str> {
+    let rest = subject.strip_prefix("Merge branch '")?;
+    let (slug, after) = rest.split_once('\'')?;
+    let lands = !slug.is_empty() && slug != branch;
+    (lands && (after.is_empty() || after.starts_with(" into "))).then_some(slug)
+}
+
 /// The tasks that landed on `branch` in `range` (`GOOD..BAD`, the commits a red came between,
 /// [`symphony_board::red::between`]), newest first: each merge on the line of first parents from
-/// `BAD` back to `GOOD` that the land made, by the slug it landed, as the release cadence counts
-/// landings ([`crate::release::cadence::landed`]). A commit the repository does not hold is the
-/// error.
+/// `BAD` back to `GOOD` that the land made, by the slug it landed ([`landing_slug`]), as the
+/// release cadence counts landings. A commit the repository does not hold is the error.
 pub fn landed(root: &Path, branch: &str, range: &str) -> Result<Vec<String>, String> {
     let merges = log(
         root,
@@ -314,7 +387,7 @@ pub fn landed(root: &Path, branch: &str, range: &str) -> Result<Vec<String>, Str
     )?;
     Ok(parse(&merges)
         .iter()
-        .filter_map(|merge| crate::release::cadence::landed(&merge.subject, branch))
+        .filter_map(|merge| landing_slug(&merge.subject, branch))
         .map(str::to_string)
         .collect())
 }

@@ -62,9 +62,13 @@ describe("a document's reads", () => {
     ["a section's end past 32 bits", ["document", "sections", 0, "end"], 2 ** 32],
     ["a section's part of a fraction", ["document", "sections", 0, "part"], 0.5],
     ["a section with no blocks", ["document", "sections", 0, "blocks"], undefined],
-    ["a block it does not know", ["document", "sections", 0, "blocks", 0], { type: "marquee" }],
+    ["a block of no kind", ["document", "sections", 0, "blocks", 0], { text: "marquee" }],
     ["a difference it does not know", ["document", "sections", 0, "comparison", "kind"], "moved"],
     ["a difference's before of no blocks", ["document", "sections", 0, "comparison", "before"], 1],
+    ["a section's ends of one block", ["document", "sections", 0, "ends"], ["paragraph"]],
+    ["a section's ends of three", ["document", "sections", 0, "ends"], ["list", "code", "list"]],
+    ["a section's ends that are no texts", ["document", "sections", 0, "ends"], [1, 2]],
+    ["a section's ends that are no list", ["document", "sections", 0, "ends"], "paragraph"],
     ["a card that is not open or shut", ["document", "cards", 0, "open"], "yes"],
     ["a thread that is no fragment", ["document", "threads", "lamp-colour"], null],
     ["a task with no status", ["document", "tasks", 0, "status"], undefined],
@@ -81,6 +85,10 @@ describe("a document's reads", () => {
       null,
     );
     expect(readOutline(edited(outline, ["document", "crumbs", 0, "href"], null))).not.toBeNull();
+    // A section's ends, null or absent as in an outline kept from before the server named them.
+    expect(readOutline(edited(outline, ["document", "sections", 0, "ends"], null))).not.toBeNull();
+    const kept = edited(outline, ["document", "sections", 0, "ends"], undefined);
+    expect(readOutline(kept)).toEqual(kept);
   });
 
   it.each([
@@ -145,7 +153,7 @@ describe("the asks' read", () => {
     ["an id past a safe integer", ["asks", 0, "id"], 2 ** 53],
     ["a quote that is no text", ["asks", 0, "quote"], null],
     ["a message whose seq is text", ["asks", 0, "messages", 0, "seq"], "1"],
-    ["a message's blocks it cannot read", ["asks", 0, "messages", 0, "blocks"], [{ type: "x" }]],
+    ["a message's blocks it cannot read", ["asks", 0, "messages", 0, "blocks"], [{ type: 7 }]],
     ["a message with no author", ["asks", 0, "messages", 1, "by"], undefined],
   ])("refuses %s", (_, path, to) => {
     expect(readAsks(edited(sample("asks"), path, to))).toBeNull();

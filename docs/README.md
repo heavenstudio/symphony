@@ -1,5 +1,7 @@
 # Symphony documentation
 
+- [Product specs](product/README.md) — what each page of the app is for and how it behaves, with
+  pictures; the form of a spec and how its pictures are taken.
 - [The project file](PROJECT_FILE.md) — `symphony.toml`: every table and key a project can set,
   with its default.
 - [Decision register](DECISIONS.md) — Symphony's own product and engineering decisions, one card
@@ -21,6 +23,10 @@
 - [Plugin protocol](PLUGIN_PROTOCOL.md) — a plugin answering from a process of its own: the
   setting, the seams it answers, its process, its commands, a register read in one request, the
   line, each call's minor, the versions and the wire's shape.
+- [The Mac app](../apps/symphony-desktop/AGENTS.md) — the desktop app's guide: the servers it
+  follows and how it finds them, what it counts and notifies, where a server's window may go, and
+  what is not in it yet; why it is built so is [the desktop client
+  analysis](analysis/desktop-client.md).
 
 Agents working in this repository follow the standing [Rules](../RULES.md).
 

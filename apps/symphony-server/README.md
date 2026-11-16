@@ -2,7 +2,7 @@
 
 `just symphony` runs this server. The native read models live in `crates/symphony`, and
 their serde-only wire records in `crates/symphony-api`. All routes run natively:
-the Dioxus SPA, reads, saves and media, under each project's `/<id>/` on the one server and
+the client, reads, saves and media, under each project's `/<id>/` on the one server and
 at `/` on a server of its own.
 
 ## Projects
@@ -10,7 +10,8 @@ at `/` on a server of its own.
 The one server (`serve --home`) keeps its record (`server.json`), log, lease and lock in the
 machine folder: `~/Library/Application Support/Symphony/` on macOS, `$XDG_DATA_HOME/symphony`
 elsewhere, `SYMPHONY_MACHINE_DIR` when set (every test sets a temporary one). The registry
-beside them (`projects.json`) holds each project's root, id and `symphony.toml`; `symphony
+beside them (`projects.json`) holds each project's root, id and `symphony.toml`, and the
+releases installed on the machine are there too (`releases/NAME/`, with the `current` link); `symphony
 project add [DIR]` writes it, and every start runs it. The build and client stay in the
 starter's install folder (`--install`, `symphony/server/` in its git common dir), where a record
 an older server left is read once; a project's own state (asks, thumbnails,
@@ -50,9 +51,16 @@ Unadmitted sockets receive 503, then close their write side and drain input to E
 existing five-second shutdown grace, so unread request bytes cannot reset away the response.
 Clients that send nothing or leave a header incomplete cannot hold the old process indefinitely;
 admitted request bodies drain normally.
-The startup lock serializes publication with starters and stops. A build failure is logged once
-per source fingerprint and sent to open clients as a named `server` SSE event containing a JSON
-string; a fresh stream receives the current notice too. Editing the sources retries the build.
+The startup lock serializes publication with starters and stops. A failed update, its build or
+its hand-over, is logged and sent to open clients as the feed's named `server` event containing a
+JSON string; a fresh stream receives the current notice too. The notice says when that source
+fingerprint is built and handed over again: 5 min after its first failure, the wait doubling with
+each failure of it in a row up to 1 h (`src/reload/retry.rs`), on either clock, so the machine
+never stays on the old build for want of a retry. Editing the sources builds the new fingerprint
+at its first check, whatever that wait. A build whose sources changed or could not be read while
+it ran is dropped and waits the same way, said in the log alone, as the version read next is
+usually another and is built at once. A starter's hand-off that fails is not tried again (the
+starter asks again), and its notice keeps the time of a retry that still waits.
 Only the main checkout on branch `main` is followed; foreground servers do not reload.
 Shared installation and live rebuilds both use Cargo's release profile. The debug
 server exceeded the idle CPU budget on the normal board; the release build keeps
@@ -93,11 +101,19 @@ cannot keep installing after `--stop` returns.
 | `/api/agent-page?cursor=…` | Twenty connected agents and their current work and five latest finished tasks; `health=lost` pages lost agents |
 | `/api/task-thread?slug=…` | Alias for the typed paged task history |
 | `/api/agents` | The board's agents view, including probe availability |
-| `/api/reports?grain=…&days=…` | The Reports page's window (`ReportsPage`): its periods by the hour, day or week, each summed from the project's roll-up, agents and board-health day files, a period no file recorded none of; the settings file's commits in the window; what was not read. It reads files only, never the board, and at most 64 MiB of them (`src/api/reports.rs`) |
+| `/api/reports?grain=…&days=…` | The Reports page's window (`ReportsPage`): its periods by the hour, day or week, each summed from the project's roll-up, agents and board-health day files, a period no file recorded none of; the settings file's commits in the window; what was not read. It reads files only, never the board, and at most 64 MiB of them (`src/api/reports.rs`). The answer is kept between reads with what it was read from (the hour, each day file by its stat, the default branch's tip), so a read that finds none of it moved opens no file and starts no git (`src/api/reports/kept.rs`) |
 | `/api/run-log?run=…&tail=…` | Part of a run's log (`RunLog`): its last 64 KiB by default, its last `tail` bytes, or `from=…&to=…` a range, at most 1 MiB; only a regular file in a day folder of the project's `logs/`, never the board (`src/api/run_log.rs`, [RUNS](../../docs/RUNS.md#logs)) |
 | `/api/activity` | Latest forty document and owner-addressed task entries |
 | `/api/pending` | Pending cards in document navigation order, then branch cards |
-| `/api/feed?since=…` | Server-Sent Events after the snapshot's version |
+| `/api/feed?since=…` | The feed after the snapshot's version: a WebSocket to a request that asks to upgrade, Server-Sent Events to any other (`src/api/feed_socket.rs`; both forms are `symphony_api`'s feed contract) |
+
+Before any project the one server answers `/api/projects`, to loopback and this machine's tailnet
+names like every route of a project's: each project it serves, with its feed's version, the cards
+waiting on the owner and the first of them, why it is refused or its board unwell, and its task
+asks, beside the server's installation id and pin (`symphony_api::ProjectList`, what the desktop
+app reads). The task asks are the questions agents asked each person on open tasks that still wait
+on them, and the board's newest reviewer verdict; a project's feed sends them again each time they
+change, as the region `task-asks` (`src/live/task_asks.rs`).
 
 Every JSON read, these and the document reads and a plugin's JSON alike, is answered
 `no-store` with a weak `ETag`: the first 16 hex digits of the SHA-256 of the JSON it sends,
@@ -105,8 +121,18 @@ before compression. A request whose `If-None-Match` names it is answered `304` w
 keeping the tag and `no-store` (`src/api/validated.rs`, applied where every read leaves
 `api::answer`). A document, its outline and its sections' bodies carry the feed's cursor
 (`version`), which moves with every change on the board, so their tag is of the JSON with the
-cursor left out: it moves only with the document. A page whose kept copy is still current takes
-the cursor from `/api/board`. The browser keeps no copy of its own: the client's cache keeps
+cursor left out: it moves only with the document. An outline's check that names the tag of the copy
+the hub follows for that page is answered `304` at the feed's cursor without rendering the
+document: the hub renders that copy again when anything a render reads that it tracks changed, and
+makes its outline's tag once for each copy (`Hub::outline_kept`). A check with another tag or none,
+of a document not followed yet, of a copy whose tasks are no longer the ones that link it on the
+board as last read (a board read asks for no refresh), or of one that names a file from outside the
+entrypoints' folders by its change time and size, which no refresh watches, renders as a read does.
+A page whose kept copy is still current takes the cursor from `/api/board`. Every JSON read names
+the feed's cursor it was read at in a header (`symphony_api::VERSION_HEADER`), on its `200` and its
+`304` alike: the server takes the cursor before it reads the answer, so every event at or before it
+is in the answer, and a page drops what its feed says of a read at or before the read's cursor
+(`api::cursor`). The browser keeps no copy of its own: the client's cache keeps
 the body and sends the tag back (docs/analysis/client-cache.md). An error carries no tag, and the
 feed's stream is never read whole.
 
@@ -147,15 +173,20 @@ The server package embeds its committed `client/public` distribution: the curren
 the two published before it, as its `builds.json` names them. A direct
 `symphony-server --port N` uses it when the default local build directory is absent.
 An explicit install or `SYMPHONY_UI_DIST` never falls back, and a present local
-bundle keeps its strict errors. `just client-update` in the Symphony workspace
+bundle keeps its strict errors. A release's build of the server (`SYMPHONY_CLIENT_BESIDE=1`)
+embeds no client: run from the release's folder in the machine folder
+(`releases/NAME/bin/symphony-server`, through `current` or not), it serves that release's
+`client/HASH/` from beside it, whatever else is named
+([RELEASES](../../docs/RELEASES.md#the-install)). `symphony-server --serves` prints, as one line
+of JSON, the plugin protocol and the board schema the build serves. `just client-update` in the Symphony workspace
 refreshes the real distribution before committing client changes. Its default
 root is the checkout's top level even when the command starts in a subfolder; `--root`
 selects another folder. A private server on the main checkout leaves the
 shared app's `artifacts/docs-app.port` record alone. A project's page serves the
 shell with revalidation by its ETag, as is any client file not named by its
 content. A file named by its content, an `assets/` name whose last `-` part is
-dx's `dxh…` hash or the packager's sixteen hex digits (the shell script, every
-page module, wasm and stylesheet), is cached for a year as immutable, so a
+the build's sixteen hex digits (the shell script, every page module and stylesheet), is
+cached for a year as immutable, so a
 return visit revalidates the page alone (`src/api/client.rs`). Snapshots and the
 page are gzipped per request. A client file is gzipped once per content, at the
 best level, by the first request that takes gzip; later requests, from any
@@ -164,7 +195,7 @@ gzips, up to 16 MiB (about eight builds of every page's files), and drops the
 least recently asked-for past that, gzipping it again should it be asked for
 again (`src/api/client/gzipped.rs`). A file gzip cannot shrink goes as it is, as
 do PNG and WOFF2 files. Gzip is the one encoding offered: `br` and `zstd` get
-the file as it is. SSE is never compressed or buffered. A changed shell script path
+the file as it is. The feed is never compressed or buffered. A changed shell script path
 emits a `client` region, which the existing client uses to reload once per build.
 
 Only the shared server started with `--home`, holding the server lease, drains
@@ -175,9 +206,10 @@ scratch database for a preview, and set `ASKS_DB` to a private path when exercis
 ask or chat writes, which still use that store. Leaving the journal alone is
 simpler than creating a second preview journal with its own delivery lifecycle.
 
-Every SSE delta has an increasing `id` and a single JSON line containing
-`version` and `changes`. The existing board regions are `card`, `queue` (only
-the five visible cards), `counts`, `progress` and `client`. Additional list
+Every delta's data is a single JSON line containing `version` and `changes`; as a
+Server-Sent Event it has an increasing `id` too, and on the WebSocket none (how each
+form says an event: `symphony_api`'s feed contract). The existing board regions are
+`card`, `queue` (only the five visible cards), `counts`, `progress` and `client`. Additional list
 regions use keyed upserts/removals (`ItemChange<T>`); their `-order` events
 move one key after another (`OrderChange`). They are `queue-item`,
 `spot-check`, `agent-queue`, `pending`, `activity`, `task`,
@@ -202,7 +234,10 @@ ask thread with a message the hub has not announced yet (`threads`, each `id` an
 document's questions read their thread again only then, and once after a
 reconnect, instead of polling. The hub compares the asks file's size and time each
 board interval and reads it only when they changed; `/api/ask` and `/api/asks` take
-the chat recipient from the hub's last board read. `branches` names the branches of the
+the chat recipient from the hub's last board read. `task-asks` is what the task
+board asks of each person, the questions waiting on them and the newest reviewer
+verdict, sent each time it changes, for the desktop app (`src/live/task_asks.rs`):
+no page reads it. `branches` names the branches of the
 project's repository whose tip moved, as the watcher saw their refs change: an open task page
 reads its gates again when the branch they were answered for is among them. Unknown regions
 are ignored by the current board client.
@@ -215,7 +250,11 @@ open stream, so the client fetches a fresh snapshot. `Last-Event-ID` is not a
 resume mechanism across server starts. Named `ping` events follow the client
 contract: at most five seconds of silence.
 
-Worktree index locks and reflogs do not invalidate document snapshots. Text and
+Worktree index locks and reflogs do not invalidate document snapshots. A page follows each
+document a visit read, and a refresh renders those again only once the page's own files changed
+(main's: a file below its documents' folders or what its plugins watch, a lost event, or its
+project file edited, whether its settings still load or not): a ref, a worktree's record or a
+branch's edit renders none of main's but one whose cards or linking tasks moved. Text and
 parsed registers reuse unchanged files, checking inode, size, modification and
 change times so atomic replacement and a restored mtime still invalidate them.
 Schema validators are reused by schema contents. Unchanged feed lists skip diff
@@ -235,11 +274,14 @@ sequenced board snapshot also supplies the board and agents views. Unchanged raw
 That snapshot also names the tasks that link a document or a folder's introduction, and the
 work beside each agent on the agents page, so those reads read no board; while the board cannot be
 read, the agents views answer unavailable, as its tasks do. The task page's reads (`task-page`, `task-offer`,
-`task-history`, `task-brief`, `task-thread`) share one store of the board, opened by the
-first and kept until the board fails a read on it, so no read finds the board's server and
-asks `ps` and `lsof` about it again. A document renders without the lock the board, the feed and
-the project list read under, which it takes only to place its copy in its page; renders take
-turns, each from its read of the file to that placement, so the copy kept is the last read.
+`task-history`, `task-brief`, `task-thread`) and the task board's search share one store of the
+board, opened by the first and kept until the board fails a read on it, so no read finds the
+board's server and asks `ps` and `lsof` about it again. A document renders without the lock the
+board, the feed and the project list read under, which it takes only to place its copy in its
+page. Renders run side by side, a visit's on tokio's blocking pool, which bounds how many run at
+once, so a reader's waits on no refresh's; a copy is placed only over one whose read began before
+its own, so the copy kept is the last read begun, and a visit's first read of a document begun
+before a refresh that renders anew reads again, as that refresh rendered only what was followed.
 
 A cold server publishes its document hub and URL, then activates the first board
 read in the hub's owned worker. Data reads activate and await that first result; an unavailable board
@@ -274,7 +316,9 @@ action is a board action of the project's plugins, named by the offer it answers
 (`TaskOffer`: the action, its label, the branch and the payload it hands back);
 an action no plugin of the project offers is a 404, and one the action refuses
 says and moves nothing on the board.
-Writes require an allowed Host and, when supplied, the app's exact Origin.
+Writes require an allowed Host and, when supplied, the app's exact Origin. So does the feed's
+WebSocket upgrade, as a page of any site may open a WebSocket and read what it says: its Origin
+must be the server's own page (`src/api/feed_socket.rs`).
 One register lock covers read, edit, no-loss validation, write and tap
 deduplication across all worktrees. Asks share the existing `ASKS_DB` store.
 

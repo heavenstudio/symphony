@@ -105,7 +105,10 @@ export function readBoard(value: unknown): Board | null {
     : null;
 }
 
-/** The regions Rust reads; any other is ignored, with its data. */
+/**
+ * The regions Rust reads but `task-asks`, which is the desktop app's: that one and any other are
+ * ignored, with their data.
+ */
 const KNOWN = ["card", "queue", "counts", "progress", "client"];
 
 /**

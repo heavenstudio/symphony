@@ -1,8 +1,11 @@
 //! How a store opens its board, by the schema rule ([`crate::schema`]): one read of the board's
-//! version, then the board taken as it is, migrated forward once, or refused before any write.
+//! version, then the board taken as it is, migrated forward once, or refused before any write. A
+//! writer keeps its line in the board's writers as it opens ([`super::writers`]).
 
+use super::surreal as sql;
 use super::transaction::Run;
-use super::{Clock, Error, Failure, Probe, STALE, Store, now, sessions};
+use super::writers::{self, Line, Program};
+use super::{Clock, Error, Failure, Probe, Store, now, sessions};
 use crate::live::{self, Live};
 use crate::rpc::{Client, DbError};
 use crate::schema::{self, Access, Opened, Schema};
@@ -22,9 +25,15 @@ pub struct Opening {
     /// Opened by `tasks migrate` in the live board's main checkout: what alone moves a live board
     /// whose default branch commits no board source ([`crate::live::may_move`]).
     pub migrating: bool,
+    /// Whether a migrate moves the board though writers seen in the last week are behind the schema
+    /// it moves it to ([`Store::writers_behind`]): `tasks migrate --leave-behind`.
+    pub leave_behind: bool,
     /// How a refusal names a scratch board, in the words the program opening it takes: its
     /// environment's [`live::SCRATCH_VARIABLE`] unless it says otherwise ([`Opening::scratch`]).
     pub scratch: &'static str,
+    /// The program opening it, which a writer's line and its refusals name: this process's unless
+    /// it says otherwise ([`Opening::by`]).
+    pub program: Program,
 }
 
 impl Opening {
@@ -36,7 +45,22 @@ impl Opening {
             project: None,
             live: None,
             migrating: false,
+            leave_behind: false,
             scratch: live::SCRATCH_VARIABLE,
+            program: Program::this(),
+        }
+    }
+
+    /// The board opened by `program` instead of this process's.
+    pub fn by(self, program: Program) -> Opening {
+        Opening { program, ..self }
+    }
+
+    /// The board opened by a migrate that moves it though writers seen in the last week are behind.
+    pub fn leave_behind(self) -> Opening {
+        Opening {
+            leave_behind: true,
+            ..self
         }
     }
 
@@ -125,6 +149,12 @@ impl Store {
     /// the version found, and the one a migration moved it to, go in that record. The live board is
     /// [`Opening::live`]; a store opened with none named is checked only when it would move the
     /// board, by the board its client's address names.
+    ///
+    /// A writer keeps its line in the board's writers ([`super::writers`]), read in that one read
+    /// and written when it is due: as it opens a board at its version, once it migrated one, and
+    /// when it is refused a board behind it, but never when the board is ahead of it. A migrate
+    /// ([`Opening::migrating`]) that would leave behind a writer seen in the last week is refused
+    /// before it moves anything, naming each, unless it is told to ([`Opening::leave_behind`]).
     pub fn opening(
         client: Client,
         clock: Clock,
@@ -139,17 +169,25 @@ impl Store {
         }
         let store = Store::unchecked_as(client, clock, pid_alive, host, how);
         let own = how.schema.version();
+        let record = |line: &Line| {
+            store.record_writer(&how.program, &how.schema, how.access, line);
+        };
         store.retrying(|| {
-            let (found, defined) = store.board_schema()?;
+            let (found, defined, line) = store.board_opening(&how.program)?;
             if let Some(live) = &how.live {
                 went_back(live, found)?;
             }
-            let decided = schema::decide(found, own, how.access, how.project.as_deref());
+            let decided =
+                schema::decide(found, own, how.access, how.project.as_deref(), &how.program);
             if let (Some(live), Some(found)) = (&how.live, found) {
                 live::seen::record(live, found, store.now());
             }
             match decided {
-                Opened::Current | Opened::Ahead => Ok(()),
+                Opened::Current => {
+                    record(&line);
+                    Ok(())
+                }
+                Opened::Ahead => Ok(()),
                 Opened::Refused(why) => Err(Failure::Stop(Error::Refused(why))),
                 Opened::Migrate => {
                     let board = how
@@ -160,17 +198,44 @@ impl Store {
                         if how.live.is_none() {
                             went_back(board, found)?;
                         }
-                        store.may_move(how, board, found)?;
+                        if let Err(refused) = store.may_move(how, board, found) {
+                            record(&line);
+                            return Err(refused);
+                        }
+                    }
+                    if how.migrating && !how.leave_behind {
+                        store.none_left_behind(how, found)?;
                     }
                     store.migrate(&how.schema, found, defined)?;
                     if let Some(board) = &board {
                         live::seen::record(board, own, store.now());
                     }
+                    record(&Line::Held(None));
                     Ok(())
                 }
             }
         })?;
         Ok(store)
+    }
+
+    /// Refused, naming each, when a writer seen in the last week is behind the schema `how` moves
+    /// this board, found at `found`, to; a board not made yet has none.
+    fn none_left_behind(&self, how: &Opening, found: Option<i64>) -> Result<(), Failure> {
+        if found.is_none() {
+            return Ok(());
+        }
+        let target = how.schema.version();
+        let behind = self.writers_behind(target, &how.program)?;
+        if behind.is_empty() {
+            return Ok(());
+        }
+        let board = schema::Named::of(how.project.as_deref()).board;
+        Err(Failure::Stop(Error::Refused(writers::left_behind(
+            &board,
+            target,
+            &behind,
+            writers::seen_now(),
+        ))))
     }
 
     /// Whether this store, opened by `how`, may move `board`, a project's live board found at
@@ -215,7 +280,11 @@ impl Store {
             pid_alive,
             host: host.into(),
             schema: how.schema.version(),
-            refusal: schema::Refusal::of(how.project.as_deref(), how.schema.version()),
+            refusal: schema::Refusal::of(
+                how.project.as_deref(),
+                how.schema.version(),
+                &how.program,
+            ),
             pick: Mutex::new(Box::new(sessions::Random::seeded())),
             callback_snapshot: Mutex::new(None),
             callback_idle: Mutex::new(None),
@@ -229,10 +298,26 @@ impl Store {
         }
     }
 
+    /// As [`Store::board_schema`], with `program`'s line in the board's writers on this host, in the
+    /// same one read ([`sql::writers::OPENING`]).
+    fn board_opening(&self, program: &Program) -> Result<(Option<i64>, bool, Line), Failure> {
+        let vars = writers::opening_vars(program, &self.host);
+        match self.request(sql::writers::OPENING, vars) {
+            Ok(answer) => {
+                let (found, line) = writers::opened(&answer);
+                Ok((found, true, line))
+            }
+            Err(DbError::Failed(said)) if undefined(&said, self.client.database()) => {
+                Ok((None, false, Line::NoTable))
+            }
+            Err(other) => Err(other.into()),
+        }
+    }
+
     /// The board's schema version (none for a board not made yet), and whether its namespace and
     /// database are on the server: one read in them, which defines nothing.
     fn board_schema(&self) -> Result<(Option<i64>, bool), Failure> {
-        match self.client.query(BOARD_SCHEMA, json!({})) {
+        match self.request(sql::opening::BOARD_SCHEMA, json!({})) {
             Ok(found) => Ok((found.last().and_then(Value::as_i64), true)),
             Err(DbError::Failed(said)) if undefined(&said, self.client.database()) => {
                 Ok((None, false))
@@ -248,14 +333,10 @@ impl Store {
     /// one another open finished first is read again rather than run twice.
     fn migrate(&self, schema: &Schema, found: Option<i64>, defined: bool) -> Result<(), Failure> {
         if !defined {
-            self.client.define_then("RETURN NONE;", json!({}))?;
+            self.define()?;
         }
-        self.client.query(schema::ANALYZERS, json!({}))?;
-        let steps = format!(
-            "LET $found = {BOARD_SCHEMA_VALUE};\nIF $found != $was {{ THROW '{STALE}' }};\n{}\n\
-             UPSERT meta:schema SET version = $version RETURN NONE;\nRETURN NONE;",
-            schema.steps()
-        );
+        self.request(schema::ANALYZERS, json!({}))?;
+        let steps = sql::opening::migration(schema.steps());
         self.run_transaction::<Value>(
             &steps,
             json!({"version": schema.version(), "was": found}),
@@ -282,19 +363,10 @@ fn undefined(said: &str, database: &str) -> bool {
             .is_some_and(|name| name.ends_with("' does not exist"))
 }
 
-/// The board's schema version, or NONE before its tables are made.
-macro_rules! board_schema {
-    () => {
-        "IF (INFO FOR DB).tables.meta = NONE { NONE } ELSE { (SELECT VALUE version FROM ONLY meta:schema) }"
-    };
-}
-const BOARD_SCHEMA_VALUE: &str = board_schema!();
-/// [`BOARD_SCHEMA_VALUE`] as a read of its own.
-const BOARD_SCHEMA: &str = concat!("RETURN ", board_schema!(), ";");
-
 #[cfg(test)]
 mod tests {
-    use super::{BOARD_SCHEMA, undefined};
+    use super::sql::opening::BOARD_SCHEMA;
+    use super::undefined;
 
     #[test]
     fn only_a_namespace_or_this_database_not_on_the_server_reads_as_a_board_not_made_yet() {
@@ -311,9 +383,14 @@ mod tests {
         }
     }
 
-    /// The open's check of the version is a read, so a late answer to it goes once more.
+    /// The open's check of the version, with its writer's line, is a read, so a late answer to it
+    /// goes once more.
     #[test]
     fn the_schema_version_check_is_a_read() {
         assert_eq!(crate::rpc::Kind::of(BOARD_SCHEMA), crate::rpc::Kind::Read);
+        assert_eq!(
+            crate::rpc::Kind::of(super::sql::writers::OPENING),
+            crate::rpc::Kind::Read
+        );
     }
 }

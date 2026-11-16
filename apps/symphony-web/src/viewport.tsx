@@ -70,12 +70,20 @@ export interface NearViewportProps {
   onEnter?: () => void;
   /** Whether the box is a list's item (`li`) rather than a `div`. */
   listItem?: boolean;
+  /** Mount the content now, near the screen or not (a part the focus is given to), and keep it. */
+  eager?: boolean;
+  /**
+   * Whether a part the address names mounts at once and is landed, as it mounts: false once the
+   * reader has acted since following the address, the part then waiting as any other, its anchors
+   * still holding the address's place.
+   */
+  lands?: boolean;
 }
 
 /**
- * `children` mounted once they come near the screen; until then `ghost`, in a box of `height` px.
- * A part the address's fragment names mounts at once, and is scrolled to; so does one under
- * `AtOnce`, which is not.
+ * `children` mounted once they come near the screen, or once `eager`; until then `ghost`, in a box
+ * of `height` px. A part the address's fragment names mounts at once, and is scrolled to, while it
+ * `lands`; one under `AtOnce` mounts at once too, and is not.
  */
 export function NearViewport({
   children,
@@ -86,17 +94,25 @@ export function NearViewport({
   className = "",
   onEnter,
   listItem = false,
+  eager = false,
+  lands = true,
 }: NearViewportProps) {
   const [addressed] = useState(() => {
     const target = anchor();
-    return target !== "" && (anchors.includes(target) || target === id);
+    return lands && target !== "" && (anchors.includes(target) || target === id);
   });
   const atOnce = useContext(AtOnce);
-  const [shown, setShown] = useState(addressed || atOnce);
+  const [latched, setShown] = useState(addressed || atOnce);
+  // An eager part draws its content in the very draw that made it eager, and stays drawn after.
+  const shown = latched || eager;
   const sentinel = useRef<HTMLDivElement>(null);
   const entered = useRef(onEnter);
   entered.current = onEnter;
   useEffect(() => {
+    if (shown && !latched) {
+      setShown(true);
+      return;
+    }
     if (shown) {
       if (addressed) scrollAnchor();
       entered.current?.();
@@ -117,7 +133,7 @@ export function NearViewport({
       observer.disconnect();
       observer.takeRecords();
     };
-  }, [shown, addressed]);
+  }, [shown, latched, addressed]);
   const style: CSSProperties = {
     containIntrinsicSize: `auto ${height}px`,
     minHeight: `${shown ? 0 : height}px`,

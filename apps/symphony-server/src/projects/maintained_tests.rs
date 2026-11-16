@@ -189,8 +189,8 @@ fn registering_or_removing_a_project_starts_or_stops_its_maintenance_with_no_req
 /// The projects a server builds as it starts ([`Projects::new`]) hold no maintenance until its
 /// generation is live, its socket hand-off committed, when the server starts their watch: a
 /// replacement killed by a failed hand-off stops no state, so nothing it started may run until
-/// then. A project a request serves before then waits too; from then, each has its sweep and its
-/// catch-up, and the server's stop joins them.
+/// then. A project a request serves before then waits too; from then, each has its sweep, and the
+/// server's stop joins it.
 #[test]
 fn no_project_is_maintained_until_the_generation_is_live() {
     let machine = Machine::new(&[("alpha", "exit 0"), ("beta", "exit 0")]);
@@ -204,8 +204,8 @@ fn no_project_is_maintained_until_the_generation_is_live() {
     let look = projects.watch();
     assert_eq!(
         (beta.maintaining(), gamma.maintaining()),
-        (2, 2),
-        "each its idle sweep and its embedding catch-up"
+        (1, 1),
+        "each its idle sweep"
     );
     machine.starter.stop();
     look.join().unwrap();

@@ -19,27 +19,28 @@ impl Legacy {
     fn new() -> Self {
         let fixture = Fixture::empty();
         let handle = fixture.session("worker");
-        fixture
-            .store
-            .client()
-            .query(
-                "UPDATE type::record('session', $handle) SET agent = $key RETURN NONE;
-             UPSERT type::record('callback_state', $handle) SET marker = 'keep' RETURN NONE;
-             UPSERT type::record('callback_event', [$handle, 'chat-test']) SET handle = $handle,
-                 key = 'chat-test', delivered = false, text = 'keep' RETURN NONE;
-             UPSERT type::record('counter', ['agent', $key]) SET last = 17 RETURN NONE;",
-                json!({"handle":handle, "key":KEY}),
-            )
+        let raw = fixture.store.raw();
+        (raw.row("session", handle.as_str()))
+            .set(json!({"agent": KEY}))
             .unwrap();
-        let metadata = fixture
-            .store
-            .client()
-            .query(
-                "RETURN type::record('callback_state', ['binding', $key]).in_process;",
-                json!({"key":KEY}),
-            )
+        (raw.row("callback_state", handle.as_str()))
+            .put(json!({"marker": "keep"}))
             .unwrap();
-        assert_eq!(metadata, vec![Value::Null]);
+        (raw.row("callback_event", json!([handle, "chat-test"])))
+            .put(json!({
+                "handle": handle,
+                "key": "chat-test",
+                "delivered": false,
+                "text": "keep",
+            }))
+            .unwrap();
+        (raw.row("counter", json!(["agent", KEY])))
+            .put(json!({"last": 17}))
+            .unwrap();
+        let metadata = (raw.row("callback_state", json!(["binding", KEY])))
+            .field("in_process")
+            .unwrap();
+        assert_eq!(metadata, Value::Null);
         Self { fixture, handle }
     }
 
@@ -54,19 +55,14 @@ impl Legacy {
 }
 
 fn state(store: &Store) -> Vec<Value> {
-    store
-        .client()
-        .query(
-            "RETURN {
-        sessions: (SELECT * FROM session ORDER BY id),
-        channels: (SELECT * FROM callback_state ORDER BY id),
-        events: (SELECT * FROM callback_event ORDER BY id),
-        leases: (SELECT * FROM callback_lease ORDER BY id),
-        counters: (SELECT * FROM counter ORDER BY id)
-    };",
-            json!({}),
-        )
-        .unwrap()
+    let rows = |table: &str| store.raw().table(table).get().unwrap();
+    vec![json!({
+        "sessions": rows("session"),
+        "channels": rows("callback_state"),
+        "events": rows("callback_event"),
+        "leases": rows("callback_lease"),
+        "counters": rows("counter"),
+    })]
 }
 
 fn body(raw: &[u8]) -> Value {
@@ -215,18 +211,13 @@ fn replaced_same_key_classification_retries_and_matches_both_real_serial_orders(
         legacy.fixture.store.handle_for_agent(KEY).unwrap(),
         Some(legacy.handle)
     );
-    let counter = legacy
-        .fixture
-        .store
-        .client()
-        .query(
-            "RETURN type::record('counter', ['agent', $key]).last;",
-            json!({"key":KEY}),
-        )
+    let counter = (legacy.fixture.store.raw())
+        .row("counter", json!(["agent", KEY]))
+        .field("last")
         .unwrap();
     assert_eq!(
         counter,
-        vec![json!(18)],
+        json!(18),
         "only the successful retry advances the key guard"
     );
 }
@@ -261,22 +252,19 @@ fn fresh_same_key_full_proof_rejects_without_writes_and_legacy_cleanup_stays_ide
         .bind_agent(KEY, &legacy.handle, false)
         .unwrap();
     assert!(classified, "legacy classification: classified={classified}");
-    let cleanup = legacy
-        .fixture
-        .store
-        .client()
-        .query(
-            "RETURN {
-        channel: record::exists(type::record('callback_state', $handle)),
-        delivered: type::record('callback_event', [$handle, 'chat-test']).delivered,
-        text: type::record('callback_event', [$handle, 'chat-test']).text
-    };",
-            json!({"handle":legacy.handle}),
-        )
+    let raw = legacy.fixture.store.raw();
+    let channel = (raw.row("callback_state", legacy.handle.as_str()))
+        .exists()
         .unwrap();
+    let event = raw.row("callback_event", json!([legacy.handle, "chat-test"]));
+    let cleanup = json!({
+        "channel": channel,
+        "delivered": event.field("delivered").unwrap(),
+        "text": event.field("text").unwrap(),
+    });
     assert_eq!(
         cleanup,
-        vec![json!({"channel":false, "delivered":true, "text":""})]
+        json!({"channel":false, "delivered":true, "text":""})
     );
     assert_eq!(
         legacy

@@ -25,6 +25,22 @@ and `theme.rs`, a generator's in `crates/tasks/src/land.rs` and a stamp's in
 `crates/symphony/tests/project/reference.rs`, fails on a key this page lacks or one the code does
 not have.
 
+## The settings check
+
+`symphony settings-check [DIR]` (`just symphony-cli settings-check`) reads the project file of DIR,
+the current folder by default, as the Symphony loads it, and judges its shape alone: a table or
+key the Symphony does not know, a value of the wrong type (a number where a text is read) and a
+required value left out (an entrypoint's `url` or `folder`) are each named on stderr, exit 1; a
+file that loads is exit 0. It judges no name against a list: a model, an agent or a recipe is any
+text, so a model nobody has heard of passes. Unlike the lint it reads no document and asks no
+build which plugins it holds.
+
+A change of the values a project file gives settings the Symphony already reads lands on this
+check green at its tip, recorded as a test run, with no reviewer
+([TASKS](TASKS.md#needed-stamps)). This repository records it with `just settings-check`; a
+project records it through its own build wrapper
+([MACHINE_WORK](MACHINE_WORK.md#recording-builds-and-tests)).
+
 ## `[project]`
 
 | Key | Default | What it sets |
@@ -88,8 +104,8 @@ neither serves no `.html` file, as its patterns serve none they leave out.
 | Key | Default | What it sets |
 | --- | --- | --- |
 | `package` | the Symphony's own | a theme package a selected plugin brings, by name |
-| `name` | the package's, else the project's | the name in the header and the tab |
-| `icon` | the package's, else none | the icon of the header and the tab |
+| `name` | the package's, else the project's | the name in the tab, and in the header once the theme has a name or an icon of its own; with neither, the header says Symphony |
+| `icon` | the package's, else the Symphony's mark, the fermata | the icon of the header and the tab |
 | `stylesheet` | none | a stylesheet served after the package's |
 | `tokens` | none | `[theme.tokens]`: the package's tokens set over, by name (`primary = "#a33"`) |
 | `layouts` | none | `[theme.layouts]`: a variant for each region, `header` (`default`, `compact`) and `home` (`default`, `focus`) |
@@ -198,6 +214,7 @@ default and is said on stderr.
 | Key | Default | What it sets |
 | --- | --- | --- |
 | `orchestrator_slots` | `[board] orchestrator_slots`, else none | the tasks in progress an orchestrator holds |
+| `orchestrator_tasks` | `16` | the open tasks an orchestrator holds the orchestrator role on, at which the board gives it no more and its take or a hand-over to it is refused, a red apart ([TASKS](TASKS.md#the-limit-on-the-tasks-an-orchestrator-holds)); at least `1` |
 | `low_volume` | `4` | PULL's low-volume line below this many open slots; `0` says it to none |
 | `machine_agents` | none: no limit | the agents this machine runs, past which a launch is refused |
 

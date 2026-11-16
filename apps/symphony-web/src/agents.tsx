@@ -11,7 +11,6 @@ import {
   Followed,
   finished,
   followedTasks,
-  followingCount,
   followingLabel,
   happening,
   held,
@@ -86,7 +85,7 @@ export function AgentsMain({ live, boardRead, stale, trouble }: AgentsMainProps)
       ) : trouble !== null ? (
         <Trouble
           title="The board could not be loaded"
-          text={`${failed(trouble)} It is also tried again on its own.`}
+          text={failed(trouble, true)}
           retry={() => {
             if (live !== null) live.retry.current += 1;
           }}
@@ -130,7 +129,7 @@ function AgentsContent({ live, connected }: { live: LiveAgents; connected: boole
       ) : d.error !== "" ? (
         <Trouble
           title="The agents could not be loaded"
-          text={failed(d.error)}
+          text={failed(d.error, true)}
           retry={() => void live.load()}
         />
       ) : (
@@ -242,8 +241,7 @@ export interface AgentLinesProps extends Omit<AgentRowProps, "scope"> {
 
 /** An agent's row as it stands. */
 export function AgentLines({ agent, local, tasks, work, following }: AgentLinesProps) {
-  const { handle } = agent;
-  const count = followingCount(agent);
+  const { handle, following: count } = agent;
   const holding = held(tasks, handle);
   const done = finished(holding);
   const followed = followedTasks(following.rows, tasks, handle);
@@ -286,7 +284,9 @@ export function AgentLines({ agent, local, tasks, work, following }: AgentLinesP
       </details>
       {agent.chat && <p>{`Chat goes to ${handle}.`}</p>}
       {agent.parent !== null && <p>{`parent: ${agent.parent}`}</p>}
-      {agent.slots !== null && <p>{`open tasks: ${agent.slots.open} of ${agent.slots.cap}`}</p>}
+      {/* Its slots (crates/tasks/src/slots.rs), PULL's word: the tasks it is building, apart from
+          the open tasks it follows. */}
+      {agent.slots !== null && <p>{`slots: ${agent.slots.open} of ${agent.slots.cap}`}</p>}
       {agent.state_detail !== null && (
         <p>{`${agent.state_detail.recipe} · ${agent.state_detail.phase}`}</p>
       )}

@@ -13,10 +13,12 @@ esac
 name="${1:-}"
 board=no
 case "$name" in
-    symphony|symphony-build) package=symphony-app; member=crates/symphony ;;
+    symphony) package=symphony-app; member=crates/symphony ;;
+    symphony-build) package=symphony-build; member=crates/symphony-build ;;
     tasks|agent-send|tasks-copy|tasks-reclaim) package=symphony-board; member=crates/tasks; board=yes ;;
     fake-hc) package=symphony-board; member=crates/tasks ;;
-    symphony-server|symphony-shelf|symphony-ui-dev) package=symphony-server; member=apps/symphony-server ;;
+    symphony-server|symphony-shelf) package=symphony-server; member=apps/symphony-server ;;
+    symphony-desktop) package=symphony-desktop; member=apps/symphony-desktop ;;
     *) printf 'symphony rs-bin: no declared binary %s in %s\n' "$name" "$root" >&2; exit 2 ;;
 esac
 shift
@@ -172,7 +174,9 @@ build_key() {
 # names as it was: `- PATH` still absent, and `+ PATH` there with its status last changed in a second
 # before the stamp's, so a change in the stamp's own second counts. What the stamp's own file times
 # say counts for nothing, so a stamp copied, restored or touched vouches for no change made after its
-# second. Anything else asks Cargo.
+# second. Anything else asks Cargo. It cannot see a toolchain a channel pin names updated in place
+# (this workspace pins a version), or a file changed while the clock stood before the stamp's second
+# and set right since, which fools Cargo too.
 fresh() {
     local line count=0 at="" names="" built="" now
     local -a paths=()

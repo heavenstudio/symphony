@@ -8,15 +8,17 @@
 //! stamp, an edit since, is written over all the same, and the run says so and where the
 //! project's own goes ([`Outcome::Replaced`]). Where the project has none, the
 //! Symphony's is used. The project's own skills and guards sit beside the shipped ones and are never
-//! touched. It writes no permission rule but the allow rules: each names a recipe `symphony.just`
-//! holds, its board and reply recipes and `land`, never the server ones ([`ALLOW`]). A rule carries
-//! no stamp, so every rule a run finds is the project's own but one a landed init wrote and this
-//! one dropped, which a run removes: an allow rule ([`RETIRED`], the env-prefixed board rule, whose
-//! `*` passed any program) or an ask rule ([`RETIRED_ASK`], those that asked before a land), an ask
-//! list they leave empty going with them. What the Symphony's default land lands is decided by its
-//! checks, every stamp the task needs standing on the tip it lands, never by a prompt; a
-//! project whose own `land` recipe replaces it gets the same allow rule, and its own landing policy
-//! decides what lands.
+//! touched, and so is a file of the project's in a shipped skill's folder that the stamp does not
+//! name: `project.md` there is the project's standing instructions for that skill's role, which
+//! the `work`, `review-task` and `assess-task` skills read first. It writes no permission rule but
+//! the allow rules: each names a recipe `symphony.just` holds, its board and reply recipes and
+//! `land`, never the server ones ([`ALLOW`]). A rule carries no stamp, so every rule a run finds is
+//! the project's own but one a landed init wrote and this one dropped, which a run removes: an
+//! allow rule ([`RETIRED`], the env-prefixed board rule, whose `*` passed any program) or an ask
+//! rule ([`RETIRED_ASK`], those that asked before a land), an ask list they leave empty going with
+//! them. What the Symphony's default land lands is decided by its checks, every stamp the task
+//! needs standing on the tip it lands, never by a prompt; a project whose own `land` recipe
+//! replaces it gets the same allow rule, and its own landing policy decides what lands.
 //!
 //! The recipes include the default `land` (`tasks land`), and `symphony.just` sets
 //! `allow-duplicate-recipes`, so a recipe of the project's own of the same name replaces the
@@ -1020,6 +1022,17 @@ pub struct Machine<'a> {
     pub beside: Option<&'a Path>,
 }
 
+impl Machine<'_> {
+    /// What a search for a build reads past a checkout's links: this machine's folder, whose
+    /// `current` names the release it runs, and its search path.
+    pub fn beyond(&self) -> builds::Beyond {
+        builds::Beyond {
+            machine: self.folder.map(Path::to_path_buf),
+            path: self.path.map(OsStr::to_os_string),
+        }
+    }
+}
+
 /// The SurrealDB the board of the checkout at `root` would start, when it is not there to run:
 /// `named` (`SYMPHONY_SURREAL`), else the pinned one in the repository's common dir. None outside a
 /// checkout.
@@ -1062,7 +1075,7 @@ fn unmade_board(root: &Path, named: Option<&Path>) -> bool {
 /// then the other ones [`RUNS`] names. These are the binaries the workspace delivers, each held to
 /// a size budget (`symphony-build size-budget`, docs/CHECKS.md "Size budgets"). The workspace's
 /// `symphony-build`, the commands only its own build and release run use, is none of them.
-pub(crate) const BUILDS: [&str; 4] = ["symphony", "tasks", "agent-send", "symphony-server"];
+pub const BUILDS: [&str; 4] = ["symphony", "tasks", "agent-send", "symphony-server"];
 
 /// What runs the build `name`: the hooks that do, then each recipe of [`RUNS`] that does but those
 /// the project's justfile has of its own (`own`), which replace the Symphony's.
@@ -1084,12 +1097,12 @@ fn runners(name: &str, own: &[&str]) -> Vec<String> {
 }
 
 /// Of `names`, the builds the checkout at `root` has none of where the recipes and the hooks look
-/// ([`builds::find`]) on the search path `path`.
-fn unfound<'a>(root: &Path, names: &[&'a str], path: Option<&OsStr>) -> Vec<&'a str> {
+/// ([`builds::find`]), past its links in `beyond`.
+fn unfound<'a>(root: &Path, names: &[&'a str], beyond: &builds::Beyond) -> Vec<&'a str> {
     names
         .iter()
         .copied()
-        .filter(|name| builds::find(root, name, path).is_none())
+        .filter(|name| builds::find(root, name, beyond).is_none())
         .collect()
 }
 
@@ -1182,7 +1195,7 @@ pub fn steps(root: &Path, machine: &Machine) -> Vec<String> {
         .filter(|name| !runners(name, &own).is_empty())
         .collect();
     steps.extend(build_steps(
-        &unfound(root, &wanted, machine.path),
+        &unfound(root, &wanted, &machine.beyond()),
         &own,
         machine.beside,
     ));
@@ -1336,10 +1349,21 @@ fn registered(root: &Path, folder: &Path) -> bool {
         .is_ok_and(|registry| registry.projects.iter().any(|entry| entry.root == main))
 }
 
-/// The warning a run at `root` ends with when the heartbeat has no build to run there, found as the
-/// hooks find it on the search path `path`.
-pub fn heartbeat_warning(root: &Path, path: Option<&OsStr>) -> Option<String> {
-    let missing = unfound(root, &HEARTBEAT_BUILDS, path);
+/// The warning a run at `root` ends with when the heartbeat has no build to run there, each found
+/// as the hooks find it, past its links in `beyond`: `symphony` as the hooks' own shell does
+/// ([`find_symphony`]: the links, then the search path, never the machine's release), and `tasks`
+/// as the beat does ([`builds::find`], the machine's release before the search path). So a project
+/// with no build of its own is warned though a release is installed: its recipes run the release,
+/// and its hooks run nothing.
+pub fn heartbeat_warning(root: &Path, beyond: &builds::Beyond) -> Option<String> {
+    let shell = builds::Beyond::path(beyond.path.as_deref());
+    let missing: Vec<&str> = HEARTBEAT_BUILDS
+        .into_iter()
+        .filter(|name| {
+            let past = if *name == "symphony" { &shell } else { beyond };
+            builds::find(root, name, past).is_none()
+        })
+        .collect();
     if missing.is_empty() {
         return None;
     }
@@ -1461,7 +1485,7 @@ pub fn main(args: &[String], out: &mut dyn io::Write, err: &mut dyn io::Write) -
                 beside: running.as_deref().ok().and_then(Path::parent),
             };
             let _ = writeln!(out, "\n{}\n\n{TRUST}", next(&steps(&root, &machine)));
-            if let Some(warning) = heartbeat_warning(&root, path.as_deref()) {
+            if let Some(warning) = heartbeat_warning(&root, &machine.beyond()) {
                 let _ = writeln!(err, "symphony init: {warning}");
             }
             0

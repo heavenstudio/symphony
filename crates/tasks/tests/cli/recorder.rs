@@ -27,6 +27,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use symphony_api::{End, RunLine};
 use symphony_board::cli::Env;
 use symphony_board::cli::machine_work::recorded::{self, Phase, Record, Step};
+use symphony_board::stamps::read;
 use symphony_board::sys::{Child, Command, Stdio, output, wait_output};
 
 pub(crate) const MACHINE: &str = "0123456789abcdef0123456789abcdef";
@@ -1163,14 +1164,9 @@ fn bind(case: &Case, handle: &str, agent: Option<&str>, claude: &str, cwd: &Path
     }
 }
 
-/// The handle and the task a run of `true` with `vars`, in `cwd`, records on `case`'s board.
+/// What a run of `true` with `vars`, in `cwd`, records on `case`'s board, once it finished.
 #[track_caller]
-fn run_in(
-    case: &Case,
-    name: &str,
-    cwd: &Path,
-    vars: &[(&str, &str)],
-) -> (Option<String>, Option<String>) {
+fn run_in(case: &Case, name: &str, cwd: &Path, vars: &[(&str, &str)]) -> Record {
     let folders = Folders::new(name);
     let mut command = tasks(
         case,
@@ -1181,8 +1177,7 @@ fn run_in(
     command.current_dir(cwd).envs(vars.iter().copied());
     let done = output(command.stdin(Stdio::null())).unwrap();
     assert!(done.status.success(), "{vars:?}: {done:?}");
-    let finished = folders.once(Step::Finished);
-    (finished.handle, finished.task)
+    folders.once(Step::Finished)
 }
 
 /// Runs on a board, each with a work folder of its own, named `PREFIX-N`: a test's prefix is its
@@ -1202,7 +1197,8 @@ impl<'c> Runs<'c> {
         }
     }
 
-    /// A run in `cwd` with `vars` records `expected`, its handle and its task, for the reason `why`.
+    /// A run in `cwd` with `vars` records `expected`, its handle and its task, for the reason `why`:
+    /// its record.
     #[track_caller]
     fn record(
         &self,
@@ -1210,24 +1206,25 @@ impl<'c> Runs<'c> {
         cwd: &Path,
         vars: &[(&str, &str)],
         expected: (Option<&str>, Option<&str>),
-    ) {
+    ) -> Record {
         let at = self.made.replace(self.made.get() + 1);
         let found = run_in(self.case, &format!("{}-{at}", self.prefix), cwd, vars);
         assert_eq!(
-            (found.0.as_deref(), found.1.as_deref()),
+            (found.handle.as_deref(), found.task.as_deref()),
             expected,
             "{why}: in {} with {vars:?}",
             cwd.display()
         );
+        found
     }
 }
 
 const CLAUDE: &str = "CLAUDE_CODE_SESSION_ID";
 
 /// With no task named, a run's task is, in this order: the given session's; the one live session
-/// the beat hook placed in its linked worktree; its branch's when that is an open task's slug; the
-/// live full session its Claude Code session binds (a subagent's is its parent's, so this never
-/// beats the branch); none. Each earlier one wins over a later one that says otherwise, and the
+/// the beat hook placed in its linked worktree; its branch's when that is a task's slug, whatever
+/// its status; the live full session its Claude Code session binds (a subagent's is its parent's,
+/// so this never beats the branch); none. Each earlier one wins over a later one that says otherwise, and the
 /// main checkout, where every agent's board commands run, places no one.
 #[test]
 fn an_unnamed_runs_task_is_its_sessions_the_placed_sessions_its_branchs_then_its_claude_sessions() {
@@ -1330,8 +1327,83 @@ fn an_unnamed_runs_task_is_its_sessions_the_placed_sessions_its_branchs_then_its
         &[],
         (None, None),
     );
-    runs.record("a finished task's branch is none", &gone, &[], (None, None));
+    runs.record(
+        "a cancelled task's branch is still its task's",
+        &gone,
+        &[],
+        (None, Some("tools/branch-gone")),
+    );
+    runs.record(
+        "a closed task's branch beats the Claude Code session's",
+        &gone,
+        &[(CLAUDE, PARENT)],
+        (None, Some("tools/branch-gone")),
+    );
     runs.record("a branch no task has is none", &unknown, &[], (None, None));
+}
+
+/// An approve leaves a task done, and its executor holds no done task: a land that conflicts sends
+/// it back to its branch, to merge main and run its tests at the merged tip, as the land's own
+/// conflict line says. What it runs there is the task's by its branch, with nothing named, and
+/// stands as the `tests` stamp at the merged tip by the reader the land and the task page read;
+/// what the same session runs in another worktree is not the task's.
+#[test]
+fn runs_on_an_approved_tasks_branch_after_a_land_conflict_are_its_tests_at_the_merged_tip() {
+    const SLUG: &str = "tools/approved";
+    const CLAUDE_EXE: &str = "claude-executor-parent";
+    let case = Case::new();
+    let [orch, exe, reviewer] =
+        ["orchestrator", "worker", "reviewer"].map(|kind| case.register(kind));
+    case.ok(
+        &orch,
+        &["create", SLUG, "Approved, then conflicting at its land"],
+    );
+    case.ok(&exe, &["claim", SLUG]);
+    case.ok(&exe, &["move", SLUG, "review"]);
+    case.ok(&reviewer, &["role", SLUG, "reviewer"]);
+    case.ok(&reviewer, &["verdict", SLUG, "approve", "fine"]);
+    let shown = case.ok("", &["show", SLUG]);
+    assert!(shown.lines().next().unwrap().contains("[done,"), "{shown}");
+    let (main, [branch, elsewhere]) = worktrees("recorder-approved", [SLUG, "tools/no-such-task"]);
+    // The task's work on its branch, approved there; then main moves, and the land conflicts: the
+    // executor merges main into the branch.
+    git(
+        &branch,
+        &["commit", "-q", "--allow-empty", "-m", "the work"],
+    );
+    let approved = git_says(&branch, &["rev-parse", "HEAD"]);
+    git(
+        &main,
+        &["commit", "-q", "--allow-empty", "-m", "main moved"],
+    );
+    git(&branch, &["merge", "-q", "--no-edit", "main"]);
+    let merged = git_says(&branch, &["rev-parse", "HEAD"]);
+    assert_ne!(merged, approved);
+    bind(&case, &exe, Some("agent-executor"), CLAUDE_EXE, &branch);
+    let runs = Runs::on(&case, "recorder-approved-run");
+    let ours = runs.record(
+        "the executor placed on the approved task's branch, holding no task: the branch's",
+        &branch,
+        &[(CLAUDE, CLAUDE_EXE)],
+        (Some(exe.as_str()), Some(SLUG)),
+    );
+    assert_eq!(ours.commit.as_deref(), Some(merged.as_str()));
+    let tests = read::tests(std::slice::from_ref(&ours), &merged, |task| task == SLUG);
+    assert!(tests.met, "{tests:?}");
+    assert_eq!(tests.by.as_deref(), Some(exe.as_str()));
+    assert_eq!(tests.commit.as_deref(), Some(merged.as_str()));
+    // Its session, placed in another worktree, holds nothing there: that run is no task's, and
+    // stands as none of the approved task's.
+    bind(&case, &exe, Some("agent-executor"), CLAUDE_EXE, &elsewhere);
+    let theirs = runs.record(
+        "the same session in another worktree: no task's",
+        &elsewhere,
+        &[(CLAUDE, CLAUDE_EXE)],
+        (Some(exe.as_str()), None),
+    );
+    let at_main = theirs.commit.clone().unwrap();
+    let tests = read::tests(&[theirs], &at_main, |task| task == SLUG);
+    assert!(!tests.met, "{tests:?}");
 }
 
 /// A session counts only while the board reads it live: one whose agent finished and never left
@@ -2150,6 +2222,13 @@ fn quoted(text: &str) -> Vec<String> {
         .collect()
 }
 
+/// A script that prints a real `cargo test`'s output (src/runs/suites/tests.rs says what it holds)
+/// on `stream` (`1` or `2`) and exits `code`.
+fn cargo_test(stream: u8, code: u8) -> String {
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/runs/fixtures/cargo-test.log");
+    format!("cat '{}' >&{stream}; exit {code}", fixture.display())
+}
+
 #[test]
 fn the_runs_doc_names_each_field_a_written_line_holds_in_its_order_and_each_end() {
     let case = Case::new();
@@ -2157,8 +2236,10 @@ fn the_runs_doc_names_each_field_a_written_line_holds_in_its_order_and_each_end(
     let repo = repository(&folders.dir.join("repo"));
     let runs = folders.dir.join("runs");
     let label = ("test", "just test-rs");
+    // A test run's, so its line says its tests too.
+    let script = cargo_test(1, 3);
     assert_eq!(
-        pipeline_run(&case, &folders, (&repo, &runs), label, "exit 3").code(),
+        pipeline_run(&case, &folders, (&repo, &runs), label, &script).code(),
         Some(3)
     );
     day_lines(&folders.work, &runs, 1);
@@ -2187,7 +2268,7 @@ fn the_runs_doc_names_each_field_a_written_line_holds_in_its_order_and_each_end(
         said.retain(|key| key != "cpu_partial");
     }
     assert_eq!(said, written);
-    // The table: each field a line holds, in its order, then those later tools fill.
+    // The table: each field a line holds, in its order.
     let table = doc.split("## A line").nth(1).unwrap();
     let rows: Vec<&str> = table
         .lines()
@@ -2198,9 +2279,7 @@ fn the_runs_doc_names_each_field_a_written_line_holds_in_its_order_and_each_end(
         .iter()
         .flat_map(|row| quoted(row.split('|').nth(1).unwrap()))
         .collect();
-    let mut every = keys(example);
-    every.extend(["suites", "failed"].map(String::from));
-    assert_eq!(fields, every);
+    assert_eq!(fields, keys(example));
     // Each end a line can say, as it says it.
     let ends = |end: End| match end {
         End::Green | End::Red | End::TimedOut | End::Interrupted | End::Incomplete => {
@@ -2678,4 +2757,45 @@ fn a_file_callers_log_holds_what_the_run_added_to_each_of_its_files_in_turn_and_
     let step = folded.iter().find(|line| line.step.is_some()).unwrap();
     assert_eq!(read(step), "inside\ninside err\n");
     assert_ne!(run.log, step.log);
+}
+
+#[test]
+fn a_test_runs_end_line_says_what_its_log_says_of_each_binary_and_each_failed_test() {
+    let case = Case::new();
+    let folders = Folders::new("recorder-run-suites");
+    let repo = repository(&folders.dir.join("repo"));
+    let runs = folders.dir.join("runs");
+    let script = cargo_test(2, 101);
+    let names = ("test", "just test-rs");
+    // From pipes, and from a file both streams name, as an agent's tool call hands it.
+    let piped = pipeline_run(&case, &folders, (&repo, &runs), names, &script);
+    let both = fs::File::create(folders.dir.join("both")).unwrap();
+    let mut command = pipeline_command(&case, &folders, (&repo, &runs), names, &script);
+    let filed = filed_run(&mut command, &both, &both);
+    assert_eq!((piped.code(), filed.code()), (Some(101), Some(101)));
+    let lines = day_lines(&folders.work, &runs, 2);
+    for start in lines.iter().filter(|line| line.end.is_none()) {
+        assert_eq!((&start.suites, &start.failed), (&None, &None), "{start:?}");
+    }
+    let ends: Vec<&RunLine> = lines.iter().filter(|line| line.end.is_some()).collect();
+    assert_eq!(ends.len(), 2);
+    for end in ends {
+        let suites: Vec<(&str, u32, u32, bool)> = (end.suites.iter().flatten())
+            .map(|suite| (suite.name.as_str(), suite.passed, suite.failed, suite.error))
+            .collect();
+        assert_eq!(
+            suites,
+            [
+                ("unittests src/lib.rs (symphony_args)", 1, 2, false),
+                ("tests/aborts.rs (aborts)", 0, 0, true),
+                ("tests/arguments.rs (arguments)", 8, 0, false),
+                ("Doc-tests symphony_args", 1, 0, false),
+            ],
+            "{end:?}"
+        );
+        let failed: Vec<&str> = (end.failed.iter().flatten())
+            .map(|test| test.name.as_str())
+            .collect();
+        assert_eq!(failed, ["fixture::compares", "fixture::panics"], "{end:?}");
+    }
 }

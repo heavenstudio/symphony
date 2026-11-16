@@ -19,17 +19,19 @@ const USAGE: &str = "usage: symphony shot [-h] URL --out FILE.png [--wait-for CS
 const HELP: &str =
     "A page as an agent sees it: a private headless Chrome opens URL, waits until the page
 has drawn (its document loaded, a Symphony page's own navigation ready, no region still loading,
-and no request but a feed stream in flight for 300 ms, its frames' and its workers' among them,
-those Chrome runs in a process of their own too, but none of a frame since removed, or held by a
-document its frame has left, nor a document its frame went on from; a shared worker's own loads
-are not waited for), runs the steps in the order given, and saves a PNG. A dialog the page or a
-frame opens is dismissed as it opens, and the page goes on: an alert closed, a confirm or a prompt
-answered as by its Cancel, a beforeunload let leave; --report names each. A tab the page opens
-(a link, a script) runs behind it as Chrome leaves it: the page is brought back in front as soon
-as Chrome tells of the new one, so Chrome closes that one's dialogs, which --report does not name.
-A window of its own the page opens (window.open with a size, or popup) stays in front and keeps
-its dialog: one of the page's own site shares the page's process, which its dialog holds until
---timeout fails the step. It only reads the page: no server is started, stopped or changed.
+none busy on the screen (aria-busy=true, a ghost not lifted, some of its box in the window and in
+each box that clips it), and no request but a feed stream in flight for 300 ms, its frames' and
+its workers' among them, those Chrome runs in a process of their own too, but none of a frame
+since removed, or held by a document its frame has left, nor a document its frame went on from; a
+shared worker's own loads are not waited for), runs the steps in the order given, and saves a
+PNG. A dialog the page or a frame opens is dismissed as it opens, and the page goes on: an alert
+closed, a confirm or a prompt answered as by its Cancel, a beforeunload let leave; --report names
+each. A tab the page opens (a link, a script) runs behind it as Chrome leaves it: the page is
+brought back in front as soon as Chrome tells of the new one, so Chrome closes that one's
+dialogs, which --report does not name. A window of its own the page opens (window.open with a
+size, or popup) stays in front and keeps its dialog: one of the page's own site shares the page's
+process, which its dialog holds until --timeout fails the step. It only reads the page: no server
+is started, stopped or changed.
 
 positional arguments:
   URL                  the page, an absolute URL (http://127.0.0.1:8765/symphony/tasks)
@@ -1934,11 +1936,25 @@ fn press(chrome: &mut Chrome, key: &Key) -> symphony_chrome::Result<()> {
 }
 
 /// What the page says of itself: its document's state, a Symphony page's own navigation marker
-/// (`html[data-navigation]`, from the shell), the regions still loading, the shell's notice and
-/// whether it is in front.
+/// (`html[data-navigation]`, from the shell), the regions still loading, the regions busy on the
+/// screen, the shell's notice and whether it is in front.
+///
+/// A region is busy while it says so (`aria-busy=true`: a ghost not lifted, a read not in, as a
+/// Symphony page marks it), and on the screen while some of its box shows in the window, cut to
+/// each box around it whose overflow clips it: one below the window, or scrolled out of its box,
+/// draws only once the reader goes to it, and is not waited for.
 const STATE: &str = "(() => ({ready: document.readyState, \
 navigation: document.documentElement ? (document.documentElement.dataset.navigation ?? null) : null, \
 loading: document.querySelectorAll('[data-ready=loading]').length, \
+busy: [...document.querySelectorAll('[aria-busy=true]')].filter(region => { \
+const r = region.getBoundingClientRect(); \
+let top = Math.max(r.top, 0), bottom = Math.min(r.bottom, innerHeight), left = Math.max(r.left, 0), right = Math.min(r.right, innerWidth); \
+for (let box = region.parentElement; box && box !== document.body && box !== document.documentElement; box = box.parentElement) { \
+const style = getComputedStyle(box); \
+if (style.overflowX === 'visible' && style.overflowY === 'visible') continue; \
+const c = box.getBoundingClientRect(); \
+top = Math.max(top, c.top); bottom = Math.min(bottom, c.bottom); left = Math.max(left, c.left); right = Math.min(right, c.right); } \
+return top < bottom && left < right; }).length, \
 notice: document.getElementById('module-error')?.textContent ?? null, \
 visible: document.visibilityState}))()";
 
@@ -1949,11 +1965,14 @@ requestAnimationFrame(() => requestAnimationFrame(() => resolve(true)))))";
 const LAYOUT: &str = "({scroll_width: document.documentElement.scrollWidth, \
 viewport_width: document.documentElement.clientWidth})";
 
-/// The protocol events that change a page's traffic: a request starting, finishing or failing.
-const TRAFFIC: [&str; 3] = [
+/// The protocol events that change a page's traffic: a request starting, finishing or failing, and
+/// a WebSocket, which Chrome tells of apart, made or closed.
+const TRAFFIC: [&str; 5] = [
     "Network.requestWillBeSent",
     "Network.loadingFinished",
     "Network.loadingFailed",
+    "Network.webSocketCreated",
+    "Network.webSocketClosed",
 ];
 
 /// Since when the page's traffic has been unchanged: the last request starting, finishing or
@@ -2071,11 +2090,14 @@ fn waiting(state: &Value, requests: &[Request]) -> Vec<String> {
             "{loading} region(s) still loading ([data-ready=loading])"
         ));
     }
+    if let Some(busy) = state["busy"].as_u64().filter(|busy| *busy > 0) {
+        missing.push(format!(
+            "{busy} region(s) busy on the screen ([aria-busy=true])"
+        ));
+    }
     let pending: Vec<&Request> = requests
         .iter()
-        .filter(|request| {
-            !request.finished && request.failed.is_none() && request.kind != "EventSource"
-        })
+        .filter(|request| !request.finished && request.failed.is_none() && !request.streams())
         .collect();
     let own: Vec<&str> = pending
         .iter()

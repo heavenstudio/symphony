@@ -1,0 +1,42 @@
+# The desktop app for the Mac (docs/analysis/desktop-client.md): a thin native shell whose windows
+# show each server's own pages, and which follows every server it knows with its windows closed.
+# The library holds every decision and is tested on the host; the binary only draws them.
+[package]
+name = "symphony-desktop"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json.workspace = true
+# The one list the app reads of each server, `GET /api/projects` (`symphony_api::ProjectList`).
+symphony-api = { path = "../../crates/symphony-api", version = "=0.1.0" }
+# A server's address and every address a page navigates to, read by the WHATWG rule a web view
+# reads them by, so the origin the app compares is the one the page has.
+url = "2.5"
+
+# The window, its web view and the menu-bar item. macOS only, so no other platform's build of the
+# workspace needs their system libraries.
+[target.'cfg(target_os = "macos")'.dependencies]
+tao = { version = "0.34.8", default-features = false, features = ["rwh_06"] }
+wry = { version = "0.53.5", default-features = false }
+tray-icon = { version = "0.21.3", default-features = false }
+# A link off a server's origin opens in the system browser (`NSWorkspace openURL:`): the versions
+# tao and wry build with.
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSWorkspace"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSURL", "NSString"] }
+
+[dev-dependencies]
+# Waits on a condition with a backstop only a stall reaches (RULES.md `tests/no-test-fails-on-load`).
+test-time = { path = "../../crates/test-time" }
+# The real server's test (tests/real_server.rs) runs on a board of its own: a SurrealDB server the
+# board's keeper starts in a scratch folder, the pinned one `SYMPHONY_SURREAL` names, and its store.
+symphony-board = { path = "../../crates/tasks", version = "=0.1.0" }
+symphony-env = { path = "../../crates/symphony-env", version = "1.0.0" }
+
+[lints]
+workspace = true

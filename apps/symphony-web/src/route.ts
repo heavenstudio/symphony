@@ -45,7 +45,7 @@ export function parseRoute(view: ProjectView, pathname: string): Route | null {
   const route = named.endsWith("/") ? named.slice(0, -1) : named;
   const answered =
     route === "" ||
-    ["tasks", "queue", "reports", "agents"].includes(route) ||
+    ["tasks", "queue", "reports", "runs", "agents"].includes(route) ||
     route.startsWith("task/") ||
     document;
   return answered ? { path: route, scope, document, folder } : null;
@@ -94,14 +94,22 @@ export function useAnchor(): string {
 
 /**
  * Bring the element the address's fragment names into view, opening every `details` around it.
- * Without a fragment it does nothing: the shell owns the guarded top reset, and a late load must
- * not undo a scroll made since.
+ * The shell lands it (`reviewLand`, assets/shell.js), once for each navigation: it holds it there
+ * while the page draws around it, as a section drawn above it once the scroll brings it near would
+ * push it down, and does nothing once that hold has ended (quiet, or scrolled away). Without a
+ * fragment it does nothing: the shell owns the guarded top reset, and a late load must not undo a
+ * scroll made since.
  */
 export function scrollAnchor(): void {
   const id = anchor();
   if (id === "") return;
   const element = document.getElementById(id);
   if (!element) return;
+  const land = (globalThis as { reviewLand?: (element: Element) => void }).reviewLand;
+  if (land) {
+    land(element);
+    return;
+  }
   for (let node: Element | null = element; node; node = node.parentElement) {
     if (node instanceof HTMLDetailsElement) node.open = true;
   }

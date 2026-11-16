@@ -12,6 +12,7 @@
 //! an ask it could not serve.
 
 use super::callbacks::{CALLBACK_LEASE_SECONDS, Pass};
+use super::surreal::dispatcher as sql;
 use super::{Error, Store};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -86,16 +87,7 @@ impl Store {
         loop {
             let took: Took = self.retrying(|| {
                 self.transact(
-                    "LET $lease = (SELECT until, revision, asked FROM ONLY type::record('callback_lease', ['dispatch', $host]));
-                     IF ($lease.until ?? 0) > $now {
-                         LET $ask = ($lease.asked ?? 0) + 1;
-                         UPDATE type::record('callback_lease', ['dispatch', $host]) SET asked = $ask RETURN NONE;
-                         RETURN { ask: $ask };
-                     };
-                     LET $revision = ($lease.revision ?? 0) + 1;
-                     UPSERT type::record('callback_lease', ['dispatch', $host]) SET until = $now + $lease_seconds, revision = $revision,
-                         asked = asked ?? 0, served = asked ?? 0, completed = completed ?? 0 RETURN NONE;
-                     RETURN { taken: $revision, began: $lease.asked ?? 0 };",
+                    sql::TAKE,
                     json!({"host": self.host, "now": self.now(), "lease_seconds": LEASE_SECONDS}),
                 )
             })?;
@@ -114,13 +106,8 @@ impl Store {
     fn wait_on(&self, ask: u64, began: Instant) -> Result<Waited, Error> {
         loop {
             std::thread::sleep(LOOK);
-            let lease: Lease = self.retrying(|| {
-                self.read(
-                    "RETURN (SELECT completed ?? 0 AS completed, until ?? 0 AS until
-                         FROM ONLY type::record('callback_lease', ['dispatch', $host])) ?? { completed: 0, until: 0 };",
-                    json!({"host": self.host}),
-                )
-            })?;
+            let lease: Lease =
+                self.retrying(|| self.read(sql::LEASE, json!({"host": self.host})))?;
             if lease.completed >= ask {
                 return Ok(Waited::Served);
             }
@@ -145,10 +132,12 @@ impl Store {
                 Err(error) => {
                     // The next dispatcher, or the server's clock, delivers what this one could not.
                     // A lease this cannot let go lapses.
-                    let _ = self.retrying(|| self.transact::<Value>(
-                        "UPDATE type::record('callback_lease', ['dispatch', $host]) SET until = 0 WHERE revision = $revision RETURN NONE; RETURN NONE;",
-                        json!({"host": self.host, "revision": revision}),
-                    ));
+                    let _ = self.retrying(|| {
+                        self.transact::<Value>(
+                            sql::LET_GO,
+                            json!({"host": self.host, "revision": revision}),
+                        )
+                    });
                     return Err(error);
                 }
             };
@@ -164,15 +153,7 @@ impl Store {
             // lapsed meanwhile. Then the next pass, if one is asked for, begins after every ask in.
             let next: Next = self.retrying(|| {
                 self.transact(
-                    "LET $lease = (SELECT revision, asked, served FROM ONLY type::record('callback_lease', ['dispatch', $host]));
-                     UPDATE type::record('callback_lease', ['dispatch', $host]) SET completed = math::max([completed ?? 0, $began]) RETURN NONE;
-                     IF $lease.revision != $revision { RETURN { next: 'lapsed' }; };
-                     IF ($lease.asked ?? 0) > ($lease.served ?? 0) OR $more {
-                         UPDATE type::record('callback_lease', ['dispatch', $host]) SET served = asked ?? 0, until = $now + $lease_seconds RETURN NONE;
-                         RETURN { next: 'again', began: $lease.asked ?? 0 };
-                     };
-                     UPDATE type::record('callback_lease', ['dispatch', $host]) SET until = 0 RETURN NONE;
-                     RETURN { next: 'done' };",
+                    sql::PASSED,
                     json!({"host": self.host, "revision": revision, "began": began, "more": more, "now": self.now(), "lease_seconds": LEASE_SECONDS}),
                 )
             })?;

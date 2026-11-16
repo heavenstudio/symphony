@@ -17,7 +17,7 @@ import {
   reloadIfRedeployed,
 } from "./live";
 import { SERVER_NOTICE } from "./shared";
-import { asking, CASES, memoryStorage, reply, server } from "./testing";
+import { asking, CASES, memoryStorage, feeds as pageFeeds, reply, say, server } from "./testing";
 import { CACHE_FORMAT, FEED_EVENT } from "./wire";
 
 afterEach(() => {
@@ -281,7 +281,7 @@ describe("a page loaded again for the build the server serves", () => {
 describe("the board's loop", () => {
   /**
    * A loop over the stubbed server, for the board item, on a page whose window and document hear
-   * events and that has no EventSource unless its test gives it one (`feeds`), so its feed cannot
+   * events and that has no WebSocket unless its test gives it one (`feeds`), so its feed cannot
    * open. `reads` is how the page reads the board and each event it hears (`heard`, read by
    * default). What it drew, kept and waited, and what its frame heard.
    */
@@ -409,26 +409,8 @@ describe("the board's loop", () => {
     expect(paused).toEqual([]);
   });
 
-  /** The page's EventSource, each stream it opens kept in order: where, and how often closed. */
-  const feeds = () => {
-    const opened: { url: string; closed: number; source: EventTarget }[] = [];
-    vi.stubGlobal("location", { href: "http://127.0.0.1/queue" });
-    vi.stubGlobal(
-      "EventSource",
-      class extends EventTarget {
-        private readonly stream: (typeof opened)[number];
-        constructor(url: string) {
-          super();
-          this.stream = { url, closed: 0, source: this };
-          opened.push(this.stream);
-        }
-        close() {
-          this.stream.closed += 1;
-        }
-      },
-    );
-    return opened;
-  };
+  /** The page's WebSocket, each stream it opens kept in order: where, and how often closed. */
+  const feeds = () => pageFeeds("http://127.0.0.1/queue");
 
   it("draws and waits for nothing more once the page is gone while it follows the feed", async () => {
     const opened = feeds();
@@ -436,7 +418,7 @@ describe("the board's loop", () => {
     await asking(asked, 1);
     asked[0]?.answer(reply(200, CASES.samples.board, "b1"));
     await asking(opened, 1);
-    expect(opened[0]?.url).toBe("http://127.0.0.1/api/feed?since=7&document=");
+    expect(opened[0]?.url).toBe("ws://127.0.0.1/api/feed?since=7&document=");
     opened[0]?.source.dispatchEvent(new Event("open"));
     await new Promise((settled) => setTimeout(settled, 0));
     expect(did).toEqual([["show", 7], ["read"], ["stale", false]]);
@@ -460,7 +442,7 @@ describe("the board's loop", () => {
     const source = opened[0]?.source;
     source?.dispatchEvent(new Event("open"));
     for (const event of events) {
-      source?.dispatchEvent(new MessageEvent(FEED_EVENT, { data: JSON.stringify(event) }));
+      say(source, FEED_EVENT, JSON.stringify(event));
     }
   };
 

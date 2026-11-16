@@ -34,11 +34,13 @@ catalogue (`just tasks stamps`): `tests` (its recorded test runs green at the ti
 `pictures`, `owner`; a task no assessment has read needs `review` alone. The land lands it once
 every stamp it needs stands on its tip, and refuses naming who gives a missing one ([the default
 landing](TASKS.md#the-default-landing)). A change to a test or a check (`[land] check_paths`)
-keeps `review`, since a loosened test or check is how a red turns green unfixed.
+keeps `review`, since a loosened test or check is how a red turns green unfixed. A change of
+settings' values needs `tests` alone, the settings check ([by kind](#evidence-by-kind-of-change)).
 
-Where review is needed, a reviewer runs the same focused tests itself, never the suite, reads the
-diff against the evidence and judges whether it is good enough for the change's risk. Evidence
-that falls short is a `changes` verdict naming what to add. The reviewer's approve is that stamp:
+Where review is needed, a reviewer reads the diff against the evidence and judges whether it is
+good enough for the change's risk, and builds or runs nothing the task's recorded runs at the
+tip already show green ([no second build in review](#no-second-build-in-review)), never the
+suite. Evidence that falls short is a `changes` verdict naming what to add. The reviewer's approve is that stamp:
 the board verdict (`just tasks verdict SLUG approve "FULL_SHA: why"`, naming the tip it read,
 RULES.md `workflow/reviewers-not-the-owner`), given on the task it reviews, never on a review
 subtask, and drawn as a round of its review gate ([Gates](TASKS.md#gates)). A slice's evidence is
@@ -75,11 +77,21 @@ a measurement before and after.
 - **A client page.** Before and after screenshots of each changed view, dark and
   light where colour changed, desktop and phone width where layout changed
   (`just symphony-cli shot URL --out FILE.png`, with `--phone` and `--scheme dark`;
-  `just symphony-cli shot --help` says the rest); the new tests for the changed behaviour (host
-  views in `-p symphony-ui --test view`, the page in `--test browser`); the existing tests the
+  `just symphony-cli shot --help` says the rest); the new tests for the changed behaviour (its
+  pure parts in the client's unit tests, `just client-lint`; the page in
+  `-p symphony-web-tests --test browser`); the existing tests the
   change was likely to break, updated where they pinned what changed, and green
   ([by page](#the-browser-target-by-page)); and `just client-update` for the pictures, its
   distribution not committed.
+- **A page made faster** (a change meant to shorten a page's open to synced, in the client or the
+  server): `tools/rs-bin.sh symphony-build synced BASE PAGE…` against a server of the task's own
+  on a scratch board, before the change and after it, on the same machine under its working load,
+  and the comparison the second run prints beside the first, which it names with `--against RUN`
+  (the name the first printed: each run is kept in the checkout's artifacts folder, `synced/`,
+  with the load, CPU busy and memory it ran under, and a server rebuilt on `--port 0` answers at
+  another address), posted on the thread. A test holds work that must not come back (a second
+  full read, a render a check did not need) by its count, never a time
+  ([time in tests](#time-in-tests)).
 - **A schema or launcher change** (the board's schema and its migration, `tools/rs-bin.sh`,
   `tools/cargo.sh`, the justfile, `symphony init`, the hooks): a mistake here stops every agent,
   so it asks the most: the migration run from the previous schema on a scratch board (the board's
@@ -108,19 +120,31 @@ a measurement before and after.
   comes with a constructor (its `#[non_exhaustive]` the protocol's tests hold, as they hold
   `Request`'s and name each enum there left exhaustive), that a field added to a call is a new major
   unless `new` leaves it out ([PLUGIN_PROTOCOL](PLUGIN_PROTOCOL.md#versions)), and that a name
-  removed or changed, or a field or variant added to a seam type or the vocabulary, is a new major
-  of the package's line.
+  removed or changed, or a field added to a seam type or the vocabulary, is a new major of the
+  package's line. A variant added to a list of the vocabulary is a minor: the kit's tests hold
+  each list `#[non_exhaustive]` and name the two left exhaustive, to which a variant added is a
+  new major (`crates/symphony-plugin/tests/vocabulary.rs`), and
+  `crates/symphony-api/tests/vocabulary_drawn.rs` holds every kind to an arm in each match of
+  this workspace, in the compiler's place.
 - **A doc** (a document, guide, skill or rule): `just symphony-cli docs-audit --check` (every
   document renders, and every recipe a text of this repository names is one a project has,
   [below](#the-recipes-a-text-names)) and `just symphony-cli status --lint` (no card slug in prose,
   nothing the plugins' prose rules refuse) clean, both run at the branch's final tip, after its
-  last edit: a run before an edit is evidence of the text before it. A guide, or a document under
+  last edit: a run before an edit is evidence of the text before it. Typed so, each is a test
+  run the recorder keeps with its commit
+  ([MACHINE_WORK](MACHINE_WORK.md#recording-builds-and-tests)), so its reviewer reads it as
+  recorded, like any test. A guide, or a document under
   `docs/` but the register and `docs/history/`, also runs the check for the owner's words in the
   shapes the guides gave them, dated or straight-quoted (`just test-rs -p symphony-app --test hooks
   owner_words`, RULES.md `docs/no-ledger-in-documents`), and its reviewer reads for any other
   shape. For a shipped skill,
   `just symphony-cli init --root .` run so the installed copies and their stamps are current, and
   the shipped skills' tests (`just test-rs -p symphony-app --lib init`). It runs no other test.
+- **A change of settings** (values of `symphony.toml` for settings the Symphony already reads,
+  with the guide's or the rules' words that repeat them): `just settings-check` at the tip, the
+  project file's shape alone ([PROJECT_FILE](PROJECT_FILE.md#the-settings-check)), recorded as
+  a test run, which is its `tests` stamp, and the doc checks above for the words. It runs no
+  other test and takes no reviewer ([TASKS](TASKS.md#needed-stamps)).
 
 ### The recipes a text names
 
@@ -161,9 +185,10 @@ audit on main after the land's round files it within minutes
 
 1. List what the branch changed: `git diff --name-only main...HEAD`.
 2. Name each file's package: `crates/tasks` is `symphony-board`, `crates/symphony` is
-   `symphony`, `apps/symphony-server` is `symphony-server`, `apps/symphony-ui` is `symphony-ui`,
-   and any other `crates/NAME` is `NAME`; `apps/symphony-web` is the React client, no Cargo
-   package, whose unit tests `just client-lint` runs with its other checks.
+   `symphony`, `apps/symphony-server` is `symphony-server`, `apps/symphony-web-tests` is `symphony-web-tests`
+   (the client's browser and build tests), `apps/symphony-desktop` is `symphony-desktop` (the Mac
+   app, whose windows no test opens), and any other `crates/NAME` is `NAME`; `apps/symphony-web`
+   is the client, no Cargo package, whose unit tests `just client-lint` runs with its other checks.
 3. For each package:
    - the unit tests of the changed modules: `just test-rs -p PACKAGE --lib MODULE`, the module
      path as a filter (`store::work` for `crates/tasks/src/store/work.rs`);
@@ -174,11 +199,11 @@ audit on main after the land's round files it within minutes
      any of them matches;
    - when a public item's contract changed, the tests of the packages that call it (`git grep`
      its name).
-4. `just lint-rs` (which runs `just client-lint`), and, when `apps/symphony-ui` or
-   `apps/symphony-web` changed, the client built (`just client-update`) for its tests and
+4. `just lint-rs` (which runs `just client-lint`), and, when `apps/symphony-web` changed, the client built (`just client-update`) for its tests and
    pictures, its distribution never committed.
-5. After merging main, the targets steps 1 to 3 pick run again at the new tip, before review,
-   as main may have changed what the branch's code meets ([after main moves](#after-main-moves)).
+5. Main is merged once, when the work is complete, and the targets steps 1 to 3 pick run again
+   at the new tip, before review, as main may have changed what the branch's code meets
+   ([after main moves](#after-main-moves)).
 
 A package's own run (`-p PACKAGE`) and the workspace's can differ, as Cargo turns on a
 dependency's features for every package one build takes: the workspace and `-p symphony-server`
@@ -187,8 +212,8 @@ as the server does, and so do the own runs of `symphony-board` and `symphony-app
 `symphony` binaries do (the board's dependency asks for them), of `symphony-api`,
 `symphony-blocks` and `symphony-plugin` (a dev-dependency asks for them, which never reaches the
 client or a plugin's build) and of `symphony-schema` (`raw_value` aside, which changes no read),
-while the own runs of `symphony-ui` and `symphony-chrome` link it with none of them, so a test of
-theirs that reads a JSON object's key order or a number's text can pass alone and fail in the
+while the own runs of `symphony-web-tests` and `symphony-chrome` link it with none of them, so a
+test of theirs that reads a JSON object's key order or a number's text can pass alone and fail in the
 workspace's run.
 
 Steps 1 to 3 without the filters are mechanical, and a recipe that runs them from the branch's
@@ -197,7 +222,7 @@ stays the agent's, and the reviewer's to judge.
 
 ### The browser target by page
 
-`just test-rs -p symphony-ui --test browser -- FILTER…` builds the release client once and
+`just test-rs -p symphony-web-tests --test browser -- FILTER…` builds the release client once and
 opens each test's page in headless Chrome. Most of its tests are named for the page or control
 they open, so a page change runs the names that page's words match. Others draw several pages
 each, under names no page's words match, and a change to a page they draw runs them too:
@@ -211,11 +236,13 @@ both kinds, to copy after `--`:
 | the home queue (`/`) | `queue` `polish::` `projects::` `budget` `phone::` |
 | the queue page (`/queue`) | `queue` `cache_pages::` `landmarks::` `skeleton::` `header::` `look_parity::` `postponed_labels` `later_advances` `restored_mockups` `reconnect_pills` `polish::` `projects::` `budget` |
 | the tasks board (`/tasks`) and its cards | `board` `task_columns` `task_controls` `tasks_and` `a_revealed_column` `owner_` `machine_work` `run_records::` `cache_pages::` `kept_pages::` `landmarks::` `layout_shift::` `skeleton::` `feed_deltas::` `header::` `look_parity::` `restored::` `components::` `polish::` `shot::` `projects::` `budget` |
-| a task's page | `task_page` `task_panel` `task_priority` `notice_layout::` `polish::` `projects::` |
-| the agents page (`/agents`) | `machine_work` `the_agents_page` `header::` `look_parity::` `a_move_between` `polish::` `projects::` `budget` |
+| a task's page, its gates and its timeline | `task_page` `task_panel` `task_priority` `task_gates::` `timeline::` `owner_controls::` `owner_save::` `cache_tasks::` `cache_ahead` `feed_deltas::` `notice_layout::` `landmarks::` `layout_shift::` `skeleton::` `header::` `look_parity::` `restored::` `components::` `persistent::` `polish::` `projects::` `budget` `preload::` |
+| the agents page (`/agents`) | `machine_work` `the_agents_page` `header::` `look_parity::` `the_chat_opened_on` `polish::` `projects::` `budget` |
 | the reports page (`/reports`) | `reports::` `header::` `polish::` `projects::` `budget` |
+| the runs page (`/runs`) | `runs::` `header::` `polish::` `projects::` `preload::` `budget` |
 | document and folder pages | `document` `docs_index` `owner_` `cache_ahead` `cache_pages::` `restored::` `landmarks::` `skeleton::` `layout_shift::` `look_parity::` `polish::` `projects::` `budget` |
-| the header, on every page | `header::` `floating_controls::` `panel_open::` `polish::` `projects::` |
+| the header, on every page | `header::` `floating_controls::` `panel_open::` `persistent::` `polish::` `projects::` |
+| the panel (the chat, add task, the activity list, Appearance, toasts, the pending bar) | `panel_open::` `persistent::` `header::` `floating_controls::` `components::` `look_parity::` `server_notices::` `notice_layout::` `polish::` `projects::` `budget` |
 | shared controls (select, menu, button, tooltip, theme) | `components::` `select` `theme` `polish::` |
 | the project switch and a project's look | `projects::` |
 | the feed and its stream | `feed` `stream` |
@@ -245,7 +272,7 @@ page's rows, in `apps/symphony-web/src/queue.tsx` and `apps/symphony-web/src/que
 just symphony-cli shot URL --out queue-before.png   (desktop and phone, light and dark, before the change)
 just symphony-cli shot URL --out queue-after.png    (the same four, after it)
 just client-lint
-just test-rs -p symphony-ui --test browser -- queue polish:: projects::
+just test-rs -p symphony-web-tests --test browser -- queue polish:: projects::
 just client-update
 just lint-rs
 ```
@@ -331,13 +358,13 @@ whole, `--workspace` and its targets, and named after its output by a line in ca
 target that failed.
 
 The lanes share no port or store: every server, store and browser a test starts takes a port the
-system picks and a folder of its own. The one test writing the build folder (`wasm_build`, which
-links `symphony-build` there again) runs in the rest with every `symphony-app` target and
-`standalone`, which copies that folder. The browser lane writes it too when `SYMPHONY_UI_DIST`
-names no client: its own client build (`cargo symphony-ui dist`, whose `bundle.sh` runs
-`tools/rs-bin.sh --build symphony-build`) can link `symphony-build` there again while the rest runs
-it. Verify names the client its client check built, so only a verify whose client check built none
-leaves it to the browser lane. The binaries a test would build for itself under its case's clock
+system picks and a folder of its own. The one target writing the build folder (the
+client's `build`, which links `symphony-build` there again) runs in the rest with every `symphony-build` and
+`symphony-app` target and `standalone`, which copies that folder. The browser lane writes it too
+when `SYMPHONY_UI_DIST` names no client: its own client build
+(`apps/symphony-web/build.sh`, which runs `tools/rs-bin.sh --build symphony-build`) can link `symphony-build` there again
+while the rest runs it. Verify names the client its client check built, so only a verify whose
+client check built none leaves it to the browser lane. The binaries a test would build for itself under its case's clock
 are the build's own, named by `SYMPHONY_TEST_TASKS_BINARY` and `SYMPHONY_TEST_BINARIES` (a target
 run alone builds them as before).
 
@@ -525,8 +552,7 @@ too.
 
 A land runs none of its `[land] generators` either: the regenerator it starts makes them of
 main's newest tip after it ([TASKS](TASKS.md#the-regenerator)). This project's one is the
-client distribution. Its key (`tools/client-key.sh`, the release snapshot's name and the React
-client's package's hash) skips a tip
+client distribution. Its key (`tools/client-key.sh`, the hash of the client's package) skips a tip
 whose client inputs and committed distribution passed before; otherwise `just client-check`
 builds the client fresh and compares it with the committed one, and only when they differ does
 `just client-update` rebuild it and `just client-check` compare again, the change landed on main
@@ -540,6 +566,55 @@ the candidate, so it commits the distribution its own sources make (`just client
 its rerun's client check proves, and the land still keeps main's side of it
 ([RELEASES](RELEASES.md#the-release-candidate)).
 
+## No second build in review
+
+A task's builds and tests go through the recorder
+([MACHINE_WORK](MACHINE_WORK.md#recording-builds-and-tests)), which keeps each run with the task
+and the commit it ran at. The recorded runs at the task's tip are its evidence, and the thread's
+post names the commands and the tip (RULES.md `workflow/no-second-build-in-review`). A stamp
+stands on evidence of work already done, so nothing is built twice to land once.
+
+**One command reads the record.** `just tasks runs SLUG` prints what the recorder kept of the
+task at its branch's tip, `--tip SHA` at another commit ([TASKS](TASKS.md#needed-stamps)): each
+build and test command the task ran there with its newest result, when and by whom, and the runs
+of it before there; the `tests` stamp as its reader reads it; the project's `[verdicts] check`
+(the docs audit here) with its run there, or `no run`; and how many of its runs are at other
+commits, none of them the tip's. The executor reads it before it moves the task to review, and
+the reviewer reads it beside the thread's evidence.
+
+**The executor runs at the tip it asks review for.** A run made before the last commit is of
+another commit: the executor runs it again at the tip, and no reviewer does it in its place. A
+command that cannot pass as typed is recorded red like any other, and no green run of another
+command answers it: only a new commit clears it, so a filter goes after `--`
+(`just test-rs -p PACKAGE --test TARGET -- FILTER FILTER`), as [step 3](#picking-the-focused-set)
+writes it.
+
+**The reviewer takes a green recorded run at the tip as run.** It reads the diff against the
+record (`just tasks runs SLUG`) and judges whether those runs cover the change. It builds or
+runs only what the record does not cover and reading cannot settle:
+
+- a doubt it names, with the smallest target that answers it (one test by its filter, never the
+  package);
+- a mutation, to see that a test the task adds can fail;
+- a run the executor left out, where the reviewer's own run is quicker than a round: otherwise a
+  `changes` naming the command.
+
+A run the evidence claims and no record at the tip shows is asked for in a `changes`, as is a
+red one.
+
+**The `tests` stamp reads the same record.** It is met by the newest recorded run of each build
+and test command the task ran at the tip, every one green and one test run among them
+([needed stamps](TASKS.md#needed-stamps)). So a reviewer's second run of a command proves
+nothing the stamp did not read, and where it is recorded for the task it becomes that command's
+newest run: red under load, it takes away a stamp that stood. The stamp says the runs are green,
+never that they are the right runs; that is the assessor's reason where it names `tests`, and
+the reviewer's judgment where the task needs `review`.
+
+**What changes do to each other is the release run's.** A task's evidence is of its own change.
+What it breaks beside another change that landed meanwhile is found on main, by
+[the release run](#the-release-run) and the candidate it holds, and filed as a red with one
+owner: no review builds for it.
+
 ## After main moves
 
 A branch's evidence is of the commit it ran at, and main moves on meanwhile: what main gained can
@@ -547,13 +622,26 @@ break the branch's change, or be broken by it, in a test neither side's evidence
 that adds a `symphony` subcommand and merges main's new test that lists the subcommands is red at
 its own tip, in a 0.2 s test it never ran.
 
+**A branch merges main once, at review, and never chases it after.** A task merges main into its
+branch when its work is complete and it is about to ask for review, so the review is of the
+change on main as it is (RULES.md `workflow/never-chase-main`). From then on it does not merge
+main because main moved: main moves with every landing, so a branch that merges, builds and
+measures finds main moved again when that ends, and would never reach its review. It lands
+once its stamps stand on its tip and it merges without conflict. It merges main again in two
+cases alone: its land reports a conflict, or a reviewer asks for the merge by naming what main
+gained that breaks the change or that the change breaks. A reviewer does not send a branch back
+only because main moved. A figure a guide quotes, such as a page's first-visit bytes or a
+binary's size, is measured once, at the review tip, and stays as measured there: no check
+compares a guide's figures with a fresh build, and the budgets are held by their tests.
+
 **After merging main, before review: the executor's and the reviewer's rule.** After a branch
 merges main, the closest targets of the packages the branch itself changed run again on the
 branch, at the new tip, before review, as main may have changed what they meet. They are the
 targets [steps 1 to 3](#picking-the-focused-set) pick at the new tip, where `main...HEAD` still
 lists the branch's own files alone; a package only main's commits touched is main's evidence, not
 the branch's. The evidence posted names the new tip. The reviewer approves only a tip the
-evidence names, and a branch that merges main during its review runs them again first.
+evidence names, and a branch that merges main during its review, in one of those two cases, runs
+them again first.
 
 **A release candidate's fix merges `release-candidate`, never main, before its land.** A red's
 own task while the release run holds a candidate ([RELEASES](RELEASES.md#the-release-candidate))
@@ -561,7 +649,9 @@ starts at the local branch `release-candidate` and merges it again before review
 moves when another red's fix lands; the same rule then holds with `release-candidate` in place of
 main: its closest targets run again at the new tip, and the evidence names it. Its evidence is
 the red check's failures run alone at its tip, the commands its task names. Main is merged only
-when its land conflicts, after an approve, and then the fresh approve the merged tip needs leaves
+when its land conflicts, after an approve, and then the approve, standing over a merge that
+settles documents alone or given afresh for the merged tip
+([TASKS](TASKS.md#the-default-landing)), leaves
 the candidate on the commit approved before the merge; a fix that needed no review has none, so
 its land then drops the candidate. One that merges main before any approve gives the candidate
 nothing it can take, and drops it.

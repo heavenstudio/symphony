@@ -14,13 +14,10 @@ export const SHARED_PORT = 8765;
 /** What the dev server proxies: every request outside [`BASE`]. */
 export const PROXIED = "^/(?!@symphony-web/)";
 
-/** The files outside this package the kinds import (the Dioxus client's media and attach sheets). */
-const OUTSIDE = ["../symphony-ui/assets"];
-
-/** The shell's sources in the Dioxus client (package.sh's order), from this package's folder. */
+/** The shell's sources (package.sh's order), from this package's folder. */
 export const SHELL_SOURCES = {
-  cache: "../symphony-ui/assets/cache.js",
-  shell: "../symphony-ui/assets/shell.js",
+  cache: "shell/cache.js",
+  shell: "shell/shell.js",
 } as const;
 
 /** The shell's line package.sh writes the kinds' manifest in. */
@@ -106,11 +103,10 @@ export function readManifest(shell: string): Manifest {
 }
 
 /**
- * The manifest of the shell the dev server serves: the Dioxus program's kinds as the server's build
- * has them (a kind with wasm), and each kind of this checkout's `kinds` as Vite serves its entry
- * under `base`, with the stylesheet every kind of the server's build shares (package.sh puts it
- * first in each) as its one style, since Vite puts each kind's own in the page as its module asks.
- * A web kind the server's build has and the checkout does not is no more.
+ * The manifest of the shell the dev server serves: each kind of this checkout's `kinds` as Vite
+ * serves its entry under `base`, with the stylesheet every kind of the server's build shares
+ * (package.sh puts it first in each) as its one style, since Vite puts each kind's own in the page
+ * as its module asks. A kind the server's build has and the checkout does not is no more.
  */
 export function devManifest(
   served: Manifest,
@@ -119,9 +115,6 @@ export function devManifest(
 ): Manifest {
   const shared = Object.values(served)[0]?.styles.slice(0, 1) ?? [];
   const manifest: Manifest = {};
-  for (const [kind, files] of Object.entries(served)) {
-    if (files.wasm !== undefined) manifest[kind] = files;
-  }
   for (const [kind, entry] of Object.entries(kinds)) {
     manifest[kind] = { script: `${base}${entry}`, imports: [], styles: shared };
   }
@@ -258,8 +251,9 @@ export function shellPlugin(served: string, sources: Sources): Plugin {
 /**
  * The dev server's settings over vite.config.ts in `root`: Vite's files under [`BASE`], on the
  * loopback address alone (it hands what it proxies to the server as this machine's), at `port`,
- * every request outside them proxied to the server with its Host and Origin unchanged (so a save
- * meets the server's origin check as on the server itself), and the shell from `plugins`. No CORS
+ * every request outside them, the feed's WebSocket among them (`ws`; Vite's own is under its base),
+ * proxied to the server with its Host and Origin unchanged (so a save or the feed meets the server's
+ * origin check as on the server itself), and the shell from `plugins`. No CORS
  * header of Vite's (its default lets a page on any loopback port read every answer, the server's
  * too): the dev page and all it loads are of its own origin, and another's reads through it no
  * more than from the server.
@@ -276,8 +270,8 @@ export function devConfig(root: string, args: DevArgs, plugins: Plugin[]): Inlin
       port: args.port,
       strictPort: true,
       cors: false,
-      proxy: { [PROXIED]: { target: origin(args.server), changeOrigin: false } },
-      fs: { allow: [".", ...OUTSIDE] },
+      proxy: { [PROXIED]: { target: origin(args.server), changeOrigin: false, ws: true } },
+      fs: { allow: ["."] },
     },
     plugins,
   };

@@ -13,17 +13,9 @@ pub(in crate::save) fn recover(
     store: &symphony_board::Store,
     receipt: &str,
 ) -> Result<Option<Value>, Failure> {
-    let values = store.client().query(
-        "SELECT VALUE slug FROM task WHERE created_by = 'owner' AND fields._symphony.owner_save = $receipt LIMIT 2;",
-        json!({"receipt":receipt}),
-    ).map_err(|error| Failure::from(symphony_board::Error::Db(error.to_string())))?;
-    let rows = values
-        .last()
-        .and_then(Value::as_array)
-        .ok_or_else(|| Failure {
-            status: 503,
-            error: format!("task save {receipt}: the board did not return a task list"),
-        })?;
+    let rows: Vec<Value> = (store.owner_saved(receipt)?.into_iter())
+        .map(Value::String)
+        .collect();
     match rows.as_slice() {
         [] => Ok(None),
         [Value::String(slug)] => Ok(Some(json!({"slug":slug}))),

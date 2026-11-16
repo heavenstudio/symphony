@@ -41,7 +41,8 @@ Each build of the board writes one schema version, which the board records. A
 build opens a board at its own version with one read and no write. A newer
 build migrates an older board forward once, its additive steps and the new
 version in one transaction before any other write. An older build is refused
-before it writes, naming the project and `just symphony`. A Symphony one version
+before it writes, naming the project, the program to rebuild (its file name and
+where it is) and `just symphony`. A Symphony one version
 behind still reads the board, and every write it would send is refused the same
 way. A store opened before a newer build migrated is refused at its next write.
 The Symphony never moves a board forward or makes one, so a branch's command line
@@ -122,12 +123,65 @@ that `just tasks migrate` must not be run, and where the recovery is described
 Nothing else reads the record: `just tasks schema` reports what it says (exit 1 while the board
 went back), `just tasks snapshot` opens no board, nor do `just tasks database`, its hold and its
 release (the hold is step 2 of [the recovery](#a-board-that-went-back), so it stops a board that
-went back as any other), and a raw read (`search_bench`'s) opens no store. Otherwise the store
-adds the version it found to the record when it is higher, and the one it migrated to. A scratch
-board keeps no record, nor does a server an address names that is no project's board server.
+went back as any other). Otherwise the store adds the version it found to the record when it is
+higher, and the one it migrated to. A scratch board keeps no record, nor does a server an address
+names that is no project's board server.
 Builds from before the record neither read nor write it: the protection holds for a project only
 once each of its readers and writers runs a build that carries it, the main checkout's
 `.target/bin/tasks`, the shared Symphony server and a consuming project's host.
+
+### Who writes a board
+
+A board keeps a line for each program that opens it to write (`crates/tasks/src/store/writers.rs`,
+the `writer` table): the program's file name, where it is, its host, the schema it was built at
+and when it was last seen, by the machine's clock, which `TASKS_NOW` does not set. The board's own
+programs (`tasks`, `agent-send`, `tasks-copy`) keep one, and so does a project's own program that
+opens the board to write through the board's crate. The heartbeat and the recorder, which take the
+board's tables as they are, keep none: the `tasks` build they run keeps its line by its other
+commands. The line is read in the opening's one read of the board's schema and written only when
+it is missing, names another schema, or is an hour old, so a board command sends no request for it
+most of the time and "last seen" is good to the hour. A reader keeps none, and the Symphony opens
+its board to read. A writer refused a board behind its build (a project's live board,
+which only `just tasks migrate` moves) still writes its line, so a writer rebuilt for the next
+schema counts as rebuilt once it has run; one refused a board ahead of its build writes nothing,
+refused before any write. The table holds no event, so a line written moves no board marker, and
+builds of any schema write it.
+
+`just tasks migrate` reads the lines before it moves anything. A writer seen in the last week
+that is behind the schema the move would bring the board to, other than the migrate's own build,
+would be refused the board from then on: the migrate names each (its program, schema, path, host
+and when it was last seen), moves nothing, and exits 2. Rebuild each at the new schema and run it
+once, which records it, then migrate again; `just tasks migrate --leave-behind` moves the board
+all the same, and each writer left behind is refused, naming itself as the program to rebuild,
+until it is. A writer not seen for a week is not counted. Only the migrate asks: where a project's
+default branch commits the board's source, as this repository's does, main's build moves the board
+at its first command once a schema lands, and names no writer.
+
+The shared server is not counted. The Symphony opens a board to read
+(`crates/symphony/src/taskview/connect.rs`), though it writes through that store (the owner's
+saves and chat, asks, a task's priority, fields and cancels), and only an opening to write keeps a
+line. Counting it would stop every move: the server takes a build of the new schema only by its
+reload after the move ([RELEASES](RELEASES.md#the-refresh)), so its line would always be behind
+when the migrate reads it, and every refresh's migrate would refuse. Meanwhile a server one schema
+behind its board reads on, and every write it sends is refused: the owner's saves and chat, with
+the asks they open, wait in its journal, which it tries again each tick until a server that can
+write hands them over, while its other writes (the owner's message on a task, a priority, a field,
+a cancel, an ask it would close) are refused until it has reloaded. A server two schemas behind
+reads nothing of its board.
+
+The record arrives with schema 18, a raise of its own, and a build below it keeps no line, so the
+move to 18 names no one: a board at 17 has no table of writers to read. In this repository main's
+build moves the board at its first board command once the raise lands, as for any schema here,
+with no migrate and no writer check. A consuming project's board is moved by the refresh of the
+first release that carries 18 ([RELEASES](RELEASES.md#the-refresh)): its `just tasks migrate`
+runs whenever the schema the project's pin locks is above its board's, and moves the board without
+naming anyone. From then on every program of the project's still built at its old pin (a linked
+`tasks` or `agent-send` not rebuilt, a program of its own that opens the board through the board's
+crate) is refused the board, naming itself as the program to rebuild; the project rebuilds each at
+its new pin right after the refresh, and each keeps its line once it has run. From 18 on, every
+build that can write a board keeps its line, so each later move names the writers it would leave
+behind, the refresh's migrate included: that move stops, naming them, until each is rebuilt and
+run once.
 
 The store takes about what it holds. Every server the board starts keeps each
 value beside its key, where compaction drops the versions a rewrite leaves, and
@@ -199,7 +253,8 @@ server and stops that one cleanly, so none of it is lost to a later kill.
 
 A replay is the one start that can remove what no server applied. A store that
 went back (a start that replayed its log in pieces and ended before its next
-flush, as an older build's kill of a starting server does) holds a log segment
+flush, as an older build's kill of a starting server does, or a crash in a
+private replay of a log over 2 GiB, which its largest memtable splits too) holds a log segment
 its manifest counts as written: every server on it skips that segment, and its
 clean stop removes it. So a replay never runs without a snapshot of the store as
 it is, taken before the private replay's server starts, on every board, scratch
@@ -382,7 +437,7 @@ refusal's words, in place of the board until a read answers.
 | `just tasks status [--json]` | the board's health over the last hour, as its Symphony server recorded it: failed dispatches and sweeps, the slowest request, write latency ([Board health](#board-health)) |
 | `just tasks asks [--all] [--json]` | what the owner waits on an agent for: the open asks, oldest first, each with its age and who holds it; `--all` adds those answered in the last day ([Asks](#asks)) |
 | `just tasks asks close ID "WHY" --as HANDLE` | close an ask that needs no answer, saying why |
-| `just tasks migrate` | move the board forward to this build's schema, or make it, and say which; a live board moves by it only from its main checkout (any checkout of a repository with none), and in a project whose main checkout holds no board source, or that has none, only by it |
+| `just tasks migrate` | move the board forward to this build's schema, or make it, and say which; a live board moves by it only from its main checkout (any checkout of a repository with none), and in a project whose main checkout holds no board source, or that has none, only by it; it moves nothing while a writer seen in the last week is behind the schema it would move to, naming each, unless `--leave-behind` ([Who writes a board](#who-writes-a-board)) |
 | `just tasks database [hold WHY \| release [--of HOLDER]] [--as HANDLE]` | the board's database: whether it is held, what runs on its data, what a start or replay under way does, and the snapshots kept until the owner removes them; `hold` stops its server cleanly and keeps every board command and the Symphony from starting it, naming the hold, until `release` by its holder (or by another naming it with `--of`), which starts nothing |
 | `just tasks schema [--accept VERSION]` | the board's schema and the highest its live board was seen at; exit 1, in the rollback's words, while it went back below it; `--accept VERSION` (`none` for a store with no board), the owner's, accepts an older board they meant ([A board that went back](#a-board-that-went-back)) |
 | `just tasks snapshot [--list]` | a copy-on-write clone of the board's store, taken only while no server has it open; one whose write-ahead log holds writes is kept until the owner removes it, and the newest three of the others; `--list` names them ([Snapshots](#where-it-lives)) |
@@ -628,22 +683,30 @@ pass of it is counted, and the picker says plainly that it has no task board. So
 folder is gone, or no longer holds the repository its server found there: the server says so once
 in its log, then reads, maintains and records nothing more of it, answers its pages' reads and saves
 with that refusal before any route runs, and never looks for its board in the folders above it,
-another repository's (`Hub::holds_its_project`, `symphony_board::project::at`). A board whose store is there is never no board: when the SurrealDB
+another repository's (`Hub::holds_its_project`, `symphony_board::project::at`). Every connect to
+its board the server's own process makes from the folder, through `symphony::taskview` (the hub's
+tick, its refreshes and branch scan, its chat journal's flush, a route's read or save), is held to
+the repository it found when it began to serve the folder (`symphony::taskview::serve`,
+`symphony_board::project::held`), so a `.git` removed after a check leads none of them to another
+board, and the flush reads the journal the project had then. Not held: a route that finds the
+project's journal from the folder again (the asks read, a chat save), and a child process the
+server runs in the folder (a `tasks` command, a sweep), which looks the board up itself. A board's
+start, stop or hold makes no folder at or above the repository's common dir again; a start whose board folder goes while its server starts (SurrealDB makes every missing
+folder of its store's path) ends that server and records none. A board whose store is there is never no board: when the SurrealDB
 that serves it is missing (a version bump before the new binary is fetched, `SYMPHONY_SURREAL` naming a file that is not there), or its server answers with an
 older schema or not at all, its passes fail and it is unwell and says so.
 `tasks status` also warns when the record is more than a minute old, naming the server's pid and
 whether it still runs: no dispatch pass has been recorded since.
 
-**Open tasks nobody orchestrates.** Every open task has an orchestrator
-([Tasks and roles](#tasks-and-roles)), so one with none is a defect: the record also counts the
+**Open tasks nobody orchestrates.** A task with no orchestrator waits for one under its limit
+that stays ([Tasks and roles](#tasks-and-roles)), a well state and no defect: the record counts the
 unfinished tasks with no holding orchestrator on them or above them in the board the server's clock
 read last (`unowned` in the record, `Recorder::unowned`), and `tasks status` says `open tasks no
-orchestrator holds: N, as of the newest board read` and, while N is above zero, warns of it, in its
-`--json` warnings too: `N open tasks no orchestrator holds, as of the newest board read: the next
-read of the whole board gives each to an orchestrator that stays (live past its first live line, and
-waiting, watching or holding a task), and it waits while none does`. The tick gives what it finds
-first ([Tasks and roles](#tasks-and-roles)), so the count it records is of tasks that wait for an
-orchestrator that stays. Counting reads the board the tick already read and adds no request; a
+orchestrator holds: N, as of the newest board read`, and warns of none of them. The tick gives what
+it finds first ([Tasks and roles](#tasks-and-roles)), so the count it records is of tasks that wait
+for an orchestrator that stays and holds fewer open tasks than the limit ([The limit on the tasks
+an orchestrator holds](#the-limit-on-the-tasks-an-orchestrator-holds)). Counting reads the board
+the tick already read and adds no request; a
 record written before any board read, or by a build older than the count, has none and says none. The owner's word on each of those tasks reaches
 every orchestrator ([Talking on a task](#talking-on-a-task)) until the board gives it one. The
 server's own notice and the project picker do not warn of it.
@@ -747,8 +810,16 @@ tasks cleanup`, or the task becoming done or cancelled: `hc kill`, then `hc rm`)
 record stays and says why and how to bring it back,
 `just tasks restore SLUG [HANDLE]`, which resumes the conversation in the same
 worktree, in a new terminal; through `just tasks`, only a worktree in the project
-([Where it lives](#where-it-lives)). A record from before hc names a herdr pane (`w1:p…`): that
-terminal is gone, so cleanup records it closed with its restore line, and restore brings
+([Where it lives](#where-it-lives)). A reviewer launch (`--role reviewer`) goes back to the
+task's recorded reviewer the same way: the newest that never said `just tasks leave` with a
+conversation recorded is resumed in its own worktree, agent and model, told `/review-task SLUG
+HANDLE` (the `resumed` line names it), and the launch is refused while a recorded reviewer still
+runs in a terminal; a new reviewer starts only where none can be resumed (no conversation
+recorded, a Codex thread that never arrived, a reviewer that left), or with `--beside WHY`, which
+resumes none and starts a second reviewer beside the one still there. One quiet since its task went
+back to `in_progress` reads `left` by its health and is resumed all the same. A reviewer launch on
+an instruction subtask is refused, naming the task it judges. A record from before hc names a
+herdr pane (`w1:p…`): that terminal is gone, so cleanup records it closed with its restore line, and restore brings
 the agent back in an hc terminal. `just tasks close SLUG HANDLE` closes one agent's terminal
 whatever role it holds (a reviewer waiting for a new tip), records it the same way once the
 terminal is killed, bound to that terminal, and retires the callback registered from it; it is
@@ -771,8 +842,11 @@ orchestrated work. The config belongs to the checkout running the command (main 
 the Symphony). `reap` runs staffing before its five-minute idle sweep. A shared
 `symphony/tasks/staff.lock` keeps concurrent staffing passes from dispatching twice. A review
 is given on the task itself, never as a subtask: its reviewer takes the reviewer's role there,
-its launch is recorded there, and the pass's line on the thread names the tip. It goes to an
-idle reviewer only when the board would take its verdict, by the rule the verdict holds
+its launch is recorded there, and the pass's line on the thread names the tip. A review whose
+task has a recorded reviewer to resume goes to it, by the launch's resume (`would resume HANDLE`
+in a dry run), never to another idle reviewer, and fails as that launch would while the reviewer
+still runs, in a dry run too. Otherwise it goes to an idle reviewer only when
+the board would take its verdict, by the rule the verdict holds
 (`Held::unfresh`, [the default landing](#the-default-landing)); a reused reviewer whose launch
 was not recorded lets the role go, so the task waits on no reviewer that has no job, and a
 launch that fails takes back what it took, as every launch does. Through `just tasks` a pass
@@ -1108,6 +1182,7 @@ rest of its document is the board's.
    "handle": "amber-heron", "kind": "worker", "model": "sonnet", "parent": "cobalt-otter",
    "task": "sim/jump", "role": "executor",           # the task it works now (an open one first)
    "tasks": [{"slug": "sim/jump", "role": "executor", "status": "in_progress"}],
+   "following": 0,                                   # the open tasks it orchestrates
    "worktree": "/…/lamp-works-wt/sim-jump", "branch": "sim/jump",   # where it really works
    "agent": "claude", "session_id": "9aa0…", "pane": "t5",
    "callback": "uds:/tmp/cc-socks/1234.sock", "chat": false,
@@ -1131,6 +1206,9 @@ question), `idle`, or `gone` (no terminal and no sign of life). An agent running
 `running_test` and `health: live`, never `lost`; so does a subagent whose worktree holds a live process, and one whose
 processes cannot be listed reads `health: unknown`. `last_tool_call` is the time of the last tool call of the agent
 (`null` before the first): the monitor's 20 s beat and board commands do not move it.
+`tasks` lists every task the agent holds a role on but those it orchestrates, and `following` counts
+the open ones it orchestrates (neither done nor cancelled), the count of its Following list on the
+agents page, which reads those tasks a page at a time.
 `callback` is the native address (`uds:` or `codex:`), or `null` for an inbox-only
 session; `chat` says whether this session is the current chat recipient, including
 an orchestrator fallback. `slots` is, under a project cap ([Slots](#slots)), the
@@ -1452,6 +1530,18 @@ a **Waiting for your sign-off** lane above the board. That needs all of:
 Deciding the card puts the task back in its column. Work nobody holds, or that
 posted no card, stays in its own column however its documents stand.
 
+A project's plugin that answers a gate named `owner` for the task ([Gates](#gates))
+decides in that rule's place: the open, executed task is in the lane while that
+gate is held, card or none, and out of it while the gate is met, waived or
+missing. The lane reads the answer the server keeps for the task's status and
+tip and never asks the plugin for it, so only a read of the task's gates (its
+page) starts the plugin's work. Only a known gate kept for that task decides:
+with no answer kept for it as it is now (before its page is read, after a new
+tip or a new status), an error kept, an answer with no `owner` gate or one
+answered `unknown`, the rule above holds, so the lane errs toward showing the
+owner what may wait on them. The lane is read again when the board, a message,
+a waiting card or a kept answer changes.
+
 **`done` is reached only by a reviewer's `approve` (its orchestrator's, on a fast
 fix), a landing, for a subtask its executor's `done`, or a close as covered by another
 task's landing ([above](#a-task-another-landing-covers)).** A session
@@ -1469,7 +1559,9 @@ that claimed an instruction under `SLUG` may still give `SLUG` its verdict, unle
 Work on the branch is a slice, filed without `--instruction`. `done` is left only by an approved task no landing has closed and whose tip the
 default branch does not hold, back to `review` by its executor, reviewer or orchestrator,
 for a fresh approve of a tip the approve does not cover
-([below](#the-default-landing)). A move of a done task the board refuses names that move
+([below](#the-default-landing)); the move itself tells `@executor` and `@reviewer` on the thread, as
+a finished task's status is followed no more, so a reopen edited into the board by hand tells
+nobody. A move of a done task the board refuses names that move
 back to review only while the approve stands; once a landing closed the task, it says what
 the task still needs goes in a new one. Several sessions
 can hold one task at once, one role each:
@@ -1638,12 +1730,12 @@ afterwards, and runs the check, the docs audit, on what it made ([below](#the-re
   [dev-dependencies]", "/justfile", "/symphony.just", "/tools/", "clippy.toml",
   ".clippy.toml", "rustfmt.toml", ".rustfmt.toml", "/.cargo/", "/Cargo.toml
   [workspace.lints]", "Cargo.toml [lints]", "/symphony.toml [verdicts]", "/symphony.toml [land]", "/symphony.toml [releases]",
-  "/crates/symphony/src/cli/commands/size_budget.rs",
-  "/crates/symphony/src/cli/commands/crates_check.rs", "/crates/symphony/src/release/crates.rs",
-  "/crates/symphony/src/docs_audit.rs",
-  "/crates/symphony/src/docs_audit/", "/crates/symphony/src/release.rs",
-  "/crates/symphony/src/release/checks.rs",
-  "/crates/symphony/src/release/steps.rs", "/crates/tasks/src/land.rs",
+  "/crates/symphony-build/src/commands/size_budget.rs",
+  "/crates/symphony-build/src/commands/crates_check.rs",
+  "/crates/symphony-build/src/release/crates.rs", "/crates/symphony/src/docs_audit.rs",
+  "/crates/symphony/src/docs_audit/", "/crates/symphony-build/src/release.rs",
+  "/crates/symphony-build/src/release/checks.rs",
+  "/crates/symphony-build/src/release/steps.rs", "/crates/tasks/src/land.rs",
   "/crates/tasks/src/land/", "/crates/tasks/src/fast_fix.rs", "/crates/tasks/src/red.rs",
   "/crates/tasks/src/store/work/red.rs"]`: the tests and what they read, the Cargo tables
   that say which tests run and how (a `[[test]]`, `[[bench]]`, `[[bin]]` or `[[example]]`
@@ -1677,6 +1769,32 @@ afterwards, and runs the check, the docs audit, on what it made ([below](#the-re
   each commit made before the verdict and before the task last went to review; the
   landing's line on the thread then says it judged by time. A commit after the named
   one, after the verdict, or during the review without a named tip refuses, naming it.
+- **An approve over one merge.** An approve naming a commit stands at a tip that is one
+  merge of the default branch into that commit, where the merge settles conflicts in
+  documents alone (`crates/tasks/src/land/carried.rs`): the merge an executor makes when a
+  land conflicts in a document, which no reviewer reads again. Three things hold of it. The
+  tip is a merge of two parents, the first the commit the approve names and the second a
+  commit the default branch holds, with nothing on top. Every path git's own merge of those
+  two leaves in conflict (`git merge-tree`, by its status and the paths it lists, whatever
+  the conflict: both sides changed, one deleted, a mode) is a document: a Markdown file
+  (`*.md`) the tip holds as a regular file (mode `100644`, no symbolic link or submodule)
+  that instructs no agent, so none under a `skills` folder and none named `AGENTS.md`,
+  `CLAUDE.md` or `RULES.md`, where a wrong settling misleads every agent and no test says so.
+  And the tip differs from that merge's tree in the conflicted paths alone. So what nobody
+  read is the settling of a conflict in a document: every other path, a document that did
+  not conflict among them, is as git merges what the reviewer read with what the default
+  branch landed, which is what the land itself makes of a tip. The land then needs the
+  task's `tests` green at that tip whatever its needs name, and says what it went by: `land
+  SLUG: approved by HANDLE at TIME, naming A, which stands over the one merge T of main at M
+  into it, which settles conflicts in documents alone (PATHS) and is git's own merge of the
+  two elsewhere; its tests are read at T`, the landing's line on the thread adding `its
+  approve of A stands over the one merge T of main into it`. A merge that settles a conflict
+  anywhere else (code, a file one side deleted, a guide, the rules, a skill) or changes a
+  path that did not conflict, each named with its paths, a commit on top of the merge, a
+  merge made on another commit than the approved one or of a commit the default branch does
+  not hold, and an approve naming no commit each go to the reviewer as before. The other
+  stamps read at the tip are as they were: a picture's post and the owner's approve name the
+  merge, and an assessment that read the approved commit is of another tip there.
 - **No owner's answer left behind.** A worktree at a commit the land brings (on the branch,
   on another branch or detached at one of its commits) whose documents hold an owner's dated
   line under a card that no commit has (the owner's answer on a card only the branch holds,
@@ -1688,7 +1806,7 @@ afterwards, and runs the check, the docs audit, on what it made ([below](#the-re
   worktree's HEAD and the tip hold of the documents it changed, so a line a regroup only
   moved is none. It is said to `@executor`, which commits it on the branch (from a worktree
   not on it, copying the line onto its card there) and has the new tip approved, as for a
-  conflict below. A worktree git cannot read refuses the land to the one landing alone, as
+  commit after the approved one. A worktree git cannot read refuses the land to the one landing alone, as
   it may hold the answer; the land runs again once git reads it. The answers are asked again
   once the merge is checked, before the default branch moves, so one saved meanwhile refuses
   as well. One saved while the default branch moves is said to `@orchestrator` once it moved
@@ -1697,10 +1815,20 @@ afterwards, and runs the check, the docs audit, on what it made ([below](#the-re
   that worktree meanwhile.
 - **Back to review.** An approve that does not do (someone else's to give, or not
   covering the tip) sends the task back to review, said to `@orchestrator` or
-  `@reviewer`. A conflict or a red check on the merge of the tip as approved is said to
-  `@executor`, which merges the default branch into its branch and fixes it there, then
-  moves the task back to review itself (`just tasks move SLUG review`) for a fresh
-  approve naming the new tip, and the land runs again. The one done task that may go
+  `@reviewer`. A conflict in documents alone (every conflicted path a document, as above)
+  under an approve that names the tip is
+  said to `@executor`, which merges the default branch into its branch once, settling
+  the conflict in those documents and changing nothing else, runs its tests at the new tip
+  (the task's by its branch, done as it is, with nothing named:
+  [MACHINE_WORK](MACHINE_WORK.md#recording-builds-and-tests), "For which task")
+  and lands it again: the task stays done, its approve standing over that one merge
+  ([above](#the-default-landing), "An approve over one merge"), and a move back to review
+  would ask for a fresh one. Any other conflict, one under an approve that names no commit
+  or stands over a merge already, or a red check on the merge of the tip as
+  approved, is said to `@executor`, which merges the default branch into its branch and
+  fixes it there, then moves the task back to review itself (`just tasks move SLUG
+  review`) for a fresh approve naming the new tip, and the land runs again. The one done
+  task that may go
   back is an approved one no landing has closed whose tip the default branch does not
   hold (one landed or merged by hand stays done, and what it still needs is a new
   task), moved by its executor, reviewer or orchestrator; the command line and the API
@@ -1717,7 +1845,8 @@ afterwards, and runs the check, the docs audit, on what it made ([below](#the-re
   the release run's `--due`, reads the land afterwards and moves the candidate to the newest
   commit of the branch an approve named, or the tip the landing line says its needed stamps
   stood on, that holds the candidate and the fix alone. A conflict goes back to `@executor` as
-  above, who merges the default branch then and asks for a fresh approve; the candidate keeps
+  above, who merges the default branch then and lands again on its approve where the merge
+  settles documents alone, or asks for a fresh approve; the candidate keeps
   the commit approved before that merge, and one that needed no review has none, and drops
   it. A red whose fix landed with another
   red's task is closed as covered by that landing ([above](#a-task-another-landing-covers)),
@@ -1866,14 +1995,18 @@ and B hears one `ROLE SLUG B orchestrator, STATUS (from A)`, whatever other
 role B holds there; A made the move and is not told it. HANDLE must still be there (live, stale or
 of unknown liveness); a hand-over to a session gone quiet, or leaving as it is
 written, is refused, naming its health; under a cap, so is one that would raise
-HANDLE's counted tasks past it ([Slots](#slots)). Taking the role over a holder that is
+HANDLE's counted tasks past it ([Slots](#slots)), and, as a take of the role is, one to an
+orchestrator at its limit ([The limit on the tasks an orchestrator
+holds](#the-limit-on-the-tasks-an-orchestrator-holds)). Taking the role over a holder that is
 lost or left drops that one in the same write, and the thread says `B took
 orchestrator over from A (lost)`, which A hears and B, who made it, does not; so
 does taking it again where a left holder still sits beside you. A task is its orchestrator's when that session holds the
 role on it, or on the nearest task above it that has a holder still there, and
-**every open task has an orchestrator**: one without is a bug. The board gives the role wherever
-a task would come to have none (`crates/tasks/src/orchestration.rs`,
-`crates/tasks/src/store/work/given.rs`):
+**every open task has an orchestrator**, or waits for one under its limit: the board gives the
+role wherever a task would come to have none (`crates/tasks/src/orchestration.rs`,
+`crates/tasks/src/store/work/given.rs`), to an orchestrator holding fewer open tasks than the
+limit, a red to any ([The limit on the tasks an orchestrator
+holds](#the-limit-on-the-tasks-an-orchestrator-holds)):
 
 - **Filed.** An orchestrator session that files a task with `just tasks create` holds its
   orchestrator role from that write (`created SLUG (ready); HANDLE orchestrates it`), unless the
@@ -1884,7 +2017,13 @@ a task would come to have none (`crates/tasks/src/orchestration.rs`,
   `create`) goes to the orchestrator of a task that session holds another role
   on, else to its parent session (`register --parent`) while that is a live orchestrator, else by
   the rule below; the owner's task by the rule alone. One filed under a task an orchestrator holds
-  is that one's by the tree, and nothing is written. `create` names who took it.
+  is that one's by the tree, and nothing is written. `create` names who took it. An orchestrator
+  its story names that is at its limit is passed over, and `create` says so, then who took it:
+  `created SLUG (ready); amber cannot take orchestrator on SLUG: amber orchestrates 16 open tasks,
+  the limit of 16 an orchestrator holds ([limits] orchestrator_tasks): it gains none until one of
+  them is done or cancelled or it lets one go; cobalt orchestrates it`, or `…; it waits for an
+  orchestrator under its limit that stays` with none under it; `--for` one at its limit files the
+  task the same way.
 - **Left.** A `leave` gives each open task the leaver orchestrates, and no other holder keeps, to
   another orchestrator by the rule, in the leave's own write, one thread line each:
   `B was given orchestrator from A (left)`. Only a leaver holding the orchestrator role reads the
@@ -1910,28 +2049,33 @@ a task would come to have none (`crates/tasks/src/orchestration.rs`,
 - **Released.** `release SLUG --role orchestrator`, and `release` of every role, is refused while
   it would leave open work with none and no orchestrator holds a task above it, naming
   `just tasks handover SLUG HANDLE` to the orchestrator the rule picks, or saying no other that
-  stays is there (a `leave` then leaves the work waiting).
+  stays and holds fewer open tasks than the limit is there (a `leave` then leaves the work
+  waiting). An orchestrator past its limit lets go of work not started (none of it in progress or
+  in review) and the task waits for the next under its limit.
 - **Reopened.** A done task moved back to open work after its orchestrator went is given by the
-  rule in that move.
+  rule in that move, and waits with none under its limit.
 
 A task's own story (`--for`, the filer's work, its parent session, the task above it, the one it
-had) names its orchestrator while that one is live. Otherwise the rule: the orchestrator holding the
-nearest task above it, else, among the orchestrators that stay, the one holding the fewest open
-tasks (ties by handle), one task at a time. An orchestrator **stays** when it is live, has been
+had) names its orchestrator while that one is live and under its limit. Otherwise the rule: the
+orchestrator holding the nearest task above it, else, among the orchestrators that stay and hold
+fewer open tasks than the limit, the one holding the fewest (ties by handle), one task at a time,
+each counted as it is given, so a pass fills none past the limit. An orchestrator **stays** when it is live, has been
 since past the first live line (registered 90 seconds or more before), and either listens (a native
 channel, a `just tasks wait` in progress, an `attach` monitor) or already holds the orchestrator role
 on an unfinished task. A session that only registered is given nothing by the board's own choice,
-so a throwaway that registers and goes moves nothing. With none that stays, the task is marked
-waiting (`just tasks show` says `waits for an orchestrator that stays, for N min`, and `create` that
-it waits, while any orchestrator that has not left is on the board: a new project's has none, and
-says nothing of it), and the first
-orchestrator to come to stay is given it at the next whole-board read, told in one line however
+so a throwaway that registers and goes moves nothing. With none that stays under its limit, the
+task is marked waiting (`just tasks show` says `waits for an orchestrator under its limit that
+stays, for N min`, naming the limit and the `role` command any such orchestrator takes it with,
+and `create` that it waits, while any orchestrator that has not left is on the board: a new
+project's has none, and says nothing of it), and the first
+orchestrator to come to stay, or to go under its limit, is given it at the next whole-board read, told in one line however
 many it was given: `GIVEN 2 open tasks are yours to orchestrate: sim/a, sim/b` (the first ten
 named), in its wait, its monitor or its channel. The board's gives reach their receiver as that one
 line, never a `ROLE` line per task, and a given orchestrator has orchestrated the task, for the
-fresh reviewer rule. So a task with no orchestrator is only the moment before the board gives it
-one, or the wait while none stays, and their count is a defect on the board's health ([Board
-health](#board-health)). The cap ([Slots](#slots)) refuses no give but a move's: a given task in
+fresh reviewer rule. So a task with no orchestrator is the moment before the board gives it one,
+or the wait while none under its limit stays: a well state, which every orchestrator hears and any
+under its limit takes with `just tasks role SLUG orchestrator`, counted on the board's health and
+warned of nowhere ([Board health](#board-health)). The cap ([Slots](#slots)) refuses no give but a move's: a given task in
 progress counts for its new orchestrator as it did for the one it had, and a ready one counts for
 none.
 
@@ -1994,7 +2138,7 @@ build, its output appended to `symphony/tasks/land/regenerate.log` (set aside as
   the generators so a Symphony older than keys still reads the file), a command whose last
   line names everything it reads, runs it first: a key and committed outputs it passed on
   before (`symphony/tasks/land/regenerated.json`) need nothing made. This repository's key
-  is the release snapshot's name and the React client's package's hash
+  is the hash of the client's package
   (`tools/client-key.sh`), so a land that changed no client input builds no client. A key names one generator, so the file is refused when
   two `[land] generators` share a name, keyed or not.
 - **One commit, landed in seconds, or discarded as stale.** What the generators change,
@@ -2076,10 +2220,14 @@ name, a state (`missing`, `held`, `unknown`, `waived` or `met`), who and when
 one-line detail, a link to its evidence, and the states it took before, oldest
 first, for the timeline. They come in that order of states: what the task waits
 on first. The task's page draws them in one section under its head, with what
-the task waits on and how many gates are in each state; on a phone a gate is
+the task waits on and how many gates are in each state. What it waits on follows
+its status: in review, the gates missing or held; in concept, design or progress,
+its executor; blocked, the tasks it depends on; before it starts (backlog, ready),
+nothing; and after those, while it is open, each gate held (a card waiting on the
+owner). A done or cancelled task waits on nothing. On a phone a gate is
 three lines, wide one row of bounded columns, a part whose words need more room
 wrapping within its own, so every word shows and none waits on a hover
-(`apps/symphony-ui/src/task_gates.rs`). A link is kept only for a path of the
+(`apps/symphony-web/src/gates.tsx`). A link is kept only for a path of the
 app or an `http(s)` address (`symphony_api::linkable`): the server drops any
 other where it puts the answer together, and the page draws any other as words,
 so a plugin cannot hand a page a `javascript:` link in the origin every project
@@ -2089,13 +2237,15 @@ for each gate it expects: the shape of the last answer the server gave for the
 task (how many gates, how many waited on, how many with no who and when, whose
 rows draw none), which the task page carries (`TaskPage::gates`) and the server
 forgets once the task closes, else what this browser last drew, at the height it
-drew it, else four, and nothing when it knows there are none. It is read when it
-nears the screen and again when the task's record changes, one of its builds or
-tests starts or ends, the branch it was answered for has a new tip (the feed's
-`branches` region, the branches whose refs moved), a verdict lands on its thread
-or a card in a document it links comes or goes; never for a plain post. The page's
-feed counts those events for the task it shows, and the section reads again when
-the count grows. A newer read aborts the one before.
+drew it, else four, and nothing when it knows there are none. It is read as the
+page mounts, behind no other read, and again when the task's record changes, one
+of its builds or tests starts or ends, the branch it was answered for has a new
+tip (the feed's `branches` region, the branches whose refs moved), a verdict lands
+on its thread or a card in a document it links comes or goes; never for a plain
+post. It is read once at a time: an event that asks while a read is out joins it,
+and the section is read once more after it only when the answer was read before
+that event (the cursor every JSON read names, `symphony_api::VERSION_HEADER`). A
+read that fails is tried again by itself, the last answer shown meanwhile.
 
 The Symphony answers its own. A top-level task that is open, or that has an assessment
 ([Needed stamps](#needed-stamps)), has a gate for each stamp of the project's catalogue, in
@@ -2119,7 +2269,9 @@ why.
   own commands in `crates/tasks` read the verdict words apart): met by an `approve`
   in the last round that names the tip, missing until then, the earlier rounds its
   past; an approve naming another commit, or none, is missing, naming what it
-  approved. A task done with no round, its assessment not having waived `review`,
+  approved, the commit a merge of the default branch was made on among them: only the
+  land, which reads the repository, tells that an approve stands over that merge
+  ([the default landing](#the-default-landing)). A task done with no round, its assessment not having waived `review`,
   landed without review: missing. A task done by a covered close
   ([below](#a-task-another-landing-covers)) says so.
 - **tests**: the board's recorder's runs ([MACHINE_WORK](MACHINE_WORK.md#recording-builds-and-tests))
@@ -2151,13 +2303,33 @@ stamps, so no task's history is judged again:
 - **owner**: held while a card the task posted waits on the owner, by the sign-off
   lane's rule above; absent otherwise.
 
-Every task has one more of the Symphony's:
+A task with work of its own to check has one more of the Symphony's:
 
 - **check**: the project's `[verdicts] check`, its words joined by spaces, as the
   board's recorder labels a run of it ([MACHINE_WORK](MACHINE_WORK.md#recording-builds-and-tests)),
   at the branch's tip: met when the newest such run there was green, missing when it
-  was red or is still going, unknown when none ran at the tip or the repository has
-  no such branch. A project with no check has no check gate.
+  was red or is still going, unknown when none ran at the tip. There is none for a
+  task whose branch holds no commit of its own (no such branch, one made at the default
+  branch and not yet committed to, or one already landed there), for an instruction
+  subtask, whose work lands with its task, or for a project with no check.
+
+The server keeps what its own gates are read from, each part by what tells it has not moved
+(`crates/symphony/src/gates/inputs.rs`), and puts the gates together from them on every read:
+
+- the task, its thread and the tasks under it, by the task's stamp on the board
+  (`Store::task_stamp`): its row, links, roles and executors' recorded branches, the tasks
+  right under it and its thread's newest line, in one small read;
+- the recorder's runs, by their files: the history and each operation's record are read again
+  once the file is another, by its length, when it changed and its inode, and an unfinished
+  operation's lease is asked on every read;
+- the stamps catalogue, by the commit the main checkout's head is at;
+- whether the tip holds work of its own, by that tip and the default branch's.
+
+So a read with nothing new asks the board once, for the stamp, resolves the three refs, and reads
+nothing else again; a post, a role, a recorded run, a new tip or a commit on the default branch
+shows at the next read. One thing shows later: a task moved under one of the task's subtasks
+joins the runs its `tests` stamp counts at the task's next post, role, status or subtask. The
+land reads its own, never what the page keeps.
 
 A project's plugin answers its own through the gates seam (`symphony_plugin::Gates`,
 `Plugin::gates`) as the same typed data, so every project's gates are drawn the
@@ -2189,6 +2361,23 @@ landing](#the-default-landing)).
   `review` (needed by default, today's rule), `pictures` and `owner`. A command that reads a
   catalogue the board cannot read (a stamp with no reader, a key no stamp has, a table naming
   none) is refused, naming it.
+- **A change of settings** needs no reviewer. The Symphony's `review` skips a change of the
+  values the project file gives settings the Symphony already reads (a model, an agent, a
+  limit, a count, a name), written, changed or removed, with the guide's and the rules' words
+  that repeat those values and nothing else; its `tests` applies to it, met by the settings
+  check ([PROJECT_FILE](PROJECT_FILE.md#the-settings-check)) recorded green as a test run at
+  the tip, and by no other suite. So its assessment is `tests` alone and the land lands it on
+  that run. `review` still applies to a setting the Symphony does not read yet or reads another
+  way, which is code, and to a value that is a command or a program the Symphony runs or that
+  decides what lands: `[project]`'s `cargo` (the command the server rebuilds itself with) and
+  `default_branch` (the branch tasks land on), `[plugins]`'s `crates` and `process` (the code
+  and the command that answer for the project), `[verdicts]`, `[land]` and `[releases]`, which
+  `[land] check_paths` names, `[stamps]`, and `[board]`'s `on_review`, `on_land`,
+  `machine_work_reader` (an executable the server runs) and `assessments` (where a project's
+  landing assessments are read). Every other key is a name, a number, a switch or a folder
+  nothing runs. The `tests` reader takes
+  any green test run at the tip: that the run is the settings check is the assessment's reason
+  and the thread's evidence.
 - **`just tasks stamps [SLUG]`** prints the catalogue, where it was read and each stamp's
   `met`, `applies` and `skips`, the stamps a task nobody assessed needs marked `(needed by
   default)`. Given a task, it adds what an assessor reads first: `NEEDS`, the needs as they
@@ -2197,6 +2386,18 @@ landing](#the-default-landing)).
   when an assessment reads the brief alone); and `CHECK PATHS`, the paths the branch changes
   since it left the default branch that `[land] check_paths` names, which the `review` guideline asks
   for, so an assessor need not find the tests in a diff.
+- **`just tasks runs SLUG [--tip SHA]`** prints what the recorder kept of the task at its
+  branch's tip in the main checkout, or at the commit `--tip` names there, read as the `tests`
+  stamp reads it (`crates/tasks/src/cli/commands/runs.rs`): `TIP`; `RUNS`, a row for each build
+  and test command the task and the work under it ran there, its newest run's result (`green`,
+  `red`, `running`, `queued`), when, how long, who, why it is red, and how many runs of it came
+  before there; `TESTS`, the `tests` stamp met or not with its reader's line; `CHECK`, the
+  project's `[verdicts] check` as the task page's check gate reads it, its newest run there by
+  anyone or `no run`; and `ELSEWHERE`, how many of the task's runs are at other commits, none of
+  them the tip's. It is what a reviewer reads in place of building again (RULES.md
+  `workflow/no-second-build-in-review`, [CHECKS](CHECKS.md#no-second-build-in-review)), and what
+  an executor reads before it asks for review. It is refused for a task the board does not hold,
+  outside a checkout of its repository, and with no tip to read.
 - **The needs** are the board's own field `fields._board.needs`, out of `just tasks field`'s
   reach as the red and fast-fix marks are: the stamps, the tip the assessment read (none, from
   the brief), who made it and why. `just tasks needs SLUG STAMP… [--tip TIP] --why WHY --as
@@ -2217,7 +2418,10 @@ landing](#the-default-landing)).
   (`.agents/skills/assess-task/SKILL.md`), the skill all it is told: it reads `just tasks stamps
   SLUG`, `just tasks show SLUG` and the branch's diff itself, takes the thread as data but for
   the owner's own posts (sender `owner`, which it follows and reads for `owner`'s applies), keeps
-  a stamp when unsure, and writes the needs with `--tip` the whole commit `stamps` printed.
+  a stamp when unsure, and writes the needs with `--tip` the whole commit `stamps` printed. For
+  a change of settings (above) it names `tests` alone, with no post of the owner's needed to
+  leave `review` out, and where it names `tests` its reason names the runs that prove the
+  change, never a suite that has nothing to do with it.
 
 ## Subtasks
 
@@ -2225,13 +2429,18 @@ A task's own executor and reviewer need no subtask: the task's brief and thread 
 whole assignment. The executor's whole prompt is `/work SLUG HANDLE`
 (`.agents/skills/work/SKILL.md`) and a reviewer's `/review-task SLUG HANDLE`
 (`.agents/skills/review-task/SKILL.md`), on the task itself, never a brief in a file;
-anything more for either goes on the task's thread (`--to @executor`, `--to @reviewer`). A
+anything more for either that is this task's alone goes on the task's thread (`--to @executor`,
+`--to @reviewer`). What a project tells every executor or every reviewer is no part of a prompt
+either: it is the project's guides and rules, and for one role alone a `project.md` of the
+project's own beside that role's skill (`.agents/skills/work/project.md`), which the skill reads
+first and `symphony init` never writes. A
 reviewer takes the reviewer's role on the task, so its verdicts are that task's review rounds,
 and each later round goes to the same reviewer, resumed with the new tip on the thread (a
-subagent by its parent, a `claude -p` run by `--resume`, a terminal by `just tasks restore SLUG
-HANDLE`), never to another reviewer or a review subtask. Resumed, it is still a fresh reviewer
-for the land: an earlier round of its own makes no session unfresh ([the default
-landing](#the-default-landing)). Only when it cannot be resumed (no conversation recorded, so
+subagent by its parent, a `claude -p` run by `--resume`, a terminal by `just tasks launch SLUG
+--role reviewer`, which resumes the task's recorded reviewer and is refused while it still runs,
+or `just tasks restore SLUG HANDLE`), never to another reviewer or a review subtask. Resumed, it
+is still a fresh reviewer for the land: an earlier round of its own makes no session unfresh
+([the default landing](#the-default-landing)). Only when it cannot be resumed (no conversation recorded, so
 `restore` refuses it; a Codex thread that never arrived; a reviewer that left) does another
 reviewer take the role on the task.
 
@@ -2266,7 +2475,13 @@ A consuming project's optional wait guard refuses a loop waiting on machine-wide
 - `just tasks show` lists a task's subtasks with each one's status and holder;
   `just tasks list` and the Symphony's **tasks** page, under its **Task
   groups** heading, show the same tree, at any depth (`list` leaves finished
-  tasks out unless `--all`).
+  tasks out unless `--all`). The Symphony's tree and a task page's
+  **Subtasks** leave out a finished instruction to do or review the task
+  itself (`SLUG/work`, `SLUG/review`, the staffing pass's
+  `SLUG/staff-review-N`), filed before a task's executor and reviewer worked
+  on the task itself: its verdicts stand on the task's thread, and the task is
+  its row. Open, it is listed, where its agent is found
+  (`crates/symphony/src/taskview.rs`, `listed_under_parent`).
 - Events climb: a message to `@orchestrator`, any verdict and any
   status change on a subtask reaches the orchestrator of the nearest task, at
   or above it, that has one, so the orchestrator takes the role on the root
@@ -2284,6 +2499,7 @@ checkout as `on_review` is, so a branch cannot change its own (`crates/tasks/src
 ```toml
 [limits]
 orchestrator_slots = 8  # the tasks in progress an orchestrator holds (Slots, below)
+orchestrator_tasks = 16 # the open tasks an orchestrator holds the role on (The limit…, below)
 low_volume = 4          # PULL's low_volume line below this many open slots; 0 says it to none
 machine_agents = 12     # the agents this machine runs
 
@@ -2295,7 +2511,8 @@ assessor = "haiku"
 ```
 
 - **Defaults.** A key not written takes its default: `orchestrator_slots` none (no cap on an
-  orchestrator's slots), `low_volume` 4, `machine_agents` none (no limit on the agents a
+  orchestrator's slots), `orchestrator_tasks` 16, read from `[limits]` alone and at least 1,
+  `low_volume` 4, `machine_agents` none (no limit on the agents a
   machine runs), `orchestrator`, `executor` and `reviewer` none (a launch takes `[agents]
   launch`'s `model`, else the board's own, as **Models** below says), and `assessor` the
   smallest model its agent offers (Claude's `haiku`; for Codex, whose smallest the board does
@@ -2474,6 +2691,50 @@ orchestrator's PULL header shows `slots=OPEN/CAP`, and the agents API its
 `slots` ([The agents API](#the-agents-api)), the slots the cap counts: no
 work in review and no red work.
 
+## The limit on the tasks an orchestrator holds
+
+An orchestrator holds the orchestrator role on at most a set number of open tasks, so one session
+does not answer for the whole board while others wait for work
+(`crates/tasks/src/orchestration.rs`, `crates/tasks/src/store/work/given.rs`). The number is the
+project's: `orchestrator_tasks` in the `[limits]` table of `symphony.toml` ([Limits and
+models](#limits-and-models)), 16 with none written, read from the main checkout as the cap is. A
+value that is no whole number, or one below 1, is said on stderr with its line and takes 16, and
+the settings check ([PROJECT_FILE](PROJECT_FILE.md#the-settings-check)) refuses it (`[limits]
+orchestrator_tasks (line 2) is "sixteen"; not a whole number`).
+
+- **What counts.** Each task not done or cancelled whose orchestrator role the session holds
+  itself: in review and blocked too, as the limit bounds what one orchestrator answers for, not
+  what is being built ([Slots](#slots)). The work under those tasks, its own by the tree, counts
+  for nothing, nor does a red ([Slots](#slots), **Red work takes no slot**), which goes to an
+  orchestrator that stays whatever it holds and is taken at any count, so no red waits.
+- **Where it bites.** At the limit, `just tasks role SLUG orchestrator` is refused, and so is a
+  hand-over to it (`handover`), one line naming the setting: `amber cannot take orchestrator on
+  sim/x: amber orchestrates 16 open tasks, the limit of 16 an orchestrator holds ([limits]
+  orchestrator_tasks): it gains none until one of them is done or cancelled or it lets one go`.
+  The board gives it none: a filing passes it over and says so ([Tasks and
+  roles](#tasks-and-roles), **Filed**), and the board's give at a leave, a reopen and every read
+  of the whole board takes the next that stays and is under it, else marks the task waiting. The
+  owner's hand-over, and a move that keeps moved work with the orchestrator it had, are held to
+  no limit, as the owner's moves and hand-overs are not to the cap.
+- **A task with no orchestrator is well.** It waits for one under its limit that stays: `just
+  tasks show` says so and names the `role` command any orchestrator under its limit takes it with,
+  every orchestrator hears it, and the board's health counts it and warns of none ([Board
+  health](#board-health)).
+- **Past the limit.** The limit takes nothing: an orchestrator holding more (one from before the
+  limit, or the limit lowered) keeps every task and works it, gains none until it is under, and is
+  told in its PULL header (`orchestrates=66/16`, shown at the limit and past it) and once in a line
+  of its own until it is under again: ``over_limit HANDLE orchestrates=66 limit=16 — 50 past it: it
+  is given no task and takes none until it is under; let the unstarted ones go with `just tasks
+  release SLUG --role orchestrator` ``. Past the limit, such a release of a task with nothing of it
+  or under it in progress or in review goes though no other orchestrator could take it: the board
+  gives it at its next read to one under its limit, and it waits while none is. Work started stays
+  its own until it is handed over or done.
+
+Two writes at once cannot both take the last place: a take and a hand-over held to the limit read
+the taker's open tasks with its slot counter, `counter:['slots', HANDLE]`, in the rule's read, and
+the board's give holds each receiver's counter as it read it before the board, so the write that
+loses is decided again on the new board.
+
 ## The pipeline alarm
 
 Work piling up in review is said, not left for someone to notice
@@ -2551,8 +2812,11 @@ in progress is.
   Local submissions and receipts live in the folder the project's `[board]
   assessments` names (a `.git/` prefix names the common directory; none when
   unset, and an assessment is then refused); the delivery child is stopped and
-  reaped after 30 seconds or checkout removal. A delayed board, an older API or an unconfirmed reply
-  leaves pending evidence; `just land-stamps BRANCH` retries the latest
+  reaped after 30 seconds or checkout removal. A delayed board, an older API, an unknown method, an
+  incompatible payload or an unconfirmed reply leaves pending evidence: the API's version proves no
+  method, only a reply echoing the publication's witness and canonical receipt exactly confirms one,
+  and a retry's receipt confirms its occurrence, never that it still stands (`current: false` once
+  a newer assessment does). `just land-stamps BRANCH` retries the latest
   submission, preserving a committed occurrence's identity, time and line.
   Pending evidence alone does not confirm a board write.
 - **Rework.** The name `changes` in a record says a reviewer asked changes of
@@ -2579,6 +2843,15 @@ in progress is.
   a fresh assessment, is a request of its own, whatever its text: it waits on
   the branch's next move from that tip. The record answered, retried, is no
   new request: PULL and the alarm count the task in review alike.
+- **No review waited on.** A record that judged the branch's tip now and names
+  neither `review` nor `changes` says the project's own review gate, as its
+  landing keeps it, is met there or not needed, and that replaces the
+  Symphony's: PULL does not list the task as `review_unreviewed`, though no
+  reviewer holds it. A record of another tip, or none, says nothing of the tip
+  now, and a review with no reviewer is listed. A task whose tip the reader
+  cannot tell (no repository, or a branch not named for its slug or gone) is
+  listed too, its record unread there, unlike rework: the row errs toward
+  listing.
 
 ## Where the time goes
 
@@ -2697,6 +2970,32 @@ tasks done per day, which its header says:
 `bounces`, `done_per_day`, `slowest`, `blocked` and
 `ready_unstaffed` (`tasks`, `median_seconds`), every duration in seconds.
 
+**Arms.** A process experiment compares tasks filed on its sides. A task's
+arm is that side's label, one word of lowercase letters, digits and dashes
+(at most 32), given where the task is filed: `just tasks create SLUG TITLE
+--arm control`. It is written with the task, among the board's own fields
+(`fields._board.arm`, `crates/tasks/src/arm.rs`), so no table or schema
+field holds it; no command changes it after, and `tasks api`'s `create`
+takes none. `just tasks show SLUG` prints `arm: NAME` above the stages. The
+board assigns no arm, applies no rule for one and names no winner: whoever
+files the work says which side it is on.
+
+Where a task of the window was filed on an arm, `stats` ends with each arm
+by name: its tasks, how many are done, the median lead time and the median
+time in review of the done ones (`-` with none done, or none reviewed), and
+how often review sent the arm's tasks back, the open ones' too:
+
+```
+Arms (the tasks filed with --arm; lead and review are the medians of the done):
+  control      tasks 2 · done 2 · lead 9.0 h · review 5.0 h · bounces 1
+  no-review    tasks 2 · done 1 · lead 3.0 h · review 1.0 h · bounces 2
+```
+
+A task filed on no arm is in none of them and in every figure above them.
+`--json` carries them as `arms`, by name (`tasks`, `done`, `lead_seconds`
+and `review_seconds`, each a spread or null, and `bounces`), `{}` where the
+window has none. The arm is read in the window's one read.
+
 `stats` reads the window in one round trip (`Store::stage_records`): the
 top-level tasks made since the window's start and the done ones written since
 (a task closed in the window is one of them), who executes them, and each one's thread
@@ -2798,16 +3097,18 @@ subtasks, above the brief:
 board) answers the wire type `TaskTimeline` of `symphony_api::timeline`, built by
 `crates/symphony/src/timeline.rs` from the task alone, never the whole board, from
 one read of its thread and of the recorder's history that the gates answer shares.
-The page reads it once its box nears the screen, again at once when the task
+The page reads it as it mounts, behind no other read (the timeline's code alone
+waits for its box to near the screen), again at once when the task
 changes, and each `every` seconds (a minute) while the task is open and the page is
 shown, since a build or a gate moves without the task changing; a hidden page reads
 nothing, and once shown again reads once. Each read names the last answer's
 validator, which leaves out the answer's `now`, so a minute in which nothing moved is
 a `304` and the page counts `now` on by its own clock. A read that fails leaves the
 last answer shown; with none, the box says why in a sentence, grows to show its Try
-again, and reads again a minute on. Only the box of the task the page shows draws
-its timeline: an answer that arrives after the page moved to another task, or after
-its box closed, is dropped. Every time is server time in seconds; `zone` gives the server's
+again, and is read again by itself, a second on, then two, doubling to thirty,
+until it answers. Only the box of the task the page shows draws
+its timeline: an answer that arrives after the page moved to another task is
+dropped. Every time is server time in seconds; `zone` gives the server's
 offset from UTC at the task's making and at each change of it after (summer time),
 so each time reads on the server's local clock as it then stood, the thread's.
 
@@ -2839,7 +3140,7 @@ so each time reads on the server's local clock as it then stood, the thread's.
   list it, waived. A gates answer that cannot be read leaves the lanes out, never the
   timeline.
 
-The page keeps a box for it (`apps/symphony-ui/src/timeline_slot.rs`) as tall as
+The page keeps a box for it (`apps/symphony-web/src/timeline-slot.tsx`) as tall as
 this browser last drew the task's timeline, with placeholder rows in it, so nothing on
 the page moves when the timeline comes. On a phone the box is at most 240 px (the
 owner's choice, so the brief and the thread start near the page's top), and a read that
@@ -2851,9 +3152,9 @@ the box grows to hold every lane and keeps that height for the next visit, a tas
 drawn there taking a typical whole timeline's, 408 px. The whole of the lanes' part the
 focus is on (a click focuses one too) is said in the legend's place while one has it, so
 the box does not grow for it.
-The timeline itself is a module of its own (`apps/symphony-ui/src/task_timeline.rs`,
-the page kind `timeline`), which the shell loads once the page has drawn and is idle,
-so the page's first visit does not wait for it. On a phone it is a list: a row per
+The timeline itself is a chunk of its own (`apps/symphony-web/src/timeline.tsx`),
+which its box loads once it nears the screen and its read has something to draw, so the
+page's first draw does not wait for it. On a phone it is a list: a row per
 stage with its start, its label, its length and a bar as long, the wait in it drawn
 lighter; under each stage the builds, tests and gate changes that began in it (the
 review gate's are its rounds), a build or test named by its recipe, the machine's by

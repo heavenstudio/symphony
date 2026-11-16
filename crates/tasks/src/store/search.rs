@@ -1,5 +1,12 @@
-//! Word matches and ranking stay in SurrealDB, including message-only matches. The exact slug
-//! branch retains identifiers containing punctuation even when the analyzer splits them into words.
+//! The board searches by words alone. Word matches and ranking stay in SurrealDB, including
+//! message-only matches. The exact slug branch retains identifiers containing punctuation even when
+//! the analyzer splits them into words.
+//!
+//! The search by meaning the board had is deleted (DECISIONS: board-search-by-meaning). Its tables
+//! (`task_chunk` with its `embedding` field and HNSW index, `task_embedding_source`,
+//! `task_embedding_checkpoint`) keep their definitions in the schema, as removing one is a schema
+//! move, and a board that holds their rows keeps them: nothing here reads or writes them.
+use super::surreal::search as sql;
 use super::*;
 
 #[derive(Debug, Clone, Deserialize)]
@@ -26,7 +33,7 @@ struct ScoredSource {
     score: f64,
 }
 
-pub(crate) fn validate_query(query: &str) -> Result<bool, Error> {
+fn validate_query(query: &str) -> Result<bool, Error> {
     if query.len() > 1024 {
         return Err(Error::Refused(
             "search query must be at most 1024 UTF-8 bytes".into(),
@@ -65,7 +72,7 @@ impl Store {
         if !validate_query(query)? {
             return Ok(Vec::new());
         }
-        self.retrying(|| self.transact(SEARCH, json!({"query": query.trim().to_lowercase()})))
+        self.retrying(|| self.transact(sql::SEARCH, json!({"query": query.trim().to_lowercase()})))
     }
 
     /// Fetch matching text for the displayed hits only. Prefer title, brief and thread context
@@ -80,7 +87,7 @@ impl Store {
         }
         let groups: BTreeMap<String, Vec<ScoredSource>> = self.retrying(|| {
             self.transact(
-                SOURCES,
+                sql::SOURCES,
                 json!({"query": query.trim().to_lowercase(), "slugs": slugs}),
             )
         })?;
@@ -102,31 +109,6 @@ impl Store {
         Ok(sources)
     }
 }
-
-const SOURCES: &str = "
-LET $titles = SELECT slug, search::score(0) ?? 0 AS score, 1 AS rank, 'title' AS source, title AS text
-    FROM task WHERE slug IN $slugs AND title @0@ $query;
-LET $briefs = SELECT slug, search::score(0) ?? 0 AS score, 2 AS rank, 'body' AS source, body AS text
-    FROM task WHERE slug IN $slugs AND body @0@ $query;
-LET $slugs_found = SELECT slug, search::score(0) ?? 0 AS score, 4 AS rank, 'slug' AS source, slug AS text
-    FROM task WHERE slug IN $slugs AND slug @0@ $query;
-LET $threads = SELECT slug, search::score(0) ?? 0 AS score, 3 AS rank, 'message' AS source, text
-    FROM message WHERE slug IN $slugs AND text @0@ $query;
-LET $exact = SELECT slug, 1000000 AS score, 4 AS rank, 'slug' AS source, slug AS text
-    FROM task WHERE slug IN $slugs AND slug = $query;
-RETURN { titles: $titles, briefs: $briefs, slugs: $slugs_found, threads: $threads, exact: $exact };
-";
-
-const SEARCH: &str = "
-LET $titles = SELECT slug, (search::score(0) ?? 0) * 3 AS score FROM task WHERE title @0@ $query;
-LET $briefs = SELECT slug, search::score(0) ?? 0 AS score FROM task WHERE body @0@ $query;
-LET $slugs = SELECT slug, (search::score(0) ?? 0) * 4 AS score FROM task WHERE slug @0@ $query;
-LET $threads = SELECT slug, search::score(0) ?? 0 AS score FROM message WHERE text @0@ $query;
-LET $exact = SELECT slug, 1000000 AS score FROM task WHERE slug = $query;
-RETURN SELECT slug, math::max(score) AS score
-    FROM array::concat($titles, $briefs, $slugs, $threads, $exact)
-    GROUP BY slug ORDER BY score DESC, slug ASC;
-";
 
 #[cfg(test)]
 mod tests {

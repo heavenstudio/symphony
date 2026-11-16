@@ -20,6 +20,11 @@ const SHELL: &str = "<!DOCTYPE html><html lang=\"en\"><head><title>Symphony</tit
 
 impl Machine {
     pub(super) fn new() -> Machine {
+        Machine::with_gate(Gate::new(Arc::new(|_| Ok(None)), Arc::new(Instant::now)))
+    }
+
+    /// [`Machine::new`], its starter judging who may reach it by `gate`.
+    fn with_gate(gate: Gate) -> Machine {
         let tree = Tree::new();
         for (id, color) in [("alpha", "#a00"), ("beta", "#0b0")] {
             tree.write(&format!("{id}/docs/README.md"), "# Docs\n");
@@ -39,14 +44,7 @@ impl Machine {
         }
         registry.write(&machine).unwrap();
         let root = tree.path("alpha").canonicalize().unwrap();
-        let starter = Shared::project(
-            1,
-            1,
-            &root,
-            Some(&tree.path("install")),
-            Gate::new(Arc::new(|_| Ok(None)), Arc::new(Instant::now)),
-            "/alpha",
-        );
+        let starter = Shared::project(1, 1, &root, Some(&tree.path("install")), gate, "/alpha");
         let projects = Projects::made(&machine, &starter, Warming::OnRequest);
         Machine { tree, projects }
     }
@@ -56,9 +54,18 @@ impl Machine {
     }
 
     async fn from(&self, client: &str, path: &str, headers: &[(&str, &str)]) -> Response {
-        let mut request = Request::builder()
-            .uri(path)
-            .header(header::HOST, "127.0.0.1:1");
+        self.named(client, "127.0.0.1:1", path, headers).await
+    }
+
+    /// `path` asked by `client` of the Host `host`.
+    async fn named(
+        &self,
+        client: &str,
+        host: &str,
+        path: &str,
+        headers: &[(&str, &str)],
+    ) -> Response {
+        let mut request = Request::builder().uri(path).header(header::HOST, host);
         for (name, value) in headers {
             request = request.header(*name, *value);
         }
@@ -224,6 +231,60 @@ async fn a_documents_picture_or_link_to_a_file_of_its_checkout_reaches_its_proje
         let page = unknown(&machine, path, &[PAGE, from_alpha]).await;
         assert!(page.contains("No project is called"), "{path}: {page}");
     }
+}
+
+/// The icon a browser asks the address for by itself is the Symphony's, the started project's
+/// never: a project's own (`tools/static/icon.svg`) answers only a page of that project, and the
+/// home screen's size is the Symphony's wherever it is asked.
+#[tokio::test]
+async fn the_addresss_own_icon_is_the_symphonys_and_a_projects_only_for_its_own_page() {
+    let machine = Machine::new();
+    // Alpha, the project the server was started from, has an icon of its own; beta has none.
+    machine
+        .tree
+        .write("alpha/tools/static/icon.svg", "<svg>alpha</svg>");
+    let from_alpha = ("referer", "http://127.0.0.1:1/alpha/src/picture.png");
+    let from_beta = ("referer", "http://127.0.0.1:1/beta/src/picture.png");
+    let elsewhere = ("referer", "http://other.example/alpha/");
+    for (path, headers, alphas) in [
+        ("/favicon.ico", &[][..], false),
+        ("/favicon.ico", &[elsewhere], false),
+        ("/favicon.ico", &[from_beta], false),
+        ("/beta/favicon.ico", &[], false),
+        ("/favicon.ico", &[from_alpha], true),
+        ("/alpha/favicon.ico", &[], true),
+    ] {
+        let icon = machine.get(path, headers).await;
+        assert_eq!(icon.status(), StatusCode::OK, "{path} {headers:?}");
+        assert_eq!(icon.headers()[header::CONTENT_TYPE], "image/svg+xml");
+        let icon = text(icon).await;
+        assert_eq!(icon == "<svg>alpha</svg>", alphas, "{path} {headers:?}");
+        assert_eq!(
+            icon.contains("M5 21A11 11 0 0 1 27 21H24.6A8.6 7.2 0 0 0 7.4 21Z"),
+            !alphas,
+            "{path} {headers:?}: {icon}"
+        );
+    }
+    for (path, headers) in [
+        ("/favicon.ico?size=180", &[][..]),
+        ("/favicon.ico?size=180", &[from_alpha]),
+        ("/alpha/favicon.ico?size=180", &[]),
+        ("/beta/favicon.ico?size=180", &[]),
+    ] {
+        let touch = machine.get(path, headers).await;
+        assert_eq!(touch.status(), StatusCode::OK, "{path} {headers:?}");
+        assert_eq!(touch.headers()[header::CONTENT_TYPE], "image/png", "{path}");
+    }
+    // The list is the Symphony's own page: its icons, and its mark and wordmark first.
+    let list = text(machine.get("/", &[PAGE]).await).await;
+    assert!(list.contains(&crate::mark::links("")), "{list}");
+    assert!(
+        list.contains(&format!(
+            "<header class=\"app-header\" id=\"top\">{}<nav",
+            crate::mark::brand("", "")
+        )),
+        "{list}"
+    );
 }
 
 /// An id spelled with escapes names its project (`/%61lpha/` is `/alpha/`), and the page of a
@@ -580,6 +641,14 @@ async fn the_list_warns_under_a_project_whose_board_is_unwell_until_it_is_well()
         1,
         "beta is well: {list}"
     );
+    // The project list as data says the same warning, as plain text, and only of alpha.
+    let unwell = listed(&machine, "alpha").await.unwell.unwrap();
+    assert!(
+        unwell.starts_with("The task board is unwell: its callback dispatch is failing")
+            && unwell.ends_with("to see why."),
+        "{unwell}"
+    );
+    assert_eq!(listed(&machine, "beta").await.unwell, None);
 
     hub.health.dispatched(at + 1.0, Ok(()));
     clock.store((at + 1.0).to_bits(), Ordering::SeqCst);
@@ -593,6 +662,7 @@ async fn the_list_warns_under_a_project_whose_board_is_unwell_until_it_is_well()
     clock.store(later.to_bits(), Ordering::SeqCst);
     let list = text(machine.get("/", &[]).await).await;
     assert!(!list.contains("class=\"health\""), "{list}");
+    assert_eq!(listed(&machine, "alpha").await.unwell, None, "well again");
 }
 
 #[tokio::test]
@@ -749,6 +819,166 @@ async fn front_names_the_projects_and_answers_loopback_alone() {
     assert_eq!(response.status(), StatusCode::FORBIDDEN);
 }
 
+/// The project list as data: every project, the starter's with its hub's counts, its first card,
+/// its feed's version and its task asks, and one with no hub yet with none of them.
+#[tokio::test]
+async fn the_project_list_names_each_project_with_its_counts_first_card_and_task_asks() {
+    use crate::testing::board::{Fixture, Seed};
+    let machine = Machine::new();
+    let root = crate::testing::repository_holding(
+        &machine.tree,
+        "alpha",
+        "docs/TOPIC.md",
+        "# Topic\n\n- [ ] **initial-card** — Initial question.\n",
+    );
+    let hub = Arc::new(crate::live::Hub::new(&root, &root.join("build/client")));
+    hub.refresh_page("", &root).unwrap();
+    let board = Fixture::new(
+        Seed::default()
+            .session("worker")
+            .task("tools/ask", "in_progress"),
+    );
+    board
+        .store
+        .say("tools/ask", "worker", "flat or falling?", Some("owner"))
+        .unwrap();
+    hub.observe(&board.store);
+    assert!(machine.projects.starter.api.set(hub.clone()).is_ok());
+
+    let response = machine.get(symphony_api::PROJECTS_PATH, &[]).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.headers()[header::CONTENT_TYPE], "application/json");
+    let list: symphony_api::ProjectList = serde_json::from_str(&text(response).await).unwrap();
+    assert_eq!(list.pin, symphony::machine::PIN);
+    let installation = list.installation.clone().unwrap();
+    assert_eq!(
+        installation,
+        symphony::machine::installation_id_in(&machine.tree.path("machine")).unwrap(),
+        "the machine folder the registry is in names the server"
+    );
+    assert_eq!(
+        list.projects
+            .iter()
+            .map(|project| (project.id.as_str(), project.name.as_str()))
+            .collect::<Vec<_>>(),
+        [("alpha", "alpha works"), ("beta", "beta works")]
+    );
+    let alpha = &list.projects[0];
+    let page = hub.pages.read().unwrap()[""].board.clone();
+    assert_eq!(alpha.version, Some(page.version));
+    assert_eq!(alpha.waiting, Some(1));
+    assert_eq!(
+        alpha.next,
+        Some(symphony_api::ListedCard {
+            title: page.next[0].title.clone(),
+            href: "/alpha/docs/TOPIC.md#initial-card".into(),
+        })
+    );
+    let asks = alpha.asks.as_ref().unwrap();
+    assert_eq!(asks.questions["owner"], 1);
+    assert!(asks.verdicts.is_empty());
+    assert_eq!((&alpha.refused, &alpha.unwell), (&None, &None));
+    // Beta's hub is not made yet: named, with nothing of its board.
+    let beta = &list.projects[1];
+    assert_eq!(
+        (
+            beta.version,
+            beta.waiting,
+            &beta.next,
+            &beta.asks,
+            &beta.refused
+        ),
+        (None, None, &None, &None, &None)
+    );
+    // Asked again, the same server answers the same id.
+    assert_eq!(
+        project_list(&machine).await.installation,
+        Some(installation)
+    );
+}
+
+/// The one server's project list, as `machine` answers it on loopback.
+async fn project_list(machine: &Machine) -> symphony_api::ProjectList {
+    serde_json::from_str(&text(machine.get(symphony_api::PROJECTS_PATH, &[]).await).await).unwrap()
+}
+
+/// The project `id` as `machine`'s project list lists it.
+async fn listed(machine: &Machine, id: &str) -> symphony_api::ListedProject {
+    let list = project_list(machine).await;
+    list.projects.into_iter().find(|p| p.id == id).unwrap()
+}
+
+/// A refused project is listed with why, and nothing of a board its build cannot serve.
+#[tokio::test]
+async fn the_project_list_says_why_a_project_is_refused_and_nothing_else_of_it() {
+    let machine = Machine::new();
+    let path = machine.tree.path("machine");
+    let mut registry = Registry::read(&path).unwrap();
+    let beta = registry
+        .projects
+        .iter_mut()
+        .find(|entry| entry.id == "beta")
+        .unwrap();
+    beta.plugins.push("fixture-uncompiled".into());
+    registry.write(&path).unwrap();
+    let beta = listed(&machine, "beta").await;
+    assert!(
+        beta.refused
+            .as_deref()
+            .is_some_and(|why| why.contains("lacks the plugin fixture-uncompiled")),
+        "{beta:?}"
+    );
+    assert_eq!(
+        (beta.version, &beta.asks, &beta.unwell),
+        (None, &None, &None)
+    );
+}
+
+/// The project list answers a tailnet peer that names this machine by its tailnet name, as every
+/// route but `/api/front` does, and nobody else.
+#[tokio::test]
+async fn the_project_list_answers_this_machines_tailnet_name_and_front_does_not() {
+    let peer = |_: &str| {
+        Ok(Some(
+            r#"{"Node":{"Name":"phone.tailnet-name.ts.net."}}"#.to_string(),
+        ))
+    };
+    let names = || Ok(r#"{"Self":{"DNSName":"studio.tailnet-name.ts.net."}}"#.to_string());
+    let machine = Machine::with_gate(
+        Gate::new(Arc::new(peer), Arc::new(Instant::now)).with_status(Arc::new(names)),
+    );
+    let phone = "100.101.102.103:1";
+    let tailnet = "studio.tailnet-name.ts.net:8765";
+    let listed = machine
+        .named(phone, tailnet, symphony_api::PROJECTS_PATH, &[])
+        .await;
+    assert_eq!(listed.status(), StatusCode::OK);
+    let list: symphony_api::ProjectList = serde_json::from_str(&text(listed).await).unwrap();
+    assert_eq!(list.projects.len(), 2);
+    assert_eq!(
+        machine
+            .named(phone, tailnet, symphony_api::FRONT_PATH, &[])
+            .await
+            .status(),
+        StatusCode::FORBIDDEN,
+        "the front answers loopback's name alone"
+    );
+    for (client, host) in [
+        (phone, "rebound.example"),
+        ("192.0.2.7:1", tailnet),
+        ("127.0.0.1:1", "rebound.example"),
+    ] {
+        assert_eq!(
+            machine
+                .named(client, host, symphony_api::PROJECTS_PATH, &[])
+                .await
+                .status(),
+            StatusCode::FORBIDDEN,
+            "{client} naming {host}"
+        );
+    }
+}
+
 #[tokio::test]
 async fn a_client_outside_this_machine_and_its_tailnet_reads_nothing() {
     let machine = Machine::new();
@@ -884,6 +1114,7 @@ async fn the_one_servers_own_json_answers_say_nosniff_as_a_projects_do() {
     let from_beta = ("referer", "http://127.0.0.1:1/beta/docs/");
     for (route, headers, status) in [
         (symphony_api::FRONT_PATH, vec![], StatusCode::OK),
+        (symphony_api::PROJECTS_PATH, vec![], StatusCode::OK),
         ("/beta/api/board", vec![], StatusCode::SERVICE_UNAVAILABLE),
         (
             "/api/board",

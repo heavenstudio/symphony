@@ -187,7 +187,7 @@ fn a_refused_copy_of_a_quarter_board_leaves_the_board_and_its_index_as_they_were
         .client()
         .query(
             "CREATE task_chunk SET slug = 'sim/jump', source = 'brief', source_hash = 'old', text_hash = 'old', model = 'fake', text = 'cached board text', embedding = $vector;",
-            json!({"vector": vec![1.0_f32; symphony_board::embedding::DIMENSIONS]}),
+            json!({"vector": vec![1.0_f32; 384]}),
         )
         .unwrap();
     let marker = one(
@@ -202,7 +202,7 @@ fn a_refused_copy_of_a_quarter_board_leaves_the_board_and_its_index_as_they_were
     }
     assert_eq!(store.dump().unwrap(), small);
     assert_eq!(
-        one(&store, "RETURN count(SELECT id FROM task_chunk);"),
+        json!(store.raw().table("task_chunk").count().unwrap()),
         json!(1)
     );
     assert_eq!(

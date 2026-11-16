@@ -160,11 +160,16 @@ fn unknown_native_presence_keeps_owned_open_slots() {
         c.f.store.take_role(&slug, &orch, "orchestrator").unwrap();
     }
     // The existing native metadata contract produces Unknown through Store::board itself.
-    c.f.store.client().query(
-        "UPSERT type::record('callback_state', $handle) SET handle = $handle, address = 'codex:abcdef01', host = $host, confirmed_until = $until, lease = $lease RETURN NONE;
-         UPDATE type::record('session', $handle) SET last_seen = $seen RETURN NONE;",
-        serde_json::json!({"handle":orch, "host":crate::common::HOST, "until":NOW-1.0, "lease":NOW+1_000_000.0, "seen":NOW-500.0}),
-    ).unwrap();
+    let raw = c.f.store.raw();
+    raw.row("callback_state", orch.as_str())
+        .put(serde_json::json!({
+            "handle": orch, "address": "codex:abcdef01", "host": crate::common::HOST,
+            "confirmed_until": NOW - 1.0, "lease": NOW + 1_000_000.0,
+        }))
+        .unwrap();
+    raw.row("session", orch.as_str())
+        .set(serde_json::json!({"last_seen": NOW - 500.0}))
+        .unwrap();
     let board = c.f.store.board().unwrap();
     assert_eq!(c.f.health(&orch), symphony_board::Health::Unknown);
     let capped = c.f.other().capping(Some(8));

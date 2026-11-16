@@ -105,7 +105,11 @@ describe("a feed event home reads", () => {
     ]);
     const other = {
       version: 9,
-      changes: [{ region: "asks", data: { threads: [] } }, { region: "tasks" }],
+      changes: [
+        { region: "asks", data: { threads: [] } },
+        { region: "task-asks", data: { questions: { owner: 1 }, verdicts: {} } },
+        { region: "tasks" },
+      ],
     };
     expect(readDelta(other)).toEqual({ version: 9, changes: [] });
   });
@@ -201,7 +205,7 @@ describe("a feed event applied to the board", () => {
     expect(after.next.map((card) => card.slug)).toEqual(["mining-yield-curve"]);
     expect(after.counts.waiting).toBe(36);
     expect(after.progress.regions[0]?.bars[0]?.done).toBe(22);
-    expect(after.build).toBe("/assets/symphony-ui-dxh3f9a1c0123456789.js");
+    expect(after.build).toBe("/assets/symphony-shell-3f9a1c0123456789.js");
     expect(notice).toBeNull();
   });
 

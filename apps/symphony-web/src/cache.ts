@@ -1,14 +1,17 @@
 // The client cache: what a page drew, kept on this device so a return visit draws at once and then
 // asks the server only whether it changed (docs/analysis/client-cache.md). The store is the shell's
-// (apps/symphony-ui/assets/cache.js, `symphonyCache`), which every page kind shares; this names what
+// (shell/cache.js, `symphonyCache`), which every page kind shares; this names what
 // is kept, under the wire's CACHE_FORMAT, and reads it back. Without the store (a browser with no
 // IndexedDB) every read misses and nothing is kept.
 
 import { project } from "./project";
 import { CACHE_FORMAT } from "./wire";
 
-/** Which caps an item counts against (`CAPS` in cache.js); the board's reads are outside both. */
-export type Kind = "board" | "task" | "document";
+/**
+ * Which caps an item counts against (`CAPS` in cache.js); the board's reads and the reports
+ * (`reportsItem`, reports.tsx) are outside both, held by the origin's bytes and their age alone.
+ */
+export type Kind = "board" | "task" | "document" | "reports";
 
 /** What one visit opens, and eviction drops whole: its parts are the reads its page drew. */
 export interface Item {
@@ -23,6 +26,16 @@ export interface Item {
 export function boardItem(scope: string): Item {
   return { kind: "board", id: `board:${scope === "" ? "" : `@${scope}/`}`, pinned: false };
 }
+
+/** The task `slug`'s page of the checkout `scope` names. */
+export function taskItem(scope: string, slug: string): Item {
+  return { kind: "task", id: `task:${scope === "" ? "" : `@${scope}/`}${slug}`, pinned: false };
+}
+
+/** The parts of a task item: its page (`/api/task-page`), and its thread's newest page
+ * (`/api/task-history` without `before`). */
+export const PAGE = "page";
+export const THREAD = "thread";
 
 /** The parts of a board item: `/api/board`, as home and the queue drew it, and `/api/queue`. */
 export const BOARD = "board";

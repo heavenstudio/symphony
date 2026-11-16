@@ -22,6 +22,8 @@ mod legacy;
 mod linked_tests;
 #[cfg(test)]
 mod outline_tests;
+#[cfg(test)]
+mod outside_tests;
 mod regroup;
 
 pub use legacy::legacy_html;
@@ -355,6 +357,9 @@ pub fn document_marked(
             finish(section, render.root(), rel, scope);
         }
         doc.sections.splice(0..0, notice);
+    }
+    for section in &mut doc.sections {
+        section.ends = symphony_api::Section::ends_of(&section.blocks);
     }
     if !scope.is_empty() {
         doc.path = format!("@{scope}/{rel}");
@@ -758,6 +763,64 @@ pub fn scope_fragment(html: &mut String, media: &mut [Media], scope: &str) {
     }
 }
 
+/// Whether `document`, rendered for `scope`'s page, names by its validator
+/// ([`crate::assets::validator`]) a file no entrypoint of `project` serves: a picture or a script
+/// from outside the documents' folders. Such a file changes what the document renders to while no
+/// file under an entrypoint does, so a reader that keeps a render until one of those changes
+/// renders this document each time instead.
+pub fn names_files_outside(
+    document: &Document,
+    project: &crate::project::Project,
+    scope: &str,
+) -> bool {
+    static LOADED: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r#"\s(?:src|data-full|data-module|poster|href)="([^"]*)""#)
+            .expect("loaded URL pattern")
+    });
+    let own = format!("/@{scope}/");
+    let outside = |url: &str| {
+        let url = crate::markup::unescape(url);
+        let url = url.split('#').next().unwrap_or_default();
+        let Some((path, query)) = url.split_once('?') else {
+            return false;
+        };
+        // A validator is written on a file of this project alone: another site's `v=` is its own.
+        let local = path.starts_with('/') && !path.starts_with("//");
+        if !local || !query.split('&').any(|pair| pair.starts_with("v=")) {
+            return false;
+        }
+        let route = match path.strip_prefix(&own) {
+            Some(inside) if !scope.is_empty() => inside,
+            _ => path.trim_start_matches('/'),
+        };
+        project.serving(route).is_none()
+    };
+    let fragments = document
+        .sections
+        .iter()
+        .map(|section| (&section.html, &section.media))
+        .chain(
+            document
+                .threads
+                .values()
+                .map(|thread| (&thread.html, &thread.media)),
+        );
+    for (html, media) in fragments {
+        if LOADED.captures_iter(html).any(|found| outside(&found[1])) {
+            return true;
+        }
+        let mut media = media.clone();
+        if media
+            .iter_mut()
+            .flat_map(media_urls)
+            .any(|url| outside(url))
+        {
+            return true;
+        }
+    }
+    false
+}
+
 /// Every URL a media item loads: its files, their posters and its viewer's script, which a branch's
 /// page loads from that branch's checkout as it does the files.
 fn media_urls(media: &mut Media) -> Vec<&mut String> {
@@ -779,5 +842,8 @@ fn media_urls(media: &mut Media) -> Vec<&mut String> {
                     .flat_map(|item| std::iter::once(&mut item.src).chain(item.poster.iter_mut())),
             )
             .collect(),
+        // A kind a later minor of the kit adds names its URLs here before a branch's page shows it
+        // (`crates/symphony-api/tests/vocabulary_drawn.rs` holds every kind to an arm).
+        _ => Vec::new(),
     }
 }
