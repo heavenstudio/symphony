@@ -628,6 +628,10 @@ impl ParitySite {
                                 }
                                 pinged = Instant::now();
                             }
+                            #[expect(
+                                clippy::disallowed_methods,
+                                reason = "no-timed-waits baseline: a test paces the pings it sends by a length of time"
+                            )]
                             std::thread::sleep(Duration::from_millis(20));
                         }
                         return;

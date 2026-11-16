@@ -371,6 +371,10 @@ impl Home {
             if !pid_alive(running.pid) || began.elapsed() >= self.patience {
                 return false;
             }
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "no-timed-waits baseline: looks again for the running server's answer, where its pipe or socket is the event"
+            )]
             std::thread::sleep(Duration::from_millis(50));
         }
     }
@@ -391,6 +395,10 @@ impl Home {
                 if gone() {
                     return Ok(());
                 }
+                #[expect(
+                    clippy::disallowed_methods,
+                    reason = "no-timed-waits baseline: looks again whether a server it told to end has gone, which no wait reports for a process it did not start"
+                )]
                 std::thread::sleep(Duration::from_millis(20));
             }
         }
@@ -529,6 +537,10 @@ impl Home {
                 // It may have printed just before it ended.
                 return announced_port(&since(log, from), pid);
             }
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "no-timed-waits baseline: reads its child's log again for the address it announces, where a pipe of its output is the event"
+            )]
             std::thread::sleep(Duration::from_millis(20));
         }
         None
@@ -548,6 +560,10 @@ impl Home {
                 Some(front) if front.pid == running.pid => up = true,
                 _ => {}
             }
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "no-timed-waits baseline: looks again for its child's answer, where its pipe or socket is the event"
+            )]
             std::thread::sleep(Duration::from_millis(50));
         }
         up

@@ -837,6 +837,10 @@ fn ping_every_ping_ms(shared: &Mutex<Shared>, stop: &AtomicBool) {
     let ping = ping();
     let mut last = Instant::now();
     while !stop.load(Ordering::SeqCst) {
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "no-timed-waits baseline: the stand-in server looks each 50 ms whether a feed's ping is due, where a timer per feed is the helper"
+        )]
         std::thread::sleep(Duration::from_millis(50));
         let every = {
             let shared = shared.lock().unwrap();
@@ -1371,6 +1375,10 @@ fn serve(
             overridden.as_ref()
         } else if path == symphony_api::BOARD_PATH {
             let delay = shared.lock().unwrap().board_delay;
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "no-timed-waits baseline: the stand-in's board answer made slow by a length of time, not held until its test releases it"
+            )]
             std::thread::sleep(delay);
             let named = {
                 let shared = shared.lock().unwrap();

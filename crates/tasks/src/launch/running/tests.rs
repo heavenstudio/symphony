@@ -39,6 +39,8 @@ fn session(handle: &str, kind: &str, pane: Option<&str>) -> Agent {
         slots: None,
         session_url: None,
         in_process: false,
+        tokens: None,
+        cost: None,
     }
 }
 

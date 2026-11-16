@@ -8,7 +8,7 @@ use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, LazyLock, Mutex, OnceLock, RwLock, Weak, mpsc};
 use std::time::{Duration, Instant};
 
-use crate::backstop::{Backstop, Sweep, Wake};
+use crate::backstop::{self, Backstop, Sweep, Wake};
 use notify::{RecursiveMode, Watcher};
 use serde_json::{Value, json};
 use symphony::{branches, dashboard, taskview};
@@ -184,6 +184,9 @@ pub(crate) struct Hub {
     /// `pages` where both are held, never before.
     task_asks: Mutex<task_asks::Asked>,
     worker: Mutex<Option<std::thread::JoinHandle<()>>>,
+    /// What the board's ticks wait on between two reads, on their own thread ([`run`]): [`Hub::stop`]
+    /// drops it, as the hub's own drop does, and that wakes the wait at once.
+    ticks: Mutex<Option<mpsc::Sender<()>>>,
     /// The board's health over the last hour: the clock's dispatch passes, the idle sweeps and
     /// every request this process sent the board ([`symphony_board::board_health`]).
     pub(crate) health: symphony_board::board_health::Recorder,
@@ -361,6 +364,7 @@ impl Hub {
             task_activity: Mutex::new(None),
             task_asks: Mutex::default(),
             worker: Mutex::new(None),
+            ticks: Mutex::new(None),
             health: symphony_board::board_health::Recorder::default(),
             agent_activity: Mutex::new(None),
             report_folders: OnceLock::new(),
@@ -1125,9 +1129,6 @@ impl Hub {
             }
         };
         let board = self.tasks_read().ok();
-        if let Some(tasks) = &board {
-            snapshot.board.counts.tasks = Some(taskview::counts(tasks));
-        }
         let cards_moved = cards_before.as_ref().is_some_and(|before| {
             !Arc::ptr_eq(before, &snapshot.pages) && **before != *snapshot.pages
         });
@@ -1203,6 +1204,13 @@ impl Hub {
                     .collect();
                 snapshot.queue.waiting = waiting;
             }
+            // The board's task counts are the ticks' ([`Hub::update_board`], [`Hub::board_error`]),
+            // which run beside this refresh: the page keeps the ones they last gave it, never ones
+            // read before these renders. A page made anew takes the last board read's.
+            snapshot.board.counts.tasks = match pages.get(scope) {
+                Some(page) => page.board.counts.tasks.clone(),
+                None => board.as_deref().map(taskview::counts),
+            };
         } else if let Some(main) = pages.get("") {
             snapshot.board = main.board.clone();
             snapshot.queue = main.queue.clone();
@@ -1856,55 +1864,99 @@ fn document_change(
         .and_then(|before| symphony::docview::changes(before, doc))
 }
 
+/// The hub's two loops once its first board read is done: the board's ticks on a thread of their
+/// own, so a document refresh never holds a tick back nor a tick a refresh, and the documents'
+/// refreshes on this one. It returns once both have ended: the ticks when the hub stops, goes or
+/// loses its project; the documents when the hub drains or goes, or once the ticks have ended, so a
+/// project lost ends both.
 fn run(
     weak: Weak<Hub>,
     recv: mpsc::Receiver<()>,
-    mut watcher: impl Watcher,
-    mut watched: BTreeSet<PathBuf>,
-    mut backstop: Backstop,
+    watcher: impl Watcher,
+    watched: BTreeSet<PathBuf>,
+    backstop: Backstop,
+    board: Option<symphony_board::Store>,
+    connect: impl FnMut(&Path) -> Result<symphony_board::Store, String> + Send,
+) {
+    let (stop, stopped) = mpsc::channel();
+    {
+        let Some(hub) = weak.upgrade() else { return };
+        let mut held = hub.ticks.lock().unwrap_or_else(|e| e.into_inner());
+        // A stop sets `draining` before it takes what this holds, so one already past its take is
+        // seen here, and neither loop starts.
+        if *hub.draining.borrow() {
+            return;
+        }
+        *held = Some(stop);
+    }
+    let weak = &weak;
+    std::thread::scope(|scope| {
+        let ticking = scope.spawn(move || ticks(weak, &stopped, board, connect));
+        documents(weak, &recv, watcher, watched, backstop, || {
+            ticking.is_finished()
+        });
+    });
+}
+
+/// The board's ticks, one an interval, independent of client count: the board read (the chat
+/// journal, callbacks, the give, the agents probe), the queue's expired postponements (with backoff
+/// on store errors), the hourly roll-up, the asks file and the project's settings. Between two it
+/// waits on `stopped`, which the hub's stop and its drop end at once, the first tick right away.
+fn ticks(
+    weak: &Weak<Hub>,
+    stopped: &mpsc::Receiver<()>,
     mut board: Option<symphony_board::Store>,
     mut connect: impl FnMut(&Path) -> Result<symphony_board::Store, String>,
 ) {
-    let mut last_board = Instant::now() - BOARD_INTERVAL;
     let mut expiry = OrderExpiry::default();
-    while let Some(hub) = weak.upgrade() {
-        if *hub.draining.borrow() {
+    let mut wait = Duration::ZERO;
+    while let Err(mpsc::RecvTimeoutError::Timeout) = stopped.recv_timeout(wait) {
+        let started = Instant::now();
+        let Some(hub) = weak.upgrade() else { break };
+        // A project removed under the server: nothing more is read or recorded for it.
+        if !hub.holds_its_project() {
+            hub.lose();
             break;
         }
-        // One central task-board read per interval, independent of client count. Expired
-        // postponements refresh the shared cached queue here, with backoff on store errors;
-        // other document and worktree changes come from watcher events and the backstop's sweep.
-        if last_board.elapsed() >= BOARD_INTERVAL {
-            last_board = Instant::now();
-            // A project removed under the server: nothing more is read or recorded for it.
-            if !hub.holds_its_project() {
-                hub.lose();
-                break;
-            }
-            expiry.tick(&hub.root, symphony::postpone::now(), || {
-                hub.refresh_order("")
-            });
-            if board.is_none() {
-                board = hub.reconnect(&mut connect);
-            }
-            if let Some(store) = &board
-                && let Err(e) = measured("board tick", || hub.board_read(store))
-            {
-                hub.board_error(e);
-                board = None;
-            }
-            measured("reports tick", || hub.reports_tick(board.as_ref()));
-            measured("asks tick", || hub.asks_tick());
-            measured("project tick", || hub.tell_project());
+        expiry.tick(&hub.root, symphony::postpone::now(), || {
+            hub.refresh_order("")
+        });
+        if board.is_none() {
+            board = hub.reconnect(&mut connect);
         }
-        drop(hub);
-        let wake = backstop.wait(&recv, Duration::from_millis(250));
+        if let Some(store) = &board
+            && let Err(e) = measured("board tick", || hub.board_read(store))
+        {
+            hub.board_error(e);
+            board = None;
+        }
+        measured("reports tick", || hub.reports_tick(board.as_ref()));
+        measured("asks tick", || hub.asks_tick());
+        measured("project tick", || hub.tell_project());
+        wait = BOARD_INTERVAL.saturating_sub(started.elapsed());
+    }
+}
+
+/// The documents' refreshes, from watcher events, the backstop's sweep and the rescans the ticks and
+/// the reads ask for, until the hub drains or goes, or `ticks_ended` says the ticks have ended.
+fn documents(
+    weak: &Weak<Hub>,
+    recv: &mpsc::Receiver<()>,
+    mut watcher: impl Watcher,
+    mut watched: BTreeSet<PathBuf>,
+    mut backstop: Backstop,
+    ticks_ended: impl Fn() -> bool,
+) {
+    loop {
+        let wake = backstop.wait(recv, Duration::from_millis(250));
         if wake == Wake::Event {
-            std::thread::sleep(Duration::from_millis(100));
-            while recv.try_recv().is_ok() {}
+            // Every event within QUIET of the first is taken with it, and the pass reads then:
+            // never later than that, as the watched worktrees seldom go quiet and every live
+            // page's update waits on this pass.
+            backstop::debounce(recv, backstop::QUIET, backstop::QUIET);
         }
         let Some(hub) = weak.upgrade() else { break };
-        if *hub.draining.borrow() {
+        if *hub.draining.borrow() || ticks_ended() {
             break;
         }
         // A task finished or came back since the last scan: its branch's cards come or go. A
@@ -2236,6 +2288,9 @@ mod timeline_tests;
 
 #[cfg(test)]
 mod reports_tests;
+
+#[cfg(test)]
+mod ticks_tests;
 
 #[cfg(test)]
 mod tests {

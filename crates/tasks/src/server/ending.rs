@@ -107,6 +107,10 @@ impl Home {
                 let _ = fs::remove_file(&asked);
                 return Ok(());
             }
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "no-timed-waits baseline: looks again whether a server it told to end has gone, which no wait reports for a process it did not start"
+            )]
             std::thread::sleep(Duration::from_millis(20));
         }
         let asked_when = match &before {

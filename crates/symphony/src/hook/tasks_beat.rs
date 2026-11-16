@@ -9,7 +9,8 @@
 //! bound to that key: a subagent by its agent id, a full session with no monitor (one started in an
 //! hc terminal) by its session id; a session with a monitor beats through it and is never bound.
 //! The beat is one call to the board's server, which it never starts, and waits on it at most two
-//! seconds.
+//! seconds; it carries the tokens the session's own transcript gained since its last beat, read
+//! from where the last one stopped (`crates/tasks/src/usage/transcript.rs`).
 //!
 //! The binary is `TASKS_BIN`, else the build this tree last ran, `.target/bin/tasks` under the project
 //! (`SYMPHONY_HOOK_ROOT`, else `CLAUDE_PROJECT_DIR`).
@@ -260,6 +261,10 @@ fn beat_within(binary: &Path, raw: &[u8], passed: &mut dyn FnMut(Duration) -> bo
         }
         match child.try_wait() {
             Ok(Some(_)) => break,
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "no-timed-waits baseline: looks again for its child's end, where a wait on the child under a deadline is the event"
+            )]
             Ok(None) if !passed(start.elapsed()) => std::thread::sleep(Duration::from_millis(2)),
             _ => {
                 let _ = child.kill();

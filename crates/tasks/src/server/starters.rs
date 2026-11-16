@@ -140,6 +140,10 @@ impl Home {
         let began = Instant::now();
         let mut said: Option<Instant> = None;
         loop {
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "no-timed-waits baseline: looks again for another starter's file, where its lock is the event"
+            )]
             std::thread::sleep(POLL);
             match file.try_lock() {
                 Ok(()) => return Ok(()),

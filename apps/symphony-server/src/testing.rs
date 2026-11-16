@@ -275,6 +275,7 @@ mod tests {
                 // Keep the FIFO empty across multiple signal deliveries so the waiting call
                 // must survive interruptions before the atomic pid record becomes readable.
                 for _ in 0..20 {
+                    #[expect(clippy::disallowed_methods, reason = "no-timed-waits baseline: a test paces the signals it sends by a length of time")]
                     std::thread::sleep(std::time::Duration::from_millis(5));
                     // SAFETY: the scope keeps the targeted thread alive.
                     assert_eq!(unsafe { libc::pthread_kill(thread, libc::SIGURG) }, 0);

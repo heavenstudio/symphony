@@ -218,6 +218,9 @@ fn board_declarations(cfg: &Config) -> Vec<Declared> {
         declared::<api::AgentRun>(cfg),
         declared::<api::AgentSaid>(cfg),
         declared::<api::AgentSlots>(cfg),
+        declared::<api::AgentTokens>(cfg),
+        declared::<api::AgentCost>(cfg),
+        declared::<api::AgentUnpriced>(cfg),
         declared::<api::SessionGo>(cfg),
         declared::<api::AgentFocus>(cfg),
         declared::<api::AgentScreen>(cfg),
@@ -1467,6 +1470,35 @@ fn sampled_agent() -> api::Agent {
             url: Some("https://example.com/s".into()),
             pane: Some("w1:p2".into()),
         }),
+        tokens: Some(api::AgentTokens {
+            input: 12,
+            cache_write_5m: 3_400,
+            cache_write_1h: 560,
+            cache_read: 78_900,
+            output: 1_200,
+            calls: 7,
+        }),
+        cost: Some(api::AgentCost {
+            dollars: 0.061_308,
+            input: 0.000_048,
+            cache_write_5m: 0.017,
+            cache_write_1h: 0.004_48,
+            cache_read: 0.015_78,
+            output: 0.024,
+            unpriced: vec![api::AgentUnpriced {
+                model: "gpt-x".into(),
+                speed: "standard".into(),
+                tokens: api::AgentTokens {
+                    input: 5,
+                    cache_write_5m: 0,
+                    cache_write_1h: 0,
+                    cache_read: 0,
+                    output: 1,
+                    calls: 1,
+                },
+            }],
+            prices: "2026-11-16".into(),
+        }),
     }
 }
 
@@ -1497,6 +1529,8 @@ fn bare_agent() -> api::Agent {
         session_url: None,
         in_process: false,
         go: None,
+        tokens: None,
+        cost: None,
     }
 }
 

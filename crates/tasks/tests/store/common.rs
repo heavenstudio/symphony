@@ -86,6 +86,10 @@ fn retry_conflicts<T>(
         match once() {
             Err(DbError::Conflict) if Instant::now() < until => {
                 let ceiling = 1000u64 << attempt.min(6);
+                #[expect(
+                    clippy::disallowed_methods,
+                    reason = "no-timed-waits baseline: a test's backoff of its own, where the board store's is the helper"
+                )]
                 std::thread::sleep(Duration::from_micros(
                     RandomState::new().hash_one(attempt) % ceiling,
                 ));

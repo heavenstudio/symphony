@@ -158,6 +158,95 @@ fn machine_work_board_projection_serializes_on_the_typed_wire_without_changing_l
     assert_eq!(legacy.agents[0].state_detail, typed.agents[0].state_detail);
 }
 
+#[test]
+fn the_typed_wire_carries_an_agents_tokens_and_cost_and_none_for_one_that_took_nothing() {
+    use symphony_board::cli::{agents, machine_work as work};
+    use symphony_board::usage::{Spent, Tokens};
+    let f = Fixture::empty();
+    let (spender, quiet) = (f.session("worker"), f.session("worker"));
+    assert!(f.store.bind_agent("agent-1", &spender, false).unwrap());
+    let spent = Spent {
+        model: "claude-opus-5-5".into(),
+        speed: "standard".into(),
+        tokens: Tokens {
+            input: 12,
+            cache_write_5m: 3_400,
+            cache_write_1h: 560,
+            cache_read: 78_900,
+            output: 1_200,
+            calls: 7,
+        },
+    };
+    let beat = symphony_board::Beat::default();
+    f.store
+        .agent_beat_spending("agent-1", &beat, None, None, &[spent])
+        .unwrap();
+    let probes = agents::Probes {
+        panes: Box::new(|| Ok(vec![])),
+        runs: Box::new(|| Ok(vec![])),
+        branch_of: Box::new(|_| Ok(String::new())),
+        processes: Box::new(|| Err("no process probe in this fixture".into())),
+    };
+    let view = agents::describe_board_observed(
+        &f.store,
+        &probes,
+        f.now(),
+        true,
+        &f.store.board().unwrap(),
+        work::Evidence {
+            local_host: "local".into(),
+            snapshot: work::Projection::new(2, 8, 10).snapshot(0),
+        },
+    )
+    .unwrap();
+    let typed = wire_agents(&view).unwrap();
+    let tokens = |handle: &str| {
+        (typed.agents.iter())
+            .find(|agent| agent.handle == handle)
+            .map(|agent| agent.tokens)
+    };
+    assert_eq!(
+        tokens(&spender),
+        Some(Some(symphony_api::AgentTokens {
+            input: 12,
+            cache_write_5m: 3_400,
+            cache_write_1h: 560,
+            cache_read: 78_900,
+            output: 1_200,
+            calls: 7,
+        }))
+    );
+    assert_eq!(tokens(&quiet), Some(None));
+    // Their cost reaches the wire as the board priced it, with the day its prices were read.
+    let prices = symphony_board::usage::Prices::embedded();
+    let priced = prices.cost(
+        "claude-opus-5-5",
+        "standard",
+        &Tokens {
+            input: 12,
+            cache_write_5m: 3_400,
+            cache_write_1h: 560,
+            cache_read: 78_900,
+            output: 1_200,
+            calls: 7,
+        },
+    );
+    let cost = |handle: &str| {
+        (typed.agents.iter())
+            .find(|agent| agent.handle == handle)
+            .and_then(|agent| agent.cost.clone())
+    };
+    let wired = cost(&spender).unwrap();
+    let board: symphony_api::AgentCost = serde_json::from_str(&symphony_board::pyjson::dumps_line(
+        &priced.json(&prices.read),
+    ))
+    .unwrap();
+    assert_eq!(wired, board);
+    assert!(wired.dollars > 0.0 && wired.unpriced.is_empty());
+    assert_eq!(wired.prices, prices.read);
+    assert_eq!(cost(&quiet), None);
+}
+
 /// The agents view asks hc for its terminals with this process's environment as the board reads
 /// it. Started from an agent's hc terminal, that environment names the agent's session and the
 /// terminal and core it runs in; hc must see none of them, or it would answer for that core alone.

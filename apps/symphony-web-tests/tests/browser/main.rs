@@ -74,6 +74,7 @@ mod skeleton;
 mod tabs;
 mod task_gates;
 mod timeline;
+mod touch;
 
 use std::time::Duration;
 
@@ -123,6 +124,58 @@ fn announced(what: &str, said: &std::sync::mpsc::Receiver<String>) -> Result<Str
 /// store misses every read and keeps nothing (`assets/cache.js`), so a return visit to the board
 /// or the queue draws from the server under its ghost, as one the device has no copy for does.
 const NO_STORE: &str = "Object.defineProperty(window, 'indexedDB', { value: undefined });";
+
+/// Hold, from the page's first script on, every timer of the asks' retry the page sets
+/// ([`symphony_web_tests::RETRY_MS`]: a failed read of a document's questions or of the chat's
+/// thread asked again), none of them ever run, so a case says whether a read that answered left
+/// one waiting, with no wait of its own: `window.askPoll` maps each held timer the page has not
+/// cleared to its callback. One the page clears is let go, as it waits for nothing any more: a
+/// deadline of that length its event ended, such as a page's `Settle` bound (`SETTLE_MS`, 3 s as
+/// well) once its first screen is in, is no poll. The page's other timers run as they are. Call it
+/// before `open`.
+fn hold_ask_polls(browser: &mut Chrome) {
+    browser.call(
+        "Page.addScriptToEvaluateOnNewDocument",
+        json!({"source": format!(
+            r#"window.askPoll = new Map();
+            (() => {{
+                const set = window.setTimeout, clear = window.clearTimeout;
+                let held = 0;
+                window.setTimeout = function (fn, ms, ...args) {{
+                    if (ms !== {retry}) return set(fn, ms, ...args);
+                    held -= 1;
+                    askPoll.set(held, () => fn(...args));
+                    return held;
+                }};
+                window.clearTimeout = function (id) {{ if (!askPoll.delete(id)) clear(id) }};
+            }})();"#,
+            retry = symphony_web_tests::RETRY_MS
+        )}),
+    );
+}
+
+/// [`hold_ask_polls`] keeps a retry's timer the page leaves set, with what it would run, lets go
+/// one the page clears, and leaves a timer of another length to the browser, its id the browser's.
+#[test]
+fn the_ask_poll_hold_keeps_a_retry_left_waiting_and_lets_a_cleared_one_go() {
+    let Some(mut browser) = chrome() else { return };
+    hold_ask_polls(&mut browser);
+    browser.open("data:text/html,held");
+    let retry = symphony_web_tests::RETRY_MS;
+    assert_eq!(
+        browser.eval(&format!(
+            "(() => {{
+                const left = setTimeout(word => {{ window.ran = word }}, {retry}, 'held');
+                clearTimeout(setTimeout(() => {{}}, {retry}));
+                const other = setTimeout(() => {{}}, {retry} + 1);
+                clearTimeout(other);
+                askPoll.get(left)?.();
+                return [askPoll.size, askPoll.has(left), left < 0, other > 0, window.ran ?? null];
+            }})()"
+        )),
+        json!([1, true, true, true, "held"])
+    );
+}
 
 /// A page script under which, once the test sets `window.__lateTasks` to a count of frames, every
 /// task of React's scheduler (a `MessageChannel` message, one posted before as well) runs that many
@@ -909,6 +962,10 @@ fn a_page_whose_build_is_gone_loads_again_once_and_one_still_served_says_the_fai
     }
     // This stand-in serves no other build, so the page loaded again finds its build gone too: it
     // loads no more.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "no-timed-waits baseline: a test holds for a length of time to show the page loads no more"
+    )]
     std::thread::sleep(Duration::from_secs(3));
     assert_eq!(loads(&site), 1, "{:?}", site.requests());
     assert_eq!(chrome.eval("window.__kept === undefined"), json!(true));
@@ -1668,6 +1725,10 @@ fn a_stream_that_falls_silent_is_lost_and_healed_while_one_that_pings_holds() {
     wait_for_feed(&site).expect("the page never followed the feed");
     record_stale(&mut chrome);
     // The server pings as its board says: the stream holds past the longest silence allowed.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "no-timed-waits baseline: a test holds past the feed's longest silence to show the stream stays"
+    )]
     std::thread::sleep(SILENCE_GIVEN_UP + Duration::from_secs(2));
     assert_eq!(site.feed_requests(), 1, "a stream that pings was given up");
     assert!(!stale_seen(&mut chrome), "a stream that pings showed stale");
@@ -1713,6 +1774,10 @@ fn a_client_healed_onto_another_build_loads_the_page_again_once() {
     }
     // This stand-in still serves the old files, so the page loaded again is not the build the
     // board names either: it loads no more.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "no-timed-waits baseline: a test holds for a length of time to show the page loads no more"
+    )]
     std::thread::sleep(Duration::from_secs(3));
     assert_eq!(
         shells(&site),
@@ -1739,6 +1804,10 @@ fn a_stream_that_ends_as_soon_as_it_opens_is_tried_again_ever_later() {
     let before = site.board_requests();
     let feeds_before = site.feed_requests();
     site.drop_feeds();
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "no-timed-waits baseline: a test holds for a length of time to count the page's reads after its feeds drop"
+    )]
     std::thread::sleep(Duration::from_secs(8));
     let fetches = site.board_requests() - before;
     let feed_retries = site.feed_requests() - feeds_before;

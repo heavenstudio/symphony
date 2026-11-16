@@ -140,14 +140,23 @@ fn a_writer_is_recorded_as_it_opens_and_its_last_seen_moves_once_an_hour_has_gon
     assert_eq!(lines(&client), [studio, moved]);
 }
 
+/// A build from before the record, which arrived with schema 18 (`store/writers.rs`'s `SINCE`):
+/// this build's tables, the writers' among them, at the version below it.
+fn before_the_record() -> Schema {
+    let mut older = Schema::this_build();
+    while older.version() >= 18 {
+        older = older.before();
+    }
+    older
+}
+
 #[test]
 fn a_build_from_before_the_record_writes_no_line_and_the_build_that_moves_its_board_does() {
     let client = client();
     let older = Program::named("tasks", "/opt/old/tasks");
-    // `before` defines this build's tables at the version behind, the writers' among them.
     opened(
         &client,
-        &Opening::write().at(Schema::this_build().before()).by(older),
+        &Opening::write().at(before_the_record()).by(older),
         HOST,
     )
     .unwrap()

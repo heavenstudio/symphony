@@ -143,6 +143,10 @@ pub(crate) fn lock_within(file: File, wait: Duration) -> io::Result<Option<FileL
         match file.try_lock() {
             Ok(()) => return Ok(Some(FileLock(file))),
             Err(TryLockError::WouldBlock) if Instant::now() < deadline => {
+                #[expect(
+                    clippy::disallowed_methods,
+                    reason = "no-timed-waits baseline: tries a file lock again until a deadline, where a blocking lock is the event"
+                )]
                 std::thread::sleep(LOCK_LOOK);
             }
             Err(TryLockError::WouldBlock) => return Ok(None),
@@ -378,6 +382,10 @@ fn said_by(command: &mut sys::Command, deadline: Instant) -> Option<Vec<u8>> {
     let status = loop {
         match child.try_wait() {
             Ok(Some(status)) => break Some(status),
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "no-timed-waits baseline: looks again for its child's end, where a wait on the child under a deadline is the event"
+            )]
             Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(2)),
             _ => {
                 let _ = child.kill();

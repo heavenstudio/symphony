@@ -5,7 +5,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Button } from "./button";
 import { answered, boardItem, drawn, failed, keepLater, QUEUE, readKept } from "./cache";
-import { sleep } from "./feed";
 import { useFreshen } from "./live";
 import { PostponeControls } from "./postpone";
 import { href, scoped } from "./project";
@@ -15,6 +14,7 @@ import { field, list } from "./shared";
 import { Backoff } from "./state";
 import { load, save } from "./storage";
 import { TaskTag } from "./task-tag";
+import { retryWait } from "./timing";
 import { failed as failedRead, ready } from "./trouble";
 import { drawnHeight, drawnStyle, NearViewport, rememberDrawn } from "./viewport";
 import type { Card, Queue, QueueItem } from "./wire";
@@ -351,7 +351,7 @@ export async function checkQueue(
   etag: () => string,
   signal: AbortSignal,
   check: QueueCheck,
-  wait: (ms: number, signal: AbortSignal) => Promise<void> = sleep,
+  wait: (ms: number, signal: AbortSignal) => Promise<void> = retryWait,
 ): Promise<void> {
   const backoff = new Backoff();
   while (!signal.aborted) {

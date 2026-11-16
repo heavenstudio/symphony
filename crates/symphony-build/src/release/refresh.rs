@@ -1,78 +1,69 @@
-//! A green release's refresh (docs/RELEASES.md), which every green release makes: what a release
-//! does for the machine once it is tagged and pushed, or once `--refresh` names it again. Each
-//! project the machine serves that builds on the Symphony ([`consumers::consumers`]) is one step,
-//! `refresh-ID`, which moves what it can and nothing more:
+//! A green release's refresh (docs/RELEASES.md, "The refresh"): the machine brought to the release
+//! once it is tagged and pushed, or once `--refresh` names it again. It is the machine's install of
+//! the release and nothing in any project's checkout: no branch, no commit, no pin moved, no main
+//! fast-forwarded. A project takes the release's kit and helpers by its own landing.
 //!
-//! - **Its pin.** While its default branch's `Cargo.lock` takes an older Symphony, one the release
-//!   descends from, the move to the release ([`pin`]) is made in a worktree of the project's own
-//!   beside the release run's checkout (`RELEASE-refresh/ID`, detached at that branch and locked), and
-//!   committed there through the project's own hooks, its commit gate, never past them, on the
-//!   branch `symphony/RELEASE`. A pin moves only forward: one neither ahead of the release nor
-//!   behind it ([`Stands::Beside`]) is left as it is, its files and its board with it, and named
-//!   with the release's commit; the next release that descends from it moves it.
-//! - **Its main.** Then its default branch is fast-forwarded to that exact commit in its main
-//!   checkout (`git merge --ff-only COMMIT`, its hooks running), when and only when the commit is
-//!   the move and nothing more ([`vet`]: one commit on its tip, changing only manifests and the
-//!   lock, every Symphony package at the release, read as git holds it after the hooks ran), that
-//!   checkout is on its default branch at that tip and has no tracked edits, and its hooks, asked
-//!   first by a ref transaction then aborted, allow it: never pushed (its own next push carries
-//!   it), never a merge commit made, never a hook passed by. Otherwise the branch is left and its
-//!   main stays where it was, its checkout too: what git wrote of the move before refusing it is
-//!   put back path by path where it is still just that, and named where it is not ([`refused`]).
-//! - **Its board.** In every refresh but one that leaves its pin beside the release, its live board
-//!   is moved to the schema of the pin its main locks then, the release once its main took it or an
-//!   older one it is still behind, by `just tasks migrate` in its main checkout, the one command
-//!   that moves a project's board, after a snapshot of the store as it runs (`Home::export`). A
-//!   board whose database is not running is refused, since nothing here starts one, and so is one
-//!   the move could put on a newer SurrealDB, which would replace the running server, or whose
-//!   versions cannot be read.
+//! - **The install** ([`super::install`]): the release built once and put in the machine folder,
+//!   `current` not yet pointed. One that fails is the refresh's red, `current` as it was.
+//! - **The switch.** While a registered project names a plugin linked into the host
+//!   ([`switch::held`]), the release is installed and nothing more: no board moves and `current`
+//!   is not pointed, the line naming the project that holds it, and `--status` says it too
+//!   ([`switch::standing`]). A board moved past the machine's server, a project's build then, would
+//!   leave that server reading it alone.
+//! - **The boards.** A release that keeps the board schema `current` names moves nothing. One that
+//!   raises it, or the first, with no `current`, judges each registered project's live board first,
+//!   this repository's aside (its board moves with its own main): a board moves only when every
+//!   writer seen there in the last week (the board's writer record, `crates/tasks/src/store/
+//!   writers.rs`) is a release's own, a binary of a release installed in this machine folder on
+//!   this host, which `current` takes on, or one built at the release's schema ([`lagging`]). A
+//!   board whose writers lag is named with each writer to rebuild, the project's to finish, and
+//!   holds the release; one whose database does not run, or whose move could put it on a newer
+//!   SurrealDB, holds it too, red. A board below schema [`symphony_board::WRITERS_SINCE`], from
+//!   before the writer record, is behind every release and never moved here: its own `just tasks
+//!   migrate` brings it up. Only when no board holds the release is every board snapshotted
+//!   through its running database (`Home::export`), all of them before the first move, so a
+//!   snapshot that fails moves nothing; then each is moved in turn by the release's own `tasks
+//!   migrate` in its project's main checkout, the one command that moves a project's board.
+//! - **`current`**, pointed at the release once nothing holds it ([`install::point`]), which every
+//!   recipe of a project with no build of its own then runs. A move that fails stops the rest and
+//!   leaves `current` where it was, so does a failure to point it, the install's red. The boards
+//!   moved before it stay at the release's schema, ahead of `current`'s, until a retry, which
+//!   judges them at the release's schema, nothing to move, and finishes the rest.
+//! - **The machine's server.** A release's server follows `current` by its own reload
+//!   (`apps/symphony-server/src/reload.rs`): the refresh waits, bounded, until it answers as the
+//!   release, or says it has not yet ([`server`]). A project's build serving takes the release by a
+//!   stop and a start, the owner's word, never the refresh's.
 //!
-//! Each step ends in one of three ([`Short`]): moved; **the project's to finish**, when the
-//! project's own commit gate refused the move, its hooks refused the fast-forward, or its main
-//! checkout is off its default branch or holds tracked edits, which is green here, filed nowhere
-//! and said with what finishes it; or **red**, when the refresh's own work failed, filed on the
-//! Symphony's board.
-//!
-//! Then the shared server is said. Its own reload (`apps/symphony-server/src/reload.rs`) watches the
-//! checkout it is built from: once that checkout's `Cargo.lock` changes it builds and installs the
-//! new server (`crates/symphony/src/reload.rs`, `cargo install`) and hands its sockets to it,
-//! a failed build leaving the old one serving. When this refresh moved that checkout's main, it
-//! waits, bounded, until another process answers for it, or says it has not yet. Nothing here stops,
-//! signals or restarts a server or a database, and a step that stops short leaves its project's
-//! main as it was: what it moves is a branch it made and the board, to the pin that main already
-//! locks.
+//! Each project whose board is judged is one step, `refresh-ID`, ending in one of three: green
+//! (moved, or nothing to move); **the project's to finish** (writers to rebuild, a board below the
+//! writer record), green here and filed nowhere; or **red**, the refresh's own work failed, filed on
+//! the Symphony's board. Nothing here starts, stops or signals a server or a database.
 
-use std::collections::BTreeSet;
 use std::fs::{self, File};
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use symphony_api::Front;
+use symphony_board::Writer;
 use symphony_board::server::{Home, ServerError};
 
 use super::board;
 use super::checks::{Ran, Step};
-use super::consumers::{self, Consumer};
-use super::git::{commit, git, is_ancestor, short};
+use super::git::git;
 use super::group::{Bound, Failed, output_until};
-use super::notes;
-use super::pin::{self, Locked};
+use super::install::{self, Installed};
 use super::record::{Refresh, THEIRS};
 use symphony::children::command;
-use symphony::machine::Registry;
+use symphony::machine::{Entry, Registry, release, switch};
 
-/// Why a refresh's worktree of a project is locked, as `git worktree list` says it.
-pub(crate) const REASON: &str = "the Symphony release run's refresh";
-/// The prefix of the branch a project's pin moves on, before the release's name.
-pub(crate) const BRANCH: &str = "symphony/";
 /// What a refresh step's name starts with, before the project's id: no check takes it.
 pub(crate) const STEP: &str = "refresh";
 /// The snapshots a project's board keeps of its store before a schema move, newest first.
 const KEPT_SNAPSHOTS: usize = 5;
-/// The longest a refresh that moved the main the shared server is built from waits for another
-/// server process to answer: its reload's release build at the machine's load.
-const RELOAD: Duration = Duration::from_secs(20 * 60);
+/// The longest a refresh that pointed `current` waits for a release's server to follow it: its
+/// reload looks once a second and hands over by exec, so a minute's work at the machine's load.
+const RELOAD: Duration = Duration::from_secs(5 * 60);
 /// The tests' wait in place of [`RELOAD`], in seconds; no flag sets it.
 const RELOAD_SECONDS: &str = "SYMPHONY_RELEASE_RELOAD_SECONDS";
 /// How often that wait asks the server what it is.
@@ -93,137 +84,144 @@ const UNSET: [&str; 9] = [
     "RUSTUP_TOOLCHAIN",
 ];
 
-/// What a refresh runs against: the Symphony's repository (its checkout, its git common dir and
-/// its main checkout), the release and its commit, where the projects' worktrees and the steps'
-/// logs go, the `surreal` a snapshot falls back to, and its time.
+/// What a refresh runs against: the Symphony's repository (its checkout, which holds the release's
+/// commit, and its git common dir), the machine folder, the release and its commit, where the
+/// steps' logs go, the `surreal` a snapshot falls back to, and its time.
 pub(crate) struct Against<'a> {
     pub(crate) root: &'a Path,
     pub(crate) ours: &'a Path,
-    pub(crate) main: &'a Path,
+    pub(crate) machine: &'a Path,
     pub(crate) tag: &'a str,
     pub(crate) commit: &'a str,
-    pub(crate) trees: &'a Path,
     pub(crate) logs: &'a Path,
     pub(crate) surreal: Option<&'a Path>,
     pub(crate) until: Bound<'a>,
 }
 
-impl Against<'_> {
-    /// Whether the run's time is up or it was told to stop: what then fails is not its project's
-    /// refusal.
-    fn stopped(&self) -> bool {
-        self.until.interrupted() || Instant::now() >= self.until.until
-    }
-
-    /// What a refusal of the project's own gate or hooks, `said`, comes to: the project's to
-    /// finish, `then` saying what finishes it; but red when the run's time was up or it was told
-    /// to stop, which is what failed then, not the project.
-    fn refusal(&self, said: String, then: &str) -> Short {
-        if self.stopped() {
-            Short::Red(said)
-        } else {
-            Short::Theirs(format!("{said}: {then}"))
-        }
-    }
-}
-
-/// The refresh of the machine to `against`'s release, each step and line said to `out` as it goes.
-pub(crate) fn release(against: &Against<'_>, out: &mut dyn Write) -> Refresh {
+/// The refresh of the machine to `against`'s release once `installed` ended, each line said to
+/// `out` as it goes and each step's end after them.
+pub(crate) fn release(
+    against: &Against<'_>,
+    mut installed: Installed,
+    out: &mut dyn Write,
+) -> Refresh {
     let mut refresh = Refresh {
         release: against.tag.to_string(),
         ..Refresh::default()
     };
-    let mut say = |refresh: &mut Refresh, line: String| {
-        let _ = writeln!(out, "release: refresh: {line}");
-        refresh.said.push(line);
+    for line in std::mem::take(&mut installed.said) {
+        say(&mut refresh, out, line);
+    }
+    let machine = against.machine;
+    let named = naming(machine);
+    let Some(manifest) = installed.manifest.clone() else {
+        say(&mut refresh, out, format!("current is as it was: {named}"));
+        refresh.steps.push(installed.ran);
+        return told(refresh, out);
     };
-    let never = |refresh: &mut Refresh, name: &str, why: String| {
-        let step = Step::shell(name, &format!("the refresh to {}", against.tag));
-        let log = against.logs.join(format!("{}.log", board::key(name)));
-        let _ = fs::create_dir_all(against.logs);
-        refresh.steps.push(Ran::never(&step, &log, why));
-    };
-    let read = symphony::machine::dir().and_then(|dir| Ok((Registry::read(&dir)?, dir)));
-    let (registry, machine) = match read {
-        Ok(read) => read,
+    let registry = match Registry::read(machine) {
+        Ok(registry) => registry,
         Err(problem) => {
+            refresh.steps.push(installed.ran);
             never(
                 &mut refresh,
+                against,
                 STEP,
                 format!(
-                    "the machine's registry cannot be read, so nothing was refreshed: {problem}"
+                    "the machine's registry cannot be read, so no board moved and current is as it \
+                     was ({named}): {problem}"
                 ),
             );
             return told(refresh, out);
         }
     };
-    let names = match pin::packages_at(against.root, against.commit) {
-        Ok(names) => names,
-        Err(problem) => {
-            never(
-                &mut refresh,
-                STEP,
-                format!(
-                    "the release's packages cannot be read, so nothing was refreshed: {problem}"
-                ),
-            );
-            return told(refresh, out);
-        }
-    };
-    let (found, skipped) = consumers::consumers(&registry, against.ours);
-    for skipped in skipped {
-        say(&mut refresh, format!("left out: {skipped}"));
+    if let Some(hold) = switch::held(&registry) {
+        say(
+            &mut refresh,
+            out,
+            format!(
+                "the switch to {} is held: {}; {} is installed, no board moves, and current is not \
+                 pointed at it ({named})",
+                against.tag,
+                hold.said(),
+                against.tag
+            ),
+        );
+        refresh.steps.push(installed.ran);
+        return told(refresh, out);
     }
-    // The server as it answers before any main moves, to tell its reload's build after.
-    let before = symphony::machine::command::running(&machine, None);
-    let mut taking = Vec::new();
-    for consumer in found {
-        let plain = !consumer.id.is_empty()
-            && consumer.id != "."
-            && consumer.id != ".."
-            && !consumer.id.contains('/');
-        if !plain {
-            say(
-                &mut refresh,
-                format!(
-                    "left out: {}: its id names no folder of its own",
-                    consumer.id
-                ),
-            );
-            continue;
-        }
-        let name = format!("{STEP}-{}", consumer.id);
-        if against.until.interrupted() {
-            never(
-                &mut refresh,
-                &name,
-                "the run was told to stop (HUP, INT or TERM) before it started".into(),
-            );
-            continue;
-        }
-        if Instant::now() >= against.until.until {
-            never(
-                &mut refresh,
-                &name,
-                "the refresh's time was up before it started".into(),
-            );
-            continue;
-        }
-        let stepped = step(&consumer, &name, &names, against);
-        for line in stepped.said {
-            say(&mut refresh, line);
-        }
-        if let Some(ran) = stepped.ran {
-            if stepped.theirs {
-                refresh.theirs.push(ran.name.clone());
-            }
-            refresh.steps.push(ran);
-            taking.push((consumer, stepped.taken));
-        }
+    let kept = release::current_installed(machine).map(|current| current.serves.schema);
+    let mut steps = Vec::new();
+    let clear = boards(
+        against,
+        &registry,
+        manifest.serves.schema,
+        kept,
+        &mut refresh,
+        &mut steps,
+        out,
+    );
+    // The server as it answers before `current` moves, to tell its reload's hand-off after.
+    let before = clear
+        .then(|| symphony::machine::command::running(machine, None))
+        .flatten();
+    let pointed = clear && install::point(machine, &mut installed);
+    if clear {
+        let line = installed.said.pop().unwrap_or_default();
+        say(&mut refresh, out, line);
+    } else {
+        say(
+            &mut refresh,
+            out,
+            format!(
+                "current is not pointed at {}: {named}, until each board above can move",
+                against.tag
+            ),
+        );
     }
-    let server = server(&machine, before.as_ref(), &taking, against);
-    say(&mut refresh, server);
+    refresh.steps.push(installed.ran);
+    refresh.steps.extend(steps);
+    if pointed {
+        let line = server(machine, before, against);
+        say(&mut refresh, out, line);
+    }
     told(refresh, out)
+}
+
+/// The refresh to the release `tag` of a machine whose folder cannot be named: the install's red,
+/// `installed`, alone, said to `out`.
+pub(crate) fn unreached(tag: &str, installed: Installed, out: &mut dyn Write) -> Refresh {
+    let mut refresh = Refresh {
+        release: tag.to_string(),
+        ..Refresh::default()
+    };
+    for line in installed.said {
+        say(&mut refresh, out, line);
+    }
+    refresh.steps.push(installed.ran);
+    told(refresh, out)
+}
+
+/// `line` said to `out` and kept in `refresh`.
+fn say(refresh: &mut Refresh, out: &mut dyn Write, line: String) {
+    let _ = writeln!(out, "release: refresh: {line}");
+    refresh.said.push(line);
+}
+
+/// The step `name` of `against`'s refresh, red before it ran for `why`, in `refresh`.
+fn never(refresh: &mut Refresh, against: &Against<'_>, name: &str, why: String) {
+    let step = Step::shell(name, &format!("the refresh to {}", against.tag));
+    let log = against.logs.join(format!("{}.log", board::key(name)));
+    let _ = fs::create_dir_all(against.logs);
+    refresh.steps.push(Ran::never(&step, &log, why));
+}
+
+/// What `machine`'s `current` names now, in words.
+fn naming(machine: &Path) -> String {
+    match release::current(machine) {
+        Some(name) => format!("it names {name}"),
+        None => "it names no release".into(),
+    }
 }
 
 /// `refresh`, each step's end said to `out`: green, red, or the project's to finish.
@@ -248,1137 +246,448 @@ fn told(refresh: Refresh, out: &mut dyn Write) -> Refresh {
     refresh
 }
 
-/// What one project's step did.
-struct Stepped {
-    /// Its record: none when it takes nothing from the Symphony by git.
-    ran: Option<Ran>,
-    /// What it said.
-    said: Vec<String>,
-    /// Where its default branch stands with the release.
-    taken: Taken,
-    /// Whether it ended as the project's to finish: green here, filed nowhere.
-    theirs: bool,
+/// Each registered project's board brought to the release's schema `target` over `kept`, the
+/// schema of the release `current` names (none: none named), its lines said in `refresh` and to
+/// `out` and its steps put in `steps`: whether nothing holds the release, every board it moves
+/// moved.
+fn boards(
+    against: &Against<'_>,
+    registry: &Registry,
+    target: i64,
+    kept: Option<i64>,
+    refresh: &mut Refresh,
+    steps: &mut Vec<Ran>,
+    out: &mut dyn Write,
+) -> bool {
+    if let Some(kept) = kept.filter(|kept| target <= *kept) {
+        say(refresh, out, no_move(against.tag, target, kept));
+        return true;
+    }
+    let mut judged = Vec::new();
+    for entry in &registry.projects {
+        match project(entry, against) {
+            Err(Some(line)) => say(refresh, out, line),
+            Err(None) => {}
+            Ok(common) => judged.push(judge(entry, &common, target, against)),
+        }
+    }
+    let holding: Vec<String> = (judged.iter())
+        .filter(|board| board.verdict.holds())
+        .map(|board| board.id.clone())
+        .collect();
+    // What keeps a board that can move where it is: the boards that hold the release, a snapshot
+    // that failed, or the move that failed before it.
+    let mut kept_by = match holding.len() {
+        0 => None,
+        1 => Some(format!("{} holds the release", holding[0])),
+        _ => Some(format!("{} hold the release", holding.join(", "))),
+    };
+    // Every board's snapshot before the first move, so one that fails moves nothing.
+    if kept_by.is_none() {
+        for board in &mut judged {
+            if !matches!(board.verdict, Verdict::Move { .. }) {
+                continue;
+            }
+            if let Err(why) = snapshot(board, against) {
+                kept_by = Some(format!("the snapshot of {}'s store failed", board.id));
+                board.verdict = Verdict::Red(why);
+                break;
+            }
+        }
+    }
+    for mut board in judged {
+        let ended = match std::mem::replace(&mut board.verdict, Verdict::Done(String::new())) {
+            Verdict::Move { live, leave } => match &kept_by {
+                Some(why) => Verdict::Done(format!(
+                    "{}: its board can move from schema {live} to {target}, and stays at {live} \
+                     while {why}",
+                    board.id
+                )),
+                None => match moved(&mut board, live, leave, against) {
+                    Ok(said) => Verdict::Done(said),
+                    Err(why) => {
+                        kept_by = Some(format!("the move of {}'s board failed", board.id));
+                        Verdict::Red(why)
+                    }
+                },
+            },
+            verdict => verdict,
+        };
+        let theirs = matches!(ended, Verdict::Theirs { .. });
+        let (ran, line) = board.ended(ended, against);
+        if theirs {
+            refresh.theirs.push(ran.name.clone());
+        }
+        say(refresh, out, line);
+        steps.push(ran);
+    }
+    kept_by.is_none()
 }
 
-/// Where a project's default branch stands with the release, once its step ended.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-enum Taken {
-    /// It does not take it: the step made no move, or left it on a branch.
-    #[default]
-    Behind,
-    /// The step fast-forwarded it to the release in its main checkout.
-    Moved,
-    /// It took it before the step.
-    Already,
-    /// It pins the Symphony beside it, neither ahead nor behind, and the step left it so.
-    Beside,
+/// Why the release `tag`, serving board schema `target`, moves no board where the release
+/// `current` names serves `kept`, at `target` or past it: no board moves back.
+fn no_move(tag: &str, target: i64, kept: i64) -> String {
+    if target == kept {
+        format!(
+            "{tag} serves board schema {target}, as the release current names serves {kept}: no \
+             board moves"
+        )
+    } else {
+        format!(
+            "{tag} serves board schema {target}, behind the release current names, which serves \
+             {kept}: no board moves, as none moves back"
+        )
+    }
 }
 
-/// The step `name` refreshing `consumer` to `against`'s release, whose packages are `names`.
-fn step(consumer: &Consumer, name: &str, names: &[String], against: &Against<'_>) -> Stepped {
-    let started = Instant::now();
-    let path = against.logs.join(format!("{}.log", board::key(name)));
+/// The git common dir of `entry`'s repository, when the refresh judges its board: never this
+/// repository's, a project whose id names no folder of its own, whose checkout is gone or that is
+/// no git checkout, each but the first said why.
+fn project(entry: &Entry, against: &Against<'_>) -> Result<PathBuf, Option<String>> {
+    let id = &entry.id;
+    if id.is_empty() || id == "." || id == ".." || id.contains('/') {
+        return Err(Some(format!(
+            "left out: {id}: its id names no folder of its own"
+        )));
+    }
+    if !entry.root.is_dir() {
+        return Err(Some(format!(
+            "left out: {id}: its checkout {} is gone",
+            entry.root.display()
+        )));
+    }
+    match symphony_board::git::checkout_common_dir(&entry.root) {
+        Some(common) if common == against.ours => Err(None),
+        Some(common) => Ok(common),
+        None => Err(Some(format!(
+            "left out: {id}: {} is not a git checkout",
+            entry.root.display()
+        ))),
+    }
+}
+
+/// One project's board, judged before anything moves.
+struct Judged {
+    id: String,
+    /// Its main checkout, where its migrate runs.
+    root: PathBuf,
+    home: Home,
+    /// Its board's folder in its git common dir.
+    folder: PathBuf,
+    target: i64,
+    verdict: Verdict,
+    /// Its store as it was before the move, once [`snapshot`] took it.
+    snapshot: Option<PathBuf>,
+    name: String,
+    log: Log,
+    started: Instant,
+}
+
+/// What a board's judgment, then its move, came to.
+enum Verdict {
+    /// Green: moved, or nothing to move, said.
+    Done(String),
+    /// Its project's to finish, said with what finishes it; `holds`, whether the release waits for
+    /// it.
+    Theirs { why: String, holds: bool },
+    /// The refresh's own work cannot judge or move it, said: red, and the release waits for it.
+    Red(String),
+    /// To move from schema `live`, with `--leave-behind` when `leave`: the only writers behind are a
+    /// release's own.
+    Move { live: i64, leave: bool },
+}
+
+impl Verdict {
+    /// Whether the release waits for the board it judged: no board moves, and `current` stays.
+    fn holds(&self) -> bool {
+        match self {
+            Verdict::Theirs { holds, .. } => *holds,
+            Verdict::Red(_) => true,
+            Verdict::Done(_) | Verdict::Move { .. } => false,
+        }
+    }
+}
+
+impl Judged {
+    /// Its step, and the line it says, once it `ended`.
+    fn ended(mut self, ended: Verdict, against: &Against<'_>) -> (Ran, String) {
+        let id = &self.id;
+        let (line, error) = match ended {
+            Verdict::Done(said) => (said, None),
+            Verdict::Theirs { why, .. } => (format!("{id}: {THEIRS}: {why}"), None),
+            Verdict::Red(why) => (format!("{id}: red: {why}"), Some(why)),
+            Verdict::Move { live, .. } => (
+                format!("{id}: its board is at schema {live}, not moved"),
+                None,
+            ),
+        };
+        self.log.line(&line);
+        let ran = Ran {
+            name: self.name.clone(),
+            command: format!("the refresh of {id}'s board to {}", against.tag),
+            exit_code: error.is_none().then_some(0),
+            signal: None,
+            seconds: self.started.elapsed().as_secs_f64(),
+            log: self.log.path.clone(),
+            steps: Vec::new(),
+            interrupted: error.is_some() && against.until.interrupted(),
+            timed_out: error.is_some()
+                && !against.until.interrupted()
+                && Instant::now() >= against.until.until,
+            error,
+            load: None,
+        };
+        (ran, line)
+    }
+}
+
+/// `entry`'s board, in the git common dir `common`, judged against the release's schema `target`:
+/// what holds it, or what moves it.
+fn judge(entry: &Entry, common: &Path, target: i64, against: &Against<'_>) -> Judged {
+    let name = format!("{STEP}-{}", entry.id);
+    let path = against.logs.join(format!("{}.log", board::key(&name)));
     let mut log = Log::open(&path);
     log.line(&format!(
-        "the refresh of {} ({}) to {} ({})",
-        consumer.id,
-        consumer.root.display(),
-        against.tag,
-        short(against.commit)
+        "the refresh of {}'s board ({}) to {}, at board schema {target}",
+        entry.id,
+        entry.root.display(),
+        against.tag
     ));
-    let mut found = Found::default();
-    let done = refresh(consumer, names, against, &mut log, &mut found);
-    for line in &found.said {
-        log.line(line);
-    }
-    let mut ran = Ran {
-        name: name.to_string(),
-        command: format!("the refresh of {} to {}", consumer.id, against.tag),
-        exit_code: Some(0),
-        signal: None,
-        seconds: started.elapsed().as_secs_f64(),
-        log: path,
-        steps: Vec::new(),
-        error: None,
-        timed_out: false,
-        interrupted: false,
-        load: None,
-    };
-    // A red wins: a move its project stopped whose board then failed to move is red.
-    let mut theirs = false;
-    match done {
-        Ok(Done::Skipped(why)) => {
-            return Stepped {
-                ran: None,
-                said: vec![format!("left out: {why}")],
-                taken: Taken::Behind,
-                theirs,
-            };
-        }
-        Ok(Done::Refreshed) => {
-            theirs = found.theirs;
-            if theirs {
-                log.line(&format!("{THEIRS}, not red here"));
-            }
-        }
-        Err(why) => {
-            log.line(&format!("red: {why}"));
-            ran.exit_code = None;
-            ran.interrupted = against.until.interrupted();
-            ran.timed_out = !ran.interrupted && Instant::now() >= against.until.until;
-            ran.error = Some(why);
-        }
-    }
-    Stepped {
-        ran: Some(ran),
-        said: found.said,
-        taken: found.taken,
-        theirs,
-    }
-}
-
-/// What a project's refresh came to.
-enum Done {
-    /// It takes nothing of the Symphony's from git, said why.
-    Skipped(String),
-    /// It did all it could, or all its project let it: what it said is in its [`Found`].
-    Refreshed,
-}
-
-/// Why a move stopped short of the project's main.
-#[derive(Debug, PartialEq, Eq)]
-enum Short {
-    /// The project's own commit gate refused it, its hooks refused the fast-forward, or its main
-    /// checkout is off its default branch or holds tracked edits: the project's to finish, said
-    /// with what finishes it, green here and filed nowhere.
-    Theirs(String),
-    /// The refresh's own work failed: red, filed on the Symphony's board.
-    Red(String),
-}
-
-impl From<String> for Short {
-    fn from(why: String) -> Short {
-        Short::Red(why)
-    }
-}
-
-/// What a project's refresh found, green or red: what it said as it went, a red's lines before
-/// it among them, where its default branch stands with the release, and whether its project's own
-/// gate, hooks or main checkout stopped the move ([`Short::Theirs`]).
-#[derive(Default)]
-struct Found {
-    said: Vec<String>,
-    taken: Taken,
-    theirs: bool,
-}
-
-impl Found {
-    /// The move stopped by its project, `why` said with what finishes it: the project's to finish.
-    fn theirs(&mut self, id: &str, why: &str) {
-        self.theirs = true;
-        self.said.push(format!("{id}: {THEIRS}: {why}"));
-    }
-}
-
-/// Refresh `consumer`, logging each command to `log` and saying what it found to `found`: what it
-/// did, or why it is red.
-fn refresh(
-    consumer: &Consumer,
-    names: &[String],
-    against: &Against<'_>,
-    log: &mut Log,
-    found: &mut Found,
-) -> Result<Done, String> {
-    let id = &consumer.id;
-    let branch = &consumer.branch;
-    let tip = commit(&consumer.root, &format!("refs/heads/{branch}"))?;
-    let metadata = consumers::metadata(&consumer.root, against.until)?;
-    let sources = consumers::sources(&metadata, names);
-    if sources.is_empty() {
-        return Ok(Done::Skipped(format!(
-            "{id}: none of its packages takes one of the Symphony's from git"
-        )));
-    }
-    let lock = git(&consumer.root, &["show", &format!("{tip}:Cargo.lock")])
-        .map_err(|_| format!("its {branch} ({}) commits no Cargo.lock", short(&tip)))?;
-    let locked = pin::locked(&lock, &sources, names)?;
-    if locked.is_empty() {
-        return Ok(Done::Skipped(format!(
-            "{id}: its Cargo.lock takes none of the Symphony's packages from git"
-        )));
-    }
-    let pinned: BTreeSet<&str> = locked
-        .iter()
-        .map(|package| package.commit.as_str())
-        .collect();
-    for pin in &pinned {
-        if commit(against.root, pin).is_err() {
-            return Err(format!(
-                "its {branch} pins the Symphony at {pin}, a commit this repository does not hold: \
-                 nothing was moved"
-            ));
-        }
-    }
-    // The pin its main locks now, whose schema its board is moved to whatever release is newest.
-    let now = pinned.iter().next().copied().unwrap_or_default();
-    match stands(against.root, against.commit, &pinned)? {
-        Stands::Takes => {
-            found.taken = Taken::Already;
-            found.said.push(format!(
-                "{id}: its {branch} takes {} already (its lock pins {})",
-                against.tag,
-                short(now)
-            ));
-            found.said.push(board_move(consumer, now, against, log)?);
-            return Ok(Done::Refreshed);
-        }
-        Stands::Beside(lacking) => {
-            // A pin moves only forward: one the release does not descend from is left, its files
-            // and its board with it, for the next release that descends from it.
-            found.taken = Taken::Beside;
-            found
-                .said
-                .push(beside(consumer, &pinned, &lacking, against));
-            return Ok(Done::Refreshed);
-        }
-        Stands::Behind => {}
-    }
-    let read = Branch {
-        tip: &tip,
-        lock: &lock,
-        locked: &locked,
-        sources: &sources,
-        names,
-        manifests: &manifests(&metadata, &consumer.root),
-    };
-    let (said, made) = match prepare(consumer, &read, against, log) {
-        Ok(made) => made,
-        // No branch was made, and its board stays where it is.
-        Err(Short::Theirs(why)) => {
-            found.theirs(id, &why);
-            return Ok(Done::Refreshed);
-        }
-        Err(Short::Red(why)) => return Err(why),
-    };
-    found.said.push(said);
-    let moved = (vet(consumer, &read, &made, against).map_err(Short::Red))
-        .and_then(|()| advance(consumer, &tip, &made, against, log));
-    if let Err(stopped) = moved {
-        // Its main stays where it is; its board still catches up with the pin it locks there.
-        let board = board_move(consumer, now, against, log);
-        return match stopped {
-            Short::Theirs(why) => {
-                found.theirs(id, &why);
-                found.said.push(board?);
-                Ok(Done::Refreshed)
-            }
-            Short::Red(why) => {
-                found.said.push(board.unwrap_or_else(|also| {
-                    format!(
-                        "{id}: its board, at the pin {} its {branch} locks now: {also}",
-                        short(now)
-                    )
-                }));
-                Err(why)
-            }
-        };
-    }
-    found.taken = Taken::Moved;
-    found.said.push(format!(
-        "{id}: its {branch} is fast-forwarded to {BRANCH}{} ({}) in its main checkout {}, \
-         through its own hooks and not pushed: its own next push carries it",
-        against.tag,
-        short(&made),
-        consumer.root.display()
-    ));
-    found
-        .said
-        .push(board_move(consumer, against.commit, against, log)?);
-    Ok(Done::Refreshed)
-}
-
-/// Where the commits a project's lock pins the Symphony at stand with a release.
-#[derive(Debug, PartialEq, Eq)]
-enum Stands {
-    /// The release is each pin or behind it: the lock takes it already.
-    Takes,
-    /// Each pin is the release or behind it, and one is behind: a move to it only goes forward.
-    Behind,
-    /// The release descends from none of these pins, and the lock does not take it: a move to it
-    /// would drop what they hold.
-    Beside(Vec<String>),
-}
-
-/// Where the lock pinning the Symphony at `pins` stands with the release `release`, read in the
-/// Symphony's repository at `root`, which holds each of them.
-fn stands(root: &Path, release: &str, pins: &BTreeSet<&str>) -> Result<Stands, String> {
-    let mut takes = true;
-    let mut lacking = Vec::new();
-    for pin in pins {
-        takes &= is_ancestor(root, release, pin)?;
-        if !is_ancestor(root, pin, release)? {
-            lacking.push((*pin).to_string());
-        }
-    }
-    Ok(if takes {
-        Stands::Takes
-    } else if lacking.is_empty() {
-        Stands::Behind
-    } else {
-        Stands::Beside(lacking)
-    })
-}
-
-/// What a step says of `consumer`'s lock pinning the Symphony at `pins`, neither ahead of
-/// `against`'s release nor behind it: the release does not descend from `lacking`, so its pin is
-/// left as it is.
-fn beside(
-    consumer: &Consumer,
-    pins: &BTreeSet<&str>,
-    lacking: &[String],
-    against: &Against<'_>,
-) -> String {
-    fn named<'a>(commits: impl Iterator<Item = &'a str>) -> String {
-        commits.map(short).collect::<Vec<_>>().join(" and ")
-    }
-    let pins = named(pins.iter().copied());
-    let lacking = named(lacking.iter().map(String::as_str));
-    format!(
-        "{id}: its {branch}'s lock pins the Symphony at {pins}, neither ahead of {tag} ({release}) \
-         nor behind it: {tag} does not descend from {lacking}, so a move to it would drop what \
-         {lacking} holds; its pin, its files and its board are left as they are, and the next \
-         release that descends from {lacking} moves it",
-        id = consumer.id,
-        branch = consumer.branch,
-        tag = against.tag,
-        release = short(against.commit),
-    )
-}
-
-/// Whether the pin's commit `made` is the move and nothing more, before its default branch takes
-/// it: one commit whose only parent is that branch's `tip` as `read`, changing only manifests and
-/// the lock, and putting each of the Symphony's packages the lock takes at the release. Read from
-/// the commit as git holds it, after the project's hooks ran (one may have rewritten or staged
-/// more), and the same for a branch an earlier refresh left, which its owner may have added to.
-/// Else why its main is not moved to it: the branch stays as it is.
-fn vet(
-    consumer: &Consumer,
-    read: &Branch<'_>,
-    made: &str,
-    against: &Against<'_>,
-) -> Result<(), String> {
-    let root = &consumer.root;
-    let main = &consumer.branch;
-    let pin = format!("{BRANCH}{}", against.tag);
-    let commit = format!("the commit {} on {pin}", short(made));
-    let left = format!(
-        "so its {main} was not moved to it: the branch is left as it is, for its own landing, or for \
-         `git -C {} branch -D {pin}` and an orchestrator's `just release --refresh` to make it again",
-        root.display()
-    );
-    let parents = git(root, &["rev-list", "--parents", "-n", "1", made])?;
-    let parents: Vec<&str> = parents.split_whitespace().skip(1).collect();
-    if parents != [read.tip] {
-        let past = git(
-            root,
-            &["rev-list", "--count", &format!("{}..{made}", read.tip)],
-        )
-        .unwrap_or_else(|_| "more".into());
-        return Err(format!(
-            "{pin} ({}) is {past} commits past its {main} ({}), not the refresh's one commit on \
-             it, {left}",
-            short(made),
-            short(read.tip)
-        ));
-    }
-    let changed = git(
-        root,
-        &[
-            "diff-tree",
-            "-r",
-            "--name-only",
-            "--no-renames",
-            read.tip,
-            made,
-        ],
-    )?;
-    let stray: Vec<&str> = changed.lines().filter(|path| !pin_path(path)).collect();
-    if !stray.is_empty() {
-        return Err(format!(
-            "{commit} changes more than its manifests and its lock ({}), {left}",
-            stray.join(", ")
-        ));
-    }
-    let lock = git(root, &["show", &format!("{made}:Cargo.lock")])
-        .map_err(|_| format!("{commit} holds no Cargo.lock, {left}"))?;
-    let locked = pin::locked(&lock, read.sources, read.names)?;
-    let behind: Vec<String> = (locked.iter())
-        .filter(|package| package.commit != against.commit)
-        .map(|package| format!("{} at {}", package.spec(), short(&package.commit)))
-        .collect();
-    if locked.is_empty() || !behind.is_empty() {
-        return Err(format!(
-            "{commit} leaves {} short of {} ({}), {left}",
-            if behind.is_empty() {
-                "every Symphony package".to_string()
-            } else {
-                behind.join(", ")
-            },
-            against.tag,
-            short(against.commit)
-        ));
-    }
-    Ok(())
-}
-
-/// Whether `path` is one a pin's move may change: a manifest, or the workspace's lock.
-fn pin_path(path: &str) -> bool {
-    path == "Cargo.lock" || path == "Cargo.toml" || path.ends_with("/Cargo.toml")
-}
-
-/// Fast-forward `consumer`'s default branch from its `tip` to the pin's commit `made`, that exact
-/// commit, in its main checkout, its hooks running: only when that checkout is on its default
-/// branch at `tip` and has no tracked edits. Its hooks are asked first, by a ref transaction that
-/// is prepared and then aborted, so a refusal they can tell writes nothing in its checkout (the
-/// shared server may be built from it). Never pushed, never a merge commit. Else why it was not
-/// moved, with what finishes it: the project's own ([`Short::Theirs`]) when its main checkout is
-/// not ready or its hooks refused, red when its main moved under the move or git left it elsewhere.
-fn advance(
-    consumer: &Consumer,
-    tip: &str,
-    made: &str,
-    against: &Against<'_>,
-    log: &mut Log,
-) -> Result<(), Short> {
-    let root = &consumer.root;
-    let shown = root.display();
-    let main = &consumer.branch;
-    let pin = format!("{BRANCH}{}", against.tag);
-    let then = format!(
-        "the branch {pin} is left for it, and once its owner puts that right an orchestrator's \
-         `just release --refresh` fast-forwards it and moves its board"
-    );
-    let landing = format!(
-        "the branch {pin} is left for its own landing, and once that lands it an orchestrator's \
-         `just release --refresh` moves its board"
-    );
-    // `HEAD` when detached; a git that cannot say is red, never taken for a detached HEAD.
-    let head = git(root, &["rev-parse", "--abbrev-ref", "HEAD"])?;
-    if head != *main {
-        let on = if head == "HEAD" {
-            "a detached HEAD".to_string()
-        } else {
-            format!("the branch {head}")
-        };
-        return Err(Short::Theirs(format!(
-            "its main checkout {shown} is on {on}, not its {main}, so its {main} was not moved: \
-             {then}"
-        )));
-    }
-    let edits = git(root, &["status", "--porcelain", "--untracked-files=no"])?;
-    if !edits.is_empty() {
-        let paths: Vec<&str> = (edits.lines().map(|line| line.get(3..).unwrap_or(line)))
-            .take(5)
-            .collect();
-        return Err(Short::Theirs(format!(
-            "its main checkout {shown} has tracked edits ({}), so its {main} was not moved: \
-             {then}",
-            paths.join(", ")
-        )));
-    }
-    let now = commit(root, &format!("refs/heads/{main}"))?;
-    if now != tip {
-        return Err(moved_on(main, &now, made));
-    }
-    ask(consumer, tip, made, &landing, against, log)?;
-    if let Err(why) = log.run(
-        root,
-        &["git", "merge", "--ff-only", "--quiet", made],
-        against.until,
-    ) {
-        return Err(refused(consumer, tip, made, &why, &landing, against, log));
-    }
-    let moved = commit(root, &format!("refs/heads/{main}"))?;
-    if moved != made {
-        return Err(Short::Red(format!(
-            "`git merge --ff-only {made}` in {shown} left its {main} at {}, not {}",
-            short(&moved),
-            short(made)
-        )));
-    }
-    Ok(())
-}
-
-/// Red: `consumer`'s default branch `main` moved on to `now` while the move to `made` was made.
-fn moved_on(main: &str, now: &str, made: &str) -> Short {
-    Short::Red(format!(
-        "its {main} moved on to {} while the move was made, so {} is no longer one commit on it and \
-         nothing was moved: an orchestrator's `just release --refresh` makes the move again on its \
-         tip",
-        short(now),
-        short(made)
-    ))
-}
-
-/// Ask `consumer`'s hooks first whether its default branch may move from `tip` to `made`: the
-/// reference-transaction hooks see the very update, prepared, then aborted, so nothing is written.
-/// A refusal is its hooks', the project's to finish (`landing` says what finishes it), unless its
-/// default branch is no longer at `tip`, which fails the ask too, or the run was stopped: red.
-fn ask(
-    consumer: &Consumer,
-    tip: &str,
-    made: &str,
-    landing: &str,
-    against: &Against<'_>,
-    log: &mut Log,
-) -> Result<(), Short> {
-    let root = &consumer.root;
-    let main = &consumer.branch;
-    let ask = against.logs.join(format!(
-        "{}.transaction",
-        board::key(&format!("{STEP}-{}", consumer.id))
-    ));
-    fs::write(
-        &ask,
-        format!("start\nupdate refs/heads/{main} {made} {tip}\nprepare\nabort\n"),
-    )
-    .map_err(|e| symphony::text::os_error(&e, &ask))?;
-    let asked = log.run(
-        root,
-        &[
-            "sh",
-            "-c",
-            "exec git update-ref --stdin <\"$1\"",
-            "sh",
-            &ask.to_string_lossy(),
-        ],
-        against.until,
-    );
-    let Err(why) = asked else {
-        return Ok(());
-    };
-    let now = commit(root, &format!("refs/heads/{main}"))?;
-    if now != tip {
-        return Err(moved_on(main, &now, made));
-    }
-    Err(against.refusal(
-        format!(
-            "git refuses the move of its {main} to {} when asked first, in a ref transaction then \
-             aborted ({why}), so its {main} was not moved and nothing was written in its checkout",
-            short(made)
-        ),
-        landing,
-    ))
-}
-
-/// What a fast-forward of `consumer`'s default branch from `tip` to `made` that git refused
-/// (`why`) left, each part read back, never assumed: where that branch is, and each path the move
-/// changes. Git writes the move's files into the checkout before its hooks may refuse the
-/// branch's move, and leaves them there when they do; each is put back to `tip`, by itself, when
-/// and only when its index entry and its file still hold exactly what the move wrote, so nothing
-/// of its owner's is touched, staged or not. One that holds anything else is left and named, with
-/// the command that puts it back. Its main still at `tip`, that is the project's to finish; red
-/// when it is elsewhere or cannot be read, when what the move wrote cannot be told, when a put-back
-/// of the refresh's own failed, or when the run was stopped ([`Against::refusal`]).
-fn refused(
-    consumer: &Consumer,
-    tip: &str,
-    made: &str,
-    why: &str,
-    landing: &str,
-    against: &Against<'_>,
-    log: &mut Log,
-) -> Short {
-    let root = &consumer.root;
-    let main = &consumer.branch;
-    let said = format!(
-        "git refused the fast-forward of its {main} to {}, through its hooks or its checkout \
-         ({why})",
-        short(made)
-    );
-    match commit(root, &format!("refs/heads/{main}")) {
-        Ok(now) if now == tip => {}
-        Ok(now) => {
-            return Short::Red(format!(
-                "{said}, and its {main} is at {} now, not {}: its checkout {} is left as it is, to \
-                 be looked at before anything more",
-                short(&now),
-                short(tip),
-                root.display()
-            ));
-        }
-        Err(e) => {
-            return Short::Red(format!(
-                "{said}, and where its {main} is cannot be read ({e})"
-            ));
-        }
-    }
-    let paths = match git(
-        root,
-        &["diff-tree", "-r", "--name-only", "--no-renames", tip, made],
-    ) {
-        Ok(paths) => paths,
-        Err(e) => {
-            return Short::Red(format!(
-                "{said}, and the paths the move changes cannot be read, so what git wrote of it \
-                 into its checkout is not known ({e})"
-            ));
-        }
-    };
-    let (mut back, mut left, mut failed) = (Vec::new(), Vec::new(), Vec::new());
-    for path in paths.lines().filter(|path| !path.is_empty()) {
-        match put_back(root, tip, made, path, against, log) {
-            Back::Untouched => {}
-            Back::Restored => back.push(path),
-            Back::Left => left.push(path),
-            Back::Failed(why) => failed.push((path, why)),
-        }
-    }
-    let mut lines = vec![format!("{said}; its {main} is still at {}", short(tip))];
-    if !back.is_empty() {
-        lines.push(format!(
-            "git had written the move's {} into its checkout first, now put back as its {main} \
-             has {}",
-            back.join(" and "),
-            if back.len() == 1 { "it" } else { "them" }
-        ));
-    }
-    for path in left {
-        lines.push(format!(
-            "{path} is not just as the move wrote it, so it is left as it is: `git -C {} restore \
-             --staged --worktree -- {path}` puts it back as its {main} has it, losing what changed \
-             there",
-            root.display()
-        ));
-    }
-    // A put-back of the refresh's own that failed leaves the move's file in its checkout: red.
-    for (path, why) in &failed {
-        lines.push(format!(
-            "git had written the move's {path} into its checkout first, and the refresh could not \
-             put it back ({why}): `git -C {} restore --source={tip} --staged --worktree -- {path}` \
-             puts it back as its {main} has it",
-            root.display()
-        ));
-    }
-    let said = lines.join("; ");
-    if failed.is_empty() {
-        against.refusal(said, landing)
-    } else {
-        Short::Red(said)
-    }
-}
-
-/// What [`put_back`] did with a path.
-#[derive(Debug, PartialEq, Eq)]
-enum Back {
-    /// Its index entry and its file are its default branch's: git never wrote it.
-    Untouched,
-    /// They held exactly what the move wrote, and are its default branch's again.
-    Restored,
-    /// They hold something else, which is left.
-    Left,
-    /// What they hold could not be read, or they held what the move wrote and the refresh's own
-    /// put-back failed, said why: the refresh's red.
-    Failed(String),
-}
-
-/// Put `path` back to `tip` in `root`'s index and checkout when both still hold exactly `made`'s
-/// content of it, read back after.
-fn put_back(
-    root: &Path,
-    tip: &str,
-    made: &str,
-    path: &str,
-    against: &Against<'_>,
-    log: &mut Log,
-) -> Back {
-    // None where the commit has no such path.
-    let blob = |rev: &str| {
-        git(
-            root,
-            &["rev-parse", "--verify", "--quiet", &format!("{rev}:{path}")],
-        )
-        .ok()
-    };
-    let staged = || -> Result<Option<String>, String> {
-        let entry = git(
-            root,
-            &["ls-files", "--stage", "--", &format!(":(literal){path}")],
-        )?;
-        Ok((entry.lines())
-            .find(|line| line.split_once('\t').is_some_and(|(_, at)| at == path))
-            .and_then(|line| line.split_whitespace().nth(1).map(str::to_string)))
-    };
-    let file = || -> Result<Option<String>, String> {
-        if !root.join(path).is_file() {
-            return Ok(None);
-        }
-        git(root, &["hash-object", "--", path]).map(Some)
-    };
-    // What its index entry and its file hold, read back: a read that fails is the refresh's own.
-    let holds = |want: &Option<String>| -> Result<bool, String> {
-        Ok(staged()? == *want && file()? == *want)
-    };
-    let (was, wrote) = (blob(tip), blob(made));
-    match holds(&was) {
-        Ok(true) => return Back::Untouched,
-        Ok(false) => {}
-        Err(e) => return Back::Failed(e),
-    }
-    match holds(&wrote) {
-        Ok(true) => {}
-        Ok(false) => return Back::Left,
-        Err(e) => return Back::Failed(e),
-    }
-    let source = format!("--source={tip}");
-    let spec = format!(":(literal){path}");
-    let words = [
-        "git",
-        "restore",
-        source.as_str(),
-        "--staged",
-        "--worktree",
-        "--",
-        spec.as_str(),
-    ];
-    if let Err(why) = log.run(root, &words, against.until) {
-        return Back::Failed(why);
-    }
-    match holds(&was) {
-        Ok(true) => Back::Restored,
-        Ok(false) => Back::Failed("`git restore` left it holding something else".into()),
-        Err(e) => Back::Failed(e),
-    }
-}
-
-/// What a refresh read of a project's default branch: its tip, its lock and the Symphony packages
-/// that lock takes from the git `sources` (of the release's `names`), and its workspace's
-/// manifests, relative to its checkout.
-struct Branch<'a> {
-    tip: &'a str,
-    lock: &'a str,
-    locked: &'a [Locked],
-    sources: &'a [String],
-    names: &'a [String],
-    manifests: &'a [PathBuf],
-}
-
-/// The manifests of the workspace `metadata` describes, relative to its checkout `root`: the
-/// workspace's own and each member's.
-fn manifests(metadata: &serde_json::Value, root: &Path) -> Vec<PathBuf> {
-    let members: Vec<&str> = (metadata["workspace_members"].as_array().into_iter())
-        .flatten()
-        .filter_map(serde_json::Value::as_str)
-        .collect();
-    let mut found = BTreeSet::from([PathBuf::from("Cargo.toml")]);
-    for package in (metadata["packages"].as_array().into_iter()).flatten() {
-        if !package["id"]
-            .as_str()
-            .is_some_and(|id| members.contains(&id))
-        {
-            continue;
-        }
-        let Some(path) = package["manifest_path"].as_str() else {
-            continue;
-        };
-        let path = Path::new(path);
-        let relative = (path.strip_prefix(root).ok())
-            .or_else(|| path.strip_prefix(root.canonicalize().ok()?).ok());
-        found.extend(relative.map(Path::to_path_buf));
-    }
-    found.into_iter().collect()
-}
-
-/// Make the pin's move to the release on the branch `symphony/RELEASE` of `consumer`'s repository,
-/// from its default branch as `read`, in a worktree of its own: its manifests take the release's
-/// tag, `cargo update --workspace` moves its lock, and the commit goes through its own hooks. A
-/// branch an earlier refresh made is taken as it is while it is a fast-forward of the default
-/// branch, and made again on its tip once that moved past it. What it said, and the commit; a
-/// commit gate that refused it is the project's own ([`Short::Theirs`]), all else red.
-fn prepare(
-    consumer: &Consumer,
-    read: &Branch<'_>,
-    against: &Against<'_>,
-    log: &mut Log,
-) -> Result<(String, String), Short> {
-    let Branch {
-        tip,
-        lock,
-        locked,
-        sources,
-        names,
-        manifests,
-    } = *read;
-    let id = &consumer.id;
-    let branch = format!("{BRANCH}{}", against.tag);
-    let existing = commit(&consumer.root, &format!("refs/heads/{branch}")).ok();
-    if let Some(made) = &existing {
-        if is_ancestor(&consumer.root, tip, made)? {
-            let said = format!(
-                "{id}: its pin to {} is on the branch {branch} ({}) already",
-                against.tag,
-                short(made)
-            );
-            return Ok((said, made.clone()));
-        }
-        if !own_commit(&consumer.root, tip, made, against.tag) {
-            return Err(Short::Red(format!(
-                "its branch {branch} ({}) is behind its {} and holds more than the refresh's own \
-                 commit, so it is left as it is: `git -C {} branch -D {branch}`, then an \
-                 orchestrator's `just release --refresh`, makes it again",
-                short(made),
-                consumer.branch,
-                consumer.root.display()
-            )));
-        }
-        log.line(&format!(
-            "its branch {branch} ({}) is behind its {}: made again on its tip",
-            short(made),
-            consumer.branch
-        ));
-    }
-    let tree = against.trees.join(id);
-    clear(&consumer.root, &tree, log)?;
-    fs::create_dir_all(against.trees).map_err(|e| symphony::text::os_error(&e, against.trees))?;
-    let path = tree.to_string_lossy().into_owned();
-    log.run(
-        &consumer.root,
-        &[
-            "git", "worktree", "add", "--quiet", "--lock", "--reason", REASON, "--detach", &path,
-            tip,
-        ],
-        against.until,
-    )?;
-    let _removed = Worktree {
-        project: consumer.root.clone(),
-        path: tree.clone(),
-    };
-    // Its manifests name the release's tag for the Symphony's sources; the lock follows them.
-    let mut moved = 0;
-    for manifest in manifests {
-        let file = tree.join(manifest);
-        let Ok(text) = fs::read_to_string(&file) else {
-            continue;
-        };
-        let (retagged, count) = pin::retag(&text, sources, against.tag);
-        let off = pin::tagged(&retagged, sources, against.tag)
-            .map_err(|e| format!("{} {e}", manifest.display()))?;
-        if !off.is_empty() {
-            return Err(Short::Red(format!(
-                "{} names the Symphony's git source in a form the refresh does not rewrite ({}): \
-                 nothing was moved",
-                manifest.display(),
-                off.join(", ")
-            )));
-        }
-        if retagged != text {
-            fs::write(&file, retagged).map_err(|e| symphony::text::os_error(&e, &file))?;
-            log.line(&format!(
-                "{}: {count} named {}",
-                manifest.display(),
-                against.tag
-            ));
-        }
-        moved += count;
-    }
-    if moved == 0 {
-        return Err(Short::Red(format!(
-            "none of its manifests names the Symphony's git source ({}): nothing was moved",
-            sources.join(", ")
-        )));
-    }
-    log.run(&tree, &["cargo", "update", "--workspace"], against.until)?;
-    let lock_file = tree.join("Cargo.lock");
-    let after =
-        fs::read_to_string(&lock_file).map_err(|e| symphony::text::os_error(&e, &lock_file))?;
-    let behind: Vec<String> = (pin::locked(&after, sources, names)?.iter())
-        .filter(|package| package.commit != against.commit)
-        .map(|package| format!("{} at {}", package.spec(), short(&package.commit)))
-        .collect();
-    if !behind.is_empty() {
-        return Err(Short::Red(format!(
-            "`cargo update` left {} short of {}: nothing was moved",
-            behind.join(", "),
-            short(against.commit)
-        )));
-    }
-    let others = pin::others(lock, &after, sources)?;
-    log.run(&tree, &["git", "add", "--update"], against.until)?;
-    let staged = log.run(
-        &tree,
-        &["git", "diff", "--cached", "--name-only"],
-        against.until,
-    )?;
-    let stray: Vec<&str> = (staged.lines()).filter(|path| !pin_path(path)).collect();
-    if !stray.is_empty() {
-        return Err(Short::Red(format!(
-            "the move changed more than its manifests and its lock ({}): nothing was moved",
-            stray.join(", ")
-        )));
-    }
-    // A commit of nothing exits 1 as a refusing hook does: never left for the gate to answer.
-    if staged.trim().is_empty() {
-        return Err(Short::Red(
-            "the move staged nothing to commit: nothing was moved".into(),
-        ));
-    }
-    let from: Vec<&str> = (locked.iter().map(|package| short(&package.commit)))
-        .collect::<BTreeSet<_>>()
-        .into_iter()
-        .collect();
-    let message = against
-        .logs
-        .join(format!("{}.message", board::key(&format!("{STEP}-{id}"))));
-    fs::write(&message, self::message(against, &from, &others))
-        .map_err(|e| symphony::text::os_error(&e, &message))?;
-    gate(&tree, &message, consumer, against, log)?;
-    let made = commit(&tree, "HEAD")?;
-    if existing.is_some() {
-        git(&consumer.root, &["branch", "--force", &branch, &made])?;
-    } else {
-        git(&consumer.root, &["branch", &branch, &made])?;
-    }
-    let also = if others.is_empty() {
-        String::new()
-    } else {
-        format!("; the move also takes {}", others.join(", "))
-    };
-    let said = format!(
-        "{id}: its pin to {} is on the branch {branch} ({}), made {}through its own commit gate \
-         and not pushed{also}",
-        against.tag,
-        short(&made),
-        if existing.is_some() {
-            "again on its tip "
-        } else {
-            ""
-        }
-    );
-    Ok((said, made))
-}
-
-/// Commit the move staged in `tree`, the worktree of `consumer`'s repository, with the message in
-/// the file `message`, through its own hooks. A hook that refuses it makes `git commit` exit 1:
-/// the project's own gate refusing, its to finish. Git's own failures exit 128, and a commit that
-/// could not run, ran past its time or was stopped has no exit: those, and a refusal while the run
-/// was stopped ([`Against::refusal`]), are the refresh's own, red.
-fn gate(
-    tree: &Path,
-    message: &Path,
-    consumer: &Consumer,
-    against: &Against<'_>,
-    log: &mut Log,
-) -> Result<(), Short> {
-    let message = message.to_string_lossy();
-    let words = ["git", "commit", "--quiet", "--file", &message];
-    let Err(failed) = log.exec(tree, &words, against.until) else {
-        return Ok(());
-    };
-    let (id, why, main) = (&consumer.id, &failed.why, &consumer.branch);
-    let nothing =
-        format!("so nothing of {id} moved: no branch was made, and its {main} is as it was");
-    if failed.code != Some(1) {
-        return Err(Short::Red(format!(
-            "the commit of the move to {} failed in the refresh's worktree ({why}), {nothing}",
-            against.tag
-        )));
-    }
-    Err(against.refusal(
-        format!(
-            "its commit gate refused the move to {} ({why}), {nothing}",
-            against.tag
-        ),
-        "what its gate refuses (its last lines are in this step's log) is the project's own to \
-         meet, and once it passes an orchestrator's `just release --refresh` makes the move again",
-    ))
-}
-
-/// Whether `made` is one commit on `tip`'s line that the refresh to `tag` made: its only commit
-/// past it, saying it takes that release.
-fn own_commit(root: &Path, tip: &str, made: &str, tag: &str) -> bool {
-    let base = git(root, &["merge-base", tip, made]).unwrap_or_default();
-    let past = git(root, &["rev-list", "--count", &format!("{base}..{made}")]);
-    let subject = git(root, &["log", "-1", "--format=%s", made]);
-    past.is_ok_and(|count| count == "1")
-        && subject.is_ok_and(|subject| subject == format!("Take Symphony {tag}"))
-}
-
-/// The pin's commit message: the release, the commits it moves from, what else the lock took.
-fn message(against: &Against<'_>, from: &[&str], others: &[String]) -> String {
-    let also = if others.is_empty() {
-        "and nothing else".to_string()
-    } else {
-        format!("and, as the release needs, {}", others.join(", "))
-    };
-    format!(
-        "Take Symphony {tag}\n\n\
-         Its manifests name the tag {tag} for the Symphony's git source, and Cargo.lock moves \
-         the Symphony's packages from {from} to it ({commit}), {also}.\n\
-         Made by the Symphony release run's refresh of that release (docs/RELEASES.md in the \
-         Symphony), for this project's own landing.\n",
-        tag = against.tag,
-        from = from.join(", "),
-        commit = short(against.commit),
-    )
-}
-
-/// Make the place `tree` ready for a worktree of `project`: the release run's own worktree there, from
-/// an earlier run, removed; any other folder in the way refused and left as it is.
-fn clear(project: &Path, tree: &Path, log: &mut Log) -> Result<(), String> {
-    let listed = git(project, &["worktree", "list", "--porcelain"])?;
-    let registered = (listed.lines())
-        .filter_map(|line| line.strip_prefix("worktree "))
-        .any(|path| Path::new(path) == tree);
-    let path = tree.to_string_lossy().into_owned();
-    if registered && tree.exists() {
-        let removed = ["git", "worktree", "remove", "--force", "--force", &path];
-        return log
-            .run(
-                project,
-                &removed,
-                Bound::until(Instant::now() + super::git::GIT_BOUND),
-            )
-            .map(|_| ());
-    }
-    if registered {
-        return log
-            .run(
-                project,
-                &["git", "worktree", "prune"],
-                Bound::until(Instant::now() + super::git::GIT_BOUND),
-            )
-            .map(|_| ());
-    }
-    if fs::symlink_metadata(tree).is_ok() {
-        return Err(format!(
-            "{} is in the way and is not the release run's worktree of {}: it is left as it is; move \
-             it away and retry",
-            tree.display(),
-            project.display()
-        ));
-    }
-    Ok(())
-}
-
-/// The release run's worktree of a project, removed with it, whatever it holds.
-struct Worktree {
-    project: PathBuf,
-    path: PathBuf,
-}
-
-impl Drop for Worktree {
-    fn drop(&mut self) {
-        let path = self.path.to_string_lossy().into_owned();
-        let _ = git(
-            &self.project,
-            &["worktree", "remove", "--force", "--force", &path],
-        );
-    }
-}
-
-/// Move `consumer`'s live board to the schema of its pin `at`, its store snapshotted first: what it
-/// did, or why it moved nothing.
-fn board_move(
-    consumer: &Consumer,
-    at: &str,
-    against: &Against<'_>,
-    log: &mut Log,
-) -> Result<String, String> {
-    let id = &consumer.id;
-    let root = consumer.root.display();
-    let Some(target) = notes::facts(against.root, at).schema else {
-        return Ok(format!(
-            "{id}: its pin {} names no board schema: nothing to move",
-            short(at)
-        ));
-    };
-    let common = PathBuf::from(git(
-        &consumer.root,
-        &["rev-parse", "--path-format=absolute", "--git-common-dir"],
-    )?);
     let folder = common.join(symphony_board::server::FOLDER);
-    if !folder.is_dir() {
-        return Ok(format!(
+    let home = Home::in_common(common, Some(&surreal_for(common, against.surreal)));
+    let mut judged = Judged {
+        id: entry.id.clone(),
+        root: entry.root.clone(),
+        home,
+        folder,
+        target,
+        verdict: Verdict::Done(String::new()),
+        snapshot: None,
+        name,
+        log,
+        started: Instant::now(),
+    };
+    judged.verdict = verdict(&judged, against);
+    judged
+}
+
+/// [`judge`]'s verdict on `board`.
+fn verdict(board: &Judged, against: &Against<'_>) -> Verdict {
+    let (id, target) = (&board.id, board.target);
+    let root = board.root.display();
+    if !board.folder.is_dir() {
+        return Verdict::Done(format!(
             "{id}: it keeps no board ({} is not there): nothing to move",
-            folder.display()
+            board.folder.display()
         ));
     }
-    let home = Home::in_common(&common, Some(&surreal_for(&common, against.surreal)));
-    let live = match home.schema(symphony_board::DATABASE) {
+    let live = match board.home.schema(symphony_board::DATABASE) {
         Ok(Some(live)) => live,
-        Ok(None) => return Ok(format!("{id}: its board is not made yet: nothing to move")),
+        Ok(None) => {
+            return Verdict::Done(format!("{id}: its board is not made yet: nothing to move"));
+        }
         Err(ServerError::NotUp(why)) => {
-            return Err(format!(
-                "{why}: its schema was not read, snapshotted or moved; once it runs (any `just \
-                 tasks` in {root} starts it), an orchestrator's `just release --refresh` moves it"
+            return Verdict::Red(format!(
+                "{why}: its schema and writers were not read, and nothing was moved; once it runs \
+                 (any `just tasks` in {root} starts it), an orchestrator's `just release --refresh` \
+                 moves it"
             ));
         }
-        Err(error) => return Err(error.to_string()),
+        Err(error) => return Verdict::Red(error.to_string()),
     };
-    log.line(&format!(
-        "its board is at schema {live}; its pin {} holds {target}",
-        short(at)
-    ));
     if live >= target {
-        return Ok(format!(
-            "{id}: its board is at schema {live}, its pin's: nothing to move"
+        return Verdict::Done(format!(
+            "{id}: its board is at schema {live}, {}'s or past it: nothing to move",
+            against.tag
         ));
+    }
+    if live < symphony_board::WRITERS_SINCE {
+        return Verdict::Theirs {
+            why: format!(
+                "its board is at schema {live}, from before the board recorded who writes it \
+                 (schema {}), so it is never moved here: `cd {root} && just tasks migrate`, its own, \
+                 brings it up",
+                symphony_board::WRITERS_SINCE
+            ),
+            holds: false,
+        };
+    }
+    let writers = match board.home.writers(symphony_board::DATABASE) {
+        Ok(writers) => writers,
+        Err(error) => {
+            return Verdict::Red(format!("{error}: nothing was moved"));
+        }
+    };
+    let (own, behind) = lagging(writers, target, seen_now(), against.machine);
+    if !behind.is_empty() {
+        return Verdict::Theirs {
+            why: format!(
+                "its board stays at schema {live}: {} seen there in the last week {} behind {}'s \
+                 schema {target}: {}; rebuild each at schema {target} and run it once, which \
+                 records it, then an orchestrator's `just release --refresh` moves it",
+                match behind.len() {
+                    1 => "a writer".to_string(),
+                    n => format!("{n} writers"),
+                },
+                if behind.len() == 1 { "is" } else { "are" },
+                against.tag,
+                (behind.iter().map(said)).collect::<Vec<_>>().join("; ")
+            ),
+            holds: true,
+        };
     }
     // Fails closed: a version that cannot be read could be one the move replaces the server for.
-    let by_hand = format!("`cd {root} && just tasks migrate` moves it when its owner says");
-    let Some(pinned) = surreal_at(against.root, at) else {
-        return Err(format!(
-            "the SurrealDB its pin {} pins cannot be read (crates/tasks/src/server.rs there names \
-             no SURREAL_VERSION), so the move might replace its board's database and the refresh \
-             stops none: nothing was moved; {by_hand}",
-            short(at)
+    let Some(pinned) = surreal_at(against.root, against.commit) else {
+        return Verdict::Red(format!(
+            "the SurrealDB {} pins cannot be read (crates/tasks/src/server.rs there names no \
+             SURREAL_VERSION), so the move might replace its board's database and the refresh stops \
+             none: nothing was moved",
+            against.tag
         ));
     };
-    let running = match home.recorded() {
+    let running = match board.home.recorded() {
         Some(running) if !running.version.trim().is_empty() => running.version,
         _ => {
-            return Err(format!(
+            return Verdict::Red(format!(
                 "the SurrealDB its board's database runs cannot be read (its record in {} names no \
                  version), so the move might replace that database and the refresh stops none: \
-                 nothing was moved; {by_hand}",
-                folder.display()
+                 nothing was moved",
+                board.folder.display()
             ));
         }
     };
     if older(&running, &pinned) {
-        return Err(format!(
-            "its board's database runs SurrealDB {running} and its pin {} pins {pinned}: moving \
-             its schema would replace that server, and the refresh stops no board's database, so \
-             nothing was moved; {by_hand}",
-            short(at)
+        return Verdict::Red(format!(
+            "its board's database runs SurrealDB {running} and {} pins {pinned}: moving its schema \
+             would replace that server, and the refresh stops no board's database, so nothing was \
+             moved",
+            against.tag
         ));
     }
-    let snapshots = common
-        .join(symphony_board::server::FOLDER)
-        .join("snapshots");
-    let snapshot = snapshots.join(format!("before-schema-{target}-{}.surql", against.tag));
-    home.export(symphony_board::DATABASE, &snapshot)
+    Verdict::Move {
+        live,
+        leave: !own.is_empty(),
+    }
+}
+
+/// The writers of `lines` seen in the last week before `now` that are behind `target`, as two
+/// lists: a release's own (a binary of a release installed in the machine folder `machine`, on this
+/// host), which `current` takes on, and the rest, which hold a move.
+fn lagging(
+    lines: Vec<Writer>,
+    target: i64,
+    now: f64,
+    machine: &Path,
+) -> (Vec<Writer>, Vec<Writer>) {
+    let releases = machine
+        .join(release::RELEASES)
+        .canonicalize()
+        .unwrap_or_else(|_| machine.join(release::RELEASES));
+    let host = symphony_board::sys::hostname();
+    let behind = (lines.into_iter())
+        .filter(|line| line.schema < target && now - line.seen <= symphony_board::WRITERS_RECENT);
+    let (own, mut rest): (Vec<Writer>, Vec<Writer>) = behind
+        .partition(|line| line.host == host && of_a_release(Path::new(&line.path), &releases));
+    rest.sort_by(|a, b| (&a.program, &a.host, &a.path).cmp(&(&b.program, &b.host, &b.path)));
+    (own, rest)
+}
+
+/// Whether `path` is a binary of a release in `releases`: `releases/NAME/bin/BINARY`.
+fn of_a_release(path: &Path, releases: &Path) -> bool {
+    let Ok(rest) = path.strip_prefix(releases) else {
+        return false;
+    };
+    let parts: Vec<_> = rest.components().collect();
+    parts.len() == 3 && parts[1].as_os_str() == "bin"
+}
+
+/// A writer, in words.
+fn said(writer: &Writer) -> String {
+    format!(
+        "{} at schema {} ({} on {}, last seen {} ago)",
+        writer.program,
+        writer.schema,
+        writer.path,
+        writer.host,
+        symphony_board::board_health::ago(seen_now() - writer.seen)
+    )
+}
+
+/// The time a writer's line is read by: this machine's clock, as the line is written by.
+fn seen_now() -> f64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0.0, |since| since.as_secs_f64())
+}
+
+/// `board`'s store exported through its running database before any board moves, into
+/// `snapshots/before-schema-TARGET-RELEASE.surql` in its folder, the newest [`KEPT_SNAPSHOTS`]
+/// kept: kept in `board`, or why it failed.
+fn snapshot(board: &mut Judged, against: &Against<'_>) -> Result<(), String> {
+    let snapshots = board.folder.join("snapshots");
+    let snapshot = snapshots.join(format!(
+        "before-schema-{}-{}.surql",
+        board.target, against.tag
+    ));
+    board
+        .home
+        .export(symphony_board::DATABASE, &snapshot)
         .map_err(|e| {
-            format!("the snapshot of its store before the move failed, so nothing was moved: {e}")
+            format!(
+                "the snapshot of its store failed, so no board was moved, this one or another: {e}"
+            )
         })?;
-    log.line(&format!("its store, as it ran: {}", snapshot.display()));
+    board
+        .log
+        .line(&format!("its store, as it ran: {}", snapshot.display()));
     prune(&snapshots, KEPT_SNAPSHOTS);
-    log.run(&consumer.root, &["just", "tasks", "migrate"], against.until)
+    board.snapshot = Some(snapshot);
+    Ok(())
+}
+
+/// `board`, snapshotted ([`snapshot`]), moved from schema `live` to its target by the release's
+/// own `tasks migrate` in its project's main checkout, `--leave-behind` when `leave`: what it did,
+/// or why it failed.
+fn moved(
+    board: &mut Judged,
+    live: i64,
+    leave: bool,
+    against: &Against<'_>,
+) -> Result<String, String> {
+    let (id, target) = (board.id.clone(), board.target);
+    let root = board.root.display().to_string();
+    let Some(snapshot) = board.snapshot.clone() else {
+        return Err("its store was not snapshotted, so it was not moved".into());
+    };
+    let tasks = release::binary(against.machine, against.tag, "tasks");
+    let tasks = tasks.to_string_lossy().into_owned();
+    let mut words = vec![tasks.as_str(), "migrate"];
+    if leave {
+        words.push("--leave-behind");
+    }
+    let command = words[1..].join(" ");
+    board
+        .log
+        .run(&board.root, &words, against.until)
         .map_err(|why| {
             format!(
-                "`just tasks migrate` in {root} failed ({why}); its store as it was before is in \
-                 {}, and `cd {root} && just tasks migrate` retries",
+                "{}'s `tasks {command}` in {root} failed ({why}); its store as it was before is in \
+                 {}, and an orchestrator's `just release --refresh` retries",
+                against.tag,
                 snapshot.display()
             )
         })?;
-    match home.schema(symphony_board::DATABASE) {
+    match board.home.schema(symphony_board::DATABASE) {
         Ok(Some(moved)) if moved >= target => Ok(format!(
-            "{id}: its board moved from schema {live} to {moved}, its store snapshotted first to {}",
+            "{id}: its board moved from schema {live} to {moved} by {}'s own `tasks {command}`, its \
+             store snapshotted first to {}",
+            against.tag,
             snapshot.display()
         )),
         read => Err(format!(
-            "`just tasks migrate` in {root} ended, but its board reads {}, short of its pin's \
-             schema {target}; its store as it was before is in {}",
+            "{}'s `tasks {command}` in {root} ended, but its board reads {}, short of schema \
+             {target}; its store as it was before is in {}",
+            against.tag,
             match read {
                 Ok(Some(moved)) => format!("schema {moved}"),
                 Ok(None) => "no schema".into(),
@@ -1431,7 +740,7 @@ fn prune(folder: &Path, kept: usize) {
     let Ok(entries) = fs::read_dir(folder) else {
         return;
     };
-    let mut found: Vec<(std::time::SystemTime, PathBuf)> = (entries.filter_map(Result::ok))
+    let mut found: Vec<(SystemTime, PathBuf)> = (entries.filter_map(Result::ok))
         .map(|entry| entry.path())
         .filter(|path| {
             path.file_name()
@@ -1446,117 +755,51 @@ fn prune(folder: &Path, kept: usize) {
     }
 }
 
-/// What the shared server does with the release, said: the server this machine's folder `machine`
-/// records, as it answered before the refresh (`before`) and now, and where the main it is built
-/// from stands with the release (`taking`, each project refreshed). When the refresh moved that
-/// main, its reload's build is waited for, bounded ([`reload`]).
-fn server(
-    machine: &Path,
-    before: Option<&Front>,
-    taking: &[(Consumer, Taken)],
-    against: &Against<'_>,
-) -> String {
-    let Some(front) = symphony::machine::command::running(machine, None) else {
-        return "the shared server: none answers on this machine, so none takes the release".into();
-    };
-    if let Some(said) = released(&front) {
-        return said;
-    }
-    let root = PathBuf::from(&front.root);
-    let same = |path: &Path| {
-        path == root
-            || (path.canonicalize().ok()).is_some_and(|path| Some(path) == root.canonicalize().ok())
+/// What the machine's server does with the release `current` now names, said: the server this
+/// machine's folder `machine` records, as it answered before `current` moved (`before`), waited for
+/// while it is another release's, bounded ([`follows`]).
+fn server(machine: &Path, before: Option<Front>, against: &Against<'_>) -> String {
+    let tag = against.tag;
+    let Some(front) = before else {
+        return format!(
+            "the machine's server: none answers on this machine, so none follows current; the next \
+             start of the one server (`just symphony`) runs {tag} when it serves every registered \
+             project"
+        );
     };
     let named = format!(
-        "the shared server (process {}, port {}) is built from {}",
-        front.pid,
-        front.port,
-        root.display()
+        "the machine's server (process {}, port {})",
+        front.pid, front.port
     );
-    let reloads = "its own reload (apps/symphony-server/src/reload.rs) builds and installs a server \
-                   from that checkout's new Cargo.lock and hands it its sockets, a failed build \
-                   leaving the old one serving and saying why on its notice";
-    match taking.iter().find(|(consumer, _)| same(&consumer.root)) {
-        Some((consumer, Taken::Moved)) => {
-            // With none answering for that checkout before the move, which build answers now
-            // cannot be told against one before it: none is taken as the reload's.
-            let Some(old) = before.filter(|old| same(Path::new(&old.root))) else {
-                return format!(
-                    "{named}, whose {} this refresh moved to {}: none built from it answered \
-                     before the move, so whether this one is built after it cannot be told; \
-                     {reloads} (`just symphony-status` says which process answers)",
-                    consumer.branch, against.tag
-                );
-            };
-            let target = notes::facts(against.root, against.commit).schema;
-            match reload(machine, old.pid, target, against) {
-                Ok(new) => format!(
-                    "the shared server (port {}) is built from {}, whose {} this refresh moved to \
-                     {}: its own reload (apps/symphony-server/src/reload.rs) built it again, and \
-                     process {} answers in place of {}",
-                    new.port,
-                    root.display(),
-                    consumer.branch,
-                    against.tag,
-                    new.pid,
-                    old.pid,
-                ),
-                Err(waited) => format!(
-                    "{named}, whose {} this refresh moved to {}: no other process answered within \
-                     {} s, so it has not taken it yet; {reloads} (`just symphony-status` says \
-                     which process answers)",
-                    consumer.branch,
-                    against.tag,
-                    waited.as_secs()
-                ),
-            }
-        }
-        Some((consumer, Taken::Already)) => format!(
-            "{named}, whose {} took {} before this refresh, as its own reload \
-             (apps/symphony-server/src/reload.rs) follows that checkout's Cargo.lock",
-            consumer.branch, against.tag
+    match front.release.as_deref() {
+        Some(running) if running == tag => format!("{named} is {tag} already"),
+        Some(running) => match follows(machine, against) {
+            Ok(new) => format!(
+                "{named}, the release {running}, followed current by its own reload \
+                 (apps/symphony-server/src/reload.rs): process {} on port {} answers as {tag}",
+                new.pid, new.port
+            ),
+            Err(waited) => format!(
+                "{named} still answers as the release {running} after {} s: its own reload \
+                 (apps/symphony-server/src/reload.rs) follows current once a second, and one whose \
+                 server does not take over leaves it serving, says why on its notice and tries again \
+                 (`just symphony-status` says which answers)",
+                waited.as_secs()
+            ),
+        },
+        None => format!(
+            "{named} is the build of {}, whose reload follows that checkout and never current: a \
+             stop and a start (`just symphony --stop`, then `just symphony`), the owner's word, make \
+             {tag} the machine's server",
+            front.root
         ),
-        Some((consumer, Taken::Behind)) => format!(
-            "{named}: it takes {} once {}'s {} does, which this refresh did not move (its step \
-             says why)",
-            against.tag, consumer.id, consumer.branch
-        ),
-        Some((consumer, Taken::Beside)) => format!(
-            "{named}: it does not take {}, as {}'s {} pins the Symphony beside it, which this \
-             refresh left as it is (its step says why)",
-            against.tag, consumer.id, consumer.branch
-        ),
-        None if same(against.main) => {
-            format!("{named}, this repository's main checkout, which its own reload follows")
-        }
-        None => format!("{named}, which takes nothing of the Symphony's from this release"),
     }
 }
 
-/// What the shared server `front` does with the release, said, when it is an installed release's
-/// server: no project's checkout builds it, and its own reload follows the machine's `current`,
-/// which the install pointed, so nothing of it is waited for here.
-fn released(front: &Front) -> Option<String> {
-    let release = front.release.as_deref()?;
-    Some(format!(
-        "the shared server (process {}, port {}) is the release {release}: its own reload \
-         (apps/symphony-server/src/reload.rs) follows the machine's current link to the release \
-         the install points it at, a release whose server does not start leaving it serving and \
-         saying why on its notice",
-        front.pid, front.port
-    ))
-}
-
-/// The shared server this machine's folder `machine` records, once a process other than `old`,
-/// the one that answered before the move, answers for it, at the release's board schema `target`
-/// or past it when both say one: its reload's new build. Waited for within [`RELOAD`] (the tests'
-/// [`RELOAD_SECONDS`]) and the refresh's time; else how long it was waited for.
-fn reload(
-    machine: &Path,
-    old: i64,
-    target: Option<i64>,
-    against: &Against<'_>,
-) -> Result<Front, Duration> {
+/// The server this machine's folder `machine` records once it answers as `against`'s release: its
+/// reload's hand-off. Waited for within [`RELOAD`] (the tests' [`RELOAD_SECONDS`]) and the
+/// refresh's time; else how long it was waited for.
+fn follows(machine: &Path, against: &Against<'_>) -> Result<Front, Duration> {
     let wait = (std::env::var(RELOAD_SECONDS).ok())
         .and_then(|seconds| seconds.parse::<u64>().ok())
         .map_or(RELOAD, Duration::from_secs);
@@ -1564,20 +807,24 @@ fn reload(
     let until = (began + wait).min(against.until.until);
     loop {
         if let Some(now) = symphony::machine::command::running(machine, None)
-            && now.pid != old
-            && (now.schema == 0 || target.is_none_or(|target| now.schema >= target))
+            && now.release.as_deref() == Some(against.tag)
         {
             return Ok(now);
         }
         if Instant::now() >= until || against.until.interrupted() {
             return Err(until.saturating_duration_since(began));
         }
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "no-timed-waits baseline: looks again for the reloaded server, which no event announces"
+        )]
         std::thread::sleep(RELOAD_LOOK.min(until.saturating_duration_since(Instant::now())));
     }
 }
 
 /// A step's log: each command it ran, with all it printed.
 struct Log {
+    path: PathBuf,
     file: Option<File>,
 }
 
@@ -1587,6 +834,7 @@ impl Log {
             let _ = fs::create_dir_all(folder);
         }
         Log {
+            path: path.to_path_buf(),
             file: File::create(path).ok(),
         }
     }
@@ -1601,11 +849,6 @@ impl Log {
     /// [`symphony_board::sys::GIT_VARS`] name: what it printed, or why it failed, its output logged
     /// either way.
     fn run(&mut self, dir: &Path, words: &[&str], until: Bound<'_>) -> Result<String, String> {
-        self.exec(dir, words, until).map_err(|failed| failed.why)
-    }
-
-    /// [`Log::run`], a failure told with how it ended ([`Failure::code`]).
-    fn exec(&mut self, dir: &Path, words: &[&str], until: Bound<'_>) -> Result<String, Failure> {
         let line = words.join(" ");
         self.line(&format!("$ {line}   (in {})", dir.display()));
         let mut run = command(words[0]);
@@ -1630,7 +873,7 @@ impl Log {
             Ok(done) => done,
             Err(why) => {
                 self.line(&why);
-                return Err(Failure { why, code: None });
+                return Err(why);
             }
         };
         let stdout = String::from_utf8_lossy(&done.stdout).into_owned();
@@ -1648,8 +891,8 @@ impl Log {
             .filter(|line| !line.is_empty())
             .collect();
         let last = last[last.len().saturating_sub(3)..].join(" / ");
-        let code = done.status.code();
-        let status = code.map_or_else(|| "was killed".to_string(), |code| format!("exited {code}"));
+        let status = (done.status.code())
+            .map_or_else(|| "was killed".to_string(), |code| format!("exited {code}"));
         let why = format!(
             "`{line}` {status}{}",
             if last.is_empty() {
@@ -1658,683 +901,11 @@ impl Log {
                 format!(": {last}")
             }
         );
-        Err(Failure { why, code })
+        self.line(&why);
+        Err(why)
     }
-}
-
-/// How a command a step ran failed: why, said, and its exit code when it ran and exited; none when
-/// it could not run, ran past the refresh's time, was stopped or was killed.
-#[derive(Debug)]
-struct Failure {
-    why: String,
-    code: Option<i32>,
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::test_tree::Tree;
-
-    #[test]
-    fn a_release_as_the_shared_server_is_said_to_follow_current_and_a_projects_build_is_not() {
-        let mut front: Front = serde_json::from_value(serde_json::json!({
-            "pid": 4242, "port": 41005, "root": "/work/consumer", "ready": true,
-        }))
-        .unwrap();
-        assert_eq!(released(&front), None);
-        front.release = Some("release-2026-11-20".into());
-        assert_eq!(
-            released(&front).unwrap(),
-            "the shared server (process 4242, port 41005) is the release release-2026-11-20: its \
-             own reload (apps/symphony-server/src/reload.rs) follows the machine's current link to \
-             the release the install points it at, a release whose server does not start leaving \
-             it serving and saying why on its notice"
-        );
-    }
-
-    #[test]
-    fn a_running_database_older_than_the_pins_is_one_the_move_would_replace() {
-        assert!(older("3.2.9", "3.3.0"));
-        assert!(older("v2.3.0", "3.0.0"));
-        assert!(older("3.3", "3.3.1"));
-        assert!(!older("3.3.0", "3.3.0"));
-        assert!(!older("3.4.0", "3.3.9"));
-        assert!(!older("3.3.0-beta", "3.3.0"), "a suffix is no older");
-    }
-
-    #[test]
-    fn the_snapshots_kept_are_the_newest_and_nothing_else_is_touched() {
-        let tree = Tree::new();
-        let folder = tree.path("snapshots");
-        fs::create_dir_all(&folder).unwrap();
-        let mut times = Vec::new();
-        for n in 0..7 {
-            let file = folder.join(format!("before-schema-{n}-release.surql"));
-            fs::write(&file, "x").unwrap();
-            let when =
-                std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_000 + n);
-            File::options()
-                .write(true)
-                .open(&file)
-                .unwrap()
-                .set_modified(when)
-                .unwrap();
-            times.push(file);
-        }
-        fs::write(folder.join("someone-else.surql"), "y").unwrap();
-        prune(&folder, 5);
-        let mut left = tree.names("snapshots");
-        left.sort();
-        assert_eq!(
-            left,
-            [
-                "before-schema-2-release.surql",
-                "before-schema-3-release.surql",
-                "before-schema-4-release.surql",
-                "before-schema-5-release.surql",
-                "before-schema-6-release.surql",
-                "someone-else.surql",
-            ]
-        );
-        prune(&tree.path("none"), 5);
-    }
-
-    #[test]
-    fn the_pin_message_names_the_release_and_all_the_lock_took() {
-        let tree = Tree::new();
-        let none = tree.path("none");
-        let against = Against {
-            root: &none,
-            ours: &none,
-            main: &none,
-            tag: "release-2026-11-12",
-            commit: "0123456789abcdef0123",
-            trees: &none,
-            logs: &none,
-            surreal: None,
-            until: Bound::until(Instant::now()),
-        };
-        assert_eq!(
-            message(&against, &["aaaaaaaaaaaa"], &[]),
-            "Take Symphony release-2026-11-12\n\nIts manifests name the tag release-2026-11-12 \
-             for the Symphony's git source, and Cargo.lock moves the Symphony's packages from \
-             aaaaaaaaaaaa to it (0123456789ab), and nothing else.\nMade by the Symphony \
-             release run's refresh of that release (docs/RELEASES.md in the Symphony), for this \
-             project's own landing.\n"
-        );
-        assert!(
-            message(&against, &["a", "b"], &["serde 1.0.200 → 1.0.210".into()]).contains(
-                "from a, b to it (0123456789ab), and, as the release needs, serde 1.0.200 → \
-                 1.0.210."
-            )
-        );
-    }
-
-    /// A repository at `root` whose main took a landing `P` beside a fix `F` branched from the
-    /// base `B`, then merged that fix as `M`: `B`, `F`, `P` and `M` by name.
-    fn fork(root: &Path) -> [String; 4] {
-        fs::create_dir_all(root).unwrap();
-        let run = |args: &[&str]| {
-            git(
-                root,
-                &[
-                    &["-c", "user.name=t", "-c", "user.email=t@example.com"][..],
-                    args,
-                ]
-                .concat(),
-            )
-            .unwrap()
-        };
-        run(&["init", "-q", "-b", "main"]);
-        run(&["commit", "-q", "--allow-empty", "-m", "the base"]);
-        let base = run(&["rev-parse", "HEAD"]);
-        run(&["switch", "-q", "-c", "fix"]);
-        run(&["commit", "-q", "--allow-empty", "-m", "the fix"]);
-        let fix = run(&["rev-parse", "HEAD"]);
-        run(&["switch", "-q", "main"]);
-        run(&["commit", "-q", "--allow-empty", "-m", "a landing meanwhile"]);
-        let meanwhile = run(&["rev-parse", "HEAD"]);
-        run(&["merge", "-q", "--no-ff", "-m", "the fix's land", "fix"]);
-        let merged = run(&["rev-parse", "HEAD"]);
-        [base, fix, meanwhile, merged]
-    }
-
-    #[test]
-    fn a_lock_stands_behind_the_release_only_when_every_pin_is_one_it_descends_from() {
-        let tree = Tree::new();
-        let root = tree.path("symphony");
-        let [base, fix, meanwhile, merged] = fork(&root);
-        let stand = |pins: &[&str]| stands(&root, &fix, &pins.iter().copied().collect());
-        // The release is the fix: behind it, at it, past it and beside it.
-        assert_eq!(stand(&[&base]), Ok(Stands::Behind));
-        assert_eq!(stand(&[&fix]), Ok(Stands::Takes));
-        assert_eq!(stand(&[&merged]), Ok(Stands::Takes));
-        assert_eq!(
-            stand(&[&meanwhile]),
-            Ok(Stands::Beside(vec![meanwhile.clone()]))
-        );
-        // Two pins: at it and behind it moves forward; at it and past it takes it already.
-        assert_eq!(stand(&[&fix, &base]), Ok(Stands::Behind));
-        assert_eq!(stand(&[&fix, &merged]), Ok(Stands::Takes));
-        // One past it and one behind, or one beside and one behind: a move would drop what the
-        // one the release lacks holds, and that one alone is named.
-        assert_eq!(
-            stand(&[&merged, &base]),
-            Ok(Stands::Beside(vec![merged.clone()]))
-        );
-        assert_eq!(
-            stand(&[&meanwhile, &base]),
-            Ok(Stands::Beside(vec![meanwhile.clone()]))
-        );
-        // The base released: the lock beside it before is past it now.
-        let stand_base = stands(&root, &base, &[meanwhile.as_str()].into_iter().collect());
-        assert_eq!(stand_base, Ok(Stands::Takes));
-        // And the merge released: the pin left beside the fix is one it descends from.
-        let stand_merged = stands(&root, &merged, &[meanwhile.as_str()].into_iter().collect());
-        assert_eq!(stand_merged, Ok(Stands::Behind));
-        // A pin git cannot answer for is said, never taken for one side or the other.
-        let unknown = "0123456789abcdef0123456789abcdef01234567";
-        let refused = stand(&[unknown]).unwrap_err();
-        assert!(
-            refused.contains(&format!(
-                "git merge-base --is-ancestor {fix} {unknown} failed"
-            )),
-            "{refused}"
-        );
-    }
-
-    #[test]
-    fn a_pin_left_beside_the_release_is_named_with_both_commits() {
-        let tree = Tree::new();
-        let none = tree.path("none");
-        let against = Against {
-            root: &none,
-            ours: &none,
-            main: &none,
-            tag: "release-2026-11-12",
-            commit: "ffffffffffff0000",
-            trees: &none,
-            logs: &none,
-            surreal: None,
-            until: Bound::until(Instant::now()),
-        };
-        let consumer = Consumer {
-            id: "consumer".into(),
-            root: none.clone(),
-            branch: "trunk".into(),
-        };
-        let one = ["aaaaaaaaaaaa1111"].into_iter().collect();
-        assert_eq!(
-            beside(&consumer, &one, &["aaaaaaaaaaaa1111".into()], &against),
-            "consumer: its trunk's lock pins the Symphony at aaaaaaaaaaaa, neither ahead of \
-             release-2026-11-12 (ffffffffffff) nor behind it: release-2026-11-12 does not descend \
-             from aaaaaaaaaaaa, so a move to it would drop what aaaaaaaaaaaa holds; its pin, its \
-             files and its board are left as they are, and the next release that descends from \
-             aaaaaaaaaaaa moves it"
-        );
-        let two = ["aaaaaaaaaaaa1111", "bbbbbbbbbbbb2222"]
-            .into_iter()
-            .collect();
-        let said = beside(&consumer, &two, &["bbbbbbbbbbbb2222".into()], &against);
-        assert!(
-            said.starts_with(
-                "consumer: its trunk's lock pins the Symphony at aaaaaaaaaaaa and bbbbbbbbbbbb, \
-                 neither ahead of release-2026-11-12 (ffffffffffff) nor behind it: \
-                 release-2026-11-12 does not descend from bbbbbbbbbbbb, so"
-            ),
-            "{said}"
-        );
-    }
-
-    /// `git ARGS` in `root` as a test's author, which must succeed: what it printed.
-    fn authored(root: &Path, args: &[&str]) -> String {
-        let named = ["-c", "user.name=t", "-c", "user.email=t@example.com"];
-        git(root, &[&named[..], args].concat()).unwrap()
-    }
-
-    /// A project at `root` whose main holds `Cargo.lock` as `old`, and the refresh's branch one
-    /// commit on it holding `new`, its main checked out: its main's tip and the move's commit.
-    fn moving(root: &Path) -> (String, String) {
-        fs::create_dir_all(root).unwrap();
-        authored(root, &["init", "-q", "-b", "main"]);
-        fs::write(root.join("Cargo.lock"), "old\n").unwrap();
-        authored(root, &["add", "-A"]);
-        authored(root, &["commit", "-q", "-m", "its main"]);
-        let tip = authored(root, &["rev-parse", "HEAD"]);
-        authored(root, &["switch", "-q", "-c", "symphony/release-2026-11-12"]);
-        fs::write(root.join("Cargo.lock"), "new\n").unwrap();
-        authored(
-            root,
-            &["commit", "-q", "-am", "Take Symphony release-2026-11-12"],
-        );
-        let made = authored(root, &["rev-parse", "HEAD"]);
-        authored(root, &["switch", "-q", "main"]);
-        (tip, made)
-    }
-
-    /// The project at `root`, its default branch `main`.
-    fn project(root: &Path) -> Consumer {
-        Consumer {
-            id: "consumer".into(),
-            root: root.to_path_buf(),
-            branch: "main".into(),
-        }
-    }
-
-    /// A refresh to the release `made`, its logs in `logs`, its time up at `until`.
-    fn against<'a>(root: &'a Path, logs: &'a Path, made: &'a str, until: Instant) -> Against<'a> {
-        Against {
-            root,
-            ours: root,
-            main: root,
-            tag: "release-2026-11-12",
-            commit: made,
-            trees: logs,
-            logs,
-            surreal: None,
-            until: Bound::until(until),
-        }
-    }
-
-    /// `text` as the executable hook `name` of the repository at `root`, its hooks found there.
-    fn hook(root: &Path, name: &str, text: &str) {
-        let hooks = root.join("hooks");
-        fs::create_dir_all(&hooks).unwrap();
-        fs::write(hooks.join(name), text).unwrap();
-        fs::set_permissions(
-            hooks.join(name),
-            std::os::unix::fs::PermissionsExt::from_mode(0o755),
-        )
-        .unwrap();
-        authored(root, &["config", "core.hooksPath", "hooks"]);
-    }
-
-    /// An hour ahead: a run with time left.
-    fn later() -> Instant {
-        Instant::now() + Duration::from_secs(3600)
-    }
-
-    #[test]
-    fn a_commands_failure_says_its_exit_only_when_it_ran_and_exited() {
-        let tree = Tree::new();
-        let dir = tree.path("");
-        let mut log = Log::open(&tree.path("logs/refresh-consumer.log"));
-        let failed = |log: &mut Log, words: &[&str]| {
-            let failed = log.exec(&dir, words, Bound::until(later())).unwrap_err();
-            (failed.code, failed.why)
-        };
-        assert_eq!(failed(&mut log, &["sh", "-c", "exit 1"]).0, Some(1));
-        assert_eq!(failed(&mut log, &["sh", "-c", "exit 128"]).0, Some(128));
-        let (code, why) = failed(&mut log, &["sh", "-c", "kill -9 $$"]);
-        assert_eq!(
-            (code, why.as_str()),
-            (None, "`sh -c kill -9 $$` was killed")
-        );
-        let (code, why) = failed(&mut log, &["no-such-program-here"]);
-        assert!(code.is_none() && why.contains("could not run in"), "{why}");
-        assert_eq!(
-            log.exec(&dir, &["sh", "-c", "echo said"], Bound::until(later()))
-                .unwrap(),
-            "said\n"
-        );
-    }
-
-    #[test]
-    fn only_a_hook_refusing_the_commit_is_its_gates_and_the_rest_is_red() {
-        let tree = Tree::new();
-        let root = tree.path("project");
-        let (tip, made) = moving(&root);
-        authored(&root, &["config", "user.name", "t"]);
-        authored(&root, &["config", "user.email", "t@example.com"]);
-        let consumer = project(&root);
-        let logs = tree.path("logs");
-        let mut log = Log::open(&logs.join("refresh-consumer.log"));
-        let message = tree.path("message.txt");
-        fs::write(&message, "Take Symphony release-2026-11-12\n").unwrap();
-        fs::write(root.join("Cargo.lock"), "newer\n").unwrap();
-        authored(&root, &["add", "Cargo.lock"]);
-        let nothing = "so nothing of consumer moved: no branch was made, and its main is as it was";
-
-        // Its own hook refuses: `git commit` exits 1, the project's to finish.
-        hook(
-            &root,
-            "pre-commit",
-            "#!/bin/sh\necho 'the gate is red' >&2\nexit 1\n",
-        );
-        let committing = format!("`git commit --quiet --file {}`", message.display());
-        let refused = format!(
-            "its commit gate refused the move to release-2026-11-12 ({committing} exited 1: the \
-             gate is red), {nothing}"
-        );
-        let theirs = gate(
-            &root,
-            &message,
-            &consumer,
-            &against(&root, &logs, &made, later()),
-            &mut log,
-        );
-        assert_eq!(
-            theirs,
-            Err(Short::Theirs(format!(
-                "{refused}: what its gate refuses (its last lines are in this step's log) is the \
-                 project's own to meet, and once it passes an orchestrator's `just release \
-                 --refresh` makes the move again"
-            )))
-        );
-        // The run's time up: red, whether the commit was cut off or its hook refused first, never
-        // saying what finishes it, and nothing committed.
-        let stopped = against(&root, &logs, &made, Instant::now());
-        let failed = gate(&root, &message, &consumer, &stopped, &mut log);
-        let Err(Short::Red(why)) = failed else {
-            panic!("a commit failed once the run's time is up is red: {failed:?}");
-        };
-        assert!(!why.contains("`just release --refresh`"), "{why}");
-        assert_eq!(authored(&root, &["rev-parse", "HEAD"]), tip);
-        fs::remove_file(root.join("hooks/pre-commit")).unwrap();
-
-        // Git's own failure (its index locked) exits 128: the refresh's, red, never the gate's.
-        let locked = root.join(".git/index.lock");
-        fs::write(&locked, "").unwrap();
-        let failed = gate(
-            &root,
-            &message,
-            &consumer,
-            &against(&root, &logs, &made, later()),
-            &mut log,
-        );
-        fs::remove_file(&locked).unwrap();
-        let Err(Short::Red(why)) = failed else {
-            panic!("git's own failure is red: {failed:?}");
-        };
-        assert!(
-            why.starts_with(
-                "the commit of the move to release-2026-11-12 failed in the refresh's worktree \
-                 (`git commit --quiet --file "
-            ) && why.contains("` exited 128: ")
-                && why.ends_with(nothing),
-            "{why}"
-        );
-
-        // Nothing refuses it: committed with its message.
-        let ran = gate(
-            &root,
-            &message,
-            &consumer,
-            &against(&root, &logs, &made, later()),
-            &mut log,
-        );
-        assert_eq!(ran, Ok(()));
-        assert_eq!(
-            authored(&root, &["log", "-1", "--format=%s"]),
-            "Take Symphony release-2026-11-12"
-        );
-    }
-
-    #[test]
-    fn hooks_refusing_the_ask_are_the_projects_and_a_main_moved_meanwhile_is_red() {
-        let tree = Tree::new();
-        let root = tree.path("project");
-        let (tip, made) = moving(&root);
-        let consumer = project(&root);
-        let logs = tree.path("logs");
-        fs::create_dir_all(&logs).unwrap();
-        let mut log = Log::open(&logs.join("refresh-consumer.log"));
-        let landing = "the branch is left for its own landing";
-        let main = || authored(&root, &["rev-parse", "main"]);
-
-        // Nothing refuses: the ask passes, and nothing moves.
-        let asked = ask(
-            &consumer,
-            &tip,
-            &made,
-            landing,
-            &against(&root, &logs, &made, later()),
-            &mut log,
-        );
-        assert_eq!(asked, Ok(()));
-        assert_eq!(main(), tip);
-
-        // Its guard refuses any move of its main: the project's, or red once the run is stopped.
-        hook(
-            &root,
-            "reference-transaction",
-            "#!/bin/sh\n[ \"$1\" = prepared ] || exit 0\n\
-             echo 'main moves only by its own landing' >&2\nexit 1\n",
-        );
-        let Err(Short::Theirs(why)) = ask(
-            &consumer,
-            &tip,
-            &made,
-            landing,
-            &against(&root, &logs, &made, later()),
-            &mut log,
-        ) else {
-            panic!("its hooks' refusal is the project's");
-        };
-        assert!(
-            why.starts_with(&format!(
-                "git refuses the move of its main to {} when asked first, in a ref transaction \
-                 then aborted (",
-                short(&made)
-            )) && why.contains("main moves only by its own landing")
-                && why.ends_with(&format!(
-                    "so its main was not moved and nothing was written in its checkout: {landing}"
-                )),
-            "{why}"
-        );
-        // The run's time up: red ([`Against::refusal`]), whether the ask was cut off or its hook
-        // refused first, its landing unsaid and its main where it was.
-        let stopped = against(&root, &logs, &made, Instant::now());
-        let Err(Short::Red(why)) = ask(&consumer, &tip, &made, landing, &stopped, &mut log) else {
-            panic!("an ask failed once the run's time is up is red");
-        };
-        assert!(!why.contains(landing), "{why}");
-        assert_eq!(main(), tip);
-        fs::remove_file(root.join("hooks/reference-transaction")).unwrap();
-
-        // Its main moved on after it was read: the ask fails on it, and that is red.
-        fs::write(root.join("notes.txt"), "its own\n").unwrap();
-        authored(&root, &["add", "notes.txt"]);
-        authored(&root, &["commit", "-q", "-m", "its own work"]);
-        let now = main();
-        assert_eq!(
-            ask(
-                &consumer,
-                &tip,
-                &made,
-                landing,
-                &against(&root, &logs, &made, later()),
-                &mut log
-            ),
-            Err(moved_on("main", &now, &made))
-        );
-        assert_eq!(main(), now);
-    }
-
-    #[test]
-    fn a_fast_forward_refused_with_its_main_in_place_is_the_projects_unless_its_own_work_failed() {
-        let tree = Tree::new();
-        let root = tree.path("project");
-        let (tip, made) = moving(&root);
-        let consumer = project(&root);
-        let logs = tree.path("logs");
-        let mut log = Log::open(&logs.join("refresh-consumer.log"));
-        let landing = "the branch is left for its own landing";
-        assert!(!against(&root, &logs, &made, later()).stopped());
-        assert!(against(&root, &logs, &made, Instant::now()).stopped());
-        let mut said = |until: Instant| {
-            let against = against(&root, &logs, &made, until);
-            refused(
-                &consumer, &tip, &made, "refused", landing, &against, &mut log,
-            )
-        };
-
-        // Its main where it was and nothing of the move written: its hooks' refusal, its own.
-        let refusal = format!(
-            "git refused the fast-forward of its main to {}, through its hooks or its checkout \
-             (refused); its main is still at {}",
-            short(&made),
-            short(&tip)
-        );
-        assert_eq!(
-            said(later()),
-            Short::Theirs(format!("{refusal}: {landing}"))
-        );
-        // The run's time up or its signal heard: what failed is the run's, red.
-        assert_eq!(said(Instant::now()), Short::Red(refusal));
-
-        // Git wrote the move's lock and staged it, and the refresh's own put-back fails (its index
-        // locked): red, naming the path and the command that puts it back, never "not as the
-        // move wrote it"; the file is left just as the move wrote it.
-        fs::write(root.join("Cargo.lock"), "new\n").unwrap();
-        authored(&root, &["add", "Cargo.lock"]);
-        let locked = root.join(".git/index.lock");
-        fs::write(&locked, "").unwrap();
-        let failed = said(later());
-        fs::remove_file(&locked).unwrap();
-        let Short::Red(why) = failed else {
-            panic!("a failed put-back is red: {failed:?}");
-        };
-        assert!(
-            why.contains(
-                "git had written the move's Cargo.lock into its checkout first, and the refresh \
-                 could not put it back (`git restore"
-            ) && why.ends_with(&format!(
-                "`git -C {} restore --source={tip} --staged --worktree -- Cargo.lock` puts it \
-                 back as its main has it",
-                root.display()
-            )) && !why.contains("not just as the move wrote it"),
-            "{why}"
-        );
-        assert_eq!(
-            fs::read_to_string(root.join("Cargo.lock")).unwrap(),
-            "new\n"
-        );
-        // Its index free again, the same is put back: the project's to finish.
-        let Short::Theirs(why) = said(later()) else {
-            panic!("put back, the refusal is the project's");
-        };
-        assert!(
-            why.contains(
-                "git had written the move's Cargo.lock into its checkout first, now put back as \
-                 its main has it"
-            ),
-            "{why}"
-        );
-        assert_eq!(
-            fs::read_to_string(root.join("Cargo.lock")).unwrap(),
-            "old\n"
-        );
-
-        // Its main moved elsewhere meanwhile: red, its checkout left to be looked at.
-        fs::write(root.join("notes.txt"), "its own\n").unwrap();
-        authored(&root, &["add", "notes.txt"]);
-        authored(&root, &["commit", "-q", "-m", "its own work"]);
-        let Short::Red(why) = said(later()) else {
-            panic!("a main moved under the move is red");
-        };
-        assert!(
-            why.contains(&format!(
-                "and its main is at {} now, not {}",
-                short(&authored(&root, &["rev-parse", "HEAD"])),
-                short(&tip)
-            )),
-            "{why}"
-        );
-    }
-
-    #[test]
-    fn the_pinned_surreal_is_read_from_the_boards_source_at_the_commit() {
-        let tree = Tree::new();
-        let root = tree.path("repo");
-        fs::create_dir_all(root.join("crates/tasks/src")).unwrap();
-        fs::write(
-            root.join("crates/tasks/src/server.rs"),
-            "//! The server.\n\n/// Pinned.\npub const SURREAL_VERSION: &str = \"3.3.0\";\n",
-        )
-        .unwrap();
-        let run = |args: &[&str]| {
-            git(
-                &root,
-                &[
-                    &["-c", "user.name=t", "-c", "user.email=t@example.com"][..],
-                    args,
-                ]
-                .concat(),
-            )
-            .unwrap()
-        };
-        run(&["init", "-q", "-b", "main"]);
-        run(&["add", "-A"]);
-        run(&["commit", "-q", "-m", "first"]);
-        assert_eq!(surreal_at(&root, "HEAD").as_deref(), Some("3.3.0"));
-        fs::write(root.join("crates/tasks/src/server.rs"), "// none\n").unwrap();
-        run(&["commit", "-q", "-am", "none"]);
-        assert_eq!(surreal_at(&root, "HEAD"), None);
-        assert_eq!(surreal_at(&root, "nowhere"), None);
-    }
-
-    #[test]
-    fn its_own_worktree_left_behind_is_cleared_and_any_other_folder_is_left_as_it_is() {
-        let tree = Tree::new();
-        let root = tree.path("project");
-        fs::create_dir_all(&root).unwrap();
-        fs::create_dir_all(tree.path("wt/release-refresh")).unwrap();
-        let root = root.canonicalize().unwrap();
-        let place = (tree.path("wt/release-refresh").canonicalize().unwrap()).join("project");
-        let at = place.to_string_lossy().into_owned();
-        let run = |args: &[&str]| {
-            git(
-                &root,
-                &[
-                    &["-c", "user.name=t", "-c", "user.email=t@example.com"][..],
-                    args,
-                ]
-                .concat(),
-            )
-            .unwrap()
-        };
-        run(&["init", "-q", "-b", "main"]);
-        run(&["commit", "-q", "--allow-empty", "-m", "first"]);
-        let listed = || -> Vec<String> {
-            (run(&["worktree", "list", "--porcelain"]).lines())
-                .filter_map(|line| line.strip_prefix("worktree "))
-                .map(str::to_string)
-                .collect()
-        };
-        let alone = [root.to_string_lossy().into_owned()];
-        let mut log = Log::open(&tree.path("logs/refresh-project.log"));
-
-        // Nothing in its place: nothing to clear.
-        clear(&root, &place, &mut log).unwrap();
-        assert_eq!(listed(), alone);
-
-        // One an interrupted refresh left, whatever it holds: removed.
-        run(&["worktree", "add", "--quiet", "--detach", &at, "HEAD"]);
-        fs::write(place.join("left.txt"), "x").unwrap();
-        clear(&root, &place, &mut log).unwrap();
-        assert!(!place.exists());
-        assert_eq!(listed(), alone);
-
-        // Registered, its folder gone: pruned.
-        run(&["worktree", "add", "--quiet", "--detach", &at, "HEAD"]);
-        fs::remove_dir_all(&place).unwrap();
-        clear(&root, &place, &mut log).unwrap();
-        assert_eq!(listed(), alone);
-
-        // Any other folder there is someone's: refused, and left as it is.
-        fs::create_dir_all(&place).unwrap();
-        fs::write(place.join("mine.txt"), "keep").unwrap();
-        let refused = clear(&root, &place, &mut log).unwrap_err();
-        assert_eq!(
-            refused,
-            format!(
-                "{at} is in the way and is not the release run's worktree of {}: it is left as it is; \
-                 move it away and retry",
-                root.display()
-            )
-        );
-        assert_eq!(fs::read_to_string(place.join("mine.txt")).unwrap(), "keep");
-        assert_eq!(listed(), alone);
-    }
-}
+#[path = "refresh_tests.rs"]
+mod tests;

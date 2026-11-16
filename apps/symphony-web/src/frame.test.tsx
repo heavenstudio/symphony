@@ -2,7 +2,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Frame, openActivity, readMetadata } from "./frame";
 import { MetadataReads } from "./state";
-import { memoryStorage } from "./testing";
+import { memoryStorage, turn } from "./testing";
 
 /** The window the frame shares with the shell and the panel: its values, events and storage. */
 function page(values: Record<string, unknown> = {}) {
@@ -150,8 +150,8 @@ describe("the frame's reads", () => {
         }),
     );
     const answer = async (activity: unknown, pending: unknown) => {
-      for (let turn = 0; turn < 50 && held.size < 2; turn += 1) {
-        await new Promise((done) => setTimeout(done, 0));
+      for (let turns = 0; turns < 50 && held.size < 2; turns += 1) {
+        await turn();
       }
       held.get("/api/activity")?.(new Response(JSON.stringify(activity)));
       held.get("/api/pending")?.(new Response(JSON.stringify(pending)));

@@ -28,6 +28,12 @@ project's board-only one, is `cli::process_main` and nothing else: a `main` of i
 `bin/agent-send.rs` is `cli/agent_send.rs`; `bin/tasks-copy.rs` and `bin/tasks-reclaim.rs` say their
 own. `cli/api.rs` is `tasks api` ([TASKS](../../docs/TASKS.md#the-tasks-api)), `cli/agents.rs` the
 agents API ([TASKS](../../docs/TASKS.md#the-agents-api)), `cli/beat.rs` the heartbeat hook,
+`usage.rs` and `usage/transcript.rs` what its beats read of the session's own transcript, kept
+beside the bound keys and never in the database
+([TASKS](../../docs/TASKS.md#where-the-tokens-go)), `usage/price.rs` what those tokens cost at the
+price table `usage/prices.toml` every build embeds, whose edit
+`just test-rs -p symphony-board --lib usage::price` reads as the builds do
+([TASKS](../../docs/TASKS.md#what-the-tokens-cost)),
 `cli/attach/` the monitor, `cli/pull.rs` the PULL digest, `cli/commands/wait.rs` `tasks wait`,
 `cli/detached.rs` the detached dispatcher a write starts, and `cli/database.rs`, `cli/snapshot.rs`,
 `cli/schema.rs` and `cli/migrate.rs` the commands of the same names. `--json` is written as the
@@ -47,6 +53,8 @@ and test work the agents view reports ([MACHINE_WORK](../../docs/MACHINE_WORK.md
 `store/` is `Store`: `work/` the task writes (making, moving, roles, needs, red marks, the
 orchestrator the board gives, covered closes), `messages.rs` threads, inboxes and keyed posts,
 `asks.rs` the owner's asks ([TASKS](../../docs/TASKS.md#asks)), `sessions.rs` sessions and beats,
+`spending.rs` the tokens a beat adds to the `usage` table in its own transaction
+(`Store::agent_beat_spending`; `agent_beat_in` and `Beat` stay as consumers call them),
 `launches.rs` launch records and the session hold, `cap.rs` the slot cap's reads, `history.rs` the
 status lines the alarm replays, `stamp.rs` what tells a task and its thread from the ones a reader
 read before, in one small read, `copy.rs` the whole-board copy, `opening.rs` how a store opens by

@@ -5,7 +5,7 @@
 use crate::common::{Fixture, NOW, Seed, client, server_addr, session, task};
 use symphony_board::rows::{
     AskRow, BarredKeyRow, DeliveryKeyRow, DeliveryRow, Dump, HeldRow, LinkRow, MessageRow, RoleRow,
-    SessionRow, TaskRow, TaskSessionRow,
+    SessionRow, TaskRow, TaskSessionRow, UsageRow,
 };
 use symphony_board::sys::{self, Command};
 use symphony_board::{Error, Store, cli, copy_main};
@@ -161,6 +161,40 @@ pub fn everything() -> Dump {
                 gone_since: None,
             },
         ],
+        usages: vec![
+            UsageRow {
+                handle: "amber-heron".into(),
+                slug: "sim/jump".into(),
+                role: "executor".into(),
+                model: "claude-opus-5-5".into(),
+                speed: "standard".into(),
+                round: 2,
+                input: 12,
+                cache_write_5m: 3_400,
+                cache_write_1h: 560,
+                cache_read: 78_900,
+                output: 1_200,
+                calls: 7,
+                first: NOW,
+                last: NOW + 90.0,
+            },
+            UsageRow {
+                handle: "brisk-finch".into(),
+                slug: String::new(),
+                role: "orchestrator".into(),
+                model: "claude-opus-5-5".into(),
+                speed: "fast".into(),
+                round: 0,
+                input: 1,
+                cache_write_5m: 0,
+                cache_write_1h: 0,
+                cache_read: 4_000,
+                output: 30,
+                calls: 1,
+                first: NOW + 1.0,
+                last: NOW + 1.0,
+            },
+        ],
     }
 }
 
@@ -241,7 +275,7 @@ fn the_copy_command_reads_a_dump_and_says_what_it_copied() {
     assert_eq!(
         String::from_utf8(out).unwrap(),
         format!(
-            "tasks-copy: 2 tasks, 2 links, 2 sessions, 2 roles, 2 messages, 1 deliveries, 1 barred keys, 1 task sessions, 1 delivery keys, 2 asks into sf/{} at {}\n",
+            "tasks-copy: 2 tasks, 2 links, 2 sessions, 2 roles, 2 messages, 1 deliveries, 1 barred keys, 1 task sessions, 1 delivery keys, 2 asks, 2 usage rows into sf/{} at {}\n",
             db.database(),
             server_addr()
         )
@@ -442,7 +476,7 @@ fn tables(f: &Fixture) -> Vec<String> {
     names
 }
 
-const BOARD_TABLES: [&str; 23] = [
+const BOARD_TABLES: [&str; 24] = [
     "ask",
     "barred_key",
     "callback_event",
@@ -465,6 +499,7 @@ const BOARD_TABLES: [&str; 23] = [
     "task_embedding_checkpoint",
     "task_embedding_source",
     "task_session",
+    "usage",
     "writer",
 ];
 

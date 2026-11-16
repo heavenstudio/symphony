@@ -8,6 +8,7 @@ use crate::health::{self, EXECUTING};
 use crate::orchestration;
 use crate::rows::SessionRow;
 use crate::sys::Boottime;
+use crate::usage::Spent;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, HashSet};
@@ -318,12 +319,32 @@ impl Store {
         place: Option<(&str, &str)>,
         boot: Option<&Boottime>,
     ) -> Result<Option<String>, Error> {
+        self.agent_beat_spending(agent, beat, place, boot, &[])
+    }
+
+    /// [`Store::agent_beat_in`], adding `spent`, the tokens the agent's model calls took since its
+    /// last beat, to the handle bound to it, in the same transaction: on the row of the task and
+    /// role it works now, the model, the speed and the task's round ([`crate::usage`]). With no
+    /// handle bound, nothing is added; the answer, the handle, says whether it was.
+    pub fn agent_beat_spending(
+        &self,
+        agent: &str,
+        beat: &Beat,
+        place: Option<(&str, &str)>,
+        boot: Option<&Boottime>,
+        spent: &[Spent],
+    ) -> Result<Option<String>, Error> {
         let place = place.map(|(worktree, branch)| json!({"worktree": worktree, "branch": branch}));
-        let vars = json!({
+        let mut vars = json!({
             "agent": agent, "now": (self.clock)(), "busy_for": beat.busy_for, "call": beat.call,
             "ended": beat.ended, "place": place, "boot": boot,
         });
-        self.retrying(|| self.transact(sql::BEAT, vars.clone()))
+        let spends = !spent.is_empty();
+        if spends {
+            super::spending::vars(&mut vars, spent);
+        }
+        let body = sql::beat(spends);
+        self.retrying(|| self.transact(&body, vars.clone()))
     }
 
     /// Take an existing handle back (a re-armed monitor), keeping every role it holds.

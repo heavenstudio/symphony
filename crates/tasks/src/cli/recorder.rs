@@ -1247,6 +1247,10 @@ fn settled(folder: &Path, ours: &str, same: crate::runs::Same, before: f64, with
         })
     };
     while std::time::Instant::now() < deadline && recorded::pending(folder, ours, before, earlier) {
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "no-timed-waits baseline: looks again for the recorder's record of a run, which no event announces"
+        )]
         std::thread::sleep(Duration::from_millis(20));
     }
 }

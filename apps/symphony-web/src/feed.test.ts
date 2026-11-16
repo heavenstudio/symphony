@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { type Heard, heard, Inbox, message, sleep, socketAddress } from "./feed";
+import { type Heard, heard, Inbox, message, socketAddress } from "./feed";
 import { feeds, say } from "./testing";
 import { FEED_EVENT, PING_EVENT, SERVER_EVENT } from "./wire";
 
@@ -108,31 +108,6 @@ describe("the inbox", () => {
   });
 });
 
-describe("a sleep", () => {
-  beforeEach(() => vi.useFakeTimers());
-  afterEach(() => vi.useRealTimers());
-
-  it("ends when its time is up", async () => {
-    let done = false;
-    void sleep(500).then(() => {
-      done = true;
-    });
-    await vi.advanceTimersByTimeAsync(499);
-    expect(done).toBe(false);
-    await vi.advanceTimersByTimeAsync(1);
-    expect(done).toBe(true);
-  });
-
-  it("ends at once when its signal aborts, or had", async () => {
-    const controller = new AbortController();
-    const slept = sleep(60_000, controller.signal);
-    controller.abort();
-    await slept;
-    await sleep(60_000, controller.signal);
-    expect(vi.getTimerCount()).toBe(0);
-  });
-});
-
 describe("the feed's stream", () => {
   // A page of its own each test, as each imports the module afresh, with listeners of its own.
   let page: EventTarget;
@@ -235,6 +210,41 @@ describe("the feed's stream", () => {
     expect(isAway()).toBe(true);
     doc.dispatchEvent(new Event("resume"));
     expect(isAway()).toBe(false);
+  });
+
+  it("waits for the page to be back at the event that says so, not a length of time", async () => {
+    vi.useFakeTimers();
+    const { back } = await import("./feed");
+    let came = 0;
+    await back();
+    page.dispatchEvent(new Event("pagehide"));
+    void back().then(() => (came += 1));
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(came).toBe(0);
+    expect(vi.getTimerCount()).toBe(0);
+    page.dispatchEvent(new Event("pageshow"));
+    await Promise.resolve();
+    expect(came).toBe(1);
+    // Frozen, then resumed, as Chrome does a background tab.
+    doc.dispatchEvent(new Event("freeze"));
+    void back().then(() => (came += 1));
+    await Promise.resolve();
+    expect(came).toBe(1);
+    doc.dispatchEvent(new Event("resume"));
+    await Promise.resolve();
+    expect(came).toBe(2);
+    vi.useRealTimers();
+  });
+
+  it("stops waiting for the page to be back once its signal ends, or at once when it had", async () => {
+    const { back } = await import("./feed");
+    page.dispatchEvent(new Event("pagehide"));
+    const leaving = new AbortController();
+    const waiting = back(leaving.signal);
+    leaving.abort();
+    await waiting;
+    await back(leaving.signal);
+    page.dispatchEvent(new Event("pageshow"));
   });
 
   it("is not told of the page going away once it was closed", async () => {

@@ -59,8 +59,9 @@ server on a project's build, naming the command that lets it go, and `just relea
 the same ([RELEASES](../../docs/RELEASES.md#status)); a stop and a start then make the release
 the machine's server once nothing holds it.
 
-A release's server builds nothing and watches no source: once a second it reads where the
-machine's `current` link points, and when it names another release, hands its sockets to that
+A release's server builds nothing and watches no source: it watches the machine folder for its
+`current` link moving, reads where the link points as it starts, at each move and once a period
+(`backstop.rs`, for an event lost), and when it names another release, hands its sockets to that
 release's server, by its own folder's path, as a reload below hands them. A release not installed
 whole, or whose server does not become ready, leaves the running one serving, said on the notice
 and tried again on the waits below; `current` pointed back at the running release clears the
@@ -189,9 +190,8 @@ it on before a release caught up) is read, and nothing is written to it from the
 dispatch no callback, give no work and keep no owner's asks, the schema rule refuses every other
 write, and every page says so on the notice until the board and the build agree. A board that
 took a read and answered it later than the 3 s wait, on its one resend too, is slow: 504, "the
-task board is slow", never "cannot be reached". The wait bounds the board tick, which shares the
-data worker's thread with document refreshes, and bounds each sending's whole
-answer, so a read sent twice stays inside the client's 15 s request limit. Native routes apply both
+task board is slow", never "cannot be reached". The wait bounds the board tick and each sending's
+whole answer, so a read sent twice stays inside the client's 15 s request limit. Native routes apply both
 the peer gate and the Host check; sandboxed frames cannot read the API.
 
 `just symphony` installs the release client with the shared server, in
@@ -277,7 +277,10 @@ are ignored by the current board client.
 
 One filesystem watcher handles registers, branch discovery and the client
 build for every connection. One shared board reader checks database changes
-each second; clients do no version polling. Recent deltas are retained for the
+each second, on a thread of its own beside the document refreshes, so neither waits on the
+other: a refresh keeps the board's counts the last tick gave its page, never older ones it read
+first, and the hub's stop ends the reader's wait between two checks at once. Clients do no
+version polling. Recent deltas are retained for the
 snapshot/subscribe gap. An expired cursor returns 409, or closes an already
 open stream, so the client fetches a fresh snapshot. `Last-Event-ID` is not a
 resume mechanism across server starts. Named `ping` events follow the client
@@ -319,7 +322,8 @@ before a refresh that renders anew reads again, as that refresh rendered only wh
 A cold server publishes its document hub and URL, then activates the first board
 read in the hub's owned worker. Data reads activate and await that first result; an unavailable board
 keeps its existing error response, a panic in that read answers as an unavailable board, and
-shutdown releases waiting reads before joining the worker. A reload replacement awaits the first board result before
+shutdown releases waiting reads before joining the worker, which ends once its board reader and
+document refreshes have. A reload replacement awaits the first board result before
 acknowledging handover. The server publishes its bound-port hint before warmup.
 Auto-port discovery also reads bounded owned announcements and probes the known
 ports before scanning processes. Cold homes and known free ports need no census;

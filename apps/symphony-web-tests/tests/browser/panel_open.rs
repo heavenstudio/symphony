@@ -738,13 +738,13 @@ fn an_open_chat_reads_its_thread_when_the_feed_says_it_moved_never_on_a_timer() 
     let site = site();
     site.set_json("/api/ask", &chat(&["First question"]));
     let Some(mut browser) = chrome() else { return };
-    // The draft names thread 7; every three-second timer the page sets is held here, so a read
-    // that answered and set one shows. The page's news of the asks is kept from its start.
+    // The draft names thread 7; every timer of the chat's retry the page sets is held here, so a
+    // read that answered and left one waiting shows. The page's news of the asks is kept from its
+    // start.
+    super::hold_ask_polls(&mut browser);
     browser.call(
         "Page.addScriptToEvaluateOnNewDocument",
         json!({"source": r#"localStorage.setItem('review-quick-draft', JSON.stringify({open: false, task: false, ask: 7}));
-            window.askPoll = []; const timer = window.setTimeout;
-            window.setTimeout = function (fn, ms, ...args) { if (ms === 3000) { askPoll.push(() => fn(...args)); return 0 } return timer(fn, ms, ...args) };
             window.asksNews = []; addEventListener('review:asks', event => asksNews.push(event.moved));"#}),
     );
     browser.open(&site.url("/"));
@@ -768,7 +768,7 @@ fn an_open_chat_reads_its_thread_when_the_feed_says_it_moved_never_on_a_timer() 
     );
     assert_eq!(chat_reads(&mut browser, &site, 1), 1);
     assert_eq!(
-        browser.eval("askPoll.length"),
+        browser.eval("askPoll.size"),
         json!(0),
         "a read that answered waits for the feed"
     );
@@ -801,7 +801,7 @@ fn an_open_chat_reads_its_thread_when_the_feed_says_it_moved_never_on_a_timer() 
         3,
         "a new recipient is read once"
     );
-    assert_eq!(browser.eval("askPoll.length"), json!(0));
+    assert_eq!(browser.eval("askPoll.size"), json!(0));
 }
 
 /// The build's files the site was asked for.

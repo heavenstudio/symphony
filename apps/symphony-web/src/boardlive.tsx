@@ -39,11 +39,10 @@ import {
   visitLater,
   WORK,
 } from "./cache";
-import { sleep } from "./feed";
 import { type FrameRefresh, useFrame } from "./frame";
 import { type Journal, ReadCursor } from "./journal";
-import { type BoardRun, flushReload, keepBoard, type PageBoard, PageNotices } from "./live";
-import { href, scoped } from "./project";
+import { type BoardRun, keepBoard, type PageBoard, PageNotices, Retry } from "./live";
+import { scoped } from "./project";
 import { getIf, getJson, said } from "./request";
 import { field, holdPlace, list as items } from "./shared";
 import { tryAgain } from "./state";
@@ -58,6 +57,7 @@ import {
   readTaskChange,
 } from "./task";
 import { markTasksReady } from "./taskcard";
+import { debounce } from "./timing";
 import { failed as failedRead } from "./trouble";
 import type { ItemChange, MachineWork, Task, TaskChange, TaskListing } from "./wire";
 import { PAGE_NAMES } from "./wire";
@@ -294,7 +294,7 @@ export class LiveBoard {
    * never the board's own notice of its state. */
   private said = "";
   /** How many times the reader pressed Retry, which the board's loop waits on. */
-  readonly retry = { current: 0 };
+  readonly retry = new Retry();
   /** A column's read, one function for the page's life: a column drawn again for it would be. */
   readonly load: OnLoad = (status, more, query, days) => {
     void this.column(status, more, query, days);
@@ -562,7 +562,7 @@ export class LiveBoard {
     // same window chosen again changes neither, and its tasks are gone.
     this.host.refresh();
     // Typing on: a later key's search reads in its place. A feed event meanwhile does not.
-    await sleep(250, this.signal);
+    await debounce(250, this.signal);
     if (!this.signal.aborted && d.view === view) await this.counts();
   }
 
@@ -582,7 +582,7 @@ export class LiveBoard {
     const view = d.view;
     const version = (d.requests.get(status) ?? 0) + 1;
     d.requests.set(status, version);
-    await sleep(250, this.signal);
+    await debounce(250, this.signal);
     if (this.signal.aborted) return;
     const read = () => this.readColumn(status, more, query, days, view, version);
     // A page a click asked for is read once. A first page that failed is read again by itself
@@ -804,7 +804,7 @@ export class LiveBoard {
   private async refreshing(): Promise<void> {
     const { d } = this;
     for (;;) {
-      await sleep(750, this.signal);
+      await debounce(750, this.signal);
       if (this.signal.aborted) return;
       const generation = d.generation;
       await this.counts();
@@ -977,11 +977,7 @@ export function TasksPage({ scope }: { scope: string }) {
     setFreshness(FRESH);
     redraw();
     void board.start(frame);
-    const minutes = setInterval(flushReload, 60_000);
-    return () => {
-      controller.abort();
-      clearInterval(minutes);
-    };
+    return () => controller.abort();
   }, [scope, frame]);
   return (
     <TasksView
@@ -1012,7 +1008,6 @@ export function TasksView({ scope, board, stale, freshness, refreshed }: TasksVi
   // A first read that failed, nothing drawn yet (a page drawn from this device is ready), says why
   // in place of the ghost, once: the notices leave it out while it stands.
   const unread = !ready && error !== "";
-  // The heading stays one node from the ghost to the board, so the link keeps its focus.
   return (
     <main
       data-ready="board"
@@ -1027,7 +1022,6 @@ export function TasksView({ scope, board, stale, freshness, refreshed }: TasksVi
       )}
       <div className="page-head">
         <h1>{PAGE_NAMES.BOARD}</h1>
-        <a href={href("/agents")}>Who is connected</a>
       </div>
       {board !== null && d !== null && unread ? (
         <UnreadBoard

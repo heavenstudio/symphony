@@ -47,6 +47,7 @@ mod session_urls;
 mod sessions;
 mod settings;
 mod snapshot;
+mod spending;
 mod stage_lines;
 mod stamp;
 mod surreal;
@@ -82,7 +83,7 @@ pub use work::{
     PIPELINE, PULLABLE, ROLES, RunPlace, STATUSES, Unfresh, approved, can_transition, covered_by,
     covered_line, landing,
 };
-pub use writers::{Program, Writer};
+pub use writers::{Program, RECENT as WRITERS_RECENT, SINCE as WRITERS_SINCE, Writer};
 
 type Clock = Box<dyn Fn() -> f64 + Send + Sync>;
 type Probe = Box<dyn Fn(i64) -> bool + Send + Sync>;
@@ -747,6 +748,10 @@ fn retried<T>(
             Err(Failure::Stop(error)) => return Err(error),
             Err(Failure::Again) if began.elapsed() < patience => {
                 TRIED_AGAIN.with(|tried| tried.set(tried.get() + 1));
+                #[expect(
+                    clippy::disallowed_methods,
+                    reason = "the named helper of RULES.md code/no-timed-waits for a retry with backoff: the board store's"
+                )]
                 std::thread::sleep(backoff(attempt));
                 attempt += 1;
             }

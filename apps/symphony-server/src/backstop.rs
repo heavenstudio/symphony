@@ -61,11 +61,42 @@ impl Backstop {
             Ok(()) => Wake::Event,
             Err(mpsc::RecvTimeoutError::Timeout) => Wake::Idle,
             Err(mpsc::RecvTimeoutError::Disconnected) => {
+                #[expect(
+                    clippy::disallowed_methods,
+                    reason = "no-timed-waits baseline: with its watcher gone the backstop sleeps out its tick, pacing a sweep for changes no event names"
+                )]
                 std::thread::sleep(tick);
                 Wake::Idle
             }
         }
     }
+}
+
+/// How long a watcher says nothing before the burst its first event began counts as one change:
+/// an editor's save is several events (a temporary file written, renamed over the old, its times
+/// set), and a refresh for each would read the file half saved.
+pub(crate) const QUIET: Duration = Duration::from_millis(100);
+
+/// The longest the reload's watcher takes a burst for, a binary being written read once it is
+/// quiet: a watcher that never goes quiet (a build writing under a watched folder) still has its
+/// changes read this often. The hub takes QUIET as its limit instead, so its pages' updates are
+/// never later than QUIET after the first event (`live.rs`).
+pub(crate) const BURST: Duration = Duration::from_secs(1);
+
+/// The debounce of a watching loop, the one RULES.md `code/no-timed-waits` names for a watcher's
+/// events: once the first event of a burst has woken the loop, every event that follows within
+/// `quiet` of the one before is taken with it, until the watcher says nothing for `quiet`, `most`
+/// has passed since this began, or the watcher is gone, which ends it at once. No event it took is
+/// left in `events`.
+pub(crate) fn debounce(events: &mpsc::Receiver<()>, quiet: Duration, most: Duration) {
+    let began = Instant::now();
+    loop {
+        let left = most.saturating_sub(began.elapsed());
+        if left.is_zero() || events.recv_timeout(quiet.min(left)).is_err() {
+            break;
+        }
+    }
+    while events.try_recv().is_ok() {}
 }
 
 /// A path's own identity, size and times, the fields [`symphony::text::FileStamp`] compares, read
@@ -368,6 +399,86 @@ mod tests {
             pass();
         }
         assert_eq!(*now.lock().unwrap() - start, period * 3);
+    }
+
+    /// `debounce` on its own thread, which says on a channel once it has returned; the test waits
+    /// for that word, never a length of time.
+    fn debounced(
+        events: mpsc::Receiver<()>,
+        quiet: Duration,
+        most: Duration,
+    ) -> mpsc::Receiver<mpsc::Receiver<()>> {
+        let (said, done) = mpsc::channel();
+        std::thread::spawn(move || {
+            super::debounce(&events, quiet, most);
+            let _ = said.send(events);
+        });
+        done
+    }
+
+    fn returned(done: &mpsc::Receiver<mpsc::Receiver<()>>, what: &str) -> mpsc::Receiver<()> {
+        done.recv_timeout(test_time::wait::backstop(Duration::ZERO))
+            .unwrap_or_else(|_| {
+                panic!(
+                    "{what}: the debounce never returned; {}",
+                    test_time::Load::now()
+                )
+            })
+    }
+
+    #[test]
+    fn a_debounce_takes_the_whole_burst_its_watcher_already_sent() {
+        let (send, events) = mpsc::channel();
+        for _ in 0..5 {
+            send.send(()).unwrap();
+        }
+        let events = returned(
+            &debounced(events, Duration::from_millis(1), Duration::from_secs(3600)),
+            "five events waiting",
+        );
+        assert_eq!(
+            events.try_recv(),
+            Err(mpsc::TryRecvError::Empty),
+            "every event of the burst was taken, and the watcher is still there"
+        );
+        send.send(()).unwrap();
+        assert_eq!(
+            events.try_recv(),
+            Ok(()),
+            "a later event is the next burst's"
+        );
+    }
+
+    #[test]
+    fn a_debounce_ends_at_once_when_its_watcher_has_gone() {
+        let (send, events) = mpsc::channel();
+        send.send(()).unwrap();
+        drop(send);
+        // No quiet or limit it could wait out: only the watcher's end returns it.
+        let hour = Duration::from_secs(3600);
+        let events = returned(&debounced(events, hour, hour), "a watcher gone");
+        assert_eq!(events.try_recv(), Err(mpsc::TryRecvError::Disconnected));
+    }
+
+    #[test]
+    fn a_watcher_that_never_goes_quiet_is_taken_by_the_limit() {
+        let (send, events) = mpsc::channel();
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let sender = std::thread::spawn({
+            let stop = stop.clone();
+            move || {
+                while !stop.load(std::sync::atomic::Ordering::SeqCst) && send.send(()).is_ok() {
+                    std::thread::yield_now();
+                }
+            }
+        });
+        // Never quiet for an hour: only the limit returns it.
+        returned(
+            &debounced(events, Duration::from_secs(3600), Duration::from_millis(5)),
+            "a watcher sending all the time",
+        );
+        stop.store(true, std::sync::atomic::Ordering::SeqCst);
+        sender.join().unwrap();
     }
 
     #[test]

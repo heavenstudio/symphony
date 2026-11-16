@@ -175,15 +175,20 @@ not a question in chat.
 **Releases.** A land starts a release run (`just release`, below) once `[releases]
 every_landings` tasks (20) have landed since the last release or run ([the
 cadence](docs/RELEASES.md#the-cadence)), and a green release refreshes the machine: the release
-installed in the machine folder ([the install](docs/RELEASES.md#the-install)), each consuming
-project's pin, main and board, and the shared server by its own reload ([the
-refresh](docs/RELEASES.md#the-refresh)). Running a release run or `--commit` by hand, installing
-its schedule and turning `[releases] publish` on are the owner's call; an orchestrator reruns
-`just release --refresh` without asking once what a refresh left red, or left to a project, is put
-right ([who runs it](docs/RELEASES.md#who-runs-it)). Pushing a consumer's branch and restarting
-the shared server are separate acts that need their own word. A pin moved by hand to a commit of
-main waits until `just tasks regenerate --status --wait` exits 0 and takes the commit it names, so
-it never carries a client older than its sources ([TASKS](docs/TASKS.md#the-regenerator)).
+installed in the machine folder ([the install](docs/RELEASES.md#the-install)), each registered
+project's board moved to its schema once every writer seen there in the last week is on the
+release, `current` pointed at it, and the machine's server following `current` by its own reload
+([the refresh](docs/RELEASES.md#the-refresh)). It writes no project's checkout: no branch, no
+commit and no pin moved, as a project takes a release by its own landing. While a registered
+project names a linked plugin, the release is installed and nothing more. Running a release run
+or `--commit` by hand, installing its schedule and turning `[releases] publish` on are the
+owner's call; an orchestrator reruns `just release --refresh` without asking once what a refresh
+left red, or left to a project, is put right ([who runs it](docs/RELEASES.md#who-runs-it)).
+Restarting the shared server, its first switch to a release's own server among it, is a separate
+act that needs its own word, and so is pointing `current` back by hand ([the way
+back](docs/RELEASES.md#the-way-back)). A pin moved by hand to a commit of main waits until
+`just tasks regenerate --status --wait` exits 0 and takes the commit it names, so it never
+carries a client older than its sources ([TASKS](docs/TASKS.md#the-regenerator)).
 
 **Board commands.** Run them as `just tasks … --as HANDLE`: a subagent's tool calls
 count as its heartbeat only after a command of that shape binds it, and one that runs

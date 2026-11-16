@@ -56,7 +56,15 @@ lockfile written again, in a task of their own.
   typescript-eslint, whose TypeScript support ends below the TypeScript this package pins, and it
   is one tool and one file for both jobs. `biome ci --error-on-warnings` makes a warning an error.
   Two style rules are off under `src/styles/` alone, the sheets carried whole from the retired
-  client ([their README](src/styles/README.md)).
+  client ([their README](src/styles/README.md)). Three more keep RULES.md `code/no-timed-waits`:
+  `noRestrictedGlobals` refuses a bare `setTimeout` or `setInterval` outside `src/timing.ts`,
+  the plugin `no-timed-waits.grit` one reached through an object (`window.setTimeout`), and
+  `noRestrictedImports` `src/timing.ts`'s `sleep`. A wait is for its event (a socket's message,
+  `pageshow`, a `MutationObserver`'s change, the reader's press); a number paces one only through
+  `src/timing.ts`'s helpers: `retryWait` (the retry's wait, `Backoff`'s in `state.ts`),
+  `debounce`, `deadline` (a bound on a wait for an event) and `tick` (a clock), and a unit test
+  yields a turn through `turn()` in `src/testing.ts`. A site kept is a `biome-ignore` whose
+  reason begins `no-timed-waits baseline:`.
 - **Vitest** runs the unit tests, with `@vitest/coverage-v8` for their coverage.
 
 `just client-lint` (`check.sh`) runs the wire types' check and the tests of the example that
@@ -524,7 +532,10 @@ What holds on every page, and each page's contract where its section above names
   background. A board
   or a `client` change naming another build than the
   page's own module script loads the page again, once per build
-  (`reloadFor` in `src/state.ts`, remembered in `sessionStorage`).
+  (`reloadFor` in `src/state.ts`, remembered in `sessionStorage`); while the reader is in the
+  middle of something (`engaged` in `src/route.ts`) it is held, and goes at the first event that
+  can end that (`whenFree`: the focus leaving the fields, a busy region, list box or details
+  changing, or an element added or removed), never on a timer.
 - **Cache.** What a page drew is kept on the device so a return visit draws at once
   ([the client cache](../../docs/analysis/client-cache.md)). The store is `shell/cache.js`
   (`window.symphonyCache`), which `package.sh` puts first in the shell's one script: every page
@@ -657,17 +668,17 @@ What holds on every page, and each page's contract where its section above names
   the owner's choice, as the caps are.
   Other page kinds are reported separately for review.
   On the fixture (`entry_pages_fit_the_first_visit_budget_and_deferred_kinds_are_reported` prints
-  each page's requests) a first visit to `/` takes 112,520 bytes, `/tasks` 121,442, `/agents`
-  115,511, `/queue` 108,081, `/reports` 112,514, `/runs` 106,760, `/docs/` 139,015, a document
-  140,676 and a task's page 142,233, and a return that finds what it kept unchanged 2,031, 2,442,
-  2,307, 2,272, 574, 984, 574, 1,677 and 2,285. A first visit to a kind is its entry and its
+  each page's requests) a first visit to `/` takes 113,361 bytes, `/tasks` 122,311, `/agents`
+  116,347, `/queue` 108,915, `/reports` 113,344, `/runs` 111,216, `/docs/` 139,904, a document
+  141,589 and a task's page 143,419, and a return that finds what it kept unchanged 2,103, 2,586,
+  2,403, 2,368, 646, 1,080, 646, 820 and 2,405. A first visit to a kind is its entry and its
   sheets, the chunk every kind shares (React and the frame) and the pieces it shares with some of
   the others (the board's feed and keep; the card and the task readers of the board and the agents
   page; the media layer's chunk and sheet, home's, the documents', a task's page's and the chat's),
   beside the HTML, the shell and the page's reads; a move to another kind takes its entry and the
   pieces no kind before it took (`apps/symphony-web-tests/tests/browser/preload.rs`). A task's page's timeline, a chunk of
   its own, comes once its box nears the screen and its part has something to draw
-  ([A task's page](#a-tasks-page)), and is reported apart from its first visit: 12,355 bytes. The
+  ([A task's page](#a-tasks-page)), and is reported apart from its first visit: 12,309 bytes. The
   reads ahead start only once the page's own reads have answered (`cache_ahead.rs`) and go marked
   as prefetches, so the budget counts them outside the first visit, with the warmed modules
   (`prefetched_bytes`). Once a page has its data and is idle, the shell warms the chat's files
@@ -697,12 +708,24 @@ What holds on every page, and each page's contract where its section above names
   shell restores their saved CSS before mounting a page. Status tokens such as `like`, `question`
   and `live` keep their defaults unless the imported file sets them. UI colours use the canonical
   shadcn token names; `src/styles/controls-theme.css` maps those names to the copied controls'
-  palette. Extend the shared controls for new fields.
+  palette. Extend the shared controls for new fields. A text field is 16px on a touch screen
+  (`(pointer: coarse)`, `!important` in `src/styles/board.css`, so no page's own sheet linked after
+  it undoes it): iOS zooms into a smaller one as it takes focus and does not zoom back out
+  (`apps/symphony-web-tests/tests/browser/touch.rs`). A press is the control's own `:active`,
+  which sinks it, with no tap flash and no label a long press selects, while an unseen layer
+  keeps its whole box a target, and a hover that moves or raises a thing sits under `(hover:
+  hover) and (pointer: fine)`, as a tap would leave it raised. A select's popup grows from the
+  edge nearest its trigger (`data-side`, `src/popup-position.ts`), stays drawn closed while its
+  exit eases out (the overlay host lets it go at its `animationend`, `src/overlay.tsx`), and under
+  reduced motion only fades (`apps/symphony-web-tests/tests/browser/polish.rs`).
 - **Task views.** The task board (`/tasks`, `src/board.tsx` over `src/boardlive.tsx`, its card
   `src/taskcard.tsx`), the agents page ([below](#the-agents-page)) and a task's page
   ([below](#a-tasks-page); the gates' and the timeline's contract,
   [TASKS](../../docs/TASKS.md#gates) and [the timeline](../../docs/TASKS.md#the-timeline)). The
-  board fetches counts first, then nearby column pages; finished work defaults to 24 hours, with
+  board alone takes the window's whole width, where every other page keeps the frame's 1440 px
+  (`main` in `src/styles/board.css`): its pipeline's columns keep their 288 px, which
+  `src/cardheight.ts` repeats, and its scroller scrolls sideways only when the window cannot
+  hold them all. The board fetches counts first, then nearby column pages; finished work defaults to 24 hours, with
   a week switch and older paging. A feed event that changes what a view lists (a task, a message
   while searching, the counts) reads the counts again 750 ms on, then the columns, each its first
   page as long as the rows it shows (the listing's `rows`), so the pages Load more brought, and the
@@ -787,7 +810,7 @@ What holds on every page, and each page's contract where its section above names
   ghost (`cover`) until no such region shows on its first screen, its read fails, or
   `SETTLE_MS` (3 s) passes; a hidden control takes no focus, so a
   browser test waits for `visible(SELECTOR)` before it focuses one. The task board shows its
-  heading (one node from ghost to board, so its link keeps focus) and controls at once, each
+  heading and controls at once, each
   column reserving a card's box per row of its first page (`PAGE` in `src/board.tsx`), at the
   pitch kept for its place, else `ROW`, a typical card (a title of two lines, a row of links and
   one of roles; its ghost draws no role chip in a column no agent has taken up, `unstaffed`),
@@ -979,8 +1002,11 @@ What holds on every page, and each page's contract where its section above names
   what an HTML document does is the server's and the browser tests'.
   The feed opts into
   one `document=PATH` and its requested `sections=JSON_LIST`; a stream without
-  a document receives no document payloads. Changing the requested keys reopens
-  the stream at its current cursor. A body response waits for that cursor and
+  a document receives no document payloads. It names the sections near the screen and those
+  whose bodies the page holds (`followed`): on a return visit the second are the ones drawn from
+  this device, there before the outline's check answers, so a return opens one stream, naming its
+  sections, though their slots name themselves only a frame or more later. A section near the
+  screen the stream does not name reopens it at its current cursor. A body response waits for that cursor and
   never overwrites a newer document change; a reconnect invalidates outstanding
   reads. Drafts and verdict retry ids are saved locally. Busy sections retain
   their markup while their source positions advance; the queued markup applies

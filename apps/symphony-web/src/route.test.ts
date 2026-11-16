@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { PLAIN } from "./project";
-import { anchor, currentRoute, engaged, HOME, parseRoute, scrollAnchor } from "./route";
+import { anchor, currentRoute, engaged, HOME, parseRoute, scrollAnchor, whenFree } from "./route";
+import { observers } from "./testing";
 
 const NAV = [{ label: "▤ shelf", title: "Shelf", href: "/shelf", document: "docs/SHELF.md" }];
 
@@ -143,5 +144,82 @@ describe("the page's route and its address", () => {
     expect(engaged()).toBe(false);
     vi.stubGlobal("document", { querySelector: () => null, activeElement: null });
     expect(engaged()).toBe(false);
+  });
+});
+
+describe("the wait for the reader to be free", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  /** A page whose focus moves (`focusout`) and whose elements change (`changed`). */
+  function page() {
+    const { watched, changed } = observers();
+    const doc = Object.assign(new EventTarget(), { documentElement: {} });
+    vi.stubGlobal("document", doc);
+    return { doc, watched, changed };
+  }
+
+  /** Whether `waiting` ended within the turns its events take. */
+  async function ended(waiting: Promise<void>): Promise<boolean> {
+    let over = false;
+    void waiting.then(() => {
+      over = true;
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    return over;
+  }
+
+  it.each(["data-busy", "data-state", "open"])(
+    "ends at a change of the %s attribute anywhere in the page, and of no other",
+    async (attribute) => {
+      const { watched, changed } = page();
+      const waiting = whenFree();
+      expect(watched.size).toBe(1);
+      changed({ attribute: "class" });
+      expect(await ended(waiting)).toBe(false);
+      changed({ attribute });
+      expect(await ended(waiting)).toBe(true);
+      expect(watched.size).toBe(0);
+    },
+  );
+
+  it("ends as an element is added or removed: a busy region or the focused field gone", async () => {
+    const { watched, changed } = page();
+    const waiting = whenFree();
+    expect([...watched.values()]).toEqual([
+      expect.objectContaining({ subtree: true, childList: true }),
+    ]);
+    changed({ childList: true });
+    expect(await ended(waiting)).toBe(true);
+    expect(watched.size).toBe(0);
+  });
+
+  it("ends as the focus leaves the fields, not as it moves from one to another", async () => {
+    const { doc, watched } = page();
+    const waiting = whenFree();
+    const field = { matches: (selector: string) => selector.includes("textarea") };
+    doc.dispatchEvent(Object.assign(new Event("focusout"), { relatedTarget: field }));
+    expect(await ended(waiting)).toBe(false);
+    const link = { matches: () => false };
+    doc.dispatchEvent(Object.assign(new Event("focusout"), { relatedTarget: link }));
+    expect(await ended(waiting)).toBe(true);
+    expect(watched.size).toBe(0);
+    // Into nothing, the page itself.
+    const again = whenFree();
+    doc.dispatchEvent(new Event("focusout"));
+    expect(await ended(again)).toBe(true);
+  });
+
+  it("ends once its signal ends, or at once when it had, watching nothing after", async () => {
+    const { doc, watched } = page();
+    const leaving = new AbortController();
+    const waiting = whenFree(leaving.signal);
+    leaving.abort();
+    expect(await ended(waiting)).toBe(true);
+    expect(watched.size).toBe(0);
+    const listened = vi.spyOn(doc, "addEventListener");
+    expect(await ended(whenFree(leaving.signal))).toBe(true);
+    expect(listened).not.toHaveBeenCalled();
+    expect(watched.size).toBe(0);
   });
 });

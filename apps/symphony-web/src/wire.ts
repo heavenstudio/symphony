@@ -799,6 +799,16 @@ export type Agent = {
    * none when nothing is known.
    */
   go: SessionGo | null;
+  /**
+   * What its model calls took, all told, as its board's heartbeat recorded them; none before
+   * any was, or from a board that records none.
+   */
+  tokens: AgentTokens | null;
+  /**
+   * What those tokens cost, estimated at API list prices; none beside no tokens, or from a board
+   * that prices none.
+   */
+  cost: AgentCost | null;
 };
 
 export type HeldTask = { slug: string; role: string; status: string };
@@ -808,6 +818,55 @@ export type AgentRun = { recipe: string; phase: string; since: number | null };
 export type AgentSaid = { slug: string; ts: number; text: string };
 
 export type AgentSlots = { open: number; cap: number };
+
+export type AgentTokens = {
+  /**
+   * Input read neither from the cache nor into it.
+   */
+  input: number;
+  /**
+   * Input written into the cache for five minutes.
+   */
+  cache_write_5m: number;
+  /**
+   * Input written into the cache for an hour.
+   */
+  cache_write_1h: number;
+  /**
+   * Input read from the cache.
+   */
+  cache_read: number;
+  /**
+   * Output, thinking included.
+   */
+  output: number;
+  /**
+   * The model calls counted.
+   */
+  calls: number;
+};
+
+export type AgentCost = {
+  /**
+   * The priced kinds all told.
+   */
+  dollars: number;
+  input: number;
+  cache_write_5m: number;
+  cache_write_1h: number;
+  cache_read: number;
+  output: number;
+  /**
+   * The tokens of each model and speed the table has no price for.
+   */
+  unpriced: Array<AgentUnpriced>;
+  /**
+   * The day the table's prices were read (`YYYY-MM-DD`): the figures are an estimate at them.
+   */
+  prices: string;
+};
+
+export type AgentUnpriced = { model: string; speed: string; tokens: AgentTokens };
 
 export type SessionGo = {
   /**

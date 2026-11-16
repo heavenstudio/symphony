@@ -152,6 +152,10 @@ pub(crate) fn stop(pid: u32, grace: Duration) {
     signal(group, libc::SIGTERM);
     let until = Instant::now() + grace;
     while !ended(pid) && Instant::now() < until {
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "no-timed-waits baseline: looks again for a process group's end, which no wait reports"
+        )]
         std::thread::sleep(POLL);
     }
     signal(group, libc::SIGKILL);
@@ -299,6 +303,10 @@ impl Clock for Wall {
     }
 
     fn pause(&mut self, pause: Duration) {
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "no-timed-waits baseline: the machine's pause behind the clock its tests replace"
+        )]
         std::thread::sleep(pause);
     }
 }

@@ -7,12 +7,13 @@ import { type Attach, AttachControls, useAttach } from "./attach";
 import { BlocksView } from "./blocks";
 import { Button } from "./button";
 import { readAsks } from "./document-read";
-import { sleep } from "./feed";
 import { useMount } from "./mount";
 import { getJson, post, said } from "./request";
 import { field, list, STALE, useStore } from "./shared";
 import { load, save } from "./storage";
 import { Textarea } from "./textarea";
+// biome-ignore lint/style/noRestrictedImports: no-timed-waits baseline: a failed read of the asks is tried again on a fixed RETRY_MS, where Backoff and retryWait are the helpers
+import { sleep } from "./timing";
 import { useVisibility } from "./viewport";
 import type { Ask } from "./wire";
 import { CHECKING } from "./words";

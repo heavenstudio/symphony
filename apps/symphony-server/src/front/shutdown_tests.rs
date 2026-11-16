@@ -534,6 +534,10 @@ async fn a_replaced_generation_ends_once_a_request_that_never_finishes_outlasts_
     started.serving = vec![
         // A request that finishes within the drain is waited for.
         tokio::spawn(async move {
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "no-timed-waits baseline: a test's request made slow by a length of time, not held until its test releases it"
+            )]
             tokio::time::sleep(Duration::from_millis(50)).await;
             let _ = finished.send(());
         }),

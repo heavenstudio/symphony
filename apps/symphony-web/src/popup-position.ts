@@ -63,7 +63,8 @@ export function reveal(popup: HTMLElement): void {
   if (by !== 0) popup.scrollTop += Math.round(by);
 }
 
-/** The popup `popupId` placed beside the trigger `triggerId`, then marked positioned. */
+/** The popup `popupId` placed beside the trigger `triggerId`, marked with the side it opened on,
+ * then marked positioned. */
 export function position(triggerId: string, popupId: string): void {
   const trigger = document.getElementById(triggerId);
   const popup = document.getElementById(popupId);
@@ -86,6 +87,9 @@ export function position(triggerId: string, popupId: string): void {
       "style",
       `position:fixed;left:${left}px;top:${top}px;width:${width}px;min-width:0;max-height:${height}px;overflow-y:auto;overflow-x:hidden;margin:0;z-index:1100`,
     );
+    // The side it opened on, which its sheet grows it from (overlay.css): above its trigger whole,
+    // else below or over it.
+    popup.setAttribute("data-side", top + height <= anchor[1] ? "top" : "bottom");
   };
   place(content);
   // A list that scrolls draws its scrollbar inside its width where the platform's scrollbars take

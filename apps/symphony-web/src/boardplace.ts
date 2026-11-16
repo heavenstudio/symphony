@@ -6,6 +6,7 @@
 import { type RefObject, useLayoutEffect, useRef } from "react";
 import { useMount } from "./mount";
 import { holdPlace } from "./shared";
+import { debounce } from "./timing";
 
 /** Every card of the board: what a live update holds in place when no column is the reader's. */
 export const ROWS = "[data-slug]";
@@ -254,7 +255,8 @@ const GESTURES = ["wheel", "touchstart", "mousedown", "keydown"];
  * the page the next kind shows.
  */
 export class PlaceKeeper {
-  private timer: ReturnType<typeof setTimeout> | undefined;
+  /** The rest the last scroll began, until it is kept or dropped. */
+  private resting: AbortController | null = null;
   private returning: AbortController | null = null;
   /** The board's path: an entry of any other is another page's, and never written. */
   private readonly path = location.pathname;
@@ -283,8 +285,7 @@ export class PlaceKeeper {
 
   /** Keep the place in the entry now: not while returning to it, nor once ended or moved off it. */
   readonly keep = (): void => {
-    clearTimeout(this.timer);
-    this.timer = undefined;
+    this.rest();
     if (this.returning !== null || this.signal.aborted || !this.here()) return;
     const place = this.now();
     if (!samePlace(keptPlace(history.state), place)) {
@@ -292,17 +293,31 @@ export class PlaceKeeper {
     }
   };
 
-  /** Keep the place once the reader's scrolling rests for RESTS_MS. */
+  /**
+   * Keep the place once the reader's scrolling rests for RESTS_MS: a debounce, not `scrollend`,
+   * which ends every scroll, a script's (the shell's hold, a return) as well as the reader's, more
+   * often than the history takes writes.
+   */
   readonly later = (): void => {
-    clearTimeout(this.timer);
-    if (!this.signal.aborted) this.timer = setTimeout(this.keep, RESTS_MS);
+    this.rest();
+    if (this.signal.aborted) return;
+    const resting = new AbortController();
+    this.resting = resting;
+    void debounce(RESTS_MS, resting.signal).then(() => {
+      if (!resting.signal.aborted) this.keep();
+    });
   };
+
+  /** The rest a scroll began, dropped. */
+  private rest(): void {
+    this.resting?.abort();
+    this.resting = null;
+  }
 
   /** Back or Forward: the scrolling not yet kept is the entry left's, and lost; another entry of
    * the board, which goes on drawing it, has its own place to return to. */
   readonly moved = (): void => {
-    clearTimeout(this.timer);
-    this.timer = undefined;
+    this.rest();
     if (this.here()) this.back();
   };
 

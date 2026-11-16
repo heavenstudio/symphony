@@ -1606,6 +1606,76 @@ fn a_land_pushes_main_alone_to_origin() {
 }
 
 #[test]
+fn a_landing_line_names_the_tokens_its_task_took_by_role_and_round_and_their_cost() {
+    use symphony_board::Beat;
+    use symphony_board::usage::{Prices, Spent, Tokens, price};
+    let r = Repo::new();
+    manifest(&r, "");
+    remote(&r);
+    branch(&r, SLUG, "sim/jump.gd", "extends Node\n");
+    let store = &r.board.store;
+    let (orch, exe, rev) = (
+        r.board.session("orchestrator"),
+        r.board.session("worker"),
+        r.board.session("reviewer"),
+    );
+    let worth = |input, read, output, calls| Tokens {
+        input,
+        cache_write_5m: 1_000,
+        cache_write_1h: 0,
+        cache_read: read,
+        output,
+        calls,
+    };
+    let spend = |key: &str, input, read, output, calls| {
+        let spent = Spent {
+            model: "claude-opus-5-5".into(),
+            speed: "standard".into(),
+            tokens: worth(input, read, output, calls),
+        };
+        store
+            .agent_beat_spending(key, &Beat::default(), None, None, &[spent])
+            .unwrap()
+            .expect("the key is bound");
+    };
+    r.task(SLUG);
+    store.take_role(SLUG, &orch, "orchestrator").unwrap();
+    store.claim(SLUG, &exe).unwrap();
+    assert!(store.bind_agent("exe-key", &exe, false).unwrap());
+    spend("exe-key", 10, 50_000, 500, 4);
+    store.move_to(SLUG, "review", &exe).unwrap();
+    store.take_role(SLUG, &rev, "reviewer").unwrap();
+    assert!(store.bind_agent("rev-key", &rev, false).unwrap());
+    spend("rev-key", 5, 19_000, 100, 2);
+    store.verdict(SLUG, &rev, "approve", "good").unwrap();
+    let line = landed(&r, SLUG, &orch).1.unwrap();
+    let merge = head(&r.root, "main");
+    // Their cost, at the prices every build embeds.
+    let prices = Prices::embedded();
+    let mut cost = prices.cost("claude-opus-5-5", "standard", &worth(10, 50_000, 500, 4));
+    cost.add(&prices.cost("claude-opus-5-5", "standard", &worth(5, 19_000, 100, 2)));
+    assert!(cost.total() > 0 && cost.unpriced.is_empty());
+    assert_eq!(
+        line,
+        format!(
+            "landed {SLUG} on main at {}; 71.6k tokens in 6 calls (executor 51.5k, reviewer \
+             20.1k; round 1 51.5k, round 2 20.1k), {} estimated at API list prices read {}; \
+             pushed to origin",
+            &merge[..12],
+            price::dollars(cost.total()),
+            prices.read
+        )
+    );
+    // The thread's landed line says the same, before how the approval was judged.
+    let said = r.board.said(SLUG);
+    let tokens = line.trim_end_matches("; pushed to origin");
+    assert!(
+        said.last().is_some_and(|last| last.starts_with(tokens)),
+        "{said:?}"
+    );
+}
+
+#[test]
 fn what_origin_gained_is_merged_and_checked_again_before_the_push() {
     let r = Repo::new();
     manifest(&r, "");

@@ -3111,7 +3111,38 @@
             "slots": { "open": 3, "cap": 8 },
             "session_url": "https://example.com/s",
             "in_process": true,
-            "go": { "handle": "birch", "url": "https://example.com/s", "pane": "w1:p2" }
+            "go": { "handle": "birch", "url": "https://example.com/s", "pane": "w1:p2" },
+            "tokens": {
+              "input": 12,
+              "cache_write_5m": 3400,
+              "cache_write_1h": 560,
+              "cache_read": 78900,
+              "output": 1200,
+              "calls": 7
+            },
+            "cost": {
+              "dollars": 0.061308,
+              "input": 0.000048,
+              "cache_write_5m": 0.017,
+              "cache_write_1h": 0.00448,
+              "cache_read": 0.01578,
+              "output": 0.024,
+              "unpriced": [
+                {
+                  "model": "gpt-x",
+                  "speed": "standard",
+                  "tokens": {
+                    "input": 5,
+                    "cache_write_5m": 0,
+                    "cache_write_1h": 0,
+                    "cache_read": 0,
+                    "output": 1,
+                    "calls": 1
+                  }
+                }
+              ],
+              "prices": "2026-11-16"
+            }
           },
           {
             "handle": "birch",
@@ -3137,7 +3168,9 @@
             "slots": null,
             "session_url": null,
             "in_process": false,
-            "go": null
+            "go": null,
+            "tokens": null,
+            "cost": null
           }
         ]
       },
@@ -3213,7 +3246,38 @@
         "slots": { "open": 3, "cap": 8 },
         "session_url": "https://example.com/s",
         "in_process": true,
-        "go": { "handle": "birch", "url": "https://example.com/s", "pane": "w1:p2" }
+        "go": { "handle": "birch", "url": "https://example.com/s", "pane": "w1:p2" },
+        "tokens": {
+          "input": 12,
+          "cache_write_5m": 3400,
+          "cache_write_1h": 560,
+          "cache_read": 78900,
+          "output": 1200,
+          "calls": 7
+        },
+        "cost": {
+          "dollars": 0.061308,
+          "input": 0.000048,
+          "cache_write_5m": 0.017,
+          "cache_write_1h": 0.00448,
+          "cache_read": 0.01578,
+          "output": 0.024,
+          "unpriced": [
+            {
+              "model": "gpt-x",
+              "speed": "standard",
+              "tokens": {
+                "input": 5,
+                "cache_write_5m": 0,
+                "cache_write_1h": 0,
+                "cache_read": 0,
+                "output": 1,
+                "calls": 1
+              }
+            }
+          ],
+          "prices": "2026-11-16"
+        }
       }
     },
     "bareAgent": {
@@ -3240,7 +3304,9 @@
       "slots": null,
       "session_url": null,
       "in_process": false,
-      "go": null
+      "go": null,
+      "tokens": null,
+      "cost": null
     },
     "agentProbes": { "panes": "ok", "herdr": "ok", "slots": "unavailable" },
     "agentFocus": { "said": "Shown in the Herdr app" },

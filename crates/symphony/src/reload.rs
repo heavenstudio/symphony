@@ -23,6 +23,10 @@ pub fn lock_until(file: &File, stopping: impl Fn() -> bool) -> Result<(), String
         }
         match file.try_lock() {
             Ok(()) => return Ok(()),
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "no-timed-waits baseline: tries a file lock again until it is free, where a blocking lock is the event"
+            )]
             Err(TryLockError::WouldBlock) => std::thread::sleep(POLL),
             Err(TryLockError::Error(problem)) => return Err(problem.to_string()),
         }
@@ -45,6 +49,10 @@ impl BuildProcess {
         // SAFETY: process_group(0) made this owned child the leader. No other server or build
         // joins it. The unreaped leader reserves this group id throughout both signals.
         unsafe { libc::killpg(group, libc::SIGTERM) };
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "no-timed-waits baseline: a grace between two signals, where the child's end is the event"
+        )]
         std::thread::sleep(BUILD_GRACE);
         // The launcher may already have ended while a compiler ignores TERM. Kill the whole
         // owned group before reaping the leader, including children that inherited pipe/lock fds.
@@ -565,6 +573,10 @@ fn run_build(
                 process.reaped = true;
                 break Ok(status);
             }
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "no-timed-waits baseline: looks again for its child's end, where a wait on the child is the event"
+            )]
             Ok(None) => std::thread::sleep(POLL),
             Err(problem) => {
                 process.cancel();

@@ -16,12 +16,14 @@ import {
   useState,
 } from "react";
 import { Button } from "./button";
-import { sleep, whenShown } from "./feed";
+import { whenShown } from "./feed";
 import { useMount } from "./mount";
 import { href } from "./project";
 import { Failure, getIf, getJson, said } from "./request";
 import { field } from "./shared";
 import { load, save } from "./storage";
+// biome-ignore lint/style/noRestrictedImports: no-timed-waits baseline: Runs has no feed of its own: it reads again every 5 and 15 s while shown, where a feed event of a run is the wait
+import { sleep } from "./timing";
 import { failed as failedRead, ready, Trouble } from "./trouble";
 import { Skeleton } from "./viewport";
 import {

@@ -1050,6 +1050,10 @@ fn a_process_that_ends_starts_again_after_its_pause() {
         Err("plugin tiny: its process was killed by signal 9".into())
     );
     until("the remote is down", || remote.down().is_some());
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "no-timed-waits baseline: a test waits out the plugin's restart pause"
+    )]
     std::thread::sleep(pause);
     assert_eq!(
         component.render(&page, "a", None),
@@ -1472,6 +1476,10 @@ fn a_line_past_the_bound_ends_the_process_and_the_plugin_starts_again_after_its_
         )
     );
     assert_eq!(seen.kills(), 1);
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "no-timed-waits baseline: a test waits out the plugin's restart pause"
+    )]
     std::thread::sleep(pause);
     assert_eq!(
         component.render(&page, "a", None),
@@ -1517,6 +1525,10 @@ struct Stuck {
 impl Write for Stuck {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         while self.stuck.load(Ordering::SeqCst) {
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "no-timed-waits baseline: a test's writer looks again for a flag its test clears, where a condvar is the event"
+            )]
             std::thread::sleep(Duration::from_millis(1));
         }
         self.input.write(buf)
