@@ -94,7 +94,7 @@ fn an_orchestrator_back_from_not_live_is_given_what_waited_and_told_once() {
     let worker = c.register("worker");
     assert_eq!(
         c.ok(&worker, &["create", "sim/loose", "Loose"]),
-        "created sim/loose (ready); it waits for an orchestrator that stays\n"
+        "created sim/loose (ready); it waits for an orchestrator under its limit that stays\n"
     );
     let back = c.ok(&orch, &["wait", "--timeout", "0"]);
     assert!(

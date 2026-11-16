@@ -3,12 +3,14 @@
 //!
 //! A task is its orchestrator's when that session holds the role on it, or on the nearest task
 //! above it that has one, and is live, stale or of unknown liveness ([`crate::Health::holds`]).
-//! Every open task has one: the board gives the role wherever a task would be left without
-//! ([`Pool`], [`unowned_tops`], [`orphaned`]; docs/TASKS.md, "Every open task has an
-//! orchestrator"). A task with none on it or above it is unowned only for the moment before the
-//! board gives it, or while no orchestrator that stays is there, when it waits for the first to
-//! come ([`WAITING`]); meanwhile every orchestrator hears it. An orchestrator hears its own tasks
-//! and the unowned ones only ([`Owners::reaches`]).
+//! The board gives the role wherever a task would be left without ([`Pool`], [`unowned_tops`],
+//! [`orphaned`]; docs/TASKS.md, "Every open task has an orchestrator"), to an orchestrator holding
+//! fewer open tasks than the limit (`[limits] orchestrator_tasks`, [`counted`], [`at_limit`]) but
+//! for a red. A task with none on it or above it is unowned for the moment before the board gives
+//! it, or while no orchestrator that stays is under the limit, when it waits for the first to come
+//! or to go under it ([`WAITING`]): a well state, which every orchestrator hears and any under the
+//! limit takes with `role`. An orchestrator hears its own tasks and the unowned ones only
+//! ([`Owners::reaches`]).
 
 use crate::health::{FINISHED, Health, LIVE_SECONDS};
 use crate::rows::SessionRow;
@@ -289,13 +291,46 @@ pub fn candidates(board: &Board, except: &[&str], now: f64) -> Vec<String> {
         .collect()
 }
 
-/// The orchestrators the board gives a task to, each with the unfinished tasks it holds the role
-/// on: rule 4 of docs/TASKS.md, "Every open task has an orchestrator", among those that show they
-/// stay. Each pick is the one holding fewest, ties by handle, and counts the task it gave, so a
-/// pass of several spreads them.
+/// Whether `task` takes a place under the limit on the open tasks an orchestrator holds the role on
+/// (`[limits] orchestrator_tasks`, [`crate::limits`]): open, done and cancelled ones being
+/// finished, and no red ([`crate::red`]), which is never held back for want of an orchestrator, as
+/// red work never waits for a slot. A task in review or blocked counts: the limit bounds what one
+/// orchestrator answers for, not what is being built ([`crate::slots`]).
+pub fn counted(task: &Task) -> bool {
+    unfinished(task) && !task.red()
+}
+
+/// How many tasks of `tasks` `handle` holds the orchestrator role on itself that take a place under
+/// the limit ([`counted`]); the tasks under them, its by the tree, take none.
+pub fn orchestrated(tasks: &[Task], handle: &str) -> usize {
+    (tasks.iter())
+        .filter(|t| counted(t))
+        .filter(|t| (t.roles.iter()).any(|r| r.role == "orchestrator" && r.handle == handle))
+        .count()
+}
+
+/// What the limit says of `handle` orchestrating `held` open tasks against `limit`: none while it
+/// may gain another, else why it gains none, which a refusal and the board's give say alike.
+pub fn at_limit(handle: &str, held: usize, limit: usize) -> Option<String> {
+    (held >= limit).then(|| {
+        format!(
+            "{handle} orchestrates {held} open tasks, the limit of {limit} an orchestrator holds \
+             ([limits] orchestrator_tasks): it gains none until one of them is done or cancelled \
+             or it lets one go"
+        )
+    })
+}
+
+/// The orchestrators the board gives a task to, each with the open tasks it holds the role on
+/// ([`counted`]): rule 4 of docs/TASKS.md, "Every open task has an orchestrator", among those that
+/// show they stay and hold fewer than the limit ([`Pool::within`]). Each pick is the one holding
+/// fewest, ties by handle, and counts the task it gave, so a pass of several spreads them and fills
+/// none past the limit.
 #[derive(Debug, Default)]
 pub struct Pool {
     load: BTreeMap<String, usize>,
+    /// The open tasks at which an orchestrator is given no more but a red; none gives at any count.
+    limit: Option<usize>,
 }
 
 impl Pool {
@@ -306,9 +341,13 @@ impl Pool {
     /// board never hands work to one that may be gone in a minute.
     pub fn of(board: &Board, except: &[&str], listening: &BTreeSet<String>, now: f64) -> Pool {
         let mut held: BTreeMap<&str, usize> = BTreeMap::new();
+        let mut orchestrating: BTreeSet<&str> = BTreeSet::new();
         for task in board.tasks.iter().filter(|t| unfinished(t)) {
             for role in task.roles.iter().filter(|r| r.role == "orchestrator") {
-                *held.entry(role.handle.as_str()).or_default() += 1;
+                orchestrating.insert(role.handle.as_str());
+                if counted(task) {
+                    *held.entry(role.handle.as_str()).or_default() += 1;
+                }
             }
         }
         let candidates = candidates(board, except, now);
@@ -319,10 +358,17 @@ impl Pool {
                 let holds = held.get(handle).copied().unwrap_or(0);
                 let monitor = s.row.pid.is_some_and(|pid| pid > 0);
                 let listens = monitor || listening.contains(handle);
-                (holds > 0 || listens).then(|| (handle.to_owned(), holds))
+                (orchestrating.contains(handle) || listens).then(|| (handle.to_owned(), holds))
             })
             .collect();
-        Pool { load }
+        Pool { load, limit: None }
+    }
+
+    /// This pool, giving no orchestrator a task past `limit` open ones but a red
+    /// ([`Pool::pick_for`]).
+    pub fn within(mut self, limit: usize) -> Pool {
+        self.limit = Some(limit);
+        self
     }
 
     /// Whether `handle` is in it: an orchestrator that stays, not left out.
@@ -330,17 +376,46 @@ impl Pool {
         self.load.contains_key(handle)
     }
 
-    /// Whether any orchestrator is in it.
+    /// Whether any orchestrator in it may be given a task that is no red: one under the limit.
     pub fn any(&self) -> bool {
-        !self.load.is_empty()
+        self.load.values().any(|held| self.under(*held))
     }
 
-    /// The orchestrator holding fewest, ties by handle, its count raised by the one it is given;
-    /// none when none stays.
+    /// Whether one in it may be given `task`: any that stays for a red, else one under the limit.
+    pub fn takes(&self, task: &Task) -> bool {
+        if task.red() {
+            !self.load.is_empty()
+        } else {
+            self.any()
+        }
+    }
+
+    fn under(&self, held: usize) -> bool {
+        self.limit.is_none_or(|limit| held < limit)
+    }
+
+    /// The orchestrator under the limit holding fewest, ties by handle, its count raised by the one
+    /// it is given; none when none that stays is under it.
     pub fn pick(&mut self) -> Option<String> {
-        let (handle, _) = (self.load.iter()).min_by_key(|(handle, held)| (**held, *handle))?;
+        self.choose(false)
+    }
+
+    /// [`Pool::pick`] for `task`: a red goes to the one holding fewest whatever it holds, and is
+    /// not counted, as no red waits for an orchestrator under the limit or takes a place under it.
+    pub fn pick_for(&mut self, task: &Task) -> Option<String> {
+        self.choose(task.red())
+    }
+
+    /// The one holding fewest, ties by handle: of all of them for a red, which it is given uncounted,
+    /// else of those under the limit, its count raised by the task.
+    fn choose(&mut self, red: bool) -> Option<String> {
+        let (handle, _) = (self.load.iter())
+            .filter(|(_, held)| red || self.under(**held))
+            .min_by_key(|(handle, held)| (**held, *handle))?;
         let handle = handle.clone();
-        self.give(&handle);
+        if !red {
+            self.give(&handle);
+        }
         Some(handle)
     }
 
@@ -375,13 +450,13 @@ pub fn may_give(tasks: &[Task]) -> Option<Vec<&Task>> {
 }
 
 /// Whether the board's give has work on a board read whose topmost unowned tasks are `tops` and
-/// whose orchestrators that stay are `pool`: a task one of them could take, a task not yet marked
-/// waiting, or a waiting mark on a task that waits no more. With none of those a pass would write
-/// nothing, so a reader that sees the same board again reads no more for it: bounded, and each
-/// give made once.
+/// whose orchestrators that stay are `pool`: a task one of them could take (under the limit, or a
+/// red at any count), a task not yet marked waiting, or a waiting mark on a task that waits no
+/// more. With none of those a pass would write nothing, so a reader that sees the same board again
+/// reads no more for it: bounded, and each give made once.
 pub fn give_due(tasks: &[Task], tops: &[&Task], pool: &Pool) -> bool {
     let waits: HashSet<&str> = tops.iter().map(|t| t.slug.as_str()).collect();
-    (!tops.is_empty() && pool.any())
+    tops.iter().any(|t| pool.takes(t))
         || tops.iter().any(|t| waiting(&t.fields).is_none())
         || (tasks.iter()).any(|t| waiting(&t.fields).is_some() && !waits.contains(t.slug.as_str()))
 }
@@ -390,6 +465,12 @@ pub fn give_due(tasks: &[Task], tops: &[&Task], pool: &Pool) -> bool {
 /// says dropped: the topmost of each tree they make, in the board's order. What a leave gives
 /// ([`crate::Store::leave`]) and what a release of the role is refused for.
 pub fn orphaned(tasks: &[Task], gone: impl Fn(&Task, &crate::Role) -> bool) -> Vec<&Task> {
+    tops(tasks, &orphans(tasks, gone))
+}
+
+/// Every unfinished task of `tasks` that is somebody's and would be nobody's were each role `gone`
+/// says dropped, not only the top of each tree they make ([`orphaned`]).
+pub fn orphans(tasks: &[Task], gone: impl Fn(&Task, &crate::Role) -> bool) -> HashSet<&str> {
     let before = Owners::new(tasks);
     let after: Vec<Task> = (tasks.iter())
         .map(|t| {
@@ -399,12 +480,11 @@ pub fn orphaned(tasks: &[Task], gone: impl Fn(&Task, &crate::Role) -> bool) -> V
         })
         .collect();
     let after_owners = Owners::new(&after);
-    let orphans: HashSet<&str> = (tasks.iter())
+    (tasks.iter())
         .filter(|t| unfinished(t) && after_owners.of(&t.slug).is_empty())
         .filter(|t| !before.of(&t.slug).is_empty())
         .map(|t| t.slug.as_str())
-        .collect();
-    tops(tasks, &orphans)
+        .collect()
 }
 
 /// Of `among`, each one's topmost task in `among` up its line of parents, once each, in `tasks`'
@@ -747,6 +827,142 @@ mod tests {
             candidates(&b, &["amber"], NOW),
             ["cobalt", "dune", "hazel", "jet"]
         );
+    }
+
+    /// `t`, marked red.
+    fn red(mut t: Task) -> Task {
+        let board = t.fields.entry(crate::red::FIELDS.into()).or_default();
+        board.insert(crate::red::MARK.into(), Value::from("main"));
+        t
+    }
+
+    /// `t`, in `status`.
+    fn at(mut t: Task, status: &str) -> Task {
+        t.status = status.into();
+        t
+    }
+
+    #[test]
+    fn an_orchestrator_counts_the_unfinished_tasks_it_holds_itself_but_a_red() {
+        let amber = || vec![held("amber", "orchestrator", Health::Live)];
+        let tasks = vec![
+            task("a", None, amber()),
+            at(task("review", None, amber()), "review"),
+            at(task("blocked", None, amber()), "blocked"),
+            at(task("ready", None, amber()), "ready"),
+            at(task("done", None, amber()), "done"),
+            at(task("cancelled", None, amber()), "cancelled"),
+            red(task("tests/main-red-1", None, amber())),
+            task("a/part", Some("a"), Vec::new()),
+            task(
+                "executed",
+                None,
+                vec![held("amber", "executor", Health::Live)],
+            ),
+            task(
+                "c",
+                None,
+                vec![held("cobalt", "orchestrator", Health::Live)],
+            ),
+        ];
+        assert_eq!(orchestrated(&tasks, "amber"), 4);
+        assert_eq!(orchestrated(&tasks, "cobalt"), 1);
+        assert_eq!(orchestrated(&tasks, "nobody"), 0);
+        assert!(!counted(&tasks[4]) && !counted(&tasks[5]) && !counted(&tasks[6]));
+        assert!(counted(&tasks[1]) && counted(&tasks[2]));
+        // A red finished is no more counted than one open.
+        assert!(!counted(&at(red(task("r", None, amber())), "done")));
+    }
+
+    #[test]
+    fn the_limit_says_nothing_under_it_and_names_the_setting_at_it_and_past_it() {
+        assert_eq!(at_limit("amber", 0, 1), None);
+        assert_eq!(at_limit("amber", 15, 16), None);
+        let at = at_limit("amber", 16, 16).unwrap();
+        assert_eq!(
+            at,
+            "amber orchestrates 16 open tasks, the limit of 16 an orchestrator holds ([limits] \
+             orchestrator_tasks): it gains none until one of them is done or cancelled or it lets \
+             one go"
+        );
+        assert!(
+            at_limit("amber", 66, 16)
+                .unwrap()
+                .starts_with("amber orchestrates 66 ")
+        );
+    }
+
+    #[test]
+    fn a_pool_within_the_limit_fills_none_past_it_and_gives_a_red_to_any_uncounted() {
+        let one =
+            |slug: &str, who: &str| task(slug, None, vec![held(who, "orchestrator", Health::Live)]);
+        let mut b = board(vec![
+            one("a1", "amber"),
+            one("a2", "amber"),
+            one("c1", "cobalt"),
+            // A red amber holds takes no place: amber is at 2, not 3.
+            red(one("r1", "amber")),
+        ]);
+        b.sessions = vec![
+            session("amber", "orchestrator", Health::Live),
+            session("cobalt", "orchestrator", Health::Live),
+        ];
+        let listening = BTreeSet::new();
+        let free = task("free", None, Vec::new());
+        let alarm = red(task("tests/main-red-2", None, Vec::new()));
+        // No limit set, as a pool opens: any count takes one.
+        let mut open = Pool::of(&b, &[], &listening, NOW);
+        assert_eq!(open.pick().as_deref(), Some("cobalt"));
+        assert_eq!(open.pick().as_deref(), Some("amber"));
+        assert_eq!(open.pick().as_deref(), Some("cobalt"));
+        // Within 2: amber is full, cobalt has one place, then nobody is under it.
+        let mut pool = Pool::of(&b, &[], &listening, NOW).within(2);
+        assert!(pool.any() && pool.takes(&free) && pool.takes(&alarm));
+        assert_eq!(pool.pick_for(&free).as_deref(), Some("cobalt"));
+        assert!(!pool.any());
+        assert!(!pool.takes(&free));
+        assert_eq!(pool.pick(), None);
+        assert_eq!(pool.pick_for(&free), None);
+        // A red still goes, to the one holding fewest, ties by handle, and is not counted.
+        assert!(pool.takes(&alarm));
+        assert_eq!(pool.pick_for(&alarm).as_deref(), Some("amber"));
+        assert_eq!(pool.pick_for(&alarm).as_deref(), Some("amber"));
+        // An orchestrator holding only a red stays, and holds none toward the limit.
+        let mut reds = board(vec![red(one("r1", "dune"))]);
+        reds.sessions = vec![session("dune", "orchestrator", Health::Live)];
+        let mut pool = Pool::of(&reds, &[], &listening, NOW).within(1);
+        assert!(pool.holds("dune"));
+        assert_eq!(pool.pick_for(&free).as_deref(), Some("dune"));
+        assert!(!pool.any());
+        // With nobody that stays, not even a red is taken.
+        let nobody = Pool::of(&board(Vec::new()), &[], &listening, NOW).within(1);
+        assert!(!nobody.takes(&alarm));
+    }
+
+    #[test]
+    fn a_give_is_due_only_while_one_under_the_limit_could_take_a_task_or_a_red_waits() {
+        let waiting_since = |mut t: Task| {
+            let board = BTreeMap::from([(WAITING.to_string(), Value::from(NOW))]);
+            t.fields.insert("_board".into(), board);
+            t
+        };
+        let mut b = board(vec![
+            task("a", None, vec![held("amber", "orchestrator", Health::Live)]),
+            waiting_since(task("free", None, Vec::new())),
+        ]);
+        b.sessions = vec![session("amber", "orchestrator", Health::Live)];
+        let listening = BTreeSet::new();
+        let tops = may_give(&b.tasks).unwrap();
+        // amber at its limit of 1 and the waiting task marked: a pass would write nothing.
+        let full = Pool::of(&b, &[], &listening, NOW).within(1);
+        assert!(!give_due(&b.tasks, &tops, &full));
+        // Under a limit of 2 it takes it.
+        let room = Pool::of(&b, &[], &listening, NOW).within(2);
+        assert!(give_due(&b.tasks, &tops, &room));
+        // A red waiting goes to amber full or not.
+        b.tasks[1] = red(waiting_since(task("tests/main-red-3", None, Vec::new())));
+        let tops = may_give(&b.tasks).unwrap();
+        assert!(give_due(&b.tasks, &tops, &full));
     }
 
     #[test]

@@ -859,11 +859,9 @@ fn a_report_counts_the_open_tasks_nobody_orchestrates_in_the_newest_board_read()
             "⚠ it is unwell".to_string(),
         ]
     );
-    // A defect, as `tasks status` reads the record: every open task has an orchestrator.
-    let defect = "2 open tasks no orchestrator holds, as of the newest board read: the next read of \
-                  the whole board gives each to an orchestrator that stays (live past its first \
-                  live line, and waiting, watching or holding a task), and it waits while none does";
-    assert_eq!(report.read_warnings(T0 + 1.0, |_| true), [defect]);
+    // No defect, as `tasks status` reads the record: each waits for an orchestrator under the limit
+    // on its open tasks that stays, a well state, counted and never warned of.
+    assert!(report.read_warnings(T0 + 1.0, |_| true).is_empty());
     assert!(
         report.warnings(T0 + 1.0).is_empty(),
         "the record's own warnings, which the server's pages show, stay its passes'"
@@ -887,14 +885,4 @@ fn a_report_counts_the_open_tasks_nobody_orchestrates_in_the_newest_board_read()
     let settled = recorder.report(T0 + 2.0);
     assert_eq!(settled.unowned, Some(0), "the newest board decides");
     assert!(settled.read_warnings(T0 + 2.0, |_| true).is_empty());
-    let mut one = settled;
-    one.unowned = Some(1);
-    assert_eq!(
-        one.read_warnings(T0 + 2.0, |_| true),
-        [
-            "1 open task no orchestrator holds, as of the newest board read: the next read of the \
-             whole board gives each to an orchestrator that stays (live past its first live line, \
-             and waiting, watching or holding a task), and it waits while none does"
-        ]
-    );
 }

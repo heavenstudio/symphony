@@ -21,8 +21,8 @@ pub(crate) use covered::covered_command;
 pub use covered::{COVERED, CoveredLine, covered_by, covered_line, landing};
 
 mod given;
-pub use given::Given;
 pub(super) use given::Pass;
+pub use given::{Filed, Given};
 
 mod moves;
 use moves::Moving;

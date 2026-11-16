@@ -364,12 +364,14 @@ impl Store {
             let held: Vec<String> = self.read(&read, json!({"actor": handle}))?;
             let mut pass = Pass::default();
             if !held.is_empty() {
+                let counted = self.slot_counters()?;
                 let (board, versions) = self.board_versions()?;
                 let mut pool = self.pool(&board, &[handle])?;
                 let gone = |_: &crate::Task, r: &crate::Role| r.handle == handle;
                 for top in orchestration::orphaned(&board.tasks, gone) {
-                    pass.give(&board, &versions, top, pool.pick(), &why, &[handle]);
+                    pass.give(&board, &versions, top, pool.pick_for(top), &why, &[handle]);
                 }
+                pass.guard(&counted);
             }
             let vars = self.acting(handle, (self.clock)(), json!({"held": held}));
             self.transact::<Value>(&body, pass.vars(handle, vars))

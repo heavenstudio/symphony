@@ -78,7 +78,7 @@ pub use stamp::TaskStamp;
 pub use unanswered::{LOOKUP_WAIT as UNANSWERED_WAIT, LOOKUP_WAIT_VAR as UNANSWERED_WAIT_VAR};
 pub use waits::{AssessmentReceipt, AssessmentState};
 pub use work::{
-    BEFORE_WORK, COVERED, CoveredLine, Given, Held, LANDS_FROM, Landed, NewTask, PIPELINE,
+    BEFORE_WORK, COVERED, CoveredLine, Filed, Given, Held, LANDS_FROM, Landed, NewTask, PIPELINE,
     PULLABLE, ROLES, RunPlace, STATUSES, Unfresh, approved, can_transition, covered_by,
     covered_line, landing,
 };
@@ -648,7 +648,9 @@ impl Store {
 
     /// As [`Store::rule`]; one that `starts` work ([`Opens`]) under a cap also reads what the cap
     /// decides on, in the same transaction as its task, as does a red's close ([`Store::ruled`]).
-    /// The cap is read once, so a project file changed meanwhile never splits one decision.
+    /// One that gives a session the orchestrator role ([`Change::gains`]) reads that session's open
+    /// tasks for the limit on them ([`Store::gaining`]). The cap and the limit are read once, so a
+    /// project file changed meanwhile never splits one decision.
     fn ruling(
         &self,
         slug: &str,
@@ -656,14 +658,19 @@ impl Store {
         starts: bool,
         decide: impl Fn(&View) -> Result<Change, Error>,
     ) -> Result<Task, Error> {
-        let cap = self.slots();
+        let limits = self.limits();
+        let cap = limits.orchestrator_slots;
         let which = if starts && cap.is_some() {
             Which::Starting(slug)
         } else {
             Which::Slug(slug)
         };
         self.retrying(|| {
-            let ruled = self.ruled(&which, slug, cap, &decide)?;
+            let mut ruled = self.ruled(&which, slug, cap, &decide)?;
+            if let Some((to, what)) = &ruled.change.gains {
+                let limit = limits.orchestrator_tasks;
+                self.gaining(to, what, limit, &mut ruled.slots)?;
+            }
             let (view, change) = (&ruled.view, &ruled.change);
             let version = view.snap.tasks.first().map_or(0, |t| t.version);
             let body = surreal::rule(
@@ -1038,6 +1045,10 @@ struct Change {
     reason: Option<String>,
     /// Work it starts, which takes a slot of an orchestrator's under the store's cap.
     opens: Option<Opens>,
+    /// The session it gives the orchestrator role on the task, held to the limit on the open tasks
+    /// an orchestrator holds the role on (`[limits] orchestrator_tasks`, [`Store::gaining`]), and
+    /// what a refusal says cannot happen.
+    gains: Option<(String, String)>,
     /// The task's needs it writes, the board's own field ([`crate::stamps::Needs`],
     /// [`Store::set_needs`]).
     needs: Option<Value>,

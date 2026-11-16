@@ -38,6 +38,7 @@ fn a_file_naming_no_limit_is_every_default_as_today() {
         let read = parsed(text);
         assert_eq!(read, Read::default(), "{text}");
         assert_eq!(read.limits.orchestrator_slots, None, "caps nothing");
+        assert_eq!(read.limits.orchestrator_tasks, 16);
         assert_eq!(read.limits.low_volume, 4);
         assert_eq!(read.limits.machine_agents, None, "limits no machine");
         assert_eq!(read.limits.alarm, Thresholds::default());
@@ -47,13 +48,14 @@ fn a_file_naming_no_limit_is_every_default_as_today() {
 #[test]
 fn each_limit_is_read_from_the_table_with_where_it_stands() {
     let read = parsed(
-        "[project]\nname = \"x\"\n\n[limits]\norchestrator_slots = 6\nlow_volume = 2\nmachine_agents = 12\n",
+        "[project]\nname = \"x\"\n\n[limits]\norchestrator_slots = 6\nlow_volume = 2\nmachine_agents = 12\norchestrator_tasks = 9\n",
     );
     assert_eq!(read.problems, Vec::<String>::new());
     assert_eq!(
         read.limits,
         Limits {
             orchestrator_slots: Some(6),
+            orchestrator_tasks: 9,
             low_volume: 2,
             machine_agents: Some(12),
             alarm: Thresholds::default(),
@@ -65,6 +67,7 @@ fn each_limit_is_read_from_the_table_with_where_it_stands() {
             (SLOTS, written("[limits] orchestrator_slots", 5)),
             (LOW, written("[limits] low_volume", 6)),
             (MACHINE_AGENTS, written("[limits] machine_agents", 7)),
+            (TASKS, written("[limits] orchestrator_tasks", 8)),
         ])
     );
     assert_eq!(
@@ -198,11 +201,54 @@ fn a_bad_value_is_said_with_its_line_and_takes_its_default_alone() {
             ),
             Limits::default(),
         ),
+        (
+            "[limits]\nlow_volume = 2\norchestrator_tasks = 0\n",
+            format!(
+                "{PATH}: [limits] orchestrator_tasks (line 3) is 0; an orchestrator holds at \
+                 least one task; it takes its default, 16"
+            ),
+            Limits {
+                low_volume: 2,
+                ..Limits::default()
+            },
+        ),
+        (
+            "[limits]\norchestrator_tasks = \"sixteen\"\n",
+            format!(
+                "{PATH}: [limits] orchestrator_tasks (line 2) is \"sixteen\"; not a whole number; \
+                 it takes its default, 16"
+            ),
+            Limits::default(),
+        ),
+        (
+            "[limits]\norchestrator_tasks = 12.5\n",
+            format!(
+                "{PATH}: [limits] orchestrator_tasks (line 2) is 12.5; not a whole number; it \
+                 takes its default, 16"
+            ),
+            Limits::default(),
+        ),
     ] {
         let read = parsed(text);
         assert_eq!(read.problems, vec![problem], "{text}");
         assert_eq!(read.limits, kept, "{text}");
     }
+}
+
+#[test]
+fn the_most_tasks_an_orchestrator_holds_is_read_from_limits_alone_down_to_one() {
+    let read = parsed("[limits]\norchestrator_tasks = 1\n");
+    assert_eq!(read.problems, Vec::<String>::new());
+    assert_eq!(read.limits.orchestrator_tasks, 1);
+    assert_eq!(
+        read.written[TASKS],
+        written("[limits] orchestrator_tasks", 2)
+    );
+    assert!(read.unknown.is_empty());
+    // Never read from `[board]`, where no build that knows the key looks: the default holds.
+    let board = parsed("[board]\norchestrator_tasks = 3\n");
+    assert_eq!(board.limits.orchestrator_tasks, ORCHESTRATOR_TASKS);
+    assert!(!board.written.contains_key(TASKS));
 }
 
 #[test]
