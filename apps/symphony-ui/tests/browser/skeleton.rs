@@ -708,9 +708,9 @@ fn a_task_before_its_read_draws_its_head_and_brief_cards_its_thread_and_its_comp
         return;
     };
     // The thread stands below a phone's first screen, so its cover lifts at once: its own
-    // mock-up is two messages' outlines and the composer's.
+    // mock-up is two messages' outlines and the composer's, each drawn as it nears the screen.
     let drawn = browser.wait_for(
-        "document.querySelector('main .ghost-head') !== null && document.querySelector('article.task .settle[data-settled=true]') !== null",
+        "document.querySelector('main .ghost-head') !== null && document.querySelector('article.task .settle[data-settled=true]') !== null && document.querySelector('article.task .ghost-composer') !== null",
         SHOWN,
     );
     // The real head's box and title, laid out beside the ghost as the page will draw them.
