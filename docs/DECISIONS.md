@@ -5,6 +5,22 @@ are at the top, and the page regroups itself every time one is answered. How car
 their dated history work is in [REVIEW](REVIEW.md).
 
 <!-- register:start -->
+## Needs your decision
+
+### The header
+
+- [ ] **phone-header-one-row** — On a phone the header would be one row instead of two: the mark and name, a menu button that names the page you are on (☰ Board), ◑ and the bell. The page links and Projects move into that menu, which opens under the button over the page, so nothing below it moves. The header goes from 97 px to 53 px tall, so every page starts 44 px higher. Wider than a phone nothing changes. It changes **header-on-a-phone**, which keeps every page in view on a second row. Approve, or comment. [[analysis/phone-header#The proposal]]
+  [2026-11-16 22:15] agent — Posted for the board task `app/phone-header-is-one-row`, from your words on its inbox item: "Navigation should also be made even smaller on mobile, possibly using hambúrguer menus".
+  [2026-11-16 22:15] agent — The board, then a document, light then dark. Each shows today, the one row, and the one row with its menu open: ![The board on a phone, light: today, one row, menu open](analysis/phone-header/board-light.webp) ![The board on a phone, dark: today, one row, menu open](analysis/phone-header/board-dark.webp) ![A document on a phone, light: today, one row, menu open](analysis/phone-header/doc-light.webp) ![A document on a phone, dark: today, one row, menu open](analysis/phone-header/doc-dark.webp)
+
+    **How the menu works.** A tap on the button, or Enter, opens it; Tab moves into it. Escape or a tap anywhere else closes it, and so does following a link. The page you are on is lit in it, as in today's row. Projects, which leaves this project for the list of all projects, is its first line.
+
+    **What it costs.** Changing page takes two taps instead of one. Activity loses its word on a phone and keeps its bell and its unread dot.
+
+    **Not pictured.** At 320 wide the row still fits with the name whole, where today the name is cut short. At desk width the header is the same, pixel for pixel. The server's own pages (the project list, a missing page) get the same menu. A theme with the compact header keeps its one scrolling row. The same board task builds it after your answer.
+
+    **Earlier verdicts checked.** **header-on-a-phone** chose two rows with every page in view; pages behind a button is another choice than the one it describes, so it is asked here and not recorded on it. **header-page-names** (the names and their order), **header-appearance** (the ◑ button) and **symphony-mark** (the fermata and its name) are kept as they are. None of them decides whether the pages go behind a menu.
+
 ## Auto-approved: spot-check
 
 ### Releases
