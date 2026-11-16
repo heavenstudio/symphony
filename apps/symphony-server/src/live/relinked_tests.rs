@@ -416,6 +416,9 @@ fn task(slug: &str, status: &str, links: &[&str]) -> symphony_api::Task {
     .unwrap()
 }
 
+/// A change made to a task.
+type Change = fn(&mut symphony_api::Task);
+
 #[test]
 fn a_board_relinks_only_when_a_task_comes_goes_or_moves_what_a_document_lists() {
     let board = vec![
@@ -423,7 +426,7 @@ fn a_board_relinks_only_when_a_task_comes_goes_or_moves_what_a_document_lists() 
         task("tools/b", "ready", &[]),
     ];
     assert!(!relinks(&board, &board.clone()), "the same board");
-    let moved: [(&str, fn(&mut symphony_api::Task), bool); 7] = [
+    let moved: [(&str, Change, bool); 7] = [
         ("its slug", |t| t.slug = "tools/c".into(), true),
         ("its title", |t| t.title = "Retitled".into(), true),
         ("its status", |t| t.status = "done".into(), true),

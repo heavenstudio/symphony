@@ -1311,7 +1311,7 @@ impl Hub {
     /// before may have read the board before `tasks`, and reads again ([`Page::renews_from`]).
     fn render_relinked(&self, tasks: &[symphony_api::Task]) -> BTreeMap<String, Vec<Rendered>> {
         let begun = self.reads.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        let listed: Vec<(String, Vec<(String, Vec<symphony_api::DocumentTask>)>)> = self
+        let listed: Vec<(String, Followed)> = self
             .pages
             .write()
             .unwrap_or_else(|e| e.into_inner())
@@ -1829,6 +1829,10 @@ fn tree_inputs(root: &Path) -> Vec<(String, RecursiveMode)> {
 /// A followed document rendered again ([`Hub::render_again`]): its path, the read it came from
 /// ([`Hub::reads`]) and what the render made of it.
 type Rendered = (String, u64, Result<symphony_api::Document, String>);
+
+/// The documents a page follows and is not holding as missing, each with the tasks its copy lists
+/// ([`Hub::render_relinked`]).
+type Followed = Vec<(String, Vec<symphony_api::DocumentTask>)>;
 
 /// Place each of `rendered` in `page`, unless a render begun after it placed its copy first, and
 /// add to `changes` what each changes on the page's open documents.
