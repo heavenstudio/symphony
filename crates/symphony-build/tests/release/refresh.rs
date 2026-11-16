@@ -591,6 +591,105 @@ fn a_lagging_writer_holds_every_board_and_current_until_it_is_rebuilt() {
 }
 
 #[test]
+fn what_cannot_be_judged_is_left_out_and_every_board_that_holds_the_release_is_named() {
+    let (fixture, _) = refreshing();
+    let plain = fixture.root.join("plain");
+    fs::create_dir_all(&plain).unwrap();
+    let gone = fixture.root.join("gone");
+    let fresh = a_project(&fixture, "fresh", &[]);
+    let alpha = a_project(&fixture, "alpha", &[]);
+    let beta = a_project(&fixture, "beta", &[]);
+    let gamma = a_project(&fixture, "gamma", &[]);
+    registered(
+        &fixture,
+        &[
+            ("a/b", &plain, &[]),
+            ("gone", &gone, &[]),
+            ("plain", &plain, &[]),
+            ("fresh", &fresh, &[]),
+            ("alpha", &alpha, &[]),
+            ("beta", &beta, &[]),
+            ("gamma", &gamma, &[]),
+        ],
+    );
+    // fresh's database runs and holds no board yet; alpha has two writers behind, beta one, and
+    // gamma's last was seen over a week ago.
+    Home::in_common(&fresh.join(".git"), Some(&super::board::surreal()))
+        .supervised(true)
+        .ensure()
+        .unwrap();
+    let (_, _, alpha_client) = board_at(&alpha, 18);
+    let gate = Path::new("/work/alpha/.target/debug/gate-review");
+    writes(&alpha_client, "gate-review", gate, 18);
+    board_at(&beta, 18);
+    let (gamma_board, _, gamma_client) = board_at(&gamma, 18);
+    aged(&gamma_client, 8.0 * DAY);
+    let builder = builder(&fixture, 19);
+    let surreal = super::board::surreal().to_string_lossy().into_owned();
+    let extra = [
+        (BUILDER, builder.as_str()),
+        ("SYMPHONY_SURREAL", surreal.as_str()),
+    ];
+
+    let (code, out, err) = fixture.release_with(NOW, &["--check", CHECK], &extra);
+    assert_eq!(code, 0, "{out}{err}");
+    for line in [
+        "left out: a/b: its id names no folder of its own".to_string(),
+        format!("left out: gone: its checkout {} is gone", gone.display()),
+        format!("left out: plain: {} is not a git checkout", plain.display()),
+        "fresh: its board is not made yet: nothing to move".to_string(),
+        "gamma: its board can move from schema 18 to 19, and stays at 18 while alpha, beta hold \
+         the release"
+            .to_string(),
+    ] {
+        assert!(
+            out.contains(&format!("release: refresh: {line}\n")),
+            "{line}\n{out}"
+        );
+    }
+    let host = symphony_board::sys::hostname();
+    assert!(
+        out.contains(&format!(
+            "release: refresh: alpha: the project's to finish: its board stays at schema 18: 2 \
+             writers seen there in the last week are behind {RELEASE}'s schema 19: "
+        )) && out.contains(&format!(
+            "gate-review at schema 18 ({} on {host}, last seen ",
+            gate.display()
+        )) && out.contains(&format!(
+            "release: refresh: beta: the project's to finish: its board stays at schema 18: a \
+             writer seen there in the last week is behind {RELEASE}'s schema 19: {}",
+            this_writer()
+        )),
+        "{out}"
+    );
+    assert!(
+        !out.contains("refresh-gone") && !out.contains("refresh-plain"),
+        "{out}"
+    );
+    assert_eq!(gamma_board.schema("tasks").unwrap(), Some(18));
+    assert_eq!(current(&fixture), None);
+    assert!(migrated(&fixture).is_empty());
+
+    // A registry that cannot be read is the refresh's own red: nothing judged, current as it was.
+    fs::write(machine(&fixture).join("projects.json"), "not a registry\n").unwrap();
+    let (code, out, err) = fixture.release_with(NOW + 120.0, &["--refresh"], &extra);
+    assert_eq!(code, 1, "{out}{err}");
+    assert!(
+        out.contains(
+            "release: refresh red (0 s): the machine's registry cannot be read, so no board moved \
+             and current is as it was (it names no release): "
+        ),
+        "{out}"
+    );
+    assert!(
+        out.contains("release: filed tests/release-red-refresh"),
+        "{out}"
+    );
+    assert!(fixture.reds()["tests/release-red-refresh"].red());
+    assert_eq!(current(&fixture), None);
+}
+
+#[test]
 fn a_project_naming_a_linked_plugin_holds_the_switch_the_release_installed_and_current_unpointed() {
     let (fixture, _) = refreshing();
     let shelf = a_project(&fixture, "shelf", &["shelf-plugin"]);
