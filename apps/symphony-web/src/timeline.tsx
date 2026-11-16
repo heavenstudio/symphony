@@ -3,10 +3,11 @@
 // its style sheet, which it puts in the page itself. It imports nothing of the box: it says each
 // draw's height through `onDrawn`, which the box keeps for the task's next visit.
 //
-// It reads `/api/task-timeline` when it mounts, again when the task changes (its `revision`) or
-// Try again is pressed, and each `every` seconds while the task is open and the page shown, asking
-// through `getIf` (request.ts) with its box's signal and the validator of the last answer, so an
-// unchanged timeline is a `304`. On a phone the box
+// Its answer is a part of the page (task-live.ts's `timelinePart`, in the page's store), asked as
+// the page mounts, so it is there, or on its way, when this chunk comes: the page reads it again
+// when the task changes and tries a failed read again by itself, and the timeline asks for it
+// again each `every` seconds while the task is open and the page shown, an unchanged timeline a
+// `304` that moves its clock on. On a phone the box
 // keeps the height the page gave it: the latest steps that fit show, a read that adds a step moves
 // nothing outside it, and "Show all" lets it grow. Wide (from 900 px, where the lanes replace the
 // list) it grows to hold every lane, with no "Show all".
@@ -18,14 +19,14 @@ import {
   type Ref,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
 import { Button } from "./button";
 import { sleep, whenShown } from "./feed";
-import { scoped } from "./project";
-import { Failure, getIf, said } from "./request";
-import { currentRoute } from "./route";
+import type { Shown as Answer } from "./parts";
+import { Failure, said } from "./request";
 import STYLE from "./timeline.css?inline";
 import {
   type Bar,
@@ -50,7 +51,7 @@ import {
   totals,
 } from "./timeline-layout";
 import { NOT_IN_TIME } from "./trouble";
-import { TASK_TIMELINE_PATH, type TaskTimeline } from "./wire";
+import type { TaskTimeline } from "./wire";
 import { fixed } from "./words";
 
 /** The id of the page's box the timeline is drawn in (timeline-slot.tsx's, not imported here). */
@@ -82,30 +83,6 @@ export function isWide(): boolean {
 
 // The reads.
 
-/** What the reads left: the last answer's validator, and the server's clock at it beside this
- * browser's (a `304` moves the one by the other). */
-export interface Kept {
-  tag: string | null;
-  at: [number, number];
-}
-
-/** What the host holds across its reads: what it shows and what the reads left. */
-export interface Held {
-  shown: Shown;
-  kept: Kept;
-}
-
-export const NOTHING_HELD: Held = { shown: null, kept: { tag: null, at: [0, 0] } };
-
-/** A read of the timeline: a new answer and its validator, the one kept (`304`), or why it failed. */
-export type Read = { fresh: TaskTimeline; tag: string | null } | { same: true } | { error: string };
-
-/** The address of `slug`'s timeline under the checkout its route names, as `getIf` asks it (under
- * the page's project). */
-export function timelineUrl(slug: string): string {
-  return scoped(currentRoute().scope, `${TASK_TIMELINE_PATH}?slug=${encodeURIComponent(slug)}`);
-}
-
 /**
  * A failed read in the timeline's own sentence's words, as the Dioxus timeline said them: the
  * server's of a refusal (its status where it gave none), the browser's of a fetch or a body that
@@ -116,71 +93,48 @@ export function readFailed(failure: unknown): string {
   return failure.text === NOT_IN_TIME ? NO_ANSWER : failure.own;
 }
 
-/**
- * `slug`'s timeline, asked through `getIf` with `tag`, the last answer's validator, when there is
- * one: a read that has no answer in ANSWER_MS fails, and one `signal` ends is given up on the wire.
- */
-export async function readOnce(
-  slug: string,
-  tag: string | null,
-  signal: AbortSignal,
-): Promise<Read> {
-  try {
-    const answer = await getIf(timelineUrl(slug), tag ?? "", signal);
-    if (answer.same) return { same: true };
-    const timeline = readTimeline(answer.value);
-    if (timeline === null) return { error: NOT_A_TIMELINE };
-    return { fresh: timeline, tag: answer.etag === "" ? null : answer.etag };
-  } catch (failure) {
-    return { error: readFailed(failure) };
-  }
+/** The answer the timeline last drew anew, and this browser's clock (ms) when it first did. */
+export interface Seen {
+  value: unknown;
+  at: number;
 }
 
 /**
- * What `held` becomes after `read`, at `clock` (this browser's, in ms): a new answer is shown and
- * kept; the one kept is shown again, its `now` moved on by this browser's clock since; a failure
- * is said only where no timeline is shown, which a failed read leaves as it is.
+ * What the timeline's place shows of its `part` at `clock` (this browser's, in ms): the answer,
+ * its `now` moved on by this browser's clock since it was first drawn (`seen`), as the server's
+ * own is not read again while nothing changed; why its read failed, only where no timeline is
+ * shown; nothing before either.
  */
-export function afterRead(held: Held, read: Read, clock: number): Held {
-  if ("fresh" in read) {
-    return {
-      shown: { timeline: read.fresh },
-      kept: { tag: read.tag, at: [read.fresh.now, clock] },
-    };
+export function shownOf(part: Answer<unknown>, seen: Seen | null, clock: number): Shown {
+  if (part.value === undefined) {
+    return part.error === null ? null : { error: readFailed(part.error) };
   }
-  const shown = held.shown;
-  const showing = shown !== null && "timeline" in shown;
-  if ("same" in read) {
-    if (!showing) return held;
-    const [now, then] = held.kept.at;
-    return {
-      ...held,
-      shown: { timeline: { ...shown.timeline, now: now + (clock - then) / 1000 } },
-    };
-  }
-  return showing ? held : { ...held, shown: { error: read.error } };
+  const timeline = readTimeline(part.value);
+  if (timeline === null) return { error: NOT_A_TIMELINE };
+  const since = seen !== null && seen.value === part.value ? (clock - seen.at) / 1000 : 0;
+  return { timeline: since > 0 ? { ...timeline, now: timeline.now + since } : timeline };
 }
 
 /**
- * Read `slug`'s timeline into `held` and say what it shows (`drawn`), and again after `nextRead`'s
- * seconds while the task is open (a minute after a failed read), waiting while the page is hidden
- * and reading once it shows again, until `signal` ends.
+ * Read the timeline again (`read`) after each of `every`'s seconds while it gives some (the task
+ * is open), waiting while the page is hidden and reading once it shows again, and say this
+ * browser's clock after each read (`drawn`), until `signal` ends.
  */
-export async function follow(
-  slug: string,
+export async function readAgain(
+  every: () => number | null,
+  read: () => Promise<unknown>,
+  drawn: (clock: number) => void,
   signal: AbortSignal,
-  held: { current: Held },
-  drawn: (shown: Shown) => void,
 ): Promise<void> {
   while (!signal.aborted) {
-    const read = await readOnce(slug, held.current.kept.tag, signal);
-    if (signal.aborted) return;
-    held.current = afterRead(held.current, read, Date.now());
-    drawn(held.current.shown);
-    const every = nextRead(held.current.shown);
-    if (every === null) return;
-    await sleep(Math.min(every * 1000, LONGEST_WAIT), signal);
+    const seconds = every();
+    if (seconds === null) return;
+    await sleep(Math.min(seconds * 1000, LONGEST_WAIT), signal);
     await whenShown(signal);
+    if (signal.aborted) return;
+    await read();
+    if (signal.aborted) return;
+    drawn(Date.now());
   }
 }
 
@@ -666,32 +620,46 @@ export function TimelineView({ timeline, onDrawn }: ViewProps): JSX.Element {
 
 export interface HostProps {
   slug: string;
-  /** The task's `updated`: a change reads the timeline again at once. */
-  revision: number;
+  /** The timeline's part as the page's store shows it: the server's answer as it came. */
+  part: Answer<unknown>;
+  /** Asks the page's store to read the part again. */
+  read: () => Promise<unknown>;
   /** Told each draw's natural height at its width, for the task's next visit. */
   onDrawn?: (wide: boolean, natural: number) => void;
 }
 
 /**
- * The timeline of `slug`: read when it mounts, again whenever the task changes (`revision`) or
- * Try again is pressed, and each `every` seconds while the task is open and the page shown. A read
- * that fails after one that did not leaves the one shown. Before its first answer it draws
- * nothing: the box's placeholder shows.
+ * The timeline of `slug`, drawn from its `part`: read again (`read`) each `every` seconds while
+ * the task is open and the page shown, and when Try again is pressed. A read that fails after one
+ * that did not leaves the one shown. Before its first answer it draws nothing: the box's
+ * placeholder shows.
  */
-export function TimelineHost({ slug, revision, onDrawn }: HostProps): JSX.Element | null {
-  const [shown, setShown] = useState<Shown>(null);
-  const [tries, setTries] = useState(0);
-  const held = useRef<Held>(NOTHING_HELD);
+export function TimelineHost({ slug, part, read, onDrawn }: HostProps): JSX.Element | null {
+  const seen = useRef<Seen | null>(null);
+  const [clock, setClock] = useState(0);
+  if (part.value !== undefined && seen.current?.value !== part.value) {
+    seen.current = { value: part.value, at: Date.now() };
+  }
+  // biome-ignore lint/correctness/useExhaustiveDependencies: drawn again for a new answer, a failure or a moved clock, whatever else the part says
+  const shown = useMemo(() => shownOf(part, seen.current, clock), [part.value, part.error, clock]);
+  const every = nextRead(shown);
+  const asked = useRef(read);
+  asked.current = read;
   useLayoutEffect(putStyle, []);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: each revision and each Try again starts the reads afresh
+  // biome-ignore lint/correctness/useExhaustiveDependencies: each task starts its reads afresh
   useEffect(() => {
     const reading = new AbortController();
-    void follow(slug, reading.signal, held, setShown);
+    void readAgain(
+      () => every,
+      () => asked.current(),
+      setClock,
+      reading.signal,
+    );
     return () => reading.abort();
-  }, [slug, revision, tries]);
+  }, [slug, every]);
   if (shown === null) return null;
   if ("error" in shown) {
-    return <TimelineFailed error={shown.error} retry={() => setTries((count) => count + 1)} />;
+    return <TimelineFailed error={shown.error} retry={() => void asked.current()} />;
   }
   return <TimelineView timeline={shown.timeline} onDrawn={onDrawn} />;
 }

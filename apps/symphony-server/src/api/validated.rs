@@ -102,7 +102,7 @@ pub(super) fn without_now(value: &mut serde_json::Value) -> String {
 /// Whether `response` is a JSON read: a `200` the server built as JSON and answered `no-store`
 /// with no validator of its own. A file the client or media routes serve carries its own, an
 /// error is never a read to keep, and the feed's stream is not JSON.
-fn is_json_read(response: &Response) -> bool {
+pub(super) fn is_json_read(response: &Response) -> bool {
     let headers = response.headers();
     response.status() == StatusCode::OK
         && !headers.contains_key(header::ETAG)

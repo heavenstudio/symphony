@@ -2,8 +2,9 @@ import type { ReactElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { drawn, FRESH } from "./cache";
+import { Parts, PartsContext, type Shown } from "./parts";
 import { STALE } from "./shared";
-import { LiveTask } from "./task-live";
+import { LiveTask, offerPart, type TaskEvent, type Thread } from "./task-live";
 import {
   Brief,
   type BriefRead,
@@ -12,8 +13,8 @@ import {
   briefOf,
   Composer,
   GhostBrief,
+  GhostComposer,
   GhostHead,
-  GhostTask,
   GhostThread,
   LiveTaskPage,
   NOTHING_READ,
@@ -25,8 +26,7 @@ import {
   TaskMessage,
   TaskPageView,
 } from "./task-page";
-import { aRole, aTask, memoryStorage } from "./testing";
-import { NOT_IN_TIME } from "./trouble";
+import { aRole, aTask, memoryStorage, reply } from "./testing";
 import type { Block, TaskBrief, TaskEntry, TaskPage } from "./wire";
 import { CHECKING } from "./words";
 import { NO_WORK } from "./work";
@@ -75,33 +75,95 @@ function aPage(
   };
 }
 
+/** A thread's part answered with `entries`, earlier ones before `before`. */
+const threadOf = (entries: TaskEntry[] = [], before: number | null = null): Shown<Thread> => ({
+  value: { entries, before, gap: null },
+  stale: false,
+  error: null,
+  missing: false,
+  answered: true,
+});
+/** A thread's part before any answer. */
+const NO_THREAD: Shown<Thread> = {
+  value: undefined,
+  stale: false,
+  error: null,
+  missing: false,
+  answered: false,
+};
+
 /**
- * A task's page as its read stands, `props` saying otherwise, under an address naming `region`: the
+ * A task's page as its parts stand, `props` saying otherwise, under an address naming `region`: the
  * part drawn whole, as a link to it draws it at once, when the parts below the screen wait for it.
+ * `parts` is the page's store, for the parts its components name themselves.
  */
-function detail(props: Partial<TaskDetailProps> = {}, region = "") {
+function detail(
+  props: Partial<TaskDetailProps> = {},
+  region = "",
+  parts: Parts<TaskEvent> | null = null,
+) {
   vi.stubGlobal("location", { hash: region === "" ? "" : `#${region}-fixture/task` });
-  const page = props.page ?? aPage();
+  const page = props.page === undefined ? aPage() : props.page;
   return html(
-    <TaskDetail
-      page={page}
-      scope=""
-      work={NO_WORK}
-      connected
-      tasks={[]}
-      entries={[]}
-      older={false}
-      loaded
-      offer={null}
-      failed={false}
-      nudged={0}
-      onHistory={() => {}}
-      onChildren={() => {}}
-      onOffer={() => {}}
-      {...props}
-    />,
+    <PartsContext.Provider value={parts}>
+      <TaskDetail
+        slug="fixture/task"
+        scope=""
+        pageFailed=""
+        connected
+        thread={threadOf()}
+        failed={false}
+        onRetry={() => {}}
+        onHistory={() => {}}
+        onChildren={() => {}}
+        {...props}
+        page={page}
+      />
+    </PartsContext.Provider>,
   );
 }
+
+type Route = (url: string) => Response;
+
+/** A server that answers each read as `route` does, and what it was asked. */
+function serving(route: Route): string[] {
+  const asked: string[] = [];
+  vi.stubGlobal("fetch", async (url: string) => {
+    asked.push(url);
+    return route(url);
+  });
+  vi.stubGlobal("symphonyCache", undefined);
+  return asked;
+}
+
+const HOST = { redraw: () => {}, freshness: () => {}, stale: () => {} };
+
+/** The live task `slug` over a server that answers as `route` does, its page and its thread
+ * opened and each answered or failed. */
+async function opened(route: Route, slug = "fixture/task") {
+  serving(route);
+  const mount = new AbortController();
+  const task = new LiveTask("", slug, HOST, mount.signal);
+  task.open();
+  await vi.waitFor(() => {
+    for (const part of [task.pagePart, task.threadPart]) {
+      const shown = task.parts.shown(part as typeof task.pagePart);
+      expect(shown.answered || shown.error !== null).toBe(true);
+    }
+  });
+  mount.abort();
+  return task;
+}
+
+/** A server with the page `page` of the fixture's task and an empty thread. */
+const withPage =
+  (page: TaskPage = aPage()): Route =>
+  (url) =>
+    url.startsWith("/api/task-page")
+      ? reply(200, page, '"p"')
+      : url.startsWith("/api/task-history")
+        ? reply(200, { entries: [], before: null, after: null }, '"t"')
+        : reply(404, { error: "none" });
 
 const STATUSES = [
   "backlog",
@@ -243,7 +305,7 @@ describe("a message of a task's thread", () => {
 describe("a task's page", () => {
   it("is one list whose items are the thread's messages", () => {
     const drawn = detail(
-      { entries: [anEntry(1, "owner"), anEntry(2, "cobalt-otter")] },
+      { thread: threadOf([anEntry(1, "owner"), anEntry(2, "cobalt-otter")]) },
       "thread-region",
     );
     expect(drawn.split('class="history"')).toHaveLength(2);
@@ -281,31 +343,126 @@ describe("a task's page", () => {
     const counted = aPage(undefined, { children_count: 2 });
     expect(detail({ page: counted }, "subtasks")).toContain(">Load subtasks</button>");
     const child = aTask("fixture/task/1", { title: "First", status: "done" });
-    const more = detail({ page: counted, tasks: [child] }, "subtasks");
+    const more = detail({ page: { ...counted, children: [child] } }, "subtasks");
     expect(more).toContain(">Load more subtasks</button>");
     expect(more).toContain('id="child-fixture/task/1"');
-    const all = detail({ page: counted, tasks: [child, aTask("fixture/task/2")] }, "subtasks");
+    const all = detail(
+      { page: { ...counted, children: [child, aTask("fixture/task/2")] } },
+      "subtasks",
+    );
     expect(all).not.toContain("Load more subtasks");
     expect(all).not.toContain(">Load subtasks</button>");
     expect(all).toContain('<span class="count">2</span>');
   });
 
   it("offers earlier messages and, before the thread is read, its loading", () => {
-    const waiting = detail({ older: true, loaded: false }, "thread-region");
-    expect(waiting).toContain(">Load earlier messages</button>");
+    const waiting = detail({ thread: NO_THREAD }, "thread-region");
+    expect(waiting).not.toContain("Load earlier messages");
     expect(waiting).toContain(">Load messages</button>");
     expect(waiting).toContain('<div id="task-thread" data-pending="true">');
+    expect(detail({ thread: threadOf([anEntry(4, "owner")], 3) }, "thread-region")).toContain(
+      ">Load earlier messages</button>",
+    );
     const read = detail({}, "thread-region");
     expect(read).toContain('<div id="task-thread" data-pending="false">');
     expect(read).not.toContain("Load earlier messages");
     expect(read).not.toContain(">Load messages</button>");
   });
 
-  it("offers the landing only for the revision it was offered for", () => {
+  it("offers the landing its own part holds, while that has a payload to post", async () => {
     const offer = { action: "land", label: "Land it", branch: "perf/x", payload: "{}" };
-    const page = aPage(aTask("fixture/task", { updated: 5 }));
-    expect(detail({ page, offer: [offer, 5] }, "composer")).toContain("✓ Land it");
-    expect(detail({ page, offer: [offer, 4] }, "composer")).not.toContain("Land it");
+    let answer: unknown = offer;
+    const asked = serving(() => reply(200, answer));
+    const mount = new AbortController();
+    const parts = new Parts<TaskEvent>(mount.signal);
+    const part = offerPart("", "fixture/task");
+    // None before its answer, nor outside a page's store.
+    expect(detail({}, "composer", parts)).not.toContain("Land it");
+    parts.open(part);
+    await vi.waitFor(() => expect(parts.shown(part).answered).toBe(true));
+    expect(asked).toEqual(["/api/task-offer?slug=fixture%2Ftask"]);
+    expect(detail({}, "composer", parts)).toContain("✓ Land it");
+    expect(detail({}, "composer")).not.toContain("Land it");
+    answer = { ...offer, payload: null };
+    await parts.read(part);
+    expect(detail({}, "composer", parts)).not.toContain("Land it");
+    mount.abort();
+  });
+});
+
+describe("a task's page before its parts answer", () => {
+  it("draws each part's mock-up in the page's own frame, and the parts that came as they are", () => {
+    const waiting = detail({ page: null, thread: NO_THREAD }, "thread-region");
+    expect(waiting).toContain('<article class="task" data-slug="fixture/task" aria-busy="true">');
+    // Said once that the task loads; each part is its own outline.
+    expect(waiting.split("Loading task…")).toHaveLength(2);
+    expect(waiting).toContain('class="card ghost-head"');
+    expect(waiting).toContain('data-gates="reading"');
+    expect(waiting).toContain('id="timeline-slot"');
+    expect(waiting).toContain('class="card ghost-brief"');
+    expect(waiting).toContain('<div id="task-thread" data-pending="true">');
+    expect(waiting).toContain('class="ghost-history"');
+    expect(waiting).not.toContain('id="task-send"');
+    // In the order the page draws them, so a part that comes moves none of the others.
+    const order = [
+      "ghost-head",
+      "task-gates-slot",
+      'id="timeline"',
+      "ghost-brief",
+      "<h2>Thread</h2>",
+    ];
+    expect(order.map((part) => waiting.indexOf(part))).toEqual(
+      order.map((part) => waiting.indexOf(part)).sort((a, b) => a - b),
+    );
+  });
+
+  it("draws the thread that came under the head's and the brief's mock-ups", () => {
+    const drawn = detail({ page: null, thread: threadOf([anEntry(1, "owner")]) }, "thread-region");
+    expect(drawn).toContain('class="card ghost-head"');
+    expect(drawn).toContain('id="message-1"');
+    expect(drawn).toContain('<div id="task-thread" data-pending="false">');
+    expect(drawn).not.toContain(">Load messages</button>");
+  });
+
+  it("draws the head and the brief that came over the thread's mock-up", () => {
+    const drawn = detail({ thread: NO_THREAD }, "thread-region");
+    expect(drawn).toContain('<article class="task" data-slug="fixture/task">');
+    expect(drawn).toContain('class="task-head card"');
+    expect(drawn).toContain('class="task-body card"');
+    expect(drawn).not.toContain("ghost-head");
+    expect(drawn).toContain('class="ghost-history"');
+  });
+
+  it("holds the composer's place until the page's roles are there", () => {
+    const waiting = detail({ page: null }, "composer");
+    expect(waiting).toContain('class="ghost-composer"');
+    expect(waiting).not.toContain('id="task-send"');
+    expect(detail({}, "composer")).toContain('id="task-send"');
+    expect(html(<GhostComposer />)).toContain('class="ghost-field ghost-textarea"');
+  });
+
+  it("says why the page's read failed in the head's place, the other parts still drawn", () => {
+    const retry = vi.fn();
+    const failed = detail(
+      {
+        page: null,
+        pageFailed: "The server answered 500",
+        failed: true,
+        thread: threadOf([anEntry(1, "owner")]),
+        onRetry: retry,
+      },
+      "thread-region",
+    );
+    expect(failed).toContain("The task could not be loaded");
+    expect(failed).toContain("<p>The server answered 500. Trying again…</p>");
+    expect(failed).toContain(">Retry</button>");
+    expect(failed).not.toContain("Loading task…");
+    expect(failed).not.toContain("ghost-head");
+    expect(failed).not.toContain("ghost-brief");
+    // The thread, the gates' outline and the timeline's box stand as their own reads do.
+    expect(failed).toContain('id="message-1"');
+    expect(failed).toContain('data-gates="reading"');
+    expect(failed).toContain('id="timeline-slot"');
   });
 });
 
@@ -448,91 +605,101 @@ describe("a task's ghost", () => {
     expect(briefBars(138)).toEqual([4, 1]);
   });
 
-  it("says once that the task loads, the thread's own ghost silent", () => {
-    const drawn = html(<GhostTask slug="fixture/task" />);
-    expect(drawn).toContain("Loading task…");
-    // The gates' outline is hidden from what is read out, its own status with it.
-    expect(drawn).toMatch(
-      /<div aria-hidden="true"><section class="task-gates card" data-gates="reading"[\s\S]*Reading the gates…/,
-    );
-    expect(drawn).not.toContain("Loading the thread…");
-    expect(drawn).toContain('<div aria-busy="true">');
-    expect(drawn).toContain('class="ghost-tl"');
-    expect(html(<GhostThread />)).toContain("Loading the thread…");
-    expect(html(<GhostThread announce={false} />)).not.toContain("Loading the thread…");
+  it("says the thread loads over its messages' and its composer's outlines", () => {
+    const drawn = html(<GhostThread />);
+    expect(drawn).toContain("Loading the thread…");
+    expect(drawn.split('class="ghost-entry"')).toHaveLength(4);
+    expect(drawn).toContain('class="ghost-composer"');
   });
 });
 
-describe("the route's task as its read stands", () => {
-  const host = { redraw: () => {}, freshness: () => {}, stale: () => {} };
+describe("the route's task as its parts stand", () => {
   const live = (slug = "fixture/task") =>
-    new LiveTask("", slug, host, new AbortController().signal);
+    new LiveTask("", slug, HOST, new AbortController().signal);
 
-  it("is the task once its page is read", () => {
-    const task = live();
-    task.d.page = aPage();
+  it("is the task once its page is read", async () => {
+    const task = await opened(withPage());
     const drawn = html(<LiveTaskPage live={task} connected />);
     expect(drawn).toContain('<div class="task-page" data-ready="task">');
-    expect(drawn).toContain('<article class="task"');
+    expect(drawn).toContain('<article class="task" data-slug="fixture/task">');
+    expect(drawn).toContain('class="task-head card"');
   });
 
-  it("is its ghost while another task's page is shown", () => {
-    const task = live("fixture/other");
-    task.d.page = aPage();
-    const drawn = html(<LiveTaskPage live={task} connected />);
+  it("is its parts' mock-ups before any read answers", () => {
+    const drawn = html(<LiveTaskPage live={live()} connected />);
+    expect(drawn).toContain('<div class="task-page" data-ready="loading">');
+    expect(drawn).toContain('<article class="task" data-slug="fixture/task" aria-busy="true">');
     expect(drawn).toContain("Loading task…");
-    expect(drawn).not.toContain("<article");
+    expect(drawn).toContain("ghost-head");
   });
 
-  it("says no task has its name, or why it could not be read", () => {
-    const missing = live();
-    missing.d.missing = "fixture/task";
+  it("says no task has its name, or why it could not be read", async () => {
+    const missing = await opened(() => reply(404, { error: "no such task" }));
     const none = html(<LiveTaskPage live={missing} connected />);
     expect(none).toContain("No task fixture/task");
     expect(none).toContain('href="/tasks"');
+    expect(none).not.toContain("<article");
     // The server has no such task: nothing is tried again, nor said to be.
     expect(none).not.toContain("Trying again");
-    const failing = live();
-    failing.d.error = "The server answered 500";
+    const failing = await opened((url) =>
+      url.startsWith("/api/task-page") ? reply(500, {}) : withPage()(url),
+    );
     const failed = html(<LiveTaskPage live={failing} connected />);
+    expect(failed).toContain('data-ready="failed"');
     expect(failed).toContain("The task could not be loaded");
     // The page reads it again by itself, and says so, the Retry kept.
     expect(failed).toContain("<p>The server answered 500. Trying again…</p>");
     expect(failed).toContain(">Retry</button>");
-    // A read with no answer in time says so in a read's words, never a write's.
-    failing.d.error = NOT_IN_TIME;
-    const late = html(<LiveTaskPage live={failing} connected />);
-    expect(late).toContain("<p>The server did not answer in time. Trying again…</p>");
-    expect(late).not.toContain("sending");
+    expect(failed).not.toContain("sending");
   });
 
-  it("under the board's notices, waits for the board, or says it could not be read", () => {
+  it("draws the page that came though the thread's read fails", async () => {
+    const task = await opened((url) =>
+      url.startsWith("/api/task-history") ? reply(500, {}) : withPage()(url),
+    );
+    const drawn = html(<LiveTaskPage live={task} connected />);
+    expect(drawn).toContain('data-ready="task"');
+    expect(drawn).toContain('class="task-head card"');
+    expect(drawn).not.toContain("The task could not be loaded");
+  });
+
+  it("under the board's notices, waits for its start, or says the board could not be read", () => {
     const waiting = html(<TaskPageView live={null} stale={false} freshness={FRESH} />);
     expect(waiting).toContain("Loading the board…");
     expect(waiting).toContain('data-feed="live"');
     const task = live();
     task.trouble = "The server answered 503";
     const trouble = html(<TaskPageView live={task} stale freshness={FRESH} />);
+    expect(trouble).toContain('data-ready="failed"');
     expect(trouble).toContain("The board could not be loaded");
     expect(trouble).toContain("<p>The server answered 503. Trying again…</p>");
     expect(trouble).toContain('data-feed="stale"');
   });
 
-  it("draws the task once the board is read or a copy from this device is", () => {
-    const task = live();
-    task.d.page = aPage();
+  it("draws the task's parts before the board is read, and the task whatever the board does", async () => {
+    // Started, nothing read yet: each part's mock-up, behind no read of the board's.
+    const started = html(<TaskPageView live={live()} stale={false} freshness={FRESH} />);
+    expect(started).toContain('data-ready="loading"');
+    expect(started).toContain("Loading task…");
+    expect(started).not.toContain("Loading the board…");
+    const task = await opened(withPage());
     const device = html(
       <TaskPageView live={task} stale={false} freshness={drawn(FRESH, "page", 5)} />,
     );
     expect(device).toContain('data-ready="board"');
     expect(device).toContain('data-cache="device"');
     expect(device).toContain('data-feed="stale"');
-    expect(device).toContain("<article");
+    expect(device).toContain('class="task-head card"');
+    // A board that cannot be read is said by the notices once the task is drawn, never in its place.
+    task.trouble = "The server answered 503";
+    const troubled = html(<TaskPageView live={task} stale freshness={FRESH} />);
+    expect(troubled).not.toContain("The board could not be loaded");
+    expect(troubled).toContain('class="task-head card"');
     const shown = live();
     shown.boardShown = true;
-    expect(html(<TaskPageView live={shown} stale={false} freshness={FRESH} />)).toContain(
-      "Loading task…",
-    );
+    const boarded = html(<TaskPageView live={shown} stale={false} freshness={FRESH} />);
+    expect(boarded).toContain('data-ready="board"');
+    expect(boarded).toContain("Loading task…");
   });
 });
 

@@ -7,9 +7,19 @@
 // drawn last. On a phone the box keeps that height when a read adds a step to it; wide it grows to
 // hold the whole timeline. Its style is timeline-slot.css, which the task page's kind imports.
 
-import { type ComponentType, type CSSProperties, type JSX, useEffect, useState } from "react";
+import {
+  type ComponentType,
+  type CSSProperties,
+  type JSX,
+  useCallback,
+  useContext,
+  useEffect,
+  useState,
+} from "react";
+import { PartsContext, usePart } from "./parts";
 import { snapshot } from "./shared";
 import { load, save } from "./storage";
+import { timelinePart } from "./task-live";
 import type { HostProps } from "./timeline";
 import { useVisibility } from "./viewport";
 
@@ -183,9 +193,9 @@ export function whenImported(told: (host: Host) => void): () => void {
 }
 
 /** The task's timeline box, one per task: another task's page gets a new one, so its height holds
- * for the visit. */
-export function TimelineSlot({ slug, revision }: { slug: string; revision: number }): JSX.Element {
-  return <SlotBox key={slug} slug={slug} revision={revision} />;
+ * for the visit. `scope` is the checkout the route names. */
+export function TimelineSlot({ slug, scope }: { slug: string; scope: string }): JSX.Element {
+  return <SlotBox key={slug} slug={slug} scope={scope} />;
 }
 
 /** The box's two heights, for its style sheet to take the one its width draws. */
@@ -194,14 +204,20 @@ export function boxStyle(narrow: number, wide: number): CSSProperties {
 }
 
 /**
- * The box of the task `slug`: its placeholder rows until the timeline draws, the timeline's chunk
- * imported once the box nears the screen, and the timeline of the task at `revision` (its
- * `updated`) drawn in it, read again when the task changes.
+ * The box of the task `slug`: its placeholder rows until the timeline draws; the timeline's answer,
+ * a part of the page asked as the box mounts (task-live.ts's `timelinePart`); the timeline's chunk,
+ * imported once the box nears the screen; and the timeline drawn in it from that answer.
  */
-function SlotBox({ slug, revision }: { slug: string; revision: number }) {
+function SlotBox({ slug, scope }: { slug: string; scope: string }) {
   const [[narrow, wide]] = useState(() => reserved(slug));
   const [shown, watch] = useVisibility(false);
   const [Timeline, setTimeline] = useState<Host | null>(loadedHost);
+  const part = timelinePart(scope, slug);
+  const parts = useContext(PartsContext);
+  const answer = usePart(part);
+  const { key } = part;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: a part is its key
+  const read = useCallback(() => parts?.read(part) ?? Promise.resolve(), [parts, key]);
   useEffect(() => {
     if (!shown || Timeline !== null) return;
     return whenImported((chunk) => setTimeline(() => chunk));
@@ -236,7 +252,8 @@ function SlotBox({ slug, revision }: { slug: string; revision: number }) {
           <div id="timeline-root">
             <Timeline
               slug={slug}
-              revision={revision}
+              part={answer}
+              read={read}
               onDrawn={(wideDraw, natural) => keep(slug, wideDraw, natural)}
             />
           </div>

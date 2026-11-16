@@ -3,29 +3,26 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import FIXTURE from "../../../crates/symphony-api/fixtures/task-timeline.json";
 import { whenShown } from "./feed";
+import type { Shown } from "./parts";
 import { Failure, NO_ANSWER as POST_UNANSWERED } from "./request";
 import {
-  afterRead,
   drawnClass,
-  follow,
-  type Held,
   isWide,
   measured,
   NO_ANSWER,
   NOT_A_TIMELINE,
-  NOTHING_HELD,
   putStyle,
+  readAgain,
   readFailed,
-  readOnce,
   type Stops,
   settle,
+  shownOf,
   stopFor,
   stopsOf,
   TimelineDrawn,
   TimelineFailed,
   TimelineHost,
   TimelineView,
-  timelineUrl,
   watchCrossings,
 } from "./timeline";
 import { lanes, readTimeline, stops } from "./timeline-layout";
@@ -115,33 +112,19 @@ function aPage(hidden = false) {
   return page;
 }
 
-/** One request the stubbed server holds, and how it is answered or refused. */
-interface Asked {
-  url: string;
-  init: RequestInit;
-  answer: (response: Response) => void;
-  refuse: (error: unknown) => void;
-}
-
-function aServer(): Asked[] {
-  const asked: Asked[] = [];
-  vi.stubGlobal(
-    "fetch",
-    (url: string, init: RequestInit) =>
-      new Promise<Response>((answer, refuse) => asked.push({ url, init, answer, refuse })),
-  );
-  return asked;
-}
-
-/** A response of `status` whose body reads as `body` (or fails with it, an error), tagged `tag`. */
-function reply(status: number, body: unknown, tag?: string): Response {
-  return {
-    status,
-    ok: status >= 200 && status < 300,
-    headers: new Headers(tag === undefined ? {} : { ETag: tag }),
-    json: () => (body instanceof Error ? Promise.reject(body) : Promise.resolve(body)),
-  } as unknown as Response;
-}
+/** The timeline's part before its page's store has anything of it. */
+const NOTHING: Shown<unknown> = {
+  value: undefined,
+  stale: false,
+  error: null,
+  missing: false,
+  answered: false,
+};
+/** The part answered with `value`, the server's JSON as it came. */
+const answered = (value: unknown): Shown<unknown> => ({ ...NOTHING, value, answered: true });
+/** The fixture as the server sends it: JSON the chunk reads as it draws. */
+const sent = () => JSON.parse(JSON.stringify(FIXTURE)) as unknown;
+const noRead = () => Promise.resolve();
 
 const flush = () => vi.advanceTimersByTimeAsync(0);
 
@@ -345,13 +328,15 @@ describe("the timeline drawn", () => {
 
 describe("the timeline's host", () => {
   it("before its first answer draws nothing, and the page's placeholder shows", () => {
-    const drawn = renderToStaticMarkup(<TimelineHost slug="tools/new" revision={1} />);
+    const drawn = renderToStaticMarkup(
+      <TimelineHost slug="tools/new" part={NOTHING} read={noRead} />,
+    );
     expect(drawn).not.toContain("tl-drawn");
     expect(drawn).not.toContain("Reading");
     expect(drawn).toBe("");
   });
 
-  it("puts its style in the page, reads when it mounts and gives the read up when it leaves", () => {
+  it("puts its style in the page, and asks for nothing by itself before its answer", async () => {
     const page = aPage();
     const appended: { id: string; textContent: string }[] = [];
     Object.assign(page, {
@@ -364,35 +349,66 @@ describe("the timeline's host", () => {
           before === null && appended.push(element),
       },
     });
-    const asked = aServer();
-    renderToStaticMarkup(<TimelineHost slug="tools/new" revision={1} />);
+    const read = vi.fn(noRead);
+    renderToStaticMarkup(<TimelineHost slug="tools/new" part={NOTHING} read={read} />);
     expect([react.layouts.length, react.effects.length]).toEqual([1, 1]);
     react.layouts[0]?.();
     expect(appended.map((element) => element.id)).toEqual(["timeline-style"]);
+    // The page's store reads the part; the host only asks again once a timeline says how often.
     const leave = react.effects[0]?.();
-    expect(asked.map((one) => one.url)).toEqual(["/api/task-timeline?slug=tools%2Fnew"]);
-    expect(asked[0]?.init.signal?.aborted).toBe(false);
+    await Promise.resolve();
+    expect(read).not.toHaveBeenCalled();
     leave?.();
-    expect(asked[0]?.init.signal?.aborted).toBe(true);
   });
 
-  it("draws what its reads show: a failure with its Try again, else the timeline", () => {
-    react.states.push({ error: "Board snapshot unavailable. " });
-    expect(renderToStaticMarkup(<TimelineHost slug="tools/x" revision={1} />)).toBe(
+  it("asks for its part again each `every` seconds of an open task, until it leaves", async () => {
+    vi.useFakeTimers();
+    aPage();
+    const read = vi.fn(noRead);
+    const open = { ...(sent() as object), every: 45, closed: null };
+    renderToStaticMarkup(<TimelineHost slug="tools/x" part={answered(open)} read={read} />);
+    // The host's effect, before its view's.
+    const leave = react.effects[0]?.();
+    await vi.advanceTimersByTimeAsync(44_999);
+    expect(read).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(read).toHaveBeenCalledTimes(1);
+    leave?.();
+    await vi.advanceTimersByTimeAsync(450_000);
+    expect(read).toHaveBeenCalledTimes(1);
+  });
+
+  it("draws what its part shows: a failure with its Try again, else the timeline", () => {
+    const failed = { ...NOTHING, error: new TypeError("Board snapshot unavailable. ") };
+    expect(renderToStaticMarkup(<TimelineHost slug="tools/x" part={failed} read={noRead} />)).toBe(
       renderToStaticMarkup(
         <TimelineFailed error="Board snapshot unavailable. " retry={() => {}} />,
       ),
     );
-    react.states.push({ timeline: pictures() });
-    expect(renderToStaticMarkup(<TimelineHost slug="tools/x" revision={1} />)).toBe(
-      html(pictures()),
-    );
+    expect(
+      renderToStaticMarkup(<TimelineHost slug="tools/x" part={answered(sent())} read={noRead} />),
+    ).toBe(html(pictures()));
+    // A later read that fails leaves the timeline shown.
+    expect(
+      renderToStaticMarkup(
+        <TimelineHost
+          slug="tools/x"
+          part={{ ...answered(sent()), error: new TypeError("Failed to fetch") }}
+          read={noRead}
+        />,
+      ),
+    ).toBe(html(pictures()));
+    expect(
+      renderToStaticMarkup(
+        <TimelineHost slug="tools/x" part={answered({ now: "soon" })} read={noRead} />,
+      ),
+    ).toBe(renderToStaticMarkup(<TimelineFailed error={NOT_A_TIMELINE} retry={() => {}} />));
   });
 
   it("a failed read with nothing shown says why in the box, with its Try again", () => {
     const retry = vi.fn();
     expect(renderToStaticMarkup(<TimelineFailed error="Failed to fetch" retry={retry} />)).toBe(
-      '<div class="tl-drawn tl-failed"><p class="tl-note">The timeline could not be read: Failed to fetch. Trying again in a minute. <button class="dx-button" data-style="outline" data-size="default" type="button">Try again</button></p></div>',
+      '<div class="tl-drawn tl-failed"><p class="tl-note">The timeline could not be read: Failed to fetch. Trying again… <button class="dx-button" data-style="outline" data-size="default" type="button">Try again</button></p></div>',
     );
     const [button] = elements(
       TimelineFailed({ error: "", retry }),
@@ -420,57 +436,6 @@ describe("the timeline's host", () => {
 });
 
 describe("the timeline's reads", () => {
-  it("asks for the task's timeline under the checkout its route names", () => {
-    aPage();
-    expect(timelineUrl("tools/x y")).toBe("/api/task-timeline?slug=tools%2Fx%20y");
-    vi.stubGlobal("location", { pathname: "/@feature-x/task/tools/x" });
-    expect(timelineUrl("tools/x")).toBe("/@feature-x/api/task-timeline?slug=tools%2Fx");
-  });
-
-  it("asks with the last answer's validator, and reads a 304 as the one kept", async () => {
-    aPage();
-    const asked = aServer();
-    const signal = new AbortController().signal;
-    const first = readOnce("tools/x", null, signal);
-    expect(asked[0]?.init.headers).toBeUndefined();
-    // Past the browser's own cache, as every read the page checks.
-    expect(asked[0]?.init.cache).toBe("no-store");
-    asked[0]?.answer(reply(200, FIXTURE, '"v1"'));
-    expect(await first).toEqual({ fresh: pictures(), tag: '"v1"' });
-    const again = readOnce("tools/x", '"v1"', signal);
-    expect(asked[1]?.init.headers).toEqual({ "If-None-Match": '"v1"' });
-    asked[1]?.answer(reply(304, null));
-    expect(await again).toEqual({ same: true });
-    // An answer with no validator is kept without one.
-    const untagged = readOnce("tools/x", null, signal);
-    asked[2]?.answer(reply(200, FIXTURE));
-    expect(await untagged).toEqual({ fresh: pictures(), tag: null });
-  });
-
-  it("says the server's own words of a refusal, its status where it gave none", async () => {
-    aPage();
-    const asked = aServer();
-    const signal = new AbortController().signal;
-    const cases: [Response, string][] = [
-      [reply(503, { error: "Board snapshot unavailable." }), "Board snapshot unavailable."],
-      [reply(500, { error: 7 }), "the server answered 500"],
-      [reply(502, new SyntaxError("Unexpected token <")), "the server answered 502"],
-      [reply(200, new SyntaxError("Unexpected end of JSON input")), "Unexpected end of JSON input"],
-      [reply(200, { now: "soon" }), NOT_A_TIMELINE],
-    ];
-    for (const [response, error] of cases) {
-      const read = readOnce("tools/x", null, signal);
-      asked.at(-1)?.answer(response);
-      expect(await read).toEqual({ error });
-    }
-    const refused = readOnce("tools/x", null, signal);
-    asked.at(-1)?.refuse(new TypeError("Failed to fetch"));
-    expect(await refused).toEqual({ error: "Failed to fetch" });
-    const thrown = readOnce("tools/x", null, signal);
-    asked.at(-1)?.refuse("offline");
-    expect(await thrown).toEqual({ error: "offline" });
-  });
-
   it("says a failure in the server's or the browser's own words, a slow one in its own", () => {
     expect(
       readFailed(Failure.refused(503, "Not ready (the server answered 503)", "Not ready.")),
@@ -483,52 +448,38 @@ describe("the timeline's reads", () => {
     expect(readFailed("offline")).toBe("offline");
   });
 
-  it("gives up a read with no answer in fifteen seconds, and one its page left", async () => {
-    vi.useFakeTimers();
-    aPage();
-    const asked = aServer();
-    const slow = readOnce("tools/x", null, new AbortController().signal);
-    await vi.advanceTimersByTimeAsync(14_999);
-    expect(asked[0]?.init.signal?.aborted).toBe(false);
-    await vi.advanceTimersByTimeAsync(1);
-    expect(await slow).toEqual({ error: NO_ANSWER });
-    expect(asked[0]?.init.signal?.aborted).toBe(true);
-    const leaving = new AbortController();
-    const left = readOnce("tools/x", null, leaving.signal);
-    leaving.abort();
-    expect(asked[1]?.init.signal?.aborted).toBe(true);
-    asked[1]?.refuse(new DOMException("The operation was aborted.", "AbortError"));
-    expect(await left).toEqual({ error: "The operation was aborted." });
-    // A page already left gives its read up before it is sent.
-    const gone = new AbortController();
-    gone.abort();
-    void readOnce("tools/x", null, gone.signal);
-    expect(asked[2]?.init.signal?.aborted).toBe(true);
+  it("shows nothing before an answer, why a read failed with none, and the answer once there", () => {
+    expect(shownOf(NOTHING, null, 0)).toBeNull();
+    expect(shownOf({ ...NOTHING, error: new TypeError("Failed to fetch") }, null, 0)).toEqual({
+      error: "Failed to fetch",
+    });
+    expect(shownOf({ ...NOTHING, error: new Failure("uncertain", NOT_IN_TIME) }, null, 0)).toEqual({
+      error: NO_ANSWER,
+    });
+    const value = sent();
+    expect(shownOf(answered(value), null, 0)).toEqual({ timeline: pictures() });
+    // A failure after a timeline leaves it shown.
+    expect(shownOf({ ...answered(value), error: new Error("gone") }, null, 0)).toEqual({
+      timeline: pictures(),
+    });
+    expect(shownOf(answered({ now: "soon" }), null, 0)).toEqual({ error: NOT_A_TIMELINE });
   });
 
-  it("shows a new answer, moves the one kept on by this browser's clock, and keeps it on a failure", () => {
+  it("moves the answer kept on by this browser's clock since it was first drawn", () => {
+    const value = sent();
     const timeline = pictures();
-    const fresh = afterRead(NOTHING_HELD, { fresh: timeline, tag: '"v1"' }, 5_000);
-    expect(fresh).toEqual({
-      shown: { timeline },
-      kept: { tag: '"v1"', at: [timeline.now, 5_000] },
+    const seen = { value, at: 5_000 };
+    expect(shownOf(answered(value), seen, 5_000)).toEqual({ timeline });
+    expect(shownOf(answered(value), seen, 50_000)).toEqual({
+      timeline: { ...timeline, now: timeline.now + 45 },
     });
-    const same = afterRead(fresh, { same: true }, 50_000);
-    expect(same.shown).toEqual({ timeline: { ...timeline, now: timeline.now + 45 } });
-    expect(same.kept).toEqual(fresh.kept);
-    // Moved from the clock of the answer, not of the last 304.
-    expect(afterRead(same, { same: true }, 65_000).shown).toEqual({
+    // Moved from the clock of the answer, not of the last read.
+    expect(shownOf(answered(value), seen, 65_000)).toEqual({
       timeline: { ...timeline, now: timeline.now + 60 },
     });
-    // A failure after a timeline leaves it shown; with none shown it is said.
-    expect(afterRead(fresh, { error: "Failed to fetch" }, 9_000)).toBe(fresh);
-    const failed = afterRead(NOTHING_HELD, { error: "Failed to fetch" }, 9_000);
-    expect(failed).toEqual({ ...NOTHING_HELD, shown: { error: "Failed to fetch" } });
-    // A 304 with nothing shown, or a failure shown, changes nothing.
-    expect(afterRead(NOTHING_HELD, { same: true }, 9_000)).toBe(NOTHING_HELD);
-    expect(afterRead(failed, { same: true }, 9_000)).toBe(failed);
-    // A later failure says its own reason where no timeline is shown.
-    expect(afterRead(failed, { error: "gone" }, 9_000).shown).toEqual({ error: "gone" });
+    // A clock before the answer's, or the clock of another answer, moves nothing.
+    expect(shownOf(answered(value), seen, 0)).toEqual({ timeline });
+    expect(shownOf(answered(sent()), seen, 50_000)).toEqual({ timeline });
   });
 
   it("waits for a hidden page to show, or for its signal to end", async () => {
@@ -558,81 +509,61 @@ describe("the timeline's reads", () => {
     await whenShown(new AbortController().signal);
   });
 
-  it("reads each `every` seconds while open, with the validator, and not while the page is hidden", async () => {
+  it("reads again each `every` seconds while open, and not while the page is hidden", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(1_000_000);
     const page = aPage();
-    const asked = aServer();
-    const held = { current: NOTHING_HELD };
+    const read = vi.fn(noRead);
     const drawn = vi.fn();
     const reading = new AbortController();
-    const done = follow("tools/x", reading.signal, held, drawn);
-    await flush();
-    expect(asked.map((one) => one.url)).toEqual(["/api/task-timeline?slug=tools%2Fx"]);
-    asked[0]?.answer(reply(200, { ...FIXTURE, every: 45 }, '"v1"'));
-    await flush();
-    expect(drawn).toHaveBeenLastCalledWith({ timeline: { ...pictures(), every: 45 } });
-    expect(held.current.kept).toEqual({ tag: '"v1"', at: [FIXTURE.now, 1_000_000] });
+    const done = readAgain(() => 45, read, drawn, reading.signal);
     await vi.advanceTimersByTimeAsync(44_999);
-    expect(asked).toHaveLength(1);
+    expect(read).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(1);
-    expect(asked).toHaveLength(2);
-    expect(asked[1]?.init.headers).toEqual({ "If-None-Match": '"v1"' });
-    asked[1]?.answer(reply(304, null));
-    await flush();
-    expect(drawn).toHaveBeenCalledTimes(2);
-    expect(drawn.mock.lastCall?.[0].timeline.now).toBe(FIXTURE.now + 45);
-    // Hidden, the page is not read until it shows again, then at once.
+    expect(read).toHaveBeenCalledTimes(1);
+    expect(drawn.mock.calls).toEqual([[1_045_000]]);
+    // Hidden, the part is not read until the page shows again, then at once.
     page.hidden = true;
     await vi.advanceTimersByTimeAsync(10 * 45_000);
-    expect(asked).toHaveLength(2);
+    expect(read).toHaveBeenCalledTimes(1);
     page.hidden = false;
     page.dispatchEvent(new Event("visibilitychange"));
     await flush();
-    expect(asked).toHaveLength(3);
-    // Left while a read is on its way: it is given up, and its answer draws nothing.
-    reading.abort();
-    expect(asked[2]?.init.signal?.aborted).toBe(true);
-    asked[2]?.answer(reply(200, FIXTURE));
-    await done;
-    expect(drawn).toHaveBeenCalledTimes(2);
-  });
-
-  it("reads a closed task once, and a failed read again a minute after", async () => {
-    vi.useFakeTimers();
-    aPage();
-    const asked = aServer();
-    const drawn = vi.fn();
-    const closed = follow(
-      "tools/x",
-      new AbortController().signal,
-      { current: NOTHING_HELD },
-      drawn,
-    );
-    await flush();
-    asked[0]?.answer(reply(200, { ...FIXTURE, closed: FIXTURE.now }));
-    await closed;
-    await vi.advanceTimersByTimeAsync(3_600_000);
-    expect(asked).toHaveLength(1);
-    const reading = new AbortController();
-    const held: { current: Held } = { current: NOTHING_HELD };
-    const failing = follow("tools/y", reading.signal, held, drawn);
-    await flush();
-    asked[1]?.refuse(new TypeError("Failed to fetch"));
-    await flush();
-    expect(drawn).toHaveBeenLastCalledWith({ error: "Failed to fetch" });
-    await vi.advanceTimersByTimeAsync(59_999);
-    expect(asked).toHaveLength(2);
-    await vi.advanceTimersByTimeAsync(1);
-    expect(asked).toHaveLength(3);
-    asked[2]?.answer(reply(200, FIXTURE, '"v2"'));
-    await flush();
-    expect(drawn).toHaveBeenLastCalledWith({ timeline: pictures() });
+    expect(read).toHaveBeenCalledTimes(2);
     // Left while it waits for its next read: it ends at once and reads nothing more.
     reading.abort();
-    await failing;
+    await done;
     await vi.advanceTimersByTimeAsync(120_000);
-    expect(asked).toHaveLength(3);
+    expect(read).toHaveBeenCalledTimes(2);
+  });
+
+  it("reads nothing again of a closed task, and says no clock of a read its page left", async () => {
+    vi.useFakeTimers();
+    aPage();
+    const read = vi.fn(noRead);
+    const drawn = vi.fn();
+    await readAgain(() => null, read, drawn, new AbortController().signal);
+    await vi.advanceTimersByTimeAsync(3_600_000);
+    expect(read).not.toHaveBeenCalled();
+    // Left while a read is on its way: its answer moves no clock.
+    const leaving = new AbortController();
+    const out = readAgain(
+      () => 1,
+      () => {
+        leaving.abort();
+        return Promise.resolve();
+      },
+      drawn,
+      leaving.signal,
+    );
+    await vi.advanceTimersByTimeAsync(1_000);
+    await out;
+    expect(drawn).not.toHaveBeenCalled();
+    // A page already left reads nothing; one left while hidden reads nothing either.
+    const gone = new AbortController();
+    gone.abort();
+    await readAgain(() => 1, read, drawn, gone.signal);
+    expect(read).not.toHaveBeenCalled();
   });
 });
 

@@ -54,10 +54,11 @@ function aPage(shell: Record<string, unknown> = {}, notice: { remove: () => void
   return storage;
 }
 
-/** A chunk's host that draws its task and revision, and says it drew 212.4 px on a phone. */
-function DrawnHost({ slug, revision, onDrawn }: HostProps) {
+/** A chunk's host that draws its task and what its part holds, and says it drew 212.4 px on a
+ * phone. */
+function DrawnHost({ slug, part, onDrawn }: HostProps) {
   onDrawn?.(false, 212.4);
-  return <i data-slug={slug} data-revision={revision} />;
+  return <i data-slug={slug} data-part={JSON.stringify(part.value ?? null)} />;
 }
 
 /** The slot's module afresh, its chunk not imported yet: one per test of the loader. */
@@ -148,7 +149,7 @@ describe("the timeline's box", () => {
 
   it("is reserved as tall as the timeline will be, with its placeholder rows", () => {
     aPage();
-    const html = renderToStaticMarkup(<TimelineSlot slug="tools/new" revision={1} />);
+    const html = renderToStaticMarkup(<TimelineSlot slug="tools/new" scope="" />);
     expect(html).toContain('<h2 id="timeline-title">Timeline</h2>');
     expect(html).toContain(
       `id="${SLOT}" data-slug="tools/new" style="--tl-narrow:${NARROW}px;--tl-wide:${WIDE}px"`,
@@ -163,7 +164,7 @@ describe("the timeline's box", () => {
   it("draws the Dioxus box's markup, the heights this browser kept for the task, and no timeline before its chunk", () => {
     const storage = aPage();
     storage.setItem(key("tools/new"), "200,500");
-    const html = renderToStaticMarkup(<TimelineSlot slug="tools/new" revision={1} />);
+    const html = renderToStaticMarkup(<TimelineSlot slug="tools/new" scope="" />);
     const row = (at: number) =>
       `<span class="tl-sk-row" aria-hidden="true"><span class="tl-sk-line tl-sk-at"></span><span class="tl-sk-line tl-sk-label" style="width:${30 + ((at * 17) % 40)}%"></span><span class="tl-sk-line tl-sk-bar" style="width:${20 + ((at * 29) % 50)}%"></span></span>`;
     expect(html).toBe(
@@ -175,7 +176,7 @@ describe("the timeline's box", () => {
   it("waits below the screen behind its sentinel, where the browser says when it nears", () => {
     aPage();
     vi.stubGlobal("IntersectionObserver", class {});
-    const html = renderToStaticMarkup(<TimelineSlot slug="tools/new" revision={1} />);
+    const html = renderToStaticMarkup(<TimelineSlot slug="tools/new" scope="" />);
     expect(html).toContain(
       '<section class="tl" id="timeline" aria-labelledby="timeline-title"><div class="viewport-sentinel" aria-hidden="true"></div><h2 id="timeline-title">Timeline</h2>',
     );
@@ -373,18 +374,58 @@ describe("the timeline's chunk", () => {
     vi.doMock("./timeline", () => ({ TimelineHost: DrawnHost }));
     const slot = await aSlot();
     // The box nears the screen: it asks for the chunk.
-    renderToStaticMarkup(<slot.TimelineSlot slug="tools/new" revision={3} />);
+    renderToStaticMarkup(<slot.TimelineSlot slug="tools/new" scope="" />);
     expect(react.effects).toHaveLength(1);
     const leave = react.effects[0]?.();
     await vi.waitFor(() => expect(slot.loadedHost()).not.toBeNull());
     leave?.();
     // Drawn again, the timeline is in its root, and its height is kept for the next visit.
-    const html = renderToStaticMarkup(<slot.TimelineSlot slug="tools/new" revision={3} />);
+    const html = renderToStaticMarkup(<slot.TimelineSlot slug="tools/new" scope="" />);
     expect(html).toContain(
-      '</div><div id="timeline-root"><i data-slug="tools/new" data-revision="3"></i></div></div></section>',
+      '</div><div id="timeline-root"><i data-slug="tools/new" data-part="null"></i></div></div></section>',
     );
     expect(storage.getItem(key("tools/new"))).toBe(`213,${WIDE}`);
     // With the chunk come, the box asks for nothing more.
     expect(react.effects[1]?.()).toBeUndefined();
+  });
+
+  it("gives the timeline its part of the page's store, asked whether or not the chunk has come", async () => {
+    aPage();
+    const asked: string[] = [];
+    vi.stubGlobal("fetch", async (url: string) => {
+      asked.push(url);
+      return {
+        status: 200,
+        ok: true,
+        headers: { get: () => null },
+        json: async () => ({ now: 7 }),
+      } as unknown as Response;
+    });
+    vi.doMock("./timeline", () => ({ TimelineHost: DrawnHost }));
+    const slot = await aSlot();
+    // The store and the part the slot's own module names, not this file's copies.
+    const { Parts, PartsContext } = await import("./parts");
+    const { timelinePart } = await import("./task-live");
+    const mount = new AbortController();
+    const parts = new Parts(mount.signal);
+    const part = timelinePart("", "tools/new");
+    parts.open(part);
+    await vi.waitFor(() => expect(parts.shown(part).answered).toBe(true));
+    expect(asked).toEqual(["/api/task-timeline?slug=tools%2Fnew"]);
+    const inPage = () =>
+      renderToStaticMarkup(
+        <PartsContext.Provider value={parts}>
+          <slot.TimelineSlot slug="tools/new" scope="" />
+        </PartsContext.Provider>,
+      );
+    // Before the chunk: the placeholder, the answer already held.
+    expect(inPage()).not.toContain("timeline-root");
+    react.effects.at(-1)?.();
+    await vi.waitFor(() => expect(slot.loadedHost()).not.toBeNull());
+    expect(inPage()).toContain(
+      '<div id="timeline-root"><i data-slug="tools/new" data-part="{&quot;now&quot;:7}"></i></div>',
+    );
+    expect(asked).toHaveLength(1);
+    mount.abort();
   });
 });
