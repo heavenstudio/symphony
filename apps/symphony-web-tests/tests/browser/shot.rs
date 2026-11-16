@@ -404,6 +404,121 @@ fn a_full_page_shot_takes_the_whole_document() {
     );
 }
 
+/// A page whose region on the screen, in a box that clips it, says it is busy (`aria-busy`, as a
+/// Symphony page's ghost does until its reads are in) for ninety frames after it loads, with
+/// nothing in flight meanwhile; three regions busy off the screen, none ever done: one below the
+/// window, one beside it and one scrolled out of the box that clips it.
+const BUSY: &str = r#"<!doctype html><title>busy</title>
+<div style="overflow: hidden"><main id="ghost" aria-busy="true"><p>Loading…</p></main></div>
+<div style="height: 100px; overflow: auto"><div style="height: 400px"></div><section aria-busy="true">Scrolled out of its box</section></div>
+<div style="height: 2000px"></div>
+<section aria-busy="true">Below the window</section>
+<section aria-busy="true" style="position: absolute; top: 0; left: 3000px">Beside the window</section>
+<script>
+window.__frames = 0;
+(function frame() {
+    if (++window.__frames < 90) requestAnimationFrame(frame);
+    else document.getElementById("ghost").setAttribute("aria-busy", "false");
+})();
+</script>"#;
+
+/// The shot counts a page drawn only once no region on the screen says it is busy, one in a box
+/// that clips it among them, however long that takes with nothing in flight, as a loaded machine's
+/// board stays under its ghost a while after its first read answers; a region busy off the screen,
+/// below the window, beside it or out of its box, which draws only once the reader goes to it, it
+/// does not wait for.
+#[test]
+fn a_page_busy_on_the_screen_is_waited_for_and_one_busy_off_it_is_not() {
+    let site = site();
+    let Some(chrome) = chrome::find() else {
+        eprintln!("no Chrome on this machine (SYMPHONY_CHROME names one): shot not run");
+        return;
+    };
+    site.set_file("/busy.html", BUSY.as_bytes().to_vec(), "text/html");
+    let scratch = Scratch::new("busy");
+    let out = scratch.join("busy.png");
+    let output = shot(
+        &chrome,
+        &[
+            &site.url("/busy.html"),
+            "--out",
+            out.to_str().unwrap(),
+            "--size",
+            "800x300",
+            "--eval",
+            "[document.getElementById('ghost').getAttribute('aria-busy'), window.__frames, document.querySelectorAll('[aria-busy=true]').length]",
+        ],
+    )
+    .output()
+    .unwrap();
+    assert!(output.status.success(), "{}", said(&output));
+    let lines = printed(&output);
+    assert_eq!(
+        (
+            &lines[0][0],
+            lines[0][1].as_u64().unwrap_or(0) >= 90,
+            &lines[0][2]
+        ),
+        (&json!("false"), true, &json!(3)),
+        "the region on the screen done after its ninety frames, the three off it still busy: {lines:?}"
+    );
+}
+
+/// A page whose first read failed is drawn saying so, never busy: the runs, a run's page and
+/// Reports, each read refused, are shot saying they could not be read (`data-ready=failed`), with
+/// no region busy left on the page, which would hold the shot to its timeout.
+#[test]
+fn a_page_whose_first_read_failed_is_shot_saying_so() {
+    let site = site();
+    let Some(chrome) = chrome::find() else {
+        eprintln!("no Chrome on this machine (SYMPHONY_CHROME names one): shot not run");
+        return;
+    };
+    for path in [
+        symphony_api::RUNS_PATH,
+        symphony_api::RUN_PATH,
+        symphony_api::REPORTS_PATH,
+    ] {
+        site.fail_route(path, true);
+    }
+    let scratch = Scratch::new("failed");
+    let run = format!("/runs?run={:032x}", 1);
+    for (n, (page, said_so)) in [
+        ("/runs", "The runs could not be read"),
+        (run.as_str(), "The run could not be read"),
+        ("/reports", "The reports could not be read"),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let out = scratch.join(&format!("failed-{n}.png"));
+        let eval = format!(
+            "[document.querySelectorAll('[data-ready=failed]').length, \
+             document.querySelectorAll('[aria-busy=true]').length, \
+             document.body.innerText.includes({})]",
+            json!(said_so)
+        );
+        let output = shot(
+            &chrome,
+            &[
+                &site.url(page),
+                "--out",
+                out.to_str().unwrap(),
+                "--eval",
+                &eval,
+            ],
+        )
+        .output()
+        .unwrap();
+        assert!(output.status.success(), "{page}: {}", said(&output));
+        assert_eq!(
+            printed(&output)[0],
+            json!([1, 0, true]),
+            "{page}: drawn failed, nothing busy, saying {said_so:?}"
+        );
+    }
+}
+
 /// `--attach` stores each picture the run saved, by its content, in the uploads of the main
 /// checkout of the repository the shot runs in, and prints the line a thread post carries for it,
 /// in the order taken; the pictures stay where they were saved.

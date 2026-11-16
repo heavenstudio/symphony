@@ -5,6 +5,7 @@
 // the page's first page (`/api/agent-page`); each feed event is applied where it lands, and one that
 // brings a task in, or the board back, reads the first page again, merged into what is drawn.
 
+import { flushSync } from "react-dom";
 import type { FrameRefresh } from "./frame";
 import { type Journal, ReadCursor } from "./journal";
 import { type BoardRun, keepBoard, type PageBoard, Retry } from "./live";
@@ -691,7 +692,10 @@ export class LiveAgents {
     const [refresh, changed] = this.apply(changes);
     if (changed) {
       holdPlace("[id^=message-], [id^=child-], [data-slug]");
-      this.host.redraw();
+      // Drawn at once, within the event, so the hold starts from the change in the page: left to
+      // React's scheduler, a later task a loaded renderer runs after its frames, the hold's four
+      // quiet frames could pass before it.
+      flushSync(() => this.host.redraw());
     }
     if (refresh) void this.reread();
     return true;

@@ -124,6 +124,43 @@ fn announced(what: &str, said: &std::sync::mpsc::Receiver<String>) -> Result<Str
 /// or the queue draws from the server under its ghost, as one the device has no copy for does.
 const NO_STORE: &str = "Object.defineProperty(window, 'indexedDB', { value: undefined });";
 
+/// A page script under which, once the test sets `window.__lateTasks` to a count of frames, every
+/// task of React's scheduler (a `MessageChannel` message, one posted before as well) runs that many
+/// frames after it comes, as a slow phone's or a loaded machine's renderer runs its frames before
+/// a task waiting for it. `window.__channels` counts the channels whose messages it takes, React's
+/// scheduler's the client's one. A page that draws a feed event within the event (`flushSync`, as
+/// the board, the agents page and a task's page do) starts the shell's hold of the reader's place
+/// from the change in the page, however late these run.
+const LATE_TASKS: &str = r#"window.__lateTasks = 0;
+window.__channels = 0;
+(() => {
+    const Channel = window.MessageChannel;
+    const receive = Object.getOwnPropertyDescriptor(MessagePort.prototype, "onmessage");
+    window.MessageChannel = class extends Channel {
+        constructor() {
+            super();
+            const port = this.port1;
+            let handler = null;
+            Object.defineProperty(port, "onmessage", {
+                get: () => handler,
+                set: given => {
+                    handler = given;
+                    if (typeof given !== "function") return receive.set.call(port, given);
+                    window.__channels += 1;
+                    receive.set.call(port, event => {
+                        let left = window.__lateTasks;
+                        (function wait() { if (left-- > 0) requestAnimationFrame(wait); else given.call(port, event); })();
+                    });
+                },
+            });
+        }
+    };
+})();"#;
+
+/// Whether React's scheduler takes its tasks through [`LATE_TASKS`]'s channel, so that a
+/// `window.__lateTasks` the test sets makes them late: a page that took none would run none late.
+const LATE_TASKS_TAKEN: &str = "window.__channels > 0";
+
 fn site() -> Site {
     Site::start(dist(), &common::fixture("board.json"))
 }

@@ -156,14 +156,12 @@ fn from_the_device(chrome: &mut Chrome, said: &str) {
 }
 
 /// The task's buttons, Cancel task and Send, as `[text, disabled]`, and whether its priority is
-/// disabled. The message box mounts as it nears the screen: the page is scrolled to it first.
+/// disabled. The message box mounts as it nears the screen, and stays hidden under the thread's
+/// ghost until the page settles (`Settle`), taking no focus meanwhile: the page is scrolled to it
+/// first, and it is waited for until it shows.
 fn actions(chrome: &mut Chrome) -> Value {
     chrome.eval("window.scrollTo(0, document.body.scrollHeight)");
-    shows(
-        chrome,
-        &format!("!!document.querySelector({})", json!(DRAFT)),
-        "the message box",
-    );
+    shows(chrome, &crate::visible(DRAFT), "the message box");
     chrome.eval(
         r#"[[...document.querySelectorAll("article.task .task-controls > button, #task-send button[type=submit]")]
             .map(button => [button.textContent.trim(), button.disabled]),
@@ -408,15 +406,30 @@ fn the_landing_offer_is_read_on_every_visit_and_never_kept() {
         &format!("(b => b?.textContent === '✓ Land it' && !b.disabled)({land})"),
         "the landing button, once current",
     );
+    // The task's head links the task it depends on, which the shell may read ahead and keep once
+    // the page is idle, however soon that comes (`ahead`, apps/symphony-web/shell/shell.js): a
+    // task's page and its thread, as a visit keeps them. Whichever tasks are kept, none keeps its
+    // offer.
     let parts = kept(&mut chrome);
+    let shown = format!("task:{SLUG} ");
     let task: Vec<&String> = parts
         .keys()
-        .filter(|part| part.starts_with("task:"))
+        .filter(|part| part.starts_with(&shown))
         .collect();
     assert_eq!(
         task,
         KEPT.iter().collect::<Vec<_>>(),
         "the offer is never kept"
+    );
+    let other: Vec<&String> = parts
+        .keys()
+        .filter(|part| {
+            part.starts_with("task:") && !part.ends_with(" page") && !part.ends_with(" thread")
+        })
+        .collect();
+    assert!(
+        other.is_empty(),
+        "a task keeps its page and its thread alone, never its offer: {parts:?}"
     );
 }
 

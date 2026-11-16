@@ -13,6 +13,7 @@
 // thread's earlier pages and its catch-up after a gap, and the subtasks, read into the page as
 // their section nears the screen.
 
+import { flushSync } from "react-dom";
 import { type Freshness, PAGE, shown, THREAD, taskItem, visitLater } from "./cache";
 import type { FrameRefresh } from "./frame";
 import { readTaskGates, WORDS, workOf } from "./gates-model";
@@ -634,13 +635,18 @@ export class LiveTask {
           break;
       }
     }
-    // The offer and the timeline hear the task's own change themselves (their parts' `hear`).
-    this.parts.heard(version, changes);
-    if (own || gates) void this.parts.read(gatesPart(this.scope, slug), version);
-    if (notice !== this.notice) {
-      this.notice = notice;
-      this.host.redraw();
-    }
+    // Drawn at once, within the event, so the hold starts from the change in the page: left to
+    // React's scheduler (the page's redraw, a later task a loaded renderer runs after its frames),
+    // the hold's four quiet frames could pass before it.
+    flushSync(() => {
+      // The offer and the timeline hear the task's own change themselves (their parts' `hear`).
+      this.parts.heard(version, changes);
+      if (own || gates) void this.parts.read(gatesPart(this.scope, slug), version);
+      if (notice !== this.notice) {
+        this.notice = notice;
+        this.host.redraw();
+      }
+    });
     return true;
   }
 

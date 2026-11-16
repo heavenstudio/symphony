@@ -4,11 +4,14 @@
 //! follows the theme and the reader's motion setting, and a page at rest animates none of it, the
 //! placeholders out of reach of the screen included. Past it, a live update that adds or removes
 //! a row leaves what the owner reads or types in where it is once they have scrolled, however
-//! many frames the row takes to draw, shows at
+//! many frames the row takes to draw and however late the page's tasks run, shows at
 //! the top what lands there while they have not, and never scrolls against the owner's own
 //! scroll; the chat's form stays at the foot of its sheet.
 use super::feed_deltas::{agent, agent_page};
-use super::{NO_STORE, SHOWN, chrome, chrome::Chrome, layout_shift, site::Site, wait_for_feed};
+use super::{
+    LATE_TASKS, LATE_TASKS_TAKEN, NO_STORE, SHOWN, chrome, chrome::Chrome, layout_shift,
+    site::Site, wait_for_feed,
+};
 use serde_json::{Value, json};
 
 const TASK: &str = "/task/visual/in-progress";
@@ -1019,8 +1022,26 @@ fn a_message_that_lands_above_the_composer_leaves_the_owner_typing_in_place() {
     message_lands_above_the_composer(
         6,
         0,
+        0,
         &[
             "An answer that lands while the owner types, long enough to wrap over a few lines of a phone's thread.",
+        ],
+    );
+}
+
+#[test]
+fn a_message_that_lands_while_the_pages_tasks_run_late_leaves_the_owner_typing_in_place() {
+    // A loaded machine's renderer: every task React's scheduler posts runs twelve frames late
+    // ([`LATE_TASKS`]), the message's draw among them. The page draws it within the event that
+    // brings it, so the shell's hold, which ends once four frames pass with nothing moved, starts
+    // from the message in the page and lasts while its box waits to draw, never ending before it.
+    message_lands_above_the_composer(
+        1,
+        0,
+        12,
+        &[
+            "An answer that lands while the owner types, drawn by a renderer that runs its frames first.",
+            "Its second paragraph, long enough to wrap over a few lines of a phone's thread like the first.",
         ],
     );
 }
@@ -1032,6 +1053,7 @@ fn a_message_drawn_late_above_the_composer_leaves_the_owner_typing_in_place() {
     message_lands_above_the_composer(
         1,
         90,
+        0,
         &[
             "An answer that lands while the owner types, drawn long after its place in the thread is kept for it.",
             "Its second paragraph, long enough to wrap over a few lines of a phone's thread like the first.",
@@ -1043,9 +1065,15 @@ fn a_message_drawn_late_above_the_composer_leaves_the_owner_typing_in_place() {
 
 /// The task's page on a phone, scrolled down to its composer with a reply typed in it, as a message
 /// of `paragraphs` lands above it from the feed on a machine `throttle` times slower, the message's
-/// own box drawn `late` frames after the box it reserves ([`LATE_DRAWS`]): the composer keeps its
+/// own box drawn `late` frames after the box it reserves ([`LATE_DRAWS`]) and every task of React's
+/// scheduler run `late_tasks` frames late from the landing ([`LATE_TASKS`]): the composer keeps its
 /// place, the focus and the reply.
-fn message_lands_above_the_composer(throttle: u32, late: u32, paragraphs: &[&str]) {
+fn message_lands_above_the_composer(
+    throttle: u32,
+    late: u32,
+    late_tasks: u32,
+    paragraphs: &[&str],
+) {
     let site = site();
     // A thread long enough to put the composer below the first screen.
     let entries: Vec<Value> = (1..=6)
@@ -1057,7 +1085,7 @@ fn message_lands_above_the_composer(throttle: u32, late: u32, paragraphs: &[&str
         "/api/task-history",
         &json!({"entries": entries, "before": null, "after": 6}),
     );
-    let Some(mut browser) = watching(390, 844, &[LATE_DRAWS]) else {
+    let Some(mut browser) = watching(390, 844, &[LATE_DRAWS, LATE_TASKS]) else {
         return;
     };
     browser.open(&site.url(TASK));
@@ -1105,7 +1133,15 @@ fn message_lands_above_the_composer(throttle: u32, late: u32, paragraphs: &[&str
             json!({ "rate": throttle }),
         );
     }
+    if late_tasks > 0 {
+        assert_eq!(
+            browser.eval(LATE_TASKS_TAKEN),
+            json!(true),
+            "React's scheduler takes no task through the page script's channel, so none would run late"
+        );
+    }
     browser.eval(&format!("window.__late = {late}"));
+    browser.eval(&format!("window.__lateTasks = {late_tasks}"));
     browser.eval(WATCH_DRAWN);
     let blocks: Vec<Value> = paragraphs
         .iter()
@@ -1131,6 +1167,7 @@ fn message_lands_above_the_composer(throttle: u32, late: u32, paragraphs: &[&str
     // page stands still around it.
     still(&mut browser, composer);
     let (after, _) = place(&mut browser, composer);
+    browser.eval("window.__lateTasks = 0");
     let sizes = browser.eval(SIZES);
     let drawn = browser.eval("window.__drawn");
     eprintln!(

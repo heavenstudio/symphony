@@ -71,6 +71,10 @@ pub(super) struct Sampler {
     /// The reader was named (`SYMPHONY_MACHINE_WORK_READER`): it must answer, where the project's
     /// path may hold none.
     supplied: bool,
+    /// How long the reader is given to answer a scan
+    /// ([`symphony_board::cli::probes::NATIVE_READER_WAIT`]); a test of anything but that deadline
+    /// gives it a stall's backstop.
+    wait: Duration,
     identity: Option<Result<String, String>>,
     revisions: BTreeMap<String, Vec<u8>>,
     /// The nonces among `revisions` the board's own recorder wrote.
@@ -88,6 +92,7 @@ impl Sampler {
             projection: Projection::new(64, HISTORY_LIMIT, 10_000),
             reader: Self::reader(root, supplied),
             supplied: supplied.is_some(),
+            wait: symphony_board::cli::probes::NATIVE_READER_WAIT,
             identity: None,
             revisions: BTreeMap::new(),
             recorded: BTreeSet::new(),
@@ -241,10 +246,12 @@ impl Sampler {
                 Some(reader) if self.supplied || reader.exists() => {
                     let mut env = symphony::children::board_env();
                     env.cwd = root.to_path_buf();
-                    let bytes = symphony_board::cli::probes::native_inventory(&env, reader, common)
-                        .map_err(|error| {
-                            format!("native inventory reader {}: {error}", reader.display())
-                        })?;
+                    let bytes = symphony_board::cli::probes::native_inventory(
+                        &env, reader, common, self.wait,
+                    )
+                    .map_err(|error| {
+                        format!("native inventory reader {}: {error}", reader.display())
+                    })?;
                     Some(bytes)
                 }
                 _ => None,

@@ -44,6 +44,21 @@ import {
 } from "./wire";
 import { NO_WORK } from "./work";
 
+// React's `flushSync` stood in for, as no DOM runs here: whether a draw comes within it.
+const react = vi.hoisted(() => ({ flushing: false }));
+
+vi.mock("react-dom", async (original) => ({
+  ...(await original<typeof import("react-dom")>()),
+  flushSync: <R>(draw: () => R): R => {
+    react.flushing = true;
+    try {
+      return draw();
+    } finally {
+      react.flushing = false;
+    }
+  },
+}));
+
 /** A response as the page reads one: its status, its JSON body, its tag and the feed's cursor it
  * was read at (`version`; a server that names none otherwise). */
 function answer(status: number, body: unknown = null, etag = "", version?: number): Response {
@@ -1192,6 +1207,22 @@ describe("a feed event on a task's page", () => {
     expect(held).not.toHaveBeenCalled();
     expect(task.heard(next())).toBe(true);
     expect(held).toHaveBeenCalledWith("[id^=message-], [id^=child-], [data-slug]");
+  });
+
+  it("holds the reader's place, then draws the change at once, within the event", async () => {
+    const { task, held, host } = await shown();
+    const order: string[] = [];
+    held.mockImplementation(() => order.push("held"));
+    host.redraw.mockImplementation(() => order.push(react.flushing ? "drawn" : "drawn later"));
+    // A message of the page's task, which its thread draws.
+    expect(task.heard(next(["message", anEntry(7).message]))).toBe(true);
+    // Another task's message changes nothing the page draws: held, and nothing drawn.
+    expect(task.heard(next(["message", anEntry(8, "w/b").message]))).toBe(true);
+    // The board is slow to answer: the page's notice, drawn by the page itself.
+    expect(task.heard(next(["tasks-status", { available: false, slow: true }]))).toBe(true);
+    // As it was when the events were heard: a read they started answers after.
+    expect([...order]).toEqual(["held", "drawn", "held", "held", "drawn"]);
+    expect(react.flushing).toBe(false);
   });
 
   it("adds a message of its task once, and a verdict reads its gates again", async () => {
