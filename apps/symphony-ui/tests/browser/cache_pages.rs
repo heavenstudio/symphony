@@ -24,9 +24,12 @@ const READS: [&str; 4] = [
     "/api/machine-work",
 ];
 
-/// This device's kept parts, `{ "ITEM PART": saved }` (`board: counts`): the store's records,
-/// read beside it, their keys' names read back without the project's.
-pub(super) const PARTS: &str = r#"(async () => {
+/// This device's kept parts, `{ "ITEM PART": FIELD }` (`board: counts`), each record's `FIELD`:
+/// the store's records, read beside it, their keys' names read back without the project's.
+macro_rules! kept_parts {
+    ($field:literal) => {
+        concat!(
+            r#"(async () => {
     const db = await new Promise(resolve => {
         const request = indexedDB.open("symphony-cache");
         // No store yet: make none.
@@ -49,8 +52,17 @@ pub(super) const PARTS: &str = r#"(async () => {
         }
         return names.slice(1).join(" ");
     };
-    return Object.fromEntries(all.map(part => [names(part.key), part.saved]));
-})()"#;
+    return Object.fromEntries(all.map(part => [names(part.key), part."#,
+            $field,
+            "]));\n})()"
+        )
+    };
+}
+
+/// When each part was kept, `{ "ITEM PART": saved }`.
+pub(super) const PARTS: &str = kept_parts!("saved");
+/// What each part holds, `{ "ITEM PART": value }`, as the page gave it to the store.
+pub(super) const VALUES: &str = kept_parts!("value");
 
 /// `work(stores)` in one read-write transaction over the store's records, beside the page's own
 /// connection: what a client of another format, or of another shape, left there.
