@@ -32,8 +32,8 @@ A release is an annotated tag on a commit of `origin/main` that every check foun
   `symphony`, [the packages](#packages-on-cratesio)) needs the library's line to name it:
   `symphony = { package = "symphony-app", git = "https://github.com/heavenstudio/symphony", tag =
   "release-…" }` in place of `symphony = { git = "https://github.com/heavenstudio/symphony", tag =
-  "release-…" }`. Until it does, the refresh's move of that project's pin is red
-  ([the refresh](#the-refresh)).
+  "release-…" }`. Until it does, that project's own move of its pin to such a release fails to
+  resolve the package (the refresh moves no project's pin, [the refresh](#the-refresh)).
 
 ## Packages on crates.io
 
@@ -635,165 +635,95 @@ the hour, and its green release refreshes the server and its projects
 
 ## The refresh
 
-A green release refreshes the machine and its clients, the projects the machine serves, the
-consuming project among them.
-Once a release's tag is pushed, the run refreshes the machine to it. First it installs the release
-on the machine, the step `refresh-install` ([the install](#the-install), below). Then one step
-`refresh-ID` for each
-project in the machine's registry (`projects.json`) whose `symphony.toml` names plugins, this
-repository aside, and whose packages take one of the Symphony's from git
-(`crates/symphony-build/src/release/refresh.rs`, its projects found by
-`crates/symphony-build/src/release/consumers.rs`). A registered project whose checkout is gone, or is
-not a git checkout, is left out, and the refresh says so (`left out: ID: …`).
+A green release refreshes the machine: it installs the release and brings the machine to it, and
+writes nothing in any project's checkout (`crates/symphony-build/src/release/refresh.rs`). No
+branch is made in a project, no commit, no pin moved and no main fast-forwarded: a project takes
+the release's kit and helpers by its own landing, which moves its pin through its own gate.
 
 **What the run does with a consuming project.** It builds and tests nothing of a consuming
-project's, and reads the machine's registry only to refresh. The refresh moves what the steps below
-say: the pin's move, made on the branch `symphony/RELEASE` through the project's own commit gate;
-its main, fast-forwarded only where its hooks allow (a project whose guard lets only its own
-landing move its main takes that branch through its landing); its board, moved to the schema of
-the pin its main locks; and, while the machine's server is a project's build, the wait for its own
-reload. A Symphony change that breaks that project's build or tests is found by its own gate when
-it takes the branch, not by the release, and is the project's to meet: a step its own gate, hooks
-or main checkout stops is the project's to finish, never red here (below). The release is
-installed on the machine as well. The machine's server is that release's once no registered
-project names a plugin linked into its host ([the switch](#the-switch), below), and its own reload
-follows `current` to it; until then it is a project's build, and each project that builds on the
-Symphony takes the release by its pin.
+project's, and reads the machine's registry (`projects.json`) only to refresh. A Symphony change
+that breaks that project's build or tests is found by its own gate when its own landing takes the
+release, not by the release. Of a project, the refresh moves its live board, under the writer rule
+below, and nothing else.
 
-A step moves what it can and nothing more:
+Once a release's tag is pushed, the run does this, in order:
 
-- **Its pin.** While the project's default branch locks an older Symphony, one the release
-  descends from, the move to the release is made in a worktree of the project's repository at
-  `../symphony-wt/release-refresh/ID`, detached at that branch's tip and locked (`the Symphony
-  release run's refresh`), never in its checkout. Each manifest of its workspace that takes the
-  Symphony's git source names the release's tag (`tag = "release-…"` in place of `branch`, `tag`
-  or `rev`), and `cargo update --workspace` moves the lock. Only `Cargo.toml` and `Cargo.lock`
-  files may change, and each Symphony package must end at the release's commit. That is committed
-  through the project's own hooks, its commit gate, never past them, on the branch
-  `symphony/RELEASE` of its repository, never pushed. A gate that refuses it makes no branch, and
-  its last lines are kept in the step's log. The worktree is removed either way. A branch made
-  before is kept while it is a fast-forward of the default branch, and made again on its tip once
-  that moved past it, when it is the refresh's own one commit; one that holds more is left as it
-  is.
+- **The install.** The release built once and installed in the machine folder, the step
+  `refresh-install` ([the install](#the-install), below). One that fails is red, and nothing after
+  it runs: `current` stays where it was.
+- **The switch.** While a registered project names a plugin linked into its host ([the
+  switch](#the-switch), below), the release is installed and nothing more: no board moves and
+  `current` is not pointed, and the run names the project that holds it (`the switch to RELEASE is
+  held: …`), as `--status` does. The machine's server is then a project's build at that project's
+  own pin, and a board moved past it would leave that server only reading it.
+- **The boards.** A release that keeps the board schema of the release `current` names moves no
+  board (`RELEASE serves board schema N, as the release current names serves N: no board moves`).
+  One that raises it, or the first, with no `current`, judges the live board of each project in the
+  registry, this repository's aside (its board moves with its own main), one step `refresh-ID` for
+  each. A project whose id is not a plain name, whose checkout is gone, or that is not a git
+  checkout is left out, and the refresh says so (`left out: ID: …`). Every board is judged before
+  any moves, each read through its running database:
+  - A project with no board folder, a board not made yet, and one at the release's schema or past
+    it have nothing to move.
+  - **The writer rule.** A board moves only when every writer seen there in the last week (its
+    writer record, [who writes a board](TASKS.md#who-writes-a-board)) is a release's own or was
+    built at the release's schema. A release's own is a binary of a release installed in this
+    machine folder (`releases/NAME/bin/`) on this host, which pointing `current` takes on. A board
+    with any other writer behind stays where it is, and the step names each writer to rebuild, at
+    its schema, by its path and host and when it was last seen: the project's to finish. The
+    machine's server is never counted, as it takes the new schema only by its reload.
+  - A board whose database is not running is red: nothing here starts, signals or stops a
+    database, and once it runs (any `just tasks` in its checkout starts it) the retry moves it. So
+    is one running an older SurrealDB than the release pins, which the move would replace, and one
+    whose versions cannot be read, the release's or the database's: the guard fails closed. So is
+    a board whose schema or writers cannot be read.
+  - A board below schema 18, from before the board recorded who writes it, has no record to judge
+    and is never moved here: its project's own `just tasks migrate`, in its main checkout, brings
+    it up. It is the project's to finish, and holds nothing, as it is behind every release.
 
-  A pin moves only forward, to a release that descends from it. A lock at the release or past it
-  takes it already. One beside it, neither ahead nor behind, such as a pin moved by hand to a
-  commit of main that a release off main's first-parent line lacks, is left as it is, its files
-  and its board with it: no branch, no commit, no snapshot and no migrate. The step is green and
-  names both commits, the pin's and the release's, and the run's record and `--status` repeat it
-  (`consumer: its main's lock pins the Symphony at P, neither ahead of release-… (R) nor behind
-  it: …`). The next release that descends from that pin moves it.
-
-  A package renamed here is a move the refresh does not make: it rewrites each line's tag and not
-  the package the line names, so `cargo update` finds no package of the old name at the new tag,
-  and the step is red for that project until its own manifest names the new one. The first
-  release that holds the library as `symphony-app` ([the packages](#packages-on-cratesio)) is
-  one: the consuming project's workspace manifest changes its
-  one line for the library from
-
-  ```toml
-  symphony = { git = "https://github.com/heavenstudio/symphony", tag = "release-…" }
-  ```
-
-  to
-
-  ```toml
-  symphony = { package = "symphony-app", git = "https://github.com/heavenstudio/symphony", tag = "release-…" }
-  ```
-
-  in the commit that moves its pin, and nothing else changes: the key stays `symphony`, and so
-  does the library's name, so no member's manifest and no `use` moves. It names no Chrome driver,
-  the other package renamed. For this rename an orchestrator makes that commit once, by hand, in
-  the consuming project's checkout ([its card](DECISIONS.md#consumer-manifest-line)): the line,
-  the release's tag on each of that project's Symphony lines and its lock, committed on its
-  default branch through its own commit gate. `just release --refresh` then finds the pin at the
-  release and goes on to the project's board and the server. Pushing that project's branch stays
-  a separate act that needs its own word.
-- **Its main.** Then the project's default branch is fast-forwarded to that exact commit, by its
-  full hash and never by a name a moved branch or a tag of the same name could answer, in its main
-  checkout (`git merge --ff-only COMMIT`, its hooks running). That happens when and only when all
-  of these hold:
-  - the commit is the move and nothing more, read as git holds it after the project's hooks ran,
-    which may have rewritten or staged more, and the same for a branch kept from before, which its
-    owner may have added to: one commit whose only parent is the default branch's tip, changing
-    only `Cargo.toml` and `Cargo.lock` files, every Symphony package its lock takes at the release;
-  - the main checkout is on its default branch at that tip and has no tracked edits;
-  - its hooks allow it, asked first by a ref transaction that is prepared and then aborted
-    (`git update-ref --stdin`: `start`, `update`, `prepare`, `abort`), so a refusal they can tell
-    writes nothing into its checkout, whose `Cargo.lock` the shared server's reload may watch.
-
-  It is never pushed (the project's own next push carries it), no hook is passed by, and no merge
-  commit is made there. Otherwise the branch is left and its main stays where it was. When git
-  refuses the move itself after the ask passed, it has already written the move's files into the
-  checkout: the run reads where the default branch is, never assuming it, and puts
-  each of those files back to the default branch's tip by itself (`git restore --source=TIP
-  --staged --worktree -- PATH`) when and only when its index entry and its file still hold exactly
-  what the move wrote, so nothing of its owner's, staged or not, is touched. One that holds
-  anything else is left and named, with the command that puts that one path back (`git -C ROOT
-  restore --staged --worktree -- PATH`). One that holds what the move wrote and that the run could
-  not put back, or could not read, is named with the command that puts it back (`git -C ROOT
-  restore --source=TIP --staged --worktree -- PATH`), and the step is red.
-- **Its board.** In every refresh but one that leaves its pin beside the release or whose commit
-  gate refused the move, the project's live board is moved to the schema of the pin its main locks
-  then: the release once its main took it, or an older pin whose schema it is still behind, so a
-  refresh finishes what an earlier one left, whatever release is newest. The store is snapshotted
-  first, as it runs (`symphony/tasks/snapshots/before-schema-N-RELEASE.surql` in the project's git
-  common dir, the newest 5 kept; `surreal export` has 5 minutes). Then `just tasks migrate` runs in
-  its main checkout, the one command that moves a project's board, and the schema is read again. On
-  a board at schema 18 or later, a writer seen there in the last week that the move would leave
-  behind stops it: the migrate names each and moves nothing, and the step is red until each is
-  rebuilt and run once. The move to 18 itself names no one, as no build below 18 keeps a line: it
-  moves the board, and the project's programs still at its old pin are refused from then on, each
-  naming itself to rebuild. The machine's server is never counted, as it takes the new schema only
-  by its reload after the move ([who writes a board](TASKS.md#who-writes-a-board)). A board whose
-  database is not running is refused, since nothing here starts, signals or stops a database. So is
-  one running an older SurrealDB than the pin names, which the move would replace, and one whose
-  versions cannot be read, the pin's or the database's: the guard fails closed. A project with no
-  board folder has nothing to move.
-- **The shared server.** Last, the run says which server answers on the machine's record, what it
-  is built from and where that checkout's main stands. Nothing here stops, signals or restarts it.
-  A release's server is said as that release, its reload following `current` (below), and nothing
-  of it is waited for. A project's build's own reload (`apps/symphony-server/src/reload.rs`)
-  fingerprints the checkout it serves, its `Cargo.lock` and sources: once that changes it builds
-  and installs a new server (`crates/symphony/src/reload.rs`, `cargo install --force --root` into
-  its install folder) and hands its sockets to it by exec. A build or a hand-over that fails leaves the previous one
-  serving and says on its notice why, and when it tries that version again: 5 minutes after its
-  first failure, the wait doubling with each failure of it in a row up to an hour, so a hand-over
-  that failed under load is tried again though the sources do not change again. A build that
-  installs the very bytes the serving one runs, with no client to
-  publish, hands over to nothing: the serving server stamps the install as that build's and keeps
-  serving. When this refresh moved that checkout's main and a server built from it
-  answered before the move, the run waits, 20 minutes at most, until another process answers for
-  it, and says which; or that none has yet, and that `just symphony-status` says which answers
-  later. With none answering for it before, it waits for none: which build answers after cannot
-  be told against one before it, and it says so. The wait is said, never red.
+  A board that lags, red or the project's to finish, holds the release: no board moves and
+  `current` is not pointed, and each board that could move says it waits (`ID: its board can move
+  from schema N to M, and stays at N while X holds the release`). A release that raises the schema
+  moves every board or none, so no board is left a schema ahead of the release `current` names,
+  nor one behind the server that follows `current`. Otherwise each board is snapshotted first,
+  through its running database (`symphony/tasks/snapshots/before-schema-N-RELEASE.surql` in the
+  project's git common dir, the newest 5 kept), then moved by the release's own `tasks migrate`
+  (`releases/RELEASE/bin/tasks`) run in the project's main checkout, the one command that moves a
+  project's board, and its schema is read again. Where the only writers behind are a release's
+  own, it runs with `--leave-behind`, which names them; otherwise the migrate's own check of its
+  writers is a second guard. The first move that fails is red and stops the rest, its snapshot
+  kept, and `current` is not pointed.
+- **`current`.** Once no board holds it, `current` is pointed at the release ([the
+  install](#the-install), below): every recipe of a project with no build of its own runs it from
+  then on. One that cannot be pointed is the install's red, `current` as it was.
+- **The machine's server.** Last, the run says which server answered on the machine's record
+  before `current` moved. Nothing here starts, stops, signals or restarts it. A release's server
+  follows `current` by its own reload ([the install](#the-install)): the run waits, 5 minutes at
+  most, until the machine's server answers as the release, and says which process now answers; or
+  that it still answers as the release before, which its reload tries again
+  (`just symphony-status` says which answers later). A project's build as the machine's server never
+  follows `current`, and the run says so: a stop and a start, the owner's word for the shared
+  server, make the release its successor. With none answering, the next start of the one server
+  runs the release when it serves every registered project. The wait is said, never red.
 
 Each step ends in one of three:
 
-- **Moved**: all its project could take, it took. Green.
-- **The project's to finish**: its own commit gate refused the move (its hook made `git commit`
-  exit 1; no branch made, the gate's last lines kept in the step's log); or its hooks refused the
-  fast-forward with its main still where it was read, or its main checkout
-  is off its default branch or holds tracked edits (the branch `symphony/RELEASE` left for its own
-  landing or its owner, its main as it was, its board moved only to the schema of the pin that main
-  locks). What stopped it is the project's own, a Symphony change its gate refuses among it, met
-  through its own landing as any change it takes is. Green here and filed nowhere: it files no task
-  and closes none, and the run's exit is not changed by it. The step says which, with what finishes
-  it, in the run's output (`release: refresh: ID: the project's to finish: …`, then `release:
-  refresh-ID the project's to finish`), the run's record (the step named in `refreshed.theirs`, its
-  line in `refreshed.said`) and `--status`.
-- **Red**: the refresh's own work failed. The registry or the release's packages cannot be read, a
-  worktree cannot be made, a lock cannot be moved to the release, the move's commit fails otherwise
-  than by its gate's exit 1 (git's own failure, exit 128, or a commit that could not run), a branch
-  is found changed under it (more than the move, or its main moved on while the move was made or
-  asked for), where its main checkout stands cannot be read, a file the move wrote into that
-  checkout cannot be put back, a snapshot or a migrate fails, or a board's database is not running
-  or could be replaced by the move. A refusal met once the run's time was up or it was told to stop
-  is red, as the run's own, and so is a move its project stopped whose board then fails to move.
+- **Moved**, or nothing to move. Green.
+- **The project's to finish**: a writer seen on its board in the last week is behind the release's
+  schema, each named with what to do (rebuild it at that schema and run it once, which records it,
+  then an orchestrator's `just release --refresh` moves the board); or its board is below schema
+  18 (`cd ROOT && just tasks migrate`, its own, brings it up). Green here and filed nowhere: it
+  files no task and closes none, and the run's exit is not changed by it. The step says which, with
+  what finishes it, in the run's output (`release: refresh: ID: the project's to finish: …`, then
+  `release: refresh-ID the project's to finish`), the run's record (the step named in
+  `refreshed.theirs`, its line in `refreshed.said`) and `--status`.
+- **Red**: the refresh's own work failed. The registry cannot be read; a board's database is not
+  running, could be replaced by the move, or its schema or writers cannot be read; a snapshot or a
+  migrate fails, or a board ends short of the release's schema. A refusal met once the run's time
+  was up or it was told to stop is red, as the run's own.
 
-A red step says what it found, the release stands (its tag is pushed), and the run exits 1. A red
-before its main moved leaves that main as it was, with the branch made and its board moved only to
-the pin that main already locks; a migrate that fails leaves the snapshot taken before it. It is
+A red step says what it found, the release stands (its tag is pushed), and the run exits 1.
+`current` stays where it was, and a migrate that fails leaves the snapshot taken before it. It is
 filed as `tests/release-red-refresh-ID` (`tests/release-red-refresh` when the registry cannot be
 read), saying what was left as it was and who fixes it, and filed as a check's red is. A refresh
 green for it closes the task.
@@ -801,19 +731,18 @@ green for it closes the task.
 What stays by hand, said in `--status` under a refresh with a step that is its project's to
 finish:
 
-- a project whose own gate refused the move: it meets that itself, on its own board;
-- a project whose hooks kept the move from its main: it lands `symphony/RELEASE` through its own
-  landing;
-- a main checkout off its default branch or with tracked edits: its owner puts it right;
+- each writer named behind the release: rebuilt at its schema and run once, which records it;
+- a board from before the writer record: brought up by its own `just tasks migrate` in its main
+  checkout;
 - then the retry, `just release --refresh`: an orchestrator's act, the owner having authorised the
   refresh itself, as it is after a red step's fix. It runs the refresh again for the newest release
-  here, as a run of its own under the lock, checking nothing, and finishes what the step did not:
-  the move, the fast-forward, the board's move and the wait for the server.
+  here, as a run of its own under the lock, checking nothing, and finishes what the steps did not:
+  the install, the boards' moves, `current` and the wait for the server.
 
-A refresh has 2 hours past the run's checks, the install's build within them. `[releases] refresh
-= false` turns it off, the install with it. Each project's step logs every command it ran
-(`logs/ID/refresh-ID.log`), and the install its build's output and what it said
-(`logs/ID/refresh-install.log`).
+A refresh's install has an hour, its build within it, and the boards, `current` and the wait for
+the server have another hour after it. `[releases] refresh = false` turns it off, the install with
+it. Each project's step logs every command it ran (`logs/ID/refresh-ID.log`), and the install its
+build's output and what it said (`logs/ID/refresh-install.log`).
 
 ### The install
 
@@ -855,22 +784,20 @@ current -> releases/release-2026-11-20
   commit with no client distribution leaves no folder and `current` where it was, and is the
   refresh's red, filed as `refresh-install`; `just release --refresh` is the retry. A folder in
   place is never written into, since a binary in it may be running: a retry that finds the
-  release installed from the same commit builds nothing and points `current`, and one that finds
-  that name holding another commit, or no whole release, refuses and names the folder to remove
-  by hand.
-- **`current`.** The install ends by pointing the machine's `current` link at the release: a new
-  link made beside it and renamed over the old, never the link rewritten, so a reader finds one
-  release or the other. Recipes and the board's own starts find a binary in this order: the
+  release installed from the same commit builds nothing and goes on to the boards and `current`,
+  and one that finds that name holding another commit, or no whole release, refuses and names the
+  folder to remove by hand.
+- **`current`.** The install points nothing. The refresh points the machine's `current` link at
+  the release once nothing holds it ([the refresh](#the-refresh), above): a new link made beside
+  it and renamed over the old, never the link rewritten, so a reader finds one release or the
+  other. Recipes and the board's own starts find a binary in this order: the
   checkout's `.target/bin/NAME`, the main checkout's from a linked worktree, `current/bin/NAME`
   in the machine folder, then `PATH` (`crates/symphony/src/builds.rs`,
   `crates/symphony/shipped/symphony.just`). So a project with no build of its own runs the
   release, and one that builds its own, this repository among them, keeps running its own, but for
   the one server, which a start runs from the release when nothing holds the switch (below).
-- **Earlier releases stay.** Nothing removes a release's folder. The way back is by hand, in the
-  machine folder: `ln -s releases/NAME current.new && mv -fh current.new current` on macOS
-  (`mv -fT` on Linux), which renames the new link over the old and never into the folder it
-  names, for a release whose folder is there. The next refresh points `current`
-  at the release it installs.
+- **Earlier releases stay.** Nothing removes a release's folder, so the way back is there
+  ([the way back](#the-way-back), below).
 
 Nothing of the install starts, stops or signals a server. A release's server follows `current`
 by its own reload (`apps/symphony-server/src/reload.rs`): it reads the link once a second and,
@@ -892,9 +819,10 @@ process, and a registered project naming a linked plugin holds the switch: the r
 `crates/symphony/src/machine/switch.rs`, which a start and the status read. While a release is
 installed and a project's build is the machine's server, each project naming a linked plugin says
 so on its pages, naming the command that lets it go, and `just release --status` says which holds
-it. A start that finds no server running starts the release's server when it serves every
-registered project, at its pin and board schema or older. While something holds the switch, a
-start by the release's own binary (`just symphony` in a project with no build of its own) starts
+it. While something holds it, a refresh installs the release and points nothing ([the
+refresh](#the-refresh)), so `current` names the release before it, or none. A start that finds no
+server running starts the release's server when it serves every registered project, at its pin
+and board schema or older. While something holds the switch, a start by the release's own binary (`just symphony` in a project with no build of its own) starts
 nothing: it registers its project and names, in one line, the project that holds the switch and
 that `just symphony` in that project's checkout, by its own build, starts the machine's server.
 A running project's build keeps serving until a stop and a start make the release its successor,
@@ -903,6 +831,27 @@ release's server. A board one schema ahead of the release (main's build moved it
 by its server, which writes nothing to it and says so on every page until a release at that schema
 serves it; a board two ahead, or a project at a newer pin, is refused until `current` names a
 release that serves it.
+
+### The way back
+
+A release is taken back on the machine by hand, by pointing `current` at the release before it,
+whose folder is still there. In the machine folder:
+
+```sh
+ln -s releases/NAME current.new && mv -fh current.new current   # macOS
+ln -s releases/NAME current.new && mv -fT current.new current   # Linux
+```
+
+which renames the new link over the old and never into the folder it names. A release's server
+follows it by its own reload, as it follows any move of `current`, and every recipe of a project
+with no build of its own runs that release from then on. Nothing else goes back with it: a board
+the newer release moved stays at that release's schema, which the older release's server reads
+and writes nothing to ([the switch](#the-switch)) and the older release's `tasks` refuses. Its
+store as it was before the move is the snapshot the refresh took
+(`before-schema-N-RELEASE.surql`), and a board put back to it is one that went back, which the
+owner accepts ([TASKS](TASKS.md#a-board-that-went-back)). Pointing `current` on the machine whose
+server is the shared one is the owner's word, as any switch of that server is. The next green
+refresh points `current` at the release it installs.
 
 ## Who runs it
 
@@ -914,7 +863,11 @@ does either only on the owner's word. The cadence's run has that word (*The cade
 land starts `--due` without asking, and the release it runs is automatic. So has a green release's
 refresh (*The refresh*, above), so its retry, `just release --refresh`, is an orchestrator's act,
 run without asking on a red refresh's task once it is fixed, or once a project finished what its
-step left to it. Turning `[releases] publish` on is the owner's word, the first publication's
+step left to it (each writer named rebuilt and run once). The machine's server is not the
+refresh's to switch: the first time the shared server becomes a release's own server, by a stop
+and a start while nothing holds the switch, is the owner's word, and so is pointing `current` back
+on that machine ([the way back](#the-way-back)); a release's server that already serves follows
+each `current` the refresh points. Turning `[releases] publish` on is the owner's word, the first publication's
 ([the packages](#packages-on-cratesio)); once it is on, `just release --refresh` after a failed
 upload's cause is put right is an orchestrator's act as well.
 Running `--due` by hand starts a release, and stays the owner's call. The release candidate's two
@@ -941,23 +894,34 @@ its checks; `none held`, or `off` while a bound is 0. Then it
 prints the cadence, the landings since what it counts from and what the next run waits for, the
 last publication on crates.io with each line it said ([the packages](#packages-on-cratesio)),
 the last refresh, with each line it said and each step red or its project's to finish, and last
-where the machine's server stands ([the switch](#the-switch)): the release `current` names,
-whether the machine's server runs it, and, while a project's build serves, what holds the switch:
+where the machine's server stands ([the switch](#the-switch)): the release `current` names, or
+the releases installed while it names none, whether the machine's server runs it, and, while a
+project's build serves, what holds the switch. A refresh that moved the boards, pointed `current`
+and saw a release's server follow it:
 
 ```text
-landings: 7 on origin/main since release-2026-11-12 (91b39f209e72); the last tools/g (23e3da01bc80)
+landings: 7 on origin/main since release-2026-11-20 (91b39f209e72); the last tools/g (23e3da01bc80)
 next run: after 13 more landings (7 of 20), or the scheduled run
-last publish: of release-2026-11-12 by the run 2026-11-12T1000-34446, 2026-11-12 10:00 (1 h ago)
+last publish: of release-2026-11-20 by the run 2026-11-20T1000-34446, 2026-11-20 10:00 (1 h ago)
   not published: [releases] publish is off
-last refresh: green, of release-2026-11-12 by the run 2026-11-12T1000-34446, 2026-11-12 10:00 (1 h ago)
-  installed release-2026-11-12 in /machine/releases/release-2026-11-12, built in 660 s: symphony-server 31,402,112 bytes, tasks 31,675,888 bytes, agent-send 5,601,824 bytes, symphony 22,668,544 bytes, client/5f0c2d9a41b7e386 6,204,518 bytes in 322 files
-  release-2026-11-12 serves board schema 18, plugin protocol 0.3 and tasks api 1.14, at Symphony pin 1
-  /machine/current names release-2026-11-12 (it named release-2026-11-11, which stays installed): a project with no build of its own runs it
-  consumer: its pin to release-2026-11-12 is on the branch symphony/release-2026-11-12 (11bbf043d060), made through its own commit gate and not pushed
-  consumer: its main is fast-forwarded to symphony/release-2026-11-12 (11bbf043d060) in its main checkout /work/consumer, through its own hooks and not pushed: its own next push carries it
-  consumer: its board moved from schema 16 to 17, its store snapshotted first to /work/consumer/.git/symphony/tasks/snapshots/before-schema-17-release-2026-11-12.surql
-  the shared server (port 8765) is built from /work/consumer, whose main this refresh moved to release-2026-11-12: its own reload (apps/symphony-server/src/reload.rs) built it again, and process 51234 answers in place of 50111
-machine: current names release-2026-11-12; the machine's server (port 8765, pid 51234) is the build of /work/consumer
+last refresh: green, of release-2026-11-20 by the run 2026-11-20T1000-34446, 2026-11-20 10:00 (1 h ago)
+  installed release-2026-11-20 in /machine/releases/release-2026-11-20, built in 660 s: symphony-server 31,402,112 bytes, tasks 31,675,888 bytes, agent-send 5,601,824 bytes, symphony 22,668,544 bytes, client/5f0c2d9a41b7e386 6,204,518 bytes in 322 files
+  release-2026-11-20 serves board schema 19, plugin protocol 0.3 and tasks api 1.15, at Symphony pin 1
+  alpha: its board moved from schema 18 to 19 by release-2026-11-20's own `tasks migrate --leave-behind`, its store snapshotted first to /work/alpha/.git/symphony/tasks/snapshots/before-schema-19-release-2026-11-20.surql
+  beta: it keeps no board (/work/beta/.git/symphony/tasks is not there): nothing to move
+  /machine/current names release-2026-11-20 (it named release-2026-11-12, which stays installed): a project with no build of its own runs it
+  the machine's server (process 50111, port 8765), the release release-2026-11-12, followed current by its own reload (apps/symphony-server/src/reload.rs): process 51234 on port 8765 answers as release-2026-11-20
+machine: current names release-2026-11-20; the machine's server (port 8765, pid 51234) runs it
+```
+
+One held by a project's linked plugin, which installed the release and nothing more:
+
+```text
+last refresh: green, of release-2026-11-20 by the run 2026-11-20T1000-34446, 2026-11-20 10:00 (1 h ago)
+  installed release-2026-11-20 in /machine/releases/release-2026-11-20, built in 660 s: …
+  release-2026-11-20 serves board schema 19, plugin protocol 0.3 and tasks api 1.15, at Symphony pin 1
+  the switch to release-2026-11-20 is held: consumer names the linked plugin consumer-board, and a release's server serves a plugin only from its process: a [plugins.process] command for it in /work/consumer/symphony.toml lets the release serve every project (docs/PLUGIN_PROTOCOL.md); release-2026-11-20 is installed, no board moves, and current is not pointed at it (it names release-2026-11-12)
+machine: current names release-2026-11-12; the machine's server (port 8765, pid 50111) is the build of /work/consumer
 machine: the switch to release-2026-11-12 is held: consumer names the linked plugin consumer-board, and a release's server serves a plugin only from its process: a [plugins.process] command for it in /work/consumer/symphony.toml lets the release serve every project (docs/PLUGIN_PROTOCOL.md)
 ```
 
@@ -1031,16 +995,16 @@ and never while a worktree has it checked out. It resets and cleans no checkout 
 removes no folder it did not make, builds and tests nothing of a consuming project's, and itself
 writes nothing to a consuming project's checkout. Its install writes in the machine folder only a
 release's own new folder under `releases/`, never one already there, and the `current` link, and
-removes there only what an install of that same release left unfinished. Its refresh writes to a project only the branch
-its pin moves on, made through the
-project's own commit gate, the worktree that makes it, removed after, the fast-forward of its main
-to that branch's one commit in a main checkout ready for it, through its own hooks, putting back
-only what that move wrote when git refuses it, and the snapshot of its store; it moves the
-project's board only by the project's own `just tasks migrate`. It never
-pushes a project's branch, makes a merge commit in a project, bypasses a project's hook, or
-starts, signals, stops or restarts a board's database or a server, a release's server taking the
-`current` it points by its own reload; past its time it stops only
-the `surreal export` client it started. Its tests run on a repository of their own with a bare
+removes there only what an install of that same release left unfinished. Its refresh writes in a
+project's checkout nothing at all: no branch, no commit, no worktree, no pin and no move of its
+main. It writes to a project only the snapshot of its store, in its git common dir, and moves the
+project's board only by the release's own `tasks migrate` run in its main checkout, and only when
+every writer seen there in the last week is a release's own or at the release's schema. It never
+moves a board below schema 18, never moves one board of a schema-raising release while another
+holds it, and never points `current` while a board holds the release, a project's linked plugin
+holds the switch or a move failed. It never starts, signals, stops or restarts a board's database
+or a server, a release's server taking the `current` it points by its own reload; past its time it
+stops only the `surreal export` client it started. Its tests run on a repository of their own with a bare
 repository for its remote and a user git configuration that asks every push for more, a scratch
 board and a machine folder of their own, with stand-in checks (`crates/symphony-build/tests/release/`),
 and shorten the refresh's wait for the shared server with `SYMPHONY_RELEASE_RELOAD_SECONDS`,

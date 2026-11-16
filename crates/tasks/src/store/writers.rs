@@ -13,9 +13,11 @@
 //! is written without the schema guard, as builds of other schemas write it; it has no event, so a
 //! line written moves no board marker. Its times are this machine's clock ([`seen_now`]).
 
+use super::opening::undefined;
 use super::surreal::writers as sql;
 use super::{Failure, Store};
 use crate::board_health::ago;
+use crate::rpc::DbError;
 use crate::schema::{Access, Schema};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -183,13 +185,20 @@ pub(super) fn left_behind(board: &str, target: i64, behind: &[Writer], now: f64)
 }
 
 impl Store {
-    /// Every writer's line on this board, none where the table is not there: one read.
+    /// Every writer's line on this board, none where the table, or the board's database itself, is
+    /// not there: one read.
     pub fn writers(&self) -> Result<Vec<Writer>, super::Error> {
         self.retrying(|| self.writer_lines())
     }
 
     fn writer_lines(&self) -> Result<Vec<Writer>, Failure> {
-        let found = self.request(sql::LINES, json!({}))?;
+        let found = match self.request(sql::LINES, json!({})) {
+            Ok(found) => found,
+            Err(DbError::Failed(said)) if undefined(&said, self.client.database()) => {
+                return Ok(Vec::new());
+            }
+            Err(other) => return Err(other.into()),
+        };
         let lines = found.last().cloned().unwrap_or(Value::Null);
         serde_json::from_value(lines)
             .map_err(|e| Failure::Stop(super::Error::Db(format!("a writer's line: {e}"))))

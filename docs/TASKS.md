@@ -172,16 +172,26 @@ reads nothing of its board.
 The record arrives with schema 18, a raise of its own, and a build below it keeps no line, so the
 move to 18 names no one: a board at 17 has no table of writers to read. In this repository main's
 build moves the board at its first board command once the raise lands, as for any schema here,
-with no migrate and no writer check. A consuming project's board is moved by the refresh of the
-first release that carries 18 ([RELEASES](RELEASES.md#the-refresh)): its `just tasks migrate`
-runs whenever the schema the project's pin locks is above its board's, and moves the board without
-naming anyone. From then on every program of the project's still built at its old pin (a linked
-`tasks` or `agent-send` not rebuilt, a program of its own that opens the board through the board's
-crate) is refused the board, naming itself as the program to rebuild; the project rebuilds each at
-its new pin right after the refresh, and each keeps its line once it has run. From 18 on, every
-build that can write a board keeps its line, so each later move names the writers it would leave
-behind, the refresh's migrate included: that move stops, naming them, until each is rebuilt and
-run once.
+with no migrate and no writer check. A consuming project's board below 18 is brought up by its own
+`just tasks migrate` in its main checkout, never by a release's refresh, which finds no record
+there to judge ([RELEASES](RELEASES.md#the-refresh)): that move names no one. From then on every
+program of the project's still built below 18 (a linked `tasks` or `agent-send` not rebuilt, a
+program of its own that opens the board through the board's crate) is refused the board, naming
+itself as the program to rebuild; the project rebuilds each, and each keeps its line once it has
+run. From 18 on, every build that can write a board keeps its line, so each later move names the
+writers it would leave behind.
+
+From 18 on, a release's refresh moves a consuming project's board to the release's schema, by the
+release's own `tasks migrate` run in the project's main checkout, its store snapshotted first:
+where a project's default branch commits no board source, its live board is moved only from its
+main checkout, by whichever build runs there (`crates/tasks/src/live.rs`). The refresh reads the
+lines first and moves the board only when every writer seen there in the last week is a release's
+own (a binary of a release installed in the machine folder, `releases/NAME/bin/`, on this host,
+which the `current` the refresh then points takes on) or was built at the release's schema; when
+the only writers behind are a release's own, its migrate runs with `--leave-behind`, naming them.
+Any other writer behind holds the release: the refresh names each to rebuild, moves no board of
+any project and leaves `current` where it was, until each is rebuilt and run once and the
+refresh's retry moves them all. A release that keeps the schema `current` names moves no board.
 
 The store takes about what it holds. Every server the board starts keeps each
 value beside its key, where compaction drops the versions a rewrite leaves, and

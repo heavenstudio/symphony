@@ -584,8 +584,8 @@ fn again(ran: &Ran, night: &Night<'_>) -> String {
     )
 }
 
-/// Whether the step `name` is a release's refresh of a project ([`super::refresh::STEP`]), not a
-/// check of the candidate.
+/// Whether the step `name` is one of a release's refresh ([`super::refresh::STEP`]: its install
+/// or a project's board), not a check of the candidate.
 pub(crate) fn is_refresh(name: &str) -> bool {
     let key = key(name);
     key == super::refresh::STEP || key.starts_with(&format!("{}-", super::refresh::STEP))
@@ -597,24 +597,24 @@ fn refresh_why(ran: &Ran) -> String {
 }
 
 /// A red refresh step's body: what it was refreshing and why it is red, its log, what it left as
-/// it was, who fixes it and what closes it. Only the refresh's own work is red: a step its
-/// project's own gate, hooks or main checkout stopped is that project's to finish, filed nowhere.
+/// it was, who fixes it and what closes it. Only the refresh's own work is red: a board whose
+/// writers its project rebuilds is that project's to finish, filed nowhere.
 fn refresh_body(ran: &Ran, night: &Night<'_>) -> String {
     format!(
         "The Symphony release run's {command} is red (run {id}, {when}, the release of {commit}): \
          {why}\n\n\
          Log: {log}\n\n\
          {tail}\n\n\
-         What it left as it was: what the step had not reached. A red before the project's main \
-         moved keeps that main where it was, a pin's branch made left as it is; a red board move \
-         moves no schema, the snapshot before it kept; the shared server keeps serving what it \
-         served. Nothing of the release is undone: it is tagged and pushed, and other projects \
-         refreshed on their own.\n\n\
+         What it left as it was: what the step had not reached, and `current`, which a red refresh \
+         never points. A red install leaves nothing of the release in the machine folder; a red \
+         board move moves no schema, the snapshot before it kept; the machine's server keeps \
+         serving what it served. No project's checkout is written. Nothing of the release is \
+         undone: it is tagged and pushed.\n\n\
          Who fixes: what the line above names. A red here is the refresh's own work that failed, \
-         fixed here; a project's own gate, hooks or main checkout that stopped the move is that \
-         project's to finish and is never filed here. {LANDS} Then an orchestrator reruns the \
-         refresh, `just release --refresh` in the Symphony's main checkout, which finishes what \
-         this step did not; a green refresh of it closes this task.\n\n\
+         fixed here; a board whose writers lag behind the release is that project's to finish and \
+         is never filed here. {LANDS} Then an orchestrator reruns the refresh, `just release \
+         --refresh` in the Symphony's main checkout, which finishes what this step did not; a \
+         green refresh of it closes this task.\n\n\
          key: {key}\ncheck: {name}",
         command = ran.command,
         id = night.id,
@@ -1482,7 +1482,7 @@ mod tests {
     #[test]
     fn a_red_refresh_is_filed_as_the_refresh_it_is_and_a_green_one_closes_it() {
         let board = Fake::default();
-        let migrate = "`just tasks migrate` in /work/alpha failed (`just tasks migrate` exited 1)";
+        let migrate = "release-2026-11-12's `tasks migrate` in /work/alpha failed (exited 1)";
         let done = report(&board, &night(&[]), &[refresh_red("alpha", migrate)]);
         assert_eq!(done.filed, ["tests/release-red-refresh-alpha"]);
         let filed = board.thread("tests/release-red-refresh-alpha").join("\n");
@@ -1490,17 +1490,17 @@ mod tests {
             filed.starts_with(
                 "Release red: the refresh of alpha to release-2026-11-12\nThe Symphony release run's \
                  the refresh of alpha to release-2026-11-12 is red (run 2026-11-12T0300-1, \
-                 2026-11-12 03:00, the release of cafe01234567): `just tasks migrate` in \
-                 /work/alpha failed"
+                 2026-11-12 03:00, the release of cafe01234567): release-2026-11-12's `tasks \
+                 migrate` in /work/alpha failed"
             ),
             "{filed}"
         );
-        // Its own work's red is fixed here; a project's own refusal is never filed.
+        // Its own work's red is fixed here; a project's writers to rebuild are never filed.
         assert!(
             filed.contains(
-                "A red here is the refresh's own work that failed, fixed here; a project's own \
-                 gate, hooks or main checkout that stopped the move is that project's to finish \
-                 and is never filed here."
+                "A red here is the refresh's own work that failed, fixed here; a board whose \
+                 writers lag behind the release is that project's to finish and is never filed \
+                 here."
             ),
             "{filed}"
         );
@@ -2520,14 +2520,20 @@ mod tests {
             command: "refresh consumer".into(),
             log: tree.write(
                 "refresh.log",
-                "$ git merge --ff-only abc\nhook refused the move\n",
+                "$ /m/releases/r/bin/tasks migrate\nthe migrate was refused\n",
             ),
             ..ran("refresh-consumer", 1)
         };
         let filed = refresh_body(&refresh, &night(&[]));
         assert_eq!(
             fenced(&filed, "What failed, as its log says it:"),
-            ["hook refused the move"],
+            ["the migrate was refused"],
+            "{filed}"
+        );
+        assert!(
+            filed.contains("`current`, which a red refresh never points")
+                && filed.contains("No project's checkout is written.")
+                && !filed.contains("branch"),
             "{filed}"
         );
     }
