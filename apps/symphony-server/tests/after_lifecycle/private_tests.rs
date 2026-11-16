@@ -130,3 +130,89 @@ fn a_server_ends_with_its_named_test_process_even_while_its_parent_lives() {
     assert!(!repo.tree.join("artifacts/docs-app.port").exists());
     assert!(front(actual.port).is_none());
 }
+
+/// A release installed in `repo`'s machine folder as an install leaves it: this build of the
+/// server, a stand-in for each other binary, and a client of a page and one build file, each
+/// saying `mark`. The server in it, through the `current` link.
+fn installed_release(repo: &Repo, name: &str, mark: &str) -> PathBuf {
+    use symphony::machine::release::{self, BINARIES, Built, Serves, Version};
+    let build = repo.base.join(format!("{name}-build"));
+    fs::create_dir_all(build.join("bin")).unwrap();
+    for binary in BINARIES {
+        let to = build.join("bin").join(binary);
+        if binary == "symphony-server" {
+            fs::copy(fixture::APP, &to).unwrap();
+        } else {
+            write(&to, "#!/bin/sh\n");
+            fs::set_permissions(&to, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+        }
+    }
+    write(
+        &build.join("client/index.html"),
+        &format!(
+            "<html><head><script type=\"module\" src=\"/assets/app-{mark}.js\"></script></head>\
+             <body>{mark}</body></html>"
+        ),
+    );
+    write(
+        &build.join(format!("client/assets/app-{mark}.js")),
+        &format!("console.log('{mark}')"),
+    );
+    let version = Version { major: 0, minor: 0 };
+    let built = Built {
+        release: name,
+        commit: "0000000",
+        serves: Serves {
+            schema: symphony_board::SCHEMA,
+            protocol: version,
+            tasks_api: version,
+        },
+        binaries: &build.join("bin"),
+        client: &build.join("client"),
+    };
+    release::install(&repo.home, &built).unwrap();
+    release::point(&repo.home, name).unwrap();
+    repo.home.join("current/bin/symphony-server")
+}
+
+#[test]
+fn a_server_run_from_an_installed_release_serves_the_client_beside_it() {
+    let repo = Repo::new("released-client");
+    let serve = |binary: &Path| {
+        let mut released = Command::new(binary);
+        released
+            .current_dir(&repo.tree)
+            .env_clear()
+            .envs(repo.environment())
+            .stdin(Stdio::null())
+            .args(["--root", repo.tree.to_str().unwrap()])
+            .args(["--port", "0", "--host", "127.0.0.1"]);
+        repo.run(released)
+    };
+    let first = installed_release(&repo, "release-1", "first");
+    let mut server = serve(&first);
+    let port = server.ready().port;
+    let (status, page) = answer(port, "/");
+    assert_eq!(status, 200, "{page}");
+    // The release's own page, the project's shell written into it.
+    assert!(
+        page.contains("src=\"/assets/app-first.js\"") && page.ends_with("first</body></html>"),
+        "{page}"
+    );
+    let (status, file) = answer(port, "/assets/app-first.js");
+    assert_eq!((status, file.as_str()), (200, "console.log('first')"));
+    server.signal(libc::SIGTERM);
+    server.success();
+    // Another release, another client: nothing of the first is compiled into the server.
+    let second = installed_release(&repo, "release-2", "second");
+    let mut server = serve(&second);
+    let port = server.ready().port;
+    let (_, page) = answer(port, "/");
+    assert!(page.ends_with("second</body></html>"), "{page}");
+    assert_eq!(
+        get(port, "/assets/app-first.js").map(|got| got.0),
+        Some(404)
+    );
+    server.signal(libc::SIGTERM);
+    server.success();
+}

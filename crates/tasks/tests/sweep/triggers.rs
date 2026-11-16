@@ -455,8 +455,8 @@ fn with_no_build_of_the_main_checkout_nothing_sweeps_and_the_log_says_where_one_
         let text = logged(&r, "no sweep: ", 1);
         started_for(&text, "sim/jump is cancelled");
         let said = format!(
-            "no sweep: no build of tasks for {}: link the project's build at {}/.target/bin/tasks \
-             or put tasks on PATH",
+            "no sweep: no build of tasks for {}: link the project's build at {}/.target/bin/tasks, \
+             install a release on the machine or put tasks on PATH",
             r.root.display(),
             r.root.display()
         );

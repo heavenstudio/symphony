@@ -15,6 +15,7 @@ mod board;
 mod cadence;
 mod candidate;
 mod consumers;
+mod install;
 mod places;
 mod publish;
 mod recorder;
