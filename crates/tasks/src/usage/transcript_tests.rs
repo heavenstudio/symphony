@@ -313,6 +313,29 @@ fn a_second_beat_of_the_key_meanwhile_reads_nothing_and_the_next_reads_what_it_l
 }
 
 #[test]
+fn a_closed_ledger_lets_its_key_go_though_a_child_started_meanwhile_holds_its_lock_still() {
+    let folder = Folder::new("inherited");
+    let (ledgers, transcript) = (folder.path("usage"), folder.path("s-1.jsonl"));
+    append(
+        &transcript,
+        &format!("{}\n", assistant("m1", 1, 0, 0, 0, 1)),
+    );
+    let first = Ledger::open(&ledgers, "k", &transcript).unwrap();
+    // What a child forked now holds until its exec closes it: the same open lock.
+    let inherited = first.lock.try_clone().unwrap();
+    first.close(true);
+    append(
+        &transcript,
+        &format!("{}\n", assistant("m2", 2, 0, 0, 0, 2)),
+    );
+    assert_eq!(
+        beat(&ledgers, "k", &transcript, true),
+        [opus(tokens(2, 0, 0, 0, 2, 1))]
+    );
+    drop(inherited);
+}
+
+#[test]
 fn a_ledger_that_does_not_parse_starts_at_the_end_and_counts_nothing_again() {
     let folder = Folder::new("corrupt");
     let (ledgers, transcript) = (folder.path("usage"), folder.path("s-1.jsonl"));

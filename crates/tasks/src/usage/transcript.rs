@@ -111,10 +111,19 @@ struct Kept {
 /// starts once it is closed.
 #[derive(Debug)]
 pub struct Ledger {
-    _lock: File,
+    lock: File,
     file: PathBuf,
     kept: Kept,
     spent: Vec<Spent>,
+}
+
+impl Drop for Ledger {
+    /// The key is let go by name, not by closing the file alone: a child started meanwhile (by a
+    /// fork, before its exec closes what it inherited) holds the same open lock, which closing this
+    /// process's copy would leave held, refusing the next beat of the key.
+    fn drop(&mut self) {
+        let _ = self.lock.unlock();
+    }
 }
 
 impl Ledger {
@@ -157,7 +166,7 @@ impl Ledger {
         let read = read(transcript, &mut kept).unwrap_or_default();
         let spent = merged(kept.pending.iter().cloned().chain(read));
         Some(Ledger {
-            _lock: lock,
+            lock,
             file,
             kept,
             spent,
