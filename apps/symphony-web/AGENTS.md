@@ -690,7 +690,10 @@ What holds on every page, and each page's contract where its section above names
   shadcn token names; `src/styles/controls-theme.css` maps those names to the copied controls'
   palette. Extend the shared controls for new fields. A text field is 16px or larger on a touch
   screen (`(pointer: coarse)`, `src/styles/board.css`): iOS zooms into a smaller one as it takes
-  focus and does not zoom back out (`apps/symphony-web-tests/tests/browser/touch.rs`).
+  focus and does not zoom back out (`apps/symphony-web-tests/tests/browser/touch.rs`). A press
+  is the control's own `:active`, which sinks it, with no tap flash and no label a long press
+  selects, and a hover that moves or raises a thing sits under `(hover: hover) and (pointer:
+  fine)`, as a tap would leave it raised.
 - **Task views.** The task board (`/tasks`, `src/board.tsx` over `src/boardlive.tsx`, its card
   `src/taskcard.tsx`), the agents page ([below](#the-agents-page)) and a task's page
   ([below](#a-tasks-page); the gates' and the timeline's contract,
