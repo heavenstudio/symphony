@@ -20,7 +20,7 @@ import {
   took,
   vanished,
 } from "./document-live";
-import { CASES, feeds as pageFeeds, reply, say } from "./testing";
+import { CASES, feeds as pageFeeds, reply, say, until } from "./testing";
 import { UNREACHABLE } from "./trouble";
 import type { Document, DocumentCard, DocumentOutline, Folder, Section } from "./wire";
 import { CACHE_FORMAT, FEED_EVENT, VERSION_HEADER } from "./wire";
@@ -155,7 +155,7 @@ function serverOf(): Held[] {
 
 /** Until `asked` holds `count`, the page's waits running meanwhile. */
 const askedFor = (asked: unknown[], count: number) =>
-  vi.waitFor(() => expect(asked).toHaveLength(count));
+  until(() => expect(asked).toHaveLength(count));
 
 /** A document answer of `status`, at the feed's `cursor` when one is given, tagged `etag`. */
 function answered(status: number, body: unknown, etag = "", cursor?: number): Response {
@@ -815,7 +815,7 @@ describe("a document page's loops", () => {
       "ws://127.0.0.1/api/feed?since=7&document=docs%2FDECISIONS.md&sections=%5B%5D",
     );
     opened[0]?.source.dispatchEvent(new Event("open"));
-    await vi.waitFor(() => expect(page.stale).toBe(false));
+    await until(() => expect(page.stale).toBe(false));
     expect(page.frame.connected).toHaveBeenCalledTimes(1);
     // A section near the screen: its body is read, and the feed opened again for it.
     page.want("intro");
@@ -829,7 +829,7 @@ describe("a document page's loops", () => {
     asked[1]?.answer(
       reply(200, { version: 7, change: { path: PATH, sections: [SECTIONS_NOW[0]] } }),
     );
-    await vi.waitFor(() => expect(page.ready()).toBe(true));
+    await until(() => expect(page.ready()).toBe(true));
     expect(page.state?.latest.sections[0]?.blocks).toEqual(SECTIONS_NOW[0]?.blocks);
     expect(store.keep).toHaveBeenCalledWith(
       CACHE_FORMAT,
@@ -913,9 +913,9 @@ describe("a document page's loops", () => {
     asked[0]?.answer(answered(200, OUTLINE_NOW, '"o1"', 7));
     await askedFor(opened, 1);
     opened[0]?.source.dispatchEvent(new Event("open"));
-    await vi.waitFor(() => expect(page.stale).toBe(false));
+    await until(() => expect(page.stale).toBe(false));
     say(opened[0]?.source, FEED_EVENT, '{"version":"x"}');
-    await vi.waitFor(() => expect(page.stale).toBe(true));
+    await until(() => expect(page.stale).toBe(true));
     expect(opened[0]?.closed).toBe(1);
     left.abort();
     await done;
@@ -933,7 +933,7 @@ describe("a document page's loops", () => {
     expect(page.state).not.toBeNull();
     expect(asked[0]?.headers).toEqual({ "If-None-Match": '"o1"' });
     asked[0]?.answer(reply(404, { error: "no such document" }));
-    await vi.waitFor(() => expect(page.missing).toBe(true));
+    await until(() => expect(page.missing).toBe(true));
     expect(page.state).toBeNull();
     expect(store.forget).toHaveBeenCalledTimes(1);
     left.abort();
@@ -950,7 +950,7 @@ describe("a document page's loops", () => {
     const done = documentLive(page, left.signal);
     await askedFor(asked, 1);
     asked[0]?.answer(reply(500, { error: "the disk is full" }));
-    await vi.waitFor(() => expect(page.trouble).not.toBeNull());
+    await until(() => expect(page.trouble).not.toBeNull());
     expect(page.trouble).toContain("the disk is full");
     expect(page.freshness.failing).toEqual([OUTLINE]);
     expect(page.state).not.toBeNull();
@@ -1168,7 +1168,7 @@ describe("a folder page's loop", () => {
     expect(store.visit).toHaveBeenCalledWith(CACHE_FORMAT, "", item.id, "document", true);
     expect(asked[0]?.url).toBe(URL);
     asked[0]?.answer(reply(200, FOLDER, '"f1"'));
-    await vi.waitFor(() => expect(page.folder).toEqual(FOLDER));
+    await until(() => expect(page.folder).toEqual(FOLDER));
     expect(page.freshness.open).toBe(true);
     expect(store.keep).toHaveBeenCalledWith(
       CACHE_FORMAT,
@@ -1197,7 +1197,7 @@ describe("a folder page's loop", () => {
     expect(waits(page.freshness, FOLDER_PART)).toBe(true);
     expect(asked[0]?.headers).toEqual({ "If-None-Match": '"f1"' });
     asked[0]?.answer(answered(304, null));
-    await vi.waitFor(() => expect(waits(page.freshness, FOLDER_PART)).toBe(false));
+    await until(() => expect(waits(page.freshness, FOLDER_PART)).toBe(false));
     expect(page.folder).toEqual(FOLDER);
     left.abort();
     await done;
@@ -1233,7 +1233,7 @@ describe("a folder page's loop", () => {
     const done = followFolder(page, left.signal);
     await askedFor(asked, 1);
     asked[0]?.answer(reply(404, { error: "no such folder" }));
-    await vi.waitFor(() => expect(page.missing).toBe(true));
+    await until(() => expect(page.missing).toBe(true));
     expect(page.folder).toBeNull();
     expect(page.error).toBeNull();
     left.abort();
@@ -1253,7 +1253,7 @@ describe("a folder page's loop", () => {
       const done = followFolder(page, left.signal);
       await askedFor(asked, 1);
       asked[0]?.answer(answer);
-      await vi.waitFor(() => expect(page.error).not.toBeNull());
+      await until(() => expect(page.error).not.toBeNull());
       expect(page.error).toContain(said);
       expect(page.freshness.failing).toEqual([FOLDER_PART]);
       left.abort();

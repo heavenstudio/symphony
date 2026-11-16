@@ -26,7 +26,7 @@ import {
 import { Parts, PartsContext, type Shown } from "./parts";
 import { Failure } from "./request";
 import { gatesPart, type TaskEvent } from "./task-live";
-import { aRole, aTask, memoryStorage, reply } from "./testing";
+import { aRole, aTask, memoryStorage, reply, until } from "./testing";
 import { NOT_IN_TIME } from "./trouble";
 import type { Gate, GatesSeen, TaskGates } from "./wire";
 
@@ -295,7 +295,7 @@ describe("the panel", () => {
     const parts = new Parts<TaskEvent>(mount.signal);
     const part = gatesPart("", "tools/x");
     parts.open(part);
-    await vi.waitFor(() => {
+    await until(() => {
       const shown = parts.shown(part);
       expect(shown.answered || shown.error !== null).toBe(true);
     });
