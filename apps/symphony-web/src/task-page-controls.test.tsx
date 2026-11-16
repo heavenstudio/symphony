@@ -22,7 +22,7 @@ import {
   TaskPage,
   TaskPageView,
 } from "./task-page";
-import { aRole, memoryStorage, reply, server } from "./testing";
+import { aRole, memoryStorage, reply, server, until } from "./testing";
 import type { TaskOffer } from "./wire";
 import { TASK_ACTION_ROUTE } from "./wire";
 import { CHECKING } from "./words";
@@ -199,7 +199,7 @@ function byId(node: ReactNode, id: string): Record<string, unknown> {
 
 /** Until `response`'s body is read, then the turn after it: what awaited it has gone on. */
 async function read(response: Response): Promise<void> {
-  await vi.waitFor(() => expect(response.bodyUsed).toBe(true));
+  await until(() => expect(response.bodyUsed).toBe(true));
   await new Promise((done) => setTimeout(done, 0));
 }
 
