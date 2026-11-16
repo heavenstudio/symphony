@@ -5,9 +5,9 @@
 
 use crate::common::{Fixture, NOW, RawWrite, Seed};
 use serde_json::json;
-use symphony_board::{Beat, Schema};
 use symphony_board::rows::UsageRow;
 use symphony_board::usage::{Spent, Tally, Tokens};
+use symphony_board::{Beat, Schema};
 
 /// `n` calls' worth on Opus at the standard speed: `n` of each kind, `n * 1000` read from the cache.
 fn opus(n: u64) -> Spent {
