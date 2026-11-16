@@ -474,6 +474,78 @@ fn package(out: &Path, publisher: &Path) -> Output {
         .expect("run package.sh")
 }
 
+fn report(args: &[&Path]) -> Output {
+    Command::new("bash")
+        .arg(web().join("report.sh"))
+        .args(args)
+        .output()
+        .expect("run report.sh")
+}
+
+/// The bundle report of a build of the case's own: each kind's first visit, the shared stylesheet
+/// first, with its files' bytes, then the build's every file once; and it writes nothing.
+#[test]
+fn the_bundle_report_says_each_kinds_first_visit_and_the_builds_files() {
+    let scratch = Scratch::new("report");
+    let out = modules(&scratch, true, true);
+    let before = files_in(&out);
+    let done = report(&[&out]);
+    succeeded(&done, "report.sh");
+    let said = String::from_utf8(done.stdout).unwrap();
+    let lines: Vec<&str> = said.lines().collect();
+    let begins = |line: &str, start: &str| assert!(line.starts_with(start), "{line}: {said}");
+    assert_eq!(lines.len(), 12, "{said}");
+    begins(lines[0], "board: first visit 4 files, 60 bytes, ");
+    begins(lines[1], "  assets/shared-55.css  8 bytes, ");
+    begins(lines[2], "  assets/layer-44.css  8 bytes, ");
+    begins(lines[3], "  assets/shared-33.js  17 bytes, ");
+    begins(lines[4], "  assets/board-11.js  27 bytes, ");
+    begins(lines[5], "queue: first visit 5 files, 68 bytes, ");
+    begins(lines[7], "  assets/layer-44.css  8 bytes, ");
+    begins(lines[8], "  assets/queue-22.css  8 bytes, ");
+    begins(lines[11], "the build: 6 files, 95 bytes, ");
+    assert!(
+        lines.iter().all(|line| line.ends_with(" gzipped")),
+        "{said}"
+    );
+    assert_eq!(files_in(&out), before, "the report wrote in the build");
+}
+
+/// Without its one folder, or over a folder that holds no build, the report is refused.
+#[test]
+fn a_bundle_report_of_no_build_is_refused() {
+    let scratch = Scratch::new("report-none");
+    let empty = scratch.0.join("empty");
+    fs::create_dir_all(&empty).unwrap();
+    for (args, said) in [
+        (vec![], "usage: report.sh OUT\n".to_string()),
+        (
+            vec![scratch.0.join("missing")],
+            "usage: report.sh OUT\n".to_string(),
+        ),
+        (
+            vec![empty.clone()],
+            format!("symphony-web: no bundle report of {}: ", empty.display()),
+        ),
+    ] {
+        let args: Vec<&Path> = args.iter().map(PathBuf::as_path).collect();
+        let done = report(&args);
+        assert_eq!(done.status.code(), Some(2), "{args:?}: {done:?}");
+        assert!(done.stdout.is_empty(), "{args:?}: {done:?}");
+        let stderr = String::from_utf8_lossy(&done.stderr);
+        assert!(stderr.starts_with(&said), "{args:?}: {stderr}");
+    }
+    // A build with no shared stylesheet is no build to report either.
+    let out = modules(&scratch, false, true);
+    let done = report(&[&out]);
+    assert_eq!(done.status.code(), Some(2), "{done:?}");
+    assert!(
+        String::from_utf8_lossy(&done.stderr)
+            .ends_with("the manifest has no shared stylesheet (src/styles/shared.css)\n"),
+        "{done:?}"
+    );
+}
+
 /// The manifest step over a build of the case's own: each entry but the shared stylesheet's is a
 /// kind, its imports the chunks it reaches, its styles the shared sheet, then its chunks', then
 /// its own.
