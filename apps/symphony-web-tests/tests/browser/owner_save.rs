@@ -58,6 +58,15 @@ fn an_uncertain_task_save_keeps_its_draft_and_identity_until_confirmation() {
         "document.querySelector('#quick-sheet button[type=submit]')?.textContent==='Check save'",
         SHOWN
     ));
+    // The save holds the fields and the tabs disabled: the sheet takes the focus at its panel.
+    assert!(
+        page.wait_for(
+            "document.activeElement === document.querySelector('#quick-sheet [role=tabpanel]:not([hidden])')",
+            SHOWN
+        ),
+        "the sheet opened on a held save takes no focus: {}",
+        page.eval("document.activeElement.outerHTML.slice(0, 200)")
+    );
     assert_eq!(page.eval("[document.getElementById('quick-title').value,document.getElementById('quick-text').value]"), json!(["Second task","Keep these typed details"]));
     site.fail_route("/api/quick-task", true);
     page.eval("document.querySelector('#quick-sheet form').requestSubmit()");

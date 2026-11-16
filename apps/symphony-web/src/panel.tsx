@@ -372,13 +372,19 @@ export function PendingBar({ targets: [prev, next], go }: PendingBarProps) {
 /** The pictures of the chat's messages, which open the viewer as a set of their own. */
 const CHAT_PICTURES = "#quick-sheet .quick-message img";
 const CHAT_REACH: Reach = { pictures: CHAT_PICTURES, views: false };
-const BOARD_REACH: Reach = { pictures: `main img, ${CHAT_PICTURES}`, views: true };
+const WHOLE_REACH: Reach = { pictures: `main img, ${CHAT_PICTURES}`, views: true };
+
+/** Whether `route`'s kind mounts a media layer of its own: home, a document and a task's page. */
+function ownLayer(route: Route): boolean {
+  return route.path === "" || route.document || route.path.startsWith("task/");
+}
 
 /** What the panel's media layer answers for on `route`: the chat's pictures on every page, and on
- * the task board and the agents page, which have no media layer of their own, the page's media
- * too. Elsewhere the page's own layer runs the page's mockups and viewers, once. */
+ * a page with no media layer of its own (the task board, the agents page, the queue, Reports and
+ * Runs) the page's media and the chat's mockups and viewers too. Elsewhere the page's own layer
+ * runs every mockup and viewer on it, the chat's among them, once. */
 export function reachOf(route: Route): Reach {
-  return route.path === "tasks" || route.path === "agents" ? BOARD_REACH : CHAT_REACH;
+  return ownLayer(route) ? CHAT_REACH : WHOLE_REACH;
 }
 
 export function PanelApp() {
