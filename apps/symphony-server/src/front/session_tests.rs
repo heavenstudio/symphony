@@ -1,5 +1,5 @@
-//! The server's maintenance children, the board's idle-session reap and its embedding catch-up,
-//! run without the session of the terminal the server was started from.
+//! The server's maintenance child, the board's idle-session reap, runs without the session of the
+//! terminal the server was started from.
 
 use super::sweep_tests::SweepFixture;
 use super::*;
@@ -45,9 +45,5 @@ fn the_maintenance_children_run_without_the_session_of_the_servers_terminal() {
     );
     let mut reap = SweepFixture::new(HELD);
     reap.start(session_maintenance(&reap.shared, Some(&reap.root), Stamp::now).unwrap());
-    let mut embed = SweepFixture::with_embedding_launcher(HELD);
-    embed.start(embeddings::start(&embed.shared, Some(&embed.root), Stamp::now).unwrap());
-    for fixture in [&reap, &embed] {
-        fixture.wait_for("held", "unset|unset|unset|unset|unset");
-    }
+    reap.wait_for("held", "unset|unset|unset|unset|unset");
 }
