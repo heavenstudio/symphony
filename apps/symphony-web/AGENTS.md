@@ -132,7 +132,13 @@ DOM and no DOM library: markup is drawn with `react-dom/server` and compared as 
 that needs a global (`localStorage`, `fetch`, `location`) stubs it with `vi.stubGlobal`, the
 browser's storage held in memory by `testing.ts`; what reads the page's elements (the media
 layer) is given a small tree of elements of its test's own (`media-layer.test.ts`). Time is
-Vitest's fake timers, never the clock.
+Vitest's fake timers, never the clock. A test's or a hook's one time is the run's backstop of two
+minutes (`BACKSTOP_MS`, `src/unit-run.ts`, in place of Vitest's 5 s), which only a stall reaches
+(a machine asleep, a process stopped). The run's own report, beside Vitest's, says each one that
+ran out as a stall, with the load average. It also names each test file the run asked for and did
+not run or finish, and fails the run. Such a file is one whose worker never started: Vitest's own
+waits for that (60 s and 90 s, which no setting changes) are reached only by a stall too, and its
+summary leaves the file out of its count.
 What only a browser shows (effects, the feed, the layout, the moves between kinds) is the headless
 browser target's (`apps/symphony-web-tests/tests/browser`, [CHECKS](../../docs/CHECKS.md#the-browser-target-by-page)),
 which drives headless Chrome over its DevTools protocol against the release build, served as the
