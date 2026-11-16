@@ -125,6 +125,58 @@ fn announced(what: &str, said: &std::sync::mpsc::Receiver<String>) -> Result<Str
 /// or the queue draws from the server under its ghost, as one the device has no copy for does.
 const NO_STORE: &str = "Object.defineProperty(window, 'indexedDB', { value: undefined });";
 
+/// Hold, from the page's first script on, every timer of the asks' retry the page sets
+/// ([`symphony_web_tests::RETRY_MS`]: a failed read of a document's questions or of the chat's
+/// thread asked again), none of them ever run, so a case says whether a read that answered left
+/// one waiting, with no wait of its own: `window.askPoll` maps each held timer the page has not
+/// cleared to its callback. One the page clears is let go, as it waits for nothing any more: a
+/// deadline of that length its event ended, such as a page's `Settle` bound (`SETTLE_MS`, 3 s as
+/// well) once its first screen is in, is no poll. The page's other timers run as they are. Call it
+/// before `open`.
+fn hold_ask_polls(browser: &mut Chrome) {
+    browser.call(
+        "Page.addScriptToEvaluateOnNewDocument",
+        json!({"source": format!(
+            r#"window.askPoll = new Map();
+            (() => {{
+                const set = window.setTimeout, clear = window.clearTimeout;
+                let held = 0;
+                window.setTimeout = function (fn, ms, ...args) {{
+                    if (ms !== {retry}) return set(fn, ms, ...args);
+                    held -= 1;
+                    askPoll.set(held, () => fn(...args));
+                    return held;
+                }};
+                window.clearTimeout = function (id) {{ if (!askPoll.delete(id)) clear(id) }};
+            }})();"#,
+            retry = symphony_web_tests::RETRY_MS
+        )}),
+    );
+}
+
+/// [`hold_ask_polls`] keeps a retry's timer the page leaves set, with what it would run, lets go
+/// one the page clears, and leaves a timer of another length to the browser, its id the browser's.
+#[test]
+fn the_ask_poll_hold_keeps_a_retry_left_waiting_and_lets_a_cleared_one_go() {
+    let Some(mut browser) = chrome() else { return };
+    hold_ask_polls(&mut browser);
+    browser.open("data:text/html,held");
+    let retry = symphony_web_tests::RETRY_MS;
+    assert_eq!(
+        browser.eval(&format!(
+            "(() => {{
+                const left = setTimeout(word => {{ window.ran = word }}, {retry}, 'held');
+                clearTimeout(setTimeout(() => {{}}, {retry}));
+                const other = setTimeout(() => {{}}, {retry} + 1);
+                clearTimeout(other);
+                askPoll.get(left)?.();
+                return [askPoll.size, askPoll.has(left), left < 0, other > 0, window.ran ?? null];
+            }})()"
+        )),
+        json!([1, true, true, true, "held"])
+    );
+}
+
 /// A page script under which, once the test sets `window.__lateTasks` to a count of frames, every
 /// task of React's scheduler (a `MessageChannel` message, one posted before as well) runs that many
 /// frames after it comes, as a slow phone's or a loaded machine's renderer runs its frames before

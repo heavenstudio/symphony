@@ -1,0 +1,78 @@
+# The API list prices agents' tokens are estimated at (crates/tasks/src/usage/price.rs, docs/TASKS.md
+# "What the tokens cost"). Every build of `tasks` and of the Symphony embeds this file, so an edit
+# takes effect with the next build, and no installed binary reads it from disk.
+#
+# To edit it: read the provider's pricing page (`page`) and write a row for each model the agents'
+# transcripts name, by its exact id (`message.model`) and speed (`usage.speed`: `standard`, or `fast`
+# where the provider prices it apart), in US dollars per million tokens: `input` (read neither from
+# nor into the cache), `cache_write_5m` and `cache_write_1h` (Anthropic's two cache lifetimes),
+# `cache_read` and `output`. Write each price as the page gives it, never as a multiple of another
+# (the cache read is 0.025 of the input on one model and 0.1 on another), to the millionth of a dollar
+# at most. Set `read` to the day the page was read. Then run the crate's price tests
+# (crates/tasks/AGENTS.md), which read this file as the builds do.
+#
+# A model with no row is not priced: its tokens are shown and named, and left out of every dollar
+# total, never priced at zero. Every figure is an estimate: what the calls would cost at these prices
+# on the API, not what a subscription is billed.
+#
+# Fast mode is priced at the page's fast input and output prices, its cache writes and reads at the
+# cache multipliers of the model applied to its fast input price, as the page says they stack.
+# Claude Haiku 5.5 is at its price for prompts up to 100,000 tokens: the board keeps no call's prompt
+# size, so a longer prompt's higher price is not seen.
+
+read = "2026-11-16"
+page = "https://platform.claude.com/docs/en/about-claude/pricing"
+
+[[price]]
+model = "claude-fable-5-2"
+speed = "standard"
+input = 8
+cache_write_5m = 10
+cache_write_1h = 16
+cache_read = 0.20
+output = 40
+
+[[price]]
+model = "claude-fable-5-2"
+speed = "fast"
+input = 16
+cache_write_5m = 20
+cache_write_1h = 32
+cache_read = 0.40
+output = 80
+
+[[price]]
+model = "claude-opus-5-5"
+speed = "standard"
+input = 4
+cache_write_5m = 5
+cache_write_1h = 8
+cache_read = 0.20
+output = 20
+
+[[price]]
+model = "claude-opus-5-5"
+speed = "fast"
+input = 8
+cache_write_5m = 10
+cache_write_1h = 16
+cache_read = 0.40
+output = 40
+
+[[price]]
+model = "claude-sonnet-5-5"
+speed = "standard"
+input = 2
+cache_write_5m = 2.50
+cache_write_1h = 4
+cache_read = 0.10
+output = 10
+
+[[price]]
+model = "claude-haiku-5-5"
+speed = "standard"
+input = 0.10
+cache_write_5m = 0.125
+cache_write_1h = 0.20
+cache_read = 0.01
+output = 0.50

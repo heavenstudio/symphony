@@ -20,8 +20,8 @@
 //! plan; otherwise the match takes the new variant. A variant that only the match names may be
 //! renamed or removed along with it; one built, compared or matched beside it is a consumer's.
 //!
-//! A release's refresh moves a consumer's pin in a commit that touches only its `Cargo.toml` and
-//! `Cargo.lock`, so a consumer's code never changes with a release: a name or signature here that a
+//! A consumer takes a release by moving its pin in its own landing, and nothing here changes its
+//! code, so a consumer's code never changes with a release: a name or signature here that a
 //! consumer uses changes only with a consumer release plan (the consumer's code moved first,
 //! against a release that still has the old name). New behaviour goes behind the name a consumer
 //! calls, or beside it under a new one. A lint that asks for a signature pinned here to change is

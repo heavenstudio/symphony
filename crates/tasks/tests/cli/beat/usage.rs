@@ -8,6 +8,7 @@ use std::fs;
 use std::io::Write as _;
 use std::path::Path;
 use symphony_board::cli::Env;
+use symphony_board::usage::{Prices, Tokens, price};
 
 /// An assistant line of message `id`, worth `n`: `n` uncached, `10 n` written to the cache for five
 /// minutes, `1000 n` read from it, `2 n` out.
@@ -84,13 +85,41 @@ fn a_subagents_beats_give_its_own_transcripts_tokens_once_from_its_binding_on() 
     beat(&env, &at(tool("Read", "a1")));
     assert_eq!(total(&env), worth(7, 3));
     let shown = ok(&env, &["show", "sim/jump"]);
+    // Their cost, at the prices every build embeds, labelled an estimate with the day they were
+    // read.
+    let prices = Prices::embedded();
+    let tokens = serde_json::from_value::<Tokens>(worth(7, 3)).unwrap();
+    let cost = prices.cost("claude-opus-5-5", "standard", &tokens);
+    let dollars = price::dollars(cost.total());
+    let line = format!(
+        "  Cost: {dollars}, estimated at API list prices read {} (input {} · cache write {} · \
+         cache read {} · output {})",
+        prices.read,
+        price::dollars(cost.input),
+        price::dollars(cost.cache_write_5m + cost.cache_write_1h),
+        price::dollars(cost.cache_read),
+        price::dollars(cost.output)
+    );
     for said in [
         "  Tokens: 7k in 3 calls (input 7 · cache write 70 · cache read 7k · output 14)",
         "    by role: executor 7k",
         "    by round: round 1 7k",
+        &line,
+        &format!("    by role: executor {dollars}"),
+        &format!("    by round: round 1 {dollars}"),
     ] {
         assert!(shown.contains(said), "{said:?} not in {shown}");
     }
+    let json = run(&env, &["show", "sim/jump", "--json"], "");
+    let json: Value = serde_json::from_str(&json.out).unwrap();
+    assert_eq!(json["tokens"]["cost"]["prices"], prices.read.as_str());
+    let written = symphony_board::pyjson::dumps_line(&cost.json(&prices.read));
+    assert_eq!(
+        json["tokens"]["cost"],
+        serde_json::from_str::<Value>(&written).unwrap()
+    );
+    assert_eq!(json["tokens"]["by_role"][0]["cost"], json["tokens"]["cost"]);
+    assert_eq!(json["tokens"]["rows"][0]["cost"], json["tokens"]["cost"]);
     let _ = fs::remove_dir_all(&dir);
 }
 

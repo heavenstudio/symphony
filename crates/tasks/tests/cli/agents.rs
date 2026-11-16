@@ -251,8 +251,8 @@ fn a_web_address_and_a_subagent_binding_are_in_the_view() {
 }
 
 #[test]
-fn an_agents_tokens_are_what_its_session_spent_all_told_and_null_before_any() {
-    use symphony_board::usage::{Spent, Tokens};
+fn an_agents_tokens_and_their_cost_are_what_its_session_spent_all_told_and_null_before_any() {
+    use symphony_board::usage::{Cost, Prices, Spent, Tokens};
     let c = Case::new();
     let worker = c.worker();
     let sub = c.f.session_with(local_session("worker"));
@@ -269,7 +269,9 @@ fn an_agents_tokens_are_what_its_session_spent_all_told_and_null_before_any() {
             calls: 1,
         },
     };
-    for (model, n) in [("claude-opus-5-5", 1), ("claude-haiku-4-5", 2)] {
+    // A model the price table lists, and one it does not.
+    let models = [("claude-opus-5-5", 1), ("claude-unlisted-0", 2)];
+    for (model, n) in models {
         c.f.store
             .agent_beat_spending(
                 "agent-sub",
@@ -305,6 +307,28 @@ fn an_agents_tokens_are_what_its_session_spent_all_told_and_null_before_any() {
                "output": 6, "calls": 2})
     );
     assert_eq!(by(&worker)["tokens"], Value::Null);
+    // Each model's tokens at its own price; the unlisted one's named, and in no dollar figure.
+    let prices = Prices::embedded();
+    let mut cost = Cost::default();
+    for (model, n) in models {
+        let one = spent(model, n);
+        cost.add(&prices.cost(&one.model, &one.speed, &one.tokens));
+    }
+    assert!(cost.total() > 0);
+    assert_eq!(found(&view, &sub).cost, Some(cost.clone()));
+    assert_eq!(
+        by(&sub)["cost"]["unpriced"],
+        json!([{"model": "claude-unlisted-0", "speed": "standard", "tokens": {"input": 2,
+                "cache_write_5m": 20, "cache_write_1h": 0, "cache_read": 200, "output": 4,
+                "calls": 1}}])
+    );
+    assert_eq!(by(&sub)["cost"]["prices"], prices.read.as_str());
+    let written = symphony_board::pyjson::dumps_line(&cost.json(&prices.read));
+    assert_eq!(
+        by(&sub)["cost"],
+        serde_json::from_str::<Value>(&written).unwrap()
+    );
+    assert_eq!(by(&worker)["cost"], Value::Null);
 }
 
 #[test]
@@ -443,7 +467,8 @@ fn the_json_is_written_in_the_contracts_key_order_as_python_writes_it() {
    "slots": null,
    "session_url": null,
    "in_process": false,
-   "tokens": null
+   "tokens": null,
+   "cost": null
   }}"#,
             orch = c.orch
         )
