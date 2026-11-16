@@ -241,6 +241,8 @@ th + th, td + td { border-left:1px solid var(--border); }
 tr:last-child > td { border-bottom:0; }
 th { background:var(--muted); font-size:var(--fs-sm); font-weight:650; vertical-align:bottom; }
 form input, form textarea, .filters input { font:inherit; font-size:var(--fs-sm); }
+/* iOS zooms into a field under 16px when it takes focus, and does not zoom back out. */
+@media (pointer: coarse) { :is(input:not([type=file]), textarea, select) { font-size:16px; } }
 /* Matching metrics keep page-end controls above even a wrapped notice at every width. */
 .stale, .feed-notice-space { width:max-content; max-width:calc(100vw - 2 * var(--sp-4)); box-sizing:border-box; margin:0; white-space:normal; }
 .feed-notice-space { display:flex; visibility:hidden; }

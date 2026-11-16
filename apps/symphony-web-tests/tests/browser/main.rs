@@ -74,6 +74,7 @@ mod skeleton;
 mod tabs;
 mod task_gates;
 mod timeline;
+mod touch;
 
 use std::time::Duration;
 

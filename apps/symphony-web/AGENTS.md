@@ -688,7 +688,9 @@ What holds on every page, and each page's contract where its section above names
   shell restores their saved CSS before mounting a page. Status tokens such as `like`, `question`
   and `live` keep their defaults unless the imported file sets them. UI colours use the canonical
   shadcn token names; `src/styles/controls-theme.css` maps those names to the copied controls'
-  palette. Extend the shared controls for new fields.
+  palette. Extend the shared controls for new fields. A text field is 16px or larger on a touch
+  screen (`(pointer: coarse)`, `src/styles/board.css`): iOS zooms into a smaller one as it takes
+  focus and does not zoom back out (`apps/symphony-web-tests/tests/browser/touch.rs`).
 - **Task views.** The task board (`/tasks`, `src/board.tsx` over `src/boardlive.tsx`, its card
   `src/taskcard.tsx`), the agents page ([below](#the-agents-page)) and a task's page
   ([below](#a-tasks-page); the gates' and the timeline's contract,
