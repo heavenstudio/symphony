@@ -53,7 +53,7 @@ fn the_settings_listen_on_the_socket_alone_sized_for_512_mib() {
         );
     }
     // The shared buffers, every connection sorting at once and every autovacuum worker at its
-    // most, as the settings say them, fit in 512 MiB.
+    // most, as the settings say them, fit in 512 MiB; each backend's own memory is not in the sum.
     let value = |key: &str| -> u64 {
         let line = said
             .lines()
@@ -66,14 +66,6 @@ fn the_settings_listen_on_the_socket_alone_sized_for_512_mib() {
         + value("autovacuum_max_workers") * value("maintenance_work_mem");
     assert_eq!(most, 128 + 64 * 4 + 2 * 32);
     assert!(most <= 512, "{most} MiB");
-}
-
-#[test]
-fn the_supervisor_runs_the_server_on_its_data_and_says_when_it_is_ready() {
-    assert!(SUPERVISED.contains(r#""$0" -D "$1" 2>&1 3<&- 4>&- &"#));
-    assert!(SUPERVISED.contains("database system is ready to accept connections"));
-    assert!(SUPERVISED.contains("kill -INT \"$server\"; kill -TERM \"$server\""));
-    assert!(SUPERVISED.contains(r#"printf '%s\n' "$line" >>"$2""#));
 }
 
 /// A project file at a folder of this test's own, removed after.

@@ -146,12 +146,13 @@ and the three runs of thirty, the last at twice the load of the others, agree to
   next) and moves the rest little.
 - **A server that answers from several processes** is counted with every process under it. Their
   resident memory counts the pages they share once each, so such a server reads higher there than
-  it holds. Since `tools/board-pg-server` the meter reads both: the server's CPU is each process's
-  own with what the children it reaped took, so a backend that ended during the run is in its
-  postmaster's, and the report's `server_memory_mib` beside `server_rss_mib` counts what they share
-  once (macOS's `footprint` of them all, the memory they dirtied; Linux's proportional set sizes).
-  For SurrealDB's one process the CPU is what it was; its `footprint` is not its resident size, so
-  the two stores compare by the same field.
+  it holds. The meter reads such a server whole: its CPU is each process's own with what the
+  children it reaped took, so a backend that ended during the run is in its postmaster's, and the
+  report's `server_memory_mib` beside `server_rss_mib` counts what they share once (macOS's
+  `footprint` of them all, the memory they dirtied; Linux's proportional set sizes). SurrealDB's
+  server is one process with no children, so its CPU and `server_rss_mib` are that process's
+  alone, as in the tables above; its `footprint` is not its resident size, so the two stores
+  compare by the same field.
 - **Durability is whatever the store's server does as the board starts it.** This page did not
   measure what a commit's sync costs or what it survives. A store compared with these numbers
   commits at least as durably as SurrealDB does under the board's settings, and says how it was
@@ -183,7 +184,8 @@ tools/rs-bin.sh tasks-copy --board --out > "$DUMP"      # a read; the main check
 ```
 
 The board's PostgreSQL bare, its opening and a connection's cost, is
-`--postgresql /opt/homebrew/opt/postgresql@18/bin` in place of `--surreal`, `--tasks` and `--dump`.
+`--postgresql DIR`, `DIR` the folder of PostgreSQL's programs that `[board] postgresql` names,
+in place of `--surreal`, `--tasks` and `--dump`.
 
 `$SCRATCH` is under the temporary folder or a checkout's `artifacts/`, a new one for each run:
 the board stays in it, and a second run there would start from the first's rows. The report is

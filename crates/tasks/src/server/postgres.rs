@@ -465,9 +465,10 @@ pub fn programs(root: &Path) -> Result<Option<PathBuf>, String> {
 
 /// The settings of a board's PostgreSQL whose socket is in `socket`, as its `postgresql.conf`. No
 /// TCP, a socket this user alone reaches, messages in English (the start waits for one), times
-/// in UTC; and sized for 512 MiB with every connection in use: 128 MiB of shared buffers, 64
-/// connections of a few MiB each and 4 MiB for a sort or a hash, no parallel query (each worker a
-/// process of its own), and two autovacuum workers of 32 MiB at most.
+/// in UTC; and sized for 512 MiB: 128 MiB of shared buffers, 4 MiB for a sort or a hash in each
+/// of 64 connections and 32 MiB for each of two autovacuum workers come to 448 MiB, which leaves
+/// out each backend's own memory, no parallel query (each worker a process of its own). What a
+/// loaded board takes is measured by the slice that loads one.
 pub fn settings(socket: &Path) -> String {
     format!(
         "# The board's PostgreSQL (crates/tasks/src/server/postgres.rs), written at each start.\n\

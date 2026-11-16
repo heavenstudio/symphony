@@ -219,7 +219,9 @@ project is given and neither the library nor the shipped `symphony` compiles
    is cleared. It resets nothing else. The client's `node_modules` goes with the ignored
    files, so each run installs it again from npm's cache on the machine (a network
    fetch only for what that cache lacks), and the run needs the client's pinned Node, on PATH or
-   by fnm ([its guide](../apps/symphony-web/AGENTS.md#the-tools)), as it needs Chrome. A link in that place, a path that is, holds or lies inside
+   by fnm ([its guide](../apps/symphony-web/AGENTS.md#the-tools)), as it needs Chrome and the
+   machine's PostgreSQL in the folder `[board] postgresql` names, whose tests otherwise fail
+   naming it ([PROJECT_FILE](PROJECT_FILE.md)). A link in that place, a path that is, holds or lies inside
    the main checkout or another worktree (compared by real path), a worktree it did not lock and
    mark, or any other folder is refused and left as it is, and the run stops, naming it. An
    `index.lock` or `HEAD.lock` that an interrupted git left in the checkout's admin folder is
