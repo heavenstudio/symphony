@@ -74,8 +74,9 @@ fn executable(path: &Path, text: &str) {
 /// fixture's `schema` file says another: it counts its runs in `builds`, exits 101 while
 /// `build-red` is there, and otherwise writes the four binaries into the build folder it is given.
 /// Its server and its board answer what the install asks at that schema, and its `tasks migrate`
-/// logs where it ran and the snapshots there were to `migrated.log`, fails while `migrate-red` is
-/// there, and otherwise moves the board its checkout reaches to that schema: its path.
+/// logs to `migrated.log` where it ran and how many snapshots every project there held then,
+/// fails while `migrate-red` is there, or `migrate-red-ID` for the project in the folder `ID`, and
+/// otherwise moves the board its checkout reaches to that schema: its path.
 pub(super) fn builder(fixture: &Fixture, schema: i64) -> String {
     let root = fixture.root.display().to_string();
     fs::write(fixture.root.join("schema"), schema.to_string()).unwrap();
@@ -91,9 +92,10 @@ pub(super) fn builder(fixture: &Fixture, schema: i64) -> String {
             "#!/bin/sh\ncase \"$1\" in\n\
              api) cat > /dev/null\n\
              echo '{{\"ok\": {{\"api\": {{\"major\": 1, \"minor\": 14}}, \"schema\": @SCHEMA@}}}}' ;;\n\
-             migrate) echo \"tasks $* in $PWD\" >> '{root}/migrated.log'\n\
-             ls .git/symphony/tasks/snapshots >> '{root}/migrated.log' 2>&1\n\
-             if [ -e '{root}/migrate-red' ]; then echo 'the migrate is red' >&2; exit 1; fi\n\
+             migrate) kept=$(ls '{root}'/*/.git/symphony/tasks/snapshots/*.surql 2>/dev/null | wc -l)\n\
+             echo \"tasks $* in $PWD, $(echo $kept) snapshots\" >> '{root}/migrated.log'\n\
+             if [ -e '{root}/migrate-red' ] || [ -e \"{root}/migrate-red-${{PWD##*/}}\" ]; then \
+             echo 'the migrate is red' >&2; exit 1; fi\n\
              addr=$(sed -n 's/.*\"addr\": *\"\\([^\"]*\\)\".*/\\1/p' .git/symphony/tasks/server.json)\n\
              curl -sf -X POST \"http://$addr/sql\" -H 'Accept: application/json' \
              --data 'USE NS sf; USE DB tasks; UPSERT meta:schema SET version = @SCHEMA@;' \
@@ -405,13 +407,12 @@ fn a_refresh_installs_moves_the_boards_its_writers_allow_points_current_and_wait
         );
     }
     assert_eq!(current(&fixture).as_deref(), Some(RELEASE));
-    // Each board snapshotted before its move, by the release's own tasks in its main checkout, on
-    // the same database, never restarted.
+    // Both boards snapshotted before the first move, each moved by the release's own tasks in its
+    // main checkout, on the same database, never restarted.
     assert_eq!(
         migrated(&fixture),
         format!(
-            "tasks migrate --leave-behind in {}\nbefore-schema-19-{RELEASE}.surql\n\
-             tasks migrate in {}\nbefore-schema-19-{RELEASE}.surql\n",
+            "tasks migrate --leave-behind in {}, 2 snapshots\ntasks migrate in {}, 2 snapshots\n",
             alpha.display(),
             beta.display()
         )
@@ -465,7 +466,7 @@ fn a_refresh_installs_moves_the_boards_its_writers_allow_points_current_and_wait
         "names {NEXT} (it named {RELEASE}, which stays installed)"
     )));
     assert!(!out.contains("refresh-alpha"), "no board is judged: {out}");
-    assert_eq!(migrated(&fixture).lines().count(), 4, "no migrate ran");
+    assert_eq!(migrated(&fixture).lines().count(), 2, "no migrate ran");
     assert_eq!(current(&fixture).as_deref(), Some(NEXT));
 }
 
@@ -588,6 +589,125 @@ fn a_lagging_writer_holds_every_board_and_current_until_it_is_rebuilt() {
     assert_eq!(alpha_board.schema("tasks").unwrap(), Some(19));
     assert_eq!(beta_board.schema("tasks").unwrap(), Some(19));
     assert_eq!([untouched(&alpha), untouched(&beta)], before);
+}
+
+#[test]
+fn every_snapshot_comes_first_and_a_move_that_fails_partway_is_finished_by_the_retry() {
+    let (fixture, _) = refreshing();
+    let alpha = a_project(&fixture, "alpha", &[]);
+    let beta = a_project(&fixture, "beta", &[]);
+    let gamma = a_project(&fixture, "gamma", &[]);
+    registered(
+        &fixture,
+        &[
+            ("alpha", &alpha, &[]),
+            ("beta", &beta, &[]),
+            ("gamma", &gamma, &[]),
+        ],
+    );
+    let boards: Vec<Home> = [&alpha, &beta, &gamma]
+        .into_iter()
+        .map(|project| {
+            let (board, _, client) = board_at(project, 18);
+            aged(&client, 8.0 * DAY);
+            board
+        })
+        .collect();
+    let schemas = || -> Vec<Option<i64>> {
+        (boards.iter())
+            .map(|board| board.schema("tasks").unwrap())
+            .collect()
+    };
+    let builder = builder(&fixture, 19);
+    let surreal = super::board::surreal().to_string_lossy().into_owned();
+    let extra = [
+        (BUILDER, builder.as_str()),
+        ("SYMPHONY_SURREAL", surreal.as_str()),
+    ];
+    let waits = |id: &str, why: &str| {
+        format!(
+            "release: refresh: {id}: its board can move from schema 18 to 19, and stays at 18 \
+             while {why}\n"
+        )
+    };
+
+    // gamma's snapshot cannot be written: taken before any move, it moves nothing.
+    let blocked = gamma.join(".git/symphony/tasks/snapshots");
+    fs::write(&blocked, "").unwrap();
+    let (code, out, err) = fixture.release_with(NOW, &["--check", CHECK], &extra);
+    assert_eq!(code, 1, "{out}{err}");
+    assert!(
+        out.contains(
+            "release: refresh: gamma: red: the snapshot of its store failed, so no board was \
+             moved, this one or another: "
+        ) && out.contains(&waits("alpha", "the snapshot of gamma's store failed"))
+            && out.contains(&waits("beta", "the snapshot of gamma's store failed")),
+        "{out}"
+    );
+    assert!(migrated(&fixture).is_empty(), "no migrate ran");
+    assert_eq!(schemas(), [Some(18), Some(18), Some(18)]);
+    assert_eq!(current(&fixture), None);
+    assert!(fixture.reds()["tests/release-red-refresh-gamma"].red());
+
+    // Every snapshot taken, then beta's migrate fails: alpha's board stays moved, gamma's waits,
+    // and current is not pointed.
+    fs::remove_file(&blocked).unwrap();
+    fs::write(fixture.root.join("migrate-red-beta"), "").unwrap();
+    let (code, out, err) = fixture.release_with(NOW + 120.0, &["--refresh"], &extra);
+    assert_eq!(code, 1, "{out}{err}");
+    assert!(
+        out.contains(&format!(
+            "release: refresh: alpha: its board moved from schema 18 to 19 by {RELEASE}'s own \
+             `tasks migrate`, its store snapshotted first to {}\n",
+            snapshot(&alpha, 19, RELEASE).display()
+        )) && out.contains(&format!(
+            "release: refresh: beta: red: {RELEASE}'s `tasks migrate` in {} failed (",
+            beta.display()
+        )) && out.contains(&format!(
+            "); its store as it was before is in {}, and an orchestrator's `just release \
+             --refresh` retries\n",
+            snapshot(&beta, 19, RELEASE).display()
+        )) && out.contains(&waits("gamma", "the move of beta's board failed")),
+        "{out}"
+    );
+    assert_eq!(
+        migrated(&fixture),
+        format!(
+            "tasks migrate in {}, 3 snapshots\ntasks migrate in {}, 3 snapshots\n",
+            alpha.display(),
+            beta.display()
+        ),
+        "all three snapshots before the first move"
+    );
+    assert_eq!(schemas(), [Some(19), Some(18), Some(18)]);
+    assert_eq!(current(&fixture), None);
+    assert!(
+        out.contains("release: filed tests/release-red-refresh-beta")
+            && out.contains("release: closed tests/release-red-refresh-gamma"),
+        "{out}"
+    );
+
+    // The retry takes alpha's board as moved, moves the other two and points current.
+    fs::remove_file(fixture.root.join("migrate-red-beta")).unwrap();
+    let (code, out, err) = fixture.release_with(NOW + 240.0, &["--refresh"], &extra);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(
+        out.contains(&format!(
+            "release: refresh: alpha: its board is at schema 19, {RELEASE}'s or past it: nothing \
+             to move\n"
+        )) && out.contains("release: refresh: beta: its board moved from schema 18 to 19 by ")
+            && out.contains("release: refresh: gamma: its board moved from schema 18 to 19 by ")
+            && out.contains("release: closed tests/release-red-refresh-beta"),
+        "{out}"
+    );
+    assert_eq!(
+        migrated(&fixture).lines().count(),
+        4,
+        "{}",
+        migrated(&fixture)
+    );
+    assert_eq!(schemas(), [Some(19), Some(19), Some(19)]);
+    assert_eq!(current(&fixture).as_deref(), Some(RELEASE));
 }
 
 #[test]

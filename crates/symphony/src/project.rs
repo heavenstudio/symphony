@@ -272,8 +272,9 @@ pub struct Releases {
     /// A run on main's tip starts once this many landings reached the default branch since the
     /// last release or the last run that checked something (`just release --due`); 0 starts none.
     pub every_landings: u32,
-    /// Whether a green release refreshes the machine: each consuming project's pin and board,
-    /// and the shared server through its own reload.
+    /// Whether a green release refreshes the machine: the release installed, each registered
+    /// project's board moved to its schema, and `current` pointed at it, which a release's server
+    /// follows by its own reload.
     pub refresh: bool,
     /// Whether a green release, once pushed, publishes on crates.io each package whose version
     /// crates.io lacks; off unless the project says, so nothing is published but on its word.

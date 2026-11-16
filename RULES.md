@@ -429,8 +429,8 @@ by hand ([the refresh](docs/RELEASES.md#the-refresh)).
 
 Nothing is pushed but main, by the land, and a release's tag, by the release run
 ([AGENTS.md](AGENTS.md#this-repository-as-its-own-project)): nothing else of a task, its branch
-included. A consuming project's branch is pushed only on the owner's word naming that push, an
-act separate from moving its pin ([the refresh](docs/RELEASES.md#the-refresh)).
+included. A consuming project's branch is pushed only on the owner's word naming that push; a
+release's refresh makes none and moves no pin ([the refresh](docs/RELEASES.md#the-refresh)).
 
 ### `delete-by-name`
 

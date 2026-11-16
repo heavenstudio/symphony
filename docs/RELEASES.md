@@ -171,8 +171,9 @@ it, the kit's three together and the product's five together, each line by its o
 
 Nothing is on crates.io yet, so a project takes all of Symphony from Git at its pin: today the
 consuming project names each package at a release tag (`tag = "release-…"`) and its `Cargo.lock`
-binds that tag's commit, which [the refresh](#the-refresh) moves to each new release. Its one line
-for the library changes with the rename, as [the refresh](#the-refresh) says. Once every package it
+binds that tag's commit, which its own landing moves to a newer release, never the refresh
+([the refresh](#the-refresh)). Its one line for the library changes with the rename, in that same
+move ([a release](#a-release), what a project's manifest changes). Once every package it
 names is published, it can take them all from crates.io in one edit; not before: a kit from
 crates.io beside a library from Git would be two copies of the kit, whose types do not match
 ([the analysis](analysis/consumer-contract.md#two-references-two-copies)).
@@ -301,9 +302,10 @@ project is given and neither the library nor the shipped `symphony` compiles
    never a consuming project's suite. The run builds and tests nothing of a project the machine
    serves, and reads the machine's registry only to refresh ([below](#the-refresh)): a project's
    own reds stay on its own board and never hold a release, and a Symphony change that breaks a
-   project is found by that project's own gate when it takes the refresh's branch. Since a refresh
-   moves a consumer's pin and none of its code, a public name its code calls changes only with a
-   consumer release plan, and those names are held at every task's gate instead, by a
+   project is found by that project's own gate when its own landing moves its pin to the release.
+   Since nothing here changes its code, which was written against its older pin, a public name its
+   code calls changes only with a consumer release plan, and those names are held at every task's
+   gate instead, by a
    `tests/consumer_api.rs` that the workspace's lint compiles in each package a consumer's code
    calls: `crates/tasks` (`symphony_board`), `crates/symphony` (with `symphony_plugin`,
    `symphony_api`, `symphony_docs`, `symphony_schema` and `symphony_args`),
@@ -683,16 +685,29 @@ Once a release's tag is pushed, the run does this, in order:
 
   A board that lags, red or the project's to finish, holds the release: no board moves and
   `current` is not pointed, and each board that could move says it waits (`ID: its board can move
-  from schema N to M, and stays at N while X holds the release`). A release that raises the schema
-  moves every board or none, so no board is left a schema ahead of the release `current` names,
-  nor one behind the server that follows `current`. Otherwise each board is snapshotted first,
-  through its running database (`symphony/tasks/snapshots/before-schema-N-RELEASE.surql` in the
-  project's git common dir, the newest 5 kept), then moved by the release's own `tasks migrate`
-  (`releases/RELEASE/bin/tasks`) run in the project's main checkout, the one command that moves a
-  project's board, and its schema is read again. Where the only writers behind are a release's
-  own, it runs with `--leave-behind`, which names them; otherwise the migrate's own check of its
-  writers is a second guard. The first move that fails is red and stops the rest, its snapshot
-  kept, and `current` is not pointed.
+  from schema N to M, and stays at N while X holds the release`). Otherwise every board is
+  snapshotted through its running database, all of them before the first move
+  (`symphony/tasks/snapshots/before-schema-N-RELEASE.surql` in the project's git common dir, the
+  newest 5 kept): a snapshot that fails is red and no board moves. Then each board is moved in
+  turn by the release's own `tasks migrate` (`releases/RELEASE/bin/tasks`) run in the project's
+  main checkout, the one command that moves a project's board, and its schema is read again. Where
+  the only writers behind are a release's own, it runs with `--leave-behind`, which names them;
+  otherwise the migrate's own check of its writers is a second guard.
+
+  **A move that fails partway.** The boards move one at a time, so a release can be left
+  half-moved: the first migrate that fails is red and stops the rest, and `current` is not
+  pointed, as it is not when it cannot be pointed after every board moved. The boards moved before
+  it stay at the release's schema, each line saying so; the one that failed keeps the schema it
+  had, its snapshot kept; each after it stays where it was (`ID: its board can move from schema N
+  to M, and stays at N while the move of ID's board failed`). Until the retry gets through, a
+  moved board is ahead of the release `current` names (none, before the first): one schema ahead,
+  that release's server reads it and writes nothing to it, saying so on its pages, and two ahead it
+  refuses it ([the switch](#the-switch)); that release's `tasks` and `agent-send` refuse it
+  either way, naming themselves as the program to rebuild ([who writes a
+  board](TASKS.md#who-writes-a-board)). The retry, `just release --refresh` once the failure's
+  cause is fixed, judges every board again: one moved already is at the release's schema, with
+  nothing to move, and the rest are snapshotted and moved, then `current` is pointed. The way back
+  to the schema a board had is its snapshot, restored by hand ([the way back](#the-way-back)).
 - **`current`.** Once no board holds it, `current` is pointed at the release ([the
   install](#the-install), below): every recipe of a project with no build of its own runs it from
   then on. One that cannot be pointed is the install's red, `current` as it was.
@@ -723,7 +738,8 @@ Each step ends in one of three:
   was up or it was told to stop is red, as the run's own.
 
 A red step says what it found, the release stands (its tag is pushed), and the run exits 1.
-`current` stays where it was, and a migrate that fails leaves the snapshot taken before it. It is
+`current` stays where it was, a migrate that fails leaves the snapshot taken before it, and the
+boards moved before it stay moved (*A move that fails partway*, above). It is
 filed as `tests/release-red-refresh-ID` (`tests/release-red-refresh` when the registry cannot be
 read), saying what was left as it was and who fixes it, and filed as a check's red is. A refresh
 green for it closes the task.

@@ -20,12 +20,15 @@
 //!   holds the release; one whose database does not run, or whose move could put it on a newer
 //!   SurrealDB, holds it too, red. A board below schema [`symphony_board::WRITERS_SINCE`], from
 //!   before the writer record, is behind every release and never moved here: its own `just tasks
-//!   migrate` brings it up. Only when no board holds the release is each one snapshotted through
-//!   its running database (`Home::export`) and moved by the release's own `tasks migrate` in its
-//!   project's main checkout, the one command that moves a project's board.
+//!   migrate` brings it up. Only when no board holds the release is every board snapshotted
+//!   through its running database (`Home::export`), all of them before the first move, so a
+//!   snapshot that fails moves nothing; then each is moved in turn by the release's own `tasks
+//!   migrate` in its project's main checkout, the one command that moves a project's board.
 //! - **`current`**, pointed at the release once nothing holds it ([`install::point`]), which every
-//!   recipe of a project with no build of its own then runs. A board move that fails leaves it
-//!   where it was, so does a failure to point it, the install's red.
+//!   recipe of a project with no build of its own then runs. A move that fails stops the rest and
+//!   leaves `current` where it was, so does a failure to point it, the install's red. The boards
+//!   moved before it stay at the release's schema, ahead of `current`'s, until a retry, which
+//!   judges them at the release's schema, nothing to move, and finishes the rest.
 //! - **The machine's server.** A release's server follows `current` by its own reload
 //!   (`apps/symphony-server/src/reload.rs`): the refresh waits, bounded, until it answers as the
 //!   release, or says it has not yet ([`server`]). A project's build serving takes the release by a
@@ -280,13 +283,26 @@ fn boards(
         .filter(|board| board.verdict.holds())
         .map(|board| board.id.clone())
         .collect();
-    // What keeps a board that can move where it is: the boards that hold the release, or the move
-    // that failed before it.
+    // What keeps a board that can move where it is: the boards that hold the release, a snapshot
+    // that failed, or the move that failed before it.
     let mut kept_by = match holding.len() {
         0 => None,
         1 => Some(format!("{} holds the release", holding[0])),
         _ => Some(format!("{} hold the release", holding.join(", "))),
     };
+    // Every board's snapshot before the first move, so one that fails moves nothing.
+    if kept_by.is_none() {
+        for board in &mut judged {
+            if !matches!(board.verdict, Verdict::Move { .. }) {
+                continue;
+            }
+            if let Err(why) = snapshot(board, against) {
+                kept_by = Some(format!("the snapshot of {}'s store failed", board.id));
+                board.verdict = Verdict::Red(why);
+                break;
+            }
+        }
+    }
     for mut board in judged {
         let ended = match std::mem::replace(&mut board.verdict, Verdict::Done(String::new())) {
             Verdict::Move { live, leave } => match &kept_by {
@@ -352,6 +368,8 @@ struct Judged {
     folder: PathBuf,
     target: i64,
     verdict: Verdict,
+    /// Its store as it was before the move, once [`snapshot`] took it.
+    snapshot: Option<PathBuf>,
     name: String,
     log: Log,
     started: Instant,
@@ -436,6 +454,7 @@ fn judge(entry: &Entry, common: &Path, target: i64, against: &Against<'_>) -> Ju
         folder,
         target,
         verdict: Verdict::Done(String::new()),
+        snapshot: None,
         name,
         log,
         started: Instant::now(),
@@ -593,8 +612,33 @@ fn seen_now() -> f64 {
         .map_or(0.0, |since| since.as_secs_f64())
 }
 
-/// `board` moved from schema `live` to its target by the release's own `tasks migrate` in its
-/// project's main checkout, `--leave-behind` when `leave`, its store snapshotted first: what it did,
+/// `board`'s store exported through its running database before any board moves, into
+/// `snapshots/before-schema-TARGET-RELEASE.surql` in its folder, the newest [`KEPT_SNAPSHOTS`]
+/// kept: kept in `board`, or why it failed.
+fn snapshot(board: &mut Judged, against: &Against<'_>) -> Result<(), String> {
+    let snapshots = board.folder.join("snapshots");
+    let snapshot = snapshots.join(format!(
+        "before-schema-{}-{}.surql",
+        board.target, against.tag
+    ));
+    board
+        .home
+        .export(symphony_board::DATABASE, &snapshot)
+        .map_err(|e| {
+            format!(
+                "the snapshot of its store failed, so no board was moved, this one or another: {e}"
+            )
+        })?;
+    board
+        .log
+        .line(&format!("its store, as it ran: {}", snapshot.display()));
+    prune(&snapshots, KEPT_SNAPSHOTS);
+    board.snapshot = Some(snapshot);
+    Ok(())
+}
+
+/// `board`, snapshotted ([`snapshot`]), moved from schema `live` to its target by the release's
+/// own `tasks migrate` in its project's main checkout, `--leave-behind` when `leave`: what it did,
 /// or why it failed.
 fn moved(
     board: &mut Judged,
@@ -604,18 +648,9 @@ fn moved(
 ) -> Result<String, String> {
     let (id, target) = (board.id.clone(), board.target);
     let root = board.root.display().to_string();
-    let snapshots = board.folder.join("snapshots");
-    let snapshot = snapshots.join(format!("before-schema-{target}-{}.surql", against.tag));
-    board
-        .home
-        .export(symphony_board::DATABASE, &snapshot)
-        .map_err(|e| {
-            format!("the snapshot of its store before the move failed, so nothing was moved: {e}")
-        })?;
-    board
-        .log
-        .line(&format!("its store, as it ran: {}", snapshot.display()));
-    prune(&snapshots, KEPT_SNAPSHOTS);
+    let Some(snapshot) = board.snapshot.clone() else {
+        return Err("its store was not snapshotted, so it was not moved".into());
+    };
     let tasks = release::binary(against.machine, against.tag, "tasks");
     let tasks = tasks.to_string_lossy().into_owned();
     let mut words = vec![tasks.as_str(), "migrate"];

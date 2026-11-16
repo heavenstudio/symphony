@@ -464,12 +464,12 @@ pub fn writable_board(env: &Env) -> Result<Reached, String> {
 }
 
 /// The client of the board [`writable_board`] reaches, for a caller that opens its own store on it
-/// ([`crate::Store::open`]): kept, with this signature, for consumers' code, which a release's
-/// refresh never changes (it moves their pin alone). New code uses [`writable_board`] and opens its
-/// store by [`Reached::opening`]. A store opened on a bare client names no live board, so a live
-/// board that went back below its record is refused here instead, in the rollback's words, before
-/// the client is returned, its schema read once when there is a record, as [`open_unchecked`] does
-/// ([`crate::live::seen::checked`]).
+/// ([`crate::Store::open`]): kept, with this signature, for consumers' code, which a release never
+/// changes (a consumer moves its pin by its own landing). New code uses [`writable_board`] and
+/// opens its store by [`Reached::opening`]. A store opened on a bare client names no live board, so
+/// a live board that went back below its record is refused here instead, in the rollback's words,
+/// before the client is returned, its schema read once when there is a record, as
+/// [`open_unchecked`] does ([`crate::live::seen::checked`]).
 pub fn board_client(env: &Env) -> Result<Client, String> {
     let reached = writable_board(env)?;
     not_gone_back(&reached)?;

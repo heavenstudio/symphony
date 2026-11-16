@@ -5,8 +5,8 @@
 //! named here the project meets when it moves its pin, its own gate building it on the new one. The
 //! other packages' guards are named in `crates/symphony/tests/consumer_api.rs`.
 //!
-//! A release's refresh moves a consumer's pin in a commit that touches only its `Cargo.toml` and
-//! `Cargo.lock`, so a consumer's code never changes with a release: a name or signature here changes
+//! A consumer takes a release by moving its pin in its own landing, and nothing here changes its
+//! code, so a consumer's code never changes with a release: a name or signature here changes
 //! only with a consumer release plan (the consumer's code moved first, against a release that still
 //! has the old name). Names were read from the consuming projects' code on 2026-11-12; add one when
 //! a consumer starts calling it.

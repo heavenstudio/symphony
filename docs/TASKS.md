@@ -191,7 +191,10 @@ which the `current` the refresh then points takes on) or was built at the releas
 the only writers behind are a release's own, its migrate runs with `--leave-behind`, naming them.
 Any other writer behind holds the release: the refresh names each to rebuild, moves no board of
 any project and leaves `current` where it was, until each is rebuilt and run once and the
-refresh's retry moves them all. A release that keeps the schema `current` names moves no board.
+refresh's retry moves them all. Every board is snapshotted before the first moves; a migrate that
+fails stops the rest, the boards moved before it staying at the release's schema until the retry
+finishes the others ([RELEASES](RELEASES.md#the-refresh)). A release that keeps the schema
+`current` names moves no board.
 
 The store takes about what it holds. Every server the board starts keeps each
 value beside its key, where compaction drops the versions a rewrite leaves, and

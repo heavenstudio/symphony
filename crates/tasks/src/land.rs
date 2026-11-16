@@ -178,9 +178,9 @@ pub(crate) use crate::sys::GIT_VARS;
 /// generators`, as `[verdicts] generators`. A land runs none, and keeps the default branch's side
 /// of each path inside `outputs` a task's branch changed.
 ///
-/// Consumers' code builds one by its fields (a project's test of its own manifest), and a release's
-/// refresh never changes that code (it moves their pin alone): a field added here breaks it, so what
-/// a generator gains goes beside it, as its key does ([`Settings::keys`]).
+/// Consumers' code builds one by its fields (a project's test of its own manifest), and a release
+/// never changes that code (a consumer moves its pin by its own landing): a field added here breaks
+/// it, so what a generator gains goes beside it, as its key does ([`Settings::keys`]).
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Generator {
