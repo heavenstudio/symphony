@@ -2941,14 +2941,18 @@
           "links": [],
           "depends": [],
           "roles": [],
-          "instruction": false
+          "instruction": false,
+          "waits_on": { "kind": "nobody", "who": "", "why": "no reason recorded", "since": 2.0 },
+          "from": "ready"
         }
       ],
       "statuses": ["ready", "in_progress"],
       "signoff": ["w/a"],
       "counts": [["ready", 1], ["in_progress", 2]],
       "lifecycle_counts": [["ready", 1], ["in_progress", 2]],
-      "next": "w/b"
+      "next": "w/b",
+      "orchestrators": [{ "handle": "sable-finch", "health": "stale" }],
+      "unstarted": 3
     },
     "emptyListing": {
       "machine_work": { "freshness": "unknown", "machines": [], "unassigned": [], "guidance": {} },
@@ -2957,7 +2961,9 @@
       "signoff": [],
       "counts": [],
       "lifecycle_counts": [],
-      "next": null
+      "next": null,
+      "orchestrators": [],
+      "unstarted": 0
     },
     "work": {
       "freshness": "fresh",
@@ -3011,7 +3017,14 @@
     "emptyWork": { "freshness": "unknown", "machines": [], "unassigned": [], "guidance": {} },
     "taskChange": {
       "key": "w/a",
-      "fields": { "status": "review", "priority": 1, "parent": "", "roles": [] }
+      "fields": {
+        "status": "review",
+        "priority": 1,
+        "parent": "",
+        "roles": [],
+        "waits_on": { "kind": "", "who": "", "why": "", "since": 0.0 },
+        "from": ""
+      }
     },
     "bareTaskChange": { "key": "w/b", "fields": {} },
     "taskAdded": {

@@ -79,8 +79,8 @@ pub use stamp::TaskStamp;
 pub use unanswered::{LOOKUP_WAIT as UNANSWERED_WAIT, LOOKUP_WAIT_VAR as UNANSWERED_WAIT_VAR};
 pub use waits::{AssessmentReceipt, AssessmentState};
 pub use work::{
-    BEFORE_WORK, COVERED, CoveredLine, Filed, Given, Held, LANDS_FROM, Landed, NewTask, PIPELINE,
-    PULLABLE, ROLES, RunPlace, STATUSES, Unfresh, approved, can_transition, covered_by,
+    BEFORE_WORK, COVERED, CoveredLine, Filed, Given, Held, LANDS_FROM, Landed, NewTask, On,
+    PIPELINE, PULLABLE, ROLES, RunPlace, STATUSES, Unfresh, approved, can_transition, covered_by,
     covered_line, landing,
 };
 pub use writers::{Program, RECENT as WRITERS_RECENT, SINCE as WRITERS_SINCE, Writer};
@@ -677,6 +677,7 @@ impl Store {
             let body = surreal::rule(
                 change.reason.is_some(),
                 change.needs.is_some(),
+                change.blocked.is_some(),
                 (change.status.as_deref()).map(|status| status == "cancelled"),
                 !ruled.slots.is_empty(),
             );
@@ -1057,6 +1058,8 @@ struct Change {
     /// The task's needs it writes, the board's own field ([`crate::stamps::Needs`],
     /// [`Store::set_needs`]).
     needs: Option<Value>,
+    /// What the block it makes waits on, the board's own field ([`crate::waits_on::Blocked`]).
+    blocked: Option<Value>,
 }
 
 /// A start a rule makes: a claim or a move into an open status, the orchestrator role taken, or a
@@ -1129,6 +1132,7 @@ impl Change {
             "say": say,
             "move_reason": self.reason,
             "needs": self.needs,
+            "blocked": self.blocked,
         })
     }
 }

@@ -974,6 +974,43 @@ fn in_status_since_is_when_the_task_took_the_status_it_holds() {
 }
 
 #[test]
+fn in_status_says_the_status_a_task_held_before_the_one_it_holds() {
+    let from = |status: &str, updated: f64, lines: &[Line]| {
+        let read = in_status(facts(status, updated), lines);
+        (read.since, read.from)
+    };
+    // Blocked by hand from review: review, from the move that blocked it.
+    let held = [
+        sys(1, 1.0, "teal claimed it"),
+        sys(2, 2.0, "teal moved it in_progress → review"),
+        sys(3, 3.0, "teal moved it review → blocked"),
+    ];
+    assert_eq!(
+        from("blocked", 3.0, &held),
+        (at(3.0), Some("review".into()))
+    );
+    // Blocked by a cancelled dependency: the status its line names.
+    let cancelled = [sys(
+        1,
+        1.0,
+        "blocked: cancelled dependencies: sim/a (was design)",
+    )];
+    assert_eq!(
+        from("blocked", 1.0, &cancelled),
+        (at(1.0), Some("design".into()))
+    );
+    // A change no line records: the status the replay last knew, from the task's last write.
+    let off_record = [sys(1, 1.0, "teal claimed it")];
+    assert_eq!(
+        from("blocked", 2.5, &off_record),
+        (at(2.5), Some("in_progress".into()))
+    );
+    // Still in the status it was made in: none before it.
+    let made = [sys(1, 0.0, "created by owner")];
+    assert_eq!(from("ready", 0.0, &made), (T0, None));
+}
+
+#[test]
 fn in_status_since_is_the_replays_current_since_at_any_now() {
     let cases: Vec<(Facts, Vec<Line>)> = vec![
         (facts("done", 3.0), straight_through()),

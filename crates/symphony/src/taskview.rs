@@ -13,15 +13,34 @@ use crate::{clock, dashboard, render::Render};
 
 mod connect;
 pub use connect::{connect, connect_in, connect_running, read_failure, serve};
+pub mod waiting;
+pub use waiting::Stood;
 
 pub fn snapshot(store: &symphony_board::Store) -> Result<(Tasks, i64), symphony_board::Error> {
     let board = store.board()?;
-    Ok(snapshot_board(&board))
+    let mut stood = Stood::default();
+    stood.read(store, &board)?;
+    Ok(snapshot_board(&board, &stood, &BTreeMap::new()))
 }
 
-/// Project one shared board read into the wire snapshot, preserving its message cursor.
-pub fn snapshot_board(board: &symphony_board::Board) -> (Tasks, i64) {
-    let tasks: Vec<Task> = board.tasks.iter().map(task).collect();
+/// Project one shared board read into the wire snapshot, preserving its message cursor: each open
+/// task with what it waits on, since when `stood` read it took its status ([`waiting::fill`]), each
+/// in the owner's sign-off `lane` waiting on the owner's decision ([`waiting::decided`]), and the
+/// board's orchestrators and ready tasks waiting to start.
+pub fn snapshot_board(
+    board: &symphony_board::Board,
+    stood: &Stood,
+    lane: &BTreeMap<String, Vec<String>>,
+) -> (Tasks, i64) {
+    let look = symphony_board::waits_on::Look::new(&board.tasks, &[]);
+    let mut tasks: Vec<Task> = (board.tasks.iter())
+        .map(|t| {
+            let mut wire = task(t);
+            waiting::fill(&mut wire, t, &look, stood);
+            wire
+        })
+        .collect();
+    waiting::decided(&mut tasks, lane);
     let sessions: Vec<Session> = board.sessions.iter().map(session).collect();
     // A version is opaque. Include every field the API returns, plus the last message, so a body,
     // title, role or thread edit moves it too.
@@ -33,6 +52,8 @@ pub fn snapshot_board(board: &symphony_board::Board) -> (Tasks, i64) {
             version,
             tasks,
             sessions,
+            orchestrators: waiting::orchestrators(board),
+            unstarted: look.unstarted(&board.tasks),
         },
         board.latest_message,
     )
@@ -116,14 +137,15 @@ pub fn asks(questions: BTreeMap<String, u32>, verdict: Option<&TaskVerdict>) -> 
 /// for the task as it is now replaces it ([`crate::gates::merged`]), read from what `kept` holds and
 /// never asked ([`crate::gates::kept_theirs`]), so the lane starts no plugin's work. Only a known
 /// gate kept for the task does: with nothing kept for it as it is now, an error kept, or the gate
-/// unknown, the card rule decides, erring toward showing the owner what may wait on them.
+/// unknown, the card rule decides, erring toward showing the owner what may wait on them. Each is
+/// its slug and the cards it posted that wait on the owner: none where a plugin's gate holds it.
 pub fn signoff(
     store: &symphony_board::Store,
     tasks: &[Task],
     pending: &symphony_api::Pending,
     root: &Path,
     kept: &crate::gates::Kept,
-) -> Result<Vec<String>, String> {
+) -> Result<Vec<(String, Vec<String>)>, String> {
     let answerers = crate::gates::answerers(&crate::project::Project::of(root), root);
     let mut result = Vec::new();
     for task in tasks.iter().filter(|t| {
@@ -141,9 +163,10 @@ pub fn signoff(
             let thread = store.thread(&task.slug).map_err(|e| e.to_string())?;
             posted = crate::gates::posted_cards(&cards, thread.iter().map(|m| m.text.as_str()));
         }
+        // Kept beside what a plugin answers: whether the hold is still the Symphony's own.
         let own: Vec<symphony_api::Gate> = crate::gates::owner(&posted).into_iter().collect();
         let gates = if answerers.is_empty() {
-            own
+            own.clone()
         } else {
             let branch = branch_of(store, &task.slug, &task.body).map_err(|e| e.to_string())?;
             let asked = crate::gates::Asked {
@@ -153,15 +176,23 @@ pub fn signoff(
                 branch,
             };
             let theirs = crate::gates::kept_theirs(kept, root, &answerers, &asked);
-            crate::gates::merged(own, theirs)
+            crate::gates::merged(own.clone(), theirs)
         };
-        if gates.iter().any(|gate| {
-            gate.name == symphony_api::gates::OWNER && gate.state == symphony_api::GateState::Held
-        }) {
-            result.push(task.slug.clone());
+        if gates.iter().any(is_held) {
+            // The cards, where the Symphony's own gate holds it and no plugin's replaced it.
+            let ours = (gates.iter()).any(|g| is_held(g) && own.contains(g));
+            let cards = (posted.iter().filter(|_| ours))
+                .map(|card| card.slug.clone())
+                .collect();
+            result.push((task.slug.clone(), cards));
         }
     }
     Ok(result)
+}
+
+/// Whether `gate` is the owner's, holding.
+fn is_held(gate: &symphony_api::Gate) -> bool {
+    gate.name == symphony_api::gates::OWNER && gate.state == symphony_api::GateState::Held
 }
 
 fn role(r: &symphony_board::Role) -> Role {
@@ -190,6 +221,8 @@ fn task(t: &symphony_board::Task) -> Task {
         roles: t.roles.iter().map(role).collect(),
         instruction: t.instruction,
         fields: fields(&t.fields),
+        waits_on: None,
+        from: None,
     }
 }
 

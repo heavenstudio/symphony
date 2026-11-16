@@ -26,6 +26,8 @@ fn task(slug: &str, status: &str, updated: f64, roles: &[(&str, &str)]) -> Task 
             .collect(),
         instruction: false,
         fields: Default::default(),
+        waits_on: None,
+        from: None,
     }
 }
 

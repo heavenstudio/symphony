@@ -541,6 +541,8 @@ fn show_prints_the_task_its_people_its_subtasks_its_body_and_its_thread() {
     let mut expected = vec![
         "sim/a — Alpha  [ready, p1]".to_string(),
         format!("  orchestrator {orch} (live)"),
+        // What it waits on: the executor of its slice, at work under it.
+        format!("  Waits: on working: {exe} · executor of sim/a/do · 0 s"),
         "  links: docs/A.md, docs/B.md#H".into(),
         "  depends on: sim/base".into(),
         "  parent: sim/base".into(),
@@ -565,6 +567,7 @@ fn show_prints_the_task_its_people_its_subtasks_its_body_and_its_thread() {
     let mut expected = vec![
         "sim/a/do — Do  [in_progress, p2]".to_string(),
         format!("  executor {exe} (live)"),
+        format!("  Waits: on working: {exe} · executor · 0 s"),
         "  parent: sim/a".into(),
         "  Stages: ready 0.0 h · in_progress 0.0 h; first claimed after 0.0 h".into(),
         "  an instruction subtask: close it with `just tasks done sim/a/do \"what came of it\"`"

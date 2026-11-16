@@ -1536,6 +1536,55 @@ closes (`from`; review and blocked when it names none) and checks them against
 the status its write reads; its answer names the one it found, and a close from
 `in_progress` addresses the verdict to `@executor` in that write.
 
+### What a task waits on
+
+**A block names a thing, never a person.** `just tasks move SLUG blocked --on THING [--why TEXT]
+--as HANDLE` says what the task waits on, THING one of `decision:NAME` (a card the owner
+decides), `check:NAME` (a stamp or a run someone gives), `task:SLUG` (a task the board holds,
+never itself) or `parked` (put aside on purpose), a name one word; `--why` is a few words, at most
+120 characters. The command line refuses a block that names nothing, saying what to pass, and
+`--on` or `--why` on a move anywhere else, and moves nothing: a card blocked on nothing is not
+blocked. The block keeps its record on the task (`fields._board.blocked`: the thing, the words,
+who, when and the status it was blocked from) in the move's own write, and, with no `--reason`,
+posts `blocked: on THING; WHY` after the move's line. A task blocked already is named again the
+same way: the record changes in place, by a session holding a role on it, and the task stays
+blocked, its time in the status kept. Every write that takes a task out of blocked (any move, the
+owner's, a dependency change that unblocks it, a land) drops the record. The library's
+`Store::move_on` and `Store::hold_blocked_on` take the thing, as `tasks api`'s `move` and `hold`
+take `on` and `why` (api version 15); without one they block as before and record nothing, and
+the Symphony's own callers name theirs: the default landing's hold is `check:owner`, the owner's
+approve of the tip ([below](#the-default-landing)), which the line reads as his decision. A cancellation's block is read from the
+task's links instead, its cancelled dependencies.
+
+**The line.** Each open task waits on one thing, said as `KIND · WHO · WHY` since the time it took
+its status (`crates/tasks/src/waits_on.rs`), KIND one of:
+
+- `working`: a session at work on it, live or stale (`stale` after its name), its executor, or in
+  review its reviewer, or an executor of a slice under it;
+- `decision`, `check`, `task` or `parked`: what its block names, a dependency still open, the
+  stamps its landing lacks, or a review waiting on the owner's sign-off ([above](#tasks-and-roles):
+  the cards it posted, or `sign-off` where a project's owner gate holds it with none). What waits
+  on the owner is a decision, never a check: a block on `check:owner`, or a landing lacking the
+  owner's stamp alone, waits on `decision`, named by his approve of the tip and never by him;
+- `queued`: nothing missing and nobody to blame, as a ready task waiting to be staffed or one in
+  review that waits only to land;
+- `nobody`: what the board can name no one for, a lost or left executor (`executor X lost`), a
+  review no reviewer holds, a dependency cancelled, or a block with no record (`no reason
+  recorded`).
+
+`just tasks show SLUG` prints it, `Waits: on KIND[: WHO] · WHY · AGE`. The listings send it as
+each task's `waits_on`, a blocked task's `from` the status it was blocked from, and the board's
+`orchestrators` (each session holding the orchestrator role on an open task, with its health) and
+`unstarted` (the ready tasks no executor that is there holds, every dependency done): the wire
+types `WaitsOn`, `Orchestrator`, `Tasks` and `TaskListing` (`crates/symphony/src/taskview/waiting.rs`).
+When each task took its status is its thread's replay, read for every open task in one round trip
+and kept, so only a task whose status or write moved is read again.
+
+**A block from before.** A task blocked by hand before a block named its thing has no record. It
+is not blocked on the wire: the listings send it in the stage it stopped in, waiting on `nobody ·
+no reason recorded`, and the board itself still holds it blocked, slots and moves alike. Naming
+its thing (`move SLUG blocked --on THING`) sends it blocked again; no migration writes one.
+
 A task that has posted a card for the owner is lifted out of its column into
 a **Waiting for your sign-off** lane above the board. That needs all of:
 
@@ -1649,7 +1698,8 @@ open status: `just tasks move SLUG cancelled --reason "why" --as HANDLE`. Once w
 (in progress or past it, or with an executor), only a session holding a role on the task moves it;
 the owner cancels any open task. The reason is a post of the mover's right after the move's own
 line, `cancelled: why`, in the move's one write; any move takes one (`blocked: waits on …`), and a
-reason with no words is refused.
+reason with no words is refused. A move to blocked names what it waits on as well (`--on THING`,
+[what a task waits on](#what-a-task-waits-on)).
 
 ### The default landing
 
@@ -1699,9 +1749,10 @@ afterwards, and runs the check, the docs audit, on what it made ([below](#the-re
   tip. A missing one refuses, naming each and who gives it: `tests` or `pictures` to
   `@executor`, at that tip; `review`, or an assessment of another tip, to `@orchestrator`, to
   start an assessor or staff a fresh reviewer; one waiting on `owner` alone, to
-  `@orchestrator`, holds the task blocked from review (`Store::hold_blocked`, keeping its
-  slot), or leaves it done by its approve, until the owner approves the tip on the task's
-  page. A land of a task that needed no review says on its landing line the stamps and the
+  `@orchestrator`, holds the task blocked from review (`Store::hold_blocked_on`, keeping its
+  slot, on `check:owner`, the owner's approve of the tip, which reads as his decision: [what a
+  task waits on](#what-a-task-waits-on)), or leaves it done by its approve, until the owner approves the tip
+  on the task's page. A land of a task that needed no review says on its landing line the stamps and the
   whole tip they stood on (`landed SLUG on main at MERGE; its needs (tests) stood at SHA`),
   the commit it vouched for, as an approve names one.
 - **Approved by someone else.** Where it needs review, the task's last verdict is an
@@ -2240,9 +2291,12 @@ first, for the timeline. They come in that order of states: what the task waits
 on first. The task's page draws them in one section under its head, with what
 the task waits on and how many gates are in each state. What it waits on follows
 its status: in review, the gates missing or held; in concept, design or progress,
-its executor; blocked, the tasks it depends on; before it starts (backlog, ready),
+its executor, said `lost` or `left` when it is gone, coloured as missing when nobody
+works it; blocked, the tasks it depends on; before it starts (backlog, ready),
 nothing; and after those, while it is open, each gate held (a card waiting on the
-owner). A done or cancelled task waits on nothing. On a phone a gate is
+owner). A done or cancelled task waits on nothing. A needed stamp of a task not
+started yet (backlog to ready) with no branch says `No branch yet`, a started one's
+that its branch is not in the repository. On a phone a gate is
 three lines, wide one row of bounded columns, a part whose words need more room
 wrapping within its own, so every word shows and none waits on a hover
 (`apps/symphony-web/src/gates.tsx`). A link is kept only for a path of the
@@ -2639,7 +2693,8 @@ capped. A value that does not parse, or one below 1, is said on stderr with its 
   task in review, an instruction for work in progress) is never refused.
 - **A landing's hold.** A landing that holds a task in review blocked while
   every stamp its branch lacks is one nobody is producing does it with a hold
-  (`Store::hold_blocked`, `tasks api`'s `hold`, api version 4): the task
+  (`Store::hold_blocked`, `tasks api`'s `hold`, api version 4; naming what it
+  waits on, `Store::hold_blocked_on` and `hold`'s `on`, api version 15): the task
   stays blocked, as any blocked task does to everyone on it, and keeps its
   slot, shown as `(blocked, held)` and counted as work in progress is, so its
   move back to `in_progress` starts nothing and is never refused, as its move

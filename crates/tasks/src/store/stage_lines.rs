@@ -6,7 +6,7 @@
 use super::report_lines::line_of;
 use super::surreal::stage_lines as sql;
 use super::{Error, Store, refused, repr};
-use crate::stages::{self, Facts, Line};
+use crate::stages::{self, Facts, InStatus, Line};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, HashSet};
@@ -32,6 +32,22 @@ impl Store {
     /// the two agree. One round trip however many there are; a slug no task has is refused, as
     /// [`Store::threads`] refuses it.
     pub fn in_status_since(&self, slugs: &[String]) -> Result<BTreeMap<String, f64>, Error> {
+        let read = self.in_status(slugs)?;
+        let mut since = BTreeMap::new();
+        for slug in slugs {
+            let Some(found) = read.get(slug) else {
+                return Err(refused(format!("no task {}", repr(slug))));
+            };
+            since.insert(slug.clone(), found.since);
+        }
+        Ok(since)
+    }
+
+    /// When each task `slugs` names took the status it holds and the status it held before
+    /// ([`stages::in_status`]), by slug, in the one round trip [`Store::in_status_since`] makes;
+    /// a slug no task has is left out, so a reader of a board that moved since it listed it reads
+    /// the rest.
+    pub fn in_status(&self, slugs: &[String]) -> Result<BTreeMap<String, InStatus>, Error> {
         if slugs.is_empty() {
             return Ok(BTreeMap::new());
         }
@@ -40,19 +56,17 @@ impl Store {
         let read = since_taken_apart(slugs, &answer).ok_or_else(|| {
             Error::Db("the read of when tasks took their status is not in the board's shape".into())
         })?;
-        let mut since = BTreeMap::new();
+        let mut stood = BTreeMap::new();
         for (slug, found) in slugs.iter().zip(read) {
-            let Some(task) = found else {
-                return Err(refused(format!("no task {}", repr(slug))));
-            };
+            let Some(task) = found else { continue };
             let facts = Facts {
                 status: &task.status,
                 created: task.created,
                 updated: task.updated,
             };
-            since.insert(slug.clone(), stages::in_status_since(facts, &task.lines));
+            stood.insert(slug.clone(), stages::in_status(facts, &task.lines));
         }
-        Ok(since)
+        Ok(stood)
     }
 
     /// Every top-level task made at or after `since`, and every done one written at or after it

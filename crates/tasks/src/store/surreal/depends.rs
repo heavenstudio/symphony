@@ -2,6 +2,7 @@
 
 use super::cap::GUARD;
 use super::logged;
+use super::work::UNBLOCKED;
 use super::write::ACT;
 
 /// Every task's status, every dependency, the count of changes to them, and the task's own version,
@@ -33,13 +34,14 @@ UPDATE type::record('task', $slug) SET status = $status ?? status, updated = $no
 DELETE type::record('counter', ['hold', $slug]) RETURN NONE;";
 
 /// [`CHANGE`] with its line on the thread (`$said`) and, when the task goes back to a status
-/// (`$back`), that line too, by `$actor`: a session's write when `acts`, else the owner's; with
-/// the slot counters it holds (`$slots`) when `guarded`.
+/// (`$back`), that line too, by `$actor`, and what its block waited on removed
+/// ([`UNBLOCKED`]): a session's write when `acts`, else the owner's; with the slot counters it
+/// holds (`$slots`) when `guarded`.
 pub(in crate::store) fn change(acts: bool, guarded: bool) -> String {
     let act = if acts { ACT } else { "" };
     let guard = if guarded { GUARD } else { "" };
     let body = format!(
-        "{act}{CHANGE}\n{}\nIF $back != NONE {{\n{}\n}};",
+        "{act}{CHANGE}{UNBLOCKED}\n{}\nIF $back != NONE {{\n{}\n}};",
         logged("$slug", "$actor", "'system'", "$said", "NONE"),
         logged("$slug", "$actor", "'system'", "$back", "NONE")
     );

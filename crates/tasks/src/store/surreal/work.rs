@@ -113,6 +113,15 @@ FOR $dependent IN array::distinct($blocked_links.slug) {{
 pub(in crate::store) const NEEDS_WRITTEN: &str =
     "\nUPDATE type::record('task', $slug) SET fields._board.needs = $needs RETURN NONE;";
 
+/// The write of what a block waits on (`$blocked`, [`crate::waits_on::Blocked`]) after the rule's
+/// own, which moved the task to blocked or found it there.
+pub(in crate::store) const BLOCKED_WRITTEN: &str =
+    "\nUPDATE type::record('task', $slug) SET fields._board.blocked = $blocked RETURN NONE;";
+
+/// What a block waited on removed from `$slug` once a write took it out of blocked: after every
+/// write of its status but one that blocks it.
+pub(in crate::store) const UNBLOCKED: &str = "\nUPDATE type::record('task', $slug) SET fields._board.blocked = NONE WHERE status != 'blocked' AND fields._board.blocked != NONE RETURN NONE;";
+
 /// The write's refusal unless its actor is a red's filer: `$filer` and `$unfiled` ([`filing`]).
 pub(in crate::store) const FILED: &str = "IF (SELECT VALUE kind FROM ONLY type::record('session', $actor)) != $filer { THROW $unfiled };";
 
@@ -271,7 +280,7 @@ IF $task.status NOT IN $from {{
     THROW $refusal;
 }};
 IF $status = 'review' AND ($task.instruction OR $task.parent != NONE) {{ THROW $instruction }};
-UPDATE type::record('task', $slug) SET status = $status, updated = $now, version += 1 RETURN NONE;
+UPDATE type::record('task', $slug) SET status = $status, updated = $now, version += 1 RETURN NONE;{UNBLOCKED}
 {UNHOLD}
 LET $said = $actor + '{MOVED}' + $task.status + '{ARROW}' + $status;
 {}\n{}\n{}",

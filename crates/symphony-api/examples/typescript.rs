@@ -196,6 +196,8 @@ fn board_declarations(cfg: &Config) -> Vec<Declared> {
         // The task board's, its tasks and the machines' work.
         declared::<api::TaskListing>(cfg),
         declared::<api::Task>(cfg),
+        declared::<api::WaitsOn>(cfg),
+        declared::<api::Orchestrator>(cfg),
         declared::<api::Role>(cfg),
         declared::<api::FieldValue>(cfg),
         declared::<api::TaskChange>(cfg),
@@ -927,6 +929,8 @@ fn task(slug: &str, status: &str, parent: Option<&str>) -> api::Task {
         }],
         instruction: false,
         fields: std::collections::BTreeMap::new(),
+        waits_on: None,
+        from: None,
     }
 }
 
@@ -1261,6 +1265,14 @@ fn task_board_samples() -> Vec<(String, Value)> {
     let mut idle = task("w/b", "ready", None);
     idle.links.clear();
     idle.roles.clear();
+    // A block that names nothing: sent in the stage it stopped in, with what it waits on.
+    idle.from = Some("ready".into());
+    idle.waits_on = Some(api::WaitsOn {
+        kind: "nobody".into(),
+        who: String::new(),
+        why: "no reason recorded".into(),
+        since: 2.0,
+    });
     let mut fielded = task("w/a/1", "in_progress", Some("w/a"));
     fielded.fields.insert(
         "game".into(),
@@ -1287,6 +1299,11 @@ fn task_board_samples() -> Vec<(String, Value)> {
         counts: vec![("ready".into(), 1), ("in_progress".into(), 2)],
         lifecycle_counts: vec![("ready".into(), 1), ("in_progress".into(), 2)],
         next: Some("w/b".into()),
+        orchestrators: vec![api::Orchestrator {
+            handle: "sable-finch".into(),
+            health: "stale".into(),
+        }],
+        unstarted: 3,
     };
     let empty = api::TaskListing {
         machine_work: api::MachineWork::default(),
@@ -1296,6 +1313,8 @@ fn task_board_samples() -> Vec<(String, Value)> {
         counts: Vec::new(),
         lifecycle_counts: Vec::new(),
         next: None,
+        orchestrators: Vec::new(),
+        unstarted: 0,
     };
     let change = api::TaskChange {
         key: "w/a".into(),
@@ -1304,6 +1323,9 @@ fn task_board_samples() -> Vec<(String, Value)> {
             priority: Some(1),
             parent: Some(String::new()),
             roles: Some(Vec::new()),
+            // Of no kind and empty: each cleared.
+            waits_on: Some(api::WaitsOn::default()),
+            from: Some(String::new()),
             ..api::TaskFields::default()
         },
     };

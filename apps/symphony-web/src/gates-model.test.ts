@@ -199,6 +199,29 @@ describe("what the task waits on", () => {
     ).toBeNull();
   });
 
+  it("in progress, says an executor that is gone lost or left, never at work", () => {
+    for (const health of ["lost", "left"]) {
+      expect(
+        waitsOn(stamped, task("in_progress", [aRole("executor", "dusky-plover", health)])),
+        health,
+      ).toEqual({
+        tone: "gate-missing",
+        names: [`executor dusky-plover ${health}`],
+      });
+    }
+    expect(
+      waitsOn(
+        stamped,
+        task("design", [aRole("executor", "a", "stale"), aRole("executor", "b", "lost")]),
+      ),
+      "one still there: the stage's colour, the gone one said gone",
+    ).toEqual({ tone: "st-design", names: ["executor a", "executor b lost"] });
+    expect(
+      waitsOn(asking, task("in_progress", [aRole("executor", "dusky-plover", "left")])),
+      "a held gate after a gone executor: nobody works it still",
+    ).toEqual({ tone: "gate-missing", names: ["executor dusky-plover left", "owner"] });
+  });
+
   it("in concept or design, names the executor working its stage", () => {
     for (const status of ["concept", "design"]) {
       expect(waitsOn(stamped, task(status, [aRole("executor", "ochre-crane")])), status).toEqual({

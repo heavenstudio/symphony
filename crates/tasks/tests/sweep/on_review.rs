@@ -302,7 +302,7 @@ fn a_move_elsewhere_than_review_starts_none_and_a_broken_manifest_is_logged() {
         &r,
         "amber-heron",
         &r.root,
-        &["move", "sim/jump", "blocked"],
+        &["move", "sim/jump", "blocked", "--on", "parked"],
         |_| {},
     );
     assert!(!log(&r).exists());

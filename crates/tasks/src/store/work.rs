@@ -38,6 +38,14 @@ mod roles;
 /// Who makes a task or posts to a thread without a session of its own.
 pub(super) const OWNER: &str = "owner";
 
+/// What a block waits on, as a move to blocked names it ([`Store::move_on`],
+/// [`Store::hold_blocked_on`]): a thing of [`crate::waits_on::THINGS`], and why in a few words.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct On<'a> {
+    pub thing: &'a str,
+    pub why: Option<&'a str>,
+}
+
 /// Every status, the pipeline's in order and then the two off it.
 pub const STATUSES: [&str; 9] = [
     "backlog",
@@ -587,18 +595,42 @@ impl Store {
         handle: &str,
         reason: Option<&str>,
     ) -> Result<Task, Error> {
+        self.move_on(slug, status, handle, reason, None)
+    }
+
+    /// [`Store::move_with`], a move to blocked naming what the block waits on (`on`), kept on the
+    /// task ([`crate::waits_on::Blocked`]) in the move's own write; with no reason given, its
+    /// thread says what it waits on in the reason's place. A task blocked already is given what
+    /// it waits on, in place of what it named, and stays blocked. A block that names nothing is
+    /// still taken here, as before (the command line alone refuses it): it waits on nothing the
+    /// board can name ([`crate::waits_on::NO_REASON`]).
+    pub fn move_on(
+        &self,
+        slug: &str,
+        status: &str,
+        handle: &str,
+        reason: Option<&str>,
+        on: Option<On<'_>>,
+    ) -> Result<Task, Error> {
+        let on = on.map(|on| self.blocking(slug, status, on)).transpose()?;
         let reason = match reason.map(str::trim) {
             Some("") => {
                 return Err(refused(
                     "a move's reason says why it moves, in words".into(),
                 ));
             }
-            given => given.map(|why| reason_line(status, why)),
+            Some(why) => Some(reason_line(status, why)),
+            None => on.as_ref().map(|(thing, why)| {
+                let why = why
+                    .as_ref()
+                    .map_or_else(String::new, |why| format!("; {why}"));
+                reason_line(status, &format!("on {thing}{why}"))
+            }),
         };
         if handle == OWNER && matches!(status, "cancelled" | "review") {
             return self.move_as_owner(slug, status, reason.as_deref());
         }
-        let (task, from) = self.moving_from(slug, status, handle, Moving::Any, reason)?;
+        let (task, from) = self.moving_from(slug, status, handle, Moving::Any, reason, on)?;
         if from == "done" {
             let text = format!(
                 "{slug} is back in review from done, by {handle}: the approve standing does not \
@@ -623,16 +655,68 @@ impl Store {
     /// move, change of parent or of dependencies. So the move that returns it starts nothing, and
     /// the slot it held is no one else's meanwhile.
     pub fn hold_blocked(&self, slug: &str, handle: &str) -> Result<Task, Error> {
-        self.moving(slug, "blocked", handle, Moving::Hold)
+        self.hold_blocked_on(slug, handle, None)
+    }
+
+    /// [`Store::hold_blocked`], naming what the hold waits on (`on`), kept on the task as a move's
+    /// block keeps it ([`Store::move_on`]): the default landing names the owner's approve
+    /// (`check:owner`). With none, as before, it names nothing.
+    pub fn hold_blocked_on(
+        &self,
+        slug: &str,
+        handle: &str,
+        on: Option<On<'_>>,
+    ) -> Result<Task, Error> {
+        let on = on
+            .map(|on| self.blocking(slug, "blocked", on))
+            .transpose()?;
+        Ok(self
+            .moving_from(slug, "blocked", handle, Moving::Hold, None, on)?
+            .0)
+    }
+
+    /// What `on` names for a move of `slug` to `status`, and its why, each as given and checked: a
+    /// thing of [`crate::waits_on::THINGS`], a task the board holds that is not `slug` itself,
+    /// and a few words; refused for a move to any status but blocked.
+    fn blocking(
+        &self,
+        slug: &str,
+        status: &str,
+        on: On<'_>,
+    ) -> Result<(String, Option<String>), Error> {
+        if status != "blocked" {
+            return Err(refused(format!(
+                "what a block waits on is said by a move to blocked, not to {status}"
+            )));
+        }
+        let thing = crate::waits_on::Thing::parse(on.thing).map_err(refused)?;
+        if let crate::waits_on::Thing::Task(target) = thing {
+            if target == slug {
+                return Err(refused(format!("{slug} cannot wait on itself")));
+            }
+            if self.get(target).is_err() {
+                return Err(refused(format!(
+                    "no task {}: a block waits on a task the board holds",
+                    repr(target)
+                )));
+            }
+        }
+        let why = (on.why)
+            .map(crate::waits_on::why)
+            .transpose()
+            .map_err(refused)?;
+        Ok((thing.to_string(), why.map(str::to_string)))
     }
 
     /// [`Store::move_to`] by a session, from the statuses `how` allows ([`Moving`]).
     fn moving(&self, slug: &str, status: &str, handle: &str, how: Moving) -> Result<Task, Error> {
-        Ok(self.moving_from(slug, status, handle, how, None)?.0)
+        Ok(self.moving_from(slug, status, handle, how, None, None)?.0)
     }
 
     /// [`Store::moving`], with `reason`'s line ([`reason_line`]) posted in its write when given,
-    /// and the status it moved the task from.
+    /// what a block waits on (`on`, [`Store::blocking`]) kept on the task, and the status it moved
+    /// the task from. A task blocked already that is given what it waits on keeps its status and
+    /// takes the record alone, the status it was blocked from kept, or read from its thread.
     fn moving_from(
         &self,
         slug: &str,
@@ -640,6 +724,7 @@ impl Store {
         handle: &str,
         how: Moving,
         reason: Option<String>,
+        on: Option<(String, Option<String>)>,
     ) -> Result<(Task, String), Error> {
         let starts = OPEN.contains(&status);
         // The board the commands a refusal names reach: this one.
@@ -651,6 +736,34 @@ impl Store {
             let current = task.status.as_str();
             from.replace(current.to_string());
             how.allows(slug, current)?;
+            let record = |was: Option<String>| {
+                on.as_ref().map(|(thing, why)| {
+                    crate::waits_on::Blocked {
+                        on: thing.clone(),
+                        why: why.clone(),
+                        by: handle.into(),
+                        at: view.now,
+                        from: was,
+                    }
+                    .value()
+                })
+            };
+            if current == "blocked" && status == "blocked" && on.is_some() {
+                if !view.snap.roles.iter().any(|r| r.handle == handle) {
+                    return Err(refused(format!(
+                        "{handle} holds no role on {slug}, which is blocked"
+                    )));
+                }
+                let was = match crate::waits_on::Blocked::kept(current, &task.fields) {
+                    Some(kept) => kept.from,
+                    None => self.blocked_from(slug, current, task.created, task.updated)?,
+                };
+                return Ok(Change {
+                    reason: reason.clone(),
+                    blocked: record(was),
+                    ..Change::default()
+                });
+            }
             if current == "done" && status == "review" {
                 // Read after the task, whose version the write holds: a landing since is a stale
                 // write, read and decided again.
@@ -719,10 +832,31 @@ impl Store {
                 say: Say::system(stages::moved_line(handle, current, status)),
                 reason: reason.clone(),
                 opens,
+                blocked: record(Some(current.into())),
                 ..Change::default()
             })
         })?;
         Ok((task, from.into_inner()))
+    }
+
+    /// The status `slug`, in `status` (blocked with no record of what it waits on) since its
+    /// write at `updated`, was blocked from, as its thread's replay reads it
+    /// ([`stages::in_status`]).
+    fn blocked_from(
+        &self,
+        slug: &str,
+        status: &str,
+        created: f64,
+        updated: f64,
+    ) -> Result<Option<String>, Error> {
+        let thread = self.thread(slug)?;
+        let lines: Vec<stages::Line> = thread.iter().map(stages::Line::from).collect();
+        let facts = stages::Facts {
+            status,
+            created,
+            updated,
+        };
+        Ok(stages::in_status(facts, &lines).from)
     }
 
     /// The owner's two moves: any open task to `cancelled`, a blocked one (never an instruction
