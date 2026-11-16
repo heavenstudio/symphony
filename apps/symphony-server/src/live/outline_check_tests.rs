@@ -316,3 +316,38 @@ fn a_branch_pages_check_is_answered_from_that_pages_copy() {
     assert_eq!(ask(OUTLINE, Some(&named)).0, StatusCode::OK);
     assert_eq!(renders(&hub), rendered + 1);
 }
+
+#[test]
+fn a_tag_made_while_another_copy_was_placed_answers_nothing_and_is_not_kept() {
+    let tree = Tree::new();
+    let root = repository(&tree);
+    let hub = Hub::new(&root, &root.join("build/client"));
+    hub.refresh_docs(None).unwrap();
+    let tag_of = |_: symphony_api::Document| "\"made\"".to_string();
+    assert_eq!(
+        hub.outline_kept("", "docs/TOPIC.md", tag_of),
+        None,
+        "a document not followed has no copy"
+    );
+    assert_eq!(hub.outline_kept("no~page", "docs/TOPIC.md", tag_of), None);
+    hub.document("", "docs/TOPIC.md").unwrap();
+
+    // A read places its copy while the first copy's tag is being made: that tag names a copy the
+    // page no longer holds.
+    let during = hub.outline_kept("", "docs/TOPIC.md", |_| {
+        hub.document("", "docs/TOPIC.md").unwrap();
+        "\"of the first copy\"".to_string()
+    });
+    assert_eq!(during, None);
+    let cursor = hub.pages.read().unwrap()[""].board.version;
+    assert_eq!(
+        hub.outline_kept("", "docs/TOPIC.md", tag_of),
+        Some(("\"made\"".to_string(), cursor)),
+        "the copy held now has its own tag made"
+    );
+    // Made once for a copy: the next check makes none.
+    assert_eq!(
+        hub.outline_kept("", "docs/TOPIC.md", |_| unreachable!("the tag is kept")),
+        Some(("\"made\"".to_string(), cursor))
+    );
+}

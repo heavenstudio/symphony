@@ -68,3 +68,33 @@ fn a_branch_pages_pictures_are_read_under_its_scope() {
         "tools~lamp"
     ));
 }
+
+#[test]
+fn a_media_items_file_is_read_as_a_pictures_is() {
+    let tree = Tree::new();
+    tree.write("mock/lamp.html", "<p>The lamp.</p>");
+    tree.write("docs/mock/lamp.html", "<p>The lamp.</p>");
+    assert!(!outside(&tree, "# R\n\n![The lamp](mock/lamp.html)\n", ""));
+    let doc = document(&Render::new(&tree.root), "docs/R.md", "", &[]).unwrap();
+    let media = serde_json::to_string(&doc.sections).unwrap();
+    assert!(
+        media.contains("/docs/mock/lamp.html?v="),
+        "the mockup is a media item named by its validator, so the case can tell: {media}"
+    );
+    assert!(outside(
+        &tree,
+        "# R\n\n![The lamp](../mock/lamp.html)\n",
+        ""
+    ));
+}
+
+#[test]
+fn a_url_with_a_query_of_its_own_or_another_sites_carries_no_validator_and_names_nothing() {
+    let tree = Tree::new();
+    tree.write("shots/lamp.png", "png");
+    assert!(!outside(
+        &tree,
+        "# R\n\n[Sized](../shots/lamp.png?size=2) and [elsewhere](https://example.invalid/watch?v=1) and [again](//example.invalid/watch?v=1).\n",
+        ""
+    ));
+}

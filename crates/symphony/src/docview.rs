@@ -784,7 +784,9 @@ pub fn names_files_outside(
         let Some((path, query)) = url.split_once('?') else {
             return false;
         };
-        if !query.split('&').any(|pair| pair.starts_with("v=")) {
+        // A validator is written on a file of this project alone: another site's `v=` is its own.
+        let local = path.starts_with('/') && !path.starts_with("//");
+        if !local || !query.split('&').any(|pair| pair.starts_with("v=")) {
             return false;
         }
         let route = match path.strip_prefix(&own) {
