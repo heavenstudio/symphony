@@ -22,7 +22,10 @@ fn a_report_from_a_served_folder_left_without_its_git_runs_no_board_command_ther
     );
     let tree = Tree::checkout();
     tree.write("artifacts/inner/.git/HEAD", "ref: refs/heads/main\n");
-    tree.write("artifacts/inner/symphony.toml", "[project]\nid = \"inner\"\n");
+    tree.write(
+        "artifacts/inner/symphony.toml",
+        "[project]\nid = \"inner\"\n",
+    );
     // The project's build of the board's command, as `tasks_binary` finds it: it says it ran.
     let ran = tree.path("ran");
     let build = tree.write(

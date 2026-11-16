@@ -54,13 +54,16 @@ static SERVED: Mutex<BTreeMap<PathBuf, Served>> = Mutex::new(BTreeMap::new());
 pub fn serve(root: &Path) -> Option<PathBuf> {
     let repository = symphony_board::project::locate_quick(root).map(|place| place.common);
     let journal = crate::asks::found_path(root);
-    SERVED.lock().unwrap_or_else(PoisonError::into_inner).insert(
-        root.to_path_buf(),
-        Served {
-            repository: repository.clone(),
-            journal,
-        },
-    );
+    SERVED
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .insert(
+            root.to_path_buf(),
+            Served {
+                repository: repository.clone(),
+                journal,
+            },
+        );
     repository
 }
 

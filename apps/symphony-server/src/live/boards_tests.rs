@@ -742,10 +742,9 @@ fn a_pages_ask_and_asks_read_after_its_projects_git_went_keep_to_its_own_journal
         !case.outer.join("artifacts/asks").exists(),
         "the asks read made the outer checkout's journal"
     );
-    let journal = symphony::asks::AskStore::existing(
-        &case.inner.root.join("artifacts/asks/asks.db"),
-    )
-    .expect("the project's own journal");
+    let journal =
+        symphony::asks::AskStore::existing(&case.inner.root.join("artifacts/asks/asks.db"))
+            .expect("the project's own journal");
     assert_eq!(journal.thread(id).unwrap().question, "Is it held?");
     assert!(case.outer_down(), "the ask started the outer board");
 }

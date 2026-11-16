@@ -307,10 +307,18 @@ fn a_served_folders_journal_is_the_one_found_when_it_began_to_be_served() {
 
     super::serve(&inner);
     std::fs::remove_dir_all(inner.join(".git")).unwrap();
-    assert_eq!(found_path(&inner), outer, "found again, it is the outer checkout's");
+    assert_eq!(
+        found_path(&inner),
+        outer,
+        "found again, it is the outer checkout's"
+    );
     assert_eq!(super::served_journal(&inner), Some(own.clone()));
     assert_eq!(default_path(&inner, None), own);
-    assert_eq!(default_path(&inner, Some("")), own, "an empty ASKS_DB names none");
+    assert_eq!(
+        default_path(&inner, Some("")),
+        own,
+        "an empty ASKS_DB names none"
+    );
     assert_eq!(
         default_path(&inner, Some("/x/y.db")),
         PathBuf::from("/x/y.db")
