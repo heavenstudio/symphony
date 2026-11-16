@@ -1071,6 +1071,84 @@ fn the_chat_and_activity_panels_take_focus_on_open_and_escape_returns_it_to_thei
     }
 }
 
+/// Whether the focus is on the sheet's shown tab panel, which a send holds it on.
+const ON_PANEL: &str = "document.activeElement === document.querySelector('#quick-sheet [role=tabpanel]:not([hidden])')";
+
+#[test]
+fn a_send_keeps_the_focus_in_the_sheet_so_escape_still_closes_it() {
+    let site = site();
+    let mut thread = super::panel_open::chat(&["Hello"]);
+    thread["id"] = json!(7);
+    site.set_json("/api/ask", &thread);
+    site.set_json("/api/quick-task", &json!({"slug":"inbox/focus"}));
+    let Some(mut page) = chrome() else { return };
+    page.open(&site.url("/"));
+    let sheet_closed = "document.querySelector('#quick-sheet')?.hidden !== false";
+
+    // A chat sent from its Send button, which the send disables with the message.
+    open_panel(&mut page);
+    assert!(
+        page.wait_for("document.activeElement.id === 'quick-text'", SHOWN),
+        "{}",
+        page.eval(FOCUS)
+    );
+    page.call("Input.insertText", json!({"text":"Hello"}));
+    site.hold_route("/api/ask", true);
+    page.eval("document.querySelector('#quick-sheet button[type=submit]').focus()");
+    key(&mut page, "Enter", "Enter", 13);
+    assert!(
+        page.wait_for(
+            &format!("document.querySelector('#quick-text').disabled && {ON_PANEL}"),
+            SHOWN
+        ),
+        "while it sends, the focus stays in the sheet: {}",
+        page.eval(FOCUS)
+    );
+    site.hold_route("/api/ask", false);
+    assert!(
+        page.wait_for(
+            "document.querySelector('#quick-text')?.value === '' && !document.querySelector('#quick-text').disabled && document.activeElement.id === 'quick-text'",
+            SHOWN
+        ),
+        "once sent, the focus is back in the message field: {}",
+        page.eval(FOCUS)
+    );
+    escape_returns_to(&mut page, sheet_closed, "#quick-open");
+
+    // A task sent by Enter in its title, the sheet closed by Escape while it saves: the save's end
+    // leaves the focus where Escape gave it back.
+    open_panel(&mut page);
+    task_tab(&mut page);
+    page.eval("document.querySelector('#quick-title').focus()");
+    page.call("Input.insertText", json!({"text":"Focus task"}));
+    site.hold_route("/api/quick-task", true);
+    key(&mut page, "Enter", "Enter", 13);
+    assert!(
+        page.wait_for(
+            &format!("document.querySelector('#quick-title').disabled && {ON_PANEL}"),
+            SHOWN
+        ),
+        "while it saves, the focus stays in the sheet: {}",
+        page.eval(FOCUS)
+    );
+    escape_returns_to(&mut page, sheet_closed, "#quick-open");
+    site.hold_route("/api/quick-task", false);
+    assert!(
+        page.wait_for(
+            "document.querySelector('#quick-sheet a[href=\"/task/inbox/focus\"]') !== null",
+            SHOWN
+        ),
+        "the save never lands"
+    );
+    // Read two frames after the save's end was drawn, its effects run.
+    assert_eq!(
+        page.eval("new Promise(done => requestAnimationFrame(() => requestAnimationFrame(() => done(document.activeElement === document.querySelector('#quick-open')))))"),
+        json!(true),
+        "the save's end took the focus from where the reader was: {}",
+        page.eval(FOCUS)
+    );
+}
+
 #[test]
 fn buttons_share_one_shape_and_one_focus_ring_and_pages_one_heading() {
     let site = site();

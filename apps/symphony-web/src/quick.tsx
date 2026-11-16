@@ -18,7 +18,7 @@ import { BlocksView } from "./blocks";
 import { Button } from "./button";
 import { Input } from "./input";
 import { useMount } from "./mount";
-import { returnFocus, takeFocus, useEscape } from "./panel-focus";
+import { holdFocus, releaseFocus, returnFocus, takeFocus, useEscape } from "./panel-focus";
 import {
   type AskReply,
   concernsThread,
@@ -45,12 +45,13 @@ import { Tooltip } from "./tooltip";
 import { Skeleton } from "./viewport";
 import { QUICK_TASK_TITLE_MAX } from "./wire";
 
+/** The shown tab's panel: a stop for Tab in the sheet that a send or a save leaves enabled, where
+ * it holds the focus while the fields, the tabs and Send are disabled. */
+const SHOWN_PANEL = "#quick-sheet [role=tabpanel]:not([hidden])";
+
 /** Where the focus goes when the sheet opens, the first of these that shows and can take it: the
- * field the reader types in, else the chosen tab while a save holds the fields disabled. */
-const QUICK_FIRST = [
-  "#quick-sheet [role=tabpanel]:not([hidden]) :is(#quick-title, #quick-text):not(:disabled)",
-  "#quick-sheet [role=tab][aria-selected=true]",
-];
+ * field the reader types in, else the shown tab's panel while a save holds the fields disabled. */
+const QUICK_FIRST = [`${SHOWN_PANEL} :is(#quick-title, #quick-text):not(:disabled)`, SHOWN_PANEL];
 
 /** How long a conversation's failed read waits before it is tried again, in ms. */
 export const RETRY_MS = 3_000;
@@ -363,6 +364,14 @@ export function QuickPanel({ route, draft, change }: QuickPanelProps) {
     change(() => ({ open: false }));
     returnFocus("#quick-open");
   });
+  // The focus a send held in the sheet, given to the field the reader types in once the send is
+  // over and its fields are enabled again.
+  const held = useRef<Element | null>(null);
+  useEffect(() => {
+    if (sending) return;
+    releaseFocus(held.current, QUICK_FIRST);
+    held.current = null;
+  }, [sending]);
   // The conversation, read when it opens and as the feed says it moved, its read given up when
   // another replaces it; a failed read is tried again until one answers.
   useEffect(() => {
@@ -438,6 +447,7 @@ export function QuickPanel({ route, draft, change }: QuickPanelProps) {
         change(() => ({ request, request_scope: route.scope }));
       }
     }
+    held.current = holdFocus("#quick-sheet", SHOWN_PANEL);
     void (async () => {
       try {
         const value = await deliver(sent);

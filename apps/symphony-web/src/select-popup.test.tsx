@@ -9,6 +9,7 @@ import type { ReactElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, type Mock, vi } from "vitest";
 import {
+  arrowsFrom,
   choosesOnClick,
   nextIndex,
   previousIndex,
@@ -153,6 +154,13 @@ describe("the focus moved round the list", () => {
     expect(previousIndex(3, 2)).toBe(1);
     expect(previousIndex(0, 1)).toBeNull();
   });
+
+  it("starts from the focused option, else the chosen one, else none", () => {
+    expect(arrowsFrom(PRIORITIES, "2", 0)).toBe(0);
+    expect(arrowsFrom(PRIORITIES, "1", null)).toBe(1);
+    expect(arrowsFrom(PRIORITIES, "9", null)).toBeNull();
+    expect(arrowsFrom([], "1", null)).toBeNull();
+  });
 });
 
 describe("what a key or a pointer means", () => {
@@ -229,15 +237,15 @@ describe("a select's popup used", () => {
 
   it("moves the focus with the arrows, Home and End, forgetting what was typed", () => {
     const moves: [string, number | null, number | null][] = [
-      ["ArrowDown", null, 0],
+      ["ArrowDown", 0, 1],
       ["ArrowDown", 2, 0],
-      ["ArrowUp", null, 2],
+      ["ArrowUp", 0, 2],
       ["ArrowUp", 1, 0],
       ["Home", 2, 0],
       ["End", 0, 2],
     ];
     for (const [name, from, to] of moves) {
-      const { element, setFocused } = draw(props(), [true, from]);
+      const { element, setFocused } = draw(props({ value: "1" }), [true, from]);
       (runtime.refs[1] as { current: { typed: string } }).current.typed = "no";
       const event = key(name);
       handler(element, isList, "onKeyDown")(event);
@@ -245,6 +253,22 @@ describe("a select's popup used", () => {
       expect((runtime.refs[1] as { current: { typed: string } }).current.typed).toBe("");
       expect(event.preventDefault).toHaveBeenCalled();
       expect(event.stopPropagation).toHaveBeenCalled();
+    }
+  });
+
+  it("moves the arrows from the chosen option while none has the focus, from the ends with none chosen", () => {
+    const moves: [string, string, number][] = [
+      ["ArrowUp", "1", 0],
+      ["ArrowDown", "1", 2],
+      ["ArrowUp", "0", 2],
+      ["ArrowDown", "2", 0],
+      ["ArrowUp", "9", 2],
+      ["ArrowDown", "9", 0],
+    ];
+    for (const [name, value, to] of moves) {
+      const { element, setFocused } = draw(props({ value }), [true, null]);
+      handler(element, isList, "onKeyDown")(key(name));
+      expect(setFocused, `${name} with ${value} chosen`).toHaveBeenCalledWith(to);
     }
   });
 
