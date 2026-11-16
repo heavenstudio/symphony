@@ -34,6 +34,7 @@ pub(in crate::store) mod search;
 pub(in crate::store) mod session_urls;
 pub(in crate::store) mod sessions;
 pub(in crate::store) mod snapshot;
+pub(in crate::store) mod spending;
 pub(in crate::store) mod stage_lines;
 pub(in crate::store) mod stamp;
 pub(in crate::store) mod unanswered;

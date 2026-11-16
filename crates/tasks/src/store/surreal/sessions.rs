@@ -70,9 +70,10 @@ RETURN {
 /// The session bound to `$agent` is seen, and its busy mark kept, moved or cleared. `boot_order`
 /// keeps the known watermark even when `last_boot` is unreadable; retired boot ids prevent a
 /// delayed sample from moving it back across a reboot. No arrival order proves sample order across
-/// an unreadable call, so `boot_uncertain` lasts for the checkout stay.
-pub(in crate::store) const BEAT: &str = "
-LET $s = (SELECT handle, busy_until, busy_call FROM session WHERE agent = $agent AND left_at = NONE LIMIT 1)[0];
+/// an unreadable call, so `boot_uncertain` lasts for the checkout stay. `$s` is the session, its
+/// kind included, which [`super::spending::SPEND`] reads after it.
+const BEAT: &str = "
+LET $s = (SELECT handle, kind, busy_until, busy_call FROM session WHERE agent = $agent AND left_at = NONE LIMIT 1)[0];
 LET $mark = IF $s = NONE { NONE }
     ELSE IF $busy_for != NONE AND ($s.busy_until = NONE OR $now + $busy_for >= $s.busy_until) {
         { until: $now + $busy_for, call: $call } }
@@ -104,7 +105,14 @@ IF $s != NONE AND $bound.in_process = true {
         };
     };
 };
-RETURN $s.handle;";
+";
+
+/// [`BEAT`], adding the tokens it hands after it when it `spends` ([`super::spending::SPEND`],
+/// whose variables it then needs too); its answer is the handle bound to `$agent`, if any.
+pub(in crate::store) fn beat(spends: bool) -> String {
+    let spend = if spends { super::spending::SPEND } else { "" };
+    format!("{BEAT}{spend}RETURN $s.handle;")
+}
 
 /// The handle of every session there ever was: a new one takes none of them.
 pub(in crate::store) const HANDLES: &str = "RETURN SELECT VALUE handle FROM session;";

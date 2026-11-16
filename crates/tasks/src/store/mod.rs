@@ -47,6 +47,7 @@ mod session_urls;
 mod sessions;
 mod settings;
 mod snapshot;
+mod spending;
 mod stage_lines;
 mod stamp;
 mod surreal;

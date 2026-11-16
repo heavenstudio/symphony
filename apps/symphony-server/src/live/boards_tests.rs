@@ -218,14 +218,16 @@ fn writer(root: &Path) -> Store {
 }
 
 /// The board of `root`'s project, opened to write by a build one schema version behind this one:
-/// the project's board command while this build's schema has not landed.
+/// the project's board command while this build's schema has not landed, on this machine, so the
+/// line it writes (a build at schema 18 or later keeps one) is that of the migrate run here after,
+/// which leaves it out.
 fn older_writer(root: &Path) -> Store {
     let reached = symphony_board::cli::board(&env(root)).unwrap();
     Store::opening(
         reached.client,
         Box::new(|| 1_000_000.0),
         Box::new(|_| false),
-        "this-host",
+        &symphony_board::sys::hostname(),
         &Opening::write()
             .at(Schema::this_build().before())
             .of(reached.project.as_deref()),

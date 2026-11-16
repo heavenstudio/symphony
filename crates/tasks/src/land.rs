@@ -2054,6 +2054,21 @@ impl Landing<'_> {
         )
     }
 
+    /// What the landed line says of the tokens the task and its subtasks took, as their beats
+    /// recorded them ([`crate::usage::said`]); nothing when none were, or the board cannot say.
+    fn tokens_said(&self) -> String {
+        let slug = self.slug;
+        let Ok(children) = self.store.children(slug) else {
+            return String::new();
+        };
+        let slugs: Vec<&str> = std::iter::once(slug)
+            .chain(children.iter().map(|child| child.slug.as_str()))
+            .collect();
+        (self.store.spent_on(&slugs).ok())
+            .and_then(|rows| crate::usage::said(&rows))
+            .map_or_else(String::new, |said| format!("; {said}"))
+    }
+
     /// The landing's end once `merge` is on the default branch, at `top` here: the push, the
     /// landed line closing the task, the sweep and the regenerator's start; the line saying where
     /// it landed. `taken` are the generated paths the merge took from the default branch; `judged`
@@ -2078,6 +2093,7 @@ impl Landing<'_> {
             landed.push_str(", finishing a land interrupted after its merge");
         }
         landed.push_str(&taken_said(taken, &default, &self.settings.generators));
+        landed.push_str(&self.tokens_said());
         // A signal from here on stops the land with its record kept, which a run again finishes.
         self.go_on(Some(merge)).map_err(Stop::Refused)?;
         let pushed = match self.push(top) {

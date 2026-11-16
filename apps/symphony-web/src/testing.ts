@@ -160,6 +160,7 @@ export function anAgent(handle: string, fields: Partial<Agent> = {}): Agent {
     session_url: null,
     in_process: false,
     go: null,
+    tokens: null,
     ...fields,
   };
 }
