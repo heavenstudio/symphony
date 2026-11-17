@@ -357,8 +357,40 @@ fn every_query_a_write_a_recipient_or_a_tick_sends_is_planned_on_an_index() {
         "",
     );
     assert_eq!(took.code, 0, "{writer}'s take of {taken}: {}", took.err);
+    // A completed task block exercises the prerequisite read and fenced resume write as well
+    // as the candidate scan every dispatch makes. Task 1 is done in the generated history.
+    let named = format!("task:{}", generated::slug(1));
+    let resumed = reader
+        .move_on(
+            &taken,
+            "blocked",
+            &writer,
+            None,
+            Some(symphony_board::On {
+                thing: &named,
+                why: None,
+            }),
+        )
+        .unwrap();
+    assert_eq!(resumed.status, "ready");
+    assert!(
+        resumed
+            .fields
+            .get("_board")
+            .is_none_or(|fields| !fields.contains_key("blocked"))
+    );
     let mut requests = board.first_looks.clone();
     requests.extend(relay.take());
+    assert!(
+        requests
+            .iter()
+            .any(|request| request.sql.contains("FROM $required.map"))
+    );
+    assert!(
+        requests
+            .iter()
+            .any(|request| request.sql.contains("FOR $g IN $watch"))
+    );
     let planned = plan_all(&board.client(), &requests);
     assert!(
         planned

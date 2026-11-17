@@ -73,6 +73,7 @@ on_both! {
             let task = f.store.get(TARGET).unwrap();
             assert_eq!(task.status, back, "from {from}, executor {executor}");
             assert!(Blocked::of(&task).is_none());
+            assert!(task.fields.get("_board").is_none_or(|fields| !fields.contains_key("blocked")));
             let expected = format!("board moved it blocked → {back}");
             assert_eq!(f.said(TARGET).iter().filter(|line| **line == expected).count(), 1);
             complete(&f, FIRST);
