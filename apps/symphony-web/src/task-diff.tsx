@@ -228,15 +228,19 @@ export function TaskDiffPanel({ scope, slug }: { scope: string; slug: string }) 
     >
       <div className="row">
         <h2 id="task-diff-title">Changes</h2>
-        <Button size="sm" onClick={() => void parts?.read(part)}>
-          Refresh files
+        <Button size="sm" disabled={answer.retrying} onClick={() => void parts?.read(part)}>
+          {answer.retrying ? "Reading files…" : "Refresh files"}
         </Button>
       </div>
+      {answer.error !== null && (
+        <p role="status">
+          {failed(said(answer.error), true)}
+          {answer.value !== undefined && " Showing files from the last successful read."}
+        </p>
+      )}
       {answer.value !== undefined ? (
         <DiffFiles diff={answer.value} scope={scope} slug={slug} />
-      ) : answer.error !== null ? (
-        <p role="status">{failed(said(answer.error), true)}</p>
-      ) : answer.missing ? (
+      ) : answer.error !== null ? null : answer.missing ? (
         <p>No comparison is available.</p>
       ) : (
         <p role="status" aria-busy="true">

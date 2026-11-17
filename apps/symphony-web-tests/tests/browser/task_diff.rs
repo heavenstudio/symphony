@@ -96,6 +96,43 @@ fn files_load_before_hunks_and_only_the_opened_file_is_read_on_desktop_and_phone
 }
 
 #[test]
+fn a_failed_file_refresh_keeps_the_previous_list_and_says_when_it_is_retrying() {
+    let site = site();
+    let Some(mut page) = chrome() else {
+        panic!("Chrome is required for task diff acceptance")
+    };
+    open(&mut page, &site);
+    site.fail_route(TASK_DIFF_PATH, true);
+    page.eval("document.querySelector('.task-diff > .row button').click()");
+    assert!(page.wait_for(
+        "document.querySelector('.task-diff [role=status]')?.textContent.includes('Showing files from the last successful read')",
+        SHOWN
+    ));
+    assert_eq!(
+        page.eval("document.querySelectorAll('.task-diff details').length"),
+        json!(3)
+    );
+    site.hold_route(TASK_DIFF_PATH, true);
+    site.fail_route(TASK_DIFF_PATH, false);
+    page.eval("document.querySelector('.task-diff > .row button').click()");
+    assert!(page.wait_for(
+        "document.querySelector('.task-diff > .row button')?.disabled && document.querySelector('.task-diff > .row button')?.textContent === 'Reading files…'",
+        SHOWN
+    ));
+    let mut diff: Value = serde_json::from_str(include_str!(
+        "../../../../crates/symphony-api/fixtures/task-diff-branch.json"
+    ))
+    .unwrap();
+    diff["head"] = json!("c".repeat(40));
+    site.set_json(TASK_DIFF_PATH, &diff);
+    site.hold_route(TASK_DIFF_PATH, false);
+    assert!(page.wait_for(
+        "document.querySelector('.task-diff')?.textContent.includes('cccccccc') && document.querySelector('.task-diff [role=status]') === null && !document.querySelector('.task-diff > .row button').disabled",
+        SHOWN
+    ));
+}
+
+#[test]
 fn patch_failure_retries_and_a_new_comparison_drops_the_previous_hunks() {
     let site = site();
     let Some(mut page) = chrome() else {

@@ -49,6 +49,56 @@ it("draws the independent part's pending, answered, failed and missing states", 
   }
 });
 
+it("keeps a refresh failure visible beside the last files until a retry succeeds", async () => {
+  for (const [status, value, words] of [
+    [503, { error: "Board unavailable" }, "Board unavailable"],
+    [200, {}, "not readable"],
+  ] as const) {
+    vi.stubGlobal("document", { getElementById: () => null });
+    const fetch = vi.fn().mockResolvedValue(reply(200, DIFF));
+    vi.stubGlobal("fetch", fetch);
+    const mount = new AbortController();
+    const parts = new Parts<TaskEvent>(mount.signal);
+    const part = diffPart("", "tools/x");
+    const draw = () =>
+      renderToStaticMarkup(
+        <PartsContext.Provider value={parts}>
+          <TaskDiffPanel scope="" slug="tools/x" />
+        </PartsContext.Provider>,
+      );
+    try {
+      parts.open(part);
+      await until(() => expect(parts.shown(part).answered).toBe(true));
+      expect(draw()).toContain("one.ts");
+      fetch.mockResolvedValue(reply(status, value));
+      await parts.read(part);
+      expect(draw()).toContain(words);
+      expect(draw()).toContain("Showing files from the last successful read");
+      expect(draw()).toContain("one.ts");
+
+      let resolve: (response: Response) => void = () => {};
+      fetch.mockReturnValue(
+        new Promise<Response>((done) => {
+          resolve = done;
+        }),
+      );
+      const retry = parts.read(part);
+      expect(draw()).toContain(words);
+      expect(draw()).toContain('disabled="">Reading files…</button>');
+      resolve(reply(200, { ...DIFF, files: [{ path: "two.ts", added: 3, removed: 0 }] }));
+      await retry;
+      const html = draw();
+      expect(html).toContain("two.ts");
+      expect(html).not.toContain("one.ts");
+      expect(html).not.toContain(words);
+      expect(html).not.toContain("last successful read");
+      expect(html).toContain(">Refresh files</button>");
+    } finally {
+      mount.abort();
+    }
+  }
+});
+
 describe("the task's changed files", () => {
   it("checks every displayed field and accepts newer fields", () => {
     expect(readDiff(DIFF)).toEqual(DIFF);
