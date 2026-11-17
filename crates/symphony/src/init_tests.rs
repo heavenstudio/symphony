@@ -68,6 +68,18 @@ fn a_fresh_project_gets_every_file_stamped_and_linked() {
 }
 
 #[test]
+fn the_work_skill_installs_the_owner_answer_commit_instruction_with_a_current_stamp() {
+    let tree = Tree::new();
+    let shipped = Shipped::builtin();
+    init(&tree.root, &shipped).unwrap();
+    let text = tree.read(".agents/skills/work/finish.md");
+    assert!(text.contains("commit them on\ntheir own cards in that branch"));
+    assert!(text.contains("another worktree is committed on that worktree's own branch and\ncard"));
+    let skill = tree.read(".agents/skills/work/SKILL.md");
+    assert!(!skill_differs_from_stamp(&tree.path(".agents/skills/work"), &skill).unwrap());
+}
+
+#[test]
 fn a_second_run_changes_nothing() {
     let tree = Tree::new();
     let shipped = kit(vec![skill("work", "v1")]);
