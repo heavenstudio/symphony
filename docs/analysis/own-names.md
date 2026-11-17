@@ -1,5 +1,11 @@
 # Symphony's own names
 
+**Historical evidence.** The dated inventory, measurements and superseded implementation plan
+below are preserved as recorded. The bridge and state-move steps are not current operating
+instructions. For current naming rules, see
+[the workspace guide](../../AGENTS.md#this-repository-as-its-own-project); for board state paths,
+see [where the board lives](../TASKS.md#where-it-lives).
+
 **Decided: B, at once**: the old names go quickly, and what that breaks is fixed as soon as
 possible. Every old name goes in one pass, with no bridge. Every repository this machine serves
 keeps its state in the `symphony/` folder of its git common dir. No build reads an
