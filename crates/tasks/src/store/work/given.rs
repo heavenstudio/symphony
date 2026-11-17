@@ -338,14 +338,23 @@ impl Store {
     /// caller reads the board again. Never fails the reader: what went wrong goes to stderr, and the
     /// next read tries again. A pass's own write, delivered, makes no pass of its own.
     pub fn give_if_due(&self, board: &Board) -> bool {
+        self.try_give_if_due(board).unwrap_or_else(|error| {
+            eprintln!("giving open tasks an orchestrator deferred: {error}");
+            false
+        })
+    }
+
+    /// [`Store::give_if_due`], returning a failed pass to a caller that schedules its own retries.
+    /// A successful `false` means no give was needed; an error must never clear a retry streak.
+    pub fn try_give_if_due(&self, board: &Board) -> Result<bool, Error> {
         thread_local! {
             static GIVING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
         }
         let Some(tops) = orchestration::may_give(&board.tasks) else {
-            return false;
+            return Ok(false);
         };
         if GIVING.with(|giving| giving.replace(true)) {
-            return false;
+            return Ok(false);
         }
         let due = self
             .retrying(|| self.pool(board, &[]))
@@ -356,10 +365,7 @@ impl Store {
             Err(error) => Err(error),
         };
         GIVING.with(|giving| giving.set(false));
-        made.unwrap_or_else(|error| {
-            eprintln!("giving open tasks an orchestrator deferred: {error}");
-            false
-        })
+        made
     }
 
     /// Give every open task nobody orchestrates to an orchestrator that stays, the topmost of each

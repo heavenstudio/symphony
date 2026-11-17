@@ -9,7 +9,7 @@
 //! to come to stay is given it. A session that only registered is given nothing by the board's own
 //! choice. A release that would leave open work with no orchestrator is refused.
 
-use super::common::{Backend, Fixture, Seed, refused};
+use super::common::{Backend, Fixture, HOST, NOW, Seed, refused};
 use super::orchestrators::go_quiet_but;
 use symphony_board::cli::Env;
 use symphony_board::health::LIVE_SECONDS;
@@ -89,6 +89,21 @@ fn filed(f: &Fixture, slug: &str, by: &str) -> Option<String> {
 }
 
 on_both! {
+    fn a_due_give_reports_errors_to_retrying_callers_and_preserves_the_boolean_wrapper(backend: Backend) {
+        let f = Fixture::on(backend, Seed::default().task("tools/pending", "ready"));
+        let old = symphony_board::Store::opening_on(f.other_database(), Box::new(|| NOW),
+            Box::new(|_| false), HOST,
+            &symphony_board::Opening::read().at(symphony_board::Schema::this_build().before())).unwrap();
+        let snapshot = old.clock_board().unwrap();
+        let error = old.try_give_if_due(&snapshot).unwrap_err().to_string();
+        assert!(error.contains("nothing was written"), "{error}");
+        assert!(!old.give_if_due(&snapshot), "existing callers still receive false on error");
+        assert!(f.store.try_give_if_due(&snapshot).unwrap(), "a healthy pass marks the unowned task waiting");
+        assert!(!f.store.try_give_if_due(&f.store.clock_board().unwrap()).unwrap(), "no more give is due");
+        let empty = Fixture::on(backend, Seed::default());
+        assert!(!empty.store.try_give_if_due(&empty.store.clock_board().unwrap()).unwrap());
+    }
+
     fn a_workers_follow_up_goes_to_the_orchestrator_of_the_task_it_works_on(backend: Backend) {
         let f = Fixture::on(backend, Seed::default());
         let (amber, cobalt) = (f.session("orchestrator"), f.session("orchestrator"));
