@@ -149,6 +149,12 @@ fn a_list_too_tall_for_the_window_is_as_wide_as_its_longest_option_beside_its_sc
         "document.querySelector('button[aria-label=\"Message recipient\"]') !== null",
         SHOWN
     ));
+    // The original width case selects its longest label, so its check mark also takes space.
+    super::components::choose(
+        &mut page,
+        "button[aria-label=\"Message recipient\"]",
+        "example-worker-0",
+    );
     page.eval("document.querySelector('button[aria-label=\"Message recipient\"]').scrollIntoView({block:'center'});document.querySelector('button[aria-label=\"Message recipient\"]').focus()");
     key(&mut page, " ", "Space", 32);
     popup_ready(&mut page);
@@ -173,7 +179,7 @@ fn a_list_too_tall_for_the_window_is_as_wide_as_its_longest_option_beside_its_sc
     );
     assert!(
         shown["apart"].as_i64().is_some_and(|apart| apart >= 12),
-        "the check mark stands apart from \"everyone on it\": {shown}"
+        "the check mark stands apart from the chosen recipient: {shown}"
     );
     // And the whole list stays inside the window, scrolling rather than running past it.
     let [left, top, right, bottom] = [0, 1, 2, 3].map(|side| shown["box"][side].as_i64().unwrap());
