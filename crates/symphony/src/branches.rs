@@ -9,9 +9,10 @@
 //! writing reaches nobody; the owner's own lines the worktree holds uncommitted are laid on top of
 //! it ([`one`]). A card is listed when it differs from main's AND from the version the branch forked
 //! from, so a branch that is only behind main never shows main's newer cards as its own. A finished
-//! branch posts nothing but the threads the owner started in its worktree: the owner's lines and
-//! the answers under them, committed or not, laid on main's copy of the card, or as the branch
-//! page's own card when main has none. On a live branch, what the owner said on a draft counts
+//! branch keeps its posted revisions of main's proposal text until it lands, as a live branch does.
+//! For other cards it keeps only threads the owner started: the owner's lines and the answers under
+//! them, committed or not, laid on main's copy or the branch page's card when main has none.
+//! On a live branch, what the owner said on a draft counts
 //! until an agent answers it. A file a merge stopped on is read as the branch's committed copy with
 //! what was saved on the branch's side since ([`file_cards`]).
 
@@ -60,7 +61,7 @@ pub struct BranchCard {
     /// finished branch holds is the worktree's copy. A card of main's carries only the owner's
     /// lines (on a finished branch, with the answers under them), under the card's own line.
     pub card: Decision,
-    /// The card is main's (the branch did not post it, or is finished): it adds the lines its
+    /// The card is main's (the branch did not post it): it adds the lines its
     /// worktree holds to main's copy, which stays main's, and is read on main's page.
     pub on_main: bool,
 }
@@ -471,8 +472,8 @@ fn asks_owner(plugins: &Plugins, card: &Decision) -> bool {
 enum Standing {
     /// Its posted cards are the owner's to read.
     Live,
-    /// Its task is done or cancelled: it posts nothing, but the threads the owner started there
-    /// still count.
+    /// Its task is done or cancelled: revisions of main's proposal text and threads the owner
+    /// started there still count until it lands.
     Finished,
     /// In main already: all it can hold of its own is uncommitted.
     Merged,
@@ -577,7 +578,10 @@ fn tree_scan(tree: &Tree, main_shapes: &Shapes, project: &Project, standing: Sta
         for posted in &heads {
             let worktree = saved.iter().find(|w| w.slug == posted.slug);
             let owner = worktree
-                .map(|w| one::owner_lines(w, Some(posted)))
+                .map(|w| match standing {
+                    Standing::Finished => one::thread_beside(w, [posted.raw.as_slice()]),
+                    _ => one::owner_lines(w, Some(posted)),
+                })
                 .unwrap_or_default();
             let copy = shape(posted);
             let main = main_shapes.get(&posted.slug);
@@ -605,15 +609,27 @@ fn tree_scan(tree: &Tree, main_shapes: &Shapes, project: &Project, standing: Sta
             }
             marks.own.insert(posted.slug.clone());
             if standing == Standing::Finished {
-                // Its own card counts no more; the thread the owner started on it does.
-                out.cards.extend(finished_thread(
-                    tree,
-                    &doc,
-                    worktree.unwrap_or(posted),
-                    main_shapes,
-                    &forked,
-                ));
-                continue;
+                let revises_main = main.is_some_and(|copies| {
+                    copies
+                        .iter()
+                        .all(|copy| one::rewrites(posted, &copy.text, &copy.lines))
+                }) && forked.get(&posted.slug).is_none_or(|copies| {
+                    copies
+                        .iter()
+                        .all(|copy| one::rewrites(posted, &copy.text, &copy.lines))
+                });
+                if !revises_main {
+                    // New cards and replies on the same proposal keep only the owner's thread.
+                    // Rewritten headings or body content stay the branch's until it lands.
+                    out.cards.extend(finished_thread(
+                        tree,
+                        &doc,
+                        worktree.unwrap_or(posted),
+                        main_shapes,
+                        &forked,
+                    ));
+                    continue;
+                }
             }
             let card = if owner.is_empty() {
                 posted.clone()

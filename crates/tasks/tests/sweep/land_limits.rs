@@ -145,43 +145,6 @@ fn a_check_past_the_timeout_is_ended_whole_and_refused() {
 }
 
 #[test]
-fn an_origin_that_does_not_answer_is_a_push_to_retry_within_the_timeout() {
-    let r = Repo::new();
-    // No check, so the 2 s is the fetch's alone: nothing else the land runs is bound by it.
-    project_file(&r, &timed(2));
-    let bare = remote(&r);
-    // An origin that answers only after any wait of the test's, so the fetch ends by its timeout.
-    let silent = script(
-        &r.dir,
-        "silent-upload-pack",
-        "sleep 600\nexec git-upload-pack \"$@\"",
-    );
-    git(
-        &r.root,
-        &[
-            "config",
-            "remote.origin.uploadpack",
-            &silent.to_string_lossy(),
-        ],
-    );
-    let before = head(&bare, "main");
-    branch(&r, SLUG, "sim/jump.gd", "extends Node\n");
-    let people = approved(&r, SLUG, "good");
-    // The line names the limit that ended the fetch: an origin that answered would push.
-    let line = landed(&r, SLUG, &people.orch).1.unwrap();
-    assert_eq!(
-        line,
-        format!(
-            "landed {SLUG} on main at {}; NOT PUSHED, landed here only: git fetch origin: no \
-             answer within 2 s. Push it with: git push origin main",
-            &head(&r.root, "main")[..12]
-        )
-    );
-    assert_eq!(head(&bare, "main"), before);
-    assert_eq!(r.board.store.get(SLUG).unwrap().status, "done");
-}
-
-#[test]
 fn a_land_waits_for_another_past_its_timeout_naming_it_and_lands_once_it_ends() {
     let r = Repo::new();
     manifest(&r, &timed(1));

@@ -932,8 +932,27 @@ describe("the waiting board's window position", () => {
       return frames.length;
     });
     const page = new AbortController();
-    return { keeper: new PlaceKeeper(surface, page.signal, true), page, held, doc, frames, state };
+    return {
+      keeper: new PlaceKeeper(surface, page.signal, true),
+      surface,
+      page,
+      held,
+      doc,
+      frames,
+      state,
+    };
   }
+  it("returns to the column scrolled sideways and keeps its updated position", () => {
+    const test = windowBoard(955);
+    test.state.board.left = 864;
+    test.keeper.back();
+    expect(test.surface.scrollLeft).toBe(864);
+    expect(scrollY).toBe(930);
+    test.surface.scrollLeft = 1152;
+    test.keeper.keep();
+    expect(test.state.board.left).toBe(1152);
+    test.page.abort();
+  });
   it("returns to the saved row's window position even if rows above grew", () => {
     const test = windowBoard(955);
     test.keeper.back();

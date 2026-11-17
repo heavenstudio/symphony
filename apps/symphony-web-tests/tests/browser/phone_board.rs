@@ -1,6 +1,6 @@
 //! The approved waiting board on a phone: one mounted stage, Review first, a saved stage,
-//! filters behind their button, and no horizontal overflow. Wide screens show every lifecycle
-//! heading together. Assertions follow the controls and layout the reader sees.
+//! filters behind their button, and no document overflow. Wider screens scroll readable columns
+//! horizontally, including beside the open chat.
 
 use serde_json::{Value, json};
 
@@ -59,11 +59,15 @@ fn viewport(page: &mut Chrome, width: u32, height: u32) {
 
 /// Open the board, live, on a touch screen of 390 by 844 px.
 fn open_on_a_phone(page: &mut Chrome, site: &Site) {
+    open_on_screen(page, site, 390, 844);
+}
+
+fn open_on_screen(page: &mut Chrome, site: &Site, width: u32, height: u32) {
     page.call(
         "Emulation.setTouchEmulationEnabled",
         json!({"enabled":true,"maxTouchPoints":5}),
     );
-    viewport(page, 390, 844);
+    viewport(page, width, height);
     page.open(&site.url("/tasks"));
     assert!(
         page.wait_for(
@@ -219,6 +223,198 @@ fn touches_release_the_position_hold_after_their_scrolling_finishes() {
     }
 }
 
+/// Two updates before the next frame must keep the first anchor, rather than correct toward
+/// competing positions. Every correction is counted, so a pair of writes that cancel before
+/// paint cannot hide behind the final offset. The browser's native anchoring is disabled.
+#[test]
+fn overlapping_refreshes_share_the_original_position_hold() {
+    let site = site_of(&listing_of(&[("review", 30)]));
+    let Some(mut page) = chrome() else { return };
+    for (width, height) in [(390, 844), (1440, 900)] {
+        open_on_screen(&mut page, &site, width, height);
+        let result = page.eval(
+            r#"(async () => {
+                document.documentElement.style.overflowAnchor = 'none';
+                await document.fonts.ready;
+                scrollTo(0,600);
+                await new Promise(requestAnimationFrame);
+                const row = [...document.querySelectorAll('.waiting-columns [data-slug]')].find(row => {
+                    const top = row.getBoundingClientRect().top;
+                    return top >= 0 && top < innerHeight;
+                });
+                const before = row.getBoundingClientRect().top;
+                const other = [...document.querySelectorAll('.waiting-columns [data-slug]')].find(node =>
+                    node !== row && node.getBoundingClientRect().top > before && node.getBoundingClientRect().top < innerHeight);
+                const scroll = window.scrollBy, writes = [], samples = [];
+                window.scrollBy = (...args) => { writes.push(args); scroll(...args); };
+                try {
+                    window.reviewHoldPlace('.waiting-columns [data-slug]');
+                    row.style.transform = 'translateY(80px)';
+                    window.reviewHoldPlace('.waiting-columns [data-slug]');
+                    await new Promise(requestAnimationFrame);
+                    samples.push(row.getBoundingClientRect().top);
+                    // Another update can choose a different row on the same scrolling surface.
+                    window.reviewHoldPlace(`[data-slug="${other.dataset.slug}"]`);
+                    row.style.transform = 'translateY(160px)';
+                    await new Promise(requestAnimationFrame);
+                    samples.push(row.getBoundingClientRect().top);
+                    // Observe enough quiet frames for the hold to finish, counting every write.
+                    for (let n = 0; n < 8; n++) {
+                        await new Promise(requestAnimationFrame);
+                        samples.push(row.getBoundingClientRect().top);
+                    }
+                    // A new update renews an almost-quiet hold while its draw is still queued.
+                    window.reviewHoldPlace('.waiting-columns [data-slug]');
+                    for (let n = 0; n < 3; n++) await new Promise(requestAnimationFrame);
+                    window.reviewHoldPlace('.waiting-columns [data-slug]');
+                    for (let n = 0; n < 2; n++) await new Promise(requestAnimationFrame);
+                    row.style.transform = 'translateY(240px)';
+                    await new Promise(requestAnimationFrame);
+                    samples.push(row.getBoundingClientRect().top);
+                    return { before, samples, writes };
+                } finally { window.scrollBy = scroll; }
+            })()"#,
+        );
+        let before = result["before"].as_f64().unwrap();
+        assert_eq!(
+            result["samples"],
+            json!(vec![before; 11]),
+            "{width}px: {result}"
+        );
+        assert_eq!(
+            result["writes"],
+            json!([[0, 80], [0, 80], [0, 80]]),
+            "{width}px: {result}"
+        );
+    }
+}
+
+/// At the page's top updates scroll nothing. At its bottom an offset the page cannot absorb
+/// must go quiet, rather than keep correcting forever or leave an anchor owning later updates.
+#[test]
+fn overlapping_holds_at_page_boundaries_go_quiet_and_release_their_anchor() {
+    let site = site_of(&listing_of(&[("review", 30)]));
+    let Some(mut page) = chrome() else { return };
+    open_on_a_phone(&mut page, &site);
+    let top = page.eval(
+        r#"(async () => {
+            document.documentElement.style.overflowAnchor = 'none';
+            await document.fonts.ready;
+            const row = document.querySelector('.waiting-columns [data-slug]');
+            const before = row.getBoundingClientRect().top;
+            window.reviewHoldPlace('.waiting-columns [data-slug]');
+            row.style.transform = 'translateY(80px)';
+            window.reviewHoldPlace('.waiting-columns [data-slug]');
+            await new Promise(requestAnimationFrame);
+            const result = [scrollY, row.getBoundingClientRect().top - before];
+            row.style.transform = '';
+            scrollTo(0,document.documentElement.scrollHeight);
+            return result;
+        })()"#,
+    );
+    assert_eq!(top, json!([0, 80]));
+    assert!(page.wait_for(
+        "document.querySelector('[data-slug=\"phone/review-30\"]') !== null",
+        SHOWN
+    ));
+    let bottom = page.eval(
+        r#"(async () => {
+            const row = [...document.querySelectorAll('.waiting-columns [data-slug]')].find(row => {
+                const top = row.getBoundingClientRect().top;
+                return top >= 0 && top < innerHeight;
+            });
+            const before = row.getBoundingClientRect().top;
+            const scroll = window.scrollBy, writes = [];
+            window.scrollBy = (...args) => { writes.push(args); scroll(...args); };
+            try {
+                window.reviewHoldPlace('.waiting-columns [data-slug]');
+                row.style.transform = 'translateY(80px)';
+                window.reviewHoldPlace('.waiting-columns [data-slug]');
+                for (let n = 0; n < 3; n++) await new Promise(requestAnimationFrame);
+                const clamped = row.getBoundingClientRect().top - before;
+                // Once the outward displacement disappears, competing anchors would start
+                // pulling away from the boundary and back toward it on every frame.
+                row.style.transform = '';
+                for (let n = 0; n < 8; n++) await new Promise(requestAnimationFrame);
+                const settled = row.getBoundingClientRect().top - before, attempts = writes.length;
+                for (let n = 0; n < 4; n++) await new Promise(requestAnimationFrame);
+                const quiet = writes.length === attempts;
+                const next = row.getBoundingClientRect().top;
+                window.reviewHoldPlace('.waiting-columns [data-slug]');
+                row.style.transform = 'translateY(-80px)';
+                await new Promise(requestAnimationFrame);
+                return { clamped, settled, attempts, quiet, next, after: row.getBoundingClientRect().top };
+            } finally { window.scrollBy = scroll; }
+        })()"#,
+    );
+    assert_eq!(bottom["clamped"], json!(80), "{bottom}");
+    assert_eq!(bottom["settled"], json!(0), "{bottom}");
+    let attempts = bottom["attempts"].as_u64().unwrap();
+    assert_eq!(attempts, 3, "one correction per clamped frame: {bottom}");
+    assert_eq!(bottom["quiet"], json!(true), "{bottom}");
+    assert_eq!(bottom["after"], bottom["next"], "{bottom}");
+}
+
+/// A hold is owned by its scrolling box, and ends on input, removal or pagehide. A queued frame
+/// of an old hold must not clear a newer one. Independent boxes still keep independent anchors.
+#[test]
+fn shared_holds_release_and_leave_other_scrolling_boxes_independent() {
+    let site = site();
+    let Some(mut page) = chrome() else { return };
+    open_on_a_phone(&mut page, &site);
+    let result = page.eval(
+        r#"(async () => {
+            document.documentElement.style.overflowAnchor = 'none';
+            const make = left => {
+                const box = document.createElement('div');
+                box.style.cssText = `position:fixed;left:${left}px;top:100px;width:120px;height:300px;overflow:auto;overflow-anchor:none`;
+                box.innerHTML = '<div style="height:100px"></div><div class="hold-probe" style="height:40px">Anchor</div><div style="height:1000px"></div>';
+                document.body.append(box);
+                box.scrollTop = 50;
+                return [box, box.querySelector('.hold-probe')];
+            };
+            const [one, first] = make(10), [two, second] = make(150);
+            await new Promise(requestAnimationFrame);
+            const before = [first.getBoundingClientRect().top, second.getBoundingClientRect().top];
+            window.reviewHoldPlace('.hold-probe');
+            first.style.transform = 'translateY(80px)';
+            first.classList.remove('hold-probe');
+            window.reviewHoldPlace('.hold-probe');
+            second.style.transform = 'translateY(40px)';
+            await new Promise(requestAnimationFrame);
+            const independent = [first.getBoundingClientRect().top, second.getBoundingClientRect().top];
+            // Both holds end immediately, allowing another in the same task before their frames.
+            dispatchEvent(new WheelEvent('wheel'));
+            first.classList.add('hold-probe');
+            window.reviewHoldPlace('.hold-probe');
+            first.style.transform = 'translateY(160px)';
+            window.reviewHoldPlace('.hold-probe');
+            await new Promise(requestAnimationFrame);
+            const renewed = first.getBoundingClientRect().top;
+            // Replace an anchor while its old hold still has a queued frame.
+            const replacement = first.cloneNode(true);
+            first.replaceWith(replacement);
+            window.reviewHoldPlace('.hold-probe');
+            replacement.style.transform = 'translateY(240px)';
+            window.reviewHoldPlace('.hold-probe');
+            await new Promise(requestAnimationFrame);
+            const replaced = replacement.getBoundingClientRect().top;
+            dispatchEvent(new PageTransitionEvent('pagehide'));
+            window.reviewHoldPlace('.hold-probe');
+            replacement.style.transform = 'translateY(320px)';
+            window.reviewHoldPlace('.hold-probe');
+            await new Promise(requestAnimationFrame);
+            const returned = replacement.getBoundingClientRect().top;
+            one.remove(); two.remove();
+            return { before, independent, renewed, replaced, returned };
+        })()"#,
+    );
+    assert_eq!(result["independent"], result["before"], "{result}");
+    for key in ["renewed", "replaced", "returned"] {
+        assert_eq!(result[key], result["before"][0], "{key}: {result}");
+    }
+}
+
 /// A detached element cannot deliver scrollend to the shell's window listener. Removing it must
 /// release later layout holds, but not the momentum of another, still-connected scroller. The
 /// touch input is synthetic; both element scrolls and the connected scrollend are native events.
@@ -352,7 +548,7 @@ fn removed_scrollers_release_idle_holds_without_ending_connected_scrolling() {
 }
 
 #[test]
-fn all_six_lifecycle_headings_fit_together_on_a_wide_board() {
+fn desktop_columns_keep_a_readable_width_and_scroll_inside_the_page_with_chat_open() {
     let site = site();
     let Some(mut page) = chrome() else { return };
     viewport(&mut page, 1440, 900);
@@ -368,21 +564,50 @@ fn all_six_lifecycle_headings_fit_together_on_a_wide_board() {
             "design",
             "ready",
             "in_progress",
-            "build-test",
+            "build",
+            "test",
             "review",
             "done"
         ])
     );
-    assert_eq!(page.eval("[...document.querySelectorAll('.waiting-columns .column h2')].every(heading => { const r = heading.getBoundingClientRect(); return r.left >= 0 && r.right <= innerWidth && r.top >= 0 && r.bottom <= innerHeight; })"), json!(true));
-    assert_eq!(
-        page.eval("document.documentElement.scrollWidth <= innerWidth"),
-        json!(true)
-    );
-    assert_eq!(page.eval("document.querySelector('.column[data-status=blocked], .signoff-lane, .pipeline, .board-scroll')"), Value::Null);
+    for width in [1440, 1100, 800] {
+        viewport(&mut page, width, 900);
+        for chat in [false, true] {
+            if chat {
+                page.eval("document.querySelector('#quick-open').click()");
+                assert!(page.wait_for(
+                    "document.querySelector('#quick-sheet .collapse')?.checkVisibility() === true",
+                    SHOWN
+                ));
+            }
+            assert_eq!(page.eval("[...document.querySelectorAll('.waiting-columns .column')].every(column => column.getBoundingClientRect().width >= 280)"), json!(true), "{width}px, chat={chat}");
+            assert_eq!(
+                page.eval("document.documentElement.scrollWidth <= innerWidth"),
+                json!(true)
+            );
+            page.eval("document.querySelector('.waiting-columns').scrollLeft = 10000");
+            assert!(page.wait_for("(() => { const board = document.querySelector('.waiting-columns'); const r = board.getBoundingClientRect(), done = board.querySelector('[data-status=done]').getBoundingClientRect(); return board.scrollLeft > 0 && done.right <= r.right + 1 && done.left >= r.left; })()", SHOWN));
+            if chat {
+                page.eval("document.querySelector('#quick-sheet .collapse').click()");
+            }
+        }
+    }
+    // A keyboard can reach the horizontal scroll surface without choosing a card first.
+    page.eval("const board = document.querySelector('.waiting-columns'); board.scrollLeft = 0; board.focus()");
+    for kind in ["keyDown", "keyUp"] {
+        page.call(
+            "Input.dispatchKeyEvent",
+            json!({"type":kind,"key":"ArrowRight","code":"ArrowRight","windowsVirtualKeyCode":39}),
+        );
+    }
+    assert!(page.wait_for(
+        "document.querySelector('.waiting-columns').scrollLeft > 0",
+        SHOWN
+    ));
 }
 
 #[test]
-fn a_phones_search_and_filters_open_from_their_button_and_a_desk_shows_them() {
+fn search_and_filters_start_collapsed_and_keep_the_query_when_toggled_at_every_width() {
     let site = site();
     let Some(mut page) = chrome() else { return };
     open_on_a_phone(&mut page, &site);
@@ -412,6 +637,71 @@ fn a_phones_search_and_filters_open_from_their_button_and_a_desk_shows_them() {
     ));
     for (width, height) in [(1440, 900), (800, 1000)] {
         viewport(&mut page, width, height);
-        assert!(page.wait_for(&format!("innerWidth === {width} && document.querySelector('#board-filters')?.checkVisibility() === true && document.querySelector('.board-filters-toggle')?.checkVisibility() === false"), SHOWN));
+        assert!(page.wait_for(&format!("innerWidth === {width} && document.querySelector('#board-filters')?.checkVisibility() === false && document.querySelector('.board-filters-toggle')?.checkVisibility() === true"), SHOWN));
+        page.eval("document.querySelector('.board-filters-toggle').click()");
+        assert!(page.wait_for("document.querySelector('#board-filters').checkVisibility() && document.querySelector('#board-filters input').value === 'found'", SHOWN));
+        page.eval("document.querySelector('.board-filters-toggle').click()");
+    }
+}
+
+#[test]
+fn backlog_stays_horizontal_while_pressed_and_returns_to_the_columns() {
+    let site = site();
+    let Some(mut page) = chrome() else { return };
+    viewport(&mut page, 1100, 850);
+    page.open(&site.url("/tasks"));
+    assert!(page.wait_for("document.querySelector('.board-backlog') !== null", SHOWN));
+    let position = page.eval("(() => { const r = document.querySelector('.board-backlog').getBoundingClientRect(); return [r.x + r.width/2, r.y + r.height/2]; })()");
+    page.call("Input.dispatchMouseEvent", json!({"type":"mousePressed","x":position[0],"y":position[1],"button":"left","clickCount":1}));
+    assert_eq!(page.eval("(() => { const b = document.querySelector('.board-backlog'); const m = new DOMMatrixReadOnly(getComputedStyle(b).transform); return b.matches(':active') && m.a > 0 && m.d > 0 && m.b === 0 && m.c === 0; })()"), json!(true));
+    page.call("Input.dispatchMouseEvent", json!({"type":"mouseReleased","x":position[0],"y":position[1],"button":"left","clickCount":1}));
+    assert!(page.wait_for("document.querySelector('.board-backlog').getAttribute('aria-expanded') === 'true' && document.querySelectorAll('.waiting-columns .column').length === 1 && document.querySelector('.column[data-status=backlog]') !== null", SHOWN));
+    page.eval("document.querySelector('.back-to-stages').click()");
+    assert!(page.wait_for("document.querySelector('.board-backlog').getAttribute('aria-expanded') === 'false' && document.querySelectorAll('.waiting-columns .column').length === 8", SHOWN));
+}
+
+#[test]
+fn an_explicit_row_link_reveals_its_offscreen_desktop_column() {
+    let site = site();
+    let Some(mut page) = chrome() else { return };
+    viewport(&mut page, 1100, 850);
+    page.open(&site.url("/tasks#row-phone%2Freview-1"));
+    assert!(page.wait_for("(() => { const board = document.querySelector('.waiting-columns'), card = document.querySelector('[data-slug=\"phone/review-1\"]'); if (!board || !card) return false; const r = card.getBoundingClientRect(), b = board.getBoundingClientRect(); return board.scrollLeft > 0 && r.left >= b.left && r.right <= b.right && r.top >= 0 && r.bottom <= innerHeight; })()", SHOWN));
+}
+
+#[test]
+fn returning_from_a_list_restores_the_columns_horizontal_position() {
+    let site = site();
+    let Some(mut page) = chrome() else { return };
+    viewport(&mut page, 1100, 850);
+    page.open(&site.url("/tasks"));
+    assert!(page.wait_for(
+        "document.querySelector('.column[data-status=done]') !== null",
+        SHOWN
+    ));
+    for list in ["backlog", "cancelled", "wait"] {
+        page.eval("(() => { const board = document.querySelector('.waiting-columns'); board.scrollLeft = board.scrollWidth; })()");
+        assert!(page.wait_for(
+            "document.querySelector('.waiting-columns').scrollLeft > 0",
+            SHOWN
+        ));
+        page.eval("window.beforeList = document.querySelector('.waiting-columns').scrollLeft");
+        let opener = match list {
+            "backlog" => ".board-backlog",
+            "cancelled" => "[data-open-stage=cancelled]",
+            _ => ".wait-chip.k-queued",
+        };
+        page.eval(&format!(
+            "document.querySelector({}).click()",
+            json!(opener)
+        ));
+        assert!(page.wait_for("document.querySelector('.waiting-pipeline') === null && document.querySelectorAll('.waiting-columns .column').length === 1", SHOWN));
+        let back = if list == "wait" {
+            ".open-count"
+        } else {
+            ".back-to-stages"
+        };
+        page.eval(&format!("document.querySelector({}).click()", json!(back)));
+        assert!(page.wait_for("document.querySelector('.waiting-pipeline') !== null && document.querySelector('.waiting-columns').scrollLeft === window.beforeList", SHOWN));
     }
 }

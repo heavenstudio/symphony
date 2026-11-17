@@ -1,12 +1,49 @@
-/* The owner-approved B board: all lifecycle stages across a desk, one saved stage on a phone. */
+/* The waiting board: readable columns across a desk, one saved stage on a phone. */
 .waiting-board {
   min-width: 0;
 }
-.waiting-columns {
-  display: grid;
-  grid-template-columns: 34px repeat(4, minmax(0, 1fr)) 112px repeat(2, minmax(0, 1fr));
+.board-toolbar {
+  display: flex;
+  flex-wrap: wrap;
   gap: 8px;
-  align-items: start;
+  margin-bottom: 12px;
+}
+.waiting-board .board-filters-toggle,
+.waiting-board .ghost-filters-toggle {
+  display: flex;
+  width: fit-content;
+  margin: 0;
+}
+.waiting-board .ghost-filters-toggle {
+  width: 143px;
+}
+.waiting-board .ghost-backlog {
+  width: 95px;
+}
+.waiting-board .filters:not([data-open="true"]) {
+  display: none;
+}
+.waiting-columns {
+  display: block;
+  overflow: auto;
+  overscroll-behavior-x: contain;
+  scrollbar-color: var(--muted-foreground) var(--muted);
+  padding-bottom: 12px;
+}
+/* Clip the whole row, so sentinels keep their vertical look-ahead between columns without
+   adding empty scroll space beyond the row's ends. */
+.waiting-pipeline {
+  display: flex;
+  width: max-content;
+  min-width: 100%;
+  gap: 8px;
+  align-items: flex-start;
+  overflow: clip;
+}
+.waiting-pipeline > .stage-slot,
+.waiting-pipeline > .ghost-column {
+  flex: 1 0 280px;
+  width: 280px;
 }
 .waiting-columns .column,
 .waiting-columns .ghost-column {
@@ -16,6 +53,10 @@
 }
 .waiting-columns .stage-slot {
   min-width: 0;
+}
+.waiting-columns:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 4px;
 }
 .waiting-columns .column h2,
 .waiting-columns .ghost-column h2 {
@@ -48,35 +89,6 @@
   border: 0;
   cursor: pointer;
   font: inherit;
-}
-.backlog-rail {
-  writing-mode: vertical-rl;
-  transform: rotate(180deg);
-  font-size: 0.7rem;
-  letter-spacing: 0.09em;
-  text-transform: uppercase;
-  color: var(--pending);
-  font-weight: 700;
-  border: 1px solid var(--border);
-  border-radius: var(--r-lg);
-  padding: 12px 6px;
-  background: var(--card);
-  cursor: pointer;
-}
-.machine-rail .column {
-  border-style: dashed;
-  background: none;
-  font-size: 0.72rem;
-}
-.machine-rail button {
-  display: block;
-  width: 100%;
-  padding: 8px 4px;
-  background: none;
-  color: var(--primary);
-  border: 1px dashed var(--border);
-  border-radius: var(--r-md);
-  cursor: pointer;
 }
 .opened-stage,
 .waiting-columns.wait-list {
@@ -295,8 +307,15 @@
   margin-bottom: 12px;
 }
 @media (max-width: 760px) {
+  .waiting-pipeline {
+    display: block;
+    width: auto;
+    overflow: visible;
+  }
   .waiting-columns {
     display: block;
+    overflow: visible;
+    padding-bottom: 0;
   }
   .waiting-columns .column,
   .waiting-columns .ghost-column {

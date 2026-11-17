@@ -31,6 +31,11 @@ stands in the default branch's place.
 
 ## Evidence at the tip, once
 
+Before review, read the owner's dated lines saved on your branch's cards and commit them on
+their own cards in that branch. A land carries commits, so an answer left only in a worktree
+cannot go with it. An answer in another worktree is committed on that worktree's own branch and
+card; never move it onto a different card to let this branch land.
+
 Run the focused builds and tests through the project's recorded entrypoints, at the tip you ask
 review for: the runs recorded there are what a reviewer reads in place of running them again. A
 run made before your last commit is of another commit, so run it again yourself before the move

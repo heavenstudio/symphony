@@ -36,6 +36,7 @@
 use crate::{BEFORE_WORK, STATUSES};
 use std::collections::{BTreeSet, HashSet};
 
+pub mod roles;
 pub mod stats;
 #[cfg(test)]
 mod stats_tests;
