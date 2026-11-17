@@ -9,7 +9,8 @@
 //!   added up where it says several (merged doc-tests say two), and doc-tests' time as `all
 //!   doctests ran in 0.76s` says it, which counts their build; a sum stays at its most, a count at
 //!   `u32::MAX` and a time at the largest finite seconds, so its line always reads back;
-//! - `failures:`, once the binary said a test `FAILED` (`test NAME ... FAILED`), which starts
+//! - `failures:`, once the binary said a line ending in `FAILED` (on its own after a serial
+//!   test's uncaptured output, or `test NAME ... FAILED`), which starts
 //!   libtest's report of the failed tests: each one's output under `---- NAME stdout ----`, then
 //!   `failures:` again and their names. A failure's first line is the first of what its panic
 //!   said, else the first its output holds.
@@ -126,7 +127,7 @@ impl Reading {
             self.unordered |= result(line).is_some();
             return;
         };
-        if line.starts_with("test ") && line.ends_with(" ... FAILED") {
+        if line.ends_with("FAILED") {
             binary.failing = true;
         } else if line == "failures:" && binary.failing {
             binary.at = At::Report;
