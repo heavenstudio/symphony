@@ -327,6 +327,14 @@ request: a plugin of 0.2 is asked them card by card, and answers the same.
   stands (`Unsupported document content: NAME`, `Unsupported NAME` in a line, `Unsupported media:
   NAME`), drawing the rest of the page. A word it does not know (a size, a tag, a shape) still
   fails the read, which the page says and tries again.
+
+  A host reading a process plugin's answer also keeps the surrounding content: a block or span
+  whose kind it does not know becomes the existing `Unknown` block or span, with the kind as its
+  `tag` and empty `text`. Unknown media becomes that unsupported node in its containing block or
+  span, tagged `media: NAME`. The unknown node's fields are unread; known nodes still require
+  valid fields, and a missing or non-text kind, a duplicate known field or a malformed answer is
+  refused. This applies to components' blocks and renderers' block drawings, including their
+  nested content, without adding a wire type.
 - A call the plugin does not know, a request missing a field, or a second member beside the call is
   answered `{"refused":"…"}`, naming what could not be read, and the host shows that in the call's
   place.
