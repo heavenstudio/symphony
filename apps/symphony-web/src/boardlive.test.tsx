@@ -106,9 +106,9 @@ function live(route: Route = () => answer(503), kept: Record<string, Kept> = {})
 /** The urls asked, without their tags. */
 const urls = (asked: [string, string][]) => asked.map(([url]) => url);
 
-const COUNTS_URL = "/api/task-board?counts=1&q=&days=1&activity=1&work=0";
+const COUNTS_URL = "/api/task-board?view=waiting&counts=1&q=&days=1&activity=1&work=0";
 const column = (status: string, more = "") =>
-  `/api/task-board?q=&status=${status}&days=1${more}&activity=1&work=0`;
+  `/api/task-board?view=waiting&q=&status=${status}&days=1${more}&activity=1&work=0`;
 
 /** A promise the test settles: what a read waits on while the test does something meanwhile. */
 function later<T>(): { promise: Promise<T>; settle: (value: T) => void } {
@@ -227,6 +227,23 @@ describe("a task the feed sends", () => {
 });
 
 describe("two reads of a task", () => {
+  it("applies live round counts and clears an unavailable summary on full replacement", () => {
+    const { board, d, host } = live();
+    const task = aTask("w/a", { status: "done", updated: NOW / 1000 });
+    d.tasks = [{ ...task, review_rounds: 1 }];
+    expect(board.apply(event(["task-fields", { key: "w/a", fields: { review_rounds: 3 } }]))).toBe(
+      false,
+    );
+    expect(d.tasks[0]?.review_rounds).toBe(3);
+    expect(board.apply(event(["task-fields", { key: "w/a", fields: { review_rounds: 0 } }]))).toBe(
+      false,
+    );
+    expect(d.tasks[0]?.review_rounds).toBe(0);
+    expect(board.apply(event(["task", { key: "w/a", value: task }]))).toBe(false);
+    expect(d.tasks).toHaveLength(1);
+    expect(d.tasks[0]?.review_rounds).toBeUndefined();
+    expect(host.redraw).toHaveBeenCalledTimes(3);
+  });
   it("are the same when they say the same, whatever objects they are", () => {
     const a = aTask("w/a", { roles: [] });
     expect(sameTask(a, a)).toBe(true);
@@ -380,7 +397,7 @@ describe("the live board's counts", () => {
     expect(store.keep).toHaveBeenCalledWith(
       expect.any(Number),
       "",
-      "board:",
+      "board:waiting",
       "board",
       "counts",
       '"c"',
@@ -412,7 +429,7 @@ describe("the live board's counts", () => {
     d.days = 7;
     await board.counts();
     expect(asked).toEqual([
-      ["/api/task-board?counts=1&q=lamp%20shade&days=7&activity=1&work=0", ""],
+      ["/api/task-board?view=waiting&counts=1&q=lamp%20shade&days=7&activity=1&work=0", ""],
     ]);
     expect(store.keep).not.toHaveBeenCalled();
   });
@@ -489,13 +506,15 @@ describe("the live board's counts", () => {
     await board.counts();
     expect(localStorage.getItem(SHAPE)).toBeNull();
     await board.machineWork();
-    expect(localStorage.getItem(SHAPE)).toBe("ready 2\nbuild-test 0");
+    expect(localStorage.getItem(SHAPE)).toBe(
+      "concept 0\ndesign 0\nready 2\nin_progress 0\nreview 0\ndone 0",
+    );
   });
 
   // The counts count a task waiting on the owner in its stage, and the board draws it in the
   // sign-off lane: once a column's first page brings it, the next visit's ghost outlines no box
   // for it in its stage.
-  it("keep each stage's count less its tasks in the sign-off lane, once a page brings them", async () => {
+  it("keep complete original-stage counts without a separate sign-off lane", async () => {
     const counts: [string, number][] = [
       ["ready", 1],
       ["review", 2],
@@ -508,14 +527,20 @@ describe("the live board's counts", () => {
     });
     await board.counts();
     await board.machineWork();
-    expect(localStorage.getItem(SHAPE)).toBe("signoff 1\nready 1\nbuild-test 0\nreview 2");
+    expect(localStorage.getItem(SHAPE)).toBe(
+      "concept 0\ndesign 0\nready 1\nin_progress 0\nreview 2\ndone 0",
+    );
     d.waiting = false;
     void board.column("ready", false, "", 1);
     await pass(250);
-    expect(localStorage.getItem(SHAPE)).toBe("signoff 1\nready 1\nbuild-test 0\nreview 2");
+    expect(localStorage.getItem(SHAPE)).toBe(
+      "concept 0\ndesign 0\nready 1\nin_progress 0\nreview 2\ndone 0",
+    );
     void board.column("review", false, "", 1);
     await pass(250);
-    expect(localStorage.getItem(SHAPE)).toBe("signoff 1\nready 1\nbuild-test 0\nreview 1");
+    expect(localStorage.getItem(SHAPE)).toBe(
+      "concept 0\ndesign 0\nready 1\nin_progress 0\nreview 2\ndone 0",
+    );
   });
 });
 
@@ -971,7 +996,7 @@ describe("a column of the live board", () => {
 
   it("holds a long answer under a search too, and names it on no page-long read", async () => {
     const searched = (more: string) =>
-      `/api/task-board?q=w&status=ready&days=1${more}&activity=1&work=0`;
+      `/api/task-board?view=waiting&q=w&status=ready&days=1${more}&activity=1&work=0`;
     const { board, d, asked } = live((url) =>
       url === searched("&rows=31")
         ? answer(200, listing(readyRows(31), [["ready", 31]]), '"found"')
@@ -1110,6 +1135,46 @@ describe("a column of the live board", () => {
 });
 
 describe("a search of the live board", () => {
+  it("retries the new facet's counts after the initial check ended and clears its alert", async () => {
+    let failing = true;
+    const { board, d, asked, page } = live(() =>
+      failing ? answer(503) : answer(200, listing([], [["ready", 1]])),
+    );
+    d.counted = 2;
+    d.worked = 2;
+    void board.filter("", 1, "nobody");
+    await pass(250);
+    expect(d.error).toContain("Trying again");
+    expect(board.fresh.failing).toContain("counts");
+    failing = false;
+    await pass(1000);
+    expect(d.counted).toBe(3);
+    expect(d.error).toBe("");
+    expect(board.fresh.failing).toEqual([]);
+    expect(urls(asked)).toEqual(
+      Array(2).fill(
+        "/api/task-board?view=waiting&wait=nobody&counts=1&q=&days=1&activity=1&work=0",
+      ),
+    );
+    await pass(4000);
+    expect(asked).toHaveLength(2);
+    page.abort();
+  });
+
+  it("ends a failed filter's retry when a later view replaces it or the page leaves", async () => {
+    const { board, asked, page } = live(() => answer(503));
+    void board.filter("old", 1, "check");
+    await pass(250);
+    void board.filter("new", 1, "queued");
+    await pass(250);
+    await pass(1000);
+    expect(urls(asked).filter((url) => url.includes("q=old"))).toHaveLength(1);
+    expect(urls(asked).filter((url) => url.includes("q=new"))).toHaveLength(2);
+    page.abort();
+    await pass(4000);
+    expect(asked).toHaveLength(3);
+  });
+
   it("clears what the page showed and reads the counts once the typing stops", async () => {
     const { board, d, asked, host } = live(() => answer(200, listing([])));
     d.tasks = [aTask("w/a")];
@@ -1123,7 +1188,9 @@ describe("a search of the live board", () => {
     await pass(100);
     void board.filter("lamp", 7);
     await pass(250);
-    expect(urls(asked)).toEqual(["/api/task-board?counts=1&q=lamp&days=7&activity=1&work=0"]);
+    expect(urls(asked)).toEqual([
+      "/api/task-board?view=waiting&counts=1&q=lamp&days=7&activity=1&work=0",
+    ]);
     expect(d.query).toBe("lamp");
     expect(d.days).toBe(7);
   });
@@ -1305,7 +1372,7 @@ describe("a feed event on the live board", () => {
     expect(d.tasks[0]?.roles[0]?.health).toBe("stale");
     host.redraw.mockClear();
     board.apply(event(["session", { key: "cedar", value: { health: "stale" } }]));
-    expect(host.redraw).not.toHaveBeenCalled();
+    expect(host.redraw).toHaveBeenCalledTimes(1); // refresh the complete orchestrator metadata
   });
 
   it("reads again for a message, the sign-off or the counts only where they move the view", () => {
@@ -1506,7 +1573,7 @@ describe("the task board's page", () => {
     expect(html).toContain('<span class="status-text" role="status">Loading tasks…</span>');
     // The heading alone: the header's Agents link leads where its Who is connected did.
     expect(html).toContain('<div class="page-head"><h1>Board</h1></div>');
-    expect(html).toContain('class="ghost-kanban"');
+    expect(html).toContain('class="ghost-kanban waiting-columns"');
     expect(html).toContain('class="stale page-notices notice-stack" hidden=""');
   });
 
@@ -1531,7 +1598,7 @@ describe("the task board's page", () => {
     let html = view(board);
     expect(html).toMatch(/^<main data-ready="board" data-feed="live" aria-busy="false">/);
     expect(html).not.toContain("Loading tasks…");
-    expect(html).toContain('<div class="kanban">');
+    expect(html).toContain('<div class="kanban waiting-columns">');
     expect(html).toContain('<span class="count">2</span>');
     html = view(board, true);
     expect(html).toContain('data-feed="stale"');
@@ -1562,8 +1629,101 @@ describe("the task board's page", () => {
     vi.stubGlobal("document", { getElementById: () => null });
     const html = renderToStaticMarkup(<TasksPage scope="" />);
     expect([...html.matchAll(/data-for="([^"]*)"/g)].map((m) => m[1])).toEqual([
-      "signoff",
+      "concept",
+      "design",
       "ready",
+      "in_progress",
+      "build-test",
+      "review",
+      "done",
     ]);
+  });
+});
+
+describe("the complete waiting projection", () => {
+  it("reads the chosen wait across stages, pages it, and never overwrites the default cache", async () => {
+    const first = aTask("a", {
+      status: "blocked",
+      from: "review",
+      waits_on: { kind: "check", who: "lint", why: "needed", since: 1 },
+    });
+    const second = aTask("b", {
+      status: "blocked",
+      from: "ready",
+      waits_on: { kind: "check", who: "lint", why: "needed", since: 2 },
+    });
+    const { board, d, asked, store } = live((url) =>
+      answer(
+        200,
+        listing(
+          url.includes("cursor=") ? [second] : [first],
+          [
+            ["review", 1],
+            ["ready", 1],
+          ],
+          {
+            next: url.includes("cursor=") ? null : "second",
+            waiting: {
+              kinds: [
+                ["check", 2],
+                ["queued", 9],
+              ],
+              columns: [
+                { status: "review", ordinary: 0, blocked: 1, oldest: 1 },
+                { status: "ready", ordinary: 0, blocked: 1, oldest: 2 },
+              ],
+            },
+            orchestrators: [{ handle: "orch", health: "stale" }],
+            unstarted: 9,
+          },
+        ),
+      ),
+    );
+    d.waiting = false;
+    void board.filter("", 1, "check");
+    await pass(250);
+    expect(d.wait).toBe("check");
+    expect(d.projection?.kinds).toEqual([
+      ["check", 2],
+      ["queued", 9],
+    ]);
+    expect(d.orchestrators).toEqual([{ handle: "orch", health: "stale" }]);
+    expect(d.unstarted).toBe(9);
+    void board.column("waiting", false, "", 1);
+    await pass(250);
+    void board.column("waiting", true, "", 1);
+    await pass(250);
+    expect(d.tasks.map((t) => t.slug)).toEqual(["a", "b"]);
+    expect(asked.every(([url]) => url.includes("view=waiting&wait=check"))).toBe(true);
+    expect(asked.some(([url]) => url.includes("status="))).toBe(false);
+    expect(asked.at(-1)?.[0]).toContain("cursor=second");
+    expect(store.keep).not.toHaveBeenCalled();
+  });
+  it("replaces a blocked row's original column and asks a long refresh for every shown row", () => {
+    const { board, d } = live();
+    d.tasks = [aTask("blocked", { status: "blocked", from: "review" }), aTask("ready")];
+    board.showColumn("review", false, listing([aTask("new", { status: "review" })]));
+    expect(d.tasks.map((t) => t.slug)).toEqual(["ready", "new"]);
+    d.wait = "check";
+    expect(board.shownRows("waiting")).toBe(2);
+    board.showColumn("waiting", false, listing([aTask("only")]));
+    expect(d.tasks.map((t) => t.slug)).toEqual(["only"]);
+  });
+  it("refreshes complete facets when a wait or original stage changes", () => {
+    const { board } = live();
+    expect(
+      board.apply(
+        event([
+          "task-fields",
+          {
+            key: "a",
+            fields: { waits_on: { kind: "check", who: "lint", why: "needed", since: 1 } },
+          },
+        ]),
+      ),
+    ).toBe(true);
+    expect(board.apply(event(["task-fields", { key: "a", fields: { from: "review" } }]))).toBe(
+      true,
+    );
   });
 });

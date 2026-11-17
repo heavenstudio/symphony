@@ -1,6 +1,7 @@
-// The task board's view (`/tasks`): its filters, its columns (the owner's sign-off, the pipeline in
-// its own scroller, the columns off it), each column's rows mounted near the screen, its task
-// groups, and the ghost it draws before its first read, in the shape and with the cards it had.
+import "./styles/boardwait.css";
+// The approved B task board: complete wait facets, original-stage columns on a desk and one saved
+// stage on a phone. Columns and cards mount near the screen, reserving each card's two-line title
+// and wait line; the first read's ghost keeps the last counts.
 // What it reads and when is boardlive.tsx's.
 
 import {
@@ -12,76 +13,44 @@ import {
   useRef,
   useState,
 } from "react";
+import { linkedSlug, linkedTask } from "./boardlink";
 import { focusedLink, focusedSlug, takeFocus, useKeptPlace } from "./boardplace";
-import { useOneColumnASwipe } from "./boardswipe";
+import {
+  OrchestratorBanner,
+  PHONE_STAGES,
+  STAGE_KEY,
+  STAGES,
+  savedStage,
+  WAIT_KINDS,
+  WAIT_LABELS,
+  WaitCard,
+  waitAge,
+  waitingOrder,
+  waitingStage,
+  waitKind,
+} from "./boardwait";
 import { Button } from "./button";
-import { type Layout, layoutAt, rowHeight } from "./cardheight";
-import { useMount } from "./mount";
-import { href, scoped } from "./project";
-import { getJson, said } from "./request";
+import { href } from "./project";
+import { said } from "./request";
+import { useAnchor } from "./route";
 import { SelectField } from "./select";
 import { load, save } from "./storage";
-import { byPriority, byRecent, isTask, readListing } from "./task";
-import { sameCard, statusWords, TaskCard } from "./taskcard";
-// biome-ignore lint/style/noRestrictedImports: no-timed-waits baseline: keepRows measures what it keeps every 100 ms, where a ResizeObserver of each column is the event
-import { sleep } from "./timing";
+import { isTask } from "./task";
+import { statusWords } from "./taskcard";
+import { tick } from "./timing";
 import { failed } from "./trouble";
-import { KEEP_MS, NearViewport, Skeleton, waitsNear, windowWidth } from "./viewport";
-import type { MachineWork, Task, TaskListing } from "./wire";
-import { freshnessWord, PIPELINE, phaseLabels, taskStage } from "./work";
+import { NearViewport, windowWidth } from "./viewport";
+import type { MachineWork, Orchestrator, Task, WaitingBoard, WaitingColumn } from "./wire";
+import { freshnessWord } from "./work";
 
-/**
- * What a column waiting for its page reserves each of the page's rows, whose tasks it does not
- * know yet: a typical card, its slug, a title of two lines, a role chip and a link chip
- * (`rowHeight`), near the median of a live board's cards (142 px).
- */
-export const ROW = 139;
-/** The typical card ROW stands for, as `rowHeight` reads it. */
-const TYPICAL: Parameters<typeof rowHeight>[0] = {
-  slug: "bulk/ready-1",
-  title: "Ready task number 1 in a long column",
-  priority: 3,
-  parent: null,
-  links: ["docs/DECISIONS.md"],
-  roles: [
-    { handle: "quiet-plover", role: "orchestrator", since: 0, expires: null, health: "live" },
-  ],
-};
-
-/** What a row whose card is not known yet reserves in `layout`: the typical card as it draws there,
- * ROW in a desk's column and a narrow window's, less in a phone's wider one, where its title takes
- * one line. */
-export function rowGuess(layout: Layout): number {
-  return rowHeight(TYPICAL, [], layout);
-}
+/** A card's fixed 110 px box and its 8 px gap, shared with boardwait.css. */
+export const ROW = 118;
 /** The rows of a column's page, as the server pages it, and the height of Load more under it. */
 export const PAGE = 30;
 export const MORE = 40;
 /** The space under a card. */
 export const GAP = 8;
-/** What a card's box holds besides its title and chips: its border and padding, its slug's line,
- * the space over its title and its two chip rows' margins, in px. */
-const FRAME = 52;
-/** A row of chips. */
-const CHIP_ROW = 21;
-/** A line of a card's title. */
-const TITLE_LINE = 20;
-
-/** The columns off the pipeline. */
-export const OFFLINE = ["backlog", "blocked", "cancelled"];
-/** Where this browser keeps the cards of each column of the board as it opens, as drawn last,
- * newest first, as lines of `WIDTH STATUS PITCH...`, a pitch followed by a `c` for each row of
- * chips its card carries. */
-const CARDS = "board-cards";
-/** How many columns' cards a browser keeps, at every width. */
-export const CARDS_MAX = 32;
-/** Where this browser keeps the shape of the project's board as last read (`boardShape`), as
- * lines of `STATUS COUNT`. */
-export const SHAPE = "board-shape";
-
-/** A card as its column keeps it: its pitch (its height with the space under it) and how many
- * rows of chips it carries (its build and test phases, its linked documents, its roles). */
-export type Kept = [number, number];
+export const SHAPE = "board-waiting-shape";
 
 const width = (w: string) => ({ "--w": w }) as CSSProperties;
 const range = (count: number) => Array.from({ length: Math.max(count, 0) }, (_, at) => at);
@@ -94,156 +63,16 @@ export function statusLabel(status: string): string {
   return first === "" ? "" : `${first.toUpperCase()}${words.slice(first.length)}`;
 }
 
-/** `statuses` with Build and Test where the board draws their columns: after In progress, Build
- * before Test. One already named is moved there; with no In progress they go last. */
-export function withMachineStages(statuses: string[]): string[] {
-  const rest = statuses.filter((status) => status !== "build" && status !== "test");
-  const progress = rest.indexOf("in_progress");
-  const at = progress < 0 ? rest.length : progress + 1;
-  return [...rest.slice(0, at), "build", "test", ...rest.slice(at)];
+export function firstPageHeight(count: number): number {
+  return Math.min(count, PAGE) * ROW + (count > PAGE ? MORE : 0);
 }
 
-/** Whether the tasks of the column `status` wait for an agent to take them up, so a card guessed
- * for them draws no role chip. */
-function unstaffed(status: string): boolean {
-  return ["concept", "design", "ready", "backlog"].includes(status);
+/** The lifecycle columns and their complete totals, saved for the next visit's ghost. */
+export function boardShape(counts: [string, number][]): [string, number][] {
+  return STAGES.map((status) => [status, counts.find(([one]) => one === status)?.[1] ?? 0]);
 }
-
-/** The card in the place `slot` of the column `status`: as `kept` has it, else as tall as the
- * typical card ROW stands for (`guess`, as it draws in the board's layout), with its row of
- * linked documents and, unless no agent has taken the column's tasks up, its row of roles. */
-export function card(kept: Kept[], slot: number, status: string, guess = ROW): Kept {
-  return kept[slot] ?? [guess, unstaffed(status) ? 1 : 2];
-}
-
-/** What a column of `count` tasks takes before its first page is in: a card for each row of the
- * page (PAGE at most), as `kept` has it or `guess`, and the Load more button when they are more
- * than a page. */
-export function firstPageHeight(count: number, kept: Kept[], guess = ROW): number {
-  const cards = range(Math.min(count, PAGE)).reduce(
-    (sum, slot) => sum + (kept[slot]?.[0] ?? guess),
-    0,
-  );
-  return count > PAGE ? cards + MORE : cards;
-}
-
-/** The lines of title `card`'s box has room for, one to five: what its pitch leaves of its frame
- * and chips, with a few px given for a height kept rounded. */
-export function titleLines([pitch, chips]: Kept): number {
-  const room = Math.max(pitch - (GAP + FRAME + chips * CHIP_ROW), 0);
-  return Math.min(Math.max(Math.floor((room + 4) / TITLE_LINE), 1), 5);
-}
-
-/** The cards `kept` (as CARDS holds them) gives the column `status` in a window `width` px wide. */
-export function recallCards(kept: string, status: string, width: number): Kept[] {
-  for (const line of kept.split("\n")) {
-    const [drawnAt, named, ...pitches] = line.split(" ");
-    if (drawnAt !== String(width) || named !== status) continue;
-    const cards: Kept[] = [];
-    for (const pitch of pitches) {
-      const height = pitch.replace(/c+$/, "");
-      const chips = pitch.length - height.length;
-      if (!/^\+?\d+$/.test(height) || chips > 255) break;
-      cards.push([Number(height), chips]);
-    }
-    return cards;
-  }
-  return [];
-}
-
-/** `kept` with `cards` as the column `status`'s in a window `width` px wide, first, its line
- * before and the oldest past CARDS_MAX dropped. */
-export function keepCards(kept: string, status: string, width: number, cards: Kept[]): string {
-  const line = [
-    `${width} ${status}`,
-    ...cards.map(([pitch, chips]) => `${pitch}${"c".repeat(chips)}`),
-  ].join(" ");
-  const own = `${width} ${status} `;
-  const others = kept === "" ? [] : kept.split("\n").filter((old) => !`${old} `.startsWith(own));
-  return [line, ...others].slice(0, CARDS_MAX).join("\n");
-}
-
-/** What a column keeps of the rows of its page as they stand, having kept `saved`; none when that
- * is what it kept. */
-export function keepRows(rows: Kept[], saved: Kept[]): Kept[] | null {
-  return rows.length > 0 && JSON.stringify(rows) !== JSON.stringify(saved) ? rows : null;
-}
-
-/** Whether a column's keep watches on, `waited` ms in: until every row has drawn its card, or no
- * row still waiting lies within the sentinel's reach of the screen, or KEEP_MS has passed. */
-export function keepsWatching(drawn: boolean, near: boolean, waited: number): boolean {
-  return !drawn && near && waited < KEEP_MS;
-}
-
-/** The layout the board's cards are drawn in, in this window: its width, and the page's inside the
- * room a scrollbar takes (none on a phone). */
-export function layoutNow(): Layout {
-  return layoutAt(innerWidth, globalThis.document?.documentElement?.clientWidth || innerWidth);
-}
-
-/** The cards this browser kept for the column `status` in a window as wide as this one. */
-function keptCards(status: string): Kept[] {
-  return recallCards(load(CARDS) ?? "", status, windowWidth());
-}
-
-/** The card a row of `task` waits for, in `layout`, with the build and test phases `work` gives
- * it: as tall as it will draw (`rowHeight`), and its rows of chips. */
-export function rowCard(task: Task, work: MachineWork, connected: boolean, layout: Layout): Kept {
-  const phases = phaseLabels(work, task.slug, connected);
-  const rows = [phases.length > 0, task.links.length > 0, task.roles.length > 0];
-  return [rowHeight(task, phases, layout), rows.filter(Boolean).length];
-}
-
-/**
- * The columns the board draws with no filter, in its order, each with its count: Waiting for your
- * sign-off when a task waits for it, the pipeline's (`build-test`, one rail, for Build and Test when
- * no machine `reported` them), then backlog, blocked and cancelled.
- */
-export function boardShape(
-  counts: [string, number][],
-  statuses: string[],
-  signoff: number,
-  reported: boolean,
-): [string, number][] {
-  const known = (statuses.length === 0 ? counts.map(([status]) => status) : statuses).filter(
-    (status) => reported || (status !== "build" && status !== "test"),
-  );
-  const count = (status: string): [string, number] => [
-    status,
-    counts.find(([one]) => one === status)?.[1] ?? 0,
-  ];
-  const shape: [string, number][] = signoff > 0 ? [["signoff", signoff]] : [];
-  for (const stage of PIPELINE) {
-    if (!reported && stage === "build") shape.push(["build-test", 0]);
-    if (known.includes(stage) || (reported && (stage === "build" || stage === "test"))) {
-      shape.push(count(stage));
-    }
-  }
-  shape.push(...known.filter((status) => OFFLINE.includes(status)).map(count));
-  return shape;
-}
-
-/**
- * Each of `counts` less its tasks the board draws in the sign-off lane (`lane`, each in the stage
- * `stage` gives it): the server counts a task waiting on the owner in its stage, so the stage's
- * column holds, outlines and loads more of the rest alone.
- */
-export function stageCounts(
-  counts: [string, number][],
-  lane: readonly Task[],
-  stage: (task: Task) => string,
-): [string, number][] {
-  if (lane.length === 0) return counts;
-  return counts.map(([status, count]) => [
-    status,
-    Math.max(0, count - lane.filter((task) => stage(task) === status).length),
-  ]);
-}
-
-/** The board's shape for a browser that kept none: the pipeline and the columns off it, a task in
- * each. */
 function defaultShape(): [string, number][] {
-  return [...PIPELINE, ...OFFLINE].map((status) => [status, 1]);
+  return STAGES.map((status) => [status, 1]);
 }
 
 /** The shape `kept` (as SHAPE holds it) gives the board; `defaultShape` for none. */
@@ -265,68 +94,32 @@ export function keepShape(shape: [string, number][]): string {
 
 /** A task's card while it loads: its box as tall as `card`'s pitch less the space under it, a bar
  * for its slug, one for each line of title it has room for and a pill for each row of chips. */
-export function GhostCard({ card }: { card: Kept }) {
-  const [pitch, chips] = card;
-  const lines = titleLines(card);
+export function GhostCard() {
   return (
-    <div className="ghost-card" style={{ height: `${Math.max(pitch - GAP, 0)}px` }}>
+    <div className="ghost-card waiting-card-ghost" style={{ height: `${ROW - GAP}px` }}>
       <span className="bone" />
-      <div>
-        {range(lines).map((line) => (
-          <span
-            key={line}
-            className="bone"
-            style={line > 0 && line + 1 === lines ? width("62%") : undefined}
-          />
-        ))}
-      </div>
-      {range(chips).map((row) => (
-        <span key={row} className="ghost-pill">
-          <span className="bone" style={width(row % 2 === 0 ? "8ch" : "12ch")} />
-        </span>
-      ))}
+      <span className="bone" style={width("62%")} />
+      <span className="bone" style={width("80%")} />
+      <span className="bone" style={width("72%")} />
+      <span className="bone" style={width("90%")} />
     </div>
   );
 }
-
-/** A column of the board's ghost: a bar for its heading, a card for each of its `count` tasks (a
- * page's at most, as `cards` kept them) and Load more's room past a page; Build and Test's lines
- * of text where they hold none. */
-function GhostColumn({
-  status,
-  count,
-  cards,
-  guess,
-}: {
-  status: string;
-  count: number;
-  cards: Kept[];
-  guess: number;
-}) {
-  // The rail's say of why it is one, then its link; Build's Machine context; the line an empty
-  // Build or Test column shows.
-  const lines =
-    status === "build-test"
-      ? 5
-      : status === "build"
-        ? 1 + Number(count === 0)
-        : status === "test"
-          ? Number(count === 0)
-          : 0;
+function GhostColumn({ status, count }: { status: string; count: number }) {
   return (
     <div className="ghost-column" data-for={status}>
-      <div>
+      <h2>
         <span className="bone" style={width("9ch")} />
+        <span className="count" style={{ visibility: "hidden" }}>
+          0
+        </span>
+      </h2>
+      <div className="column-summary">
+        <span className="bone" style={width("12ch")} />
       </div>
-      {lines > 0 && <Skeleton lines={lines} />}
-      {status === "build-test" && (
-        <div>
-          <span className="bone" style={width("12ch")} />
-        </div>
-      )}
       <div>
         {range(Math.min(count, PAGE)).map((slot) => (
-          <GhostCard key={slot} card={card(cards, slot, status, guess)} />
+          <GhostCard key={slot} />
         ))}
         {count > PAGE && <div style={{ height: `${MORE}px` }} />}
       </div>
@@ -337,19 +130,10 @@ function GhostColumn({
 /** The task board before its first read: its filters and, in the `shape` it last had, its columns
  * with a card for each task they held, each as this browser last drew it. */
 export function GhostBoard({ shape }: { shape: [string, number][] }) {
-  const guess = rowGuess(layoutNow());
-  const column = ([status, count]: [string, number]) => (
-    <GhostColumn
-      key={status}
-      status={status}
-      count={count}
-      cards={keptCards(status)}
-      guess={guess}
-    />
-  );
+  const phone = windowWidth() <= 760;
+  const stages = phone ? [savedStage(load(STAGE_KEY))] : STAGES;
   return (
-    <>
-      {/* A phone's button for the search and the filters (board.css), shut as the board opens. */}
+    <div className="waiting-board waiting-ghost">
       <span className="ghost-field ghost-filters-toggle">
         <span className="bone" style={width("16ch")} />
       </span>
@@ -359,38 +143,37 @@ export function GhostBoard({ shape }: { shape: [string, number][] }) {
           <span className="ghost-field" style={{ width: "10.5rem" }} />
         </div>
         <div>
-          Status
-          <span className="ghost-field" style={{ width: "7.5rem" }}>
-            <span className="bone" style={width("10ch")} />
-          </span>
-        </div>
-        <div>
           Finished tasks
-          <span className="ghost-field" style={{ width: "8.125rem" }}>
-            <span className="bone" style={width("11ch")} />
+          <span className="ghost-field" style={{ width: "8.125rem" }} />
+        </div>
+      </div>
+      <nav className="wait-strip" aria-hidden="true">
+        <span className="open-count">0 open</span>
+        {WAIT_KINDS.map((kind, index) => (
+          <span key={kind} className={`wait-chip k-${kind}`}>
+            {WAIT_LABELS[index]} <b>0</b>
           </span>
+        ))}
+      </nav>
+      {phone && (
+        <div className="ghost-tabs">
+          <span className="bone" style={width("95%")} />
         </div>
+      )}
+      <div className="ghost-kanban waiting-columns">
+        {!phone && <div className="backlog-rail">Backlog</div>}
+        {stages.flatMap((status) => [
+          <GhostColumn
+            key={status}
+            status={status}
+            count={shape.find(([one]) => one === status)?.[1] ?? 1}
+          />,
+          ...(!phone && status === "in_progress"
+            ? [<GhostColumn key="build-test" status="build-test" count={0} />]
+            : []),
+        ])}
       </div>
-      {/* Its own class, laid out as `.kanban` is: a wait for the board never finds its ghost. */}
-      <div className="ghost-kanban">
-        {shape.filter(([status]) => status === "signoff").map(column)}
-        {/* Two bars that wrap as the hint's words do: one line wide, two on a phone. */}
-        <div className="ghost-hint">
-          <span className="bone" style={width("38ch")} />{" "}
-          <span className="bone" style={width("26ch")} />
-        </div>
-        {/* It scrolls as the pipeline's scroller does, its scroll bar in the same place; no stop
-            for the keyboard. */}
-        <div className="ghost-pipeline" tabIndex={-1}>
-          {shape
-            .filter(([status]) => status !== "signoff" && !OFFLINE.includes(status))
-            .map(column)}
-        </div>
-        <div className="ghost-offline">
-          {shape.filter(([status]) => OFFLINE.includes(status)).map(column)}
-        </div>
-      </div>
-    </>
+    </div>
   );
 }
 
@@ -410,40 +193,10 @@ export function UnreadBoard({ why, retry }: { why: string; retry: () => void }) 
   );
 }
 
-/** Which of the pipeline's columns a heading's is, `3 of 6` (`stopPlace`): a phone shows its column
- * alone and keeps its heading at the board's top (board.css), where this tells the reader where they
- * stand; a wider window shows the columns side by side, and not this. A screen reader hears the
- * heading's own words, moving through the columns in order. */
-function ColumnPlace({ place }: { place: string | undefined }) {
-  return place === undefined ? null : (
-    <span className="column-place" aria-hidden="true">
-      {place}
-    </span>
-  );
-}
-
-/** Where `stop` stands among the pipeline's `stops`, as its heading says it (`3 of 6`): nothing for
- * a pipeline of one column, or a column not among them. */
-export function stopPlace(stops: readonly string[], stop: string): string | undefined {
-  const at = stops.indexOf(stop);
-  return stops.length > 1 && at >= 0 ? `${at + 1} of ${stops.length}` : undefined;
-}
-
-/** Build and Test of a project no machine reports for: one narrow rail where their columns go,
- * drawn again only when the feed comes or goes. */
-const UnreportedRail = memo(function UnreportedRail({
-  connected,
-  place,
-}: {
-  connected: boolean;
-  place?: string | undefined;
-}) {
+const UnreportedRail = memo(function UnreportedRail({ connected }: { connected: boolean }) {
   return (
     <section className="column rail" data-status="build-test" aria-label="Build and test">
-      <h2>
-        build · test
-        <ColumnPlace place={place} />
-      </h2>
+      <h2>build · test</h2>
       <p className="muted work-empty">
         {connected
           ? "No machine reports this project's builds or tests."
@@ -472,231 +225,22 @@ export function BoardContext({ work, connected }: { work: MachineWork; connected
   );
 }
 
-/** What a part of the task groups shows: its tasks, how many there are, and why a read failed. */
-export interface Tree {
-  rows: Task[];
-  total: number;
-  trouble: string;
-}
-
-/**
- * A page of the task groups `parent` holds (the roots for none, older tasks among them), from
- * `cursor` on: its listing, or why it could not be read. Given up once `signal` ends.
- */
-export async function readTree(
-  scope: string,
-  parent: string | null,
-  cursor: string | null,
-  signal: AbortSignal,
-): Promise<TaskListing | string> {
-  const after = cursor === null ? "" : `&cursor=${encodeURIComponent(cursor)}`;
-  const selection = parent === null ? "roots=1" : `parent=${encodeURIComponent(parent)}`;
-  try {
-    const list = readListing(
-      await getJson(scoped(scope, `/api/task-board?${selection}&older=1${after}`), signal),
-    );
-    return list ?? "The task board's answer is not a listing";
-  } catch (failure) {
-    return said(failure);
-  }
-}
-
-/** `shown` with the page `read`: in its place for the first page, else after it, each task once;
- * a read that failed keeps what it showed and says why. */
-export function grownTree(shown: Tree, read: TaskListing | string, more: boolean): Tree {
-  if (typeof read === "string") return { ...shown, trouble: read };
-  const rows = more ? [...shown.rows] : [];
-  for (const task of read.tasks) {
-    if (!rows.some((row) => row.slug === task.slug)) rows.push(task);
-  }
-  return { rows, total: read.counts.reduce((sum, [, count]) => sum + count, 0), trouble: "" };
-}
-
-/** No task groups read yet. */
-export const NO_TREE: Tree = { rows: [], total: 0, trouble: "" };
-
-/**
- * The reads of the task groups `parent` holds (the roots for none), a page at a time, while the
- * part that shows them is drawn (`open` until `close`) and its kind is mounted (`mount`): each
- * answer is given to `show` as the change it makes to what the part shows, and one that comes
- * once either has ended is dropped. Before the part is open nothing is read.
- */
-export class TreeReads {
-  /** Where the next page starts: the last page's `next`. */
-  private cursor: string | null = null;
-  private part: AbortSignal | null = null;
-
-  constructor(
-    readonly scope: string,
-    readonly parent: string | null,
-    private readonly mount: AbortSignal,
-    private readonly show: (change: (shown: Tree) => Tree) => void,
-  ) {}
-
-  /** The part is drawn: what it reads goes on until `signal` ends. */
-  open(signal: AbortSignal): void {
-    this.part = signal;
-  }
-
-  /** Read the first page again (`more` false), or the next one; settles once it is shown or
-   * dropped. */
-  async load(more: boolean): Promise<void> {
-    const signal = this.part;
-    if (signal === null || signal.aborted || this.mount.aborted) return;
-    const read = await readTree(this.scope, this.parent, more ? this.cursor : null, signal);
-    if (signal.aborted || this.mount.aborted) return;
-    if (typeof read !== "string") this.cursor = read.next ?? null;
-    this.show((shown) => grownTree(shown, read, more));
-  }
-}
-
-/**
- * The task groups `parent` holds (the roots for none), read a page at a time while the part that
- * shows them is drawn: the first page again (`more` false), or the next one (`TreeReads`).
- */
-function useTree(scope: string, parent: string | null): [Tree, (more: boolean) => void] {
-  const [tree, setTree] = useState<Tree>(NO_TREE);
-  const mount = useMount();
-  const [reads] = useState(() => new TreeReads(scope, parent, mount, setTree));
-  useEffect(() => {
-    const controller = new AbortController();
-    reads.open(controller.signal);
-    return () => controller.abort();
-  }, [reads]);
-  return [tree, (more) => void reads.load(more)];
-}
-
-/** The task groups' tree: the top tasks, each opening the tasks under it. */
-function TreePanel({ known, scope }: { known: Task[]; scope: string }) {
-  const [tree, load] = useTree(scope, null);
-  const [started] = useState({ done: false });
-  useEffect(() => {
-    if (started.done) return;
-    started.done = true;
-    load(false);
-  });
-  return (
-    <div id="task-groups">
-      {tree.trouble !== "" && (
-        <section className="trouble card" role="status">
-          <h3>The task groups could not be loaded</h3>
-          <p>{failed(tree.trouble)}</p>
-          <p className="trouble-actions">
-            <Button type="button" onClick={() => load(false)}>
-              Retry
-            </Button>
-          </p>
-        </section>
-      )}
-      <ul>
-        {tree.rows.map((task) => (
-          <TreeNode key={task.slug} task={task} known={known} scope={scope} />
-        ))}
-      </ul>
-      {tree.rows.length < tree.total && (
-        <Button onClick={() => load(true)}>Load more task groups</Button>
-      )}
-    </div>
-  );
-}
-
-/** A task of the tree, as the board shows it when it holds it, its subtasks opened on demand. */
-function TreeNode({ task, known, scope }: { task: Task; known: Task[]; scope: string }) {
-  const shown = known.find((one) => one.slug === task.slug) ?? task;
-  const [open, setOpen] = useState(false);
-  const [children, load] = useTree(scope, shown.slug);
-  return (
-    <NearViewport id={`tree-${shown.slug}`} height={40} listItem>
-      <a href={href(`/task/${shown.slug}`)}>{shown.title}</a>{" "}
-      <span className="pill">{statusWords(shown.status)}</span>
-      <Button
-        aria-expanded={open}
-        onClick={() => {
-          if (!open) load(false);
-          setOpen(!open);
-        }}
-      >
-        Subtasks
-      </Button>
-      {open && (
-        <>
-          {children.trouble !== "" && (
-            <p role="status">{`Its subtasks could not be loaded: ${children.trouble}`}</p>
-          )}
-          <ul>
-            {children.rows.map((child) => (
-              <TreeNode key={child.slug} task={child} known={known} scope={scope} />
-            ))}
-          </ul>
-          {children.rows.length < children.total && (
-            <Button onClick={() => load(true)}>Load more subtasks</Button>
-          )}
-        </>
-      )}
-    </NearViewport>
-  );
-}
-
-/** The rows of `column`'s page as they stand now, each its pitch and its rows of chips: a drawn
- * card's, else the place the row holds and its ghost's chips; and whether every row has drawn. */
-export function drawnRows(column: Element): [Kept[], boolean] {
-  let drawn = true;
-  const height = (node: Element) => Math.round(node.getBoundingClientRect().height);
-  const rows = [...column.querySelectorAll('[id^="row-"]')].slice(0, PAGE).map((row): Kept => {
-    const found = row.querySelector(".taskcard");
-    if (found) {
-      const chips = [...found.querySelectorAll(".chips")].filter(
-        (chips) => chips.firstElementChild !== null,
-      ).length;
-      return [height(found) + GAP, chips];
-    }
-    drawn = false;
-    return [height(row), row.querySelectorAll(".ghost-pill").length];
-  });
-  return [rows, drawn];
-}
-
-/** Keep the rows of the column `status` as they draw, its page's at most: every 100 ms, each row's
- * pitch, again whenever one changed, while `keepsWatching`, until `signal` ends. */
-export async function rememberCards(status: string, signal: AbortSignal): Promise<void> {
-  let saved: Kept[] = [];
-  let waited = 0;
-  for (;;) {
-    await sleep(100, signal);
-    if (signal.aborted) return;
-    waited += 100;
-    const column = document.querySelector(`.kanban .column[data-status="${status}"]`);
-    if (!column) return;
-    const [rows, drawn] = drawnRows(column);
-    const cards = keepRows(rows, saved);
-    if (cards !== null) {
-      save(CARDS, keepCards(load(CARDS) ?? "", status, windowWidth(), cards));
-      saved = cards;
-    }
-    if (!keepsWatching(drawn, waitsNear(column, ".board-scroll"), waited)) return;
-  }
-}
-
 /** What a column asks of the page: a page of `status` (the next one when `more`), under the
  * search `query` and the window of `days`. */
 export type OnLoad = (status: string, more: boolean, query: string, days: number) => void;
 
 export interface RowProps {
   task: Task;
-  work: MachineWork;
-  connected: boolean;
-  /** The layout its reserve is worked out for. */
-  layout: Layout;
+  now?: number;
 }
 
 /**
  * A row of a column: its card once near the screen, until then as tall as that card will take
- * (`rowCard`). Drawn again only when its card would change (`sameCard`), or its layout. A row
+ * (`ROW`). Drawn again only when its task or clock changed. A row
  * first drawn while its task's card holds the focus elsewhere is that card's new place, in the
  * column a live update moved it to: it draws the card at once and gives the focus back to it.
  */
-export const BoardRow = memo(function BoardRow({ task, work, connected, layout }: RowProps) {
-  const reserve = rowCard(task, work, connected, layout);
+export const BoardRow = memo(function BoardRow({ task, now = Date.now() / 1000 }: RowProps) {
   const [follows] = useState(() => focusedLink(task.slug));
   useLayoutEffect(() => {
     if (follows !== null) takeFocus(task.slug, follows);
@@ -704,18 +248,18 @@ export const BoardRow = memo(function BoardRow({ task, work, connected, layout }
   return (
     <NearViewport
       id={`row-${task.slug}`}
-      height={reserve[0]}
-      ghost={<GhostCard card={reserve} />}
+      height={ROW}
+      ghost={<GhostCard />}
       eager={follows !== null}
     >
-      <TaskCard task={task} work={work} connected={connected} />
+      <WaitCard task={task} now={now} />
     </NearViewport>
   );
 }, sameRow);
 
 /** Whether two rows draw alike. */
 export function sameRow(a: RowProps, b: RowProps): boolean {
-  return a.layout === b.layout && sameCard(a, b);
+  return a.now === b.now && a.task === b.task;
 }
 
 export interface ColumnProps {
@@ -729,7 +273,11 @@ export interface ColumnProps {
   onLoad: OnLoad;
   refreshed: number;
   /** Which of the pipeline's columns it is (`stopPlace`); none off the pipeline. */
-  place?: string | undefined;
+  meta?: WaitingColumn | undefined;
+  label?: string | undefined;
+  now?: number;
+  cancelled?: number;
+  onCancelled?: (() => void) | undefined;
 }
 
 /** A column of the board: its heading and count, its rows near the screen, and Load more. Drawn again
@@ -744,14 +292,13 @@ export const TaskColumn = memo(function TaskColumn({
   days,
   onLoad,
   refreshed,
-  place,
+  meta,
+  label,
+  now = Date.now() / 1000,
+  cancelled = 0,
+  onCancelled,
 }: ColumnProps) {
   const [visible, setVisible] = useState(false);
-  // The layout a row's reserve is worked out for and the cards kept, read once: a window resized
-  // later only misjudges rows still waiting.
-  const [layout] = useState(layoutNow);
-  const [guess] = useState(() => rowGuess(layout));
-  const [kept] = useState(() => keptCards(status));
   // Complete totals make empty-column reads unnecessary. Retained rows still refresh so a
   // reconnect can remove stale cards, and a newly populated column must request its page.
   const needsPage = count > 0 || tasks.length > 0;
@@ -761,43 +308,38 @@ export const TaskColumn = memo(function TaskColumn({
     void refreshed;
     if (visible && needsPage) load.current(status, false, query, days);
   }, [visible, needsPage, query, days, refreshed, status]);
-  const rows =
-    query === "" && (status === "done" || status === "cancelled")
-      ? [...tasks].sort(byRecent)
-      : tasks;
+  const rows = tasks;
   // Keep unloaded columns in place while their first page is fetched: a card's box for each row of
   // the page, each as tall as this browser last drew the row in its place, and the Load more
   // button a column of more than a page will show.
-  const reserved = firstPageHeight(count, kept, guess);
+  const reserved = firstPageHeight(count);
   const reading = count > 0 && tasks.length === 0;
-  // Once its cards are drawn on the board as it opens, their heights for the next visit.
-  const shown = tasks.length;
-  const keeps = useRef({ query, days });
-  keeps.current = { query, days };
-  useEffect(() => {
-    if (shown === 0 || keeps.current.query !== "" || keeps.current.days !== 1) return;
-    const controller = new AbortController();
-    void rememberCards(status, controller.signal);
-    return () => controller.abort();
-  }, [shown, status]);
-  const ghosts = range(Math.min(count, PAGE)).map((slot) => (
-    <GhostCard key={slot} card={card(kept, slot, status, guess)} />
-  ));
+  const ghosts = range(Math.min(count, PAGE)).map((slot) => <GhostCard key={slot} />);
   // A column not near the screen yet draws its rows at once when one of them is the new place of
   // the card holding the focus (`BoardRow`), as a phone's column beside the one shown is.
   const focused = visible ? null : focusedSlug();
   const follows = focused !== null && tasks.some((task) => task.slug === focused);
   return (
-    <section
-      className={status === "signoff" ? "column signoff" : "column"}
-      data-status={status}
-      aria-busy={reading}
-    >
+    <section className="column" data-status={status} aria-busy={reading}>
       <h2>
-        {status === "signoff" ? "Waiting for your sign-off" : statusWords(status)}{" "}
-        <span className="count">{count}</span>
-        <ColumnPlace place={place} />
+        {label ?? statusWords(status)} <span className="count">{meta?.ordinary ?? count}</span>
       </h2>
+      <div className="column-summary">
+        {status === "done" ? (
+          <button type="button" data-open-stage="cancelled" onClick={onCancelled}>
+            {cancelled} cancelled · {days === 1 ? "today" : "this week"}
+          </button>
+        ) : (
+          <>
+            {(meta?.blocked ?? 0) > 0 && (
+              <>
+                <b>+{meta?.blocked} blocked</b> ·{" "}
+              </>
+            )}
+            {meta?.oldest != null && <>oldest {waitAge(meta.oldest, now)}</>}
+          </>
+        )}
+      </div>
       {status === "build" && <BoardContext work={work} connected={connected} />}
       {count === 0 && (status === "build" || status === "test") && (
         <p className="muted work-empty">{`No tasks with fresh ${status} activity.`}</p>
@@ -814,9 +356,9 @@ export const TaskColumn = memo(function TaskColumn({
             {ghosts}
           </div>
         )}
-        {/* A row waiting to be drawn holds what its own card will take (`rowHeight`). */}
+        {/* Each row holds its card's fixed box until it is near the screen. */}
         {rows.map((task) => (
-          <BoardRow key={task.slug} task={task} work={work} connected={connected} layout={layout} />
+          <BoardRow key={task.slug} task={task} now={now} />
         ))}
         {/* Only once the first page is in: while it is read, there is nothing more to load. */}
         {tasks.length > 0 && count > tasks.length && (
@@ -883,7 +425,7 @@ export function windowChosen(filters: Filters, value: string, onFilter: Filter):
 
 /** What the filters ask of the page: the board read under the search `query` in the window of
  * `days`. */
-export type Filter = (query: string, days: number) => void;
+export type Filter = (query: string, days: number, wait?: string) => void;
 
 export interface TaskBoardProps {
   scope: string;
@@ -896,6 +438,9 @@ export interface TaskBoardProps {
   refreshed: number;
   onFilter: Filter;
   onLoad: OnLoad;
+  waiting?: WaitingBoard | null;
+  orchestrators?: Orchestrator[];
+  unstarted?: number;
 }
 
 /** The board: its filters, its columns and its task groups. */
@@ -904,76 +449,193 @@ export function TaskBoard({
   tasks,
   work,
   connected,
-  signoff,
   counts,
-  statuses,
   refreshed,
   onFilter,
   onLoad,
+  waiting = null,
+  orchestrators = [],
+  unstarted = 0,
 }: TaskBoardProps) {
   const [filters, setFilters] = useState<Filters>({ search: "", days: 1 });
   const { search, days } = filters;
-  const [selected, setSelected] = useState("");
-  const [subtree, setSubtree] = useState(false);
-  // On a phone the search and the filters show only while their button is pressed (board.css); a
-  // desk shows them always, and no button.
+  const [wait, setWait] = useState("");
+  const [selected, setSelected] = useState(() => savedStage(load(STAGE_KEY)));
+  const [phone, setPhone] = useState(() => windowWidth() <= 760);
+  const [opened, setOpened] = useState("");
   const [filtering, setFiltering] = useState(false);
-  const pipeline = selected === "" || (PIPELINE as readonly string[]).includes(selected);
-  // Back to the board draws it where the reader left it.
-  const scroller = useRef<HTMLDivElement>(null);
-  useKeptPlace(scroller, pipeline);
-  useOneColumnASwipe(scroller, pipeline);
-  const named = statuses.length === 0 ? counts.map(([status]) => status) : statuses;
-  // With no machine reporting this project's work, nothing can place a task in Build or Test: one
-  // narrow rail says so once, where two empty columns would each repeat it.
-  const unreported = work.machines.length === 0;
-  const machine = (status: string) => status === "build" || status === "test";
-  const listed = unreported ? named.filter((status) => !machine(status)) : withMachineStages(named);
-  // Each column's tasks, placed once: a column whose tasks did not change keeps its list, and is not
-  // drawn again.
-  const kept = useRef(new Map<string, Task[]>());
-  const columns = useMemo(() => {
-    const filtered = tasks.filter(
-      (task) =>
-        (isTask(task) || search !== "") &&
-        (selected === "" || taskStage(work, task, connected) === selected),
+  const [now, setNow] = useState(() => Date.now() / 1000);
+  const address = useAnchor();
+  const slug = linkedSlug(address);
+  const [resolved, setResolved] = useState<Task | null>(null);
+  const [linkError, setLinkError] = useState("");
+  const [retryLink, setRetryLink] = useState(0);
+  const [followed, setFollowed] = useState("");
+  const known = tasks.find((task) => task.slug === slug);
+  const linked = known ?? (resolved?.slug === slug ? resolved : null);
+  useEffect(() => {
+    void retryLink;
+    if (slug === "" || known !== undefined) return;
+    const controller = new AbortController();
+    setLinkError("");
+    void linkedTask(scope, slug, controller.signal).then(
+      (task) => {
+        if (!controller.signal.aborted) {
+          setResolved(task);
+          if (task === null) setLinkError("The linked task is no longer on this board.");
+        }
+      },
+      (error: unknown) => {
+        if (!controller.signal.aborted) setLinkError(said(error));
+      },
     );
-    if (search === "") filtered.sort(byPriority);
-    const place = (task: Task) =>
-      signoff.includes(task.slug) ? "signoff" : taskStage(work, task, connected);
-    return byColumn(filtered, place, kept.current);
-  }, [tasks, search, selected, work, connected, signoff]);
-  kept.current = columns;
-  // A stage's tasks waiting on the owner are drawn in the sign-off lane: its column counts the rest.
-  const lane = columns.get("signoff") ?? NONE;
-  const placed = useMemo(
-    () => stageCounts(counts, lane, (task) => taskStage(work, task, connected)),
-    [counts, lane, work, connected],
-  );
-  // The pipeline's columns, in order, the rail among them where it stands for Build and Test.
-  const stops = PIPELINE.flatMap((stage) => [
-    ...(unreported && stage === "build" && (selected === "" || machine(selected))
-      ? ["build-test"]
-      : []),
-    ...(listed.includes(stage) && (selected === "" || selected === stage) ? [stage] : []),
+    return () => controller.abort();
+  }, [scope, slug, known, retryLink]);
+  // Resolve the address before the selected column mounts, so its row can land directly under
+  // the header. A saved phone tab never takes precedence over an explicit row address.
+  const destination = linked === null ? "" : waitingStage(work, linked, connected);
+  if (followed !== address && (slug === "" || linked !== null)) {
+    setFollowed(address);
+    if (linked !== null) {
+      if (PHONE_STAGES.includes(destination)) setSelected(destination);
+      setOpened(
+        STAGES.includes(destination) || (phone && PHONE_STAGES.includes(destination))
+          ? ""
+          : destination,
+      );
+    }
+  }
+  const linkPage = useRef("");
+  useEffect(() => {
+    if (known !== undefined || destination === "" || wait !== "" || search !== "") return;
+    if (phone ? destination !== (opened || selected) : opened !== "" && opened !== destination)
+      return;
+    const rows = tasks.filter((task) => waitingStage(work, task, connected) === destination).length;
+    const total = counts.find(([stage]) => stage === destination)?.[1] ?? 0;
+    const key = `${address}:${destination}:${rows}`;
+    if (rows === 0 || rows >= total || linkPage.current === key) return;
+    linkPage.current = key;
+    onLoad(destination, true, search, days);
+  }, [
+    address,
+    destination,
+    known,
+    tasks,
+    counts,
+    work,
+    connected,
+    phone,
+    opened,
+    selected,
+    wait,
+    search,
+    days,
+    onLoad,
   ]);
-  const column = (status: string, place?: string) => (
+  const surface = useRef<HTMLDivElement>(null);
+  useKeptPlace(surface, true, true);
+  // Follow only the card holding the keyboard focus. Adjust this component's state before
+  // React commits the move, while BoardRow can still read the old title link to restore it.
+  const focused = wait === "" ? focusedSlug() : null;
+  const focusedTask = focused === null ? undefined : tasks.find((task) => task.slug === focused);
+  if (focusedTask !== undefined) {
+    const destination = waitingStage(work, focusedTask, connected);
+    if (phone && destination !== (opened || selected)) {
+      if (PHONE_STAGES.includes(destination)) {
+        setSelected(destination);
+        setOpened("");
+      } else setOpened(destination);
+    } else if (!phone) {
+      const next = STAGES.includes(destination) ? "" : destination;
+      if (opened !== next) setOpened(next);
+    }
+  }
+  useEffect(() => {
+    save(STAGE_KEY, selected);
+  }, [selected]);
+  const previousOpen = useRef(opened);
+  useLayoutEffect(() => {
+    const previous = previousOpen.current;
+    previousOpen.current = opened;
+    if (previous === opened || document.activeElement !== document.body) return;
+    const target = phone
+      ? '.stage-tabs button[aria-current="page"]'
+      : opened !== ""
+        ? ".back-to-stages"
+        : previous !== ""
+          ? `[data-open-stage="${previous}"]`
+          : null;
+    if (target !== null)
+      document.querySelector<HTMLButtonElement>(target)?.focus({ preventScroll: true });
+  }, [opened, phone]);
+  useEffect(() => {
+    const resize = () => setPhone(windowWidth() <= 760);
+    window.addEventListener("resize", resize);
+    const controller = new AbortController();
+    void (async () => {
+      while (!controller.signal.aborted) {
+        await tick(controller.signal);
+        if (!controller.signal.aborted) setNow(Date.now() / 1000);
+      }
+    })();
+    return () => {
+      window.removeEventListener("resize", resize);
+      controller.abort();
+    };
+  }, []);
+  const kept = useRef(new Map<string, Task[]>());
+  const columns = useMemo(
+    () =>
+      byColumn(
+        tasks
+          .filter(
+            (task) =>
+              (isTask(task) || search !== "") &&
+              (wait === "" ||
+                (waitKind(task) === wait && !["done", "cancelled"].includes(task.status))),
+          )
+          .sort(waitingOrder),
+        (task) => (wait === "" ? waitingStage(work, task, connected) : "waiting"),
+        kept.current,
+      ),
+    [tasks, search, wait, work, connected],
+  );
+  kept.current = columns;
+  const count = (status: string) => counts.find(([one]) => one === status)?.[1] ?? 0;
+  const meta = (status: string) => waiting?.columns.find((one) => one.status === status);
+  const column = (status: string) => (
     <TaskColumn
       key={status}
       status={status}
+      tasks={columns.get(status) ?? NONE}
+      count={status === "waiting" ? counts.reduce((sum, [, n]) => sum + n, 0) : count(status)}
       work={work}
       connected={connected}
-      tasks={columns.get(status) ?? NONE}
-      count={placed.find(([one]) => one === status)?.[1] ?? 0}
       query={search}
       days={days}
       onLoad={onLoad}
       refreshed={refreshed}
-      place={place}
+      meta={meta(status)}
+      label={status === "waiting" ? WAIT_LABELS[WAIT_KINDS.indexOf(wait)] : undefined}
+      now={now}
+      cancelled={count("cancelled")}
+      onCancelled={() => setOpened(opened === "cancelled" ? "" : "cancelled")}
     />
   );
+  const filter = (query: string, days: number) => onFilter(query, days, wait);
+  const chooseWait = (kind: string) => {
+    const next = wait === kind ? "" : kind;
+    setWait(next);
+    onFilter(search, days, next);
+  };
+  const machine = work.machines.length > 0;
   return (
-    <>
+    <div className="waiting-board">
+      {slug !== "" && known === undefined && linkError !== "" && (
+        <p role="status" className="trouble">
+          {linkError} <Button onClick={() => setRetryLink(retryLink + 1)}>Retry</Button>
+        </p>
+      )}
       <Button
         type="button"
         className="board-filters-toggle"
@@ -985,31 +647,18 @@ export function TaskBoard({
       </Button>
       <div id="board-filters" className="row filters" data-open={filtering}>
         <label>
-          {"Search tasks and messages "}
+          Search tasks and messages{" "}
           <input
             className="dx-input"
             type="search"
             placeholder="Slug or words"
             defaultValue=""
-            onInput={(event) => setFilters(searched(filters, event.currentTarget.value, onFilter))}
+            onInput={(event) => setFilters(searched(filters, event.currentTarget.value, filter))}
           />
         </label>
-        {/* biome-ignore lint/a11y/noLabelWithoutControl: the field's trigger, a button, is the control it labels */}
+        {/* biome-ignore lint/a11y/noLabelWithoutControl: SelectField provides the labelled button */}
         <label>
-          {"Status "}
-          <SelectField
-            label="Status"
-            value={selected}
-            options={[
-              ["", "All statuses"],
-              ...listed.map((status): [string, string] => [status, statusLabel(status)]),
-            ]}
-            onChange={setSelected}
-          />
-        </label>
-        {/* biome-ignore lint/a11y/noLabelWithoutControl: the field's trigger, a button, is the control it labels */}
-        <label>
-          {"Finished tasks "}
+          Finished tasks{" "}
           <SelectField
             label="Finished tasks"
             value={String(days)}
@@ -1017,68 +666,139 @@ export function TaskBoard({
               ["1", "Last 24 hours"],
               ["7", "Last week"],
             ]}
-            onChange={(value) => setFilters(windowChosen(filters, value, onFilter))}
+            onChange={(value) => setFilters(windowChosen(filters, value, filter))}
           />
         </label>
       </div>
-      <div className="kanban">
-        {signoff.length > 0 && (
-          <TaskColumn
-            status="signoff"
-            work={work}
-            connected={connected}
-            tasks={columns.get("signoff") ?? NONE}
-            count={signoff.length}
-            query={search}
-            days={days}
-            onLoad={onLoad}
-            refreshed={refreshed}
-          />
-        )}
-        {selected === "" && (
-          <p id="board-scroll-hint" className="board-scroll-hint muted">
-            Columns continue right → · Swipe, scroll, or focus the board and use arrow keys.
-          </p>
-        )}
-        {pipeline && (
-          // biome-ignore lint/a11y/useSemanticElements: the scroller is a region of its own, as the Dioxus page draws it
-          <div
-            ref={scroller}
-            className="board-scroll"
-            // biome-ignore lint/a11y/noNoninteractiveTabindex: the keyboard scrolls the columns from it
-            tabIndex={0}
-            role="region"
-            aria-label="Task pipeline columns"
-            aria-describedby={selected === "" ? "board-scroll-hint" : ""}
-          >
-            <div className="pipeline">
-              {stops.map((stop) =>
-                stop === "build-test" ? (
-                  <UnreportedRail key={stop} connected={connected} place={stopPlace(stops, stop)} />
-                ) : (
-                  column(stop, stopPlace(stops, stop))
-                ),
-              )}
-            </div>
-          </div>
-        )}
-        <div className="offline">
-          {listed
-            .filter((status) => OFFLINE.includes(status))
-            .map((status) => (selected === "" || selected === status ? column(status) : null))}
-        </div>
-      </div>
-      <section className="task-groups" aria-labelledby="task-groups-title">
-        <h2 id="task-groups-title">Task groups</h2>
-        <Button
-          aria-expanded={subtree}
-          aria-controls="task-groups"
-          onClick={() => setSubtree(!subtree)}
+      <OrchestratorBanner
+        orchestrators={orchestrators}
+        unstarted={unstarted}
+        ready={
+          wait === "" && search === "" ? (meta("ready")?.ordinary ?? count("ready")) : undefined
+        }
+      />
+      <nav className="wait-strip" aria-label="Filter tasks by what they wait on">
+        <button
+          type="button"
+          className="open-count"
+          aria-pressed={wait === ""}
+          onClick={() => chooseWait("")}
         >
-          {`${subtree ? "Hide" : "Show"} task groups`}
+          {waiting?.kinds.reduce((sum, [, n]) => sum + n, 0) ??
+            counts
+              .filter(([s]) => !["done", "cancelled"].includes(s))
+              .reduce((sum, [, n]) => sum + n, 0)}{" "}
+          open
+        </button>
+        {WAIT_KINDS.map((kind, index) => (
+          <button
+            key={kind}
+            type="button"
+            className={`wait-chip k-${kind}`}
+            aria-pressed={wait === kind}
+            onClick={() => chooseWait(kind)}
+          >
+            {WAIT_LABELS[index]} <b>{waiting?.kinds.find(([one]) => one === kind)?.[1] ?? 0}</b>
+          </button>
+        ))}
+      </nav>
+      {wait === "" && (
+        <nav className="stage-tabs" aria-label="Task stages">
+          {PHONE_STAGES.map((stage) => (
+            <button
+              key={stage}
+              type="button"
+              aria-current={
+                (opened === "" && selected === stage) ||
+                (opened === "cancelled" && stage === "done")
+                  ? "page"
+                  : undefined
+              }
+              onClick={() => {
+                setSelected(stage);
+                save(STAGE_KEY, stage);
+                setOpened("");
+              }}
+            >
+              {statusLabel(stage)} <i>{meta(stage)?.ordinary ?? count(stage)}</i>
+              {(meta(stage)?.blocked ?? 0) > 0 && <b>+{meta(stage)?.blocked}</b>}
+            </button>
+          ))}
+          {machine &&
+            ["build", "test"].map((stage) => (
+              <button
+                key={stage}
+                type="button"
+                aria-current={opened === stage ? "page" : undefined}
+                onClick={() => setOpened(stage)}
+              >
+                {statusLabel(stage)} {count(stage)}
+              </button>
+            ))}
+        </nav>
+      )}
+      {!phone && wait === "" && opened !== "" && (
+        <Button className="back-to-stages" onClick={() => setOpened("")}>
+          Back to stages
         </Button>
-        {subtree && <TreePanel known={tasks} scope={scope} />}
-      </section>
-    </>
+      )}
+      <div
+        ref={surface}
+        className={`kanban waiting-columns${wait !== "" || (!phone && opened !== "") ? " wait-list" : ""}`}
+      >
+        {wait !== "" ? (
+          column("waiting")
+        ) : phone ? (
+          column(opened || selected)
+        ) : opened !== "" ? (
+          column(opened)
+        ) : (
+          <>
+            <button
+              type="button"
+              className="backlog-rail"
+              data-open-stage="backlog"
+              aria-expanded={false}
+              onClick={() => setOpened("backlog")}
+            >
+              Backlog {count("backlog")}
+            </button>
+            {STAGES.map((stage) => (
+              <div className="stage-slot" key={stage}>
+                {column(stage)}
+              </div>
+            )).flatMap((element, index) =>
+              index === 3
+                ? [
+                    element,
+                    <div className="machine-rail" key="machine">
+                      {machine ? (
+                        <>
+                          <button
+                            type="button"
+                            data-open-stage="build"
+                            onClick={() => setOpened("build")}
+                          >
+                            Build {count("build")}
+                          </button>
+                          <button
+                            type="button"
+                            data-open-stage="test"
+                            onClick={() => setOpened("test")}
+                          >
+                            Test {count("test")}
+                          </button>
+                        </>
+                      ) : (
+                        <UnreportedRail connected={connected} />
+                      )}
+                    </div>,
+                  ]
+                : [element],
+            )}
+          </>
+        )}
+      </div>
+    </div>
   );
 }

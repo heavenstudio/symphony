@@ -53,10 +53,10 @@ fn an_open_select_and_the_appearance_panel_draw_on_an_opaque_bounded_surface_in_
         scheme(&mut page, mode);
         page.open(&site.url("/tasks"));
         assert!(page.wait_for(
-            "document.querySelector('button[aria-label=\"Status\"]') !== null",
+            "document.querySelector('button[aria-label=\"Finished tasks\"]') !== null",
             SHOWN
         ));
-        page.eval("document.querySelector('button[aria-label=\"Status\"]').focus()");
+        page.eval("document.querySelector('button[aria-label=\"Finished tasks\"]').focus()");
         key(&mut page, " ", "Space", 32);
         popup_ready(&mut page);
         let list = page.eval(
@@ -64,12 +64,10 @@ fn an_open_select_and_the_appearance_panel_draw_on_an_opaque_bounded_surface_in_
              return {focused:document.activeElement===list,outline:style.outlineStyle,background:style.backgroundColor,\
              inside:box.top>=0&&box.bottom<=innerHeight,scrolls:list.scrollHeight>list.clientHeight,options:list.querySelectorAll('[role=option]').length};})()",
         );
-        // No machine reports the fixture's work, so Build and Test are drawn as one rail and the
-        // filter offers neither (`tasks.rs`, docs/MACHINE_WORK.md).
         assert_eq!(
             list["options"],
-            json!(10),
-            "{mode}: all statuses and the board's nine"
+            json!(2),
+            "{mode}: both finished-work windows"
         );
         assert_eq!(
             list["focused"],
@@ -138,24 +136,35 @@ const OPTIONS: &str = "(() => {const list=document.querySelector('[role=listbox]
 #[test]
 fn a_list_too_tall_for_the_window_is_as_wide_as_its_longest_option_beside_its_scrollbar() {
     let site = site();
+    let mut detail = super::look_parity::responses()["/api/task-page"].clone();
+    detail["task"]["roles"] = json!((0..8).map(|i| json!({"handle":format!("example-worker-{i}"),"role":"executor","health":"live","since":1.0,"expires":null})).collect::<Vec<_>>());
+    site.set_json("/api/task-page", &detail);
     let Some(mut page) = chrome() else { return };
-    // Too short for the statuses: the list scrolls, its scrollbar inside its box.
+    // Too short for the task recipients: the list scrolls, its scrollbar inside its box.
     viewport(&mut page, 1280, 320);
-    page.open(&site.url("/tasks"));
+    page.open(&site.url("/task/visual/in-progress"));
+    assert!(page.wait_for("document.querySelector('[id^=composer-]') !== null", SHOWN));
+    page.eval("document.querySelector('[id^=composer-]').scrollIntoView({block:'center'})");
     assert!(page.wait_for(
-        "document.querySelector('button[aria-label=\"Status\"]') !== null",
+        "document.querySelector('button[aria-label=\"Message recipient\"]') !== null",
         SHOWN
     ));
-    page.eval("document.querySelector('button[aria-label=\"Status\"]').focus()");
+    // The original width case selects its longest label, so its check mark also takes space.
+    super::components::choose(
+        &mut page,
+        "button[aria-label=\"Message recipient\"]",
+        "example-worker-0",
+    );
+    page.eval("document.querySelector('button[aria-label=\"Message recipient\"]').scrollIntoView({block:'center'});document.querySelector('button[aria-label=\"Message recipient\"]').focus()");
     key(&mut page, " ", "Space", 32);
     popup_ready(&mut page);
     let shown = page.eval(OPTIONS);
     assert_eq!(shown["scrolls"], json!(true), "{shown}");
     let options = shown["options"].as_array().unwrap();
-    assert_eq!(options[0][0], json!("All statuses"), "{shown}");
+    assert_eq!(options[0][0], json!("everyone on it"), "{shown}");
     assert!(
         options.iter().all(|option| option[1] == options[1][1]),
-        "every option on one line, \"All statuses\" and its check mark among them: {shown}"
+        "every option on one line, \"everyone on it\" and its check mark among them: {shown}"
     );
     // As wide as that longest line and no wider: an option's padding (24px), the check mark
     // (16px) 12px from the text, the list's padding (8px) and a scrollbar's room past its text,
@@ -170,7 +179,7 @@ fn a_list_too_tall_for_the_window_is_as_wide_as_its_longest_option_beside_its_sc
     );
     assert!(
         shown["apart"].as_i64().is_some_and(|apart| apart >= 12),
-        "the check mark stands apart from \"All statuses\": {shown}"
+        "the check mark stands apart from the chosen recipient: {shown}"
     );
     // And the whole list stays inside the window, scrolling rather than running past it.
     let [left, top, right, bottom] = [0, 1, 2, 3].map(|side| shown["box"][side].as_i64().unwrap());
@@ -921,32 +930,20 @@ fn a_folders_intro_the_server_no_longer_has_draws_nothing_and_reconnects_nothing
 }
 
 #[test]
-fn the_task_groups_say_when_they_could_not_be_loaded_and_retry() {
+fn a_wait_filter_read_failure_is_said_and_retries_without_a_click() {
     let site = site();
     let Some(mut page) = chrome() else { return };
+    viewport(&mut page, 1440, 900);
     page.open(&site.url("/tasks"));
     assert!(page.wait_for(
-        "document.querySelector('.pipeline .column') !== null",
+        "document.querySelector('.taskcard') !== null && document.querySelector('.wait-chip.k-nobody') !== null",
         SHOWN
     ));
     site.fail_route("/api/task-board", true);
-    page.eval("document.querySelector('[aria-controls=task-groups]').click()");
-    let failed = trouble(&mut page);
-    assert_eq!(
-        failed["title"],
-        json!("The task groups could not be loaded"),
-        "{failed}"
-    );
-    assert_eq!(
-        (&failed["level"], &failed["part"], &failed["headings"]),
-        (&json!("H3"), &json!("Task groups"), &json!(1)),
-        "a part of the tasks page, under its h2 and the page's one h1: {failed}"
-    );
+    page.eval("document.querySelector('.wait-chip.k-nobody').click()");
+    assert!(page.wait_for("document.querySelector('.page-notices [role=alert]')?.textContent === 'Board snapshot unavailable (the server answered 500). Trying again…'",SHOWN));
     site.fail_route("/api/task-board", false);
-    retry(
-        &mut page,
-        "document.querySelector('#task-groups .trouble') === null && document.querySelector('#task-groups ul li') !== null",
-    );
+    assert!(page.wait_for("document.querySelector('.page-notices [role=alert]') === null && document.querySelector('.column[data-status=waiting] .taskcard') !== null",SHOWN), "recovered reads: {:?}; page: {}", site.targets(), page.eval("document.body.innerText"));
 }
 
 /// Each callout badge's text, with the WCAG contrast of its colour on its background.
@@ -1177,15 +1174,16 @@ fn buttons_share_one_shape_and_one_focus_ring_and_pages_one_heading() {
         "every page has one h1, of one size: {headings:?}"
     );
 
+    viewport(&mut page, 390, 844);
     page.open(&site.url("/tasks"));
     assert!(page.wait_for(
-        "document.querySelector('[aria-controls=task-groups]') !== null",
+        "document.querySelector('.board-filters-toggle') !== null",
         SHOWN
     ));
     open_panel(&mut page);
     appearance(&mut page);
     let looks = page.eval("(() => {const look=e=>{const s=getComputedStyle(e),box=e.getBoundingClientRect();return {radius:s.borderRadius,height:box.height,cursor:s.cursor,weight:s.fontWeight};};\
-        return {component:look(document.querySelector('[aria-controls=task-groups]')),plain:look(document.querySelector('#quick-sheet button.collapse')),\
+        return {component:look(document.querySelector('.board-filters-toggle')),plain:look(document.querySelector('#quick-sheet button.collapse')),\
         theme:look(document.querySelector('#appearance-panel [data-theme-action=import]'))};})()");
     assert_eq!(looks["component"]["cursor"], json!("pointer"), "{looks}");
     assert_eq!(
@@ -1197,7 +1195,7 @@ fn buttons_share_one_shape_and_one_focus_ring_and_pages_one_heading() {
         "so is the Appearance panel's: {looks}"
     );
     for control in [
-        "[aria-controls=task-groups]",
+        ".board-filters-toggle",
         "#appearance-panel [data-theme-action=import]",
         "#quick-sheet button.collapse",
     ] {
@@ -1256,21 +1254,16 @@ fn smaller_ones_land_on_their_anchor_stay_on_screen_and_read_as_sentences() {
         "the tip reads as a sentence, not a column of words: {tip}"
     );
 
-    // d) The task groups are a labelled region with a labelled toggle.
+    // d) The phone's search/filter button names the region and its expanded state.
+    viewport(&mut page, 390, 844);
     page.open(&site.url("/tasks"));
     assert!(page.wait_for(
-        "document.querySelector('[aria-controls=task-groups]') !== null",
+        "document.querySelector('.board-filters-toggle') !== null",
         SHOWN
     ));
-    assert_eq!(
-        page.eval("(() => {const b=document.querySelector('[aria-controls=task-groups]');return [b.closest('section')?.querySelector('h2')?.textContent, b.textContent];})()"),
-        json!(["Task groups", "Show task groups"])
-    );
-    page.eval("document.querySelector('[aria-controls=task-groups]').click()");
-    assert!(page.wait_for(
-        "document.querySelector('[aria-controls=task-groups]').textContent === 'Hide task groups' && document.querySelector('#task-groups') !== null",
-        SHOWN
-    ));
+    assert_eq!(page.eval("(() => {const b=document.querySelector('.board-filters-toggle');return [b.getAttribute('aria-controls'),b.textContent,b.getAttribute('aria-expanded')];})()"),json!(["board-filters","Search and filters","false"]));
+    page.eval("document.querySelector('.board-filters-toggle').click()");
+    assert!(page.wait_for("document.querySelector('.board-filters-toggle').getAttribute('aria-expanded') === 'true' && document.querySelector('#board-filters').checkVisibility()",SHOWN));
 
     // e) A task's thread is one timeline.
     page.open(&site.url("/task/visual/in-progress"));
@@ -1372,27 +1365,23 @@ fn every_status() -> Value {
 }
 
 /// Where the filters are: whether the search field reaches past its label's text, whether the
-/// Status label stands 16 px or more after that text or on a line below it, the field's
-/// placeholder, the Status field's width and the left of the Finished tasks label.
+/// Finished tasks label stands 16 px or more after that text or on a line below it, the field's
+/// placeholder, the finished-window field's width and the left of its label.
 const FILTERS: &str = "(() => {
-    const [search, status, finished] = document.querySelectorAll('.filters > label');
+    const [search, finished] = document.querySelectorAll('.filters > label');
     const text = document.createRange();
     text.selectNodeContents(search.firstChild);
-    const words = text.getBoundingClientRect(), field = search.querySelector('input'), next = status.getBoundingClientRect();
+    const words = text.getBoundingClientRect(), field = search.querySelector('input'), next = finished.getBoundingClientRect();
     return {wide: field.getBoundingClientRect().right >= words.right,
         apart: next.left - words.right >= 16 || next.top >= search.getBoundingClientRect().bottom - 1,
-        placeholder: field.placeholder, status: status.querySelector('button').getBoundingClientRect().width,
+        placeholder: field.placeholder, status: finished.querySelector('button').getBoundingClientRect().width,
         finished: finished.getBoundingClientRect().left};
 })()";
 
-/// The tasks page's filters (app/tasks-page-polish): the search field is at least as wide as its
-/// label and says what it takes, so the labels never read as one phrase; choosing a status keeps
-/// the Status field's width and the Finished tasks filter where it was; the statuses are named as
-/// "All statuses" is; and a status filtered alone is a column's width, not the page's. A phone's
-/// filters are read once their button shows them, and each of its columns is as wide as the
-/// board's scroller, a status alone too.
+/// The search field fits its label and stays apart from the finished window. Choosing a window
+/// preserves the controls' widths and positions. A phone opens them from its filters button.
 #[test]
-fn the_tasks_filters_read_apart_and_a_chosen_status_moves_nothing() {
+fn the_tasks_filters_read_apart_and_a_chosen_window_moves_nothing() {
     let site = bare_site();
     site.set_json("/api/task-board", &every_status());
     let Some(mut page) = chrome() else { return };
@@ -1402,13 +1391,13 @@ fn the_tasks_filters_read_apart_and_a_chosen_status_moves_nothing() {
         assert!(
             page.wait_for(
                 // The nine statuses' columns and the one rail Build and Test are drawn as.
-                "document.querySelectorAll('.column').length === 10 && document.querySelector('.taskcard') !== null",
+                "document.querySelector('.waiting-columns .taskcard') !== null",
                 SHOWN
             ),
             "{width}px: {}",
             page.eval("document.querySelector('main')?.innerText")
         );
-        let phone = width <= 600;
+        let phone = width <= 760;
         if phone {
             page.eval("document.querySelector('.board-filters-toggle').click()");
             assert!(
@@ -1425,53 +1414,25 @@ fn the_tasks_filters_read_apart_and_a_chosen_status_moves_nothing() {
             (&json!(true), &json!(true), &json!("Slug or words")),
             "{width}px: the search field is as wide as its label, which stands apart from the next: {before}"
         );
-        page.eval("document.querySelector('.filters button[aria-label=Status]').click()");
-        assert!(page.wait_for(
-            "document.querySelector('[role=listbox] [role=option]') !== null",
-            SHOWN
-        ));
-        assert_eq!(
-            page.eval("[...document.querySelectorAll('[role=listbox] [role=option]')].map(o => o.textContent.trim())"),
-            json!(["All statuses", "Backlog", "Concept", "Design", "Ready", "In progress", "Review", "Done", "Blocked", "Cancelled"]),
-            "{width}px"
-        );
-        key(&mut page, "Escape", "Escape", 27);
-        assert!(page.wait_for(
-            "document.querySelector('.filters button[aria-label=Status]').getAttribute('aria-expanded') === 'false'",
-            SHOWN
-        ));
-        for (option, status) in [("Backlog", "backlog"), ("In progress", "in_progress")] {
-            super::components::choose(&mut page, ".filters button[aria-label=Status]", option);
-            assert!(page.wait_for(
-                &format!("document.querySelectorAll('.column').length === 1 && document.querySelector('.column[data-status={status}] .taskcard') !== null"),
-                SHOWN
-            ));
+        for option in ["Last week", "Last 24 hours"] {
+            super::components::choose(
+                &mut page,
+                ".filters button[aria-label='Finished tasks']",
+                option,
+            );
             let after = page.eval(FILTERS);
             assert_eq!(
                 (&after["status"], &after["finished"]),
                 (&before["status"], &before["finished"]),
-                "{width}px, {option}: choosing a status moved the filters: {before} then {after}"
-            );
-            // A phone's In progress is the board's scroller's width exactly; Backlog stands in the
-            // row under the pipeline, as narrow on a phone.
-            let column = if phone && status == "in_progress" {
-                "=== document.querySelector('.board-scroll').clientWidth"
-            } else {
-                "<= 288"
-            };
-            assert_eq!(
-                page.eval(&format!("Math.round(document.querySelector('.column[data-status={status}]').getBoundingClientRect().width) {column}")),
-                json!(true),
-                "{width}px, {option}: a status filtered alone is a column's width"
+                "{width}px: changing the finished window moved the filters"
             );
         }
     }
 }
 
-/// The lower row's columns are each as tall as their own cards (app/visual-polish-3): a long
-/// Cancelled never stretches Backlog and Blocked beside it to its height.
+/// Opening a short Backlog list or a long Cancelled list uses only the chosen list's height.
 #[test]
-fn the_lower_rows_columns_are_each_as_tall_as_their_own_cards() {
+fn separately_opened_backlog_and_cancelled_lists_take_the_height_of_their_own_cards() {
     let site = bare_site();
     let mut board = every_status();
     let tasks = board["tasks"].as_array_mut().unwrap();
@@ -1486,23 +1447,31 @@ fn the_lower_rows_columns_are_each_as_tall_as_their_own_cards() {
     let Some(mut page) = chrome() else { return };
     viewport(&mut page, 1280, 900);
     page.open(&site.url("/tasks"));
+    assert!(page.wait_for(
+        "document.querySelector('button.backlog-rail') !== null",
+        SHOWN
+    ));
+    page.eval("document.querySelector('.backlog-rail').click()");
+    assert!(page.wait_for(
+        "document.querySelector('.column[data-status=backlog] .taskcard') !== null",
+        SHOWN
+    ));
+    let short = page
+        .eval(
+            "document.querySelector('.column[data-status=backlog]').getBoundingClientRect().height",
+        )
+        .as_f64()
+        .unwrap();
+    page.eval("document.querySelector('.back-to-stages').click()");
+    page.eval("document.querySelector('[data-open-stage=cancelled]').click()");
+    assert!(page.wait_for(
+        "document.querySelectorAll('.column[data-status=cancelled] [id^=row-]').length === 13",
+        SHOWN
+    ));
+    let long=page.eval("document.querySelector('.column[data-status=cancelled]').getBoundingClientRect().height").as_f64().unwrap();
     assert!(
-        page.wait_for(
-            "['backlog', 'blocked', 'cancelled'].every(status => document.querySelector(`.offline .column[data-status=${status}] .taskcard`) !== null)",
-            SHOWN
-        ),
-        "{}",
-        page.eval("document.querySelector('main')?.innerText")
-    );
-    let heights = page.eval(
-        "Object.fromEntries(['backlog', 'blocked', 'cancelled'].map(status => [status, \
-         Math.round(document.querySelector(`.offline .column[data-status=${status}]`).getBoundingClientRect().height)]))",
-    );
-    let height = |status: &str| heights[status].as_f64().unwrap();
-    assert!(
-        height("backlog") * 3.0 < height("cancelled")
-            && height("blocked") * 3.0 < height("cancelled"),
-        "one card's columns are a card's height, not the thirteen's: {heights}"
+        short * 3.0 < long,
+        "one backlog card takes its own height {short}, not the thirteen cancelled cards' {long}"
     );
 }
 
@@ -1555,12 +1524,11 @@ const READY_COLUMN: &str = "(() => {
 /// Bring the ready column into the board's view sideways, then scroll the board down it half its
 /// height at a time, as a reader does, until every one of its rows is drawn.
 fn draw_every_ready_row(page: &mut Chrome, width: u32) {
-    page.eval("(() => {const board = document.querySelector('.board-scroll'), column = document.querySelector('.column[data-status=ready]'); board.scrollLeft += column.getBoundingClientRect().left - board.getBoundingClientRect().left;})()");
     let drawn = test_time::until_true(format!("{width}px: every ready row drawn"), STALL, || {
         page.eval("document.querySelectorAll('.column[data-status=ready] .taskcard').length")
             == json!(30)
             || {
-                page.eval("(board => board.scrollTop += board.clientHeight / 2)(document.querySelector('.board-scroll'))");
+                page.eval("scrollBy(0, innerHeight / 2)");
                 page.pump(std::time::Duration::from_millis(50));
                 false
             }
@@ -1607,6 +1575,13 @@ fn the_tasks_board_keeps_its_height_as_rows_load() {
         };
         viewport(&mut page, width, height);
         page.open(&site.url("/tasks"));
+        if width <= 760 {
+            assert!(page.wait_for(
+                "document.querySelector('.stage-tabs button') !== null",
+                SHOWN
+            ));
+            page.eval("[...document.querySelectorAll('.stage-tabs button')].find(button=>button.textContent.startsWith('Ready')).click()");
+        }
         assert!(
             page.wait_for(
                 // The column reading its page is busy, its rows' place held by their ghost.
@@ -1661,29 +1636,13 @@ fn the_tasks_board_keeps_its_height_as_rows_load() {
 /// the board's top, below the room the board's own scroll padding leaves there (a phone's, for its
 /// column's heading, which stays at the board's top) and clear of its column's heading.
 fn named_card(row: u32) -> String {
-    format!(
-        "(() => {{
-    const card = document.getElementById('row-load/ready-{row}')?.querySelector('.taskcard');
-    const header = Math.max(0, document.querySelector('.app-header')?.getBoundingClientRect().bottom ?? 0);
-    const below = ['row-load/ready-{}', 'row-load/ready-{}'].map(id => document.getElementById(id)).filter(Boolean);
-    const board = document.querySelector('.board-scroll');
-    const at = card?.getBoundingClientRect(), view = board?.getBoundingClientRect();
-    const padded = board ? parseFloat(getComputedStyle(board).scrollPaddingTop) || 0 : 0;
-    const heading = card?.closest('.column')?.querySelector(':scope > h2')?.getBoundingClientRect();
-    return {{top: card ? Math.round(at.top - header) : null,
-        room: Math.round(parseFloat(getComputedStyle(document.documentElement).scrollPaddingTop) - header),
-        below: below.length === 2 && below.every(slot => slot.querySelector('.taskcard')),
-        boardTop: Math.round(board?.scrollTop ?? 0),
-        boardRange: board ? board.scrollHeight - board.clientHeight : null,
-        atBoardTop: card && board ? Math.abs(at.top - view.top - padded) < 2 : false,
-        clear: card && heading ? at.top >= heading.bottom - 0.5 : false,
-        boardEnd: board ? board.scrollTop >= board.scrollHeight - board.clientHeight - 1 : false,
-        inBoard: card && board ? at.top >= view.top - 1 && at.bottom <= view.bottom + 1 : false,
-        pageEnd: scrollY >= document.documentElement.scrollHeight - innerHeight - 1}};
-}})()",
-        row + 1,
-        row + 2
-    )
+    format!("(() => {{const card=document.getElementById('row-load/ready-{row}')?.querySelector('.taskcard');
+        const header=Math.max(0,document.querySelector('.app-header')?.getBoundingClientRect().bottom??0);
+        const below=['row-load/ready-{}','row-load/ready-{}'].map(id=>document.getElementById(id));
+        const r=card?.getBoundingClientRect();
+        return {{top:card?Math.round(r.top-header):null, room:Math.round(parseFloat(getComputedStyle(document.documentElement).scrollPaddingTop)-header),
+            below:below.every(slot=>slot?.querySelector('.taskcard')), clear:card?r.top>=header:false,
+            inBoard:card?r.top>=0&&r.bottom<=innerHeight:false, pageEnd:scrollY>=document.documentElement.scrollHeight-innerHeight-1}}; }})()",row+1,row+2)
 }
 
 /// A link to a card far down a long column (app/tasks-page-polish, `/tasks#row-load/ready-20`)
@@ -1721,8 +1680,7 @@ fn a_link_to_a_card_far_down_a_column_lands_under_the_header_and_stays() {
         // lower but in full view.
         let room = landed["room"].as_f64().unwrap().max(0.0);
         assert!(
-            (landed["atBoardTop"] == json!(true)
-                || (landed["boardEnd"] == json!(true) && landed["inBoard"] == json!(true)))
+            landed["inBoard"] == json!(true)
                 && landed["clear"] == json!(true)
                 && top >= 0.0
                 && (top <= room + 4.0 || (landed["pageEnd"] == json!(true) && top <= 400.0)),
@@ -1740,17 +1698,17 @@ fn a_link_to_a_card_far_down_a_column_lands_under_the_header_and_stays() {
 /// The pipeline's column labels (app/tasks-page-polish) start where their columns do, each the
 /// same way in from its column's edge, with nothing drawn before them.
 #[test]
-fn the_pipeline_labels_start_alike_in_their_columns() {
+fn the_waiting_stage_labels_start_alike_in_their_columns() {
     let site = bare_site();
     site.set_json("/api/task-board", &every_status());
     let Some(mut page) = chrome() else { return };
     viewport(&mut page, 1280, 900);
     page.open(&site.url("/tasks"));
     assert!(page.wait_for(
-        "document.querySelectorAll('.pipeline > .column').length === 7",
+        "document.querySelectorAll('.waiting-columns .column').length === 7",
         SHOWN
     ));
-    let labels = page.eval("[...document.querySelectorAll('.pipeline > .column')].map(column => { const label = column.querySelector('h2'), words = document.createRange(); words.selectNodeContents(label.firstChild); return [column.dataset.status, Math.round(words.getBoundingClientRect().left - column.getBoundingClientRect().left), getComputedStyle(label, '::before').content]; })");
+    let labels = page.eval("[...document.querySelectorAll('.waiting-columns .column')].map(column => { const label = column.querySelector('h2'), words = document.createRange(); words.selectNodeContents(label.firstChild); return [column.dataset.status, Math.round(words.getBoundingClientRect().left - column.getBoundingClientRect().left), getComputedStyle(label, '::before').content]; })");
     let first = &labels[0][1];
     assert!(
         labels

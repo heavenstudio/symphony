@@ -77,23 +77,31 @@ const BOARD: Page = Page {
     name: "tasks",
     path: "/tasks",
     held: &["/api/task-board"],
-    ghost: "document.querySelector('.ghost-pipeline') !== null",
-    page: "document.querySelectorAll('.column[data-status=concept] .taskcard').length === 5 && document.querySelector('.offline .taskcard') !== null",
+    ghost: "document.querySelector('.ghost-kanban.waiting-columns') !== null",
+    page: "document.querySelector('.column[data-status=review] .taskcard') !== null && (innerWidth <= 760 || document.querySelectorAll('.column[data-status=concept] .taskcard').length === 5)",
     regions: &[
         ("filters", "main .filters", "main .filters"),
         ("kanban", ".ghost-kanban", ".kanban"),
-        ("pipeline", ".ghost-pipeline", ".board-scroll"),
+        (
+            "pipeline",
+            ".ghost-kanban.waiting-columns",
+            ".kanban.waiting-columns",
+        ),
         (
             "column",
-            ".ghost-pipeline > .ghost-column",
-            ".pipeline > .column",
+            ".ghost-kanban.waiting-columns > .ghost-column",
+            ".waiting-columns .column",
         ),
         (
             "fourth card",
             "js:document.querySelectorAll('.ghost-column[data-for=concept] .ghost-card')[3]",
             "js:document.querySelectorAll('.column[data-status=concept] .taskcard')[3]",
         ),
-        ("lower row", ".ghost-offline", ".offline"),
+        (
+            "wait strip",
+            ".waiting-ghost .wait-strip",
+            ".waiting-board:not(.waiting-ghost) .wait-strip",
+        ),
     ],
 };
 
@@ -525,7 +533,7 @@ fn the_board_draws_its_filters_and_pipeline_where_its_ghost_did_and_next_its_car
             "pipeline",
             "column",
             "fourth card",
-            "lower row",
+            "wait strip",
         ],
     );
 }
@@ -615,7 +623,7 @@ fn a_board_whose_rows_draw_late_keeps_them_for_its_next_ghost() {
             "pipeline",
             "column",
             "fourth card",
-            "lower row",
+            "wait strip",
         ],
     );
 }

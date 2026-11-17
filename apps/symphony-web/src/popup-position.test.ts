@@ -114,6 +114,7 @@ function page(elements: Box[], active: Box | null = null, visual?: Record<string
   vi.stubGlobal("addEventListener", listen("window"));
   vi.stubGlobal("removeEventListener", unlisten("window"));
   vi.stubGlobal("Node", Box);
+  vi.stubGlobal("getComputedStyle", (element: Box) => ({ width: `${element.box.width}px` }));
   return heard;
 }
 
@@ -149,6 +150,17 @@ describe("a popup placed beside its trigger", () => {
     position("field", "field-popup");
     expect(popup.attributes.get("style")).toContain("top:192px;");
     expect(popup.attributes.get("data-side")).toBe("bottom");
+  });
+
+  it("rounds the natural width up before fixing it, without measuring the opening transform", () => {
+    const trigger = new Box("field", { left: 20, top: 30, width: 80, height: 36 });
+    const popup = new Box("field-popup", { left: 0, top: 0, width: 172.375, height: 240 });
+    popup.offsetWidth = 172;
+    popup.clientWidth = popup.bar = 172;
+    popup.getBoundingClientRect = () => ({ width: 163.75 }) as DOMRect;
+    page([trigger, popup]);
+    position("field", "field-popup");
+    expect(popup.attributes.get("style")).toContain("width:173px;");
   });
 
   it("is placed again as wide as its scrollbar more, in the visible viewport", () => {

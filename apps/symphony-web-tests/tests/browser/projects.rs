@@ -1122,3 +1122,27 @@ fn the_header_and_the_icons_are_the_symphonys_until_a_theme_has_its_own() {
         );
     }
 }
+
+/// Projects share an origin, but the phone's board stage is the project's own saved choice.
+#[test]
+fn a_phone_keeps_its_selected_board_stage_only_for_that_project() {
+    let board = ScratchBoard::start();
+    board.call_in_database(DATABASE, "register", json!({"kind":"worker"}));
+    let server = OneServer::start(board.address());
+    let Some(mut browser) = chrome() else { return };
+    browser.call(
+        "Emulation.setDeviceMetricsOverride",
+        json!({"width":390,"height":844,"deviceScaleFactor":1,"mobile":true}),
+    );
+    for (project, expected, choose) in [
+        ("alpha", "review", "Ready"),
+        ("pantry", "review", "Design"),
+        ("alpha", "ready", "Ready"),
+        ("pantry", "design", "Design"),
+    ] {
+        browser.open(&server.url(&format!("/{project}/tasks")));
+        assert!(browser.wait_for(&format!("document.querySelector('.waiting-columns .column[data-status={expected}]') !== null && document.documentElement.dataset.navigation === 'ready'"),SHOWN),"{project} did not restore {expected}: {}", observed_page(&mut browser));
+        browser.eval(&format!("[...document.querySelectorAll('.stage-tabs button')].find(button=>button.textContent.startsWith({})).click()",json!(choose)));
+    }
+    assert_eq!(browser.eval("[localStorage.getItem('alpha:board-waiting-stage'),localStorage.getItem('pantry:board-waiting-stage'),localStorage.getItem('board-waiting-stage')]"),json!(["ready","design",null]));
+}

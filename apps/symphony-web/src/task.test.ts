@@ -192,6 +192,22 @@ describe("a change the feed sends", () => {
 });
 
 describe("a task's changed fields", () => {
+  it("validates review counts and applies known zero as a real update", () => {
+    for (const count of [undefined, null, 0, 1, 3, 0xffffffff]) {
+      const fields = count === undefined ? {} : { review_rounds: count };
+      expect(readTask({ ...aTask("w/a"), ...fields })).not.toBeNull();
+      expect(readTaskChange({ key: "w/a", fields })).not.toBeNull();
+    }
+    for (const count of [-1, 1.5, Infinity, NaN, "3", 0x100000000]) {
+      expect(readTask({ ...aTask("w/a"), review_rounds: count })).toBeNull();
+      expect(readTaskChange({ key: "w/a", fields: { review_rounds: count } })).toBeNull();
+    }
+    const task = aTask("w/a", { review_rounds: 3 });
+    expect(merge(task, { review_rounds: 1 }).review_rounds).toBe(1);
+    expect(merge(task, { review_rounds: 0 }).review_rounds).toBe(0);
+    expect(merge(task, { review_rounds: null }).review_rounds).toBe(3);
+    expect(merge(task, {}).review_rounds).toBe(3);
+  });
   it("land in the task, the rest of it as it was", () => {
     const task = aTask("w/a", { parent: "w", links: ["docs/A.md"] });
     const changed = merge(task, {
@@ -277,4 +293,21 @@ describe("a holder's health", () => {
     );
     expect(healths(next)).toEqual([[["amber", "lost"]]]);
   });
+});
+
+it("guards the waiting projection and the fields the wait card draws", () => {
+  const task = aTask("a");
+  for (const fields of [{ waits_on: { kind: "check", who: 3, why: "why", since: 1 } }, { from: 5 }])
+    expect(readTask({ ...task, ...fields })).toBeNull();
+  const waiting = {
+    kinds: [["check", 3]],
+    columns: [{ status: "review", ordinary: 1, blocked: 2, oldest: 1 }],
+  };
+  expect(readListing({ tasks: [task], waiting })?.waiting).toEqual(waiting);
+  for (const malformed of [
+    { ...waiting, kinds: [["check", "3"]] },
+    { ...waiting, columns: [{ status: "review", ordinary: 1, blocked: "2" }] },
+    { ...waiting, columns: [{ status: "review", ordinary: 1, blocked: 2, oldest: "yesterday" }] },
+  ])
+    expect(readListing({ tasks: [], waiting: malformed })).toBeNull();
 });

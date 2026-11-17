@@ -289,35 +289,38 @@ fn the_board_before_its_first_read_draws_its_heading_filters_and_columns_of_card
         site.hold_route("/api/task-board", false);
         return;
     };
-    let drawn = browser.wait_for("document.querySelector('.ghost-pipeline') !== null", SHOWN);
+    let drawn = browser.wait_for(
+        "document.querySelector('.ghost-kanban.waiting-columns') !== null",
+        SHOWN,
+    );
     // Each ghost column's box against a real column's of its status, laid out beside it.
     let ghost = browser.eval(&format!(
-        "(() => {{ const columns = [...document.querySelectorAll('.ghost-pipeline > .ghost-column, .ghost-offline > .ghost-column')];
-            const differ = column => {{ const probe = document.createElement('section'); probe.className = 'column'; probe.dataset.status = column.dataset.for; column.after(probe);
+        "(() => {{ const columns = [...document.querySelectorAll('.ghost-kanban.waiting-columns > .ghost-column, .ghost-offline > .ghost-column')];
+            const differ = column => {{ const probe = document.createElement('section'); probe.className = column.dataset.for === 'build-test' ? 'column rail' : 'column'; probe.dataset.status = column.dataset.for; const wrapper = document.createElement('div'); wrapper.className = column.dataset.for === 'build-test' ? 'machine-rail' : ''; column.after(wrapper); wrapper.append(probe);
                 const a = getComputedStyle(column), b = getComputedStyle(probe);
                 const differ = ['borderTopColor', 'backgroundColor', 'paddingTop', 'paddingLeft', 'borderTopWidth', 'borderLeftWidth', 'borderTopLeftRadius']
                     .filter(key => a[key] !== b[key]).map(key => [column.dataset.for, key, a[key], b[key]]);
-                probe.remove(); return differ; }};
+                wrapper.remove(); return differ; }};
             return {{heading: document.querySelector('.page-head h1')?.textContent, fields: document.querySelectorAll('.filters .ghost-field').length,
                 filled: [...document.querySelectorAll('.filters .ghost-field')].map(field => field.querySelectorAll('.bone').length),
                 status: [...document.querySelectorAll('main [role=status]')].map(status => status.textContent), busy: document.querySelector('main').getAttribute('aria-busy'),
                 columns: columns.map(c => c.dataset.for), column: columns.flatMap(differ),
                 cards: columns.map(c => c.querySelectorAll('.ghost-card').length),
                 chips: columns.map(c => c.querySelectorAll('.ghost-card .ghost-pill').length),
-                card: {SAME_BOX}(columns[0].querySelector('.ghost-card'), 'taskcard')}}; }})()"
+                card: {SAME_BOX}(columns[0].querySelector('.ghost-card'), 'taskcard waiting-card')}}; }})()"
     ));
     site.hold_route("/api/task-board", false);
     assert!(drawn, "no ghost of the board: {}", browser.eval(PAGE));
     assert_eq!(
         ghost,
-        json!({"heading": "Board", "fields": 3, "filled": [0, 1, 1], "status": ["Loading tasks…"], "busy": "true",
-            "columns": ["concept", "design", "ready", "in_progress", "build", "test", "review", "done", "backlog", "blocked", "cancelled"],
-            "column": [], "cards": [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1], "chips": [1, 1, 1, 2, 2, 2, 2, 2, 1, 2, 2],
+        json!({"heading": "Board", "fields": 2, "filled": [0, 0], "status": ["Loading tasks…"], "busy": "true",
+            "columns": ["concept", "design", "ready", "in_progress", "build-test", "review", "done"],
+            "column": [], "cards": [1, 1, 1, 1, 0, 1, 1], "chips": [0, 0, 0, 0, 0, 0, 0],
             "card": []}),
         "a first visit's ghost draws each column of the board in its colour with a typical card's box, its row of links and, on the cards of tasks taken up, its row of roles, and says once that the board loads"
     );
     assert!(
-        browser.wait_for("document.querySelector('.ghost-pipeline') === null && document.querySelector('.pipeline') !== null", SHOWN),
+        browser.wait_for("document.querySelector('.ghost-kanban.waiting-columns') === null && document.querySelector('.kanban.waiting-columns') !== null", SHOWN),
         "the board never replaced its ghost: {}",
         browser.eval(PAGE)
     );
@@ -359,7 +362,7 @@ fn a_board_whose_first_read_fails_says_why_in_place_of_its_ghost_until_a_read_an
     browser.eval("document.querySelector('main .unread-board button')?.click()");
     assert!(
         browser.wait_for(
-            "document.querySelector('main .unread-board') === null && document.querySelector('.pipeline') !== null",
+            "document.querySelector('main .unread-board') === null && document.querySelector('.kanban.waiting-columns') !== null",
             SHOWN
         ),
         "the board never replaced the block: {}",
@@ -370,9 +373,15 @@ fn a_board_whose_first_read_fails_says_why_in_place_of_its_ghost_until_a_read_an
 #[test]
 fn the_board_s_next_ghost_draws_the_columns_it_last_read_with_a_card_for_each_task() {
     let site = site();
+    site.set_json("/api/task-board", &json!({"tasks": [task(1,2)], "statuses": ["ready"], "counts": [["ready",1]], "signoff": [], "next": null}));
     let Some(mut browser) = open(&site, "/tasks", 390, 844) else {
         return;
     };
+    assert!(browser.wait_for(
+        "document.querySelector('.stage-tabs button') !== null",
+        SHOWN
+    ));
+    browser.eval("[...document.querySelectorAll('.stage-tabs button')].find(button => button.textContent.startsWith('Ready')).click()");
     assert!(
         browser.wait_for(
             "document.querySelector('.kanban .taskcard') !== null",
@@ -389,7 +398,10 @@ fn the_board_s_next_ghost_draws_the_columns_it_last_read_with_a_card_for_each_ta
     );
     site.hold_route("/api/task-board", true);
     browser.open(&site.url("/tasks"));
-    let drawn = browser.wait_for("document.querySelector('.ghost-pipeline') !== null", SHOWN);
+    let drawn = browser.wait_for(
+        "document.querySelector('.ghost-kanban.waiting-columns') !== null",
+        SHOWN,
+    );
     let ghost = browser.eval(
         "[...document.querySelectorAll('.ghost-column')].map(c => [c.dataset.for, c.querySelectorAll('.ghost-card').length, Math.round(c.getBoundingClientRect().width)])",
     );
@@ -455,25 +467,22 @@ fn a_column_still_reading_its_tasks_draws_a_card_box_for_each_it_will_hold() {
                 return {{cards: cards.length, waiting: cards.every(card => card.closest('[data-pending=true]') !== null),
                     busy: document.querySelector('{column}').getAttribute('aria-busy'), said: document.querySelectorAll('{column} [role=status]').length,
                     more: [...document.querySelectorAll('{column} button')].some(button => button.textContent.includes('Load more')),
-                    box: {SAME_BOX}(cards[0], 'taskcard'),
+                    box: {SAME_BOX}(cards[0], 'taskcard waiting-card'),
                     pitch: Math.round(cards[1].getBoundingClientRect().top - cards[0].getBoundingClientRect().top),
                     reserved: parseFloat(cards[0].closest('[data-pending=true]').style.minHeight) / cards.length,
                     bars: cards[0].querySelectorAll('.bone').length,
                     colour: getComputedStyle(cards[0].querySelector('.bone')).backgroundColor}}; }})()"
         )),
-        json!({"cards": 14, "waiting": true, "busy": "true", "said": 0, "more": false, "box": [], "pitch": 139,
-            "reserved": 139, "bars": 5, "colour": "rgba(127, 127, 127, 0.14)"}),
+        json!({"cards": 14, "waiting": true, "busy": "true", "said": 0, "more": false, "box": [], "pitch": 118,
+            "reserved": 118, "bars": 5, "colour": "rgba(127, 127, 127, 0.14)"}),
         "a typical card's box per task counted, no agent's yet: a bar for its slug, its title's lines and its row of links, and no Load more while the first page is read"
     );
 }
 
-/// The counts count a task waiting on the owner's sign-off in its stage, as the server does, and
-/// the board draws it in the sign-off lane: a stage counts the rest. One whose every task waits
-/// there holds none and waits for none once its first page is in (no ghost, no shimmer, not busy);
-/// one with part of its tasks there counts the cards it holds, with no Load more of the others
-/// (app/board-column-with-an-empty-answer-stops-loading).
+/// A task waiting for sign-off remains in its lifecycle stage in the waiting board. Once each
+/// stage's answer arrives, its complete count matches its cards and no ghost or spinner remains.
 #[test]
-fn a_stage_counts_none_of_its_tasks_drawn_in_the_sign_off_lane() {
+fn a_stage_keeps_its_sign_off_tasks_and_stops_loading_after_its_answer() {
     let site = site();
     let task = |slug: &str, status: &str| {
         json!({"slug": slug, "title": format!("The task {slug}"), "body": "", "status": status,
@@ -512,23 +521,23 @@ fn a_stage_counts_none_of_its_tasks_drawn_in_the_sign_off_lane() {
                 count: c.querySelector('h2 .count').textContent,
                 more: [...c.querySelectorAll('button')].some(button => button.textContent.includes('Load more')),
                 shimmer: document.getAnimations().filter(a => a.animationName === 'shimmer' && c.contains(a.effect?.target)).length}; };
-        return {in_progress: at('in_progress'), review: at('review'), lane: at('signoff').cards}; })()";
+        return {in_progress: at('in_progress'), review: at('review'), lane: document.querySelector('.column[data-status=signoff]') !== null}; })()";
     let settled = format!(
-        "(s => s.review.busy === 'false' && s.in_progress.busy === 'false' && s.lane.length === 2
-            && s.in_progress.cards.length === 1)({shows})"
+        "(s => s.review.busy === 'false' && s.in_progress.busy === 'false' && s.lane === false
+            && s.in_progress.cards.length === 2)({shows})"
     );
     assert!(
         browser.wait_for(&settled, SHOWN),
-        "a stage kept waiting once its first page answered, its tasks in the sign-off lane: {}",
+        "a stage kept waiting once its first page answered, its tasks in their original stages: {}",
         browser.eval(shows)
     );
     assert_eq!(
         browser.eval(shows),
         json!({
-            "in_progress": {"busy": "false", "ghosts": 0, "cards": ["probe/half-plain"], "count": "1", "more": false, "shimmer": 0},
-            "review": {"busy": "false", "ghosts": 0, "cards": [], "count": "0", "more": false, "shimmer": 0},
-            "lane": ["probe/asks", "probe/half-asks"]}),
-        "each stage counts the cards it holds, its tasks in the sign-off lane left out: no ghost, no Load more"
+            "in_progress": {"busy": "false", "ghosts": 0, "cards": ["probe/half-asks", "probe/half-plain"], "count": "2", "more": false, "shimmer": 0},
+            "review": {"busy": "false", "ghosts": 0, "cards": ["probe/asks"], "count": "1", "more": false, "shimmer": 0},
+            "lane": false}),
+        "each stage counts the cards it holds, its tasks in their original stages left out: no ghost, no Load more"
     );
 }
 
@@ -612,7 +621,7 @@ fn a_column_whose_first_page_fails_is_read_again_by_itself_until_it_answers() {
 
 /// The default view's read of the first page of the column `status`, as the board asks for it.
 fn column_read(status: &str) -> String {
-    format!("/api/task-board?q=&status={status}&days=1&activity=1&work=0")
+    format!("/api/task-board?view=waiting&q=&status={status}&days=1&activity=1&work=0")
 }
 
 /// What a page animates: the shimmer animations that run (`document.getAnimations()`), and the
@@ -725,8 +734,8 @@ fn a_ghost_card_is_as_tall_as_the_card_of_a_task_with_a_title_of_two_lines() {
     assert_eq!(
         (ghost, page),
         (
-            json!([[139, false], [139, false]]),
-            json!([[139, false], [139, false]])
+            json!([[118, false], [118, false]]),
+            json!([[118, false], [118, false]])
         ),
         "the ghost's card for a ready task and for one under review, then the board's"
     );
@@ -1285,7 +1294,7 @@ const READ: &str = "[data-slug=\"tools/t-08\"]";
 const TRACE: &str = "window.__trace = [];
 const offset = Object.getOwnPropertyDescriptor(Element.prototype, 'scrollTop');
 Object.defineProperty(Element.prototype, 'scrollTop', {configurable: true, get() { return offset.get.call(this); }, set(value) { window.__trace.push(['set', Math.round(performance.now()), value]); offset.set.call(this, value); }});
-(function frame(left) { const row = document.querySelector('[data-slug=\"tools/t-08\"]'), board = document.querySelector('.board-scroll'); window.__trace.push([Math.round(performance.now()), row ? row.getBoundingClientRect().top : null, board ? board.scrollTop : null, scrollY, [...document.querySelectorAll('[data-pending=true]')].map(box => Math.round(box.getBoundingClientRect().top))]); if (left > 0) requestAnimationFrame(() => frame(left - 1)); })(60)";
+(function frame(left) { const row = document.querySelector('[data-slug=\"tools/t-08\"]'), board = document.querySelector('.waiting-columns'); window.__trace.push([Math.round(performance.now()), row ? row.getBoundingClientRect().top : null, scrollY, scrollY, [...document.querySelectorAll('[data-pending=true]')].map(box => Math.round(box.getBoundingClientRect().top))]); if (left > 0) requestAnimationFrame(() => frame(left - 1)); })(60)";
 
 fn task(n: u32, priority: u32) -> Value {
     json!({"slug": format!("tools/t-{n:02}"), "title": format!("Task {n}"), "body": "",
@@ -1335,7 +1344,7 @@ fn board_of(site: &Site, count: u32) -> Option<Chrome> {
 /// then is.
 fn board_scrolled_to_a_row(site: &Site) -> Option<(Chrome, f64)> {
     let mut browser = board_of_fourteen(site)?;
-    browser.eval("(() => { const board = document.querySelector('.board-scroll'), row = document.querySelector('[id=\"row-tools/t-08\"]'); board.scrollTop += row.getBoundingClientRect().top - board.getBoundingClientRect().top - 120; })()");
+    browser.eval("(() => { const row = document.querySelector('[id=\"row-tools/t-08\"]'); scrollBy(0, row.getBoundingClientRect().top - 120); })()");
     assert!(
         browser.wait_for(
             &format!("document.querySelector({}) !== null", json!(READ)),
@@ -1347,7 +1356,7 @@ fn board_scrolled_to_a_row(site: &Site) -> Option<(Chrome, f64)> {
     still(&mut browser, READ);
     let (top, _) = place(&mut browser, READ);
     assert!(
-        browser.eval("document.querySelector('.board-scroll').scrollTop") != json!(0),
+        browser.eval("scrollY") != json!(0),
         "the row must sit below the board's first screen"
     );
     browser.call("Emulation.setCPUThrottlingRate", json!({"rate": 6}));
@@ -1357,7 +1366,7 @@ fn board_scrolled_to_a_row(site: &Site) -> Option<(Chrome, f64)> {
 /// Each frame for about a second and a half: the most the board scroller and the page are ever
 /// scrolled.
 const MOST_SCROLLED: &str = "window.__most = {board: 0, page: 0, done: false};
-(function frame(left) { const board = document.querySelector('.board-scroll'); __most.board = Math.max(__most.board, board.scrollTop); __most.page = Math.max(__most.page, scrollY); if (left > 0) requestAnimationFrame(() => frame(left - 1)); else __most.done = true; })(90)";
+(function frame(left) { const board = document.querySelector('.waiting-columns'); __most.board = Math.max(__most.board, scrollY); __most.page = Math.max(__most.page, scrollY); if (left > 0) requestAnimationFrame(() => frame(left - 1)); else __most.done = true; })(90)";
 
 #[test]
 fn a_task_that_lands_at_the_top_of_a_board_at_rest_shows_there_and_scrolls_nothing() {
@@ -1379,7 +1388,7 @@ fn a_task_that_lands_at_the_top_of_a_board_at_rest_shows_there_and_scrolls_nothi
         browser.eval(PAGE)
     );
     let landed = browser.eval(
-        "(() => { const board = document.querySelector('.board-scroll').getBoundingClientRect(), card = document.querySelector('[data-slug=\"tools/t-00\"]').getBoundingClientRect();
+        "(() => { const board = ({top:0,bottom:innerHeight}), card = document.querySelector('[data-slug=\"tools/t-00\"]').getBoundingClientRect();
             return {first: document.querySelector('.column[data-status=ready] [data-slug]').dataset.slug, shown: card.top >= board.top && card.bottom <= board.bottom}; })()",
     );
     assert_eq!(
@@ -1404,7 +1413,7 @@ fn a_task_added_or_removed_above_the_row_the_owner_reads_leaves_it_in_place() {
     // Its reserved box gives way to the row once it is near the screen.
     assert!(
         browser.wait_for(
-            "document.querySelector('[data-slug=\"tools/t-00\"]') !== null",
+            "document.querySelector('[id=\"row-tools/t-00\"]') !== null",
             SHOWN
         ),
         "the added task never landed: {}",
@@ -1439,9 +1448,9 @@ fn a_task_whose_box_lands_past_the_board_s_reach_leaves_no_hold_running() {
     // than 600 px above the board's box, past the reach of its sentinel there, though within 600 px
     // of the window: that box never draws while the board stays there.
     let read = browser.eval(
-        "(() => { const board = document.querySelector('.board-scroll'), first = document.querySelector('[id=\"row-tools/t-01\"]');
-            board.scrollTop += first.getBoundingClientRect().top - (board.getBoundingClientRect().top - 800);
-            const top = board.getBoundingClientRect().top;
+        "(() => { const board = document.querySelector('.waiting-columns'), first = document.querySelector('[id=\"row-tools/t-01\"]');
+            scrollBy(0, first.getBoundingClientRect().top + 800);
+            const top = 0;
             return [...document.querySelectorAll('[data-slug]')].find(row => row.getBoundingClientRect().top >= top)?.dataset.slug; })()",
     );
     let read = format!(
@@ -1462,24 +1471,24 @@ fn a_task_whose_box_lands_past_the_board_s_reach_leaves_no_hold_running() {
     // a scroll the page itself then makes, by no gesture, stays where it is put.
     still(&mut browser, &read);
     let at = browser.eval(
-        "(() => { const board = document.querySelector('.board-scroll'), clip = board.getBoundingClientRect();
+        "(() => { const board = document.querySelector('.waiting-columns'), clip = {top:0,bottom:innerHeight};
             const box = document.querySelector('[id=\"row-tools/t-00\"] [data-pending=true]')?.getBoundingClientRect();
-            board.scrollTop += 200;
-            return {box: box ? [box.top, box.bottom] : null, board: [clip.top, clip.bottom], set: board.scrollTop}; })()",
+            scrollBy(0, 200);
+            return {box: box ? [box.top, box.bottom] : null, board: [clip.top, clip.bottom], set: scrollY}; })()",
     );
     let (box_bottom, board_top) = (
         at["box"][1].as_f64().unwrap_or(f64::NAN),
         at["board"][0].as_f64().unwrap_or(f64::NAN),
     );
     assert!(
-        box_bottom > -600.0 && box_bottom + 600.0 < board_top,
-        "the landed task's box must wait within 600 px of the window yet past the board's reach: {at}"
+        box_bottom + 600.0 < board_top,
+        "the landed task's box must wait more than 600 px above the window: {at}"
     );
     for _ in 0..4 {
         frames(&mut browser);
     }
     assert_eq!(
-        browser.eval("document.querySelector('.board-scroll').scrollTop"),
+        browser.eval("scrollY"),
         at["set"],
         "a hold still running scrolled the board back for a box that cannot draw: {at}"
     );
@@ -1492,11 +1501,11 @@ new MutationObserver((records, observer) => {
     if (!document.getElementById('row-tools/t-00')) return;
     observer.disconnect();
     requestAnimationFrame(() => {
-        const board = document.querySelector('.board-scroll');
+        const board = document.querySelector('.waiting-columns');
         board.dispatchEvent(new WheelEvent('wheel', {deltaY: 300, bubbles: true}));
-        board.scrollTop += 300;
-        const then = board.scrollTop;
-        setTimeout(() => { window.__scrolled = {then, later: board.scrollTop}; }, 1000);
+        scrollBy(0, 300);
+        const then = scrollY;
+        setTimeout(() => { window.__scrolled = {then, later: scrollY}; }, 1000);
     });
 }).observe(document.body, {subtree: true, childList: true});"#;
 

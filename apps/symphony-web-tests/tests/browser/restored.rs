@@ -887,7 +887,7 @@ fn board_fetch_and_server_notices_keep_loaded_rows_in_place_after_narrowing() {
         "review",
         "done",
     ];
-    let tasks: Vec<_> = statuses.iter().flat_map(|status| (0..3).map(move |i| json!({
+    let tasks: Vec<_> = statuses.iter().flat_map(|status| (0..12).map(move |i| json!({
         "slug": format!("notice/{status}-{i}"),
         "title": format!("Loaded {status} task {i} keeps its real row through an unavailable board snapshot"),
         "body": "", "status": status, "priority":1, "parent":null, "created_by":"owner",
@@ -898,7 +898,7 @@ fn board_fetch_and_server_notices_keep_loaded_rows_in_place_after_narrowing() {
         "/api/task-board",
         &json!({
             "tasks":tasks, "statuses":statuses,
-            "counts":statuses.map(|s| (s,3)), "signoff":[], "next":null
+            "counts":statuses.map(|s| (s,12)), "signoff":[], "next":null
         }),
     );
     let Some(mut browser) = chrome() else { return };
@@ -912,28 +912,55 @@ fn board_fetch_and_server_notices_keep_loaded_rows_in_place_after_narrowing() {
     // deliberately taller than a short fetched row; that loading transition
     // must not be mistaken for a reconnect notice moving settled content.
     for status in statuses {
+        assert!(browser.wait_for(
+            &format!("document.querySelectorAll('[data-status={status}] [id^=row-]').length===12"),
+            SHOWN
+        ));
         browser.eval(&format!(
-            "document.querySelector('[data-status={status}]').scrollIntoView()"
+            "document.querySelector('[data-status={status}] [id^=row-]:last-child').scrollIntoView()"
         ));
         assert!(browser.wait_for(
-            &format!("document.querySelectorAll('[data-status={status}] .taskcard').length===3"),
+            &format!("document.querySelectorAll('[data-status={status}] .taskcard').length===12"),
             SHOWN
         ));
     }
     assert_eq!(
         browser.eval("document.querySelectorAll('.taskcard').length"),
-        json!(18)
+        json!(72)
     );
     for width in [300, 390, 1024] {
         browser.call(
             "Emulation.setDeviceMetricsOverride",
             json!({"width":width,"height":900,"deviceScaleFactor":1,"mobile":false}),
         );
-        let narrowed = browser.eval("({height:document.documentElement.scrollHeight,rows:document.querySelectorAll('.taskcard').length})");
-        for status in statuses {
-            browser.eval(&format!("document.querySelector('[data-status={status}]').scrollIntoView();new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))"));
-        }
-        println!("board {width}px after resize {narrowed}, after revealing loaded rows {}", browser.eval("({height:document.documentElement.scrollHeight,rows:document.querySelectorAll('.taskcard').length})"));
+        assert!(browser.wait_for(
+            &format!(
+                "document.querySelectorAll('.waiting-columns .column').length === {}",
+                if width <= 760 { 1 } else { 7 }
+            ),
+            SHOWN
+        ));
+        // Widening remounts the stage lists; approach their tops before their row boxes.
+        browser.eval("scrollTo(0,0)");
+        assert!(browser.wait_for(
+            &format!(
+                "document.querySelectorAll('.waiting-columns [id^=row-]').length === {}",
+                if width <= 760 { 12 } else { 72 }
+            ),
+            SHOWN
+        ));
+        assert!(browser.wait_for(
+            "[...document.querySelectorAll('.waiting-columns .column:not(.rail)')].every(column => column.querySelector('[id^=row-]:first-child .taskcard'))",
+            SHOWN
+        ));
+        browser.eval("scrollTo(0,document.documentElement.scrollHeight)");
+        assert!(browser.wait_for(
+            &format!(
+                "document.querySelectorAll('.taskcard').length === {}",
+                if width <= 760 { 12 } else { 72 }
+            ),
+            SHOWN
+        ));
         browser.eval("document.documentElement.style.overflowAnchor='none';scrollTo({top:1200,behavior:'instant'});new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))");
         browser.eval("window.keptScroll=scrollY;window.keptBoard=document.querySelector('.kanban');window.keptBox=JSON.stringify(keptBoard.getBoundingClientRect().toJSON());window.keptRows=[...document.querySelectorAll('.taskcard')];window.keptIds=keptRows.map(e=>e.dataset.slug).join(',')");
         site.server_notice("The review server is reconnecting to its task database.");
@@ -947,13 +974,13 @@ fn board_fetch_and_server_notices_keep_loaded_rows_in_place_after_narrowing() {
         // page tries again by itself, and says so.
         assert!(browser.wait_for("document.querySelector('main')?.dataset.feed==='stale' && document.querySelector('.page-notices [role=alert]')?.textContent==='Board snapshot unavailable (the server answered 500). Trying again…'", SHOWN), "the real board-fetch alert was not reached: {}", browser.eval("document.body.innerText"));
         assert_notice_surface(&mut browser, ".page-notices [role=alert]", "alert");
-        assert_eq!(browser.eval("scrollY===keptScroll && JSON.stringify(keptBoard.getBoundingClientRect().toJSON())===keptBox && [...document.querySelectorAll('.taskcard')].every((e,i)=>e===keptRows[i]) && keptRows.map(e=>e.dataset.slug).join(',')===keptIds"), json!(true), "{width}px: failed snapshots must retain all eighteen row identities, the board height and reading offset");
+        assert_eq!(browser.eval("scrollY===keptScroll && JSON.stringify(keptBoard.getBoundingClientRect().toJSON())===keptBox && [...document.querySelectorAll('.taskcard')].every((e,i)=>e===keptRows[i]) && keptRows.map(e=>e.dataset.slug).join(',')===keptIds"), json!(true), "{width}px: failed snapshots must retain all mounted row identities, the board height and reading offset");
         browser.eval("scrollTo(0,document.documentElement.scrollHeight);new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))");
         assert_eq!(browser.eval(r#"(() => {
             const notice=document.querySelector('.page-notices').getBoundingClientRect();
-            const last=document.querySelector('[aria-controls=task-groups]').getBoundingClientRect();
+            const last=[...document.querySelectorAll('.taskcard')].map(card=>card.getBoundingClientRect()).sort((a,b)=>b.bottom-a.bottom)[0];
             return last.height>0 && last.top>=0 && last.bottom<=notice.top && notice.bottom<=innerHeight;
-        })()"#), json!(true), "{width}px: the actual end control clears the whole notice stack");
+        })()"#), json!(true), "{width}px: the last real card clears the whole notice stack");
         browser.eval("window.failureHeight=document.documentElement.scrollHeight;window.failureScroll=scrollY");
         site.fail_route("/api/task-board", false);
         site.fail_feeds(0);

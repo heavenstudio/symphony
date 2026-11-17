@@ -264,6 +264,10 @@ impl Drop for ScratchBoard {
 fn owner_priority_and_cancellation_update_the_task_and_open_board_without_reload() {
     let Some(mut page) = chrome() else { return };
     let Some(mut overview) = chrome() else { return };
+    overview.call(
+        "Emulation.setDeviceMetricsOverride",
+        json!({"width":1440,"height":900,"deviceScaleFactor":1,"mobile":false}),
+    );
     let board = ScratchBoard::start();
     let actor = board.call("register", json!({"kind":"worker"}));
     let slug = "fixture/owner-controls";
@@ -333,11 +337,9 @@ fn owner_priority_and_cancellation_update_the_task_and_open_board_without_reload
     ));
     page.eval("[...document.querySelectorAll('.task-controls button')].find(b=>b.textContent==='Confirm cancellation').click()");
     assert!(page.wait_for("document.querySelector('.task-head .state')?.textContent==='cancelled' && ![...document.querySelectorAll('.task-controls button')].some(b=>b.textContent==='Cancel task' || b.textContent==='Confirm cancellation')",SHOWN),"{}",page.eval("document.body.innerText"));
-    assert!(overview.wait_for("document.querySelector('.column[data-status=ready] .count')?.textContent==='0' && document.querySelector('.column[data-status=cancelled] .count')?.textContent==='1'",SHOWN),"{}",overview.eval("document.body.innerText"));
-    overview.eval(
-        "document.querySelector('.column[data-status=cancelled]').scrollIntoView({block:'center'})",
-    );
-    assert!(overview.wait_for("document.querySelector('.column[data-status=cancelled] [data-slug=\"fixture/owner-controls\"].p0 .task-status')?.textContent==='cancelled'",SHOWN));
+    assert!(overview.wait_for("document.querySelector('.column[data-status=ready] .count')?.textContent==='0' && document.querySelector('[data-open-stage=cancelled]')?.textContent.startsWith('1 cancelled')",SHOWN),"{}",overview.eval("document.body.innerText"));
+    overview.eval("document.querySelector('[data-open-stage=cancelled]').click()");
+    assert!(overview.wait_for("document.querySelector('.column[data-status=cancelled] .count')?.textContent==='1' && document.querySelector('.column[data-status=cancelled] [data-slug=\"fixture/owner-controls\"].p0') !== null",SHOWN));
     assert_eq!(page.eval("window.ownerControlsVisit"), json!(true));
     assert_eq!(overview.eval("window.ownerControlsVisit"), json!(true));
     let stored = board.call("get", json!({"slug":slug}));

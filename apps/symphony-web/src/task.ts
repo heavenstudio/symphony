@@ -19,6 +19,8 @@ import type {
 
 const isText = (value: unknown): value is string => typeof value === "string";
 const isNumber = (value: unknown): value is number => typeof value === "number";
+const isReviewCount = (value: unknown): value is number =>
+  isNumber(value) && Number.isInteger(value) && value >= 0 && value <= 0xffffffff;
 const isTexts = (value: unknown): value is string[] => Array.isArray(value) && value.every(isText);
 /** As serde reads an `Option`: absent and `null` are none. */
 const absent = (value: unknown) => value === undefined || value === null;
@@ -52,7 +54,10 @@ export function readTask(value: unknown): Task | null {
     isNumber(field(value, "updated")) &&
     (absent(field(value, "parent")) || isText(field(value, "parent"))) &&
     isTexts(field(value, "links")) &&
-    isRoles(field(value, "roles"))
+    isRoles(field(value, "roles")) &&
+    (absent(field(value, "review_rounds")) || isReviewCount(field(value, "review_rounds"))) &&
+    (absent(field(value, "waits_on")) || isWaitsOn(field(value, "waits_on"))) &&
+    (absent(field(value, "from")) || isText(field(value, "from")))
     ? { ...(value as Task), parent: (field(value, "parent") as string | undefined) ?? null }
     : null;
 }
@@ -81,6 +86,18 @@ export function readListing(value: unknown): TaskListing | null {
     return found === undefined || guard(found);
   };
   if (
+    !(
+      absent(field(value, "waiting")) ||
+      (isCounts(field(field(value, "waiting"), "kinds")) &&
+        Array.isArray(field(field(value, "waiting"), "columns")) &&
+        (field(field(value, "waiting"), "columns") as unknown[]).every(
+          (column) =>
+            isText(field(column, "status")) &&
+            isNumber(field(column, "ordinary")) &&
+            isNumber(field(column, "blocked")) &&
+            (absent(field(column, "oldest")) || isNumber(field(column, "oldest"))),
+        ))
+    ) ||
     !listed("statuses", isTexts) ||
     !listed("signoff", isTexts) ||
     !listed("counts", isCounts) ||
@@ -116,6 +133,7 @@ const FIELDS: [keyof TaskFields, (value: unknown) => boolean][] = [
   ["depends", isTexts],
   ["roles", isRoles],
   ["instruction", (value) => typeof value === "boolean"],
+  ["review_rounds", isReviewCount],
   ["waits_on", isWaitsOn],
   ["from", isText],
 ];
@@ -246,6 +264,7 @@ export function merge(task: Task, fields: TaskFields): Task {
     "priority",
     "updated",
     "instruction",
+    "review_rounds",
   ] as const) {
     const value = fields[name];
     if (value !== undefined && value !== null) (next as Record<string, unknown>)[name] = value;
