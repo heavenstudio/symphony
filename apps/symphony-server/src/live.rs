@@ -2164,6 +2164,17 @@ fn board_changes(old: &Board, new: &Board) -> Vec<Value> {
     changes
 }
 
+/// Items in lexical key order, retaining the last item with a duplicate key.
+fn keyed<T>(items: &[T], key: impl Fn(&T) -> String) -> BTreeMap<String, &T> {
+    let mut mapped = BTreeMap::new();
+    // Direct insertion keeps the last duplicate and sorts by key, without collecting a
+    // temporary vector and linking a separate stable sorter for each wire item type.
+    for item in items {
+        mapped.insert(key(item), item);
+    }
+    mapped
+}
+
 /// List regions carry keyed upserts/removals, never a copy of the task board or the entire queue.
 /// `order` is sent only when membership/order changes, alongside those changed records.
 fn diff_items<T: serde::Serialize + PartialEq>(
@@ -2176,8 +2187,8 @@ fn diff_items<T: serde::Serialize + PartialEq>(
     if old == new {
         return;
     }
-    let before: BTreeMap<_, _> = old.iter().map(|t| (key(t), t)).collect();
-    let after: BTreeMap<_, _> = new.iter().map(|t| (key(t), t)).collect();
+    let before = keyed(old, &key);
+    let after = keyed(new, &key);
     for (id, item) in &after {
         if before.get(id).copied() != Some(*item) {
             changes.push(json!({"region":region, "data":{"key":id, "value":item}}));
@@ -2224,7 +2235,7 @@ fn diff_shown<T: serde::Serialize + PartialEq + Clone>(
     };
     let at = changes.len();
     diff_items(changes, region, &shown(old), &shown(new), &key);
-    let now: BTreeMap<String, &T> = new.iter().map(|item| (key(item), item)).collect();
+    let now = keyed(new, key);
     for event in &mut changes[at..] {
         if event["region"] == region
             && event["data"].get("value").is_some()
@@ -2451,6 +2462,9 @@ mod timeline_tests;
 
 #[cfg(test)]
 mod task_diff_tests;
+
+#[cfg(test)]
+mod keyed_tests;
 
 #[cfg(test)]
 mod reports_tests;
