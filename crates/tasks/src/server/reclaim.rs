@@ -434,7 +434,7 @@ fn layout(running: &Running) -> Result<Layout, ServerError> {
         }
         layout.definitions.insert(ns, defined(&info));
     }
-    layout.databases.sort_unstable();
+    layout.databases.sort();
     Ok(layout)
 }
 

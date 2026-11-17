@@ -243,7 +243,7 @@ fn record(store: &Store, handle: &str, terminal: &Object, why: &str) -> Result<S
                 .map(move |r| (r.since, t.slug.clone(), r.role))
         })
         .collect();
-    roles.sort_unstable_by(|a, b| {
+    roles.sort_by(|a, b| {
         a.0.total_cmp(&b.0)
             .then_with(|| (&a.1, &a.2).cmp(&(&b.1, &b.2)))
     });

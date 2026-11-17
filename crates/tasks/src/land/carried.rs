@@ -193,7 +193,7 @@ fn merged(dir: &Path, ours: &str, theirs: &str) -> Result<(String, Vec<String>),
         .take_while(|field| !field.is_empty())
         .map(str::to_string)
         .collect();
-    conflicted.sort_unstable();
+    conflicted.sort();
     conflicted.dedup();
     // 0 is a clean merge and 1 one with conflicts, the tree written either way; a status that
     // disagrees with the paths listed is not one to go by.

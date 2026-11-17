@@ -265,7 +265,7 @@ impl<'a> Look<'a> {
     /// oldest made first, and the role it holds there: `executor of SLUG`.
     fn under_work(&self, task: &Task, role: &str) -> Option<(String, String)> {
         let mut under = self.below(task);
-        under.sort_unstable_by_key(|t| t.id);
+        under.sort_by_key(|t| t.id);
         (under.iter()).find_map(|child| {
             (self.held(child, role)).map(|who| (who, format!("{role} of {}", child.slug)))
         })

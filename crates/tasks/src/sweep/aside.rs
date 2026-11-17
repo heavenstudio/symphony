@@ -235,7 +235,7 @@ impl Look<'_> {
                 Err(_) => unnamed = true,
             }
         }
-        names.sort_unstable();
+        names.sort();
         let start = kept.len();
         let mut left_out = false;
         for name in names {

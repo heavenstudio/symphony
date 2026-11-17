@@ -173,7 +173,7 @@ pub fn measure(
         })
         .unwrap_or_default();
     let bytes = largest.iter().map(|l| l.bytes).sum();
-    largest.sort_unstable_by(|a, b| b.bytes.cmp(&a.bytes).then_with(|| a.name.cmp(&b.name)));
+    largest.sort_by(|a, b| b.bytes.cmp(&a.bytes).then_with(|| a.name.cmp(&b.name)));
     largest.truncate(LARGEST);
     Measured {
         folder: folder.to_path_buf(),

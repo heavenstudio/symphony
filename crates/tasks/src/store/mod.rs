@@ -382,7 +382,7 @@ impl Store {
         let sql = surreal::claimable();
         let mut slugs: Vec<String> = self
             .retrying(|| self.transact(&sql, json!({"handle": handle, "executing": EXECUTING})))?;
-        slugs.sort_unstable();
+        slugs.sort();
         slugs.dedup();
         Ok(slugs)
     }

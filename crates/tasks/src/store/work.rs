@@ -511,7 +511,7 @@ impl Store {
                 .filter(|held| held.handle == handle)
                 .map(|held| held.slug.clone())
                 .collect();
-            slugs.sort_unstable();
+            slugs.sort();
             slugs.dedup();
             top_in(&tree, &slugs).cloned()
         };

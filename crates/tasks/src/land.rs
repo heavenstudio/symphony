@@ -1111,7 +1111,7 @@ fn justfile(root: &Path) -> Option<PathBuf> {
         .map(|entry| entry.file_name().to_string_lossy().into_owned())
         .filter(|name| matches!(name.to_lowercase().as_str(), "justfile" | ".justfile"))
         .collect();
-    names.sort_unstable();
+    names.sort();
     names.first().map(|name| root.join(name))
 }
 
@@ -2513,7 +2513,7 @@ impl Landing<'_> {
                 taken.push(file.clone());
             }
         }
-        taken.sort_unstable();
+        taken.sort();
         if !taken.is_empty() {
             if let Err(why) = self.take_ours(&path, &taken) {
                 let _ = git(&path, &["merge", "--abort"]);

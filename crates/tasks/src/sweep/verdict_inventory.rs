@@ -210,7 +210,7 @@ impl Capture<'_> {
                     return Err(Unproven::Unknown);
                 }
             }
-            names.sort_unstable();
+            names.sort();
             for name in names {
                 self.walk(&path.join(name))?;
             }

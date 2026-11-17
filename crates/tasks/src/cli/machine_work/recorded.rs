@@ -493,7 +493,7 @@ fn names(operations: &Path) -> io::Result<Vec<PathBuf>> {
             paths.push(path);
         }
     }
-    paths.sort_unstable();
+    paths.sort();
     Ok(paths)
 }
 
@@ -732,7 +732,7 @@ fn entries(folder: &Path) -> io::Result<(Vec<PathBuf>, Vec<PathBuf>)> {
             visible.push(path);
         }
     }
-    visible.sort_unstable();
+    visible.sort();
     Ok((visible, hidden))
 }
 

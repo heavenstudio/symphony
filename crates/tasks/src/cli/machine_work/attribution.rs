@@ -64,7 +64,7 @@ fn assign(
         .filter(|r| r.closed.is_none() && r.handle == handle && r.worktree == operation.checkout)
         .map(|r| &r.slug)
         .collect();
-    tasks.sort_unstable();
+    tasks.sort();
     tasks.dedup();
     if tasks.len() == 1 {
         operation.task = Some(tasks[0].clone());
