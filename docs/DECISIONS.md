@@ -16,6 +16,8 @@ their dated history work is in [REVIEW](REVIEW.md).
 
     **B** needs no separate action for a compatible change. A commit can change routing or staffing for live work as soon as it is observed; incompatible changes still stop for mappings. Operators must treat every workflow commit as an activation and use another committed change to roll it back.
 
+    **Required under either option:** unknown or removed IDs stop activation until every affected task and blocked resume target has a valid mapping. Active attempts must drain or be explicitly invalidated. Concurrent writers and stale requests are fenced; failure leaves the previous version active, with no partial mapping. Rollback is a new audited activation with mappings and retained history, not a schema downgrade. Neither option decides project artifact-guard semantics.
+
     **Why A.** A workflow change can move existing blocked resume targets, replace who gets staffed and affect pending delivery. The preview makes those consequences reviewable before the board changes them. Activation remains one audited transaction; reverting Git alone cannot downgrade stored history.
 
     **Earlier verdicts checked.** **project-workflow-shape** approved C, including configurable staffing, recovery and completion with unchanged defaults. It does not choose automatic versus explicit activation. **needed-stamps** keeps evidence in the existing catalogue and project landing policy; neither option changes that. The separate artifact-guard design owns approval enforcement, not this activation choice.

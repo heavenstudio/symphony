@@ -59,6 +59,13 @@ Task outcome, dependency satisfaction, worktree cleanup eligibility and reposito
 separate recorded facts. In particular, an approved task may still await landing or deployment.
 Provider success and an agent's final message imply none of these facts.
 
+The attempt-design join uses project/board/task identity plus attempt UUID and immutable input
+revision/digest. Input revision is distinct from task coordination revision. Result promotion
+also checks the current-attempt pointer, operation key, attempt-state revision, worker lease
+epoch and provider resource/runtime generation, including the restore execution epoch. Persist
+the initiating trusted principal separately from the service applying the result. These are
+requirements agreed on the execution task thread, not a released attempt API.
+
 ## Definition and validation
 
 The proposed `[workflow]` in committed `symphony.toml` replaces the whole default definition.
@@ -173,10 +180,12 @@ the same access policy as the task. A legal-next-actions answer is a preview, ne
 | Unavailable guard or unsupported writer/adapter | Refuse the guarded operation, with the missing capability/version. Display caches cannot turn unknown into pass. |
 
 Legacy commands and API methods keep their current meaning for the default workflow. A custom
-workflow can provide an unambiguous legacy alias, resolved through admission with a current
-snapshot, or return `explicit_action_required` with its next actions. Existing signatures remain
-working on default projects beside the new API for at least the consumer two-release window.
-Existing API fields are not renamed, removed or changed in meaning within their major.
+workflow-aware CLI can resolve an unambiguous legacy alias after reading next actions and then
+submit the expected revisions, or return `explicit_action_required`. A legacy API request
+without the required source/revision tokens refuses custom-workflow mutation; the server cannot
+invent a fresh client intention by reading the current task. Existing signatures remain working
+on default projects beside the new API for at least the consumer two-release window. Existing
+API fields are not renamed, removed or changed in meaning within their major.
 
 ## Worked graph and recovery
 
@@ -249,7 +258,9 @@ head, input/evidence generation and destination. Immediately before a merge or d
 the adapter revalidates that intent and actual remote/head/target preconditions; it supplies
 an authoritative effect receipt for finalization. Stale or cancelled intent refuses the effect.
 Graph state alone is never proof of Git merge or deployment. The GitHub landing design owns
-head-bound checks, evidence sealing, merge authority, squash provenance and reconciliation.
+head-bound evidence, merge-time revalidation, merge authority, squash provenance and
+reconciliation. Any stronger cross-system sealing mechanism is that design's proposal to assess,
+not a requirement silently added by this graph contract.
 
 If a crash occurs after an external merge but before board finalization, reconciliation reads
 the actual effect by its idempotency/provenance identity, records its receipt and finishes the
