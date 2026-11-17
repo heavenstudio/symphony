@@ -2,7 +2,9 @@
 //! its start registers): the project of DIR's checkout written into the machine folder's registry
 //! (its main checkout, its id and its `symphony.toml`), and what the host rule says of the running
 //! server ([`super::host`]): it serves the project, or it lacks the project's plugins and that
-//! project's `just symphony` replaces it, or the project's pin is newer and someone must bump. Run
+//! project's `just symphony` replaces it, or the project's pin is newer and someone must bump.
+//! A compatible host is called serving only once its board JSON answers; registration makes and
+//! migrates no board. Run
 //! in a linked worktree, it registers no project of that worktree's own repository, naming the main
 //! checkout; another repository's project it registers as it would from anywhere else.
 
@@ -124,7 +126,10 @@ pub fn add(
         entry.root.display()
     );
     Ok(match verdict {
-        Some(Verdict::Serves) => format!("{said}; the running Symphony serves it"),
+        Some(Verdict::Serves) => match board_readiness(front.expect("a judged host"), &entry.id) {
+            Ok(()) => format!("{said}; the running Symphony serves it"),
+            Err(why) => format!("{said}\n· {why}"),
+        },
         Some(Verdict::Replace(why)) => format!(
             "{said}\n· {why}: `just symphony` in {} hands it over",
             entry.root.display()
@@ -206,24 +211,68 @@ fn running_within(
         Err(_) => return None,
     };
     let record: Record = serde_json::from_str(&text).ok()?;
-    let address = SocketAddr::from(([127, 0, 0, 1], record.port));
-    let mut stream = TcpStream::connect_timeout(&address, look).ok()?;
-    stream.set_read_timeout(Some(look)).ok()?;
-    write!(
-        stream,
-        "GET {} HTTP/1.0\r\nHost: 127.0.0.1:{}\r\nConnection: close\r\n\r\n",
-        symphony_api::FRONT_PATH,
-        record.port
-    )
-    .ok()?;
-    let mut answer = String::new();
-    stream.read_to_string(&mut answer).ok()?;
-    let (head, body) = answer.split_once("\r\n\r\n")?;
-    head.lines()
-        .next()
-        .is_some_and(|status| status.split_whitespace().nth(1) == Some("200"))
-        .then(|| serde_json::from_str(body).ok())
+    let (status, body) = get(record.port, symphony_api::FRONT_PATH, look).ok()?;
+    (status == 200)
+        .then(|| serde_json::from_str(&body).ok())
         .flatten()
+}
+
+/// Check the board's JSON, never the HTML shell, without writing or migrating it. A refusal keeps
+/// the API's actionable reason. A repaired board may retain that reason until its next retry.
+pub(crate) fn board_readiness(front: &symphony_api::Front, id: &str) -> Result<(), String> {
+    let path = format!("/{id}/api/task-board?counts=1&work=0");
+    let url = format!("http://127.0.0.1:{}{path}", front.port);
+    let checked = get(front.port, &path, LOOK).and_then(|(status, body)| {
+        if status != 200 {
+            let why = serde_json::from_str::<serde_json::Value>(&body)
+                .ok()
+                .and_then(|value| value["error"].as_str().map(str::to_string))
+                .unwrap_or_else(|| "no board JSON answer".into());
+            return Err(format!("HTTP {status}: {why}"));
+        }
+        serde_json::from_str::<symphony_api::TaskListing>(&body)
+            .map(|_| ())
+            .map_err(|_| "HTTP 200 did not contain task-board JSON".to_string())
+    });
+    checked.map_err(|why| {
+        format!(
+            "board readiness at {url} failed: {why}; the running host requires board schema {}. \
+             If the board is behind, first link a board command compatible with that schema, \
+             then run `just tasks migrate` in the project's main checkout; registration and \
+             readers never migrate it. After repair the running \
+             server retries within 60 seconds on its next board tick or request; check this JSON \
+             URL again",
+            front.schema
+        )
+    })
+}
+
+/// A bounded, local HTTP/1.0 read: asking for close avoids chunked transfer encoding.
+fn get(port: u16, path: &str, look: Duration) -> Result<(u16, String), String> {
+    let read = || -> std::io::Result<String> {
+        let address = SocketAddr::from(([127, 0, 0, 1], port));
+        let mut stream = TcpStream::connect_timeout(&address, look)?;
+        stream.set_read_timeout(Some(look))?;
+        stream.set_write_timeout(Some(look))?;
+        write!(
+            stream,
+            "GET {path} HTTP/1.0\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n"
+        )?;
+        let mut answer = String::new();
+        stream.read_to_string(&mut answer)?;
+        Ok(answer)
+    };
+    let answer = read().map_err(|error| error.to_string())?;
+    let (head, body) = answer
+        .split_once("\r\n\r\n")
+        .ok_or("incomplete HTTP answer")?;
+    let status = head
+        .lines()
+        .next()
+        .and_then(|line| line.split_whitespace().nth(1))
+        .and_then(|status| status.parse().ok())
+        .ok_or("invalid HTTP status")?;
+    Ok((status, body.to_string()))
 }
 
 #[cfg(test)]

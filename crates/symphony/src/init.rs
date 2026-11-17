@@ -1227,14 +1227,38 @@ pub fn steps(root: &Path, machine: &Machine) -> Vec<String> {
                 .to_string(),
         );
     }
-    if let Some(folder) = machine.folder
-        && !registered(root, folder)
-    {
-        steps.push(
-            "register the project with the machine's Symphony: `just symphony-cli project add` \
-             (a start of `just symphony` registers it too)"
-                .to_string(),
-        );
+    if let Some(folder) = machine.folder {
+        let registered = registered(root, folder);
+        if !registered {
+            steps.push(
+                "register the project with the machine's Symphony: `just symphony-cli project add` \
+                 (a start of `just symphony` registers it too)"
+                    .to_string(),
+            );
+        }
+        if let Some(front) = crate::machine::command::running(folder, None) {
+            if let Some(writer) = builds::find(root, "tasks", &machine.beyond())
+                && let Some((_, release)) = crate::machine::release::of_binary(&writer)
+                && release.serves.schema < front.schema
+            {
+                steps.push(format!(
+                    "link a compatible board command: {} selects {} at schema {}, but the \
+                     running host requires schema {}; after updating the project's writer, \
+                     `just tasks migrate` in its main checkout moves the board. Init never \
+                     changes the writer or migrates the board",
+                    writer.display(),
+                    release.release,
+                    release.serves.schema,
+                    front.schema
+                ));
+            }
+            if registered
+                && let Some(project) = &project
+                && let Err(why) = crate::machine::command::board_readiness(&front, &project.id)
+            {
+                steps.push(why);
+            }
+        }
     }
     steps
 }
