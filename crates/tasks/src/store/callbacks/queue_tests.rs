@@ -2,6 +2,7 @@
 //! that is the only codex on its `PATH`.
 
 use super::*;
+use crate::children::Child as _;
 use crate::sys::Command;
 use std::time::Instant;
 
@@ -50,7 +51,7 @@ fn stand_in(name: &str) -> PathBuf {
 /// None of its streams is `/dev/null`, so a queue that inherited one would not read null.
 fn rerun(name: &str, dir: &std::path::Path) {
     let case = crate::sys::spawn_piped(
-        Command::new(std::env::current_exe().unwrap())
+        Command::of(std::env::current_exe().unwrap())
             .args(["--exact", &format!("store::callbacks::queue_tests::{name}")])
             .env(QUEUE_CASE, dir)
             .env("PATH", format!("{}:/usr/bin:/bin", dir.display()))
@@ -243,20 +244,22 @@ fn an_accepted_connection_not_yet_close_on_exec_reaches_no_codex_queue() {
         let queued = scope.spawn(|| answered(queue_until("abcdef01", "a message", due)));
         // The queue's child, read under the spawn lock: after its spawn has left it its streams
         // alone, and while it waits for its release.
-        let table = loop {
-            {
-                let _spawning = crate::sys::spawning();
-                match listed(own).0[..] {
-                    [] => {}
-                    [child] => break listed(child).1,
-                    ref many => panic!("this case's one child is its queue: {many:?}"),
+        let table = test_time::until(
+            "the codex queue's child is read, or the queue ends",
+            test_time::FLOOR,
+            || {
+                {
+                    let _spawning = crate::sys::spawning();
+                    match listed(own).0[..] {
+                        [] => {}
+                        [child] => return Some(listed(child).1),
+                        ref many => panic!("this case's one child is its queue: {many:?}"),
+                    }
                 }
-            }
-            if queued.is_finished() {
-                break BTreeMap::new();
-            }
-            std::thread::sleep(Duration::from_millis(1));
-        };
+                queued.is_finished().then(BTreeMap::new)
+            },
+        )
+        .unwrap();
         if table.is_empty() {
             let ended = queued.join().unwrap();
             panic!("codex queue ended ({ended:?}) before its descriptors were read");

@@ -239,6 +239,10 @@ mod tests {
             || taken() >= least,
         )
         .unwrap();
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "no-timed-waits baseline: a test holds a moment to show no further SIGTERM comes, where a mark the program writes after the ask's last signal is the event"
+        )]
         std::thread::sleep(Duration::from_millis(300));
         taken()
     }

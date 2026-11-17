@@ -3,6 +3,7 @@
 //! stand-in `tar` killed part way through its unpack.
 
 use super::*;
+use crate::children::Child as _;
 use sha2::{Digest, Sha256};
 use std::os::unix::fs::PermissionsExt;
 use std::process::Command;
@@ -82,7 +83,7 @@ fn fetched(dir: &Path, surreal: &Path, tarball: &Path, sha: &str) -> std::proces
             tarball.display()
         ),
     );
-    Command::new("/bin/sh")
+    Command::of("/bin/sh")
         .args(["-c", &line])
         .env(
             "PATH",
@@ -108,7 +109,7 @@ fn the_fetch_installs_the_surreal_of_a_tarball_whose_sha256_is_the_pin_and_nothi
     let dir = scratch("install");
     executable(&dir.join("made/surreal"), "#!/bin/sh\necho surreal 3.3.0\n");
     let tarball = dir.join("made.tgz");
-    let made = Command::new("tar")
+    let made = Command::of("tar")
         .args(["-czf"])
         .arg(&tarball)
         .arg("-C")

@@ -1,6 +1,7 @@
 //! Exercise the real fixture boundary: shutdown must finish before a scope or test process ends,
 //! and an error keeps its original cause. Every server, log and port belongs to this case.
 
+use crate::children::Child as _;
 use crate::{board, store};
 use std::hash::{BuildHasher, RandomState};
 use std::net::TcpListener;
@@ -88,7 +89,7 @@ fn static_board_exit_waits_for_its_server_even_after_a_poisoned_worker() {
     let scratch = Scratch::new("exit");
     let record = scratch.0.join("address");
     let done = sys::output(
-        Command::new(std::env::current_exe().unwrap())
+        Command::of(std::env::current_exe().unwrap())
             .args([
                 "--ignored",
                 "--exact",

@@ -1,5 +1,6 @@
 //! Repeated passes count real status invocations, rather than inferring reuse from elapsed time.
 
+use crate::children::Child as _;
 use crate::common::Seed;
 use crate::{Repo, git, text, write};
 use std::fs;
@@ -37,10 +38,10 @@ pub(super) fn traced_with(
     change: impl FnOnce(&mut Command),
 ) -> (String, usize) {
     let _ = fs::remove_file(trace);
-    let mut command = Command::new(env!("CARGO_BIN_EXE_tasks"));
+    let mut command = Command::of(env!("CARGO_BIN_EXE_tasks"));
     command
         .args(["sweep", "--recent-hours", "0"])
-        .env_clear()
+        .cleared()
         .envs(r.vars())
         .env("GIT_TRACE2_EVENT", trace)
         .env("TASKS_SWEEP", "off")
@@ -411,7 +412,7 @@ fn a_candidate_using_another_common_policy_declines_cache_reuse() {
     assert_eq!(traced(&r, &trace).1, 1);
     assert_eq!(traced(&r, &trace).1, 0);
     let other = r.dir.join("other-common");
-    let copied = Command::new("cp")
+    let copied = Command::of("cp")
         .arg("-R")
         .arg(r.root.join(".git"))
         .arg(&other)

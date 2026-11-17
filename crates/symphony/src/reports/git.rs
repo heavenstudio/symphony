@@ -188,17 +188,19 @@ pub fn read(root: &Path, branch: &str, since: f64, excluded: &[String]) -> Resul
 /// The rules every agent of a project follows, at its root.
 pub const RULES: &str = "RULES.md";
 
-/// The folder that holds a skill a folder, wherever it is: the project's installed ones
-/// (`.agents/skills`), a package's shipped ones.
-pub const SKILLS: &str = "skills";
+/// The folders that hold skills, a folder each, at the root or under any folder: where a project's
+/// agents find them installed (`.agents/skills`, `.claude/skills`) and where a package ships them
+/// (`shipped/skills`). A folder of a project's own code named `skills` is none of them.
+pub const SKILLS: [&str; 3] = [".agents/skills", ".claude/skills", "shipped/skills"];
 
 /// What a change of `path` changes of what the agents of a project work under, the one list of the
 /// files whose changes the Reports page marks: `settings` for the project's settings file
 /// ([`crate::project::FILE`]), `rules` for [`RULES`] and `skill NAME` for a file of the skill NAME
-/// (anything under a `skills/NAME/` folder, its role pages among them); none for every other path,
-/// a link to a skill's folder (`.claude/skills/NAME`) among them. A guide (`AGENTS.md`,
-/// `CLAUDE.md`) is none: here a third of the landings change one, 69 names in a day beside 12 of
-/// skills and one of the settings (2026-11-15), which buried the marks the page is read for.
+/// (anything under a `NAME/` folder of one of [`SKILLS`], its role pages among them); none for
+/// every other path, a link to a skill's folder (`.claude/skills/NAME`) among them. A guide
+/// (`AGENTS.md`, `CLAUDE.md`) is none: here a third of the landings change one, 69 names in a day
+/// beside 12 of skills and one of the settings (2026-11-15), which buried the marks the page is
+/// read for.
 pub fn instruction(path: &str) -> Option<String> {
     if path == crate::project::FILE {
         return Some("settings".to_string());
@@ -206,22 +208,26 @@ pub fn instruction(path: &str) -> Option<String> {
     if path == RULES {
         return Some("rules".to_string());
     }
-    // The folders alone: the path's last part is the file.
-    let mut folders: Vec<&str> = path.split('/').collect();
-    folders.pop()?;
-    let skills = folders.iter().position(|folder| *folder == SKILLS)?;
-    folders
-        .get(skills + 1)
-        .map(|skill| format!("skill {skill}"))
+    // The folders alone: the path's last part is the file. A skill's is the first `PLACE/NAME/`
+    // among them, PLACE one of `SKILLS`.
+    let parts: Vec<&str> = path.split('/').collect();
+    let (_file, folders) = parts.split_last()?;
+    folders.windows(3).find_map(|three| {
+        let placed = SKILLS
+            .iter()
+            .any(|place| place.split_once('/') == Some((three[0], three[1])));
+        placed.then(|| format!("skill {}", three[2]))
+    })
 }
 
 /// The pathspecs of every path [`instruction`] names, so git reads no other.
 fn instructions() -> Vec<String> {
-    vec![
+    let mut specs = vec![
         format!(":(literal){}", crate::project::FILE),
         format!(":(literal){RULES}"),
-        format!(":(glob)**/{SKILLS}/*/**"),
-    ]
+    ];
+    specs.extend(SKILLS.iter().map(|place| format!(":(glob)**/{place}/*/**")));
+    specs
 }
 
 /// A commit that changed what the agents of a project work under.

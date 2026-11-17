@@ -21,7 +21,7 @@
 
 import { type KeyboardEvent, type PointerEvent, useEffect, useRef, useState } from "react";
 import { anchor } from "./popup-position";
-import { debounce } from "./timing";
+import { Debounce } from "./timing";
 import { bestMatch, Keyboard, TYPEAHEAD_MS } from "./typeahead";
 
 /** The next option after `current` among `count`, round the list; the first with none. */
@@ -129,7 +129,11 @@ export function SelectPopup({
   const shut = closed || !open;
   const [focused, setFocused] = useState<number | null>(null);
   const list = useRef<HTMLDivElement>(null);
-  const search = useRef({ typed: "", resting: new AbortController(), keyboard: new Keyboard() });
+  const search = useRef({
+    typed: "",
+    resting: new Debounce(TYPEAHEAD_MS),
+    keyboard: new Keyboard(),
+  });
   // The option a pointer went down on, and where: only a release on that same option chooses.
   const down = useRef<{ key: string; at: [number, number] } | null>(null);
   // The pointer released since the last press, which the next click is judged by (`clickChooses`).
@@ -137,7 +141,7 @@ export function SelectPopup({
 
   // Placed beside the trigger now and as the page or the viewport moves, until it closes.
   useEffect(() => anchor(id, popup), [id, popup]);
-  useEffect(() => () => search.current.resting.abort(), []);
+  useEffect(() => () => search.current.resting.cancel(), []);
   // The list holds the focus until an option takes it.
   useEffect(() => {
     if (shut) return;
@@ -178,13 +182,10 @@ export function SelectPopup({
       event.stopPropagation();
     } else if (typesLetter(key)) {
       const kept = search.current;
-      kept.resting.abort();
       kept.typed += key;
       // What was typed is forgotten once the keys rest for TYPEAHEAD_MS: a later key starts again.
-      const resting = new AbortController();
-      kept.resting = resting;
-      void debounce(TYPEAHEAD_MS, resting.signal).then(() => {
-        if (!resting.signal.aborted) kept.typed = "";
+      void kept.resting.rest().then((rested) => {
+        if (rested) kept.typed = "";
       });
       const match = bestMatch(
         kept.keyboard,

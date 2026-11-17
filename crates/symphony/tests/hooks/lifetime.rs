@@ -15,7 +15,7 @@ use std::io::Write;
 use std::os::unix::ffi::OsStrExt;
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use symphony_board::sys::{pid_alive, terminate};
 
 /// The longest each wait lasts: for the hook to start its beat, and for the interrupted hook to
@@ -89,31 +89,25 @@ fn interrupting_the_hook_stops_and_reaps_its_beat_even_with_pipe_backpressure() 
             .unwrap()
             .write_all(event.to_string().as_bytes())
             .unwrap();
-        let until = Instant::now() + CEILING;
-        loop {
-            let pid = std::fs::read_to_string(tree.path("held-beat.pid"))
-                .ok()
-                .and_then(|text| text.trim().parse().ok());
-            if let Some(pid) = pid {
-                hook.beat = Some(pid);
-                break;
-            }
-            let ended = hook.child.try_wait().unwrap();
-            assert!(
-                ended.is_none(),
-                "the hook ended before its {padding}-byte fixture beat started: {ended:?}"
-            );
-            assert!(
-                Instant::now() < until,
-                "the {padding}-byte fixture beat never started in {CEILING:?}"
-            );
-            #[expect(
-                clippy::disallowed_methods,
-                reason = "no-timed-waits baseline: a test looks again for its condition by hand, where test_time::wait::until is the helper"
-            )]
-            std::thread::sleep(Duration::from_millis(2));
-        }
-        let pid = hook.beat.unwrap();
+        let pid: i64 = test_time::until(
+            format!("the {padding}-byte fixture beat starts"),
+            CEILING,
+            || {
+                let pid = std::fs::read_to_string(tree.path("held-beat.pid"))
+                    .ok()
+                    .and_then(|text| text.trim().parse().ok());
+                if pid.is_none() {
+                    let ended = hook.child.try_wait().unwrap();
+                    assert!(
+                        ended.is_none(),
+                        "the hook ended before its {padding}-byte fixture beat started: {ended:?}"
+                    );
+                }
+                pid
+            },
+        )
+        .unwrap();
+        hook.beat = Some(pid);
         assert!(
             pid_alive(pid),
             "fixture beat {pid} ended before interruption"
@@ -122,21 +116,12 @@ fn interrupting_the_hook_stops_and_reaps_its_beat_even_with_pipe_backpressure() 
             terminate(i64::from(hook.child.id()), false),
             "hook did not receive SIGTERM"
         );
-        let until = Instant::now() + CEILING;
-        let status = loop {
-            if let Some(status) = hook.child.try_wait().unwrap() {
-                break status;
-            }
-            assert!(
-                Instant::now() < until,
-                "interrupted hook still waits on beat {pid} after {CEILING:?}"
-            );
-            #[expect(
-                clippy::disallowed_methods,
-                reason = "no-timed-waits baseline: a test looks again for its condition by hand, where test_time::wait::until is the helper"
-            )]
-            std::thread::sleep(Duration::from_millis(2));
-        };
+        let status = test_time::until(
+            format!("the interrupted hook ends, not waiting on beat {pid}"),
+            CEILING,
+            || hook.child.try_wait().unwrap(),
+        )
+        .unwrap();
         assert!(status.success(), "silent hook exit: {status:?}");
         assert!(
             !pid_alive(pid),

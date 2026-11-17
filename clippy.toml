@@ -53,3 +53,16 @@ reason = "RULES.md code/no-timed-waits: wait for the event itself, or pace it by
 [[disallowed-methods]]
 path = "tokio::time::interval_at"
 reason = "RULES.md code/no-timed-waits: wait for the event itself, or pace it by a named helper (test_time::wait::until in a test)"
+
+# Two waits of the server's that a deadline bounds and nothing else ends but its stop, so each is a
+# sleep: `front::Shared::wait` wakes early only when the server stops, and `backstop::Backstop::wait`
+# (the watcher's check each `PERIOD`, for an event the watcher dropped) ends each `tick` with
+# `Wake::Idle` only so its loop can look whether it should stop. Each caller is kept in the baseline
+# until its stop and its hand-off wake it by message.
+[[disallowed-methods]]
+path = "symphony_server::front::Shared::wait"
+reason = "RULES.md code/no-timed-waits: a wait only the server's stop ends early is a sleep; wait for the event itself"
+
+[[disallowed-methods]]
+path = "symphony_server::backstop::Backstop::wait"
+reason = "RULES.md code/no-timed-waits: its tick is a look whether the loop should stop; have the stop wake the loop by message"

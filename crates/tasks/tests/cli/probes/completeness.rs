@@ -122,10 +122,10 @@ const LISTINGS: [Listing; 16] = [
 ];
 
 fn read_agent(env: &Env, root: &Path, handle: &str) -> Value {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_tasks"));
+    let mut command = Command::of(env!("CARGO_BIN_EXE_tasks"));
     command
         .args(["agents", "--json"])
-        .env_clear()
+        .cleared()
         .envs(&env.vars)
         .current_dir(root);
     if let Some(profile) = std::env::var_os("LLVM_PROFILE_FILE") {
@@ -174,7 +174,7 @@ fn native_child(c: &mut crate::Case, handle: &str, recorded: &Path, working: &Pa
         .insert("TASKS_NOW".into(), wall_clock().to_string());
     let store = c.store();
     call_in(&store, recorded);
-    let mut cat = Command::new("/bin/cat");
+    let mut cat = Command::of("/bin/cat");
     cat.current_dir(working)
         .stdin(symphony_board::sys::Stdio::piped())
         .stdout(symphony_board::sys::Stdio::null());
@@ -333,7 +333,7 @@ fn partial_listings_cannot_make_a_still_running_owned_child_lost() {
     store.claim("tools/listing", &handle).unwrap();
     assert!(store.bind_agent("listing-agent", &handle, false).unwrap());
     call_in(&store, &tree);
-    let mut cat = Command::new("/bin/cat");
+    let mut cat = Command::of("/bin/cat");
     cat.current_dir(&tree)
         .stdin(symphony_board::sys::Stdio::piped())
         .stdout(symphony_board::sys::Stdio::null());

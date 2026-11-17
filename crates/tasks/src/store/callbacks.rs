@@ -32,6 +32,10 @@ mod pane_watch;
 
 #[cfg(test)]
 #[path = "../../../../tools/test-support/script_process_cwd.rs"]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the fixture scripts every crate's tests share start their children as a test likes, and wait by no timer"
+)]
 mod fixture_script;
 
 /// How long one dispatcher holds a recipient: past it, another may observe and deliver for it.

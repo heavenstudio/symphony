@@ -192,7 +192,8 @@ fn quiet_publication_output(output: &str) -> String {
 /// relays record them, never the case's whole wall: a case a loaded host slows passes while its
 /// stages keep coming, and one that goes `DEADLINE` without a stage event is a hang, failed with
 /// its watchdog report, whose child logs end at the open stage. `now` and `wait` are the clock
-/// and one poll's pause, so a test can run the loop on a clock of its own.
+/// and one poll's pause, so a test can run the loop on a clock of its own; a case runs its looks
+/// ([`watch_look`]) by `test_time::until` instead.
 ///
 /// Its limit: it catches a child that stops, never one that spins. A save that
 /// `retry_conflicts` (src/commit.rs) retries every 250 ms, while another worker hangs holding an
@@ -212,24 +213,38 @@ fn watch(
 ) -> Result<std::process::ExitStatus, String> {
     let spawned = now();
     loop {
-        let at = now();
-        // Full detail stays in child.log; an open stage reaches the live stream
-        // before the target timeout, without flooding successful suite output.
-        let (overdue, progress) = {
-            let mut pending = pending.lock().unwrap();
-            (pending.overdue(at), pending.2.map_or(spawned, |last| last.max(spawned)))
-        };
-        let _ = std::io::stderr().write_all(overdue.as_bytes());
-        if let Some(status) = exited() {
-            return Ok(status);
-        }
-        if at.saturating_duration_since(progress) >= DEADLINE {
-            return Err(watchdog_report(name, home));
+        if let Some(outcome) = watch_look(name, home, pending, &mut exited, spawned, now()) {
+            return outcome;
         }
         // Only this watchdog polls process completion. The cases' ordering assertions use
         // sockets or worker joins, with no elapsed-time or sleep-based success criterion.
         wait();
     }
+}
+
+/// One look of the watchdog ([`watch`]) at `at`, for a child spawned at `spawned`: its status
+/// once it has exited, its watchdog report once it has gone `DEADLINE` without a stage event, and
+/// none while it runs on.
+#[allow(dead_code)]
+fn watch_look(
+    name: &str,
+    home: &Path,
+    pending: &Mutex<PendingPublications>,
+    exited: &mut impl FnMut() -> Option<std::process::ExitStatus>,
+    spawned: Instant,
+    at: Instant,
+) -> Option<Result<std::process::ExitStatus, String>> {
+    // Full detail stays in child.log; an open stage reaches the live stream
+    // before the target timeout, without flooding successful suite output.
+    let (overdue, progress) = {
+        let mut pending = pending.lock().unwrap();
+        (pending.overdue(at), pending.2.map_or(spawned, |last| last.max(spawned)))
+    };
+    let _ = std::io::stderr().write_all(overdue.as_bytes());
+    if let Some(status) = exited() {
+        return Some(Ok(status));
+    }
+    (at.saturating_duration_since(progress) >= DEADLINE).then(|| Err(watchdog_report(name, home)))
 }
 
 #[allow(dead_code)]

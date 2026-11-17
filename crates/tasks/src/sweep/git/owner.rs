@@ -144,6 +144,7 @@ pub fn answers(path: &Path, folders: &[String], tip: Option<&str>) -> Result<Vec
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::children::Child as _;
 
     #[test]
     fn the_owners_lines_are_their_dated_lines_under_a_card() {
@@ -197,7 +198,7 @@ mod tests {
 
     /// `git ARGS` in `root`, which must succeed.
     fn git(root: &Path, args: &[&str]) {
-        let done = std::process::Command::new("git")
+        let done = std::process::Command::of("git")
             .args(["-c", "user.name=t", "-c", "user.email=t@t"])
             .args(args)
             .current_dir(root)

@@ -260,7 +260,7 @@ fn on_a_wide_screen_the_charts_are_two_columns_and_dark_takes_its_own_colours() 
     }
 }
 
-/// The days of [`fortnight`] its ten settings changes fall on, the last three before today, six on
+/// The days of [`fortnight`] its ten marked changes fall on, the last three before today, six on
 /// the middle one: as this repository's own fortnight stood on 13 Nov, symphony.toml changed six
 /// times on 12 Nov alone.
 const CHANGED: [u32; 10] = [10, 10, 11, 11, 11, 11, 11, 11, 12, 12];
@@ -303,12 +303,11 @@ fn what(n: u32) -> &'static str {
     }
 }
 
-/// On a phone the list of a window's ten settings changes shows the newest three and folds the
-/// rest under a disclosure, so the first chart starts on the first screen; a period with six says
-/// each in its readout.
+/// On a phone the list of a window's ten changes, of the settings, the rules and skills, shows the
+/// newest three and folds the rest under a disclosure, so the first chart starts on the first
+/// screen; a period with six says each in its readout.
 #[test]
-fn on_a_phone_a_window_s_many_settings_changes_fold_and_the_first_chart_shows_on_the_first_screen()
-{
+fn on_a_phone_a_window_s_many_changes_fold_and_the_first_chart_shows_on_the_first_screen() {
     let site = served(&changed_often());
     let Some(mut chrome) = chrome() else { return };
     screen(&mut chrome, 390, 844, true);

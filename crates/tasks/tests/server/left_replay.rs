@@ -5,10 +5,11 @@
 //! its own, in the live board's shape (its servers detached), and a starter that ends in the middle
 //! of its replay a process of its own that the case starts and kills by the pid it spawned.
 
+use crate::children::Child as _;
 use crate::common::{Scratch, gone, script, signal};
 use serde_json::json;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use symphony_board::rpc::{Client, healthy};
 use symphony_board::server::{
     Home, LEFT_STOPS, REPLAY_BEGINS, REPLAY_ENDS, REPLAY_THROUGH, Running, Storage, replaying_in,
@@ -116,7 +117,7 @@ fn written(s: &Scratch) -> u64 {
 fn left_running(s: &Scratch) -> (PathBuf, i64, u64) {
     let log = written(s);
     let surreal = gated(s);
-    let mut starter = Command::new(std::env::current_exe().unwrap())
+    let mut starter = Command::of(std::env::current_exe().unwrap())
         .args([
             "--ignored",
             "--exact",
@@ -130,18 +131,21 @@ fn left_running(s: &Scratch) -> (PathBuf, i64, u64) {
         .stderr(Stdio::null())
         .spawn()
         .unwrap();
-    let began = Instant::now();
-    let (replay, memtable) = loop {
-        if let Some(&found) = starts(s).iter().find(|(_, m)| *m > SMALL.memtable) {
-            break found;
-        }
-        assert!(
-            starter.try_wait().unwrap().is_none(),
-            "the starter ended before its replay began"
-        );
-        assert!(began.elapsed() < Duration::from_secs(60), "no replay began");
-        std::thread::sleep(Duration::from_millis(20));
-    };
+    let (replay, memtable) = test_time::until(
+        "a replay begins",
+        test_time::backstop(Duration::from_secs(60)),
+        || {
+            let found = starts(s).iter().find(|(_, m)| *m > SMALL.memtable).copied();
+            if found.is_none() {
+                assert!(
+                    starter.try_wait().unwrap().is_none(),
+                    "the starter ended before its replay began"
+                );
+            }
+            found
+        },
+    )
+    .unwrap();
     // The gated `surreal` says its start before its starter has read the server's pid and written
     // it into the record: the starter is killed only once the record names that server.
     let named = |replay: i64| {
@@ -151,18 +155,21 @@ fn left_running(s: &Scratch) -> (PathBuf, i64, u64) {
             .and_then(|record| record["server"]["pid"].as_i64())
             == Some(replay)
     };
-    let began = Instant::now();
-    while !named(replay) {
-        assert!(
-            starter.try_wait().unwrap().is_none(),
-            "the starter ended before its record named its replay's server"
-        );
-        assert!(
-            began.elapsed() < Duration::from_secs(60),
-            "the record never named the replay's server, pid {replay}"
-        );
-        std::thread::sleep(Duration::from_millis(20));
-    }
+    test_time::until_true(
+        format!("the record names the replay's server, pid {replay}"),
+        test_time::backstop(Duration::from_secs(60)),
+        || {
+            let said = named(replay);
+            if !said {
+                assert!(
+                    starter.try_wait().unwrap().is_none(),
+                    "the starter ended before its record named its replay's server"
+                );
+            }
+            said
+        },
+    )
+    .unwrap();
     starter.kill().unwrap();
     starter.wait().unwrap();
     assert!(
@@ -301,14 +308,12 @@ fn a_read_starting_apart_has_a_left_replays_server_stopped_and_the_boards_starte
     let (surreal, replay, memtable) = left_running(&s);
     std::fs::write(s.dir.join("go"), "").unwrap();
     let left = board(&s, &surreal).left_replay().unwrap().server;
-    let began = Instant::now();
-    while !healthy(&left.addr) {
-        assert!(
-            began.elapsed() < Duration::from_secs(60),
-            "it never answered"
-        );
-        std::thread::sleep(Duration::from_millis(20));
-    }
+    test_time::until_true(
+        "the left replay's server answers",
+        test_time::backstop(Duration::from_secs(60)),
+        || healthy(&left.addr),
+    )
+    .unwrap();
     let read = || {
         board(&s, &surreal)
             .waiting_at_most(Duration::from_secs(5))
@@ -320,15 +325,18 @@ fn a_read_starting_apart_has_a_left_replays_server_stopped_and_the_boards_starte
         "{refused}"
     );
     assert!(replaying_in(&refused).is_some(), "{refused}");
-    let running = loop {
-        match read().ensure() {
-            Ok(running) => break running,
-            Err(problem) => {
-                assert!(began.elapsed() < Duration::from_secs(120), "{problem}");
-                std::thread::sleep(Duration::from_millis(50));
-            }
-        }
-    };
+    let mut problem = String::new();
+    let running = test_time::until(
+        "the board's own server answers the read",
+        test_time::backstop(Duration::from_secs(120)),
+        || {
+            read()
+                .ensure()
+                .map_err(|refused| problem = refused.to_string())
+                .ok()
+        },
+    )
+    .unwrap_or_else(|stall| panic!("{stall}: {problem}"));
     the_boards_own(&s, &running, (replay, memtable));
 }
 
@@ -410,7 +418,7 @@ fn a_start_that_gives_up_on_its_replays_server_leaves_it_named_and_never_the_boa
 
 /// The pid of a process this case started, which has ended and been reaped.
 fn ended_pid() -> i64 {
-    let mut child = Command::new("/usr/bin/true").spawn().unwrap();
+    let mut child = Command::of("/usr/bin/true").spawn().unwrap();
     child.wait().unwrap();
     i64::from(child.id())
 }

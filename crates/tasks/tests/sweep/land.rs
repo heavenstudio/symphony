@@ -3,6 +3,7 @@
 //! branch moving under a land, two lands at once, the project's generators (which a land never
 //! runs, and the regenerator does), and the push to a scratch bare remote.
 
+use crate::children::Child as _;
 use crate::common::GONE;
 use crate::{Repo, dead_pid, git, write};
 use std::fs;
@@ -725,7 +726,7 @@ fn a_commit_made_after_an_approval_naming_none_is_refused_by_its_time() {
     // Past the board's clock, where the approval stands.
     let when = format!("@{:.0} +0000", r.board.now() + 600.0);
     let done = symphony_board::sys::output(
-        symphony_board::sys::Command::new("git")
+        symphony_board::sys::Command::of("git")
             .args(["commit", "-qam", "after the verdict"])
             .env("GIT_COMMITTER_DATE", &when)
             .env("GIT_AUTHOR_DATE", &when)
@@ -893,7 +894,7 @@ fn a_conflict_fixed_on_the_branch_and_approved_again_lands() {
     let store = &r.board.store;
     assert_eq!(store.get(SLUG).unwrap().status, "done");
     let merging = symphony_board::sys::output(
-        symphony_board::sys::Command::new("git")
+        symphony_board::sys::Command::of("git")
             .args(["merge", "-q", "main"])
             .current_dir(&wt),
     )

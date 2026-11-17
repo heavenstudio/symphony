@@ -5,6 +5,7 @@
 //! store put back from one, a clone of it in another folder, opens at its schema with every task and
 //! message it held when it was taken.
 
+use crate::children::Child as _;
 use crate::common::{Scratch, gone, signal};
 use crate::home_fixture::healthy_server;
 use std::convert::Infallible;
@@ -28,7 +29,7 @@ fn foreign_server(surreal: &Path, dir: &Path, data: &str) -> Child {
     let (child, _) = start_on_free_port(ATTEMPTS, until, |reserved| {
         let addr = reserved.to_string();
         let out = std::fs::File::create(&log).unwrap();
-        let mut child = Command::new(surreal)
+        let mut child = Command::of(surreal)
             .args([
                 "start",
                 "--unauthenticated",
@@ -43,20 +44,23 @@ fn foreign_server(surreal: &Path, dir: &Path, data: &str) -> Child {
             .stderr(out)
             .spawn()
             .unwrap();
-        loop {
-            if child.try_wait().unwrap().is_some() {
-                let said = std::fs::read_to_string(&log).unwrap();
-                return Ok::<_, Infallible>(Start::Ended(said));
-            }
-            if rpc::healthy(&addr) && listens(child.id(), reserved, sys::output).unwrap() {
-                return Ok(Start::Up(child));
-            }
-            assert!(
-                Instant::now() < until,
-                "the server on {addr} neither answered nor ended"
-            );
-            std::thread::sleep(Duration::from_millis(50));
+        // Up once it answers on its port; ended once it exits first.
+        let up = test_time::until(
+            format!("the server on {addr} answers or ends"),
+            until.saturating_duration_since(Instant::now()),
+            || {
+                if child.try_wait().unwrap().is_some() {
+                    return Some(false);
+                }
+                (rpc::healthy(&addr) && listens(child.id(), reserved, sys::output).unwrap())
+                    .then_some(true)
+            },
+        )
+        .unwrap();
+        if up {
+            return Ok::<_, Infallible>(Start::Up(child));
         }
+        Ok(Start::Ended(std::fs::read_to_string(&log).unwrap()))
     })
     .unwrap_or_else(|why| panic!("the server ended: {why}"));
     child
@@ -277,7 +281,7 @@ fn a_store_put_back_from_a_snapshot_opens_at_its_schema_with_what_it_held() {
 
     // Put back: a clone of the snapshot in a folder of its own, never the snapshot itself.
     let other = Scratch::new("snapshot-restored-into");
-    let done = std::process::Command::new("cp")
+    let done = std::process::Command::of("cp")
         .args(if cfg!(target_os = "macos") {
             &["-c", "-R"][..]
         } else {

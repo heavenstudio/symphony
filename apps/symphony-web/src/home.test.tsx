@@ -58,6 +58,22 @@ describe("the owner's clock", () => {
     expect(vi.getTimerCount()).toBe(0);
     expect(shown).toHaveLength(2);
   });
+
+  it("opened within a minute, tells the next as it comes, not a minute after the opening", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 9, 8, 10, 12, 45));
+    const shown: number[] = [];
+    const page = new AbortController();
+    const kept = keepTime(page.signal, (now) => shown.push(now));
+    await vi.advanceTimersByTimeAsync(14_999);
+    expect(shown).toEqual([]);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(shown).toEqual([at("2026-10-08 10:13")]);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(shown).toEqual([at("2026-10-08 10:13"), at("2026-10-08 10:14")]);
+    page.abort();
+    await kept;
+  });
 });
 
 describe("the greeting", () => {
