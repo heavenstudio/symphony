@@ -269,6 +269,17 @@ struct Shared {
     html_pages: HashMap<String, Body>,
 }
 
+/// One ordinary card for generic page tests, in the stage their view opens.
+/// Cases exercising a specific lifecycle stage name that stage explicitly.
+pub fn example_listing(status: &str) -> serde_json::Value {
+    serde_json::json!({
+        "tasks": [{"slug":"tools/example","title":"Example task","body":"","status":status,
+            "priority":1,"parent":null,"created_by":"owner","created":0.0,"updated":0.0,
+            "links":[],"depends":[],"roles":[],"instruction":false}],
+        "statuses":[status],"counts":[[status,1]],"signoff":[],"next":null
+    })
+}
+
 pub struct Site {
     pub addr: SocketAddr,
     files: Arc<HashMap<String, File>>,
@@ -289,16 +300,7 @@ impl Site {
         for (path, value) in [
             ("/api/activity", serde_json::json!({"items": []})),
             ("/api/pending", serde_json::json!({"items": [], "docs": []})),
-            (
-                "/api/task-board",
-                serde_json::json!({
-                    "tasks": [{"slug": "tools/example", "title": "Example task", "body": "",
-                        "status": "ready", "priority": 1, "parent": null, "created_by": "owner",
-                        "created": 0.0, "updated": 0.0, "links": [], "depends": [], "roles": [],
-                        "instruction": false}],
-                    "statuses": ["ready"], "counts": [["ready", 1]], "signoff": [], "next": null
-                }),
-            ),
+            ("/api/task-board", example_listing("review")),
             (
                 "/api/agent-page",
                 serde_json::json!({

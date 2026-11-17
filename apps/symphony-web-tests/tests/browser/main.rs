@@ -317,6 +317,7 @@ fn texts(chrome: &mut Chrome, selector: &str) -> Vec<String> {
 #[test]
 fn entry_pages_fit_the_first_visit_budget_and_deferred_kinds_are_reported() {
     let site = site();
+    site.set_json("/api/task-board", &site::example_listing("ready"));
     let content = look_parity::responses();
     for path in [
         "/api/document",
@@ -1000,6 +1001,7 @@ fn fetched(chrome: &mut Chrome, site: &Site, query: &str, what: &str) {
 #[test]
 fn task_controls_read_the_board_again_for_the_window_already_chosen() {
     let site = site();
+    site.set_json("/api/task-board", &site::example_listing("ready"));
     let Some(mut chrome) = chrome() else { return };
     chrome.call(
         "Emulation.setDeviceMetricsOverride",
@@ -1041,6 +1043,7 @@ fn task_controls_read_the_board_again_for_the_window_already_chosen() {
 #[test]
 fn task_controls_keep_their_values_and_revealed_rows_after_scrolling() {
     let site = site();
+    site.set_json("/api/task-board", &site::example_listing("ready"));
     let Some(mut chrome) = chrome() else { return };
     chrome.call(
         "Emulation.setDeviceMetricsOverride",
@@ -1322,16 +1325,16 @@ fn tasks_and_their_controls_work_without_a_visibility_observer() {
         "document.querySelector('[data-slug=\"tools/example\"]') !== null",
         SHOWN
     ));
-    chrome.eval("Array.from(document.querySelectorAll('button')).find(e => e.textContent === 'Show task groups').click()");
+    chrome.eval("document.querySelector('.wait-chip.k-nobody').click()");
     assert!(
         chrome.wait_for(
-            "document.querySelector('ul li a')?.textContent === 'Example task'",
+            "document.querySelector('.column[data-status=waiting] .taskcard-title')?.textContent === 'Example task'",
             SHOWN
         ),
         "the fallback left task controls unusable: {:?}",
         chrome.eval("document.body.innerText")
     );
-    assert!(site.targets().iter().any(|url| url.contains("roots=1")));
+    assert!(site.targets().iter().any(|url| url.contains("wait=nobody")));
 }
 
 /// A task the server sends with its plugins' board fields draws on the board as one without them
@@ -1347,11 +1350,11 @@ fn a_task_with_plugin_board_fields_draws_on_the_board() {
     site.set_json(
         "/api/task-board",
         &json!({
-            "tasks": [{"slug": "game/jump", "title": "Jump", "body": "", "status": "ready",
+            "tasks": [{"slug": "game/jump", "title": "Jump", "body": "", "status": "review",
                 "priority": 2, "parent": null, "created_by": "owner", "created": 0.0,
                 "updated": 0.0, "links": [], "depends": [], "roles": [], "instruction": false,
                 "fields": {"game": {"effort": 3.0, "risk": "high", "done": true}}}],
-            "statuses": ["ready"], "counts": [["ready", 1]], "signoff": [], "next": null
+            "statuses": ["review"], "counts": [["review", 1]], "signoff": [], "next": null
         }),
     );
     let Some(mut chrome) = chrome() else { return };

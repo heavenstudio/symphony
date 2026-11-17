@@ -53,10 +53,10 @@ fn an_open_select_and_the_appearance_panel_draw_on_an_opaque_bounded_surface_in_
         scheme(&mut page, mode);
         page.open(&site.url("/tasks"));
         assert!(page.wait_for(
-            "document.querySelector('button[aria-label=\"Status\"]') !== null",
+            "document.querySelector('button[aria-label=\"Finished tasks\"]') !== null",
             SHOWN
         ));
-        page.eval("document.querySelector('button[aria-label=\"Status\"]').focus()");
+        page.eval("document.querySelector('button[aria-label=\"Finished tasks\"]').focus()");
         key(&mut page, " ", "Space", 32);
         popup_ready(&mut page);
         let list = page.eval(
@@ -64,12 +64,10 @@ fn an_open_select_and_the_appearance_panel_draw_on_an_opaque_bounded_surface_in_
              return {focused:document.activeElement===list,outline:style.outlineStyle,background:style.backgroundColor,\
              inside:box.top>=0&&box.bottom<=innerHeight,scrolls:list.scrollHeight>list.clientHeight,options:list.querySelectorAll('[role=option]').length};})()",
         );
-        // No machine reports the fixture's work, so Build and Test are drawn as one rail and the
-        // filter offers neither (`tasks.rs`, docs/MACHINE_WORK.md).
         assert_eq!(
             list["options"],
-            json!(10),
-            "{mode}: all statuses and the board's nine"
+            json!(2),
+            "{mode}: both finished-work windows"
         );
         assert_eq!(
             list["focused"],
@@ -138,24 +136,27 @@ const OPTIONS: &str = "(() => {const list=document.querySelector('[role=listbox]
 #[test]
 fn a_list_too_tall_for_the_window_is_as_wide_as_its_longest_option_beside_its_scrollbar() {
     let site = site();
+    let mut detail = super::look_parity::responses()["/api/task-page"].clone();
+    detail["task"]["roles"] = json!((0..8).map(|i| json!({"handle":format!("example-worker-{i}"),"role":"executor","health":"live","since":1.0,"expires":null})).collect::<Vec<_>>());
+    site.set_json("/api/task-page", &detail);
     let Some(mut page) = chrome() else { return };
-    // Too short for the statuses: the list scrolls, its scrollbar inside its box.
+    // Too short for the task recipients: the list scrolls, its scrollbar inside its box.
     viewport(&mut page, 1280, 320);
-    page.open(&site.url("/tasks"));
+    page.open(&site.url("/task/visual/in-progress"));
     assert!(page.wait_for(
-        "document.querySelector('button[aria-label=\"Status\"]') !== null",
+        "document.querySelector('button[aria-label=\"Message recipient\"]') !== null",
         SHOWN
     ));
-    page.eval("document.querySelector('button[aria-label=\"Status\"]').focus()");
+    page.eval("document.querySelector('button[aria-label=\"Message recipient\"]').scrollIntoView({block:'center'});document.querySelector('button[aria-label=\"Message recipient\"]').focus()");
     key(&mut page, " ", "Space", 32);
     popup_ready(&mut page);
     let shown = page.eval(OPTIONS);
     assert_eq!(shown["scrolls"], json!(true), "{shown}");
     let options = shown["options"].as_array().unwrap();
-    assert_eq!(options[0][0], json!("All statuses"), "{shown}");
+    assert_eq!(options[0][0], json!("everyone on it"), "{shown}");
     assert!(
         options.iter().all(|option| option[1] == options[1][1]),
-        "every option on one line, \"All statuses\" and its check mark among them: {shown}"
+        "every option on one line, \"everyone on it\" and its check mark among them: {shown}"
     );
     // As wide as that longest line and no wider: an option's padding (24px), the check mark
     // (16px) 12px from the text, the list's padding (8px) and a scrollbar's room past its text,
@@ -170,7 +171,7 @@ fn a_list_too_tall_for_the_window_is_as_wide_as_its_longest_option_beside_its_sc
     );
     assert!(
         shown["apart"].as_i64().is_some_and(|apart| apart >= 12),
-        "the check mark stands apart from \"All statuses\": {shown}"
+        "the check mark stands apart from \"everyone on it\": {shown}"
     );
     // And the whole list stays inside the window, scrolling rather than running past it.
     let [left, top, right, bottom] = [0, 1, 2, 3].map(|side| shown["box"][side].as_i64().unwrap());
@@ -1356,8 +1357,8 @@ fn every_status() -> Value {
 }
 
 /// Where the filters are: whether the search field reaches past its label's text, whether the
-/// Status label stands 16 px or more after that text or on a line below it, the field's
-/// placeholder, the Status field's width and the left of the Finished tasks label.
+/// Finished tasks label stands 16 px or more after that text or on a line below it, the field's
+/// placeholder, the finished-window field's width and the left of its label.
 const FILTERS: &str = "(() => {
     const [search, finished] = document.querySelectorAll('.filters > label');
     const text = document.createRange();
@@ -1369,12 +1370,8 @@ const FILTERS: &str = "(() => {
         finished: finished.getBoundingClientRect().left};
 })()";
 
-/// The tasks page's filters (app/tasks-page-polish): the search field is at least as wide as its
-/// label and says what it takes, so the labels never read as one phrase; choosing a status keeps
-/// the Status field's width and the Finished tasks filter where it was; the statuses are named as
-/// "All statuses" is; and a status filtered alone is a column's width, not the page's. A phone's
-/// filters are read once their button shows them, and each of its columns is as wide as the
-/// board's scroller, a status alone too.
+/// The search field fits its label and stays apart from the finished window. Choosing a window
+/// preserves the controls' widths and positions. A phone opens them from its filters button.
 #[test]
 fn the_tasks_filters_read_apart_and_a_chosen_window_moves_nothing() {
     let site = bare_site();

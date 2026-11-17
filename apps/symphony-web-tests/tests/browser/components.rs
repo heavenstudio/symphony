@@ -115,6 +115,10 @@ fn choose_file(page: &mut super::Chrome, name: &str) {
 fn an_entry_select_loads_its_popup_on_use_and_keeps_keyboard_selection_and_escape() {
     let site = site();
     let Some(mut page) = chrome() else { return };
+    page.call(
+        "Emulation.setDeviceMetricsOverride",
+        json!({"width":1440,"height":900,"deviceScaleFactor":1,"mobile":false}),
+    );
     page.save_data();
     page.open(&site.url("/tasks"));
     assert!(page.wait_for(
