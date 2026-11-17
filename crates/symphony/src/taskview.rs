@@ -107,13 +107,12 @@ pub fn questions(
     store: &symphony_board::Store,
     open: &[String],
 ) -> Result<BTreeMap<String, u32>, symphony_board::Error> {
-    PEOPLE
-        .iter()
-        .map(|person| {
-            let waiting = store.questions_waiting(person, open)?;
-            Ok(((*person).to_string(), dashboard::count(waiting.len())))
-        })
-        .collect()
+    let mut questions = BTreeMap::new();
+    for person in PEOPLE {
+        let waiting = store.questions_waiting(person, open)?;
+        questions.insert(person.to_string(), dashboard::count(waiting.len()));
+    }
+    Ok(questions)
 }
 
 /// `message` on the wire, when it is a reviewer's verdict ([`symphony_board::reviewer_verdict`]).

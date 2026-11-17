@@ -224,10 +224,18 @@ fn the_activity_says_answered_of_exactly_the_owners_questions_no_longer_waiting(
         .map(|question| question.id)
         .collect();
     assert_eq!(waiting, BTreeSet::from([4, 8]));
+    let before = f.store.database().requests();
     assert_eq!(
         questions(&f.store, &open).unwrap(),
         BTreeMap::from([(owner.to_string(), 2)])
     );
+    assert_eq!(f.store.database().requests() - before, PEOPLE.len());
+    let before = f.store.database().requests();
+    assert_eq!(
+        questions(&f.store, &[]).unwrap(),
+        BTreeMap::from([(owner.to_string(), 0)])
+    );
+    assert_eq!(f.store.database().requests(), before);
     let listed: BTreeMap<i64, bool> = (activity(&f.store).unwrap().iter())
         .map(|item| {
             let id = item.id.strip_prefix("task#").and_then(|id| id.parse().ok());
