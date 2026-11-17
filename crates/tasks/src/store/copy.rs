@@ -173,11 +173,10 @@ impl Store {
                 .iter()
                 .filter(|(table, _)| *table == "task")
                 .flat_map(|(_, rows)| rows)
-                .filter_map(|row| {
-                    row.get("fields").map(|fields| {
-                        json!({
-                            "id": row["slug"], "original": fields.to_string(),
-                        })
+                .map(|row| {
+                    json!({
+                        "id": row["slug"], "original": row.get("fields")
+                            .map_or_else(|| "{}".to_string(), Value::to_string),
                     })
                 })
                 .collect(),
@@ -235,8 +234,9 @@ impl Store {
     /// copy wrote, read back. An object inside a task's fields has its keys in their order as text,
     /// as SurrealDB keeps them, where PostgreSQL keeps the shorter first: a board's export is one text
     /// in either database. PostgreSQL also restores a copied field's numeric spelling while that
-    /// value is unchanged: jsonb alone expands exponents and forgets negative zero. The original
-    /// fields text in `copied_fields` is replaced with the copy and removed with the task.
+    /// value agrees with its saved JSON: jsonb alone expands exponents and forgets negative zero.
+    /// Every task-field setter updates `copied_fields` at the assigned path; replacements do not
+    /// inherit the old value's spelling. A copy replaces the text, and task deletion removes it.
     pub fn dump(&self) -> Result<Dump, Error> {
         let dump = || both(sql::DUMP, Pg::read(postgres::copy::DUMP.as_str()));
         let mut dump: Dump = if self.db.is_postgresql() {
@@ -272,8 +272,9 @@ impl Store {
 /// The most a copy sends in one request: the server takes 4 MiB (`SURREAL_HTTP_MAX_RPC_BODY_SIZE`).
 pub(super) const CHUNK_BYTES: usize = 1 << 20;
 
-/// Restore a copied number's spelling only while the current value is still its jsonb spelling.
-/// Numbers live at arbitrary object/array depths; edits, removals and additions remain visible.
+/// Restore numbers from the saved JSON, which field setters maintain at the assigned paths.
+/// Agreement with its jsonb form is a consistency check, not proof of element identity: an
+/// assignment must first replace the saved subtree, including an entire assigned array.
 fn restore_numbers(current: &mut Value, original: &Value, normalized: &Value) {
     match current {
         Value::Number(_) if original.is_number() && current == normalized => {

@@ -401,6 +401,42 @@ BEGIN
 END
 $f$;
 
+-- Patch JSON without converting unchanged siblings through jsonb. Assigned arrays/objects
+-- replace their whole subtree, so numeric forms cannot migrate between array positions.
+CREATE OR REPLACE FUNCTION board_saved_set(target json, path text[], value json) RETURNS json
+LANGUAGE plpgsql IMMUTABLE AS $f$
+DECLARE
+    holder json := CASE WHEN json_typeof(target) = 'object' THEN target ELSE '{}'::json END;
+    child json;
+BEGIN
+    IF cardinality(path) = 0 THEN RETURN value; END IF;
+    child := board_saved_set(holder -> path[1], path[2:], value);
+    RETURN (SELECT coalesce(json_object_agg(key, item), '{}'::json) FROM (
+        SELECT key, entry.value AS item FROM json_each(holder) AS entry WHERE key <> path[1]
+        UNION ALL SELECT path[1], child WHERE child IS NOT NULL
+    ) AS entries);
+END
+$f$;
+
+-- All task-field writes keep imported text at the exact path they assign. Explicit values
+-- come from the original JSON variables, before jsonb loses exponent and negative-zero forms.
+CREATE OR REPLACE FUNCTION board_fields(task_id jsonb, target jsonb, path text[], value jsonb,
+    written json DEFAULT NULL) RETURNS jsonb LANGUAGE plpgsql VOLATILE AS $f$
+BEGIN
+    IF written IS NULL AND (target #> path) IS NOT DISTINCT FROM value THEN
+        RETURN target;
+    END IF;
+    IF cardinality(path) = 0 AND value IS NULL THEN
+        UPDATE copied_fields SET original = '{}' WHERE id = task_id;
+    ELSE
+        UPDATE copied_fields SET original = board_saved_set(original::json, path,
+            coalesce(written, value::json))::text WHERE id = task_id;
+    END IF;
+    IF cardinality(path) = 0 THEN RETURN value; END IF;
+    RETURN board_set(target, path, value);
+END
+$f$;
+
 CREATE OR REPLACE FUNCTION board_bump() RETURNS void LANGUAGE plpgsql AS $f$
 BEGIN
     IF current_setting('board.bumped', true) IS DISTINCT FROM 'yes' THEN

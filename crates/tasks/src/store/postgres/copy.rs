@@ -5,8 +5,11 @@
 //!
 //! `copied_fields` keeps imported fields as text beside their task: jsonb cannot preserve a JSON
 //! number's spelling or distinguish an exponent float from an integer. The dump gives both that
-//! text and its jsonb normalization to `Store::dump`, which restores unchanged numbers. A delete
-//! removes the text with the task; another copy replaces it in the same transaction.
+//! text and its jsonb normalization to `Store::dump`. Every task-field assignment updates its
+//! exact path in the saved JSON, before jsonb loses the incoming number's spelling; an assigned
+//! array or object replaces its whole subtree. The text is removed with a task and replaced with
+//! a copy, in the same transaction. This schema (version 19) is for fresh scratch PostgreSQL
+//! boards; the version-only opening guard does not upgrade an earlier same-version shape.
 
 use super::schema::{self, Kind};
 use super::{Pg, row};

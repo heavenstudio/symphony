@@ -238,7 +238,7 @@ fn numeric_fields_keep_the_surrealdb_exports_representation() {
     postgres.store.copy(&expected).unwrap();
     check(&expected);
     raw.row("task", slug.as_str()).delete().unwrap();
-    assert_eq!(raw.table("copied_fields").count().unwrap(), 0);
+    assert_eq!(raw.table("copied_fields").count().unwrap(), 1);
     let fresh = symphony_board::NewTask::new(&slug, "New task at the same slug", "owner");
     postgres.store.create(&fresh).unwrap();
     raw.row("task", slug.as_str())
@@ -253,4 +253,173 @@ fn numeric_fields_keep_the_surrealdb_exports_representation() {
             .fields,
         serde_json::from_value(json!({"probe": {"numbers": 99}})).unwrap()
     );
+}
+
+/// Actual edits keep the addressed replacement's tokens: array positions are not element
+/// identities. An equal-valued raw document update is a no-op on SurrealDB, while a write that
+/// changes the document keeps its new numeric forms and the untouched siblings' old forms.
+#[test]
+fn edited_numeric_fields_keep_the_written_tokens_on_both_databases() {
+    let mut board = everything();
+    board.tasks[0].fields = serde_json::from_value(json!({"probe": {
+        "values": [1e18, 1_000_000_000_000_000_000_i64],
+        "object": {"leaf": 1e18}, "leaf": 1e18, "sibling": 1e18
+    }}))
+    .unwrap();
+    let (surreal, postgres) = (
+        Fixture::on(
+            Backend::SurrealDb,
+            Seed {
+                dump: board.clone(),
+            },
+        ),
+        Fixture::on(
+            Backend::PostgreSql,
+            Seed {
+                dump: board.clone(),
+            },
+        ),
+    );
+    let slug = board.tasks[0].slug.as_str();
+    let fields = |store: &Store| {
+        store
+            .dump()
+            .unwrap()
+            .tasks
+            .into_iter()
+            .find(|task| task.slug == slug)
+            .unwrap()
+            .fields
+    };
+    let cases = [
+        json!({"fields.probe.values": [1_000_000_000_000_000_000_i64]}),
+        json!({"fields.probe.values": [1e18]}),
+        json!({"fields.probe.values": [1_000_000_000_000_000_000_i64, 1e18]}),
+        json!({"fields.probe.object": {"leaf": 1_000_000_000_000_000_000_i64}}),
+        json!({"fields.probe.object.leaf": 1_000_000_000_000_000_000_i64}),
+        json!({"fields.probe.object.leaf": 1_000_000_000_000_000_000_i64, "title": "Changed"}),
+        json!({"fields.probe.values": [1_000_000_000_000_000_000_i64, 1e18], "fields.probe.added": "new"}),
+        json!({"fields": {"probe": {"values": [1_000_000_000_000_000_000_i64], "leaf": 1_000_000_000_000_000_000_i64, "sibling": 1e18}}}),
+        json!({"fields.probe.object.leaf": null, "fields.probe.values": []}),
+        json!({"fields.probe.values": [1e-30, {"n": 1e30}]}),
+        json!({"fields": null}),
+    ];
+    for patch in cases {
+        for store in [&surreal.store, &postgres.store] {
+            store.copy(&board).unwrap();
+            store.raw().row("task", slug).set(patch.clone()).unwrap();
+        }
+        let expected = fields(&surreal.store);
+        let back = fields(&postgres.store);
+        assert_eq!(back, expected, "{patch}");
+        assert_eq!(
+            serde_json::to_string(&back).unwrap(),
+            serde_json::to_string(&expected).unwrap(),
+            "{patch}"
+        );
+    }
+    // A failed task write rolls back the saved text too, even after its field setter ran.
+    for store in [&surreal.store, &postgres.store] {
+        store.copy(&board).unwrap();
+        let before = fields(store);
+        assert!(
+            store
+                .raw()
+                .row("task", slug)
+                .set(json!({
+                    "fields.probe.values": [1_000_000_000_000_000_000_i64], "title": null
+                }))
+                .is_err()
+        );
+        assert_eq!(fields(store), before);
+    }
+    // An upsert of the existing task updates the same saved JSON as an ordinary assignment.
+    let mut replacement = surreal.store.raw().row("task", slug).get().unwrap();
+    replacement["title"] = json!("Upserted");
+    replacement["fields"]["probe"]["values"] = json!([1_000_000_000_000_000_000_i64]);
+    for store in [&surreal.store, &postgres.store] {
+        store
+            .raw()
+            .row("task", slug)
+            .put(replacement.clone())
+            .unwrap();
+    }
+    assert_eq!(fields(&postgres.store), fields(&surreal.store));
+    // The public setter's MERGE is separate from its version bump: SurrealDB keeps the old
+    // document on an equal-valued MERGE, including its existing number's spelling.
+    for store in [&surreal.store, &postgres.store] {
+        store.copy(&board).unwrap();
+        store
+            .set_field(
+                slug,
+                "probe",
+                "leaf",
+                &json!(1_000_000_000_000_000_000_i64),
+                "owner",
+            )
+            .unwrap();
+    }
+    let expected = fields(&surreal.store);
+    assert_eq!(expected["probe"]["leaf"], json!(1e18));
+    assert_eq!(fields(&postgres.store), expected);
+    for store in [&surreal.store, &postgres.store] {
+        store
+            .set_field(slug, "probe", "leaf", &json!(1e30), "owner")
+            .unwrap();
+    }
+    let expected = fields(&surreal.store);
+    assert_eq!(expected["probe"]["leaf"], json!(1e30));
+    assert_eq!(fields(&postgres.store), expected);
+    for store in [&surreal.store, &postgres.store] {
+        store
+            .raw()
+            .row("task", slug)
+            .add("fields.probe.leaf", json!(0))
+            .unwrap();
+    }
+    assert_eq!(fields(&postgres.store), fields(&surreal.store));
+    for store in [&surreal.store, &postgres.store] {
+        store
+            .set_field(slug, "probe", "leaf", &json!("1e+18 is text"), "owner")
+            .unwrap();
+    }
+    let expected = fields(&surreal.store);
+    assert_eq!(expected["probe"]["leaf"], json!("1e+18 is text"));
+    assert_eq!(fields(&postgres.store), expected);
+    // Tasks imported without fields also retain numeric tokens when a plugin adds one later.
+    let empty_slug = board.tasks[1].slug.as_str();
+    for store in [&surreal.store, &postgres.store] {
+        store
+            .set_field(empty_slug, "probe", "new", &json!(1e18), "owner")
+            .unwrap();
+    }
+    let empty_fields = |store: &Store| {
+        store
+            .dump()
+            .unwrap()
+            .tasks
+            .into_iter()
+            .find(|task| task.slug == empty_slug)
+            .unwrap()
+            .fields
+    };
+    assert_eq!(empty_fields(&surreal.store)["probe"]["new"], json!(1e18));
+    assert_eq!(empty_fields(&postgres.store), empty_fields(&surreal.store));
+    // Removing all fields and then adding one must not reuse a deleted token or lose the
+    // new input's form on a task whose fields have already been tracked.
+    for store in [&surreal.store, &postgres.store] {
+        store
+            .raw()
+            .row("task", slug)
+            .set(json!({"fields": null}))
+            .unwrap();
+        store
+            .raw()
+            .row("task", slug)
+            .set(json!({"fields.probe.leaf": 1e18}))
+            .unwrap();
+    }
+    let expected = fields(&surreal.store);
+    assert_eq!(expected["probe"]["leaf"], json!(1e18));
+    assert_eq!(fields(&postgres.store), expected);
 }
