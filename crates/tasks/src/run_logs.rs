@@ -324,7 +324,7 @@ impl Ending {
 /// `file` opened again, to read: a caller's stream is most often open to write alone.
 fn reopened(file: &File) -> io::Result<File> {
     #[cfg(target_os = "macos")]
-    let path = {
+    {
         use std::os::unix::ffi::OsStringExt as _;
         let mut path = vec![0_u8; usize::try_from(libc::PATH_MAX).unwrap_or(1024)];
         // SAFETY: F_GETPATH writes at most PATH_MAX bytes, a NUL among them, into `path`.
@@ -336,13 +336,20 @@ fn reopened(file: &File) -> io::Result<File> {
             .position(|&byte| byte == 0)
             .unwrap_or(path.len());
         path.truncate(length);
-        std::path::PathBuf::from(std::ffi::OsString::from_vec(path))
-    };
+        let path = std::path::PathBuf::from(std::ffi::OsString::from_vec(path));
+        #[cfg(test)]
+        tests::before_reopen(&path);
+        crate::runs::regular(&path, OpenOptions::new().read(true))
+    }
     #[cfg(not(target_os = "macos"))]
-    let path = fs::read_link(format!("/proc/self/fd/{}", file.as_raw_fd()))?;
-    #[cfg(test)]
-    tests::before_reopen(&path);
-    crate::runs::regular(&path, OpenOptions::new().read(true))
+    {
+        // The proc link names the live descriptor, including an unlinked or anonymous file.
+        // Follow that kernel-owned link directly: its target text need not be an openable path.
+        OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NONBLOCK)
+            .open(format!("/proc/self/fd/{}", file.as_raw_fd()))
+    }
 }
 
 /// Where a run's log is written from: its command's streams copied as they come ([`Copying`]), or

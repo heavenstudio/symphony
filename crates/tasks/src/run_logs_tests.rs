@@ -12,12 +12,15 @@ use std::time::Instant;
 const PATIENT: Duration = test_time::backstop(Duration::from_secs(10));
 const NOW: f64 = 1_794_400_000.0; // 2026-11-11, 12:26 UTC
 
+#[cfg(target_os = "macos")]
 type ReopenHook = Box<dyn FnOnce(&Path)>;
+#[cfg(target_os = "macos")]
 thread_local! {
     static BEFORE_REOPEN: std::cell::RefCell<Option<ReopenHook>> = const { std::cell::RefCell::new(None) };
 }
 
 /// A replacement after the descriptor's path was resolved, on this test's thread alone.
+#[cfg(target_os = "macos")]
 pub(super) fn before_reopen(path: &Path) {
     let hook = BEFORE_REOPEN.take();
     if let Some(hook) = hook {
@@ -383,6 +386,7 @@ fn what_is_no_regular_file_is_left_out_and_a_file_cut_short_or_a_log_that_fails_
 }
 
 #[test]
+#[cfg(target_os = "macos")]
 fn a_file_replaced_before_its_reopen_is_never_read_through_a_link_or_waited_on() {
     for replacement in ["fifo", "link", "directory", "file", "missing"] {
         let dir = scratch(&format!("reopen-{replacement}"));
@@ -426,6 +430,43 @@ fn a_file_replaced_before_its_reopen_is_never_read_through_a_link_or_waited_on()
         returned.unwrap_or_else(|stall| panic!("{stall}: reopen waited on {replacement}"));
         assert!(empty, "the reopened {replacement} was kept");
         fs::remove_dir_all(&dir).unwrap();
+    }
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+fn an_unlinked_or_anonymous_regular_output_file_is_still_copied_from_its_mark() {
+    use std::os::fd::FromRawFd as _;
+
+    for kind in ["unlinked", "anonymous"] {
+        let dir = scratch(&format!("files-{kind}"));
+        let mut out = if kind == "unlinked" {
+            let path = dir.join("out");
+            let out = appended(&path, b"");
+            fs::remove_file(path).unwrap();
+            out
+        } else {
+            // SAFETY: a NUL-terminated name; a successful call returns a new owned descriptor.
+            let fd = unsafe { libc::memfd_create(c"run-log-output".as_ptr(), libc::MFD_CLOEXEC) };
+            assert!(fd >= 0, "{}", io::Error::last_os_error());
+            // SAFETY: the descriptor is new and nothing else owns it.
+            unsafe { File::from_raw_fd(fd) }
+        };
+        out.write_all(b"before\n").unwrap();
+        let mut err = out.try_clone().unwrap();
+        let files = Files::mark([out.try_clone().unwrap(), err.try_clone().unwrap()]);
+        assert_eq!(files.0.len(), 1, "{kind}: one live file, marked once");
+        out.write_all(b"\x1b[32mafter\x1b[0m\n").unwrap();
+        err.write_all(b"stderr\n").unwrap();
+        let log_name = name(&run('a'), NOW);
+        let log = create(&dir, &log_name).unwrap();
+        assert_eq!(files.copy(&log), 13, "{kind}");
+        assert_eq!(
+            fs::read(dir.join(log_name)).unwrap(),
+            b"after\nstderr\n",
+            "{kind}"
+        );
+        fs::remove_dir_all(dir).unwrap();
     }
 }
 
