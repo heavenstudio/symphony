@@ -110,19 +110,33 @@ scan: private planning text need not contain a token to be unsuitable for a publ
 
 ## Identity and recovery
 
-Map local project/task immutable identity to numeric repository ID, issue/PR global ID, and current
-URL/number. Titles, slugs, repository names and usernames are display names. Renames preserve
-identity; transfer to an unapproved repository pauses until explicit rebind. A 404 means missing
-or inaccessible, never delete local work. Until immutable local identity is exposed, slug changes
-require explicit rebinding.
+Bind the local project/task within its proved board lifetime to numeric repository ID, issue/PR
+global ID and current URL/number. Supported title edits retain the local row ID; the current API
+has no task-slug rename operation, and adding one is outside the initial adapter scope. Repository
+names and usernames are display names; transfer to an unapproved repository pauses until explicit
+rebind. A 404 means missing or inaccessible, never delete local work. A changed local binding
+requires reconciliation rather than adopting another task with the same slug or numeric ID.
 
-Before writing, persist operation ID, target, digest, expected base and configuration revision.
+Before writing, persist operation ID, target, digest, expected base, board and restore authority
+scope, and configuration revision.
 Persist acknowledgment before advancing a cursor. Imported tasks use a deterministic slug from
 repository/issue IDs: existing unique creation prevents duplicate imports after a crash. On a
 collision, verify the recorded identity instead of adopting an unrelated task. Keyed `say`
-deduplicates notes. Expose the existing internal task ID through an additive API field and prove
-its backup/restore lifetime; introduce no second UUID scheme. Conditional content updates still
-need additive API work before reliable exchange.
+deduplicates notes. Expose the existing task ID only with its proved lifetime within the board,
+without promising that it stays immutable through restore. The investigation at `c3f11c0f6`, on
+[[task:tools/github-board-contracts]], reproduced an old-dump restore resetting the task counter
+and row versions: an ID allocated after the snapshot can later identify another task, while an
+expected version can repeat. Source inspection finds the reset in both copy backends; the
+prerequisite still needs its planned proof on each backend. Retaining one restored row's ID does
+not prove safety for all mappings or stale writes.
+
+Reliable exchange therefore still needs additive identity/content contracts and a proved restore
+fence. Check an authoritative restore/rebind scope atomically with conditional writes, and reject
+stale mappings/tokens after restore or state loss. A version-only comparison or a documented manual
+rebind instruction alone does not supply that guarantee. The prerequisite must identify and test
+an existing authority signal and its lifetime; if none exists, report bounded alternatives and
+migration/compatibility consequences before implementing new authority. No second task identity
+scheme or broad copy/schema redesign is assumed by this proposal.
 
 Do not assume GitHub creation has a client idempotency key. Include an opaque operation marker
 in the created body. After a timeout, list the complete selected scope for that marker before a
@@ -182,8 +196,9 @@ or changes visibility/protections. Importing an external PR never checks out or 
 ## Implementation and decision handoff
 
 1. Complete [readiness remediation](public-readiness.md#remediation-order) independently.
-2. Land only missing board contracts first: conditional content update, exposure of existing
-   task identity and durable state discovery. Reuse unique creation. Preserve old calls under the [consumer API
+2. Land only missing board contracts first: conditional content updates checked against restore
+   authority, truthfully scoped task identity and durable state discovery. Reuse unique creation.
+   Preserve old calls under the [consumer API
    rule](../CHECKS.md#consumer-api-changes). No provider-specific database access.
 3. Ship disabled configuration, preview and manual issue import/export. Use a fixture HTTP
    server and scratch board; real API proof needs an explicitly authorized scratch GitHub repo.
