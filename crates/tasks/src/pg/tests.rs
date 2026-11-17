@@ -510,6 +510,28 @@ fn a_server_that_takes_none_of_a_request_and_says_nothing_fails_it_at_the_client
 }
 
 #[test]
+fn a_server_gone_after_an_answer_fails_the_next_request_as_it_is_sent() {
+    let (tell, gone) = mpsc::channel();
+    let dir = serving(move |mut stream| {
+        while wire::read(&mut stream).unwrap().kind != b'S' {}
+        stream.write_all(&bytes(JSONB_AND_NULL)).unwrap();
+        drop(stream);
+        tell.send(()).unwrap();
+    });
+    let client = Client::new(dir.path(), "board");
+    client.request(&[Step::bare("SELECT 1")]).unwrap();
+    gone.recv().unwrap();
+    let Err(DbError::Failed(said)) = client.request(&[Step::bare("SELECT 1")]) else {
+        panic!("a request to a server that has gone fails");
+    };
+    assert!(said.contains(": sending a request: "), "{said}");
+    assert!(
+        client.connection.lock().unwrap().is_none(),
+        "the connection went"
+    );
+}
+
+#[test]
 fn a_connection_waits_the_clients_wait_on_each_write_as_on_each_read() {
     let fake = Fake::new(vec![Script {
         started: STARTED,
