@@ -912,6 +912,7 @@ fn board_fetch_and_server_notices_keep_loaded_rows_in_place_after_narrowing() {
     // deliberately taller than a short fetched row; that loading transition
     // must not be mistaken for a reconnect notice moving settled content.
     for status in statuses {
+        browser.reveal(&format!("#column-{status}"));
         assert!(browser.wait_for(
             &format!("document.querySelectorAll('[data-status={status}] [id^=row-]').length===12"),
             SHOWN
@@ -936,11 +937,34 @@ fn board_fetch_and_server_notices_keep_loaded_rows_in_place_after_narrowing() {
         assert!(browser.wait_for(
             &format!(
                 "document.querySelectorAll('.waiting-columns .column').length === {}",
-                if width <= 760 { 1 } else { 7 }
+                if width <= 760 { 1 } else { 8 }
             ),
             SHOWN
         ));
-        // Widening remounts the stage lists; approach their tops before their row boxes.
+        // Widening remounts the stage lists; reveal each populated stage and its rows.
+        let shown = if width <= 760 {
+            &statuses[4..5]
+        } else {
+            &statuses[..]
+        };
+        for status in shown {
+            browser.reveal(&format!("#column-{status}"));
+            assert!(browser.wait_for(
+                &format!(
+                    "document.querySelectorAll('[data-status={status}] [id^=row-]').length === 12"
+                ),
+                SHOWN
+            ));
+            for i in 0..12 {
+                browser.reveal(&format!("[id='row-notice/{status}-{i}']"));
+            }
+            assert!(browser.wait_for(
+                &format!(
+                    "document.querySelectorAll('[data-status={status}] .taskcard').length === 12"
+                ),
+                SHOWN
+            ));
+        }
         browser.eval("scrollTo(0,0)");
         assert!(browser.wait_for(
             &format!(
@@ -950,7 +974,7 @@ fn board_fetch_and_server_notices_keep_loaded_rows_in_place_after_narrowing() {
             SHOWN
         ));
         assert!(browser.wait_for(
-            "[...document.querySelectorAll('.waiting-columns .column:not(.rail)')].every(column => column.querySelector('[id^=row-]:first-child .taskcard'))",
+            "[...document.querySelectorAll('.waiting-columns .column:not([data-status=build]):not([data-status=test])')].every(column => column.querySelector('[id^=row-]:first-child .taskcard'))",
             SHOWN
         ));
         browser.eval("scrollTo(0,document.documentElement.scrollHeight)");

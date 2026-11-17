@@ -3,7 +3,7 @@
 # every `symphony::` stays as it is. The binaries keep theirs: `symphony` is what is installed.
 [package]
 name = "symphony-app"
-version = "0.1.0"
+version = "0.2.0"
 edition.workspace = true
 rust-version.workspace = true
 publish = true
@@ -55,7 +55,7 @@ fancy-regex.workspace = true
 sha2.workspace = true
 symphony-schema = { path = "../symphony-schema", version = "1.0.0" }
 symphony-args = { path = "../symphony-args", version = "1.0.0" }
-symphony-api = { path = "../symphony-api", version = "=0.1.0" }
+symphony-api = { path = "../symphony-api", version = "=0.2.0" }
 # The plugin seams a project's plugins implement, and the project file (symphony.toml) they are chosen by.
 symphony-plugin = { path = "../symphony-plugin", version = "1.0.0" }
 # The one reading of a card and its entries, which the docs build shares (`register`).
@@ -63,9 +63,9 @@ symphony-docs = { path = "../symphony-docs", version = "1.0.0" }
 # Its variables, each by its one SYMPHONY_ name.
 symphony-env = { path = "../symphony-env", version = "1.0.0" }
 toml.workspace = true
-symphony-board = { path = "../tasks", version = "=0.1.0" }
+symphony-board = { path = "../tasks", version = "=0.2.0" }
 # `symphony shot`: a page in a private headless Chrome, driven as the client's browser tests drive it.
-symphony-chrome = { path = "../chrome-devtools", version = "=0.1.0" }
+symphony-chrome = { path = "../chrome-devtools", version = "=0.2.0" }
 gix = { version = "0.87", default-features = false, features = ["basic", "blob-diff", "revision", "sha1"] }
 
 [dev-dependencies]
