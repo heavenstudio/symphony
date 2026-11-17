@@ -138,6 +138,44 @@ impl Provider for Fake {
     }
 }
 
+type ReadAction<'a> = Box<dyn Fn(&Scope, &ArtifactId) + Send + Sync + 'a>;
+
+/// Interleave another actor after verified byte delivery, without a scheduler or timed wait.
+struct OnRead<'a> {
+    inner: &'a Fake,
+    then: ReadAction<'a>,
+}
+
+impl Provider for OnRead<'_> {
+    fn binding(&self) -> &str {
+        self.inner.binding()
+    }
+    fn put(&self, scope: &Scope, id: &ArtifactId, bytes: &[u8]) -> Result<Generation, Failure> {
+        self.inner.put(scope, id, bytes)
+    }
+    fn inspect(&self, scope: &Scope, id: &ArtifactId) -> Result<Generation, Failure> {
+        self.inner.inspect(scope, id)
+    }
+    fn read(
+        &self,
+        scope: &Scope,
+        id: &ArtifactId,
+        generation: &Generation,
+    ) -> Result<Vec<u8>, Failure> {
+        let bytes = self.inner.read(scope, id, generation)?;
+        (self.then)(scope, id);
+        Ok(bytes)
+    }
+    fn delete(
+        &self,
+        scope: &Scope,
+        id: &ArtifactId,
+        generation: &Generation,
+    ) -> Result<(), Failure> {
+        self.inner.delete(scope, id, generation)
+    }
+}
+
 fn scope() -> Scope {
     Scope::new("tenant-a", "project-a").unwrap()
 }
@@ -216,7 +254,22 @@ fn verified_availability_precedes_atomic_idempotent_publication() {
         Err(Error::NotAvailable)
     );
     assert_eq!(c.read(&scope(), &id, None), Err(Error::NotAvailable));
-    let sealed = c.upload(&scope(), &id, b"evidence").unwrap();
+    let provider = OnRead {
+        inner: &p,
+        then: Box::new(|scope, id| {
+            assert_eq!(c.status(scope, id), Ok(Status::Pending));
+            assert_eq!(
+                c.publish(scope, "during-verification", &publication),
+                Err(Error::NotAvailable)
+            );
+        }),
+    };
+    let sealed = (Core {
+        metadata: &m,
+        provider: &provider,
+    })
+    .upload(&scope(), &id, b"evidence")
+    .unwrap();
     assert_eq!(sealed.sha256, model::digest(b"evidence"));
     assert_eq!(sealed.media_type, "text/plain; charset=utf-8");
     assert_eq!(sealed.bytes, 8);
@@ -521,41 +574,17 @@ fn cancellation_replacement_and_fake_restore_fences_reject_stale_completion() {
 
 #[test]
 fn cancellation_between_verified_bytes_and_metadata_cas_is_rechecked() {
-    struct Cancelling<'a> {
-        inner: &'a Fake,
-        metadata: &'a Memory,
-        permit: &'a Permit,
-    }
-    impl Provider for Cancelling<'_> {
-        fn binding(&self) -> &str {
-            self.inner.binding()
-        }
-        fn put(&self, s: &Scope, id: &ArtifactId, b: &[u8]) -> Result<Generation, Failure> {
-            self.inner.put(s, id, b)
-        }
-        fn inspect(&self, s: &Scope, id: &ArtifactId) -> Result<Generation, Failure> {
-            self.inner.inspect(s, id)
-        }
-        fn read(&self, s: &Scope, id: &ArtifactId, g: &Generation) -> Result<Vec<u8>, Failure> {
-            let bytes = self.inner.read(s, id, g)?;
-            core(self.metadata, self.inner)
-                .fence(s, &self.permit.owner, self.permit.revision, None)
-                .unwrap();
-            Ok(bytes)
-        }
-        fn delete(&self, s: &Scope, id: &ArtifactId, g: &Generation) -> Result<(), Failure> {
-            self.inner.delete(s, id, g)
-        }
-    }
     let m = Memory::default();
     let p = Fake::default();
     let c = core(&m, &p);
     let permit = admitted(&c);
     let id = begin(&c, &permit);
-    let provider = Cancelling {
+    let provider = OnRead {
         inner: &p,
-        metadata: &m,
-        permit: &permit,
+        then: Box::new(|scope, _id| {
+            c.fence(scope, &permit.owner, permit.revision, None)
+                .unwrap();
+        }),
     };
     assert_eq!(
         (Core {
@@ -566,6 +595,32 @@ fn cancellation_between_verified_bytes_and_metadata_cas_is_rechecked() {
         Err(Error::Stale)
     );
     assert_eq!(c.status(&scope(), &id), Ok(Status::Pending));
+    assert_eq!(p.objects.lock().unwrap().len(), 1);
+}
+
+#[test]
+fn interleaved_finalizers_converge_after_both_verify_the_same_generation() {
+    let m = Memory::default();
+    let p = Fake::default();
+    let c = core(&m, &p);
+    let permit = admitted(&c);
+    let id = begin(&c, &permit);
+    let provider = OnRead {
+        inner: &p,
+        then: Box::new(|scope, id| {
+            c.upload(scope, id, b"evidence").unwrap();
+        }),
+    };
+    let descriptor = (Core {
+        metadata: &m,
+        provider: &provider,
+    })
+    .upload(&scope(), &id, b"evidence")
+    .unwrap();
+    assert_eq!(descriptor.generation, p.inspect(&scope(), &id).unwrap());
+    assert_eq!(p.reads.load(Ordering::SeqCst), 2);
+    assert_eq!(c.status(&scope(), &id), Ok(Status::Available));
+    assert_eq!(m.load(&scope()).unwrap().ledger.records.len(), 1);
     assert_eq!(p.objects.lock().unwrap().len(), 1);
 }
 
