@@ -295,8 +295,8 @@ fn the_board_before_its_first_read_draws_its_heading_filters_and_columns_of_card
     );
     // Each ghost column's box against a real column's of its status, laid out beside it.
     let ghost = browser.eval(&format!(
-        "(() => {{ const columns = [...document.querySelectorAll('.ghost-kanban.waiting-columns > .ghost-column, .ghost-offline > .ghost-column')];
-            const differ = column => {{ const probe = document.createElement('section'); probe.className = column.dataset.for === 'build-test' ? 'column rail' : 'column'; probe.dataset.status = column.dataset.for; const wrapper = document.createElement('div'); wrapper.className = column.dataset.for === 'build-test' ? 'machine-rail' : ''; column.after(wrapper); wrapper.append(probe);
+        "(() => {{ const columns = [...document.querySelectorAll('.ghost-kanban.waiting-columns .ghost-column, .ghost-offline > .ghost-column')];
+            const differ = column => {{ const probe = document.createElement('section'); probe.className = 'column'; probe.dataset.status = column.dataset.for; const wrapper = document.createElement('div'); column.after(wrapper); wrapper.append(probe);
                 const a = getComputedStyle(column), b = getComputedStyle(probe);
                 const differ = ['borderTopColor', 'backgroundColor', 'paddingTop', 'paddingLeft', 'borderTopWidth', 'borderLeftWidth', 'borderTopLeftRadius']
                     .filter(key => a[key] !== b[key]).map(key => [column.dataset.for, key, a[key], b[key]]);
@@ -314,8 +314,8 @@ fn the_board_before_its_first_read_draws_its_heading_filters_and_columns_of_card
     assert_eq!(
         ghost,
         json!({"heading": "Board", "fields": 2, "filled": [0, 0], "status": ["Loading tasks…"], "busy": "true",
-            "columns": ["concept", "design", "ready", "in_progress", "build-test", "review", "done"],
-            "column": [], "cards": [1, 1, 1, 1, 0, 1, 1], "chips": [0, 0, 0, 0, 0, 0, 0],
+            "columns": ["concept", "design", "ready", "in_progress", "build", "test", "review", "done"],
+            "column": [], "cards": [1, 1, 1, 1, 0, 0, 1, 1], "chips": [0, 0, 0, 0, 0, 0, 0, 0],
             "card": []}),
         "a first visit's ghost draws each column of the board in its colour with a typical card's box, its row of links and, on the cards of tasks taken up, its row of roles, and says once that the board loads"
     );

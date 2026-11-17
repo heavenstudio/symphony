@@ -125,7 +125,7 @@ fn a_recorded_test_run_moves_its_task_to_test_and_back_and_a_reviewers_stays_in_
     let fixture = Fixture::start();
     chrome.call("Emulation.setDeviceMetricsOverride", desktop());
     chrome.open(&fixture.site.url("/tasks"));
-    // Nothing was recorded here and no project reader answers: Build and Test are one rail.
+    // Build and Test remain columns before this project records its first run.
     assert!(chrome.wait_for(&format!("document.querySelector('.column[data-status=in_progress] .taskcard[data-slug=\"{WORKING}\"]') !== null && document.querySelector('main')?.dataset.feed==='live'"), SHOWN), "{}", chrome.eval("document.body.innerText"));
     assert_eq!(
         columns(&mut chrome),
@@ -134,7 +134,8 @@ fn a_recorded_test_run_moves_its_task_to_test_and_back_and_a_reviewers_stays_in_
             "design",
             "ready",
             "in_progress",
-            "build-test",
+            "build",
+            "test",
             "review",
             "done"
         ]),
@@ -155,28 +156,41 @@ fn a_recorded_test_run_moves_its_task_to_test_and_back_and_a_reviewers_stays_in_
     let mut slicing = Run::start(&fixture, "slicing", &fixture.slicer);
     assert!(
         chrome.wait_for(
-            "document.querySelector('[data-open-stage=test]') !== null",
+            "document.querySelector('.column[data-status=test]') !== null",
             SHOWN
         ),
         "no machine reported its runs"
     );
-    chrome.eval("document.querySelector('[data-open-stage=test]').click()");
+    chrome.eval("document.querySelector('.column[data-status=test]').scrollIntoView({block:'nearest',inline:'center'})");
     assert!(chrome.wait_for(&format!("document.querySelector('.column[data-status=test] .taskcard[data-slug=\"{WORKING}\"]') !== null && document.querySelector('.column[data-status=test] .taskcard[data-slug=\"{SLICED}\"]') !== null && document.querySelector('.column[data-status=test] .count').textContent === '2'"),SHOWN),"recorded runs did not place executor and slice-parent cards: {}",chrome.eval("document.body.innerText"));
-    assert_eq!(columns(&mut chrome), json!(["test"]));
+    assert_eq!(
+        columns(&mut chrome),
+        json!([
+            "concept",
+            "design",
+            "ready",
+            "in_progress",
+            "build",
+            "test",
+            "review",
+            "done"
+        ])
+    );
+    assert!(chrome.wait_for(&format!("document.querySelector('.column[data-status=review] .taskcard[data-slug=\"{REVIEWED}\"]') !== null"), SHOWN));
     assert_eq!(
         column(&mut chrome, REVIEWED),
-        Value::Null,
+        json!("review"),
         "a reviewer's run never moves the review card to Test"
     );
     screenshot(&mut chrome, "after-going");
-    chrome.eval("document.querySelector('.back-to-stages').click()");
+    chrome.eval("document.querySelector('.column[data-status=review]').scrollIntoView({block:'nearest',inline:'center'})");
     assert!(chrome.wait_for(&format!("document.querySelector('.column[data-status=review] .taskcard[data-slug=\"{REVIEWED}\"]') !== null && document.querySelector('.column[data-status=in_progress] .count').textContent === '0'"),SHOWN));
     working.end();
     reviewing.end();
     slicing.end();
     assert!(chrome.wait_for(&format!("document.querySelector('.column[data-status=in_progress] .taskcard[data-slug=\"{WORKING}\"]') !== null && document.querySelector('.column[data-status=in_progress] .taskcard[data-slug=\"{SLICED}\"]') !== null && document.querySelector('.column[data-status=review] .taskcard[data-slug=\"{REVIEWED}\"]') !== null"),SHOWN),"ended runs did not return their lifecycle cards: {}",chrome.eval("document.body.innerText"));
     assert!(chrome.wait_for(
-        "document.querySelector('[data-open-stage=test]').textContent.trim() === 'Test 0'",
+        "document.querySelector('.column[data-status=test] .count').textContent === '0'",
         SHOWN
     ));
     assert_eq!(
@@ -186,6 +200,8 @@ fn a_recorded_test_run_moves_its_task_to_test_and_back_and_a_reviewers_stays_in_
             "design",
             "ready",
             "in_progress",
+            "build",
+            "test",
             "review",
             "done"
         ])

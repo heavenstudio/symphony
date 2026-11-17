@@ -231,8 +231,9 @@ fn the_tasks_page_is_captured_drawn_with_its_columns_and_a_click_records_the_ope
         return;
     };
     let scratch = Scratch::new("menu");
-    let (before, open, last) = (
+    let (before, right, open, last) = (
         scratch.join("board.png"),
+        scratch.join("right.png"),
         scratch.join("open.png"),
         scratch.join("last.png"),
     );
@@ -242,10 +243,20 @@ fn the_tasks_page_is_captured_drawn_with_its_columns_and_a_click_records_the_ope
             &site.url("/tasks"),
             "--out",
             last.to_str().unwrap(),
+            "--click",
+            ".board-filters-toggle",
             "--shot",
             before.to_str().unwrap(),
             "--eval",
             COLUMNS,
+            "--eval",
+            "document.querySelector('.waiting-columns').scrollLeft = 10000",
+            "--shot",
+            right.to_str().unwrap(),
+            "--eval",
+            COLUMNS,
+            "--eval",
+            "document.querySelector('.waiting-columns').scrollLeft = 0",
             "--click",
             "button[aria-label=\"Finished tasks\"]",
             "--shot",
@@ -258,10 +269,13 @@ fn the_tasks_page_is_captured_drawn_with_its_columns_and_a_click_records_the_ope
     .unwrap();
     assert!(output.status.success(), "{}", said(&output));
     let lines = printed(&output);
-    let [columns, menu] = lines.as_slice() else {
-        panic!("two evaluations, one line each: {}", said(&output));
+    let [columns, across, shifted, back, menu] = lines.as_slice() else {
+        panic!("five evaluations, one line each: {}", said(&output));
     };
+    assert!(across.as_f64().unwrap() > 0.0);
+    assert_eq!(back, &json!(0));
     let board = Picture::read(&before);
+    let scrolled = Picture::read(&right);
     assert_eq!((board.width, board.height), (1440, 900));
     let everything = board.colours([0.0, 0.0, 1440.0, 900.0], 1.0);
     assert!(
@@ -270,7 +284,7 @@ fn the_tasks_page_is_captured_drawn_with_its_columns_and_a_click_records_the_ope
     );
     let columns = columns.as_array().unwrap();
     let statuses: Vec<_> = columns.iter().map(|column| &column["status"]).collect();
-    // All six lifecycle heads and the unreported machine rail draw even with one task.
+    // Lifecycle and machine columns all draw, including those reached by scrolling.
     assert_eq!(
         statuses,
         [
@@ -278,16 +292,27 @@ fn the_tasks_page_is_captured_drawn_with_its_columns_and_a_click_records_the_ope
             &json!("design"),
             &json!("ready"),
             &json!("in_progress"),
-            &json!("build-test"),
+            &json!("build"),
+            &json!("test"),
             &json!("review"),
             &json!("done")
         ],
         "the board's columns: {columns:?}"
     );
-    for column in columns {
-        let heading = rect(&column["heading"]);
+    for (column, moved) in columns.iter().zip(shifted.as_array().unwrap()) {
+        assert_eq!(column["status"], moved["status"]);
+        let initial = rect(&column["heading"]);
+        let (picture, heading) = if initial[0] >= 0.0 && initial[0] + initial[2] <= 1440.0 {
+            (&board, initial)
+        } else {
+            (&scrolled, rect(&moved["heading"]))
+        };
         assert!(heading[2] > 0.0 && heading[3] > 0.0, "{heading:?}");
-        let drawn = board.colours(heading, 1.0);
+        assert!(
+            heading[0] >= 0.0 && heading[0] + heading[2] <= 1440.0,
+            "{heading:?}"
+        );
+        let drawn = picture.colours(heading, 1.0);
         assert!(
             drawn > 1,
             "the column heading at {heading:?} is one flat colour in the picture"

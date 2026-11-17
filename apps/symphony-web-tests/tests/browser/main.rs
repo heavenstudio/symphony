@@ -1021,6 +1021,7 @@ fn task_controls_read_the_board_again_for_the_window_already_chosen() {
             .count()
     };
     let before = reads(&site);
+    components::board_filters(&mut chrome);
     components::choose(
         &mut chrome,
         ".filters button[aria-label='Finished tasks']",
@@ -1087,6 +1088,7 @@ fn task_controls_keep_their_values_and_revealed_rows_after_scrolling() {
         chrome.eval("document.querySelectorAll('[data-slug=\"tools/example\"]').length"),
         json!(1)
     );
+    components::board_filters(&mut chrome);
     // The real control is deliberately not focused. Read its node, not activeElement, and
     // preserve the latest synchronous edit when the request's debounce runs later.
     chrome.eval("const decoy = document.createElement('input'); decoy.value = 'wrong'; document.body.prepend(decoy); decoy.focus(); const input = document.querySelector('input[type=search]'); input.value = 'alpha'; input.dispatchEvent(new Event('input', {bubbles:true})); input.value = 'beta'; input.dispatchEvent(new Event('input', {bubbles:true}));");
