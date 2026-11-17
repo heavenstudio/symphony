@@ -121,7 +121,7 @@ session baseline restored. Drop it on a protocol error, failed cleanup, cancella
 or an unknown transaction state. Test isolation with different variables, failures and concurrent
 borrowers before choosing any more aggressive pooling mode.
 
-Remote execution follows its [commit-intent contract](remote-execution-attempts.md#Commit intent, then perform I/O).
+Remote execution follows its [commit-intent contract](remote-execution-attempts.md#commit-intent-then-perform-io).
 Commit and release the borrowed connection before provider I/O. Atomic admission, keyed intent,
 active-attempt pointers and durable execution reservations remain one database transaction;
 database-clock leases, worker epochs and revision comparisons fence later writes. Runtime
