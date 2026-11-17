@@ -21,6 +21,7 @@ fn project_task_counts_exclude_children_and_grandchildren() {
         instruction: false,
         fields: BTreeMap::new(),
         waits_on: None,
+        review_rounds: None,
         from: None,
     };
     let board = Tasks {
@@ -117,6 +118,7 @@ fn a_questions_task_is_open_until_it_is_done_or_cancelled() {
         instruction: false,
         fields: BTreeMap::new(),
         waits_on: None,
+        review_rounds: None,
         from: None,
     };
     let tasks: Vec<Task> = [

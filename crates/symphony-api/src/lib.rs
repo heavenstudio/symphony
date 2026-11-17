@@ -496,6 +496,10 @@ pub struct Task {
     /// The plugins' board fields: plugin name, then field name, then its value.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub fields: std::collections::BTreeMap<String, std::collections::BTreeMap<String, FieldValue>>,
+    /// Replayed stretches in review, including an active round, for open and finished tasks.
+    /// None means the summary is unavailable (including older servers), not zero reviews.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub review_rounds: Option<u32>,
     /// What an open task waits on; none for a closed one, or from a server before it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub waits_on: Option<WaitsOn>,
@@ -1113,6 +1117,9 @@ pub struct TaskFields {
     pub roles: Option<Vec<Role>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub instruction: Option<bool>,
+    /// Present when the known review-round count changes. Losing the summary replaces the task.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub review_rounds: Option<u32>,
     /// Present only when what it waits on changes; one of no kind (empty) clears it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub waits_on: Option<WaitsOn>,

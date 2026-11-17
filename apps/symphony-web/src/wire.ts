@@ -619,6 +619,11 @@ export type Task = {
    */
   fields?: { [key in string]: { [key in string]: FieldValue } };
   /**
+   * Replayed stretches in review, including an active round, for open and finished tasks.
+   * None means the summary is unavailable (including older servers), not zero reviews.
+   */
+  review_rounds?: number | null;
+  /**
    * What an open task waits on; none for a closed one, or from a server before it.
    */
   waits_on?: WaitsOn | null;
@@ -678,6 +683,10 @@ export type TaskFields = {
   depends?: Array<string> | null;
   roles?: Array<Role> | null;
   instruction?: boolean | null;
+  /**
+   * Present when the known review-round count changes. Losing the summary replaces the task.
+   */
+  review_rounds?: number | null;
   /**
    * Present only when what it waits on changes; one of no kind (empty) clears it.
    */

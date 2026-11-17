@@ -146,6 +146,7 @@ mod tests {
             instruction: false,
             fields: std::collections::BTreeMap::default(),
             waits_on: None,
+            review_rounds: None,
             from: None,
         }
     }

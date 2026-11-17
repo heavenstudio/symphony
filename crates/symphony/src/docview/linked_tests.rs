@@ -22,6 +22,7 @@ fn task(slug: &str, links: &[&str]) -> Task {
         instruction: false,
         fields: Default::default(),
         waits_on: None,
+        review_rounds: None,
         from: None,
     }
 }
