@@ -260,8 +260,8 @@ describe("the queue's check", () => {
         answered: (read, etag) => told.push(["answered", read, etag]),
         failed: (why) => told.push(["failed", why]),
       },
-      async (ms) => {
-        waits.push(ms);
+      async (backoff, ended) => {
+        waits.push(backoff.wait(ended));
       },
     );
     return { told, waits, done, asked };

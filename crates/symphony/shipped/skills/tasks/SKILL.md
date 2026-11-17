@@ -192,22 +192,27 @@ Pull work from the board, don't only wait for events: [task-orchestrator](../tas
    --link docs/X.md#Heading [--depends …] [--parent …]`. A task
    you file as an orchestrator is yours from that write (its line ends
    `; HANDLE orchestrates it`; `--no-role --for HANDLE` files it for
-   HANDLE, a live orchestrator, instead), and
+   HANDLE, a live orchestrator, instead) while you orchestrate fewer open
+   tasks than `[limits] orchestrator_tasks` (16 unwritten): at that limit
+   you take and are given none but a red, the line saying why and who took
+   it or that it waits, and
    `just tasks role SLUG orchestrator` takes one another orchestrator holds
    no more; on a task with subtasks, the root alone is enough, events climb to you.
-   Every open task has an orchestrator: the board gives one filed by any other
-   session to the orchestrator of the work that session holds, else of its
-   parent, else to the orchestrator holding the nearest task above it, else to
-   the one holding fewest among those that stay (live past the first live line,
-   and waiting, watching or holding a task: a session that only registered gets
-   nothing). A leaving orchestrator's open work goes in the leave; a lost one's,
-   and any other open work with none, at the next read of the whole board (an
-   orchestrator's `wait`, monitor or `pull`, the server's clock, a dispatch),
-   one thread line each, with no sweep needed; a task moved out from under yours
-   stays yours. `release SLUG --role orchestrator` is refused while it would
-   leave open work with none (hand it over). With none that stays, such work
-   waits, and the first orchestrator to come to stay is given it at its next
-   look, told one line: `GIVEN N open tasks are yours to orchestrate: …`.
+   Every open task has an orchestrator or waits for one: the board gives one
+   filed by any other session to the orchestrator of the work that session
+   holds, else of its parent, else to the orchestrator holding the nearest task
+   above it, else to the one holding fewest among those under that limit that
+   stay (live past the first live line, and waiting, watching or holding a
+   task: a session that only registered gets nothing). A leaving orchestrator's
+   open work goes in the leave; a lost one's, and any other open work with
+   none, at the next read of the whole board (an orchestrator's `wait`, monitor
+   or `pull`, the server's clock, a dispatch), one thread line each, with no
+   sweep needed; a task moved out from under yours stays yours.
+   `release SLUG --role orchestrator` is refused while it would leave open work
+   with none (hand it over), but for unstarted work while you are past that
+   limit. With none under it that stays, such work waits, and the first such
+   orchestrator to come is given it at its next look, told one line:
+   `GIVEN N open tasks are yours to orchestrate: …`.
    A task has one orchestrator: the role on a task another orchestrator
    still holds is refused, naming it. To give one of yours away, run
    `just tasks handover SLUG HANDLE` (one write; the thread names the new
@@ -373,6 +378,6 @@ When the owner says stop, or your work is done: release the executor or
 reviewer roles you will not finish (`just tasks release SLUG --role ROLE`),
 then `just tasks leave`. This unregisters delivery and chat ownership. Do not
 release the open work you orchestrate (that is refused): the leave gives it to
-another orchestrator that stays, or leaves it waiting for the first to come
-while none does; hand a task to one you choose first with
+another orchestrator under its limit that stays, or leaves it waiting for the
+first to come while none is; hand a task to one you choose first with
 `just tasks handover SLUG HANDLE`. Say in one line what you left where.

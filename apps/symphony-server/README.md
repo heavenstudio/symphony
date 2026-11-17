@@ -90,8 +90,11 @@ each failure of it in a row up to 1 h (`src/reload/retry.rs`), on either clock, 
 never stays on the old build for want of a retry. Editing the sources builds the new fingerprint
 at its first check, whatever that wait. A build whose sources changed or could not be read while
 it ran is dropped and waits the same way, said in the log alone, as the version read next is
-usually another and is built at once. A starter's hand-off that fails is not tried again (the
-starter asks again), and its notice keeps the time of a retry that still waits.
+usually another and is built at once; a notice that already says an update failed says the drop
+in its place, so the time it names is never one already past. A build kept as the running image
+clears the notice and the wait, so the next failure waits 5 min again. A starter's hand-off that
+fails is not tried again (the starter asks again), and its notice keeps the time of a retry that
+still waits.
 Only the main checkout on branch `main` is followed; foreground servers do not reload.
 Shared installation and live rebuilds both use Cargo's release profile. The debug
 server exceeded the idle CPU budget on the normal board; the release build keeps
@@ -132,7 +135,7 @@ cannot keep installing after `--stop` returns.
 | `/api/agent-page?cursor=…` | Twenty connected agents and their current work and five latest finished tasks; `health=lost` pages lost agents |
 | `/api/task-thread?slug=…` | Alias for the typed paged task history |
 | `/api/agents` | The board's agents view, including probe availability |
-| `/api/reports?grain=…&days=…` | The Reports page's window (`ReportsPage`): its periods by the hour, day or week, each summed from the project's roll-up, agents and board-health day files, a period no file recorded none of; the settings file's commits in the window; what was not read. It reads files only, never the board, and at most 64 MiB of them (`src/api/reports.rs`). The answer is kept between reads with what it was read from (the hour, each day file by its stat, the default branch's tip), so a read that finds none of it moved opens no file and starts no git (`src/api/reports/kept.rs`) |
+| `/api/reports?grain=…&days=…` | The Reports page's window (`ReportsPage`): its periods by the hour, day or week, each summed from the project's roll-up, agents and board-health day files, a period no file recorded none of; the commits in the window that changed the settings file, the rules or a skill, each with what it changed (`ReportMark`); what was not read. It reads files only, never the board, and at most 64 MiB of them (`src/api/reports.rs`). The answer is kept between reads with what it was read from (the hour, each day file by its stat, the default branch's tip), so a read that finds none of it moved opens no file and starts no git (`src/api/reports/kept.rs`) |
 | `/api/run-log?run=…&tail=…` | Part of a run's log (`RunLog`): its last 64 KiB by default, its last `tail` bytes, or `from=…&to=…` a range, at most 1 MiB; only a regular file in a day folder of the project's `logs/`, never the board (`src/api/run_log.rs`, [RUNS](../../docs/RUNS.md#logs)) |
 | `/api/activity` | Latest forty document and owner-addressed task entries |
 | `/api/pending` | Pending cards in document navigation order, then branch cards |
@@ -140,7 +143,8 @@ cannot keep installing after `--stop` returns.
 
 Before any project the one server answers `/api/projects`, to loopback and this machine's tailnet
 names like every route of a project's: each project it serves, with its feed's version, the cards
-waiting on the owner and the first of them, why it is refused or its board unwell, and its task
+waiting on the owner and the first of them, why it is refused or its board not well (the line
+the project list draws under it, `src/live/health.rs`), and its task
 asks, beside the server's installation id and pin (`symphony_api::ProjectList`, what the desktop
 app reads). The task asks are the questions agents asked each person on open tasks that still wait
 on them, and the board's newest reviewer verdict; a project's feed sends them again each time they

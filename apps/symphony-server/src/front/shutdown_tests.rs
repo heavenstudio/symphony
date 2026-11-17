@@ -239,6 +239,10 @@ async fn stopping_a_cold_server_prevents_its_first_hub_start() {
 }
 
 #[test]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "Shared::wait's own test: the stop wakes its long timer, and one asked after the stop returns at once"
+)]
 fn background_shutdown_wakes_long_timers_and_remains_sticky() {
     let tree = Tree::new();
     let shared = Shared::new(
@@ -308,11 +312,12 @@ fn a_signalled_stop_leaves_the_runtime_worker_free_while_it_waits() {
         })
     };
     signal.send(()).unwrap();
-    assert!(
-        shared.wait(BACKSTOP),
-        "{}",
-        stalled("the signal to start a stop")
-    );
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "waits for the stop the signal starts, which wakes it, BACKSTOP its bound alone"
+    )]
+    let stopped = shared.wait(BACKSTOP);
+    assert!(stopped, "{}", stalled("the signal to start a stop"));
     let (answered, answer) = std::sync::mpsc::channel();
     runtime.spawn(async move { answered.send(()).unwrap() });
     // Only a worker that stop does not hold can send this answer before the tick ends.

@@ -2,6 +2,7 @@
 //! transaction (`tasks-copy` on SurrealDB), and `Store::dump` reads it back in the same shape, each
 //! table in the order of its key.
 
+use crate::children::Child as _;
 use crate::common::{Backend, Fixture, NOW, Seed, client, server_addr, session, task};
 use symphony_board::rows::{
     AskRow, BarredKeyRow, DeliveryKeyRow, DeliveryRow, Dump, HeldRow, LinkRow, MessageRow, RoleRow,
@@ -410,7 +411,7 @@ fn the_copy_binary_is_the_command() {
     let db = client();
     // The copy reads the whole dump before it says anything, so the dump is written first.
     let mut child = sys::spawn_piped(
-        Command::new(env!("CARGO_BIN_EXE_tasks-copy"))
+        Command::of(env!("CARGO_BIN_EXE_tasks-copy"))
             .args([server_addr(), db.database().to_string()]),
     )
     .unwrap();
@@ -430,7 +431,7 @@ fn the_copy_binary_is_the_command() {
             .unwrap()
             .starts_with("tasks-copy: 2 tasks")
     );
-    let refused = sys::output(&mut Command::new(env!("CARGO_BIN_EXE_tasks-copy"))).unwrap();
+    let refused = sys::output(&mut Command::of(env!("CARGO_BIN_EXE_tasks-copy"))).unwrap();
     assert_eq!(refused.status.code(), Some(2));
 }
 

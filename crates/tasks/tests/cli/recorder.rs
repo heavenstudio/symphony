@@ -14,6 +14,7 @@
 //! reaches ([`patience`]), and one that gives up says what the work folder holds ([`holds`]): never
 //! recorded, or recorded and never finished.
 
+use crate::children::Child as _;
 use crate::{Case, git, repository, scratch};
 use std::collections::BTreeSet;
 use std::fs;
@@ -166,7 +167,7 @@ pub(crate) fn patience() -> Duration {
 
 /// What `git ARGS` in `dir` prints, trimmed.
 pub(crate) fn git_says(dir: &Path, args: &[&str]) -> String {
-    let done = output(Command::new("git").arg("-C").arg(dir).args(args)).unwrap();
+    let done = output(Command::of("git").arg("-C").arg(dir).args(args)).unwrap();
     assert!(done.status.success(), "git {args:?}: {done:?}");
     String::from_utf8(done.stdout).unwrap().trim().to_string()
 }
@@ -249,7 +250,7 @@ const ENDING: [libc::c_int; 4] = [libc::SIGHUP, libc::SIGINT, libc::SIGQUIT, lib
 /// in `folders`, its waits at [`SCALE`], with each of [`ENDING`] at its default; standard streams
 /// the test's to set.
 fn tasks(case: &Case, folders: &Folders, session: Option<&str>, args: &[&str]) -> Command {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_tasks"));
+    let mut command = Command::of(env!("CARGO_BIN_EXE_tasks"));
     for signal in ENDING {
         command.default_signal(signal);
     }
@@ -758,7 +759,7 @@ fn a_command_keeps_the_descriptors_ignored_signals_and_signal_mask_its_caller_ha
     let run = |wrapped: Option<&Folders>| {
         let file = fs::File::create(&passed).unwrap();
         let mut command = if let Some(folders) = wrapped {
-            let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_tasks"));
+            let mut command = std::process::Command::of(env!("CARGO_BIN_EXE_tasks"));
             command.args(["run", "--phase", "test"]);
             if std::ptr::eq(folders, &piped) {
                 command
@@ -779,7 +780,7 @@ fn a_command_keeps_the_descriptors_ignored_signals_and_signal_mask_its_caller_ha
                 .env_remove(recorded::PIPELINE_VAR);
             command
         } else {
-            std::process::Command::new("sh")
+            std::process::Command::of("sh")
         };
         command
             .args(["-c", script.as_str()])

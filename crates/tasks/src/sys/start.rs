@@ -193,6 +193,7 @@ pub(crate) fn bsd_start(pid: c_int) -> std::io::Result<Option<(u64, u64)>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::children::Child as _;
     use crate::sys::{Command, EPERM};
     use std::io::{Error, ErrorKind};
 
@@ -283,7 +284,7 @@ mod tests {
 
     #[test]
     fn this_process_has_a_start_and_no_pid_or_a_reaped_one_has_ended() {
-        let mut done = Command::new("true").spawn().unwrap();
+        let mut done = Command::of("true").spawn().unwrap();
         done.wait().unwrap();
         let pids = [i64::from(std::process::id()), i64::from(done.id()), 0, -1];
         let starts = process_starts(&pids);

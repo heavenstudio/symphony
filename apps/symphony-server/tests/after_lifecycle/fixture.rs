@@ -303,22 +303,22 @@ fn stalled_why(message: &str) -> &str {
     why
 }
 
+/// `event`'s value once it gives one, or none once `backstop` has passed on `elapsed`, the wait's
+/// clock: the wall's (`Instant::elapsed`), or a test's own, which alone ends the wait, so
+/// test_time's wall backstop is never reached first.
 fn poll_for<T>(
     backstop: Duration,
     mut event: impl FnMut() -> Option<T>,
     mut elapsed: impl FnMut(&Instant) -> Duration,
 ) -> Option<T> {
     let began = Instant::now();
-    loop {
+    test_time::until("an event of the lifecycle fixture", Duration::MAX, || {
         if let Some(value) = event() {
-            return Some(value);
+            return Some(Some(value));
         }
-        if elapsed(&began) >= backstop {
-            return None;
-        }
-        #[expect(clippy::disallowed_methods, reason = "no-timed-waits baseline: a test looks again for its condition by hand, where test_time::wait::until is the helper")]
-        std::thread::sleep(Duration::from_millis(10));
-    }
+        (elapsed(&began) >= backstop).then_some(None)
+    })
+    .unwrap_or_else(|stall| panic!("{stall}"))
 }
 
 /// Cleanup still fails a passing case, but preserves an original failure and its other reports.

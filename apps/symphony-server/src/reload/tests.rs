@@ -794,6 +794,45 @@ impl Reloading {
         self.hub.server_notice.borrow().clone()
     }
 
+    /// The server's notice once it says other than `before`.
+    fn notice_after(&self, before: &str) -> String {
+        test_time::until("the notice to change", stall(), || {
+            Some(self.notice()).filter(|notice| notice != before)
+        })
+        .unwrap()
+    }
+
+    /// The checkout registered in the server's machine folder, so a starter's request to hand over
+    /// to a build of it is taken.
+    fn register(&self) {
+        symphony::machine::Registry {
+            projects: vec![symphony::machine::Entry {
+                id: "project".into(),
+                name: "project".into(),
+                root: self.root.clone(),
+                manifest: None,
+                plugins: Vec::new(),
+                pin: 1,
+                schema: 1,
+            }],
+        }
+        .write(&self.home)
+        .unwrap();
+    }
+
+    /// A starter's request to hand over to the case's replacement that ends before it is ready
+    /// ([`ends`]), and the flag that tells the reload worker of it.
+    fn ask_hand_over(&self) {
+        crate::host::Handover {
+            exe: self.folder().join("replacement"),
+            root: self.root.clone(),
+            install: self.home.clone(),
+        }
+        .ask(&self.home)
+        .unwrap();
+        self.shared.handover.store(true, Ordering::SeqCst);
+    }
+
     /// The worker stopped and joined.
     fn stop(&self, worker: std::thread::JoinHandle<()>) {
         self.shared.stop();
@@ -931,6 +970,31 @@ printf '%s %s\n' "$said" "$*" > '{next}' && mv '{next}' '{replaced}'
 /// A build's body that records its arguments and installs another image: a stand-in replacement
 /// that records its start and ends before it says it is ready, so every hand-over to it fails.
 fn installs_a_replacement_that_ends(folder: &Path, home: &Path) -> String {
+    in_turn(folder, &[ends(folder, home)])
+}
+
+/// A build's body that records its arguments, then runs the step of its turn among `steps`: the
+/// first build the first, and every build from the last step's turn on the last.
+fn in_turn(folder: &Path, steps: &[String]) -> String {
+    let builds = folder.join("builds");
+    let mut body = format!(
+        "printf '%s\\n' \"$*\" >> '{builds}'\ncase $(($(wc -l < '{builds}'))) in\n",
+        builds = builds.display()
+    );
+    for (turn, step) in steps.iter().enumerate() {
+        let turn = if turn + 1 == steps.len() {
+            "*".to_string()
+        } else {
+            (turn + 1).to_string()
+        };
+        body.push_str(&format!("{turn}) {step} ;;\n"));
+    }
+    body + "esac\n"
+}
+
+/// A build's step that installs a stand-in replacement, `folder/replacement`, that records its
+/// start and ends before it says it is ready, so every hand-over to it fails.
+fn ends(folder: &Path, home: &Path) -> String {
     let replacement = folder.join("replacement");
     crate::fixture_script::write(
         &replacement,
@@ -942,13 +1006,29 @@ fn installs_a_replacement_that_ends(folder: &Path, home: &Path) -> String {
     );
     crate::testing::assert_primed(&replacement);
     format!(
-        "printf '%s\\n' \"$*\" >> '{builds}'\nln -s '{replacement}' '{next}' && mv '{next}' '{image}'\n",
-        builds = folder.join("builds").display(),
+        "ln -s '{replacement}' '{next}' && mv '{next}' '{image}'",
         replacement = replacement.display(),
         next = home.join("bin/next").display(),
         image = home.join("bin/symphony-server").display(),
     )
 }
+
+/// A build's step that installs the running image's bytes again, from a copy of them in `folder`,
+/// as a new file: a build that is kept, whatever image the builds before it installed.
+fn installs_running(folder: &Path, home: &Path) -> String {
+    let running = folder.join("running");
+    std::fs::write(&running, RUNNING).unwrap();
+    format!(
+        "cp '{running}' '{next}' && mv '{next}' '{image}'",
+        running = running.display(),
+        next = home.join("bin/next").display(),
+        image = home.join("bin/symphony-server").display(),
+    )
+}
+
+/// A build's step that leaves the checkout on another branch, where its sources are not read: the
+/// build is dropped.
+const LEAVES_MAIN: &str = "git symbolic-ref HEAD refs/heads/aside";
 
 /// The reload's clock in a test's hands: it stands where the test sets it, starts at a whole
 /// minute of wall time, so a notice names the minute each wait ends, and counts its reads.
@@ -1087,14 +1167,8 @@ fn a_failed_builds_notice_ends_its_reason_before_saying_when_it_is_tried_again()
         )
     });
     let clock = Clock::new();
-    let notice = |before: &str| {
-        test_time::until("a failed build on the notice", stall(), || {
-            Some(server.notice()).filter(|notice| notice != before)
-        })
-        .unwrap()
-    };
     let worker = server.retrying::<notify::NullWatcher>(server.setup(false), clock.retry());
-    let first = notice("");
+    let first = server.notice_after("");
     assert_eq!(
         first,
         format!(
@@ -1105,7 +1179,7 @@ fn a_failed_builds_notice_ends_its_reason_before_saying_when_it_is_tried_again()
     );
     clock.at(5 * MINUTE);
     assert_eq!(
-        notice(&first),
+        server.notice_after(&first),
         format!(
             "{FAILED} symphony-server build exit status: 1: error: no such crate. It tries this \
              version again at about {}.",
@@ -1173,42 +1247,13 @@ fn a_build_dropped_for_sources_unread_after_it_is_tried_again_after_the_wait() {
 #[test]
 fn a_starters_failed_hand_over_keeps_a_waiting_retrys_time_on_the_notice() {
     let server = Reloading::new(installs_a_replacement_that_ends);
-    symphony::machine::Registry {
-        projects: vec![symphony::machine::Entry {
-            id: "project".into(),
-            name: "project".into(),
-            root: server.root.clone(),
-            manifest: None,
-            plugins: Vec::new(),
-            pin: 1,
-            schema: 1,
-        }],
-    }
-    .write(&server.home)
-    .unwrap();
-    // A starter's request to hand over to a build that ends before it is ready.
-    let ask = || {
-        crate::host::Handover {
-            exe: server.folder().join("replacement"),
-            root: server.root.clone(),
-            install: server.home.clone(),
-        }
-        .ask(&server.home)
-        .unwrap();
-        server.shared.handover.store(true, Ordering::SeqCst);
-    };
-    let notice = |before: &str| {
-        test_time::until("a failed hand-over on the notice", stall(), || {
-            Some(server.notice()).filter(|notice| notice != before)
-        })
-        .unwrap()
-    };
+    server.register();
     let clock = Clock::new();
     // A stamped start builds nothing, so no retry waits when the starter first asks.
     let worker = server.retrying::<notify::NullWatcher>(server.setup(true), clock.retry());
-    ask();
+    server.ask_hand_over();
     let asked = format!("{FAILED} replacement did not become ready: it ended");
-    assert_eq!(notice(""), asked);
+    assert_eq!(server.notice_after(""), asked);
     assert_eq!((server.builds().len(), started(&server)), (0, 1));
 
     server.tree.write(
@@ -1219,24 +1264,143 @@ fn a_starters_failed_hand_over_keeps_a_waiting_retrys_time_on_the_notice() {
         "{asked}. It tries this version again at about {}.",
         clock.minute(5 * MINUTE)
     );
-    assert_eq!(notice(&asked), failed);
-    ask();
+    assert_eq!(server.notice_after(&asked), failed);
+    server.ask_hand_over();
     let kept = format!(
         "{asked}. The version whose update failed before is tried again at about {}.",
         clock.minute(5 * MINUTE)
     );
-    assert_eq!(notice(&failed), kept);
+    assert_eq!(server.notice_after(&failed), kept);
     assert_eq!((server.builds().len(), started(&server)), (1, 3));
     // The retry comes at the time both notices named.
     clock.at(5 * MINUTE);
     assert_eq!(
-        notice(&kept),
+        server.notice_after(&kept),
         format!(
             "{asked}. It tries this version again at about {}.",
             clock.minute(15 * MINUTE)
         )
     );
     assert_eq!((server.builds().len(), started(&server)), (2, 4));
+    server.stop(worker);
+}
+
+/// A build kept as the running image after another version's update failed leaves no retry of
+/// that version waiting, as the sources read the kept one: a starter's hand-over that fails after
+/// it names none.
+#[test]
+fn a_kept_build_leaves_no_retry_for_a_failed_hand_over_to_name() {
+    let server = Reloading::new(|folder, home| {
+        in_turn(
+            folder,
+            &[ends(folder, home), installs_running(folder, home)],
+        )
+    });
+    server.register();
+    let clock = Clock::new();
+    let worker = server.retrying::<notify::NullWatcher>(server.setup(false), clock.retry());
+    let asked = format!("{FAILED} replacement did not become ready: it ended");
+    let failed = format!(
+        "{asked}. It tries this version again at about {}.",
+        clock.minute(5 * MINUTE)
+    );
+    assert_eq!(server.notice_after(""), failed);
+    server.tree.write(
+        "main/symphony/apps/symphony-server/src/main.rs",
+        "fn main() { /* changed */ }\n",
+    );
+    let changed = symphony::reload::fingerprint(&server.root).unwrap();
+    assert_eq!(
+        server.notice_after(&failed),
+        "",
+        "the changed sources' build, kept"
+    );
+    assert_eq!(
+        server.stamp().expect("a kept build's stamp")["source"],
+        changed
+    );
+    server.ask_hand_over();
+    assert_eq!(server.notice_after(""), asked, "no retry named");
+    assert_eq!((server.builds().len(), started(&server)), (2, 2));
+    server.stop(worker);
+}
+
+/// A retry whose own build is dropped, for sources that cannot be read once it has ended, says so
+/// on the notice that named its time, with the time it is tried again: the notice keeps no time
+/// already past. That time is the one to come: once the sources read as that version again, it is
+/// built then and not before. Once a build is kept the notice says no failure, and a build dropped
+/// after it is said in the log alone.
+#[test]
+fn a_retrys_dropped_build_names_on_the_notice_when_it_is_tried_again() {
+    let server = Reloading::new(|folder, home| {
+        in_turn(
+            folder,
+            &[
+                ends(folder, home),
+                LEAVES_MAIN.into(),
+                installs_running(folder, home),
+                LEAVES_MAIN.into(),
+            ],
+        )
+    });
+    let version = symphony::reload::fingerprint(&server.root).unwrap();
+    // A watched folder of no crate: the worker lets it go at the first check after it went.
+    let marker = server.root.join("crates");
+    std::fs::create_dir(&marker).unwrap();
+    let clock = Clock::new();
+    let worker = server.retrying::<Seeing>(server.setup(false), clock.retry());
+    let failed = format!(
+        "{FAILED} replacement did not become ready: it ended. It tries this version again at \
+         about {}.",
+        clock.minute(5 * MINUTE)
+    );
+    assert_eq!(server.notice_after(""), failed);
+    // The retry, whose build leaves the checkout off main: the read after it fails, and the clock
+    // is read again for that failure's wait.
+    clock.at(5 * MINUTE);
+    std::fs::remove_dir(&marker).unwrap();
+    test_time::until_true("a check after the retry's build", stall(), || {
+        seen(false, &marker)
+    })
+    .unwrap();
+    assert_eq!(server.builds().len(), 2);
+    let dropped = format!(
+        "{FAILED} The sources changed or could not be read during the build; its result is \
+         dropped, and that version is tried again at about {} if they read as it again.",
+        clock.minute(15 * MINUTE)
+    );
+    assert_eq!(server.notice(), dropped);
+
+    git(&server.root, &["symbolic-ref", "HEAD", "refs/heads/main"]);
+    assert_eq!(
+        symphony::reload::fingerprint(&server.root).unwrap(),
+        version
+    );
+    clock.at(15 * MINUTE - Duration::from_secs(1));
+    assert_eq!(server.builds().len(), 2, "not before the time named");
+    clock.set(15 * MINUTE);
+    assert_eq!(server.notice_after(&dropped), "", "the retry then, kept");
+    assert_eq!(
+        server.stamp().expect("a kept build's stamp")["source"],
+        version
+    );
+    assert_eq!((server.builds().len(), started(&server)), (3, 1));
+
+    // A source change, whose build leaves the checkout off main again. With nothing waiting since
+    // the kept build, the clock is read for that drop's wait first: then the sources are put back.
+    let read = clock.reads.load(Ordering::SeqCst);
+    server.tree.write(
+        "main/symphony/apps/symphony-server/src/main.rs",
+        "fn main() { /* changed */ }\n",
+    );
+    test_time::until_true("the changed sources' build, dropped", stall(), || {
+        clock.reads.load(Ordering::SeqCst) > read
+    })
+    .unwrap();
+    git(&server.root, &["symbolic-ref", "HEAD", "refs/heads/main"]);
+    clock.at(15 * MINUTE);
+    assert_eq!(server.builds().len(), 4);
+    assert_eq!(server.notice(), "", "a drop with no failure on the notice");
     server.stop(worker);
 }
 

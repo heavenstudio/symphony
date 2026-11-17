@@ -153,20 +153,20 @@ export class Retry {
   }
 }
 
-/** Waits `ms` before a read is tried again (`wait`, a retry's by default), or less: until the
- * reader presses Retry, or `signal` ends. */
+/** Waits `wait` (a retry's, `retryWait`, or a baseline site's own) before a read is tried again,
+ * or less: until the reader presses Retry, or `signal` ends, either of which ends the signal it
+ * gives `wait`. */
 export function pause(
-  ms: number,
+  wait: (signal: AbortSignal) => Promise<void>,
   retry: Retry,
   signal: AbortSignal,
-  wait: (ms: number, signal: AbortSignal) => Promise<void> = retryWait,
 ): Promise<void> {
   if (signal.aborted) return Promise.resolve();
   const pressed = new AbortController();
   const end = () => pressed.abort();
   const stop = retry.heard(end);
   signal.addEventListener("abort", end, { signal: pressed.signal });
-  return wait(ms, pressed.signal).finally(() => {
+  return wait(pressed.signal).finally(() => {
     stop();
     pressed.abort();
   });
@@ -409,7 +409,11 @@ export interface BoardRun<B extends PageBoard = PageBoard> {
 /** The loop's waits: until the page is back, and between one try and the next. */
 export interface BoardWaits {
   back(signal: AbortSignal): Promise<void>;
-  pause(ms: number, retry: Retry, signal: AbortSignal): Promise<void>;
+  pause(
+    wait: (signal: AbortSignal) => Promise<void>,
+    retry: Retry,
+    signal: AbortSignal,
+  ): Promise<void>;
 }
 
 /**
@@ -455,7 +459,7 @@ export async function keepBoard<B extends PageBoard>(
       run.setTrouble(said(error));
     }
     run.setStale(true);
-    await waits.pause(backoff.wait(ended), run.retry, signal);
+    await waits.pause((pressed) => retryWait(backoff, ended, pressed), run.retry, signal);
   }
 }
 

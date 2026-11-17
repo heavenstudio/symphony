@@ -19,6 +19,7 @@ import {
   reloadIfRedeployed,
 } from "./live";
 import { SERVER_NOTICE } from "./shared";
+import { Backoff, NEVER_ANSWERED } from "./state";
 import {
   asking,
   CASES,
@@ -31,6 +32,7 @@ import {
   turn,
   until,
 } from "./testing";
+import { retryWait } from "./timing";
 import { CACHE_FORMAT, FEED_EVENT } from "./wire";
 
 afterEach(() => {
@@ -370,10 +372,13 @@ describe("a read's pause before it is tried again", () => {
     return over;
   }
 
-  it("ends when its time is up", async () => {
+  /** A retry's first wait, 1 s. */
+  const retrying = (signal: AbortSignal) => retryWait(new Backoff(), NEVER_ANSWERED, signal);
+
+  it("ends when its wait is over", async () => {
     vi.useFakeTimers();
-    const waiting = pause(5_000, new Retry(), new AbortController().signal);
-    await vi.advanceTimersByTimeAsync(4_999);
+    const waiting = pause(retrying, new Retry(), new AbortController().signal);
+    await vi.advanceTimersByTimeAsync(999);
     expect(await ended(waiting)).toBe(false);
     await vi.advanceTimersByTimeAsync(1);
     expect(await ended(waiting)).toBe(true);
@@ -382,7 +387,7 @@ describe("a read's pause before it is tried again", () => {
   it("ends at the reader's press of Retry, and leaves the presses after it alone", async () => {
     vi.useFakeTimers();
     const retry = new Retry();
-    const waiting = pause(60_000, retry, new AbortController().signal);
+    const waiting = pause(retrying, retry, new AbortController().signal);
     expect(await ended(waiting)).toBe(false);
     retry.current += 1;
     expect(await ended(waiting)).toBe(true);
@@ -393,27 +398,31 @@ describe("a read's pause before it is tried again", () => {
     expect(retry.current).toBe(2);
   });
 
-  it("waits through the wait it is given, which the reader's press still ends", async () => {
-    const asked: number[] = [];
-    const given = (ms: number, signal: AbortSignal) => {
-      asked.push(ms);
+  it("waits through the wait it is given, whose signal the reader's press ends", async () => {
+    const asked: AbortSignal[] = [];
+    const given = (signal: AbortSignal) => {
+      asked.push(signal);
       return new Promise<void>((done) => signal.addEventListener("abort", () => done()));
     };
     const retry = new Retry();
-    const waiting = pause(5_000, retry, new AbortController().signal, given);
-    expect(asked).toEqual([5_000]);
+    const page = new AbortController();
+    const waiting = pause(given, retry, page.signal);
+    expect(asked).toHaveLength(1);
+    expect(asked[0]).not.toBe(page.signal);
     expect(await ended(waiting)).toBe(false);
     retry.current += 1;
     expect(await ended(waiting)).toBe(true);
+    expect(asked[0]?.aborted).toBe(true);
+    expect(page.signal.aborted).toBe(false);
   });
 
   it("ends once its signal ends, or at once when it had, leaving no timer", async () => {
     vi.useFakeTimers();
     const leaving = new AbortController();
-    const waiting = pause(60_000, new Retry(), leaving.signal);
+    const waiting = pause(retrying, new Retry(), leaving.signal);
     leaving.abort();
     expect(await ended(waiting)).toBe(true);
-    await pause(60_000, new Retry(), leaving.signal);
+    await pause(retrying, new Retry(), leaving.signal);
     expect(vi.getTimerCount()).toBe(0);
   });
 });
@@ -456,7 +465,7 @@ describe("the board's loop", () => {
     vi.stubGlobal("symphonyCache", { keep });
     const page = new AbortController();
     const did: unknown[] = [];
-    const paused: number[] = [];
+    const paused: ((signal: AbortSignal) => Promise<void>)[] = [];
     const frame = { refresh: vi.fn(), connected: vi.fn(), heard: vi.fn() };
     const board: { current: PageBoard | null } = { current: null };
     const done = keepBoard(
@@ -486,8 +495,8 @@ describe("the board's loop", () => {
       {
         back: () => waitBack(page),
         // The reader leaves while the loop waits to try again.
-        pause: async (ms) => {
-          paused.push(ms);
+        pause: async (wait) => {
+          paused.push(wait);
           page.abort();
         },
       },

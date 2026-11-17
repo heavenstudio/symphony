@@ -63,11 +63,11 @@ impl Hub {
 
     /// Whether the project has no board: the last reach of it said none is made, or that it has no
     /// store and no SurrealDB here to serve one ([`symphony_board::board_health::absent`]). A store
-    /// that is there and cannot be served is a board, and unwell.
+    /// that is there and cannot be served is a board, and unwell. Read as [`Hub::tasks_read`]
+    /// answers, it never waits on a board read under way.
     pub(crate) fn boardless(&self) -> bool {
-        // A panic under this lock leaves at worst an older board observation, read as it is.
-        let held = self.tasks.lock().unwrap_or_else(|e| e.into_inner());
-        held.error
+        self.tasks_read()
+            .err()
             .as_deref()
             .is_some_and(symphony_board::board_health::absent)
     }
@@ -132,6 +132,7 @@ impl Hub {
         // since, so a poisoned lock is read as it is.
         let mut held = self.tasks.lock().unwrap_or_else(|e| e.into_inner());
         let was = held.error.replace(error.clone());
+        self.publish_listing(Err(error.clone()));
         drop(held);
         let newly_unavailable = was.is_none();
         let turned = was.is_some_and(|was| symphony_board::rpc::slow(&was) != slow);

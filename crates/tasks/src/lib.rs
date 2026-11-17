@@ -20,18 +20,14 @@
 //! and liveness guards fence the sessions they depend on. Callback readers combine both markers
 //! to reuse unchanged board inputs without making independent heartbeats write one counter.
 
-// The library's tests start their own fixtures and stand-ins; clippy checks the library without
-// them too, where only `sys::command` and `sys::command_with` make a child (clippy.toml).
-#![cfg_attr(
-    test,
-    expect(
-        clippy::disallowed_methods,
-        reason = "a test starts its fixtures as it likes; the library alone is checked without it"
-    )
-)]
-
 #[cfg(test)]
 extern crate self as symphony_board;
+
+// The library's tests start their own fixtures and stand-ins through it; the library itself makes
+// a child by `sys::command` and `sys::command_with` alone (clippy.toml).
+#[cfg(test)]
+#[path = "../tests/support/children.rs"]
+mod children;
 
 pub mod alarm;
 pub mod arm;

@@ -1162,6 +1162,21 @@ describe("what the live board gives its columns", () => {
     expect(d.days).toBe(7);
   });
 
+  it("reads a column asked again within its rest once, the last ask's, and another column beside it", async () => {
+    const { board, d, asked } = live(() => answer(200, listing([aTask("w/a")], [["ready", 1]])));
+    d.waiting = false;
+    board.load("ready", false, "", 1);
+    await pass(200);
+    board.load("ready", false, "", 1);
+    board.load("done", false, "", 1);
+    // The first ask's rest is over, its timer with it.
+    expect(vi.getTimerCount()).toBe(2);
+    await pass(200);
+    expect(urls(asked)).toEqual([]);
+    await pass(50);
+    expect(urls(asked).sort()).toEqual([column("done"), column("ready")]);
+  });
+
   it("after one card's update, is the other columns' tasks as they were", () => {
     const { board, d } = live();
     d.tasks = [aTask("w/a"), aTask("w/b"), aTask("w/c", { status: "review" })];

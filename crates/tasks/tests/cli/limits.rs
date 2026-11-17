@@ -165,9 +165,9 @@ fn the_tasks_an_orchestrator_holds_stop_at_the_limit_the_file_writes_and_past_it
         "{pulled}"
     );
     let over = format!(
-        "  over_limit {orch} orchestrates=2 limit=1 — 1 past it: it is given no task and takes \
-         none until it is under; let the unstarted ones go with `just tasks release SLUG --role \
-         orchestrator`"
+        "  over_limit {orch} orchestrates=2 limit=1 — 1 past it: it is given and takes no task \
+         but a red until it is under; let the unstarted ones go with `just tasks release SLUG \
+         --role orchestrator`"
     );
     assert!(pulled.lines().any(|line| line == over), "{pulled}");
     c.ok(&orch, &["release", "work/1", "--role", "orchestrator"]);

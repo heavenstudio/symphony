@@ -38,7 +38,8 @@ pub struct ProjectView {
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub wordmark: String,
     /// The icon the header opens with in place of the Symphony's mark: the theme package's own,
-    /// its file project-relative with no slash first, served under the base. Empty is the
+    /// its file project-relative with no slash first, served under the base; in the page the
+    /// server serves, with the version (`?v=`) its answer is kept for good under. Empty is the
     /// Symphony's.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub mark: String,

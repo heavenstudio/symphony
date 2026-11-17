@@ -5,6 +5,7 @@
 //! takes for its server, rather than about SurrealDB, starts this instead, so the case waits on
 //! that server's own listener, not on a SurrealDB start or shutdown that load stretches.
 
+use crate::children::Child as _;
 use crate::common::{answer_healthy, script};
 use crate::helper::{answer, event_of};
 use std::io::Read;
@@ -51,7 +52,7 @@ impl Unresponsive {
     pub fn start(data: &str) -> Self {
         let events = UdpSocket::bind("127.0.0.1:0").unwrap();
         let child = crate::store::spawn_with_input(
-            Command::new(std::env::current_exe().unwrap())
+            Command::of(std::env::current_exe().unwrap())
                 .args([
                     "--ignored",
                     "--exact",
@@ -196,6 +197,10 @@ fn helper_healthy() {
         }
     });
     while symphony_board::sys::pid_alive(owner) {
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "no-timed-waits baseline: looks again whether the test that started it has ended, which no wait reports for a process it did not start"
+        )]
         std::thread::sleep(Duration::from_millis(50));
     }
 }

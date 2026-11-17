@@ -6,6 +6,7 @@ use crate::gate::Gate;
 use crate::testing::Tree;
 use axum::body::Body;
 use axum::extract::connect_info::MockConnectInfo;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
 /// A machine folder registering `alpha` (the starter) and `beta`, each with a theme of its own,
@@ -65,16 +66,48 @@ impl Machine {
         path: &str,
         headers: &[(&str, &str)],
     ) -> Response {
-        let mut request = Request::builder().uri(path).header(header::HOST, host);
-        for (name, value) in headers {
-            request = request.header(*name, *value);
-        }
-        router(self.projects.clone())
-            .layer(MockConnectInfo(client.parse::<SocketAddr>().unwrap()))
-            .oneshot(request.body(Body::empty()).unwrap())
-            .await
-            .unwrap()
+        asked(self.projects.clone(), client, host, path, headers).await
     }
+}
+
+/// `path` asked of `projects`' server by `client` of the Host `host`.
+async fn asked(
+    projects: Arc<Projects>,
+    client: &str,
+    host: &str,
+    path: &str,
+    headers: &[(&str, &str)],
+) -> Response {
+    let mut request = Request::builder().uri(path).header(header::HOST, host);
+    for (name, value) in headers {
+        request = request.header(*name, *value);
+    }
+    router(projects)
+        .layer(MockConnectInfo(client.parse::<SocketAddr>().unwrap()))
+        .oneshot(request.body(Body::empty()).unwrap())
+        .await
+        .unwrap()
+}
+
+/// How long a test waits on an answer asked aside; only a stall reaches it.
+const BACKSTOP: std::time::Duration = test_time::backstop(std::time::Duration::from_secs(15));
+
+/// `path` asked of `machine` on loopback on a thread of its own, its body sent once it answers:
+/// what a test waits on, with [`BACKSTOP`], while it holds what the answer must not wait on.
+fn asked_aside(machine: &Machine, path: &'static str) -> std::sync::mpsc::Receiver<String> {
+    let projects = machine.projects.clone();
+    let (send, answered) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let body = runtime.block_on(async {
+            text(asked(projects, "127.0.0.1:1", "127.0.0.1:1", path, &[]).await).await
+        });
+        let _ = send.send(body);
+    });
+    answered
 }
 
 fn location(response: &Response) -> &str {
@@ -609,35 +642,70 @@ async fn the_list_names_every_project_and_why_one_is_not_served() {
     assert_eq!(tokens.status(), StatusCode::OK);
 }
 
-#[tokio::test]
-async fn the_list_warns_under_a_project_whose_board_is_unwell_until_it_is_well() {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    let machine = Machine::new();
-    let starter = &machine.projects.starter;
-    // The hub's clock, as the test moves it.
-    let at = symphony_board::sweep::trigger::now();
-    let clock = Arc::new(AtomicU64::new(at.to_bits()));
-    let mut hub = crate::live::Hub::new(&starter.root, &starter.root.join("build/client"));
+/// A hub of `shared`'s project set as its hub, on a clock the test moves, from `at`.
+fn clocked(shared: &Shared, at: f64) -> (Arc<crate::live::Hub>, Clock) {
+    let clock = Clock(Arc::new(AtomicU64::new(at.to_bits())));
+    let mut hub = crate::live::Hub::new(&shared.root, &shared.root.join("build/client"));
     hub.clock = {
-        let clock = Arc::clone(&clock);
-        Box::new(move || f64::from_bits(clock.load(Ordering::SeqCst)))
+        let clock = clock.clone();
+        Box::new(move || clock.now())
     };
     let hub = Arc::new(hub);
-    assert!(starter.api.set(hub.clone()).is_ok());
-    // Plain text, as the pages' notice says it too: no markup's backticks.
-    let warning = "<span class=\"health\" role=\"status\">⚠ The task board is unwell: its \
-                   callback dispatch is failing, so agents may not hear from it. Run “just \
-                   tasks status” to see why.</span>";
+    assert!(shared.api.set(hub.clone()).is_ok());
+    (hub, clock)
+}
+
+/// A hub's clock, as the test moves it.
+#[derive(Clone)]
+struct Clock(Arc<AtomicU64>);
+
+impl Clock {
+    fn now(&self) -> f64 {
+        f64::from_bits(self.0.load(Ordering::SeqCst))
+    }
+
+    fn set(&self, at: f64) {
+        self.0.store(at.to_bits(), Ordering::SeqCst);
+    }
+}
+
+/// `id`'s row of the project list `list`.
+fn row<'a>(list: &'a str, id: &str) -> &'a str {
+    list.split("<li>")
+        .find(|row| row.contains(&format!("href=\"/{id}/\"")))
+        .unwrap_or_else(|| panic!("no row for {id}: {list}"))
+}
+
+/// The dot a row opens with, by its signal's name and what it says.
+fn dot(signal: &str, said: &str) -> String {
+    format!(
+        "<span class=\"dot {signal}\" role=\"img\" aria-label=\"{said}\" title=\"{said}\"></span>"
+    )
+}
+
+/// The line a row says how its board stands in, in its signal's colour.
+fn line(signal: &str, said: &str) -> String {
+    format!("<span class=\"health {signal}\" role=\"status\">{said}</span>")
+}
+
+#[tokio::test]
+async fn the_list_warns_under_a_project_whose_board_is_unwell_until_it_is_well() {
+    let machine = Machine::new();
+    let starter = &machine.projects.starter;
+    let at = symphony_board::sweep::trigger::now();
+    let (hub, clock) = clocked(starter, at);
+    // Plain text, as the pages' notice says it too: no markup's backticks, and today's words.
+    let warning = line("red", DISPATCH_FAILING);
 
     hub.health.dispatched(at, Err("the board did not answer"));
     let list = text(machine.get("/", &[]).await).await;
-    let alpha = list
-        .split("<li>")
-        .find(|row| row.contains("href=\"/alpha/\""))
-        .unwrap();
-    assert!(alpha.contains(warning), "{list}");
+    let alpha = row(&list, "alpha");
+    assert!(
+        alpha.starts_with(&dot("red", "failing")) && alpha.contains(&warning),
+        "{list}"
+    );
     assert_eq!(
-        list.matches("class=\"health\"").count(),
+        list.matches("class=\"health ").count(),
         1,
         "beta is well: {list}"
     );
@@ -651,19 +719,125 @@ async fn the_list_warns_under_a_project_whose_board_is_unwell_until_it_is_well()
     assert_eq!(listed(&machine, "beta").await.unwell, None);
 
     hub.health.dispatched(at + 1.0, Ok(()));
-    clock.store((at + 1.0).to_bits(), Ordering::SeqCst);
+    clock.set(at + 1.0);
     let list = text(machine.get("/", &[]).await).await;
     assert!(
-        list.contains(warning),
+        list.contains(&warning),
         "one good pass does not clear it: {list}"
     );
     let later = at + 1.0 + symphony_board::board_health::CLEARS_AFTER;
     hub.health.dispatched(later, Ok(()));
-    clock.store(later.to_bits(), Ordering::SeqCst);
+    clock.set(later);
     let list = text(machine.get("/", &[]).await).await;
-    assert!(!list.contains("class=\"health\""), "{list}");
+    assert!(!list.contains("class=\"health "), "{list}");
+    assert!(
+        row(&list, "alpha").starts_with(&dot("green", "well")),
+        "{list}"
+    );
     assert_eq!(listed(&machine, "alpha").await.unwell, None, "well again");
 }
+
+/// Each project's dot is its board's worst signal: green while well, with no line; amber while its
+/// writes took a second or more at p90 over the hour, or a request went unanswered in it, its line
+/// saying so with the figures, until the hour holds none; red while its dispatch fails, in today's
+/// words. Of two projects, only the one not well carries a line, and the list as data says the
+/// same line.
+#[tokio::test]
+async fn the_list_dots_each_board_by_its_worst_signal_and_says_why_only_when_it_is_not_green() {
+    use std::panic::Location;
+    use symphony_board::board_health::{Query, QueryLog, WINDOW};
+    let machine = Machine::new();
+    let at = symphony_board::sweep::trigger::now();
+    let (alpha, clock) = clocked(&machine.projects.starter, at);
+    let served = machine.projects.served();
+    let beta = served.iter().find(|p| p.entry.id == "beta").unwrap();
+    let (_beta, _) = clocked(&beta.shared, at);
+    let log = Arc::new(QueryLog::default());
+    alpha.health.reading(Arc::clone(&log));
+    let request = |at: f64, ms: f64, write: bool, failed: bool| {
+        log.record(Query {
+            at,
+            ms,
+            source: Location::caller(),
+            write,
+            failed,
+        });
+    };
+    let list = || async { text(machine.get("/", &[]).await).await };
+
+    // Well: a green dot and no line, beta's alike.
+    let well = list().await;
+    for id in ["alpha", "beta"] {
+        let row = row(&well, id);
+        assert!(row.starts_with(&dot("green", "well")), "{well}");
+        assert!(!row.contains("class=\"health"), "{well}");
+    }
+    assert_eq!(listed(&machine, "alpha").await.unwell, None);
+
+    // Writes at 2.6 s at p90 over the hour (the ninth of ten): amber, in whole seconds.
+    for n in 0..8 {
+        request(at - 600.0 + f64::from(n), 40.0, true, false);
+    }
+    request(at - 90.0, 2_600.0, true, false);
+    request(at - 60.0, 3_400.0, true, false);
+    let slow = list().await;
+    let said = "Board slow (writes 3 s this hour)";
+    assert!(
+        row(&slow, "alpha").starts_with(&dot("amber", "slow or unstaffed"))
+            && row(&slow, "alpha").contains(&line("amber", said)),
+        "{slow}"
+    );
+    assert!(
+        !row(&slow, "beta").contains("class=\"health"),
+        "only the project not well carries a line: {slow}"
+    );
+    assert_eq!(
+        listed(&machine, "alpha").await.unwell.as_deref(),
+        Some(said)
+    );
+    assert_eq!(listed(&machine, "beta").await.unwell, None);
+
+    // An hour on, one request went unanswered and every write was quick: amber, its count alone.
+    let later = at + WINDOW;
+    clock.set(later);
+    request(later - 30.0, 10_000.0, false, true);
+    request(later - 20.0, 30.0, true, false);
+    let unanswered = list().await;
+    assert!(
+        row(&unanswered, "alpha").contains(&line("amber", "Board slow (1 unanswered this hour)")),
+        "{unanswered}"
+    );
+
+    // Another hour on, with no request in it: green again.
+    clock.set(later + WINDOW);
+    let quiet = list().await;
+    assert!(
+        row(&quiet, "alpha").starts_with(&dot("green", "well"))
+            && !quiet.contains("class=\"health"),
+        "{quiet}"
+    );
+
+    // A failing dispatch is red, in today's words, whatever the hour held.
+    request(later + WINDOW - 5.0, 3_000.0, true, true);
+    alpha
+        .health
+        .dispatched(later + WINDOW, Err("the board did not answer"));
+    let failing = list().await;
+    let alpha_row = row(&failing, "alpha");
+    assert!(alpha_row.starts_with(&dot("red", "failing")), "{failing}");
+    assert!(
+        alpha_row.contains(&line("red", DISPATCH_FAILING)),
+        "{failing}"
+    );
+    assert!(
+        !alpha_row.contains("Board slow"),
+        "red says its words alone: {failing}"
+    );
+}
+
+/// What the pages and the list say today of a board whose callback dispatch fails.
+const DISPATCH_FAILING: &str = "The task board is unwell: its callback dispatch is failing, so \
+                                agents may not hear from it. Run “just tasks status” to see why.";
 
 #[tokio::test]
 async fn the_list_says_calmly_that_a_project_with_no_board_has_none() {
@@ -681,23 +855,21 @@ async fn the_list_says_calmly_that_a_project_with_no_board_has_none() {
             .is_none()
     );
     let list = text(machine.get("/", &[]).await).await;
-    let alpha = list
-        .split("<li>")
-        .find(|row| row.contains("href=\"/alpha/\""))
-        .unwrap();
+    let alpha = row(&list, "alpha");
     assert!(
         alpha.contains("<span class=\"counts\">No task board</span>"),
         "its counts not read yet: {list}"
     );
     assert!(
-        !list.contains("class=\"health\"") && !list.contains("⚠"),
+        alpha.starts_with(&dot("green", "well"))
+            && !list.contains("class=\"health")
+            && !list.contains("⚠"),
         "no board is not an unwell board: {list}"
     );
-    let beta = list
-        .split("<li>")
-        .find(|row| row.contains("href=\"/beta/\""))
-        .unwrap();
-    assert!(!beta.to_lowercase().contains("no task board"), "{list}");
+    assert!(
+        !row(&list, "beta").to_lowercase().contains("no task board"),
+        "{list}"
+    );
 
     // With its counts read, it says so after them, where a board's task counts would be.
     let served = machine.projects.served();
@@ -706,18 +878,20 @@ async fn the_list_says_calmly_that_a_project_with_no_board_has_none() {
         waiting: 2,
         ..Default::default()
     };
+    let none = Blocked::default();
     assert!(
-        list_row(alpha, Some(&counts), "", true)
-            .contains("<span class=\"counts\">2 waiting on you · no task board</span>")
+        list_row(alpha, Some(&counts), None, none, true).contains(
+            "<span class=\"counts\">2 decision cards waiting on you · no task board</span>"
+        )
     );
     assert!(
-        list_row(alpha, Some(&counts), "", false)
-            .contains("<span class=\"counts\">2 waiting on you</span>")
+        list_row(alpha, Some(&counts), None, none, false)
+            .contains("<span class=\"counts\">2 decision cards waiting on you</span>")
     );
     // A board's in-progress count is the status's, the board's Build and Test columns in it, and
     // it says so: the board's own In progress column leaves them out.
     let counts = symphony_api::Counts {
-        waiting: 2,
+        waiting: 1,
         tasks: Some(symphony_api::TaskCounts {
             in_progress: 9,
             in_review: 3,
@@ -725,12 +899,42 @@ async fn the_list_says_calmly_that_a_project_with_no_board_has_none() {
         }),
         ..Default::default()
     };
-    let row = list_row(alpha, Some(&counts), "", false);
+    let row = list_row(alpha, Some(&counts), None, none, false);
     assert!(
         row.contains(
-            "<span class=\"counts\">2 waiting on you · 9 in progress (Build and Test included) · 3 in review</span>"
+            "<span class=\"counts\">1 decision card waiting on you · 9 in progress (Build and Test included) · 3 in review</span>"
         ),
         "{row}"
+    );
+    // A refused project says why alone: no dot and no line, whatever its board's standing.
+    let mut refused = alpha.clone();
+    refused.refused = Some("lacks the plugin fixture-uncompiled".into());
+    let failing = Standing {
+        signal: Signal::Red,
+        line: "The task board is unwell".into(),
+    };
+    let row = list_row(&refused, Some(&counts), Some(&failing), none, false);
+    assert_eq!(
+        row,
+        "<li><a href=\"/alpha/\">alpha works</a><span class=\"refused\">lacks the plugin \
+         fixture-uncompiled</span></li>",
+    );
+}
+
+/// The blocked part of the counts: none while nothing is blocked, the count alone while none of
+/// them waits on the owner's decision, and how many do when some do; never a person.
+#[test]
+fn the_blocked_part_counts_the_blocked_and_those_waiting_on_the_owners_decision() {
+    let blocked = |tasks, on_decision| Blocked { tasks, on_decision }.said();
+    assert_eq!(blocked(0, 0), "");
+    assert_eq!(blocked(1, 0), " · <strong>1 blocked</strong>");
+    assert_eq!(
+        blocked(41, 9),
+        " · <strong>41 blocked, 9 of them waiting on your decision</strong>"
+    );
+    assert_eq!(
+        blocked(2, 2),
+        " · <strong>2 blocked, 2 of them waiting on your decision</strong>"
     );
 }
 
@@ -756,12 +960,11 @@ async fn the_list_warns_under_a_project_whose_store_cannot_be_served_and_never_c
             .is_none()
     );
     let list = text(machine.get("/", &[]).await).await;
-    let alpha = list
-        .split("<li>")
-        .find(|row| row.contains("href=\"/alpha/\""))
-        .unwrap();
+    let alpha = row(&list, "alpha");
     assert!(
-        alpha.contains("class=\"health\"") && alpha.contains("The task board is unwell"),
+        alpha.starts_with(&dot("red", "failing"))
+            && alpha.contains("class=\"health red\"")
+            && alpha.contains("The task board is unwell"),
         "{list}"
     );
     assert!(!list.to_lowercase().contains("no task board"), "{list}");
@@ -894,6 +1097,208 @@ async fn the_project_list_names_each_project_with_its_counts_first_card_and_task
     assert_eq!(
         project_list(&machine).await.installation,
         Some(installation)
+    );
+}
+
+/// Work waiting to start that no live orchestrator staffs is amber: nothing while its one
+/// orchestrator is live, `orchestrator stale` while that one is stale, one line with the slow part
+/// when the board is slow too, and `no orchestrator` once it is gone. The counts say how many tasks
+/// are blocked and how many of them wait on the owner's decision, a subtask and a block that names
+/// nothing left out. Drawing the list, or listing it as data, sends the board no request.
+#[tokio::test]
+async fn the_list_says_queued_work_no_live_orchestrator_staffs_and_counts_the_blocked() {
+    use crate::testing::board::{Fixture, GONE, HOST, NOW, Seed, task};
+    use std::panic::Location;
+    use std::sync::atomic::AtomicUsize;
+    use symphony_board::board_health::{Query, QueryLog, queries_of};
+    use symphony_board::rows::{SessionRow, TaskRow};
+    use symphony_board::waits_on::{BLOCKED, Blocked as Block};
+    let machine = Machine::new();
+    let root = crate::testing::repository_holding(
+        &machine.tree,
+        "alpha",
+        "docs/TOPIC.md",
+        "# Topic\n\n- [ ] **initial-card** — Initial question.\n",
+    );
+    let at = symphony_board::sweep::trigger::now();
+    let clock = Clock(Arc::new(AtomicU64::new(at.to_bits())));
+    let mut hub = crate::live::Hub::new(&root, &root.join("build/client"));
+    hub.clock = {
+        let clock = clock.clone();
+        Box::new(move || clock.now())
+    };
+    hub.refresh_page("", &root).unwrap();
+    // A task blocked on `on`, or with no record of what it waits on.
+    let blocked = |id: i64, slug: &str, on: Option<&str>, parent: Option<&str>| {
+        let mut row = TaskRow {
+            id,
+            parent: parent.map(String::from),
+            ..task(slug, "blocked")
+        };
+        if let Some(on) = on {
+            let record = Block {
+                on: on.into(),
+                why: None,
+                by: "quiet-plover".into(),
+                at: NOW,
+                from: Some("ready".into()),
+            };
+            row.fields.insert(
+                symphony_board::red::FIELDS.into(),
+                [(BLOCKED.to_string(), record.value())].into(),
+            );
+        }
+        row
+    };
+    let board = Fixture::new(
+        Seed::default()
+            .session_row(SessionRow {
+                handle: "amber-heron".into(),
+                kind: "orchestrator".into(),
+                connected: NOW,
+                last_seen: NOW,
+                ..Default::default()
+            })
+            .task("tools/queued", "ready")
+            .role("tools/queued", "amber-heron", "orchestrator")
+            .task_row(blocked(
+                2,
+                "tools/card",
+                Some("decision:projects-health"),
+                None,
+            ))
+            .task_row(blocked(3, "tools/stamp", Some("check:owner"), None))
+            .task_row(blocked(4, "tools/tests", Some("check:tests"), None))
+            .task_row(blocked(5, "tools/silent", None, None))
+            .task_row(blocked(6, "tools/unnamed", Some("nothing"), None))
+            .task_row(blocked(
+                7,
+                "tools/card/work",
+                Some("decision:projects-health"),
+                Some("tools/card"),
+            )),
+    );
+    let client = board.store.client();
+    hub.health
+        .reading(queries_of(client.addr(), "sf", client.database()));
+    // The hub's reader, the way it reads the board for a page, opens this board, counted: a read
+    // through it is a request this board's count holds.
+    let connects = Arc::new(AtomicUsize::new(0));
+    hub.connect_reader = {
+        let (counted, client) = (Arc::clone(&connects), board.other_client());
+        Box::new(move |_| {
+            counted.fetch_add(1, Ordering::SeqCst);
+            symphony_board::Store::with(
+                symphony_board::rpc::Client::new(client.addr(), "sf", client.database()),
+                Box::new(|| NOW),
+                Box::new(|_| false),
+                HOST,
+            )
+            .map_err(|e| e.to_string())
+        })
+    };
+    hub.observe(&board.store);
+    let hub = Arc::new(hub);
+    assert!(machine.projects.starter.api.set(hub.clone()).is_ok());
+    let list = || async { text(machine.get("/", &[]).await).await };
+
+    // Drawn and listed from the hub's memory: the board's request count does not move, and no
+    // reader of it is opened.
+    let requests = || hub.health.report(clock.now()).queries.count;
+    let read = requests();
+    assert!(read > 0, "the board's read is counted");
+    let live = list().await;
+    listed(&machine, "alpha").await;
+    assert_eq!(
+        (requests(), connects.load(Ordering::SeqCst)),
+        (read, 0),
+        "the list and the listing sent the board no request and opened no reader of it"
+    );
+    // From here the hour's requests are the test's own.
+    let log = Arc::new(QueryLog::default());
+    hub.health.reading(Arc::clone(&log));
+
+    let alpha = row(&live, "alpha");
+    assert!(
+        alpha.contains(
+            "<span class=\"counts\">1 decision card waiting on you · 0 in progress (Build and \
+             Test included) · 0 in review · <strong>3 blocked, 2 of them waiting on your \
+             decision</strong></span>"
+        ),
+        "the card and the owner's stamp wait on him; the check, the subtask and the blocks \
+         that name nothing are not his: {live}"
+    );
+    assert!(
+        alpha.starts_with(&dot("green", "well")) && !alpha.contains("class=\"health"),
+        "its one orchestrator is live: {live}"
+    );
+
+    board.advance(200.0);
+    hub.observe(&board.store);
+    let stale = list().await;
+    assert!(
+        row(&stale, "alpha").starts_with(&dot("amber", "slow or unstaffed"))
+            && row(&stale, "alpha").contains(&line("amber", "orchestrator stale")),
+        "{stale}"
+    );
+    assert_eq!(
+        listed(&machine, "alpha").await.unwell.as_deref(),
+        Some("orchestrator stale")
+    );
+
+    // A board read holds the hub's task state across its reads of the board, as a slow board's
+    // does for as long as it is slow: the list and the listing answer meanwhile from the board's
+    // last read, waiting on none of it. One that waited would wait until the hold ends.
+    let held = hub.hold_board_read();
+    let drawn = asked_aside(&machine, "/");
+    let listing = asked_aside(&machine, symphony_api::PROJECTS_PATH);
+    let drawn = drawn
+        .recv_timeout(BACKSTOP)
+        .expect("the list waited on the board's read");
+    let listing = listing
+        .recv_timeout(BACKSTOP)
+        .expect("the listing waited on the board's read");
+    drop(held);
+    assert_eq!(row(&drawn, "alpha"), row(&stale, "alpha"));
+    let listing: symphony_api::ProjectList = serde_json::from_str(&listing).unwrap();
+    assert_eq!(
+        listing.projects[0].unwell.as_deref(),
+        Some("orchestrator stale")
+    );
+
+    for (n, ms) in [
+        40.0, 40.0, 40.0, 40.0, 40.0, 40.0, 40.0, 40.0, 1_600.0, 1_700.0,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        #[expect(clippy::cast_precision_loss, reason = "ten requests")]
+        let at = at - 100.0 + n as f64;
+        log.record(Query {
+            at,
+            ms,
+            source: Location::caller(),
+            write: true,
+            failed: false,
+        });
+    }
+    let both = list().await;
+    assert!(
+        row(&both, "alpha").contains(&line(
+            "amber",
+            "Board slow (writes 2 s this hour) · orchestrator stale"
+        )),
+        "one line, both parts: {both}"
+    );
+    assert_eq!(both.matches("class=\"health ").count(), 1, "{both}");
+
+    hub.health.reading(Arc::new(QueryLog::default()));
+    board.advance(GONE);
+    hub.observe(&board.store);
+    let gone = list().await;
+    assert!(
+        row(&gone, "alpha").contains(&line("amber", "no orchestrator")),
+        "{gone}"
     );
 }
 

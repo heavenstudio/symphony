@@ -1,5 +1,6 @@
 //! Launch commands use a private board, a throwaway repository and the fake hc.
 
+use crate::children::Child as _;
 use crate::{Ran, env, run};
 use serde_json::{Value, json};
 use std::fs;
@@ -23,7 +24,7 @@ fn outside(name: &str) -> PathBuf {
 
 fn git(dir: &PathBuf, args: &[&str]) {
     let done = symphony_board::sys::output(
-        Command::new("git")
+        Command::of("git")
             .args(["-c", "user.email=t@t", "-c", "user.name=t", "-C"])
             .arg(dir)
             .args(args),
@@ -1477,9 +1478,9 @@ impl Terminals {
     /// no process this test binary's other threads spawn holds a copy of its lock.
     pub(crate) fn binary(&self, now: f64, args: &[&str]) -> Ran {
         let done = symphony_board::sys::output(
-            Command::new(TASKS)
+            Command::of(TASKS)
                 .args(args)
-                .env_clear()
+                .cleared()
                 .envs(&self.env.vars)
                 .env("TASKS_NOW", now.to_string())
                 .current_dir(&self.env.cwd),

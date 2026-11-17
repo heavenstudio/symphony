@@ -9,6 +9,7 @@
 //! (`STANDIN_UPLIFT=copy`), so a stale one would say so.
 
 use super::{Fixture, Ran, git};
+use crate::children::Child as _;
 use std::fs::{self, File};
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
@@ -264,7 +265,7 @@ fn each_source_changed_brings_cargo_back_however_it_arrived() {
             "a source written earlier copied into place with its times",
             &|| {
                 let older = t.older("copied");
-                let done = Command::new("cp")
+                let done = Command::of("cp")
                     .arg("-p")
                     .arg(&older)
                     .arg(&source)
@@ -605,11 +606,7 @@ fn a_stamp_touched_copied_or_restored_vouches_for_no_change_after_its_second() {
     t.skipped(&[], "after the touched stamp was replaced");
     // The stamp from before that change copied back with its times, then written back and set
     // ahead.
-    let done = Command::new("cp")
-        .arg("-p")
-        .arg(&saved)
-        .arg(&stamp)
-        .status();
+    let done = Command::of("cp").arg("-p").arg(&saved).arg(&stamp).status();
     assert!(done.unwrap().success());
     t.built(&[], "the stamp from before the change was copied back");
     t.skipped(&[], "after the copied stamp was replaced");
@@ -665,7 +662,7 @@ fn runs_at_once_each_run_the_new_build_and_leave_a_good_stamp() {
     settle();
     let runs: Vec<_> = (0..4)
         .map(|_| {
-            let mut command = Command::new(t.main().join("tools/rs-bin.sh"));
+            let mut command = Command::of(t.main().join("tools/rs-bin.sh"));
             for name in [
                 "TASKS_SERVER",
                 "TASKS_DATABASE",

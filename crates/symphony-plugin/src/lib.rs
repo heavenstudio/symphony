@@ -28,13 +28,12 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use serde::{Deserialize, Serialize};
 
-/// The block vocabulary a plugin renders to, and the data its seams return.
+/// The block vocabulary a plugin renders to, and the data its seams return: `symphony-blocks`
+/// re-exported whole, so every word a block carries is named from here. Everything public in that
+/// crate is the kit's public vocabulary, and a type added there is a published addition, under the
+/// kit's version rules (docs/PLUGIN_PROTOCOL.md, *Versions*).
 pub mod vocabulary {
-    pub use symphony_blocks::{
-        Block, Cell, ContainerKind, FieldValue, FigureSize, GalleryItem, Gate, GatePast, GateState,
-        Image, InlineKind, LinkTarget, Media, NavItem, Picture, Presentation, ProgressBar, Region,
-        Span, TaskOffer, VectorKind, VectorShape, View, Viewer,
-    };
+    pub use symphony_blocks::*;
 }
 
 mod renderer;

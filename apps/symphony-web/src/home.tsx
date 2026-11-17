@@ -66,7 +66,7 @@ function useNow(): number {
 /** The moment it is where the owner is, told to `shown` at each minute's tick until `signal` ends. */
 export async function keepTime(signal: AbortSignal, shown: (now: number) => void): Promise<void> {
   while (!signal.aborted) {
-    await tick(60_000, signal);
+    await tick(signal);
     if (!signal.aborted) shown(localMoment(new Date()));
   }
 }

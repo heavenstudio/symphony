@@ -17,14 +17,14 @@ check_lock() {
 		# we take fd 9, so retry if another caller wins that gap; only fd 9 guards the build.
 		wait_command=(lockf -s -k "$folder/lock" true)
 	else
-		printf "%s: neither flock nor lockf is installed to take the %s build folder's lock.\n" "$label" "$kind" >&2
+		printf "%s: neither flock nor lockf is installed to take the %s folder's lock.\n" "$label" "$kind" >&2
 		return 1
 	fi
 	mkdir -p "$folder" || return 1
 	exec 9>>"$folder/lock" || return 1
 	while ! "${lock_command[@]}" "${try_flags[@]}" 9; do
 		if [[ -z "$waiting" ]]; then
-			printf '%s: waiting for the %s build folder %s, held by %s\n' \
+			printf '%s: waiting for the %s folder %s, held by %s\n' \
 				"$label" "$kind" "$folder" "$(cat "$folder/lock" 2>/dev/null)" >&2
 			waiting=1
 		fi
