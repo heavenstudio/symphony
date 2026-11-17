@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::HashMap;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
@@ -103,10 +103,33 @@ impl Fixture {
 struct Fake {
     calls: AtomicUsize,
     jobs: AtomicUsize,
-    starts: Mutex<BTreeMap<String, (Input, Receipt)>>,
+    starts: Mutex<HashMap<ProviderKey, (Input, Receipt)>>,
     lose_response: AtomicBool,
     reply: Mutex<Option<Outcome>>,
     deadlines: Mutex<Vec<Instant>>,
+}
+
+/// Retry identity excludes worker/runtime epochs, which can change during recovery, and the
+/// input digest so that reusing the same operation key with different input is a conflict.
+#[derive(PartialEq, Eq, Hash)]
+struct ProviderKey {
+    attempt: AttemptRef,
+    configuration: String,
+    kind: Operation,
+    sequence: u64,
+    key: String,
+}
+
+impl ProviderKey {
+    fn of(identity: &OperationIdentity) -> Self {
+        Self {
+            attempt: identity.attempt.clone(),
+            configuration: identity.configuration.clone(),
+            kind: identity.kind,
+            sequence: identity.sequence,
+            key: identity.key.clone(),
+        }
+    }
 }
 
 impl Adapter for Fake {
@@ -130,23 +153,29 @@ impl Adapter for Fake {
         match &call.request {
             Request::Start { input } => {
                 let mut starts = self.starts.lock().unwrap();
-                let entry = starts.entry(call.identity.key.clone()).or_insert_with(|| {
-                    self.jobs.fetch_add(1, Ordering::SeqCst);
-                    (input.clone(), receipt(resource()))
-                });
+                let entry = starts
+                    .entry(ProviderKey::of(&call.identity))
+                    .or_insert_with(|| {
+                        let number = self.jobs.fetch_add(1, Ordering::SeqCst) + 1;
+                        let mut bound = resource();
+                        if number > 1 {
+                            bound.id = ResourceId::new(format!("resource-{number}"));
+                        }
+                        (input.clone(), receipt(bound))
+                    });
                 if entry.0 != *input {
                     return Outcome::Rejected(Rejection::Provider("key/input conflict".into()));
                 }
                 if self.lose_response.swap(false, Ordering::SeqCst) {
                     return Outcome::Unknown(Unknown::ContactLost);
                 }
-                Outcome::Accepted(entry.1.clone())
+                Outcome::Accepted(receipt(entry.1.resource.clone()))
             }
             Request::Reconcile { .. } => self
                 .starts
                 .lock()
                 .unwrap()
-                .get(&call.identity.key)
+                .get(&ProviderKey::of(&call.identity))
                 .map(|(_, found)| Outcome::Found(receipt(found.resource.clone())))
                 .unwrap_or(Outcome::Unknown(Unknown::Visibility)),
             Request::Observe { resource, .. } => {
@@ -228,6 +257,40 @@ fn duplicate_key_with_changed_input_is_rejected_by_the_provider() {
         Outcome::Rejected(Rejection::Provider("key/input conflict".into()))
     );
     assert_eq!(fake.jobs.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn provider_keys_are_scoped_and_worker_takeover_reuses_the_original_job() {
+    let fake = Fake::default();
+    let mut first = Fixture::new();
+    assert!(matches!(first.invoke(&fake), Outcome::Accepted(_)));
+    first.call.identity.fencing_epoch += 1;
+    let Outcome::Accepted(recovered) = first.invoke(&fake) else {
+        panic!("same operation under a new worker fence");
+    };
+    assert_eq!(
+        recovered.identity.fencing_epoch,
+        first.call.identity.fencing_epoch
+    );
+    assert_eq!(fake.jobs.load(Ordering::SeqCst), 1);
+    let mut other = Fixture::new();
+    other.profile.scope.project = "project-b".into();
+    other.call.identity.attempt.scope.project = "project-b".into();
+    let Outcome::Accepted(accepted) = other.invoke(&fake) else {
+        panic!("a separate project has its own retry scope");
+    };
+    assert_ne!(accepted.resource.id, recovered.resource.id);
+    assert_eq!(fake.jobs.load(Ordering::SeqCst), 2);
+    let Request::Start { input } = &mut first.call.request else {
+        unreachable!()
+    };
+    input.digest = "different-input".into();
+    first.call.identity.input_digest = input.digest.clone();
+    assert_eq!(
+        first.invoke(&fake),
+        Outcome::Rejected(Rejection::Provider("key/input conflict".into()))
+    );
+    assert_eq!(fake.jobs.load(Ordering::SeqCst), 2);
 }
 
 #[test]
