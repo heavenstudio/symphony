@@ -151,7 +151,9 @@ pub(super) fn behind(
         .filter(|line| line.schema < target && now - line.seen <= RECENT)
         .filter(|line| !(line.host == host && line.path == program.path))
         .collect();
-    behind.sort_by(|a, b| (&a.program, &a.host, &a.path).cmp(&(&b.program, &b.host, &b.path)));
+    crate::order::sort_by(&mut behind, &|a, b| {
+        (&a.program, &a.host, &a.path).cmp(&(&b.program, &b.host, &b.path))
+    });
     behind
 }
 

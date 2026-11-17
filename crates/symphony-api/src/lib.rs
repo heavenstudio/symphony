@@ -77,7 +77,7 @@ pub use task_queries::{
     TaskKind, TaskStatus, slug_order, subtasks, tasks, tasks_in_progress, tasks_in_review,
     tasks_in_status,
 };
-pub use task_stage::{TaskListing, TaskStage};
+pub use task_stage::{TaskListing, TaskStage, WaitingBoard, WaitingColumn};
 pub use timeline::{TASK_TIMELINE_PATH, TaskTimeline};
 pub use {agent_probes::AgentProbes, agents::*, machine_work::*, project::*};
 

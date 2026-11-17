@@ -573,6 +573,31 @@ export type TaskListing = {
    * listing selects ([`crate::Tasks::unstarted`]).
    */
   unstarted: number;
+  /**
+   * Complete totals for the opt-in waiting-columns projection; absent on ordinary listings.
+   */
+  waiting?: WaitingBoard | null;
+};
+
+export type WaitingBoard = {
+  /**
+   * Open tasks by [`crate::WAITS_KINDS`], in that order, before the selected wait kind.
+   */
+  kinds: Array<[string, number]>;
+  /**
+   * Every column after the selected wait kind, including columns outside the requested page.
+   */
+  columns: Array<WaitingColumn>;
+};
+
+export type WaitingColumn = {
+  status: string;
+  ordinary: number;
+  blocked: number;
+  /**
+   * Seconds since the epoch, not a changing age; none for an empty column.
+   */
+  oldest: number | null;
 };
 
 export type Task = {

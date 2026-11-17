@@ -114,7 +114,7 @@ fn newest_at<'a>(
     let mut mine: Vec<&Record> = (runs.iter())
         .filter(|run| run.commit.is_some() && run.task.as_deref().is_some_and(ours))
         .collect();
-    mine.sort_by(|a, b| began(a).total_cmp(&began(b)));
+    crate::order::sort_by(&mut mine, &|a, b| began(a).total_cmp(&began(b)));
     let mut newest: Vec<&Record> = Vec::new();
     for run in mine.iter().filter(|run| run.commit.as_deref() == Some(tip)) {
         match newest.iter_mut().find(|kept| kept.label == run.label) {

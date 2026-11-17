@@ -31,6 +31,30 @@ pub struct TaskListing {
     /// listing selects ([`crate::Tasks::unstarted`]).
     #[serde(default)]
     pub unstarted: usize,
+    /// Complete totals for the opt-in waiting-columns projection; absent on ordinary listings.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub waiting: Option<WaitingBoard>,
+}
+
+/// The waiting board's facets and columns, counted before pagination.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
+pub struct WaitingBoard {
+    /// Open tasks by [`crate::WAITS_KINDS`], in that order, before the selected wait kind.
+    pub kinds: Vec<(String, usize)>,
+    /// Every column after the selected wait kind, including columns outside the requested page.
+    pub columns: Vec<WaitingColumn>,
+}
+
+/// One waiting column's ordinary and blocked tasks and earliest status entry.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "typescript", derive(ts_rs::TS))]
+pub struct WaitingColumn {
+    pub status: String,
+    pub ordinary: usize,
+    pub blocked: usize,
+    /// Seconds since the epoch, not a changing age; none for an empty column.
+    pub oldest: Option<f64>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
