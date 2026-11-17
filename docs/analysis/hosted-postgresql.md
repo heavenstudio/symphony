@@ -121,6 +121,14 @@ session baseline restored. Drop it on a protocol error, failed cleanup, cancella
 or an unknown transaction state. Test isolation with different variables, failures and concurrent
 borrowers before choosing any more aggressive pooling mode.
 
+Remote execution follows its [commit-intent contract](remote-execution-attempts.md#Commit intent, then perform I/O).
+Commit and release the borrowed connection before provider I/O. Atomic admission, keyed intent,
+active-attempt pointers and durable execution reservations remain one database transaction;
+database-clock leases, worker epochs and revision comparisons fence later writes. Runtime
+execution epochs and project/board references retain their separate scopes. Authorized cancel
+intent does not require the worker lease. The hosted adapter must preserve these guarantees;
+this proposal does not claim the current connection code implements them.
+
 ## Capacity across revisions and workers
 
 All clients of a project and credential generation within one process share one pool registry;
@@ -255,6 +263,11 @@ unavailable, and readiness remains false until the schema and database identity 
 Shutdown stops admission, cancels waiting borrowers, bounds draining and closes owned connections;
 it stops no managed database. Restart preserves committed rows and durable delivery state.
 
+For a remote attempt, an unknown intent or lease commit prohibits provider I/O until a fresh
+read confirms the stable key, revision and ownership epoch. An unknown result commit is
+reconciled against its durable fact before another append or application. Connection recovery
+does not itself confer worker ownership or permission to dispatch.
+
 Provider backup/PITR is the durable disaster-recovery mechanism; the deployer owns its schedule,
 retention, access and a measured recovery-point/recovery-time objective. No objective is claimed
 before a restore drill. Add portable logical export from the landed copy code, with a consistent
@@ -309,6 +322,7 @@ role described above. Record server/client versions, encoding, collation provide
 | TLS and login | Verified CA/name, SCRAM, wrong/expired cert, rejected password, rotation | Same | Bad/missing secrets and forbidden TLS options expose no secret |
 | Topology/capacity | Old+new+worker+maintenance held together, queue exhaustion and cancellation | Same | No bypass pool, overflow or starvation; inspect actual backend count |
 | Restart/drop/outage | Process restart, idle/mid-write drop, ambiguous commit, DB unavailable | Same | No automatic transport replay, no local fallback, bounded attempts |
+| Remote execution integration | Atomic admission/intent/reservation, lease and revision fencing, uncertain commit reconciliation | Same | No provider I/O while a connection is held or intent/ownership is unknown |
 | Isolation/recovery | Two projects/roles, cross-connect denial, export and older-backup restore drill | Same | No cross-read/write; generation/high-water guard survives container loss |
 
 The source-backed SQL hypotheses are PostgreSQL 16's
@@ -336,6 +350,8 @@ Implementation consumes the reviewed, landed search/copy and lifecycle sources; 
 copy unlanded branches. Confirm file ownership before editing `pg`, store opening/database/
 transaction, schema guards, project configuration or CLI reaching. Remote execution attempts
 remain `tools/remote-execution-attempts`'s contract; database capacity is a separate resource.
+Its execution reservations live in durable board rows, never pool/process counters, and remain
+held for uncertain or cancelled resources until authoritative absence or quiescence is confirmed.
 Configurable workflow remains `tools/configurable-delivery-workflow`'s contract. No frontend
 or distribution input changes are proposed here.
 
