@@ -16,7 +16,11 @@
 use std::cmp::Ordering;
 
 /// `items` sorted by `compare`, stably, as `slice::sort_by` sorts them.
-pub(crate) fn sort_by<T>(items: &mut [T], compare: &impl Fn(&T, &T) -> Ordering) {
+///
+/// Uses one temporary position per element to share the sorting code across element types.
+/// Suitable for inspection and presentation reads; latency-sensitive paths can keep their
+/// in-place sort. If `compare` panics, `items` remains unchanged.
+pub fn sort_by<T>(items: &mut [T], compare: &impl Fn(&T, &T) -> Ordering) {
     if items.len() < 2 {
         return;
     }
@@ -26,7 +30,10 @@ pub(crate) fn sort_by<T>(items: &mut [T], compare: &impl Fn(&T, &T) -> Ordering)
 }
 
 /// `items` sorted by `key`, stably, as `slice::sort_by_key` sorts them.
-pub(crate) fn sort_by_key<T, K: Ord>(items: &mut [T], key: &impl Fn(&T) -> K) {
+///
+/// Has the allocation and panic behavior of [`sort_by`]. The key is evaluated for comparisons,
+/// rather than cached, just as with `slice::sort_by_key`.
+pub fn sort_by_key<T, K: Ord>(items: &mut [T], key: &impl Fn(&T) -> K) {
     sort_by(items, &|a, b| key(a).cmp(&key(b)));
 }
 
