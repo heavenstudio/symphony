@@ -22,7 +22,7 @@ import {
   windowOf,
 } from "./board";
 import { STAGE_KEY, STAGES } from "./boardwait";
-import { aMachine, aTask, aWork, memoryStorage } from "./testing";
+import { aMachine, anOperation, aTask, aWork, memoryStorage } from "./testing";
 import { NO_WORK } from "./work";
 
 beforeEach(() => {
@@ -50,19 +50,22 @@ const columns = (html: string) => [...html.matchAll(/data-status="([^"]*)"/g)].m
 const rows = (html: string) => [...html.matchAll(/id="row-([^"]*)"/g)].map((m) => m[1]);
 
 describe("the approved B board", () => {
-  it("shows every lifecycle stage, a Backlog rail and one machine rail, with no Blocked or signoff column", () => {
+  it("shows lifecycle and machine columns, with Backlog in the toolbar and no Blocked or signoff column", () => {
     const html = board({ signoff: ["a"], statuses: ["blocked", "ready"] });
     expect(columns(html)).toEqual([
       "concept",
       "design",
       "ready",
       "in_progress",
-      "build-test",
+      "build",
+      "test",
       "review",
       "done",
     ]);
-    expect(html).toContain('class="backlog-rail"');
-    expect(html).toContain("No machine reports this project");
+    expect(html).toContain("board-backlog");
+    expect(html).toContain("No build observations reported.");
+    expect(html).toContain("No test observations reported.");
+    expect(html).toContain('aria-expanded="false" aria-controls="board-filters"');
     expect(html).not.toContain('class="board-scroll"');
     expect(html).not.toContain("Waiting for your sign-off");
     expect(html).not.toContain("Task groups");
@@ -70,17 +73,39 @@ describe("the approved B board", () => {
     expect(html).toContain('aria-label="Finished tasks"');
     expect(html).toContain('type="search"');
   });
-  it("exposes the reporting machine stages from the rail", () => {
+  it("draws complete machine counts and cards alongside lifecycle columns", () => {
+    vi.stubGlobal("location", { hash: "#column-build" });
     const html = board({
-      work: aWork([aMachine("desk", [])]),
+      tasks: [aTask("build/a", { status: "in_progress" })],
+      work: aWork([
+        aMachine("desk", [anOperation("desk", "a", "build", "running", { task: "build/a" })]),
+      ]),
       counts: [
         ["build", 2],
         ["test", 1],
       ],
     });
-    expect(html).toContain(">Build 2</button>");
-    expect(html).toContain(">Test 1</button>");
-    expect(html).not.toContain("No machine reports");
+    expect(html).toContain('build <span class="count">2</span>');
+    expect(html).toContain('test <span class="count">1</span>');
+    expect(rows(html)).toEqual(["build/a"]);
+    expect(columns(html)).toEqual(STAGES);
+    expect(html).not.toContain('data-open-stage="build"');
+    expect(html).not.toContain("No build observations");
+  });
+  it("keeps machine columns on disconnect while cards return to their lifecycle stages", () => {
+    vi.stubGlobal("location", { hash: "#column-in_progress" });
+    const html = board({ connected: false, tasks: [aTask("a", { status: "in_progress" })] });
+    expect(columns(html)).toEqual(STAGES);
+    expect(rows(html)).toEqual(["a"]);
+    expect(html).toContain("Disconnected · build activity unknown");
+    expect(html).toContain("Disconnected · test activity unknown");
+  });
+  it("distinguishes reported empty machine activity from missing observations", () => {
+    const html = board({ work: aWork([aMachine("desk", [])]) });
+    expect(columns(html)).toEqual(STAGES);
+    expect(html).toContain("No tasks with fresh build activity.");
+    expect(html).toContain("No tasks with fresh test activity.");
+    expect(html).not.toContain("observations reported.");
   });
   it("keeps blocked tasks in their original column before ordinary work and parked last", () => {
     vi.stubGlobal("location", { hash: "#column-review" });
@@ -241,7 +266,9 @@ describe("lazy cards and placeholders", () => {
     ]);
     expect(shape).toEqual(STAGES.map((s) => [s, s === "review" ? 4 : s === "ready" ? 6 : 0]));
     expect(recallShape(keepShape(shape))).toEqual(shape);
-    expect(recallShape("invalid")).toEqual(STAGES.map((s) => [s, 1]));
+    expect(recallShape("invalid")).toEqual(
+      STAGES.map((s) => [s, ["build", "test"].includes(s) ? 0 : 1]),
+    );
     vi.stubGlobal("innerWidth", 390);
     localStorage.setItem(STAGE_KEY, "ready");
     const html = render(<GhostBoard shape={shape} />);

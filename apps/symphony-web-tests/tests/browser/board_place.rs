@@ -126,10 +126,11 @@ fn open(page: &mut Chrome, site: &Site, width: u32, height: u32) {
 /// which a sentinel's edge meets or not as the layout rounds.
 const WAITING: &str = "(() => {
     const board = document.querySelector('.waiting-columns');
-    const top = 0, left = 0, bottom = innerHeight, right = innerWidth;
+    const box = board.getBoundingClientRect();
+    const top = 0, left = Math.max(0, box.left), bottom = innerHeight, right = Math.min(innerWidth, box.right);
     const near = [...board.querySelectorAll('[data-pending=true]')].flatMap(part => {
         const r = part.getBoundingClientRect();
-        return r.bottom > top - 599 && r.top < bottom + 599 && r.right > left && r.left < right
+        return r.bottom > r.top && r.bottom > top - 599 && r.top < bottom + 599 && r.right > left && r.left < right
             ? [[part.closest('[id]')?.id ?? part.closest('.column')?.dataset.status, Math.round(r.top), Math.round(r.bottom), Math.round(r.left), Math.round(r.right)]] : [];
     });
     return {width: innerWidth, shows: [top, bottom, left, right], left: scrollX, top: scrollY, near};
@@ -139,7 +140,7 @@ const WAITING: &str = "(() => {
 /// to), once what is near what it shows is drawn (`WAITING`), and stays as it is.
 fn scroll_board(page: &mut Chrome, status: &str, top: u32) {
     page.eval(&format!(
-        "(() => {{ if (innerWidth <= 760) {{ const stages = ['review','in_progress','ready','done','design','concept','backlog']; const tab=document.querySelectorAll('.stage-tabs button')[stages.indexOf('{status}')]; tab.focus({{preventScroll:true}}); tab.click(); }} }})()"
+        "(() => {{ if (innerWidth <= 760) {{ const stages = ['review','in_progress','ready','done','design','concept','backlog']; const tab=document.querySelectorAll('.stage-tabs button')[stages.indexOf('{status}')]; tab.focus({{preventScroll:true}}); tab.click(); }} else {{ const board = document.querySelector('.waiting-columns'), column = board.querySelector('.column[data-status={status}]'); board.scrollLeft += column.getBoundingClientRect().left - board.getBoundingClientRect().left; }} }})()"
     ));
     assert!(page.wait_for(
         &format!("document.querySelector('.column[data-status={status}]') !== null"),
@@ -787,7 +788,7 @@ fn a_focused_card_moved_to_another_column_keeps_the_focus() {
 /// Where the reader is on the board: its scroller's left, the window's top and Ready's first card
 /// on the screen (`first_on_screen`).
 const PLACE: &str = "(() => { const board = document.querySelector('.waiting-columns');
-    return board ? [Math.round(scrollX), Math.round(scrollY), FIRST] : null; })()";
+    return board ? [Math.round(board.scrollLeft), Math.round(scrollY), FIRST] : null; })()";
 
 /// Open the task of a Ready card's title on the screen, clicked as the reader clicks it: the
 /// pointer over Ready and the focus on the link, so Ready is the reader's column; until its page
