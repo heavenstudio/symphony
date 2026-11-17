@@ -27,9 +27,8 @@ impl Source {
                 && line.text.contains(symphony_board::alarm::UNDER)
                 && parent_move(line).is_none()
         });
-        // A closed row with no recorded close supplies no invented boundary.
-        replay.uncertain |=
-            matches!(window.status.as_str(), "done" | "cancelled") && !replay.closed;
+        // A missing close or reopening supplies no invented boundary in either direction.
+        replay.uncertain |= matches!(window.status.as_str(), "done" | "cancelled") != replay.closed;
         Self { window, replay }
     }
 
@@ -38,6 +37,9 @@ impl Source {
     }
 
     fn closed_before(&self, id: i64) -> Option<bool> {
+        if self.replay.uncertain {
+            return None;
+        }
         self.replay
             .edges
             .iter()

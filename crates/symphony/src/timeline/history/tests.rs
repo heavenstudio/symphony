@@ -169,7 +169,7 @@ fn inheritance_uses_the_recorded_parent_at_send_time_and_names_its_source() {
 }
 
 #[test]
-fn unrecorded_closure_cut_events_and_legacy_parent_moves_never_supply_confidence() {
+fn unrecorded_closure_reopening_cut_events_and_legacy_parent_moves_never_supply_confidence() {
     for (status, cut, lines) in [
         (
             "cancelled",
@@ -177,6 +177,22 @@ fn unrecorded_closure_cut_events_and_legacy_parent_moves_never_supply_confidence
             vec![system(1, "o joined as orchestrator")],
         ),
         ("ready", true, vec![system(1, "o joined as orchestrator")]),
+        (
+            "ready",
+            false,
+            vec![
+                system(1, "o joined as orchestrator"),
+                system(2, "owner moved it ready → cancelled"),
+            ],
+        ),
+        (
+            "cancelled",
+            true,
+            vec![
+                system(1, "o joined as orchestrator"),
+                system(2, "owner moved it ready → cancelled"),
+            ],
+        ),
         (
             "ready",
             false,
@@ -356,27 +372,24 @@ fn duplicate_and_unsorted_lines_have_one_entry_per_id_and_ties_use_id_order() {
 
 #[test]
 fn a_closing_verdict_keeps_its_senders_role_at_send_but_no_hold_after_it() {
-    let h = history(BTreeMap::from([(
-        "child".into(),
-        source(
-            "child",
-            None,
-            vec![
-                system(1, "o joined as orchestrator"),
-                system(2, "r joined as reviewer"),
-                message(
-                    3,
-                    3.0,
-                    "verdict",
-                    "approve: fine",
-                    "r",
-                    Some("@orchestrator"),
-                ),
-                message(4, 4.0, "msg", "after", "r", Some("@reviewer")),
-            ],
-            false,
-        ),
-    )]));
+    let source = Source::new(ThreadWindow {
+        status: "done".into(),
+        lines: vec![
+            system(1, "o joined as orchestrator"),
+            system(2, "r joined as reviewer"),
+            message(
+                3,
+                3.0,
+                "verdict",
+                "approve: fine",
+                "r",
+                Some("@orchestrator"),
+            ),
+            message(4, 4.0, "msg", "after", "r", Some("@reviewer")),
+        ],
+        ..ThreadWindow::default()
+    });
+    let h = history(BTreeMap::from([("child".into(), source)]));
     assert_eq!(h.messages[0].from.state, EndpointState::Known);
     assert_eq!(h.messages[0].to.state, EndpointState::Known);
     assert_eq!(h.messages[0].after_close, Some(false));
