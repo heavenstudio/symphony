@@ -26,6 +26,7 @@ mod sweep;
 pub(crate) mod text;
 mod usage;
 
+use crate::maps::Collect as _;
 use crate::rpc::{self, Client};
 use crate::server::Home;
 use crate::{DATABASE, NAMESPACE, Store, sys};
@@ -52,7 +53,7 @@ impl Env {
                 .filter_map(|(name, value)| {
                     Some((name.into_string().ok()?, value.into_string().ok()?))
                 })
-                .collect(),
+                .collect_map(),
             cwd: std::env::current_dir().unwrap_or_default(),
         }
     }

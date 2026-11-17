@@ -74,10 +74,11 @@ fn policy_stamp(path: &Path) -> Option<Option<Stamp>> {
 pub(super) type PolicyInputs = BTreeMap<PathBuf, Option<Stamp>>;
 
 fn capture(paths: impl IntoIterator<Item = PathBuf>) -> Option<PolicyInputs> {
-    paths
+    let stamped: Option<Vec<_>> = paths
         .into_iter()
         .map(|path| Some((path.clone(), policy_stamp(&path)?)))
-        .collect()
+        .collect();
+    stamped.map(crate::maps::of)
 }
 
 /// Configuration is queried once per pass; its source files are rechecked per candidate. A

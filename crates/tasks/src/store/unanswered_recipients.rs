@@ -1,6 +1,7 @@
 //! Resolve role aliases from the thread prefix at each post, never from today's role holders.
 
 use super::super::{Message, Role};
+use crate::maps::Collect as _;
 use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Default)]
@@ -122,7 +123,7 @@ pub(super) fn resolve(
                 recipients
                     .into_iter()
                     .map(|handle| (handle, role.into()))
-                    .collect(),
+                    .collect_map(),
             );
         } else if !to.starts_with('@') {
             let role = last_role.get(to).copied().or_else(|| {
