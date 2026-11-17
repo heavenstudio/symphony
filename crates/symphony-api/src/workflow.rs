@@ -111,7 +111,7 @@ pub struct Phase {
     pub label: String,
     pub order: u32,
     pub phone_order: u32,
-    /// False for the default's off-pipeline blocked/cancelled groups.
+    /// False for the default's off-pipeline backlog/blocked/cancelled groups.
     pub column: bool,
 }
 

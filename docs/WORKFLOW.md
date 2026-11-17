@@ -33,7 +33,7 @@ are omitted in TOML or `null` in JSON; all other fields are required. Empty list
 | Record | Fields |
 | --- | --- |
 | Pair | `phase`, `state`: IDs naming one explicitly declared position; not a Cartesian product. |
-| Phase | `id`, nonempty `label`, unique unsigned `order` and `phone_order`, `column` boolean. The default's blocked/cancelled groups are outside its seven pipeline columns. |
+| Phase | `id`, nonempty `label`, unique unsigned `order` and `phone_order`, `column` boolean. The default's backlog/blocked/cancelled groups are outside its six delivery columns; Build and Test are separate process overlays. Phone order follows the current board, including backlog. |
 | State | `id`, nonempty `label`. These are coordination states, never execution-attempt status. |
 | Position | `at` pair; optional `staffing` (`executor`, `reviewer`, `orchestrator`, omission means none); `slot`; `dependencies`; `unsuccessful_dependency`; booleans `accepts_work`, `terminal`, `satisfies_dependencies`; conservative `legacy`; optional `outcome`; `completion`; optional `recovery`. |
 | Recovery | Required actions `release`, `lost_holder`, `attempt_failure`, `cancellation_acknowledged`. Every staffed position declares all four. |

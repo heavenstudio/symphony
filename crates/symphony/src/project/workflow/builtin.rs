@@ -128,8 +128,8 @@ pub fn builtin() -> Definition {
                 id: (*id).into(),
                 label: id.replace('_', " "),
                 order: i as u32,
-                phone_order: i as u32,
-                column: i < 7,
+                phone_order: [6, 5, 4, 2, 1, 0, 3, 7, 8][i],
+                column: i > 0 && i < 7,
             })
             .collect(),
         states: [

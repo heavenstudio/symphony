@@ -54,6 +54,34 @@ fn default_is_valid_and_omission_preserves_project_and_definition() {
     assert_eq!(
         columns.iter().map(|p| p.id.as_str()).collect::<Vec<_>>(),
         symphony_board::PIPELINE
+            .into_iter()
+            .filter(|p| *p != "backlog")
+            .collect::<Vec<_>>()
+    );
+    let mut phone: Vec<_> = d
+        .phases
+        .iter()
+        .filter(|p| !["blocked", "cancelled"].contains(&p.id.as_str()))
+        .collect();
+    phone.sort_by_key(|p| p.phone_order);
+    let current_phone = include_str!("../../../apps/symphony-web/src/boardwait.tsx")
+        .split_once("export const PHONE_STAGES = [")
+        .unwrap()
+        .1
+        .split_once(']')
+        .unwrap()
+        .0
+        .lines()
+        .filter_map(|line| {
+            line.trim()
+                .strip_prefix('"')?
+                .split_once('"')
+                .map(|(value, _)| value)
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        phone.iter().map(|p| p.id.as_str()).collect::<Vec<_>>(),
+        current_phone
     );
     assert!(
         d.positions
