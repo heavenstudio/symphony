@@ -118,6 +118,28 @@ impl Listener {
             }
         }
     }
+
+    fn through(&self, marker: &str) -> Vec<String> {
+        let mut messages = Vec::new();
+        loop {
+            let frame = self
+                .messages
+                .recv_timeout(test_time::backstop(Duration::from_secs(10)))
+                .unwrap_or_else(|error| {
+                    panic!(
+                        "callback {marker} stalled: {error}; {}",
+                        test_time::Load::now()
+                    )
+                });
+            let envelope: serde_json::Value = serde_json::from_str(&frame).unwrap();
+            let text = envelope["message"]["content"].as_str().unwrap().to_string();
+            let found = text.contains(marker);
+            messages.push(text);
+            if found {
+                return messages;
+            }
+        }
+    }
 }
 
 impl Drop for Listener {
@@ -130,6 +152,136 @@ impl Drop for Listener {
             joined.unwrap();
         }
     }
+}
+
+#[test]
+fn the_clock_recovers_an_acknowledged_owner_task_after_its_writer_disappears() {
+    let tree = Tree::new();
+    let fixture = Fixture::new(Seed::default().task("tools/base", "ready"));
+    let orchestrator = fixture.session("orchestrator");
+    let sender = fixture.session("worker");
+    fixture
+        .store
+        .take_role("tools/base", &orchestrator, "orchestrator")
+        .unwrap();
+    fixture.advance(symphony_board::health::LIVE_SECONDS + 1.0);
+    fixture.store.touch(&orchestrator).unwrap();
+    let listener = Listener::new(&fixture);
+    fixture
+        .store
+        .callback(
+            &orchestrator,
+            Some(&format!("uds:{}", listener.path.display())),
+            false,
+            false,
+        )
+        .unwrap();
+    assert!(
+        fixture
+            .store
+            .send_agent(&sender, &orchestrator, "before-acknowledgement")
+            .unwrap()
+    );
+    listener.through("before-acknowledgement");
+
+    let new = symphony_board::NewTask::new(
+        "tools/clock-owner",
+        "Owner task after interruption",
+        "owner",
+    );
+    let fast = fixture.other().dispatching_by(Box::new(|| {
+        panic!("optional work ran before acknowledgement")
+    }));
+    let queries = fast.database().queries();
+    let count = || queries.within(&(i64::MIN..=i64::MAX)).0.count;
+    let before = count();
+    let (made, cpu) = test_time::cpu::spent(|| {
+        fast.persist_owner_task(&new, "clock-owner-receipt")
+            .unwrap()
+    });
+    let acknowledgement = count() - before;
+    assert_eq!(acknowledgement, 1);
+    assert!(made.roles.is_empty());
+    assert_eq!(made.created_by, "owner");
+    drop(fast); // No in-memory callback, queued worker or save Store remains to finish the give.
+
+    let (hub, clock) = clocked(&tree);
+    let mut store = None;
+    let mut offline = true;
+    let mut connect = |_: &std::path::Path| {
+        if std::mem::take(&mut offline) {
+            Err("private board temporarily unavailable".into())
+        } else {
+            Ok(fixture.other())
+        }
+    };
+    hub.board_tick(&mut store, &mut connect);
+    assert!(store.is_none());
+    assert!(fixture.store.get(&new.slug).unwrap().roles.is_empty());
+    pass(&clock, 1);
+    let before_completion = count();
+    hub.board_tick(&mut store, &mut connect);
+    let completion = count() - before_completion;
+    assert!(store.is_some());
+    assert!(
+        hub.task_snapshot()
+            .unwrap()
+            .tasks
+            .iter()
+            .any(|task| task.slug == new.slug)
+    );
+    let given = format!("GIVEN 1 open task is yours to orchestrate: {}", new.slug);
+    // This waits for the real clock's native delivery, before a manual send can flush anything.
+    let mut messages = listener.through(&given);
+    let task = fixture.store.get(&new.slug).unwrap();
+    assert_eq!(task.holders("orchestrator"), [orchestrator.as_str()]);
+    assert_eq!(task.created_by, "owner");
+    assert_eq!(
+        task.fields["_symphony"]["owner_save"],
+        "clock-owner-receipt"
+    );
+    let thread = fixture.store.thread(&new.slug).unwrap();
+    assert_eq!(thread.len(), 2);
+    assert_eq!(
+        (thread[0].sender.as_str(), thread[0].text.as_str()),
+        ("owner", "created by owner")
+    );
+    assert!(matches!(
+        fixture
+            .other()
+            .persist_owner_task(&new, "clock-owner-receipt"),
+        Err(symphony_board::Error::Refused(_))
+    ));
+    drop(store);
+    let root = hub.root.clone();
+    drop(hub);
+
+    let mut restarted = Hub::new(&root, &root.join("build/client"));
+    restarted.clock = Box::new(|| NOW);
+    let mut store = None;
+    for _ in 0..2 {
+        restarted.board_tick(&mut store, &mut |_| Ok(fixture.other()));
+    }
+    assert_eq!(fixture.store.thread(&new.slug).unwrap().len(), 2);
+    assert!(
+        fixture
+            .store
+            .send_agent(&sender, &orchestrator, "after-clock-restart")
+            .unwrap()
+    );
+    messages.extend(listener.through("after-clock-restart"));
+    assert_eq!(
+        messages
+            .iter()
+            .flat_map(|text| text.lines())
+            .filter(|line| *line == given)
+            .count(),
+        1,
+        "{messages:?}"
+    );
+    println!(
+        "owner acknowledgement: {acknowledgement} request, {cpu:?} CPU; later clock completion: {completion} requests"
+    );
 }
 
 #[test]

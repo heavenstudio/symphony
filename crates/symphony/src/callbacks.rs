@@ -9,6 +9,39 @@ use std::time::SystemTime;
 /// New ask stores include the outbox, so a chat save needs no second schema setup.
 pub(crate) const SCHEMA: &str = "CREATE TABLE IF NOT EXISTS callbacks (id INTEGER PRIMARY KEY AUTOINCREMENT, text TEXT NOT NULL, ask TEXT);";
 
+// A receipt key contains this table's id, so it must never be reused after a flush. Check the
+// required columns and AUTOINCREMENT, allowing additional columns for newer writers.
+const SHAPE: &str = r#"SELECT
+    (SELECT count(*) FROM pragma_table_info('callbacks') WHERE name = 'id' AND upper(type) = 'INTEGER' AND pk = 1) = 1
+    AND (SELECT count(*) FROM pragma_table_info('callbacks') WHERE pk > 0) = 1
+    AND (SELECT count(*) FROM pragma_table_info('callbacks') WHERE name = 'text' AND upper(type) = 'TEXT' AND "notnull" = 1 AND pk = 0) = 1
+    AND EXISTS (SELECT 1 FROM sqlite_schema WHERE name = 'callbacks' AND type = 'table' AND instr(upper(sql), 'AUTOINCREMENT') > 0) AS core,
+    (SELECT count(*) FROM pragma_table_info('callbacks') WHERE name = 'ask' AND upper(type) = 'TEXT' AND "notnull" = 0 AND pk = 0) = 1 AS asking,
+    (SELECT count(*) FROM pragma_table_info('callbacks') WHERE name = 'ask') = 0 AS legacy"#;
+const SCHEMA_GUARD: &str = "callback_schema_ready";
+
+#[derive(serde::Deserialize)]
+struct Shape {
+    core: i64,
+    asking: i64,
+    legacy: i64,
+}
+
+fn shape(connection: &AskStore) -> Result<Shape, String> {
+    connection
+        .rows::<Shape>(SHAPE)
+        .map_err(|e| e.to_string())?
+        .pop()
+        .ok_or_else(|| "chat journal schema check returned no result".into())
+}
+
+fn invalid_schema(path: &Path) -> String {
+    format!(
+        "chat journal {}: callbacks needs an AUTOINCREMENT INTEGER primary key id, non-null TEXT text and nullable TEXT ask; restore or repair this journal before retrying",
+        path.display()
+    )
+}
+
 /// The journal of the project at `root`, where this process's `ASKS_DB` puts it, else in the
 /// project's artifacts folder ([`crate::asks::default_path`]).
 fn journal(root: &Path) -> PathBuf {
@@ -23,20 +56,20 @@ fn database(path: &Path) -> Result<(AskStore, String), String> {
     }
     let connection = AskStore::open(path).map_err(|e| e.to_string())?;
     // A journal made before asks has no `ask` column: it gains one, its records keeping none.
-    #[derive(serde::Deserialize)]
-    struct Column {
-        name: String,
+    let columns = shape(&connection)?;
+    if columns.core != 1 || (columns.asking != 1 && columns.legacy != 1) {
+        return Err(invalid_schema(path));
     }
-    let columns: Vec<Column> = connection
-        .rows("SELECT name FROM pragma_table_info('callbacks');")
-        .map_err(|e| e.to_string())?;
-    if !columns.iter().any(|c| c.name == "ask") {
+    if columns.legacy == 1 {
         match connection.run("ALTER TABLE callbacks ADD COLUMN ask TEXT;") {
             Ok(_) => {}
             // Another publisher can finish the same additive migration after our column read.
             Err(crate::asks::AskError::Store(why))
                 if why.contains("duplicate column name: ask") => {}
             Err(error) => return Err(error.to_string()),
+        }
+        if shape(&connection)?.asking != 1 {
+            return Err(invalid_schema(path));
         }
     }
     let path = path.canonicalize().map_err(|e| e.to_string())?;
@@ -68,15 +101,17 @@ fn publish_at(path: &Path, text: &str, ask: Option<&symphony_board::NewAsk>) -> 
         Some(ask) => text_sql(&serde_json::to_string(ask).map_err(|e| e.to_string())?),
         None => "NULL".into(),
     };
+    // Schema validation and insertion share one process and writer transaction. A file's
+    // presence alone says nothing about whether its outbox can retain a replayable receipt.
     let insert = format!(
-        "INSERT INTO callbacks(text, ask) VALUES ({}, {ask});",
+        "BEGIN IMMEDIATE;\nCREATE TEMP TABLE callback_guard (ok INTEGER NOT NULL CONSTRAINT {SCHEMA_GUARD} CHECK (ok = 1));\nINSERT INTO callback_guard SELECT core AND asking FROM ({SHAPE});\nINSERT INTO callbacks(text, ask) VALUES ({}, {ask});\nCOMMIT;",
         text_sql(text)
     );
     if let Some(connection) = AskStore::existing(path) {
         match connection.run(&insert) {
             Ok(_) => return Ok(()),
-            // These preparation failures ran no INSERT. Only a missing schema takes the
-            // initialization path; I/O, lock and constraint failures keep their real cause.
+            // A failed schema guard ran no outbox INSERT. Initialization handles an absent
+            // table or its legacy column, and refuses malformed shapes before writing an intent.
             Err(error) if missing_schema(&error) => {}
             Err(error) => return Err(error.to_string()),
         }
@@ -89,8 +124,7 @@ fn publish_at(path: &Path, text: &str, ask: Option<&symphony_board::NewAsk>) -> 
 
 fn missing_schema(error: &crate::asks::AskError) -> bool {
     matches!(error, crate::asks::AskError::Store(why)
-        if why.contains("no such table: callbacks")
-            || why.contains("table callbacks has no column named ask"))
+        if why.contains(SCHEMA_GUARD))
 }
 
 /// The shared, lease-holding server's journal reader. Private servers leave the journal alone,

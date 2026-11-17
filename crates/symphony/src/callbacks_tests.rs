@@ -121,3 +121,57 @@ fn concurrent_legacy_publishers_keep_each_durable_intent() {
         ]
     );
 }
+
+#[test]
+fn insertable_but_malformed_outboxes_never_acknowledge_an_intent() {
+    let tree = Tree::new();
+    for (case, columns) in [
+        ("missing-id", "text TEXT NOT NULL, ask TEXT"),
+        (
+            "reused-id",
+            "id INTEGER PRIMARY KEY, text TEXT NOT NULL, ask TEXT",
+        ),
+        (
+            "nullable-text",
+            "id INTEGER PRIMARY KEY AUTOINCREMENT, text TEXT, ask TEXT",
+        ),
+        (
+            "wrong-ask",
+            "id INTEGER PRIMARY KEY AUTOINCREMENT, text TEXT NOT NULL, ask INTEGER",
+        ),
+        ("legacy-bad-id", "id TEXT PRIMARY KEY, text TEXT NOT NULL"),
+    ] {
+        let path = tree.root.join(format!("{case}.db"));
+        let store = AskStore::open(&path).unwrap();
+        store.run(&format!("DROP TABLE callbacks; CREATE TABLE callbacks ({columns}); INSERT INTO callbacks(text) VALUES ('existing');")).unwrap();
+        let error = publish_at(&path, "must remain unacknowledged", None).unwrap_err();
+        assert!(error.contains("callbacks needs"), "{case}: {error}");
+        assert!(error.contains(path.to_str().unwrap()), "{case}: {error}");
+        let rows: Vec<Value> = store.rows("SELECT text FROM callbacks;").unwrap();
+        assert_eq!(rows, [json!({"text":"existing"})], "{case}");
+    }
+}
+
+#[test]
+fn an_outbox_with_extra_columns_remains_compatible_and_receipts_do_not_reuse_ids() {
+    let tree = Tree::new();
+    let path = tree.root.join("extended.db");
+    let store = AskStore::open(&path).unwrap();
+    store
+        .run("ALTER TABLE callbacks ADD COLUMN future TEXT;")
+        .unwrap();
+    publish_at(&path, "first", None).unwrap();
+    let first: Vec<Value> = store.rows("SELECT id FROM callbacks;").unwrap();
+    store.run("DELETE FROM callbacks;").unwrap();
+    publish_at(&path, "second", None).unwrap();
+    let second: Vec<Value> = store.rows("SELECT id FROM callbacks;").unwrap();
+    assert!(second[0]["id"].as_i64().unwrap() > first[0]["id"].as_i64().unwrap());
+
+    let blocked = tree.root.join("blocked");
+    std::fs::write(&blocked, "not a directory").unwrap();
+    let error = publish_at(&blocked.join("asks.db"), "retain this", None).unwrap_err();
+    assert!(
+        !error.contains("callbacks needs"),
+        "I/O must not become schema readiness: {error}"
+    );
+}
