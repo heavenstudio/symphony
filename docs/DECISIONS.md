@@ -16,6 +16,13 @@ their dated history work is in [REVIEW](REVIEW.md).
 
     **Earlier verdicts checked.** **desktop-client** chooses a thin Mac shell and explicitly leaves hosted HTTPS/login for a later card. **consumer-contract-versioning** preserves the public kit/helper boundary; either choice keeps vendor handling in the consuming host. **release-delivery** chooses distribution, not visitor authorization. **server-socket-hand-over** keeps the machine's shared-server handover; this proposal preserves that and specifies a separate foreground hosted lifecycle. None decides this ingress boundary. This card asks the architecture direction only; implementation, consumer deployment policy and live changes need their own scoped work.
 
+### Execution
+
+- [ ] **execution-provider-attempts** — A project could run an executor or reviewer on its own cloud service while Symphony keeps the history, recovery and results of each attempt. Local terminals would keep working. Should Symphony own this common execution boundary and attempt record, with provider clients, credentials and file storage left to each project? Recommended: yes. This adds durable start/control intent, recovery after uncertain responses and authorized historical session links; it does not choose or operate a cloud provider. The cost is a versioned adapter contract, additive board records and recovery logic, then task API/client support. Approve this direction, or comment. [[analysis/remote-execution-attempts#The smallest boundary]]
+  [2026-11-17 19:25] agent — Proposed for `tools/remote-execution-attempts`, from source revision `3b460adb62827f674669e8e99f3090561107264f`. This is design only. The analysis separates existing launch/delivery/link support from proposed attempts, failure recovery and actor checks, and lists the tests future implementation must prove. No provider session, deployment, consumer edit, live migration or implementation is authorized by landing this proposal. Follow-up implementation briefs are proposed only after this direction is approved.
+
+    **Earlier verdicts checked.** **consumer-contract-versioning** (B) places the reusable contract in the kit and leaves project code outside the library; **consumer-api-break-release** keeps old public APIs working for a release. Both are preserved. **project-workflow-shape** (C) permits a configurable task lifecycle; execution observations here supply evidence rather than deciding workflow progress. **desktop-client** reserves hosted login and mentions future people; it does not supply authenticated human context to plugin calls. None decides whether Symphony owns the execution boundary and durable attempts, so that direction remains this card's question.
+
 ## Auto-approved: spot-check
 
 ### Releases
