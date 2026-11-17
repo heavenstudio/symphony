@@ -23,6 +23,7 @@ import { SelectField } from "./select";
 import { GoToSession } from "./session";
 import { field, STALE, useStore } from "./shared";
 import { load, save } from "./storage";
+import { TaskDiffPanel } from "./task-diff";
 import { LiveTask, offerPart, type Thread } from "./task-live";
 import { readBrief } from "./task-read";
 import { statusWords, WorkPhases } from "./taskcard";
@@ -713,7 +714,7 @@ export interface TaskDetailProps {
   /** Whether the page says a failure: the thread waits under its ghost no longer. */
   failed: boolean;
   onRetry: () => void;
-  onHistory: (older: boolean) => void;
+  onHistory: (older: boolean) => undefined | Promise<string | null>;
   onChildren: (more: boolean) => void;
 }
 
@@ -810,7 +811,20 @@ export function TaskDetail({
           ) : null}
         </NearViewport>
       )}
-      <TimelineSlot key={slug} slug={slug} scope={scope} />
+      <TimelineSlot
+        key={slug}
+        slug={slug}
+        scope={scope}
+        thread={{
+          entries,
+          before: thread.value?.before ?? null,
+          pending: (!loaded && thread.error === null) || thread.retrying,
+          error: thread.error === null ? null : said(thread.error),
+          earlier: async () => (await onHistory(true)) ?? null,
+          latest: async () => (await onHistory(false)) ?? null,
+          render: (entry) => <TaskMessage entry={entry} />,
+        }}
+      />
       {page !== null ? (
         <Brief
           slug={slug}
@@ -822,6 +836,9 @@ export function TaskDetail({
       ) : (
         pageFailed === "" && <GhostBrief height={heights.brief} />
       )}
+      <NearViewport key={`diff-${slug}`} id={`changes-${slug}`} height={160}>
+        <TaskDiffPanel scope={scope} slug={slug} />
+      </NearViewport>
       <h2>Thread</h2>
       {/* The thread and the composer under it wait under their ghost until the thread on the first
           screen is in, whatever the head and the brief do meanwhile. */}
@@ -903,7 +920,7 @@ export function LiveTaskPage({ live, connected }: { live: LiveTask; connected: b
             thread={live.thread()}
             failed={pageFailed !== "" || live.error() !== ""}
             onRetry={() => live.again()}
-            onHistory={(more) => void live.history(more)}
+            onHistory={(more) => live.history(more)}
             onChildren={(more) => void live.children(more)}
           />
         </PartsContext.Provider>

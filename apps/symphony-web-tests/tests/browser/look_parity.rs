@@ -1014,16 +1014,16 @@ fn waiting_columns_keep_status_tones_priority_edges_and_a_single_phone_stage() {
         json!({"features":[{"name":"prefers-color-scheme","value":"light"}]}),
     );
     browser.open(&site.url("/tasks"));
-    // The nine lifecycle statuses. No machine reports this fixture's work, so Build and Test
-    // are one rail between them.
-    assert!(browser.wait_for("document.querySelectorAll('.waiting-columns .column').length === 7 && document.querySelector('.taskcard') !== null",SHOWN), "the board shows {}", browser.eval("JSON.stringify({columns: [...document.querySelectorAll('.column')].map(c => c.dataset.status), cards: [...document.querySelectorAll('.taskcard')].map(c => c.dataset.slug)})"));
+    // Lifecycle and machine columns keep their status colours before observations arrive.
+    assert!(browser.wait_for("document.querySelectorAll('.waiting-columns .column').length === 8 && document.querySelector('.taskcard') !== null",SHOWN), "the board shows {}", browser.eval("JSON.stringify({columns: [...document.querySelectorAll('.column')].map(c => c.dataset.status), cards: [...document.querySelectorAll('.taskcard')].map(c => c.dataset.slug)})"));
     painted_layout(&mut browser);
     for (status, colour) in [
         ("concept", "rgb(74, 63, 158)"),
         ("design", "rgb(74, 63, 158)"),
         ("ready", "rgb(31, 122, 140)"),
         ("in_progress", "rgb(47, 93, 158)"),
-        ("build-test", "rgb(47, 93, 158)"),
+        ("build", "rgb(47, 93, 158)"),
+        ("test", "rgb(47, 93, 158)"),
         ("review", "rgb(148, 106, 0)"),
         ("done", "rgb(46, 125, 79)"),
     ] {
@@ -1038,7 +1038,8 @@ fn waiting_columns_keep_status_tones_priority_edges_and_a_single_phone_stage() {
             "design",
             "ready",
             "in_progress",
-            "build-test",
+            "build",
+            "test",
             "review",
             "done"
         ])
@@ -1068,6 +1069,7 @@ fn task_priority_and_recipient_labels_stay_inline_with_their_controls() {
         json!({"width":1280,"height":800,"deviceScaleFactor":1,"mobile":false}),
     );
     browser.open(&site.url("/task/visual/in-progress"));
+    browser.reveal("[id=\"composer-visual/in-progress\"]");
     assert!(browser.wait_for(
         "document.querySelector('#task-send .inline-control .dx-select') !== null",
         SHOWN

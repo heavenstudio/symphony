@@ -29,6 +29,25 @@ pub(crate) fn read(dir: &Path, args: &[&str]) -> Option<Output> {
 
 /// [`read`], or why it could not be made: git's own first line, or that it could not run.
 pub(crate) fn told(dir: &Path, args: &[&str]) -> Result<Output, String> {
+    told_with(dir, args, &[0])
+}
+
+/// A grep's no-match exit is a successful empty read too.
+pub(super) fn grep(dir: &Path, args: &[&str]) -> Result<Output, String> {
+    let done = told_with(dir, args, &[0, 1])?;
+    // Git can report an unreadable file on stderr yet exit 0 because another file matched (or 1
+    // with no matches). Those incomplete results cannot prove there is no answer left behind.
+    if !done.stderr.is_empty() {
+        return Err(format!(
+            "git grep could not read in {}: {}",
+            dir.display(),
+            String::from_utf8_lossy(&done.stderr).trim()
+        ));
+    }
+    Ok(done)
+}
+
+fn told_with(dir: &Path, args: &[&str], codes: &[i32]) -> Result<Output, String> {
     let done = crate::sys::output(reading(dir).args(args)).map_err(|error| {
         format!(
             "git {} could not run in {}: {error}",
@@ -36,7 +55,7 @@ pub(crate) fn told(dir: &Path, args: &[&str]) -> Result<Output, String> {
             dir.display()
         )
     })?;
-    if done.status.success() {
+    if done.status.code().is_some_and(|code| codes.contains(&code)) {
         return Ok(done);
     }
     let said = String::from_utf8_lossy(&done.stderr);

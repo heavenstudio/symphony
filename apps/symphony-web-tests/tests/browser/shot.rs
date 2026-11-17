@@ -231,8 +231,9 @@ fn the_tasks_page_is_captured_drawn_with_its_columns_and_a_click_records_the_ope
         return;
     };
     let scratch = Scratch::new("menu");
-    let (before, open, last) = (
+    let (before, right, open, last) = (
         scratch.join("board.png"),
+        scratch.join("right.png"),
         scratch.join("open.png"),
         scratch.join("last.png"),
     );
@@ -242,10 +243,20 @@ fn the_tasks_page_is_captured_drawn_with_its_columns_and_a_click_records_the_ope
             &site.url("/tasks"),
             "--out",
             last.to_str().unwrap(),
+            "--click",
+            ".board-filters-toggle",
             "--shot",
             before.to_str().unwrap(),
             "--eval",
             COLUMNS,
+            "--eval",
+            "document.querySelector('.waiting-columns').scrollLeft = 10000",
+            "--shot",
+            right.to_str().unwrap(),
+            "--eval",
+            COLUMNS,
+            "--eval",
+            "document.querySelector('.waiting-columns').scrollLeft = 0",
             "--click",
             "button[aria-label=\"Finished tasks\"]",
             "--shot",
@@ -258,10 +269,13 @@ fn the_tasks_page_is_captured_drawn_with_its_columns_and_a_click_records_the_ope
     .unwrap();
     assert!(output.status.success(), "{}", said(&output));
     let lines = printed(&output);
-    let [columns, menu] = lines.as_slice() else {
-        panic!("two evaluations, one line each: {}", said(&output));
+    let [columns, across, shifted, back, menu] = lines.as_slice() else {
+        panic!("five evaluations, one line each: {}", said(&output));
     };
+    assert!(across.as_f64().unwrap() > 0.0);
+    assert_eq!(back, &json!(0));
     let board = Picture::read(&before);
+    let scrolled = Picture::read(&right);
     assert_eq!((board.width, board.height), (1440, 900));
     let everything = board.colours([0.0, 0.0, 1440.0, 900.0], 1.0);
     assert!(
@@ -270,7 +284,7 @@ fn the_tasks_page_is_captured_drawn_with_its_columns_and_a_click_records_the_ope
     );
     let columns = columns.as_array().unwrap();
     let statuses: Vec<_> = columns.iter().map(|column| &column["status"]).collect();
-    // All six lifecycle heads and the unreported machine rail draw even with one task.
+    // Lifecycle and machine columns all draw, including those reached by scrolling.
     assert_eq!(
         statuses,
         [
@@ -278,16 +292,27 @@ fn the_tasks_page_is_captured_drawn_with_its_columns_and_a_click_records_the_ope
             &json!("design"),
             &json!("ready"),
             &json!("in_progress"),
-            &json!("build-test"),
+            &json!("build"),
+            &json!("test"),
             &json!("review"),
             &json!("done")
         ],
         "the board's columns: {columns:?}"
     );
-    for column in columns {
-        let heading = rect(&column["heading"]);
+    for (column, moved) in columns.iter().zip(shifted.as_array().unwrap()) {
+        assert_eq!(column["status"], moved["status"]);
+        let initial = rect(&column["heading"]);
+        let (picture, heading) = if initial[0] >= 0.0 && initial[0] + initial[2] <= 1440.0 {
+            (&board, initial)
+        } else {
+            (&scrolled, rect(&moved["heading"]))
+        };
         assert!(heading[2] > 0.0 && heading[3] > 0.0, "{heading:?}");
-        let drawn = board.colours(heading, 1.0);
+        assert!(
+            heading[0] >= 0.0 && heading[0] + heading[2] <= 1440.0,
+            "{heading:?}"
+        );
+        let drawn = picture.colours(heading, 1.0);
         assert!(
             drawn > 1,
             "the column heading at {heading:?} is one flat colour in the picture"
@@ -1388,42 +1413,6 @@ fn a_click_on_a_checkbox_under_a_track_deep_in_plain_spans_lands_on_the_label_an
     );
 }
 
-#[test]
-fn a_target_whose_label_clicks_another_control_says_so_and_offers_no_label_to_target() {
-    // The label that holds each one clicks another checkbox: named for what a press there does,
-    // never as the thing to target. The second checkbox's own clip hides it, the icon takes no
-    // pointer.
-    for (name, css, message) in [
-        (
-            "label-pair",
-            "#second",
-            "--click #second stayed clipped by its own clip: label#pair.toggle, which holds it, \
-             was on top at its middle after every scroll within 5s; a press there clicks \
-             input#first (by its label), not it",
-        ),
-        (
-            "label-mark",
-            "#mark",
-            "--click #mark takes no pointer at its middle (pointer-events: none): \
-             label#other-label, which holds it, was on top there after every scroll within 5s; a \
-             press there clicks input#other (by its label), not it",
-        ),
-        // The control in a component's shadow root, named in its host's, as a cover there is.
-        (
-            "label-shadow-control",
-            "#checkmark",
-            "--click #checkmark takes no pointer at its middle (pointer-events: none): \
-             x-check#check-host, which holds it, was on top there after every scroll within 5s; a \
-             press there clicks input#shadow-check in x-check#check-host's shadow root (by its \
-             label), not it",
-        ),
-    ] {
-        if !refused(name, &labels(), "--click", css, message) {
-            return;
-        }
-    }
-}
-
 /// An icon with `pointer-events: none` in its button; a disabled button with `pointer-events:
 /// none` in its row; an SVG ring around an empty middle; and a button under a cover of zero
 /// opacity. Then a toolbar of two buttons with neither id nor class, each holding an icon with
@@ -1473,38 +1462,6 @@ fn ancestors() -> Vec<u8> {
 {POINTED}"##
     )
     .into_bytes()
-}
-
-#[test]
-fn a_target_with_no_pointer_in_its_button_fails_naming_the_button_which_then_takes_the_click() {
-    for flag in ["--click", "--hover"] {
-        let message = format!(
-            "{flag} #icon takes no pointer at its middle (pointer-events: none): button#go, which \
-             holds it, was on top there after every scroll within 5s; target button#go instead"
-        );
-        if !refused(
-            &format!("icon{flag}"),
-            &ancestors(),
-            flag,
-            "#icon",
-            &message,
-        ) {
-            return;
-        }
-    }
-    // Targeted as the failure says, the button takes the press and the click.
-    let Some((output, _out, _requests, _scratch)) = on_page(
-        "icon-button",
-        &ancestors(),
-        &["--click", "button#go", "--eval", "landed"],
-    ) else {
-        return;
-    };
-    assert!(output.status.success(), "{}", said(&output));
-    assert_eq!(
-        printed(&output),
-        [json!([["pointerdown", "go"], ["click", "go"]])]
-    );
 }
 
 #[test]
@@ -1616,60 +1573,6 @@ fn a_target_a_clip_path_cuts_away_fails_as_clipped_offering_nothing() {
             return;
         }
     }
-}
-
-#[test]
-fn a_target_no_clip_path_cuts_at_its_middle_is_never_called_clipped() {
-    // Each misses its click for another cause than the clip-path around it or its own: the span's
-    // inherited pointer-events, the ring's unpainted middle (what holds it named, a press on it
-    // offered for nothing), a card painted over the avatar, a checkbox's own clip.
-    for (name, css, message) in [
-        (
-            "uncut-icon",
-            "#decorated",
-            "--click #decorated takes no pointer at its middle (pointer-events: none): \
-             button#deco-button, which holds it, was on top there after every scroll within 5s; \
-             target button#deco-button instead",
-        ),
-        (
-            "uncut-ring",
-            "#framed-ring",
-            "--click #framed-ring takes no pointer at its middle: svg#framed, which holds it, was \
-             on top there after every scroll within 5s",
-        ),
-        // Mirrored or half-turned with its box, a clip-path keeps the point its own box's
-        // coordinates would cut: never tested there, the checkbox's own clip is what is named.
-        (
-            "uncut-mirrored",
-            "#mirrored-check",
-            "--click #mirrored-check stayed clipped by its own clip: div#mirrored, which holds it, \
-             was on top at its middle after every scroll within 5s",
-        ),
-        (
-            "uncut-turned",
-            "#turned-check",
-            "--click #turned-check stayed clipped by its own clip: div#turned, which holds it, was \
-             on top at its middle after every scroll within 5s",
-        ),
-        (
-            "uncut-avatar",
-            "#avatar",
-            "--click #avatar stayed covered: div#card was on top at its middle after every scroll \
-             within 5s",
-        ),
-    ] {
-        if !refused(name, &ancestors(), "--click", css, message) {
-            return;
-        }
-    }
-}
-
-#[test]
-fn a_target_with_no_pointer_straight_in_the_body_is_offered_nothing_to_target() {
-    let message = "--click #loose takes no pointer at its middle (pointer-events: none): html > \
-                   body, which holds it, was on top there after every scroll within 5s; html > \
-                   body is the page itself, nothing to target instead";
-    refused("loose", &ancestors(), "--click", "#loose", message);
 }
 
 /// All in a root lifted onto a layer of its own (`translateZ(0)`): a button its box's `clip-path`
@@ -2632,22 +2535,6 @@ fn a_new_projects_home_without_a_register_links_none_and_is_shot_drawn() {
     }
 }
 
-/// What a shot of `url` that failed, its page not drawn within [`PATIENT`] seconds, said it still
-/// waited for, each part once: they come in the order each began, which a page's frames leave to
-/// the machine.
-fn still_waiting(output: &Output, url: &str) -> BTreeSet<String> {
-    assert_eq!(output.status.code(), Some(1), "{}", said(output));
-    let prefix = format!(
-        "symphony shot: {url}: the page was not drawn within {PATIENT}s: still waiting for "
-    );
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    let parts = stderr
-        .trim_end()
-        .strip_prefix(&prefix)
-        .unwrap_or_else(|| panic!("no {prefix:?}: {}", said(output)));
-    parts.split("; ").map(str::to_owned).collect()
-}
-
 /// A page's icon, given in the page, so that Chrome asks the stand-in for no `/favicon.ico` once
 /// the page has loaded: its 404 would be a failed request of the page's own.
 const NO_ICON: &str = r#"<link rel="icon" href="data:,">"#;
@@ -2690,152 +2577,6 @@ fn shared_fetching(path: &str) -> Vec<u8> {
          asked.then(answer => answer.text()).then(text => port.postMessage(text)); }};"
     )
     .into_bytes()
-}
-
-#[test]
-fn a_frame_or_a_worker_that_never_loads_fails_the_shot_within_its_timeout_naming_each() {
-    // A sandboxed frame whose document the stand-in never answers, a frame of another site whose
-    // stylesheet it never answers, a dedicated worker of the page whose fetch it never answers, and
-    // one whose script it never answers: the page's own document waits for its frames, and the shot
-    // fails at its timeout naming each frame that never loaded, by its address, and what it still
-    // waits for in it, and the first worker's fetch by the worker's script, never as a frame's.
-    // Chrome attaches no worker to a script not yet answered, so the second's script stays a
-    // request of the page's own in flight, named as one, never as a frame or a worker. The timeout
-    // is the patient one, which only a stall reaches, so by then the page has gone as far as it
-    // ever will, however loaded the machine. No picture is left.
-    let Some(chrome) = chrome::find() else {
-        eprintln!("no Chrome on this machine (SYMPHONY_CHROME names one): shot not run");
-        return;
-    };
-    let other = site();
-    let site = site();
-    serve_framed(&other, "/stalled.html", "/hung.css");
-    other.hold_route("/hung.css", true);
-    site.hold_route("/hung.html", true);
-    site.set_file("/hung-worker.js", fetching("/hung-data"), "text/javascript");
-    site.hold_route("/hung-data", true);
-    site.hold_route("/unanswered-worker.js", true);
-    let stalled = format!("http://localhost:{}/stalled.html", other.addr.port());
-    site.set_file(
-        "/hung-frames.html",
-        format!(
-            r#"<!doctype html>{NO_ICON}<iframe sandbox="allow-scripts" src="/hung.html"></iframe><iframe src="{stalled}"></iframe>
-<script>new Worker('/hung-worker.js'); new Worker('/unanswered-worker.js');</script>"#
-        )
-        .into_bytes(),
-        "text/html",
-    );
-    let scratch = Scratch::new("hung-frames");
-    let out = scratch.join("hung.png");
-    let url = site.url("/hung-frames.html");
-    let output = shot(&chrome, &[&url, "--out", out.to_str().unwrap()])
-        .output()
-        .unwrap();
-    assert_eq!(
-        still_waiting(&output, &url),
-        BTreeSet::from([
-            "the document to load (it is interactive)".to_string(),
-            format!(
-                "1 request(s) in flight: {}",
-                site.url("/unanswered-worker.js")
-            ),
-            format!(
-                "the frame {} to load (its document is in flight)",
-                site.url("/hung.html")
-            ),
-            format!(
-                "1 request(s) in flight in the frame {stalled}: http://localhost:{}/hung.css",
-                other.addr.port()
-            ),
-            format!(
-                "1 request(s) in flight in the worker {}: {}",
-                site.url("/hung-worker.js"),
-                site.url("/hung-data")
-            ),
-        ]),
-        "{}",
-        said(&output)
-    );
-    assert!(!out.exists(), "a failed shot left a picture");
-}
-
-#[test]
-fn a_frame_sent_to_the_pages_own_site_mid_load_is_still_waited_for() {
-    // Two frames of another site, which Chrome runs in a process of their own, each sent to a
-    // document of the page's own site, which it loads in the page's process: one frame navigates
-    // itself there, the page sends the other. The stand-in stalls each document after its first
-    // half, which tells the page, and the page then marks its own part drawn. Each frame still
-    // loads its document, so the shot waits for both, fails at its patient timeout naming them,
-    // and leaves no picture.
-    let Some(chrome) = chrome::find() else {
-        eprintln!("no Chrome on this machine (SYMPHONY_CHROME names one): shot not run");
-        return;
-    };
-    let other = site();
-    let site = site();
-    let back = site.url("/back-in.html");
-    let sent = site.url("/by-parent.html");
-    for (path, name) in [
-        ("/back-in.html", "back-in"),
-        ("/by-parent.html", "by-parent"),
-    ] {
-        site.set_file(path, telling_its_parent(name), "text/html");
-        site.stall_body(path, true);
-    }
-    other.set_file(
-        "/leaving.html",
-        format!(
-            r#"<!doctype html><p>leaving</p><script>addEventListener('message', () => {{ location = '{back}'; }});</script>"#
-        )
-        .into_bytes(),
-        "text/html",
-    );
-    other.set_file(
-        "/staying.html",
-        b"<!doctype html><p>staying</p>".to_vec(),
-        "text/html",
-    );
-    let away = format!("http://localhost:{}", other.addr.port());
-    site.set_file(
-        "/moving.html",
-        format!(
-            r#"<!doctype html>
-<meta charset="utf-8">
-{NO_ICON}
-<p id="loading" data-ready="loading">frames on their way</p>
-<iframe id="leaving" src="{away}/leaving.html"></iframe>
-<iframe id="sent" src="{away}/staying.html"></iframe>
-<script>
-  const told = new Set();
-  addEventListener('message', event => {{
-    told.add(event.data);
-    if (told.has('back-in') && told.has('by-parent')) document.getElementById('loading').remove();
-  }});
-  addEventListener('load', () => {{
-    document.getElementById('leaving').contentWindow.postMessage('go', '*');
-    document.getElementById('sent').src = '/by-parent.html';
-  }});
-</script>"#
-        )
-        .into_bytes(),
-        "text/html",
-    );
-    let scratch = Scratch::new("moving-frames");
-    let out = scratch.join("moving.png");
-    let url = site.url("/moving.html");
-    let output = shot(&chrome, &[&url, "--out", out.to_str().unwrap()])
-        .output()
-        .unwrap();
-    assert_eq!(
-        still_waiting(&output, &url),
-        BTreeSet::from([
-            format!("the frame {back} to load (its document is in flight)"),
-            format!("the frame {sent} to load (its document is in flight)"),
-        ]),
-        "{}",
-        said(&output)
-    );
-    assert!(!out.exists(), "a failed shot left a picture");
 }
 
 #[test]

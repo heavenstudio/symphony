@@ -1,0 +1,13 @@
+DioxusLabs/dioxus-components
+https://github.com/DioxusLabs/dioxus-components/tree/9a758255ea26e2b20c8cecf4c1c946feb9e71da7
+Revision: 9a758255ea26e2b20c8cecf4c1c946feb9e71da7
+License selected: MIT (upstream offers MIT or Apache-2.0).
+
+Adapted control styles and markup: button, input, textarea, select, dialog,
+tabs and tooltip; the dialog focus trap is ported as trapFocus. The copied
+styles retain dx-* class names; radii, fonts, colors, focus outlines and
+button defaults are adapted to Symphony's theme. Popup, dialog, tabs and
+tooltip rules are carried in overlay.css and panel.css. Theme variables
+are mapped by controls-theme.css. These adaptations retain the upstream
+permission notice below; Symphony's repository MIT license does not replace
+the licenses of its dependencies.

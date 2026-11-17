@@ -4,9 +4,22 @@ use super::*;
 use crate::test_layouts::{Others, others, repository};
 use crate::test_tree::Tree;
 
+#[path = "readiness_tests.rs"]
+mod readiness;
+
 /// [`super::running`], the server given a look only a stall outlasts.
 fn running(machine: &Path, older: Option<&Path>) -> Option<symphony_api::Front> {
     running_within(machine, older, test_time::backstop(LOOK))
+}
+
+/// [`super::add`], its board probe bounded only by the test's stall backstop.
+fn add(
+    dir: &Path,
+    from: &Path,
+    machine: &Path,
+    front: Option<&symphony_api::Front>,
+) -> Result<String, String> {
+    add_within(dir, from, machine, front, test_time::backstop(LOOK))
 }
 
 fn project(tree: &Tree, id: &str, plugins: &str) -> PathBuf {
@@ -40,7 +53,7 @@ fn a_project_is_registered_once_and_said_again_as_the_running_server_serves_it()
     let tree = Tree::new();
     let root = project(&tree, "lantern", "");
     let machine = tree.path("machine");
-    let first = add(&root, &tree.root, &machine, None).unwrap();
+    let first = super::add(&root, &tree.root, &machine, None).unwrap();
     assert!(
         first.starts_with("· lantern works registered at /lantern/ ("),
         "{first}"
@@ -49,8 +62,8 @@ fn a_project_is_registered_once_and_said_again_as_the_running_server_serves_it()
         first.ends_with("; `just symphony` starts the Symphony"),
         "{first}"
     );
-    let host = front(&[], crate::machine::PIN, symphony_board::SCHEMA);
-    let again = add(&root, &tree.root, &machine, Some(&host)).unwrap();
+    let peer = readiness::Peer::new(symphony_board::SCHEMA, 200, r#"{"tasks":[],"next":null}"#);
+    let again = add(&root, &tree.root, &machine, Some(&peer.front)).unwrap();
     assert!(
         again.contains("already registered") && again.ends_with("the running Symphony serves it"),
         "{again}"

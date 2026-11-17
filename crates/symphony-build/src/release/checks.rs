@@ -13,9 +13,11 @@
 //! leader ends, whatever of its group is left is killed with it.
 
 use std::fs::{self, File};
+use std::io;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::os::unix::process::ExitStatusExt;
 use std::path::{Path, PathBuf};
+use std::process::ExitStatus;
 use std::time::Instant;
 
 use serde::{Deserialize, Serialize};
@@ -112,7 +114,7 @@ pub(crate) struct Ran {
     /// check that lists none.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(crate) steps: Vec<Ran>,
-    /// Why it never ran, when it did not.
+    /// Why it could not run or its process group could not be cleaned up.
     #[serde(default)]
     pub(crate) error: Option<String>,
     /// Whether it was stopped when the run's time was up.
@@ -176,6 +178,13 @@ impl Ran {
     /// when the run was told to stop, or why it never ran.
     pub(crate) fn ended(&self) -> String {
         if let Some(error) = &self.error {
+            if self.exit_code.is_some()
+                || self.signal.is_some()
+                || self.interrupted
+                || self.timed_out
+            {
+                return format!("failed: {error}");
+            }
             return format!("did not run: {error}");
         }
         if self.interrupted {
@@ -281,11 +290,12 @@ pub(crate) fn run(step: &Step, checkout: &Path, log: &Path, within: Within<'_>) 
         }));
     }
     let (mut timed_out, mut interrupted) = (false, false);
+    let mut cleanup = Ok(());
     while !group::ended(pid) {
         interrupted = within.bound.interrupted();
         timed_out = !interrupted && Instant::now() >= within.bound.until;
         if interrupted || timed_out {
-            group::stop(pid, group::GRACE);
+            cleanup = group::stop(pid, group::GRACE);
             break;
         }
         #[expect(
@@ -297,11 +307,16 @@ pub(crate) fn run(step: &Step, checkout: &Path, log: &Path, within: Within<'_>) 
     // The load as it ended, before what it left is stopped: what a red's reader judges it under.
     let load = Load::now();
     // What its leader left of its group goes with it, before the leader is reaped and its id freed.
-    group::signal(
-        libc::pid_t::try_from(pid).unwrap_or(libc::pid_t::MAX),
-        libc::SIGKILL,
-    );
-    let status = child.wait();
+    if !interrupted && !timed_out {
+        cleanup = group::kill(pid);
+    }
+    // An unsuccessful cleanup must not become an unbounded blocking wait on a live leader.
+    let status = if cleanup.is_ok() || group::ended(pid) {
+        child.wait().map(Some)
+    } else {
+        child.try_wait()
+    };
+    let (status, error) = outcome(pid, status, cleanup);
     if let Some(running) = within.running {
         running(None);
     }
@@ -319,22 +334,47 @@ pub(crate) fn run(step: &Step, checkout: &Path, log: &Path, within: Within<'_>) 
             .open(log)
             .and_then(|mut file| writeln!(file, "(stopped after {seconds:.0} s: {why})"));
     }
-    match status {
-        Ok(status) => Ran {
-            name: step.name.clone(),
-            command: step.command.clone(),
-            exit_code: status.code(),
-            signal: status.signal(),
-            seconds,
-            log: log.to_path_buf(),
-            steps: Vec::new(),
-            error: None,
-            timed_out,
-            interrupted,
-            load,
-        },
-        Err(e) => Ran::never(step, log, format!("cannot wait for {}: {e}", line[0])),
+    if let Some(error) = &error {
+        let _ = fs::OpenOptions::new()
+            .append(true)
+            .open(log)
+            .and_then(|mut file| writeln!(file, "({error})"));
     }
+    Ran {
+        name: step.name.clone(),
+        command: step.command.clone(),
+        exit_code: status.and_then(|status| status.code()),
+        signal: status.and_then(|status| status.signal()),
+        seconds,
+        log: log.to_path_buf(),
+        steps: Vec::new(),
+        error,
+        timed_out,
+        interrupted,
+        load,
+    }
+}
+
+/// Keep the leader's status even when its group's cleanup failed. A reap error belongs beside
+/// the cleanup error in the existing log, never in a replacement that discards the check's output.
+fn outcome(
+    pid: u32,
+    status: io::Result<Option<ExitStatus>>,
+    cleanup: io::Result<()>,
+) -> (Option<ExitStatus>, Option<String>) {
+    let mut errors: Vec<String> = cleanup
+        .err()
+        .map(|error| error.to_string())
+        .into_iter()
+        .collect();
+    let status = match status {
+        Ok(status) => status,
+        Err(error) => {
+            errors.push(format!("cannot wait for process {pid}: {error}"));
+            None
+        }
+    };
+    (status, (!errors.is_empty()).then(|| errors.join("; ")))
 }
 
 /// The end of the log at `path`: its last `lines` lines within its last `bytes` bytes, a line cut
@@ -491,6 +531,112 @@ mod tests {
         assert!(log.contains("started\n"), "{log}");
         assert!(log.contains("s: the run was told to stop)\n"), "{log}");
         gone(written_pid(&helper), "what the check started");
+    }
+
+    #[test]
+    fn a_stopping_check_drains_a_helper_forked_by_its_term_handler_and_keeps_its_status() {
+        let tree = Tree::new();
+        let ready = tree.path("ready");
+        let helper = tree.path("helper.pid");
+        let fifo = tree.path("hold");
+        let script = format!(
+            "mkfifo '{}'; exec 3<> '{}'; \
+             trap 'sleep 1000 & echo $! > \"{}\"; echo term; exit 37' TERM; \
+             echo ready > '{}'; read -r held <&3",
+            fifo.display(),
+            fifo.display(),
+            helper.display(),
+            ready.display()
+        );
+        let step = Step {
+            argv: vec!["bash".into(), "-c".into(), script.clone()],
+            ..Step::shell("verify", &script)
+        };
+        let heard = || ready.exists();
+        let checking = RefCell::new(None);
+        let running = |check: Option<&Checking>| {
+            if let Some(check) = check {
+                *checking.borrow_mut() = Some(check.clone());
+            }
+        };
+        let ran = run(
+            &step,
+            &tree.root,
+            &tree.path("verify.log"),
+            Within {
+                bound: Bound::hearing(far().until, &heard),
+                running: Some(&running),
+            },
+        );
+        assert!(ran.interrupted && !ran.timed_out && !ran.green(), "{ran:?}");
+        assert_eq!(
+            (ran.exit_code, ran.signal, ran.error),
+            (Some(37), None, None)
+        );
+        let helper = written_pid(&helper);
+        let check = checking.into_inner().unwrap();
+        test_time::until_true(
+            format!("the stopped check's group and forked helper {helper} gone"),
+            test_time::FLOOR,
+            || !group::lives(check.group, check.start.as_ref()),
+        )
+        .unwrap_or_else(|stall| panic!("{stall}"));
+        let log = fs::read_to_string(tree.path("verify.log")).unwrap();
+        assert!(log.contains("\nterm\n"), "{log}");
+        assert!(log.ends_with("s: the run was told to stop)\n"), "{log}");
+    }
+
+    #[test]
+    fn cleanup_errors_keep_a_checks_status_and_make_it_red_alongside_any_reap_error() {
+        let status = ExitStatus::from_raw(37 << 8);
+        assert_eq!(outcome(10, Ok(Some(status)), Ok(())), (Some(status), None));
+        let (kept, error) = outcome(
+            10,
+            Ok(Some(status)),
+            Err(io::Error::other("live members remain")),
+        );
+        assert_eq!(
+            (kept, error.as_deref()),
+            (Some(status), Some("live members remain"))
+        );
+        let tree = Tree::new();
+        let ran = Ran {
+            exit_code: kept.and_then(|status| status.code()),
+            error,
+            ..Ran::never(
+                &Step::shell("verify", "true"),
+                &tree.path("verify.log"),
+                "not started".into(),
+            )
+        };
+        assert!(!ran.green());
+        assert_eq!(ran.ended(), "failed: live members remain");
+        assert_eq!(
+            serde_json::from_value::<Ran>(serde_json::to_value(&ran).unwrap()).unwrap(),
+            ran
+        );
+        assert_eq!(
+            outcome(10, Ok(None), Err(io::Error::other("not stopped"))),
+            (None, Some("not stopped".into()))
+        );
+        assert_eq!(
+            outcome(
+                10,
+                Err(io::Error::other("reap refused")),
+                Err(io::Error::other("kill refused"))
+            ),
+            (
+                None,
+                Some("kill refused; cannot wait for process 10: reap refused".into())
+            )
+        );
+        assert_eq!(
+            outcome(10, Err(io::Error::other("reap refused")), Ok(())),
+            (
+                None,
+                Some("cannot wait for process 10: reap refused".into())
+            )
+        );
     }
 
     #[test]

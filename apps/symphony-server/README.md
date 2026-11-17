@@ -5,6 +5,12 @@ their serde-only wire records in `crates/symphony-api`. All routes run natively:
 the client, reads, saves and media, under each project's `/<id>/` on the one server and
 at `/` on a server of its own.
 
+The public Rust items a consumer calls follow the
+[two-release rule](../../docs/CHECKS.md#consumer-api-changes), held here by
+`tests/consumer_api.rs`: keep the working old item without `#[deprecated]` alongside its
+replacement for a release, then remove it in a separate later task with consumer migration
+evidence and the guard list updated.
+
 ## Projects
 
 The one server (`serve --home`) keeps its record (`server.json`), log, lease and lock in the
@@ -28,6 +34,22 @@ A navigation to a path of today
 (`/docs/…`, `/tasks`, a bookmark) redirects to the project a same-origin referrer names, else
 the starter's; other requests on such a path are answered by that project in place. A
 project whose root is gone, or whose plugins the running build lacks, answers 503 saying why.
+
+`symphony project add` registers the project before checking its board at
+`/<id>/api/task-board?counts=1&work=0`. Only a 200 task-board JSON answer is readiness evidence;
+the HTML shell at `/<id>/tasks` can answer 200 while its board is unavailable. A failed check
+keeps the registration and reports the API's refusal and the JSON URL to check again.
+`symphony init` checks that JSON too for an already registered project while its host answers,
+and names an older selected release writer, its schema and the host's required schema in `Next:`.
+An unknown local build's schema is not inferred from its path.
+
+A board behind the running host needs a compatible project board command linked first, then
+`just tasks migrate` in that project's main checkout under its migration policy. Registration,
+init and the reader never migrate it or replace the shared host. Failed board operations retry
+after 1, 2, 4, 8, 16, 32, then at most 60 seconds; requests and filesystem changes keep that
+deadline. After an external migration, the worker or page reader recovers on its next due
+attempt without a server restart (`src/live/retry.rs`). The worker's next board tick publishes
+the recovered JSON; page-reader success alone does not refresh that snapshot.
 
 A start judges the running server by the host rule (`symphony::machine::host`). A build serves a
 project's plugin when the plugin answers from a process of its own (`[plugins.process]`,
@@ -129,6 +151,8 @@ cannot keep installing after `--stop` returns.
 | `/api/tasks` | Version, task records and sessions without process ids |
 | `/api/task-board?q=…&status=…&cursor=…` | Thirty brief-free summaries in the requested column; `counts=1` returns only counts and sign-off slugs |
 | `/api/task-page?slug=…` | Task, shared typed brief blocks and child count; `gates`, once the server has answered the task's gates since it started, says how many there were, how many the task waited on and how many had no who and when (`GatesSeen`), the room the page holds while it reads them again |
+| `/api/task-diff?slug=…` | Changed paths and added/removed counts, from the branch's merge base or the recorded landing merge's first parent; at most 500 paths and 256 KiB of Git output. Binary counts are null; missing branches or history are said explicitly (`TaskDiff`) |
+| `/api/task-diff-file?slug=…&path=…&base=…&head=…` | One file's patch, at most 256 KiB; the comparison must still match the summary's commit ids, otherwise 409. All Git calls in either read share five seconds, and cancellation ends the child (`src/api/task_diff.rs`) |
 | `/api/task-gates?slug=…` | The task's gates at its recorded branch's tip (`TaskGates`): the Symphony's review, check and owner gates and the project's plugins' own, each met, missing, waived, held or unknown, what the task waits on first; a plugin that errs or is slow is an unknown gate, a task not on the board 404 ([TASKS](../../docs/TASKS.md#gates)) |
 | `/api/task-offer?slug=…` | Resolved branch and the first offer of the project's board actions that has a payload, on work of any status (each action decides which it offers on); fetched near the controls |
 | `/api/task-history?slug=…&before=…` | Thirty structured messages with timestamps and typed blocks; `after=…` catches up a loaded thread after a lost feed |

@@ -1,12 +1,15 @@
 //! Native owner writes. Validate the browser's origin before reading or dispatching its body.
 
 use crate::front::Shared;
-use axum::body::to_bytes;
+use axum::body::Body;
 use axum::extract::Request;
 use axum::http::{HeaderMap, Method, StatusCode, header};
 use axum::response::{IntoResponse, Json, Response};
 use serde_json::{Value, json};
 use std::sync::Arc;
+
+/// JSON saves carry text and references; uploaded file bytes have their own route and cap.
+const JSON_BYTES: usize = 2 * 1024 * 1024;
 
 fn error(status: StatusCode, why: impl ToString) -> Response {
     (
@@ -74,17 +77,9 @@ pub(crate) async fn answer(shared: &Arc<Shared>, request: Request) -> Response {
     if route == symphony_api::AGENT_FOCUS_PATH {
         return crate::session_go::answer_focus(shared, request).await;
     }
-    let bytes = match to_bytes(request.into_body(), usize::MAX).await {
-        Ok(bytes) => bytes,
-        Err(e) => return error(StatusCode::BAD_REQUEST, format!("bad JSON: {e}")),
-    };
-    let payload = if bytes.is_empty() {
-        json!({})
-    } else {
-        match serde_json::from_slice::<Value>(&bytes) {
-            Ok(payload) => payload,
-            Err(e) => return error(StatusCode::BAD_REQUEST, format!("bad JSON: {e}")),
-        }
+    let payload = match json_body(request.into_body()).await {
+        Ok(payload) => payload,
+        Err((status, why)) => return error(status, why),
     };
     let shared = shared.clone();
     match crate::spawn::blocking(move || {
@@ -133,6 +128,30 @@ pub(crate) async fn answer(shared: &Arc<Shared>, request: Request) -> Response {
             e.error,
         ),
         Err(e) => error(StatusCode::INTERNAL_SERVER_ERROR, e),
+    }
+}
+
+/// Collect no more than the JSON cap, even for a chunked body with no length header. Once a
+/// chunk exceeds the remaining space, refuse it without collecting it or polling the rest.
+async fn json_body(body: Body) -> Result<Value, (StatusCode, String)> {
+    use futures_util::StreamExt;
+    let mut body = body.into_data_stream();
+    let mut bytes = Vec::new();
+    while let Some(chunk) = body.next().await {
+        let chunk = chunk.map_err(|e| (StatusCode::BAD_REQUEST, format!("bad JSON: {e}")))?;
+        if chunk.len() > JSON_BYTES - bytes.len() {
+            return Err((
+                StatusCode::PAYLOAD_TOO_LARGE,
+                "JSON saves are at most 2 MiB; send files through the upload route".into(),
+            ));
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    if bytes.is_empty() {
+        Ok(json!({}))
+    } else {
+        serde_json::from_slice(&bytes)
+            .map_err(|e| (StatusCode::BAD_REQUEST, format!("bad JSON: {e}")))
     }
 }
 
@@ -315,6 +334,9 @@ fn cancel_failed(root: &std::path::Path, slug: &str, why: &str) {
 
 #[cfg(test)]
 mod upload_tests;
+
+#[cfg(test)]
+mod body_tests;
 
 #[cfg(test)]
 mod tests {

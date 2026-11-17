@@ -201,11 +201,10 @@ fn visit(chrome: &mut Chrome, site: &Site, page: &Page) {
     if page.drawn.starts_with("[data-status=build]") {
         shows(
             chrome,
-            "document.querySelector('[data-open-stage=build]') !== null",
-            "Build rail",
+            "document.querySelector('.column[data-status=build]') !== null",
+            "Build column",
         );
-        // Opening the activity list unmounts the lifecycle columns. Keep the initial reads
-        // this case needs before switching, so visibility cannot cancel an unstarted read.
+        // Keep the initial lifecycle reads before scrolling to machine activity.
         let lifecycle: Vec<_> = page
             .parts
             .iter()
@@ -213,7 +212,7 @@ fn visit(chrome: &mut Chrome, site: &Site, page: &Page) {
             .filter(|part| *part != "board:waiting column:build")
             .collect();
         keeps(chrome, &lifecycle);
-        chrome.eval("document.querySelector('[data-open-stage=build]').click()");
+        chrome.eval("document.querySelector('.column[data-status=build]').scrollIntoView({block:'nearest',inline:'center'})");
     }
     shows(chrome, &present(page.drawn), page.path);
     shows(chrome, LIVE, page.path);
@@ -778,10 +777,10 @@ fn a_task_no_fresh_answer_lists_goes_whichever_order_the_answers_come_in() {
         chrome.open(&site.url(page.path));
         shows(
             &mut chrome,
-            "document.querySelector('[data-open-stage=build]') !== null",
-            "kept Build rail",
+            "document.querySelector('.column[data-status=build]') !== null",
+            "kept Build column",
         );
-        chrome.eval("document.querySelector('[data-open-stage=build]').click()");
+        chrome.eval("document.querySelector('.column[data-status=build]').scrollIntoView({block:'nearest',inline:'center'})");
         shows(
             &mut chrome,
             &present(page.drawn),
@@ -805,7 +804,7 @@ fn a_task_no_fresh_answer_lists_goes_whichever_order_the_answers_come_in() {
             .expect("a read let go was never answered");
         }
         shows(&mut chrome, LIVE, "every read answered");
-        chrome.eval("document.querySelector('.back-to-stages').click()");
+        chrome.eval("document.querySelector('.column[data-status=in_progress]').scrollIntoView({block:'nearest',inline:'center'})");
         shows(
             &mut chrome,
             &format!("!({}) && {}", present(GHOST), present(STAY)),

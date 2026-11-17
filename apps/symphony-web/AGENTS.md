@@ -188,6 +188,13 @@ the rest of the build, so the build is the same from any checkout and shell.
 its guides and of the notice styles, so the regenerator rebuilds the distribution when one
 changes. The server embeds the files as it embeds the rest, and needs no Node to run. The build
 needs Git, Bash, jq, the pinned Node and a Rust toolchain for the publisher.
+Vite's `build.license` inventories the packages in emitted chunks with their installed license
+text (`.vite/licenses.json`). `notices.sh` combines it with `copied-controls.txt` and the copied
+controls' selected MIT text into `assets/third-party-HASH.txt`, named by the shell and retained
+in `builds.json` with that build. The server packages, embeds and installs it with the other
+client files. A missing inventory, missing text or license other than MIT refuses packaging,
+so a dependency with different terms needs an explicit license selection in this step. The
+repository's MIT license covers its own code; dependencies retain their own licenses.
 `report.sh OUT` prints what each kind of the build in OUT makes a browser fetch
 ([Budget](#what-the-pages-keep)).
 
@@ -487,6 +494,14 @@ once it nears the screen and its part has something to draw (an answer, or why t
 behind no other read, so the page's first draw carries none of it; its style comes with it. The gates' and the box's styles (`src/gates.css`,
 `src/timeline-slot.css`) are the kind's own.
 
+The task's Changes section (`src/task-diff.tsx`, its style `src/task-diff.css`) mounts near the
+screen, reading its own live part from `/api/task-diff`: paths and line counts, binary files
+said as such, never patch text. It follows branch changes and the task's verdicts. Opening a
+file reads `/api/task-diff-file` with the summary's base and head commits; a new comparison
+closes the old files and cancels their reads. Patches are scrollable and bounded at 256 KiB,
+the file list at 500 files and 256 KiB of Git output; every incomplete or unavailable read
+says why. This code belongs only to the task kind, so the board carries none of it.
+
 ## The panel
 
 The kind `panel` (`src/kinds/panel.tsx`, `src/panel.tsx`) is the shell's persistent kind, which it
@@ -742,8 +757,10 @@ What holds on every page, and each page's contract where its section above names
   The board implements the owner's option B (`docs/analysis/board-design/b-stuck-in-place.html`):
   blocked tasks stay first in their original stage, ordered by named wait kind then age, ordinary
   work oldest first, parked last and finished newest first. An unnamed legacy block is ordinary
-  work. Six lifecycle stages fit a wide page, with a Backlog rail and a Build/Test rail; Backlog,
-  Build, Test and cancelled work open as a list in the board's place, with Back to stages.
+  work. Lifecycle, Build and Test columns scroll horizontally at a minimum width of 280 px,
+  including beside the chat. Backlog opens from the toolbar and cancelled work from Done, each
+  as a list in the board's place, with Back to stages. Search and the finished window are behind
+  Search and filters, collapsed initially at every width.
   A focused card that moves keeps its title focused, opening its destination where needed;
   unrelated moves keep the chosen stage. At 760 px and below one stage is mounted, Review
   first, with the chosen tab saved per project (`board-waiting-stage`, `src/storage.ts`). The

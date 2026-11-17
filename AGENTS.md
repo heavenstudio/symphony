@@ -24,6 +24,12 @@ the product (the library as `symphony-app`, its library still `symphony`, the bo
 sources, the Mac app, the build and release commands (`symphony-build`) and the tests' time keep
 `publish = false` ([RELEASES](docs/RELEASES.md#packages-on-cratesio)).
 
+Public Rust items a consumer calls follow the
+[two-release rule](docs/CHECKS.md#consumer-api-changes): ship the replacement beside the working
+old item without `#[deprecated]`, then remove the old item in a separate later task after the
+consumer migrations are proved. Keep the compile guards in step with those calls; kit and helper
+major-version requirements still apply.
+
 ### Where each part is said
 
 - **A project's settings** are its `symphony.toml`, every table and key in
@@ -121,9 +127,11 @@ PATH, or fnm to fetch it once: `tools/node.sh`); the consuming project's binarie
 prerequisites. The client build needs Git, Bash and jq, and native
 board fixtures need lsof and the pinned SurrealDB (`tools/surreal.sh`, or `SYMPHONY_SURREAL`).
 The board's server tests (`just test-rs -p symphony-board --test server`, and so the release run)
-need the machine's PostgreSQL in the folder `symphony.toml`'s `[board] postgresql` names
-(`brew install postgresql@18` on a Mac): without it each PostgreSQL test fails naming the folder,
-the key and that install. This repository has no hosted GitHub CI requirement.
+need the machine's PostgreSQL 18 or later: the absolute folder `symphony.toml`'s `[board]
+postgresql` names, otherwise the first executable `postgres` on `PATH`, with `initdb`, `pg_ctl`
+and `psql` in that same folder. [The setup](docs/PROJECT_FILE.md#board) gives the portable
+Homebrew line; absent or incompatible tools fail with setup guidance. This repository has no
+hosted GitHub CI requirement.
 
 ## This repository as its own project
 
@@ -208,7 +216,19 @@ recipe before either runs, and the separator ends option parsing. Do not repeat 
 assignments on each command. This repository's `.codex/rules/checks.rules` allows its named
 checks to record shared state outside the worktree sandbox; it grants no directory-wide access.
 For both document checks use `just --one -- docs-check`, whose arguments are fixed; the generic
-document CLI also accepts flags that write documents. A check
+document CLI also accepts flags that write documents.
+
+Give each check or board command its own tool invocation, with plain arguments and a quoted
+message for `just tasks say`. Keep the executable, recipe and subcommand words unquoted.
+Concatenating shell quote fragments to encode one message argument can also keep the command
+sandboxed. Use a single literal quoted body where that preserves its text; complex quoting
+uses the active approval flow. Do not redirect checks into task artifacts or add environment
+assignments, substitutions or other shell expansion: those forms prevent Codex from
+matching the named command rule ([shell handling](https://developers.openai.com/codex/rules#shell-wrappers-and-compound-commands)).
+A simple compound command is evaluated by all its parts; one unmatched part can keep the whole
+invocation sandboxed. Independent tool calls can still run concurrently. Keep the tool's output
+or read the recorder's existing [run log](docs/RUNS.md#logs); `just tasks runs SLUG --as HANDLE`
+shows the recorded results, so an extra redirected run is unnecessary. A check
 run for another task still needs the explicit attribution above and the active approval flow.
 Full sessions register their own callback early with `just tasks callback --as HANDLE`;
 in-process agents read their inbox instead. An orchestrator also reads
@@ -302,13 +322,21 @@ dismissing each dialog, runs the steps `--click CSS`, `--type CSS=TEXT`, `--key 
 `--hover CSS`, `--eval JS` (its JSON on stdout), `--pause MS` and `--shot FILE.png` in the order
 given, then saves the PNG. `--phone`, `--size WxH`, `--full-page` and `--scheme dark` set the
 view, `--wait-for CSS` and `--timeout SECS` bound the waits, `--report` prints the console errors,
-failed requests, dialogs dismissed and horizontal overflow it saw, and `--help` says the rest. It
-only reads the page, so the live board (`http://127.0.0.1:8765/symphony/tasks`) is fair to shoot;
-it never starts, stops or reconfigures a server. Pictures kept as a task's evidence are saved
+failed requests, dialogs dismissed and horizontal overflow it saw, and `--help` says the rest. A
+capture without interaction steps reads the page, so the live board
+(`http://127.0.0.1:8765/symphony/tasks`) is fair to shoot. Inspect interaction steps and script
+text as described below. Pictures kept as a task's evidence are saved
 under the project's artifacts folder in the task's slug (`artifacts/SLUG/` by default) and
 attached, as a path there leads nowhere once the sweep moves a worktree's artifacts: `--attach`
 (`just symphony-cli attach FILE…` for a file saved before) stores each by its content in the main
 checkout's uploads, from a linked worktree too, and prints the line the thread post carries.
+
+For Codex evidence commands use `just --one -- symphony-cli shot URL --out FILE.png …` or
+`just --one -- symphony-cli attach FILE …`, each as a plain tool invocation. These commands use
+the active approval flow: inspect the entire argument list, the task's artifact paths, the
+local URL and every interaction or `--eval` script. A prefix ending at one filename still
+permits extra file arguments; it does not confine uploads to that file or task. Do not turn
+one approved capture or attachment into a reusable `symphony-cli`, shell or script grant.
 
 ## Command ownership
 
