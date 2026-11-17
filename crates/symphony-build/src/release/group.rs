@@ -130,35 +130,273 @@ pub(crate) fn signal(group: libc::pid_t, signal: libc::c_int) {
 /// Whether this process's child `pid` has ended, left unreaped (`WNOWAIT`), so its pid still names
 /// it and its group; one that cannot be waited for any more has ended.
 pub(crate) fn ended(pid: u32) -> bool {
+    child_ended(pid).unwrap_or(true)
+}
+
+/// Observe only an unreaped child. An error does not authorize signalling its numeric group id.
+fn child_ended(pid: u32) -> io::Result<bool> {
+    if pid <= 1 || libc::pid_t::try_from(pid).is_err() {
+        return Err(io::Error::from_raw_os_error(libc::EINVAL));
+    }
     // SAFETY: siginfo_t is plain data, for which all zeroes is a value.
     let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
-    // SAFETY: reads whether one child of this process ended into `info`, waiting for and reaping
-    // none.
-    let waited = unsafe {
-        libc::waitid(
-            libc::P_PID,
-            libc::id_t::from(pid),
-            &raw mut info,
-            libc::WEXITED | libc::WNOWAIT | libc::WNOHANG,
-        )
-    };
-    waited != 0 || info.si_signo == libc::SIGCHLD
+    retry_interrupted(|| {
+        // SAFETY: observes only the named child, writing `info` and reaping none.
+        let waited = unsafe {
+            libc::waitid(
+                libc::P_PID,
+                libc::id_t::from(pid),
+                &raw mut info,
+                libc::WEXITED | libc::WNOWAIT | libc::WNOHANG,
+            )
+        };
+        if waited != 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(info.si_signo == libc::SIGCHLD
+            && matches!(
+                info.si_code,
+                libc::CLD_EXITED | libc::CLD_KILLED | libc::CLD_DUMPED
+            ))
+    })
 }
 
 /// Stop the group the child `pid` leads: SIGTERM, up to [`GRACE`] for its leader to end, then
-/// SIGKILL to whatever of it is left. The leader is left unreaped, for its owner to wait for.
-pub(crate) fn stop(pid: u32, grace: Duration) {
-    let group = group_of(pid);
-    signal(group, libc::SIGTERM);
-    let until = Instant::now() + grace;
-    while !ended(pid) && Instant::now() < until {
-        #[expect(
-            clippy::disallowed_methods,
-            reason = "no-timed-waits baseline: looks again for a process group's end, which no wait reports"
-        )]
-        std::thread::sleep(POLL);
+/// drain whatever of it is left. The leader is left unreaped, for its sole owner to wait for.
+pub(crate) fn stop(pid: u32, grace: Duration) -> io::Result<()> {
+    owned_signal(pid, libc::SIGTERM)?;
+    let mut clock = Wall(Instant::now());
+    while !child_ended(pid)? && clock.elapsed() < grace {
+        clock.pause(POLL.min(grace.saturating_sub(clock.elapsed())));
     }
-    signal(group, libc::SIGKILL);
+    kill(pid)
+}
+
+/// Kill remaining live members before the caller reaps the leader and frees its id. A group
+/// signal can miss a concurrent fork, so repeat while any live member remains, for at most
+/// [`GRACE`]. Zombies cannot fork or write and need not be reaped by their inheritor first.
+pub(crate) fn kill(pid: u32) -> io::Result<()> {
+    drain(
+        &mut || owned_signal(pid, libc::SIGKILL),
+        &mut || running(pid),
+        GRACE,
+        &mut Wall(Instant::now()),
+    )
+    .map_err(|error| io::Error::new(error.kind(), format!("cannot drain group {pid}: {error}")))
+}
+
+/// The caller alone owns and reaps this child throughout the operation. A number that no longer
+/// names an unreaped child authorizes no signal.
+fn owned_signal(pid: u32, how: libc::c_int) -> io::Result<()> {
+    child_ended(pid)?;
+    retry_interrupted(|| {
+        // SAFETY: waitid above established the caller's unreaped child; its id stays reserved.
+        if unsafe { libc::killpg(group_of(pid), how) } == 0 {
+            return Ok(());
+        }
+        let error = io::Error::last_os_error();
+        // Darwin reports EPERM for a group containing only zombies. A census below must still
+        // establish that no live member remains; EPERM alone never means successful cleanup.
+        if error.raw_os_error() == Some(libc::ESRCH)
+            || (error.raw_os_error() == Some(libc::EPERM) && !running(pid)?)
+        {
+            Ok(())
+        } else {
+            Err(error)
+        }
+    })
+}
+
+fn retry_interrupted<T>(mut operation: impl FnMut() -> io::Result<T>) -> io::Result<T> {
+    loop {
+        match operation() {
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
+            answer => return answer,
+        }
+    }
+}
+
+/// The signal and census are separate: after every signal a new member can appear. No member
+/// pid from a census is ever signalled individually, since it could be recycled before the kill.
+fn drain(
+    kill: &mut dyn FnMut() -> io::Result<()>,
+    running: &mut dyn FnMut() -> io::Result<bool>,
+    most: Duration,
+    clock: &mut dyn Clock,
+) -> io::Result<()> {
+    loop {
+        kill()?;
+        if !running()? {
+            return Ok(());
+        }
+        let left = most.saturating_sub(clock.elapsed());
+        if left.is_zero() {
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "live members remain after SIGKILL",
+            ));
+        }
+        clock.pause(POLL.min(left));
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn member_pids(group: u32) -> io::Result<Vec<i32>> {
+    // sys/proc_info.h PROC_PGRP_ONLY. List only this group, including its zombies.
+    const PROC_PGRP_ONLY: u32 = 2;
+    let mut pids = vec![0i32; 64];
+    loop {
+        let bytes = retry_interrupted(|| {
+            // SAFETY: the buffer holds the supplied byte count, and libproc only writes pids.
+            let bytes = unsafe {
+                libc::proc_listpids(
+                    PROC_PGRP_ONLY,
+                    group,
+                    pids.as_mut_ptr().cast(),
+                    i32::try_from(pids.len() * size_of::<i32>()).map_err(io::Error::other)?,
+                )
+            };
+            if bytes < 0 {
+                Err(io::Error::last_os_error())
+            } else {
+                Ok(bytes as usize)
+            }
+        })?;
+        let count = bytes / size_of::<i32>();
+        if count == pids.len() {
+            pids.resize(pids.len() * 2, 0);
+            continue;
+        }
+        pids.truncate(count);
+        break;
+    }
+    pids.retain(|pid| *pid > 0);
+    Ok(pids)
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Member {
+    pid: u32,
+    start: (u64, u64),
+    live: bool,
+}
+
+fn running(group: u32) -> io::Result<bool> {
+    // A kernel census can cease listing a dying leader before waitid reports its exit. Keep
+    // that wait inside the bounded drain too, so the caller's final reap cannot block on it.
+    if !child_ended(group)? {
+        return Ok(true);
+    }
+    changing(&mut || members(group))
+}
+
+/// A parent can fork and end between a membership list and its status read. A second census
+/// must contain only the same zombies before cleanup can succeed. Starts distinguish recycled
+/// member pids; none is used as a target for a signal.
+fn changing(census: &mut dyn FnMut() -> io::Result<Vec<Member>>) -> io::Result<bool> {
+    let before = census()?;
+    if before.iter().any(|member| member.live) {
+        return Ok(true);
+    }
+    Ok(census()?
+        .iter()
+        .any(|member| member.live || !before.contains(member)))
+}
+
+#[cfg(target_os = "macos")]
+fn members(group: u32) -> io::Result<Vec<Member>> {
+    let pids = member_pids(group)?;
+    let mut found = Vec::new();
+    for pid in pids {
+        // SAFETY: proc_bsdinfo is plain output data for which all zeroes is valid.
+        let mut info: libc::proc_bsdinfo = unsafe { std::mem::zeroed() };
+        let size = i32::try_from(size_of::<libc::proc_bsdinfo>()).unwrap();
+        let read = retry_interrupted(|| {
+            // SAFETY: libproc receives exactly the size of the output buffer. The nonzero arg
+            // includes zombies (XNU proc_pidinfo), so an exiting parent cannot masquerade as
+            // absent just because the default query excludes zombies.
+            let read = unsafe {
+                libc::proc_pidinfo(
+                    pid,
+                    libc::PROC_PIDTBSDINFO,
+                    1,
+                    std::ptr::from_mut(&mut info).cast(),
+                    size,
+                )
+            };
+            if read == size {
+                return Ok(true);
+            }
+            let error = io::Error::last_os_error();
+            if error.raw_os_error() == Some(libc::ESRCH) {
+                Ok(false)
+            } else {
+                Err(error)
+            }
+        })?;
+        if read && info.pbi_pgid == group {
+            found.push(Member {
+                pid: info.pbi_pid,
+                start: (info.pbi_start_tvsec, info.pbi_start_tvusec),
+                live: info.pbi_status != 5,
+            });
+        } else {
+            // It left the group or was reaped after the list. It could have forked first; make
+            // the drain look again rather than calling that incomplete census empty.
+            found.push(Member {
+                pid: pid as u32,
+                start: (0, 0),
+                live: true,
+            });
+        }
+    }
+    Ok(found)
+}
+
+#[cfg(target_os = "linux")]
+fn members(group: u32) -> io::Result<Vec<Member>> {
+    let mut found = Vec::new();
+    for entry in std::fs::read_dir("/proc")? {
+        let entry = entry?;
+        let Ok(pid) = entry.file_name().to_string_lossy().parse::<u32>() else {
+            continue;
+        };
+        let text = match std::fs::read_to_string(entry.path().join("stat")) {
+            Ok(text) => text,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(error),
+        };
+        if let Some(member) = stat_member(pid, &text, group)? {
+            found.push(member);
+        }
+    }
+    Ok(found)
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn stat_member(pid: u32, stat: &str, group: u32) -> io::Result<Option<Member>> {
+    let fields: Vec<_> = stat
+        .rsplit_once(')')
+        .map_or("", |(_, fields)| fields)
+        .split_whitespace()
+        .collect();
+    let invalid = || io::Error::new(io::ErrorKind::InvalidData, "invalid /proc process stat");
+    let pgrp = fields
+        .get(2)
+        .and_then(|field| field.parse::<u32>().ok())
+        .ok_or_else(invalid)?;
+    if pgrp != group {
+        return Ok(None);
+    }
+    let start = fields
+        .get(19)
+        .and_then(|field| field.parse().ok())
+        .ok_or_else(invalid)?;
+    Ok(Some(Member {
+        pid,
+        start: (start, 0),
+        live: !matches!(fields.first(), Some(&"Z" | &"X" | &"x")),
+    }))
 }
 
 /// `command` run in a process group of its own, stdin null and its output read, within `bound`: a
@@ -412,6 +650,17 @@ mod tests {
     use super::*;
     use crate::test_tree::Tree;
     use symphony::children::command;
+    use symphony_board::sys::{Child, Stdio};
+
+    /// Each fixture process remains our unreaped child even when an assertion panics.
+    struct Owned(Child);
+
+    impl Drop for Owned {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
 
     /// A clock that moves only by the pauses taken on it.
     #[derive(Default)]
@@ -425,6 +674,303 @@ mod tests {
         fn pause(&mut self, pause: Duration) {
             self.0 += pause;
         }
+    }
+
+    #[test]
+    fn a_drain_retries_live_members_and_reports_errors_or_its_deadline() {
+        let calls = std::cell::Cell::new(0);
+        let mut kill = || {
+            calls.set(calls.get() + 1);
+            Ok(())
+        };
+        let mut clock = Paused::default();
+        drain(&mut kill, &mut || Ok(calls.get() < 3), GRACE, &mut clock).unwrap();
+        assert_eq!(calls.get(), 3);
+        assert_eq!(clock.elapsed(), POLL * 2);
+        let error = drain(&mut kill, &mut || Ok(true), Duration::ZERO, &mut clock).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::TimedOut);
+        let before = calls.get();
+        let error = drain(
+            &mut || Err(io::Error::from_raw_os_error(libc::EPERM)),
+            &mut || panic!("a failed signal must not be called clean"),
+            GRACE,
+            &mut clock,
+        )
+        .unwrap_err();
+        assert_eq!(error.raw_os_error(), Some(libc::EPERM));
+        assert_eq!(calls.get(), before);
+        let error = drain(
+            &mut kill,
+            &mut || Err(io::Error::other("census refused")),
+            GRACE,
+            &mut clock,
+        )
+        .unwrap_err();
+        assert_eq!(error.to_string(), "census refused");
+        // Even at its deadline a completed drain succeeds, without a timer assertion.
+        drain(&mut kill, &mut || Ok(false), Duration::ZERO, &mut clock).unwrap();
+    }
+
+    #[test]
+    fn a_census_confirms_only_the_same_zombies_and_never_assumes_an_error_is_empty() {
+        let zombie = Member {
+            pid: 10,
+            start: (100, 0),
+            live: false,
+        };
+        let live = Member {
+            live: true,
+            ..zombie.clone()
+        };
+        let cases = [
+            (vec![], vec![], false),
+            (vec![zombie.clone()], vec![zombie.clone()], false),
+            (vec![zombie.clone()], vec![], false),
+            (vec![live.clone()], vec![], true),
+            (vec![zombie.clone()], vec![live], true),
+            (
+                vec![zombie.clone()],
+                vec![Member {
+                    pid: 11,
+                    ..zombie.clone()
+                }],
+                true,
+            ),
+            (
+                vec![zombie.clone()],
+                vec![Member {
+                    start: (101, 0),
+                    ..zombie
+                }],
+                true,
+            ),
+        ];
+        for (first, second, expected) in cases {
+            let mut looks = [first, second].into_iter();
+            assert_eq!(
+                changing(&mut || Ok(looks.next().unwrap())).unwrap(),
+                expected
+            );
+        }
+        assert!(changing(&mut || Err(io::Error::other("unreadable"))).is_err());
+        let mut looks = [Ok(vec![]), Err(io::Error::other("second census failed"))].into_iter();
+        assert!(changing(&mut || looks.next().unwrap()).is_err());
+    }
+
+    #[test]
+    fn interrupted_observations_retry_and_other_errors_stand() {
+        let mut answers = [Err(io::Error::from_raw_os_error(libc::EINTR)), Ok(42)].into_iter();
+        assert_eq!(retry_interrupted(|| answers.next().unwrap()).unwrap(), 42);
+        let error = retry_interrupted(|| Err::<(), _>(io::Error::from_raw_os_error(libc::EACCES)))
+            .unwrap_err();
+        assert_eq!(error.raw_os_error(), Some(libc::EACCES));
+    }
+
+    #[test]
+    fn linux_member_status_reads_past_names_and_excludes_zombies_and_other_groups() {
+        let stat = |state| {
+            format!("10 (helper (with spaces)) {state} 1 10 10 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 123 0")
+        };
+        for state in ["R", "S", "T", "D"] {
+            let member = stat_member(10, &stat(state), 10).unwrap().unwrap();
+            assert_eq!(
+                member,
+                Member {
+                    pid: 10,
+                    start: (123, 0),
+                    live: true
+                }
+            );
+        }
+        for state in ["Z", "X", "x"] {
+            assert!(!stat_member(10, &stat(state), 10).unwrap().unwrap().live);
+        }
+        assert!(stat_member(10, &stat("S"), 11).unwrap().is_none());
+        for bad in [
+            "",
+            "10 (name) S 1 invalid",
+            "10 (name) Z 1 10",
+            "10 (name) S 1 10 0",
+        ] {
+            assert_eq!(
+                stat_member(10, bad, 10).unwrap_err().kind(),
+                io::ErrorKind::InvalidData
+            );
+        }
+    }
+
+    #[test]
+    fn a_reaped_or_unowned_leader_never_authorizes_a_group_signal() {
+        // A live owned group stands in for a recycled numeric id. waitid must refuse it when
+        // called by a different parent, and the original group must survive that attempt.
+        const CASE: &str = "SYMPHONY_RELEASE_UNOWNED_GROUP";
+        if let Ok(pid) = std::env::var(CASE) {
+            let pid = pid.parse().unwrap();
+            assert_eq!(
+                child_ended(pid).unwrap_err().raw_os_error(),
+                Some(libc::ECHILD)
+            );
+            let error = kill(pid).unwrap_err();
+            assert!(error.to_string().contains("cannot drain group"));
+            return;
+        }
+        let mut child = Owned(
+            command("sleep")
+                .arg("1000")
+                .process_group(0)
+                .spawn()
+                .unwrap(),
+        );
+        let name = format!(
+            "{}::a_reaped_or_unowned_leader_never_authorizes_a_group_signal",
+            module_path!().split_once("::").unwrap().1
+        );
+        let done = output_until(
+            command(std::env::current_exe().unwrap())
+                .args(["--exact", &name])
+                .env(CASE, child.0.id().to_string()),
+            far(),
+        )
+        .unwrap();
+        assert!(
+            done.status.success(),
+            "{}",
+            String::from_utf8_lossy(&done.stdout)
+        );
+        assert!(
+            !ended(child.0.id()),
+            "an unowned numeric id received no signal"
+        );
+        child.0.kill().unwrap();
+        child.0.wait().unwrap();
+        assert!(kill(child.0.id()).is_err());
+        for invalid in [0, 1, u32::MAX] {
+            assert!(stop(invalid, Duration::ZERO).is_err());
+        }
+    }
+
+    #[test]
+    fn a_member_appearing_after_the_first_kill_is_drained_before_the_leader_is_reaped() {
+        use std::io::{Read, Write};
+        const CASE: &str = "SYMPHONY_RELEASE_JOIN_GROUP";
+        if let Ok(group) = std::env::var(CASE) {
+            let group: libc::pid_t = group.parse().unwrap();
+            std::io::stdin().read_exact(&mut [0]).unwrap();
+            // SAFETY: this fixture changes only its own group, to its sibling's owned group.
+            assert_eq!(unsafe { libc::setpgid(0, group) }, 0);
+            std::fs::write(
+                std::env::var_os("SYMPHONY_RELEASE_JOINED").unwrap(),
+                "joined",
+            )
+            .unwrap();
+            std::io::stdin().read_exact(&mut [0]).unwrap();
+            panic!("the fixture must be killed, not released twice");
+        }
+        let tree = Tree::new();
+        let joined = tree.path("joined");
+        let mut leader = Owned(
+            command("sleep")
+                .arg("1000")
+                .process_group(0)
+                .spawn()
+                .unwrap(),
+        );
+        let pid = leader.0.id();
+        let name = format!(
+            "{}::a_member_appearing_after_the_first_kill_is_drained_before_the_leader_is_reaped",
+            module_path!().split_once("::").unwrap().1
+        );
+        let mut helper = Owned(
+            command(std::env::current_exe().unwrap())
+                .args(["--exact", &name])
+                .env(CASE, pid.to_string())
+                .env("SYMPHONY_RELEASE_JOINED", &joined)
+                .stdin(Stdio::piped())
+                .stdout(Stdio::null())
+                .spawn()
+                .unwrap(),
+        );
+        let mut calls = 0;
+        drain(
+            &mut || {
+                owned_signal(pid, libc::SIGKILL)?;
+                calls += 1;
+                if calls == 1 {
+                    // Barrier models a member missed by the first signal's membership snapshot.
+                    helper.0.stdin.as_mut().unwrap().write_all(b"x").unwrap();
+                    test_time::until_true(
+                        "the late member joined the owned group",
+                        test_time::FLOOR,
+                        || joined.exists(),
+                    )
+                    .unwrap_or_else(|stall| panic!("{stall}"));
+                    assert!(running(pid).unwrap());
+                }
+                Ok(())
+            },
+            &mut || running(pid),
+            GRACE,
+            &mut Wall(Instant::now()),
+        )
+        .unwrap();
+        assert!(calls >= 2, "the late member needs another group signal");
+        assert!(
+            child_ended(pid).unwrap(),
+            "the leader remains an unreaped child"
+        );
+        assert!(!running(pid).unwrap());
+        for child in [&mut leader.0, &mut helper.0] {
+            assert_eq!(
+                std::os::unix::process::ExitStatusExt::signal(&child.wait().unwrap()),
+                Some(libc::SIGKILL)
+            );
+        }
+    }
+
+    #[test]
+    fn a_stopped_child_is_live_and_a_zombie_only_group_drains_without_reaping() {
+        let mut child = Owned(
+            command("sleep")
+                .arg("1000")
+                .process_group(0)
+                .spawn()
+                .unwrap(),
+        );
+        let pid = child.0.id();
+        owned_signal(pid, libc::SIGSTOP).unwrap();
+        test_time::until_true("the owned child stopped", test_time::FLOOR, || {
+            // waitid may report CLD_STOPPED on Darwin even when only WEXITED was requested.
+            // SAFETY: siginfo_t is plain output data for which all zeroes is valid.
+            let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
+            // SAFETY: observes only our unreaped child and writes exactly one siginfo_t.
+            let read = unsafe {
+                libc::waitid(
+                    libc::P_PID,
+                    pid,
+                    &raw mut info,
+                    libc::WSTOPPED | libc::WNOWAIT | libc::WNOHANG,
+                )
+            };
+            read == 0 && info.si_code == libc::CLD_STOPPED
+        })
+        .unwrap_or_else(|stall| panic!("{stall}"));
+        assert!(!ended(pid));
+        assert!(running(pid).unwrap());
+        kill(pid).unwrap();
+        assert!(child_ended(pid).unwrap());
+        assert!(!running(pid).unwrap(), "its unreaped zombie runs nothing");
+        assert_eq!(
+            members(pid)
+                .unwrap()
+                .iter()
+                .filter(|member| member.pid == pid)
+                .map(|member| member.live)
+                .collect::<Vec<_>>(),
+            [false],
+            "the native census includes the unreaped leader as a zombie"
+        );
+        kill(pid).unwrap();
+        child.0.wait().unwrap();
     }
 
     #[test]
@@ -758,7 +1304,7 @@ mod tests {
             .unwrap();
         assert!(!ended(child.id()));
         // Its grace is a wait for its leader to end, which only a stall outlasts.
-        stop(child.id(), test_time::backstop(GRACE));
+        stop(child.id(), test_time::backstop(GRACE)).unwrap();
         assert!(ended(child.id()));
         let status = child.wait().unwrap();
         assert_eq!(
@@ -785,7 +1331,7 @@ mod tests {
             ignoring.exists()
         })
         .unwrap_or_else(|stall| panic!("{stall}"));
-        stop(child.id(), Duration::from_millis(300));
+        stop(child.id(), Duration::from_millis(300)).unwrap();
         let status = child.wait().unwrap();
         assert_eq!(
             std::os::unix::process::ExitStatusExt::signal(&status),
