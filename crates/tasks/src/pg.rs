@@ -1,7 +1,8 @@
 //! The board's PostgreSQL client: the server's frontend/backend protocol 3.0 over its Unix socket
 //! alone, where the server trusts the user that made it ([`crate::server::postgres`]), so a client
 //! has no TCP, no TLS and no password, and speaks only the messages the store's requests need
-//! ([`wire`]). No async runtime, no dependency: one connection, read and written in turn.
+//! ([`wire`]). No async runtime, no dependency: one connection, a request written on a thread of
+//! its own while its answers are read ([`Connection::exchange`]).
 //!
 //! A client makes its connection at its first request and keeps it for its life, so a command,
 //! one process, is one connection. Its startup names the user [`USER`], its database, UTF-8, and
@@ -23,10 +24,11 @@
 //! have done.
 
 use crate::rpc::DbError;
-use std::io::{BufReader, Write};
+use std::io::{BufRead, BufReader, Write};
+use std::net::Shutdown;
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Mutex, PoisonError};
 use std::time::Duration;
 
@@ -39,8 +41,8 @@ mod tests;
 pub const USER: &str = crate::server::postgres::USER;
 /// The database a connection that makes another names: PostgreSQL's own.
 pub const MAINTENANCE: &str = "postgres";
-/// How long a request may wait on the server, as the SurrealDB client's: a whole board's copy, on
-/// a loaded machine, is the longest.
+/// How long a request may wait on the server, as the SurrealDB client's, to take each write of it
+/// and to give each read of its answers: a whole board's copy, on a loaded machine, is the longest.
 const TIMEOUT: Duration = Duration::from_secs(300);
 /// SQLSTATEs a write is tried again on: `serialization_failure` and `deadlock_detected`.
 const AGAIN: [&str; 2] = ["40001", "40P01"];
@@ -97,9 +99,12 @@ pub struct Client {
     connection: Mutex<Option<Connection>>,
 }
 
+/// One connection: the socket its answers are read from, and the same socket a request is written
+/// to, on a thread of its own ([`Connection::exchange`]).
 #[derive(Debug)]
 struct Connection {
     stream: BufReader<UnixStream>,
+    writer: UnixStream,
 }
 
 impl Client {
@@ -118,7 +123,9 @@ impl Client {
         }
     }
 
-    /// This client, waiting at most `timeout` for the server to answer each read of a request.
+    /// This client, waiting at most `timeout` for the server to take each write of a request and
+    /// to give each read of its answers: a server that does neither in time ends the request in
+    /// an error, and its connection.
     pub fn waiting(mut self, timeout: Duration) -> Client {
         self.timeout = timeout;
         self
@@ -227,8 +234,13 @@ impl Client {
         stream
             .set_read_timeout(Some(self.timeout))
             .map_err(unreachable)?;
+        stream
+            .set_write_timeout(Some(self.timeout))
+            .map_err(unreachable)?;
+        let writer = stream.try_clone().map_err(unreachable)?;
         let mut connection = Connection {
             stream: BufReader::new(stream),
+            writer,
         };
         let startup = wire::startup(&[
             ("user", USER),
@@ -257,7 +269,7 @@ impl Drop for Client {
         if let Some(connection) = held.as_mut() {
             let mut out = Vec::new();
             wire::terminate(&mut out);
-            let _ = connection.stream.get_mut().write_all(&out);
+            let _ = connection.writer.write_all(&out);
         }
     }
 }
@@ -272,10 +284,7 @@ impl Connection {
     /// The startup sent, and the server's answers read up to its first ReadyForQuery: refused
     /// unless it trusts the connection, since the client has no password to give.
     fn started(&mut self, startup: &[u8]) -> Result<(), Started> {
-        self.stream
-            .get_mut()
-            .write_all(startup)
-            .map_err(Started::Broken)?;
+        self.writer.write_all(startup).map_err(Started::Broken)?;
         loop {
             let message = wire::read(&mut self.stream).map_err(Started::Broken)?;
             match message.kind {
@@ -301,28 +310,72 @@ impl Connection {
         }
     }
 
-    /// `out` written, and the answers read up to the ReadyForQuery that ends them: the outer error
-    /// is the connection's, the inner the server's answer. A transaction a simple query left
-    /// failed is rolled back before the answer is given.
+    /// `out` sent, and the answers read up to the ReadyForQuery that ends them: the outer error is
+    /// the connection's, the inner the server's answer. A transaction a simple query left failed
+    /// is rolled back before the answer is given.
+    ///
+    /// The request is written on a thread of its own while this one reads, so whatever the server
+    /// says before it has read the whole request is read as it comes: an answer or an error at
+    /// any length (one with the variables in it, a refusal that shows the row it refused) never
+    /// leaves the server waiting on a client that waits on it, each with its socket full, as a
+    /// client that writes the whole request before it reads can (libpq's pipeline mode says the
+    /// same of its own). A server that takes nothing for the client's wait, or says nothing,
+    /// ends the request in an error ([`Client::waiting`]).
     fn exchange(&mut self, out: &[u8]) -> std::io::Result<Result<Vec<Answer>, DbError>> {
-        self.stream.get_mut().write_all(out)?;
-        let (answers, status) = self.answers()?;
+        let (answers, status) = self.sent_and_read(out)?;
         if status == b'E' {
             let mut rollback = Vec::new();
             wire::query(&mut rollback, "ROLLBACK");
-            self.stream.get_mut().write_all(&rollback)?;
-            let (_rolled_back, _) = self.answers()?;
+            let (_rolled_back, _) = self.sent_and_read(&rollback)?;
         }
         Ok(answers)
     }
 
-    /// The server's messages up to its next ReadyForQuery, and the transaction status it says.
-    fn answers(&mut self) -> std::io::Result<(Result<Vec<Answer>, DbError>, u8)> {
+    /// `out` written on a thread of its own while this one reads the answers up to the next
+    /// ReadyForQuery, and the transaction status it says. The side that fails first ends the
+    /// connection for both, so neither waits on the other, and its error is the one given: the
+    /// other's is what that end did to it. A thread the system will not give fails the request
+    /// before anything is sent.
+    fn sent_and_read(&mut self, out: &[u8]) -> std::io::Result<(Result<Vec<Answer>, DbError>, u8)> {
+        let ended = AtomicBool::new(false);
+        // The connection ended for both sides, and whether this was the first to end it.
+        let end = |stream: &UnixStream| {
+            let first = !ended.swap(true, Ordering::SeqCst);
+            let _ = stream.shutdown(Shutdown::Both);
+            first
+        };
+        let Connection { stream, writer } = self;
+        let writer: &UnixStream = writer;
+        std::thread::scope(|scope| {
+            let sending = std::thread::Builder::new()
+                .name("board-pg-send".into())
+                .spawn_scoped(scope, || {
+                    let mut to = writer;
+                    to.write_all(out).map_err(|why| {
+                        let why =
+                            std::io::Error::new(why.kind(), format!("sending a request: {why}"));
+                        (why, end(writer))
+                    })
+                })
+                .map_err(|why| {
+                    std::io::Error::new(why.kind(), format!("no thread to send a request: {why}"))
+                })?;
+            let read = Connection::answers(stream).map_err(|why| (why, end(stream.get_ref())));
+            let sent = sending
+                .join()
+                .unwrap_or_else(|panic| std::panic::resume_unwind(panic));
+            given(read, sent)
+        })
+    }
+
+    /// The server's messages on `stream` up to its next ReadyForQuery, and the transaction status
+    /// it says.
+    fn answers(stream: &mut impl BufRead) -> std::io::Result<(Result<Vec<Answer>, DbError>, u8)> {
         let mut answers = Vec::new();
         let mut current = Answer::default();
         let mut error = None;
         loop {
-            let message = wire::read(&mut self.stream)?;
+            let message = wire::read(stream)?;
             match message.kind {
                 b'D' => {
                     let row = wire::row(&message.body).ok_or_else(|| {
@@ -351,6 +404,20 @@ impl Connection {
                 other => return Err(unexpected(other, "an answer")),
             }
         }
+    }
+}
+
+/// What a request's two sides came to ([`Connection::sent_and_read`]): the answers when both
+/// ended well, else the error of the side that failed first, each error with whether its side was
+/// the first to end the connection.
+fn given<T>(
+    read: Result<T, (std::io::Error, bool)>,
+    sent: Result<(), (std::io::Error, bool)>,
+) -> std::io::Result<T> {
+    match (read, sent) {
+        (Ok(read), Ok(())) => Ok(read),
+        (Err((why, true)), _) | (_, Err((why, true))) => Err(why),
+        (Err((why, false)), _) | (_, Err((why, false))) => Err(why),
     }
 }
 

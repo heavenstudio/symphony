@@ -1,9 +1,10 @@
 //! A task made on either database: what it is made with (its parent, links, the tasks it waits on,
 //! its reservation and its marks), the line that says so, and the refusals before anything is
-//! written.
+//! written; a body and a line of a megabyte, as each was given.
 
-use crate::common::{Backend, Fixture, Seed, refused};
+use crate::common::{Backend, Fixture, Seed, bounded, refused};
 use serde_json::json;
+use std::time::Duration;
 use symphony_board::{NewTask, Task};
 
 fn board(backend: Backend) -> Fixture {
@@ -118,4 +119,40 @@ on_both! {
         assert_eq!(f.store.marker().unwrap(), marker, "nothing was written");
         assert_eq!(f.store.tasks(None).unwrap().len(), 2);
     }
+
+    fn a_long_body_and_a_long_line_are_written_and_read_back_whole(backend: Backend) {
+        let f = board(backend);
+        let what = format!("a task and a line of {LONG:?} bytes each, on {backend:?}");
+        bounded(&what, Duration::from_secs(10), move || {
+            for (at, bytes) in LONG.into_iter().enumerate() {
+                let slug = format!("tools/long-{at}");
+                let made = f
+                    .store
+                    .create(&NewTask {
+                        body: words(bytes),
+                        ..NewTask::new(&slug, "A long brief", "owner")
+                    })
+                    .unwrap();
+                assert_eq!(made.body, words(bytes));
+                f.store.say(&slug, "owner", &words(bytes), None).unwrap();
+                assert_eq!(f.store.get(&slug).unwrap().body, words(bytes));
+                assert_eq!(f.said(&slug).last(), Some(&words(bytes)));
+            }
+        });
+    }
+}
+
+/// The lengths of text, in bytes, a board takes and gives back whole: past the 16 KiB from which
+/// a PostgreSQL request whose answer came while it was still being sent once hung, and a megabyte.
+const LONG: [usize; 2] = [64 << 10, 1 << 20];
+
+/// Words, `bytes` of them, as a brief is written.
+fn words(bytes: usize) -> String {
+    let mut text: String = "the brief says a word "
+        .chars()
+        .cycle()
+        .take(bytes - 1)
+        .collect();
+    text.push('.');
+    text
 }

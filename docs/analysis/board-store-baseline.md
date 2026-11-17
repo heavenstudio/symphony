@@ -187,6 +187,19 @@ tasks meet. The one counter row made nearly every write meet. All thirty on one 
 whatever the marker is. The probe tried again at once, where the store's backoff (`retried`)
 spaces its tries.
 
+The probe's writes moved a task and the marker, nothing else. A board write that posts a line on
+a thread (a task made, a line said, a priority set, each move) also moves the one message
+counter, which numbers and dates the line (`logged` in `crates/tasks/src/store/postgres/mod.rs`,
+`counter:message` on SurrealDB). That counter is one row on both databases. So the second row's
+2% holds only for a write that posts no line, such as a session's beat (`Store::touch`). Two
+writes that post at once meet on the message counter, as the first row's writes meet on the one
+counter row. For thirty sessions posting back to back, a write that posts costs what the first
+row's writes cost: nine in ten or more tried again, three or four tries each, with a few still
+meeting after fifty tries at once, which the store's backoff spaces out. It stays so until a line's
+number comes from something two writes do not both move. The thirty-session run of
+tools/board-pg-lifecycle reads its retries for the writes that post against the first row, and
+those for the writes that post none against the second.
+
 ## What this does not measure
 
 - **A board ten times this size.** Every run is this board or an empty one.

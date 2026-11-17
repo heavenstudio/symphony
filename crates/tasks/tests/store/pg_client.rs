@@ -2,7 +2,7 @@
 //! (`common::postgresql`), each test in a database of its own: what the store relies on of it,
 //! which its recorded-bytes tests (`src/pg/tests.rs`) cannot show of a server's own behaviour.
 
-use crate::common::postgresql;
+use crate::common::{bounded, postgresql};
 use std::time::Duration;
 use symphony_board::pg::{self, Answer, Step};
 use symphony_board::rpc::DbError;
@@ -144,4 +144,28 @@ fn two_clients_writing_one_row_at_once_meet_as_a_conflict_and_the_first_to_commi
         .request(&[Step::bare("UPDATE t SET n = n + 1 WHERE id = 1")])
         .unwrap();
     assert_eq!(n(&client), "11", "the first writes when it tries again");
+}
+
+#[test]
+fn a_request_whose_answer_comes_while_it_is_still_being_sent_is_read_as_it_comes() {
+    let client = postgresql();
+    client.make_database().unwrap();
+    // A megabyte, sent twice: the first statement answers with all of it before the server has
+    // read the second, so a client that reads only once it has written would wait on a server
+    // that waits on it, each with its socket full.
+    let long = format!("\"{}\"", "x".repeat(1 << 20));
+    let asked = client.another();
+    let answers = bounded(
+        "a request answering a megabyte while a megabyte is still being sent",
+        Duration::from_secs(10),
+        move || {
+            asked.request(&[
+                Step::with("SELECT $1::jsonb #>> '{}'", &long),
+                Step::with("SELECT length($1::jsonb #>> '{}')", &long),
+            ])
+        },
+    )
+    .unwrap();
+    assert_eq!(value(&answers, 0).map(str::len), Some(1 << 20));
+    assert_eq!(value(&answers, 1), Some("1048576"));
 }

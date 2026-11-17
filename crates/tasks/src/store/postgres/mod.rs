@@ -77,23 +77,28 @@ pub(in crate::store) enum Request {
 
 /// The statements `statement` sends, behind the schema's guard when `guarded`; none for
 /// [`Pg::Nothing`].
+///
+/// A request carries its variables once, in its first statement, and only its last answers
+/// anything at length: a read alone binds them, and any other request sets them first ([`VARS`],
+/// which answers nothing), where every statement after it reads them.
 pub(in crate::store) fn request(statement: &Pg, guarded: bool) -> Option<Request> {
     let mut steps = Vec::new();
-    let takes_vars = guarded || matches!(statement, Pg::Script(..));
-    if takes_vars {
+    let set = guarded || matches!(statement, Pg::Script(..));
+    if set {
         steps.push((VARS.to_string(), true));
     }
     if guarded {
         steps.push((GUARD.to_string(), false));
     }
+    let from = if set { SET } else { BOUND };
     match statement {
         Pg::Nothing => return None,
         Pg::Simple(sql) => return Some(Request::Simple(sql.to_string())),
-        Pg::Read(expression) => steps.push((answered(expression), true)),
+        Pg::Read(expression) => steps.push((answered(expression, from), !set)),
         Pg::Script(block, then) => {
             steps.push((script(block), false));
             match then {
-                Some(expression) => steps.push((answered(expression), true)),
+                Some(expression) => steps.push((answered(expression, SET), false)),
                 None => steps.push((ANSWER.to_string(), false)),
             }
         }
@@ -102,15 +107,22 @@ pub(in crate::store) fn request(statement: &Pg, guarded: bool) -> Option<Request
     Some(Request::Steps { steps, answer })
 }
 
-/// The variables, set for the transaction, where a block reads them.
-const VARS: &str = "SELECT set_config('board.vars', $1::text, true)";
+/// The variables, set for the transaction, where every later statement reads them ([`SET`]): a
+/// row of no columns is all it answers.
+const VARS: &str = "SELECT FROM set_config('board.vars', $1::text, true)";
+
+/// The variables as a statement binds them, its `$1`: a read sent alone.
+const BOUND: &str = "$1::jsonb";
+
+/// The variables as [`VARS`] set them, for a statement after it.
+const SET: &str = "current_setting('board.vars')::jsonb";
 
 /// A block's `board_answer`, which it set for the transaction.
 const ANSWER: &str = "SELECT nullif(current_setting('board.answer', true), '')";
 
-/// `expression`'s value, as `jsonb` text, `v` the variables.
-fn answered(expression: &str) -> String {
-    format!("SELECT to_jsonb(({expression}))::text FROM (SELECT $1::jsonb AS v) AS board_vars")
+/// `expression`'s value, as `jsonb` text, `v` the variables `from` gives ([`BOUND`], [`SET`]).
+fn answered(expression: &str, from: &str) -> String {
+    format!("SELECT to_jsonb(({expression}))::text FROM (SELECT {from} AS v) AS board_vars")
 }
 
 /// `block` as a statement of its own: `v` the variables, `sid_` and `ts_` the line [`logged`]
@@ -219,6 +231,14 @@ pub(in crate::store) fn rows(alias: &str, from: &str, order: &str) -> String {
 mod tests {
     use super::*;
 
+    /// Which of `steps` bind the variables: a request carries them once.
+    fn binding(steps: &[(String, bool)]) -> Vec<usize> {
+        let at = steps.iter().enumerate();
+        at.filter(|(_, (_, takes))| *takes)
+            .map(|(at, _)| at)
+            .collect()
+    }
+
     #[test]
     fn a_read_is_one_statement_and_a_write_sets_its_variables_runs_its_block_and_answers() {
         assert_eq!(
@@ -248,6 +268,7 @@ mod tests {
                 ("SELECT", false)
             ]
         );
+        assert_eq!(steps[0].0, VARS);
         assert_eq!(steps[1].0, GUARD);
         assert!(steps[2].0.contains("\nNULL;\n"), "{}", steps[2].0);
         assert_eq!(steps[3].0, ANSWER);
@@ -257,8 +278,20 @@ mod tests {
             panic!("a script is steps");
         };
         assert_eq!(steps.len(), 3);
-        assert!(steps[2].1, "the read after it takes the variables");
+        assert_eq!(binding(&steps), [0], "only the first binds the variables");
+        assert_eq!(
+            steps[2].0,
+            "SELECT to_jsonb((v))::text FROM (SELECT current_setting('board.vars')::jsonb AS v) \
+             AS board_vars",
+            "the read after the block takes the variables its first statement set"
+        );
         assert_eq!(answer, 2);
+        let Some(Request::Steps { steps, .. }) = request(&Pg::read("v"), true) else {
+            panic!("a read is steps");
+        };
+        assert_eq!(steps.len(), 3);
+        assert_eq!(binding(&steps), [0], "a guarded read binds them once too");
+        assert!(steps[2].0.contains(SET), "{}", steps[2].0);
         assert_eq!(request(&Pg::Nothing, true), None);
         assert_eq!(
             request(&Pg::Simple("CREATE TABLE t ();".into()), false),

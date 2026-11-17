@@ -774,6 +774,28 @@ pub fn amber_back_meanwhile() -> (Fixture, Store) {
     (f, late)
 }
 
+/// What `work` gives, run on a thread of its own and waited on as a wait on its condition
+/// (`test_time::until_true`): work that never ends fails the test as a stall naming `what`, and
+/// never hangs it. `allowance` is what the work takes on a quiet machine, with room to spare.
+#[allow(
+    dead_code,
+    reason = "each test binary including this file bounds the work its tests name"
+)]
+pub fn bounded<T: Send + 'static>(
+    what: &str,
+    allowance: Duration,
+    work: impl FnOnce() -> T + Send + 'static,
+) -> T {
+    let running = std::thread::spawn(work);
+    test_time::until_true(what, test_time::backstop(allowance), || {
+        running.is_finished()
+    })
+    .unwrap_or_else(|stall| panic!("{stall}"));
+    running
+        .join()
+        .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+}
+
 /// The refusal's words, or a panic naming what came back instead.
 pub fn refused<T: std::fmt::Debug>(result: Result<T, symphony_board::Error>) -> String {
     match result {

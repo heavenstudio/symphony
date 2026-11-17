@@ -104,10 +104,7 @@ impl Fake {
         thread::spawn(move || {
             for script in scripts {
                 let (mut stream, _) = listener.accept().unwrap();
-                let mut length = [0u8; 4];
-                stream.read_exact(&mut length).unwrap();
-                let mut startup = vec![0u8; u32::from_be_bytes(length) as usize - 4];
-                stream.read_exact(&mut startup).unwrap();
+                let startup = startup(&mut stream);
                 stream.write_all(&bytes(script.started)).unwrap();
                 let mut after = Vec::new();
                 for answer in script.answers {
@@ -141,6 +138,48 @@ impl Fake {
     fn sent(&self) -> (Vec<u8>, Vec<u8>) {
         self.sent.recv().unwrap()
     }
+}
+
+/// A connection's startup message, read whole: its body.
+fn startup(stream: &mut UnixStream) -> Vec<u8> {
+    let mut length = [0u8; 4];
+    stream.read_exact(&mut length).unwrap();
+    let mut startup = vec![0u8; u32::from_be_bytes(length) as usize - 4];
+    stream.read_exact(&mut startup).unwrap();
+    startup
+}
+
+/// A server of one connection on a socket of its own: the startup read and answered as
+/// [`STARTED`] says, then the connection handed to `serve`.
+fn serving(serve: impl FnOnce(UnixStream) + Send + 'static) -> Dir {
+    let dir = Dir::new();
+    let listener =
+        UnixListener::bind(dir.path().join(crate::server::postgres::SOCKET_FILE)).unwrap();
+    thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        startup(&mut stream);
+        stream.write_all(&bytes(STARTED)).unwrap();
+        serve(stream);
+    });
+    dir
+}
+
+/// What `work` gives, on a thread of its own and waited on as a wait on its condition
+/// (`test_time::until_true`): work that never ends fails the test as a stall naming `what`, and
+/// never hangs it.
+fn bounded<T: Send + 'static>(what: &str, work: impl FnOnce() -> T + Send + 'static) -> T {
+    let running = thread::spawn(work);
+    let backstop = test_time::backstop(Duration::from_secs(10));
+    test_time::until_true(what, backstop, || running.is_finished())
+        .unwrap_or_else(|stall| panic!("{stall}"));
+    running
+        .join()
+        .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+}
+
+/// A megabyte of `jsonb`: a string, its text more than the sockets on both sides hold.
+fn megabyte() -> String {
+    format!("\"{}\"", "y".repeat(1 << 20))
 }
 
 /// The type of each message in `sent`, in order.
@@ -396,6 +435,118 @@ fn a_connection_that_breaks_mid_answer_is_dropped_and_the_next_request_makes_ano
     let (_, first) = fake.sent();
     assert!(!first.is_empty());
     assert!(client.request(&[Step::bare("SELECT 1")]).is_ok());
+}
+
+#[test]
+fn a_server_that_answers_at_length_before_it_has_read_the_request_is_read_while_it_is_written() {
+    // A megabyte each way: a client that wrote the whole request before it read would wait on a
+    // server that waits on it, each with its socket full.
+    const ROWS: usize = 16;
+    let column = "x".repeat(64 << 10);
+    let mut answer = Vec::new();
+    for _ in 0..ROWS {
+        answer.push(b'D');
+        answer.extend(len(4 + 2 + 4 + column.len()));
+        answer.extend(1u16.to_be_bytes());
+        answer.extend(len(column.len()));
+        answer.extend(column.as_bytes());
+    }
+    answer.push(b'C');
+    answer.extend(len(4 + b"SELECT 16\0".len()));
+    answer.extend(b"SELECT 16\0");
+    answer.extend(bytes("5a0000000549"));
+    let (tell, heard) = mpsc::channel();
+    let dir = serving(move |mut stream| {
+        stream.write_all(&answer).unwrap();
+        let mut sent = Vec::new();
+        loop {
+            let message = wire::read(&mut stream).unwrap();
+            let kind = message.kind;
+            sent.push(message);
+            if kind == b'S' {
+                break;
+            }
+        }
+        tell.send(sent).unwrap();
+    });
+    let client = Client::new(dir.path(), "board");
+    let answers = bounded(
+        "a request answered at length before the server has read it",
+        move || client.request(&[Step::with("SELECT $1", &megabyte())]),
+    )
+    .unwrap();
+    assert_eq!(answers.len(), 1);
+    assert_eq!(answers[0].tag, "SELECT 16");
+    assert_eq!(answers[0].rows, vec![vec![Some(column)]; ROWS]);
+    let sent = heard.recv().unwrap();
+    let kinds: Vec<u8> = sent.iter().map(|message| message.kind).collect();
+    assert_eq!(kinds, b"PBES");
+    let bound = String::from_utf8_lossy(&sent[1].body);
+    assert!(
+        bound.contains(&megabyte()),
+        "the server read the request whole"
+    );
+}
+
+#[test]
+fn a_server_that_takes_none_of_a_request_and_says_nothing_fails_it_at_the_clients_wait() {
+    let (done, finished) = mpsc::channel::<()>();
+    // It holds the connection and reads nothing, until the client has given up.
+    let dir = serving(move |stream| {
+        let _ = finished.recv();
+        drop(stream);
+    });
+    let wait = Duration::from_millis(50);
+    let client = Client::new(dir.path(), "board").waiting(wait);
+    let failed = bounded("a request the server takes none of", move || {
+        let failed = client.request(&[Step::with("SELECT $1", &megabyte())]);
+        (failed, client.connection.lock().unwrap().is_none())
+    });
+    done.send(()).unwrap();
+    let (Err(DbError::Failed(said)), true) = failed else {
+        panic!("a request the server never takes fails, and its connection goes: {failed:?}");
+    };
+    assert!(said.starts_with("the board's PostgreSQL at "), "{said}");
+}
+
+#[test]
+fn a_connection_waits_the_clients_wait_on_each_write_as_on_each_read() {
+    let fake = Fake::new(vec![Script {
+        started: STARTED,
+        answers: vec![JSONB_AND_NULL],
+    }]);
+    let wait = Duration::from_secs(7);
+    let client = fake.client().waiting(wait);
+    client.request(&[Step::bare("SELECT 1")]).unwrap();
+    let held = client.connection.lock().unwrap();
+    let connection = held.as_ref().expect("the connection is kept");
+    assert_eq!(connection.writer.write_timeout().unwrap(), Some(wait));
+    assert_eq!(
+        connection.stream.get_ref().read_timeout().unwrap(),
+        Some(wait)
+    );
+}
+
+#[test]
+fn the_side_of_a_request_that_failed_first_gives_its_error() {
+    let failed = |words: &str, first: bool| Err((std::io::Error::other(words.to_string()), first));
+    let said = |given: std::io::Result<()>| given.unwrap_err().to_string();
+    assert!(given(Ok(()), Ok(())).is_ok());
+    assert_eq!(
+        said(given(failed("read", true), failed("sent", false))),
+        "read"
+    );
+    assert_eq!(
+        said(given(failed("read", false), failed("sent", true))),
+        "sent"
+    );
+    assert_eq!(said(given(Ok(()), failed("sent", true))), "sent");
+    assert_eq!(said(given(failed("read", true), Ok(()))), "read");
+    assert_eq!(
+        said(given(failed("read", false), Ok(()))),
+        "read",
+        "an error whose side was not first, and no other, is still an error"
+    );
 }
 
 #[test]

@@ -119,30 +119,34 @@ impl Store {
             }
             Run::Unguarded => ("", false),
         };
-        let answer = match &self.db {
+        // Once the write has committed, before its answer is read: delivery failure must never turn
+        // it into a failed write that a caller might repeat. The shared server also drains this
+        // durable outbox after a crash.
+        let committed = || {
+            if dispatch && sql::posts(&body.surreal) {
+                self.after_write();
+            }
+        };
+        match &self.db {
             Database::SurrealDb(client) => {
                 let results = client.query(&sql::transaction(guard, &body.surreal), vars)?;
+                committed();
                 let answer = results
                     .len()
                     .checked_sub(2)
                     .and_then(|last| results.into_iter().nth(last));
-                answer.ok_or_else(|| {
-                    Failure::Stop(Error::Db("a transaction gave no answer".into()))
-                })?
+                answer
+                    .ok_or_else(|| Failure::Stop(Error::Db("a transaction gave no answer".into())))
             }
             Database::PostgreSql(client) => {
                 let twin = body
                     .postgres_at(Location::caller())
                     .map_err(Failure::Stop)?;
-                on_postgres(client, twin, &vars, !guard.is_empty())?
+                let answer = on_postgres(client, twin, &vars, !guard.is_empty())?;
+                committed();
+                Ok(answer)
             }
-        };
-        // The write has committed. Delivery failure must never turn it into a failed write that a
-        // caller might repeat. The shared server also drains this durable outbox after a crash.
-        if dispatch && sql::posts(&body.surreal) {
-            self.after_write();
         }
-        Ok(answer)
     }
 }
 
