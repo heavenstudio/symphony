@@ -292,7 +292,7 @@ fn pass_inner(
     let defaults = Defaults::configured(&machine.root).map_err(refused)?;
     let mut candidates = store.board()?.tasks;
     candidates.retain(|t| matches!(t.status.as_str(), "ready" | "review"));
-    candidates.sort_by(|a, b| {
+    candidates.sort_unstable_by(|a, b| {
         a.priority
             .cmp(&b.priority)
             .then_with(|| a.created.total_cmp(&b.created))

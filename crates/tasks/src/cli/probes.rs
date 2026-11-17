@@ -142,7 +142,7 @@ pub fn slot_runs(dir: &Path) -> Answer<Vec<Run>> {
         .map_err(|e| e.to_string())?
         .filter_map(|entry| entry.ok()?.file_name().into_string().ok())
         .collect();
-    names.sort();
+    names.sort_unstable();
     for (pool, prefix) in POOLS {
         for name in names
             .iter()
@@ -206,7 +206,7 @@ fn places(dir: &Path, names: &[String], prefix: &str) -> Vec<PathBuf> {
             Some((seq.parse().ok().filter(|_| digits)?, name))
         })
         .collect();
-    found.sort();
+    found.sort_unstable();
     found.into_iter().map(|(_, name)| dir.join(name)).collect()
 }
 

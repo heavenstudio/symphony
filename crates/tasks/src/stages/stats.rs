@@ -135,7 +135,7 @@ pub fn spread(mut values: Vec<f64>) -> Option<Spread> {
     if values.is_empty() {
         return None;
     }
-    values.sort_by(f64::total_cmp);
+    values.sort_unstable_by(f64::total_cmp);
     Some(Spread {
         n: values.len(),
         median: quantile(&values, 0.5),
@@ -224,7 +224,7 @@ pub fn summarize(
             seconds: age(r),
         })
         .collect();
-    slowest.sort_by(|a, b| {
+    crate::order::sort_by(&mut slowest, &|a, b| {
         b.seconds
             .total_cmp(&a.seconds)
             .then_with(|| a.slug.cmp(&b.slug))
