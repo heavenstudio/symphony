@@ -176,3 +176,13 @@ it("does not attach a stale author to a decision's own wait reason", () => {
   const t = { ...task("decision"), roles: [aRole("orchestrator", "named", "stale")] };
   expect(render(<WaitCard task={t} now={now} />)).not.toContain("(stale)");
 });
+
+it("names the working holder and their role from the authoritative wait line", () => {
+  const t = aTask("a", {
+    status: "in_progress",
+    waits_on: { kind: "working", who: "amber (stale)", why: "executor", since: now },
+  });
+  const html = render(<WaitCard task={t} now={now} />);
+  expect(html).toContain('title="executor amber (stale)"');
+  expect(html).toContain(">executor amber (stale)</span>");
+});

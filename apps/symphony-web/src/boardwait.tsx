@@ -114,6 +114,11 @@ export function WaitCard({ task, now }: { task: Task; now: number }) {
         role.health === "stale" &&
         (line?.who.includes(role.handle) || line?.why.includes(role.handle)),
     );
+  const reason =
+    kind === "working" && line?.who && !line.why.includes(line.who)
+      ? `${line.why} ${line.who}`.trim()
+      : (line?.why ?? "");
+  const why = stale && !reason.includes("(stale)") ? `${reason} (stale)` : reason;
   return (
     <div
       className={`taskcard waiting-card p${task.priority} k-${kind}${blocked(task) ? " is-blocked" : ""}`}
@@ -131,9 +136,8 @@ export function WaitCard({ task, now }: { task: Task; now: number }) {
           {finished ? (task.status === "done" ? "Done" : "Cancelled") : waitLabel(task)}
         </span>
         <span className={old ? "age old" : "age"}>{waitAge(since, now)}</span>
-        <span className="why" title={line?.why}>
-          {line?.why ?? ""}
-          {stale && !line?.why.includes("(stale)") ? " (stale)" : ""}
+        <span className="why" title={why}>
+          {why}
         </span>
       </div>
     </div>
