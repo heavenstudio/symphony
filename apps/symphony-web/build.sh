@@ -23,7 +23,7 @@ out="$(cd "$1" && pwd)"
 
 # shellcheck source=../../tools/check_lock.sh
 source "$root/tools/check_lock.sh"
-check_lock "$out/.build" symphony-web "client"
+check_lock "$out/.build" symphony-web "client build"
 
 # The publisher, built before the client: a build that cannot publish makes nothing.
 publisher="$("$root/tools/rs-bin.sh" --build symphony-build)"

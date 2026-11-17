@@ -11,10 +11,9 @@
 //! which checkout's source it was built from, made only when that source changed, and copied to
 //! `debug/NAME` on every build, a new file keeping the time of the one it copies.
 
-#![expect(
-    clippy::disallowed_methods,
-    reason = "a test starts its fixtures and stand-ins as it likes; the board's children are sys's"
-)]
+// How a test starts its own children ([`children::Child`]).
+#[path = "support/children.rs"]
+mod children;
 
 // Each run's scratch in a folder of its own under the temp folder, swept when a killed run left it.
 #[path = "../../chrome-devtools/src/harness_scratch.rs"]
@@ -26,6 +25,7 @@ mod seed;
 #[path = "launcher/fresh.rs"]
 mod fresh;
 
+use crate::children::Child as _;
 use std::fs;
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
@@ -132,7 +132,7 @@ fn standin_cargo() -> &'static Path {
         fs::write(&cargo, CARGO.replace("@BUILD@", build_path)).unwrap();
         for script in [&cargo, &build] {
             fs::set_permissions(script, fs::Permissions::from_mode(0o755)).unwrap();
-            assert!(Command::new(script).output().unwrap().status.success());
+            assert!(Command::of(script).output().unwrap().status.success());
         }
         cargo
     })
@@ -181,7 +181,7 @@ impl Fixture {
     /// `checkout/tools/rs-bin.sh ARGS` run in `cwd`, with `vars` on an environment that names no
     /// board, no target folder and no git repository of its own.
     fn run(&self, checkout: &Path, cwd: &Path, vars: &[(&str, &str)], args: &[&str]) -> Ran {
-        let mut command = Command::new(checkout.join("tools/rs-bin.sh"));
+        let mut command = Command::of(checkout.join("tools/rs-bin.sh"));
         for name in [
             "TASKS_SERVER",
             "TASKS_DATABASE",
@@ -471,7 +471,7 @@ fn a_build_that_relinked_nothing_runs_the_same_file_and_a_relink_a_new_one() {
     let relinked = inode(&stable);
     assert_ne!(relinked, ran);
     fs::write(f.main.join("crates/tasks/src/bin/tasks.rs"), "again").unwrap();
-    let cargo = Command::new(standin_cargo())
+    let cargo = Command::of(standin_cargo())
         .args(["build", "-p", "symphony-board", "--bin", "tasks"])
         .current_dir(&f.main)
         .env("CARGO_TARGET_DIR", &target)
@@ -505,7 +505,7 @@ fn sources(checkout: &Path, text: &str) {
 
 /// `git ARGS` in `dir` as a committer named `t`, which must succeed.
 fn git(dir: &Path, args: &[&str]) {
-    let done = Command::new("git")
+    let done = Command::of("git")
         .args(["-c", "user.email=t@t", "-c", "user.name=t", "-C"])
         .arg(dir)
         .args(args)

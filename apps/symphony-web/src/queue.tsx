@@ -11,7 +11,7 @@ import { href, scoped } from "./project";
 import { getIf, said } from "./request";
 import { scrollAnchor } from "./route";
 import { field, list } from "./shared";
-import { Backoff } from "./state";
+import { Backoff, NEVER_ANSWERED } from "./state";
 import { load, save } from "./storage";
 import { TaskTag } from "./task-tag";
 import { retryWait } from "./timing";
@@ -351,7 +351,7 @@ export async function checkQueue(
   etag: () => string,
   signal: AbortSignal,
   check: QueueCheck,
-  wait: (ms: number, signal: AbortSignal) => Promise<void> = retryWait,
+  wait: typeof retryWait = retryWait,
 ): Promise<void> {
   const backoff = new Backoff();
   while (!signal.aborted) {
@@ -370,7 +370,7 @@ export async function checkQueue(
       if (signal.aborted) return;
       check.failed(said(failure));
     }
-    await wait(backoff.after(0), signal);
+    await wait(backoff, NEVER_ANSWERED, signal);
   }
 }
 

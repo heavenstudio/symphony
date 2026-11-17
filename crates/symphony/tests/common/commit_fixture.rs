@@ -230,14 +230,13 @@ fn isolated_output(name: &str, run: impl FnOnce(&Fixture)) -> Option<String> {
         .stdin(symphony_board::sys::Stdio::Null);
     let mut child = OwnedChild::logged(&mut child, &output);
     stage(format_args!("case child spawned: {name}"));
-    let status = watch(
-        name,
-        &tree.root,
-        &child.2,
-        || child.0.try_wait().unwrap(),
-        Instant::now,
-        || std::thread::park_timeout(Duration::from_millis(10)),
-    )
+    // The watchdog's own quiet deadline ends the wait, never test_time's wall backstop.
+    let spawned = Instant::now();
+    let mut exited = || child.0.try_wait().unwrap();
+    let status = test_time::until(format!("{name}'s case child"), Duration::MAX, || {
+        watch_look(name, &tree.root, &child.2, &mut exited, spawned, Instant::now())
+    })
+    .unwrap_or_else(|stall| panic!("{stall}"))
     .unwrap_or_else(|report| panic!("{report}"));
     child.finish_output();
     stage(format_args!(

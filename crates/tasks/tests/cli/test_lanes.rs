@@ -5,6 +5,7 @@
 //! lane's targets as one list at the end, a red lane that listed none named whole, and the build's
 //! binaries named for the tests that would build their own.
 
+use crate::children::Child as _;
 use crate::scratch;
 use std::fs;
 use std::os::unix::fs::PermissionsExt as _;
@@ -189,7 +190,7 @@ impl Lanes {
 
     /// `tools/test-lanes.sh ARGS` with `vars`, recording nothing, run from elsewhere.
     fn command(&self, args: &[&str], vars: &[(&str, &str)]) -> Command {
-        let mut command = Command::new(self.root.join("tools/test-lanes.sh"));
+        let mut command = Command::of(self.root.join("tools/test-lanes.sh"));
         let path = std::env::var("PATH").unwrap_or_default();
         command
             .args(args)

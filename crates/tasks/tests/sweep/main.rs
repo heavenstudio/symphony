@@ -6,10 +6,9 @@
 //! cannot reach (a clock, `ps`, a pause, the process scan) and as the command line, in this process,
 //! where it is the command line that is tested.
 
-#![expect(
-    clippy::disallowed_methods,
-    reason = "a test starts its fixtures and stand-ins as it likes; the board's children are sys's"
-)]
+// How a test starts its own children ([`children::Child`]).
+#[path = "../support/children.rs"]
+mod children;
 
 #[path = "../store/common.rs"]
 #[allow(dead_code)]
@@ -31,6 +30,7 @@ mod rules;
 mod sessionless;
 mod triggers;
 
+use crate::children::Child as _;
 use common::{Fixture, Seed};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File, FileTimes};
@@ -125,7 +125,7 @@ fn template() -> &'static Path {
 /// `git ARGS` in `dir`, which must succeed: its output, trimmed.
 pub fn git(dir: &Path, args: &[&str]) -> String {
     let done = symphony_board::sys::output(
-        symphony_board::sys::Command::new("git")
+        symphony_board::sys::Command::of("git")
             .args(args)
             .current_dir(dir),
     )
@@ -151,7 +151,7 @@ pub struct HeldCwd(std::process::Child);
 
 impl HeldCwd {
     pub fn at(path: &Path) -> Self {
-        let mut cat = Command::new("cat");
+        let mut cat = Command::of("cat");
         cat.current_dir(path)
             .stdin(Stdio::piped())
             .stdout(Stdio::null())
@@ -172,7 +172,7 @@ impl Drop for HeldCwd {
 
 /// The pid of a process that has exited and been reaped.
 pub fn dead_pid() -> i64 {
-    let mut child = Command::new("true").spawn_locked().unwrap();
+    let mut child = Command::of("true").spawn_locked().unwrap();
     child.wait().unwrap();
     i64::from(child.id())
 }
@@ -181,7 +181,7 @@ pub fn dead_pid() -> i64 {
 fn date(tz: &str, bsd: &[&str], gnu: &[&str]) -> String {
     for args in [bsd, gnu] {
         let done = symphony_board::sys::output(
-            symphony_board::sys::Command::new("date")
+            symphony_board::sys::Command::of("date")
                 .args(args)
                 .env("TZ", tz)
                 .env("LC_ALL", "C"),
@@ -199,7 +199,7 @@ fn date(tz: &str, bsd: &[&str], gnu: &[&str]) -> String {
 /// `date`, so the sweep's own reading of `ps` is not what a test compares with.
 pub fn started(pid: i64) -> String {
     let local = symphony_board::sys::output(
-        symphony_board::sys::Command::new("ps")
+        symphony_board::sys::Command::of("ps")
             .args(["-o", "lstart=", "-p", &pid.to_string()])
             .env("LC_ALL", "C")
             .env("TZ", NOT_UTC),
@@ -256,7 +256,7 @@ impl Repo {
         let dir = dir.canonicalize().unwrap();
         let root = dir.join("repo");
         // A copy of one repository made once: six git commands a test, saved.
-        let copied = Command::new("cp")
+        let copied = Command::of("cp")
             .arg("-R")
             .arg(template())
             .arg(&root)

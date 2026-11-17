@@ -7,7 +7,6 @@ use crate::common::{Fixture, HOST, NOW, client, server_addr};
 use crate::relay::Relay;
 use serde_json::json;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::time::Duration;
 use symphony_board::Store;
 use symphony_board::rpc::{Client, DbError, Kind};
 
@@ -133,15 +132,16 @@ fn a_board_not_made_yet_is_defined_its_namespace_once_and_then_opens_on_one_read
 /// `db`'s namespace and database made, with no board in them; again when that meets another test's
 /// definition at once in the shared namespace.
 fn bare(db: Client) -> Client {
-    let made = (0..100).find_map(|_| match db.define_then("RETURN NONE;", json!({})) {
-        Err(DbError::Conflict) => {
-            std::thread::sleep(Duration::from_millis(50));
-            None
-        }
-        made => Some(made),
-    });
-    made.expect("the database kept meeting other writes")
-        .unwrap();
+    test_time::until(
+        "the database made without meeting another test's definition",
+        test_time::FLOOR,
+        || match db.define_then("RETURN NONE;", json!({})) {
+            Err(DbError::Conflict) => None,
+            made => Some(made),
+        },
+    )
+    .unwrap()
+    .unwrap();
     db
 }
 

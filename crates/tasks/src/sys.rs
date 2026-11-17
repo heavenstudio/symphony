@@ -287,6 +287,7 @@ pub fn terminate(pid: i64, hard: bool) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::children::Child as _;
     use std::path::Path;
 
     /// The session this test's re-run is started in, as an agent's hc terminal starts a command:
@@ -319,7 +320,7 @@ mod tests {
         if std::env::var_os(CASE).is_some() {
             let none = "unset|unset|unset|unset|unset";
             let all = "fixture-session|t7|/fixture/hc/t7.sock|fixture-core|fixture-scope|kept";
-            assert_eq!(saw(&mut Command::new("/bin/sh")), all, "the starter's own");
+            assert_eq!(saw(&mut Command::of("/bin/sh")), all, "the starter's own");
             assert_eq!(saw(&mut command("/bin/sh")), format!("{none}|kept"));
             assert_eq!(
                 saw(command("/bin/sh").env("TASKS_SESSION", "an-actor")),
@@ -339,13 +340,13 @@ mod tests {
                 "unset|t9|unset|unset|unset|unset"
             );
             // A launcher handed a command drops even what its caller set before.
-            let mut handed = Command::new("/bin/sh");
+            let mut handed = Command::of("/bin/sh");
             handed.env("HC_SESSION", "other-core");
             assert_eq!(saw(sessionless(&mut handed)), format!("{none}|kept"));
             return;
         }
         let done = output(
-            Command::new(std::env::current_exe().unwrap())
+            Command::of(std::env::current_exe().unwrap())
                 .args([
                     "--exact",
                     "sys::tests::a_child_runs_without_its_starters_session_but_with_what_its_caller_sets",
@@ -382,7 +383,7 @@ mod tests {
         };
         if std::env::var_os(CASE).is_some() {
             assert_eq!(
-                saw(&mut Command::new("/bin/sh")),
+                saw(&mut Command::of("/bin/sh")),
                 "1|1|kept",
                 "the starter's own"
             );
@@ -397,13 +398,13 @@ mod tests {
                 saw(command_with("/bin/sh", &given).env(crate::land::RECIPE, "1")),
                 "unset|1|kept"
             );
-            let mut handed = Command::new("/bin/sh");
+            let mut handed = Command::of("/bin/sh");
             handed.env(crate::confine::MARKER, "again");
             assert_eq!(saw(unmarked(&mut handed)), "unset|unset|kept");
             return;
         }
         let done = output(
-            Command::new(std::env::current_exe().unwrap())
+            Command::of(std::env::current_exe().unwrap())
                 .args([
                     "--exact",
                     "sys::tests::a_child_runs_without_the_marks_of_how_its_starter_was_asked_for",
@@ -503,7 +504,7 @@ mod tests {
                 .args(["rev-parse", "HEAD^{tree}"]),
         );
         let done = output(
-            Command::new(std::env::current_exe().unwrap())
+            Command::of(std::env::current_exe().unwrap())
                 .args([
                     "--exact",
                     "sys::tests::a_git_acts_on_the_repository_of_its_folder_whatever_repository_its_starter_names",
@@ -539,7 +540,7 @@ mod tests {
 
     #[test]
     fn the_host_name_is_the_one_the_system_gives() {
-        let said = output(&mut Command::new("hostname")).unwrap();
+        let said = output(&mut Command::of("hostname")).unwrap();
         assert_eq!(hostname(), String::from_utf8(said.stdout).unwrap().trim());
         assert!(!hostname().is_empty());
     }
@@ -547,7 +548,7 @@ mod tests {
     #[test]
     fn this_process_is_alive_and_a_reaped_child_is_not() {
         assert!(pid_alive(i64::from(std::process::id())));
-        let mut child = Command::new("true").spawn().unwrap();
+        let mut child = Command::of("true").spawn().unwrap();
         let pid = i64::from(child.id());
         child.wait().unwrap();
         assert!(!pid_alive(pid));
@@ -578,7 +579,7 @@ mod tests {
                 let racers = Racers(
                     (0..32)
                         .map(|_| {
-                            std::process::Command::new("sleep")
+                            std::process::Command::of("sleep")
                                 .arg("60")
                                 .stdin(std::process::Stdio::null())
                                 .stdout(std::process::Stdio::null())
@@ -593,7 +594,7 @@ mod tests {
             });
             let mut answers = 0;
             while !spawned.load(Ordering::Relaxed) {
-                let mut child = spawn_piped(&mut Command::new("true")).unwrap();
+                let mut child = spawn_piped(&mut Command::of("true")).unwrap();
                 let mut input = child.stdin.take().unwrap();
                 assert!(child.wait().unwrap().success());
                 let refused = input.write_all(b"unread").unwrap_err();
@@ -602,7 +603,7 @@ mod tests {
                     std::io::ErrorKind::BrokenPipe,
                     "answer {answers}"
                 );
-                let done = output(Command::new("/bin/echo").arg("answer")).unwrap();
+                let done = output(Command::of("/bin/echo").arg("answer")).unwrap();
                 assert_eq!(done.stdout, b"answer\n");
                 answers += 1;
             }
@@ -624,11 +625,11 @@ mod tests {
     fn a_local_minute_is_the_one_date_gives() {
         for seconds in [0.0_f64, 1_800_000_000.9, 1_791_362_047.125_689] {
             let whole = format!("{}", seconds.floor());
-            let bsd = output(Command::new("date").args(["-r", &whole, "+%Y-%m-%d %H:%M"])).unwrap();
+            let bsd = output(Command::of("date").args(["-r", &whole, "+%Y-%m-%d %H:%M"])).unwrap();
             let date = if bsd.status.success() {
                 bsd
             } else {
-                output(Command::new("date").args(["-d", &format!("@{whole}"), "+%Y-%m-%d %H:%M"]))
+                output(Command::of("date").args(["-d", &format!("@{whole}"), "+%Y-%m-%d %H:%M"]))
                     .unwrap()
             };
             assert_eq!(
@@ -643,7 +644,7 @@ mod tests {
     fn terminate_ends_one_process_softly_or_hard() {
         use std::os::unix::process::ExitStatusExt;
         for (hard, signal) in [(false, 15), (true, 9)] {
-            let mut child = Command::new("sleep").arg("30").spawn().unwrap();
+            let mut child = Command::of("sleep").arg("30").spawn().unwrap();
             assert!(terminate(i64::from(child.id()), hard));
             assert_eq!(child.wait().unwrap().signal(), Some(signal));
         }
@@ -660,14 +661,21 @@ mod tests {
     fn end_group_ends_a_childs_own_group_whole_and_never_ours_or_inits() {
         use std::os::unix::process::ExitStatusExt;
         for (hard, signal) in [(false, 15), (true, 9)] {
-            // The shell and the sleep it started, one group.
-            let mut child = Command::new("sh")
-                .args(["-c", "sleep 30; exit 3"])
-                .process_group(0)
-                .spawn()
-                .unwrap();
-            // Let the shell start its sleep, so the signal finds both.
-            std::thread::sleep(std::time::Duration::from_millis(100));
+            // The shell and the sleep it started, one group: it says the sleep's pid once it has
+            // made it, so the signal finds both.
+            let mut child = spawn_output(
+                Command::of("sh")
+                    .args(["-c", "sleep 30 & echo $!; wait $!; exit 3"])
+                    .process_group(0),
+            )
+            .unwrap();
+            let mut made = String::new();
+            std::io::BufRead::read_line(
+                &mut std::io::BufReader::new(child.stdout.as_mut().unwrap()),
+                &mut made,
+            )
+            .unwrap();
+            assert!(made.trim().parse::<u32>().is_ok(), "{made:?}");
             assert!(end_group(child.id(), hard));
             assert_eq!(child.wait().unwrap().signal(), Some(signal));
         }
@@ -680,7 +688,7 @@ mod tests {
     fn a_group_is_alive_while_any_process_of_it_lives_even_once_its_first_ended() {
         // The shell ends at once, leaving the sleep it started in the background in its group, one
         // no slow look at the group outlives: only the kill below ends it.
-        let mut child = Command::new("sh")
+        let mut child = Command::of("sh")
             .args(["-c", "sleep 600 &"])
             .process_group(0)
             .stdin(Stdio::null())

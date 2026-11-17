@@ -4,6 +4,7 @@
 mod codex_helpers;
 
 use crate::World;
+use crate::children::Child as _;
 use symphony_board::cli::Env;
 use symphony_board::launch::LaunchError;
 use symphony_board::launch::procs::{
@@ -409,7 +410,7 @@ fn the_name_flag_is_the_first_one_named() {
 /// assesses a new executable on its first run, in one machine-wide queue, which under load has
 /// taken the whole of `ps`'s 30 s. The flags `descendants_by` adds are the script's `$0` and `$1`.
 fn sh_ps(script: &str) -> symphony_board::sys::Command {
-    let mut ps = symphony_board::sys::Command::new("/bin/sh");
+    let mut ps = symphony_board::sys::Command::of("/bin/sh");
     ps.args(["-c", script]);
     ps
 }
@@ -452,7 +453,7 @@ fn a_command_line_that_is_not_utf8_is_read_and_the_pids_still_parse() {
             "{table}"
         );
     }
-    let missing = descendants_by(symphony_board::sys::Command::new(w.dir().join("no-ps")), 10);
+    let missing = descendants_by(symphony_board::sys::Command::of(w.dir().join("no-ps")), 10);
     assert!(
         matches!(&missing, Err(LaunchError(why)) if why.starts_with("ps: ")),
         "{missing:?}"

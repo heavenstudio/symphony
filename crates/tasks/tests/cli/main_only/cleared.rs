@@ -4,6 +4,7 @@
 
 use super::{COPY, Held, Live, TASKS, before, refused, this};
 use crate::Ran;
+use crate::children::Child as _;
 use std::path::{Path, PathBuf};
 
 /// Set, this test binary is the stand-in for Cargo ([`cargo_stand_in`]): the file it names holds
@@ -34,7 +35,7 @@ fn cargo_stand_in() {
     let text = std::fs::read_to_string(file).unwrap();
     let mut lines = text.lines();
     let (dir, program) = (lines.next().unwrap(), lines.next().unwrap());
-    let status = std::process::Command::new(program)
+    let status = std::process::Command::of(program)
         .args(lines)
         .current_dir(dir)
         .env_remove(STAND_IN)
