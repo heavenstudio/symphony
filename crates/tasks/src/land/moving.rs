@@ -270,7 +270,8 @@ impl Landing<'_> {
                 let group = child.id();
                 self.running(group, &format!("git {}", args.join(" ")), true);
                 let limit = self.settings.timeout;
-                let (done, ended) = watched(group, limit, None, || sys::wait_output(child));
+                let (done, ended) =
+                    watched(group, limit, None, self.now, || sys::wait_output(child));
                 self.ran();
                 match (done, ended) {
                     (_, Ended::Late) => format!(
