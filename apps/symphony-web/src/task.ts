@@ -52,7 +52,9 @@ export function readTask(value: unknown): Task | null {
     isNumber(field(value, "updated")) &&
     (absent(field(value, "parent")) || isText(field(value, "parent"))) &&
     isTexts(field(value, "links")) &&
-    isRoles(field(value, "roles"))
+    isRoles(field(value, "roles")) &&
+    (absent(field(value, "waits_on")) || isWaitsOn(field(value, "waits_on"))) &&
+    (absent(field(value, "from")) || isText(field(value, "from")))
     ? { ...(value as Task), parent: (field(value, "parent") as string | undefined) ?? null }
     : null;
 }
@@ -81,6 +83,18 @@ export function readListing(value: unknown): TaskListing | null {
     return found === undefined || guard(found);
   };
   if (
+    !(
+      absent(field(value, "waiting")) ||
+      (isCounts(field(field(value, "waiting"), "kinds")) &&
+        Array.isArray(field(field(value, "waiting"), "columns")) &&
+        (field(field(value, "waiting"), "columns") as unknown[]).every(
+          (column) =>
+            isText(field(column, "status")) &&
+            isNumber(field(column, "ordinary")) &&
+            isNumber(field(column, "blocked")) &&
+            (absent(field(column, "oldest")) || isNumber(field(column, "oldest"))),
+        ))
+    ) ||
     !listed("statuses", isTexts) ||
     !listed("signoff", isTexts) ||
     !listed("counts", isCounts) ||

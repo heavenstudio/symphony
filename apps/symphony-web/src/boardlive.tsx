@@ -14,11 +14,11 @@ import {
   PAGE,
   recallShape,
   SHAPE,
-  stageCounts,
   TaskBoard,
   UnreadBoard,
 } from "./board";
 import { readerRows } from "./boardplace";
+import { waitingStage } from "./boardwait";
 import {
   answered,
   BOARD,
@@ -59,10 +59,18 @@ import {
 import { markTasksReady } from "./taskcard";
 import { Debounce } from "./timing";
 import { failed as failedRead } from "./trouble";
-import type { ItemChange, MachineWork, Task, TaskChange, TaskListing } from "./wire";
+import type {
+  ItemChange,
+  MachineWork,
+  Orchestrator,
+  Task,
+  TaskChange,
+  TaskListing,
+  WaitingBoard,
+} from "./wire";
 import { PAGE_NAMES } from "./wire";
 import { statusNotice } from "./words";
-import { drawsAlike, NO_WORK, placesAlike, readWork, taskStage } from "./work";
+import { drawsAlike, NO_WORK, placesAlike, readWork } from "./work";
 
 /** How long a search, a window or a column waits for the reader's next key before it reads. */
 const TYPING_MS = 250;
@@ -85,6 +93,10 @@ export interface BoardData {
   statuses: string[];
   signoff: string[];
   query: string;
+  wait: string;
+  projection: WaitingBoard | null;
+  orchestrators: Orchestrator[];
+  unstarted: number;
   days: number;
   ready: boolean;
   error: string;
@@ -144,6 +156,10 @@ export function emptyBoard(): BoardData {
     statuses: [],
     signoff: [],
     query: "",
+    wait: "",
+    projection: null,
+    orchestrators: [],
+    unstarted: 0,
     days: 1,
     ready: false,
     error: "",
@@ -308,8 +324,8 @@ export class LiveBoard {
     void this.column(status, more, query, days);
   };
   /** A search or window chosen, one function for the page's life as `load`. */
-  readonly search = (query: string, days: number): void => {
-    void this.filter(query, days);
+  readonly search = (query: string, days: number, wait = ""): void => {
+    void this.filter(query, days, wait);
   };
 
   /** The rests between a search's keys: the last reads its counts. */
@@ -325,7 +341,7 @@ export class LiveBoard {
     readonly signal: AbortSignal,
     private readonly now: () => number = Date.now,
   ) {
-    this.item = boardItem(scope);
+    this.item = { ...boardItem(scope), id: `${boardItem(scope).id}waiting` };
     this.typing = new Debounce(TYPING_MS, signal);
     this.refreshes = new Debounce(REFRESH_MS, signal);
   }
@@ -409,6 +425,9 @@ export class LiveBoard {
     d.lifecycleCounts = list.lifecycle_counts;
     d.statuses = list.statuses;
     d.signoff = list.signoff;
+    d.projection = list.waiting ?? null;
+    d.orchestrators = list.orchestrators;
+    d.unstarted = list.unstarted;
     d.ready = true;
   }
 
@@ -420,11 +439,18 @@ export class LiveBoard {
     if (next !== null) d.cursors.set(status, next);
     else d.cursors.delete(status);
     const before = new Map(d.tasks.map((task) => [task.slug, task]));
-    if (!more) d.tasks = d.tasks.filter((task) => taskStage(d.work, task, d.connected) !== status);
+    if (!more)
+      d.tasks =
+        status === "waiting"
+          ? []
+          : d.tasks.filter((task) => waitingStage(d.work, task, d.connected) !== status);
     d.tasks = withListed(d.tasks, list.tasks, before);
     d.counts = list.counts;
     d.lifecycleCounts = list.lifecycle_counts;
     d.signoff = list.signoff;
+    d.projection = list.waiting ?? null;
+    d.orchestrators = list.orchestrators;
+    d.unstarted = list.unstarted;
     return next !== null;
   }
 
@@ -522,12 +548,15 @@ export class LiveBoard {
    */
   rememberShape(): void {
     const { d } = this;
-    if (d.counted === 0 || d.worked === 0 || !keptView(d.query, d.days, d.connected ? 1 : 0)) {
+    if (
+      d.counted === 0 ||
+      d.worked === 0 ||
+      d.wait !== "" ||
+      !keptView(d.query, d.days, d.connected ? 1 : 0)
+    ) {
       return;
     }
-    const lane = d.tasks.filter((task) => isTask(task) && d.signoff.includes(task.slug));
-    const counts = stageCounts(d.counts, lane, (task) => taskStage(d.work, task, d.connected));
-    const shape = boardShape(counts, d.statuses, d.signoff.length, d.work.machines.length > 0);
+    const shape = boardShape(d.counts);
     save(SHAPE, keepShape(shape));
   }
 
@@ -543,10 +572,10 @@ export class LiveBoard {
     const request = d.countRequest;
     const { query, days, view } = d;
     const activity = d.connected ? 1 : 0;
-    const kept = keptView(query, days, activity);
+    const kept = d.wait === "" && keptView(query, days, activity);
     const since = new ReadCursor(d.journal);
     try {
-      const path = `/api/task-board?counts=1&q=${encodeURIComponent(query)}&days=${days}&activity=${activity}&work=0`;
+      const path = `/api/task-board?view=waiting${d.wait ? `&wait=${d.wait}` : ""}&counts=1&q=${encodeURIComponent(query)}&days=${days}&activity=${activity}&work=0`;
       let read: Awaited<ReturnType<LiveBoard["readListing"]>> | null = null;
       let why = "";
       try {
@@ -579,9 +608,10 @@ export class LiveBoard {
    * even though the first and last are alike, and the window chosen again is a new one: the page
    * reads it again rather than leaving its columns empty, as the Dioxus page did.
    */
-  async filter(query: string, days: number): Promise<void> {
+  async filter(query: string, days: number, wait = ""): Promise<void> {
     const { d } = this;
     d.query = query;
+    d.wait = wait;
     d.days = days;
     d.generation += 1;
     d.view += 1;
@@ -653,8 +683,11 @@ export class LiveBoard {
   /** The rows the board draws in `status`'s column: its tasks the stages place there. */
   shownRows(status: string): number {
     const { d } = this;
-    return d.tasks.filter((task) => isTask(task) && taskStage(d.work, task, d.connected) === status)
-      .length;
+    return d.tasks.filter(
+      (task) =>
+        status === "waiting" ||
+        (isTask(task) && waitingStage(d.work, task, d.connected) === status),
+    ).length;
   }
 
   /**
@@ -685,14 +718,14 @@ export class LiveBoard {
     const activity = d.connected ? 1 : 0;
     const rows = more ? 0 : this.shownRows(status);
     const long = rows > PAGE;
-    const kept = !more && !long && keptView(query, days, activity);
+    const kept = !more && !long && d.wait === "" && keptView(query, days, activity);
     const copy = kept ? d.copies.get(part) : long ? d.long.get(part) : undefined;
     const cursor = more ? (d.cursors.get(status) ?? null) : null;
     const since = new ReadCursor(d.journal);
     try {
       const after = cursor === null ? "" : `&cursor=${encodeURIComponent(cursor)}`;
       const length = long ? `&rows=${rows}` : "";
-      const path = `/api/task-board?q=${encodeURIComponent(query)}&status=${status}&days=${days}${after}${length}&activity=${activity}&work=0`;
+      const path = `/api/task-board?view=waiting${d.wait ? `&wait=${d.wait}` : ""}&q=${encodeURIComponent(query)}${status === "waiting" ? "" : `&status=${status}`}&days=${days}${after}${length}&activity=${activity}&work=0`;
       let read: Awaited<ReturnType<LiveBoard["readListing"]>> | null = null;
       let why = "";
       try {
@@ -900,7 +933,7 @@ export class LiveBoard {
   /** `changes` made to the data: whether they ask for a refresh, and whether any changed it. */
   merge(changes: Change[]): [boolean, boolean] {
     const { d } = this;
-    const searching = d.query !== "";
+    const searching = d.query !== "" || d.wait !== "";
     let refresh = false;
     let changed = false;
     for (const change of changes) {
@@ -951,10 +984,13 @@ export class LiveBoard {
           refresh ||=
             searching ||
             (fields.status !== undefined && fields.status !== null) ||
-            (fields.parent !== undefined && fields.parent !== null);
+            (fields.parent !== undefined && fields.parent !== null) ||
+            fields.waits_on != null ||
+            fields.from != null;
           break;
         }
         case "session": {
+          refresh = true;
           // A holder's health: its roles on every card say it.
           const [moved, tasks] = holderHealth(d.tasks, change.key, change.health);
           if (moved) {
@@ -1082,6 +1118,9 @@ export function TasksView({ scope, board, stale, freshness, refreshed }: TasksVi
           connected={!stale}
           statuses={d.statuses}
           signoff={d.signoff}
+          waiting={d.projection}
+          orchestrators={d.orchestrators}
+          unstarted={d.unstarted}
           refreshed={refreshed}
           onFilter={board.search}
           onLoad={board.load}

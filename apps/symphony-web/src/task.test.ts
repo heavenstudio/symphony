@@ -278,3 +278,20 @@ describe("a holder's health", () => {
     expect(healths(next)).toEqual([[["amber", "lost"]]]);
   });
 });
+
+it("guards the waiting projection and the fields the wait card draws", () => {
+  const task = aTask("a");
+  for (const fields of [{ waits_on: { kind: "check", who: 3, why: "why", since: 1 } }, { from: 5 }])
+    expect(readTask({ ...task, ...fields })).toBeNull();
+  const waiting = {
+    kinds: [["check", 3]],
+    columns: [{ status: "review", ordinary: 1, blocked: 2, oldest: 1 }],
+  };
+  expect(readListing({ tasks: [task], waiting })?.waiting).toEqual(waiting);
+  for (const malformed of [
+    { ...waiting, kinds: [["check", "3"]] },
+    { ...waiting, columns: [{ status: "review", ordinary: 1, blocked: "2" }] },
+    { ...waiting, columns: [{ status: "review", ordinary: 1, blocked: 2, oldest: "yesterday" }] },
+  ])
+    expect(readListing({ tasks: [], waiting: malformed })).toBeNull();
+});
