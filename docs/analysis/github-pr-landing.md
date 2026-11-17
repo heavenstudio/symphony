@@ -136,32 +136,52 @@ create is not assumed to be idempotent. Do not create both a commit status and c
 the same required name. No Actions workflow, hosted runner or GitHub-triggered test job is
 needed.
 
-### Closing publication races
+### Publication freshness and the smaller first implementation
 
-A background mirror alone cannot guarantee that GitHub stops merging immediately after local
-evidence changes. A completed green check can outlive a lost publisher. GitHub has no atomic
-transaction with the board and no local-evidence lease expiry. Treat this as a delivery
-constraint, not something a frequent poll solves.
+GitHub checks identify a commit and retain their published result; the merge request can match
+the PR head. Those are documented platform features. Neither API offers a transaction with the
+board's evidence records. The resulting limitation is an inference: a completed green check
+can survive a publisher outage, and a same-head local evidence change can precede its remote
+invalidation. A background mirror cannot promise instantaneous revocation.
 
-Before eligibility becomes green, seal an immutable evidence generation in the board. Mutations
-that would invalidate it (a new run, changed assessment/verdict, withdrawn owner approval or
-policy activation) first enter an invalidating state, publish a blocking eligibility result and
-read back that result, then commit the changed authoritative record. If publication fails, the
-mutation stays pending and the sealed evidence remains the authoritative generation. Serialize
-this transition with landing; a recorder must pass this barrier before starting another run at
-H. This needs a shared board-side transaction boundary, including every evidence writer, not
-just a hook after a CLI write. Keep an append-only audit of superseded snapshots.
+**Recommended first implementation: trusted merge-time revalidation.** Immediately before
+dispatch, the landing service reads the authoritative current head, policy, assessment and
+stamp readers again, publishes their consistent snapshot, and reads back the source-pinned
+checks. It compares the board's evidence revision with that snapshot when recording its merge
+intent; a mismatch retries validation, not the build. A changed head gets no carried checks.
+Only the trusted landing identity dispatches the head-matched squash, and every invalidating
+event also queues a blocking remote update. An unavailable board, publisher or GitHub prevents
+a new dispatch. A durable intent handles an already-dispatched request with an uncertain answer.
 
-Only the trusted landing identity may update the protected default branch. It serializes the
-final eligibility read and merge request with those invalidations. A timed-out merge keeps the
-generation sealed until remote state is reconciled. If an owner withdrawal arrives meanwhile,
-record it immediately as pending and show that the remote operation may already have completed;
-do not claim an in-flight GitHub merge can be recalled. After remote success, a changed mind is
-a new change/revert. Across an outage a sealed success certifies the retained snapshot, not the
-publisher's current liveness.
+This smaller path meets the stated requirement that GitHub require an assessment and its
+met/explicitly-waived stamps on the PR head, with a fresh local validation before dispatch. It
+does not guarantee that a local withdrawal or new red arriving after the final validation can
+cancel a request GitHub is already processing. GitHub checks the published state, not a live
+board read. The receipt records the validated revision and request boundary so that this limit
+is visible; a later change invalidates the checks or, after delivery, needs a correction/revert.
+Repeated polling cannot remove that window. This is a proposed delivery policy, not an owner
+approval of stronger consistency or an already-proved provider behavior.
 
-An enforceable setup therefore requires both trusted check authorship and control of the merge
-writer. A proposed ruleset arrangement separates (1) PR/check/squash requirements with no bypass
+**Stronger alternative, only if that additional guarantee is required:** seal an evidence
+generation before making eligibility green. A new run, assessment/verdict change, owner-approval
+withdrawal or policy activation must first publish and read back blocking eligibility, then
+commit its invalidating record. Serialize those transitions and merge requests in one durable
+coordinator, including every recorder and evidence writer. This closes the accepted-local-change
+before-remote-invalidation race by delaying acceptance of the change; it cannot recall an
+already-dispatched remote merge.
+
+The stronger design makes GitHub availability a prerequisite for accepting those local writes
+and starting another run at H. An outage leaves them pending while the sealed snapshot remains
+authoritative; a timeout keeps it reserved until reconciliation proves the request's outcome.
+An owner withdrawal must be recorded immediately as pending, with the in-flight limit shown.
+It requires board-wide mutation changes, recovery of abandoned reservations and proof that no
+writer bypasses the barrier. That cost is not justified by the stated remote-check requirement
+alone. Keep it as an unapproved alternative, rather than an implementation prerequisite or a new
+standing rule. Assess the smaller path first; a stricter consistency promise would be a separate
+coordinated decision.
+
+Both proposals need trusted check authorship and control of the merge writer. A proposed
+ruleset arrangement separates (1) PR/check/squash requirements with no bypass
 actors and (2) restricted default-branch updates, with only the landing App allowed through the
 second ruleset. The App receives no bypass of the first. GitHub documents
 [update restrictions and independent rules](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/available-rules-for-rulesets);
@@ -202,7 +222,7 @@ explicit repository and PR IDs. The durable state progression is:
 | State | Action and recorded boundary |
 | --- | --- |
 | Prepared | Bind H, task/PR, policy, snapshot and intended squash title/body; keep task ready for delivery, not landed. |
-| Eligible | Read back every check from the expected App at H and seal its generation. Recheck remote rules, owner-answer preservation and the local/remote head binding. |
+| Eligible | Revalidate the authoritative snapshot and its evidence revision, read back every check from the expected App at H, and record the matching intent. Recheck remote rules, owner-answer preservation and the local/remote head binding. |
 | Merge requested | Persist the request intent before invoking `gh pr merge NUMBER --repo HOST/OWNER/REPO --squash --match-head-commit H --subject TITLE --body-file FILE`. Do not use admin, auto-merge or branch deletion. |
 | Remote merged | Read the PR's merged state and returned squash commit S, fetch it, verify repository/base/head provenance and the resulting tree, then persist a receipt. A command exit alone is not proof. |
 | Reconciled | Fast-forward a clean local default checkout to the fetched remote default, close the task with H → S and the snapshot reference, then dispatch post-land work exactly once. |
@@ -280,8 +300,8 @@ project using release candidates.
 ## Implementation boundary and proof
 
 The concept changes no production code. After the GitHub prerequisite lands, implement a small
-shared evidence snapshot/receipt contract first, then the authenticated publisher and its
-invalidation barrier, then the hosted landing seam and all default-branch writers. Preserve
+shared evidence snapshot/receipt contract first, then the authenticated publisher and trusted
+merge-time revalidation, then the hosted landing seam and all default-branch writers. Preserve
 public consumer APIs under the two-release rule. Use independent assessment/review of the real
 diff; this proposal grants no activation, remote merge or settings change.
 
@@ -292,7 +312,7 @@ The focused acceptance matrix for that implementation is:
 | Mode/policy | Disabled keeps current behavior; enabled with missing plugin/auth/source protection refuses; task-branch policy cannot weaken the gate; custom lands and all default writers are accounted for. |
 | Assessment/stamps | No assessment, stale assessment, forged author, missing/default stamp, needed red, owner hold, explicit empty needs and individually reasoned waivers. Same-named foreign-App checks cannot satisfy protection. |
 | Identity/freshness | Wrong repository/base/PR, duplicate binding, local/remote disagreement, head race at merge, conflict resolution, rebase/force push and policy change. Base movement alone keeps valid H evidence. |
-| Publication | Partial writes never publish eligibility success; duplicate/out-of-order events, reconnect, App outage, run start/withdrawal during sealing and process death at every invalidation/merge boundary. No arbitrary commands from remote content. |
+| Publication | Partial writes never publish eligibility success; duplicate/out-of-order events, reconnect, App outage, changed evidence before dispatch and a withdrawal during an uncertain request. Demonstrate the stated same-head propagation window; do not claim instantaneous revocation. No arbitrary commands from remote content. |
 | Delivery | Squash provenance and actual tree, successful merge with lost response, closed-unmerged PR, dirty/diverged local main, board write failure, repeat retry, manual merge and retained H after branch deletion. Exactly one closure and post-land dispatch. |
 | Other writers | Pending owner answer preserved, mixed/generated diff refused or corrected before evidence, regenerator PR without a loop, candidate/main partial delivery and no force move. Optional direct-doc writer stays disabled. |
 | Protection | Disposable-repository API and UI attempts with missing/waived/present checks, untrusted status source, ordinary direct push, bypass-capable maintainer and landing App. Prove the App bypasses only update restriction, never PR/stamp requirements. |
