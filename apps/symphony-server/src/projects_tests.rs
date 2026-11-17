@@ -874,6 +874,19 @@ async fn the_list_says_calmly_that_a_project_with_no_board_has_none() {
         ),
         "{row}"
     );
+    // A refused project says why alone: no dot and no line, whatever its board's standing.
+    let mut refused = alpha.clone();
+    refused.refused = Some("lacks the plugin fixture-uncompiled".into());
+    let failing = Standing {
+        signal: Signal::Red,
+        line: "The task board is unwell".into(),
+    };
+    let row = list_row(&refused, Some(&counts), Some(&failing), none, false);
+    assert_eq!(
+        row,
+        "<li><a href=\"/alpha/\">alpha works</a><span class=\"refused\">lacks the plugin \
+         fixture-uncompiled</span></li>",
+    );
 }
 
 /// The blocked part of the counts: none while nothing is blocked, the count alone while none of
