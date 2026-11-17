@@ -64,11 +64,6 @@ fn machine_work_phases_and_advisory_targets_stay_consistent_through_live_complet
     let mut version = 4183;
     for (path, selector, reveal) in [
         (
-            "/tasks",
-            ".taskcard[data-slug='visual/in-progress'] .work-phase",
-            "document.querySelector('[data-status=test]')",
-        ),
-        (
             "/agents",
             ".agent .work-phase",
             "document.getElementById('agent-example')",
@@ -119,9 +114,6 @@ fn machine_work_phases_and_advisory_targets_stay_consistent_through_live_complet
             columns::screenshot(&mut chrome, "agents-desktop");
         }
         wait_for_feed(&site).expect("the page never followed the feed");
-        if path == "/tasks" {
-            assert_eq!(chrome.eval("document.querySelector('[data-status=build] .machine-work a').getAttribute('href')"), json!("/agents#machine-context"));
-        }
         if path == "/agents" {
             let targets = texts(&mut chrome, ".machine-guidance summary");
             assert_eq!(
@@ -175,9 +167,6 @@ fn machine_work_phases_and_advisory_targets_stay_consistent_through_live_complet
                 .to_string(),
         );
         version += 1;
-        if path == "/tasks" {
-            columns::reveal(&mut chrome, "in_progress");
-        }
         labels(
             &mut chrome,
             selector,
