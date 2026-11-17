@@ -23,13 +23,13 @@ fn started(r: &Repo, actor: &str) -> Child {
 
 /// [`started`] in the environment `vars`.
 fn started_with(r: &Repo, actor: &str, vars: BTreeMap<String, String>) -> Child {
-    let mut command = sys::Command::new(env!("CARGO_BIN_EXE_tasks"));
+    let mut command = sys::Command::of(env!("CARGO_BIN_EXE_tasks"));
     for signal in STOPPING {
         command.default_signal(signal);
     }
     command
         .args(["land", SLUG, "--as", actor])
-        .env_clear()
+        .cleared()
         .envs(vars)
         .env(RECIPE, "1")
         .current_dir(&r.root)
@@ -203,6 +203,10 @@ fn a_terminate_to_a_land_waiting_for_another_ends_its_wait_and_lands_nothing() {
             .contains("waiting for the land of sim/fall (pid 4242) to finish")
     });
     // Past its timeout, which bounds a check and not a wait, it waits on.
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "no-timed-waits baseline: a test holds past the land's timeout to show the land still waits, where a clock the land reads is the event"
+    )]
     std::thread::sleep(Duration::from_millis(1500));
     assert!(
         land.try_wait().unwrap().is_none(),
@@ -289,7 +293,7 @@ fn a_land_stopped_after_main_moved_is_finished_by_a_run_again_pushing_what_it_ch
         ),
     );
     let receive = r.dir.join("receive-pack");
-    let chmod = Command::new("chmod")
+    let chmod = Command::of("chmod")
         .arg("+x")
         .arg(&receive)
         .status_locked()
@@ -388,7 +392,7 @@ fn a_full_sweep_after_a_land_stopped_past_main_keeps_its_branch_and_the_land_fin
         ),
     );
     let receive = r.dir.join("receive-pack");
-    let chmod = Command::new("chmod")
+    let chmod = Command::of("chmod")
         .arg("+x")
         .arg(&receive)
         .status_locked()
@@ -450,7 +454,7 @@ struct Stranger(Child);
 
 impl Stranger {
     fn new() -> Stranger {
-        let mut sleep = sys::Command::new("sleep");
+        let mut sleep = sys::Command::of("sleep");
         sleep.arg("60").process_group(0).stdin(Stdio::null());
         Stranger(sleep.spawn().unwrap())
     }
@@ -514,7 +518,7 @@ fn a_group_is_named_the_lands_only_while_its_first_process_is_the_one_the_land_s
         unproven(group)
     );
     let quit = r.dir.join("quit");
-    let mut leader = sys::Command::new("sh");
+    let mut leader = sys::Command::of("sh");
     leader
         .args([
             "-c",
@@ -594,7 +598,7 @@ fn a_worktree_whose_lock_names_a_number_another_process_took_since_is_replaced()
 fn script(dir: &Path, name: &str, body: &str) -> PathBuf {
     write(dir, name, &format!("#!/bin/sh\n{body}"));
     let path = dir.join(name);
-    let chmod = Command::new("chmod")
+    let chmod = Command::of("chmod")
         .arg("+x")
         .arg(&path)
         .status_locked()
@@ -772,6 +776,10 @@ fn a_terminals_interrupt_while_main_moves_lets_the_move_end_and_a_run_again_fini
     // A terminal's Ctrl-C while git writes the main checkout: the land's group, never the move's,
     // which the land waits for.
     send(land.id(), libc::SIGINT, true);
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "no-timed-waits baseline: a test holds a moment to show the move runs on past the interrupt, where a mark the land writes once it has taken the signal is the event"
+    )]
     std::thread::sleep(Duration::from_millis(200));
     assert!(pid_alive(i64::from(group)), "the move runs on");
     write(&r.dir, "go", "");

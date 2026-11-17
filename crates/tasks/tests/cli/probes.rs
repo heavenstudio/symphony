@@ -3,6 +3,7 @@
 
 mod tips;
 
+use crate::children::Child as _;
 use serde_json::{Value, json};
 use std::fs::{self, File};
 use std::path::{Path, PathBuf};
@@ -44,7 +45,7 @@ fn outside(name: &str) -> PathBuf {
 
 /// A pid no process has: a child that has been waited for.
 fn dead_pid() -> u32 {
-    let mut child = Command::new("true").spawn().unwrap();
+    let mut child = Command::of("true").spawn().unwrap();
     let pid = child.id();
     child.wait().unwrap();
     pid
@@ -457,7 +458,7 @@ fn repo(name: &str) -> PathBuf {
 
 fn git(dir: &Path, args: &[&str]) {
     let done = symphony_board::sys::output(
-        Command::new("git")
+        Command::of("git")
             .args(["-c", "user.email=t@t", "-c", "user.name=t", "-C"])
             .arg(dir)
             .args(args),
@@ -580,7 +581,7 @@ struct SpawnSpan {
 fn the_machine_lists_each_process_with_its_working_directory_and_when_it_started() {
     let folder = scratch("working").canonicalize().unwrap();
     let before = (wall_clock(), boot_clock());
-    let mut cat = Command::new("cat");
+    let mut cat = Command::of("cat");
     cat.current_dir(&folder)
         .stdin(symphony_board::sys::Stdio::piped())
         .stdout(symphony_board::sys::Stdio::null());

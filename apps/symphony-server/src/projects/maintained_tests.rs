@@ -123,7 +123,7 @@ fn recording(said: &Said) -> Box<Maintain> {
         said.lock().unwrap().push(format!("started {id}"));
         let (said, shared) = (said.clone(), shared.clone());
         vec![std::thread::spawn(move || {
-            while !shared.wait(Duration::from_millis(20)) {}
+            shared.wait_for_stop();
             said.lock().unwrap().push(format!("ended {id}"));
         })]
     })
@@ -264,7 +264,7 @@ fn a_stopped_state_joins_its_maintenance_a_panicked_or_a_late_one_too() {
     })]);
     let waits = shared.clone();
     shared.maintained(vec![std::thread::spawn(move || {
-        while !waits.wait(Duration::from_millis(20)) {}
+        waits.wait_for_stop();
     })]);
     assert_eq!(shared.maintaining(), 2);
     shared.stop();
@@ -274,7 +274,7 @@ fn a_stopped_state_joins_its_maintenance_a_panicked_or_a_late_one_too() {
     let late = ended.clone();
     let waits = shared.clone();
     shared.maintained(vec![std::thread::spawn(move || {
-        while !waits.wait(Duration::from_millis(20)) {}
+        waits.wait_for_stop();
         late.store(true, std::sync::atomic::Ordering::SeqCst);
     })]);
     assert!(ended.load(std::sync::atomic::Ordering::SeqCst));

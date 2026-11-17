@@ -1517,6 +1517,7 @@ pub fn recent_hours(vars: &BTreeMap<String, String>, flag: Option<f64>) -> Resul
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::children::Child as _;
 
     fn vars(window: Option<&str>) -> BTreeMap<String, String> {
         window
@@ -1566,7 +1567,7 @@ mod tests {
             std::env::temp_dir().join(format!("symphony-sweep-records-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
-        let init = std::process::Command::new("git")
+        let init = std::process::Command::of("git")
             .args(["init", "-q"])
             .current_dir(&root)
             .output()

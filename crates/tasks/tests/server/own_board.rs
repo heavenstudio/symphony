@@ -6,6 +6,7 @@
 //! the project's board-only `tasks` tests' too, which run this crate's dispatch case with that
 //! build's executable.
 
+use crate::children::Child as _;
 use std::path::{Path, PathBuf};
 use std::process::ExitStatus;
 use std::sync::OnceLock;
@@ -38,7 +39,7 @@ impl GuardedSurreal {
         // blocked on macOS after its last writer closes. Keep the watchdog owned and reap it on
         // normal teardown; its own group survives an interrupted suite's group.
         let watchdog = crate::store::spawn_with_input(
-            Command::new("bash")
+            Command::of("bash")
                 .args([
                     "-c",
                     r#"
@@ -125,7 +126,7 @@ impl Drop for GuardedSurreal {
 
 /// The command line of process `pid`, if it runs.
 pub fn command_of(pid: i64) -> Option<String> {
-    let out = symphony_board::sys::output(Command::new("ps").args([
+    let out = symphony_board::sys::output(Command::of("ps").args([
         "-ww",
         "-o",
         "command=",
@@ -145,7 +146,7 @@ pub fn serves_data(pid: i64, data: &str) -> bool {
 
 /// The parent of process `pid`, if it runs.
 pub fn parent_of(pid: i64) -> Option<i64> {
-    let out = symphony_board::sys::output(Command::new("ps").args([
+    let out = symphony_board::sys::output(Command::of("ps").args([
         "-o",
         "ppid=",
         "-p",
@@ -156,7 +157,7 @@ pub fn parent_of(pid: i64) -> Option<i64> {
 }
 
 pub fn signal(pid: i64, name: &str) {
-    let _ = std::process::Command::new("kill")
+    let _ = std::process::Command::of("kill")
         .arg(format!("-{name}"))
         .arg(pid.to_string())
         .status_locked();
@@ -199,8 +200,8 @@ impl Repository {
         let dir = base.join(format!("{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
-        let done = symphony_board::sys::output(Command::new("git").args(["init", "-q"]).arg(&dir))
-            .unwrap();
+        let done =
+            symphony_board::sys::output(Command::of("git").args(["init", "-q"]).arg(&dir)).unwrap();
         assert!(done.status.success(), "git init: {done:?}");
         let dir = dir.canonicalize().unwrap();
         let surreal = GuardedSurreal::new(&dir);

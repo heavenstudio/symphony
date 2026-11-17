@@ -512,6 +512,7 @@ impl Aside {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::children::Child as _;
 
     const FOLDER: &str = "artifacts";
 
@@ -568,7 +569,7 @@ mod tests {
                 "init",
             ],
         ] {
-            let done = std::process::Command::new("git")
+            let done = std::process::Command::of("git")
                 .args(args)
                 .current_dir(root)
                 .output()

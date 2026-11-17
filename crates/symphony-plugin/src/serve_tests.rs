@@ -512,8 +512,10 @@ fn a_line_past_the_bound_ends_the_process_and_an_answer_past_it_is_refused() {
 fn an_input_that_ends_runs_its_ending_after_its_delay_and_only_then() {
     let ran = std::sync::Arc::new(AtomicUsize::new(0));
     let counted = ran.clone();
+    let (ending, ended) = mpsc::channel();
     let then = Box::new(move || {
         counted.fetch_add(1, Ordering::SeqCst);
+        let _ = ending.send(());
     });
     let mut input = Ending::new(&b"a\nb\n"[..], std::time::Duration::from_millis(20), then);
     let mut line = String::new();
@@ -534,15 +536,7 @@ fn an_input_that_ends_runs_its_ending_after_its_delay_and_only_then() {
     // Ended: once, after the delay, however often the end is read.
     let mut more = [0; 4];
     assert_eq!(std::io::Read::read(&mut input, &mut more).unwrap(), 0);
-    let deadline = Instant::now() + std::time::Duration::from_secs(5);
-    while ran.load(Ordering::SeqCst) == 0 {
-        assert!(Instant::now() < deadline, "the ending did not run");
-        #[expect(
-            clippy::disallowed_methods,
-            reason = "no-timed-waits baseline: a test looks again for its condition by hand, where test_time::wait::until is the helper"
-        )]
-        std::thread::sleep(std::time::Duration::from_millis(5));
-    }
+    ending_ran(&ended);
     #[expect(
         clippy::disallowed_methods,
         reason = "no-timed-waits baseline: a test holds for a length of time to show nothing more runs"
@@ -560,9 +554,20 @@ fn an_input_that_fails_runs_its_ending_too() {
     let mut input = Ending::new(BufReader::new(Failing), std::time::Duration::ZERO, then);
     let mut line = String::new();
     assert!(input.read_line(&mut line).is_err());
+    ending_ran(&ended);
+}
+
+/// An input's ending ran, within the backstop of the wait it was given: only a stall, said with
+/// the machine's load, comes before it.
+fn ending_ran(ended: &mpsc::Receiver<()>) {
     ended
-        .recv_timeout(std::time::Duration::from_secs(5))
-        .unwrap();
+        .recv_timeout(test_time::backstop(std::time::Duration::from_secs(5)))
+        .unwrap_or_else(|_| {
+            panic!(
+                "the ending did not run: a stall; {}",
+                test_time::Load::now()
+            )
+        });
 }
 
 #[test]

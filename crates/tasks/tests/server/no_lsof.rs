@@ -6,6 +6,7 @@
 //! its own on a `PATH` of the case's: the `ps` the board tells its servers by, and the `lsof` the
 //! case gives or none.
 
+use crate::children::Child as _;
 use crate::common::{Scratch, Told, surreal};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -82,7 +83,7 @@ fn helper_a_board_on_a_path_of_its_own() {
 /// told.
 fn on_path(s: &Scratch, bin: &Path, case: &str) -> Vec<String> {
     let done = sys::output(
-        Command::new(std::env::current_exe().unwrap())
+        Command::of(std::env::current_exe().unwrap())
             .args([
                 "--ignored",
                 "--exact",

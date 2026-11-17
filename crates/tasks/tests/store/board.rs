@@ -599,18 +599,16 @@ fn a_definition_that_fails_leaves_no_board_taken_for_made() {
     // The database is made as an open makes it, again when that meets another test's at once in the
     // shared namespace (the verify of 7ea29d1d: Conflict here). Its statements are no transaction, so
     // the rows go in after, once.
-    let made =
-        (0..100).find_map(
-            |_| match client.define_then("RETURN NONE;", serde_json::json!({})) {
-                Err(rpc::DbError::Conflict) => {
-                    std::thread::sleep(std::time::Duration::from_millis(50));
-                    None
-                }
-                made => Some(made),
-            },
-        );
-    made.expect("the database kept meeting other writes")
-        .unwrap();
+    test_time::until(
+        "the database made without meeting another test's definition",
+        test_time::FLOOR,
+        || match client.define_then("RETURN NONE;", serde_json::json!({})) {
+            Err(rpc::DbError::Conflict) => None,
+            made => Some(made),
+        },
+    )
+    .unwrap()
+    .unwrap();
     for row in ["a", "b"] {
         (Raw::on(&client).row("task", row))
             .create(serde_json::json!({"sid": 1}))

@@ -6,6 +6,7 @@ use std::io::{Read, Write};
 use std::net::{Shutdown, SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::Instant;
 
 use flate2::Compression;
 use flate2::read::GzDecoder;
@@ -248,6 +249,36 @@ fn a_retired_build_file_is_gone_until_it_is_restored() {
     assert_eq!(
         (status(retired), status(kept)),
         ("200".into(), "200".into())
+    );
+}
+
+/// A path's first request is timed as the site reads it, before its answer; a later one, any query
+/// of it, or a read ahead moves nothing.
+#[test]
+fn a_paths_first_request_is_timed_as_it_is_read() {
+    let dist = Dist::new("/assets/shell.js", &[]);
+    let site = Site::start(dist.path(), &board());
+    site.set_json("/api/read", &serde_json::json!({}));
+    assert_eq!(site.first_asked("/tasks"), None);
+    let before = Instant::now();
+    get(site.addr, "/tasks", "");
+    let answered = Instant::now();
+    let first = site.first_asked("/tasks").expect("asked for");
+    assert!(before <= first && first <= answered, "{first:?}");
+    get(site.addr, "/tasks?view=list", "");
+    get(site.addr, "/tasks", "");
+    assert_eq!(site.first_asked("/tasks"), Some(first), "the first stays");
+    get(site.addr, "/api/read", "Purpose: prefetch\r\n");
+    assert_eq!(
+        site.first_asked("/api/read"),
+        None,
+        "a read ahead is no page's"
+    );
+    let later = Instant::now();
+    get(site.addr, "/api/read", "");
+    assert!(
+        site.first_asked("/api/read")
+            .is_some_and(|read| read >= later)
     );
 }
 

@@ -13,6 +13,7 @@ mod rolled_back;
 mod served;
 mod writers;
 
+use crate::children::Child as _;
 use crate::common::{NOW, surreal};
 use crate::{Ran, git, repository, scratch};
 use std::cell::Cell;
@@ -242,9 +243,9 @@ fn run(
         "{}:/usr/sbin:/sbin",
         std::env::var("PATH").unwrap_or_default()
     );
-    let mut command = Command::new(program);
+    let mut command = Command::of(program);
     command
-        .env_clear()
+        .cleared()
         .env("PATH", path)
         .env("HOME", base.join("home"))
         .env("SYMPHONY_SURREAL", surreal())

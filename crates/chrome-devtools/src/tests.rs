@@ -343,18 +343,12 @@ fn a_browser_that_ended_is_reaped_only_after_the_kill_of_its_group() {
         .unwrap();
     let group = child.id();
     let mut browser = BrowserGroup { child, done: false };
-    let began = Instant::now();
-    while !crate::exited(group).unwrap() {
-        assert!(
-            began.elapsed() < Duration::from_secs(30),
-            "the browser ran on"
-        );
-        #[expect(
-            clippy::disallowed_methods,
-            reason = "no-timed-waits baseline: a test looks again for its condition by hand, where test_time::wait::until is the helper"
-        )]
-        std::thread::sleep(POLL);
-    }
+    test_time::until_true(
+        "the browser ends on its own",
+        test_time::backstop(Duration::from_secs(30)),
+        || crate::exited(group).unwrap(),
+    )
+    .unwrap();
     // SAFETY: signal 0 to this test's own unreaped child sends nothing.
     assert_eq!(
         unsafe { libc::kill(pid(group), 0) },
@@ -363,18 +357,12 @@ fn a_browser_that_ended_is_reaped_only_after_the_kill_of_its_group() {
     );
     assert!(signal_group(group, 0).is_ok(), "its helper runs");
     assert!(browser.end().unwrap().success());
-    let killed = Instant::now();
-    while signal_group(group, 0).is_ok() {
-        assert!(
-            killed.elapsed() < Duration::from_secs(10),
-            "its helper lives"
-        );
-        #[expect(
-            clippy::disallowed_methods,
-            reason = "no-timed-waits baseline: a test looks again for its condition by hand, where test_time::wait::until is the helper"
-        )]
-        std::thread::sleep(POLL);
-    }
+    test_time::until_true(
+        "its helper ends with its group's kill",
+        test_time::backstop(Duration::from_secs(10)),
+        || signal_group(group, 0).is_err(),
+    )
+    .unwrap();
     assert!(
         browser.end().unwrap().success(),
         "a second end answers the same"
@@ -406,22 +394,18 @@ fn a_stopped_browser_has_not_ended() {
     let resumed = crate::exited(id).unwrap();
     // Killed before any assertion, so a failing one leaves no stopped process behind.
     child.kill().unwrap();
-    let began = Instant::now();
-    let mut killed = false;
-    while !killed && began.elapsed() < Duration::from_secs(10) {
-        #[expect(
-            clippy::disallowed_methods,
-            reason = "no-timed-waits baseline: a test looks again for its condition by hand, where test_time::wait::until is the helper"
-        )]
-        std::thread::sleep(POLL);
-        killed = crate::exited(id).unwrap();
-    }
+    // Asserted below, after the reap, so a stall leaves no child behind.
+    let killed = test_time::until_true(
+        "the kill is seen before the reap",
+        test_time::backstop(Duration::from_secs(10)),
+        || crate::exited(id).unwrap(),
+    );
     let status = child.wait().unwrap();
     assert_eq!((stop, waited, resume), (0, 0, 0));
     assert_eq!(info.si_code, libc::CLD_STOPPED);
     assert!(!stopped, "a stopped child was taken for ended");
     assert!(!resumed, "a continued child was taken for ended");
-    assert!(killed, "the kill was not seen before the reap");
+    killed.unwrap();
     assert_eq!(
         std::os::unix::process::ExitStatusExt::signal(&status),
         Some(libc::SIGKILL)
@@ -1388,22 +1372,24 @@ wait "$helper"
                 wait_for_protocol_eof(socket)
                     .unwrap_or_else(|error| panic!("browser protocol after {signal}: {error}"));
             }
-            loop {
-                // SAFETY: the suite announced this exact leash PID at startup. Signal zero
-                // only queries it, including its zombie until the parent reaps it.
-                if unsafe { libc::kill(pid(leash), 0) } != 0 {
+            test_time::until_true(
+                format!("the leash {leash} ends after {signal}"),
+                test_time::FLOOR,
+                || {
+                    // SAFETY: the suite announced this exact leash PID at startup. Signal zero
+                    // only queries it, including its zombie until the parent reaps it.
+                    if unsafe { libc::kill(pid(leash), 0) } == 0 {
+                        return false;
+                    }
                     let error = std::io::Error::last_os_error();
                     if error.raw_os_error() == Some(3) {
-                        break;
+                        return true;
                     }
                     assert_eq!(error.kind(), ErrorKind::PermissionDenied, "{error}");
-                }
-                #[expect(
-                    clippy::disallowed_methods,
-                    reason = "no-timed-waits baseline: a test looks again for its condition by hand, where test_time::wait::until is the helper"
-                )]
-                std::thread::sleep(POLL);
-            }
+                    false
+                },
+            )
+            .unwrap();
             // The leash's exit is the boundary under test. Waiting here for a leaked
             // helper/profile would hide a premature exit instead of failing the case.
             assert_eq!(

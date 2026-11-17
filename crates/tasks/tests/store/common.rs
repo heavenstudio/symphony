@@ -171,7 +171,7 @@ pub fn surreal() -> PathBuf {
         return named.into();
     }
     let script = project_root().join("tools/surreal.sh");
-    let found = symphony_board::sys::output(Command::new("bash").arg(&script))
+    let found = symphony_board::sys::output(symphony_board::sys::command("bash").arg(&script))
         .expect("bash runs tools/surreal.sh");
     assert!(
         found.status.success(),
@@ -264,7 +264,7 @@ pub fn launch_on(
             let (announced, announcer) =
                 symphony_board::sys::pipe().expect("a pipe for the server's pid");
             let shell = spawn_with_input(
-            Command::new("bash")
+            symphony_board::sys::command("bash")
                 .arg("-c")
                 .arg(concat!(
                     r#". "$2"; fixture_close_fds; exec 3<&0; "$0" start --unauthenticated --bind "$1" --log error --allow-net=127.0.0.1 "$3" >&2 3<&- & s=$!; "#,

@@ -13,7 +13,9 @@
 //! it on the same board left ([`unowned`]); then, after a look by another orchestrator that makes
 //! it one that stays (as the timings' looks make theirs), it files another and dispatches again.
 //! Each give is judged by its having been made ([`gave`]), never by who the board picked, which
-//! turns on the orchestrators earlier tests made stay.
+//! turns on the orchestrators earlier tests made stay. Last, a session holding no orchestrator role
+//! takes it on a third such task, so the read of the taker's roles that the limit on the open tasks
+//! an orchestrator holds makes ([`GAINING`]) is planned, and held to its holder's index alone.
 
 use crate::board::board;
 use crate::findings::{Finding, findings, reads_rows, whole_read};
@@ -33,7 +35,8 @@ pub fn bound(name: &str) -> Option<Value> {
     Some(match name {
         "me" => json!({"connected": NOW - 5.0 * 86_400.0, "left_at": null}),
         "connected" => json!(NOW - 5.0 * 86_400.0),
-        "slugs" | "open" | "waiting" => open,
+        // `mine`: the tasks a take's taker holds the orchestrator role on, read by its roles.
+        "slugs" | "open" | "waiting" | "mine" => open,
         "tasks" => json!([{"slug": generated::thread()}]),
         "orchestrators" => json!([[generated::thread(), generated::orchestrator()]]),
         // The unanswered lookup's answers below a task: the sequence its ask reads after.
@@ -171,6 +174,10 @@ fn plan_all(client: &Client, requests: &[Request]) -> BTreeMap<String, Planned> 
 /// A statement of the give pass's fence ([`symphony_board::Store::give_unowned`]): what the requests
 /// hold once the check's commands made a give.
 const GIVE_FENCE: &str = "type::record('task', $g.slug)";
+
+/// What a take of the orchestrator role reads of its taker for the limit on the open tasks it holds
+/// the role on, its slot counter beside its roles: in the request of that read alone.
+const GAINING: &str = "['slots', $handle]";
 
 /// The two reads of [`symphony_board::Store::questions_waiting`]: the questions to a person, by the
 /// recipient's index, and each one's thread after it, by its range.
@@ -341,6 +348,15 @@ fn every_query_a_write_a_recipient_or_a_tick_sends_is_planned_on_an_index() {
     );
     let to_second = gave(&board, &second);
     eprintln!("perf: the give passes gave {first} to {to_first}, then {second} to {to_second}");
+    // A take of the role, by a session holding it on no task, of one filed after the last pass,
+    // which no pass gives first: its read of the taker for the limit, then the rule's write.
+    let taken = unowned(&board, "taken");
+    let took = board.run(
+        &relay.addr,
+        &["role", &taken, "orchestrator", "--as", &writer],
+        "",
+    );
+    assert_eq!(took.code, 0, "{writer}'s take of {taken}: {}", took.err);
     let mut requests = board.first_looks.clone();
     requests.extend(relay.take());
     let planned = plan_all(&board.client(), &requests);
@@ -350,6 +366,23 @@ fn every_query_a_write_a_recipient_or_a_tick_sends_is_planned_on_an_index() {
             .any(|statement| statement.contains(GIVE_FENCE)),
         "the requests hold the give pass's fence"
     );
+    // The take reads the taker's roles by their holder's index alone: a condition on the role's
+    // kind beside it has the server read `role_role` too, every orchestrator role on the board,
+    // which is on an index and no finding.
+    let gaining: Vec<&Request> = (requests.iter())
+        .filter(|request| request.sql.contains(GAINING))
+        .collect();
+    assert!(!gaining.is_empty(), "the requests hold the take's read");
+    for request in gaining {
+        let roles = statements(&request.sql).into_iter();
+        for statement in roles.filter(|statement| statement.contains("FROM role")) {
+            let plan = &planned[&statement].plan;
+            assert!(
+                plan.contains("role_handle") && !plan.contains("role_role"),
+                "the take's read of its taker's roles by role_handle alone: {statement}\n{plan}"
+            );
+        }
+    }
     for read in QUESTIONS {
         assert!(
             planned.keys().any(|statement| statement.contains(read)),

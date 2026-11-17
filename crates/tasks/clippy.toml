@@ -54,14 +54,28 @@ reason = "RULES.md code/no-timed-waits: wait for the event itself, or pace it by
 path = "tokio::time::interval_at"
 reason = "RULES.md code/no-timed-waits: wait for the event itself, or pace it by a named helper (test_time::wait::until in a test)"
 
+# Two waits of the server's that a deadline bounds and nothing else ends but its stop, so each is a
+# sleep: `front::Shared::wait` wakes early only when the server stops, and `backstop::Backstop::wait`
+# (the watcher's check each `PERIOD`, for an event the watcher dropped) ends each `tick` with
+# `Wake::Idle` only so its loop can look whether it should stop. Each caller is kept in the baseline
+# until its stop and its hand-off wake it by message.
+[[disallowed-methods]]
+path = "symphony_server::front::Shared::wait"
+reason = "RULES.md code/no-timed-waits: a wait only the server's stop ends early is a sleep; wait for the event itself"
+
+[[disallowed-methods]]
+path = "symphony_server::backstop::Backstop::wait"
+reason = "RULES.md code/no-timed-waits: its tick is a look whether the loop should stop; have the stop wake the loop by message"
+
 # The board's own, below the workspace's settings above. Clippy reads the nearest clippy.toml alone,
 # so this crate's starts with symphony/clippy.toml whole (src/sys.rs's tests hold it to that).
 #
 # Every child the board starts is built by `sys::command` or `sys::command_with` (src/sys.rs), without
 # the session of the process that starts it (`sys::SESSION_VARS`). Clippy refuses any other
 # constructor, however its path is spelled, imported or renamed. A test target, or a library test
-# module, starts what it likes and says so: `#[expect(clippy::disallowed_methods, reason = "...")]`.
-# That one expectation covers the timers above as well, so a test target's sleeps are read in review.
+# module, starts what it likes through tests/support/children.rs (`Command::of`, `.cleared()`),
+# whose constructors alone carry `#[expect(clippy::disallowed_methods, reason = "...")]`, so
+# clippy still reads every test against the timers above.
 [[disallowed-methods]]
 path = "std::process::Command::new"
 reason = "a board child starts without its starter's session: sys::command, or sys::command_with in a caller's environment"

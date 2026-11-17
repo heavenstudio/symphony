@@ -26,7 +26,7 @@ describe("the waits between tries of a lost feed", () => {
 });
 
 describe("a failed read tried again by itself", () => {
-  /** `tryAgain` with its waits recorded rather than slept, `answers` reads before it is answered;
+  /** `tryAgain` with its waits recorded rather than waited, `answers` reads before it is answered;
    * `left` ends the page at that wait (1 for the first). */
   async function tried(answers: number, left = 0, signal = new AbortController()) {
     const waited: number[] = [];
@@ -37,9 +37,10 @@ describe("a failed read tried again by itself", () => {
         reads += 1;
       },
       signal.signal,
-      async (ms, given) => {
+      async (backoff, ended, given) => {
         expect(given).toBe(signal.signal);
-        waited.push(ms);
+        // The length the retry's wait would take: one backoff's, across every try.
+        waited.push(backoff.wait(ended));
         if (waited.length === left) signal.abort();
       },
     );

@@ -218,6 +218,27 @@ fn an_orchestrator_filing_at_the_limit_is_passed_over_for_one_under_it_or_the_ta
 // On SurrealDB alone until tools/board-pg-sessions-and-delivery: a session's beat (`Store::touch`)
 // has no PostgreSQL twin yet.
 #[test]
+fn one_filed_for_at_the_limit_is_named_as_passed_over_though_the_filer_is_given_the_task() {
+    let f = Fixture::empty();
+    let store = limited(&f, 2);
+    let (amber, cobalt) = (f.session("orchestrator"), f.session("orchestrator"));
+    orchestrating(&f, &store, &amber, "tools/a", 1);
+    orchestrating(&f, &store, &cobalt, "tools/c", 2);
+    settle(&f, &[&amber, &cobalt]);
+    // `--for` cobalt, at its limit: the board gives it to the one under it that stays, the filer,
+    // and the filer is still told why cobalt was passed over.
+    f.task_with(NewTask::new("tools/for", "For", &amber));
+    let filed = store
+        .give_filed_saying("tools/for", &amber, Some(&cobalt))
+        .unwrap();
+    assert_eq!(
+        (filed.orchestrator.as_deref(), filed.passed),
+        (Some(amber.as_str()), Some(at_limit(&cobalt, 2, 2)))
+    );
+    assert_eq!(orchestrators_of(&f, "tools/for"), [amber.as_str()]);
+}
+
+#[test]
 fn the_boards_give_fills_none_past_the_limit_and_a_waiting_task_is_any_takers() {
     let f = Fixture::new(Seed::default());
     let store = limited(&f, 2);

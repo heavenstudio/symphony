@@ -6,8 +6,9 @@
 //! - [`copied`]: the generated board is copied whole onto a store in the run's folder, on a server
 //!   the store's fixture starts as committed: its rows and its store, never a time.
 //! - [`plans`]: every query the board's commands on a per-write, per-recipient or per-tick path send
-//!   (a say, a claim, an inbox, the dispatch passes to every recipient, the `tasks api` calls land
-//!   makes, the pull digest and the agents view a recipient's look reads), recorded on their way to
+//!   (a say, a claim, a take of the orchestrator role, an inbox, the dispatch passes to every
+//!   recipient, the `tasks api` calls land makes, the pull digest and the agents view a recipient's
+//!   look reads), recorded on their way to
 //!   the server, is planned with no filtered scan of a whole table among message, delivery, role,
 //!   session and callback_state, and no subquery in a predicate, which the server runs again for
 //!   every row it tests; and so is every query the schema's events run in the write that fires
@@ -30,10 +31,9 @@
 //! ran `session WHERE handle IN (SELECT … FROM role)`, the role scan again for every session, 7 s a
 //! recipient. The suite is how a change to the board's queries shows what it costs at that scale.
 
-#![expect(
-    clippy::disallowed_methods,
-    reason = "a test starts its fixtures and stand-ins as it likes; the board's children are sys's"
-)]
+// How a test starts its own children ([`children::Child`]).
+#[path = "../support/children.rs"]
+mod children;
 
 #[path = "../store/common.rs"]
 #[allow(dead_code)]

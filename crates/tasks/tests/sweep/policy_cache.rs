@@ -1,5 +1,6 @@
 //! Native effective-ignore changes invalidate real saved positive and complete empty verdicts.
 
+use crate::children::Child as _;
 use crate::{Repo, cached, clean_cache, git, text, write};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -48,7 +49,7 @@ fn cli(r: &Repo) -> (String, usize) {
 
 /// The native control cannot refresh the index and accidentally invalidate an unrelated input.
 fn native(r: &Repo, tree: &Path) -> String {
-    let mut command = Command::new("git");
+    let mut command = Command::of("git");
     command
         .args([
             "-c",
@@ -59,7 +60,7 @@ fn native(r: &Repo, tree: &Path) -> String {
             "--untracked-files=all",
         ])
         .current_dir(tree)
-        .env_clear()
+        .cleared()
         .envs(r.vars())
         .env("GIT_OPTIONAL_LOCKS", "0");
     environment(&mut command);

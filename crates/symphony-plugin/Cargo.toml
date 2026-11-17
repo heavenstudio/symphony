@@ -35,3 +35,6 @@ serde_json = { workspace = true, features = ["raw_value", "float_roundtrip"] }
 # as the server does (docs/CHECKS.md): above all `arbitrary_precision`, under which serde's buffered
 # content loses a fraction. A dev-dependency's features never reach a plugin's build.
 serde_json = { workspace = true, features = ["arbitrary_precision", "float_roundtrip", "preserve_order", "raw_value"] }
+# The tests' waits on a condition, whose backstop only a stall reaches (RULES.md
+# `tests/no-test-fails-on-load`); published without it, as it names no version.
+test-time = { path = "../test-time" }

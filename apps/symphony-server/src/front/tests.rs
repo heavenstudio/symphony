@@ -124,8 +124,8 @@ fn leaving_the_server_scope_joins_its_owned_workers() {
         let (returned, stopped) = std::sync::mpsc::channel();
         let working = shared.clone();
         let worker = std::thread::spawn(move || {
-            // A timer far past the backstop: only the stop wakes it in time.
-            working.wait(Duration::from_secs(86_400));
+            // Only the stop wakes it.
+            working.wait_for_stop();
             entered.send(working.stopping()).unwrap();
             // Closing release also lets an early assertion unwind without stranding a worker.
             let _ = finish.recv();

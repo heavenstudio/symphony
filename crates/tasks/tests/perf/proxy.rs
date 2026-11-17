@@ -7,7 +7,6 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{Shutdown, TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
-use std::time::Duration;
 
 /// One request a client sent: its query text and its variables.
 #[derive(Clone, Debug)]
@@ -26,23 +25,25 @@ impl Proxy {
     /// A relay on a free local port to the server at `upstream`.
     pub fn to(upstream: &str) -> Proxy {
         let listener = TcpListener::bind("127.0.0.1:0").expect("the relay binds");
-        listener.set_nonblocking(true).expect("a nonblocking relay");
         let addr = listener.local_addr().unwrap().to_string();
         let sent = Arc::new(Mutex::new(Vec::new()));
         let stop = Arc::new(AtomicBool::new(false));
         let kept = Arc::clone(&sent);
         let stopped = Arc::clone(&stop);
         let upstream = upstream.to_string();
+        // Each connection as it comes; the drop's own connection wakes the accept to its stop.
         std::thread::spawn(move || {
-            while !stopped.load(Ordering::Relaxed) {
-                match listener.accept() {
-                    Ok((client, _)) => {
-                        let _ = client.set_nonblocking(false);
-                        let server = TcpStream::connect(&upstream).expect("the server answers");
-                        relay(client, server, Arc::clone(&kept));
-                    }
-                    Err(_) => std::thread::sleep(Duration::from_millis(2)),
+            for client in listener.incoming() {
+                if stopped.load(Ordering::Relaxed) {
+                    return;
                 }
+                let client = match client {
+                    Ok(client) => client,
+                    Err(why) if passing(&why) => continue,
+                    Err(why) => panic!("the relay's accept failed: {why}"),
+                };
+                let server = TcpStream::connect(&upstream).expect("the server answers");
+                relay(client, server, Arc::clone(&kept));
             }
         });
         Proxy { addr, sent, stop }
@@ -61,9 +62,20 @@ fn sent_so_far(sent: &Mutex<Vec<Request>>) -> MutexGuard<'_, Vec<Request>> {
     sent.lock().unwrap_or_else(|failed| failed.into_inner())
 }
 
+/// Whether an accept's failure is one that passes, so the next accept is made: a signal, or a
+/// connection its client dropped before it was taken.
+fn passing(why: &std::io::Error) -> bool {
+    matches!(
+        why.kind(),
+        std::io::ErrorKind::Interrupted | std::io::ErrorKind::ConnectionAborted
+    )
+}
+
 impl Drop for Proxy {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Relaxed);
+        // Wakes the accept, which then sees the stop.
+        let _ = TcpStream::connect(&self.addr);
     }
 }
 

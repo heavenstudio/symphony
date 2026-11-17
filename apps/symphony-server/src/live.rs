@@ -136,6 +136,11 @@ pub(crate) struct Hub {
     invalid: RwLock<BTreeMap<String, String>>,
     trees: RwLock<BTreeMap<String, PathBuf>>,
     tasks: Mutex<TaskState>,
+    /// What [`Hub::tasks_read`] answers: the board's last read, or why there is none, set where
+    /// `tasks` is, under it, and read without it. A board read holds `tasks` across its reads of
+    /// the board (`update_board`), so a slow board holds it for as long as it is slow; a reader of
+    /// this waits on none of that, and reads what `tasks` held before that read began.
+    listing: RwLock<Result<Arc<Tasks>, String>>,
     agents: Mutex<Option<symphony_api::Agents>>,
     machine_work: Mutex<machine_work::Sampler>,
     latest_message: Mutex<Option<i64>>,
@@ -260,6 +265,9 @@ pub(crate) type Connect = dyn Fn(&Path) -> Result<symphony_board::Store, String>
 /// its calls bound by one deadline from then, or a test's stand-in.
 pub(crate) type Panes = dyn Fn(&Path) -> Box<dyn symphony_board::launch::hc::Hc> + Send + Sync;
 
+/// Why the hub holds no board read before its first.
+const STARTING: &str = "the task board is starting";
+
 struct TaskState {
     /// Shared with the reads that take what they need of it, so none copies the whole board.
     last: Option<Arc<Tasks>>,
@@ -335,8 +343,9 @@ impl Hub {
             tasks: Mutex::new(TaskState {
                 last: None,
                 raw: None,
-                error: Some("the task board is starting".into()),
+                error: Some(STARTING.into()),
             }),
+            listing: RwLock::new(Err(STARTING.into())),
             agents: Mutex::new(None),
             machine_work: Mutex::new(machine_work::Sampler::new(
                 root,
@@ -468,15 +477,27 @@ impl Hub {
 
     /// The board's tasks and sessions as the last board read found them, shared rather than
     /// copied, or why there are none: the board cannot be read now, or has not been read yet.
+    /// It never waits on a board read under way (the hub's `listing`).
     pub(crate) fn tasks_read(&self) -> Result<Arc<Tasks>, String> {
-        let state = self.tasks.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(error) = &state.error {
-            return Err(error.clone());
-        }
-        state
-            .last
+        // A panic under this lock leaves at worst the read before, a whole value.
+        self.listing
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
             .clone()
-            .ok_or_else(|| "the task board is starting".into())
+    }
+
+    /// The board's last read, or why there is none, set as [`Hub::tasks_read`] answers it: called
+    /// with the task state held, where it changes, so the two never disagree once it is let go.
+    fn publish_listing(&self, read: Result<Arc<Tasks>, String>) {
+        *self.listing.write().unwrap_or_else(|e| e.into_inner()) = read;
+    }
+
+    /// The hub's task state held as a board read holds it across its reads of the board
+    /// (`update_board`), until what this returns drops: what a test holds to see that a reader
+    /// waits on none of it.
+    #[cfg(test)]
+    pub(crate) fn hold_board_read(&self) -> impl Sized + '_ {
+        self.tasks.lock().unwrap_or_else(|e| e.into_inner())
     }
 
     /// The store the page reads of the board share, opened by the first and kept, so the reads of a
@@ -1567,6 +1588,7 @@ impl Hub {
         held.last = Some(next.clone());
         held.raw = Some(snapshot);
         held.error = None;
+        self.publish_listing(Ok(Arc::clone(&next)));
         drop(held);
         let mut old_agents = self.agents.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(old) = &*old_agents {
@@ -2039,6 +2061,10 @@ fn documents(
     ticks_ended: impl Fn() -> bool,
 ) {
     loop {
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "no-timed-waits baseline: wakes every 250 ms with no event to look whether the hub drains, the ticks ended or a rescan was asked for, where a message from each is the event"
+        )]
         let wake = backstop.wait(recv, Duration::from_millis(250));
         if wake == Wake::Event {
             // Every event within QUIET of the first is taken with it, and the pass reads then:
@@ -2318,6 +2344,8 @@ mod asks;
 mod board_status;
 mod health;
 mod machine_work;
+
+pub(crate) use health::{Signal, Standing};
 mod owner_asks;
 mod reports;
 mod startup;

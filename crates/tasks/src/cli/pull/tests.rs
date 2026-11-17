@@ -85,9 +85,9 @@ fn an_orchestrator_at_the_limit_sees_it_in_the_header_and_past_it_is_told_by_how
     assert!(lines[0].ends_with(" orchestrates=66/16"), "{lines:?}");
     assert_eq!(
         lines[1],
-        "  over_limit keen orchestrates=66 limit=16 — 50 past it: it is given no task and takes \
-         none until it is under; let the unstarted ones go with `just tasks release SLUG --role \
-         orchestrator`"
+        "  over_limit keen orchestrates=66 limit=16 — 50 past it: it is given and takes no task \
+         but a red until it is under; let the unstarted ones go with `just tasks release SLUG \
+         --role orchestrator`"
     );
     let said = over.said();
     assert!(

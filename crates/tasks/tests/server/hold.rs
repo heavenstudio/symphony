@@ -5,6 +5,7 @@
 //! starts on it (`Home::replay`). Each case's store is a scratch folder of its own, and each server
 //! it signals is one it started there.
 
+use crate::children::Child as _;
 use crate::common::{Scratch, Told, gone, script, signal};
 use crate::home_fixture::{Unresponsive, healthy_server};
 use serde_json::json;
@@ -503,7 +504,7 @@ impl Older {
             let addr = reserved.to_string();
             let out = File::create(&log).unwrap();
             let mut older = Older(
-                Command::new(s.surreal())
+                Command::of(s.surreal())
                     .args([
                         "start",
                         "--unauthenticated",
@@ -524,20 +525,25 @@ impl Older {
                     .spawn()
                     .unwrap(),
             );
-            loop {
-                if older.0.try_wait().unwrap().is_some() {
-                    return Ok::<_, Infallible>(port::Start::Ended(
-                        std::fs::read_to_string(&log).unwrap(),
-                    ));
-                }
-                if healthy(&addr)
-                    && port::listens(older.0.id(), reserved, symphony_board::sys::output).unwrap()
-                {
-                    return Ok(port::Start::Up((older, addr)));
-                }
-                assert!(Instant::now() < until, "the older start never answered");
-                std::thread::sleep(Duration::from_millis(20));
+            // Up once it answers on its port; ended once it exits first.
+            let up = test_time::until(
+                "the older start answers or ends",
+                until.saturating_duration_since(Instant::now()),
+                || {
+                    if older.0.try_wait().unwrap().is_some() {
+                        return Some(false);
+                    }
+                    (healthy(&addr)
+                        && port::listens(older.0.id(), reserved, symphony_board::sys::output)
+                            .unwrap())
+                    .then_some(true)
+                },
+            )
+            .unwrap();
+            if up {
+                return Ok::<_, Infallible>(port::Start::Up((older, addr)));
             }
+            Ok(port::Start::Ended(std::fs::read_to_string(&log).unwrap()))
         })
         .unwrap_or_else(|why| panic!("the older start: {why:?}"));
         (older, addr)

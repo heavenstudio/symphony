@@ -4,6 +4,7 @@
 
 use super::common::Fixture;
 use super::quiet_callbacks::listen;
+use crate::children::Child as _;
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 use symphony_board::NewLaunch;
@@ -46,7 +47,7 @@ fn in_child_with_hc(name: &str) -> bool {
     let state = dir.join("hc.json");
     std::fs::write(&state, json!({"terminals": []}).to_string()).unwrap();
     assert!(
-        std::process::Command::new("git")
+        std::process::Command::of("git")
             .args(["init", "-q"])
             .arg(&dir)
             .status_locked()
@@ -54,7 +55,7 @@ fn in_child_with_hc(name: &str) -> bool {
             .success()
     );
     let output = symphony_board::sys::output(
-        Command::new(std::env::current_exe().unwrap())
+        Command::of(std::env::current_exe().unwrap())
             .args(["--exact", name, "--nocapture"])
             .current_dir(&dir)
             .env_remove("GIT_DIR")

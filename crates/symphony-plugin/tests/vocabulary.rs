@@ -5,11 +5,9 @@
 //! builds because every match on one below ends with `_`, which is all a plugin that lists them
 //! needs to keep building on a later minor, and a plugin makes them as before.
 
-// The words of a callout and of a card, which `vocabulary` does not name.
-use symphony_blocks::{CalloutKind, CardGroup, CardState, ThreadAuthor};
 use symphony_plugin::vocabulary::{
-    Block, ContainerKind, FieldValue, FigureSize, GateState, InlineKind, Media, Presentation, Span,
-    VectorKind, Viewer,
+    Block, CalloutKind, CardGroup, CardState, ContainerKind, FieldValue, FigureSize, GateState,
+    InlineKind, Media, Presentation, Span, ThreadAuthor, ThreadEntry, VectorKind, Verdict, Viewer,
 };
 use symphony_plugin::{Drawing, FieldKind, Reply};
 
@@ -253,6 +251,69 @@ fn a_plugin_that_matches_the_vocabulary_with_a_wildcard_arm_builds_and_makes_eve
         ],
         ["json", "file"]
     );
+}
+
+/// A card and a thread, made as a plugin's component makes them, by every word their fields carry,
+/// each named from `vocabulary` alone.
+#[test]
+fn a_plugin_makes_a_card_and_a_thread_from_the_words_vocabulary_names() {
+    let entry = ThreadEntry {
+        who: ThreadAuthor::Owner,
+        timestamp: Some("2026-11-17 09:00".into()),
+        verdict: Some("approved".into()),
+        blocks: vec![Block::Paragraph {
+            spans: vec![Span::Text { text: "Yes".into() }],
+        }],
+    };
+    let card = Block::Card {
+        slug: "kit-words".into(),
+        mark: CardState::Approved,
+        title: "The kit names every word".into(),
+        body: Vec::new(),
+        verdict: Verdict {
+            group: CardGroup::Resolved,
+            open: false,
+            posted: Some("2026-11-16".into()),
+            decided: Some("2026-11-17".into()),
+        },
+        thread: vec![entry.clone()],
+        line: None,
+        line_offset: None,
+        comparison: Vec::new(),
+    };
+    let thread = Block::Thread {
+        entries: vec![
+            entry,
+            ThreadEntry {
+                who: ThreadAuthor::Agent,
+                timestamp: None,
+                verdict: None,
+                blocks: Vec::new(),
+            },
+        ],
+    };
+    // Read back by their words, the kinds a plugin leaves to `_`.
+    let words = |block: &Block| -> Vec<&'static str> {
+        let who = |entries: &[ThreadEntry]| -> Vec<&'static str> {
+            entries.iter().map(|entry| entry.who.as_str()).collect()
+        };
+        match block {
+            Block::Card {
+                mark,
+                verdict,
+                thread,
+                ..
+            } => [mark.as_str(), verdict.group.as_str()]
+                .into_iter()
+                .chain(who(thread))
+                .collect(),
+            Block::Thread { entries } => who(entries),
+            _ => Vec::new(),
+        }
+    };
+    assert_eq!(words(&card), ["approved", "resolved", "owner"]);
+    assert_eq!(words(&thread), ["owner", "agent"]);
+    assert_eq!(words(&Block::Rule), Vec::<&str>::new());
 }
 
 /// The enums `source` defines, a `pub enum` line each (the one `vocabulary!` writes for each of

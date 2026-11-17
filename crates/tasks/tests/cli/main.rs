@@ -1,9 +1,8 @@
 //! The `tasks` command line over a real SurrealDB server: the store's tests' server, one per binary.
 
-#![expect(
-    clippy::disallowed_methods,
-    reason = "a test starts its fixtures and stand-ins as it likes; the board's children are sys's"
-)]
+// How a test starts its own children ([`children::Child`]).
+#[path = "../support/children.rs"]
+mod children;
 
 #[path = "../store/common.rs"]
 #[allow(dead_code)]
@@ -48,6 +47,7 @@ mod sweep;
 mod test_lanes;
 mod write_load;
 
+use crate::children::Child as _;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
@@ -212,7 +212,7 @@ pub fn scratch(name: &str) -> PathBuf {
 /// `git ARGS` in `dir`, as a committer named `t`, which must succeed.
 pub fn git(dir: &Path, args: &[&str]) {
     let done = symphony_board::sys::output(
-        symphony_board::sys::Command::new("git")
+        symphony_board::sys::Command::of("git")
             .args(["-c", "user.email=t@t", "-c", "user.name=t", "-C"])
             .arg(dir)
             .args(args),

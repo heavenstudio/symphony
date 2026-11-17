@@ -91,8 +91,19 @@ fn a_package_names_the_tab_and_sets_icon_tokens_stylesheet_and_layouts_under_the
     let named = view(&page);
     assert_eq!(
         (named.wordmark.as_str(), named.mark.as_str()),
-        ("Lantern <Works>", "look/icon.svg"),
-        "the header opens with the theme's own"
+        (
+            "Lantern <Works>",
+            format!(
+                "look/icon.svg?v={}",
+                symphony::assets::validator(&tree.path("look/icon.svg"))
+            )
+            .as_str()
+        ),
+        "the header opens with the theme's own, versioned as the tab's icon is"
+    );
+    assert!(
+        page.contains(&format!("href=\"/lantern/{}\"", named.mark)),
+        "{page}"
     );
     let tokens = format!("<style {THEME_MARK}>:root{{--primary:#a33;}}\n</style>");
     let sheet = "<link rel=\"stylesheet\" href=\"/lantern/look/look.css?v=";
@@ -128,6 +139,125 @@ fn a_changed_file_gets_a_new_version_and_a_missing_one_none() {
         versioned(&tree.root, "/x", "look/none.css"),
         "/x/look/none.css"
     );
+}
+
+/// What `url`, a path under the base `/lantern`, is answered with, asked with `headers`: its
+/// status, its `Cache-Control` and `ETag`, and its body.
+async fn served(root: &Path, url: &str, headers: &[(&str, &str)]) -> (u16, String, String, String) {
+    let path = url.strip_prefix("/lantern").expect("a path under the base");
+    let gate = crate::gate::Gate::new(
+        std::sync::Arc::new(|_| Ok(None)),
+        std::sync::Arc::new(std::time::Instant::now),
+    );
+    let shared = crate::front::Shared::project(1, 1234, root, None, gate, "/lantern");
+    let mut request = axum::http::Request::builder().uri(path);
+    for (name, value) in headers {
+        request = request.header(*name, *value);
+    }
+    let request = request.body(()).unwrap();
+    let file = path.split('?').next().unwrap();
+    let response = crate::media_files::answer(&shared, root, file, &request).await;
+    let said = |name| {
+        response
+            .headers()
+            .get(name)
+            .map_or("", |value| value.to_str().unwrap())
+            .to_string()
+    };
+    let (status, control, etag) = (
+        response.status().as_u16(),
+        said(axum::http::header::CACHE_CONTROL),
+        said(axum::http::header::ETAG),
+    );
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    (
+        status,
+        control,
+        etag,
+        String::from_utf8(body.to_vec()).unwrap(),
+    )
+}
+
+/// The theme files the page asks for, under the base: its stylesheet, its tab's icon and its
+/// header's icon, each with the version the shell gave it.
+fn theme_files(page: &str) -> [String; 3] {
+    let href = |open: &str| {
+        let at = page
+            .find(open)
+            .unwrap_or_else(|| panic!("{open} in {page}"))
+            + open.len();
+        page[at..at + page[at..].find('"').unwrap()].to_string()
+    };
+    [
+        href("<link rel=\"stylesheet\" href=\""),
+        href("<link rel=\"icon\" href=\""),
+        format!("/lantern/{}", view(page).mark),
+    ]
+}
+
+/// A theme file asked with the shell's own version is answered as one to keep for good; once it
+/// changes, the shell names it by another version, and a request with the old one is answered
+/// with the new bytes only to revalidate, never to keep. Asked with no version, it is revalidated.
+#[tokio::test]
+async fn a_theme_file_asked_with_the_shells_version_is_kept_until_it_changes() {
+    let tree = Tree::new();
+    let root = crate::testing::repository_holding(
+        &tree,
+        "lantern",
+        "symphony.toml",
+        "[project]\nname = \"Lantern\"\nid = \"lantern\"\n[theme]\nicon = \"look/icon.svg\"\n\
+         stylesheet = \"look/look.css\"\n",
+    );
+    tree.write("lantern/look/icon.svg", "<svg/>");
+    tree.write("lantern/look/look.css", "main{}");
+    let first = theme_files(&page(SHELL, &root, "/lantern", ""));
+    assert_eq!(
+        first[1], first[2],
+        "the header's icon is the tab's, under the one version"
+    );
+    for url in &first {
+        let (status, control, etag, _) = served(&root, url, &[]).await;
+        assert_eq!(
+            (status, control.as_str()),
+            (200, symphony::assets::KEEP),
+            "{url}"
+        );
+        assert_eq!(
+            format!("\"{}\"", &url[url.find("?v=").unwrap() + 3..]),
+            etag,
+            "{url}: the version is the file's validator"
+        );
+    }
+    tree.write("lantern/look/look.css", "main{color:red}");
+    let second = theme_files(&page(SHELL, &root, "/lantern", ""));
+    assert_ne!(first[0], second[0], "a changed file is named anew");
+    assert_eq!(first[1], second[1], "an unchanged one keeps its version");
+    let (status, control, etag, body) = served(&root, &first[0], &[]).await;
+    assert_eq!(
+        (status, control.as_str(), body.as_str()),
+        (200, symphony::assets::REVALIDATE, "main{color:red}"),
+        "the old version's request is not kept as the new bytes"
+    );
+    let (_, kept, new_etag, _) = served(&root, &second[0], &[]).await;
+    assert_eq!(
+        (kept.as_str(), new_etag.as_str()),
+        (symphony::assets::KEEP, etag.as_str())
+    );
+    let (status, control, plain_etag, _) = served(&root, "/lantern/look/look.css", &[]).await;
+    assert_eq!(
+        (status, control.as_str(), plain_etag.as_str()),
+        (200, symphony::assets::REVALIDATE, etag.as_str()),
+        "with no version it is revalidated by its tag"
+    );
+    let (status, _, _, body) = served(
+        &root,
+        "/lantern/look/look.css",
+        &[("If-None-Match", etag.as_str())],
+    )
+    .await;
+    assert_eq!((status, body.as_str()), (304, ""));
 }
 
 #[test]

@@ -432,27 +432,25 @@ impl Fixture {
             // Surreal emits that line before binding. Wait for an actual response, including under
             // instrumentation/load, before schema setup; a log message is not a listening socket,
             // and an answer counts only once this child itself listens on the port.
-            loop {
-                if database.0.try_wait().unwrap().is_some() {
-                    return Ok(Start::Ended(database_lines.said()));
-                }
-                if rpc::healthy(&board_address)
-                    && port::listens(server, reserved, sys::output).unwrap()
-                {
-                    return Ok(Start::Up((database, database_lines, board_address)));
-                }
-                let remaining = deadline.saturating_duration_since(Instant::now());
-                assert!(
-                    !remaining.is_zero(),
-                    "{}",
-                    stalled("the private database's answer to its health check")
-                );
-                #[expect(
-                    clippy::disallowed_methods,
-                    reason = "no-timed-waits baseline: a test looks again for its condition by hand, where test_time::wait::until is the helper"
-                )]
-                std::thread::sleep(Duration::from_millis(50).min(remaining));
-            }
+            // Up once it answers; ended once it exits first.
+            let up = test_time::until(
+                "the private database's answer to its health check",
+                deadline.saturating_duration_since(Instant::now()),
+                || {
+                    if database.0.try_wait().unwrap().is_some() {
+                        return Some(false);
+                    }
+                    (rpc::healthy(&board_address)
+                        && port::listens(server, reserved, sys::output).unwrap())
+                    .then_some(true)
+                },
+            )
+            .unwrap_or_else(|stall| panic!("{stall}"));
+            Ok(if up {
+                Start::Up((database, database_lines, board_address))
+            } else {
+                Start::Ended(database_lines.said())
+            })
         });
         let ((database, _database_lines, board_address), _) =
             started.unwrap_or_else(|why| panic!("private database exited before readiness: {why}"));

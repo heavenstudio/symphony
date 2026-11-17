@@ -341,6 +341,176 @@ fn a_failed_dispatch_pass_warns_until_a_minute_of_good_passes_and_the_record_say
 const DISPATCH_FAILING: &str = "The task board is unwell: its callback dispatch is failing, so \
                                 agents may not hear from it. Run “just tasks status” to see why.";
 
+/// The hour a recorder counted: its writes' p90 and its unanswered requests.
+fn hour(p90_ms: Option<f64>, failed: u64) -> Report {
+    use symphony_board::board_health::{QueryReport, WriteReport};
+    Report {
+        queries: QueryReport {
+            failed,
+            ..QueryReport::default()
+        },
+        writes: WriteReport {
+            p90_ms,
+            ..WriteReport::default()
+        },
+        ..Report::default()
+    }
+}
+
+/// A board's last read as the listing sends it: `unstarted` tasks waiting to start, and each
+/// orchestrator of an open task by its health.
+fn listing(unstarted: usize, orchestrators: &[&str]) -> symphony_api::Tasks {
+    symphony_api::Tasks {
+        version: String::new(),
+        tasks: Vec::new(),
+        sessions: Vec::new(),
+        orchestrators: (orchestrators.iter().enumerate())
+            .map(|(n, health)| symphony_api::Orchestrator {
+                handle: format!("orchestrator-{n}"),
+                health: (*health).into(),
+            })
+            .collect(),
+        unstarted,
+    }
+}
+
+#[test]
+fn a_board_is_slow_by_its_writes_p90_from_a_second_or_any_request_unanswered_said_with_its_figures()
+{
+    use super::health::slow;
+    assert_eq!(slow(&hour(None, 0)), None, "no write and none unanswered");
+    assert_eq!(slow(&hour(Some(999.9), 0)), None, "under a second");
+    assert_eq!(
+        slow(&hour(Some(1_000.0), 0)).as_deref(),
+        Some("Board slow (writes 1 s this hour)"),
+        "a second is slow"
+    );
+    assert_eq!(
+        slow(&hour(Some(1_499.0), 0)).as_deref(),
+        Some("Board slow (writes 1 s this hour)")
+    );
+    assert_eq!(
+        slow(&hour(Some(2_500.0), 0)).as_deref(),
+        Some("Board slow (writes 3 s this hour)"),
+        "to the nearest whole second, a half up"
+    );
+    assert_eq!(
+        slow(&hour(Some(300.0), 1)).as_deref(),
+        Some("Board slow (1 unanswered this hour)"),
+        "quick writes say no figure of theirs"
+    );
+    assert_eq!(
+        slow(&hour(None, 2)).as_deref(),
+        Some("Board slow (2 unanswered this hour)")
+    );
+    assert_eq!(
+        slow(&hour(Some(3_040.0), 48)).as_deref(),
+        Some("Board slow (writes 3 s, 48 unanswered this hour)")
+    );
+}
+
+#[test]
+fn work_waiting_to_start_lacks_an_orchestrator_until_one_is_live_and_a_stale_one_is_still_there() {
+    use super::health::unstaffed;
+    assert_eq!(unstaffed(&listing(0, &[])), None, "nothing waits to start");
+    assert_eq!(unstaffed(&listing(0, &["stale"])), None);
+    assert_eq!(unstaffed(&listing(3, &["live"])), None);
+    assert_eq!(
+        unstaffed(&listing(3, &["stale", "live", "lost"])),
+        None,
+        "one live is enough"
+    );
+    assert_eq!(
+        unstaffed(&listing(1, &["stale"])),
+        Some("orchestrator stale")
+    );
+    assert_eq!(
+        unstaffed(&listing(1, &["lost", "unknown"])),
+        Some("orchestrator stale"),
+        "one whose presence is not swept yet is still there"
+    );
+    assert_eq!(unstaffed(&listing(1, &[])), Some("no orchestrator"));
+    assert_eq!(
+        unstaffed(&listing(2, &["lost", "left"])),
+        Some("no orchestrator"),
+        "a lost or left one is not there"
+    );
+}
+
+#[test]
+fn a_board_not_unwell_is_amber_while_slow_or_unstaffed_in_one_line_and_green_otherwise() {
+    use super::health::{Signal, Standing, judged};
+    let green = Standing {
+        signal: Signal::Green,
+        line: String::new(),
+    };
+    assert_eq!(judged(&hour(None, 0), None), green, "nothing read yet");
+    assert_eq!(judged(&hour(Some(20.0), 0), Some(&listing(0, &[]))), green);
+    assert_eq!(green.unwell(), None);
+    let slow = judged(&hour(Some(3_000.0), 48), None);
+    assert_eq!(
+        (slow.signal, slow.line.as_str()),
+        (
+            Signal::Amber,
+            "Board slow (writes 3 s, 48 unanswered this hour)"
+        )
+    );
+    let unstaffed = judged(&hour(None, 0), Some(&listing(4, &[])));
+    assert_eq!(
+        (unstaffed.signal, unstaffed.unwell().as_deref()),
+        (Signal::Amber, Some("no orchestrator"))
+    );
+    let both = judged(&hour(Some(3_000.0), 48), Some(&listing(4, &["stale"])));
+    assert_eq!(
+        both.unwell().as_deref(),
+        Some("Board slow (writes 3 s, 48 unanswered this hour) · orchestrator stale")
+    );
+    for (signal, name, said) in [
+        (Signal::Green, "green", "well"),
+        (Signal::Amber, "amber", "slow or unstaffed"),
+        (Signal::Red, "red", "failing"),
+    ] {
+        assert_eq!((signal.name(), signal.said()), (name, said));
+    }
+}
+
+/// The hub's own judgement: red in its pages' words while they say the board is unwell, whatever
+/// else holds; amber or green by its recorder's hour otherwise.
+#[test]
+fn the_hubs_standing_is_red_in_its_pages_words_while_they_call_the_board_unwell() {
+    use super::health::Signal;
+    use std::panic::Location;
+    use symphony_board::board_health::{Query, QueryLog};
+    let tree = Tree::new();
+    let root = repository(&tree);
+    let clock = Clock::at(now());
+    let hub = hub(&root, &tree.path("symphony/tasks/health.json"), &clock);
+    assert_eq!(
+        (hub.standing().signal, hub.standing().unwell()),
+        (Signal::Green, None)
+    );
+    let log = Arc::new(QueryLog::default());
+    hub.health.reading(Arc::clone(&log));
+    log.record(Query {
+        at: clock.now(),
+        ms: 9_000.0,
+        source: Location::caller(),
+        write: false,
+        failed: true,
+    });
+    assert_eq!(
+        hub.standing().unwell().as_deref(),
+        Some("Board slow (1 unanswered this hour)")
+    );
+    hub.health
+        .dispatched(clock.now(), Err("the board did not answer"));
+    let red = hub.standing();
+    assert_eq!(
+        (red.signal, red.line.as_str()),
+        (Signal::Red, DISPATCH_FAILING)
+    );
+}
+
 #[test]
 fn the_notice_names_what_is_failing_and_nothing_while_the_board_is_well() {
     assert_eq!(super::health::notice([false, false]), "");

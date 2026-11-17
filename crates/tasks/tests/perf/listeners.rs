@@ -1,5 +1,6 @@
-//! The recipients' native channels: one Unix socket each, all accepted by one thread of this
-//! process, which reads each connection to its end on a thread of its own and keeps what it said.
+//! The recipients' native channels: one Unix socket each, each accepted by a thread of this process
+//! as its connections come, which reads each to its end on a thread of its own and keeps what it
+//! said.
 //! A delivery to any of them is a socket write, as to a live Claude session, so what a write costs
 //! is the board's, not a transport's.
 
@@ -22,39 +23,34 @@ impl Listeners {
     /// A socket in `dir` for each of `handles`, served from now on.
     pub fn new(dir: &Path, handles: &[String]) -> Listeners {
         let mut paths = BTreeMap::new();
-        let mut bound = Vec::new();
+        let said: Arc<Mutex<BTreeMap<String, Vec<String>>>> = Arc::default();
+        let stop = Arc::new(AtomicBool::new(false));
         let numbered = handles.iter().enumerate();
         for (n, handle) in numbered {
             let path = dir.join(format!("c{n}.sock"));
             let _ = std::fs::remove_file(&path);
             let listener = UnixListener::bind(&path).expect("a recipient's socket binds");
-            listener
-                .set_nonblocking(true)
-                .expect("a nonblocking socket");
             paths.insert(handle.clone(), path);
-            bound.push((handle.clone(), listener));
-        }
-        let said: Arc<Mutex<BTreeMap<String, Vec<String>>>> = Arc::default();
-        let stop = Arc::new(AtomicBool::new(false));
-        let (heard, stopped) = (Arc::clone(&said), Arc::clone(&stop));
-        std::thread::spawn(move || {
-            while !stopped.load(Ordering::Relaxed) {
-                let mut idle = true;
-                for (handle, listener) in &bound {
-                    while let Ok((stream, _)) = listener.accept() {
-                        idle = false;
-                        let (heard, handle) = (Arc::clone(&heard), handle.clone());
-                        std::thread::spawn(move || {
-                            let lines = read_frame(stream);
-                            (heard_so_far(&heard).entry(handle).or_default()).extend(lines);
-                        });
+            let (heard, stopped, handle) = (Arc::clone(&said), Arc::clone(&stop), handle.clone());
+            // Each connection as it comes; the drop's own connection wakes the accept to its stop.
+            std::thread::spawn(move || {
+                for stream in listener.incoming() {
+                    if stopped.load(Ordering::Relaxed) {
+                        return;
                     }
+                    let stream = match stream {
+                        Ok(stream) => stream,
+                        Err(why) if passing(&why) => continue,
+                        Err(why) => panic!("{handle}'s socket's accept failed: {why}"),
+                    };
+                    let (heard, handle) = (Arc::clone(&heard), handle.clone());
+                    std::thread::spawn(move || {
+                        let lines = read_frame(stream);
+                        (heard_so_far(&heard).entry(handle).or_default()).extend(lines);
+                    });
                 }
-                if idle {
-                    std::thread::sleep(Duration::from_millis(2));
-                }
-            }
-        });
+            });
+        }
         Listeners { paths, said, stop }
     }
 
@@ -84,9 +80,20 @@ impl Drop for Listeners {
         self.stop.store(true, Ordering::Relaxed);
         let sockets = self.paths.values();
         for path in sockets {
+            // Wakes its accept, which then sees the stop.
+            let _ = UnixStream::connect(path);
             let _ = std::fs::remove_file(path);
         }
     }
+}
+
+/// Whether an accept's failure is one that passes, so the next accept is made: a signal, or a
+/// connection its client dropped before it was taken.
+fn passing(why: &std::io::Error) -> bool {
+    matches!(
+        why.kind(),
+        std::io::ErrorKind::Interrupted | std::io::ErrorKind::ConnectionAborted
+    )
 }
 
 /// What every socket has been sent so far, by handle. A panic while it was held (a test's, reading

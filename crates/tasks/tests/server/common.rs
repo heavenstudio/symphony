@@ -5,6 +5,7 @@
 //! also ends every server if the test process is killed. A healthy occupier takes a port a server
 //! was told to bind, and answers there as a server would.
 
+use crate::children::Child as _;
 pub use crate::own_board::{
     GuardedSurreal, Repository, command_of, gone, parent_of, serves_data, signal, surreal,
 };
@@ -154,7 +155,7 @@ pub fn script(path: &Path, body: &str) -> PathBuf {
         &format!("#!/bin/sh\n[ $# -gt 0 ] || exit 0\n{body}\n"),
         false,
     );
-    let status = std::process::Command::new(path)
+    let status = std::process::Command::of(path)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
@@ -238,7 +239,7 @@ fn one_watchdog_ends_every_server_on_eof_even_with_inherited_high_writers() {
             |reserved| {
                 let addr = reserved.to_string();
                 let out = std::fs::File::create(&log).unwrap();
-                let mut command = Command::new(s.surreal());
+                let mut command = Command::of(s.surreal());
                 command
                     .args([
                         "start",
@@ -270,25 +271,31 @@ fn one_watchdog_ends_every_server_on_eof_even_with_inherited_high_writers() {
                     .push(command.pass_fd(inherited.as_raw_fd()).spawn().unwrap());
                 drop(inherited);
                 let server = servers.0.last_mut().unwrap();
-                loop {
-                    if server.try_wait().unwrap().is_some() {
-                        servers.0.pop();
-                        let said = std::fs::read_to_string(&log).unwrap();
-                        return Ok::<_, Infallible>(symphony_board::port::Start::Ended(said));
-                    }
-                    if symphony_board::rpc::healthy(&addr)
-                        && symphony_board::port::listens(
-                            server.id(),
-                            reserved,
-                            symphony_board::sys::output,
-                        )
-                        .unwrap()
-                    {
-                        return Ok(symphony_board::port::Start::Up(()));
-                    }
-                    assert!(Instant::now() < until, "server readiness: {addr}");
-                    std::thread::sleep(Duration::from_millis(20));
+                // Up once it answers on its port; ended once it exits first.
+                let up = test_time::until(
+                    format!("server readiness: {addr}"),
+                    until.saturating_duration_since(Instant::now()),
+                    || {
+                        if server.try_wait().unwrap().is_some() {
+                            return Some(false);
+                        }
+                        (symphony_board::rpc::healthy(&addr)
+                            && symphony_board::port::listens(
+                                server.id(),
+                                reserved,
+                                symphony_board::sys::output,
+                            )
+                            .unwrap())
+                        .then_some(true)
+                    },
+                )
+                .unwrap();
+                if up {
+                    return Ok::<_, Infallible>(symphony_board::port::Start::Up(()));
                 }
+                servers.0.pop();
+                let said = std::fs::read_to_string(&log).unwrap();
+                Ok(symphony_board::port::Start::Ended(said))
             },
         )
         .unwrap_or_else(|why| panic!("server {index}: {why}"));
@@ -322,7 +329,7 @@ fn one_watchdog_ends_every_server_on_eof_even_with_inherited_high_writers() {
     let late_log = s.dir.join("late.log");
     let out = std::fs::File::create(&late_log).unwrap();
     servers.0.push(
-        Command::new(s.surreal())
+        Command::of(s.surreal())
             .args([
                 "start",
                 "--unauthenticated",
@@ -365,7 +372,7 @@ fn kept_folders_of_ended_runs_are_pruned_to_the_newest() {
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(&root).unwrap();
     let ended = || {
-        let mut child = Command::new("/usr/bin/true").spawn().unwrap();
+        let mut child = Command::of("/usr/bin/true").spawn().unwrap();
         child.wait().unwrap();
         child.id()
     };
@@ -377,9 +384,15 @@ fn kept_folders_of_ended_runs_are_pruned_to_the_newest() {
         format!("server-{}-newest", ended()),
         "server-runs".to_string(),
     ];
-    for name in &names {
+    // Each folder a second newer than the one before, set rather than waited for.
+    let made = std::time::SystemTime::now() - Duration::from_secs(60);
+    for (at, name) in names.iter().enumerate() {
         std::fs::create_dir_all(root.join(name)).unwrap();
-        std::thread::sleep(Duration::from_millis(20));
+        let seconds = Duration::from_secs(u64::try_from(at).unwrap());
+        std::fs::File::open(root.join(name))
+            .unwrap()
+            .set_modified(made + seconds)
+            .unwrap();
     }
     let file = format!("server-{}-file", ended());
     std::fs::write(root.join(&file), "").unwrap();

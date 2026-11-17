@@ -11,8 +11,9 @@
 //! icons). A URL relative to the page keeps its form (a branch's page loads its own worktree's file) and is
 //! only resolved against the page to find the file. A link to open (`<a href>`), an outside URL, a URL
 //! with a query of its own and a file that does not exist are left as they are, and a thumbnail is
-//! already named by its token. [`cache_headers`] is the answer's side: a request naming the current
-//! validator may be kept for good, any other is revalidated (`ETag`, answered 304 when it matches).
+//! already named by its token. [`versioned`] names one path of the site the same way, as the shell's
+//! theme files are. [`cache_headers`] is the answer's side: a request naming the current validator
+//! may be kept for good, any other is revalidated (`ETag`, answered 304 when it matches).
 
 use std::collections::BTreeMap;
 use std::os::unix::fs::MetadataExt;
@@ -127,6 +128,18 @@ pub fn bust(
         })
         .into_owned();
     (out, files)
+}
+
+/// `url`, a path of the project at `root`'s site (`/look/look.css`), with the validator of the file
+/// the server answers it with as its `v`, the app's own under `/static/` being in `tools/static`:
+/// the answer to it is kept for good ([`cache_headers`]) until the file changes, which names it
+/// anew. A path no file answers stays as it is, and a fragment stays after the version.
+pub fn versioned(url: &str, root: &Path) -> String {
+    let Some(file) = local_file(url, root, &root.join("tools/static"), "/") else {
+        return url.to_string();
+    };
+    let (path, fragment) = url.find('#').map_or((url, ""), |at| url.split_at(at));
+    format!("{path}?v={}{fragment}", validator(&file))
 }
 
 /// The `v` of a query string.

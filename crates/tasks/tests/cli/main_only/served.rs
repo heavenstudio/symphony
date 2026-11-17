@@ -4,6 +4,7 @@
 //! original's default branch.
 
 use super::{COPY, Held, Live, OWN, TASKS, as_copy, before, refused};
+use crate::children::Child as _;
 use crate::{Ran, git};
 use std::path::Path;
 use symphony_board::live::SOURCE;
@@ -40,7 +41,7 @@ fn an_address_reaches_the_board_its_server_serves_from_any_folder() {
     // A copy of the repository, its server record the original's, its default branch committing
     // this build's source: the board is the original's, judged by the original's default branch.
     let copy = live.base.join("copy");
-    let done = std::process::Command::new("cp")
+    let done = std::process::Command::of("cp")
         .arg("-R")
         .arg(&live.main)
         .arg(&copy)

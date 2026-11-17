@@ -1,5 +1,6 @@
 //! The legacy monitor's terminal-watch controls; the parent owns the existing private harness.
 use super::*;
+use crate::children::Child as _;
 
 /// `launched_child`'s terminal, `t1`, as hc keeps it.
 fn child_pane(status: &str) -> Value {
@@ -147,11 +148,11 @@ fn inbox_rows(board: &Store, handle: &str) -> Vec<Value> {
 }
 
 fn inbox_subprocess(monitor: &Monitor, actor: &str) -> String {
-    let mut command = sys::Command::new(env!("CARGO_BIN_EXE_tasks"));
+    let mut command = sys::Command::of(env!("CARGO_BIN_EXE_tasks"));
     command
         .args(["inbox", "--as", actor])
         .current_dir(&monitor.repo)
-        .env_clear()
+        .cleared()
         .envs(monitor.at().env.vars)
         .env("TASKS_SWEEP", "off")
         .env("TASKS_DISPATCH", "inline")

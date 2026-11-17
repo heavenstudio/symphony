@@ -190,9 +190,12 @@ FOR $slug IN $unmarks {{
 }
 
 /// What `Store::gaining` reads of `$handle`: its slot counter, and the status and red mark of each
-/// task it holds the orchestrator role on, by `role_handle` and then by id.
+/// task it holds the orchestrator role on: its roles read through the index of a role's holder
+/// alone and narrowed after, as a leave reads them (a condition on the role's kind as well has the
+/// server read `role_role` beside it, every orchestrator role on the board), then each task by id.
 pub(in crate::store) const GAINING: &str =
-    "LET $mine = (SELECT VALUE slug FROM role WHERE handle = $handle AND role = 'orchestrator');
+    "LET $mine = (SELECT slug, role FROM role WHERE handle = $handle)
+    .filter(|$r| $r.role = 'orchestrator').map(|$r| $r.slug);
 RETURN {
     last: (SELECT VALUE last FROM ONLY type::record('counter', ['slots', $handle])) ?? 0,
     tasks: (SELECT status, fields._board.red AS red FROM $mine.map(|$s| type::record('task', $s))),

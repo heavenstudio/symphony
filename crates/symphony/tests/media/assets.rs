@@ -3,7 +3,7 @@
 
 use std::path::Path;
 
-use symphony::assets::{KEEP, REVALIDATE, bust, cache_headers, local_file, validator};
+use symphony::assets::{KEEP, REVALIDATE, bust, cache_headers, local_file, validator, versioned};
 
 use super::{Tree, png};
 
@@ -155,6 +155,78 @@ fn a_request_naming_the_current_validator_may_be_kept_for_good() {
     assert!(
         control == KEEP && control.contains("immutable"),
         "{control}"
+    );
+}
+
+/// The `v` of `url`, which [`versioned`] gave it.
+fn version(url: &str) -> &str {
+    let at = url
+        .find("?v=")
+        .unwrap_or_else(|| panic!("no version in {url}"))
+        + "?v=".len();
+    url[at..].split('#').next().unwrap()
+}
+
+#[test]
+fn a_path_is_versioned_by_the_validator_its_answer_is_kept_for_good_under() {
+    let tree = project();
+    tree.write("look/look.css", "main{}");
+    let url = versioned("/look/look.css", &tree.root);
+    assert_eq!(
+        url,
+        format!("/look/look.css?v={}", v(&tree, "look/look.css"))
+    );
+    let (etag, control) =
+        cache_headers(&tree.path("look/look.css"), &format!("v={}", version(&url)));
+    assert_eq!((etag, control), (format!("\"{}\"", version(&url)), KEEP));
+    tree.write("look/look.css", "main{color:red}");
+    let changed = versioned("/look/look.css", &tree.root);
+    assert_ne!(changed, url, "a changed file is named anew");
+    let (_, control) = cache_headers(&tree.path("look/look.css"), &format!("v={}", version(&url)));
+    assert_eq!(control, REVALIDATE, "the old version is no longer kept");
+}
+
+#[test]
+fn a_path_names_the_file_the_server_answers_it_with() {
+    let tree = project();
+    tree.write("tools/static/app.css", "a{}");
+    tree.write("manual/look.css", "b{}");
+    assert_eq!(
+        versioned("/static/app.css", &tree.root),
+        format!("/static/app.css?v={}", v(&tree, "tools/static/app.css")),
+        "the app's own files are in tools/static"
+    );
+    assert_eq!(
+        versioned("/static/live.js", &tree.root),
+        "/static/live.js",
+        "a static/ folder at the root answers no /static/ path"
+    );
+    tree.write(
+        "symphony.toml",
+        "[[entrypoints]]\nurl = \"/guide/\"\nfolder = \"manual\"\n",
+    );
+    assert_eq!(
+        versioned("/guide/look.css", &tree.root),
+        format!("/guide/look.css?v={}", v(&tree, "manual/look.css")),
+        "a route names a file of the folder its entrypoint serves"
+    );
+}
+
+#[test]
+fn a_path_no_file_answers_stays_as_it_is_and_a_fragment_after_the_version() {
+    let tree = project();
+    for url in [
+        "/look/gone.css",
+        "/docs",
+        "/../secret.css",
+        "/artifacts/x.png?w=2",
+        "https://example.com/x.css",
+    ] {
+        assert_eq!(versioned(url, &tree.root), url);
+    }
+    assert_eq!(
+        versioned("/artifacts/x.png#a", &tree.root),
+        format!("/artifacts/x.png?v={}#a", v(&tree, "artifacts/x.png"))
     );
 }
 

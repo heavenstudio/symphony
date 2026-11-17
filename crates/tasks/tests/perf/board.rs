@@ -6,6 +6,7 @@
 //! recipient take most of the suite's time. Each test holds it while it runs, so a timing never
 //! shares the server with another test's commands.
 
+use crate::children::Child as _;
 use crate::cpu;
 use crate::generated::{NOW, dump, ready, recipients, thread, writer};
 use crate::listeners::Listeners;
@@ -255,10 +256,10 @@ impl Board {
     /// own and what the board's server took for it, from quiet to quiet again ([`Board::bill`]).
     pub fn run(&self, server: &str, args: &[&str], input: &str) -> Ran {
         use std::io::Write as _;
-        let mut command = Command::new(program());
+        let mut command = Command::of(program());
         command
             .args(args)
-            .env_clear()
+            .cleared()
             .env("PATH", std::env::var_os("PATH").unwrap_or_default())
             .env("HOME", &self.dir)
             .env("TASKS_SERVER", server)
