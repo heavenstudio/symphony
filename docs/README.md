@@ -30,6 +30,8 @@ the evidence behind decisions are under [Design and history](#design-and-history
 
 ## Development and contracts
 
+- [Workflow definitions](WORKFLOW.md) — the additive candidate format, validation and wire
+  records; custom workflow activation remains unavailable.
 - [Checks](CHECKS.md) — what a task in this repository proves before review, and the release run's
   full verification.
 - [Plugin protocol](PLUGIN_PROTOCOL.md) — a plugin answering from a process of its own: the
