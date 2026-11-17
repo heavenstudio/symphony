@@ -448,10 +448,15 @@ applied to it again; a part is read once more only where the store cannot tell w
 opened, or the events it would need are no longer among the 128 kept); and when the feed opens
 again, only the parts answered at another version than it opens from are read (`since`).
 `LiveTask` (`src/task-live.ts`, on `live.tsx`'s `keepBoard`, whose `views.read` gives the board's
-loop nothing to wait for) hears the feed into the store and reads again the parts an event names
-without carrying: the gates for a verdict, a card in a document the task links, a new tip of
-their branch or a run of the task's; the offer, the gates and the timeline when the task itself
-changed. What no key names stays the page's own: the thread's earlier pages and its catch-up
+loop nothing to wait for) hears the feed into the store, each event with the page as it was drawn
+when it came (`TaskEvent`), and each part reads itself again, through its `hear`, for what an
+event newer than its answer names without carrying: the gates for a verdict, a card in a
+document the task links, a new tip of their branch or a run of the task's (`namesGates`, the
+links and the run told by the page as the event found it); the offer, the gates and the timeline
+when the task itself changed. A part whose read failed offers its retry (the gates' Retry, the
+thread's Load messages, which nothing offers while its first read is out), and says it reads
+while a read is out after the failed one, the store's own or the reader's (`Shown.retrying`).
+What no key names stays the page's own: the thread's earlier pages and its catch-up
 after a gap, and the subtasks, read into the page as their section nears the screen. Its guards
 are `src/task-read.ts`.
 

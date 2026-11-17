@@ -21,6 +21,8 @@ export const WORDS = {
   reading: "Reading the gates…",
   slow: "The gates took too long to answer and were given up on. The rest of the page still works.",
   retry: "Retry",
+  /** The retry while a read is out after the last failed. */
+  retrying: "Retrying…",
   waitsOn: "waits on ",
   /** Before the last name the pill says, and before each other but the first. */
   and: " and ",

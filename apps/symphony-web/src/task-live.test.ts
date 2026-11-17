@@ -11,6 +11,7 @@ import {
   hearThread,
   LiveTask,
   linksCard,
+  namesGates,
   offerPart,
   pageFields,
   pagePart,
@@ -306,6 +307,72 @@ describe("the branch a task's gates follow", () => {
     expect(gatesBranch("tools/x", ["tools/x", "feature/x"])).toBe("feature/x");
     expect(gatesBranch("tools/y", ["tools/x", "feature/x"])).toBe("tools/y");
     expect(gatesBranch("tools/x", null)).toBe("tools/x");
+  });
+});
+
+describe("what changes a task's gates", () => {
+  /** The changes of a feed event, each a region and its data, as the page reads them. */
+  const changes = (...given: [string, unknown][]) => readChanges(event(...given)) as Change[];
+  const running = aWork([
+    aMachine("m", [anOperation("m", "1", "test", "running", { task: "w/a" })]),
+  ]);
+  const page = aPage(aTask("w/a", { links: ["docs/X.md"] }), [], { machine_work: running });
+  const answered = { ...GATES, branch: "feature/a" };
+  /** Whether the event of `given` names the gates of `w/a` answered as `gates` (none before an
+   * answer), on `on`. */
+  const names = (
+    given: [string, unknown][],
+    gates: typeof GATES | null = answered,
+    on: TaskPage | null = page,
+  ) => namesGates("w/a", gates ?? undefined, { changes: changes(...given), page: on });
+
+  it("is the task itself, a verdict on it, and a new tip of the branch they were answered for", () => {
+    expect(names([["task", { key: "w/a", value: aTask("w/a") }]])).toBe(true);
+    expect(names([["task", { key: "w/a", removed: true }]])).toBe(true);
+    expect(names([["task-fields", change("w/a", { title: "T" })]])).toBe(true);
+    expect(names([["task-fields", change("w/b", { title: "T" })]])).toBe(false);
+    expect(names([["task", { key: "w/b", value: aTask("w/b") }]])).toBe(false);
+    expect(names([["message", anEntry(9, "w/a", "amber", "verdict").message]])).toBe(true);
+    expect(names([["message", anEntry(9, "w/a").message]]), "a plain post").toBe(false);
+    expect(names([["message", anEntry(9, "w/b", "amber", "verdict").message]])).toBe(false);
+    expect(names([["branches", ["feature/a"]]])).toBe(true);
+    expect(names([["branches", ["w/a"]]]), "not the branch they were answered for").toBe(false);
+    // Before an answer, or one that names no branch, they follow the task's slug.
+    expect(names([["branches", ["w/a"]]], null)).toBe(true);
+    expect(names([["branches", ["w/a"]]], { ...GATES, branch: "" })).toBe(true);
+    expect(names([["branches", ["feature/a"]]], null)).toBe(false);
+  });
+
+  it("is a card in a document the task links, and a run of its moved, as the page stood", () => {
+    expect(names([["pending", { key: "/docs/X.md#c" }]])).toBe(true);
+    expect(names([["pending", { key: "/docs/Y.md#c" }]])).toBe(false);
+    expect(names([["pending", {}]]), "a card no key names").toBe(false);
+    // The page's own work before the event: the same is no move, another is.
+    expect(names([["machine-work", running]])).toBe(false);
+    expect(names([["machine-work", aWork([])]])).toBe(true);
+    expect(names([["machine-work", running]], answered, aPage())).toBe(true);
+    // With no page drawn when it came, neither can be told.
+    expect(names([["pending", { key: "/docs/X.md#c" }]], answered, null)).toBe(false);
+    expect(names([["machine-work", aWork([])]], answered, null)).toBe(false);
+  });
+
+  it("is none of the rest, and any one change of several", () => {
+    expect(names([["session", { key: "amber", value: { health: "stale" } }]])).toBe(false);
+    expect(names([["tasks-status", { available: true }]])).toBe(false);
+    expect(names([])).toBe(false);
+    expect(
+      names([
+        ["message", anEntry(9, "w/a").message],
+        ["branches", ["feature/a"]],
+      ]),
+    ).toBe(true);
+  });
+
+  it("asks the gates' part to read again, the answer shown meanwhile", () => {
+    const part = gatesPart("", "w/a");
+    const event = { changes: changes(["branches", ["feature/a"]]), page };
+    expect(part.hear?.(answered, event)).toEqual({ value: answered, again: true });
+    expect(part.hear?.(answered, { ...event, changes: changes(["branches", ["x"]]) })).toBeNull();
   });
 });
 
@@ -1289,6 +1356,40 @@ describe("a feed event on a task's page", () => {
     await pass();
     expect(task.page()?.machine_work).toEqual(work);
     expect(urls(asked)).toEqual([GATES_URL]);
+  });
+
+  it("reads the gates no more for an event their answer already holds", async () => {
+    const { task, asked } = await shown();
+    // The gates were answered at version 1: each of these is in that answer.
+    task.heard({
+      ...event(["message", anEntry(9, "w/a", "amber", "verdict").message]),
+      version: 1,
+    });
+    task.heard({ ...event(["branches", ["feature/a"]]), version: 0 });
+    task.heard({ ...event(["pending", { key: "/docs/X.md#c" }]), version: 1 });
+    await pass();
+    expect(asked).toEqual([]);
+    task.heard(next(["branches", ["feature/a"]]));
+    await pass();
+    expect(urls(asked)).toEqual([GATES_URL]);
+  });
+
+  it("reads the gates again when an answer read while their branch moved is older than the move", async () => {
+    const reply = later<Response>();
+    const { task, asked } = live(serves((url) => (url === GATES_URL ? reply.promise : null)));
+    task.open();
+    task.parts.open(gatesPart("", "w/a"));
+    await pass();
+    asked.length = 0;
+    // Before their answer they follow the slug: the branch they will name moves meanwhile.
+    task.heard(next(["branches", ["feature/a"]]));
+    await pass();
+    expect(asked).toEqual([]);
+    reply.settle(answer(200, { ...GATES, branch: "feature/a" }, "", version - 1));
+    await pass();
+    // Judged on that answer, the move is theirs and after it: read once more.
+    expect(urls(asked)).toEqual([GATES_URL]);
+    expect(task.parts.shown(gatesPart("", "w/a")).value?.branch).toBe("feature/a");
   });
 
   it("says a holder's health on every role it holds", async () => {

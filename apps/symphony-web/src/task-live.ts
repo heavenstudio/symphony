@@ -6,12 +6,13 @@
 // another's read (docs/analysis/components-draw-when-their-data-arrives.md).
 //
 // The board's feed (live.tsx's `keepBoard`, which reads the board, follows its feed and starts
-// again when the stream is lost) is heard one event at a time: the store applies it to the page
-// and the thread it is newer than, and this page reads again the parts it names without carrying
-// (the gates, the offer, the timeline). A reconnect reads again only the parts answered at another
-// version than the one the feed opens from. What stays the page's own is what no key names: the
-// thread's earlier pages and its catch-up after a gap, and the subtasks, read into the page as
-// their section nears the screen.
+// again when the stream is lost) is heard one event at a time, with the page as it stood when it
+// came: the store gives it to each part it is newer than, which applies it (the page, the thread)
+// or reads itself again for what it names without carrying (the gates, the offer, the timeline),
+// and drops it for a part whose answer already holds it. A reconnect reads again only the parts
+// answered at another version than the one the feed opens from. What stays the page's own is what
+// no key names: the thread's earlier pages and its catch-up after a gap, and the subtasks, read
+// into the page as their section nears the screen.
 
 import { flushSync } from "react-dom";
 import { type Freshness, PAGE, shown, THREAD, taskItem, visitLater } from "./cache";
@@ -190,8 +191,15 @@ export function readChanges(value: unknown): Change[] | null {
   return read;
 }
 
-/** A feed event as a task's page hears it: its changes, read whole. */
-export type TaskEvent = Change[];
+/**
+ * A feed event as a task's page hears it: its changes, read whole, and the task's page as the page
+ * drew it when the event came (none before it had one), which says what of them names the gates.
+ * The store keeps it so, and judges it the same way on an answer read while it came.
+ */
+export interface TaskEvent {
+  changes: Change[];
+  page: TaskPage | null;
+}
 
 /** `slug` as a read's query names it. */
 const named = (slug: string) => encodeURIComponent(slug);
@@ -206,7 +214,7 @@ const named = (slug: string) => encodeURIComponent(slug);
 export function hearPage(
   slug: string,
   page: TaskPage | undefined,
-  changes: TaskEvent,
+  changes: readonly Change[],
 ): Heard<TaskPage> | null {
   let next = page;
   let again = false;
@@ -284,7 +292,7 @@ export function pagePart(scope: string, slug: string): Part<TaskPage, TaskEvent>
       held !== undefined && held.children.length > 0
         ? { ...answer, children: held.children }
         : answer,
-    hear: (page, changes) => hearPage(slug, page, changes),
+    hear: (page, event) => hearPage(slug, page, event.changes),
   };
 }
 
@@ -321,7 +329,7 @@ export function rejoined(answer: Thread, held: Thread): Thread {
 export function hearThread(
   slug: string,
   thread: Thread | undefined,
-  changes: TaskEvent,
+  changes: readonly Change[],
 ): Heard<Thread> | null {
   if (thread === undefined) return null;
   const held = new Set(ids(thread.entries));
@@ -351,22 +359,59 @@ export function threadPart(scope: string, slug: string): Part<Thread, TaskEvent>
     // Over this device's copy the answer stands alone: the store applies the feed's messages
     // since to it again.
     merge: (answer, held, fresh) => (fresh && held !== undefined ? rejoined(answer, held) : answer),
-    hear: (thread, changes) => hearThread(slug, thread, changes),
+    hear: (thread, event) => hearThread(slug, thread, event.changes),
   };
 }
 
-/** The gates of the task `slug` (gates.tsx draws them); the server's 404 is a task nothing gates. */
+/**
+ * Whether `event` may change the gates of the task `slug`, answered as `gates` (none before an
+ * answer): the task itself changed, a verdict on it came, a card came, changed or went in a
+ * document it links, the branch they were answered for (`gatesBranch`) has a new tip, or one of
+ * its builds or tests started, moved on or ended. What it links and the machine work it had are
+ * the page's as it stood when the event came (`TaskEvent.page`).
+ */
+export function namesGates(slug: string, gates: TaskGates | undefined, event: TaskEvent): boolean {
+  const { page } = event;
+  // Its part's answer is the task's, whatever slug it names.
+  const branch = gatesBranch(
+    slug,
+    gates === undefined || gates.branch === "" ? null : [slug, gates.branch],
+  );
+  return event.changes.some((change) => {
+    switch (change.region) {
+      case "task":
+      case "task-fields":
+        return change.change.key === slug;
+      case "message":
+        return change.entry.message.slug === slug && change.entry.message.kind === "verdict";
+      case "pending":
+        return change.key !== null && page !== null && linksCard(page.task.links, change.key);
+      case "branches":
+        return change.moved.includes(branch);
+      case "machine-work":
+        return page !== null && workOf(page.machine_work, slug) !== workOf(change.work, slug);
+      default:
+        return false;
+    }
+  });
+}
+
+/**
+ * The gates of the task `slug` (gates.tsx draws them); the server's 404 is a task nothing gates.
+ * An event that may change them (`namesGates`) reads them again, the answer shown meanwhile.
+ */
 export function gatesPart(scope: string, slug: string): Part<TaskGates, TaskEvent> {
   return {
     key: `gates ${slug}`,
     url: scoped(scope, `${TASK_GATES_PATH}?slug=${named(slug)}`),
     read: readTaskGates,
     unreadable: WORDS.unreadable,
+    hear: (gates, event) => (namesGates(slug, gates, event) ? { value: gates, again: true } : null),
   };
 }
 
 /** Whether `changes` change the task `slug` itself: its record, or fields of it. */
-export function changesTask(slug: string, changes: TaskEvent): boolean {
+export function changesTask(slug: string, changes: readonly Change[]): boolean {
   return changes.some(
     (change) =>
       (change.region === "task" || change.region === "task-fields") && change.change.key === slug,
@@ -384,8 +429,8 @@ export function offerPart(scope: string, slug: string): Part<TaskOffer, TaskEven
     url: scoped(scope, `/api/task-offer?slug=${named(slug)}`),
     read: readOffer,
     unreadable: "The task's offer is not readable",
-    hear: (offer, changes) =>
-      changesTask(slug, changes)
+    hear: (offer, event) =>
+      changesTask(slug, event.changes)
         ? {
             value:
               offer === undefined || offer.payload === null ? offer : { ...offer, payload: null },
@@ -405,7 +450,7 @@ export function timelinePart(scope: string, slug: string): Part<unknown, TaskEve
     url: scoped(scope, `${TASK_TIMELINE_PATH}?slug=${named(slug)}`),
     read: (value) => value ?? null,
     // The task's own change moves its timeline: read again, the one shown left meanwhile.
-    hear: (value, changes) => (changesTask(slug, changes) ? { value, again: true } : null),
+    hear: (value, event) => (changesTask(slug, event.changes) ? { value, again: true } : null),
   };
 }
 
@@ -585,9 +630,9 @@ export class LiveTask {
   }
 
   /**
-   * One feed event: held for the reads still out and applied to the page and the thread by the
-   * store, and the parts it names without carrying read again. False for one the page cannot
-   * read, which loses the stream.
+   * One feed event: held for the reads still out and applied to each part it is newer than by the
+   * store, each part reading itself again for what it names without carrying (its `hear`). False
+   * for one the page cannot read, which loses the stream.
    */
   heard(value: unknown): boolean {
     const changes = readChanges(value);
@@ -595,53 +640,24 @@ export class LiveTask {
     if (changes === null || typeof version !== "number") return false;
     holdPlace(HELD_ROWS);
     const { slug } = this;
-    const before = this.page();
-    const answeredFor = this.parts.shown(gatesPart(this.scope, slug)).value?.branch ?? "";
-    let gates = false;
-    let own = false;
+    const page = this.page();
     let notice = this.notice;
     for (const change of changes) {
-      switch (change.region) {
-        case "task":
-          own ||= change.change.key === slug;
-          break;
-        case "task-fields": {
-          const { key, fields } = change.change;
-          own ||= key === slug;
-          const listed = before?.children.some((child) => child.slug === key) ?? false;
-          this.childCame ||= (fields.parent ?? null) === slug && !listed;
-          break;
-        }
-        case "message":
-          gates ||= change.entry.message.slug === slug && change.entry.message.kind === "verdict";
-          break;
-        // A card that came, changed or went: the owner gate of a task that links its document.
-        case "pending":
-          gates ||=
-            change.key !== null && before !== null && linksCard(before.task.links, change.key);
-          break;
-        case "branches":
-          gates ||= change.moved.includes(
-            gatesBranch(slug, answeredFor === "" ? null : [slug, answeredFor]),
-          );
-          break;
-        // One of the task's builds or tests started, moved on or ended.
-        case "machine-work":
-          gates ||=
-            before !== null && workOf(before.machine_work, slug) !== workOf(change.work, slug);
-          break;
-        case "tasks-status":
-          notice = boardNotice(change.available, change.slow);
-          break;
+      if (change.region === "task-fields") {
+        const { key, fields } = change.change;
+        const listed = page?.children.some((child) => child.slug === key) ?? false;
+        this.childCame ||= (fields.parent ?? null) === slug && !listed;
+      } else if (change.region === "tasks-status") {
+        notice = boardNotice(change.available, change.slow);
       }
     }
     // Drawn at once, within the event, so the hold starts from the change in the page: left to
     // React's scheduler (the page's redraw, a later task a loaded renderer runs after its frames),
     // the hold's four quiet frames could pass before it.
     flushSync(() => {
-      // The offer and the timeline hear the task's own change themselves (their parts' `hear`).
-      this.parts.heard(version, changes);
-      if (own || gates) void this.parts.read(gatesPart(this.scope, slug), version);
+      // With the page as it was drawn when the event came: what it links and its machine work
+      // before the event say whether the gates change (`namesGates`).
+      this.parts.heard(version, { changes, page });
       if (notice !== this.notice) {
         this.notice = notice;
         this.host.redraw();

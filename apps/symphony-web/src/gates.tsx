@@ -9,11 +9,11 @@
 // card with a shadow line for each gate it expects (`Room`): as many as the server last answered
 // for the task, else as this browser last drew for it, else for the last task it drew, else four,
 // and none when it knows there are none; so the page below does not move when the gates arrive.
-// The page reads them again when the task changes, one of its runs starts or ends, or its feed
-// says what may change them, the last answer shown meanwhile. A task nothing gates shows no
-// section, and a read that failed says so in its place, tried again by itself, while the rest of
-// the page works. Its head's pill says what the task waits on, by its status (`waitsOn`): the
-// gates only in review.
+// The part reads itself again for a feed event newer than its answer that may change them (the
+// task changed, one of its runs started or ended, `namesGates`), the last answer shown meanwhile.
+// A task nothing gates shows no section, and a read that failed says so in its place, tried again
+// by itself, its Retry saying it reads while a read is out, while the rest of the page works. Its
+// head's pill says what the task waits on, by its status (`waitsOn`): the gates only in review.
 //
 // Wide, a gate is one row of bounded columns, a part wrapping within its own when its words need
 // more room, so every word shows without a hover; on a phone, three lines (its name and state, its
@@ -127,7 +127,8 @@ export function TaskGatesPanel({
 }: TaskGatesPanelProps) {
   const part = gatesPart(scope, slug);
   const parts = useContext(PartsContext);
-  const gates = gatesShown(usePart(part));
+  const shown = usePart(part);
+  const gates = gatesShown(shown);
   const said = seen === null ? "" : `${seen.count} ${seen.waiting} ${seen.unsigned}`;
   // biome-ignore lint/correctness/useExhaustiveDependencies: the room follows what the server said, by its counts
   const room = useMemo(() => roomFor(slug, seen), [slug, said]);
@@ -144,6 +145,7 @@ export function TaskGatesPanel({
         room={room}
         width={width()}
         quiet={quiet}
+        retrying={shown.retrying}
         onRetry={() => void parts?.read(part)}
       />
     </div>
@@ -165,6 +167,8 @@ export interface GatesViewProps {
   width: number | null;
   /** Whether the page already says it loads: the section's reading is then not said again. */
   quiet?: boolean;
+  /** A read is out after the last failed: the retry says so, and asks for none more. */
+  retrying?: boolean;
   onRetry: () => void;
 }
 
@@ -179,6 +183,7 @@ export function GatesView({
   room,
   width,
   quiet = false,
+  retrying = false,
   onRetry,
 }: GatesViewProps) {
   const head = (
@@ -192,8 +197,8 @@ export function GatesView({
       <p className="gates-note" role="status">
         {text}
       </p>
-      <Button type="button" onClick={() => onRetry()}>
-        {WORDS.retry}
+      <Button type="button" disabled={retrying} onClick={() => onRetry()}>
+        {retrying ? WORDS.retrying : WORDS.retry}
       </Button>
     </section>
   );

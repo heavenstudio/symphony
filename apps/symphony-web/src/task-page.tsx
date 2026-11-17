@@ -829,7 +829,14 @@ export function TaskDetail({
         <NearViewport id={`thread-region-${slug}`} height={200}>
           <div id="task-thread" data-pending={`${!loaded}`}>
             {older && <Button onClick={() => onHistory(true)}>Load earlier messages</Button>}
-            {!loaded && <Button onClick={() => onHistory(false)}>Load messages</Button>}
+            {/* Offered once its read failed with nothing drawn (the store tries it again too), and
+                never asked while a read is out: the first is the ghost's to say, a later the
+                button's. */}
+            {!loaded && thread.error !== null && (
+              <Button disabled={thread.retrying} onClick={() => onHistory(false)}>
+                {thread.retrying ? "Loading messages…" : "Load messages"}
+              </Button>
+            )}
             {/* One timeline: every message is an item of the one list its line runs down. */}
             <ul className="history">
               {entries.map((entry) => (

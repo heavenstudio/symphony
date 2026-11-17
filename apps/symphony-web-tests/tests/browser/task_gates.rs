@@ -3,7 +3,8 @@
 //! kept for a hover; the theme's colours for each state; the room the card holds before its
 //! answer, so the brief does not move, a gate with no who and when included; a read asked only
 //! near the screen, again on the board events that change the gates and never for a plain post,
-//! the latest alone drawn; a read that fails; and a task nothing gates. The task is the
+//! the latest alone drawn; a read that fails, its retry saying it reads while the read it asked
+//! is out; and a task nothing gates. The task is the
 //! look-parity fixture's, in review; its gates are the A pictures' task
 //! (crates/symphony-api/fixtures/task-gates.json). That a gate's link names its page under the
 //! project's base is the one server's to show (projects.rs).
@@ -456,8 +457,18 @@ fn task_page_gates_draw_only_the_latest_read_and_a_failed_read_leaves_the_page_w
         json!({"said":"The gates could not be read: Board snapshot unavailable (the server answered 500). The rest of the page still works.","brief":"Task brief","composer":true,"notice":false}),
         "the failure is the section's own, not the page's"
     );
+    // Its retry asks a read (the store tries one by itself too), and while that read is out says
+    // it reads and asks for none more, the note kept in its place.
+    site.hold_route(GATES, true);
     site.fail_route(GATES, false);
     page.eval("document.querySelector('.task-gates button').click()");
+    let retrying = page.wait_for(
+        "(button => button?.disabled && button.textContent === 'Retrying…')(document.querySelector('.task-gates[data-gates=failed] button'))",
+        SHOWN,
+    );
+    let shown = page.eval("document.querySelector('main')?.innerText");
+    site.hold_route(GATES, false);
+    assert!(retrying, "the retry never said it reads: {shown:?}");
     drawn(&mut page, 4);
 }
 
