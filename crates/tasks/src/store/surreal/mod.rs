@@ -13,6 +13,7 @@
 //! read from a write by a statement's words) and `crate::server` (the keeper of the SurrealDB
 //! server, which asks it of itself).
 
+pub(in crate::store) mod artifacts;
 pub(in crate::store) mod asks;
 pub(in crate::store) mod branches;
 pub(in crate::store) mod callbacks;

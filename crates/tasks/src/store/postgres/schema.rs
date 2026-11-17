@@ -118,7 +118,11 @@ pub(in crate::store) struct Table {
 use Kind::{Array, Bool, Float, Int, Object, Text};
 
 /// The board's tables, each in the order of its fields.
-pub(in crate::store) const TABLES: [Table; 21] = [
+pub(in crate::store) const TABLES: [Table; 22] = [
+    Table {
+        name: "artifact_ledger",
+        columns: &[req("revision", Int), req("body", Object)],
+    },
     Table {
         name: "task",
         columns: &[

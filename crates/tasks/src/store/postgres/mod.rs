@@ -16,6 +16,7 @@
 //! The marker's triggers and each sender's last word are the schema's ([`schema`]), as SurrealDB's
 //! events are its schema's.
 
+pub(in crate::store) mod artifacts;
 pub(in crate::store) mod asks;
 pub(in crate::store) mod branches;
 pub(in crate::store) mod callbacks;

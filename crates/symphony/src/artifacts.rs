@@ -10,10 +10,12 @@
 //! These types are internal storage contracts, never an HTTP response or authorization token.
 //! Current membership must be checked by the trusted host on every call, including byte reads.
 
+mod board;
 mod core;
 mod local;
 mod model;
 
+pub use board::BoardMetadata;
 pub use core::Core;
 pub use local::Local;
 pub use model::{

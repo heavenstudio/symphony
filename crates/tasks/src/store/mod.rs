@@ -20,6 +20,7 @@ use std::hash::{BuildHasher, RandomState};
 use std::sync::Mutex;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+mod artifacts;
 pub(crate) mod asks;
 mod beside;
 mod branches;

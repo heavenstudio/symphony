@@ -69,6 +69,12 @@ including concurrent processes and unknown commit outcomes. One aggregate serial
 within a project; it is a bounded first implementation, with no per-object scalability claim.
 Malformed/unknown metadata formats fail explicitly. No caller may reset operation tombstones.
 
+[`BoardMetadata`](../crates/symphony/src/artifacts/board.rs) uses the board's scoped
+[`artifact_ledger` CAS](../crates/tasks/src/store/artifacts.rs) on either database. Schema 21
+adds this private table without changing existing task/session rows. An opaque JSON envelope
+preserves nested nulls through both backends. Opening or constructing the adapter does not enable
+hosted delivery. Copy/export/restore integration of its roots remains a separate prerequisite.
+
 ## Remaining integration checklist
 
 - Join current operation/source/attempt identities with the real board accepted-result transaction,
