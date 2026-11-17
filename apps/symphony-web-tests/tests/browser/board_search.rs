@@ -37,7 +37,7 @@ fn listing(tasks: &[(&str, &str)], counts: &[(&str, usize)]) -> Value {
 
 /// The read of the search's `query` (its counts, or one column's first page), as the page asks it.
 fn search_read(query: &str) -> String {
-    format!("/api/task-board?{query}&days=1&activity=1&work=0")
+    format!("/api/task-board?view=waiting&{query}&days=1&activity=1&work=0")
 }
 
 fn counts_read() -> String {
@@ -189,6 +189,7 @@ fn a_search_reads_its_counts_and_columns_once_while_the_machines_heartbeat_comes
     };
     let from = opened(&site, &mut chrome);
     search(&site, &mut chrome, from);
+    chrome.eval("[...document.querySelectorAll('.machine-rail button')].find(button => button.textContent.startsWith('Build')).click()");
     // Three samples while the columns' reads are out, the last one saying the observation is
     // stale as a whole, which the build column's machine context shows once the page has it.
     let version = version();

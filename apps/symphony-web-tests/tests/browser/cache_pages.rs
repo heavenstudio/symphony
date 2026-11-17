@@ -698,7 +698,7 @@ fn building(tasks: &[&str]) -> Value {
 
 /// The task board's default view's read of `query`.
 fn listing_read(query: &str) -> String {
-    format!("/api/task-board?{query}&days=1&activity=1&work=0")
+    format!("/api/task-board?view=waiting&{query}&days=1&activity=1&work=0")
 }
 
 /// A task drawn from the device in the machine's Build, which the server lists nowhere now and no

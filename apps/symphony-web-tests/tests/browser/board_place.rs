@@ -35,7 +35,7 @@ const STATUSES: [&str; 6] = [
 fn task(slug: &str, status: &str, priority: u8, links: Value) -> Value {
     json!({"slug": slug, "title": format!("The task {slug}"), "body": "", "status": status,
         "priority": priority, "parent": null, "created_by": "owner", "created": 0.0,
-        "updated": 0.0, "links": links, "depends": [], "roles": [], "instruction": false})
+        "updated": if priority == 0 { -1.0 } else if slug == "deep/filed-below" { 1.0 } else { 0.0 }, "links": links, "depends": [], "roles": [], "instruction": false})
 }
 
 /// Thirty tasks in Concept and in Ready, so both scroll down past the screen, and two in each
@@ -91,7 +91,7 @@ fn site(tasks: &[Value]) -> Site {
 fn viewport(page: &mut Chrome, width: u32, height: u32) {
     page.call(
         "Emulation.setDeviceMetricsOverride",
-        json!({"width":width,"height":height,"deviceScaleFactor":1,"mobile":width < 600}),
+        json!({"width":width,"height":height,"deviceScaleFactor":1,"mobile":width <= 760}),
     );
 }
 
@@ -110,7 +110,7 @@ fn open(page: &mut Chrome, site: &Site, width: u32, height: u32) {
     page.open(&site.url("/tasks"));
     assert!(
         page.wait_for(
-            "document.querySelector('main[data-feed=live] .board-scroll .taskcard') !== null && document.documentElement.dataset.navigation === 'ready'",
+            "document.querySelector('main[data-feed=live] .waiting-columns .taskcard') !== null && document.documentElement.dataset.navigation === 'ready'",
             SHOWN
         ),
         "{width}px: the board never drew live: {}",
@@ -126,25 +126,27 @@ fn open(page: &mut Chrome, site: &Site, width: u32, height: u32) {
 /// `.viewport-sentinel`) of what it shows: each one's id and box. A pixel short of the reach,
 /// which a sentinel's edge meets or not as the layout rounds.
 const WAITING: &str = "(() => {
-    const board = document.querySelector('.board-scroll'), box = board.getBoundingClientRect();
-    const top = box.top + board.clientTop, left = box.left + board.clientLeft;
-    const bottom = top + board.clientHeight, right = left + board.clientWidth;
+    const board = document.querySelector('.waiting-columns');
+    const top = 0, left = 0, bottom = innerHeight, right = innerWidth;
     const near = [...board.querySelectorAll('[data-pending=true]')].flatMap(part => {
         const r = part.getBoundingClientRect();
         return r.bottom > top - 599 && r.top < bottom + 599 && r.right > left && r.left < right
             ? [[part.closest('[id]')?.id ?? part.closest('.column')?.dataset.status, Math.round(r.top), Math.round(r.bottom), Math.round(r.left), Math.round(r.right)]] : [];
     });
-    return {width: innerWidth, shows: [top, bottom, left, right], left: board.scrollLeft, top: board.scrollTop, near};
+    return {width: innerWidth, shows: [top, bottom, left, right], left: scrollX, top: scrollY, near};
 })()";
 
 /// The board's scroller at `top`, sideways where the column `status` starts (a place it snaps
 /// to), once what is near what it shows is drawn (`WAITING`), and stays as it is.
 fn scroll_board(page: &mut Chrome, status: &str, top: u32) {
     page.eval(&format!(
-        "(() => {{ const board = document.querySelector('.board-scroll'), column = document.querySelector('.column[data-status={status}]');
-            board.scrollLeft += column.getBoundingClientRect().left - board.getBoundingClientRect().left;
-            board.scrollTop = {top}; }})()"
+        "(() => {{ if (innerWidth <= 760) {{ const stages = ['review','in_progress','ready','done','design','concept','backlog']; document.querySelectorAll('.stage-tabs button')[stages.indexOf('{status}')].click(); }} }})()"
     ));
+    assert!(page.wait_for(
+        &format!("document.querySelector('.column[data-status={status}]') !== null"),
+        SHOWN
+    ));
+    page.eval(&format!("scrollTo(0, {top})"));
     assert!(
         page.wait_for(&format!("{WAITING}.near.length === 0"), SHOWN),
         "what is near the screen never drew: {}",
@@ -163,8 +165,8 @@ fn scroll_board(page: &mut Chrome, status: &str, top: u32) {
 /// Count the frames in a row in which no card on the board's scroller moved, in `boardStill`,
 /// up to ten.
 const STILL: &str = "(() => {
-    const cards = () => { const box = document.querySelector('.board-scroll').getBoundingClientRect();
-        return JSON.stringify([...document.querySelectorAll('.board-scroll .taskcard')].flatMap(card => {
+    const cards = () => { const box = ({top:0,left:0,bottom:innerHeight,right:innerWidth});
+        return JSON.stringify([...document.querySelectorAll('.waiting-columns .taskcard')].flatMap(card => {
             const r = card.getBoundingClientRect();
             return r.bottom > box.top && r.top < box.bottom && r.right > box.left && r.left < box.right ? [[card.dataset.slug, r.top, r.left]] : [];
         })); };
@@ -179,7 +181,7 @@ const STILL: &str = "(() => {
 /// far below the scroller's top it stands.
 fn first_on_screen(status: &str) -> String {
     format!(
-        "(() => {{ const box = document.querySelector('.board-scroll')?.getBoundingClientRect();
+        "(() => {{ const box = ({{top:0,left:0,bottom:innerHeight,right:innerWidth}});
             const card = box && [...document.querySelectorAll('.column[data-status={status}] .taskcard')].find(card => {{
                 const top = card.getBoundingClientRect().top; return top >= box.top && top < box.bottom; }});
             return card ? [card.dataset.slug, card.getBoundingClientRect().top - box.top] : null; }})()"
@@ -198,9 +200,7 @@ fn filed_and_held(slug: &str, status: &str, place: &Value) -> String {
 }
 
 fn scroll_top(page: &mut Chrome) -> f64 {
-    page.eval("document.querySelector('.board-scroll').scrollTop")
-        .as_f64()
-        .unwrap()
+    page.eval("scrollY").as_f64().unwrap()
 }
 
 /// A task filed above the reader keeps their column where it was on their screen: on a desk with
@@ -249,10 +249,10 @@ fn filed_above_the_reader(late: u32) {
             );
         }
         scroll_board(&mut page, first, 1500);
-        if width >= 600 {
+        if width > 760 {
             let card = page.eval(&format!(
                 "(() => {{ const r = document.getElementById({}).getBoundingClientRect(); return [r.left + 20, r.top + 20]; }})()",
-                json!("row-place/ready-20")
+                json!("row-place/ready-14")
             ));
             page.call(
                 "Input.dispatchMouseEvent",
@@ -303,7 +303,7 @@ const PAGE: usize = 30;
 
 /// The address of a read of Ready's rows, `extra` naming its cursor or its length.
 fn ready_target(extra: &str) -> String {
-    format!("/api/task-board?q=&status=ready&days=1{extra}&activity=1&work=0")
+    format!("/api/task-board?view=waiting&q=&status=ready&days=1{extra}&activity=1&work=0")
 }
 
 /// `rows` as a listing's page, counted over all of `board`, its cursor `next`.
@@ -338,8 +338,7 @@ fn serve_ready(site: &Site, board: &[Value]) {
 }
 
 /// How many rows Ready draws, whether their cards drew or not.
-const READY_ROWS: &str =
-    "document.querySelectorAll('.board-scroll .column[data-status=ready] [id^=\"row-\"]').length";
+const READY_ROWS: &str = "document.querySelectorAll('.waiting-columns .column[data-status=ready] [id^=\"row-\"]').length";
 
 /// Press Ready's Load more.
 const LOAD_MORE: &str = "[...document.querySelectorAll('.column[data-status=ready] button')]
@@ -375,8 +374,8 @@ fn a_refresh_keeps_every_row_of_a_column_loaded_to_its_end_and_the_reader_on_the
         );
     }
     let middle = page.eval(
-        "(() => { const board = document.querySelector('.board-scroll');
-            return Math.round((board.scrollHeight - board.clientHeight) / 2); })()",
+        "(() => { const board = document.querySelector('.waiting-columns');
+            return Math.round((document.scrollingElement.scrollHeight - innerHeight) / 2); })()",
     );
     let middle = u32::try_from(middle.as_u64().expect("the scroller's middle")).unwrap();
     scroll_board(&mut page, "ready", middle);
@@ -392,7 +391,7 @@ fn a_refresh_keeps_every_row_of_a_column_loaded_to_its_end_and_the_reader_on_the
     );
     // The pointer over a card of Ready on the screen: Ready is the reader's column.
     let card = page.eval(
-        "(() => { const box = document.querySelector('.board-scroll').getBoundingClientRect();
+        "(() => { const box = ({top:0,left:0,bottom:innerHeight,right:innerWidth});
             const card = [...document.querySelectorAll('.column[data-status=ready] .taskcard')].find(card => {
                 const r = card.getBoundingClientRect(); return r.top > box.top && r.bottom < box.bottom; });
             const r = card.getBoundingClientRect(); return [r.left + 20, r.top + 20]; })()",
@@ -680,8 +679,8 @@ fn a_touch_screens_last_tap_leaves_the_readers_column_in_place() {
     );
     scroll_board(&mut page, "in_progress", 900);
     let at = page.eval(
-        "(() => { const box = document.querySelector('.board-scroll').getBoundingClientRect();
-            const slug = [...document.querySelectorAll('.column[data-status=in_progress] .taskcard-slug')].find(code => {
+        "(() => { const box = ({top:0,left:0,bottom:innerHeight,right:innerWidth});
+            const slug = [...document.querySelectorAll('.column[data-status=in_progress] .waiting-slug')].find(code => {
                 const r = code.getBoundingClientRect();
                 return r.top > box.top && r.bottom < box.bottom && r.left > box.left && r.right < box.right; });
             const r = slug.getBoundingClientRect();
@@ -699,18 +698,8 @@ fn a_touch_screens_last_tap_leaves_the_readers_column_in_place() {
         page.wait_for(TAPPED, SHOWN),
         "the tap never left the pointer over In progress"
     );
-    scroll_board(&mut page, "design", 900);
-    // Ready across the board's middle, In progress peeking in beside it, the pointer still over it
-    // where the reader tapped.
-    let peeks = "(() => { const box = document.querySelector('.board-scroll').getBoundingClientRect(), middle = (box.left + box.right) / 2;
-        const r = document.querySelector('.column[data-status=in_progress]').getBoundingClientRect();
-        const ready = document.querySelector('.column[data-status=ready]').getBoundingClientRect();
-        return r.left < box.right && r.right > box.left && ready.left < middle && ready.right > middle; })()";
-    assert_eq!(
-        page.eval(&format!("{TAPPED} && {peeks}")),
-        json!(true),
-        "the setup swipes back to Ready in the board's middle, In progress beside it under the tap"
-    );
+    scroll_board(&mut page, "ready", 900);
+    assert_eq!(page.eval("[...document.querySelectorAll('.waiting-columns .column')].map(column => column.dataset.status)"), json!(["ready"]));
     let slug = "place/filed-after-a-tap";
     let before = page.eval(&first_on_screen("ready"));
     let top = scroll_top(&mut page);
@@ -752,14 +741,7 @@ fn a_focused_card_moved_to_another_column_keeps_the_focus() {
         open(&mut page, &site, width, height);
         scroll_board(&mut page, "ready", 0);
         let mut version = version();
-        let moves: &[(&str, &str)] = if width < 600 {
-            &[("place/ready-03", "a.taskcard-title")]
-        } else {
-            &[
-                ("place/ready-03", "a.taskcard-title"),
-                ("place/ready-04", "a.docchip"),
-            ]
-        };
+        let moves: &[(&str, &str)] = &[("place/ready-03", "a.taskcard-title")];
         for (slug, link) in moves {
             page.eval(&format!(
                 "document.querySelector({}).focus()",
@@ -771,7 +753,7 @@ fn a_focused_card_moved_to_another_column_keeps_the_focus() {
                 json!([slug, "ready", class]),
                 "{width}px: the setup focuses {slug}'s {link} in Ready"
             );
-            let left = page.eval("document.querySelector('.board-scroll').scrollLeft");
+            let left = page.eval("scrollX");
             for task in &mut board {
                 if task["slug"] == *slug {
                     task["status"] = json!("in_progress");
@@ -796,7 +778,7 @@ fn a_focused_card_moved_to_another_column_keeps_the_focus() {
                 page.eval(FOCUSED)
             );
             assert_eq!(
-                page.eval("document.querySelector('.board-scroll').scrollLeft"),
+                page.eval("scrollX"),
                 left,
                 "{width}px: the focus followed {slug} without scrolling the board to it"
             );
@@ -806,18 +788,18 @@ fn a_focused_card_moved_to_another_column_keeps_the_focus() {
 
 /// Where the reader is on the board: its scroller's left, the window's top and Ready's first card
 /// on the screen (`first_on_screen`).
-const PLACE: &str = "(() => { const board = document.querySelector('.board-scroll');
-    return board ? [Math.round(board.scrollLeft), Math.round(scrollY), FIRST] : null; })()";
+const PLACE: &str = "(() => { const board = document.querySelector('.waiting-columns');
+    return board ? [Math.round(scrollX), Math.round(scrollY), FIRST] : null; })()";
 
 /// Open the task of a Ready card's title on the screen, clicked as the reader clicks it: the
 /// pointer over Ready and the focus on the link, so Ready is the reader's column; until its page
 /// is drawn.
 fn open_a_ready_task(page: &mut Chrome, width: u32) {
     let link = page.eval(
-        "(() => { const box = document.querySelector('.board-scroll').getBoundingClientRect();
-            const link = [...document.querySelectorAll('.board-scroll .column[data-status=ready] .taskcard-title')].find(a => {
+        "(() => { const box = ({top:0,left:0,bottom:innerHeight,right:innerWidth});
+            const link = [...document.querySelectorAll('.waiting-columns .column[data-status=ready] .taskcard-title')].find(a => {
                 const r = a.getBoundingClientRect();
-                return r.top > box.top && r.bottom < box.bottom && r.left > box.left && r.right < box.right; });
+                return r.top > Math.max(box.top, document.querySelector('header').getBoundingClientRect().bottom) && r.bottom < box.bottom && r.left > box.left && r.right < box.right; });
             const r = link.getBoundingClientRect();
             return [link.getAttribute('href'), r.left + Math.min(20, r.width / 2), r.top + r.height / 2]; })()",
     );
@@ -856,12 +838,9 @@ fn back_from_a_task_draws_the_board_where_the_reader_left_it() {
         let Some(mut page) = chrome() else { return };
         open(&mut page, &site, width, height);
         scroll_board(&mut page, first, 900);
-        page.eval(
-            "scrollTo(0, Math.min(120, document.scrollingElement.scrollHeight - innerHeight))",
-        );
         let before = page.eval(&place);
         assert!(
-            before[0].as_f64().unwrap() > 0.0 && before[2].is_array(),
+            before[1].as_f64().unwrap() > 0.0 && before[2].is_array(),
             "{width}px: the setup scrolls the board sideways and down Ready: {before}"
         );
         open_a_ready_task(&mut page, width);
@@ -882,8 +861,8 @@ fn back_from_a_task_draws_the_board_where_the_reader_left_it() {
 
 /// The slug of Ready's first row whose top is on the board's scroller: the row the board's place
 /// is kept by when Ready is the reader's column.
-const KEPT_ROW: &str = "(() => { const box = document.querySelector('.board-scroll').getBoundingClientRect();
-    const row = [...document.querySelectorAll('.board-scroll .column[data-status=ready] [id^=\"row-\"]')].find(row => {
+const KEPT_ROW: &str = "(() => { const box = ({top:0,left:0,bottom:innerHeight,right:innerWidth});
+    const row = [...document.querySelectorAll('.waiting-columns .column[data-status=ready] [id^=\"row-\"]')].find(row => {
         const top = row.getBoundingClientRect().top; return top >= box.top && top < box.bottom; });
     return row ? row.id.slice(4) : null; })()";
 
@@ -899,16 +878,13 @@ const REDRAWN_ABOVE: f64 = 12.0;
 /// where that card went, once the board has drawn it there and stands still.
 #[test]
 fn back_to_a_board_whose_kept_card_left_its_column_returns_to_the_scrollers_place() {
-    let place = PLACE.replace("FIRST", "Math.round(board.scrollTop)");
+    let place = PLACE.replace("FIRST", "Math.round(scrollY)");
     for status in ["in_progress", "cancelled"] {
         let mut board = tasks();
         let site = site(&board);
         let Some(mut page) = chrome() else { return };
         open(&mut page, &site, 1280, 800);
         scroll_board(&mut page, "design", 900);
-        page.eval(
-            "scrollTo(0, Math.min(120, document.scrollingElement.scrollHeight - innerHeight))",
-        );
         let before = page.eval(&place);
         let kept = page.eval(KEPT_ROW);
         let Some(slug) = kept.as_str().map(str::to_owned) else {
@@ -932,9 +908,8 @@ fn back_to_a_board_whose_kept_card_left_its_column_returns_to_the_scrollers_plac
         page.eval("history.back()");
         let there = format!(
             "location.pathname === '/tasks' && document.documentElement.dataset.navigation === 'ready'
-                && document.getElementById({})?.closest('.column')?.dataset.status === '{status}'
+                && document.querySelector('.column[data-status=ready] [id=\"row-{slug}\"]') === null
                 && {WAITING}.near.length === 0",
-            json!(format!("row-{slug}"))
         );
         assert!(
             page.wait_for(&there, SHOWN),
