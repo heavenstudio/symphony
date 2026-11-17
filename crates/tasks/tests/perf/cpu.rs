@@ -5,6 +5,7 @@
 //! once it ends. The readings are the shared test helper's (`crates/test-time`, RULES.md
 //! `tests/no-test-fails-on-load`).
 
+use crate::children::Child as _;
 use std::cell::OnceCell;
 use std::io::Read as _;
 use std::process::Output;
@@ -69,6 +70,10 @@ fn settle(meter: &dyn Fn() -> Duration, tick: Duration, most: Duration) -> Settl
     let (began, first) = (Instant::now(), meter());
     let (mut at, mut before) = (began, first);
     loop {
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "no-timed-waits baseline: a meter reads the CPU a process took over a window of this length, where the process's own mark that it is idle is the event"
+        )]
         std::thread::sleep(QUIET_OVER);
         let (now, reading) = (Instant::now(), meter());
         let last = Window {
@@ -228,7 +233,7 @@ mod meter {
 
     /// `sh -c script`, its input and output piped.
     fn sh(script: &str) -> Child {
-        let mut command = Command::new("sh");
+        let mut command = Command::of("sh");
         command.args(["-c", script]);
         sys::spawn_piped(&mut command).expect("sh starts")
     }

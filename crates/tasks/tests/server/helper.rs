@@ -2,6 +2,7 @@
 //! ([`answer`]), waited for while the helper lives and given up at once when it exits first
 //! ([`event_of`]), never against a wall-clock bound that load can exceed.
 
+use crate::children::Child as _;
 use crate::common::signal;
 use std::io::{Read, Write};
 use std::net::UdpSocket;
@@ -76,7 +77,7 @@ pub fn answer(events: &UdpSocket, message: &[u8]) {
 /// A stand-in helper for [`event_of`]: `cat`, alive until its input is dropped, saying nothing.
 fn quiet_helper() -> Child {
     crate::store::spawn_with_input(
-        Command::new("cat")
+        Command::of("cat")
             .stdout(Stdio::null())
             .stderr(Stdio::null()),
     )
@@ -92,6 +93,10 @@ fn a_live_helper_that_never_answers_is_waited_on_until_it_ends_and_its_end_is_na
     let began = Instant::now();
     // Twenty looks pass with the helper alive and silent; only its end stops the wait.
     let killer = std::thread::spawn(move || {
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "no-timed-waits baseline: a test holds for a length of time to show the wait goes on while the helper lives, where a count of the wait's looks is the event"
+        )]
         std::thread::sleep(patience);
         signal(pid, "KILL");
     });
@@ -105,7 +110,7 @@ fn a_live_helper_that_never_answers_is_waited_on_until_it_ends_and_its_end_is_na
 #[test]
 fn a_helper_that_exits_before_it_answers_fails_the_wait_naming_its_exit() {
     let events = UdpSocket::bind("127.0.0.1:0").unwrap();
-    let mut helper = Command::new("sh")
+    let mut helper = Command::of("sh")
         .args(["-c", "exit 3"])
         .stdin(Stdio::null())
         .spawn()
@@ -132,12 +137,16 @@ fn a_helper_that_answers_late_is_heard_acknowledged_and_left_running() {
     let to = events.local_addr().unwrap();
     // `cat` stands in for the helper, writing out the acknowledgements it is given.
     let mut helper = crate::store::spawn_with_input(
-        Command::new("cat")
+        Command::of("cat")
             .stdout(std::fs::File::create(&read).unwrap())
             .stderr(Stdio::null()),
     )
     .unwrap();
     let answer = std::thread::spawn(move || {
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "no-timed-waits baseline: the stand-in answers ten of the wait's looks late, to show it looks again, where a count of the wait's looks is the event"
+        )]
         std::thread::sleep(LOOK * 10);
         let from = UdpSocket::bind("127.0.0.1:0").unwrap();
         from.send_to(b"ready", to).unwrap();
@@ -190,7 +199,7 @@ fn every_helper_that_answers_then_exits_at_once_is_heard() {
     for round in 0..ROUNDS {
         let events = UdpSocket::bind("127.0.0.1:0").unwrap();
         let mut helper = crate::store::spawn_with_input(
-            Command::new(std::env::current_exe().unwrap())
+            Command::of(std::env::current_exe().unwrap())
                 .args([
                     "--ignored",
                     "--exact",

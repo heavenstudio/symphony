@@ -386,7 +386,7 @@ fn an_approve_naming_no_commit_covers_none_made_during_its_review() {
     write(&wt, "sim/jump.gd", "extends Node2D\n");
     let when = format!("@{:.0} +0000", r.board.now() + 100.0);
     let done = symphony_board::sys::output(
-        symphony_board::sys::Command::new("git")
+        symphony_board::sys::Command::of("git")
             .args(["commit", "-qam", "during the review"])
             .env("GIT_COMMITTER_DATE", &when)
             .env("GIT_AUTHOR_DATE", &when)

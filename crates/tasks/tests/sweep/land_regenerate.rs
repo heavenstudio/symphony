@@ -932,10 +932,10 @@ fn spawned(r: &Repo) -> symphony_board::sys::Child {
         .append(true)
         .open(lands(r).join("regenerate.log"))
         .unwrap();
-    let mut command = symphony_board::sys::Command::new(env!("CARGO_BIN_EXE_tasks"));
+    let mut command = symphony_board::sys::Command::of(env!("CARGO_BIN_EXE_tasks"));
     command
         .arg("regenerate")
-        .env_clear()
+        .cleared()
         .envs(r.vars())
         .env(RECIPE, "1")
         .current_dir(&r.root)

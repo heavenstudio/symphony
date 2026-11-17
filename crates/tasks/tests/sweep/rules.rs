@@ -2,6 +2,7 @@
 //! goes, the agent branches, the window of recent activity, the races the re-checks guard against,
 //! and the processes behind a lock.
 
+use crate::children::Child as _;
 use crate::common::{GONE, Seed, session};
 use crate::{HeldCwd, IDLE_HOURS, NOT_UTC, Repo, dead_pid, git, set_time, started, text, write};
 use std::cell::Cell;
@@ -591,7 +592,7 @@ fn foreign_worktree_reads_preserve_stale_merged_and_unmerged_indexes() {
             // A real stage-2 entry also checks the read with a conflicted index.
             let blob = git(&wt, &["rev-parse", "HEAD:docs/OWNER.md"]);
             let mut child = crate::common::spawn_with_input(
-                Command::new("git")
+                Command::of("git")
                     .args(["update-index", "--index-info"])
                     .current_dir(&wt),
             )
@@ -1348,10 +1349,13 @@ fn a_process_entering_after_status_or_unlock_keeps_its_tree() {
         let child: Rc<RefCell<Option<HeldCwd>>> = Rc::default();
         let (running, there) = (Rc::clone(&child), wt.clone());
         let result = r.sweep_with(|o| {
-            o.occupied = Box::new(process_cwd::occupied);
+            let occupied = |tree: &Path| {
+                process_cwd::occupied_with(symphony_board::sys::command("lsof"), tree)
+            };
+            o.occupied = Box::new(occupied);
             o.pause = at(stage, &wt, move || {
                 *running.borrow_mut() = Some(HeldCwd::at(&there.join("sim")));
-                assert_eq!(process_cwd::occupied(&there), Some(true));
+                assert_eq!(occupied(&there), Some(true));
             });
         });
         assert!(child.borrow().is_some());
@@ -1429,8 +1433,8 @@ fn head_and_its_branch_stay_locked_during_the_final_process_probe_and_release_af
                     vec!["update-ref", "HEAD", &attempted],
                     vec!["symbolic-ref", "HEAD", "refs/heads/other"],
                 ] {
-                    let done = sys::output(sys::Command::new("git").args(&args).current_dir(path))
-                        .unwrap();
+                    let done =
+                        sys::output(sys::Command::of("git").args(&args).current_dir(path)).unwrap();
                     assert!(
                         !done.status.success(),
                         "writer succeeded under removal guard: {args:?}"

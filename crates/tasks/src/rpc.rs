@@ -800,6 +800,7 @@ fn results(reply: Value) -> Result<Vec<Value>, DbError> {
 
 #[cfg(test)]
 mod tests {
+    use crate::children::Child as _;
     mod failures;
     mod resend;
 
@@ -1296,7 +1297,7 @@ mod tests {
         use std::os::fd::{AsRawFd, RawFd};
         use std::os::unix::process::CommandExt;
         let found = |fd: RawFd| {
-            let mut command = std::process::Command::new("/usr/bin/true");
+            let mut command = std::process::Command::of("/usr/bin/true");
             // SAFETY: fcntl is async-signal-safe and reads only the forked child's own table.
             unsafe {
                 command.pre_exec(move || {

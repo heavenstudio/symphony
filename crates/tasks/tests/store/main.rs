@@ -1,9 +1,8 @@
 //! The store over a real SurrealDB server, one test binary so they share one server.
 
-#![expect(
-    clippy::disallowed_methods,
-    reason = "a test starts its fixtures and stand-ins as it likes; the board's children are sys's"
-)]
+// How a test starts its own children ([`children::Child`]).
+#[path = "../support/children.rs"]
+mod children;
 
 mod amend;
 mod asks;
@@ -27,6 +26,10 @@ mod done;
 mod fast_fix;
 mod fields;
 #[path = "../../../../tools/test-support/script_process_cwd.rs"]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the fixture scripts every crate's tests share start their children as a test likes, and wait by no timer"
+)]
 mod fixture_script;
 mod gate;
 mod hand_over_outage;

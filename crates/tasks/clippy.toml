@@ -60,8 +60,9 @@ reason = "RULES.md code/no-timed-waits: wait for the event itself, or pace it by
 # Every child the board starts is built by `sys::command` or `sys::command_with` (src/sys.rs), without
 # the session of the process that starts it (`sys::SESSION_VARS`). Clippy refuses any other
 # constructor, however its path is spelled, imported or renamed. A test target, or a library test
-# module, starts what it likes and says so: `#[expect(clippy::disallowed_methods, reason = "...")]`.
-# That one expectation covers the timers above as well, so a test target's sleeps are read in review.
+# module, starts what it likes through tests/support/children.rs (`Command::of`, `.cleared()`),
+# whose constructors alone carry `#[expect(clippy::disallowed_methods, reason = "...")]`, so
+# clippy still reads every test against the timers above.
 [[disallowed-methods]]
 path = "std::process::Command::new"
 reason = "a board child starts without its starter's session: sys::command, or sys::command_with in a caller's environment"

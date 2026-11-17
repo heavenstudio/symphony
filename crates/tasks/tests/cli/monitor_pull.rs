@@ -1,6 +1,7 @@
 //! PULL observations through the monitor private board and clock.
 
 use super::*;
+use crate::children::Child as _;
 
 #[test]
 fn held_count_changes_warn_before_the_periodic_pull_and_failed_reads_report_unknown() {
@@ -325,7 +326,7 @@ struct Working(sys::Child);
 
 impl Working {
     fn in_folder(folder: &std::path::Path) -> Self {
-        let mut cat = sys::Command::new("cat");
+        let mut cat = sys::Command::of("cat");
         cat.current_dir(folder)
             .stdin(sys::Stdio::piped())
             .stdout(sys::Stdio::null());

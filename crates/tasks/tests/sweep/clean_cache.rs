@@ -1,5 +1,6 @@
 //! Complete clean proofs and fresh native guards, measured in isolated child environments.
 
+use crate::children::Child as _;
 use crate::{Repo, cached, git, text, write};
 use std::cell::{Cell, RefCell};
 use std::fs::{self, File};
@@ -39,7 +40,7 @@ pub(super) fn isolated_with(
     ));
     fs::create_dir_all(&path).unwrap();
     let scratch = Scratch(path);
-    let mut child = Command::new(std::env::current_exe().unwrap());
+    let mut child = Command::of(std::env::current_exe().unwrap());
     child
         .args([
             "--exact",
@@ -47,7 +48,7 @@ pub(super) fn isolated_with(
             "--nocapture",
             "--test-threads=1",
         ])
-        .env_clear()
+        .cleared()
         .env("PATH", std::env::var_os("PATH").unwrap())
         .env("HOME", &scratch.0)
         .env("SYMPHONY_SURREAL", crate::common::surreal())

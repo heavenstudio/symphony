@@ -20,6 +20,7 @@
 //! shell, so the server's CPU is counted in the rusage of whoever ran the tests, as a child's,
 //! rather than lost with an orphan's, and removes the server's log.
 
+use crate::children::Child as _;
 use std::collections::HashSet;
 use std::convert::Infallible;
 use std::io::{BufRead, BufReader, Read};
@@ -169,7 +170,7 @@ pub fn surreal() -> PathBuf {
         return named.into();
     }
     let script = project_root().join("tools/surreal.sh");
-    let found = symphony_board::sys::output(Command::new("bash").arg(&script))
+    let found = symphony_board::sys::output(Command::of("bash").arg(&script))
         .expect("bash runs tools/surreal.sh");
     assert!(
         found.status.success(),
@@ -262,7 +263,7 @@ pub fn launch_on(
             let (announced, announcer) =
                 symphony_board::sys::pipe().expect("a pipe for the server's pid");
             let shell = spawn_with_input(
-            Command::new("bash")
+            Command::of("bash")
                 .arg("-c")
                 .arg(concat!(
                     r#". "$2"; fixture_close_fds; exec 3<&0; "$0" start --unauthenticated --bind "$1" --log error --allow-net=127.0.0.1 "$3" >&2 3<&- & s=$!; "#,
