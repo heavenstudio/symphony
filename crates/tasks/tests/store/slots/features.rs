@@ -56,6 +56,8 @@ on_both! {
     }
 }
 
+// On SurrealDB alone until tools/board-pg-sessions-and-delivery: a launch recorded
+// (`Store::record_launch`) has no PostgreSQL twin yet.
 #[test]
 fn a_branch_mirror_and_regular_nested_children_share_the_parent_slot_at_eight() {
     let mut seed = eight_and_seed(&[("next", "ready")]);
@@ -109,6 +111,8 @@ fn a_branch_mirror_and_regular_nested_children_share_the_parent_slot_at_eight() 
     );
 }
 
+// On SurrealDB alone until tools/board-pg-sessions-and-delivery: a launch recorded
+// (`Store::record_launch`) has no PostgreSQL twin yet.
 #[test]
 fn a_mirror_finds_its_inactive_recorded_task_and_latest_executor_branch_only() {
     let seed = eight_and_seed(&[])
@@ -135,6 +139,8 @@ fn a_mirror_finds_its_inactive_recorded_task_and_latest_executor_branch_only() {
     assert_eq!(store.get("legacy").unwrap().status, "done");
 }
 
+// On SurrealDB alone until tools/board-pg-sessions-and-delivery: a launch recorded
+// (`Store::record_launch`) has no PostgreSQL twin yet.
 #[test]
 fn discovering_a_held_tasks_branch_does_not_erase_its_hold_above_the_cap() {
     let seed = with(sessions(), "kept", "review", None, Some(O));

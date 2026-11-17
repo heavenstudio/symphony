@@ -10,39 +10,39 @@ use crate::store::surreal::work::Creating;
 use std::borrow::Cow;
 
 /// The task, its dependencies and parent there, its assignee a session, and a slug nobody took.
-const CREATE: &str = "IF EXISTS (SELECT 1 FROM task WHERE slug = v ->> 'slug') THEN
-    RAISE EXCEPTION '%', v ->> 'taken';
-END IF;
-IF EXISTS (SELECT 1 FROM jsonb_array_elements(v -> 'needed') AS needed (other)
-        WHERE NOT EXISTS (SELECT 1 FROM task WHERE slug = needed.other ->> 'slug')) THEN
-    RAISE EXCEPTION '%', (SELECT needed.other ->> 'missing' FROM jsonb_array_elements(v -> 'needed')
-        WITH ORDINALITY AS needed (other, at)
-        WHERE NOT EXISTS (SELECT 1 FROM task WHERE slug = needed.other ->> 'slug')
-        ORDER BY needed.at LIMIT 1);
-END IF;
-IF v ? 'assignee' AND NOT EXISTS (SELECT 1 FROM session WHERE handle = v ->> 'assignee') THEN
-    RAISE EXCEPTION '%', v ->> 'unassignable';
-END IF;
-INSERT INTO counter (id, last) VALUES ('\"task\"', 1)
-    ON CONFLICT (id) DO UPDATE SET last = counter.last + 1
-    RETURNING last INTO sid_;
-INSERT INTO task (id, sid, slug, title, body, status, priority, parent, created_by, created, updated, instruction)
-    VALUES (v -> 'slug', sid_, v ->> 'slug', v ->> 'title', v ->> 'body', v ->> 'status',
-        (v ->> 'priority')::bigint, v ->> 'parent', v ->> 'actor', (v ->> 'now')::double precision,
-        (v ->> 'now')::double precision, (v ->> 'instruction')::boolean)
-    ON CONFLICT DO NOTHING;
-IF NOT FOUND THEN
-    RAISE EXCEPTION 'stale';
-END IF;
-IF v ? 'assignee' THEN
-    INSERT INTO role (id, slug, handle, role, since)
-        VALUES (jsonb_build_array(v -> 'slug', v -> 'assignee', 'reserved'), v ->> 'slug',
-            v ->> 'assignee', 'reserved', (v ->> 'now')::double precision);
-END IF;
-INSERT INTO link (id, slug, kind, target)
-    SELECT DISTINCT jsonb_build_array(v -> 'slug', l.link -> 'kind', l.link -> 'target'), v ->> 'slug',
-        l.link ->> 'kind', l.link ->> 'target'
-    FROM jsonb_array_elements(v -> 'links') AS l (link)
+const CREATE: &str = "IF EXISTS (SELECT 1 FROM task WHERE slug = v ->> 'slug') THEN \
+    RAISE EXCEPTION '%', v ->> 'taken'; \
+END IF; \
+IF EXISTS (SELECT 1 FROM jsonb_array_elements(v -> 'needed') AS needed (other) \
+        WHERE NOT EXISTS (SELECT 1 FROM task WHERE slug = needed.other ->> 'slug')) THEN \
+    RAISE EXCEPTION '%', (SELECT needed.other ->> 'missing' FROM jsonb_array_elements(v -> 'needed') \
+        WITH ORDINALITY AS needed (other, at) \
+        WHERE NOT EXISTS (SELECT 1 FROM task WHERE slug = needed.other ->> 'slug') \
+        ORDER BY needed.at LIMIT 1); \
+END IF; \
+IF v ? 'assignee' AND NOT EXISTS (SELECT 1 FROM session WHERE handle = v ->> 'assignee') THEN \
+    RAISE EXCEPTION '%', v ->> 'unassignable'; \
+END IF; \
+INSERT INTO counter (id, last) VALUES ('\"task\"', 1) \
+    ON CONFLICT (id) DO UPDATE SET last = counter.last + 1 \
+    RETURNING last INTO sid_; \
+INSERT INTO task (id, sid, slug, title, body, status, priority, parent, created_by, created, updated, instruction) \
+    VALUES (v -> 'slug', sid_, v ->> 'slug', v ->> 'title', v ->> 'body', v ->> 'status', \
+        (v ->> 'priority')::bigint, v ->> 'parent', v ->> 'actor', (v ->> 'now')::double precision, \
+        (v ->> 'now')::double precision, (v ->> 'instruction')::boolean) \
+    ON CONFLICT DO NOTHING; \
+IF NOT FOUND THEN \
+    RAISE EXCEPTION 'stale'; \
+END IF; \
+IF v ? 'assignee' THEN \
+    INSERT INTO role (id, slug, handle, role, since) \
+        VALUES (jsonb_build_array(v -> 'slug', v -> 'assignee', 'reserved'), v ->> 'slug', \
+            v ->> 'assignee', 'reserved', (v ->> 'now')::double precision); \
+END IF; \
+INSERT INTO link (id, slug, kind, target) \
+    SELECT DISTINCT jsonb_build_array(v -> 'slug', l.link -> 'kind', l.link -> 'target'), v ->> 'slug', \
+        l.link ->> 'kind', l.link ->> 'target' \
+    FROM jsonb_array_elements(v -> 'links') AS l (link) \
     ON CONFLICT (id) DO NOTHING;";
 
 /// `v ->> 'slug'`'s task with `path` of its fields set to `value`, a `jsonb` expression.
@@ -53,9 +53,8 @@ pub(in crate::store) fn field_set(path: &str, value: &str) -> String {
 }
 
 /// The write's refusal unless its actor is a red's filer: `filer` and `unfiled`.
-pub(in crate::store) const FILED: &str =
-    "IF (SELECT kind FROM session WHERE handle = v ->> 'actor') IS DISTINCT FROM v ->> 'filer' THEN
-    RAISE EXCEPTION '%', v ->> 'unfiled';
+pub(in crate::store) const FILED: &str = "IF (SELECT kind FROM session WHERE handle = v ->> 'actor') IS DISTINCT FROM v ->> 'filer' THEN \
+    RAISE EXCEPTION '%', v ->> 'unfiled'; \
 END IF;";
 
 /// A new task ([`CREATE`]) with the marks `new` names, its line on the thread (`said`) and, where
@@ -102,22 +101,22 @@ pub(in crate::store) fn block_cancelled_dependencies(cancelling: bool) -> String
         "l.slug = v ->> 'slug'"
     };
     format!(
-        "DECLARE
-    dependent_ record;
-    was_ text;
-BEGIN
-    FOR dependent_ IN SELECT l.slug, string_agg(l.target, ', ' ORDER BY l.target) AS cancelled
-        FROM link l JOIN task t ON t.slug = l.target JOIN task d ON d.slug = l.slug
-        WHERE l.kind = 'dep' AND {scope} AND t.status = 'cancelled'
-            AND d.status NOT IN ('done', 'cancelled')
-        GROUP BY l.slug ORDER BY l.slug
-    LOOP
-        SELECT status INTO was_ FROM task WHERE slug = dependent_.slug;
-        UPDATE task SET status = 'blocked', updated = (v ->> 'now')::double precision,
-            version = version + 1 WHERE slug = dependent_.slug;
-        DELETE FROM counter WHERE id = jsonb_build_array('hold', dependent_.slug);
-        {}
-    END LOOP;
+        "DECLARE \
+    dependent_ record; \
+    was_ text; \
+BEGIN \
+    FOR dependent_ IN SELECT l.slug, string_agg(l.target, ', ' ORDER BY l.target) AS cancelled \
+        FROM link l JOIN task t ON t.slug = l.target JOIN task d ON d.slug = l.slug \
+        WHERE l.kind = 'dep' AND {scope} AND t.status = 'cancelled' \
+            AND d.status NOT IN ('done', 'cancelled') \
+        GROUP BY l.slug ORDER BY l.slug \
+    LOOP \
+        SELECT status INTO was_ FROM task WHERE slug = dependent_.slug; \
+        UPDATE task SET status = 'blocked', updated = (v ->> 'now')::double precision, \
+            version = version + 1 WHERE slug = dependent_.slug; \
+        DELETE FROM counter WHERE id = jsonb_build_array('hold', dependent_.slug); \
+        {} \
+    END LOOP; \
 END;",
         logged(
             "dependent_.slug",
@@ -134,17 +133,17 @@ END;",
 pub(in crate::store) fn set_priority(acts: bool) -> String {
     let act = if acts { act() } else { String::new() };
     format!(
-        "{act}
-DECLARE
-    was_ bigint;
-BEGIN
-    SELECT priority INTO was_ FROM task WHERE slug = v ->> 'slug';
-    IF NOT FOUND THEN
-        RAISE EXCEPTION '%', v ->> 'missing';
-    END IF;
-    UPDATE task SET priority = (v ->> 'priority')::bigint, version = version + 1
-        WHERE slug = v ->> 'slug';
-    {}
+        "{act} \
+DECLARE \
+    was_ bigint; \
+BEGIN \
+    SELECT priority INTO was_ FROM task WHERE slug = v ->> 'slug'; \
+    IF NOT FOUND THEN \
+        RAISE EXCEPTION '%', v ->> 'missing'; \
+    END IF; \
+    UPDATE task SET priority = (v ->> 'priority')::bigint, version = version + 1 \
+        WHERE slug = v ->> 'slug'; \
+    {} \
 END;",
         said("(v ->> 'actor') || ' changed priority p' || was_ || ' → p' || (v ->> 'priority')")
     )
@@ -162,12 +161,12 @@ pub(in crate::store) fn reason_written() -> String {
 }
 
 /// What a block waited on removed from `v ->> 'slug'` once a write took it out of blocked.
-pub(in crate::store) const UNBLOCKED: &str =
-    "UPDATE task SET fields = board_set(fields, '{_board,blocked}', NULL)
+pub(in crate::store) const UNBLOCKED: &str = "UPDATE task SET fields = board_set(fields, '{_board,blocked}', NULL) \
     WHERE slug = v ->> 'slug' AND status <> 'blocked' AND fields #> '{_board,blocked}' IS NOT NULL;";
 
 /// Every task's slug and parent: the tree, read whole.
-const TREE: &str = "coalesce((SELECT jsonb_agg(jsonb_build_array(slug, parent) ORDER BY slug) FROM task), '[]'::jsonb)";
+const TREE: &str =
+    "coalesce((SELECT jsonb_agg(jsonb_build_array(slug, parent) ORDER BY slug) FROM task), '[]')";
 
 /// The tree ([`TREE`]), as a read of its own.
 pub(in crate::store) const TREE_ONLY: Pg<'static> = Pg::Read(Cow::Borrowed(TREE));
@@ -175,22 +174,22 @@ pub(in crate::store) const TREE_ONLY: Pg<'static> = Pg::Read(Cow::Borrowed(TREE)
 /// The tree as `set_parent` decides on it, the count of moves it was read at, and the actor.
 pub(in crate::store) fn tree_read() -> Pg<'static> {
     Pg::read(format!(
-        "jsonb_build_object('tree', {TREE},
-    'moves', coalesce((SELECT last FROM counter WHERE id = '\"tree\"'), 0),
-    'me', (SELECT jsonb_strip_nulls(jsonb_build_object('left_at', left_at)) FROM session
-        WHERE handle = v ->> 'actor'),
+        "jsonb_build_object('tree', {TREE}, \
+    'moves', coalesce((SELECT last FROM counter WHERE id = '\"tree\"'), 0), \
+    'me', (SELECT jsonb_strip_nulls(jsonb_build_object('left_at', left_at)) FROM session \
+        WHERE handle = v ->> 'actor'), \
     'known', EXISTS (SELECT 1 FROM session WHERE handle = v ->> 'actor'))"
     ))
 }
 
 /// No task moved under another since the tree was read; then the task under `v ->> 'parent'`.
-const MOVE_UNDER: &str = "IF coalesce((SELECT last FROM counter WHERE id = '\"tree\"'), 0)
-        <> (v ->> 'moves')::bigint THEN
-    RAISE EXCEPTION 'stale';
-END IF;
-INSERT INTO counter (id, last) VALUES ('\"tree\"', 1)
-    ON CONFLICT (id) DO UPDATE SET last = counter.last + 1;
-UPDATE task SET parent = v ->> 'parent', updated = (v ->> 'now')::double precision,
+const MOVE_UNDER: &str = "IF coalesce((SELECT last FROM counter WHERE id = '\"tree\"'), 0) \
+        <> (v ->> 'moves')::bigint THEN \
+    RAISE EXCEPTION 'stale'; \
+END IF; \
+INSERT INTO counter (id, last) VALUES ('\"tree\"', 1) \
+    ON CONFLICT (id) DO UPDATE SET last = counter.last + 1; \
+UPDATE task SET parent = v ->> 'parent', updated = (v ->> 'now')::double precision, \
     version = version + 1 WHERE slug = v ->> 'slug';";
 
 /// What `Store::run_for` reads, in one statement (`super::super::surreal::work::run_for_read`).
@@ -199,23 +198,23 @@ pub(in crate::store) fn run_for_read() -> Pg<'static> {
         "SELECT s.handle, s.last_seen, s.busy_until, s.pid, s.host FROM session s";
     const BINDING: &str = "callback_state c ON c.id = jsonb_build_array('binding', s.agent)";
     Pg::read(format!(
-        "(WITH here AS ({SEEN_AS} JOIN {BINDING}
-        WHERE v ? 'checkout' AND s.left_at IS NULL
-            AND c.doc -> 'in_process' = 'true' AND c.doc ->> 'worktree' = v ->> 'checkout'),
-    called AS ({SEEN_AS} LEFT JOIN {BINDING}
-        WHERE v ? 'claude' AND s.left_at IS NULL AND s.agent = v ->> 'claude'
-            AND coalesce(c.doc -> 'in_process', 'false') = 'false'),
-    who AS (SELECT v ->> 'asked' AS handle UNION SELECT handle FROM here
-        UNION SELECT handle FROM called)
-SELECT jsonb_build_object(
-    'here', {},
-    'called', {},
-    'held', coalesce((SELECT jsonb_agg(jsonb_build_object('handle', r.handle, 'slug', r.slug))
-        FROM role r JOIN task t ON t.slug = r.slug
-        WHERE r.handle IN (SELECT handle FROM who)
-        AND ((r.role = 'executor' AND t.status IN (SELECT jsonb_array_elements_text(v -> 'executing')))
-            OR (r.role = 'reviewer' AND t.status = 'review'))), '[]'::jsonb),
-    'tree', {TREE},
+        "(WITH here AS ({SEEN_AS} JOIN {BINDING} \
+        WHERE v ? 'checkout' AND s.left_at IS NULL \
+            AND c.doc -> 'in_process' = 'true' AND c.doc ->> 'worktree' = v ->> 'checkout'), \
+    called AS ({SEEN_AS} LEFT JOIN {BINDING} \
+        WHERE v ? 'claude' AND s.left_at IS NULL AND s.agent = v ->> 'claude' \
+            AND coalesce(c.doc -> 'in_process', 'false') = 'false'), \
+    who AS (SELECT v ->> 'asked' AS handle UNION SELECT handle FROM here \
+        UNION SELECT handle FROM called) \
+SELECT jsonb_build_object( \
+    'here', {}, \
+    'called', {}, \
+    'held', coalesce((SELECT jsonb_agg(jsonb_build_object('handle', r.handle, 'slug', r.slug)) \
+        FROM role r JOIN task t ON t.slug = r.slug \
+        WHERE r.handle IN (SELECT handle FROM who) \
+        AND ((r.role = 'executor' AND t.status IN (SELECT jsonb_array_elements_text(v -> 'executing'))) \
+            OR (r.role = 'reviewer' AND t.status = 'review'))), '[]'), \
+    'tree', {TREE}, \
     'branch', (SELECT to_jsonb(status) FROM task WHERE slug = v ->> 'branch')))",
         rows("h", "here h", "h.handle"),
         rows("h", "called h", "h.handle"),
@@ -224,10 +223,10 @@ SELECT jsonb_build_object(
 
 /// The checks a pass's write makes first, before any statement of its own moves a version or a
 /// `last_seen`: each task as read (`fenced`), then each dropped holder as read ([`SEEN`]).
-const FENCES: &str = "IF EXISTS (SELECT 1 FROM jsonb_array_elements(v -> 'fenced') AS g
-        WHERE (SELECT version FROM task WHERE slug = g ->> 'slug')
-            IS DISTINCT FROM (g ->> 'version')::bigint) THEN
-    RAISE EXCEPTION 'stale';
+const FENCES: &str = "IF EXISTS (SELECT 1 FROM jsonb_array_elements(v -> 'fenced') AS g \
+        WHERE (SELECT version FROM task WHERE slug = g ->> 'slug') \
+            IS DISTINCT FROM (g ->> 'version')::bigint) THEN \
+    RAISE EXCEPTION 'stale'; \
 END IF;";
 
 /// A pass's writes, after its fences: each receiver still there and fenced, its slot counter where
@@ -235,36 +234,36 @@ END IF;";
 /// or lifted (`super::super::surreal::work::gives`).
 fn gives() -> String {
     format!(
-        "IF EXISTS (SELECT 1 FROM jsonb_array_elements_text(v -> 'receivers') AS h
-        WHERE NOT EXISTS (SELECT 1 FROM session WHERE handle = h AND left_at IS NULL)) THEN
-    RAISE EXCEPTION 'stale';
-END IF;
-{}
-IF EXISTS (SELECT 1 FROM jsonb_array_elements(v -> 'counters') AS c
-        WHERE coalesce((SELECT last FROM counter WHERE id = c -> 'key'), 0)
-            <> (c ->> 'last')::bigint) THEN
-    RAISE EXCEPTION 'stale';
-END IF;
-DECLARE
-    give_ jsonb;
-BEGIN
-    FOR give_ IN SELECT jsonb_array_elements(v -> 'gives') LOOP
-        DELETE FROM role WHERE id IN (SELECT jsonb_build_array(give_ ->> 'slug', h, 'orchestrator')
-            FROM jsonb_array_elements_text(give_ -> 'drop') AS h);
-        INSERT INTO role (id, slug, handle, role, since)
-            VALUES (jsonb_build_array(give_ ->> 'slug', give_ ->> 'to', 'orchestrator'),
-                give_ ->> 'slug', give_ ->> 'to', 'orchestrator', (v ->> 'now')::double precision)
-            ON CONFLICT (id) DO UPDATE SET since = EXCLUDED.since, expires = NULL;
-        UPDATE task SET version = version + 1 WHERE slug = give_ ->> 'slug';
-        INSERT INTO counter (id, last) VALUES (jsonb_build_array('slots', give_ ->> 'to'), 1)
-            ON CONFLICT (id) DO UPDATE SET last = counter.last + 1;
-        {}
-    END LOOP;
-END;
-UPDATE task SET version = version + 1,
-    fields = board_set(fields, '{{{FIELDS},{WAITING}}}', v -> 'now')
-    WHERE slug IN (SELECT jsonb_array_elements_text(v -> 'marks'));
-UPDATE task SET version = version + 1, fields = board_set(fields, '{{{FIELDS},{WAITING}}}', NULL)
+        "IF EXISTS (SELECT 1 FROM jsonb_array_elements_text(v -> 'receivers') AS h \
+        WHERE NOT EXISTS (SELECT 1 FROM session WHERE handle = h AND left_at IS NULL)) THEN \
+    RAISE EXCEPTION 'stale'; \
+END IF; \
+{} \
+IF EXISTS (SELECT 1 FROM jsonb_array_elements(v -> 'counters') AS c \
+        WHERE coalesce((SELECT last FROM counter WHERE id = c -> 'key'), 0) \
+            <> (c ->> 'last')::bigint) THEN \
+    RAISE EXCEPTION 'stale'; \
+END IF; \
+DECLARE \
+    give_ jsonb; \
+BEGIN \
+    FOR give_ IN SELECT jsonb_array_elements(v -> 'gives') LOOP \
+        DELETE FROM role WHERE id IN (SELECT jsonb_build_array(give_ ->> 'slug', h, 'orchestrator') \
+            FROM jsonb_array_elements_text(give_ -> 'drop') AS h); \
+        INSERT INTO role (id, slug, handle, role, since) \
+            VALUES (jsonb_build_array(give_ ->> 'slug', give_ ->> 'to', 'orchestrator'), \
+                give_ ->> 'slug', give_ ->> 'to', 'orchestrator', (v ->> 'now')::double precision) \
+            ON CONFLICT (id) DO UPDATE SET since = EXCLUDED.since, expires = NULL; \
+        UPDATE task SET version = version + 1 WHERE slug = give_ ->> 'slug'; \
+        INSERT INTO counter (id, last) VALUES (jsonb_build_array('slots', give_ ->> 'to'), 1) \
+            ON CONFLICT (id) DO UPDATE SET last = counter.last + 1; \
+        {} \
+    END LOOP; \
+END; \
+UPDATE task SET version = version + 1, \
+    fields = board_set(fields, '{{{FIELDS},{WAITING}}}', v -> 'now') \
+    WHERE slug IN (SELECT jsonb_array_elements_text(v -> 'marks')); \
+UPDATE task SET version = version + 1, fields = board_set(fields, '{{{FIELDS},{WAITING}}}', NULL) \
     WHERE slug IN (SELECT jsonb_array_elements_text(v -> 'unmarks'));",
         fenced("SELECT jsonb_array_elements_text(v -> 'receivers')"),
         logged(
@@ -280,24 +279,24 @@ UPDATE task SET version = version + 1, fields = board_set(fields, '{{{FIELDS},{W
 /// What `Store::gaining` reads of `v ->> 'handle'`: its slot counter, and the status and red mark
 /// of each task it holds the orchestrator role on.
 pub(in crate::store) const GAINING: Pg<'static> = Pg::Read(Cow::Borrowed(
-    "jsonb_build_object(
-    'last', coalesce((SELECT last FROM counter WHERE id = jsonb_build_array('slots', v ->> 'handle')), 0),
-    'tasks', coalesce((SELECT jsonb_agg(jsonb_build_object('status', t.status,
-            'red', t.fields #> '{_board,red}') ORDER BY t.slug)
-        FROM role r JOIN task t ON t.slug = r.slug
-        WHERE r.handle = v ->> 'handle' AND r.role = 'orchestrator'), '[]'::jsonb))",
+    "jsonb_build_object( \
+    'last', coalesce((SELECT last FROM counter WHERE id = jsonb_build_array('slots', v ->> 'handle')), 0), \
+    'tasks', coalesce((SELECT jsonb_agg(jsonb_build_object('status', t.status, \
+            'red', t.fields #> '{_board,red}') ORDER BY t.slug) \
+        FROM role r JOIN task t ON t.slug = r.slug \
+        WHERE r.handle = v ->> 'handle' AND r.role = 'orchestrator'), '[]'))",
 ));
 
 /// Of `candidates`, the sessions that listen: a channel registered, or a reader of `tasks wait`.
 pub(in crate::store) const LISTENING: Pg<'static> = Pg::Read(Cow::Borrowed(
-    "coalesce((SELECT jsonb_agg(DISTINCT l.handle) FROM (
-    SELECT c.doc ->> 'handle' AS handle FROM callback_state c
-        WHERE c.id IN (SELECT to_jsonb(h) FROM jsonb_array_elements_text(v -> 'candidates') AS h)
-            AND c.doc ->> 'address' IS NOT NULL
-    UNION SELECT w FROM jsonb_array_elements_text(coalesce(
-            (SELECT doc -> 'waiting' FROM callback_state WHERE id = '\"chat\"'), '[]'::jsonb)) AS w
-        WHERE w IN (SELECT jsonb_array_elements_text(v -> 'candidates'))) AS l
-    WHERE l.handle IS NOT NULL), '[]'::jsonb)",
+    "coalesce((SELECT jsonb_agg(DISTINCT l.handle) FROM ( \
+    SELECT c.doc ->> 'handle' AS handle FROM callback_state c \
+        WHERE c.id IN (SELECT to_jsonb(h) FROM jsonb_array_elements_text(v -> 'candidates') AS h) \
+            AND c.doc ->> 'address' IS NOT NULL \
+    UNION SELECT w FROM jsonb_array_elements_text(coalesce( \
+            (SELECT doc -> 'waiting' FROM callback_state WHERE id = '\"chat\"'), '[]')) AS w \
+        WHERE w IN (SELECT jsonb_array_elements_text(v -> 'candidates'))) AS l \
+    WHERE l.handle IS NOT NULL), '[]')",
 ));
 
 /// A pass of gives as one write: its fences, then its writes ([`gives`]), by a session (`actor`)
@@ -329,22 +328,22 @@ pub(in crate::store) fn set_parent(acts: bool, guarded: bool, gives: bool) -> Pg
 pub(in crate::store) fn amend(acts: bool) -> Pg<'static> {
     let act = if acts { act() } else { String::new() };
     Pg::script(format!(
-        "{act}
-DECLARE
-    title_ text;
-BEGIN
-    SELECT title INTO title_ FROM task WHERE slug = v ->> 'slug';
-    IF NOT FOUND THEN
-        RAISE EXCEPTION '%', v ->> 'missing';
-    END IF;
-    INSERT INTO link (id, slug, kind, target)
-        SELECT DISTINCT jsonb_build_array(v ->> 'slug', 'doc', l), v ->> 'slug', 'doc', l
-        FROM jsonb_array_elements_text(v -> 'links') AS l
-        ON CONFLICT (id) DO NOTHING;
-    UPDATE task SET title = v ->> 'title', version = version + 1 WHERE slug = v ->> 'slug';
-    IF title_ IS DISTINCT FROM v ->> 'title' THEN
-        {}
-    END IF;
+        "{act} \
+DECLARE \
+    title_ text; \
+BEGIN \
+    SELECT title INTO title_ FROM task WHERE slug = v ->> 'slug'; \
+    IF NOT FOUND THEN \
+        RAISE EXCEPTION '%', v ->> 'missing'; \
+    END IF; \
+    INSERT INTO link (id, slug, kind, target) \
+        SELECT DISTINCT jsonb_build_array(v ->> 'slug', 'doc', l), v ->> 'slug', 'doc', l \
+        FROM jsonb_array_elements_text(v -> 'links') AS l \
+        ON CONFLICT (id) DO NOTHING; \
+    UPDATE task SET title = v ->> 'title', version = version + 1 WHERE slug = v ->> 'slug'; \
+    IF title_ IS DISTINCT FROM v ->> 'title' THEN \
+        {} \
+    END IF; \
 END;",
         said("(v ->> 'actor') || ' retitled it: ' || title_ || ' → ' || (v ->> 'title')")
     ))
@@ -366,26 +365,26 @@ pub(in crate::store) fn move_as_owner(
         String::new()
     };
     let body = format!(
-        "DECLARE
-    task_ record;
-BEGIN
-    SELECT status, instruction, parent INTO task_ FROM task WHERE slug = v ->> 'slug';
-    IF NOT FOUND THEN
-        RAISE EXCEPTION '%', v ->> 'missing';
-    END IF;
-    IF task_.status NOT IN (SELECT jsonb_array_elements_text(v -> 'from')) THEN
-        RAISE EXCEPTION '%', (v ->> 'cannot') || task_.status || ' to ' || (v ->> 'status');
-    END IF;
-    IF v ->> 'status' = 'review' AND (task_.instruction OR task_.parent IS NOT NULL) THEN
-        RAISE EXCEPTION '%', v ->> 'instruction';
-    END IF;
-    UPDATE task SET status = v ->> 'status', updated = (v ->> 'now')::double precision,
-        version = version + 1 WHERE slug = v ->> 'slug';
-    {UNBLOCKED}
-    {UNHOLD}
-    {}
-END;
-{reason}
+        "DECLARE \
+    task_ record; \
+BEGIN \
+    SELECT status, instruction, parent INTO task_ FROM task WHERE slug = v ->> 'slug'; \
+    IF NOT FOUND THEN \
+        RAISE EXCEPTION '%', v ->> 'missing'; \
+    END IF; \
+    IF task_.status NOT IN (SELECT jsonb_array_elements_text(v -> 'from')) THEN \
+        RAISE EXCEPTION '%', (v ->> 'cannot') || task_.status || ' to ' || (v ->> 'status'); \
+    END IF; \
+    IF v ->> 'status' = 'review' AND (task_.instruction OR task_.parent IS NOT NULL) THEN \
+        RAISE EXCEPTION '%', v ->> 'instruction'; \
+    END IF; \
+    UPDATE task SET status = v ->> 'status', updated = (v ->> 'now')::double precision, \
+        version = version + 1 WHERE slug = v ->> 'slug'; \
+    {UNBLOCKED} \
+    {UNHOLD} \
+    {} \
+END; \
+{reason} \
 {}",
         said(&format!(
             "(v ->> 'actor') || '{MOVED}' || task_.status || '{ARROW}' || (v ->> 'status')"
@@ -398,48 +397,47 @@ END;
 /// Whether `v ->> 'slug'` is a task, the tasks right under it, the lines of its thread that record
 /// an executor or an orchestrator, and who holds those roles now.
 pub(in crate::store) const EVER_HELD: Pg<'static> = Pg::Read(Cow::Borrowed(
-    "jsonb_build_object(
-    'known', EXISTS (SELECT 1 FROM task WHERE slug = v ->> 'slug'),
-    'below', coalesce((SELECT jsonb_agg(jsonb_build_object('slug', slug, 'instruction', instruction)
-        ORDER BY slug) FROM task WHERE parent = v ->> 'slug'), '[]'::jsonb),
-    'lines', coalesce((SELECT jsonb_agg(jsonb_build_object('sender', m.sender, 'text', m.text)
-            ORDER BY m.sid)
-        FROM message m WHERE m.slug = v ->> 'slug' AND m.kind = 'system'
-            AND (starts_with(m.text, m.sender || ' claimed it')
-                OR m.text = m.sender || ' joined as executor'
-                OR strpos(m.text, ' orchestrator') > 0)), '[]'::jsonb),
-    'holders', coalesce((SELECT jsonb_agg(jsonb_build_object('handle', handle, 'role', role)
-        ORDER BY handle, role)
-        FROM role WHERE slug = v ->> 'slug' AND role IN ('executor', 'orchestrator')), '[]'::jsonb))",
+    "jsonb_build_object( \
+    'known', EXISTS (SELECT 1 FROM task WHERE slug = v ->> 'slug'), \
+    'below', coalesce((SELECT jsonb_agg(jsonb_build_object('slug', slug, 'instruction', instruction) \
+        ORDER BY slug) FROM task WHERE parent = v ->> 'slug'), '[]'), \
+    'lines', coalesce((SELECT jsonb_agg(jsonb_build_object('sender', m.sender, 'text', m.text) \
+            ORDER BY m.sid) \
+        FROM message m WHERE m.slug = v ->> 'slug' AND m.kind = 'system' \
+            AND (starts_with(m.text, m.sender || ' claimed it') \
+                OR m.text = m.sender || ' joined as executor' \
+                OR strpos(m.text, ' orchestrator') > 0)), '[]'), \
+    'holders', coalesce((SELECT jsonb_agg(jsonb_build_object('handle', handle, 'role', role) \
+        ORDER BY handle, role) \
+        FROM role WHERE slug = v ->> 'slug' AND role IN ('executor', 'orchestrator')), '[]'))",
 ));
 
 /// The task `v ->> 'slug'` as a red's mark reads it, into `task_`: refused with `missing` when it
 /// is not there.
-const RED_READ: &str =
-    "SELECT status, priority, fields #> '{_board,red}' AS red INTO task_ FROM task
-        WHERE slug = v ->> 'slug';
-    IF NOT FOUND THEN
-        RAISE EXCEPTION '%', v ->> 'missing';
+const RED_READ: &str = "SELECT status, priority, fields #> '{_board,red}' AS red INTO task_ FROM task \
+        WHERE slug = v ->> 'slug'; \
+    IF NOT FOUND THEN \
+        RAISE EXCEPTION '%', v ->> 'missing'; \
     END IF;";
 
 /// A red's filer ([`FILED`]) marking `v ->> 'slug'` red (`red`) and most urgent, said on its
 /// thread, unless it is both already; refused for a task closed (`closed`).
 pub(in crate::store) fn mark_red() -> Pg<'static> {
     Pg::script(format!(
-        "{}
-DECLARE
-    task_ record;
-BEGIN
-    {RED_READ}
-    IF task_.status IN ('done', 'cancelled') THEN
-        RAISE EXCEPTION '%', (v ->> 'closed') || task_.status || ': only an open task is marked red';
-    END IF;
-    {FILED}
-    IF task_.red IS NULL OR task_.priority > 0 THEN
-        UPDATE task SET fields = board_set(fields, '{{_board,red}}', v -> 'red'), priority = 0,
-            version = version + 1 WHERE slug = v ->> 'slug';
-        {}
-    END IF;
+        "{} \
+DECLARE \
+    task_ record; \
+BEGIN \
+    {RED_READ} \
+    IF task_.status IN ('done', 'cancelled') THEN \
+        RAISE EXCEPTION '%', (v ->> 'closed') || task_.status || ': only an open task is marked red'; \
+    END IF; \
+    {FILED} \
+    IF task_.red IS NULL OR task_.priority > 0 THEN \
+        UPDATE task SET fields = board_set(fields, '{{_board,red}}', v -> 'red'), priority = 0, \
+            version = version + 1 WHERE slug = v ->> 'slug'; \
+        {} \
+    END IF; \
 END;",
         act(),
         said(
@@ -452,17 +450,17 @@ END;",
 /// none or is closed; fenced on `version` when `fenced` and holding `slots` when `guarded`.
 pub(in crate::store) fn unmark_red(fenced: bool, guarded: bool) -> Pg<'static> {
     let body = format!(
-        "{}
-DECLARE
-    task_ record;
-BEGIN
-    {RED_READ}
-    {FILED}
-    IF task_.red IS NOT NULL AND task_.status NOT IN ('done', 'cancelled') THEN
-        UPDATE task SET fields = board_set(fields, '{{_board,red}}', NULL), version = version + 1
-            WHERE slug = v ->> 'slug';
-        {}
-    END IF;
+        "{} \
+DECLARE \
+    task_ record; \
+BEGIN \
+    {RED_READ} \
+    {FILED} \
+    IF task_.red IS NOT NULL AND task_.status NOT IN ('done', 'cancelled') THEN \
+        UPDATE task SET fields = board_set(fields, '{{_board,red}}', NULL), version = version + 1 \
+            WHERE slug = v ->> 'slug'; \
+        {} \
+    END IF; \
 END;",
         act(),
         said(
@@ -474,6 +472,122 @@ END;",
 
 /// The owner's tasks saved under the receipt `receipt`, two at most.
 pub(in crate::store) const OWNER_SAVED: Pg<'static> = Pg::Read(Cow::Borrowed(
-    "coalesce((SELECT jsonb_agg(o.slug) FROM (SELECT slug FROM task WHERE created_by = 'owner'
-    AND fields #>> '{_symphony,owner_save}' = v ->> 'receipt' ORDER BY slug LIMIT 2) AS o), '[]'::jsonb)",
+    "coalesce((SELECT jsonb_agg(o.slug) FROM (SELECT slug FROM task WHERE created_by = 'owner' \
+    AND fields #>> '{_symphony,owner_save}' = v ->> 'receipt' ORDER BY slug LIMIT 2) AS o), '[]')",
 ));
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `statement`'s block, the shape every write here has.
+    fn block(statement: Pg<'static>) -> String {
+        match statement {
+            Pg::Script(block, None) => block.into_owned(),
+            other => panic!("a write is a block answering its own: {other:?}"),
+        }
+    }
+
+    /// Where each of `parts` is in `text`, each after the one before it.
+    fn in_order(text: &str, parts: &[&str]) {
+        let at: Vec<usize> = (parts.iter())
+            .map(|part| {
+                text.find(part)
+                    .unwrap_or_else(|| panic!("{part} in {text}"))
+            })
+            .collect();
+        assert!(at.windows(2).all(|pair| pair[0] < pair[1]), "{at:?}");
+    }
+
+    #[test]
+    fn a_new_task_carries_each_mark_it_is_made_with_and_no_other() {
+        let new = |acts, receipt, red, fast_fix, arm| Creating {
+            acts,
+            receipt,
+            red,
+            fast_fix,
+            arm,
+        };
+        let marks = [
+            field_set("_symphony,owner_save", "v -> 'owner_save'"),
+            field_set("_board,red", "v -> 'red'"),
+            field_set("_board,fast_fix", "v -> 'fast_fix'"),
+            field_set("_board,arm", "v -> 'arm'"),
+        ];
+        let bare = create(&new(false, false, false, false, false));
+        assert!(
+            bare.starts_with(CREATE),
+            "the owner's task is no session's act"
+        );
+        assert!(marks.iter().all(|mark| !bare.contains(mark.as_str())));
+        assert!(!bare.contains(FILED));
+        let all = create(&new(true, true, true, true, true));
+        let act = act();
+        let said = said("v ->> 'said'");
+        let blocks = block_cancelled_dependencies(false);
+        in_order(
+            &all,
+            &[
+                &act, CREATE, &marks[0], FILED, &marks[1], &marks[2], &marks[3], &said, &blocks,
+            ],
+        );
+        let red = create(&new(true, false, true, false, false));
+        assert!(red.contains(FILED) && red.contains(marks[1].as_str()));
+        assert!(!red.contains(marks[2].as_str()) && !red.contains(marks[3].as_str()));
+    }
+
+    #[test]
+    fn a_move_under_another_checks_before_it_writes_and_gives_after() {
+        let bare = block(set_parent(false, false, false));
+        assert!(bare.contains(MOVE_UNDER) && bare.contains(UNHOLD));
+        for part in [FENCES, SEEN, GUARD, "v -> 'gives'", "unknown_actor"] {
+            assert!(!bare.contains(part), "{part}");
+        }
+        let whole = block(set_parent(true, true, true));
+        let (act, said, gives) = (act(), said("v ->> 'said'"), gives());
+        in_order(
+            &whole,
+            &[&act, FENCES, SEEN, MOVE_UNDER, UNHOLD, &said, GUARD, &gives],
+        );
+        assert_eq!(
+            block(give_pass(false)),
+            format!("\n{FENCES}\n{SEEN}\n{gives}")
+        );
+        assert!(block(give_pass(true)).starts_with(&act));
+    }
+
+    #[test]
+    fn an_owners_move_is_fenced_guarded_reasoned_and_blocks_as_asked() {
+        let bare = block(move_as_owner(false, false, false, false));
+        assert!(!bare.contains("move_reason") && !bare.contains(GUARD));
+        assert!(
+            !bare.contains("RAISE EXCEPTION 'stale'"),
+            "no fence: {bare}"
+        );
+        assert!(bare.contains(&block_cancelled_dependencies(false)));
+        let whole = block(move_as_owner(true, true, true, true));
+        let (reason, blocks) = (reason_written(), block_cancelled_dependencies(true));
+        in_order(
+            &whole,
+            &[
+                super::super::cap::FENCE,
+                UNBLOCKED,
+                UNHOLD,
+                &reason,
+                &blocks,
+                GUARD,
+            ],
+        );
+        let unmarked = block(unmark_red(true, false));
+        assert!(unmarked.starts_with(super::super::cap::FENCE) && !unmarked.contains(GUARD));
+    }
+
+    #[test]
+    fn a_session_amends_as_an_act_and_the_owner_with_none() {
+        let act = act();
+        assert!(block(amend(true)).starts_with(&act));
+        let owners = block(amend(false));
+        assert!(!owners.contains(&act) && owners.contains("v ->> 'missing'"));
+        assert!(block(mark_red()).starts_with(&act));
+    }
+}

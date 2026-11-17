@@ -9,7 +9,7 @@
 //! to come to stay is given it. A session that only registered is given nothing by the board's own
 //! choice. A release that would leave open work with no orchestrator is refused.
 
-use super::common::{Backend, Fixture, RawWrite as _, Seed, refused};
+use super::common::{Backend, Fixture, Seed, refused};
 use super::orchestrators::go_quiet_but;
 use symphony_board::cli::Env;
 use symphony_board::health::LIVE_SECONDS;
@@ -59,13 +59,22 @@ fn settle(f: &Fixture, handles: &[&str]) {
 /// `handles` on the waiting list a look of `tasks wait` puts its reader on, as a waiting
 /// orchestrator is, with no look of their own made (which would give what waits).
 fn listen(f: &Fixture, handles: &[&str]) {
-    (f.store.client())
-        .write(
-            "FOR $h IN $handles { UPSERT type::record('callback_state', $h) SET handle = $h; };
-             UPSERT callback_state:chat SET waiting = array::union(waiting ?? [], $handles);",
-            serde_json::json!({"handles": handles}),
-        )
-        .unwrap();
+    let raw = f.store.raw();
+    for handle in handles {
+        let state = raw.row("callback_state", *handle);
+        state.put(serde_json::json!({"handle": handle})).unwrap();
+    }
+    let chat = raw.row("callback_state", "chat");
+    let mut waiting = match chat.field("waiting").unwrap() {
+        serde_json::Value::Array(waiting) => waiting,
+        _ => Vec::new(),
+    };
+    for handle in handles {
+        if !waiting.iter().any(|was| was == handle) {
+            waiting.push(serde_json::json!(handle));
+        }
+    }
+    chat.put(serde_json::json!({"waiting": waiting})).unwrap();
 }
 
 /// Whether a reader of the whole board, as the server's clock reads it, gave anything.
@@ -275,6 +284,8 @@ on_both! {
     }
 }
 
+// On SurrealDB alone until tools/board-pg-sessions-and-delivery: a session's beat (`Store::touch`)
+// has no PostgreSQL twin yet.
 #[test]
 fn a_subagents_task_goes_to_the_orchestrator_that_registered_it() {
     let f = Fixture::new(Seed::default());
@@ -303,6 +314,8 @@ fn a_subagents_task_goes_to_the_orchestrator_that_registered_it() {
     );
 }
 
+// On SurrealDB alone until tools/board-pg-sessions-and-delivery: a session's beat (`Store::touch`)
+// has no PostgreSQL twin yet.
 #[test]
 fn a_task_filed_by_no_orchestrators_session_goes_to_the_orchestrator_that_stays_holding_fewest() {
     let f = Fixture::new(Seed::default());
@@ -340,6 +353,8 @@ fn a_task_filed_by_no_orchestrators_session_goes_to_the_orchestrator_that_stays_
     assert_eq!(f.store.thread("tools/red-ish").unwrap()[1].sender, "board");
 }
 
+// On SurrealDB alone until tools/board-pg-sessions-and-delivery: a reader's callbacks
+// (`Store::collect_callbacks`) has no PostgreSQL twin yet.
 #[test]
 fn with_no_orchestrator_that_stays_a_task_waits_and_a_lone_new_one_is_given_it_once_it_waits() {
     let f = Fixture::new(Seed::default());
@@ -385,6 +400,8 @@ fn with_no_orchestrator_that_stays_a_task_waits_and_a_lone_new_one_is_given_it_o
     assert_eq!(f.said("tools/loose").len(), 2);
 }
 
+// On SurrealDB alone until tools/board-pg-sessions-and-delivery: a session's beat (`Store::touch`)
+// has no PostgreSQL twin yet.
 #[test]
 fn a_just_registered_orchestrator_beside_one_that_stays_is_given_nothing() {
     let f = Fixture::new(Seed::default());
@@ -414,6 +431,8 @@ fn a_just_registered_orchestrator_beside_one_that_stays_is_given_nothing() {
     assert_eq!(orchestrators_of(&f, "tools/b"), [amber.as_str()]);
 }
 
+// On SurrealDB alone until tools/board-pg-sessions-and-delivery: a session's beat (`Store::touch`)
+// has no PostgreSQL twin yet.
 #[test]
 fn a_throwaway_orchestrator_that_registers_and_vanishes_moves_nothing() {
     let f = Fixture::new(Seed::default());
@@ -444,6 +463,8 @@ fn a_throwaway_orchestrator_that_registers_and_vanishes_moves_nothing() {
     }
 }
 
+// On SurrealDB alone until tools/board-pg-sessions-and-delivery: a reader's callbacks
+// (`Store::collect_callbacks`) has no PostgreSQL twin yet.
 #[test]
 fn a_lost_holders_open_work_is_given_at_the_next_wait_look_with_no_sweep_run() {
     let f = Fixture::new(Seed::default());
@@ -486,6 +507,7 @@ fn a_lost_holders_open_work_is_given_at_the_next_wait_look_with_no_sweep_run() {
     assert_eq!(f.said("tools/quiet").len(), lines);
 }
 
+// On SurrealDB alone: it reaches the board through SurrealDB's own client.
 #[test]
 fn a_detached_dispatchers_pass_gives_a_lost_holders_work_to_an_orchestrator_on_a_channel() {
     let f = Fixture::new(Seed::default());
@@ -516,6 +538,8 @@ fn a_detached_dispatchers_pass_gives_a_lost_holders_work_to_an_orchestrator_on_a
     assert_eq!(heard.iter().filter(|l| l.starts_with("GIVEN ")).count(), 1);
 }
 
+// On SurrealDB alone until tools/board-pg-sessions-and-delivery: a session's beat (`Store::touch`)
+// has no PostgreSQL twin yet.
 #[test]
 fn the_clocks_read_gives_a_lost_holders_work_to_one_that_holds_a_task() {
     let f = Fixture::new(Seed::default());
@@ -535,6 +559,8 @@ fn the_clocks_read_gives_a_lost_holders_work_to_one_that_holds_a_task() {
     assert!(!tick(&f));
 }
 
+// On SurrealDB alone until tools/board-pg-sessions-and-delivery: a session's beat (`Store::touch`)
+// has no PostgreSQL twin yet.
 #[test]
 fn when_one_of_two_orchestrators_leaves_the_other_is_given_its_open_work_in_the_same_write() {
     let f = Fixture::new(Seed::default());
@@ -582,6 +608,8 @@ fn when_one_of_two_orchestrators_leaves_the_other_is_given_its_open_work_in_the_
     );
 }
 
+// On SurrealDB alone until tools/board-pg-sessions-and-delivery: a session leaving (`Store::leave`)
+// has no PostgreSQL twin yet.
 #[test]
 fn the_last_orchestrator_leaving_leaves_its_open_work_waiting() {
     let f = Fixture::new(Seed::default());
@@ -599,6 +627,8 @@ fn the_last_orchestrator_leaving_leaves_its_open_work_waiting() {
     );
 }
 
+// On SurrealDB alone until tools/board-pg-sessions-and-delivery: a reader's callbacks
+// (`Store::collect_callbacks`) has no PostgreSQL twin yet.
 #[test]
 fn the_idle_sweep_gives_a_quiet_orchestrators_open_work_to_one_that_stays() {
     let f = Fixture::new(Seed::default());
@@ -647,6 +677,8 @@ fn the_idle_sweep_gives_a_quiet_orchestrators_open_work_to_one_that_stays() {
     assert_eq!(f.said("tools/quiet").len(), lines);
 }
 
+// On SurrealDB alone until tools/board-pg-sessions-and-delivery: a session's beat (`Store::touch`)
+// has no PostgreSQL twin yet.
 #[test]
 fn an_orchestrator_quiet_then_back_is_given_what_waited_once_it_waits() {
     let f = Fixture::new(Seed::default());
@@ -670,6 +702,8 @@ fn an_orchestrator_quiet_then_back_is_given_what_waited_once_it_waits() {
     );
 }
 
+// On SurrealDB alone until tools/board-pg-sessions-and-delivery: a session's beat (`Store::touch`)
+// has no PostgreSQL twin yet.
 #[test]
 fn letting_the_orchestrator_role_go_is_refused_while_it_leaves_open_work_with_none() {
     let f = Fixture::new(Seed::default());
@@ -737,6 +771,8 @@ fn letting_the_orchestrator_role_go_is_refused_while_it_leaves_open_work_with_no
     assert!(task.holders("orchestrator").is_empty());
 }
 
+// On SurrealDB alone until tools/board-pg-sessions-and-delivery: a session leaving (`Store::leave`)
+// has no PostgreSQL twin yet.
 #[test]
 fn an_approved_task_reopened_after_its_orchestrator_left_is_given_one_again() {
     let f = Fixture::new(Seed::default());
@@ -770,6 +806,8 @@ fn an_approved_task_reopened_after_its_orchestrator_left_is_given_one_again() {
     );
 }
 
+// On SurrealDB alone until tools/board-pg-sessions-and-delivery: a session leaving (`Store::leave`)
+// has no PostgreSQL twin yet.
 #[test]
 fn a_given_orchestrator_counts_as_having_orchestrated_the_task_for_its_review() {
     let f = Fixture::new(Seed::default());

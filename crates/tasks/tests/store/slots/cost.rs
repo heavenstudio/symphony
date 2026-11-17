@@ -69,6 +69,7 @@ fn subquery_in_predicate(line: &str) -> bool {
     })
 }
 
+// On SurrealDB alone: it counts the round trips SurrealDB's client makes.
 #[test]
 fn the_caps_reads_are_planned_on_an_index_and_a_capped_claim_adds_a_round_trip_a_level() {
     let f = big(Backend::SurrealDb);

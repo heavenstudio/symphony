@@ -101,6 +101,7 @@ fn message(stream: &mut impl BufRead) -> Option<(Vec<u8>, Vec<u8>)> {
     Some((raw, body))
 }
 
+// On SurrealDB alone: a proxy stands before SurrealDB's server.
 #[test]
 fn a_real_retry_reobserves_source_without_refreshing_the_frozen_task_fence() {
     for known in [false, true] {

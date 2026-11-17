@@ -36,6 +36,8 @@ on_both! {
     }
 }
 
+// On SurrealDB alone until tools/board-pg-sessions-and-delivery: a launch recorded
+// (`Store::record_launch`) has no PostgreSQL twin yet.
 #[test]
 fn a_tasks_stamp_stands_until_the_task_or_its_thread_changes() {
     let f = Fixture::new(Seed::default());

@@ -135,6 +135,8 @@ on_both! {
     }
 }
 
+// On SurrealDB alone until tools/board-pg-threads-and-asks: the landings posted
+// (`Store::landings_posted`) has no PostgreSQL twin yet.
 #[test]
 fn a_cancelled_dependency_blocks_with_a_reason_instead_of_disappearing_from_pull() {
     for actor in ["owner", "amber-heron"] {
@@ -235,6 +237,8 @@ fn a_cancelled_dependency_blocks_with_a_reason_instead_of_disappearing_from_pull
     }
 }
 
+// On SurrealDB alone until tools/board-pg-sessions-and-delivery: a session's beat (`Store::touch`)
+// has no PostgreSQL twin yet.
 #[test]
 fn next_offers_work_whose_executor_or_reserver_is_gone() {
     let f = Fixture::new(Seed::default());
@@ -254,6 +258,8 @@ fn next_offers_work_whose_executor_or_reserver_is_gone() {
     assert_eq!(next(&f, &other).as_deref(), Some("sim/held"));
 }
 
+// On SurrealDB alone until tools/board-pg-sessions-and-delivery: a session's beat (`Store::touch`)
+// has no PostgreSQL twin yet.
 #[test]
 fn a_subtask_made_for_a_handle_is_offered_to_it_alone() {
     let f = Fixture::new(Seed::default());

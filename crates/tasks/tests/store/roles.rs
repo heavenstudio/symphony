@@ -789,6 +789,8 @@ fn told(f: &Fixture, handle: &str) -> Vec<String> {
 /// refused, say, goes back to review for a fresh approve: by its executor, reviewer or
 /// orchestrator, and only while the approve stands, so never once a landing has closed it. Its
 /// executor and reviewer are told, where their inbox and PULL digest find it.
+// On SurrealDB alone until tools/board-pg-sessions-and-delivery: the open panes' read
+// (`Store::open_task_sessions`) has no PostgreSQL twin yet.
 #[test]
 fn an_approved_task_no_landing_closed_goes_back_to_review_for_a_fresh_approve() {
     let (f, orch, exe, rev) = in_review(Backend::SurrealDb);
@@ -1010,6 +1012,8 @@ on_both! {
 
 /// A role on the task that is not one of the three sends it nowhere; with no executor to read
 /// the notice, its orchestrator hears it, and restaffs.
+// On SurrealDB alone until tools/board-pg-sessions-and-delivery: the open panes' read
+// (`Store::open_task_sessions`) has no PostgreSQL twin yet.
 #[test]
 fn a_reopen_no_executor_reads_is_said_to_the_orchestrator_and_a_reservation_reopens_nothing() {
     let (f, orch, exe, rev) = in_review(Backend::SurrealDb);
@@ -1049,6 +1053,8 @@ fn a_reopen_no_executor_reads_is_said_to_the_orchestrator_and_a_reservation_reop
     assert!(told(&f, &orch).contains(&unread), "{:?}", told(&f, &orch));
 }
 
+// On SurrealDB alone until tools/board-pg-sessions-and-delivery: a session's beat (`Store::touch`)
+// has no PostgreSQL twin yet.
 #[test]
 fn a_subtask_made_for_a_handle_is_reserved_without_a_lapse() {
     let f = Fixture::new(Seed::default());

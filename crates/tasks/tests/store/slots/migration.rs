@@ -1,5 +1,7 @@
 //! Branch lookup indexes and session revisions migrate schema 13 with its board data intact.
 
+// On SurrealDB alone: SurrealDB's schema 13 and its migration are its subject.
+
 use super::{K, O, sessions, with};
 use crate::common::{Fixture, HOST, NOW, RawWrite, refused};
 use serde_json::{Value, json};

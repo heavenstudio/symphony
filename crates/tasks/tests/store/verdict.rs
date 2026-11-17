@@ -115,6 +115,8 @@ on_both! {
     }
 }
 
+// On SurrealDB alone until tools/board-pg-sessions-and-delivery: the open panes' read
+// (`Store::open_task_sessions`) has no PostgreSQL twin yet.
 #[test]
 fn changes_for_an_executor_gone_quiet_tell_the_orchestrator_and_an_approve_does_not() {
     for verdict in ["approve", "changes"] {

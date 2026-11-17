@@ -169,6 +169,8 @@ on_both! {
     }
 }
 
+// On SurrealDB alone until tools/board-pg-sessions-and-delivery: a session leaving (`Store::leave`)
+// has no PostgreSQL twin yet.
 #[test]
 fn source_observations_refuse_fresh_writes_but_never_hide_a_committed_receipt() {
     use symphony_board::Error;
@@ -225,6 +227,8 @@ fn source_observations_refuse_fresh_writes_but_never_hide_a_committed_receipt() 
     }
 }
 
+// On SurrealDB alone until tools/board-pg-sessions-and-delivery: a session leaving (`Store::leave`)
+// has no PostgreSQL twin yet.
 #[test]
 fn a_known_older_receipt_survives_moved_state_and_a_departed_writer_without_replacing_the_newer() {
     let f = Fixture::new(Seed::default().session(ACTOR));

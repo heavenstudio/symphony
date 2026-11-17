@@ -156,6 +156,8 @@ on_both! {
     }
 }
 
+// On SurrealDB alone until tools/board-pg-sessions-and-delivery: a launch recorded
+// (`Store::record_launch`) has no PostgreSQL twin yet.
 #[test]
 fn one_owned_observation_groups_nested_and_branch_mirror_keys_without_writing_state() {
     let seed = with(sessions(), "feature", "ready", None, Some(O));

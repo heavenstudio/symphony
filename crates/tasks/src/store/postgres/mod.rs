@@ -43,9 +43,9 @@ use std::borrow::Cow;
 /// (`super::surreal::task_slugs`).
 pub(in crate::store) fn task_slugs(by_status: bool) -> Pg<'static> {
     Pg::read(if by_status {
-        "coalesce((SELECT jsonb_agg(slug ORDER BY slug) FROM task WHERE status = v ->> 'status'), '[]'::jsonb)"
+        "coalesce((SELECT jsonb_agg(slug ORDER BY slug) FROM task WHERE status = v ->> 'status'), '[]')"
     } else {
-        "coalesce((SELECT jsonb_agg(slug ORDER BY slug) FROM task), '[]'::jsonb)"
+        "coalesce((SELECT jsonb_agg(slug ORDER BY slug) FROM task), '[]')"
     })
 }
 
@@ -286,7 +286,7 @@ pub(in crate::store) fn row(row: &str) -> String {
 /// The rows of `from` read as [`row`] reads one, in `order`, as a list: `alias` names a row.
 pub(in crate::store) fn rows(alias: &str, from: &str, order: &str) -> String {
     format!(
-        "coalesce((SELECT jsonb_agg({} ORDER BY {order}) FROM {from}), '[]'::jsonb)",
+        "coalesce((SELECT jsonb_agg({} ORDER BY {order}) FROM {from}), '[]')",
         row(alias)
     )
 }
@@ -361,5 +361,62 @@ mod tests {
             request(&Pg::Simple("CREATE TABLE t ();".into()), false),
             Some(Request::Simple("CREATE TABLE t ();".into()))
         );
+    }
+
+    /// `rule`'s block, which a rule's write is.
+    fn ruled(reason: bool, needs: bool, blocked: bool, moved: Option<bool>, holds: bool) -> String {
+        match rule(reason, needs, blocked, moved, holds) {
+            Pg::Script(block, None) => block.into_owned(),
+            other => panic!("a rule is a block answering its own: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_rule_adds_to_its_write_each_part_its_change_asks_for_in_surrealqls_order() {
+        assert_eq!(ruled(false, false, false, None, false), write::write());
+        let whole = ruled(true, true, true, Some(true), true);
+        let parts = [
+            write::write(),
+            work::UNBLOCKED.to_string(),
+            work::field_set("_board,blocked", "v -> 'blocked'"),
+            work::reason_written(),
+            work::field_set("_board,needs", "v -> 'needs'"),
+            cap::HOLDING.to_string(),
+            work::block_cancelled_dependencies(true),
+            cap::GUARD.to_string(),
+        ];
+        let at: Vec<usize> = (parts.iter())
+            .map(|part| {
+                whole
+                    .find(part.as_str())
+                    .unwrap_or_else(|| panic!("{part}"))
+            })
+            .collect();
+        assert!(at.windows(2).all(|pair| pair[0] < pair[1]), "{at:?}");
+        assert_eq!(
+            whole.len(),
+            parts.iter().map(|part| part.len() + 1).sum::<usize>() - 1
+        );
+
+        let moved = ruled(false, false, false, Some(false), false);
+        assert!(moved.contains(&work::block_cancelled_dependencies(false)));
+        assert!(!moved.contains(&work::block_cancelled_dependencies(true)));
+        assert!(moved.contains(work::UNBLOCKED) && moved.contains(cap::HOLDING));
+        assert!(!moved.contains(cap::GUARD) && !moved.contains("move_reason"));
+        let held = ruled(false, false, false, None, true);
+        assert_eq!(held, format!("{}\n{}", write::write(), cap::GUARD));
+    }
+
+    #[test]
+    fn the_slugs_read_names_a_status_only_when_asked_by_status() {
+        let (Pg::Read(by_status), Pg::Read(all)) = (task_slugs(true), task_slugs(false)) else {
+            panic!("the slugs are a read");
+        };
+        assert!(
+            by_status.contains("WHERE status = v ->> 'status'"),
+            "{by_status}"
+        );
+        assert!(!all.contains("WHERE"), "{all}");
+        assert_eq!(claimable(), Pg::read(sessions::CLAIMABLE));
     }
 }

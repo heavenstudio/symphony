@@ -182,6 +182,8 @@ on_both! {
     }
 }
 
+// On SurrealDB alone until tools/board-pg-sessions-and-delivery: a session leaving (`Store::leave`)
+// has no PostgreSQL twin yet.
 #[test]
 fn invalid_priorities_missing_tasks_and_invalid_actors_leave_the_board_unchanged() {
     let f = Fixture::new(
@@ -215,6 +217,7 @@ fn invalid_priorities_missing_tasks_and_invalid_actors_leave_the_board_unchanged
     }
 }
 
+// On SurrealDB alone: it reaches the board through SurrealDB's own client.
 #[test]
 fn a_priority_edit_sends_no_callback_to_a_listening_orchestrator() {
     use std::io::Read;

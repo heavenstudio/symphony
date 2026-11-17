@@ -77,6 +77,8 @@ on_both! {
     }
 }
 
+// On SurrealDB alone until tools/board-pg-sessions-and-delivery: a session's beat (`Store::touch`)
+// has no PostgreSQL twin yet.
 #[test]
 fn a_second_orchestrator_is_refused_naming_the_holder_and_the_hand_over() {
     let (f, a, b) = two_orchestrators(Backend::SurrealDb);
@@ -122,6 +124,8 @@ fn a_second_orchestrator_is_refused_naming_the_holder_and_the_hand_over() {
     );
 }
 
+// On SurrealDB alone until tools/board-pg-sessions-and-delivery: a session's beat (`Store::touch`)
+// has no PostgreSQL twin yet.
 #[test]
 fn taking_the_role_over_a_lost_or_left_holder_moves_it_and_says_so() {
     let (f, a, b) = two_orchestrators(Backend::SurrealDb);
@@ -160,6 +164,8 @@ fn taking_the_role_over_a_lost_or_left_holder_moves_it_and_says_so() {
     );
 }
 
+// On SurrealDB alone until tools/board-pg-sessions-and-delivery: a session leaving (`Store::leave`)
+// has no PostgreSQL twin yet.
 #[test]
 fn a_hand_over_moves_the_role_in_one_write_naming_the_new_orchestrator() {
     let (f, a, b) = two_orchestrators(Backend::SurrealDb);
@@ -193,6 +199,8 @@ fn a_hand_over_moves_the_role_in_one_write_naming_the_new_orchestrator() {
     );
 }
 
+// On SurrealDB alone until tools/board-pg-sessions-and-delivery: a session's beat (`Store::touch`)
+// has no PostgreSQL twin yet.
 #[test]
 fn a_hand_over_to_a_session_gone_quiet_or_leaving_meanwhile_is_refused() {
     let (f, a, b) = two_orchestrators(Backend::SurrealDb);
@@ -210,6 +218,8 @@ fn a_hand_over_to_a_session_gone_quiet_or_leaving_meanwhile_is_refused() {
     );
 }
 
+// On SurrealDB alone until tools/board-pg-sessions-and-delivery: a session's beat (`Store::touch`)
+// has no PostgreSQL twin yet.
 #[test]
 fn a_hand_over_by_a_session_not_orchestrating_names_who_does_or_how_to_take_the_role() {
     let (f, a, b) = two_orchestrators(Backend::SurrealDb);
@@ -250,6 +260,7 @@ pub(super) fn heard(f: &Fixture, sender: &str, who: &[(&Listener, &str)]) -> Vec
 }
 
 /// A hand-over is the giver's own write: only the session it reached hears it, once.
+// On SurrealDB alone: it reaches the board through SurrealDB's own client.
 #[test]
 fn a_hand_over_sends_one_role_event_to_the_session_it_reached() {
     let (f, a, b) = two_orchestrators(Backend::SurrealDb);
@@ -272,6 +283,7 @@ fn a_hand_over_sends_one_role_event_to_the_session_it_reached() {
     );
 }
 
+// On SurrealDB alone: it reaches the board through SurrealDB's own client.
 #[test]
 fn a_hand_over_to_a_reviewer_of_the_task_is_still_one_role_event() {
     let (f, a, b) = two_orchestrators(Backend::SurrealDb);
@@ -286,6 +298,7 @@ fn a_hand_over_to_a_reviewer_of_the_task_is_still_one_role_event() {
     assert_eq!(heard(&f, &w, &ears), [vec![], vec![role]]);
 }
 
+// On SurrealDB alone: it reaches the board through SurrealDB's own client.
 #[test]
 fn each_orchestrator_hears_its_own_tasks_and_the_unclaimed_ones_only() {
     let f = Fixture::new(Seed::default());
@@ -425,6 +438,7 @@ impl SharedWorker {
     }
 }
 
+// On SurrealDB alone: it reaches the board through SurrealDB's own client.
 #[test]
 fn a_lost_session_s_work_is_told_to_each_orchestrator_as_far_as_it_is_its_own() {
     let shared = SharedWorker::new(Backend::SurrealDb);
@@ -449,6 +463,7 @@ fn a_lost_session_s_work_is_told_to_each_orchestrator_as_far_as_it_is_its_own() 
     );
 }
 
+// On SurrealDB alone: it reaches the board through SurrealDB's own client.
 #[test]
 fn a_status_move_on_unclaimed_work_reaches_every_orchestrator() {
     let shared = SharedWorker::new(Backend::SurrealDb);
@@ -462,6 +477,8 @@ fn a_status_move_on_unclaimed_work_reaches_every_orchestrator() {
     assert_eq!(shared.heard(w), [vec![status.clone()], vec![status]]);
 }
 
+// On SurrealDB alone until tools/board-pg-sessions-and-delivery: a session's beat (`Store::touch`)
+// has no PostgreSQL twin yet.
 #[test]
 fn a_post_to_at_orchestrator_passes_a_holder_gone_quiet_for_the_one_above() {
     let (f, a, b) = two_orchestrators(Backend::SurrealDb);
@@ -483,6 +500,8 @@ fn a_post_to_at_orchestrator_passes_a_holder_gone_quiet_for_the_one_above() {
     assert_eq!(ids, [post.id], "the task is a's while b is gone");
 }
 
+// On SurrealDB alone until tools/board-pg-threads-and-asks: the inbox (`Store::inbox`) has no
+// PostgreSQL twin yet.
 #[test]
 fn a_post_to_at_orchestrator_reaches_the_nearest_orchestrator_only() {
     let (f, a, b) = two_orchestrators(Backend::SurrealDb);
@@ -523,6 +542,8 @@ fn a_post_to_at_orchestrator_reaches_the_nearest_orchestrator_only() {
     assert_eq!(ids(&a), [to_a.id, named.id]);
 }
 
+// On SurrealDB alone until tools/board-pg-sessions-and-delivery: a session leaving (`Store::leave`)
+// has no PostgreSQL twin yet.
 #[test]
 fn each_digest_lists_its_own_and_the_unclaimed_tasks() {
     let f = Fixture::new(Seed::default());

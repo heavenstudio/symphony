@@ -324,6 +324,7 @@ on_both! {
     }
 }
 
+// On SurrealDB alone: it counts the round trips SurrealDB's client makes.
 #[test]
 fn the_board_is_one_round_trip_however_big_it_is() {
     for size in [1, 40] {
@@ -336,6 +337,7 @@ fn the_board_is_one_round_trip_however_big_it_is() {
     }
 }
 
+// On SurrealDB alone: it counts the round trips SurrealDB's client makes.
 #[test]
 fn a_task_read_is_one_round_trip_too() {
     let f = Fixture::new(a_board_of(5));
@@ -399,6 +401,7 @@ fn consistent(task: &Task) {
     );
 }
 
+// On SurrealDB alone: SurrealDB's engine is its subject.
 #[test]
 fn tasks_is_one_snapshot() {
     let read = claimed_mid_read(|store| store.tasks(None).unwrap());
@@ -406,11 +409,13 @@ fn tasks_is_one_snapshot() {
     read.iter().for_each(consistent);
 }
 
+// On SurrealDB alone: SurrealDB's engine is its subject.
 #[test]
 fn get_is_one_snapshot() {
     consistent(&claimed_mid_read(|store| store.get("sim/jump").unwrap()));
 }
 
+// On SurrealDB alone: SurrealDB's engine is its subject.
 #[test]
 fn the_board_is_one_snapshot() {
     let board = claimed_mid_read(|store| store.board().unwrap());
@@ -504,6 +509,7 @@ fn counted<T>(f: &Fixture, call: impl FnOnce() -> T) -> (usize, T) {
     (f.store.client().requests() - before, given)
 }
 
+// On SurrealDB alone: it counts the round trips SurrealDB's client makes.
 #[test]
 fn a_rule_is_its_read_and_one_write_that_gives_back_the_task_as_written() {
     let f = Fixture::new(Seed::default());
@@ -541,6 +547,7 @@ fn a_rule_is_its_read_and_one_write_that_gives_back_the_task_as_written() {
     assert_eq!(requests, 2);
 }
 
+// On SurrealDB alone: it counts the round trips SurrealDB's client makes.
 #[test]
 fn a_new_task_is_one_round_trip_and_a_move_under_another_two() {
     let f = Fixture::new(Seed::default());
@@ -573,6 +580,7 @@ fn a_new_task_is_one_round_trip_and_a_move_under_another_two() {
     );
 }
 
+// On SurrealDB alone: it counts the round trips SurrealDB's client makes.
 #[test]
 fn a_new_session_is_two_round_trips() {
     let f = Fixture::new(Seed::default());
@@ -583,6 +591,7 @@ fn a_new_session_is_two_round_trips() {
 
 /// A schema definition failure leaves no partially created board or version marker.
 /// A later open reports the failure too. Duplicate rows force a unique-index failure.
+// On SurrealDB alone: SurrealDB's engine is its subject.
 #[test]
 fn a_definition_that_fails_leaves_no_board_taken_for_made() {
     let client = crate::common::client();
@@ -628,6 +637,7 @@ fn a_definition_that_fails_leaves_no_board_taken_for_made() {
     );
 }
 
+// On SurrealDB alone: it counts the round trips SurrealDB's client makes.
 #[test]
 fn opening_a_board_already_made_is_one_round_trip() {
     let first = crate::common::client();

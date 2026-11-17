@@ -33,8 +33,8 @@ fn step(more: &str) -> String {
 /// on and a move in the tree among them (`super::super::surreal::history::STATUS_LINES`).
 pub(in crate::store) fn status_lines() -> Pg<'static> {
     Pg::read(format!(
-        "coalesce((SELECT jsonb_agg({LINE} ORDER BY m.slug, m.sid) FROM message m
-    WHERE m.ts >= (v ->> 'since')::double precision AND {}), '[]'::jsonb)",
+        "coalesce((SELECT jsonb_agg({LINE} ORDER BY m.slug, m.sid) FROM message m \
+    WHERE m.ts >= (v ->> 'since')::double precision AND {}), '[]')",
         step(&format!(" OR {} OR {}", holds("waits"), holds("under")))
     ))
 }
@@ -43,11 +43,11 @@ pub(in crate::store) fn status_lines() -> Pg<'static> {
 /// line of its `sid`, in the order `from` names them.
 fn page_query(filter: &str) -> Pg<'static> {
     Pg::read(format!(
-        "coalesce((SELECT jsonb_agg(coalesce((SELECT jsonb_agg({LINE} ORDER BY m.sid DESC)
-        FROM (SELECT * FROM message m WHERE m.slug = f.line ->> 'slug'
-            AND m.sid < (f.line ->> 'sid')::bigint AND {filter}
-            ORDER BY m.sid DESC LIMIT {PAGE}) AS m), '[]'::jsonb) ORDER BY f.at)
-    FROM jsonb_array_elements(v -> 'from') WITH ORDINALITY AS f (line, at)), '[]'::jsonb)"
+        "coalesce((SELECT jsonb_agg(coalesce((SELECT jsonb_agg({LINE} ORDER BY m.sid DESC) \
+        FROM (SELECT * FROM message m WHERE m.slug = f.line ->> 'slug' \
+            AND m.sid < (f.line ->> 'sid')::bigint AND {filter} \
+            ORDER BY m.sid DESC LIMIT {PAGE}) AS m), '[]') ORDER BY f.at) \
+    FROM jsonb_array_elements(v -> 'from') WITH ORDINALITY AS f (line, at)), '[]')"
     ))
 }
 
@@ -79,8 +79,8 @@ pub(in crate::store) fn into_review() -> Pg<'static> {
 /// The lines of `slug`'s thread written at `at` that may record what its landing waits on.
 pub(in crate::store) fn waits_at() -> Pg<'static> {
     Pg::read(format!(
-        "coalesce((SELECT jsonb_agg({LINE} ORDER BY m.sid) FROM message m WHERE m.slug = v ->> 'slug'
-    AND m.ts = (v ->> 'at')::double precision AND m.kind = 'system' AND {}), '[]'::jsonb)",
+        "coalesce((SELECT jsonb_agg({LINE} ORDER BY m.sid) FROM message m WHERE m.slug = v ->> 'slug' \
+    AND m.ts = (v ->> 'at')::double precision AND m.kind = 'system' AND {}), '[]')",
         holds("waits")
     ))
 }

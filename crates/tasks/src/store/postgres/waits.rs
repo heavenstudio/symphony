@@ -8,8 +8,8 @@ use crate::red::FIELDS;
 /// Task `slug`'s status and version, as one row; none for a slug no task has.
 pub(in crate::store) fn assessment_state() -> Pg<'static> {
     Pg::read(
-        "coalesce((SELECT jsonb_agg(jsonb_build_object('slug', slug, 'status', status,
-    'version', version)) FROM task WHERE slug = v ->> 'slug'), '[]'::jsonb)",
+        "coalesce((SELECT jsonb_agg(jsonb_build_object('slug', slug, 'status', status, \
+    'version', version)) FROM task WHERE slug = v ->> 'slug'), '[]')",
     )
 }
 
@@ -26,44 +26,44 @@ pub(in crate::store) fn record(acting: bool) -> Pg<'static> {
     let act = if acting { act() } else { String::new() };
     let kept = |id: &str, record: &str, at: &str, sid: &str| {
         format!(
-            "UPDATE task SET fields = board_set(fields, ARRAY['{FIELDS}', 'assessments', {id}, {record}],
+            "UPDATE task SET fields = board_set(fields, ARRAY['{FIELDS}', 'assessments', {id}, {record}], \
             jsonb_build_object('at', {at}, 'sid', {sid})) WHERE slug = v ->> 'slug';"
         )
     };
     Pg::script(format!(
-        "DECLARE
-    board_ jsonb;
-BEGIN
-    SELECT fields -> '{FIELDS}' INTO board_ FROM task WHERE slug = v ->> 'slug';
-    IF NOT FOUND THEN
-        RAISE EXCEPTION '%', v ->> 'missing';
-    END IF;
-    IF board_ -> 'assessments' -> (v ->> 'assessment') -> (v ->> 'record') IS NULL
-        AND NOT coalesce(board_ ->> '{WAITS}' = v ->> 'record'
-            AND board_ -> '{ASSESSED}' ->> 'id' = v ->> 'assessment', false) THEN
-        {act}
-        IF v ? 'source_error' THEN
-            RAISE EXCEPTION '%', v ->> 'source_error';
-        END IF;
-        IF NOT (v ->> 'source_current')::boolean THEN
-            RAISE EXCEPTION '%', v ->> 'source_changed';
-        END IF;
-        IF (v ->> 'checked')::boolean AND EXISTS (SELECT 1 FROM task WHERE slug = v ->> 'slug'
-                AND (status IS DISTINCT FROM v ->> 'expected_status'
-                    OR version IS DISTINCT FROM (v ->> 'expected_version')::bigint)) THEN
-            RAISE EXCEPTION '%', v ->> 'changed';
-        END IF;
-        IF board_ -> '{ASSESSED}' -> 'id' IS NOT NULL AND board_ -> '{WAITS}' IS NOT NULL THEN
-            {}
-        END IF;
-        UPDATE task SET fields = board_set(fields, '{{{FIELDS},{WAITS}}}', v -> 'record'),
-            version = version + 1 WHERE slug = v ->> 'slug';
-        {}
-        UPDATE task SET fields = board_set(fields, '{{{FIELDS},{ASSESSED}}}',
-            jsonb_build_object('id', v -> 'assessment', 'at', {WRITTEN_AT}, 'sid', sid_))
-            WHERE slug = v ->> 'slug';
-        {}
-    END IF;
+        "DECLARE \
+    board_ jsonb; \
+BEGIN \
+    SELECT fields -> '{FIELDS}' INTO board_ FROM task WHERE slug = v ->> 'slug'; \
+    IF NOT FOUND THEN \
+        RAISE EXCEPTION '%', v ->> 'missing'; \
+    END IF; \
+    IF board_ -> 'assessments' -> (v ->> 'assessment') -> (v ->> 'record') IS NULL \
+        AND NOT coalesce(board_ ->> '{WAITS}' = v ->> 'record' \
+            AND board_ -> '{ASSESSED}' ->> 'id' = v ->> 'assessment', false) THEN \
+        {act} \
+        IF v ? 'source_error' THEN \
+            RAISE EXCEPTION '%', v ->> 'source_error'; \
+        END IF; \
+        IF NOT (v ->> 'source_current')::boolean THEN \
+            RAISE EXCEPTION '%', v ->> 'source_changed'; \
+        END IF; \
+        IF (v ->> 'checked')::boolean AND EXISTS (SELECT 1 FROM task WHERE slug = v ->> 'slug' \
+                AND (status IS DISTINCT FROM v ->> 'expected_status' \
+                    OR version IS DISTINCT FROM (v ->> 'expected_version')::bigint)) THEN \
+            RAISE EXCEPTION '%', v ->> 'changed'; \
+        END IF; \
+        IF board_ -> '{ASSESSED}' -> 'id' IS NOT NULL AND board_ -> '{WAITS}' IS NOT NULL THEN \
+            {} \
+        END IF; \
+        UPDATE task SET fields = board_set(fields, '{{{FIELDS},{WAITS}}}', v -> 'record'), \
+            version = version + 1 WHERE slug = v ->> 'slug'; \
+        {} \
+        UPDATE task SET fields = board_set(fields, '{{{FIELDS},{ASSESSED}}}', \
+            jsonb_build_object('id', v -> 'assessment', 'at', {WRITTEN_AT}, 'sid', sid_)) \
+            WHERE slug = v ->> 'slug'; \
+        {} \
+    END IF; \
 END;",
         kept(
             &format!("board_ -> '{ASSESSED}' ->> 'id'"),
@@ -82,7 +82,7 @@ pub(in crate::store) fn fixed() -> Pg<'static> {
     let kept = format!("ARRAY['{FIELDS}', '{FIXED}', v ->> 'judged', v ->> 'written']");
     Pg::script_then(
         format!(
-            "UPDATE task SET fields = board_set(fields, {kept}, v -> 'patch' #> {kept})
+            "UPDATE task SET fields = board_set(fields, {kept}, v -> 'patch' #> {kept}) \
     WHERE slug = v ->> 'slug' AND fields #> {kept} IS NULL;"
         ),
         format!("(SELECT fields #> {kept} FROM task WHERE slug = v ->> 'slug')"),

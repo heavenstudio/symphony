@@ -6,9 +6,9 @@ use super::Pg;
 /// (a condition on `m`), in order: a verdict's text only for its first words.
 fn lines(slug: &str, kinds: &str) -> String {
     format!(
-        "coalesce((SELECT jsonb_agg(jsonb_build_object('sid', m.sid, 'kind', m.kind, 'ts', m.ts,
-        'text', CASE WHEN m.kind = 'system' THEN m.text ELSE left(m.text, 16) END) ORDER BY m.sid)
-    FROM message m WHERE m.slug = {slug} AND {kinds}), '[]'::jsonb)"
+        "coalesce((SELECT jsonb_agg(jsonb_build_object('sid', m.sid, 'kind', m.kind, 'ts', m.ts, \
+        'text', CASE WHEN m.kind = 'system' THEN m.text ELSE left(m.text, 16) END) ORDER BY m.sid) \
+    FROM message m WHERE m.slug = {slug} AND {kinds}), '[]')"
     )
 }
 
@@ -16,14 +16,14 @@ fn lines(slug: &str, kinds: &str) -> String {
 /// them, and each one's thread without its posts (`super::super::surreal::stage_lines::READ`).
 pub(in crate::store) fn read() -> Pg<'static> {
     Pg::read(format!(
-        "(WITH picked AS (SELECT sid, slug, status, created, updated, fields #> '{{_board,arm}}' AS arm
-        FROM task WHERE parent IS NULL AND (created >= (v ->> 'since')::double precision
-            OR (status = 'done' AND updated >= (v ->> 'since')::double precision)))
-SELECT jsonb_build_object(
-    'tasks', coalesce((SELECT jsonb_agg(jsonb_strip_nulls(to_jsonb(p)) ORDER BY p.sid) FROM picked p), '[]'::jsonb),
-    'executing', coalesce((SELECT jsonb_agg(DISTINCT r.slug) FROM role r
-        WHERE r.slug IN (SELECT slug FROM picked) AND r.role = 'executor'), '[]'::jsonb),
-    'lines', coalesce((SELECT jsonb_agg({} ORDER BY p.sid) FROM picked p), '[]'::jsonb)))",
+        "(WITH picked AS (SELECT sid, slug, status, created, updated, fields #> '{{_board,arm}}' AS arm \
+        FROM task WHERE parent IS NULL AND (created >= (v ->> 'since')::double precision \
+            OR (status = 'done' AND updated >= (v ->> 'since')::double precision))) \
+SELECT jsonb_build_object( \
+    'tasks', coalesce((SELECT jsonb_agg(jsonb_strip_nulls(to_jsonb(p)) ORDER BY p.sid) FROM picked p), '[]'), \
+    'executing', coalesce((SELECT jsonb_agg(DISTINCT r.slug) FROM role r \
+        WHERE r.slug IN (SELECT slug FROM picked) AND r.role = 'executor'), '[]'), \
+    'lines', coalesce((SELECT jsonb_agg({} ORDER BY p.sid) FROM picked p), '[]')))",
         lines("p.slug", "m.kind <> 'msg'")
     ))
 }
@@ -32,12 +32,12 @@ SELECT jsonb_build_object(
 /// its thread that can change its status, in the order `slugs` names them.
 pub(in crate::store) fn since_read() -> Pg<'static> {
     Pg::read(format!(
-        "jsonb_build_object(
-    'tasks', coalesce((SELECT jsonb_agg(coalesce((SELECT jsonb_agg(jsonb_build_object('status', t.status,
-            'created', t.created, 'updated', t.updated)) FROM task t WHERE t.slug = s.slug), '[]'::jsonb)
-        ORDER BY s.at) FROM jsonb_array_elements_text(v -> 'slugs') WITH ORDINALITY AS s (slug, at)), '[]'::jsonb),
-    'lines', coalesce((SELECT jsonb_agg({} ORDER BY s.at)
-        FROM jsonb_array_elements_text(v -> 'slugs') WITH ORDINALITY AS s (slug, at)), '[]'::jsonb))",
+        "jsonb_build_object( \
+    'tasks', coalesce((SELECT jsonb_agg(coalesce((SELECT jsonb_agg(jsonb_build_object('status', t.status, \
+            'created', t.created, 'updated', t.updated)) FROM task t WHERE t.slug = s.slug), '[]') \
+        ORDER BY s.at) FROM jsonb_array_elements_text(v -> 'slugs') WITH ORDINALITY AS s (slug, at)), '[]'), \
+    'lines', coalesce((SELECT jsonb_agg({} ORDER BY s.at) \
+        FROM jsonb_array_elements_text(v -> 'slugs') WITH ORDINALITY AS s (slug, at)), '[]'))",
         lines("s.slug", "m.kind IN ('system', 'verdict')")
     ))
 }

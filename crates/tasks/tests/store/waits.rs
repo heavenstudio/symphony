@@ -442,6 +442,8 @@ on_both! {
     }
 }
 
+// On SurrealDB alone until tools/board-pg-sessions-and-delivery: a session leaving (`Store::leave`)
+// has no PostgreSQL twin yet.
 #[test]
 fn simultaneous_duplicates_and_an_old_retry_after_a_fresh_verdict_write_once_each() {
     let f = Fixture::new(Seed::default().session("brisk-finch"));
