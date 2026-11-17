@@ -174,7 +174,7 @@ pub(super) fn saved_locks(dir: &Path) -> Option<Vec<String>> {
             ));
         }
     }
-    saved.sort();
+    saved.sort_unstable();
     Some(saved)
 }
 

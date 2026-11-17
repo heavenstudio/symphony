@@ -457,7 +457,7 @@ fn log_and_manifest(store: &Path) -> Option<Vec<(PathBuf, u64, SystemTime)>> {
             }
         }
     }
-    found.sort();
+    found.sort_unstable();
     Some(found)
 }
 
