@@ -5,39 +5,6 @@ are at the top, and the page regroups itself every time one is answered. How car
 their dated history work is in [REVIEW](REVIEW.md).
 
 <!-- register:start -->
-## Needs your decision
-
-### Hosted boards
-
-- [ ] **hosted-postgresql-database-boundary** — Each hosted Symphony project needs a database boundary that keeps another project's data and migrations out. The platform may currently supply only the application's existing database, so a separate board database could require provisioning work. Which boundary should the first hosted adapter require? A: a pre-created database dedicated to each Symphony project, owned by its restricted project login; sharing another application's tables is unsupported. B: defer hosted activation until a separate design proves safe sharing of an application database through schemas and permissions. Recommended: A. Approve and say A or B in the note, or comment. [[analysis/hosted-postgresql#Database and privileges]]
-  [2026-11-17 19:42] agent — Proposed by `tools/hosted-postgresql`. A reuses the store's database-wide namespace and migration lock, but needs the platform to provision a database per project and deny cross-project connections. The application has no CREATE DATABASE/ROLE privilege. B may fit existing provisioning but needs schema ownership, qualified SQL, migration locks, export/restore and isolation designed before activation; prefixes or a project-id column alone are insufficient. Additional provisioning cost and availability are unverified. Both preserve the requested managed connection and unchanged local socket behavior. Neither authorizes a live migration, cutover, restore or shared-server restart.
-
-    **Earlier verdicts checked.** **postgresql-binary-source** (C) chooses machine-installed local PostgreSQL and the latest local Homebrew version; it does not decide managed database tenancy. **board-schema-at-update** (C) preserves recent-writer checks before migration, and **consumer-api-break-release** preserves old public calls for a release; both options keep them. Neither chooses a database boundary. The live cutover remains `docs/board-pg-cutover-card`'s separate decision.
-
-### Durable evidence
-
-- [ ] **durable-project-artifacts** — A hosted project's working evidence should remain readable after its worker and app container disappear. Should Symphony define an optional storage contract for that evidence, with each consuming project supplying its private storage provider? A: define the shared contract for verified uploads, project access, revision-bound references and restore; local projects keep their current files and links. B: leave the entire remote evidence contract to each consuming project. Both preserve Git-backed document and card pictures. Recommended: A. Approve and say A or B in the note, or comment. [[analysis/remote-artifact-store#Smallest boundary]]
-  [2026-11-17 19:38] agent — Proposed by board task `tools/remote-artifact-store`. This asks for a design direction only. Implementation, provider selection, migration, retention changes and any live-data operation need their own authorized work.
-
-    **Cost of A:** Symphony owns the common identity, integrity, authorization and publication rules; the consuming project owns credentials, storage, repository retention and backup operations. **B:** Symphony adds nothing; each consumer must keep its own evidence references and recovery rules consistent with task delivery.
-
-    **Earlier verdicts checked:** **pictures-in-every-clone**, F, commits document/card images and keeps working evidence outside Git; **sweep-swept-retention** keeps referenced files and asks for manual cleanup past the cap. Neither chooses a remote provider or defines hosted publication and restore. This proposal preserves those decisions and leaves this repository's storage unchanged.
-
-### Project workflows
-
-- [ ] **configurable-workflow-activation** — When a project commits a changed workflow, should its board start using it at once, or wait for a deliberate activation? A: preview the affected tasks and explicitly activate that committed version, applying all required mappings together. B: automatically activate a valid committed version when the board next reads it, stopping if a mapping or prerequisite is missing. Recommended: A. Approve and say A or B, or comment. [[analysis/configurable-delivery-workflow#Version changes, migration and rollback]]
-  [2026-11-17 19:30] agent — Proposed for `tools/configurable-delivery-workflow`. Both options preserve the approved C graph, task and evidence history, reject stale requests, fence old writers and require complete mappings for removed IDs. This asks only when an otherwise valid change takes effect; it authorizes no live migration now.
-
-    **A** keeps the current workflow running until a project administrator accepts a preview against the current board revision. It adds one operational action per change, including a rollback, and the interface must show committed versus active versions. A task changing during the preview makes activation stale and requires another preview.
-
-    **B** needs no separate action for a compatible change. A commit can change routing or staffing for live work as soon as it is observed; incompatible changes still stop for mappings. Operators must treat every workflow commit as an activation and use another committed change to roll it back.
-
-    **Required under either option:** unknown or removed IDs stop activation until every affected task and blocked resume target has a valid mapping. Active attempts must drain or be explicitly invalidated. Concurrent writers and stale requests are fenced; failure leaves the previous version active, with no partial mapping. Rollback is a new audited activation with mappings and retained history, not a schema downgrade. Neither option decides project artifact-guard semantics.
-
-    **Why A.** A workflow change can move existing blocked resume targets, replace who gets staffed and affect pending delivery. The preview makes those consequences reviewable before the board changes them. Activation remains one audited transaction; reverting Git alone cannot downgrade stored history.
-
-    **Earlier verdicts checked.** **project-workflow-shape** approved C, including configurable staffing, recovery and completion with unchanged defaults. It does not choose automatic versus explicit activation. **needed-stamps** keeps evidence in the existing catalogue and project landing policy; neither option changes that. The separate artifact-guard design owns approval enforcement, not this activation choice.
-
 ## Auto-approved: spot-check
 
 ### Releases
@@ -59,6 +26,40 @@ their dated history work is in [REVIEW](REVIEW.md).
   [2026-11-13 20:43] agent · auto-approved — A: the owner, 2026-11-13, in the terminal: "contract-tool-route reads like it should be auto triaged". The card's own evidence leaves A standing: both tools exist to check what the machine does (the card you will see, whether the machine would hold a land), and under B the project's copies "keep passing while the machine does otherwise, until someone copies again", so they would stop checking it. Symphony adds the two commands (one that draws a single card, one that answers the landing's checks for a branch) and keeps their output, and status's and triage's, stable; its side is filed on the board now. Any verdict here overrides this.
 
 ## Waiting on an agent
+
+### Hosted boards
+
+- [x] **hosted-postgresql-database-boundary** — Each hosted Symphony project needs a database boundary that keeps another project's data and migrations out. The platform may currently supply only the application's existing database, so a separate board database could require provisioning work. Which boundary should the first hosted adapter require? A: a pre-created database dedicated to each Symphony project, owned by its restricted project login; sharing another application's tables is unsupported. B: defer hosted activation until a separate design proves safe sharing of an application database through schemas and permissions. Recommended: A. Approve and say A or B in the note, or comment. [[analysis/hosted-postgresql#Database and privileges]]
+  [2026-11-17 19:42] agent — Proposed by `tools/hosted-postgresql`. A reuses the store's database-wide namespace and migration lock, but needs the platform to provision a database per project and deny cross-project connections. The application has no CREATE DATABASE/ROLE privilege. B may fit existing provisioning but needs schema ownership, qualified SQL, migration locks, export/restore and isolation designed before activation; prefixes or a project-id column alone are insufficient. Additional provisioning cost and availability are unverified. Both preserve the requested managed connection and unchanged local socket behavior. Neither authorizes a live migration, cutover, restore or shared-server restart.
+
+    **Earlier verdicts checked.** **postgresql-binary-source** (C) chooses machine-installed local PostgreSQL and the latest local Homebrew version; it does not decide managed database tenancy. **board-schema-at-update** (C) preserves recent-writer checks before migration, and **consumer-api-break-release** preserves old public calls for a release; both options keep them. Neither chooses a database boundary. The live cutover remains `docs/board-pg-cutover-card`'s separate decision.
+  [2026-11-17 20:43] owner · approved — A
+
+### Durable evidence
+
+- [x] **durable-project-artifacts** — A hosted project's working evidence should remain readable after its worker and app container disappear. Should Symphony define an optional storage contract for that evidence, with each consuming project supplying its private storage provider? A: define the shared contract for verified uploads, project access, revision-bound references and restore; local projects keep their current files and links. B: leave the entire remote evidence contract to each consuming project. Both preserve Git-backed document and card pictures. Recommended: A. Approve and say A or B in the note, or comment. [[analysis/remote-artifact-store#Smallest boundary]]
+  [2026-11-17 19:38] agent — Proposed by board task `tools/remote-artifact-store`. This asks for a design direction only. Implementation, provider selection, migration, retention changes and any live-data operation need their own authorized work.
+
+    **Cost of A:** Symphony owns the common identity, integrity, authorization and publication rules; the consuming project owns credentials, storage, repository retention and backup operations. **B:** Symphony adds nothing; each consumer must keep its own evidence references and recovery rules consistent with task delivery.
+
+    **Earlier verdicts checked:** **pictures-in-every-clone**, F, commits document/card images and keeps working evidence outside Git; **sweep-swept-retention** keeps referenced files and asks for manual cleanup past the cap. Neither chooses a remote provider or defines hosted publication and restore. This proposal preserves those decisions and leaves this repository's storage unchanged.
+  [2026-11-17 20:42] owner · approved — A
+
+### Project workflows
+
+- [x] **configurable-workflow-activation** — When a project commits a changed workflow, should its board start using it at once, or wait for a deliberate activation? A: preview the affected tasks and explicitly activate that committed version, applying all required mappings together. B: automatically activate a valid committed version when the board next reads it, stopping if a mapping or prerequisite is missing. Recommended: A. Approve and say A or B, or comment. [[analysis/configurable-delivery-workflow#Version changes, migration and rollback]]
+  [2026-11-17 19:30] agent — Proposed for `tools/configurable-delivery-workflow`. Both options preserve the approved C graph, task and evidence history, reject stale requests, fence old writers and require complete mappings for removed IDs. This asks only when an otherwise valid change takes effect; it authorizes no live migration now.
+
+    **A** keeps the current workflow running until a project administrator accepts a preview against the current board revision. It adds one operational action per change, including a rollback, and the interface must show committed versus active versions. A task changing during the preview makes activation stale and requires another preview.
+
+    **B** needs no separate action for a compatible change. A commit can change routing or staffing for live work as soon as it is observed; incompatible changes still stop for mappings. Operators must treat every workflow commit as an activation and use another committed change to roll it back.
+
+    **Required under either option:** unknown or removed IDs stop activation until every affected task and blocked resume target has a valid mapping. Active attempts must drain or be explicitly invalidated. Concurrent writers and stale requests are fenced; failure leaves the previous version active, with no partial mapping. Rollback is a new audited activation with mappings and retained history, not a schema downgrade. Neither option decides project artifact-guard semantics.
+
+    **Why A.** A workflow change can move existing blocked resume targets, replace who gets staffed and affect pending delivery. The preview makes those consequences reviewable before the board changes them. Activation remains one audited transaction; reverting Git alone cannot downgrade stored history.
+
+    **Earlier verdicts checked.** **project-workflow-shape** approved C, including configurable staffing, recovery and completion with unchanged defaults. It does not choose automatic versus explicit activation. **needed-stamps** keeps evidence in the existing catalogue and project landing policy; neither option changes that. The separate artifact-guard design owns approval enforcement, not this activation choice.
+  [2026-11-17 20:42] owner · approved — B
 
 ### Hosted boards
 

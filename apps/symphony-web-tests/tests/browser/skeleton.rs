@@ -601,6 +601,12 @@ fn a_ghost_card_is_as_tall_as_the_card_of_a_task_with_a_title_of_two_lines() {
 #[test]
 fn a_task_before_its_read_draws_its_head_and_brief_cards_its_thread_and_its_composer() {
     let site = site();
+    // Revealing the composer also mounts Changes: answer that independent read so the only
+    // loading announcement is the task's, and count its card alongside the original four.
+    site.set_json(
+        symphony_api::TASK_DIFF_PATH,
+        &json!({"source":"branch","base":"base","head":"head","files":[],"truncated":false,"reason":null}),
+    );
     // Each part is its mock-up until its own read answers: the page's and the thread's held.
     let held = ["/api/task-page", "/api/task-history"];
     for route in held {
@@ -612,11 +618,26 @@ fn a_task_before_its_read_draws_its_head_and_brief_cards_its_thread_and_its_comp
         }
         return;
     };
-    // The thread stands below a phone's first screen, so its cover lifts at once: its own
-    // mock-up is two messages' outlines and the composer's, each drawn as it nears the screen.
-    let drawn = browser.wait_for(
-        "document.querySelector('main .ghost-head') !== null && document.querySelector('article.task .settle[data-settled=true]') !== null && document.querySelector('article.task .ghost-composer') !== null",
-        SHOWN,
+    // The thread stands below a phone's first screen, so its cover lifts at once. Its own
+    // mock-up and the composer's mount only as their slots near the screen.
+    assert!(
+        browser.wait_for(
+            "document.querySelector('main .ghost-head') !== null && document.querySelector('article.task .settle[data-settled=true]') !== null",
+            SHOWN,
+        ),
+        "no ghost of the task: {}",
+        browser.eval(PAGE)
+    );
+    browser.eval(
+        "document.getElementById('composer-visual/in-progress').scrollIntoView({block: 'center'})",
+    );
+    assert!(
+        browser.wait_for(
+            "document.querySelector('#task-thread[data-pending=true]') !== null && document.querySelector('article.task .ghost-composer') !== null && document.querySelector('.task-diff > p:last-child')?.textContent === 'No changed files.'",
+            SHOWN,
+        ),
+        "the pending thread and composer never mounted near the screen: {}",
+        browser.eval(PAGE)
     );
     // The real head's box and title, laid out beside the ghost as the page will draw them.
     let ghost = browser.eval(&format!(
@@ -630,20 +651,41 @@ fn a_task_before_its_read_draws_its_head_and_brief_cards_its_thread_and_its_comp
                 said: [...document.querySelectorAll('main [role=status]')].filter(status => !status.closest('[aria-hidden=true]')).map(status => status.textContent),
                 busy: page.getAttribute('aria-busy')}}; }})()"
     ));
-    for route in held {
-        site.hold_route(route, false);
-    }
-    assert!(drawn, "no ghost of the task: {}", browser.eval(PAGE));
     assert_eq!(
         ghost,
-        json!({"cards": 4, "pills": 2, "entries": 2, "fields": 4, "head": [], "title": 2,
+        json!({"cards": 5, "pills": 2, "entries": 2, "fields": 4, "head": [], "title": 2,
             "said": ["Loading task…"], "busy": "true"}),
-        "the ghost draws the task's head card as the real one, its title two lines of the title's height on a phone, then its gates, timeline, brief, thread and composer, and says once that the task loads"
+        "the ghost draws the task's head card as the real one, its title two lines of the title's height on a phone, then its gates, timeline, brief, Changes card, thread and composer, and says once that the task loads"
     );
+    // The thread answers first: its messages replace their outlines while the head, brief and
+    // composer still wait on the page's own read.
+    site.hold_route("/api/task-history", false);
     assert!(
-        browser.wait_for("document.querySelector('main .ghost-head') === null && document.querySelector('article.task .task-head h1') !== null", SHOWN),
+        browser.wait_for(
+            "document.querySelector('#task-thread[data-pending=false] .entry-text')?.textContent === 'Owner message'",
+            SHOWN,
+        ),
+        "the thread waited for the task's page: {}",
+        browser.eval(PAGE)
+    );
+    assert_eq!(
+        browser.eval(
+            "({head: document.querySelectorAll('article.task .ghost-head').length, brief: document.querySelectorAll('article.task .ghost-brief').length, thread: document.querySelectorAll('article.task .ghost-history').length, composer: document.querySelectorAll('article.task .ghost-composer').length, form: document.querySelectorAll('#task-send').length})"
+        ),
+        json!({"head": 1, "brief": 1, "thread": 0, "composer": 1, "form": 0}),
+        "the thread draws independently while the page and composer keep their ghosts"
+    );
+    site.hold_route("/api/task-page", false);
+    assert!(
+        browser.wait_for("document.querySelector('main .ghost-head') === null && document.querySelector('article.task .task-head h1') !== null && document.querySelector('#task-send') !== null", SHOWN),
         "the task never replaced its ghost: {}",
         browser.eval(PAGE)
+    );
+    assert_eq!(
+        browser.eval(
+            "({ghosts: document.querySelectorAll('article.task .ghost-head, article.task .ghost-brief, article.task .ghost-history, article.task .ghost-composer').length, busy: document.querySelector('article.task').getAttribute('aria-busy')})"
+        ),
+        json!({"ghosts": 0, "busy": null})
     );
 }
 
