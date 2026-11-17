@@ -5,15 +5,6 @@ are at the top, and the page regroups itself every time one is answered. How car
 their dated history work is in [REVIEW](REVIEW.md).
 
 <!-- register:start -->
-## Needs your decision
-
-### Hosted boards
-
-- [ ] **hosted-postgresql-database-boundary** — Each hosted Symphony project needs a database boundary that keeps another project's data and migrations out. The platform may currently supply only the application's existing database, so a separate board database could require provisioning work. Which boundary should the first hosted adapter require? A: a pre-created database dedicated to each Symphony project, owned by its restricted project login; sharing another application's tables is unsupported. B: defer hosted activation until a separate design proves safe sharing of an application database through schemas and permissions. Recommended: A. Approve and say A or B in the note, or comment. [[analysis/hosted-postgresql#Database and privileges]]
-  [2026-11-17 19:42] agent — Proposed by `tools/hosted-postgresql`. A reuses the store's database-wide namespace and migration lock, but needs the platform to provision a database per project and deny cross-project connections. The application has no CREATE DATABASE/ROLE privilege. B may fit existing provisioning but needs schema ownership, qualified SQL, migration locks, export/restore and isolation designed before activation; prefixes or a project-id column alone are insufficient. Additional provisioning cost and availability are unverified. Both preserve the requested managed connection and unchanged local socket behavior. Neither authorizes a live migration, cutover, restore or shared-server restart.
-
-    **Earlier verdicts checked.** **postgresql-binary-source** (C) chooses machine-installed local PostgreSQL and the latest local Homebrew version; it does not decide managed database tenancy. **board-schema-at-update** (C) preserves recent-writer checks before migration, and **consumer-api-break-release** preserves old public calls for a release; both options keep them. Neither chooses a database boundary. The live cutover remains `docs/board-pg-cutover-card`'s separate decision.
-
 ## Auto-approved: spot-check
 
 ### Releases
@@ -35,6 +26,14 @@ their dated history work is in [REVIEW](REVIEW.md).
   [2026-11-13 20:43] agent · auto-approved — A: the owner, 2026-11-13, in the terminal: "contract-tool-route reads like it should be auto triaged". The card's own evidence leaves A standing: both tools exist to check what the machine does (the card you will see, whether the machine would hold a land), and under B the project's copies "keep passing while the machine does otherwise, until someone copies again", so they would stop checking it. Symphony adds the two commands (one that draws a single card, one that answers the landing's checks for a branch) and keeps their output, and status's and triage's, stable; its side is filed on the board now. Any verdict here overrides this.
 
 ## Waiting on an agent
+
+### Hosted boards
+
+- [x] **hosted-postgresql-database-boundary** — Each hosted Symphony project needs a database boundary that keeps another project's data and migrations out. The platform may currently supply only the application's existing database, so a separate board database could require provisioning work. Which boundary should the first hosted adapter require? A: a pre-created database dedicated to each Symphony project, owned by its restricted project login; sharing another application's tables is unsupported. B: defer hosted activation until a separate design proves safe sharing of an application database through schemas and permissions. Recommended: A. Approve and say A or B in the note, or comment. [[analysis/hosted-postgresql#Database and privileges]]
+  [2026-11-17 19:42] agent — Proposed by `tools/hosted-postgresql`. A reuses the store's database-wide namespace and migration lock, but needs the platform to provision a database per project and deny cross-project connections. The application has no CREATE DATABASE/ROLE privilege. B may fit existing provisioning but needs schema ownership, qualified SQL, migration locks, export/restore and isolation designed before activation; prefixes or a project-id column alone are insufficient. Additional provisioning cost and availability are unverified. Both preserve the requested managed connection and unchanged local socket behavior. Neither authorizes a live migration, cutover, restore or shared-server restart.
+
+    **Earlier verdicts checked.** **postgresql-binary-source** (C) chooses machine-installed local PostgreSQL and the latest local Homebrew version; it does not decide managed database tenancy. **board-schema-at-update** (C) preserves recent-writer checks before migration, and **consumer-api-break-release** preserves old public calls for a release; both options keep them. Neither chooses a database boundary. The live cutover remains `docs/board-pg-cutover-card`'s separate decision.
+  [2026-11-17 20:43] owner · approved — A
 
 ### Durable evidence
 
