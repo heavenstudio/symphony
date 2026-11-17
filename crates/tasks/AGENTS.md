@@ -116,8 +116,7 @@ what it requires, `check_paths.rs` which tests and checks a branch changes, `mov
 the main checkout, `regenerate.rs` the regenerator ([TASKS](../../docs/TASKS.md#the-regenerator)).
 `covering.rs` with `store/work/covered.rs` is a close covered by another landing
 ([TASKS](../../docs/TASKS.md#a-task-another-landing-covers)). `stamps.rs` and `stamps/read.rs` are
-the stamps' catalogue and readers ([TASKS](../../docs/TASKS.md#needed-stamps)), `fast_fix.rs` and
-`red.rs` the two marks.
+the stamps' catalogue and readers ([TASKS](../../docs/TASKS.md#needed-stamps)), `red.rs` the red mark.
 
 ### The rules of work
 

@@ -139,10 +139,6 @@ IF $task.status IN ['done', 'cancelled'] {
 pub(in crate::store) const RED: &str =
     "UPDATE type::record('task', $slug) SET fields._board.red = $red RETURN NONE;";
 
-/// A fast fix's mark, the risk its filer recorded, written with the task ([`crate::fast_fix`]).
-pub(in crate::store) const FAST_FIX: &str =
-    "UPDATE type::record('task', $slug) SET fields._board.fast_fix = $fast_fix RETURN NONE;";
-
 /// The arm a task is filed on, written with the task ([`crate::arm`]).
 pub(in crate::store) const ARM: &str =
     "UPDATE type::record('task', $slug) SET fields._board.arm = $arm RETURN NONE;";
@@ -361,8 +357,6 @@ pub(in crate::store) struct Creating {
     pub(in crate::store) receipt: bool,
     /// Its filer marks it red ([`FILED`], [`RED`]).
     pub(in crate::store) red: bool,
-    /// It is a fast fix ([`FAST_FIX`]).
-    pub(in crate::store) fast_fix: bool,
     /// It is filed on an arm ([`ARM`]).
     pub(in crate::store) arm: bool,
 }
@@ -377,10 +371,9 @@ pub(in crate::store) fn create(new: &Creating) -> String {
     } else {
         String::new()
     };
-    let fast = if new.fast_fix { FAST_FIX } else { "" };
     let arm_mark = if new.arm { ARM } else { "" };
     format!(
-        "{act}{CREATE}\n{stamp}\n{marked}\n{fast}\n{arm_mark}\n{}\n{}",
+        "{act}{CREATE}\n{stamp}\n{marked}\n{arm_mark}\n{}\n{}",
         logged("$slug", "$actor", "'system'", "$said", "NONE"),
         block_cancelled_dependencies(false)
     )

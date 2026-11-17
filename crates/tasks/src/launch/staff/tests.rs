@@ -196,11 +196,17 @@ fn reviewing() -> Fixture {
 fn in_review(f: &Fixture, slug: &str, fast: bool) {
     let store = &f.store;
     store
-        .create(&NewTask {
-            fast_fix: fast.then(|| "a one-line fix, its test posted".into()),
-            ..NewTask::new(slug, "A review", FILER)
-        })
+        .create(&NewTask::new(slug, "A review", FILER))
         .unwrap();
+    if fast {
+        store
+            .raw()
+            .row("task", slug)
+            .set(serde_json::json!({
+                "fields._board.fast_fix": "a one-line fix, its test posted"
+            }))
+            .unwrap();
+    }
     store.take_role(slug, ORCHESTRATED, "orchestrator").unwrap();
     store.hand_over(slug, ORCHESTRATED, ORCHESTRATES).unwrap();
     store.claim(slug, EXECUTED).unwrap();
@@ -232,18 +238,14 @@ fn an_idle_reviewer_is_picked_only_when_the_board_takes_its_verdict() {
     for one in unfresh {
         assert_eq!(picked("sim/jump", &[one]), None, "{one}");
     }
-    // On a fast fix only its executor is: who requested it may judge it.
-    assert_eq!(picked("sim/fast", &[EXECUTED]), None);
+    // A legacy mark gives no requester a reviewer's role.
     assert_eq!(
-        picked("sim/fast", &[EXECUTED, FILER]).as_deref(),
-        Some(FILER)
+        picked("sim/fast", &[EXECUTED, FILER, ORCHESTRATED, FRESH]).as_deref(),
+        Some(FRESH)
     );
-    assert_eq!(
-        picked("sim/fast", &[ORCHESTRATED]).as_deref(),
-        Some(ORCHESTRATED)
-    );
-    // The orchestrator it has now orchestrates work, which no idle pick takes, fast fix or not.
-    assert_eq!(picked("sim/fast", &[ORCHESTRATES]), None);
+    for one in [EXECUTED, FILER, ORCHESTRATED, ORCHESTRATES] {
+        assert_eq!(picked("sim/fast", &[one]), None, "{one}");
+    }
 }
 
 #[test]

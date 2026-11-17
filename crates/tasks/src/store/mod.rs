@@ -547,8 +547,7 @@ impl Store {
     /// session that ever executed the task, or a work subtask under it, gives it none, whatever
     /// role it holds now, though the instruction subtask it claimed to review the task is not such
     /// work ([`Store::ever_held`]); nor one that orchestrates it or did, or filed it, though it holds
-    /// the reviewer's role. On a fast fix ([`crate::fast_fix`]) its orchestrator gives the verdict,
-    /// as a reviewer would.
+    /// the reviewer's role.
     pub fn verdict(
         &self,
         slug: &str,
@@ -583,25 +582,19 @@ impl Store {
             if task.status != "review" {
                 return Err(refused(format!("{slug} is {}, not in review", task.status)));
             }
-            let fast = crate::fast_fix::marked(&task.fields).is_some();
             let orchestrates = view.holds(handle, "orchestrator");
             // One that executed it was refused above; one that requested it is told it gives no
             // verdict a landing goes by, whatever role it holds, and who does.
-            if let Some(why) = held.unfresh(handle, &task.created_by, orchestrates, fast) {
+            if let Some(why) = held.unfresh(handle, &task.created_by, orchestrates) {
                 return Err(refused(work::unfresh_refusal(
                     &board, slug, handle, why, false,
                 )));
             }
-            if !view.holds(handle, "reviewer") && !(fast && orchestrates) {
-                // Anyone else is told the role to take.
-                return Err(refused(if fast {
-                    format!("{handle} is neither a reviewer of {slug} nor its orchestrator")
-                } else {
-                    format!(
-                        "{handle} is not a reviewer of {slug}; take the role first: {board} role \
-                         {slug} reviewer"
-                    )
-                }));
+            if !view.holds(handle, "reviewer") {
+                return Err(refused(format!(
+                    "{handle} is not a reviewer of {slug}; take the role first: {board} role \
+                     {slug} reviewer"
+                )));
             }
             let approve = verdict == "approve";
             Ok(Change {

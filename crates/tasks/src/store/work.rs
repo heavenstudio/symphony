@@ -108,9 +108,6 @@ pub struct NewTask {
     /// What is red, for a task filed to fix a red that stops every landing ([`crate::red`]): it
     /// and the work under it take no orchestrator slot.
     pub red: Option<String>,
-    /// Why a fix needs no reviewer, for a fast fix ([`crate::fast_fix`]): its orchestrator's
-    /// verdict, never its executor's, is the one it lands on.
-    pub fast_fix: Option<String>,
 }
 
 impl Default for NewTask {
@@ -128,7 +125,6 @@ impl Default for NewTask {
             assignee: None,
             instruction: false,
             red: None,
-            fast_fix: None,
         }
     }
 }
@@ -1159,34 +1155,19 @@ impl Held {
     /// is none: it executed the task or work under it, or it requested the work
     /// ([`Held::requested`]). The board refuses such a verdict ([`Store::verdict`]) and the land an
     /// approve an older board took from one (`land::independent`), by this one rule.
-    pub fn unfresh(
-        &self,
-        handle: &str,
-        filer: &str,
-        orchestrates: bool,
-        fast_fix: bool,
-    ) -> Option<Unfresh> {
+    pub fn unfresh(&self, handle: &str, filer: &str, orchestrates: bool) -> Option<Unfresh> {
         if self.executed.contains(handle) {
             return Some(Unfresh::Executed);
         }
-        self.requested(handle, filer, orchestrates, fast_fix)
+        self.requested(handle, filer, orchestrates)
     }
 
     /// Whether `handle` requested the work, and how, when its verdict is no fresh reviewer's for
     /// that: it orchestrates the task (`orchestrates`, the role as read now, which an older board's
-    /// record may not show) or did, or it filed it (`filer`). Never on a fast fix (`fast_fix`,
-    /// [`crate::fast_fix`]), whose orchestrator judges it on its posted evidence. The board refuses
+    /// record may not show) or did, or it filed it (`filer`). The board refuses
     /// such a session the reviewer's role too ([`Store::take_role`]).
-    pub fn requested(
-        &self,
-        handle: &str,
-        filer: &str,
-        orchestrates: bool,
-        fast_fix: bool,
-    ) -> Option<Unfresh> {
-        if fast_fix {
-            None
-        } else if orchestrates || self.orchestrated.contains(handle) {
+    pub fn requested(&self, handle: &str, filer: &str, orchestrates: bool) -> Option<Unfresh> {
+        if orchestrates || self.orchestrated.contains(handle) {
             Some(Unfresh::Orchestrated)
         } else if filer == handle {
             Some(Unfresh::Filed)
@@ -1313,7 +1294,7 @@ mod tests {
     }
 
     /// Whose verdict is no fresh reviewer's, and why: who executed the task first, whatever else
-    /// it did; then, but on a fast fix, who orchestrates it now or did, then who filed it.
+    /// it did; then who orchestrates it now or did, then who filed it.
     #[test]
     fn a_fresh_reviewer_wrote_executed_and_requested_none_of_the_work() {
         let held = Held {
@@ -1325,34 +1306,23 @@ mod tests {
             Some(Unfresh::Orchestrated),
             Some(Unfresh::Filed),
         );
-        // handle, filer, orchestrates now, fast fix, unfresh, requested.
-        for (handle, filer, orchestrates, fast, unfresh, requested) in [
-            ("slate", "owner", false, false, None, None),
-            ("slate", "owner", false, true, None, None),
-            ("amber", "owner", false, false, executed, None),
-            ("amber", "owner", false, true, executed, None),
-            ("both", "owner", false, false, executed, orchestrated),
-            ("both", "both", true, true, executed, None),
-            ("taupe", "owner", false, false, orchestrated, orchestrated),
-            ("taupe", "owner", false, true, None, None),
-            // The role read now, though the record does not show it (an older board's).
-            ("ochre", "owner", true, false, orchestrated, orchestrated),
-            ("ochre", "owner", true, true, None, None),
-            ("ochre", "ochre", true, false, orchestrated, orchestrated),
-            ("owner", "owner", false, false, filed, filed),
-            ("coral", "coral", false, false, filed, filed),
-            ("coral", "coral", false, true, None, None),
-            ("amber", "amber", false, false, executed, filed),
+        // handle, filer, orchestrates now, unfresh, requested.
+        for (handle, filer, orchestrates, unfresh, requested) in [
+            ("slate", "owner", false, None, None),
+            ("amber", "owner", false, executed, None),
+            ("both", "owner", false, executed, orchestrated),
+            ("both", "both", true, executed, orchestrated),
+            ("taupe", "owner", false, orchestrated, orchestrated),
+            ("ochre", "owner", true, orchestrated, orchestrated),
+            ("ochre", "ochre", true, orchestrated, orchestrated),
+            ("owner", "owner", false, filed, filed),
+            ("coral", "coral", false, filed, filed),
+            ("amber", "amber", false, executed, filed),
         ] {
-            let case =
-                format!("{handle} filed by {filer}, orchestrates {orchestrates}, fast {fast}");
+            let case = format!("{handle} filed by {filer}, orchestrates {orchestrates}");
+            assert_eq!(held.unfresh(handle, filer, orchestrates), unfresh, "{case}");
             assert_eq!(
-                held.unfresh(handle, filer, orchestrates, fast),
-                unfresh,
-                "{case}"
-            );
-            assert_eq!(
-                held.requested(handle, filer, orchestrates, fast),
+                held.requested(handle, filer, orchestrates),
                 requested,
                 "{case}"
             );

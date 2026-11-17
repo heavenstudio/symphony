@@ -9,10 +9,11 @@ use crate::children::Child as _;
 use crate::scratch;
 use std::fs;
 use std::os::unix::fs::PermissionsExt as _;
+use std::os::unix::process::ExitStatusExt as _;
 use std::path::{Path, PathBuf};
 use std::process::Output;
 use std::time::Duration;
-use symphony_board::sys::{Command, Stdio, output, wait_output};
+use symphony_board::sys::{Command, Stdio, group_alive, output, wait_output};
 
 /// The lanes a run in the stand-in workspace starts: all of them, as its targets fill each.
 const LANES: usize = 8;
@@ -23,8 +24,9 @@ const LANES: usize = 8;
 /// one in `$STAND/running` while it runs), and waits until `LANES` lanes have started (one run
 /// while too few others could would wait out its backstop and fail), then adds how many lanes run
 /// to `$STAND/at-once` and says the binaries it was named. With `HOLD`, each lane makes the file
-/// `$HOLD.PID` once all started, then waits to be ended by a signal, and says so if it never was: a
-/// lane started with Ctrl-C ignored. A lane that runs a target `SAY` names as `TARGET:TEXT` writes
+/// `$HOLD.PID` once all started and it opened the FIFO `$HOLD` read/write, then holds in a builtin
+/// read with no child to fork after that mark. A signal ends it; a read that returns says the
+/// signal never reached it. A lane that runs a target `SAY` names as `TARGET:TEXT` writes
 /// TEXT as the status of the lane named as that target (in the folder `SYMPHONY_TEST_LANE_LOGS`
 /// names), where the run cannot write it again, and ends green. One `DIE` names as `TARGET:kill`
 /// says a failed test, a list a test printed and a test it started, then is killed mid-line; as
@@ -58,8 +60,9 @@ done
 ls "$STAND/running" | wc -l | tr -d ' ' >>"$STAND/at-once"
 printf 'binaries=%s\ntasks=%s\n' "${SYMPHONY_TEST_BINARIES-unset}" "${SYMPHONY_TEST_TASKS_BINARY-unset}"
 if [ -n "${HOLD:-}" ]; then
+    exec 3<>"$HOLD"
     : >"$HOLD.$$"
-    sleep 600
+    read -r held <&3
     printf 'the signal never reached this lane\n'
     exit 0
 fi
@@ -227,9 +230,15 @@ impl Lanes {
     /// lane has started and holds: what it did.
     fn stopped(&self, signal: libc::c_int, vars: &[(&str, &str)]) -> Output {
         let hold = self.stand.join("held");
+        assert!(
+            output(Command::of("mkfifo").arg(&hold))
+                .unwrap()
+                .status
+                .success()
+        );
         let mut vars = vars.to_vec();
         vars.push(("HOLD", hold.to_str().unwrap()));
-        let child = self
+        let mut child = self
             .command(&[], &vars)
             .process_group(0)
             .stdout(Stdio::piped())
@@ -252,6 +261,14 @@ impl Lanes {
         let group = i32::try_from(child.id()).unwrap();
         // SAFETY: kill reads nothing of ours; a pid below 0 names the group the child leads.
         assert_eq!(unsafe { libc::kill(-group, signal) }, 0);
+        // Reap the leader while waiting, so its zombie cannot keep the group alive. A leader's
+        // exit alone says nothing about its lanes: no member may still write a log we read next.
+        test_time::until_true(
+            format!("lane process group ended after signal {signal}"),
+            test_time::backstop(Duration::ZERO),
+            || child.try_wait().unwrap().is_some() && !group_alive(child.id()),
+        )
+        .unwrap();
         wait_output(child).unwrap()
     }
 
@@ -644,4 +661,54 @@ fn an_interrupt_ends_the_lanes_and_the_run_says_what_they_wrote_and_exits_130() 
         ),
         "{said}"
     );
+}
+
+#[test]
+fn a_stop_leaves_each_lanes_log_where_the_run_said_before_any_lane_started() {
+    for (signal, code) in [
+        (libc::SIGTERM, 143),
+        (libc::SIGHUP, 129),
+        (libc::SIGKILL, 0),
+    ] {
+        let lanes = Lanes::new("test-lanes-stopped");
+        // A caller's folder, including spaces: the same path must be named and written.
+        let logs = lanes.root.join("build/steps of a check/tests-lanes");
+        let done = lanes.stopped(
+            signal,
+            &[("SYMPHONY_TEST_LANE_LOGS", logs.to_str().unwrap())],
+        );
+        let mut expected = format!("built: {RUN} --no-run\n{}", named(&logs));
+        for lane in LISTED {
+            let wrote = format!(
+                "     Running lane: {RUN} {}\nbinaries={}\ntasks=unset\n",
+                targets(lane),
+                lanes.root.join(".target/debug").display()
+            );
+            let log = logs.join(format!("{}.log", name(lane)));
+            assert_eq!(
+                fs::read_to_string(&log).unwrap(),
+                wrote,
+                "signal {signal}: {}",
+                log.display()
+            );
+            if signal != libc::SIGKILL {
+                expected.push_str(&wrote);
+            }
+        }
+        if signal == libc::SIGKILL {
+            // No trap can print more after SIGKILL: the already named logs keep the output.
+            assert_eq!(done.status.signal(), Some(signal), "{done:?}");
+        } else {
+            assert_eq!(done.status.code(), Some(code), "signal {signal}: {done:?}");
+            expected.push_str(&format!(
+                "test-lanes: interrupted (exit {code}): a lane it cut short ended there, its log \
+                 as far as it got\n"
+            ));
+        }
+        assert_eq!(
+            String::from_utf8(done.stdout).unwrap(),
+            expected,
+            "signal {signal}"
+        );
+    }
 }

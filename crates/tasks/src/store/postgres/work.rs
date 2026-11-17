@@ -77,10 +77,6 @@ pub(in crate::store) fn create(new: &Creating) -> String {
         block.push_str(&field_set("_board,red", "v -> 'red'"));
         block.push('\n');
     }
-    if new.fast_fix {
-        block.push_str(&field_set("_board,fast_fix", "v -> 'fast_fix'"));
-        block.push('\n');
-    }
     if new.arm {
         block.push_str(&field_set("_board,arm", "v -> 'arm'"));
         block.push('\n');
@@ -501,39 +497,37 @@ mod tests {
 
     #[test]
     fn a_new_task_carries_each_mark_it_is_made_with_and_no_other() {
-        let new = |acts, receipt, red, fast_fix, arm| Creating {
+        let new = |acts, receipt, red, arm| Creating {
             acts,
             receipt,
             red,
-            fast_fix,
             arm,
         };
         let marks = [
             field_set("_symphony,owner_save", "v -> 'owner_save'"),
             field_set("_board,red", "v -> 'red'"),
-            field_set("_board,fast_fix", "v -> 'fast_fix'"),
             field_set("_board,arm", "v -> 'arm'"),
         ];
-        let bare = create(&new(false, false, false, false, false));
+        let bare = create(&new(false, false, false, false));
         assert!(
             bare.starts_with(CREATE),
             "the owner's task is no session's act"
         );
         assert!(marks.iter().all(|mark| !bare.contains(mark.as_str())));
         assert!(!bare.contains(FILED));
-        let all = create(&new(true, true, true, true, true));
+        let all = create(&new(true, true, true, true));
         let act = act();
         let said = said("v ->> 'said'");
         let blocks = block_cancelled_dependencies(false);
         in_order(
             &all,
             &[
-                &act, CREATE, &marks[0], FILED, &marks[1], &marks[2], &marks[3], &said, &blocks,
+                &act, CREATE, &marks[0], FILED, &marks[1], &marks[2], &said, &blocks,
             ],
         );
-        let red = create(&new(true, false, true, false, false));
+        let red = create(&new(true, false, true, false));
         assert!(red.contains(FILED) && red.contains(marks[1].as_str()));
-        assert!(!red.contains(marks[2].as_str()) && !red.contains(marks[3].as_str()));
+        assert!(!red.contains(marks[2].as_str()));
     }
 
     #[test]

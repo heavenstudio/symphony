@@ -47,7 +47,6 @@ pub mod cli;
 pub mod codex_queue;
 pub mod confine;
 pub mod covering;
-pub mod fast_fix;
 pub mod folders;
 pub mod git;
 pub mod health;
