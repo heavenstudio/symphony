@@ -10,6 +10,7 @@
 //! and rounds to the cent only where it is said.
 
 use super::Tokens;
+use crate::json_object::object;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::sync::LazyLock;
@@ -310,23 +311,23 @@ impl Cost {
     pub fn json(&self, read: &str) -> Value {
         let unpriced = (self.unpriced.iter())
             .map(|((model, speed), tokens)| {
-                json!({
-                    "model": model,
-                    "speed": speed,
-                    "tokens": tokens.json(),
-                })
+                object(vec![
+                    ("model", json!(model)),
+                    ("speed", json!(speed)),
+                    ("tokens", tokens.json()),
+                ])
             })
             .collect();
-        json!({
-            "dollars": in_dollars(self.total()),
-            "input": in_dollars(self.input),
-            "cache_write_5m": in_dollars(self.cache_write_5m),
-            "cache_write_1h": in_dollars(self.cache_write_1h),
-            "cache_read": in_dollars(self.cache_read),
-            "output": in_dollars(self.output),
-            "unpriced": Value::Array(unpriced),
-            "prices": read,
-        })
+        object(vec![
+            ("dollars", json!(in_dollars(self.total()))),
+            ("input", json!(in_dollars(self.input))),
+            ("cache_write_5m", json!(in_dollars(self.cache_write_5m))),
+            ("cache_write_1h", json!(in_dollars(self.cache_write_1h))),
+            ("cache_read", json!(in_dollars(self.cache_read))),
+            ("output", json!(in_dollars(self.output))),
+            ("unpriced", Value::Array(unpriced)),
+            ("prices", json!(read)),
+        ])
     }
 
     /// The figure a line says: the dollars, `+ unpriced` after them where some tokens had no price,

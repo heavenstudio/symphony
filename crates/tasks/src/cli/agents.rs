@@ -41,6 +41,7 @@
 mod place;
 
 use crate::health::Health;
+use crate::json_object::object;
 use crate::rows::TaskSessionRow;
 use crate::usage::{Cost, Prices, Tokens};
 use crate::{Binding, Error, Session, Store, Task};
@@ -204,15 +205,21 @@ fn ok(asked: bool) -> Value {
 impl View {
     /// The contract, in its key order.
     pub fn json(&self) -> Value {
-        json!({
-            "generated": self.generated,
-            "probes": {
-                "herdr": ok(self.herdr),
-                "slots": ok(self.slots),
-            },
-            "agents": Value::Array(self.agents.iter().map(Agent::json).collect()),
-            "machine_work": super::machine_work::json(&self.machine_work),
-        })
+        object(vec![
+            ("generated", json!(self.generated)),
+            (
+                "probes",
+                object(vec![("herdr", ok(self.herdr)), ("slots", ok(self.slots))]),
+            ),
+            (
+                "agents",
+                Value::Array(self.agents.iter().map(Agent::json).collect()),
+            ),
+            (
+                "machine_work",
+                super::machine_work::json(&self.machine_work),
+            ),
+        ])
     }
 }
 
@@ -222,62 +229,64 @@ impl Agent {
             .tasks
             .iter()
             .map(|t| {
-                json!({
-                    "slug": &t.slug,
-                    "role": &t.role,
-                    "status": &t.status,
-                })
+                object(vec![
+                    ("slug", json!(&t.slug)),
+                    ("role", json!(&t.role)),
+                    ("status", json!(&t.status)),
+                ])
             })
             .collect();
         let detail = self.detail.as_ref().map_or(Value::Null, |d| {
-            json!({
-                "recipe": &d.recipe,
-                "phase": &d.phase,
-                "since": d.since,
-            })
+            object(vec![
+                ("recipe", json!(&d.recipe)),
+                ("phase", json!(&d.phase)),
+                ("since", json!(d.since)),
+            ])
         });
         let said = self.last_message.as_ref().map_or(Value::Null, |m| {
-            json!({
-                "slug": &m.slug,
-                "ts": m.ts,
-                "text": &m.text,
-            })
+            object(vec![
+                ("slug", json!(&m.slug)),
+                ("ts", json!(m.ts)),
+                ("text", json!(&m.text)),
+            ])
         });
         let count = |n: usize| json!(i64::try_from(n).unwrap_or(i64::MAX));
         let slots = self.slots.map_or(Value::Null, |s| {
-            json!({
-                "open": count(s.open),
-                "cap": count(s.cap),
-            })
+            object(vec![("open", count(s.open)), ("cap", count(s.cap))])
         });
-        json!({
-            "handle": &self.handle,
-            "kind": &self.kind,
-            "model": &self.model,
-            "parent": self.parent.as_deref(),
-            "task": self.task.as_deref(),
-            "role": self.role.as_deref(),
-            "tasks": Value::Array(held),
-            "following": count(self.following),
-            "worktree": &self.worktree,
-            "branch": &self.branch,
-            "agent": self.agent.as_deref(),
-            "session_id": self.session_id.as_deref(),
-            "pane": self.pane.as_deref(),
-            "callback": self.callback.as_deref(),
-            "chat": self.chat,
-            "state": self.state,
-            "state_detail": detail,
-            "health": self.health.as_str(),
-            "last_tool_call": self.last_tool_call,
-            "last_message": said,
-            "slots": slots,
-            "session_url": self.session_url.as_deref(),
-            "in_process": self.in_process,
-            "tokens": self.tokens.as_ref().map_or(Value::Null, Tokens::json),
-            "cost": (self.cost.as_ref())
-                .map_or(Value::Null, |c| c.json(&Prices::embedded().read)),
-        })
+        object(vec![
+            ("handle", json!(&self.handle)),
+            ("kind", json!(&self.kind)),
+            ("model", json!(&self.model)),
+            ("parent", json!(self.parent.as_deref())),
+            ("task", json!(self.task.as_deref())),
+            ("role", json!(self.role.as_deref())),
+            ("tasks", Value::Array(held)),
+            ("following", count(self.following)),
+            ("worktree", json!(&self.worktree)),
+            ("branch", json!(&self.branch)),
+            ("agent", json!(self.agent.as_deref())),
+            ("session_id", json!(self.session_id.as_deref())),
+            ("pane", json!(self.pane.as_deref())),
+            ("callback", json!(self.callback.as_deref())),
+            ("chat", json!(self.chat)),
+            ("state", json!(self.state)),
+            ("state_detail", detail),
+            ("health", json!(self.health.as_str())),
+            ("last_tool_call", json!(self.last_tool_call)),
+            ("last_message", said),
+            ("slots", slots),
+            ("session_url", json!(self.session_url.as_deref())),
+            ("in_process", json!(self.in_process)),
+            (
+                "tokens",
+                self.tokens.as_ref().map_or(Value::Null, Tokens::json),
+            ),
+            (
+                "cost",
+                (self.cost.as_ref()).map_or(Value::Null, |c| c.json(&Prices::embedded().read)),
+            ),
+        ])
     }
 }
 
