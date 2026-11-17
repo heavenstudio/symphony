@@ -122,7 +122,7 @@ fn project_page(
     let icon = if view.mark.is_empty() {
         String::new()
     } else {
-        view.here(&format!("/{}", view.mark))
+        crate::shell::versioned(root, base, &view.mark)
     };
     let mut links = crate::mark::brand(&view.wordmark, &icon);
     if !base.is_empty() {
