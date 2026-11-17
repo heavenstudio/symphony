@@ -66,6 +66,11 @@ if [ "$manifest" = '{}' ]; then
     echo "symphony-web: the client's build has no kind: $vite" >&2
     exit 2
 fi
+# Notices travel with every retained build, in the same immutable asset list as its code. The
+# shell names them without fetching them on a first visit; changing a notice changes its build.
+bash "$here/notices.sh" "$web/.vite/licenses.json" "$stage/third-party.txt"
+notice="third-party-$(shasum -a 256 "$stage/third-party.txt" | cut -c1-16).txt"
+mv "$stage/third-party.txt" "$stage/assets/$notice"
 # The shell's hash includes the page module manifest: a new module changes Board.build, while
 # returning to any unchanged kind still uses its immutable browser-cache entries. The manifest
 # keeps its own first line, `const modules = …;`, which readers of a build look for; the rest,
@@ -85,6 +90,7 @@ fi
 } > "$stage/shell.js"
 rm -f "$stage/shell.min.js"
 # Eager notice styles are part of this shell's build identity too.
+printf '\n// Third-party notices: %s/assets/%s\n' "$prefix" "$notice" >> "$stage/shell.js"
 printf '\n// Notice styles: %s\n' "$(shasum -a 256 ../symphony-server/src/notices.css | cut -c1-16)" >> "$stage/shell.js"
 hash="$(shasum -a 256 "$stage/shell.js" | cut -c1-16)"
 shell="symphony-shell-$hash.js"

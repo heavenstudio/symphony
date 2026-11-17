@@ -168,6 +168,7 @@ fn a_build_publishes_every_kind_over_one_shared_stylesheet_into_out_as_named_fro
     assert!(!body.contains("__MODULES__"), "{body}");
     assert!(body.contains("symphonyCache"), "the client cache's store");
     assert!(body.contains("reviewShell"), "the shell");
+    bundled_notices(&public, &body);
     let source = fs::read_to_string(web().join("shell/shell.js")).unwrap();
     let store = fs::read_to_string(web().join("shell/cache.js")).unwrap();
     assert!(
@@ -331,6 +332,67 @@ fn sha256(path: &Path) -> String {
     String::from_utf8(done.stdout).unwrap()
 }
 
+/// The build's own inventory, not package.json's development tools: every bundled package has
+/// its installed text verbatim, with the copied controls' provenance and selected MIT text.
+fn bundled_notices(public: &Path, shell: &str) {
+    let relative = shell
+        .lines()
+        .find_map(|line| line.strip_prefix("// Third-party notices: /"))
+        .expect("the shell names its bundled notices");
+    let path = public.join(relative);
+    assert_eq!(
+        relative,
+        format!("assets/third-party-{}.txt", &sha256(&path)[..16])
+    );
+    let notice = fs::read_to_string(&path).unwrap();
+    let inventory: Vec<serde_json::Value> = serde_json::from_slice(
+        &fs::read(
+            public
+                .parent()
+                .unwrap()
+                .join(".modules/web/.vite/licenses.json"),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        inventory
+            .iter()
+            .map(|entry| entry["name"].as_str().unwrap())
+            .collect::<Vec<_>>(),
+        // Vite orders the inventory by name@version, so '-' precedes '@'.
+        ["react-dom", "react", "scheduler"],
+        "review any change to the actual bundled dependency inventory"
+    );
+    for entry in inventory {
+        let name = entry["name"].as_str().unwrap();
+        let installed = web().join("node_modules").join(name);
+        let package: serde_json::Value =
+            serde_json::from_slice(&fs::read(installed.join("package.json")).unwrap()).unwrap();
+        let text = fs::read_to_string(installed.join("LICENSE")).unwrap();
+        assert_eq!(entry["version"], package["version"], "{name}");
+        assert_eq!(entry["identifier"], package["license"], "{name}");
+        assert_eq!(entry["text"], text.trim(), "{name}");
+        assert!(
+            notice.contains(&format!(
+                "{name}@{} (MIT)\n\n{}\n",
+                entry["version"].as_str().unwrap(),
+                text.trim()
+            )),
+            "{name}"
+        );
+    }
+    assert!(notice.contains(&fs::read_to_string(web().join("copied-controls.txt")).unwrap()));
+    assert!(notice.ends_with(&format!(
+        "{}\n",
+        fs::read_to_string(web().join("src/styles/LICENSE-MIT")).unwrap()
+    )));
+    assert!(
+        !notice.contains(&web().display().to_string()),
+        "no checkout path"
+    );
+}
+
 /// Two builds into one OUT at once take turns at its lock, and each publishes a whole client.
 #[test]
 fn two_builds_into_one_out_take_turns_and_both_publish() {
@@ -462,6 +524,10 @@ fn modules(scratch: &Scratch, shared: bool, kinds: bool) -> PathBuf {
     scratch.write(
         "out/.modules/web/.vite/manifest.json",
         &serde_json::Value::Object(manifest).to_string(),
+    );
+    scratch.write(
+        "out/.modules/web/.vite/licenses.json",
+        r#"[{"name":"fixture-library","version":"1.2.3","identifier":"MIT","text":"Exact upstream permission text."}]"#,
     );
     scratch.0.join("out")
 }
@@ -609,6 +675,114 @@ fn the_manifest_step_names_each_kinds_script_imports_and_styles_shared_sheet_fir
             notices.trim_end()
         )),
         "the page carries the server's notice styles"
+    );
+}
+
+/// Packaging refuses a missing or incomplete inventory instead of silently publishing a client
+/// without notices. A new license needs a deliberate selection before it can ship.
+#[test]
+fn incomplete_bundled_notices_refuse_packaging_without_replacing_the_client() {
+    let valid = serde_json::json!({
+        "name": "fixture-library", "version": "1.2.3", "identifier": "MIT", "text": "Permission text."
+    });
+    let mut cases = vec![
+        None,
+        Some("bad json".into()),
+        Some("{}".into()),
+        Some("[]".into()),
+    ];
+    for field in ["name", "version", "identifier", "text"] {
+        let mut missing = valid.clone();
+        missing.as_object_mut().unwrap().remove(field);
+        cases.push(Some(serde_json::json!([missing]).to_string()));
+        for value in [serde_json::json!(""), serde_json::json!(42)] {
+            let mut wrong = valid.clone();
+            wrong[field] = value;
+            cases.push(Some(serde_json::json!([wrong]).to_string()));
+        }
+    }
+    let mut other = valid.clone();
+    other["identifier"] = serde_json::json!("MIT OR Apache-2.0");
+    cases.push(Some(serde_json::json!([other]).to_string()));
+    // One good entry must not hide an incomplete second one.
+    cases.push(Some(
+        serde_json::json!([valid, {"name": "missing-text"}]).to_string(),
+    ));
+    for (case, inventory) in cases.into_iter().enumerate() {
+        let scratch = Scratch::new(&format!("notice-refused-{case}"));
+        let out = modules(&scratch, true, true);
+        let path = out.join(".modules/web/.vite/licenses.json");
+        if let Some(inventory) = inventory {
+            fs::write(&path, inventory).unwrap();
+        } else {
+            fs::remove_file(&path).unwrap();
+        }
+        scratch.write("out/public/index.html", "last good client");
+        let before = files_in(&out.join("public"));
+        let done = package(&out, &publisher(&scratch));
+        assert_eq!(done.status.code(), Some(2), "case {case}: {done:?}");
+        assert!(
+            String::from_utf8_lossy(&done.stderr)
+                .contains("missing or incomplete bundled MIT license inventory"),
+            "case {case}: {done:?}"
+        );
+        assert_eq!(files_in(&out.join("public")), before, "case {case}");
+        assert!(fs::read_dir(&out).unwrap().all(|entry| {
+            !entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with(".public-stage.")
+        }));
+    }
+}
+
+#[test]
+fn bundled_notices_are_sorted_and_part_of_the_builds_identity() {
+    let scratch = Scratch::new("notice-order");
+    let out = modules(&scratch, true, true);
+    let first = serde_json::json!({"name":"alpha", "version":"1", "identifier":"MIT", "text":"Alpha license"});
+    let second = serde_json::json!({"name":"zulu", "version":"2", "identifier":"MIT", "text":"Zulu license"});
+    let inventory = out.join(".modules/web/.vite/licenses.json");
+    let publisher = publisher(&scratch);
+    fs::write(&inventory, serde_json::json!([second, first]).to_string()).unwrap();
+    succeeded(&package(&out, &publisher), "package notices");
+    let before = files_in(&out.join("public"));
+    fs::write(&inventory, serde_json::json!([first, second]).to_string()).unwrap();
+    succeeded(&package(&out, &publisher), "package reordered notices");
+    assert_eq!(files_in(&out.join("public")), before);
+    let (manifest, shell) = shell_of(&out.join("public"));
+    assert_eq!(manifest.as_object().unwrap().len(), 2, "no new page kind");
+    let notice = shell
+        .lines()
+        .find_map(|line| line.strip_prefix("// Third-party notices: /"))
+        .unwrap();
+    let text = fs::read_to_string(out.join("public").join(notice)).unwrap();
+    assert!(
+        text.find("alpha@1 (MIT)\n\nAlpha license\n").unwrap()
+            < text.find("zulu@2 (MIT)\n\nZulu license\n").unwrap()
+    );
+    let builds: serde_json::Value =
+        serde_json::from_slice(&fs::read(out.join("public/builds.json")).unwrap()).unwrap();
+    assert!(
+        builds["builds"][0]["files"]
+            .as_array()
+            .unwrap()
+            .contains(&serde_json::json!(notice.strip_prefix("assets/").unwrap()))
+    );
+    let mut changed = first;
+    changed["text"] = serde_json::json!("Changed upstream license text");
+    fs::write(&inventory, serde_json::json!([changed, second]).to_string()).unwrap();
+    succeeded(&package(&out, &publisher), "package changed notice");
+    let after = files_in(&out.join("public"));
+    assert_ne!(
+        after[Path::new("index.html")],
+        before[Path::new("index.html")],
+        "notice changes select a new shell/build"
+    );
+    assert!(
+        !out.join("public").join(notice).exists(),
+        "the new stage carries its own notice"
     );
 }
 
