@@ -93,24 +93,6 @@ fn a_header_opens_with_the_mark_and_the_wordmark_or_a_themes_own_in_their_place(
     );
 }
 
-/// The React frame draws the mark from its own markup: the same two shapes in the same box.
-#[test]
-fn the_react_frame_draws_the_same_mark() {
-    let frame = std::fs::read_to_string(
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../symphony-web/src/frame.tsx"),
-    )
-    .unwrap();
-    for part in [
-        "className=\"app-mark\" viewBox=\"4.5 9.5 23 14.4\" aria-hidden=\"true\"",
-        "<path d=\"M5 21A11 11 0 0 1 27 21H24.6A8.6 7.2 0 0 0 7.4 21Z\" />",
-        "<circle cx=\"16\" cy=\"19.6\" r=\"2.9\" />",
-    ] {
-        assert!(frame.contains(part), "frame.tsx lacks {part}");
-        let served = part.replace("className", "class").replace(" />", "/>");
-        assert!(MARK.contains(&served), "mark.svg lacks {served}");
-    }
-}
-
 #[tokio::test]
 async fn the_addresss_own_icon_is_the_svg_and_the_home_screens_a_png_180_wide() {
     for query in [None, Some(""), Some("size=32"), Some("v=1&size=180")] {

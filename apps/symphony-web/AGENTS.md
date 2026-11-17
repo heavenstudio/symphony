@@ -219,7 +219,8 @@ client's persistent kind `panel` ([The panel](#the-panel)), which the shell moun
 The header opens with the Symphony's mark, the fermata, and its wordmark, or in the place of each
 the icon and the name the project's theme has of its own (`ProjectView`'s `mark` and `wordmark`,
 which the server decides), as the server's own pages open theirs
-(`apps/symphony-server/src/mark.rs`, whose tests hold the two marks alike); it is no link, so the
+(`apps/symphony-server/src/mark.rs`; `src/frame.test.tsx` reads its `mark/mark.svg` to hold the two
+marks alike, as the published server's tests read only its own files); it is no link, so the
 keyboard's first stop stays the project switch.
 
 The menus are this client's persistent kind `overlay` (`src/kinds/overlay.tsx`, `src/overlay.tsx`),
