@@ -202,6 +202,15 @@ fn visit(chrome: &mut Chrome, site: &Site, page: &Page) {
             "document.querySelector('[data-open-stage=build]') !== null",
             "Build rail",
         );
+        // Opening the activity list unmounts the lifecycle columns. Keep the initial reads
+        // this case needs before switching, so visibility cannot cancel an unstarted read.
+        let lifecycle: Vec<_> = page
+            .parts
+            .iter()
+            .copied()
+            .filter(|part| *part != "board:waiting column:build")
+            .collect();
+        keeps(chrome, &lifecycle);
         chrome.eval("document.querySelector('[data-open-stage=build]').click()");
     }
     shows(chrome, &present(page.drawn), page.path);
