@@ -73,10 +73,32 @@ fn missing_tables_and_keys_work_in_every_toml_table_form() {
 
 #[test]
 fn strings_round_trip_quotes_controls_unicode_empty_and_dashed_names() {
-    for model in ["", " ", "-model", "m\"\\\n\r\t\0\u{8}\u{c}\u{1f}", "模型🦡"] {
+    for model in [
+        "",
+        " ",
+        "-model",
+        "m\"\\\n\r\t\0\u{8}\u{c}\u{1f}",
+        "\u{7f}",
+        "bad\u{7f}name",
+        "literal\\u007F",
+        "模型🦡",
+    ] {
         let after = edited(MODELS, "executor", model).unwrap();
         let file: toml::Table = after.parse().unwrap();
         assert_eq!(file["agents"]["models"]["executor"].as_str(), Some(model));
+    }
+}
+
+#[test]
+fn every_ascii_character_round_trips_in_a_toml_model_string() {
+    for character in '\0'..='\u{7f}' {
+        let model = format!("before{character}after");
+        let after = edited(MODELS, "executor", &model).unwrap();
+        let file: toml::Table = after.parse().unwrap();
+        assert_eq!(
+            file["agents"]["models"]["executor"].as_str(),
+            Some(model.as_str())
+        );
     }
 }
 

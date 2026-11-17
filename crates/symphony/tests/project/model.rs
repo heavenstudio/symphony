@@ -112,3 +112,43 @@ fn the_binary_reports_refusals_and_accepts_a_dashed_model_after_double_dash() {
     assert_eq!((code, out.as_str()), (1, ""));
     assert!(err.contains("no git checkout"), "{err}");
 }
+
+#[test]
+fn literal_help_flags_and_del_round_trip_through_the_binary_and_settings_readers() {
+    let tree = Tree::new();
+    let (main, _) = layouts::repository(&tree.root);
+    let machine = tree.path("machine");
+    for value in ["--help", "-h", "bad\u{7f}name", "\u{7f}"] {
+        let (code, out, err) = model(&main, &machine, &["executor", "--", value]);
+        assert_eq!((code, err.as_str()), (0, ""), "{out}");
+        assert!(out.contains("executor model set to"), "{out}");
+        let written = std::fs::read_to_string(main.join("symphony.toml")).unwrap();
+        let parsed: toml::Table = written.parse().unwrap();
+        assert_eq!(parsed["agents"]["models"]["executor"].as_str(), Some(value));
+        assert_eq!(
+            Defaults::configured(&main)
+                .unwrap()
+                .models
+                .executor
+                .as_deref(),
+            Some(value)
+        );
+        let (mut out, mut err) = (Vec::new(), Vec::new());
+        assert_eq!(
+            symphony::lint::settings(&[main.display().to_string()], &mut out, &mut err),
+            0,
+            "{}",
+            String::from_utf8_lossy(&err)
+        );
+    }
+    let before = std::fs::read_to_string(main.join("symphony.toml")).unwrap();
+    for flag in ["--help", "-h"] {
+        let (code, out, err) = model(&main, &machine, &[flag]);
+        assert_eq!((code, err.as_str()), (0, ""));
+        assert!(out.starts_with("usage: symphony model ROLE MODEL"), "{out}");
+        assert_eq!(
+            std::fs::read_to_string(main.join("symphony.toml")).unwrap(),
+            before
+        );
+    }
+}

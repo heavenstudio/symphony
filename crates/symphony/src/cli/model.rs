@@ -71,7 +71,10 @@ fn edited(text: &str, role: &str, model: &str) -> Result<String, String> {
     } else {
         return Err(format!("unknown role {role:?}"));
     };
-    let quoted = serde_json::Value::String(model.into()).to_string();
+    // JSON and TOML share these string escapes, but TOML also requires DEL to be escaped.
+    let quoted = serde_json::Value::String(model.into())
+        .to_string()
+        .replace('\u{7f}', "\\u007F");
     let mut text = text.to_string();
     for role in roles {
         set(&mut text, &["agents", "models", role], model, &quoted)?;

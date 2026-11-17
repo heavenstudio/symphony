@@ -60,7 +60,7 @@ const OWN: [(&str, &str); 15] = [
 ];
 
 /// The usage of the Symphony's commands that read no options of their own, and what their help says
-/// after their line: what `--help` or `-h` anywhere on their command line prints ([`plain_help`]).
+/// after their line: what `--help` or `-h` before `--` prints ([`plain_help`]).
 const PLAIN: [(&str, &str, &str); 5] = [
     (
         "model",
@@ -125,7 +125,11 @@ pub(super) const SYMPHONY: Binary = Binary {
 /// for it.
 pub(super) fn plain_help(binary: &Binary, name: &str, args: &[String]) -> Option<String> {
     let (_, usage, more) = binary.plain.iter().find(|(plain, _, _)| *plain == name)?;
-    if !args.iter().any(|arg| arg == "-h" || arg == "--help") {
+    if !args
+        .iter()
+        .take_while(|arg| arg.as_str() != "--")
+        .any(|arg| arg == "-h" || arg == "--help")
+    {
         return None;
     }
     let said = binary
@@ -348,6 +352,26 @@ mod tests {
                 usage.starts_with(&format!("usage: symphony {name}")),
                 "{usage}"
             );
+        }
+    }
+
+    #[test]
+    fn plain_help_flags_after_the_argument_delimiter_are_literal_values() {
+        for (name, usage, _) in SYMPHONY.plain {
+            for flag in ["--help", "-h"] {
+                for args in [vec![flag], vec!["role", flag], vec![flag, "--", "value"]] {
+                    let args: Vec<String> = args.into_iter().map(str::to_string).collect();
+                    assert!(
+                        plain_help(&SYMPHONY, name, &args)
+                            .unwrap()
+                            .starts_with(usage)
+                    );
+                }
+                for args in [vec!["--", flag], vec!["role", "--", flag]] {
+                    let args: Vec<String> = args.into_iter().map(str::to_string).collect();
+                    assert_eq!(plain_help(&SYMPHONY, name, &args), None);
+                }
+            }
         }
     }
 
