@@ -1123,11 +1123,31 @@ fn feed_fixture(fake: &Arc<Fake>) -> (crate::testing::Tree, Arc<crate::live::Hub
 }
 
 async fn native_sections_at_final_cursor(app: &Router) -> symphony_api::DocumentSections {
+    let outline = app
+        .clone()
+        .oneshot(request("/api/document?path=docs/README.md&view=outline"))
+        .await
+        .unwrap();
+    assert_eq!(outline.status(), StatusCode::OK);
+    let outline: symphony_api::DocumentOutline =
+        serde_json::from_str(&bytes(outline).await).unwrap();
+    let keys: Vec<_> = outline
+        .document
+        .sections
+        .iter()
+        .map(|section| &section.key)
+        .collect();
+    assert_eq!(keys.len(), 1);
+    let keys: String = serde_json::to_string(&keys)
+        .unwrap()
+        .bytes()
+        .map(|byte| format!("%{byte:02X}"))
+        .collect();
     let response = app
         .clone()
-        .oneshot(request(
-            "/api/section?path=docs/README.md&format=blocks&keys=%5B%22intro%22%5D",
-        ))
+        .oneshot(request(&format!(
+            "/api/section?path=docs/README.md&format=blocks&keys={keys}"
+        )))
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
