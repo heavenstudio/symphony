@@ -246,21 +246,10 @@ fn member_pids(group: u32) -> io::Result<Vec<i32>> {
     const PROC_PGRP_ONLY: u32 = 2;
     let mut pids = vec![0i32; 64];
     loop {
-        let bytes = retry_interrupted(|| {
+        let size = i32::try_from(pids.len() * size_of::<i32>()).map_err(io::Error::other)?;
+        let bytes = libproc_count(&mut || {
             // SAFETY: the buffer holds the supplied byte count, and libproc only writes pids.
-            let bytes = unsafe {
-                libc::proc_listpids(
-                    PROC_PGRP_ONLY,
-                    group,
-                    pids.as_mut_ptr().cast(),
-                    i32::try_from(pids.len() * size_of::<i32>()).map_err(io::Error::other)?,
-                )
-            };
-            if bytes < 0 {
-                Err(io::Error::last_os_error())
-            } else {
-                Ok(bytes as usize)
-            }
+            unsafe { libc::proc_listpids(PROC_PGRP_ONLY, group, pids.as_mut_ptr().cast(), size) }
         })?;
         let count = bytes / size_of::<i32>();
         if count == pids.len() {
@@ -272,6 +261,26 @@ fn member_pids(group: u32) -> io::Result<Vec<i32>> {
     }
     pids.retain(|pid| *pid > 0);
     Ok(pids)
+}
+
+/// libproc returns zero both for an empty list and for a syscall failure. Reset errno at each
+/// attempt, before the native call, so stale errors cannot hide a genuinely empty group.
+#[cfg(target_os = "macos")]
+fn libproc_count(call: &mut dyn FnMut() -> libc::c_int) -> io::Result<usize> {
+    retry_interrupted(|| {
+        // SAFETY: __error returns this thread's live errno slot.
+        let errno = unsafe { libc::__error() };
+        // SAFETY: the slot belongs to this thread and is writable for one c_int.
+        unsafe { errno.write(0) };
+        let bytes = call();
+        // SAFETY: the native call ran on this thread, whose errno slot remains valid.
+        let error = unsafe { errno.read() };
+        if bytes == 0 && error != 0 {
+            Err(io::Error::from_raw_os_error(error))
+        } else {
+            usize::try_from(bytes).map_err(io::Error::other)
+        }
+    })
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -812,6 +821,89 @@ mod tests {
         assert_eq!(error.raw_os_error(), Some(libc::EACCES));
     }
 
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn libproc_zero_results_retry_interruptions_preserve_errors_and_reset_stale_errno() {
+        fn set_errno(value: libc::c_int) {
+            // SAFETY: __error returns this thread's live errno slot.
+            let errno = unsafe { libc::__error() };
+            // SAFETY: this thread owns the writable slot for one c_int.
+            unsafe { errno.write(value) };
+        }
+        fn errno() -> libc::c_int {
+            // SAFETY: __error returns this thread's live errno slot.
+            let errno = unsafe { libc::__error() };
+            // SAFETY: the slot remains valid and readable on this thread.
+            unsafe { errno.read() }
+        }
+
+        set_errno(libc::ENOMEM);
+        let mut attempts = 0;
+        let empty = libproc_count(&mut || {
+            assert_eq!(errno(), 0, "errno is reset before every native attempt");
+            attempts += 1;
+            if attempts == 1 {
+                set_errno(libc::EINTR);
+            }
+            0
+        })
+        .unwrap();
+        assert_eq!((empty, attempts), (0, 2));
+        for refused in [libc::ENOMEM, libc::EPERM] {
+            let mut attempts = 0;
+            let error = libproc_count(&mut || {
+                assert_eq!(errno(), 0);
+                attempts += 1;
+                set_errno(refused);
+                0
+            })
+            .unwrap_err();
+            assert_eq!(error.raw_os_error(), Some(refused));
+            assert_eq!(attempts, 1, "a non-retryable failure is not retried");
+        }
+        set_errno(libc::EINTR);
+        assert_eq!(
+            libproc_count(&mut || {
+                assert_eq!(errno(), 0);
+                0
+            })
+            .unwrap(),
+            0
+        );
+        assert_eq!(
+            libproc_count(&mut || {
+                set_errno(libc::EIO);
+                4
+            })
+            .unwrap(),
+            4
+        );
+        assert!(libproc_count(&mut || -1).is_err());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_native_libproc_error_is_not_an_empty_group() {
+        let mut byte = 0u8;
+        let error = libproc_count(&mut || {
+            // SAFETY: the output buffer has the supplied one-byte size. libproc rejects it as
+            // too small for a pid before writing anything; this call only observes processes.
+            unsafe {
+                libc::proc_listpids(
+                    2,
+                    std::process::id(),
+                    std::ptr::from_mut(&mut byte).cast(),
+                    1,
+                )
+            }
+        })
+        .unwrap_err();
+        assert_eq!(error.raw_os_error(), Some(libc::ENOMEM));
+        // A negative numeric group cannot name a live process group. The same boundary must
+        // accept its genuine empty success even after the preceding call set errno to ENOMEM.
+        assert!(member_pids(u32::MAX).unwrap().is_empty());
+    }
+
     #[test]
     fn linux_member_status_reads_past_names_and_excludes_zombies_and_other_groups() {
         let stat = |state| {
@@ -1003,6 +1095,7 @@ mod tests {
                 .spawn()
                 .unwrap(),
         );
+        let helper_pid = helper.0.id();
         let mut calls = 0;
         drain(
             &mut || {
@@ -1018,12 +1111,21 @@ mod tests {
                     )
                     .unwrap_or_else(|stall| panic!("{stall}"));
                     assert!(running(pid).unwrap());
+                } else {
+                    // Native scheduling is bounded by a condition's stall backstop, separately
+                    // from the injected clock used for the drain's product deadline.
+                    test_time::until_true(
+                        "the killed leader and late member exited",
+                        test_time::FLOOR,
+                        || child_ended(pid).unwrap() && child_ended(helper_pid).unwrap(),
+                    )
+                    .unwrap_or_else(|stall| panic!("{stall}"));
                 }
                 Ok(())
             },
             &mut || running(pid),
             GRACE,
-            &mut Wall(Instant::now()),
+            &mut Paused::default(),
         )
         .unwrap();
         assert!(calls >= 2, "the late member needs another group signal");
