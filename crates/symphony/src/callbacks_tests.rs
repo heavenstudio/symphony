@@ -149,6 +149,14 @@ fn insertable_but_malformed_outboxes_never_acknowledge_an_intent() {
         assert!(error.contains(path.to_str().unwrap()), "{case}: {error}");
         let rows: Vec<Value> = store.rows("SELECT text FROM callbacks;").unwrap();
         assert_eq!(rows, [json!({"text":"existing"})], "{case}");
+        store.run("DELETE FROM callbacks;").unwrap();
+        let error = publish_at(&path, "must not reuse a drained event id", None).unwrap_err();
+        assert!(error.contains("callbacks needs"), "{case}: {error}");
+        let rows: Vec<Value> = store.rows("SELECT text FROM callbacks;").unwrap();
+        assert!(
+            rows.is_empty(),
+            "{case}: an empty malformed journal acknowledged a new event"
+        );
     }
 }
 

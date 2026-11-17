@@ -285,6 +285,92 @@ fn the_clock_recovers_an_acknowledged_owner_task_after_its_writer_disappears() {
 }
 
 #[test]
+fn the_clock_recovers_creation_delivery_without_an_orchestrator_give() {
+    let tree = Tree::new();
+    let fixture = Fixture::new(Seed::default().task("tools/parent", "ready"));
+    let orchestrator = fixture.session("orchestrator");
+    let sender = fixture.session("worker");
+    fixture
+        .store
+        .take_role("tools/parent", &orchestrator, "orchestrator")
+        .unwrap();
+    let listener = Listener::new(&fixture);
+    fixture
+        .store
+        .callback(
+            &orchestrator,
+            Some(&format!("uds:{}", listener.path.display())),
+            false,
+            false,
+        )
+        .unwrap();
+    assert!(
+        fixture
+            .store
+            .send_agent(&sender, &orchestrator, "before-inherited-creation")
+            .unwrap()
+    );
+    listener.through("before-inherited-creation");
+    let new = symphony_board::NewTask {
+        parent: Some("tools/parent".into()),
+        ..symphony_board::NewTask::new("tools/parent/owner", "Owner child", "owner")
+    };
+    let writer = fixture.other().dispatching_by(Box::new(|| {
+        panic!("creation delivery ran before acknowledgement")
+    }));
+    writer
+        .persist_owner_task(&new, "inherited-owner-receipt")
+        .unwrap();
+    drop(writer);
+    let (hub, _) = clocked(&tree);
+    let mut store = None;
+    hub.board_tick(&mut store, &mut |_| Ok(fixture.other()));
+    assert!(store.is_some());
+    let event = format!("NEW {} ready — {}", new.slug, new.title);
+    // No give can flush this creation: orchestration is inherited and the clock writes no role.
+    let mut messages = listener.through(&event);
+    let task = fixture.store.get(&new.slug).unwrap();
+    assert!(
+        task.roles.is_empty(),
+        "no orchestrator role was given to the child"
+    );
+    let thread = fixture.store.thread(&new.slug).unwrap();
+    assert_eq!(
+        thread.len(),
+        1,
+        "no give or other write assisted callback recovery"
+    );
+    assert_eq!(
+        (thread[0].sender.as_str(), thread[0].text.as_str()),
+        ("owner", "created by owner")
+    );
+    let root = hub.root.clone();
+    drop(store);
+    drop(hub);
+    let mut restarted = Hub::new(&root, &root.join("build/client"));
+    restarted.clock = Box::new(|| NOW);
+    let mut store = None;
+    restarted.board_tick(&mut store, &mut |_| Ok(fixture.other()));
+    assert!(
+        fixture
+            .store
+            .send_agent(&sender, &orchestrator, "after-inherited-restart")
+            .unwrap()
+    );
+    messages.extend(listener.through("after-inherited-restart"));
+    assert_eq!(
+        messages
+            .iter()
+            .flat_map(|text| text.lines())
+            .filter(|line| *line == event)
+            .count(),
+        1,
+        "{messages:?}"
+    );
+    assert_eq!(fixture.store.thread(&new.slug).unwrap().len(), 1);
+}
+
+#[test]
 fn schema_open_failures_are_bounded_across_ticks_and_recover_only_when_due() {
     let tree = Tree::new();
     let (hub, clock) = clocked(&tree);
