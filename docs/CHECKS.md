@@ -53,6 +53,33 @@ test target of the changed package, the browser target still by filter; the targ
 packages that call a changed public item), a target only the release run runs that covers it, or
 a measurement before and after.
 
+## Consumer API changes
+
+A public Rust item a known consumer calls is replaced across at least two releases
+(RULES.md `code/consumer-api-two-releases`, [its card](DECISIONS.md#consumer-api-break-release)):
+
+1. Ship the replacement alongside the old item, which keeps its signature and behaviour. Do not
+   mark the old item `#[deprecated]`: a consumer's lint denies warnings, so the warning itself
+   would break its gate. Add the replacement's consumer calls to the compile guard as they begin.
+2. Consumers move to the replacement through their own tasks and landing gates, against a
+   release that carries both items. Their checkouts are read-only to work here.
+3. Remove the old item only in a separate task for a release after the one that shipped the
+   replacement. Its evidence names that release and the consumers' migration commits, with the
+   call sites read on their committed default branches showing that none still calls the old
+   item. Update the guard's list with that removal, never simply to make a break compile.
+
+The lists are `tests/consumer_api.rs` in `crates/tasks`, `crates/symphony` (also holding the kit,
+wire types, docs, schema and args), `apps/symphony-server`, `crates/process-cwd` and
+`crates/repository-read` ([what they hold](RELEASES.md#the-release-run), step 4). Run the affected
+compile guards and `just lint-rs`; a reviewer checks every public-item removal or signature
+change in a crate a consumer links against these lists and the release and migration evidence.
+The guards' headers say what they leave to a consumer's own gate.
+
+This overlap does not replace the kit's and helpers' major-version requirements
+([packages on crates.io](RELEASES.md#packages-on-cratesio)), or the separate versioned
+[`tasks api` contract](TASKS.md#the-tasks-api). Symphony's release checks build no consumer:
+consumer-owned landing gates meet the new pin, and releases run this repository's checks alone.
+
 ## Evidence by kind of change
 
 - **A pure function** (a parser, a formatter, a state transition): unit tests of its edge cases

@@ -5,6 +5,12 @@ their serde-only wire records in `crates/symphony-api`. All routes run natively:
 the client, reads, saves and media, under each project's `/<id>/` on the one server and
 at `/` on a server of its own.
 
+The public Rust items a consumer calls follow the
+[two-release rule](../../docs/CHECKS.md#consumer-api-changes), held here by
+`tests/consumer_api.rs`: keep the working old item without `#[deprecated]` alongside its
+replacement for a release, then remove it in a separate later task with consumer migration
+evidence and the guard list updated.
+
 ## Projects
 
 The one server (`serve --home`) keeps its record (`server.json`), log, lease and lock in the

@@ -64,7 +64,7 @@ on_both! {
         assert_eq!(made.id, f.store.get("tools/done").unwrap().id + 1);
     }
 
-    fn a_red_a_fast_fix_and_an_owners_receipt_are_marks_on_the_task(backend: Backend) {
+    fn a_red_and_an_owners_receipt_are_marks_on_the_task(backend: Backend) {
         let f = board(backend);
         let filer = f.session(symphony_board::red::FILER);
         let red = f
@@ -75,15 +75,6 @@ on_both! {
             })
             .unwrap();
         assert_eq!(red.fields["_board"]["red"], json!("main"));
-        let worker = f.session("worker");
-        let fix = f
-            .store
-            .create(&NewTask {
-                fast_fix: Some("a one-line fix".into()),
-                ..NewTask::new("fix/regex", "A fix", &worker)
-            })
-            .unwrap();
-        assert!(fix.fields["_board"].contains_key("fast_fix"), "{:?}", fix.fields);
         f.store
             .create_owner_task(&NewTask::new("tools/saved", "Saved", "owner"), "receipt-1")
             .unwrap();

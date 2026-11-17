@@ -116,8 +116,7 @@ what it requires, `check_paths.rs` which tests and checks a branch changes, `mov
 the main checkout, `regenerate.rs` the regenerator ([TASKS](../../docs/TASKS.md#the-regenerator)).
 `covering.rs` with `store/work/covered.rs` is a close covered by another landing
 ([TASKS](../../docs/TASKS.md#a-task-another-landing-covers)). `stamps.rs` and `stamps/read.rs` are
-the stamps' catalogue and readers ([TASKS](../../docs/TASKS.md#needed-stamps)), `fast_fix.rs` and
-`red.rs` the two marks.
+the stamps' catalogue and readers ([TASKS](../../docs/TASKS.md#needed-stamps)), `red.rs` the red mark.
 
 ### The rules of work
 
@@ -230,6 +229,11 @@ registered project's programs make; a call such a program starts making is added
 consumers call are held by `tests/consumer_api.rs` ([RELEASES](../../docs/RELEASES.md)), and one
 changes only with a consumer release plan (the crate's `clippy.toml` says why
 `avoid-breaking-exported-api` is off).
+
+For those Rust calls, the [two-release rule](../../docs/CHECKS.md#consumer-api-changes) keeps the
+working old item without `#[deprecated]` beside its replacement for a release. Removal is a
+separate later task with read-only consumer migration evidence and the compile list updated.
+That Rust compatibility rule is separate from the `tasks api` version contract above.
 
 ### A write decides on what it read
 

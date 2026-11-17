@@ -509,12 +509,11 @@ fn job_for<'a>(
 }
 
 /// Whether `handle` is a fresh reviewer of `task`, `held` its [`Store::ever_held`]: one that
-/// executed none of it and, but on a fast fix, neither orchestrates, orchestrated nor filed it, by
+/// executed none of it and neither orchestrates, orchestrated nor filed it, by
 /// the one rule the board's verdict and the land hold ([`Held::unfresh`]).
 fn fresh(task: &Task, held: &Held, handle: &str) -> bool {
     let orchestrates = task.holders("orchestrator").contains(&handle);
-    let fast_fix = task.fast_fix().is_some();
-    (held.unfresh(handle, &task.created_by, orchestrates, fast_fix)).is_none()
+    (held.unfresh(handle, &task.created_by, orchestrates)).is_none()
 }
 
 /// Keep task-specific failures (target, checkout, launch and reuse) inside this job. A review is

@@ -1,7 +1,6 @@
-//! What of a project's tests and checks a branch changes (`[land] check_paths`). The land reads it
-//! for a red filed as a fast fix ([`super::independent`]): its orchestrator's approve lands only a
-//! fix that changes none of them, since a loosened test or check is how a red turns green unfixed,
-//! and a fresh reviewer's lands any other.
+//! What of a project's tests and checks a branch changes (`[land] check_paths`), reported to its
+//! assessor: a change to one keeps review, since a loosened test or check is how a red turns green
+//! unfixed.
 //!
 //! An entry names paths as a `.gitignore` line does: a final `/` names a folder and what is inside
 //! it, a `/` at the start or in the middle anchors it at the project's root, and one with neither
@@ -102,7 +101,8 @@ pub const DEFAULT: &[&str] = &[
     "/crates/symphony/src/nightly/steps.rs",
     "/crates/tasks/src/land.rs",
     "/crates/tasks/src/land/",
-    "/crates/tasks/src/fast_fix.rs",
+    "/crates/tasks/src/stamps.rs",
+    "/crates/tasks/src/stamps/",
     "/crates/tasks/src/red.rs",
     "/crates/tasks/src/store/work/red.rs",
 ];

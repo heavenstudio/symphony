@@ -24,6 +24,12 @@ the product (the library as `symphony-app`, its library still `symphony`, the bo
 sources, the Mac app, the build and release commands (`symphony-build`) and the tests' time keep
 `publish = false` ([RELEASES](docs/RELEASES.md#packages-on-cratesio)).
 
+Public Rust items a consumer calls follow the
+[two-release rule](docs/CHECKS.md#consumer-api-changes): ship the replacement beside the working
+old item without `#[deprecated]`, then remove the old item in a separate later task after the
+consumer migrations are proved. Keep the compile guards in step with those calls; kit and helper
+major-version requirements still apply.
+
 ### Where each part is said
 
 - **A project's settings** are its `symphony.toml`, every table and key in

@@ -648,7 +648,6 @@ fn create(store: &Store, c: &mut Context) -> Result<(), Stop> {
         // Reds are marked by what files them (`tasks api` `create`); work under one is red work.
         red: None,
         // No task is filed as a fast fix any more: what it needs to land is its assessor's.
-        fast_fix: None,
     };
     let t = match p.get("arm") {
         Some(arm) => store.create_in_arm(&new, arm)?,

@@ -1,20 +1,15 @@
 # Needed stamps
 
 What `just land` requires of a task: the stamps its risk calls for, named by an assessor that is
-never the task's executor, chosen from one catalogue, and checked on the branch's tip. It replaces
-the default landing's one rule (a fresh reviewer's approve) and its one exception (a fast fix) with
-one field on the task and one check in the land. Its card:
+never the task's executor, chosen from one catalogue, and checked on the branch's tip. The task's
+assessment names its stamps and the land reads their evidence. Its card:
 [the needed stamps](../DECISIONS.md#needed-stamps).
 
-## Today
+## Current contract
 
-- The default land lands a task only on a fresh reviewer's approve naming the tip, or, on a task
-  filed `--fast-fix WHY`, on its orchestrator's (`crates/tasks/src/land.rs`, `approval` and
-  `independent`; `crates/tasks/src/fast_fix.rs`). A document costs the same review round as a
-  change to the land itself.
-- The task page's gates (`review`, `check`, `owner`, [TASKS](../TASKS.md#gates)) say what stands
-  and what is missing, but not which of them the land requires.
-- The only record of a task's risk is a fast fix's reason, written by whoever filed it.
+The default land uses the assessment and the catalogue. A needed `review` is a fresh reviewer's
+approve naming the tip; no task mark grants a requester approval privilege. The task page shows
+which stamps stand and which the task needs.
 
 ## The catalogue
 
@@ -103,7 +98,7 @@ assessed needs, is `review`, which is today's rule.
 
 `_board.needs` on the task: the stamps it needs (none, for everything waived), the tip the
 assessment read (none before the task has a branch), who made it and why. It is the board's own
-field, out of `just tasks field`'s reach, as the red and fast-fix marks are. Each change is also a
+field, out of `just tasks field`'s reach, as the red mark is. Each change is also a
 line on the thread, which keeps every assessment:
 `needs tests, review at 1a2b3c4 (was review): a store query and its test, no page or wire; by HANDLE`.
 
@@ -164,7 +159,7 @@ as they are.
 
 The gates answer marks each stamp of the catalogue: one needed, met, missing or held at the tip;
 one the assessment left out, waived, the assessment's line its reason. A task done with no review
-round reads waived from its assessment, not from the fast-fix rule. `owner` is held while the
+round reads waived from its assessment. `owner` is held while the
 owner's stamp is needed and not given, or a card the task posted waits. `check` stays as it is,
 information the land does not read.
 
@@ -197,19 +192,17 @@ land`.
 The board cannot tell who started a session, so a helper an executor started itself would pass as
 its assessor. A reviewer has the same gap today ([left out](#left-out)).
 
-## Existing tasks and `--fast-fix`
+## Existing tasks
 
-- No open task has an assessment, so each needs `review`, as today. Nothing is migrated.
-- A fast fix becomes an assessment that needs `tests`, which gives up its orchestrator's read of
-  the red's own failing test ([left out](#left-out)). `just tasks create` stops taking
-  `--fast-fix`, the release run and the regenerator file their reds without it, and the assessor
-  reads each at review. A task already filed with the mark keeps today's path (its orchestrator's
-  approve, a red's bounded by `[land] check_paths`) until it closes, and that code goes once none is
-  open.
-- RULES.md `workflow/evidence-is-the-gate`, `workflow/fast-bugfixes` and
-  `workflow/release-reds-first`, [CHECKS](../CHECKS.md) and
-  [the default landing](../TASKS.md#the-default-landing) say a reviewer is staffed when the needs
-  name `review`, and an assessor is started at filing and at review.
+Nothing is migrated: completed tasks retain their status, fields and verdicts. Every task's needs
+come from its assessment and the catalogue, including one with an older mark. No creation command
+or API accepts `fast_fix`; API 2.0 refuses that argument. The stamp catalogue and its readers are
+in the default `[land] check_paths`, alongside the landing itself.
+
+RULES.md `workflow/evidence-is-the-gate`, `workflow/fast-bugfixes` and
+`workflow/release-reds-first`, [CHECKS](../CHECKS.md) and
+[the default landing](../TASKS.md#the-default-landing) say a reviewer is staffed when the needs
+name `review`, and an assessor is started at filing and at review.
 
 ## Where it meets other work
 
@@ -253,8 +246,8 @@ landing changes until the whole is there:
   reviewers.
 - **The owner writing the needs on the page:** the assessor follows the owner's own post on the
   thread.
-- **A floor under the assessment:** the land enforces the needs alone. Today's bound on a red's fix
-  (`[land] check_paths`) becomes the `review` guideline, its paths named to the assessor as a fact.
+- **A floor under the assessment:** the land enforces the needs alone. The `review` guideline uses
+  `[land] check_paths`, its paths named to the assessor as a fact.
 - **A red's own failing test:** retiring `--fast-fix` gives up the orchestrator's read of a red's
   evidence, so nobody reads that the red's failing test, unchanged, ran green at the tip: `tests`
   asks only that the task's test runs there are green, and a red's fix that ran another test green
