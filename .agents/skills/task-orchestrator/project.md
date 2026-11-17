@@ -17,7 +17,17 @@ Read this page with the orchestrator skill, as the [root guide](../../../AGENTS.
   keep those and the installed-parser regression current when adding a recurring check.
 - Codex loads project rules at process startup when its project configuration is trusted
   ([the rules reference](https://developers.openai.com/codex/rules)). A fresh process, including
-  one resuming a conversation, reads the rules in its own checkout. An already running
-  session needs a restart/resume to pick up a committed rule update; do not edit other feature
-  branches or assume an existing process reloaded it. Handle its current task-authorized
-  prompt through the active approval flow while that update reaches its checkout.
+  one resuming a conversation, reads the rules in its own checkout. First check the exact
+  invocation against the root guide's [command forms](../../../AGENTS.md#this-repository-as-its-own-project):
+  redirection, quoted prefix words, concatenated message quotes or an unmatched compound part
+  can explain a prompt even when the rules loaded. Inspect the submitted tool command;
+  displayed logical arguments and rule-file presence alone do not establish what was evaluated.
+  `codex execpolicy check` evaluates the supplied argv and inline examples; it does not prove
+  that a running session loaded those files or test that session's shell splitting.
+  If a plain supported form still prompts, inspect startup time, rule availability in that
+  checkout and project trust through read-only metadata. A process that predates its rule
+  update needs a fresh process or safe resume after the update reaches its checkout; an
+  untrusted project layer needs its trust resolved through the active approval flow. Never
+  forcibly cycle an active worker, edit its feature branch or change global trust. Handle its
+  current task-authorized prompt through the active approval flow; a redirected prompt alone
+  is no reason to restart or repeat a recorded check.
