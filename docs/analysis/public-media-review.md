@@ -69,7 +69,21 @@ Review the eight label regions at native resolution, inspect replacement metadat
 hashes before treating the finding as resolved. Do not substitute a synthetic computer name into
 an ostensibly unchanged historical capture.
 
+The proposed rectangles below use original 1280×1200 pixel coordinates, with a top-left origin;
+each tuple is `(x, y, width, height)`. They cover the computer text with a small margin and leave
+the Builds/Tests headings untouched. The complete hashes are in the inventory.
+
+| File under `docs/analysis/timeline-burst/` | Builds label | Tests label |
+|---|---|---|
+| `a-wide.webp` | `(44, 388, 156, 18)` | `(44, 678, 156, 18)` |
+| `b-wide.webp` | `(44, 388, 156, 18)` | `(44, 582, 156, 18)` |
+| `c-wide.webp` | `(44, 388, 156, 18)` | `(44, 477, 156, 18)` |
+| `c-wide-dark.webp` | `(44, 388, 156, 18)` | `(44, 477, 156, 18)` |
+
 The exact paths have been sent to the public-readiness/history owner before any image change.
+The handoff is on `docs/public-media-privacy-review`; `inbox/github-integration` owns the
+coordinated historical privacy decision, including these four files, rather than this report
+silently approving their continued exposure.
 This report proposes that bounded historical-evidence treatment for coordination; it performs no
 redaction, deletion or history rewrite. If the historical image cannot be edited while preserving
 its evidentiary purpose, the specific fallback is owner-authorized removal of these four rendered
