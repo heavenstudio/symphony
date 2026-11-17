@@ -12,6 +12,19 @@ use std::time::Instant;
 const PATIENT: Duration = test_time::backstop(Duration::from_secs(10));
 const NOW: f64 = 1_794_400_000.0; // 2026-11-11, 12:26 UTC
 
+type ReopenHook = Box<dyn FnOnce(&Path)>;
+thread_local! {
+    static BEFORE_REOPEN: std::cell::RefCell<Option<ReopenHook>> = const { std::cell::RefCell::new(None) };
+}
+
+/// A replacement after the descriptor's path was resolved, on this test's thread alone.
+pub(super) fn before_reopen(path: &Path) {
+    let hook = BEFORE_REOPEN.take();
+    if let Some(hook) = hook {
+        hook(path);
+    }
+}
+
 fn scratch(name: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!("symphony-run-logs-{name}-{}", std::process::id()));
     let _ = fs::remove_dir_all(&dir);
@@ -367,6 +380,48 @@ fn what_is_no_regular_file_is_left_out_and_a_file_cut_short_or_a_log_that_fails_
     let refusing = File::open(dir.join(&name)).unwrap();
     assert_eq!(files.copy(&refusing), 0);
     fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn a_file_replaced_before_its_reopen_is_never_read_through_a_link_or_waited_on() {
+    for replacement in ["fifo", "link", "directory", "file", "missing"] {
+        let dir = scratch(&format!("reopen-{replacement}"));
+        let path = dir.join("out");
+        let out = appended(&path, b"original\n");
+        let (empty, returned) = std::thread::scope(|scope| {
+            let reading = scope.spawn(move || {
+                BEFORE_REOPEN.set(Some(Box::new(move |path| {
+                    let original = path.with_extension("old");
+                    fs::rename(path, &original).unwrap();
+                    match replacement {
+                        "fifo" => {
+                            let name = std::ffi::CString::new(path.as_os_str().as_encoded_bytes())
+                                .unwrap();
+                            // SAFETY: a NUL-terminated path, alive through the call.
+                            assert_eq!(unsafe { libc::mkfifo(name.as_ptr(), 0o600) }, 0);
+                        }
+                        "link" => std::os::unix::fs::symlink(original, path).unwrap(),
+                        "directory" => fs::create_dir(path).unwrap(),
+                        "file" => fs::write(path, b"someone else's\n").unwrap(),
+                        "missing" => {}
+                        _ => unreachable!(),
+                    }
+                })));
+                Files::mark([out]).0.is_empty()
+            });
+            let returned = test_time::until_true("the file reopen returned", PATIENT, || {
+                reading.is_finished()
+            });
+            // Release a blocking open on regression, so the test fails instead of hanging.
+            if returned.is_err() && replacement == "fifo" {
+                drop(OpenOptions::new().write(true).open(&path));
+            }
+            (reading.join().unwrap(), returned)
+        });
+        returned.unwrap_or_else(|stall| panic!("{stall}: reopen waited on {replacement}"));
+        assert!(empty, "the reopened {replacement} was kept");
+        fs::remove_dir_all(&dir).unwrap();
+    }
 }
 
 #[test]

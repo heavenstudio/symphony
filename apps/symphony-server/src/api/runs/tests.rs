@@ -16,6 +16,19 @@ use symphony_api::{FailedTest, RUN_SCHEMA};
 const TODAY: f64 = 1_794_700_800.0;
 const NOW: f64 = TODAY + 12.0 * 3_600.0;
 
+type DayLockHook = Box<dyn FnOnce(&File)>;
+thread_local! {
+    static BEFORE_DAY_LOCK: std::cell::RefCell<Option<DayLockHook>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Hold a reader before the index's lock, on this test's thread alone.
+pub(super) fn before_day_lock(file: &File) {
+    let hook = BEFORE_DAY_LOCK.take();
+    if let Some(hook) = hook {
+        hook(file);
+    }
+}
+
 /// A run's id, 32 hex digits, from a short name.
 fn id(name: &str) -> String {
     format!("{name:0>32}")
@@ -619,6 +632,52 @@ fn answers_asked_for_at_once_parse_each_byte_appended_once() {
         index.parsed(),
         length(&runs, TODAY),
         "each byte parsed once, whoever asked"
+    );
+}
+
+#[test]
+fn a_reader_that_opened_before_an_append_takes_the_longer_day_kept_while_it_waited() {
+    let tree = Tree::new();
+    let runs = tree.path("runs");
+    let index = Index::default();
+    let all = Filters::default();
+    write_day(&runs, TODAY, &[start("a", "test", TODAY + 10.0)], "");
+    let opened = Arc::new(std::sync::Barrier::new(2));
+    let resume = Arc::new(std::sync::Barrier::new(2));
+    let length_seen = Arc::new(std::sync::atomic::AtomicU64::new(0));
+    let before = length(&runs, TODAY);
+    std::thread::scope(|scope| {
+        let (slow_opened, slow_resume, slow_seen) =
+            (opened.clone(), resume.clone(), length_seen.clone());
+        let (index, runs, all) = (&index, &runs, &all);
+        let first = scope.spawn(move || {
+            BEFORE_DAY_LOCK.set(Some(Box::new(move |file| {
+                slow_seen.store(
+                    file.metadata().unwrap().len(),
+                    std::sync::atomic::Ordering::Relaxed,
+                );
+                slow_opened.wait();
+                slow_resume.wait();
+            })));
+            page(index, runs, all, NOW)
+        });
+        // The first reader has seen the shorter file but cannot take the lock until the second
+        // has parsed the append. Its next status must describe what the index now keeps.
+        opened.wait();
+        append(runs, TODAY, &[start("b", "test", TODAY + 20.0)], "");
+        let second = page(index, runs, all, NOW);
+        resume.wait();
+        assert_eq!(first.join().unwrap(), second);
+    });
+    assert_eq!(
+        length_seen.load(std::sync::atomic::Ordering::Relaxed),
+        before
+    );
+    assert_eq!(names(&page(&index, &runs, &all, NOW)), ["b", "a"]);
+    assert_eq!(
+        index.parsed(),
+        length(&runs, TODAY),
+        "each byte parsed once"
     );
 }
 

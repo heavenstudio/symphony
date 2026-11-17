@@ -339,8 +339,10 @@ fn reopened(file: &File) -> io::Result<File> {
         std::path::PathBuf::from(std::ffi::OsString::from_vec(path))
     };
     #[cfg(not(target_os = "macos"))]
-    let path = std::path::PathBuf::from(format!("/proc/self/fd/{}", file.as_raw_fd()));
-    OpenOptions::new().read(true).open(path)
+    let path = fs::read_link(format!("/proc/self/fd/{}", file.as_raw_fd()))?;
+    #[cfg(test)]
+    tests::before_reopen(&path);
+    crate::runs::regular(&path, OpenOptions::new().read(true))
 }
 
 /// Where a run's log is written from: its command's streams copied as they come ([`Copying`]), or

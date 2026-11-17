@@ -334,6 +334,15 @@ fn day_file(
         }
         Err(e) => return gone(format!("{name}: {e}")),
     };
+    #[cfg(test)]
+    tests::before_day_lock(&file);
+    // Take the status under the lock too: another reader may have stored a longer day while
+    // this reader waited. Its descriptor sees the append, so it takes that reader's fold.
+    let mut days = index.days();
+    let mut gone = |why: String| {
+        days.remove(&path);
+        Err(why)
+    };
     let meta = match file.metadata() {
         Ok(meta) => meta,
         Err(e) => return gone(format!("{name}: {e}")),
@@ -362,7 +371,6 @@ fn day_file(
     );
     // Under the lock to the end: an answer that asks for the day meanwhile waits, and takes what
     // this one kept.
-    let mut days = index.days();
     if let Some(kept) = days.get(&path)
         && kept.seen == seen
     {

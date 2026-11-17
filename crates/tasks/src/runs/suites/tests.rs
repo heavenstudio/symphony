@@ -81,6 +81,44 @@ fn a_real_cargo_test_gives_each_binary_its_counts_and_time_and_each_failed_test_
 }
 
 #[test]
+fn a_serial_uncaptured_test_marks_its_failure_after_its_output() {
+    let dir = scratch("serial-uncaptured");
+    let log = "     Running tests/serial.rs (.target/debug/deps/serial-0123456789abcdef)
+
+running 2 tests
+test first ... output from the passing test
+ok
+test second ... output from the failing test
+thread 'second' panicked at tests/serial.rs:2:2:
+the value was wrong
+FAILED
+
+failures:
+
+failures:
+    second
+
+test result: FAILED. 1 passed; 1 failed; 0 ignored; finished in 0.01s
+";
+    let tests = read_text(&dir, log).unwrap();
+    assert_eq!(
+        tests.suites,
+        [suite("tests/serial.rs (serial)", (1, 1, 0), 0.01, false)]
+    );
+    assert_eq!(
+        tests.failed,
+        [failed("tests/serial.rs (serial)", "second", "")]
+    );
+    // Uncaptured output may end without a newline, leaving FAILED on that same line.
+    let tests = read_text(&dir, &log.replace("\nFAILED\n", " with no newlineFAILED\n")).unwrap();
+    assert_eq!(
+        tests.failed,
+        [failed("tests/serial.rs (serial)", "second", "")]
+    );
+    fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
 fn a_binary_cut_off_before_its_result_line_is_an_error_and_what_follows_never_ran() {
     let dir = scratch("cut");
     let text = fs::read_to_string(FIXTURE).unwrap();

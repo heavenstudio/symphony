@@ -147,6 +147,7 @@ what the caller handed the command, and the caller sees the same bytes whichever
   else wrote to the file meanwhile is in the log too, and on macOS, where the recorder
   reads the file as soon as it sees the command end, so may what the caller wrote at
   once after it be. A file its caller cut below its mark gives nothing.
+  Runs that append to one file at once include each other's lines in their logs.
 - **Anything else** (a pipe, a socket, `/dev/null`): the command writes to pipes its
   recorder reads, which copies each read on to where that stream went before, as it
   came, and into the log. A recorder that dies while its command runs leaves those
