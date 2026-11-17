@@ -26,6 +26,8 @@ use symphony_api::{Gate, GateState, Pending, TaskTimeline};
 use symphony_board::cli::machine_work::recorded::{self, Phase, Record, Step};
 use symphony_board::stages::{self, Facts, Hold, Line, Segment};
 
+mod history;
+
 /// The timeline of the task `slug`, which `facts` describe, from its `thread`, the `runs` kept for
 /// it, its `gates` and the time `now`. Its clock ([`TaskTimeline::zone`]) and how often it is read
 /// again are the caller's to set.
@@ -416,6 +418,7 @@ pub fn answer(
         zone: zone(record.created, now),
         every: TIMELINE_EVERY,
         runs_from,
+        history: Some(history::answer(store, record)),
         ..build(&record.slug, facts, &thread, &runs, &gates, now)
     })
 }

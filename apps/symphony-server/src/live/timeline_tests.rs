@@ -333,7 +333,47 @@ fn the_pictures_task_gives_the_timeline_they_draw_and_a_task_with_no_runs_has_no
     );
     // The task is open and never assessed: the stamps the Symphony's catalogue leaves out by
     // default have no lane, as the pictures have none.
-    assert_eq!(answer, expected(&zone));
+    let history: symphony_api::timeline::History =
+        serde_json::from_value(answer["history"].clone()).unwrap();
+    assert!(history.sources_complete);
+    assert_eq!(
+        history.sources,
+        vec![symphony_api::timeline::HistorySource {
+            slug: SLUG.into(),
+            state: symphony_api::timeline::HistoryState::Complete,
+            first_id: Some(1),
+            last_id: Some(8),
+            before: None,
+        }]
+    );
+    assert_eq!(history.messages.len(), 1);
+    assert_eq!(
+        (history.messages[0].id, history.messages[0].at),
+        (5, shifted(1_794_392_820.0))
+    );
+    assert_eq!(
+        history.messages[0].from.state,
+        symphony_api::timeline::EndpointState::Known
+    );
+    assert_eq!(
+        history.messages[0].to.state,
+        symphony_api::timeline::EndpointState::Everyone
+    );
+    assert_eq!(
+        history
+            .roles
+            .iter()
+            .map(|span| (span.role.as_str(), span.from_id, span.to_id))
+            .collect::<Vec<_>>(),
+        [
+            ("executor", 2, None),
+            ("reviewer", 4, Some(6)),
+            ("reviewer", 8, None)
+        ]
+    );
+    let mut legacy = answer.clone();
+    legacy.as_object_mut().unwrap().remove("history");
+    assert_eq!(legacy, expected(&zone));
     assert!(answer.get("runs_from").is_none(), "nothing rotated out");
 
     // No run kept for it: no runs at all, not runs of nothing. Never in review, it has no review

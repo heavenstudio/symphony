@@ -17,6 +17,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::GateState;
 
+mod history;
+pub use history::*;
+
 /// The route that answers a [`TaskTimeline`]: `?slug=SLUG`.
 pub const TASK_TIMELINE_PATH: &str = "/api/task-timeline";
 
@@ -73,6 +76,10 @@ pub struct TaskTimeline {
     /// not be read.
     #[serde(default)]
     pub gates: Vec<GateLane>,
+    /// Recorded roles and message addresses. Absent on servers without this projection; never
+    /// interpret absence, a partial source or a failed source as an empty history.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub history: Option<History>,
 }
 
 impl TaskTimeline {
