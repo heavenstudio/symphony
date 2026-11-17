@@ -528,6 +528,26 @@ fn a_connection_waits_the_clients_wait_on_each_write_as_on_each_read() {
 }
 
 #[test]
+fn a_request_the_socket_takes_whole_is_taken_at_once_and_of_a_longer_one_what_it_can_hold() {
+    // A peer that reads nothing: what the socket takes is what its buffers hold.
+    let (ours, _peer) = UnixStream::pair().unwrap();
+    let connection = Connection {
+        stream: BufReader::new(ours.try_clone().unwrap()),
+        writer: ours,
+    };
+    let short = [b'S', 0, 0, 0, 4];
+    assert_eq!(connection.taken(&short).unwrap(), short.len());
+    let long = megabyte().into_bytes();
+    let taken = bounded("a write that does not wait", move || {
+        connection.taken(&long).unwrap()
+    });
+    assert!(
+        (1..(1 << 20)).contains(&taken),
+        "the socket held some and not a megabyte: {taken}"
+    );
+}
+
+#[test]
 fn the_side_of_a_request_that_failed_first_gives_its_error() {
     let failed = |words: &str, first: bool| Err((std::io::Error::other(words.to_string()), first));
     let said = |given: std::io::Result<()>| given.unwrap_err().to_string();

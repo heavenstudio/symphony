@@ -1,8 +1,9 @@
 //! The board's PostgreSQL client: the server's frontend/backend protocol 3.0 over its Unix socket
 //! alone, where the server trusts the user that made it ([`crate::server::postgres`]), so a client
 //! has no TCP, no TLS and no password, and speaks only the messages the store's requests need
-//! ([`wire`]). No async runtime, no dependency: one connection, a request written on a thread of
-//! its own while its answers are read ([`Connection::exchange`]).
+//! ([`wire`]). No async runtime, no dependency: one connection, and a request the socket cannot
+//! take at once written on a thread of its own while its answers are read
+//! ([`Connection::exchange`]).
 //!
 //! A client makes its connection at its first request and keeps it for its life, so a command,
 //! one process, is one connection. Its startup names the user [`USER`], its database, UTF-8, and
@@ -100,7 +101,7 @@ pub struct Client {
 }
 
 /// One connection: the socket its answers are read from, and the same socket a request is written
-/// to, on a thread of its own ([`Connection::exchange`]).
+/// to ([`Connection::exchange`]).
 #[derive(Debug)]
 struct Connection {
     stream: BufReader<UnixStream>,
@@ -314,13 +315,15 @@ impl Connection {
     /// the connection's, the inner the server's answer. A transaction a simple query left failed
     /// is rolled back before the answer is given.
     ///
-    /// The request is written on a thread of its own while this one reads, so whatever the server
-    /// says before it has read the whole request is read as it comes: an answer or an error at
-    /// any length (one with the variables in it, a refusal that shows the row it refused) never
-    /// leaves the server waiting on a client that waits on it, each with its socket full, as a
-    /// client that writes the whole request before it reads can (libpq's pipeline mode says the
-    /// same of its own). A server that takes nothing for the client's wait, or says nothing,
-    /// ends the request in an error ([`Client::waiting`]).
+    /// Whatever the server says before it has read the whole request is read as it comes: an
+    /// answer or an error at any length (one with the variables in it, a refusal that shows the
+    /// row it refused) never leaves the server waiting on a client that waits on it, each with its
+    /// socket full, as a client that writes the whole request before it reads can (libpq's
+    /// pipeline mode says the same of its own). The socket takes what it can of the request at
+    /// once ([`Connection::taken`]): a request it takes whole is sent before anything is read, and
+    /// nothing the server says can stop it; the rest of one it does not is written on a thread of
+    /// its own while this one reads. A server that takes nothing for the client's wait, or says
+    /// nothing, ends the request in an error ([`Client::waiting`]).
     fn exchange(&mut self, out: &[u8]) -> std::io::Result<Result<Vec<Answer>, DbError>> {
         let (answers, status) = self.sent_and_read(out)?;
         if status == b'E' {
@@ -331,12 +334,17 @@ impl Connection {
         Ok(answers)
     }
 
-    /// `out` written on a thread of its own while this one reads the answers up to the next
-    /// ReadyForQuery, and the transaction status it says. The side that fails first ends the
-    /// connection for both, so neither waits on the other, and its error is the one given: the
-    /// other's is what that end did to it. A thread the system will not give fails the request
-    /// before anything is sent.
+    /// `out` sent and the answers read up to the next ReadyForQuery, and the transaction status it
+    /// says ([`Connection::exchange`]): what the socket takes at once, then any rest written on a
+    /// thread of its own while this one reads. The side that fails first ends the connection for
+    /// both, so neither waits on the other, and its error is the one given: the other's is what
+    /// that end did to it. A thread the system will not give fails the request.
     fn sent_and_read(&mut self, out: &[u8]) -> std::io::Result<(Result<Vec<Answer>, DbError>, u8)> {
+        let taken = self.taken(out).map_err(sending)?;
+        let out = &out[taken..];
+        if out.is_empty() {
+            return Connection::answers(&mut self.stream);
+        }
         let ended = AtomicBool::new(false);
         // The connection ended for both sides, and whether this was the first to end it.
         let end = |stream: &UnixStream| {
@@ -351,11 +359,7 @@ impl Connection {
                 .name("board-pg-send".into())
                 .spawn_scoped(scope, || {
                     let mut to = writer;
-                    to.write_all(out).map_err(|why| {
-                        let why =
-                            std::io::Error::new(why.kind(), format!("sending a request: {why}"));
-                        (why, end(writer))
-                    })
+                    (to.write_all(out)).map_err(|why| (sending(why), end(writer)))
                 })
                 .map_err(|why| {
                     std::io::Error::new(why.kind(), format!("no thread to send a request: {why}"))
@@ -366,6 +370,30 @@ impl Connection {
                 .unwrap_or_else(|panic| std::panic::resume_unwind(panic));
             given(read, sent)
         })
+    }
+
+    /// As much of `out` as the socket takes now, written without waiting: how many bytes that was.
+    /// The socket waits again afterwards, also when the write failed.
+    fn taken(&self, out: &[u8]) -> std::io::Result<usize> {
+        self.writer.set_nonblocking(true)?;
+        let mut to = &self.writer;
+        let mut taken = 0;
+        let wrote = loop {
+            if taken == out.len() {
+                break Ok(taken);
+            }
+            match to.write(&out[taken..]) {
+                Ok(0) => break Err(std::io::ErrorKind::WriteZero.into()),
+                Ok(more) => taken += more,
+                Err(why) if why.kind() == std::io::ErrorKind::WouldBlock => break Ok(taken),
+                Err(why) if why.kind() == std::io::ErrorKind::Interrupted => {}
+                Err(why) => break Err(why),
+            }
+        };
+        let waiting = self.writer.set_nonblocking(false);
+        let taken = wrote?;
+        waiting?;
+        Ok(taken)
     }
 
     /// The server's messages on `stream` up to its next ReadyForQuery, and the transaction status
@@ -419,6 +447,11 @@ fn given<T>(
         (Err((why, true)), _) | (_, Err((why, true))) => Err(why),
         (Err((why, false)), _) | (_, Err((why, false))) => Err(why),
     }
+}
+
+/// A write's failure, said as the sending of a request.
+fn sending(why: std::io::Error) -> std::io::Error {
+    std::io::Error::new(why.kind(), format!("sending a request: {why}"))
 }
 
 fn unexpected(kind: u8, during: &str) -> std::io::Error {
