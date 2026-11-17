@@ -2499,6 +2499,8 @@ mod machine_work;
 
 pub(crate) use health::{Signal, Standing};
 mod owner_asks;
+#[cfg(test)]
+mod readiness_tests;
 mod reports;
 mod retry;
 #[cfg(test)]
