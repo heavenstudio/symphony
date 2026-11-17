@@ -21,15 +21,15 @@
 //!
 //! The look comes before the read, so a file or a tip that moves between the two is kept under
 //! what it was before, and the next read finds it moved. An answer whose marks could not be read
-//! is not kept: the next read asks git again.
+//! is not kept, nor one whose branch tip could not be read: the next read asks git again.
 
 use super::{Folders, Grain, ReportMark, day_files, days_read, first, page, periods};
 use crate::api::validated::checksum;
 use axum::body::Bytes;
 use std::os::unix::fs::MetadataExt as _;
 use std::path::Path;
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 use symphony_api::run_day;
 
 /// The windows a hub keeps the answers of, the one read longest ago going first: a page asks for
@@ -66,8 +66,9 @@ struct Seen {
 struct Window {
     grain: Grain,
     days: u32,
-    seen: Seen,
-    answer: Answer,
+    /// Held while this window is read, so its readers share one read without holding up a kept
+    /// answer of another window.
+    answer: Mutex<Option<(Seen, Answer)>>,
 }
 
 /// The marks one `git log` read: those of `tip` since `since`, oldest first.
@@ -80,8 +81,8 @@ struct Marks {
 /// A hub's kept answers and marks, and how often it read for them.
 #[derive(Default)]
 pub(crate) struct Kept {
-    /// Held while an answer is read, so two reads of one window read its files once.
-    windows: Mutex<Vec<Window>>,
+    /// Held only to find a window and move it to the end, never for its files or git.
+    windows: Mutex<Vec<Arc<Window>>>,
     marks: Mutex<Option<Marks>>,
     passes: AtomicU64,
     gits: AtomicU64,
@@ -103,11 +104,11 @@ fn stamp(path: &Path) -> Option<Stamp> {
 }
 
 impl Seen {
-    /// What a window from `from` to `to` of the project at `root` would be read from now.
-    fn now(folders: &Folders, root: &Path, branch: &str, from: f64, to: f64) -> Seen {
+    /// What a window from `from` to `to` would be read from now, with the observed branch tip.
+    fn now(folders: &Folders, tip: Option<String>, from: f64, to: f64) -> Seen {
         Seen {
             to,
-            tip: symphony::gates::tip(root, branch),
+            tip,
             first: folders.reports.as_ref().ok().and_then(|path| first(path)),
             files: days_read(from, to)
                 .flat_map(|day| day_files(folders, &run_day(day)))
@@ -142,21 +143,33 @@ impl Kept {
         days: u32,
         now: f64,
     ) -> Answer {
+        self.answer_with_tip(folders, root, grain, days, now, symphony::gates::tip)
+    }
+
+    /// Read the branch tip separately from git's marks read, so a missing observation can be
+    /// exercised even when git can read the branch.
+    fn answer_with_tip(
+        &self,
+        folders: &Folders,
+        root: &Path,
+        grain: Grain,
+        days: u32,
+        now: f64,
+        tip: impl FnOnce(&Path, &str) -> Option<String>,
+    ) -> Answer {
         let branch = symphony::project::Project::of(root).default_branch.clone();
         let spans = periods(grain, days, now);
         let from = spans.first().map_or(now, |span| span.0);
         let to = spans.last().map_or(now, |span| span.1);
-        let seen = Seen::now(folders, root, &branch, from, to);
-        let mut windows = lock(&self.windows);
-        let asked = |window: &Window| window.grain == grain && window.days == days;
-        if let Some(at) = windows.iter().position(asked) {
-            let window = windows.remove(at);
-            if window.seen == seen {
-                let answer = window.answer.clone();
-                windows.push(window);
-                return answer;
-            }
+        let seen = Seen::now(folders, tip(root, &branch), from, to);
+        let window = self.window(grain, days);
+        let mut kept = lock(&window.answer);
+        if let Some((before, answer)) = kept.as_ref()
+            && *before == seen
+        {
+            return answer.clone();
         }
+        *kept = None;
         let mut failed = false;
         self.passes.fetch_add(1, Ordering::Relaxed);
         let page = page(folders, grain, days, now, |since| {
@@ -168,18 +181,34 @@ impl Kept {
             tag: checksum(&body),
             body: Bytes::from(body),
         };
-        if !failed {
-            if windows.len() >= WINDOWS {
-                windows.remove(0);
-            }
-            windows.push(Window {
-                grain,
-                days,
-                seen,
-                answer: answer.clone(),
-            });
+        if !failed && seen.tip.is_some() {
+            *kept = Some((seen, answer.clone()));
         }
         answer
+    }
+
+    /// Find this window and mark it as the most recently asked for, making room for a new one
+    /// when needed. Its answer has its own lock, which stays alive for any readers after eviction.
+    fn window(&self, grain: Grain, days: u32) -> Arc<Window> {
+        let mut windows = lock(&self.windows);
+        let window = match windows
+            .iter()
+            .position(|window| window.grain == grain && window.days == days)
+        {
+            Some(at) => windows.remove(at),
+            None => {
+                if windows.len() >= WINDOWS {
+                    windows.remove(0);
+                }
+                Arc::new(Window {
+                    grain,
+                    days,
+                    answer: Mutex::default(),
+                })
+            }
+        };
+        windows.push(Arc::clone(&window));
+        window
     }
 
     /// The marks of `branch` since `since`, oldest first: the kept ones where they were

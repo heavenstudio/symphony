@@ -2,14 +2,15 @@
 //! time: a second read with nothing moved reads no day file and starts no git; a day file written,
 //! changed or appended to, an older roll-up file, a commit on the default branch and the hour each
 //! have the answer read again, git started for a moved tip or a window reaching further back
-//! alone; an answer whose marks could not be read is not kept; and a hub keeps a few windows, the
-//! one read longest ago going first.
+//! alone; an answer whose marks or tip could not be read is not kept; a kept hit does not wait on
+//! another window's read; and a hub keeps a few windows, the one read longest ago going first.
 
 use super::super::tests::{MONDAY, folders, hour, report, wednesday, week};
 use super::super::{DAY, HOUR, ReportsPage};
 use super::*;
 use crate::testing::{Tree, git, repository};
 use std::path::PathBuf;
+use test_time::wait::{FLOOR, until};
 
 /// The fixture week's folders beside a repository whose default branch holds one commit.
 fn project(tree: &Tree) -> (Folders, PathBuf) {
@@ -216,6 +217,100 @@ fn an_answer_whose_marks_could_not_be_read_is_not_kept() {
     assert!(first.buckets[0].flow.is_some(), "the files still read");
     ask();
     assert_eq!(read(&kept), (2, 2), "the next read tries again");
+}
+
+#[test]
+fn an_answer_with_marks_but_no_tip_is_not_kept() {
+    let tree = Tree::new();
+    let (folders, root) = project(&tree);
+    std::fs::write(root.join("RULES.md"), "# Rules\n").unwrap();
+    git(&root, &["add", "."]);
+    git(&root, &["commit", "-m", "Rules begin"]);
+    let kept = Kept::default();
+    let now = clock();
+    let ask = || kept.answer_with_tip(&folders, &root, Grain::Day, 3, now, |_, _| None);
+    for reads in 1..=2 {
+        let page = page_of(&ask());
+        assert!(page.unread.is_empty(), "{:?}", page.unread);
+        assert_eq!(page.marks.len(), 1);
+        assert_eq!(page.marks[0].subject, "Rules begin");
+        assert_eq!(read(&kept), (reads, reads), "no tip: try again");
+    }
+    // Once the tip can be observed, both the marks and the answer can be kept again.
+    let found = kept.answer(&folders, &root, Grain::Day, 3, now);
+    let again = kept.answer(&folders, &root, Grain::Day, 3, now);
+    assert_eq!((&again.body, &again.tag), (&found.body, &found.tag));
+    assert_eq!(read(&kept), (3, 3));
+    // Losing the observation again must neither reuse the answer nor keep its replacement.
+    for reads in 4..=5 {
+        assert_eq!(ask().body, found.body);
+        assert_eq!(read(&kept), (reads, reads));
+    }
+}
+
+#[test]
+fn a_kept_hit_is_answered_while_another_windows_read_is_held() {
+    let tree = Tree::new();
+    let (folders, root) = project(&tree);
+    let kept = Kept::default();
+    let first = kept.answer(&folders, &root, Grain::Day, 3, wednesday());
+    std::thread::scope(|scope| {
+        // Hold the marks read at its lock until the kept hit has answered. The miss has already
+        // entered its read when the hit starts, so holding the windows lock across a read would
+        // prevent the hit from answering until the backstop.
+        let held = lock(&kept.marks);
+        let miss = scope.spawn(|| kept.answer(&folders, &root, Grain::Hour, 1, wednesday()));
+        until("the other window's read has begun", FLOOR, || {
+            (kept.passes() == 2).then_some(())
+        })
+        .unwrap();
+        let (sent, received) = std::sync::mpsc::channel();
+        {
+            let (kept, folders, root) = (&kept, &folders, &root);
+            scope.spawn(move || {
+                sent.send(kept.answer(folders, root, Grain::Day, 3, wednesday()))
+                    .unwrap();
+            });
+        }
+        let hit = until("the kept hit answers while the miss is held", FLOOR, || {
+            received.try_recv().ok()
+        });
+        // Release and reap the miss even if the hit stalled.
+        drop(held);
+        let hit = hit.unwrap();
+        assert_eq!((&hit.body, &hit.tag), (&first.body, &first.tag));
+        assert_eq!(page_of(&miss.join().unwrap()).buckets.len(), 24);
+    });
+    assert_eq!(read(&kept), (2, 1), "the hit did no extra read");
+}
+
+#[test]
+fn concurrent_readers_of_one_window_share_its_read() {
+    let tree = Tree::new();
+    let (folders, root) = project(&tree);
+    let kept = Kept::default();
+    let together = std::sync::Barrier::new(4);
+    std::thread::scope(|scope| {
+        let readers: Vec<_> = (0..4)
+            .map(|_| {
+                scope.spawn(|| {
+                    together.wait();
+                    kept.answer(&folders, &root, Grain::Day, 3, wednesday())
+                })
+            })
+            .collect();
+        let answers: Vec<_> = readers
+            .into_iter()
+            .map(|reader| reader.join().unwrap())
+            .collect();
+        for answer in &answers[1..] {
+            assert_eq!(
+                (&answer.body, &answer.tag),
+                (&answers[0].body, &answers[0].tag)
+            );
+        }
+    });
+    assert_eq!(read(&kept), (1, 1));
 }
 
 #[test]
