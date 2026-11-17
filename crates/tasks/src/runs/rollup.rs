@@ -86,7 +86,7 @@ fn day(project: &str, start: f64, now: f64, lines: &[RunLine]) -> RunsDay {
             .filter(|line| !covered.contains(line.run.as_str())),
     );
     let mut slowest: Vec<&SuiteDay> = suites.iter().collect();
-    slowest.sort_by(|a, b| {
+    crate::order::sort_by(&mut slowest, &|a, b| {
         b.time
             .median
             .total_cmp(&a.time.median)
@@ -221,7 +221,9 @@ fn flaky<'a>(window: impl Iterator<Item = &'a RunLine>) -> Vec<FlakyTest> {
             red,
         })
         .collect();
-    flaky.sort_by(|a, b| b.flaky.cmp(&a.flaky).then(b.red.cmp(&a.red)));
+    crate::order::sort_by(&mut flaky, &|a, b| {
+        b.flaky.cmp(&a.flaky).then(b.red.cmp(&a.red))
+    });
     flaky
 }
 
@@ -281,7 +283,7 @@ fn tasks(runs: &[&RunLine]) -> Vec<TaskCost> {
             cost: cost(runs.into_iter()),
         })
         .collect();
-    tasks.sort_by(|a, b| {
+    crate::order::sort_by(&mut tasks, &|a, b| {
         b.cost
             .cpu_s
             .total_cmp(&a.cost.cpu_s)
