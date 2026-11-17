@@ -328,6 +328,11 @@ fn every_query_a_write_a_recipient_or_a_tick_sends_is_planned_on_an_index() {
     );
     let open = [thread.clone(), generated::slug(generated::TASKS - 1)];
     reader.questions_waiting("owner", &open).unwrap();
+    let window = reader.thread_window(&thread, None).unwrap();
+    assert!(window.lines.len() <= symphony_board::THREAD_WINDOW_LIMIT);
+    reader
+        .thread_window(&thread, window.lines.first().map(|line| line.id))
+        .unwrap();
     let to_first = gave(&board, &first);
     // Another orchestrator's look makes it one that stays, holding fewer than the live one, as a
     // test before this one may have made the waiter: the next give may go to it. Its look is not

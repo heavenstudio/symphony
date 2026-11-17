@@ -65,18 +65,45 @@ another recorded stretch.
 
 ## Data and implementation boundary
 
-The timeline wire type (`crates/symphony-api/src/timeline.rs`) currently carries stages,
-executor claims, review rounds, runs and gates. Its builder (`crates/symphony/src/timeline.rs`)
-does not include orchestrator holds or messages. The board's `stages::holds` replays only
-executors and reviewers. The task thread already keeps each message's id, sender, recipient,
-kind, text and timestamp, and `orchestration::moved` reads recorded handovers, takeovers and gives.
+The timeline wire type (`crates/symphony-api/src/timeline.rs`) adds optional `history` beside
+stages, executor claims, review rounds, runs and gates. An absent `history` means the server
+does not supply this projection, never that there were no messages. The existing timeline
+and gates replay keeps its own semantics; `stages::roles` separately replays recorded role
+events in message-id order, using `orchestration::moved` for handovers, takeovers and gives.
 
-Implementation needs additive defaulted wire fields for orchestrator spans and message metadata,
-replayed from recorded role events in message-id order. Joins and releases need handling beside
-the handover reader. Role history must remain distinct from execution-stage claims. Messages
-should reuse thread rendering and fetching for their full text rather than create a second
-copy of the thread in the timeline response. A metadata range and explicit loading/failure state
-must make any pagination visible, so an incomplete history never reads as no messages.
+`history.sources` identifies each source task, its `first_id` and `last_id`, and its state:
+`complete` for all recorded lines, `partial` for a cutoff or uncertain records, `unavailable`
+for a failed read. Complete describes the records read, not a promise that every action was
+recorded. Each source reads at most 256 newest lines, with one extra row to detect continuation,
+through the thread's key range. Non-system message bodies are omitted; verdicts retain their
+first 16 characters for replay. System event text is bounded to 2048 characters, with a cut
+making its source uncertain. At most eight sources, including the task, are read; historical
+parent moves name additional sources. `sources_complete` is false when this count or a failed
+read leaves ancestry unexplored. Missing parents and cycles cannot supply a holder.
+
+A source's `before` cursor names older entries still reachable through the existing
+`/api/task-history?slug=SLUG&before=ID` read. Continue that read using its own `before` cursor;
+each `TaskEntry.message` supplies the original id, address, timestamp and full text. Selecting
+a metadata entry uses the same thread reads and rendering. Loading and failed reads keep their
+own visible states; neither becomes an empty complete history. Earlier entries reached through
+thread reads retain unknown individual endpoints unless their recorded role history is available.
+
+`history.roles` holds executor and reviewer stretches and effective orchestration on the task.
+Each span names `role`, `by`, its assignment's source task, and the exact boundary times and
+global message ids (`from`, `from_id`, `to`, `to_id`). Inheritance starts at a recorded child
+boundary, such as its creation or reparenting; source attribution identifies the ancestor whose
+assignment supplies the holder. Closure suspends roles until a recorded reopening. Missing
+boundaries stay unknown. Regressing clocks and conflicting duplicates mark spans `uncertain`;
+they never produce corrected timestamps or definite durations.
+
+`history.messages` keeps non-system entries' `id`, `at`, `sender`, original `recipient`, `kind`
+and nullable `after_close` (unknown when the recorded range cannot say), ordered by exact
+timestamp then id. Its `from` and `to` endpoints each have a
+state (`known`, `ambiguous`, `unknown`, `everyone` or `outside`) and role candidates naming
+their holder and source task. A partial nearer source prevents inference from a parent. Several
+roles or holders remain candidates; current session and role rows supply none. An endpoint is
+context for the recorded address, never evidence of delivery or reply causality. A client extends
+its shared clock to include message instants after closure while retaining the closed stage.
 
 This design changes neither board routing nor its storage schema. Its implementation should
 prove assignment, release, handover, duplicate and out-of-order lines, gaps, multiple roles,
