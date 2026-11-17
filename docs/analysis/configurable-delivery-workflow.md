@@ -253,20 +253,30 @@ invalidation/carry-forward and authenticated approval storage; this contract res
 revision references and refusal behavior without claiming those mechanisms implemented.
 
 The default land keeps existing stamp readers and project policy. A custom land integrates
-through prepare/finalize: prepare admits an edge and records an effect intent bound to source
-head, input/evidence generation and destination. Immediately before a merge or deployment,
-the adapter revalidates that intent and actual remote/head/target preconditions; it supplies
-an authoritative effect receipt for finalization. Stale or cancelled intent refuses the effect.
-Graph state alone is never proof of Git merge or deployment. The GitHub landing design owns
-head-bound evidence, merge-time revalidation, merge authority, squash provenance and
-reconciliation. Any stronger cross-system sealing mechanism is that design's proposal to assess,
-not a requirement silently added by this graph contract.
+through prepare/finalize: prepare admits an edge and reserves the delivery operation, binding
+project/task, repository identity, PR identity where applicable, exact reviewed head, authoritative
+landing-policy revision, workflow generation, input/evidence snapshot revisions and destination.
+The adapter revalidates those bindings before recording its durable keyed merge/deploy intent,
+then checks the actual remote/head/target preconditions before sending the external request.
+The intent is committed before external I/O. A stale or cancelled reservation found before
+dispatch refuses the effect. Finalization requires the authoritative remote squash/deployment
+receipt and the adapter's required reconciliation; provider or graph success alone cannot
+finalize delivery.
+
+A request already in flight cannot be recalled by a later evidence withdrawal or cancellation.
+Reconciliation records the actual outcome against the policy/evidence snapshot that authorized
+its intent, and records a recovery requirement when current policy no longer accepts it. Graph
+state alone is never proof of Git merge or deployment. The GitHub landing design owns head-bound
+evidence, merge-time revalidation, merge authority, squash provenance and reconciliation. Any
+stronger cross-system sealing mechanism is that design's proposal to assess, not a requirement
+silently added by this graph contract.
 
 If a crash occurs after an external merge but before board finalization, reconciliation reads
 the actual effect by its idempotency/provenance identity, records its receipt and finishes the
 same operation. If policy changed in the gap, record the real external outcome and a recovery
 requirement; never pretend the merge did not happen or mark fresh policy satisfied. Adapters
-that cannot enforce freshness at the side-effect boundary cannot activate those edges.
+may activate only edges whose promised head/policy/evidence semantics they can enforce at the
+side-effect boundary; merge-time snapshot validation does not promise atomic remote revocation.
 
 A subtask still completes by executor integration into its parent, not an independent release.
 That completion names the integration commit and accepted outputs through admission. Only the
