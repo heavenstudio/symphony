@@ -111,7 +111,7 @@ pub fn own_over<'a>(
         .chain(made)
         .chain(moved_at.filter(|at| *at > since && *at <= now))
         .collect();
-    times.sort_unstable_by(f64::total_cmp);
+    crate::order::sort_by(&mut times, &f64::total_cmp);
     times.dedup();
     let mut own: HashMap<&'a str, Vec<(f64, bool)>> = HashMap::new();
     for at in times {

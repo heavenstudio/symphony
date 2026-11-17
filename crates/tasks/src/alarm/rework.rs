@@ -239,7 +239,7 @@ pub(super) fn merged<'a>(
     let mut times: Vec<f64> = (status.iter().map(|(at, _)| *at))
         .chain(flags.iter().map(|(at, _)| *at))
         .collect();
-    times.sort_unstable_by(f64::total_cmp);
+    crate::order::sort_by(&mut times, &f64::total_cmp);
     times.dedup();
     let held = |at: f64| {
         let status = (status.iter().rev()).find(|(from, _)| *from <= at);
