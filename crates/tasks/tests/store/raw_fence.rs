@@ -5,8 +5,15 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-/// How a test hands the client a statement: the client's two calls, and the tests' retried write.
-const SENDS: [&str; 3] = [".query(", ".define_then(", "RawWrite"];
+/// How a test hands a client a statement: SurrealDB's client's two calls, the tests' retried
+/// write, and a PostgreSQL client's statement or simple query.
+const SENDS: [&str; 5] = [
+    ".query(",
+    ".define_then(",
+    "RawWrite",
+    "Step::bare(",
+    ".simple(",
+];
 
 /// The engine is the test's subject: its catalogue, a plan, a definition made or removed, a
 /// transaction thrown, a write paused at a gate, a database not made yet.
@@ -21,7 +28,7 @@ const SCRATCH: &str = "a scratch table of its own";
 const AS_WRITTEN: &str = "a row written as the fixture cannot";
 
 /// Every test file that still sends a statement, by its path under the package.
-const STILL_SENDS: [(&str, &str); 50] = [
+const STILL_SENDS: [(&str, &str); 51] = [
     ("tests/cli/attach.rs", ENGINE),
     ("tests/cli/launch_rollback.rs", ENGINE),
     ("tests/cli/main_only/writers.rs", AS_WRITTEN),
@@ -59,6 +66,7 @@ const STILL_SENDS: [(&str, &str); 50] = [
     ("tests/store/messages/last_words.rs", LIBRARY),
     ("tests/store/open_read.rs", ENGINE),
     ("tests/store/orchestrator_given.rs", ONE_REQUEST),
+    ("tests/store/pg_client.rs", ENGINE),
     ("tests/store/pull_acknowledgements.rs", ONE_REQUEST),
     ("tests/store/quiet_callbacks.rs", LIBRARY),
     ("tests/store/quiet_pull.rs", ENGINE),

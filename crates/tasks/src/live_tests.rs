@@ -722,3 +722,15 @@ fn the_source_a_main_checkout_is_read_at_is_the_file_this_build_embeds() {
         OWN_SOURCE
     );
 }
+
+/// The build knows its own source by the digest it holds, and a source changed by one byte, or cut
+/// short, or empty, for another.
+#[test]
+fn the_digest_this_build_holds_is_its_schema_sources_and_no_other_texts() {
+    assert_eq!(OWN_DIGEST.len(), 64, "{OWN_DIGEST}");
+    assert!(is_own(OWN_SOURCE));
+    assert!(!is_own(&OWN_SOURCE.replacen("//!", "// !", 1)));
+    assert!(!is_own(&OWN_SOURCE[..OWN_SOURCE.len() - 1]));
+    assert!(!is_own(&format!("{OWN_SOURCE}\n")));
+    assert!(!is_own(""));
+}

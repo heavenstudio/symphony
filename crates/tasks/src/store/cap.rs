@@ -44,7 +44,7 @@ pub use super::surreal::cap::STATEMENTS;
 /// Rounds of reads by id above the open tasks: deeper than any tree the board holds.
 const DEPTH: usize = 32;
 
-/// The variables [`lets`] and [`field`] read beside the wanted tasks.
+/// The variables [`sql::lets`] and [`sql::field`] read beside the wanted tasks.
 pub(super) fn vars() -> Value {
     json!({"slot_statuses": OPEN})
 }
@@ -63,7 +63,7 @@ pub(super) fn closing(view: &View, slug: &str, status: Option<&str>) -> Option<O
     })
 }
 
-/// The counters of `kind` a write holds ([`GUARD`]), one for each of `names`, at the `last` of
+/// The counters of `kind` a write holds ([`sql::GUARD`]), one for each of `names`, at the `last` of
 /// each as `read` gave it.
 fn held(kind: &str, read: &[(String, i64)], names: &[&str]) -> Vec<Value> {
     let last: HashMap<&str, i64> = read.iter().map(|(n, l)| (n.as_str(), *l)).collect();
@@ -79,7 +79,7 @@ pub(super) struct Ruled {
     pub(super) view: View,
     /// What the rule decided on `view`.
     pub(super) change: Change,
-    /// The counters its write holds ([`GUARD`]): a start's under the cap, refused past it
+    /// The counters its write holds ([`sql::GUARD`]): a start's under the cap, refused past it
     /// ([`Store::slots_taken`]), and a red's close's ([`closing`]); none for any other change.
     pub(super) slots: Vec<Value>,
 }
@@ -90,7 +90,7 @@ pub(super) struct Closed {
     /// The task's version as read, which the write must still find ([`sql::FENCE`]); none for a
     /// move that reads nothing, into an open status.
     pub(super) version: Option<i64>,
-    /// The counters its write holds ([`GUARD`]).
+    /// The counters its write holds ([`sql::GUARD`]).
     pub(super) slots: Vec<Value>,
 }
 
@@ -100,7 +100,7 @@ impl Closed {
         self.version.is_some()
     }
 
-    /// Whether this close's write holds counters ([`GUARD`]).
+    /// Whether this close's write holds counters ([`sql::GUARD`]).
     pub(super) fn guarded(&self) -> bool {
         !self.slots.is_empty()
     }
@@ -257,7 +257,7 @@ impl Store {
         self.holding(view, slug, opens, Some(cap))
     }
 
-    /// The counters the change `opens` describes holds ([`GUARD`]): refused past `cap` as
+    /// The counters the change `opens` describes holds ([`sql::GUARD`]): refused past `cap` as
     /// [`Store::slots_taken`] is, and never with none, a red's close ([`closing`]).
     fn holding(
         &self,

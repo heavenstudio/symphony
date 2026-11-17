@@ -32,7 +32,7 @@ impl Store {
     pub fn tasks_for_branch(&self, branch: &str) -> Result<Vec<Task>, Error> {
         let candidates: Vec<String> = self.retrying(|| {
             self.transact(
-                &sql::on_branch(),
+                sql::on_branch(),
                 json!({"branch": branch, "slot_wanted": [branch]}),
             )
         })?;

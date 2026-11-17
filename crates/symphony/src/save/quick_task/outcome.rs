@@ -13,15 +13,13 @@ pub(in crate::save) fn recover(
     store: &symphony_board::Store,
     receipt: &str,
 ) -> Result<Option<Value>, Failure> {
-    let rows: Vec<Value> = (store.owner_saved(receipt)?.into_iter())
-        .map(Value::String)
-        .collect();
-    match rows.as_slice() {
+    let slugs = store.owner_saved(receipt)?;
+    match slugs.as_slice() {
         [] => Ok(None),
-        [Value::String(slug)] => Ok(Some(json!({"slug":slug}))),
+        [slug] => Ok(Some(json!({"slug":slug}))),
         _ => Err(Failure {
             status: 503,
-            error: format!("task save {receipt}: ambiguous task list {rows:?}"),
+            error: format!("task save {receipt}: ambiguous task list {slugs:?}"),
         }),
     }
 }

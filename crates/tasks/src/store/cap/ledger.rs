@@ -61,7 +61,7 @@ impl Observation {
                 break;
             }
             looked.extend(wanted.iter().cloned());
-            let level: Level = store.transact(&sql::level(), json!({"slot_wanted": wanted}))?;
+            let level: Level = store.transact(sql::level(), json!({"slot_wanted": wanted}))?;
             for row in level.tasks {
                 self.rows.entry(row.slug.clone()).or_insert(row);
             }

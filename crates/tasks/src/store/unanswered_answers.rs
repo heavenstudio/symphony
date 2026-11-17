@@ -10,7 +10,7 @@ pub(super) type Answer = (i64, String);
 
 pub(super) fn rows(store: &Store, handle: &str, post: i64) -> Result<Vec<Answer>, Error> {
     store
-        .bounded_read(&sql::answer_rows(), json!({"handle":handle, "post":post}))
+        .bounded_read(sql::answer_rows(), json!({"handle":handle, "post":post}))
         .map_err(recovery_error)
 }
 

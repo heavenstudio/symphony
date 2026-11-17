@@ -168,6 +168,10 @@ impl Client {
         &self.db
     }
 
+    pub fn namespace(&self) -> &str {
+        &self.ns
+    }
+
     /// How many requests this client has made: a read's round trips, for the tests that count them.
     pub fn requests(&self) -> usize {
         self.requests.load(Ordering::SeqCst)

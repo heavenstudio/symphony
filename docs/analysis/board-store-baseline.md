@@ -158,6 +158,48 @@ and the three runs of thirty, the last at twice the load of the others, agree to
   commits at least as durably as SurrealDB does under the board's settings, and says how it was
   set to.
 
+## The marker on PostgreSQL
+
+The board's marker moves with every commit a reader can see. On SurrealDB it is one counter every
+write moves. On PostgreSQL that row would make any two writes at once meet, so the marker there
+is the sum of one row for each writer's connection, each moved once by its own write, plus the
+sessions' revisions (`crates/tasks/src/store/postgres/schema.rs`). A sequence or a log's highest
+id would be no marker: a commit that ends later can hold a lower number than one a reader has
+already seen. A sum read in the reader's own snapshot moves for every commit that has become
+visible to it.
+
+Measured 2026-11-16 on the machine above, on a scratch PostgreSQL 18.7 initdb'd in a temporary
+folder, its socket in a private folder, stopped and removed after each sitting. The runs used
+pgbench, a new connection per transaction, REPEATABLE READ, and 30 clients × 100 transactions
+each, with up to 50 tries and no backoff. Each transaction moves one of 720 tasks at random, then
+moves the marker as each row says. The load was 6 to 20 for the first run and 23 to 27 for the
+other two.
+
+| each write's marker | retried, of 3,000 | retries | failed after 50 tries |
+|---|---|---|---|
+| one counter row every writer moves | 2,839 / 2,896 / 2,890 | 9,434 / 12,258 / 8,916 | 0 / 5 / 1 |
+| a row of its own writer's | 58 / 58 / 57 | 59 / 58 / 57 | 0 / 0 / 0 |
+| a row inserted | 60 / 65 / 64 | 61 / 68 / 65 | 0 / 0 / 0 |
+| a row inserted, all thirty writers on one task | 2,845 / 2,918 / 2,886 | 17,576 / 17,054 / 12,832 | 9 / 14 / 2 |
+
+With a row of its own, a write met another only on a task, where two of thirty on one of 720
+tasks meet. The one counter row made nearly every write meet. All thirty on one task meet
+whatever the marker is. The probe tried again at once, where the store's backoff (`retried`)
+spaces its tries.
+
+The probe's writes moved a task and the marker, nothing else. A board write that posts a line on
+a thread (a task made, a line said, a priority set, each move) also moves the one message
+counter, which numbers and dates the line (`logged` in `crates/tasks/src/store/postgres/mod.rs`,
+`counter:message` on SurrealDB). That counter is one row on both databases. So the second row's
+2% holds only for a write that posts no line, such as a session's beat (`Store::touch`). Two
+writes that post at once meet on the message counter, as the first row's writes meet on the one
+counter row. For thirty sessions posting back to back, a write that posts costs what the first
+row's writes cost: nine in ten or more tried again, three or four tries each, with a few still
+meeting after fifty tries at once, which the store's backoff spaces out. It stays so until a line's
+number comes from something two writes do not both move. The thirty-session run of
+tools/board-pg-lifecycle reads its retries for the writes that post against the first row, and
+those for the writes that post none against the second.
+
 ## What this does not measure
 
 - **A board ten times this size.** Every run is this board or an empty one.

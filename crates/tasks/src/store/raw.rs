@@ -7,20 +7,30 @@
 //! nothing; one that meets another's is sent again, as the store's own are. The board's commands
 //! never come here.
 
+use super::database::Database;
+use super::postgres::{Pg, raw as pg};
 use super::surreal::raw as sql;
+use super::transaction::on_postgres;
 use super::{Error, Failure, PATIENCE, Store, retried};
 use crate::rpc::Client;
 use serde_json::{Map, Value, json};
 
+/// The board a [`Raw`] reaches, on either database.
+#[derive(Clone, Copy)]
+enum On<'a> {
+    SurrealDb(&'a Client),
+    PostgreSql(&'a crate::pg::Client),
+}
+
 /// A board's rows, read and set as they are ([`Store::raw`], [`Raw::on`]).
 pub struct Raw<'a> {
-    client: &'a Client,
+    client: On<'a>,
 }
 
 /// The rows of one table a [`Raw`] reads or changes: one by its id, or every one, or those whose
 /// fields equal given values.
 pub struct Rows<'a> {
-    client: &'a Client,
+    client: On<'a>,
     table: String,
     which: Which,
 }
@@ -33,14 +43,26 @@ enum Which {
 impl Store {
     /// This board's rows as they are, for a test's fixture and its look at what was written.
     pub fn raw(&self) -> Raw<'_> {
-        Raw::on(&self.client)
+        Raw::of(&self.db)
     }
 }
 
 impl<'a> Raw<'a> {
     /// The rows of the board `client` reaches.
     pub fn on(client: &'a Client) -> Raw<'a> {
-        Raw { client }
+        Raw {
+            client: On::SurrealDb(client),
+        }
+    }
+
+    /// The rows of the board in `db`, on either database.
+    pub fn of(db: &'a Database) -> Raw<'a> {
+        Raw {
+            client: match db {
+                Database::SurrealDb(client) => On::SurrealDb(client),
+                Database::PostgreSql(client) => On::PostgreSql(client),
+            },
+        }
     }
 
     /// The row of `table` whose id is `id`: a text, a number, or the parts of a compound id.
@@ -76,29 +98,38 @@ impl Rows<'_> {
     /// The one row whole, its id left out, or null when it is not there; a table's rows as a
     /// list, each whole with its id, in the order of their ids.
     pub fn get(&self) -> Result<Value, Error> {
-        self.ask(&sql::get(&self.rows()), Map::new())
+        let rows = self.rows();
+        self.ask(&sql::get(&rows), pg::get(&rows), Map::new())
     }
 
     /// As [`Rows::get`], each row only its `fields`.
     pub fn fields(&self, fields: &[&str]) -> Result<Value, Error> {
         fields.iter().copied().for_each(plain);
-        self.ask(&sql::fields(&self.rows(), fields), Map::new())
+        let rows = self.rows();
+        self.ask(
+            &sql::fields(&rows, fields),
+            pg::fields(&rows, fields),
+            Map::new(),
+        )
     }
 
     /// One field of the one row, null when the field or the row is not there.
     pub fn field(&self, field: &str) -> Result<Value, Error> {
         plain(field);
-        self.ask(&sql::field(&self.one(), field), Map::new())
+        let one = self.one();
+        self.ask(&sql::field(&one, field), pg::field(&one, field), Map::new())
     }
 
     /// Whether the one row is there.
     pub fn exists(&self) -> Result<bool, Error> {
-        Ok(self.ask(&sql::exists(&self.one()), Map::new())? == json!(true))
+        let one = self.one();
+        Ok(self.ask(&sql::exists(&one), pg::exists(&one), Map::new())? == json!(true))
     }
 
     /// How many rows there are.
     pub fn count(&self) -> Result<u64, Error> {
-        let counted = self.ask(&sql::count(&self.rows()), Map::new())?;
+        let rows = self.rows();
+        let counted = self.ask(&sql::count(&rows), pg::count(&rows), Map::new())?;
         Ok(counted.as_u64().unwrap_or(0))
     }
 
@@ -107,33 +138,43 @@ impl Rows<'_> {
     pub fn set(&self, fields: Value) -> Result<(), Error> {
         let fields = object(fields);
         let vars = values("s", &fields);
-        self.ask(&sql::set(&self.rows(), &fields), vars).map(drop)
+        let rows = self.rows();
+        self.ask(&sql::set(&rows, &fields), pg::set(&rows, &fields), vars)
+            .map(drop)
     }
 
     /// `field` of the rows there are, moved by `by`.
     pub fn add(&self, field: &str, by: impl Into<Value>) -> Result<(), Error> {
         plain(field);
         let vars = Map::from_iter([("by".to_string(), by.into())]);
-        self.ask(&sql::add(&self.rows(), field), vars).map(drop)
+        let rows = self.rows();
+        self.ask(&sql::add(&rows, field), pg::add(&rows, field), vars)
+            .map(drop)
     }
 
     /// The one row made with `fields`, or changed where it is there.
     pub fn put(&self, fields: Value) -> Result<(), Error> {
         let fields = object(fields);
         let vars = values("s", &fields);
-        self.ask(&sql::put(&self.one(), &fields), vars).map(drop)
+        let one = self.one();
+        self.ask(&sql::put(&one, &fields), pg::put(&one, &fields), vars)
+            .map(drop)
     }
 
     /// The one row made with `fields`: an error where it is there already.
     pub fn create(&self, fields: Value) -> Result<(), Error> {
         let fields = object(fields);
         let vars = values("s", &fields);
-        self.ask(&sql::create(&self.one(), &fields), vars).map(drop)
+        let one = self.one();
+        self.ask(&sql::create(&one, &fields), pg::create(&one, &fields), vars)
+            .map(drop)
     }
 
     /// The rows removed.
     pub fn delete(&self) -> Result<(), Error> {
-        self.ask(&sql::delete(&self.rows()), Map::new()).map(drop)
+        let rows = self.rows();
+        self.ask(&sql::delete(&rows), pg::delete(&rows), Map::new())
+            .map(drop)
     }
 
     fn rows(&self) -> sql::Rows<'_> {
@@ -153,20 +194,24 @@ impl Rows<'_> {
         self.rows()
     }
 
-    /// `statement`'s one answer, with this target's variables and `more`; sent again when it met
-    /// another's write.
-    fn ask(&self, statement: &str, more: Map<String, Value>) -> Result<Value, Error> {
+    /// `statement`'s one answer, the SurrealQL `surreal` or its twin `postgres` as the board's
+    /// database takes, with this target's variables and `more`; sent again when it met another's
+    /// write.
+    fn ask(&self, surreal: &str, postgres: Pg, more: Map<String, Value>) -> Result<Value, Error> {
         let mut vars = match &self.which {
             Which::One(id) => Map::from_iter([("id".to_string(), id.clone())]),
             Which::Where(equal) => values("w", equal),
         };
         vars.extend(more);
         let vars = Value::Object(vars);
-        retried(PATIENCE, || {
-            let mut answers = (self.client)
-                .query(statement, vars.clone())
-                .map_err(Failure::from)?;
-            Ok(answers.pop().unwrap_or(Value::Null))
+        retried(PATIENCE, || match self.client {
+            On::SurrealDb(client) => {
+                let mut answers = client.query(surreal, vars.clone()).map_err(Failure::from)?;
+                Ok(answers.pop().unwrap_or(Value::Null))
+            }
+            On::PostgreSql(client) => {
+                on_postgres(client, &postgres, &vars, false).map_err(Failure::from)
+            }
         })
     }
 }

@@ -43,8 +43,22 @@ pub mod seen;
 /// Where a repository that commits the board's own source keeps its schema: this repository's.
 pub const SOURCE: &str = "crates/tasks/src/schema.rs";
 
-/// This build's schema source, byte for byte.
+/// The SHA-256 of this build's schema source, byte for byte, as `build.rs` read it: a committed
+/// source is this build's when its digest is this one, and no build carries the source itself.
+const OWN_DIGEST: &str = env!("BOARD_SCHEMA_SHA256");
+
+/// This build's schema source, for the tests to commit as a branch's.
+#[cfg(test)]
 const OWN_SOURCE: &str = include_str!("schema.rs");
+
+/// Whether `source` is this build's schema source, byte for byte ([`OWN_DIGEST`]).
+fn is_own(source: &str) -> bool {
+    use sha2::{Digest as _, Sha256};
+    let digest: String = (Sha256::digest(source.as_bytes()).iter())
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    digest == OWN_DIGEST
+}
 
 /// What Cargo sets for every process it runs, tests and examples included: the package's folder.
 pub const CARGO: &str = "CARGO_MANIFEST_DIR";
@@ -472,7 +486,7 @@ fn judged(
         |main| main.display().to_string(),
     );
     match &committed.source {
-        Source::Text(held) if this_build && held == OWN_SOURCE => Ok(()),
+        Source::Text(held) if this_build && is_own(held) => Ok(()),
         Source::Text(_) => Err(format!(
             "{board}, and only a build of the schema source its default branch `{branch}` commits \
              ({SOURCE}) {forward}: this build's is another, wherever it was built and whatever a \

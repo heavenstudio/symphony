@@ -1,6 +1,8 @@
 //! The copy of a whole board: a dump (every row, table by table, [`Dump`]) written in one
 //! transaction, replacing what the board held, and read back in the same shape.
 
+use super::postgres;
+use super::statement::both;
 use super::surreal::copy as sql;
 use super::transaction::Run;
 use super::{Error, Store, values};
@@ -116,6 +118,9 @@ impl Store {
         let last_task = dump.tasks.iter().map(|t| t.id).max().unwrap_or(0);
         let last_ask = dump.asks.iter().map(|a| a.id).max().unwrap_or(0);
         let last_ts = dump.messages.iter().map(|m| m.ts).reduce(f64::max);
+        if self.db.is_postgresql() {
+            return self.copy_in_one(&tables, last, last_ts, last_task, last_ask);
+        }
         let staging = format!(
             "copy_{:016x}",
             RandomState::new().hash_one(std::process::id())
@@ -130,6 +135,38 @@ impl Store {
                 .map(|_| ())
         });
         copied.map_err(|error| self.cleanup_staging(&sql::remove_staged(&staging, &names), error))
+    }
+
+    /// On PostgreSQL, `tables` (each a table and its rows) into the emptied board in one guarded
+    /// transaction, with the counters the dump's rows end at: the copy of a board one request
+    /// takes ([`postgres::copy`]).
+    fn copy_in_one(
+        &self,
+        tables: &[(&str, Vec<Value>)],
+        last: i64,
+        last_ts: Option<f64>,
+        last_task: i64,
+        last_ask: i64,
+    ) -> Result<(), Error> {
+        let names: Vec<&str> = tables.iter().map(|(table, _)| *table).collect();
+        let mut vars = json!({
+            "last": last, "last_ts": last_ts, "last_task": last_task, "last_ask": last_ask,
+        });
+        for (table, rows) in tables {
+            let rows: Vec<Value> = (rows.iter().cloned())
+                .map(|mut row| {
+                    // A task row is made at its first version, as SurrealDB's field default makes it.
+                    if *table == "task" {
+                        row["version"] = json!(0);
+                    }
+                    row
+                })
+                .collect();
+            vars[*table] = Value::Array(rows);
+        }
+        let copy = || both(sql::NOTHING_COPIED, postgres::copy::copy(&names));
+        self.retrying(|| self.run_transaction::<Value>(copy(), vars.clone(), Run::Staging))
+            .map(|_| ())
     }
 
     /// Every row of `tables` into schemaless tables named `{staging}_{table}`, each request at most

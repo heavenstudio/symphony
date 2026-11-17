@@ -62,8 +62,10 @@ the schema rule, `transaction.rs` the schema guard every write starts with, `wri
 each program that opens a board to write keeps, which `tasks migrate` reads before it moves one
 ([TASKS](../../docs/TASKS.md#who-writes-a-board)). `lib.rs`'s doc states
 the rule of every write. `store/surreal/` is every statement the store sends, a module beside each
-store module, and `store/raw.rs` (`Store::raw`) a board's rows as a test sets and reads them
-([the seam](#the-stores-statements-live-in-one-place)). `schema.rs` is the tables, the indexes, the version and its migration
+store module, `store/postgres/` its PostgreSQL twin of each one written so far and the board's
+tables there, `store/statement.rs` the pair a call names, `store/database.rs` the database a board
+is in, and `store/raw.rs` (`Store::raw`) a board's rows as a test sets and reads them
+([the seam](#the-stores-statements-live-in-one-place)). `pg.rs` is the PostgreSQL client. `schema.rs` is the tables, the indexes, the version and its migration
 steps; `live.rs` which builds may move a project's live board, and `live/seen.rs` the highest schema
 it was seen at. `rpc.rs` (with `rpc/read.rs`) and `cbor.rs` are the client: SurrealDB's RPC in CBOR
 over plain HTTP.
@@ -252,11 +254,17 @@ The store's modules hold the rules: what is read, what is decided, the variables
 handed and the shape of its answer. The statement's text is `store/surreal/`'s, under a name the
 store's module asks for whole (a constant, or a function of the few values its text turns on), so
 no SurrealQL is written anywhere else but in the files `store/surreal/fence_tests.rs` lists with
-their reasons (the schema, the client, the server's reclaim), and nothing reaches the client but
-through `store/transaction.rs`. A new statement goes there; a test that needs a row no command
-writes, or reads one, asks `Store::raw` by table, id and equal fields and writes no statement of
-its own, and one that must (the engine itself is its subject) is in the list
-`tests/store/raw_fence.rs` holds. That is what lets another database answer the same names.
+their reasons (the schema, the client, the server's reclaim). Its PostgreSQL twin is
+`store/postgres/`'s, by the same name in a module of the same name, and a call names both
+(`store/statement.rs`'s `both`); a call that names its SurrealQL alone has no twin yet, and on a
+PostgreSQL board it is refused, naming its line, before anything is sent. Nothing reaches a client
+but through `store/transaction.rs`, the store's one sender, `store/raw.rs`, which sends the rows'
+own statements, and `store/database.rs`, which makes a board's database. A new statement goes
+there; a test that needs a row no command writes, or reads one, asks `Store::raw` by table, id and
+equal fields and writes no statement of its own, and one that must (the engine itself is its
+subject) is in the list `tests/store/raw_fence.rs` holds. A store test written once for both
+databases is `on_both!`'s (`tests/store/main.rs`), each run on the binary's own scratch server of
+each (`tests/store/common.rs`'s `Backend`).
 
 ### Delivery never loses a line
 

@@ -1,6 +1,7 @@
 //! Threads: saying, inboxes and acknowledging them, what reaches the owner, each sender's last word,
 //! and landings on the record.
 
+use super::statement::Statement;
 use super::surreal::messages as sql;
 use super::work::{OWNER, ROLES, Tree, above, no_task};
 use super::{
@@ -206,7 +207,11 @@ impl Store {
             Poster::Session
         };
         let (task_about, task_words) = super::asks::on_thread_vars(slug, text);
-        let body = sql::post(poster, keyed.map(|(_, adopt)| adopt));
+        let shape = keyed.map(|(_, adopt)| adopt);
+        let body = || Statement {
+            surreal: sql::post(poster, shape).into(),
+            postgres: super::postgres::messages::post(poster, shape),
+        };
         let now = (self.clock)();
         let key = keyed.map(|(key, _)| key);
         let vars = self.acting(
@@ -219,7 +224,7 @@ impl Store {
                 "nobody": handle.map(nobody),
             }),
         );
-        let row: MessageRow = self.retrying(|| self.transact(&body, vars.clone()))?;
+        let row: MessageRow = self.retrying(|| self.transact(body(), vars.clone()))?;
         // Told of the line's recipient, not this call's: a post repeated under a key, or one that
         // took a line made under no key, answers that line, and says once that no executor reads
         // it when nothing said so yet (the board's notice goes under the line's own key,

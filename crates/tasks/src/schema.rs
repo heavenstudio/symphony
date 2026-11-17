@@ -97,14 +97,18 @@ pub const BOARD_MARKER: &str = "((SELECT VALUE last FROM ONLY counter:board_stru
 pub struct Schema {
     version: i64,
     steps: String,
+    /// On PostgreSQL, what the steps add to this build's tables, which every migration there
+    /// makes first: nothing for this build's own schema.
+    postgres: String,
 }
 
 impl Schema {
-    /// This build's: [`VERSION`], by [`DEFINE`].
+    /// This build's: [`VERSION`], by [`DEFINE`], and on PostgreSQL by its own tables.
     pub fn this_build() -> Schema {
         Schema {
             version: VERSION,
             steps: DEFINE.into(),
+            postgres: String::new(),
         }
     }
 
@@ -112,24 +116,37 @@ impl Schema {
         self.version
     }
 
-    /// The schema one version on, `step` run after this one's: a newer build's.
-    pub fn then(&self, step: &str) -> Schema {
+    /// The schema one version on, `surreal` run after this one's steps on SurrealDB and
+    /// `postgres` after them on PostgreSQL: a newer build's.
+    pub fn then_each(&self, surreal: &str, postgres: &str) -> Schema {
         Schema {
             version: self.version + 1,
-            steps: format!("{}\n{step}", self.steps),
+            steps: format!("{}\n{surreal}", self.steps),
+            postgres: format!("{}\n{postgres}", self.postgres),
         }
+    }
+
+    /// The schema one version on, `step` run after this one's on SurrealDB, and nothing more on
+    /// PostgreSQL: a newer build's.
+    pub fn then(&self, step: &str) -> Schema {
+        self.then_each(step, "")
     }
 
     /// The schema one version back, by the same steps: an older build's, as far as the rule goes.
     pub fn before(&self) -> Schema {
         Schema {
             version: self.version - 1,
-            steps: self.steps.clone(),
+            ..self.clone()
         }
     }
 
     pub(crate) fn steps(&self) -> &str {
         &self.steps
+    }
+
+    /// What the steps add on PostgreSQL to this build's tables.
+    pub(crate) fn postgres_steps(&self) -> &str {
+        &self.postgres
     }
 }
 

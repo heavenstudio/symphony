@@ -28,6 +28,7 @@ mod callback_state;
 mod callbacks;
 mod cap;
 mod copy;
+mod database;
 mod depends;
 mod dispatcher;
 mod fields;
@@ -37,6 +38,7 @@ mod launches;
 mod messages;
 mod opening;
 mod pool;
+mod postgres;
 mod pull_account;
 mod queued_lines;
 mod raw;
@@ -50,6 +52,7 @@ mod snapshot;
 mod spending;
 mod stage_lines;
 mod stamp;
+mod statement;
 mod surreal;
 mod transaction;
 pub(crate) mod unanswered;
@@ -58,6 +61,8 @@ mod work;
 mod writers;
 
 use beside::Beside;
+use postgres::{self as pg, Pg};
+use statement::{Statement, both};
 use surreal::reading::{native_bounds, reading};
 use surreal::session_read;
 
@@ -66,6 +71,7 @@ pub use asks::{ASK_KINDS, Ask, LATE_SECONDS, NewAsk};
 pub use callbacks::{Callback, ChatSeat, Presence};
 /// Every statement the cap on an orchestrator's open tasks sends: the plan test's to plan.
 pub use cap::STATEMENTS as SLOT_READS;
+pub use database::Database;
 pub use launches::NewLaunch;
 pub use messages::reviewer_verdict;
 pub use opening::Opening;
@@ -199,11 +205,12 @@ pub struct Board {
 }
 
 pub struct Store {
-    client: Client,
+    /// The database the board is in, and its client.
+    db: Database,
     /// The client the unanswered-post lookup reads through when one is set
     /// ([`Store::looking_up_within`]): this one's board, a read that ran out its shorter wait not
-    /// sent again ([`Client::bounded`]). None reads through `client`, as every other read.
-    lookup: Option<Client>,
+    /// sent again ([`Client::bounded`]). None reads through `db`, as every other read.
+    lookup: Option<Database>,
     clock: Clock,
     pid_alive: Probe,
     host: String,
@@ -263,20 +270,32 @@ impl Store {
     /// [`UNANSWERED_WAIT_VAR`] says, so no command waits minutes on what it can do without. A
     /// store none is set on waits on the lookup as on any read.
     pub fn looking_up_within(mut self, wait: Duration) -> Store {
-        self.lookup = Some(self.client.bounded(wait));
+        self.lookup = Some(self.db.bounded(wait));
         self
     }
 
     /// The command that reaches this store's board again ([`board_command`]).
     pub fn board_command(&self) -> String {
         board_command(
-            self.named_server.then(|| self.client.addr()),
-            self.client.database(),
+            self.named_server.then(|| self.db.addr()).as_deref(),
+            self.db.database(),
         )
     }
 
+    /// The SurrealDB client of a board on SurrealDB. A board on PostgreSQL has none: its client is
+    /// [`Store::database`]'s.
     pub fn client(&self) -> &Client {
-        &self.client
+        match &self.db {
+            Database::SurrealDb(client) => client,
+            Database::PostgreSql(_) => {
+                panic!("this board is on PostgreSQL, which no SurrealDB client reaches")
+            }
+        }
+    }
+
+    /// The database the board is in.
+    pub fn database(&self) -> &Database {
+        &self.db
     }
 
     /// The time by this store's clock.
@@ -335,7 +354,7 @@ impl Store {
     pub fn session(&self, handle: &str) -> Result<Session, Error> {
         let found: Found = self.retrying(|| {
             self.transact(
-                &session_read(),
+                session_read(),
                 json!({"handle": handle, "executing": EXECUTING}),
             )
         })?;
@@ -374,8 +393,12 @@ impl Store {
             known: bool,
             messages: Vec<MessageRow>,
         }
-        let thread: Thread =
-            self.retrying(|| self.transact(surreal::THREAD, json!({"slug": slug})))?;
+        let thread: Thread = self.retrying(|| {
+            self.transact(
+                both(surreal::THREAD, pg::messages::thread()),
+                json!({"slug": slug}),
+            )
+        })?;
         if !thread.known {
             return Err(refused(format!("no task {}", repr(slug))));
         }
@@ -390,8 +413,8 @@ impl Store {
             unknown: Vec<String>,
             threads: Vec<Vec<MessageRow>>,
         }
-        let read: Threads =
-            self.retrying(|| self.transact(surreal::THREADS, json!({"slugs": slugs})))?;
+        let read = || both(surreal::THREADS, pg::messages::threads());
+        let read: Threads = self.retrying(|| self.transact(read(), json!({"slugs": slugs})))?;
         if let Some(slug) = read.unknown.first() {
             return Err(refused(format!("no task {}", repr(slug))));
         }
@@ -690,8 +713,8 @@ impl Store {
     /// `which` with every session: what a rule decides on, the cap's ledger and a whole board read.
     #[track_caller]
     fn view(&self, which: &Which) -> Result<View, Failure> {
-        let (read, vars) = reading(which, Sessions::Whole);
-        let snap: Snapshot = self.transact(&read, vars)?;
+        let (read, vars) = read_of(which, Sessions::Whole);
+        let snap: Snapshot = self.transact(read, vars)?;
         Ok(View::new(self, snap))
     }
 
@@ -699,21 +722,46 @@ impl Store {
     /// and the asker of `Which::Pullable`, may be asked of it.
     #[track_caller]
     fn shown(&self, which: &Which) -> Result<View, Failure> {
-        let (read, vars) = reading(which, Sessions::Shown);
-        let snap: Snapshot = self.transact(&read, vars)?;
+        let (read, vars) = read_of(which, Sessions::Shown);
+        let snap: Snapshot = self.transact(read, vars)?;
         Ok(View::new(self, snap))
     }
 
     /// `body`'s writes, then `slug` read as `get` reads it, in one transaction: the task as the write
     /// left it, in the write's one round trip. `body` ends without a `RETURN`.
     #[track_caller]
-    fn written(&self, body: &str, mut vars: Value, slug: &str) -> Result<Task, Failure> {
-        let (read, more) = reading(&Which::Slug(slug), Sessions::Shown);
+    fn written<'a>(
+        &self,
+        body: impl Into<Statement<'a>>,
+        vars: Value,
+        slug: &str,
+    ) -> Result<Task, Failure> {
+        self.written_statement(body.into(), vars, slug)
+    }
+
+    #[track_caller]
+    fn written_statement(
+        &self,
+        body: Statement,
+        mut vars: Value,
+        slug: &str,
+    ) -> Result<Task, Failure> {
+        let which = Which::Slug(slug);
+        let (read, more) = reading(&which, Sessions::Shown);
         if let (Some(vars), Value::Object(more)) = (vars.as_object_mut(), more) {
             vars.extend(more);
         }
+        // On PostgreSQL the write's block, then the read, its answer.
+        let postgres = match (body.postgres, pg::reading::written(&which)) {
+            (Some(Pg::Script(block, None)), Some(read)) => Some(Pg::script_then(block, read)),
+            _ => None,
+        };
+        let written = Statement {
+            surreal: surreal::written(&body.surreal, &read).into(),
+            postgres,
+        };
         // Include recipient presence in the write's existing result instead of a separate read.
-        let snap: Snapshot = self.transact_dispatch(&surreal::written(body, &read), vars, false)?;
+        let snap: Snapshot = self.transact_dispatch(written, vars, false)?;
         if snap.has_callbacks {
             self.after_write();
         }
@@ -1188,6 +1236,17 @@ fn message(row: MessageRow) -> Message {
         text: row.text,
         ts: row.ts,
     }
+}
+
+/// The read of `which` with the sessions `sessions` asks for, in each database's language, and
+/// its variables.
+fn read_of(which: &Which, sessions: Sessions) -> (Statement<'static>, Value) {
+    let (read, vars) = reading(which, sessions);
+    let statement = Statement {
+        surreal: read.into(),
+        postgres: pg::reading::reading(which, sessions).map(Pg::read),
+    };
+    (statement, vars)
 }
 
 fn values<T: serde::Serialize>(rows: &[T]) -> Vec<Value> {

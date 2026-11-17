@@ -147,8 +147,10 @@ fn no_surrealql_is_written_outside_the_seam() {
     );
 }
 
-/// Only `store/transaction.rs` hands the client a statement: every other module of the store
-/// asks through it, so what a second database must answer goes through one door.
+/// Only `store/transaction.rs` hands a client a statement, SurrealDB's or PostgreSQL's
+/// (`.simple(`), `store/raw.rs` its rows' own and `store/database.rs` the making of a database:
+/// every other module of the store asks through it, so what each database must answer goes
+/// through one door.
 #[test]
 fn the_store_sends_through_its_one_sender() {
     let root = sources().join("store");
@@ -162,12 +164,16 @@ fn the_store_sends_through_its_one_sender() {
             .to_str()
             .unwrap()
             .to_string();
-        if relative == "transaction.rs" || relative == "raw.rs" || tests_alone(&relative) {
+        if ["transaction.rs", "raw.rs", "database.rs"].contains(&relative.as_str())
+            || tests_alone(&relative)
+        {
             continue;
         }
         let text = fs::read_to_string(&path).unwrap();
         for (at, line) in program(&text) {
-            if line.contains(".query(") || line.contains(".define_then(") || line.contains(".call(")
+            if [".query(", ".define_then(", ".call(", ".simple("]
+                .iter()
+                .any(|send| line.contains(send))
             {
                 strays.push(format!("src/store/{relative}:{at}: {}", line.trim()));
             }
