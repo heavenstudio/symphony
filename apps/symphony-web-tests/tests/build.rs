@@ -17,12 +17,13 @@ use std::process::{Command, Output, Stdio};
 
 /// The client's kinds, each with the styles it loads after the shared stylesheet, in order: the
 /// CSS of the chunks its entry imports (the media layer's, which brings the media sheet, for the
-/// kinds that show media), then its entry's own. The task board and the agents page have none:
-/// their styles (`src/styles/board.css`) are in the shared file. The menus (`overlay`) and the
-/// chat (`panel`) are no page's but the shell's persistent kinds.
+/// kinds that show media), then its entry's own. The task board's own sheet is
+/// `src/styles/boardwait.css`; the agents page has none. Their common styles
+/// (`src/styles/board.css`) are in the shared file. The menus (`overlay`) and the chat (`panel`)
+/// are no page's but the shell's persistent kinds.
 const KINDS: [(&str, &[&str]); 10] = [
     ("agents", &[]),
-    ("board", &[]),
+    ("board", &["board"]),
     ("docs", &["media-layer", "docs"]),
     ("overlay", &["overlay"]),
     ("panel", &["media-layer", "panel"]),
@@ -258,6 +259,17 @@ fn a_build_publishes_every_kind_over_one_shared_stylesheet_into_out_as_named_fro
             assert!(!file(style).is_empty(), "{style}");
         }
     }
+
+    let board = manifest["board"]["styles"][1].as_str().unwrap();
+    let waiting = String::from_utf8(file(board)).unwrap();
+    assert!(
+        waiting.contains(".waiting-board{"),
+        "the board's own stylesheet holds boardwait.css"
+    );
+    assert!(
+        !sheet.contains(".waiting-board{"),
+        "the waiting board's rules stay out of the shared stylesheet"
+    );
 
     // builds.json names this build, every file under assets/ and no other; nothing of Vite's own
     // (its manifest) is published.
