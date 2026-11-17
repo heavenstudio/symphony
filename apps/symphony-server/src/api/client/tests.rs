@@ -502,3 +502,122 @@ async fn pictures_and_fonts_go_as_they_are_and_the_page_is_still_compressed_per_
     let shell = String::from_utf8(gunzip(&shell.body)).unwrap();
     assert!(shell.contains("Native shell."), "{shell}");
 }
+
+#[tokio::test]
+async fn page_preloads_follow_the_named_shell_even_with_a_newer_build_kept_beside_it() {
+    let html = b"<html><head></head><body><script type=\"module\" src=\"/assets/symphony-shell-1111111111111111.js\"></script></body></html>";
+    let script = br#"const modules = {"review":{"imports":["/assets/home-1111111111111111.js"]},"board":{"imports":["/assets/board-1111111111111111.js"]},"docs":{"imports":["/assets/docs-1111111111111111.js"]},"task":{"imports":["/assets/task-1111111111111111.js"]}};
+"#;
+    let (_tree, app) = serving(&[
+        ("index.html", html),
+        ("assets/symphony-shell-1111111111111111.js", script),
+        (
+            "assets/symphony-shell-2222222222222222.js",
+            b"const modules = {};\n",
+        ),
+        (
+            "builds.json",
+            b"{\"builds\":[{\"shell\":\"symphony-shell-2222222222222222.js\"}]}",
+        ),
+    ]);
+    for (path, kind) in [
+        ("/", "home"),
+        ("/tasks", "board"),
+        ("/task/", "board"),
+        ("/task/tools/x", "task"),
+        ("/docs/page.md", "docs"),
+        ("/docs/page.html", "docs"),
+    ] {
+        let got = send(&app, Method::GET, path, &[]).await;
+        assert_eq!(got.status, StatusCode::OK);
+        let page = std::str::from_utf8(&got.body).unwrap();
+        let link =
+            format!("<link rel=\"modulepreload\" href=\"/assets/{kind}-1111111111111111.js\">");
+        assert!(page.contains(&format!("{link}</head>")), "{path}: {page}");
+        assert_eq!(page.matches("rel=\"modulepreload\"").count(), 1);
+        assert_eq!(got.header("cache-control"), Some("no-cache"));
+        let cached = send(
+            &app,
+            Method::GET,
+            path,
+            &[("If-None-Match", got.header("etag").unwrap())],
+        )
+        .await;
+        assert_eq!(cached.status, StatusCode::NOT_MODIFIED);
+        assert!(cached.body.is_empty());
+    }
+    let dev = send(&app, Method::GET, "/tasks", &[("x-symphony-dev", "1")]).await;
+    assert!(
+        !std::str::from_utf8(&dev.body)
+            .unwrap()
+            .contains("modulepreload")
+    );
+    let shell = send(
+        &app,
+        Method::GET,
+        "/assets/symphony-shell-1111111111111111.js",
+        &[],
+    )
+    .await;
+    assert_eq!(shell.body, script.as_slice());
+}
+
+#[tokio::test]
+async fn absent_or_older_shells_and_heads_do_not_prevent_serving_the_page() {
+    for (html, script) in [
+        ("<html><head></head><body>old shell</body></html>", None),
+        (
+            "<html><head></head><script src=\"/assets/symphony-shell-1111111111111111.js\"></script></html>",
+            None,
+        ),
+        (
+            "<html><head></head><script src=\"/assets/symphony-shell-1111111111111111.js\"></script></html>",
+            Some("// old shell"),
+        ),
+        (
+            "<html><script src=\"/assets/symphony-shell-1111111111111111.js\"></script></html>",
+            Some(
+                "const modules = {\"review\":{\"imports\":[\"/assets/chunk-1111111111111111.js\"]}};",
+            ),
+        ),
+    ] {
+        let mut files = vec![("index.html", html.as_bytes())];
+        if let Some(script) = script {
+            files.push((
+                "assets/symphony-shell-1111111111111111.js",
+                script.as_bytes(),
+            ));
+        }
+        let (_tree, app) = serving(&files);
+        let got = send(&app, Method::GET, "/", &[]).await;
+        assert_eq!(got.status, StatusCode::OK);
+        assert!(
+            !std::str::from_utf8(&got.body)
+                .unwrap()
+                .contains("modulepreload")
+        );
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_shell_symlink_outside_the_bundle_does_not_contribute_preloads() {
+    let (tree, app) = serving(&[("index.html", b"<html><head></head><script src=\"/assets/symphony-shell-1111111111111111.js\"></script></html>")]);
+    tree.write(
+        "outside.js",
+        "const modules = {\"review\":{\"imports\":[\"/assets/private-1111111111111111.js\"]}};",
+    );
+    std::fs::create_dir_all(tree.path("install/client/public/assets")).unwrap();
+    std::os::unix::fs::symlink(
+        tree.path("outside.js"),
+        tree.path("install/client/public/assets/symphony-shell-1111111111111111.js"),
+    )
+    .unwrap();
+    let got = send(&app, Method::GET, "/", &[]).await;
+    assert_eq!(got.status, StatusCode::OK);
+    assert!(
+        !std::str::from_utf8(&got.body)
+            .unwrap()
+            .contains("modulepreload")
+    );
+}
