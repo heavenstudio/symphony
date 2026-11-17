@@ -41,6 +41,8 @@ pub(crate) const READS: &[&str] = &[
     "/api/task-offer",
     symphony_api::TASK_GATES_PATH,
     symphony_api::TASK_TIMELINE_PATH,
+    symphony_api::TASK_DIFF_PATH,
+    symphony_api::TASK_DIFF_FILE_PATH,
     "/api/task-history",
     "/api/agent-page",
     symphony_api::AGENT_SCREEN_PATH,
@@ -115,7 +117,9 @@ async fn read(shared: &Arc<Shared>, request: Request) -> Option<Response> {
     let (uri_scope, path) = scope_path(&decoded);
     // Existing page scripts pass @tree/docs/X.md in path; SPA callers may scope the route itself.
     let rel = query(&request, "path").unwrap_or_default();
-    let (query_scope, rel) = if let Some(scoped) = rel.strip_prefix('@') {
+    let (query_scope, rel) = if path != symphony_api::TASK_DIFF_FILE_PATH
+        && let Some(scoped) = rel.strip_prefix('@')
+    {
         scoped.split_once('/').unwrap_or(("", &rel))
     } else {
         ("", rel.as_str())
@@ -203,6 +207,8 @@ async fn read(shared: &Arc<Shared>, request: Request) -> Option<Response> {
             | "/api/task-offer"
             | symphony_api::TASK_GATES_PATH
             | symphony_api::TASK_TIMELINE_PATH
+            | symphony_api::TASK_DIFF_PATH
+            | symphony_api::TASK_DIFF_FILE_PATH
     ) && let Err(why) = argument(&request, "slug")
     {
         return Some(error(StatusCode::BAD_REQUEST, why));
@@ -480,6 +486,20 @@ async fn read(shared: &Arc<Shared>, request: Request) -> Option<Response> {
         });
     }
     let response = match path {
+        symphony_api::TASK_DIFF_PATH | symphony_api::TASK_DIFF_FILE_PATH => {
+            let root = if scope.is_empty() {
+                hub.root.clone()
+            } else {
+                hub.tree(scope).expect("scope was checked")
+            };
+            task_diff::answer(
+                hub.clone(),
+                root,
+                &request,
+                path == symphony_api::TASK_DIFF_FILE_PATH,
+            )
+            .await
+        }
         "/api/feed" => feed(hub, scope, request).await,
         "/api/tasks" | "/api/task-board" => {
             let search = query(&request, "q")

@@ -486,6 +486,14 @@ once it nears the screen and its part has something to draw (an answer, or why t
 behind no other read, so the page's first draw carries none of it; its style comes with it. The gates' and the box's styles (`src/gates.css`,
 `src/timeline-slot.css`) are the kind's own.
 
+The task's Changes section (`src/task-diff.tsx`, its style `src/task-diff.css`) mounts near the
+screen, reading its own live part from `/api/task-diff`: paths and line counts, binary files
+said as such, never patch text. It follows branch changes and the task's verdicts. Opening a
+file reads `/api/task-diff-file` with the summary's base and head commits; a new comparison
+closes the old files and cancels their reads. Patches are scrollable and bounded at 256 KiB,
+the file list at 500 files and 256 KiB of Git output; every incomplete or unavailable read
+says why. This code belongs only to the task kind, so the board carries none of it.
+
 ## The panel
 
 The kind `panel` (`src/kinds/panel.tsx`, `src/panel.tsx`) is the shell's persistent kind, which it

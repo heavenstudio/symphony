@@ -55,6 +55,7 @@ async fn run(mut command: Command, limit: usize, deadline: Instant) -> Result<Ou
         loop {
             let mut ready = pipe.readable_mut().await?;
             let count = match ready.try_io(|pipe| pipe.get_mut().read(&mut buffer)) {
+                Ok(Err(error)) if error.kind() == io::ErrorKind::Interrupted => continue,
                 Ok(count) => count?,
                 Err(_) => continue,
             };

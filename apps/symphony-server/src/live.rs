@@ -2419,6 +2419,9 @@ mod gates_tests;
 mod timeline_tests;
 
 #[cfg(test)]
+mod task_diff_tests;
+
+#[cfg(test)]
 mod reports_tests;
 
 #[cfg(test)]
