@@ -219,10 +219,9 @@ impl StandIn {
     }
 
     fn configure(&self, folder: &Path) {
-        let value = toml::Value::String(folder.display().to_string());
         fs::write(
             self.dir.join(crate::project::FILE),
-            format!("[board]\npostgresql = {value}\n"),
+            format!("[board]\npostgresql = {:?}\n", folder.to_str().unwrap()),
         )
         .unwrap();
     }
