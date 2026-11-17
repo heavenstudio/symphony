@@ -7,7 +7,7 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::sync::OnceLock;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use serde_json::{Value, json};
 
@@ -3741,15 +3741,12 @@ fn a_selector_that_never_appears_fails_within_the_timeout_naming_it_and_leaves_n
     .stderr(Stdio::piped())
     .spawn()
     .unwrap();
-    // The last look that found it not yet asked for, so never after the request, or none as the
-    // shot ended first: what it waited is timed from no later than its page's request.
-    let mut unasked = Instant::now();
+    // When the site read the page's request, before it answered and so before the shot's waits
+    // for the page and then the selector began; or none, as the shot ended first.
     let asked = test_time::until("the shot asks for its page", test_time::FLOOR, || {
-        let look = Instant::now();
-        if site.requests().iter().any(|path| path == "/still.html") {
-            return Some(Some(unasked));
+        if let Some(asked) = site.first_asked("/still.html") {
+            return Some(Some(asked));
         }
-        unasked = look;
         running.try_wait().unwrap().is_some().then_some(None)
     })
     .unwrap_or_else(|stall| panic!("{stall}"));

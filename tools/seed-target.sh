@@ -149,13 +149,14 @@ done
 # with stderr at /dev/null already. The job is forked holding a FIFO open to read and write (5),
 # which every member of its group inherits; this run then keeps the read end alone (6), whose end of
 # file says that every member has gone, which is what `finish` waits for. Opened both ways first,
-# neither open waits for the other side.
+# neither open waits for the other side; an open that fails forks nothing, as the read end alone
+# would wait for a writer for ever.
 under_lock() {
     local held="$staged/tool/held"
     rm -f "$held"
     mkfifo "$held" || return 1
+    exec 5<>"$held" || return 1
     starting=1
-    exec 5<>"$held"
     set -m
     { locked "$wait" "$source/.cargo-lock" "$@" & } 2>/dev/null
     job=$!
