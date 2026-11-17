@@ -11,7 +11,7 @@
 
 use super::Tokens;
 use crate::json_object::object;
-use serde_json::{Value, json};
+use serde_json::Value;
 use std::collections::BTreeMap;
 use std::sync::LazyLock;
 
@@ -312,21 +312,27 @@ impl Cost {
         let unpriced = (self.unpriced.iter())
             .map(|((model, speed), tokens)| {
                 object(vec![
-                    ("model", json!(model)),
-                    ("speed", json!(speed)),
+                    ("model", Value::from(model.as_str())),
+                    ("speed", Value::from(speed.as_str())),
                     ("tokens", tokens.json()),
                 ])
             })
             .collect();
         object(vec![
-            ("dollars", json!(in_dollars(self.total()))),
-            ("input", json!(in_dollars(self.input))),
-            ("cache_write_5m", json!(in_dollars(self.cache_write_5m))),
-            ("cache_write_1h", json!(in_dollars(self.cache_write_1h))),
-            ("cache_read", json!(in_dollars(self.cache_read))),
-            ("output", json!(in_dollars(self.output))),
+            ("dollars", Value::from(in_dollars(self.total()))),
+            ("input", Value::from(in_dollars(self.input))),
+            (
+                "cache_write_5m",
+                Value::from(in_dollars(self.cache_write_5m)),
+            ),
+            (
+                "cache_write_1h",
+                Value::from(in_dollars(self.cache_write_1h)),
+            ),
+            ("cache_read", Value::from(in_dollars(self.cache_read))),
+            ("output", Value::from(in_dollars(self.output))),
             ("unpriced", Value::Array(unpriced)),
-            ("prices", json!(read)),
+            ("prices", Value::from(read)),
         ])
     }
 
