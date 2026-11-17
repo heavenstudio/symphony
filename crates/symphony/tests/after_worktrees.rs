@@ -145,7 +145,7 @@ fn owner_verdict_read_preserves_stale_merged_and_unmerged_indexes() {
         assert_eq!(command(&wt, &["ls-files", "-u"], 1).is_empty(), !unmerged);
         fs::write(
             wt.join(DOC),
-            "# Decisions\n[2026-10-27 10:00] owner · approved — keep this answer\n",
+            "# Decisions\n- [x] **answer** — Answer.\n  [2026-10-27 10:00] owner · approved — keep this answer\n",
         )
         .unwrap();
         let tracked = wt.join("docs/OTHER.md");
@@ -168,6 +168,37 @@ fn owner_verdict_read_preserves_stale_merged_and_unmerged_indexes() {
         assert_eq!(fs::metadata(&index).unwrap().modified().unwrap(), modified);
     }
     assert!(symphony::landing::owner_lines_left(&tree.path("gone")).is_empty());
+}
+
+#[test]
+fn the_consumer_owner_reader_keeps_untracked_answers_and_git_failures() {
+    let tree = repository();
+    tree.write("spec/D.md", "# D\n");
+    tree.write(
+        "symphony.toml",
+        "[[entrypoints]]\nurl = \"spec\"\nfolder = \"spec\"\n",
+    );
+    commit(&tree.root, "base", 1);
+    let answer = "- [x] **x** — X.\n  [2026-11-14 01:52] owner · approved — go\n";
+    tree.write("spec/NEW.md", answer);
+    tree.write(DOC, answer);
+    assert_eq!(
+        symphony::landing::owner_lines_left(&tree.root),
+        ["spec/NEW.md"]
+    );
+    // An unreadable project reads the whole checkout, preserving the answers it cannot scope.
+    tree.write("symphony.toml", "[broken\n");
+    assert_eq!(
+        symphony::landing::owner_lines_left(&tree.root),
+        [DOC, "spec/NEW.md"]
+    );
+    let ordinary = Tree::new();
+    let kept = symphony::landing::owner_lines_left(&ordinary.root);
+    assert_eq!(kept.len(), 1);
+    assert!(
+        kept[0].starts_with("owner answers could not be read: git diff failed"),
+        "{kept:?}"
+    );
 }
 
 fn executable(tree: &Tree, rel: &str, text: &str) {
@@ -413,6 +444,16 @@ fn a_verdict_when_the_worktrees_cannot_be_listed_stays_the_pages_and_main_takes_
 fn a_line_on_a_card_the_branch_posted_and_main_closed_since_is_saved_on_main_as_its_page_draws_it()
 {
     landed::a_line_on_a_card_main_closed_since_the_branch_posted_it_is_mains();
+}
+
+#[test]
+fn save_routing_and_page_agree_on_which_cards_main_closed() {
+    landed::save_routing_and_page_use_the_registers_closure();
+}
+
+#[test]
+fn a_finished_revision_and_its_answer_stay_one_card_until_landed() {
+    landed::a_finished_revision_stays_one_card_until_its_answer_lands();
 }
 
 #[test]
