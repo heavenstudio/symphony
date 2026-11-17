@@ -259,3 +259,15 @@ it("labels a cross-stage list with the selected wait kind", () => {
   );
   expect(html).toContain('On checks <span class="count">32</span>');
 });
+
+it("follows a focused task to its new phone stage without following unrelated moves", () => {
+  vi.stubGlobal("innerWidth", 390);
+  const focused = { getAttribute: () => "follow", querySelectorAll: () => [] };
+  vi.stubGlobal("document", { activeElement: { closest: () => focused } });
+  const html = board({ tasks: [aTask("follow", { status: "in_progress" })] });
+  expect(columns(html)).toEqual(["in_progress"]);
+  vi.stubGlobal("document", { activeElement: null });
+  expect(columns(board({ tasks: [aTask("follow", { status: "in_progress" })] }))).toEqual([
+    "review",
+  ]);
+});

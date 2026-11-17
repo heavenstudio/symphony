@@ -458,6 +458,24 @@ export function TaskBoard({
   const [opened, setOpened] = useState("");
   const [filtering, setFiltering] = useState(false);
   const [now, setNow] = useState(() => Date.now() / 1000);
+  // Follow only the card holding the keyboard focus. Adjust this component's state before
+  // React commits the move, while BoardRow can still read the old title link to restore it.
+  const focused = wait === "" ? focusedSlug() : null;
+  const focusedTask = focused === null ? undefined : tasks.find((task) => task.slug === focused);
+  if (focusedTask !== undefined) {
+    const destination = waitingStage(work, focusedTask, connected);
+    if (phone && destination !== (opened || selected)) {
+      if (PHONE_STAGES.includes(destination)) {
+        setSelected(destination);
+        setOpened("");
+      } else setOpened(destination);
+    } else if (!phone && !STAGES.includes(destination) && opened !== destination) {
+      setOpened(destination);
+    }
+  }
+  useEffect(() => {
+    save(STAGE_KEY, selected);
+  }, [selected]);
   useEffect(() => {
     const resize = () => setPhone(windowWidth() <= 760);
     window.addEventListener("resize", resize);
