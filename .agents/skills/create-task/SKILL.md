@@ -2,7 +2,7 @@
 name: create-task
 description: File a task on the board so an executor can work from the brief alone, without duplicating existing work or missing a required field. Trigger on "file a task", "create a task", "add this to the board", or /create-task.
 ---
-<!-- symphony-stamp: 7609a6e51e748a2a files=SKILL.md -->
+<!-- symphony-stamp: 56d8c7c7841b616c files=SKILL.md -->
 
 # File a task on the board
 
@@ -94,16 +94,19 @@ also follow that project; this skill imposes no separate document execution lane
 
 ## 8. Afterwards
 
-- Every open task has an orchestrator, and the create's line names it
-  (`; HANDLE orchestrates it`). Filed by an orchestrator session, the task is
-  yours from the create, unless you passed `--no-role --for HANDLE` (a live
-  orchestrator, who takes it) or a parent another holds already makes it
-  theirs. Filed by any other session, the board gives it to the orchestrator
-  of the task you work on, else of your parent session, else to one that
-  stays (live past its first live line, and waiting, watching or holding a
-  task); with none that stays it says `it waits for an orchestrator that
-  stays`, and the first to come to stay is given it. On a board with no
-  orchestrator at all, a new project's, it says nothing of one.
+- Every open task has an orchestrator or waits for one, and the create's line
+  says which (`; HANDLE orchestrates it`). Filed by an orchestrator session,
+  the task is yours from the create, unless you passed `--no-role --for
+  HANDLE` (a live orchestrator, who takes it) or a parent another holds
+  already makes it theirs. Filed by any other session, the board gives it to
+  the orchestrator of the task you work on, else of your parent session, else
+  to one that stays (live past its first live line, and waiting, watching or
+  holding a task). One that orchestrates `[limits] orchestrator_tasks` open
+  tasks or more (16 unwritten), you or the `--for` one included, is passed
+  over, the line saying why; with none under its limit that stays it says
+  `it waits for an orchestrator under its limit that stays`, and the first
+  such to come is given it. On a board with no orchestrator at all, a new
+  project's, it says nothing of one.
 - Tell the owner the slug in one line.
 - Starting an executor on it is a separate step — see the task-orchestrator
   skill.
