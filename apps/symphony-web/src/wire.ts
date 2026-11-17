@@ -31,6 +31,8 @@ export const TASK_TIMELINE_PATH = "/api/task-timeline";
 export const TASK_DIFF_PATH = "/api/task-diff";
 export const TASK_DIFF_FILE_PATH = "/api/task-diff-file";
 export const TIMELINE_EVERY = 60;
+export const TIMELINE_HISTORY_LIMIT = 256;
+export const TIMELINE_HISTORY_SOURCES = 8;
 export const AGENT_FOCUS_PATH = "/api/agent-focus";
 export const AGENT_SCREEN_PATH = "/api/agent-screen";
 export const SYMPHONY_ROUTES = [
@@ -1500,6 +1502,11 @@ export type TaskTimeline = {
    * not be read.
    */
   gates: Array<GateLane>;
+  /**
+   * Recorded roles and message addresses. Absent on servers without this projection; never
+   * interpret absence, a partial source or a failed source as an empty history.
+   */
+  history?: History | null;
 };
 
 export type Offset = { from: number; seconds: number };
@@ -1614,6 +1621,65 @@ export type GateSpan = {
   by?: string | null;
   detail: string;
 };
+
+export type History = {
+  sources: Array<HistorySource>;
+  /**
+   * False when the source-count bound or a failed read left ancestry unexplored. Truncated
+   * ranges are reported by `sources`, even when every referenced source was visited.
+   */
+  sources_complete: boolean;
+  roles: Array<RoleSpan>;
+  /**
+   * Non-system thread entries, ordered by exact timestamp then id. No text or reply inference.
+   */
+  messages: Array<TimelineMessage>;
+};
+
+export type HistorySource = {
+  slug: string;
+  state: HistoryState;
+  first_id: number | null;
+  last_id: number | null;
+  /**
+   * Older entries remain reachable through `/api/task-history?slug=SLUG&before=ID`.
+   * Unlike `partial`, this specifically means earlier recorded rows were left out.
+   */
+  before: number | null;
+};
+
+export type HistoryState = "complete" | "partial" | "unavailable";
+
+export type RoleSpan = {
+  role: string;
+  by: string;
+  source: string;
+  from: number;
+  from_id: number;
+  to: number | null;
+  to_id: number | null;
+  uncertain: boolean;
+};
+
+export type TimelineMessage = {
+  id: number;
+  at: number;
+  sender: string;
+  recipient: string | null;
+  kind: string;
+  from: MessageEndpoint;
+  to: MessageEndpoint;
+  /**
+   * Unknown when incomplete records cannot establish whether the task was closed then.
+   */
+  after_close: boolean | null;
+};
+
+export type MessageEndpoint = { state: EndpointState; candidates: Array<RoleEndpoint> };
+
+export type EndpointState = "known" | "ambiguous" | "everyone" | "outside" | "unknown";
+
+export type RoleEndpoint = { role: string; by: string; source: string };
 
 export type TaskDiffSource = "branch" | "landing" | "unavailable";
 
