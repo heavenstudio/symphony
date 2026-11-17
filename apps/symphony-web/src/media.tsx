@@ -501,9 +501,7 @@ export function FileViewer({ src, caption, viewer, poster = null }: FileViewerPr
               </Button>
             ))}
             {viewer.download != null && (
-              // As the Dioxus client draws it (`download: true`, written as the value "true"), so
-              // the two clients save the same file; an empty value would keep the file's own name.
-              <a href={href(src)} download="true">
+              <a href={href(src)} download={label(src, "")}>
                 {viewer.download}
               </a>
             )}
