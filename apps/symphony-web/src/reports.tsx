@@ -20,6 +20,7 @@ import {
   sum,
   type Unit,
 } from "./chart";
+import { PageNotices } from "./live";
 import { getIf, said } from "./request";
 import { field } from "./shared";
 import { Backoff } from "./state";
@@ -29,7 +30,6 @@ import { sleep } from "./timing";
 import { failed, ready } from "./trouble";
 import { NearViewport } from "./viewport";
 import { type Grain, REPORTS_PATH, type ReportMark } from "./wire";
-import { deviceNotice, savedAt } from "./words";
 
 const HOUR = 3_600;
 const DAY = 86_400;
@@ -796,17 +796,15 @@ export interface ReportsViewProps {
    * kept, in ms.
    */
   device?: number | null;
-  /** The clock the kept copy's time is said against. */
-  now?: Date;
 }
 
 /**
  * The page under its header: the window's controls, its four figures, the marked changes and
  * the charts, or the ghost of them while the first answer is on its way. A page drawn from what
- * this device kept is marked so (`data-cache`) and says it, in the other pages' words and in their
- * place (the shared sheet's notice stack, out of the page's flow, so its going moves nothing),
- * until a read answers: that it is checking, or, while the read fails, that the server is not
- * reachable.
+ * this device kept is marked so (`data-cache`) and says it as the other pages do, in their notices
+ * (`PageNotices`: out of the page's flow, so its going moves nothing, with the reserve that keeps
+ * the page's end clear of it and the toasts above it), until a read answers: that it is checking,
+ * or, while the read fails, that the server is not reachable.
  */
 export function ReportsView({
   grain,
@@ -818,7 +816,6 @@ export function ReportsView({
   onToggle,
   lands = true,
   device = null,
-  now = new Date(),
 }: ReportsViewProps) {
   // Busy while the window asked for is on its way, and no longer once its read failed: the page
   // then says so, drawn, and a region busy on the screen would hold `symphony shot` to its timeout.
@@ -857,13 +854,7 @@ export function ReportsView({
           lands={lands}
         />
       )}
-      {kept !== null && (
-        <div className="stale page-notices notice-stack">
-          <p className="pill wait device-notice" role="status">
-            {deviceNotice(savedAt(new Date(kept), now), error !== null)}
-          </p>
-        </div>
-      )}
+      <PageNotices reconnecting={false} device={kept !== null ? [kept, error !== null] : null} />
     </div>
   );
 }
@@ -1202,7 +1193,8 @@ export async function openReports(
 /**
  * The page, its read and its window: the window this browser last chose, read at once, again
  * whenever another is chosen, and every five minutes while the page is open, naming the copy shown
- * so an hour no file changed in answers `304`. A read that fails keeps what is shown and says why.
+ * so an hour no file changed in answers `304`. A read that fails keeps what is shown and says why,
+ * until a read answers or another window is chosen.
  * Each window's last answer is kept on this device (`openReports`) and drawn at once on a return,
  * or when its window is chosen again, marked as this device's until a read answers. The series
  * this browser hid stay hidden in every window, and each hidden or shown again is kept at once.
@@ -1248,6 +1240,9 @@ export function ReportsPage({ scope = "" }: { scope?: string }) {
           save("reports-grain", nextGrain);
           save("reports-days", String(nextDays));
           setWindow([nextGrain, nextDays]);
+          // The read that failed was the window left: the one chosen is not said unreachable
+          // before its own read is tried.
+          setError(null);
           setAsked((count) => count + 1);
         }}
         onToggle={(key) => {
