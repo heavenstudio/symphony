@@ -57,16 +57,23 @@ impl Kind {
 }
 
 /// One field of a SCHEMAFULL table.
+/// Only seven columns have a default or allowed values. Keep those attributes behind a
+/// reference, rather than repeating two wide optional fields in every column's static data.
 #[derive(Clone, Copy, Debug)]
 pub(in crate::store) struct Column {
     pub name: &'static str,
     pub kind: Kind,
     /// SurrealDB's `TYPE T` rather than `TYPE option<T>`.
     pub required: bool,
+    attribute: Option<&'static Attribute>,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum Attribute {
     /// What a row made without it holds.
-    pub default: Option<&'static str>,
-    /// The values it is held to (`ASSERT $value IN [...]`); none holds it to none.
-    pub one_of: &'static [&'static str],
+    Default(&'static str),
+    /// The values it is held to (`ASSERT $value IN [...]`); empty holds it to none.
+    OneOf(&'static [&'static str]),
 }
 
 const fn req(name: &'static str, kind: Kind) -> Column {
@@ -74,8 +81,7 @@ const fn req(name: &'static str, kind: Kind) -> Column {
         name,
         kind,
         required: true,
-        default: None,
-        one_of: &[],
+        attribute: None,
     }
 }
 
@@ -84,28 +90,16 @@ const fn opt(name: &'static str, kind: Kind) -> Column {
         name,
         kind,
         required: false,
-        default: None,
-        one_of: &[],
+        attribute: None,
     }
 }
 
-const fn of(name: &'static str, one_of: &'static [&'static str]) -> Column {
-    Column {
-        name,
-        kind: Kind::Text,
-        required: true,
-        default: None,
-        one_of,
-    }
-}
-
-const fn defaulted(name: &'static str, kind: Kind, default: &'static str) -> Column {
+const fn with_attribute(name: &'static str, kind: Kind, attribute: &'static Attribute) -> Column {
     Column {
         name,
         kind,
         required: true,
-        default: Some(default),
-        one_of: &[],
+        attribute: Some(attribute),
     }
 }
 
@@ -132,9 +126,10 @@ pub(in crate::store) const TABLES: [Table; 23] = [
             req("slug", Text),
             req("title", Text),
             req("body", Text),
-            of(
+            with_attribute(
                 "status",
-                &[
+                Text,
+                &Attribute::OneOf(&[
                     "backlog",
                     "concept",
                     "design",
@@ -144,15 +139,15 @@ pub(in crate::store) const TABLES: [Table; 23] = [
                     "done",
                     "blocked",
                     "cancelled",
-                ],
+                ]),
             ),
             req("priority", Int),
             opt("parent", Text),
             req("created_by", Text),
             req("created", Float),
             req("updated", Float),
-            defaulted("instruction", Bool, "false"),
-            defaulted("version", Int, "0"),
+            with_attribute("instruction", Bool, &Attribute::Default("false")),
+            with_attribute("version", Int, &Attribute::Default("0")),
             opt("fields", Object),
         ],
     },
@@ -160,7 +155,7 @@ pub(in crate::store) const TABLES: [Table; 23] = [
         name: "link",
         columns: &[
             req("slug", Text),
-            of("kind", &["doc", "dep"]),
+            with_attribute("kind", Text, &Attribute::OneOf(&["doc", "dep"])),
             req("target", Text),
         ],
     },
@@ -194,9 +189,10 @@ pub(in crate::store) const TABLES: [Table; 23] = [
         columns: &[
             req("slug", Text),
             req("handle", Text),
-            of(
+            with_attribute(
                 "role",
-                &["orchestrator", "executor", "reviewer", "reserved"],
+                Text,
+                &Attribute::OneOf(&["orchestrator", "executor", "reviewer", "reserved"]),
             ),
             req("since", Float),
             opt("expires", Float),
@@ -209,7 +205,11 @@ pub(in crate::store) const TABLES: [Table; 23] = [
             req("slug", Text),
             req("sender", Text),
             opt("recipient", Text),
-            of("kind", &["system", "msg", "verdict"]),
+            with_attribute(
+                "kind",
+                Text,
+                &Attribute::OneOf(&["system", "msg", "verdict"]),
+            ),
             req("text", Text),
             req("ts", Float),
         ],
@@ -292,7 +292,11 @@ pub(in crate::store) const TABLES: [Table; 23] = [
         name: "ask",
         columns: &[
             req("sid", Int),
-            of("kind", &["verdict", "message", "comment", "chat", "task"]),
+            with_attribute(
+                "kind",
+                Text,
+                &Attribute::OneOf(&["verdict", "message", "comment", "chat", "task"]),
+            ),
             req("about", Text),
             opt("path", Text),
             opt("card", Text),
@@ -700,14 +704,16 @@ fn create(table: &Table) -> String {
     }
     for column in table.columns {
         let _ = write!(sql, ",\n    {} {}", column.name, column.kind.sql());
-        if let Some(default) = column.default {
+        if let Some(Attribute::Default(default)) = column.attribute {
             let _ = write!(sql, " DEFAULT {default}");
         }
         if column.required {
             sql.push_str(" NOT NULL");
         }
-        if !column.one_of.is_empty() {
-            let values: Vec<String> = column.one_of.iter().map(|v| format!("'{v}'")).collect();
+        if let Some(Attribute::OneOf(values)) = column.attribute
+            && !values.is_empty()
+        {
+            let values: Vec<String> = values.iter().map(|v| format!("'{v}'")).collect();
             let _ = write!(sql, " CHECK ({} IN ({}))", column.name, values.join(", "));
         }
         if let Some(json) = column.kind.json() {
@@ -789,6 +795,34 @@ mod tests {
             "{ask}"
         );
         assert!(table("moved").is_none() && table("task_chunk").is_none());
+    }
+
+    #[test]
+    fn column_attributes_keep_defaults_required_flags_and_allowed_values() {
+        const TABLE: Table = Table {
+            name: "attributes",
+            columns: &[
+                req("plain", Text),
+                opt("optional", Text),
+                with_attribute("flag", Bool, &Attribute::Default("false")),
+                with_attribute("count", Int, &Attribute::Default("0")),
+                with_attribute("choice", Text, &Attribute::OneOf(&["first", "last"])),
+                with_attribute("unrestricted", Text, &Attribute::OneOf(&[])),
+            ],
+        };
+        assert_eq!(
+            create(&TABLE),
+            "CREATE TABLE IF NOT EXISTS attributes (
+    id jsonb PRIMARY KEY,
+    plain text NOT NULL,
+    optional text,
+    flag boolean DEFAULT false NOT NULL,
+    count bigint DEFAULT 0 NOT NULL,
+    choice text NOT NULL CHECK (choice IN ('first', 'last')),
+    unrestricted text NOT NULL
+);
+"
+        );
     }
 
     /// The numbers are Rust's, ranges of them and single ones, and no letter among them.
