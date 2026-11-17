@@ -128,6 +128,104 @@ fn a_phones_chosen_stage_survives_a_full_load() {
     fits(&mut page);
 }
 
+/// A refresh starts its position hold after the finger came down. Each subsequent movement
+/// arrives before that hold's first frame, as a drag or its momentum can. Explicit offsets make
+/// the regression deterministic; this checks the shell's response, not a device's physics.
+#[test]
+fn a_refresh_mid_drag_or_flick_never_pulls_vertical_scrolling_back() {
+    let site = site_of(&listing_of(&[("review", 30)]));
+    let Some(mut page) = chrome() else { return };
+    open_on_a_phone(&mut page, &site);
+    for dragging in [true, false] {
+        let movements = page.eval(&format!(
+            r#"new Promise(resolve => {{
+                scrollTo(0, 600);
+                const board = document.querySelector('.waiting-columns');
+                const touch = type => board.dispatchEvent(new TouchEvent(type, {{bubbles: true}}));
+                touch('touchstart');
+                if (!{dragging}) touch('touchend');
+                const movements = [];
+                const move = () => {{
+                    const before = scrollY;
+                    window.reviewHoldPlace('.waiting-columns [data-slug]');
+                    if ({dragging}) touch('touchmove');
+                    scrollBy(0, 180);
+                    const wanted = scrollY;
+                    requestAnimationFrame(() => {{
+                        movements.push([before, wanted, scrollY]);
+                        if (movements.length < 3) move();
+                        else {{ touch('touchend'); resolve(movements); }}
+                    }});
+                }};
+                requestAnimationFrame(move);
+            }})"#
+        ));
+        let samples = movements.as_array().expect("the scroll samples");
+        assert_eq!(samples.len(), 3);
+        for sample in samples {
+            let before = sample[0].as_f64().unwrap();
+            let wanted = sample[1].as_f64().unwrap();
+            let after = sample[2].as_f64().unwrap();
+            assert_eq!(wanted - before, 180.0, "the fixture has room to scroll");
+            assert_eq!(
+                after, wanted,
+                "dragging={dragging}: the hold pulled the scroll back: {movements}"
+            );
+        }
+    }
+}
+
+/// Native touch input still pans the page vertically and the stage strip horizontally. No
+/// gesture is prevented or restricted to one axis by the position-hold repair.
+#[test]
+fn vertical_finger_swipes_and_horizontal_stage_swipes_keep_their_native_scroll() {
+    let site = site_of(&listing_of(&[("review", 30)]));
+    let Some(mut page) = chrome() else { return };
+    open_on_a_phone(&mut page, &site);
+    for (x, start, end) in [(180, 700, 400), (180, 650, 350)] {
+        let before = page.eval("scrollY").as_f64().unwrap();
+        page.call(
+            "Input.dispatchTouchEvent",
+            json!({"type":"touchStart","touchPoints":[{"x":x,"y":start}]}),
+        );
+        for y in [start - 40, end] {
+            page.call(
+                "Input.dispatchTouchEvent",
+                json!({"type":"touchMove","touchPoints":[{"x":x,"y":y}]}),
+            );
+        }
+        page.call(
+            "Input.dispatchTouchEvent",
+            json!({"type":"touchEnd","touchPoints":[]}),
+        );
+        assert!(page.wait_for(&format!("scrollY > {}", before + 100.0), SHOWN));
+    }
+    // A fresh page ends the vertical fling before aiming at the strip at the top.
+    open_on_a_phone(&mut page, &site);
+    let at = page.eval("(() => { const tabs = document.querySelector('.stage-tabs'); tabs.scrollLeft = 0; const r = tabs.getBoundingClientRect(); return Math.round(r.top + r.height / 2); })()");
+    assert!(at.as_f64().is_some_and(|y| y > 0.0 && y < 844.0));
+    page.call(
+        "Input.dispatchTouchEvent",
+        json!({"type":"touchStart","touchPoints":[{"x":320,"y":at}]}),
+    );
+    for x in [280, 180, 70] {
+        page.call(
+            "Input.dispatchTouchEvent",
+            json!({"type":"touchMove","touchPoints":[{"x":x,"y":at}]}),
+        );
+    }
+    page.call(
+        "Input.dispatchTouchEvent",
+        json!({"type":"touchEnd","touchPoints":[]}),
+    );
+    assert!(page.wait_for(
+        "document.querySelector('.stage-tabs').scrollLeft > 100",
+        SHOWN
+    ));
+    assert_eq!(page.eval("scrollY"), json!(0));
+    assert_eq!(page.eval(MOUNTED), json!(["review"]));
+}
+
 #[test]
 fn all_six_lifecycle_headings_fit_together_on_a_wide_board() {
     let site = site();

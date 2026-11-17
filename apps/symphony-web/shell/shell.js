@@ -338,7 +338,7 @@ function pendingNear() {
 // Call `stop` on the reader's own scroll, click or key (typing in a field aside); what it returns
 // stops listening.
 function onGesture(stop) {
-  const gestures = ["wheel", "touchstart", "mousedown", "keydown"];
+  const gestures = ["wheel", "touchstart", "touchmove", "mousedown", "keydown"];
   const gesture = (event) => {
     if (
       event.type !== "keydown" ||
@@ -360,7 +360,8 @@ function onGesture(stop) {
 // (`pendingNear`). However many frames that takes, as on a slow phone, and 1800 at most (half a
 // minute at sixty a second; a hidden tab draws none), a backstop only a box that never draws
 // reaches. A move the box and the page cannot take back (one at its end) counts as nothing moved
-// once it stays. The reader's own scroll, click or key ends the hold.
+// once it stays. The reader's own scroll, click or key ends the hold, including a drag or its
+// momentum already underway when the update arrived.
 window.reviewHoldPlace = (rows) => {
   const shows = (node) => {
     const top = node.getBoundingClientRect().top,
@@ -376,7 +377,8 @@ window.reviewHoldPlace = (rows) => {
   const scroller = scrollerOf(anchor),
     page = scrollY > 0;
   if (scroller ? scroller.scrollTop <= 0 : !page) return;
-  const top = anchor.getBoundingClientRect().top;
+  let place = placeOf(anchor);
+  const top = place[0];
   let stopped = false,
     frame = 0,
     quiet = 0,
@@ -386,7 +388,12 @@ window.reviewHoldPlace = (rows) => {
   });
   const hold = () => {
     if (!stopped && anchor.isConnected) {
-      const moved = anchor.getBoundingClientRect().top - top;
+      const now = placeOf(anchor);
+      if (scrolledAway(place, now)) {
+        listening();
+        return;
+      }
+      const moved = now[0] - top;
       let left = moved;
       if (Math.abs(left) >= 0.5 && scroller) {
         const before = scroller.scrollTop;
@@ -400,6 +407,7 @@ window.reviewHoldPlace = (rows) => {
       }
       quiet = Math.abs(moved - stuck) >= 0.5 || pendingNear() ? 0 : quiet + 1;
       stuck = left;
+      place = placeOf(anchor);
       if (quiet < 4 && ++frame < 1800) return requestAnimationFrame(hold);
     }
     listening();
