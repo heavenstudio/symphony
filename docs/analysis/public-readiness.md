@@ -33,6 +33,7 @@ runtime change is committed.
 | Dependencies | `tools/cargo.sh metadata --locked --offline --format-version 1`; tracked npm lockfile license/source fields, workspace manifests and copied CSS notices. No advisory database or complete distribution bill of materials. |
 | GitHub | Read-only repository, main-branch, Actions-artifact and release APIs. No settings changed. |
 | Code/design | Board JSON API and write guards; server peer/Host and native-write origin gates; process-plugin trust; land/release contracts and documentation ownership. A targeted source review, not a security assessment of every module. |
+| Contributed package evidence | The publication worker's exact-archive audit and preserved Cargo verification record for `837a0d36c8d8287860b44c7913c35a698779ac80`, summarized below. This session read the redacted report/manifests, not another branch's files, and did not regenerate or independently inspect those archives. |
 
 Gitleaks came from its [official release](https://github.com/gitleaks/gitleaks/releases/tag/v8.30.1).
 The Darwin ARM64 archive matched published SHA-256
@@ -44,6 +45,34 @@ clones, forks, LFS objects, Actions logs/caches, and remote issue/PR bodies. Ima
 not exhaustively read or OCR-scanned. Encoded/archive content can evade signatures; regexes do
 not prove absence of arbitrary credentials or private planning. Scan success cannot substitute
 for the requested review.
+
+## Publication evidence by source
+
+**No immutable source is cleared for first publication by this audit.** Evidence belongs to its
+named commit and archive hashes; it does not follow a moving branch, a release-candidate name,
+or a later document commit.
+
+| Source commit | Evidence and remaining disposition |
+| --- | --- |
+| `837a0d36c8d8287860b44c7913c35a698779ac80` | Initial tree/metadata audit above. Publication task reports all thirteen packages passing locked dry-run verification, eight package tests, lint and four packaged CLI version smokes. Its later approved run `7ba17f0f9a21e3106a5d5eeaced0a38d` also verifies all thirteen using the normal Cargo home and unchanged pinned toolchain, with verification enabled. Exact thirteen-archive audit covers 838 regular members and identifies the React notice gap and Dioxus notice disposition in L3. Packaging success is not release validation or publication clearance. |
+| `facf1a9801f49c75fd68776a76b8bfe68d9be9d2` | Release-candidate test-fix commit identified by coordination. This audit supplies no exact-source package archive or readiness clearance for it. The `837a0d36` source/archives and their verification do not establish this commit's readiness; candidate review and release validation remain separate evidence. |
+
+The preserved exact-archive report/manifests on the publication task have SHA-256
+`da5604658b5ef9d818e56091b971f5db78be99d23834054b55cac101d54710f7`; the separate fixture,
+verification logs and recorder summaries have SHA-256
+`1a5ba276d78dbf2dae493229c1407fee56d3fd476375d153ba893e48f2a8e538`.
+These identify the contributed evidence without treating a successful command as an audit.
+The normal-home success supersedes the claim that default Cargo state necessarily causes the
+earlier no-hash failure: restricted execution versus transient/cache state was not isolated.
+No cache corruption or required toolchain/source fix is established.
+
+Any eventual clearance must name the chosen full source SHA, exact rebuilt archive hashes,
+disposition of each applicable finding, independent review and required release evidence.
+A later source change needs a scoped comparison and validation of the resulting archives,
+including notice remediation; it cannot inherit an unrelated commit's scan or dry-run. Historical
+path privacy treatment is its own owner decision, not proof of a credential inside a package.
+Upload authentication remains unverified, recurring publication remains off, and no credential
+read, authentication probe, upload or publication-setting change is part of this document work.
 
 ## Findings
 
@@ -59,6 +88,7 @@ for the requested review.
 | G2 | Actions artifact API reports zero artifacts; releases API returns no GitHub releases. Git tags exist and were part of reachable history. | No assets in those responses to inspect; says nothing about logs/caches, deleted assets or forks. |
 | L1 | Root LICENSE is MIT with Stefano Benatti's copyright. Workspace metadata says MIT and names `heavenstudio/symphony`; members inherit or declare licensing. Copied Dioxus styles retain upstream revision/provenance and adjacent MIT/Apache licenses. | MIT project intent is recorded. Preserve third-party notices; the root license does not relicense dependencies. |
 | L2 | Cargo metadata: 512 packages, 17 workspace and 495 external registry packages, no missing external license field or external Git/path source. Five external crates declare MPL-2.0: cssparser, cssparser-macros, dtoa-short, option-ext, selectors. Other expressions include Apache, Unicode and BSD terms. Main npm lock: 117 non-root entries, all with licenses, all resolved URLs on npm registry. Experiment npm locks also declare mixed licenses. | Make a distribution-specific dependency/notice inventory including native desktop code, copied assets and experiments. Metadata is neither compliance evidence nor a vulnerability scan. Determine obligations of what actually ships; not every dependency is MIT. |
+| L3 | Contributed exact-archive audit at `837a0d36c8d8287860b44c7913c35a698779ac80`: `symphony-server-0.1.0.crate`, SHA-256 `38ac2bd484a2439729f3c1c73e0e580c1c579e9febf095869802676505930f0f`, embeds React 19.3.1 in `client/public/assets/shared-c61b2176a5517aea.js` but contains no Meta/Facebook copyright or vendor notice/license file; JS/CSS license comments are absent. Adapted Dioxus controls/focus-trap source provenance and license templates are outside the archive. The worker's bounded private-key/token/path checks found no confirmed credential; path matches were test fixtures. | Concrete distribution-notice remediation at this source, independent of secret-scan results. The orchestrator assigns the client/distribution fix and independent review; the publication task validates the replacement immutable source and exact archives. Select/document the applicable Dioxus license route and retain its notices. Actual-target Rust dependency obligations and the broader audit remain separate; the archive report is not general clearance. |
 | D1 | DECISIONS.md: 65 cards, 49 resolved, nine rejected, three postponed, three waiting on an agent, one auto-approved for spot-check; 1,515 lines. Some durable behavior is already in owning docs; register still carries detailed designs and implementation-era context. | Migrate by topic, preserving card anchors, owner verdicts, pending asks and links. See the ownership plan below. |
 | D2 | README setup says SurrealDB while root guide also describes PostgreSQL prerequisites. Product index calls its spec form a proposal although the card is resolved. `docs/analysis/own-names.md` keeps a superseded plan in a reference location. | Reconcile setup with supported behavior, apply accepted decisions into current prose and move superseded evidence to history. |
 | D3 | No tracked SECURITY.md, CONTRIBUTING.md or third-party notice inventory found. There are 151 raster pictures. | Add a verified private vulnerability-reporting path and contributor doorway; inspect every published picture for private paths/accounts/task text and use fixtures for public examples. |
