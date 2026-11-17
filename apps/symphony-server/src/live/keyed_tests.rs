@@ -1,9 +1,9 @@
-//! The feed's keyed views retain lexical order and the last duplicate without cloning items.
+//! The feed's keyed positions retain lexical order and the last duplicate without cloning items.
 use super::{diff_items, keyed};
 use serde_json::json;
 
 #[test]
-fn keyed_views_borrow_in_key_order_and_keep_the_last_duplicate() {
+fn keyed_positions_borrow_in_key_order_and_keep_the_last_duplicate() {
     struct Item(&'static str, usize);
     let items = [
         Item("z", 1),
@@ -17,8 +17,8 @@ fn keyed_views_borrow_in_key_order_and_keep_the_last_duplicate() {
         mapped.keys().map(String::as_str).collect::<Vec<_>>(),
         ["", "a", "z", "猫"]
     );
-    assert_eq!(mapped["z"].1, 5);
-    assert!(std::ptr::eq(mapped["z"], &items[4]));
+    assert_eq!(items[mapped["z"]].1, 5);
+    assert!(std::ptr::eq(&items[mapped["z"]], &items[4]));
     assert!(keyed::<Item>(&[], |item| item.0.into()).is_empty());
 }
 
@@ -41,5 +41,56 @@ fn changed_lists_keep_their_exact_upserts_removals_and_predecessors() {
     );
     events.clear();
     diff_items(&mut events, "row", &new, &new, key);
+    assert!(events.is_empty());
+}
+
+#[test]
+fn keyed_envelopes_keep_exact_json_bytes_for_scalar_and_nested_values() {
+    for value in [
+        json!(null),
+        json!(true),
+        json!(i64::MIN),
+        json!(u64::MAX),
+        json!(-0.0),
+        json!("é\n\"😀"),
+        json!([1, {"nested": [false, null]}]),
+    ] {
+        assert_eq!(
+            super::region_event("row", value.clone()).to_string(),
+            json!({"region":"row", "data":value}).to_string(),
+        );
+        let expected = json!({"region":"row", "data":{"key":"猫", "value":value}});
+        assert_eq!(
+            super::keyed_event("row", "猫", "value", value).to_string(),
+            expected.to_string(),
+        );
+    }
+    for after in [None, Some(""), Some("é\n😀")] {
+        assert_eq!(
+            super::keyed_event("row-order", "", "after", after.into()).to_string(),
+            json!({"region":"row-order", "data":{"key":"", "after":after}}).to_string(),
+        );
+    }
+    assert_eq!(
+        super::keyed_event("row", "z", "removed", true.into()).to_string(),
+        r#"{"region":"row","data":{"key":"z","removed":true}}"#,
+    );
+}
+
+#[test]
+fn reordering_borrowed_items_sends_only_the_changed_predecessors() {
+    let old = ["猫", "", "a"];
+    let new = ["a", "猫", ""];
+    let mut events = vec![];
+    diff_items(&mut events, "row", &old, &new, |s| (*s).to_owned());
+    assert_eq!(
+        events,
+        vec![
+            json!({"region":"row-order", "data":{"key":"a", "after":null}}),
+            json!({"region":"row-order", "data":{"key":"猫", "after":"a"}}),
+        ]
+    );
+    events.clear();
+    diff_items(&mut events, "row", &[] as &[&str], &[], |s| (*s).to_owned());
     assert!(events.is_empty());
 }
