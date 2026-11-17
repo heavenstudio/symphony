@@ -1,20 +1,22 @@
 # This repository's recurring checks, alongside init's generic symphony.rules. A matching
 # command runs outside the sandbox so its recorder can keep shared board state. No writable
-# directory is added to the workspace sandbox. Run plain commands with the inherited session.
+# directory is added to the workspace sandbox. Run one recipe with the inherited session:
+# --one rejects a second recipe before execution, and -- ends just's option parsing. Prefix
+# matches can still include invalid extra words: the installed just parser refuses those.
 prefix_rule(
-    pattern=["just", ["fmt", "lint-rs", "test-rs", "client-lint", "client-check", "client-update", "symphony-ui-dist", "settings-check", "crates-check"]],
+    pattern=["just", "--one", "--", ["fmt", "lint-rs", "test-rs", "client-lint", "client-check", "client-update", "symphony-ui-dist", "settings-check", "crates-check"]],
     decision="allow",
     justification="Run this repository's named build and check recipes with their recorder",
     match=[
-        "just fmt",
-        "just lint-rs",
-        "just test-rs -p symphony-board --lib cli::attach",
-        "just client-lint",
-        "just client-check",
-        "just client-update",
-        "just symphony-ui-dist",
-        "just settings-check",
-        "just crates-check",
+        "just --one -- fmt",
+        "just --one -- lint-rs",
+        "just --one -- test-rs -p symphony-board --lib cli::attach",
+        "just --one -- client-lint",
+        "just --one -- client-check",
+        "just --one -- client-update",
+        "just --one -- symphony-ui-dist",
+        "just --one -- settings-check",
+        "just --one -- crates-check",
     ],
     not_match=[
         "just test-rs-extra",
@@ -33,21 +35,30 @@ prefix_rule(
         "sh -c 'just lint-rs'",
         "tools/record.sh test arbitrary sh -c arbitrary",
         "tools/cargo.sh test",
+        "just lint-rs",
+        "just lint-rs release",
+        "just lint-rs symphony",
+        "just lint-rs --justfile /tmp/other.just",
+        "just lint-rs --command sh -c arbitrary",
+        "just --one lint-rs",
+        "just --one -- release",
+        "just --one -- symphony --shared",
+        "just --one -- --justfile /tmp/other.just lint-rs",
     ],
 )
 
 prefix_rule(
-    pattern=["just", "symphony-cli", "docs-audit", "--check"],
+    pattern=["just", "--one", "--", "symphony-cli", "docs-audit", "--check"],
     decision="allow",
     justification="Record the repository's document audit",
-    match=["just symphony-cli docs-audit --check"],
-    not_match=["just symphony-cli docs-audit", "just symphony-cli init --root ."],
+    match=["just --one -- symphony-cli docs-audit --check"],
+    not_match=["just symphony-cli docs-audit --check", "just --one -- symphony-cli docs-audit", "just --one -- symphony-cli init --root ."],
 )
 
 prefix_rule(
-    pattern=["just", "symphony-cli", "status", "--lint"],
+    pattern=["just", "--one", "--", "symphony-cli", "status", "--lint"],
     decision="allow",
     justification="Record the repository's document lint",
-    match=["just symphony-cli status --lint"],
-    not_match=["just symphony-cli status --tidy", "just symphony-cli serve"],
+    match=["just --one -- symphony-cli status --lint"],
+    not_match=["just symphony-cli status --lint", "just --one -- symphony-cli status --tidy", "just --one -- symphony-cli serve"],
 )

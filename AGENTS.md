@@ -202,9 +202,11 @@ a session of its own, names it: `TASKS_TASK=SLUG just test-rs …`, with
 `TASKS_SESSION=HANDLE` when it has a handle (docs/MACHINE_WORK.md).
 
 A board-launched Codex executor or reviewer already inherits `TASKS_SESSION`: run its own
-checks as plain commands (`just test-rs …`, `just lint-rs`), so the recorder derives the task
-from its held role. Do not repeat session/task assignments on each command. This repository's
-`.codex/rules/checks.rules` allows its named checks, including the two document checks, to
+checks as one recipe (`just --one -- test-rs …`, `just --one -- lint-rs`), so the recorder derives
+the task from its held role. Keep `--one --` before the recipe: the first option refuses a second
+recipe before either runs, and the separator ends option parsing. Do not repeat session/task
+assignments on each command. This repository's `.codex/rules/checks.rules` allows its named
+checks, including the two document checks, to
 record shared state outside the worktree sandbox; it grants no directory-wide access. A check
 run for another task still needs the explicit attribution above and the active approval flow.
 Full sessions register their own callback early with `just tasks callback --as HANDLE`;

@@ -12,7 +12,9 @@ Read this page with the orchestrator skill, as the [root guide](../../../AGENTS.
 - Fix repeated permission prompts durably with a narrow project rule for the named command
   and guidance for its caller. Keep arbitrary shells, recorder commands and whole-directory
   access out of the allowlist. The project's [check rules](../../../.codex/rules/checks.rules)
-  show positive and negative examples; keep them current when adding a recurring check.
+  require `--one --` before the recipe so an allowed prefix cannot run a second recipe or
+  reinterpret later words as command-runner options. They show positive and negative examples;
+  keep those and the installed-parser regression current when adding a recurring check.
 - Codex loads project rules at process startup when its project configuration is trusted
   ([the rules reference](https://developers.openai.com/codex/rules)). A fresh process, including
   one resuming a conversation, reads the rules in its own checkout. An already running
