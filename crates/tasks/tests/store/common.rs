@@ -708,7 +708,12 @@ impl Fixture {
 /// open since the day before, `sim/gone` closed then, and `sim/b`'s review subtask; the sessions
 /// that work it registered the day before but one, an opus worker at 01:00.
 pub fn report_board() -> Fixture {
-    let f = Fixture::empty();
+    report_board_on(Backend::SurrealDb)
+}
+
+/// The report history written through the same public commands on either backend.
+pub fn report_board_on(backend: Backend) -> Fixture {
+    let f = Fixture::on(backend, Seed::default());
     f.at_hour(-24.0);
     let orch = f.session("orchestrator");
     let exe = f.session("worker");

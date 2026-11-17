@@ -2,7 +2,7 @@
 
 use super::*;
 use crate::NewTask;
-use crate::store_fixture::Fixture;
+use crate::store_fixture::{Backend, Fixture, Seed};
 
 #[path = "unanswered_reads.rs"]
 mod reads;
@@ -16,8 +16,8 @@ fn owed_by(f: &Fixture, handle: &str) -> Vec<Pending> {
         .unwrap()
 }
 
-fn setup() -> (Fixture, Pending) {
-    let f = Fixture::empty();
+fn setup(backend: Backend) -> (Fixture, Pending) {
+    let f = Fixture::on(backend, Seed::default());
     f.task("work");
     let worker = f.session("worker");
     f.store.claim("work", &worker).unwrap();
@@ -45,90 +45,99 @@ fn reserved(f: &Fixture, pending: &Pending) -> bool {
 
 #[test]
 fn final_reservation_rechecks_late_descendant_answers_and_preserves_one_attempt() {
-    for reply_task in ["work", "different-name"] {
-        let (f, pending) = setup();
-        let rows = answers::rows(&f.store, &pending.handle, pending.post.id).unwrap();
-        let parents = answers::parents(&f.store, &rows).unwrap();
-        assert!(rows.is_empty());
-        // A second store commits after the decision, immediately before the reservation transaction.
-        f.other()
-            .say(reply_task, &pending.handle, "done", None)
-            .unwrap();
-        assert_eq!(
-            f.store.session(&pending.handle).unwrap().row.last_seen,
-            pending.seen
-        );
-        assert!(
-            !f.store
-                .reserve_unanswered_restore(&pending, &rows, &parents)
-                .unwrap()
-        );
-        assert!(!f.store.claim_unanswered_restore(&pending).unwrap());
-        assert!(!reserved(&f, &pending));
-        let request = f
-            .store
-            .say("work", "owner", "new request", Some(&pending.handle))
-            .unwrap();
-        // The reply answered the first post, on the task or under it.
-        let owed = owed_by(&f, &pending.handle);
-        assert_eq!(owed.len(), 1, "{reply_task}: {owed:?}");
-        let next = owed.into_iter().next().unwrap();
-        assert_eq!(next.post.id, request.id);
-        assert!(f.store.claim_unanswered_restore(&next).unwrap());
-        assert!(!f.other().claim_unanswered_restore(&next).unwrap());
+    for backend in [Backend::SurrealDb, Backend::PostgreSql] {
+        for reply_task in ["work", "different-name"] {
+            let (f, pending) = setup(backend);
+            let rows = answers::rows(&f.store, &pending.handle, pending.post.id).unwrap();
+            let parents = answers::parents(&f.store, &rows).unwrap();
+            assert!(rows.is_empty());
+            // A second store commits after the decision, immediately before the reservation transaction.
+            f.other()
+                .say(reply_task, &pending.handle, "done", None)
+                .unwrap();
+            assert_eq!(
+                f.store.session(&pending.handle).unwrap().row.last_seen,
+                pending.seen
+            );
+            assert!(
+                !f.store
+                    .reserve_unanswered_restore(&pending, &rows, &parents)
+                    .unwrap()
+            );
+            assert!(!f.store.claim_unanswered_restore(&pending).unwrap());
+            assert!(!reserved(&f, &pending));
+            let request = f
+                .store
+                .say("work", "owner", "new request", Some(&pending.handle))
+                .unwrap();
+            // The reply answered the first post, on the task or under it.
+            let owed = owed_by(&f, &pending.handle);
+            assert_eq!(owed.len(), 1, "{reply_task}: {owed:?}");
+            let next = owed.into_iter().next().unwrap();
+            assert_eq!(next.post.id, request.id);
+            assert!(f.store.claim_unanswered_restore(&next).unwrap());
+            assert!(!f.other().claim_unanswered_restore(&next).unwrap());
+        }
     }
 }
 
 #[test]
 fn final_reservation_rechecks_ancestry_and_heartbeat_without_consuming_an_attempt() {
-    for change in ["parent", "heartbeat", "status"] {
-        let (f, pending) = setup();
-        f.task("unrelated");
-        f.store
-            .set_parent("different-name", Some("unrelated"), "owner")
-            .unwrap();
-        f.store
-            .say("different-name", &pending.handle, "unrelated reply", None)
-            .unwrap();
-        let rows = answers::rows(&f.store, &pending.handle, pending.post.id).unwrap();
-        let parents = answers::parents(&f.store, &rows).unwrap();
-        assert!(!answers::answered(
-            &rows,
-            &pending.slug,
-            &parents.iter().cloned().collect()
-        ));
-        match change {
-            "parent" => {
-                f.other()
-                    .set_parent("different-name", Some("work"), "owner")
-                    .unwrap();
+    for backend in [Backend::SurrealDb, Backend::PostgreSql] {
+        for change in ["parent", "heartbeat", "status"] {
+            let (f, pending) = setup(backend);
+            f.task("unrelated");
+            f.store
+                .set_parent("different-name", Some("unrelated"), "owner")
+                .unwrap();
+            f.store
+                .say("different-name", &pending.handle, "unrelated reply", None)
+                .unwrap();
+            let rows = answers::rows(&f.store, &pending.handle, pending.post.id).unwrap();
+            let parents = answers::parents(&f.store, &rows).unwrap();
+            assert!(!answers::answered(
+                &rows,
+                &pending.slug,
+                &parents.iter().cloned().collect()
+            ));
+            match change {
+                "parent" => {
+                    f.other()
+                        .set_parent("different-name", Some("work"), "owner")
+                        .unwrap();
+                }
+                "heartbeat" => {
+                    f.advance(1.0);
+                    // The session-writing slice owns touch; this test changes its observed input.
+                    f.other()
+                        .raw()
+                        .row("session", pending.handle.as_str())
+                        .set(json!({"last_seen": f.now()}))
+                        .unwrap();
+                }
+                "status" => {
+                    f.other()
+                        .raw()
+                        .row("task", "work")
+                        .set(json!({"status": "done"}))
+                        .unwrap();
+                }
+                _ => unreachable!(),
             }
-            "heartbeat" => {
-                f.advance(1.0);
-                f.other().touch(&pending.handle).unwrap();
-            }
-            "status" => {
-                f.other()
-                    .raw()
-                    .row("task", "work")
-                    .set(json!({"status": "done"}))
-                    .unwrap();
-            }
-            _ => unreachable!(),
+            assert!(
+                !f.store
+                    .reserve_unanswered_restore(&pending, &rows, &parents)
+                    .unwrap(),
+                "{change}"
+            );
+            assert!(!reserved(&f, &pending));
         }
-        assert!(
-            !f.store
-                .reserve_unanswered_restore(&pending, &rows, &parents)
-                .unwrap(),
-            "{change}"
-        );
-        assert!(!reserved(&f, &pending));
     }
 }
 
 #[test]
 fn recipient_suffix_uses_sender_kind_and_sequence_index_bounds() {
-    let (f, pending) = setup();
+    let (f, pending) = setup(Backend::SurrealDb);
     let old = f
         .store
         .say("different-name", &pending.handle, "before cursor", None)
@@ -167,6 +176,66 @@ fn recipient_suffix_uses_sender_kind_and_sequence_index_bounds() {
                 pending.handle, cursor.id
             )),
             "{plan}"
+        );
+    }
+}
+
+#[test]
+fn concurrent_reservations_allow_one_attempt_and_keep_it_after_reopening() {
+    for backend in [Backend::SurrealDb, Backend::PostgreSql] {
+        let (f, pending) = setup(backend);
+        let stores = [f.other(), f.other()];
+        let barrier = std::sync::Barrier::new(2);
+        let answers = std::thread::scope(|scope| {
+            let joins: Vec<_> = stores
+                .iter()
+                .map(|store| {
+                    scope.spawn(|| {
+                        barrier.wait();
+                        store.claim_unanswered_restore(&pending)
+                    })
+                })
+                .collect();
+            joins
+                .into_iter()
+                .map(|join| join.join().unwrap())
+                .collect::<Vec<_>>()
+        });
+        assert_eq!(
+            answers
+                .iter()
+                .filter(|answer| matches!(answer, Ok(true)))
+                .count(),
+            1,
+            "{backend:?}: {answers:?}"
+        );
+        for answer in answers {
+            if let Err(error) = answer {
+                assert_eq!(
+                    error,
+                    Error::Db(
+                        "board changed during unanswered recovery; automatic attempt not repeated"
+                            .into()
+                    )
+                );
+            }
+        }
+        assert_eq!(
+            f.store.raw().table("unanswered_restore").count().unwrap(),
+            1
+        );
+        assert!(!f.other().claim_unanswered_restore(&pending).unwrap());
+        f.store
+            .record_unanswered_restore("work", "restored once")
+            .unwrap();
+        let notice = f.store.thread("work").unwrap().pop().unwrap();
+        assert_eq!(
+            (
+                notice.sender.as_str(),
+                notice.recipient.as_deref(),
+                notice.text.as_str()
+            ),
+            ("board", Some("@orchestrator"), "restored once")
         );
     }
 }

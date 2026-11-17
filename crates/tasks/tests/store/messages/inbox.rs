@@ -2,13 +2,13 @@
 //! of a recipient further behind than a dispatch pass reads.
 
 use super::texts;
-use crate::common::{Fixture, HOST, NOW, Seed};
+use crate::common::{Backend, Fixture, HOST, NOW, Seed};
 use symphony_board::rpc::Client;
 use symphony_board::{Message, Store};
 
-#[test]
-fn ack_empties_the_inbox_and_new_messages_arrive_again() {
-    let f = Fixture::empty();
+on_both! {
+fn ack_empties_the_inbox_and_new_messages_arrive_again(backend: Backend) {
+    let f = Fixture::on(backend, Seed::default());
     let a = f.session("worker");
     f.task("sim/jump");
     f.store.claim("sim/jump", &a).unwrap();
@@ -19,11 +19,13 @@ fn ack_empties_the_inbox_and_new_messages_arrive_again() {
     assert!(f.store.inbox(&a).unwrap().is_empty());
     f.store.say("sim/jump", "owner", "two", None).unwrap();
     assert_eq!(texts(f.store.inbox(&a).unwrap()), ["two"]);
-    assert_eq!(f.store.dump().unwrap().deliveries.len(), 1);
+    assert_eq!(f.store.raw().table("delivery").count().unwrap(), 1);
+
+}
 }
 
-#[test]
-fn acknowledgements_keep_adjacent_large_integer_ids_and_recipients_distinct() {
+on_both! {
+fn acknowledgements_keep_adjacent_large_integer_ids_and_recipients_distinct(backend: Backend) {
     use symphony_board::rows::{DeliveryRow, MessageRow};
 
     let ids = [
@@ -60,7 +62,7 @@ fn acknowledgements_keep_adjacent_large_integer_ids_and_recipients_distinct() {
         acked: NOW,
     })
     .collect();
-    let f = Fixture::new(seed);
+    let f = Fixture::on(backend, seed);
     let unread = || {
         f.store
             .inbox("amber-heron")
@@ -74,6 +76,8 @@ fn acknowledgements_keep_adjacent_large_integer_ids_and_recipients_distinct() {
     assert_eq!(unread(), [ids[3]]);
     f.store.ack("amber-heron", &[ids[3]]).unwrap();
     assert!(unread().is_empty());
+
+}
 }
 
 /// Forward one real RPC to the private fixture, counting its complete HTTP response. Nothing here
@@ -275,4 +279,51 @@ fn a_recipient_far_behind_the_board_reads_its_inbox_from_its_cursor() {
         !heard.iter().any(|line| line.contains("line ")),
         "{heard:?}"
     );
+}
+
+on_both! {
+/// The reader advances only after acknowledging every line it saw. Writers share the message
+/// counter, so no committed smaller id can appear behind that cursor afterwards.
+fn concurrent_writers_leave_no_gap_or_duplicate_in_a_readers_inbox(backend: Backend) {
+    use std::collections::BTreeSet;
+    use std::sync::{Arc, Barrier};
+    let f = Fixture::on(backend, Seed::default());
+    let reader = f.session("worker");
+    let writers: Vec<_> = (0..3).map(|_| f.session("worker")).collect();
+    for slug in ["one", "two"] { f.task(slug); }
+    let stores: Vec<_> = writers.iter().map(|_| f.other()).collect();
+    let start = Arc::new(Barrier::new(4));
+    let mut seen = Vec::new();
+    let mut posted = Vec::new();
+    std::thread::scope(|scope| {
+        let joins: Vec<_> = stores.into_iter().zip(&writers).map(|(store, writer)| {
+            let start = Arc::clone(&start);
+            let reader = &reader;
+            scope.spawn(move || {
+                start.wait();
+                (0..12).map(|n| store.say(if n % 2 == 0 {"one"} else {"two"}, writer,
+                    &format!("{writer}:{n}"), Some(reader)).unwrap().id).collect::<Vec<_>>()
+            })
+        }).collect();
+        start.wait();
+        loop {
+            let messages = f.store.inbox(&reader).unwrap();
+            let ids: Vec<_> = messages.iter().map(|m| m.id).collect();
+            for id in &ids { assert!(seen.last().is_none_or(|last| last < id), "{seen:?} then {ids:?}"); seen.push(*id); }
+            f.store.ack(&reader, &ids).unwrap();
+            if joins.iter().all(|join| join.is_finished()) { break; }
+            std::thread::yield_now();
+        }
+        for join in joins { posted.extend(join.join().unwrap()); }
+    });
+    let remaining = f.store.inbox(&reader).unwrap();
+    let ids: Vec<_> = remaining.iter().map(|m| m.id).collect();
+    for id in &ids { assert!(seen.last().is_none_or(|last| last < id)); seen.push(*id); }
+    f.store.ack(&reader, &ids).unwrap();
+    posted.sort_unstable();
+    assert_eq!(seen, posted);
+    assert_eq!(seen.len(), 36);
+    assert_eq!(seen.iter().collect::<BTreeSet<_>>().len(), 36);
+    assert!(f.store.inbox(&reader).unwrap().is_empty());
+}
 }
