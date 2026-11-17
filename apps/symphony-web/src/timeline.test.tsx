@@ -245,7 +245,11 @@ describe("the timeline drawn", () => {
     expect(drawn).toContain(
       '<li><span class="tl-key tl-key-work"></span>worked or ran</li><li><span class="tl-key tl-key-wait"></span>queued or waiting</li><li><span class="tl-key tl-key-running"></span>running now</li><li class="tl-wide"><span class="tl-key tl-g tl-g-met"></span>gate met</li>',
     );
-    expect(drawn.endsWith("</ul></div></div>")).toBe(true);
+    expect(
+      drawn.endsWith(
+        '</ul></div></div><p class="tl-note">Role and address history unavailable.</p>',
+      ),
+    ).toBe(true);
   });
 
   it("a task with nothing but its making draws one stage and no other lane", () => {
@@ -509,12 +513,13 @@ describe("the timeline's host", () => {
     const onDrawn = vi.fn();
     renderToStaticMarkup(<TimelineView timeline={pictures()} onDrawn={onDrawn} />);
     // The style sheet is put before the draw is measured, which it lays out.
-    expect([react.layouts.length, react.effects.length]).toEqual([2, 1]);
+    // Selection adds one layout effect for the phone row, plus attempt lifetime and thread-read effects.
+    expect([react.layouts.length, react.effects.length]).toEqual([3, 3]);
     expect(react.layouts[0]).toBe(putStyle);
     // No element was drawn here: nothing to measure, nothing said.
     react.layouts[1]?.();
     expect(onDrawn).not.toHaveBeenCalled();
-    const stop = react.effects[0]?.();
+    const stop = react.effects[2]?.();
     expect(typeof stop).toBe("function");
     stop?.();
   });

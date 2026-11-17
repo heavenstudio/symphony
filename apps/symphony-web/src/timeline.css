@@ -820,3 +820,117 @@
     display: none;
   }
 }
+
+/* Message marks keep their exact x; a separate chooser retains colliding instants. */
+.tl-message-mark {
+  position: absolute;
+  z-index: 2;
+  top: 6px;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  transform: translateX(-50%);
+  border: 0;
+  background: transparent;
+  color: var(--foreground);
+  cursor: pointer;
+}
+.tl-message-mark::before {
+  content: "";
+  display: block;
+  width: 6px;
+  height: 6px;
+  margin: auto;
+  border: 2px solid currentColor;
+  background: var(--card);
+  border-radius: 50%;
+}
+.tl-message-mark[aria-pressed="true"]::before {
+  background: var(--foreground);
+}
+.tl-message-mark:focus-visible,
+.tl-message-row:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 1px;
+}
+.tl-address-track {
+  position: absolute;
+  left: var(--name);
+  right: var(--end);
+  top: 0;
+  bottom: 0;
+  pointer-events: none;
+  z-index: 3;
+}
+.tl-address-arrow {
+  position: absolute;
+  border-left: 2px solid var(--foreground);
+}
+.tl-address-arrow::after {
+  content: "";
+  position: absolute;
+  left: -6px;
+  bottom: 0;
+  width: 8px;
+  height: 8px;
+  border-bottom: 2px solid var(--foreground);
+  border-right: 2px solid var(--foreground);
+  transform: rotate(45deg);
+}
+.tl-address-arrow.tl-arrow-up::after {
+  top: 0;
+  bottom: auto;
+  transform: rotate(225deg);
+}
+.tl-message-row {
+  text-align: left;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+.tl-message-row[aria-pressed="true"] {
+  font-weight: 700;
+  text-decoration: underline;
+}
+.tl-message-panel {
+  padding-top: var(--sp-3);
+  border-top: 1px solid var(--border);
+  margin-top: var(--sp-3);
+  min-width: 0;
+  font-size: var(--fs-sm);
+  overflow-wrap: anywhere;
+}
+.tl-message-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2);
+  margin-top: var(--sp-2);
+}
+.tl-message-controls select {
+  max-width: 100%;
+  min-width: 0;
+  background: var(--card);
+  color: var(--foreground);
+  border: 1px solid var(--border);
+  padding: 6px;
+}
+.tl-message-details h3 {
+  font-size: var(--fs-sm);
+}
+@media (max-width: 899.98px) {
+  .tl-drawn[data-selected] .tl-body {
+    display: block;
+    overflow-y: auto;
+  }
+  .tl-message-panel {
+    padding-right: 40px;
+  }
+  .tl-message-controls label,
+  .tl-message-controls select {
+    width: 100%;
+  }
+}
