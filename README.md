@@ -1,4 +1,4 @@
-# Symphony
+# <img src="apps/symphony-server/src/mark/icon.svg" alt="" width="32" height="32"> Symphony
 
 Symphony is a local workspace for building a project with AI agents and staying in charge of it.
 The agents write design documents, file and do tasks, and review each other's work; you read,
