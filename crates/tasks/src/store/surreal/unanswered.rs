@@ -82,21 +82,58 @@ pub(in crate::store) fn answer_rows() -> String {
 pub(in crate::store) const PARENTS: &str =
     "RETURN $slugs.map(|$slug| [$slug, type::record('task', $slug).parent ?? NULL]);";
 
+/// The task and only its executor holders' health inputs, by task/role index and record id.
+pub(in crate::store) fn successor_roles() -> &'static str {
+    "SELECT handle FROM role WITH INDEX role_slug WHERE slug = $slug AND role = 'executor' ORDER BY handle"
+}
+
+fn successor_inputs() -> String {
+    format!(
+        "{{ version: type::record('task', $slug).version,
+holders: ({}).map(|$r| [$r.handle,
+    (SELECT * OMIT id FROM ONLY type::record('session', $r.handle)) ?? NULL,
+    type::record('callback_state', $r.handle).address ?? NULL,
+    type::record('callback_state', $r.handle).confirmed_until ?? 0]) }}",
+        successor_roles()
+    )
+}
+
+pub(in crate::store) fn successors() -> String {
+    format!("RETURN {};", successor_inputs())
+}
+
 /// The one automatic resume of `$handle` for `$post` on `$slug`, reserved, answering whether it
 /// was: not when it is reserved already, the session was seen since `$seen`, its answers
 /// ([`answers`]) are no longer `$answers`, a parent of `$parents` changed, or `$role` no longer
-/// answers for the task in its status.
+/// answers for the task in its status. Executor eligibility also fences its observed task,
+/// sessions and native registrations, without consuming an attempt when they changed.
 pub(in crate::store) fn reserve() -> String {
     format!("LET $key = type::record('unanswered_restore', [$slug, $handle, $post]);
 IF record::exists($key) {{ RETURN false; }};
+FOR $witness_handle IN array::sort(array::distinct(array::concat([$handle], ($successors.holders ?? []).map(|$h| $h[0])))) {{
+    {witness_fence}
+}};
 IF type::record('session', $handle).last_seen != $seen {{ RETURN false; }};
 IF {} != $answers {{ RETURN false; }};
 IF $parents.map(|$p| [$p[0], type::record('task', $p[0]).parent ?? NULL]) != $parents {{ RETURN false; }};
 LET $status = type::record('task', $slug).status;
 IF ($role = 'executor' AND $status NOT IN ['in_progress', 'blocked', 'review'])
     OR ($role = 'reviewer' AND $status != 'review') {{ RETURN false; }};
+IF $successors != NONE {{
+    IF {successor_inputs} != $successors {{ RETURN false; }};
+    FOR $successor_handle IN $successors.holders.map(|$h| $h[0]) {{
+        LET $callback = type::record('callback_state', $successor_handle);
+        IF record::exists($callback) {{
+            UPDATE $callback SET recovery_revision = (recovery_revision ?? 0) + 1 RETURN NONE;
+        }};
+    }};
+    UPDATE type::record('task', $slug) SET version += 1 RETURN NONE;
+}};
 CREATE $key CONTENT {{ slug: $slug, handle: $handle, post: $post }} RETURN NONE;
-RETURN true;", answers())
+RETURN true;", answers(),
+        witness_fence = super::write::FENCE_RECIPIENT.replace("$handle", "$witness_handle"),
+        successor_inputs = successor_inputs(),
+        )
 }
 
 /// The board's line `$text` to `@orchestrator` on `$slug`'s thread at `$now`.

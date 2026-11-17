@@ -59,18 +59,19 @@
 //! digest ([`Digest::lines`]) on demand.
 
 mod pipeline;
+mod recovery;
 
 use crate::alarm::{Alarm, Thresholds, Tips};
 use crate::health::Health;
 use crate::maps::Collect as _;
 use crate::orchestration::{Owners, claimable_work};
 use crate::red::UNSTAFFED_SECONDS;
-use crate::store::unanswered::Pending;
 use crate::sys::local_minute;
 use crate::{Board, Error, Session, Store, Task};
 pub(crate) use pipeline::Observation;
 pub use pipeline::digest;
 use pipeline::{Fixes, Judged, review_alarm, waiting};
+use recovery::Advice;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
@@ -127,7 +128,7 @@ pub struct Digest {
     pub notes: BTreeMap<String, String>,
     /// Work retained because its shared native presence signal expired.
     pub liveness_unknown: Vec<String>,
-    unanswered: Vec<Pending>,
+    unanswered: Vec<Advice>,
     /// Whether the unanswered-post scan answered: a look whose scan failed cannot say which posts
     /// wait, nor how many ([`Digest::said_after`]).
     unanswered_scanned: bool,
@@ -216,7 +217,7 @@ impl Digest {
                 let entries: Vec<String> = if *name == "idle" {
                     self.idle.clone()
                 } else if *name == "unanswered" {
-                    self.unanswered.iter().map(pending_key).collect()
+                    self.unanswered.iter().map(|p| p.key.clone()).collect()
                 } else {
                     self.items(name).iter().map(|t| t.slug.clone()).collect()
                 };
@@ -471,11 +472,11 @@ impl Digest {
     fn unanswered_lines(&self, seen: &BTreeSet<(String, String)>) -> Vec<String> {
         let mut by_post: BTreeMap<(String, i64), Vec<String>> = BTreeMap::new();
         for pending in &self.unanswered {
-            if !seen.contains(&("unanswered".into(), pending_key(pending))) {
+            if !seen.contains(&("unanswered".into(), pending.key.clone())) {
                 by_post
-                    .entry((pending.slug.clone(), pending.post.id))
+                    .entry((pending.slug.clone(), pending.post))
                     .or_default()
-                    .push(format!("{}: {}", pending.handle, pending.command()));
+                    .push(format!("{}: {}", pending.handle, pending.command));
             }
         }
         by_post
@@ -743,6 +744,7 @@ pub(crate) fn digest_on(
     // A scan the board does not answer leaves this look without unanswered posts and says why on
     // stderr: the other lists, and every other event of the pass, go out all the same. A post
     // already told keeps its identity (`pull_unanswered`), so its return is not told again.
+    // An executor handoff projects distinct follow-up/recovery advice without answering the post.
     // A PULL diffed against an earlier one says nothing of them ([`Digest::said_after`]).
     let mut unanswered_scanned = true;
     let overdue = crate::store::unanswered::Asked::Overdue(tasks, now);
@@ -752,9 +754,11 @@ pub(crate) fn digest_on(
         unanswered_scanned = false;
         Vec::new()
     });
+    let verifying: BTreeSet<_> = verifying.iter().cloned().collect();
     let unanswered: Vec<_> = pending
         .into_iter()
         .filter(|p| !busy.contains(p.handle.as_str()))
+        .map(|p| Advice::of(p, &verifying))
         .collect();
     for t in tasks {
         if unanswered.iter().any(|p| p.slug == t.slug) {
@@ -868,10 +872,6 @@ pub(crate) fn digest_on(
         limit: limits.orchestrator_tasks,
         scoped: false,
     })
-}
-
-fn pending_key(pending: &Pending) -> String {
-    format!("{}#{}", pending.slug, pending.post.id)
 }
 
 #[cfg(test)]

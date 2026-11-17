@@ -2,6 +2,7 @@
 
 use super::hc::{self, Hc, Object, text_of};
 use super::{Machine, cleanup, restore};
+use crate::cli::{Env, agents, probes};
 use crate::rows::TaskSessionRow;
 use crate::store::unanswered::{Asked, restorable};
 use crate::{Error, Store};
@@ -27,6 +28,17 @@ pub fn restore_unanswered(
 ) -> Result<Vec<String>, Error> {
     let board = store.board()?;
     let callbacks = store.callbacks()?;
+    let env = Env {
+        cwd: machine.root.clone(),
+        ..Env::of_process()
+    };
+    // Recovery already reads hc through its injected owner. The agents view needs only the
+    // existing run/process probes here; it must not start a second, uninjected hc inventory.
+    let probes = agents::Probes {
+        panes: Box::new(|| Ok(Vec::new())),
+        ..probes::machine(&env)
+    };
+    let verifying = || agents::running_tests(store, &probes).map(|runs| runs.into_keys().collect());
     let mut restored = Vec::new();
     for pending in store.pending_posts(&board, Asked::Overdue(&board.tasks, store.now()))? {
         if pending.health.holds() && callbacks.contains_key(&pending.handle) {
@@ -48,7 +60,7 @@ pub fn restore_unanswered(
             .pending_posts(&fresh, again)?
             .iter()
             .any(|p| p.handle == pending.handle && p.post.id == pending.post.id)
-            || !store.claim_unanswered_restore(&pending)?
+            || !store.claim_unanswered_restore_checking(&pending, &verifying)?
         {
             continue;
         }

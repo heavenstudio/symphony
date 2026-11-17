@@ -1347,8 +1347,8 @@ follows the header, whoever the digest is for, and its raising is an entry.
 Counts and the clock do not trigger delivery. A departure alone pushes nothing;
 an entry that stays present is never re-sent, and an ordinary entry that leaves and returns pushes once.
 The first PULL a recipient receives is the whole digest: `PULL HH:MM` with every count, then each list's
-first six rows and how many more it holds, but `unanswered`, whose every post is listed with the command that
-answers it, since a post a PULL tells is never told again. Each later one says only what changed since the last PULL it
+first six rows and how many more it holds, but `unanswered`, whose every post is listed with its
+actionable advice, delivered once per target and action. Each later one says only what changed since the last PULL it
 acknowledged: the counts that moved (`PULL ready_unstaffed=34 (was 33)`, or `PULL counts unchanged`), the
 liveness and low-volume lines it was not told, each row a list gained, and `resolved LIST a, b` for the rows
 that left it. A backlog of 33 that gains one row is that header and one row. What the last acknowledged PULL said
@@ -1369,7 +1369,8 @@ The scan reads only the open tasks' threads, and each of its reads waits at most
 board command never waits minutes on it. A pass whose unanswered-post scan fails says why on stderr and delivers the rest, and its PULL says nothing of
 those posts, neither their count nor any of them resolved; their count is then unknown to the recipient, so the
 next PULL whose scan answers says it (`unanswered=1 (was unknown)`) and resolves the posts answered meanwhile.
-Unanswered work retains its task/post identity across departures and returns.
+Unanswered work retains its task/post identity across departures and returns; executor handoffs
+also distinguish the current target and whether it needs follow-up or recovery.
 `unanswered` lists an executor on an in-progress, blocked or review task, or a reviewer
 on a task in review, when it is lost or left (or its recorded terminal is closed) and an
 addressed post has waited thirty minutes without a later message, status move or
@@ -1377,10 +1378,18 @@ verdict from that handle. A deliberate role release also answers earlier request
 an automatic departure does not. Posts belong to their recipients at post time,
 so a replacement never inherits its predecessor's role-addressed work. Each line
 names the post and the recorded conversation's `just tasks restore SLUG HANDLE`
-command, or the explicit launch command when no conversation was recorded. The
-orchestrator receives each task/post once, even if it leaves and returns; a new
-unanswered post can push a new line for the same task. Its count appears only when
-nonzero. `reap` makes the sole automatic recovery attempt described above.
+command, or the explicit launch command when no conversation was recorded. When a different
+executor now holds the task, the original request stays visible: its advice names both handles
+and follows up with the current executor using `just tasks say`. A live, stale or liveness-unknown
+replacement, or one running a test, prevents duplicate launch advice. If that replacement is lost or leaves, the advice
+offers an executor launch again, without reviving the predecessor's conversation. Each target
+and action is delivered once, so replacement loss can push recovery after an earlier follow-up;
+an unchanged request and action are never repeated. Its count appears only when
+nonzero. `reap` uses the same successor eligibility before automatic recovery, checking current
+task, session and native-presence inputs again in its reservation transaction, with fresh
+running-test evidence. A changed observation or an active successor consumes no recovery attempt;
+once that successor no longer qualifies, the unanswered conversation can recover. `reap` makes
+the sole automatic recovery attempt described above.
 
 What is pushed is what the recipient cannot predict and must act on, said once: posts and verdicts, the
 owner's moves (a `MOVE` line, [Talking on a task](#talking-on-a-task)), NEW, STATUS, ROLE, GIVEN (one line for every task the board gave the recipient since its last read, [Tasks and roles](#tasks-and-roles)), BLOCKED, the PULL above, and STALE, LOST or LIVENESS UNKNOWN once for each transition of a quiet
