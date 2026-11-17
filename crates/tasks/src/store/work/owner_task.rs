@@ -27,7 +27,8 @@ impl Store {
     /// at most: none when the save never reached the board, one when it did, and two when the
     /// receipt does not say which task it made.
     pub fn owner_saved(&self, receipt: &str) -> Result<Vec<String>, Error> {
-        self.retrying(|| self.read(sql::OWNER_SAVED, json!({"receipt": receipt})))
+        let read = || both(sql::OWNER_SAVED, pg::OWNER_SAVED);
+        self.retrying(|| self.read(read(), json!({"receipt": receipt})))
     }
 
     /// Create an owner's task with an opaque save receipt in the task's private fields.

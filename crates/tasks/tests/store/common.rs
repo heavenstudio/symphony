@@ -510,6 +510,47 @@ impl Fixture {
             .unwrap();
     }
 
+    /// Every row of each of the board's tables, as [`Store::raw`] reads them past every rule, on
+    /// either database: what a write refused leaves as it was.
+    #[allow(
+        dead_code,
+        reason = "each test binary including this file reads the board as its tests need"
+    )]
+    pub fn rows(&self) -> serde_json::Value {
+        const TABLES: [&str; 20] = [
+            "task",
+            "link",
+            "session",
+            "session_revision",
+            "role",
+            "message",
+            "said",
+            "delivery",
+            "delivery_key",
+            "barred_key",
+            "task_session",
+            "counter",
+            "meta",
+            "writer",
+            "callback_state",
+            "callback_lease",
+            "callback_event",
+            "chat_event",
+            "ask",
+            "usage",
+        ];
+        let raw = self.store.raw();
+        (TABLES.iter())
+            .map(|table| {
+                (
+                    table.to_string(),
+                    raw.table(table).get().expect("the table reads"),
+                )
+            })
+            .collect::<serde_json::Map<_, _>>()
+            .into()
+    }
+
     /// The text of each line on `slug`'s thread.
     pub fn said(&self, slug: &str) -> Vec<String> {
         let thread = self.store.thread(slug).expect("the task is there");
@@ -759,8 +800,9 @@ fn open(db: &Database, clock: &Arc<Mutex<f64>>, alive: &Arc<Mutex<HashSet<i64>>>
 
 /// Two sessions and two tasks, and a store whose rule sees amber-heron come back between its read and
 /// its write, by acting on the other task (acting is being seen).
-pub fn amber_back_meanwhile() -> (Fixture, Store) {
-    let f = Fixture::new(
+pub fn amber_back_meanwhile(backend: Backend) -> (Fixture, Store) {
+    let f = Fixture::on(
+        backend,
         Seed::default()
             .session("amber-heron")
             .session("brisk-finch")
