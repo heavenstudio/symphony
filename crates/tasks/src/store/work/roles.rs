@@ -39,7 +39,7 @@ impl Store {
     /// Taking the orchestrator role makes the open work it takes on the taker's: refused when that
     /// raises the taker's open tasks past the store's cap ([`crate::slots`]). The reviewer's role
     /// is refused to its executor, and to a session that requested the work, one that orchestrates
-    /// the task or did or that filed it, but on a fast fix ([`Held::requested`]): its verdict is
+    /// the task or did or that filed it ([`Held::requested`]): its verdict is
     /// none the board takes ([`Store::verdict`]), so it is told at once who gives it instead. One
     /// reviewer a task: while another holds the role and is still there, a new one is refused naming
     /// it, as each later round resumes that one, unless it says why it joins beside it
@@ -102,9 +102,8 @@ impl Store {
             }
             let mut change = Change::default();
             if role == "reviewer" {
-                let fast = crate::fast_fix::marked(&task.fields).is_some();
                 let orchestrates = view.holds(handle, "orchestrator");
-                if let Some(why) = held.requested(handle, &task.created_by, orchestrates, fast) {
+                if let Some(why) = held.requested(handle, &task.created_by, orchestrates) {
                     return Err(refused(super::unfresh_refusal(
                         &board, slug, handle, why, true,
                     )));
@@ -117,7 +116,7 @@ impl Store {
                 for other in view.holders(role).filter(|_| !filer && !view.holds(handle, role)) {
                     let (who, health) = (&other.handle, view.health(&other.handle));
                     let theirs = view.holds(who, "orchestrator");
-                    if held.unfresh(who, &task.created_by, theirs, fast).is_some() {
+                    if held.unfresh(who, &task.created_by, theirs).is_some() {
                         continue;
                     }
                     if health.holds() {

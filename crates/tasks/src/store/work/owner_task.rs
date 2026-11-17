@@ -82,14 +82,6 @@ impl Store {
         }
         let red = (new.red.as_deref()).map(|what| named(&new.slug, what));
         let red = red.transpose()?;
-        let fast_fix = match new.fast_fix.as_deref().map(str::trim) {
-            Some("") => {
-                return Err(refused(
-                    "a fast fix records why it needs no reviewer: its risk, in words".into(),
-                ));
-            }
-            fast_fix => fast_fix,
-        };
         let parent = new.parent.as_deref().filter(|p| !p.is_empty());
         if new.instruction && parent.is_none() {
             return Err(refused(
@@ -118,7 +110,6 @@ impl Store {
             acts: new.by != OWNER,
             receipt: receipt.is_some(),
             red: red.is_some(),
-            fast_fix: fast_fix.is_some(),
             arm: arm.is_some(),
         };
         let body = || both(sql::create(&creating), Pg::script(pg::create(&creating)));
@@ -129,7 +120,7 @@ impl Store {
                 "slug": new.slug, "title": title, "body": new.body, "status": new.status,
                 "priority": new.priority, "parent": parent, "instruction": new.instruction,
                 "needed": needed, "links": links, "assignee": new.assignee, "said": said,
-                "owner_save": receipt, "red": red, "fast_fix": fast_fix, "arm": arm,
+                "owner_save": receipt, "red": red, "arm": arm,
                 "taken": format!("{REFUSED}task {} already exists", new.slug),
                 "unassignable": new.assignee.as_ref()
                     .map(|a| format!("{REFUSED}no session {} to assign it to", repr(a))),
