@@ -138,6 +138,30 @@ describe("the approved B board", () => {
     localStorage.setItem(STAGE_KEY, "unknown");
     expect(columns(board())).toEqual(["review"]);
   });
+  it("opens the linked row's original stage before a saved phone tab", () => {
+    vi.stubGlobal("innerWidth", 390);
+    vi.stubGlobal("location", { hash: "#row-work%2Fa" });
+    localStorage.setItem(STAGE_KEY, "design");
+    expect(
+      columns(
+        board({
+          tasks: [
+            aTask("work/a", {
+              status: "blocked",
+              from: "ready",
+              waits_on: { kind: "decision", who: "design-choice", why: "Needed", since: 1 },
+            }),
+          ],
+        }),
+      ),
+    ).toEqual(["ready"]);
+  });
+  it("opens a linked row in a hidden desktop rail", () => {
+    vi.stubGlobal("location", { hash: "#row-work/a" });
+    expect(columns(board({ tasks: [aTask("work/a", { status: "backlog" })] }))).toEqual([
+      "backlog",
+    ]);
+  });
   it("orders ordinary work by age then natural slug and finished tasks newest first", () => {
     vi.stubGlobal("location", { hash: "#column-ready" });
     expect(

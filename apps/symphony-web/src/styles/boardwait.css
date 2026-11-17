@@ -17,17 +17,20 @@
 .waiting-columns .stage-slot {
   min-width: 0;
 }
-.waiting-columns .column h2 {
+.waiting-columns .column h2,
+.waiting-columns .ghost-column h2 {
   font-size: 0.7rem;
   white-space: nowrap;
   margin: 2px 2px 8px;
   gap: 4px;
 }
-.waiting-columns .column h2 .count {
+.waiting-columns .column h2 .count,
+.waiting-columns .ghost-column h2 .count {
   padding: 0 5px;
 }
 .column-summary {
   min-height: 16px;
+  line-height: 16px;
   margin: -4px 2px 8px;
   font-size: 0.72rem;
   color: var(--muted-foreground);
@@ -216,6 +219,9 @@
   min-width: 0;
 }
 .task-wait .why {
+  background: none;
+  padding: 0;
+  color: var(--muted-foreground);
   grid-column: 1 / -1;
   min-width: 0;
   overflow: hidden;
@@ -295,10 +301,10 @@
     min-height: 0;
   }
   .waiting-columns:not(.wait-list) .column > h2,
-  .waiting-columns:not(.wait-list) .column-summary {
+  .waiting-columns .ghost-column > h2 {
     display: none;
   }
-  .waiting-columns .column[data-status="done"] .column-summary {
+  .waiting-columns .column-summary {
     display: block;
     margin: 0 0 8px;
   }
@@ -360,6 +366,8 @@
   color: var(--question);
 }
 .waiting-card-ghost {
+  border-left-width: 3px;
+  line-height: 1.35;
   box-sizing: border-box;
   padding: 7px 10px;
 }

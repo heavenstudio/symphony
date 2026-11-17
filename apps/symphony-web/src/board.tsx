@@ -13,6 +13,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { linkedSlug, linkedTask } from "./boardlink";
 import { focusedLink, focusedSlug, takeFocus, useKeptPlace } from "./boardplace";
 import {
   OrchestratorBanner,
@@ -30,6 +31,8 @@ import {
 } from "./boardwait";
 import { Button } from "./button";
 import { href } from "./project";
+import { said } from "./request";
+import { useAnchor } from "./route";
 import { SelectField } from "./select";
 import { load, save } from "./storage";
 import { isTask } from "./task";
@@ -105,9 +108,12 @@ export function GhostCard() {
 function GhostColumn({ status, count }: { status: string; count: number }) {
   return (
     <div className="ghost-column" data-for={status}>
-      <div>
+      <h2>
         <span className="bone" style={width("9ch")} />
-      </div>
+        <span className="count" style={{ visibility: "hidden" }}>
+          0
+        </span>
+      </h2>
       <div className="column-summary">
         <span className="bone" style={width("12ch")} />
       </div>
@@ -439,6 +445,7 @@ export interface TaskBoardProps {
 
 /** The board: its filters, its columns and its task groups. */
 export function TaskBoard({
+  scope,
   tasks,
   work,
   connected,
@@ -458,6 +465,73 @@ export function TaskBoard({
   const [opened, setOpened] = useState("");
   const [filtering, setFiltering] = useState(false);
   const [now, setNow] = useState(() => Date.now() / 1000);
+  const address = useAnchor();
+  const slug = linkedSlug(address);
+  const [resolved, setResolved] = useState<Task | null>(null);
+  const [linkError, setLinkError] = useState("");
+  const [retryLink, setRetryLink] = useState(0);
+  const [followed, setFollowed] = useState("");
+  const known = tasks.find((task) => task.slug === slug);
+  const linked = known ?? (resolved?.slug === slug ? resolved : null);
+  useEffect(() => {
+    void retryLink;
+    if (slug === "" || known !== undefined) return;
+    const controller = new AbortController();
+    setLinkError("");
+    void linkedTask(scope, slug, controller.signal).then(
+      (task) => {
+        if (!controller.signal.aborted) {
+          setResolved(task);
+          if (task === null) setLinkError("The linked task is no longer on this board.");
+        }
+      },
+      (error: unknown) => {
+        if (!controller.signal.aborted) setLinkError(said(error));
+      },
+    );
+    return () => controller.abort();
+  }, [scope, slug, known, retryLink]);
+  // Resolve the address before the selected column mounts, so its row can land directly under
+  // the header. A saved phone tab never takes precedence over an explicit row address.
+  const destination = linked === null ? "" : waitingStage(work, linked, connected);
+  if (followed !== address && (slug === "" || linked !== null)) {
+    setFollowed(address);
+    if (linked !== null) {
+      if (PHONE_STAGES.includes(destination)) setSelected(destination);
+      setOpened(
+        STAGES.includes(destination) || (phone && PHONE_STAGES.includes(destination))
+          ? ""
+          : destination,
+      );
+    }
+  }
+  const linkPage = useRef("");
+  useEffect(() => {
+    if (known !== undefined || destination === "" || wait !== "" || search !== "") return;
+    if (phone ? destination !== (opened || selected) : opened !== "" && opened !== destination)
+      return;
+    const rows = tasks.filter((task) => waitingStage(work, task, connected) === destination).length;
+    const total = counts.find(([stage]) => stage === destination)?.[1] ?? 0;
+    const key = `${address}:${destination}:${rows}`;
+    if (rows === 0 || rows >= total || linkPage.current === key) return;
+    linkPage.current = key;
+    onLoad(destination, true, search, days);
+  }, [
+    address,
+    destination,
+    known,
+    tasks,
+    counts,
+    work,
+    connected,
+    phone,
+    opened,
+    selected,
+    wait,
+    search,
+    days,
+    onLoad,
+  ]);
   const surface = useRef<HTMLDivElement>(null);
   useKeptPlace(surface, true, true);
   // Follow only the card holding the keyboard focus. Adjust this component's state before
@@ -557,6 +631,11 @@ export function TaskBoard({
   const machine = work.machines.length > 0;
   return (
     <div className="waiting-board">
+      {slug !== "" && known === undefined && linkError !== "" && (
+        <p role="status" className="trouble">
+          {linkError} <Button onClick={() => setRetryLink(retryLink + 1)}>Retry</Button>
+        </p>
+      )}
       <Button
         type="button"
         className="board-filters-toggle"
