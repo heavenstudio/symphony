@@ -222,11 +222,22 @@ fn touches_release_the_position_hold_after_their_scrolling_finishes() {
 /// A detached element cannot deliver scrollend to the shell's window listener. Removing it must
 /// release later layout holds, but not the momentum of another, still-connected scroller. The
 /// touch input is synthetic; both element scrolls and the connected scrollend are native events.
+/// Release and cancellation target the original element, before or after its removal. A second
+/// scroller also has a second contact: its release leaves the detached contact down until last.
 #[test]
 fn removed_scrollers_release_idle_holds_without_ending_connected_scrolling() {
     let site = site_of(&listing_of(&[("review", 30)]));
     let Some(mut page) = chrome() else { return };
-    for continuing in [false, true] {
+    for (release_before, release_kind, continuing) in [
+        (true, "touchend", false),
+        (true, "touchend", true),
+        (true, "touchcancel", false),
+        (true, "touchcancel", true),
+        (false, "touchend", false),
+        (false, "touchend", true),
+        (false, "touchcancel", false),
+        (false, "touchcancel", true),
+    ] {
         open_on_a_phone(&mut page, &site);
         let result = page.eval(&format!(
             r#"(async () => {{
@@ -249,7 +260,16 @@ fn removed_scrollers_release_idle_holds_without_ending_connected_scrolling() {
                     return box;
                 }};
                 const removed = scroller(), kept = {continuing} ? scroller() : null;
+                const firstContact = new Touch({{identifier:1, target:removed}});
+                const contacts = kept ? [firstContact, new Touch({{identifier:2, target:kept}})] : [firstContact];
                 const events = [];
+                let whileDown = null, releasedConnected = null;
+                const touch = (type, target = removed, touches = contacts) => target.dispatchEvent(new TouchEvent(type, {{bubbles:true, touches}}));
+                const release = () => {{
+                    if (kept) touch({release_kind:?}, kept, [firstContact]);
+                    releasedConnected = removed.isConnected;
+                    touch({release_kind:?}, removed, []);
+                }};
                 const ended = kept && new Promise(resolve => kept.addEventListener('scrollend', event => {{
                     events.push(['end', event.isTrusted]);
                     resolve();
@@ -268,15 +288,28 @@ fn removed_scrollers_release_idle_holds_without_ending_connected_scrolling() {
                     removed.addEventListener('scroll', event => {{
                         events.push(['removed', event.isTrusted]);
                         removed.remove();
-                        if (kept) kept.scrollTop = 40;
-                        else resolve(displaced());
+                        const onward = () => {{
+                            if (kept) kept.scrollTop = 40;
+                            else resolve(displaced());
+                        }};
+                        if ({release_before}) onward();
+                        else {{
+                            window.reviewHoldPlace('.waiting-columns [data-slug]');
+                            row.style.transform = 'translateY(40px)';
+                            requestAnimationFrame(() => {{
+                                whileDown = row.getBoundingClientRect().top;
+                                row.style.transform = '';
+                                release();
+                                onward();
+                            }});
+                        }}
                     }}, {{once:true}});
                 }});
-                const touch = type => removed.dispatchEvent(new TouchEvent(type, {{bubbles:true}}));
-                touch('touchstart');
+                touch('touchstart', removed, [firstContact]);
+                if (kept) touch('touchstart', kept);
                 touch('touchmove');
                 removed.scrollTop = 40;
-                touch('touchend');
+                if ({release_before}) release();
                 const first = await scrolled;
                 if (ended) await ended;
                 const idle = row.getBoundingClientRect().top;
@@ -284,10 +317,22 @@ fn removed_scrollers_release_idle_holds_without_ending_connected_scrolling() {
                 row.style.transform = 'translateY(160px)';
                 await new Promise(requestAnimationFrame);
                 kept?.remove();
-                return {{before, first, idle, after:row.getBoundingClientRect().top, events}};
+                return {{before, first, idle, after:row.getBoundingClientRect().top, events, whileDown, releasedConnected}};
             }})()"#
         ));
         let before = result["before"].as_f64().unwrap();
+        assert_eq!(
+            result["releasedConnected"],
+            json!(release_before),
+            "{result}"
+        );
+        if !release_before {
+            assert_eq!(
+                result["whileDown"].as_f64().unwrap(),
+                before + 40.0,
+                "{result}"
+            );
+        }
         assert_eq!(result["first"][0].as_f64().unwrap(), before + 80.0);
         assert_eq!(
             result["first"][1].as_f64().unwrap(),

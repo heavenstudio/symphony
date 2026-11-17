@@ -356,10 +356,28 @@ function onGesture(stop) {
 // arriving after touchstart must not begin a position hold in the middle of that gesture. Track
 // each scroller: an unrelated box ending its scroll must not end the page's flick.
 let touchScroll = null;
+function clearTouchScroll() {
+  touchScroll?.release.abort();
+  touchScroll = null;
+}
 addEventListener(
   "touchstart",
-  () => {
-    touchScroll = { moved: false, down: true, scrollers: new Set() };
+  (event) => {
+    clearTouchScroll();
+    const release = new AbortController();
+    touchScroll = { moved: false, down: true, scrollers: new Set(), release };
+    // Releases still target where each contact began, even after that node is removed. Keep
+    // listeners there as well as at the window, for every contact that remains down.
+    const targets = new Set([event.target, ...Array.from(event.touches, (touch) => touch.target)]);
+    for (const target of targets) {
+      for (const type of ["touchend", "touchcancel"]) {
+        target.addEventListener(type, releaseTouch, {
+          capture: true,
+          passive: true,
+          signal: release.signal,
+        });
+      }
+    }
   },
   { capture: true, passive: true },
 );
@@ -377,16 +395,17 @@ addEventListener(
   },
   { capture: true, passive: true },
 );
-const releaseTouch = (event) => {
+function releaseTouch(event) {
   const touch = touchScroll;
   if (!touch || event.touches.length > 0) return;
   touch.down = false;
+  touch.release.abort();
   // Scroll events are delivered before the next frame. A touch that scrolled nothing gets no
   // scrollend, so let it go once those events have had their turn.
   requestAnimationFrame(() => {
-    if (touchScroll === touch && touch.scrollers.size === 0) touchScroll = null;
+    if (touchScroll === touch && touch.scrollers.size === 0) clearTouchScroll();
   });
-};
+}
 addEventListener("touchend", releaseTouch, { capture: true, passive: true });
 addEventListener("touchcancel", releaseTouch, { capture: true, passive: true });
 addEventListener(
@@ -394,13 +413,11 @@ addEventListener(
   (event) => {
     if (!touchScroll) return;
     touchScroll.scrollers.delete(event.target);
-    if (!touchScroll.down && touchScroll.scrollers.size === 0) touchScroll = null;
+    if (!touchScroll.down && touchScroll.scrollers.size === 0) clearTouchScroll();
   },
   { capture: true, passive: true },
 );
-addEventListener("pagehide", () => {
-  touchScroll = null;
-});
+addEventListener("pagehide", clearTouchScroll);
 
 // A live update about to be drawn keeps what the reader looks at in place: the focused field on
 // the screen, else the first of `rows` on it. Only where the reader has scrolled: the box that
@@ -419,7 +436,7 @@ window.reviewHoldPlace = (rows) => {
     for (const scroller of touchScroll.scrollers) {
       if (!scroller.isConnected) touchScroll.scrollers.delete(scroller);
     }
-    if (touchScroll.scrollers.size === 0) touchScroll = null;
+    if (touchScroll.scrollers.size === 0) clearTouchScroll();
   }
   if (touchScroll?.moved) return;
   const shows = (node) => {
