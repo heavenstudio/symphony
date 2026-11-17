@@ -10,7 +10,9 @@
 # each tarball). The Rust tests start it (`crates/tasks/tests/store/common.rs`), unless
 # `SYMPHONY_SURREAL` names another. Of callers at once, one fetches, holding the folder's `lock`
 # file under the kernel's lock (tools/check_lock.sh), which the others wait on and which ends with
-# its holder; nothing but that file and the checked binary is ever left in the folder.
+# its holder. Each fetch downloads into a scratch folder of its own there, `fetch.XXXXXX`, and
+# removes it; a fetch killed part way leaves its scratch folder, which the next fetch removes under
+# the lock. Nothing else is ever left in the folder but that file and the checked binary.
 # A refusal is one line on stderr, `❌ surreal: …`, and exit 2.
 #
 # Sourced, it defines its functions and runs nothing. Test harnesses can supply fetch and pinned
@@ -136,9 +138,15 @@ unlock() {
 
 # Fetch build $2 into folder $1, check it and install it, under the folder's lock: its path.
 install() {
-    local where="$1" name="$2" binary="$1/$VERSION/surreal" from scratch why got
+    local where="$1" name="$2" binary="$1/$VERSION/surreal" from scratch why got left
     from="$(url "$name")"
     printf 'surreal: fetching SurrealDB %s for %s once for this machine, into %s\n' "$VERSION" "$name" "$where" >&2
+    # What a fetch killed part way left: every fetch runs under the lock, so none writes it now.
+    for left in "$where"/fetch.*; do
+        if [ -d "$left" ] && [ ! -L "$left" ]; then
+            rm -rf "$left"
+        fi
+    done
     mkdir -p "$where/$VERSION" || return 1
     scratch="$(mktemp -d "$where/fetch.XXXXXX")" || return 1
     if ! why="$(fetch "$from" "$scratch/surreal.tgz")"; then

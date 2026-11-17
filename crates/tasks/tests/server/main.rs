@@ -1,8 +1,8 @@
 //! The board's server: found where it says it is, started when it is not (on a reserved port, and on
 //! another when that one was taken), and the git common dir it keeps its data in; what its store
 //! takes on disk, and the reclaim that rebuilds it; in a repository of its own, a write's
-//! delivery by the detached dispatcher it starts; and the board's PostgreSQL beside it, started
-//! and stopped on scratch boards.
+//! delivery by the detached dispatcher it starts; the board's PostgreSQL beside it, started
+//! and stopped on scratch boards; and the lock `tools/surreal.sh` fetches its SurrealDB under.
 
 // How a test starts its own children ([`children::Child`]).
 #[path = "../support/children.rs"]
@@ -42,3 +42,4 @@ mod snapshot;
 #[path = "../store/common.rs"]
 #[allow(dead_code)]
 mod store;
+mod surreal_lock;

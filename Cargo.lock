@@ -4153,6 +4153,7 @@ dependencies = [
  "serde_json",
  "symphony-blocks",
  "symphony-docs",
+ "test-time",
 ]
 
 [[package]]
