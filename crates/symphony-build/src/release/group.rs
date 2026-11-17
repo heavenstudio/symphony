@@ -281,6 +281,17 @@ struct Member {
     live: bool,
 }
 
+impl Member {
+    /// An incomplete observation needs another look, never an assumption of successful cleanup.
+    fn uncertain(pid: u32) -> Self {
+        Self {
+            pid,
+            start: (0, 0),
+            live: true,
+        }
+    }
+}
+
 fn running(group: u32) -> io::Result<bool> {
     // A kernel census can cease listing a dying leader before waitid reports its exit. Keep
     // that wait inside the bounded drain too, so the caller's final reap cannot block on it.
@@ -343,11 +354,7 @@ fn members(group: u32) -> io::Result<Vec<Member>> {
         } else {
             // It left the group or was reaped after the list. It could have forked first; make
             // the drain look again rather than calling that incomplete census empty.
-            found.push(Member {
-                pid: pid as u32,
-                start: (0, 0),
-                live: true,
-            });
+            found.push(Member::uncertain(pid as u32));
         }
     }
     Ok(found)
@@ -355,20 +362,59 @@ fn members(group: u32) -> io::Result<Vec<Member>> {
 
 #[cfg(target_os = "linux")]
 fn members(group: u32) -> io::Result<Vec<Member>> {
+    linux_members(Path::new("/proc"), group, &mut process_group)
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn process_group(pid: u32) -> io::Result<Option<u32>> {
+    if pid == 0 {
+        return Err(io::Error::from_raw_os_error(libc::EINVAL));
+    }
+    let pid = libc::pid_t::try_from(pid).map_err(io::Error::other)?;
+    retry_interrupted(|| {
+        // SAFETY: getpgid only observes this positive process id; it sends no signal.
+        let group = unsafe { libc::getpgid(pid) };
+        if group >= 0 {
+            return Ok(Some(group as u32));
+        }
+        let error = io::Error::last_os_error();
+        if error.raw_os_error() == Some(libc::ESRCH) {
+            Ok(None)
+        } else {
+            Err(error)
+        }
+    })
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn linux_members(
+    root: &Path,
+    group: u32,
+    group_of: &mut dyn FnMut(u32) -> io::Result<Option<u32>>,
+) -> io::Result<Vec<Member>> {
     let mut found = Vec::new();
-    for entry in std::fs::read_dir("/proc")? {
+    for entry in std::fs::read_dir(root)? {
         let entry = entry?;
         let Ok(pid) = entry.file_name().to_string_lossy().parse::<u32>() else {
             continue;
         };
+        match group_of(pid)? {
+            Some(current) if current != group => continue,
+            None => {
+                found.push(Member::uncertain(pid));
+                continue;
+            }
+            Some(_) => {}
+        }
         let text = match std::fs::read_to_string(entry.path().join("stat")) {
             Ok(text) => text,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                found.push(Member::uncertain(pid));
+                continue;
+            }
             Err(error) => return Err(error),
         };
-        if let Some(member) = stat_member(pid, &text, group)? {
-            found.push(member);
-        }
+        found.push(stat_member(pid, &text, group)?.unwrap_or_else(|| Member::uncertain(pid)));
     }
     Ok(found)
 }
@@ -797,6 +843,73 @@ mod tests {
                 io::ErrorKind::InvalidData
             );
         }
+    }
+
+    #[test]
+    fn a_linux_census_rechecks_disappearing_or_changed_members_and_preserves_errors() {
+        let tree = Tree::new();
+        let stat = |group| format!("7 (helper) Z 1 {group} 10 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 123 0");
+        tree.write("self", "not a numeric process directory");
+        tree.write("7/stat", &stat(10));
+        tree.write("8/stat", "another group's stat is not read");
+        tree.write("9/placeholder", "the stat disappeared after getpgid");
+        tree.write("10/stat", &stat(11));
+        tree.write("11/stat", "the process disappeared before getpgid");
+        let mut group_of = |pid| {
+            Ok(match pid {
+                8 => Some(11),
+                11 => None,
+                _ => Some(10),
+            })
+        };
+        let mut found = linux_members(&tree.root, 10, &mut group_of).unwrap();
+        found.sort_by_key(|member| member.pid);
+        assert_eq!(
+            found,
+            [
+                Member {
+                    pid: 7,
+                    start: (123, 0),
+                    live: false
+                },
+                Member::uncertain(9),
+                Member::uncertain(10),
+                Member::uncertain(11)
+            ]
+        );
+        let error = linux_members(&tree.root, 10, &mut |_| {
+            Err(io::Error::other("getpgid refused"))
+        })
+        .unwrap_err();
+        assert_eq!(error.to_string(), "getpgid refused");
+        assert!(linux_members(&tree.path("missing"), 10, &mut group_of).is_err());
+        tree.write("7/stat", "malformed");
+        assert_eq!(
+            linux_members(&tree.root, 10, &mut group_of)
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::InvalidData
+        );
+        let unreadable = Tree::new();
+        unreadable.write(
+            "7/stat/directory",
+            "a stat that is a directory cannot be read",
+        );
+        assert!(linux_members(&unreadable.root, 10, &mut group_of).is_err());
+    }
+
+    #[test]
+    fn a_native_group_observation_reads_only_positive_pids() {
+        let child = Owned(
+            command("sleep")
+                .arg("1000")
+                .process_group(0)
+                .spawn()
+                .unwrap(),
+        );
+        assert_eq!(process_group(child.0.id()).unwrap(), Some(child.0.id()));
+        assert!(process_group(0).is_err());
+        assert!(process_group(u32::MAX).is_err());
     }
 
     #[test]
