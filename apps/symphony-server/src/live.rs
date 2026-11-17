@@ -237,7 +237,13 @@ pub(crate) struct Hub {
     /// see that a read rendered nothing.
     renders: AtomicU64,
     /// The store the page reads of the board share ([`Hub::reader`]), once one has been opened.
-    reader: Mutex<Option<Arc<symphony_board::Store>>>,
+    reader: Mutex<BoardReader>,
+    /// Independent deadlines for failed board work ([`retry`]).
+    board_retry: Mutex<retry::Retry>,
+    chat_retry: Mutex<retry::Retry>,
+    dispatch_retry: Mutex<retry::Retry>,
+    give_retry: Mutex<retry::Retry>,
+    retry_clock: Box<dyn Fn() -> Instant + Send + Sync>,
     /// How [`Hub::reader`] opens the board: [`taskview::connect`], held to `repository` as every
     /// reach from `root` here is ([`taskview::serve`]), or a test's board.
     pub(crate) connect_reader: Box<Connect>,
@@ -256,6 +262,13 @@ pub(crate) struct Hub {
 /// ([`branches::Scan::failed`]). The cards are shared, so the hourly roll-up takes them without a
 /// copy ([`reports`]).
 type BranchScan = (Arc<Vec<branches::BranchCard>>, f64, Arc<BTreeSet<String>>);
+
+#[derive(Default)]
+struct BoardReader {
+    store: Option<Arc<symphony_board::Store>>,
+    retry: retry::Retry,
+    error: Option<String>,
+}
 
 /// How a hub opens the board of the checkout at a path.
 pub(crate) type Connect = dyn Fn(&Path) -> Result<symphony_board::Store, String> + Send + Sync;
@@ -391,7 +404,12 @@ impl Hub {
             low_disk: health::low_disk(root),
             reads: AtomicU64::new(0),
             renders: AtomicU64::new(0),
-            reader: Mutex::new(None),
+            reader: Mutex::default(),
+            board_retry: Mutex::default(),
+            chat_retry: Mutex::default(),
+            dispatch_retry: Mutex::default(),
+            give_retry: Mutex::default(),
+            retry_clock: Box::new(Instant::now),
             connect_reader: Box::new(taskview::connect),
             panes: Box::new(|root| {
                 let mut env = symphony::children::board_env();
@@ -503,26 +521,44 @@ impl Hub {
     /// The store the page reads of the board share, opened by the first and kept, so the reads of a
     /// page (a task page asks for its task, its offer and its history) and of every page after it go
     /// on its connections, never opening the board anew: finding its server, asking `ps` and `lsof`
-    /// that it is that, and reading its schema. Reads wait while one opens it.
+    /// that it is that, and reading its schema. Reads wait while one opens it. A failed opening
+    /// keeps its error until its retry deadline ([`retry`]); requests never reset that deadline.
     pub(crate) fn reader(&self) -> Result<Arc<symphony_board::Store>, String> {
         let mut kept = self.reader.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(store) = &*kept {
+        if let Some(store) = &kept.store {
             return Ok(Arc::clone(store));
         }
         if !self.holds_its_project() {
             return Err(self.gone());
         }
-        let store = Arc::new((self.connect_reader)(&self.root)?);
-        *kept = Some(Arc::clone(&store));
-        Ok(store)
+        match kept
+            .retry
+            .run(&self.retry_clock, || (self.connect_reader)(&self.root))
+        {
+            Some(Ok(store)) => {
+                let store = Arc::new(store);
+                kept.store = Some(Arc::clone(&store));
+                kept.error = None;
+                Ok(store)
+            }
+            Some(Err(error)) => {
+                kept.error = Some(error.clone());
+                Err(error)
+            }
+            None => Err(kept.error.clone().expect("a failed opening waits")),
+        }
     }
 
     /// Forget `store` after the board failed a read on it, unless it is already forgotten: the next
     /// read opens the board anew, where its server is then.
     pub(crate) fn reader_failed(&self, store: &Arc<symphony_board::Store>) {
         let mut kept = self.reader.lock().unwrap_or_else(|e| e.into_inner());
-        if kept.as_ref().is_some_and(|kept| Arc::ptr_eq(kept, store)) {
-            *kept = None;
+        if kept
+            .store
+            .as_ref()
+            .is_some_and(|kept| Arc::ptr_eq(kept, store))
+        {
+            kept.store = None;
         }
     }
 
@@ -2034,15 +2070,7 @@ fn ticks(
         expiry.tick(&hub.root, symphony::postpone::now(), || {
             hub.refresh_order("")
         });
-        if board.is_none() {
-            board = hub.reconnect(&mut connect);
-        }
-        if let Some(store) = &board
-            && let Err(e) = measured("board tick", || hub.board_read(store))
-        {
-            hub.board_error(e);
-            board = None;
-        }
+        hub.board_tick(&mut board, &mut connect);
         measured("reports tick", || hub.reports_tick(board.as_ref()));
         measured("asks tick", || hub.asks_tick());
         measured("project tick", || hub.tell_project());
@@ -2358,6 +2386,9 @@ mod machine_work;
 pub(crate) use health::{Signal, Standing};
 mod owner_asks;
 mod reports;
+mod retry;
+#[cfg(test)]
+mod retry_tests;
 mod startup;
 mod task_asks;
 

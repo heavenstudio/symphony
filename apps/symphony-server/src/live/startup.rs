@@ -237,16 +237,8 @@ fn initial_board(
     }
     let board_started = Instant::now();
     let unwinding = Unwinding(&hub);
-    let board = match connect(&hub.root).and_then(|store| {
-        hub.board_read(&store)?;
-        Ok(store)
-    }) {
-        Ok(store) => Some(store),
-        Err(error) => {
-            hub.board_error(error);
-            None
-        }
-    };
+    let mut board = None;
+    hub.board_tick(&mut board, connect);
     drop(unwinding);
     // Logged before the waiters are released, so the log orders this read against what waited.
     eprintln!(
