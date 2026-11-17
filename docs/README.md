@@ -10,6 +10,8 @@
   the existing gate boundary, and migration that preserves the default flow.
 - [Managed PostgreSQL](analysis/hosted-postgresql.md) — the proposed hosted connection,
   connection budget, database boundary and PostgreSQL 16/18 validation contract.
+- [Configurable delivery workflows](analysis/configurable-delivery-workflow.md) — the proposed
+  C contract: separate phase/state, authoritative operations, migration and implementation briefs.
 - [Execution providers and durable attempts](analysis/remote-execution-attempts.md) — a proposal
   for project-owned execution adapters, durable recovery and authorized attempt history.
 - [Concept review](REVIEW.md) — review cards, comments, questions and the owner queue.
