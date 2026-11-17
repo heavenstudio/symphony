@@ -5,6 +5,7 @@
 //! beside it as a [`Narrowing`] of it.
 
 use crate::health::{EXECUTING, Health};
+use crate::maps::Collect as _;
 use crate::orchestration::{Owners, claimable_work, told_of};
 use crate::{Board, Error, Store, Task};
 use std::collections::btree_map::Entry;
@@ -124,7 +125,7 @@ fn look(board: &Board, handle: &str, kind: &str, scope: Scope) -> Seen {
         (board.tasks.iter())
             .filter(|t| t.status == "ready" && reaches(&t.slug))
             .map(|t| (t.slug.clone(), t.title.clone()))
-            .collect()
+            .collect_map()
     } else {
         BTreeMap::new()
     };
@@ -150,7 +151,7 @@ fn look(board: &Board, handle: &str, kind: &str, scope: Scope) -> Seen {
         .filter(|s| s.row.handle != handle)
         .filter(|s| told_of(&owners, work.as_ref(), &s.row, handle))
         .map(|s| (s.row.handle.clone(), s.health))
-        .collect();
+        .collect_map();
     Seen {
         latest_message: Some(board.latest_message),
         staffing,
@@ -158,7 +159,7 @@ fn look(board: &Board, handle: &str, kind: &str, scope: Scope) -> Seen {
         roles,
         statuses: (watched.iter())
             .map(|(slug, task)| (slug.to_string(), task.status.clone()))
-            .collect(),
+            .collect_map(),
         unclaimed: unclaimed.into_iter().map(str::to_owned).collect(),
         ready,
         children,
@@ -188,7 +189,7 @@ fn followed<'board>(
     for task in &board.tasks {
         kids.entry(task.parent.as_deref()).or_default().push(task);
     }
-    let mut watched: BTreeMap<&str, &Task> = mine.iter().map(|t| (t.slug.as_str(), *t)).collect();
+    let mut watched = mine.iter().map(|t| (t.slug.as_str(), *t)).collect_map();
     let mut below: HashSet<&str> = HashSet::new();
     let orchestrated =
         |t: &&&Task| (t.roles.iter()).any(|r| r.handle == handle && r.role == "orchestrator");
@@ -305,15 +306,15 @@ impl<V: Clone> Delta<V> {
             added: (heard.iter())
                 .filter(|(key, _)| !legacy.contains_key(*key))
                 .map(|(key, value)| (key.clone(), value.clone()))
-                .collect(),
+                .collect_map(),
         }
     }
 
     fn over(&self, legacy: &BTreeMap<String, V>) -> BTreeMap<String, V> {
-        let mut heard: BTreeMap<String, V> = (legacy.iter())
+        let mut heard = (legacy.iter())
             .filter(|(key, _)| !self.left.contains(*key))
             .map(|(key, value)| (key.clone(), value.clone()))
-            .collect();
+            .collect_map();
         for (key, value) in &self.added {
             heard.entry(key.clone()).or_insert_with(|| value.clone());
         }

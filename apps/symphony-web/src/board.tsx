@@ -5,7 +5,6 @@
 
 import {
   type CSSProperties,
-  Fragment,
   memo,
   useEffect,
   useLayoutEffect,
@@ -411,12 +410,40 @@ export function UnreadBoard({ why, retry }: { why: string; retry: () => void }) 
   );
 }
 
+/** Which of the pipeline's columns a heading's is, `3 of 6` (`stopPlace`): a phone shows its column
+ * alone and keeps its heading at the board's top (board.css), where this tells the reader where they
+ * stand; a wider window shows the columns side by side, and not this. A screen reader hears the
+ * heading's own words, moving through the columns in order. */
+function ColumnPlace({ place }: { place: string | undefined }) {
+  return place === undefined ? null : (
+    <span className="column-place" aria-hidden="true">
+      {place}
+    </span>
+  );
+}
+
+/** Where `stop` stands among the pipeline's `stops`, as its heading says it (`3 of 6`): nothing for
+ * a pipeline of one column, or a column not among them. */
+export function stopPlace(stops: readonly string[], stop: string): string | undefined {
+  const at = stops.indexOf(stop);
+  return stops.length > 1 && at >= 0 ? `${at + 1} of ${stops.length}` : undefined;
+}
+
 /** Build and Test of a project no machine reports for: one narrow rail where their columns go,
  * drawn again only when the feed comes or goes. */
-const UnreportedRail = memo(function UnreportedRail({ connected }: { connected: boolean }) {
+const UnreportedRail = memo(function UnreportedRail({
+  connected,
+  place,
+}: {
+  connected: boolean;
+  place?: string | undefined;
+}) {
   return (
     <section className="column rail" data-status="build-test" aria-label="Build and test">
-      <h2>build · test</h2>
+      <h2>
+        build · test
+        <ColumnPlace place={place} />
+      </h2>
       <p className="muted work-empty">
         {connected
           ? "No machine reports this project's builds or tests."
@@ -701,6 +728,8 @@ export interface ColumnProps {
   days: number;
   onLoad: OnLoad;
   refreshed: number;
+  /** Which of the pipeline's columns it is (`stopPlace`); none off the pipeline. */
+  place?: string | undefined;
 }
 
 /** A column of the board: its heading and count, its rows near the screen, and Load more. Drawn again
@@ -715,6 +744,7 @@ export const TaskColumn = memo(function TaskColumn({
   days,
   onLoad,
   refreshed,
+  place,
 }: ColumnProps) {
   const [visible, setVisible] = useState(false);
   // The layout a row's reserve is worked out for and the cards kept, read once: a window resized
@@ -766,6 +796,7 @@ export const TaskColumn = memo(function TaskColumn({
       <h2>
         {status === "signoff" ? "Waiting for your sign-off" : statusWords(status)}{" "}
         <span className="count">{count}</span>
+        <ColumnPlace place={place} />
       </h2>
       {status === "build" && <BoardContext work={work} connected={connected} />}
       {count === 0 && (status === "build" || status === "test") && (
@@ -919,7 +950,14 @@ export function TaskBoard({
     () => stageCounts(counts, lane, (task) => taskStage(work, task, connected)),
     [counts, lane, work, connected],
   );
-  const column = (status: string) => (
+  // The pipeline's columns, in order, the rail among them where it stands for Build and Test.
+  const stops = PIPELINE.flatMap((stage) => [
+    ...(unreported && stage === "build" && (selected === "" || machine(selected))
+      ? ["build-test"]
+      : []),
+    ...(listed.includes(stage) && (selected === "" || selected === stage) ? [stage] : []),
+  ]);
+  const column = (status: string, place?: string) => (
     <TaskColumn
       key={status}
       status={status}
@@ -931,6 +969,7 @@ export function TaskBoard({
       days={days}
       onLoad={onLoad}
       refreshed={refreshed}
+      place={place}
     />
   );
   return (
@@ -1013,16 +1052,13 @@ export function TaskBoard({
             aria-describedby={selected === "" ? "board-scroll-hint" : ""}
           >
             <div className="pipeline">
-              {PIPELINE.map((stage) => (
-                <Fragment key={stage}>
-                  {unreported && stage === "build" && (selected === "" || machine(selected)) && (
-                    <UnreportedRail connected={connected} />
-                  )}
-                  {listed.includes(stage) &&
-                    (selected === "" || selected === stage) &&
-                    column(stage)}
-                </Fragment>
-              ))}
+              {stops.map((stop) =>
+                stop === "build-test" ? (
+                  <UnreportedRail key={stop} connected={connected} place={stopPlace(stops, stop)} />
+                ) : (
+                  column(stop, stopPlace(stops, stop))
+                ),
+              )}
             </div>
           </div>
         )}

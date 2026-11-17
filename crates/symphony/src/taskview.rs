@@ -12,6 +12,7 @@ use symphony_api::{
 use crate::{clock, dashboard, render::Render};
 
 mod connect;
+pub(crate) use connect::served_journal;
 pub use connect::{connect, connect_in, connect_running, read_failure, serve};
 pub mod waiting;
 pub use waiting::Stood;

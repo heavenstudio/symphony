@@ -4,6 +4,7 @@
 
 use super::surreal::session_urls as sql;
 use super::{Error, Store, refused};
+use crate::maps::Collect as _;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
@@ -31,6 +32,6 @@ impl Store {
                 let kept = crate::session_url::checked(url.as_str()?).ok()??;
                 Some((handle, kept))
             })
-            .collect())
+            .collect_map())
     }
 }

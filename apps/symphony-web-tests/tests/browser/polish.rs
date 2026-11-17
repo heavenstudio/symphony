@@ -1657,7 +1657,9 @@ fn the_tasks_board_keeps_its_height_as_rows_load() {
 
 /// Where the card of `load/ready-{row}` stands below what the window shows of the page's header (a
 /// phone's scrolls away with the page), the room the page's scroll padding leaves above a card it
-/// scrolls to, and whether the two rows the board shows under it have drawn.
+/// scrolls to, whether the two rows the board shows under it have drawn, and whether it stands at
+/// the board's top, below the room the board's own scroll padding leaves there (a phone's, for its
+/// column's heading, which stays at the board's top) and clear of its column's heading.
 fn named_card(row: u32) -> String {
     format!(
         "(() => {{
@@ -1666,12 +1668,15 @@ fn named_card(row: u32) -> String {
     const below = ['row-load/ready-{}', 'row-load/ready-{}'].map(id => document.getElementById(id)).filter(Boolean);
     const board = document.querySelector('.board-scroll');
     const at = card?.getBoundingClientRect(), view = board?.getBoundingClientRect();
+    const padded = board ? parseFloat(getComputedStyle(board).scrollPaddingTop) || 0 : 0;
+    const heading = card?.closest('.column')?.querySelector(':scope > h2')?.getBoundingClientRect();
     return {{top: card ? Math.round(at.top - header) : null,
         room: Math.round(parseFloat(getComputedStyle(document.documentElement).scrollPaddingTop) - header),
         below: below.length === 2 && below.every(slot => slot.querySelector('.taskcard')),
         boardTop: Math.round(board?.scrollTop ?? 0),
         boardRange: board ? board.scrollHeight - board.clientHeight : null,
-        atBoardTop: card && board ? Math.abs(at.top - view.top) < 2 : false,
+        atBoardTop: card && board ? Math.abs(at.top - view.top - padded) < 2 : false,
+        clear: card && heading ? at.top >= heading.bottom - 0.5 : false,
         boardEnd: board ? board.scrollTop >= board.scrollHeight - board.clientHeight - 1 : false,
         inBoard: card && board ? at.top >= view.top - 1 && at.bottom <= view.bottom + 1 : false,
         pageEnd: scrollY >= document.documentElement.scrollHeight - innerHeight - 1}};
@@ -1683,10 +1688,11 @@ fn named_card(row: u32) -> String {
 
 /// A link to a card far down a long column (app/tasks-page-polish, `/tasks#row-load/ready-20`)
 /// lands with the card just below the header, where the page's scroll padding puts it, the board
-/// scrolled inside itself to it, and the card stays there as the rows below it draw, on a desk and
-/// a phone; one among the column's last (`ready-28`) stays too, the board scrolling no further for
-/// rows still to draw below it. Each link is a first visit, in a browser of its own, so the board
-/// loads from the network as the rows below the card draw, not at once from the device's copy.
+/// scrolled inside itself to it (on a phone, below its column's heading, which stays at the
+/// board's top), and the card stays there as the rows below it draw, on a desk and a phone; one
+/// among the column's last (`ready-28`) stays too, the board scrolling no further for rows still to
+/// draw below it. Each link is a first visit, in a browser of its own, so the board loads from the
+/// network as the rows below the card draw, not at once from the device's copy.
 #[test]
 fn a_link_to_a_card_far_down_a_column_lands_under_the_header_and_stays() {
     let site = bare_site();
@@ -1717,6 +1723,7 @@ fn a_link_to_a_card_far_down_a_column_lands_under_the_header_and_stays() {
         assert!(
             (landed["atBoardTop"] == json!(true)
                 || (landed["boardEnd"] == json!(true) && landed["inBoard"] == json!(true)))
+                && landed["clear"] == json!(true)
                 && top >= 0.0
                 && (top <= room + 4.0 || (landed["pageEnd"] == json!(true) && top <= 400.0)),
             "{width}px: the card landed {top}px below the header: {landed}"

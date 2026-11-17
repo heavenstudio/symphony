@@ -6,6 +6,7 @@
 use super::surreal::unanswered as sql;
 use super::work::{Tree, above};
 use super::{Board, Error, Failure, Health, Message, Store, Task};
+use crate::maps::Collect as _;
 use crate::rows::MessageRow;
 use crate::rows::TaskSessionRow;
 use serde::Deserialize;
@@ -247,7 +248,11 @@ impl Store {
         board: &Board,
         asked: Asked<'_>,
     ) -> Result<Vec<Pending>, Error> {
-        let by_slug: BTreeMap<_, _> = board.tasks.iter().map(|t| (t.slug.as_str(), t)).collect();
+        let by_slug = board
+            .tasks
+            .iter()
+            .map(|t| (t.slug.as_str(), t))
+            .collect_map();
         let tasks: Vec<&Task> = match asked {
             Asked::Overdue(tasks, _) => tasks
                 .iter()

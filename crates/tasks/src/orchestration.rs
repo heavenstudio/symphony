@@ -13,6 +13,7 @@
 //! ([`Owners::reaches`]).
 
 use crate::health::{FINISHED, Health, LIVE_SECONDS};
+use crate::maps::Collect as _;
 use crate::rows::SessionRow;
 use crate::{Board, Task};
 use serde_json::Value;
@@ -136,7 +137,7 @@ pub fn open_statuses(board: &Board) -> BTreeMap<String, String> {
     (board.tasks.iter())
         .filter(|t| !crate::health::FINISHED.contains(&t.status.as_str()))
         .map(|t| (t.slug.clone(), t.status.clone()))
-        .collect()
+        .collect_map()
 }
 
 /// Of `statuses`, those of the tasks orchestrator `handle` hears: what schedules its PULL digest,
@@ -360,7 +361,7 @@ impl Pool {
                 let listens = monitor || listening.contains(handle);
                 (orchestrating.contains(handle) || listens).then(|| (handle.to_owned(), holds))
             })
-            .collect();
+            .collect_map();
         Pool { load, limit: None }
     }
 
