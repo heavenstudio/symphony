@@ -1,5 +1,5 @@
 //! What a task went through (`symphony_api::timeline`), for its page's `/api/task-timeline`: read
-//! from the task alone, never the whole board.
+//! from the task and its bounded recorded ancestry, never the whole board.
 //!
 //! - Its stages are the board's replay of its thread (`symphony_board::stages`), each stretch in
 //!   review a round: the round waits for a reviewer until one takes the role (or holds it already),
@@ -12,9 +12,12 @@
 //! - Its gates are the gates answer's states, past and current ([`crate::gates::answer`]), a lane
 //!   each, by name, but none for a stamp left out (`gates::stamps::left_out`), which the gates
 //!   list. The review gate's lane begins where the task first went to review.
+//! - Its role and address metadata is a separate bounded projection (`history`), with explicit
+//!   source completeness and thread cursors. It reads no current session or role holders.
 //!
 //! [`build`] puts them together from what was read; [`answer`] reads the thread and the recorder's
-//! history once, for the timeline's own lanes and for the gates beside them.
+//! history once, for those lanes and the gates beside them, and reads capped thread windows for
+//! the role and address projection.
 
 use std::path::Path;
 

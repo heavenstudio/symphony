@@ -1,11 +1,12 @@
 //! What a task went through, for its page's timeline: `GET` [`TASK_TIMELINE_PATH`]`?slug=SLUG`
 //! answers a [`TaskTimeline`].
 //!
-//! Its lanes are what the server reads of the task alone, never the whole board: the stages the
+//! Its lanes are what the server reads for this task, never the whole board: the stages the
 //! board's replay of its thread keeps ([`Stage`]), the executors' time in progress ([`Claim`]),
 //! each review round ([`Round`]), the builds and tests the board's recorder kept for it ([`Run`])
 //! and each gate's states ([`GateLane`], from the gates answer's past states). A client lays them
-//! out: a list with a bar per step on a phone, lanes over the same hours wide.
+//! out: a list with a bar per step on a phone, lanes over the same hours wide. Optional [`History`]
+//! adds bounded role and address metadata, including recorded ancestor orchestration.
 //!
 //! Every time is server time in seconds since the epoch, as the board's are;
 //! [`TaskTimeline::offset_at`] turns one into the server's local clock, which the thread's own
