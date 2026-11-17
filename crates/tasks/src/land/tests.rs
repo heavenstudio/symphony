@@ -449,14 +449,14 @@ fn holding(roles: &[(&str, &str)], fast_fix: Option<&str>) -> Task {
     if let Some(why) = fast_fix {
         task.fields.insert(
             crate::red::FIELDS.into(),
-            BTreeMap::from([(crate::fast_fix::MARK.into(), why.into())]),
+            BTreeMap::from([("fast_fix".into(), why.into())]),
         );
     }
     task
 }
 
 #[test]
-fn only_a_fresh_reviewers_approve_counts_and_the_orchestrators_on_a_fast_fix() {
+fn only_a_fresh_reviewers_approve_counts_even_with_a_legacy_mark() {
     // amber executed it (or a subtask), and taupe orchestrated it before it handed it to ochre.
     let held = Held {
         executed: BTreeSet::from(["amber".to_string()]),
@@ -471,10 +471,7 @@ fn only_a_fresh_reviewers_approve_counts_and_the_orchestrators_on_a_fast_fix() {
     let plain = holding(&roles, None);
     let fast = holding(&roles, Some("a one-line fix"));
     for task in [&plain, &fast] {
-        assert_eq!(
-            independent(task, &approval_by("slate"), &held),
-            Ok(Scope::Whole)
-        );
+        assert_eq!(independent(task, &approval_by("slate"), &held), Ok(()));
         // Who executed it never approves it, whatever it holds now: a fast fix its orchestrator
         // executed is approved by a fresh reviewer too.
         assert_eq!(
@@ -485,8 +482,7 @@ fn only_a_fresh_reviewers_approve_counts_and_the_orchestrators_on_a_fast_fix() {
     }
     let orchestrated = |by: &str| {
         format!(
-            "tools/lamp's approve is {by}'s, which orchestrated it: a fresh reviewer approves it, \
-             and its orchestrator only a fast fix (a task filed with the fast-fix mark)"
+            "tools/lamp's approve is {by}'s, which orchestrated it: a fresh reviewer approves it"
         )
     };
     // Its orchestrator now, and one that orchestrated it before and reviews it now.
@@ -503,112 +499,18 @@ fn only_a_fresh_reviewers_approve_counts_and_the_orchestrators_on_a_fast_fix() {
     );
     assert_eq!(
         independent(&plain, &approval_by("owner"), &held).unwrap_err(),
-        "tools/lamp's approve is owner's, which filed it: a fresh reviewer approves it, and its \
-         orchestrator only a fast fix (a task filed with the fast-fix mark)"
+        "tools/lamp's approve is owner's, which filed it: a fresh reviewer approves it"
     );
     for by in ["ochre", "taupe"] {
         assert_eq!(
-            independent(&fast, &approval_by(by), &held),
-            Ok(Scope::Whole)
+            independent(&fast, &approval_by(by), &held).unwrap_err(),
+            orchestrated(by)
         );
     }
-}
-
-/// `holding`'s task marked red as well, as a tool files one.
-fn red(roles: &[(&str, &str)], fast_fix: Option<&str>) -> Task {
-    let mut task = holding(roles, fast_fix);
-    task.fields
-        .entry(crate::red::FIELDS.into())
-        .or_default()
-        .insert(crate::red::MARK.into(), "nightly".into());
-    task
-}
-
-#[test]
-fn a_reds_orchestrator_approves_only_a_fix_changing_no_check_and_a_fresh_reviewer_any() {
-    let held = Held {
-        executed: BTreeSet::from(["amber".to_string()]),
-        orchestrated: BTreeSet::from(["ochre".to_string()]),
-    };
-    let roles = [("ochre", "orchestrator"), ("slate", "reviewer")];
-    let marked = red(&roles, Some(crate::fast_fix::RED));
-    assert!(marked.red() && marked.fast_fix().is_some());
-    // A fresh reviewer's approve stands whatever the fix changes; its orchestrator's and its
-    // filer's only on a fix that changes no check; its executor's never.
-    assert_eq!(
-        independent(&marked, &approval_by("slate"), &held),
-        Ok(Scope::Whole)
-    );
-    assert_eq!(
-        independent(&marked, &approval_by("ochre"), &held),
-        Ok(Scope::ChecksUnchanged(Unfresh::Orchestrated))
-    );
-    assert_eq!(
-        independent(&marked, &approval_by("owner"), &held),
-        Ok(Scope::ChecksUnchanged(Unfresh::Filed))
-    );
-    assert!(independent(&marked, &approval_by("amber"), &held).is_err());
-    // A filer lifts the red mark; the risk no session clears holds it to the same bound.
-    let lifted = holding(&roles, Some(crate::fast_fix::RED));
-    assert!(!lifted.red() && lifted.fast_fix() == Some(crate::fast_fix::RED));
-    assert_eq!(
-        independent(&lifted, &approval_by("ochre"), &held),
-        Ok(Scope::ChecksUnchanged(Unfresh::Orchestrated))
-    );
-    assert_eq!(
-        independent(&lifted, &approval_by("slate"), &held),
-        Ok(Scope::Whole)
-    );
-    // So is one filed with an older wording of the risk, by the opening every wording keeps.
-    let older = holding(
-        &roles,
-        Some("a red is fixed as a bug fix is: an older wording of it"),
-    );
-    assert_eq!(
-        independent(&older, &approval_by("ochre"), &held),
-        Ok(Scope::ChecksUnchanged(Unfresh::Orchestrated))
-    );
-    // A red with no fast-fix mark, as the regenerator files, is approved as any task is.
-    let unmarked = red(&roles, None);
     assert!(
-        independent(&unmarked, &approval_by("ochre"), &held)
+        independent(&fast, &approval_by("owner"), &held)
             .unwrap_err()
-            .contains("which orchestrated it: a fresh reviewer approves it")
-    );
-    let tip = "0123456789abcdef0123456789abcdef01234567";
-    let ochre = approval_by("ochre");
-    let stands = |touched| unchanged_checks(&marked, &ochre, Unfresh::Orchestrated, tip, touched);
-    assert_eq!(stands(Ok(Vec::new())), Ok(()));
-    assert_eq!(
-        stands(Ok(vec![
-            "tools/size-budget.toml".into(),
-            "src/lib.rs (#[cfg(test)] code at line 9)".into()
-        ]))
-        .unwrap_err(),
-        "tools/lamp's approve is ochre's, which orchestrated it, which lands a red filed as a fast \
-         fix only when the fix changes none of the project's tests and checks (`[land] \
-         check_paths`), and 0123456 changes tools/size-budget.toml, src/lib.rs (#[cfg(test)] code \
-         at line 9): a fresh reviewer approves a fix that changes a test or a check"
-    );
-    let many: Vec<String> = (1..=10).map(|n| format!("tests/t{n}.rs")).collect();
-    assert!(stands(Ok(many)).unwrap_err().contains(
-        "changes tests/t1.rs, tests/t2.rs, tests/t3.rs, tests/t4.rs, tests/t5.rs, \
-                       tests/t6.rs, tests/t7.rs, tests/t8.rs and 2 more: a fresh reviewer"
-    ));
-    assert!(
-        unchanged_checks(
-            &marked,
-            &approval_by("owner"),
-            Unfresh::Filed,
-            tip,
-            Err("git cannot run".into())
-        )
-        .unwrap_err()
-        .contains(
-            "which filed it, which lands a red filed as a fast fix only when the fix \
-                       changes none of the project's tests and checks (`[land] check_paths`), and \
-                       what 0123456 changes cannot be read (git cannot run)"
-        )
+            .contains("which filed it")
     );
 }
 

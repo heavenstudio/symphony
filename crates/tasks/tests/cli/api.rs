@@ -155,6 +155,55 @@ fn a_task_filed_through_the_api_comes_back_with_its_orchestrator() {
 }
 
 #[test]
+fn create_refuses_fast_fix_without_filing_and_keeps_serving() {
+    let c = Case::new();
+    let actor = c.register("worker");
+    let mut calls = Vec::new();
+    for value in [
+        json!("one line"),
+        json!(""),
+        json!(null),
+        json!(false),
+        json!({}),
+    ] {
+        calls.push(json!({"method": "create", "args": {
+            "slug": "fix/retired", "title": "Retired", "by": actor, "fast_fix": value
+        }}));
+    }
+    calls.push(
+        json!({"method": "create", "args": {"slug": "fix/plain", "title": "Plain", "by": actor}}),
+    );
+    let answers = answer(&c.env, json!(calls));
+    for result in &answers.as_array().unwrap()[..5] {
+        assert!(
+            result["error"]
+                .as_str()
+                .is_some_and(|why| why.contains("unknown field `fast_fix`")),
+            "{result}"
+        );
+    }
+    assert_eq!(answers[5]["ok"]["slug"], "fix/plain");
+    assert!(c.store().get("fix/retired").is_err());
+    *calls.last_mut().unwrap() = json!({"method": "get", "args": {"slug": "fix/plain"}});
+    let lines = calls
+        .iter()
+        .map(Value::to_string)
+        .collect::<Vec<_>>()
+        .join("\n");
+    let (_, answers) = served(&c.env, &lines);
+    for result in &answers[..5] {
+        assert!(
+            result["error"]
+                .as_str()
+                .is_some_and(|why| why.contains("unknown field `fast_fix`")),
+            "{result}"
+        );
+    }
+    assert_eq!(answers[5]["ok"]["slug"], "fix/plain");
+    assert!(c.store().get("fix/retired").is_err());
+}
+
+#[test]
 fn a_call_it_cannot_read_is_an_error_naming_what() {
     let env = env();
     for (call, named) in [

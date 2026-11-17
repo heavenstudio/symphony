@@ -1155,9 +1155,8 @@ options:
 Land the task's branch, named as its slug, on the default branch once every
 stamp it needs stands on the branch's tip: its assessment's on the tip it read,
 else the catalogue's defaults beside them (`just tasks stamps SLUG` says which).
-Where review is needed, the approve of a fresh reviewer (or of its orchestrator,
-on a task filed with the fast-fix mark) must be its last verdict and cover the
-tip; where it is not, the task lands from review or blocked. A missing stamp
+Where review is needed, the approve of a fresh reviewer must be its last
+verdict and cover the tip; where it is not, the task lands from review or blocked. A missing stamp
 refuses, naming who gives it. The branch is merged (--no-ff) in a
 worktree of its own, main's side of each generated path kept, and checked by
 [verdicts] check unless [land] check = false; main moves there, is pushed to
