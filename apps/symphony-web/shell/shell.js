@@ -17,7 +17,9 @@ let requested = 0;
 let switching = Promise.resolve();
 const styleLoads = new Map();
 const preloaded = new Set(
-  [...document.querySelectorAll('link[rel="modulepreload"]')].map((link) => link.getAttribute("href")),
+  [...document.querySelectorAll('link[rel="modulepreload"]')].map((link) =>
+    link.getAttribute("href"),
+  ),
 );
 // The page's own reads in flight (its data) and when the last one answered: the idle warm-up waits
 // until none has been in flight for half a second, and after a read that got no answer (its time
