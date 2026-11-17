@@ -15,8 +15,7 @@ pub(in crate::store) fn board() -> Pg<'static> {
             callback_sequence: MARKER,
             has_callbacks: "false",
         },
-    )
-    .expect("the whole board has its read");
+    );
     Pg::read(read)
 }
 

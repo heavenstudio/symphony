@@ -25,6 +25,305 @@ fn a_board_of(tasks: usize) -> Seed {
     seed
 }
 
+on_both! {
+    fn tasks_come_by_priority_then_the_order_they_were_made_in(backend: Backend) {
+        let at = |slug: &str, id: i64, priority: i64| TaskRow {
+            id,
+            priority,
+            ..crate::common::task(slug, "ready")
+        };
+        let f = Fixture::on(backend,
+            Seed::default()
+                .task_row(at("z/first", 1, 2))
+                .task_row(at("a/second", 2, 2))
+                .task_row(at("m/urgent", 3, 0))
+                .task_row(at("b/later", 4, 3)),
+        );
+        let slugs: Vec<String> = f
+            .store
+            .board()
+            .unwrap()
+            .tasks
+            .into_iter()
+            .map(|t| t.slug)
+            .collect();
+        assert_eq!(slugs, ["m/urgent", "z/first", "a/second", "b/later"]);
+        let ids: Vec<i64> = f
+            .store
+            .tasks(None)
+            .unwrap()
+            .into_iter()
+            .map(|t| t.id)
+            .collect();
+        assert_eq!(ids, [3, 1, 2, 4]);
+    }
+
+    fn tasks_by_status_are_only_those(backend: Backend) {
+        let f = Fixture::on(backend,
+            Seed::default()
+                .task("sim/a", "ready")
+                .task("sim/b", "done")
+                .task("sim/c", "ready"),
+        );
+        let ready: Vec<String> = f
+            .store
+            .tasks(Some("ready"))
+            .unwrap()
+            .into_iter()
+            .map(|t| t.slug)
+            .collect();
+        assert_eq!(ready, ["sim/a", "sim/c"]);
+        assert!(f.store.tasks(Some("review")).unwrap().is_empty());
+    }
+
+    fn a_task_carries_its_fields_its_links_and_its_holders_with_their_health(backend: Backend) {
+        let row = TaskRow {
+            id: 2,
+            body: "Make it jump.\n\nTwice.".into(),
+            priority: 1,
+            parent: Some("sim".into()),
+            updated: NOW + 3.0,
+            ..crate::common::task("sim/jump", "in_progress")
+        };
+        let f = Fixture::on(backend,
+            Seed::default()
+                .session("amber-heron")
+                .session_row(SessionRow {
+                    last_seen: NOW - LIVE_SECONDS - 1.0,
+                    ..session("brisk-finch")
+                })
+                .task("sim", "ready")
+                .task_row(row)
+                .task("sim/land", "done")
+                .link("sim/jump", "doc", "docs/game/SPEC.md#Jumping")
+                .link("sim/jump", "dep", "sim/land")
+                .link("sim/jump", "doc", "docs/engineering/DECK.md")
+                .role("sim/jump", "amber-heron", "executor")
+                .role("sim/jump", "brisk-finch", "reviewer"),
+        );
+        let task = f.store.get("sim/jump").unwrap();
+        assert_eq!(
+            (
+                task.id,
+                task.title.as_str(),
+                task.body.as_str(),
+                task.priority,
+                task.parent.as_deref(),
+                task.created,
+                task.updated
+            ),
+            (
+                2,
+                "Task sim/jump",
+                "Make it jump.\n\nTwice.",
+                1,
+                Some("sim"),
+                NOW,
+                NOW + 3.0
+            )
+        );
+        assert_eq!(
+            task.links,
+            ["docs/engineering/DECK.md", "docs/game/SPEC.md#Jumping"],
+            "doc links, by target"
+        );
+        assert_eq!(task.depends, ["sim/land"]);
+        let held: Vec<(&str, &str, Health)> = task
+            .roles
+            .iter()
+            .map(|r| (r.handle.as_str(), r.role.as_str(), r.health))
+            .collect();
+        assert_eq!(
+            held,
+            [
+                ("amber-heron", "executor", Health::Live),
+                ("brisk-finch", "reviewer", Health::Stale)
+            ],
+            "by since, then handle"
+        );
+        assert!(!task.instruction);
+        assert_eq!(
+            f.store
+                .board()
+                .unwrap()
+                .tasks
+                .into_iter()
+                .find(|t| t.slug == "sim/jump")
+                .unwrap(),
+            task,
+            "the board reads it the same"
+        );
+    }
+
+    fn a_reservation_without_an_end_is_held_until_its_holder_is_gone(backend: Backend) {
+        let f = Fixture::on(backend,
+            Seed::default()
+                .session("amber-heron")
+                .task("sim/jump", "ready")
+                .reserved("sim/jump", "amber-heron", None),
+        );
+        assert_eq!(
+            f.store.get("sim/jump").unwrap().holders("reserved"),
+            ["amber-heron"]
+        );
+        f.advance(1e7);
+        assert_eq!(
+            f.store.get("sim/jump").unwrap().roles[0].health,
+            Health::Left,
+            "shown, but its holder has gone"
+        );
+    }
+
+    fn sessions_come_by_when_they_connected_then_handle(backend: Backend) {
+        let at = |handle: &str, connected: f64| SessionRow {
+            connected,
+            ..session(handle)
+        };
+        let f = Fixture::on(backend,
+            Seed::default()
+                .session_row(at("zinc-moth", NOW - 5.0))
+                .session_row(at("brisk-finch", NOW))
+                .session_row(at("amber-heron", NOW)),
+        );
+        let handles: Vec<String> = f
+            .store
+            .board()
+            .unwrap()
+            .sessions
+            .into_iter()
+            .map(|s| s.row.handle)
+            .collect();
+        assert_eq!(handles, ["zinc-moth", "amber-heron", "brisk-finch"]);
+    }
+
+    fn a_session_reads_back_every_column(backend: Backend) {
+        let row = SessionRow {
+            handle: "amber-heron".into(),
+            kind: "reviewer".into(),
+            parent: Some("ochre-owl".into()),
+            worktree: "/w/rust-s2".into(),
+            branch: "tools/rust-port-s2".into(),
+            model: "opus".into(),
+            pid: Some(4242),
+            host: "elsewhere".into(),
+            affinity: "rust,tools".into(),
+            connected: NOW - 100.0,
+            last_seen: NOW - 1.0,
+            left_at: None,
+            agent: Some("agent-7".into()),
+            busy_until: Some(NOW + 30.0),
+            busy_call: Some("toolu_1".into()),
+            last_tool: Some(NOW - 2.0),
+        };
+        let f = Fixture::on(backend, Seed::default().session_row(row.clone()));
+        assert_eq!(f.store.session("amber-heron").unwrap().row, row);
+    }
+
+    fn the_newest_message_is_what_a_poller_compares(backend: Backend) {
+        let said = |id: i64| MessageRow {
+            id,
+            slug: "sim/jump".into(),
+            sender: "owner".into(),
+            kind: "msg".into(),
+            text: format!("#{id}"),
+            ts: NOW,
+            ..Default::default()
+        };
+        let mut seed = Seed::default()
+            .session("amber-heron")
+            .task("sim/jump", "ready");
+        seed.dump.messages = vec![said(3), said(17)];
+        let f = Fixture::on(backend, seed);
+        assert_eq!(f.store.board().unwrap().latest_message, 17);
+        f.store.claim("sim/jump", "amber-heron").unwrap();
+        assert_eq!(
+            f.store.board().unwrap().latest_message,
+            18,
+            "the next message continues the board's numbering"
+        );
+        let ids: Vec<i64> = f
+            .store
+            .thread("sim/jump")
+            .unwrap()
+            .into_iter()
+            .map(|m| m.id)
+            .collect();
+        assert_eq!(ids, [3, 17, 18]);
+    }
+
+    fn an_empty_board_reads_as_nothing(backend: Backend) {
+        let board = Fixture::on(backend, Seed::default()).store.board().unwrap();
+        assert_eq!(
+            (
+                board.tasks.len(),
+                board.sessions.len(),
+                board.latest_message
+            ),
+            (0, 0, 0)
+        );
+    }
+
+    fn an_unknown_task_is_refused(backend: Backend) {
+        let f = Fixture::on(backend, Seed::default());
+        assert_eq!(refused(f.store.get("sim/none")), "no task 'sim/none'");
+        assert_eq!(refused(f.store.thread("sim/none")), "no task 'sim/none'");
+    }
+
+    fn a_slug_is_data_never_part_of_a_statement(backend: Backend) {
+        let slug = "sim/x'); DELETE task; --";
+        let f = Fixture::on(backend,
+            Seed::default()
+                .session("amber-heron")
+                .task(slug, "ready")
+                .task("sim/kept", "ready"),
+        );
+        assert_eq!(f.store.claim(slug, "amber-heron").unwrap().slug, slug);
+        assert_eq!(f.store.tasks(None).unwrap().len(), 2);
+        assert_eq!(f.store.thread(slug).unwrap().len(), 1);
+    }
+
+    fn a_board_read_never_sees_half_a_write(backend: Backend) {
+        let mut seed = Seed::default().session("amber-heron");
+        for i in 0..30 {
+            seed = seed.task(&format!("sim/t{i:02}"), "ready");
+        }
+        let f = Fixture::on(backend, seed);
+        let writer = f.other();
+        std::thread::scope(|scope| {
+            let claims = scope.spawn(move || {
+                for i in 0..30 {
+                    writer
+                        .claim(&format!("sim/t{i:02}"), "amber-heron")
+                        .unwrap();
+                }
+            });
+            let mut reads = 0;
+            while !claims.is_finished() || reads == 0 {
+                let board = f.store.board().unwrap();
+                let claimed = board
+                    .tasks
+                    .iter()
+                    .filter(|t| !t.holders("executor").is_empty())
+                    .count();
+                for t in &board.tasks {
+                    assert_eq!(
+                        t.status == "in_progress",
+                        !t.holders("executor").is_empty(),
+                        "{} in read {reads}",
+                        t.slug
+                    );
+                }
+                assert_eq!(
+                    board.latest_message as usize, claimed,
+                    "one message per claim, read {reads}"
+                );
+                reads += 1;
+            }
+            claims.join().unwrap();
+        });
+    }
+}
+
 #[test]
 fn the_board_is_one_round_trip_however_big_it_is() {
     for size in [1, 40] {
@@ -45,314 +344,6 @@ fn a_task_read_is_one_round_trip_too() {
     f.store.tasks(Some("ready")).unwrap();
     f.store.session("amber-heron").unwrap();
     assert_eq!(f.store.client().requests() - before, 3);
-}
-
-#[test]
-fn tasks_come_by_priority_then_the_order_they_were_made_in() {
-    let at = |slug: &str, id: i64, priority: i64| TaskRow {
-        id,
-        priority,
-        ..crate::common::task(slug, "ready")
-    };
-    let f = Fixture::new(
-        Seed::default()
-            .task_row(at("z/first", 1, 2))
-            .task_row(at("a/second", 2, 2))
-            .task_row(at("m/urgent", 3, 0))
-            .task_row(at("b/later", 4, 3)),
-    );
-    let slugs: Vec<String> = f
-        .store
-        .board()
-        .unwrap()
-        .tasks
-        .into_iter()
-        .map(|t| t.slug)
-        .collect();
-    assert_eq!(slugs, ["m/urgent", "z/first", "a/second", "b/later"]);
-    let ids: Vec<i64> = f
-        .store
-        .tasks(None)
-        .unwrap()
-        .into_iter()
-        .map(|t| t.id)
-        .collect();
-    assert_eq!(ids, [3, 1, 2, 4]);
-}
-
-#[test]
-fn tasks_by_status_are_only_those() {
-    let f = Fixture::new(
-        Seed::default()
-            .task("sim/a", "ready")
-            .task("sim/b", "done")
-            .task("sim/c", "ready"),
-    );
-    let ready: Vec<String> = f
-        .store
-        .tasks(Some("ready"))
-        .unwrap()
-        .into_iter()
-        .map(|t| t.slug)
-        .collect();
-    assert_eq!(ready, ["sim/a", "sim/c"]);
-    assert!(f.store.tasks(Some("review")).unwrap().is_empty());
-}
-
-#[test]
-fn a_task_carries_its_fields_its_links_and_its_holders_with_their_health() {
-    let row = TaskRow {
-        id: 2,
-        body: "Make it jump.\n\nTwice.".into(),
-        priority: 1,
-        parent: Some("sim".into()),
-        updated: NOW + 3.0,
-        ..crate::common::task("sim/jump", "in_progress")
-    };
-    let f = Fixture::new(
-        Seed::default()
-            .session("amber-heron")
-            .session_row(SessionRow {
-                last_seen: NOW - LIVE_SECONDS - 1.0,
-                ..session("brisk-finch")
-            })
-            .task("sim", "ready")
-            .task_row(row)
-            .task("sim/land", "done")
-            .link("sim/jump", "doc", "docs/game/SPEC.md#Jumping")
-            .link("sim/jump", "dep", "sim/land")
-            .link("sim/jump", "doc", "docs/engineering/DECK.md")
-            .role("sim/jump", "amber-heron", "executor")
-            .role("sim/jump", "brisk-finch", "reviewer"),
-    );
-    let task = f.store.get("sim/jump").unwrap();
-    assert_eq!(
-        (
-            task.id,
-            task.title.as_str(),
-            task.body.as_str(),
-            task.priority,
-            task.parent.as_deref(),
-            task.created,
-            task.updated
-        ),
-        (
-            2,
-            "Task sim/jump",
-            "Make it jump.\n\nTwice.",
-            1,
-            Some("sim"),
-            NOW,
-            NOW + 3.0
-        )
-    );
-    assert_eq!(
-        task.links,
-        ["docs/engineering/DECK.md", "docs/game/SPEC.md#Jumping"],
-        "doc links, by target"
-    );
-    assert_eq!(task.depends, ["sim/land"]);
-    let held: Vec<(&str, &str, Health)> = task
-        .roles
-        .iter()
-        .map(|r| (r.handle.as_str(), r.role.as_str(), r.health))
-        .collect();
-    assert_eq!(
-        held,
-        [
-            ("amber-heron", "executor", Health::Live),
-            ("brisk-finch", "reviewer", Health::Stale)
-        ],
-        "by since, then handle"
-    );
-    assert!(!task.instruction);
-    assert_eq!(
-        f.store
-            .board()
-            .unwrap()
-            .tasks
-            .into_iter()
-            .find(|t| t.slug == "sim/jump")
-            .unwrap(),
-        task,
-        "the board reads it the same"
-    );
-}
-
-#[test]
-fn a_reservation_without_an_end_is_held_until_its_holder_is_gone() {
-    let f = Fixture::new(
-        Seed::default()
-            .session("amber-heron")
-            .task("sim/jump", "ready")
-            .reserved("sim/jump", "amber-heron", None),
-    );
-    assert_eq!(
-        f.store.get("sim/jump").unwrap().holders("reserved"),
-        ["amber-heron"]
-    );
-    f.advance(1e7);
-    assert_eq!(
-        f.store.get("sim/jump").unwrap().roles[0].health,
-        Health::Left,
-        "shown, but its holder has gone"
-    );
-}
-
-#[test]
-fn sessions_come_by_when_they_connected_then_handle() {
-    let at = |handle: &str, connected: f64| SessionRow {
-        connected,
-        ..session(handle)
-    };
-    let f = Fixture::new(
-        Seed::default()
-            .session_row(at("zinc-moth", NOW - 5.0))
-            .session_row(at("brisk-finch", NOW))
-            .session_row(at("amber-heron", NOW)),
-    );
-    let handles: Vec<String> = f
-        .store
-        .board()
-        .unwrap()
-        .sessions
-        .into_iter()
-        .map(|s| s.row.handle)
-        .collect();
-    assert_eq!(handles, ["zinc-moth", "amber-heron", "brisk-finch"]);
-}
-
-#[test]
-fn a_session_reads_back_every_column() {
-    let row = SessionRow {
-        handle: "amber-heron".into(),
-        kind: "reviewer".into(),
-        parent: Some("ochre-owl".into()),
-        worktree: "/w/rust-s2".into(),
-        branch: "tools/rust-port-s2".into(),
-        model: "opus".into(),
-        pid: Some(4242),
-        host: "elsewhere".into(),
-        affinity: "rust,tools".into(),
-        connected: NOW - 100.0,
-        last_seen: NOW - 1.0,
-        left_at: None,
-        agent: Some("agent-7".into()),
-        busy_until: Some(NOW + 30.0),
-        busy_call: Some("toolu_1".into()),
-        last_tool: Some(NOW - 2.0),
-    };
-    let f = Fixture::new(Seed::default().session_row(row.clone()));
-    assert_eq!(f.store.session("amber-heron").unwrap().row, row);
-}
-
-#[test]
-fn the_newest_message_is_what_a_poller_compares() {
-    let said = |id: i64| MessageRow {
-        id,
-        slug: "sim/jump".into(),
-        sender: "owner".into(),
-        kind: "msg".into(),
-        text: format!("#{id}"),
-        ts: NOW,
-        ..Default::default()
-    };
-    let mut seed = Seed::default()
-        .session("amber-heron")
-        .task("sim/jump", "ready");
-    seed.dump.messages = vec![said(3), said(17)];
-    let f = Fixture::new(seed);
-    assert_eq!(f.store.board().unwrap().latest_message, 17);
-    f.store.claim("sim/jump", "amber-heron").unwrap();
-    assert_eq!(
-        f.store.board().unwrap().latest_message,
-        18,
-        "the next message continues the board's numbering"
-    );
-    let ids: Vec<i64> = f
-        .store
-        .thread("sim/jump")
-        .unwrap()
-        .into_iter()
-        .map(|m| m.id)
-        .collect();
-    assert_eq!(ids, [3, 17, 18]);
-}
-
-#[test]
-fn an_empty_board_reads_as_nothing() {
-    let board = Fixture::new(Seed::default()).store.board().unwrap();
-    assert_eq!(
-        (
-            board.tasks.len(),
-            board.sessions.len(),
-            board.latest_message
-        ),
-        (0, 0, 0)
-    );
-}
-
-#[test]
-fn an_unknown_task_is_refused() {
-    let f = Fixture::new(Seed::default());
-    assert_eq!(refused(f.store.get("sim/none")), "no task 'sim/none'");
-    assert_eq!(refused(f.store.thread("sim/none")), "no task 'sim/none'");
-}
-
-#[test]
-fn a_slug_is_data_never_part_of_a_statement() {
-    let slug = "sim/x'); DELETE task; --";
-    let f = Fixture::new(
-        Seed::default()
-            .session("amber-heron")
-            .task(slug, "ready")
-            .task("sim/kept", "ready"),
-    );
-    assert_eq!(f.store.claim(slug, "amber-heron").unwrap().slug, slug);
-    assert_eq!(f.store.tasks(None).unwrap().len(), 2);
-    assert_eq!(f.store.thread(slug).unwrap().len(), 1);
-}
-
-#[test]
-fn a_board_read_never_sees_half_a_write() {
-    let mut seed = Seed::default().session("amber-heron");
-    for i in 0..30 {
-        seed = seed.task(&format!("sim/t{i:02}"), "ready");
-    }
-    let f = Fixture::new(seed);
-    let writer = f.other();
-    std::thread::scope(|scope| {
-        let claims = scope.spawn(move || {
-            for i in 0..30 {
-                writer
-                    .claim(&format!("sim/t{i:02}"), "amber-heron")
-                    .unwrap();
-            }
-        });
-        let mut reads = 0;
-        while !claims.is_finished() || reads == 0 {
-            let board = f.store.board().unwrap();
-            let claimed = board
-                .tasks
-                .iter()
-                .filter(|t| !t.holders("executor").is_empty())
-                .count();
-            for t in &board.tasks {
-                assert_eq!(
-                    t.status == "in_progress",
-                    !t.holders("executor").is_empty(),
-                    "{} in read {reads}",
-                    t.slug
-                );
-            }
-            assert_eq!(
-                board.latest_message as usize, claimed,
-                "one message per claim, read {reads}"
-            );
-            reads += 1;
-        }
-        claims.join().unwrap();
-    });
 }
 
 /// `read` of a board holding a ready `sim/jump`, with another session's claim of it forced into the
@@ -515,7 +506,7 @@ fn counted<T>(f: &Fixture, call: impl FnOnce() -> T) -> (usize, T) {
 
 #[test]
 fn a_rule_is_its_read_and_one_write_that_gives_back_the_task_as_written() {
-    let f = Fixture::empty();
+    let f = Fixture::new(Seed::default());
     let orch = f.session("orchestrator");
     let worker = f.session("worker");
     f.task("p/a");
@@ -552,7 +543,7 @@ fn a_rule_is_its_read_and_one_write_that_gives_back_the_task_as_written() {
 
 #[test]
 fn a_new_task_is_one_round_trip_and_a_move_under_another_two() {
-    let f = Fixture::empty();
+    let f = Fixture::new(Seed::default());
     let orch = f.session("orchestrator");
     let (requests, made) = counted(&f, || {
         f.store.create(&NewTask::new("p/a", "A", &orch)).unwrap()
@@ -584,7 +575,7 @@ fn a_new_task_is_one_round_trip_and_a_move_under_another_two() {
 
 #[test]
 fn a_new_session_is_two_round_trips() {
-    let f = Fixture::empty();
+    let f = Fixture::new(Seed::default());
     let (requests, made) = counted(&f, || f.store.register(&NewSession::new("worker")).unwrap());
     assert_eq!(requests, 2);
     assert_eq!(made, f.store.session(&made.row.handle).unwrap());

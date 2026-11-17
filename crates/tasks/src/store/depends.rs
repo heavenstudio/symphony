@@ -1,6 +1,8 @@
 //! What a task waits on, changed after it was made: a dependent of a superseded task follows its
 //! successor, and once nothing it waits on is cancelled it leaves the block a cancellation put it in.
 
+use super::postgres::depends as pg;
+use super::statement::both;
 use super::surreal::depends as sql;
 use super::work::{BLOCK_LINE, OWNER, no_task};
 use super::{Error, Failure, Opens, STATUSES, Store, Task, Which, refused};
@@ -104,7 +106,7 @@ impl Store {
         }
         let said = said.trim_end_matches(';').to_string();
         self.retrying(|| {
-            let read: Read = self.transact(sql::READ, json!({"slug": slug}))?;
+            let read: Read = self.transact(both(sql::READ, pg::READ), json!({"slug": slug}))?;
             let statuses: HashMap<&str, &str> = (read.tasks.iter())
                 .map(|(slug, status)| (slug.as_str(), status.as_str()))
                 .collect();
@@ -204,7 +206,8 @@ impl Store {
                     "slots": slots,
                 }),
             );
-            self.written(sql::change(acts, guarded), vars, slug)
+            let body = both(sql::change(acts, guarded), pg::change(acts, guarded));
+            self.written(body, vars, slug)
         })
     }
 }

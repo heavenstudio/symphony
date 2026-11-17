@@ -1,7 +1,7 @@
 //! A task's stamp (`Store::task_stamp`): the same while nothing `get` and `thread` read of the task
 //! has changed, another after each thing that changes them.
 
-use crate::common::Fixture;
+use crate::common::{Backend, Fixture, Seed};
 use symphony_board::{NewLaunch, NewTask, TaskStamp};
 
 fn stamp(f: &Fixture, slug: &str) -> TaskStamp {
@@ -18,9 +18,27 @@ fn under(slug: &str, parent: &str) -> NewTask {
     }
 }
 
+on_both! {
+    fn a_slug_no_task_has_has_no_stamp(backend: Backend) {
+        let f = Fixture::on(backend, Seed::default());
+        f.task("sim/jump");
+        assert_eq!(f.store.task_stamp("sim/missing").unwrap(), None);
+    }
+
+    fn a_task_made_under_a_subtask_leaves_the_stamp_of_the_task_above_it(backend: Backend) {
+        let f = Fixture::on(backend, Seed::default());
+        f.task("a");
+        f.task_with(under("a/b", "a"));
+        let (top, middle) = (stamp(&f, "a"), stamp(&f, "a/b"));
+        f.task_with(under("a/b/c", "a/b"));
+        assert_eq!(stamp(&f, "a"), top, "only the tasks right under it");
+        assert_ne!(stamp(&f, "a/b"), middle);
+    }
+}
+
 #[test]
 fn a_tasks_stamp_stands_until_the_task_or_its_thread_changes() {
-    let f = Fixture::empty();
+    let f = Fixture::new(Seed::default());
     f.task("sim/jump");
     f.task("sim/other");
     let worker = f.session("worker");
@@ -66,22 +84,4 @@ fn a_tasks_stamp_stands_until_the_task_or_its_thread_changes() {
     moved("a branch recorded with no line");
     f.task_with(under("sim/jump/work", "sim/jump"));
     moved("a task made under it");
-}
-
-#[test]
-fn a_slug_no_task_has_has_no_stamp() {
-    let f = Fixture::empty();
-    f.task("sim/jump");
-    assert_eq!(f.store.task_stamp("sim/missing").unwrap(), None);
-}
-
-#[test]
-fn a_task_made_under_a_subtask_leaves_the_stamp_of_the_task_above_it() {
-    let f = Fixture::empty();
-    f.task("a");
-    f.task_with(under("a/b", "a"));
-    let (top, middle) = (stamp(&f, "a"), stamp(&f, "a/b"));
-    f.task_with(under("a/b/c", "a/b"));
-    assert_eq!(stamp(&f, "a"), top, "only the tasks right under it");
-    assert_ne!(stamp(&f, "a/b"), middle);
 }

@@ -16,8 +16,13 @@
 //! The marker's triggers and each sender's last word are the schema's ([`schema`]), as SurrealDB's
 //! events are its schema's.
 
+pub(in crate::store) mod branches;
 pub(in crate::store) mod callbacks;
+pub(in crate::store) mod cap;
 pub(in crate::store) mod copy;
+pub(in crate::store) mod depends;
+pub(in crate::store) mod fields;
+pub(in crate::store) mod history;
 pub(in crate::store) mod messages;
 pub(in crate::store) mod opening;
 pub(in crate::store) mod raw;
@@ -25,10 +30,69 @@ pub(in crate::store) mod reading;
 pub(in crate::store) mod schema;
 pub(in crate::store) mod sessions;
 pub(in crate::store) mod snapshot;
+pub(in crate::store) mod stage_lines;
+pub(in crate::store) mod stamp;
+pub(in crate::store) mod waits;
 pub(in crate::store) mod work;
+pub(in crate::store) mod write;
 pub(in crate::store) mod writers;
 
 use std::borrow::Cow;
+
+/// The slugs of every task, or of those in `v ->> 'status'` when `by_status`
+/// (`super::surreal::task_slugs`).
+pub(in crate::store) fn task_slugs(by_status: bool) -> Pg<'static> {
+    Pg::read(if by_status {
+        "coalesce((SELECT jsonb_agg(slug ORDER BY slug) FROM task WHERE status = v ->> 'status'), '[]'::jsonb)"
+    } else {
+        "coalesce((SELECT jsonb_agg(slug ORDER BY slug) FROM task), '[]'::jsonb)"
+    })
+}
+
+/// The tasks `v ->> 'handle'` holds that another could take over, as a read of its own
+/// (`super::surreal::claimable`).
+pub(in crate::store) fn claimable() -> Pg<'static> {
+    Pg::read(sessions::CLAIMABLE)
+}
+
+/// A rule's write ([`write::write`]) with what its change adds, as `super::surreal::rule` adds
+/// it: what a block waited on removed by a change of status out of blocked, what it waits on
+/// written (`blocked`), the move's `reason` posted after its line, the task's `needs` written, a
+/// change of status (`moved`, whether to cancelled) settling its hold and its dependants, and the
+/// slot counters it `holds` guarded.
+pub(in crate::store) fn rule(
+    reason: bool,
+    needs: bool,
+    blocked: bool,
+    moved: Option<bool>,
+    holds: bool,
+) -> Pg<'static> {
+    let mut body = write::write();
+    let mut add = |part: &str| {
+        body.push('\n');
+        body.push_str(part);
+    };
+    if moved.is_some() {
+        add(work::UNBLOCKED);
+    }
+    if blocked {
+        add(&work::field_set("_board,blocked", "v -> 'blocked'"));
+    }
+    if reason {
+        add(&work::reason_written());
+    }
+    if needs {
+        add(&work::field_set("_board,needs", "v -> 'needs'"));
+    }
+    if let Some(cancelled) = moved {
+        add(cap::HOLDING);
+        add(&work::block_cancelled_dependencies(cancelled));
+    }
+    if holds {
+        add(cap::GUARD);
+    }
+    Pg::script(body)
+}
 
 /// A statement on PostgreSQL.
 #[derive(Clone, Debug, PartialEq, Eq)]

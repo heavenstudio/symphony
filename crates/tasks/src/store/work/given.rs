@@ -28,6 +28,8 @@
 use crate::health::FINISHED;
 use crate::orchestration::{self, Owners, Pool};
 use crate::store::messages::BOARD;
+use crate::store::postgres::{cap as pg_cap, work as pg};
+use crate::store::statement::both;
 use crate::store::surreal::work as sql;
 use crate::store::{Board, Error, Failure, Store, Task, Which};
 use serde_json::{Value, json};
@@ -245,14 +247,15 @@ impl Store {
             return Ok(());
         }
         let session = by.filter(|by| *by != OWNER);
-        let body = sql::give_pass(session.is_some());
+        let acts = session.is_some();
+        let body = both(sql::give_pass(acts), pg::give_pass(acts));
         let now = (self.clock)();
         let sender = by.unwrap_or(BOARD);
         let vars = match session {
             Some(actor) => self.acting(actor, now, json!({})),
             None => json!({"now": now}),
         };
-        self.transact::<Value>(&body, pass.vars(sender, vars))
+        self.transact::<Value>(body, pass.vars(sender, vars))
             .map(|_| ())
     }
 
@@ -280,7 +283,8 @@ impl Store {
             #[serde(default)]
             red: Option<Value>,
         }
-        let mine: Mine = self.read(sql::GAINING, json!({"handle": to}))?;
+        let read = both(sql::GAINING, pg::GAINING);
+        let mine: Mine = self.read(read, json!({"handle": to}))?;
         let held = (mine.tasks.iter())
             .filter(|t| !FINISHED.contains(&t.status.as_str()))
             .filter(|t| t.red.as_ref().is_none_or(Value::is_null))
@@ -303,10 +307,8 @@ impl Store {
     /// take of the role or hand-over to it moves: what a pass reads before the board it decides on,
     /// to hold its receivers' where it read them ([`Pass::guard`]).
     pub(in crate::store) fn slot_counters(&self) -> Result<Vec<(String, i64)>, Failure> {
-        self.read(
-            format!("RETURN ({});", crate::store::surreal::cap::COUNTERS),
-            json!({}),
-        )
+        let read = format!("RETURN ({});", crate::store::surreal::cap::COUNTERS);
+        self.read(both(read, pg_cap::counted()), json!({}))
     }
 
     /// The orchestrators of `board` that stay, but `except` ([`Pool::of`]), none given a task past
@@ -319,7 +321,10 @@ impl Store {
         let candidates = orchestration::candidates(board, except, now);
         let listening: BTreeSet<String> = match candidates.is_empty() {
             true => BTreeSet::new(),
-            false => self.read(sql::LISTENING, json!({"candidates": candidates}))?,
+            false => {
+                let read = both(sql::LISTENING, pg::LISTENING);
+                self.read(read, json!({"candidates": candidates}))?
+            }
         };
         Ok(Pool::of(board, except, &listening, now).within(self.limits().orchestrator_tasks))
     }
