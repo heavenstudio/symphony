@@ -628,8 +628,20 @@ export class LiveBoard {
     // A column reads again when its search or window changes, and when the board is refreshed: the
     // same window chosen again changes neither, and its tasks are gone.
     this.host.refresh();
-    // Typing on: a later key's search reads in its place. A feed event meanwhile does not.
-    if ((await this.typing.rest()) && d.view === view) await this.counts();
+    // Typing on: a later key's search reads in this one's place. The new view has no rows yet,
+    // so its counts retry just like its first column pages, even after the initial check ended.
+    if ((await this.typing.rest()) && d.view === view) {
+      const counted = d.counted;
+      this.uncounted = counted;
+      await this.untilAnswered(
+        () => d.view === view && d.counted === counted,
+        async () => {
+          if (d.counted !== counted) return true;
+          await this.counts();
+          return d.counted !== counted;
+        },
+      );
+    }
   }
 
   /** A column asks for a page: its first, or the next (`more`). */

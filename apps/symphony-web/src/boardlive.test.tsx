@@ -1118,6 +1118,46 @@ describe("a column of the live board", () => {
 });
 
 describe("a search of the live board", () => {
+  it("retries the new facet's counts after the initial check ended and clears its alert", async () => {
+    let failing = true;
+    const { board, d, asked, page } = live(() =>
+      failing ? answer(503) : answer(200, listing([], [["ready", 1]])),
+    );
+    d.counted = 2;
+    d.worked = 2;
+    void board.filter("", 1, "nobody");
+    await pass(250);
+    expect(d.error).toContain("Trying again");
+    expect(board.fresh.failing).toContain("counts");
+    failing = false;
+    await pass(1000);
+    expect(d.counted).toBe(3);
+    expect(d.error).toBe("");
+    expect(board.fresh.failing).toEqual([]);
+    expect(urls(asked)).toEqual(
+      Array(2).fill(
+        "/api/task-board?view=waiting&wait=nobody&counts=1&q=&days=1&activity=1&work=0",
+      ),
+    );
+    await pass(4000);
+    expect(asked).toHaveLength(2);
+    page.abort();
+  });
+
+  it("ends a failed filter's retry when a later view replaces it or the page leaves", async () => {
+    const { board, asked, page } = live(() => answer(503));
+    void board.filter("old", 1, "check");
+    await pass(250);
+    void board.filter("new", 1, "queued");
+    await pass(250);
+    await pass(1000);
+    expect(urls(asked).filter((url) => url.includes("q=old"))).toHaveLength(1);
+    expect(urls(asked).filter((url) => url.includes("q=new"))).toHaveLength(2);
+    page.abort();
+    await pass(4000);
+    expect(asked).toHaveLength(3);
+  });
+
   it("clears what the page showed and reads the counts once the typing stops", async () => {
     const { board, d, asked, host } = live(() => answer(200, listing([])));
     d.tasks = [aTask("w/a")];
