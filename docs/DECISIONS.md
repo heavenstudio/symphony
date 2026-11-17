@@ -7,6 +7,25 @@ their dated history work is in [REVIEW](REVIEW.md).
 <!-- register:start -->
 ## Needs your decision
 
+### Task page, in pictures
+
+- [ ] **timeline-burst-drawing** — A burst of runs, dozens of tests minutes apart in a task that lasted days, makes the task's wide timeline 12 px taller per run, with no limit: tools/board-token-usage's is 911 px tall, and its Tests lane is 37 thin rows that read as a dashed line, with no words. How should a lane draw a burst, every run kept its own and reachable? A: as it is, a thin row per run, the box growing. B: the same rows, the lane scrolling in a box of its own past 256 px, the height of six rows with words. C: each burst one mark that says how many runs and how many went red ("37 tests · 4 red"), opened in place to its runs by a click, a tap or Enter; on a phone, one row of the list the same way. Recommended: C. Approve and say A, B or C in the note, or comment. [[TASKS#The timeline]]
+  [2026-11-17 00:43] agent — Posted for the board task `app/timeline-burst-drawing-card`, from the review of `app/timeline-builds-and-tests-apart`. tools/board-token-usage at 1280 wide, on a private server of main's build (the shared server runs a release from before builds and tests had lanes of their own): A as it is, then B and C drawn on that page by hand, not built. ![The burst wide, option A](analysis/timeline-burst/a-wide.webp) ![The burst wide, option B](analysis/timeline-burst/b-wide.webp) ![The burst wide, option C](analysis/timeline-burst/c-wide.webp)
+
+    **A, as it is.** The box is 911 px; a typical whole timeline is 508. The Tests lane alone is 449 px: 12 tests on 11-15 and 37 on 11-16, each a sliver on five days of hours, each in a row of its own so that none is drawn over another. A run's words are only in its hover, its focus and its row on a phone.
+
+    **B, the lane scrolls.** The box is 719 px. The lane stops at 256 px and scrolls the rest, its scroll bar in the margin past the hours. The rows are A's, no easier to read, and the runs below its edge are a scroll away inside a page that scrolls too.
+
+    **C, one mark per burst.** The box is 509 px, about a typical timeline's. The lane is one row: a stacked mark with its count, its words under it. Opened, the burst draws its runs under the mark as A does, and closes the same way. The mark is no run's bar: its count says it holds several, so it never reads as one long run. A burst is runs each queued so soon after the one before it ended (half a percent of the hours drawn, as today) that they would need more than six rows; every other run is drawn as now.
+
+    **What each costs.** A, nothing. B, a few lines of style, and a box that scrolls inside the page, which a trackpad catches as it passes over. C the most: the bursts found in the layout, a mark the keyboard and a tap open and close, its words, the phone's folded row, and their tests.
+
+    **Why C.** What a burst says is how many ran and whether any went red: C says it on one line, wide and on a phone, where the thin rows say neither. It gives back 402 px wide and 2,140 px on a phone's Show all, and every run is still one press away, each with its words in its hover, its focus and its row.
+
+    **Earlier verdicts checked.** **task-page-timeline-place** (C) keeps a phone's box at 240 px behind Show all; no option changes that. Your note on `inbox/timeline-should-not-be-collapsed-by-defa` had the wide timeline shown whole: "Desktop collapse save almost no space and hides really good information from view." It weighs against B and C, which hide runs until scrolled or opened, and does not decide this card: that collapse cut every task's lanes for little room, where a burst costs 402 px of rows that show no words. `app/timeline-builds-and-tests-apart`, from your question whether a 55 min build was several, never draws two runs as one bar, and no option does. None of them decides how a burst is drawn.
+  [2026-11-17 00:43] agent — On a phone the box opens at 240 px on the latest steps under every option (here round 3 and Done), so the burst shows only after Show all. There A and B list every run, 61 steps in 3,143 px, each row reading "Test, just test-rs -p sympho…"; C folds more than six runs in a row of the list into one row, 16 steps in 1,003 px. The list puts a run under the stage it began in, so 11-15's burst, which spans two stages, folds its first seven runs and leaves the last six as rows. ![A and B on a phone, after Show all](analysis/timeline-burst/phone-all.webp) ![C on a phone, after Show all](analysis/timeline-burst/c-phone-all.webp) C wide, in dark: ![C wide, dark](analysis/timeline-burst/c-wide-dark.webp)
+  [2026-11-17 00:43] agent — **Not asked here: the word under a bar.** It is the command's first word, so every `cargo install` reads "cargo 55 m" and every `just test-rs` "test-rs", and a phone's row is cut before what tells two runs apart. Better: the command's distinguishing words, the command without `just`, its flags and the test filter after `--`. So `just test-rs -p symphony-board --test cli -- beat` reads "test-rs symphony-board cli", `cargo install symphony-server (cold-full)` keeps all four words and `just lint-rs` stays "lint-rs"; under a bar with too little room for them, the first word as now, so no word goes where one shows today. It is not built here: it changes the drawing this card's answer changes, so it is built with that answer.
+
 ### Agents page
 
 - [ ] **agents-page-orchestrator-first** — The Agents page would open on the orchestrators instead of repeating the board. For each one: how many tasks it holds against its limit of 16 and how many of its 8 slots are in use, the agents it runs and what each is doing this minute, and what is waiting on it. Lost agents and agents stopped on a question come first, and a task is only its title, as a link. Your own open asks stay in the queue. The "Happening now" cards and the A-to-Z list of agents go. How should it be laid out? A: one panel per orchestrator, its agents beside what waits on it, everything open. B: first a list of what needs a look across every orchestrator, then a compact list of who runs what. C: a tile per orchestrator with its counts; open one to see its agents and what waits on it. Recommended: A. Approve and say A, B or C in the note, or comment. [[analysis/agents-page#The options]]
@@ -27,43 +46,6 @@ their dated history work is in [REVIEW](REVIEW.md).
 
     **Earlier verdicts checked.** **board-at-a-glance** (B) sets how a task's wait reads: a wait on you names the decision card, never a person alone. The lists here use that line, and it says nothing of this page's layout. **owner-asks-place** (A) shows your open asks, what you said that waits on an agent's answer, in the queue's *Waiting on the agent* group with who holds each and for how long, counted on Home, with no page of their own. So this page leaves them there: an orchestrator's list of what waits on it holds no asks. **header-page-names** keeps Agents as this page's name. None of them decides this card.
   [2026-11-16 22:32] agent — On a phone: today's first screen, an orchestrator's row today, on its seventh screen, then the first screen of A, B and C. ![Today on a phone](analysis/agents-page/today-phone.png) ![An orchestrator today, on a phone](analysis/agents-page/today-phone-orchestrator.png) ![Option A on a phone](analysis/agents-page/a-phone.png) ![Option B on a phone](analysis/agents-page/b-phone.png) ![Option C on a phone](analysis/agents-page/c-phone.png)
-
-### The header
-
-- [ ] **phone-header-mark-only** — Replaces: phone-header-one-row. On a phone the header would be one row with the mark alone and no name: the fermata, a menu button that names the page you are on (☰ Board), ◑ and the bell. The page links and Projects move into that menu, which opens under the button over the page, so nothing below it moves. The header goes from 97 px to 53 px tall, so every page starts 44 px higher. Wider than a phone nothing changes, the name included. It changes **header-on-a-phone**, which keeps every page in view on a second row. Approve, or comment. [[analysis/phone-header#The mark alone]]
-  [2026-11-16 23:05] agent — Posted for the board task `app/phone-header-mark-only`, from your rejection of **phone-header-one-row**: "Symphony title should be omitted, only the icon should show for mobile". The name is the only change from that card.
-  [2026-11-16 23:05] agent — The board, then a document, light then dark. Each shows today, the mark alone, and the menu open: ![The board on a phone, light: today, the mark alone, menu open](analysis/phone-header/mark-only-board-light.webp) ![The board on a phone, dark: today, the mark alone, menu open](analysis/phone-header/mark-only-board-dark.webp) ![A document on a phone, light: today, the mark alone, menu open](analysis/phone-header/mark-only-doc-light.webp) ![A document on a phone, dark: today, the mark alone, menu open](analysis/phone-header/mark-only-doc-dark.webp)
-
-    **The name.** It goes on every page 760 px wide or less, the server's own pages too (the project list, a missing page). A project with a name and an icon of its own shows its icon alone the same way. A screen reader still reads the name: it stays in the page out of sight, as the bell keeps its word Activity. The mark is no link today and stays none; Home is in the menu.
-
-    **The width it frees.** 84 px, the name and the gap after it. Nothing takes it: the gap between the menu button and ◑ grows. Only a page name too long for the button uses it, and is cut short with "…" past that. At 320 wide, Board leaves 102 px free; a page name of 234 px shows 138 px of itself, and the header stays one row with no sideways scroll.
-
-    **How the menu works.** As on the rejected card: a tap or Enter opens it, Tab moves into it, Escape or a tap anywhere else closes it, and Escape gives the focus back to the button. Following a link closes it too. The page you are on is lit in it, and Projects is its first line.
-
-    **What it costs.** Changing page takes two taps instead of one. Activity loses its word on a phone, keeping its bell and its unread dot. The name shows only wider than a phone.
-
-    **Not pictured.** At 320, 360 and 375 wide the row is one line with no sideways scroll. At desk width the header is the same, pixel for pixel, name and all. A theme with the compact header keeps its one scrolling row. The same board task builds it after your answer.
-
-    **Earlier verdicts checked.** **phone-header-one-row** is rejected; your words on it ask for this card's one change. **header-on-a-phone** chose two rows with every page in view; pages behind a button is another choice, so it is asked here and not recorded there. **symphony-mark** (C) put the fermata and its wordmark at the head of the header; your words on **phone-header-one-row**, which came after it, drop the wordmark on a phone, and wider than a phone it stays. **header-page-names** (the names and their order) and **header-appearance** (the ◑ button) are kept. None of them decides whether the pages go behind a menu.
-
-### Task page, in pictures
-
-- [ ] **timeline-burst-drawing** — A burst of runs, dozens of tests minutes apart in a task that lasted days, makes the task's wide timeline 12 px taller per run, with no limit: tools/board-token-usage's is 911 px tall, and its Tests lane is 37 thin rows that read as a dashed line, with no words. How should a lane draw a burst, every run kept its own and reachable? A: as it is, a thin row per run, the box growing. B: the same rows, the lane scrolling in a box of its own past 256 px, the height of six rows with words. C: each burst one mark that says how many runs and how many went red ("37 tests · 4 red"), opened in place to its runs by a click, a tap or Enter; on a phone, one row of the list the same way. Recommended: C. Approve and say A, B or C in the note, or comment. [[TASKS#The timeline]]
-  [2026-11-17 00:43] agent — Posted for the board task `app/timeline-burst-drawing-card`, from the review of `app/timeline-builds-and-tests-apart`. tools/board-token-usage at 1280 wide, on a private server of main's build (the shared server runs a release from before builds and tests had lanes of their own): A as it is, then B and C drawn on that page by hand, not built. ![The burst wide, option A](analysis/timeline-burst/a-wide.webp) ![The burst wide, option B](analysis/timeline-burst/b-wide.webp) ![The burst wide, option C](analysis/timeline-burst/c-wide.webp)
-
-    **A, as it is.** The box is 911 px; a typical whole timeline is 508. The Tests lane alone is 449 px: 12 tests on 11-15 and 37 on 11-16, each a sliver on five days of hours, each in a row of its own so that none is drawn over another. A run's words are only in its hover, its focus and its row on a phone.
-
-    **B, the lane scrolls.** The box is 719 px. The lane stops at 256 px and scrolls the rest, its scroll bar in the margin past the hours. The rows are A's, no easier to read, and the runs below its edge are a scroll away inside a page that scrolls too.
-
-    **C, one mark per burst.** The box is 509 px, about a typical timeline's. The lane is one row: a stacked mark with its count, its words under it. Opened, the burst draws its runs under the mark as A does, and closes the same way. The mark is no run's bar: its count says it holds several, so it never reads as one long run. A burst is runs each queued so soon after the one before it ended (half a percent of the hours drawn, as today) that they would need more than six rows; every other run is drawn as now.
-
-    **What each costs.** A, nothing. B, a few lines of style, and a box that scrolls inside the page, which a trackpad catches as it passes over. C the most: the bursts found in the layout, a mark the keyboard and a tap open and close, its words, the phone's folded row, and their tests.
-
-    **Why C.** What a burst says is how many ran and whether any went red: C says it on one line, wide and on a phone, where the thin rows say neither. It gives back 402 px wide and 2,140 px on a phone's Show all, and every run is still one press away, each with its words in its hover, its focus and its row.
-
-    **Earlier verdicts checked.** **task-page-timeline-place** (C) keeps a phone's box at 240 px behind Show all; no option changes that. Your note on `inbox/timeline-should-not-be-collapsed-by-defa` had the wide timeline shown whole: "Desktop collapse save almost no space and hides really good information from view." It weighs against B and C, which hide runs until scrolled or opened, and does not decide this card: that collapse cut every task's lanes for little room, where a burst costs 402 px of rows that show no words. `app/timeline-builds-and-tests-apart`, from your question whether a 55 min build was several, never draws two runs as one bar, and no option does. None of them decides how a burst is drawn.
-  [2026-11-17 00:43] agent — On a phone the box opens at 240 px on the latest steps under every option (here round 3 and Done), so the burst shows only after Show all. There A and B list every run, 61 steps in 3,143 px, each row reading "Test, just test-rs -p sympho…"; C folds more than six runs in a row of the list into one row, 16 steps in 1,003 px. The list puts a run under the stage it began in, so 11-15's burst, which spans two stages, folds its first seven runs and leaves the last six as rows. ![A and B on a phone, after Show all](analysis/timeline-burst/phone-all.webp) ![C on a phone, after Show all](analysis/timeline-burst/c-phone-all.webp) C wide, in dark: ![C wide, dark](analysis/timeline-burst/c-wide-dark.webp)
-  [2026-11-17 00:43] agent — **Not asked here: the word under a bar.** It is the command's first word, so every `cargo install` reads "cargo 55 m" and every `just test-rs` "test-rs", and a phone's row is cut before what tells two runs apart. Better: the command's distinguishing words, the command without `just`, its flags and the test filter after `--`. So `just test-rs -p symphony-board --test cli -- beat` reads "test-rs symphony-board cli", `cargo install symphony-server (cold-full)` keeps all four words and `just lint-rs` stays "lint-rs"; under a bar with too little room for them, the first word as now, so no word goes where one shows today. It is not built here: it changes the drawing this card's answer changes, so it is built with that answer.
 
 ## Auto-approved: spot-check
 
@@ -86,22 +68,6 @@ their dated history work is in [REVIEW](REVIEW.md).
   [2026-11-13 20:43] agent · auto-approved — A: the owner, 2026-11-13, in the terminal: "contract-tool-route reads like it should be auto triaged". The card's own evidence leaves A standing: both tools exist to check what the machine does (the card you will see, whether the machine would hold a land), and under B the project's copies "keep passing while the machine does otherwise, until someone copies again", so they would stop checking it. Symphony adds the two commands (one that draws a single card, one that answers the landing's checks for a branch) and keeps their output, and status's and triage's, stable; its side is filed on the board now. Any verdict here overrides this.
 
 ## Waiting on an agent
-
-### The header
-
-- [-] **phone-header-one-row** — On a phone the header would be one row instead of two: the mark and name, a menu button that names the page you are on (☰ Board), ◑ and the bell. The page links and Projects move into that menu, which opens under the button over the page, so nothing below it moves. The header goes from 97 px to 53 px tall, so every page starts 44 px higher. Wider than a phone nothing changes. It changes **header-on-a-phone**, which keeps every page in view on a second row. Approve, or comment. [[analysis/phone-header#The proposal]]
-  [2026-11-16 22:15] agent — Posted for the board task `app/phone-header-is-one-row`, from your words on its inbox item: "Navigation should also be made even smaller on mobile, possibly using hambúrguer menus".
-  [2026-11-16 22:15] agent — The board, then a document, light then dark. Each shows today, the one row, and the one row with its menu open: ![The board on a phone, light: today, one row, menu open](analysis/phone-header/board-light.webp) ![The board on a phone, dark: today, one row, menu open](analysis/phone-header/board-dark.webp) ![A document on a phone, light: today, one row, menu open](analysis/phone-header/doc-light.webp) ![A document on a phone, dark: today, one row, menu open](analysis/phone-header/doc-dark.webp)
-
-    **How the menu works.** A tap on the button, or Enter, opens it; Tab moves into it. Escape or a tap anywhere else closes it, and so does following a link. The page you are on is lit in it, as in today's row. Projects, which leaves this project for the list of all projects, is its first line.
-
-    **What it costs.** Changing page takes two taps instead of one. Activity loses its word on a phone and keeps its bell and its unread dot.
-
-    **Not pictured.** At 320 wide the row still fits with the name whole, where today the name is cut short. At desk width the header is the same, pixel for pixel. The server's own pages (the project list, a missing page) get the same menu. A theme with the compact header keeps its one scrolling row. The same board task builds it after your answer.
-
-    **Earlier verdicts checked.** **header-on-a-phone** chose two rows with every page in view; pages behind a button is another choice than the one it describes, so it is asked here and not recorded on it. **header-page-names** (the names and their order), **header-appearance** (the ◑ button) and **symphony-mark** (the fermata and its name) are kept as they are. None of them decides whether the pages go behind a menu.
-  [2026-11-16 22:30] owner · rejected — Symphony title should be omitted, only the icon should show for mobile
-  [2026-11-16 23:02] agent — Replaced by **phone-header-mark-only**: the same one row with the mark alone and no name on a phone; the name stays wider than a phone, and in the page for a screen reader. Pictures of the board and a document, light and dark, are on that card.
 
 ### Board
 
@@ -148,6 +114,22 @@ their dated history work is in [REVIEW](REVIEW.md).
   [2026-11-15 11:38] owner · approved — A
 
 ## Rejected and replaced
+
+### The header
+
+- [-] **phone-header-one-row** — On a phone the header would be one row instead of two: the mark and name, a menu button that names the page you are on (☰ Board), ◑ and the bell. The page links and Projects move into that menu, which opens under the button over the page, so nothing below it moves. The header goes from 97 px to 53 px tall, so every page starts 44 px higher. Wider than a phone nothing changes. It changes **header-on-a-phone**, which keeps every page in view on a second row. Approve, or comment. [[analysis/phone-header#The proposal]]
+  [2026-11-16 22:15] agent — Posted for the board task `app/phone-header-is-one-row`, from your words on its inbox item: "Navigation should also be made even smaller on mobile, possibly using hambúrguer menus".
+  [2026-11-16 22:15] agent — The board, then a document, light then dark. Each shows today, the one row, and the one row with its menu open: ![The board on a phone, light: today, one row, menu open](analysis/phone-header/board-light.webp) ![The board on a phone, dark: today, one row, menu open](analysis/phone-header/board-dark.webp) ![A document on a phone, light: today, one row, menu open](analysis/phone-header/doc-light.webp) ![A document on a phone, dark: today, one row, menu open](analysis/phone-header/doc-dark.webp)
+
+    **How the menu works.** A tap on the button, or Enter, opens it; Tab moves into it. Escape or a tap anywhere else closes it, and so does following a link. The page you are on is lit in it, as in today's row. Projects, which leaves this project for the list of all projects, is its first line.
+
+    **What it costs.** Changing page takes two taps instead of one. Activity loses its word on a phone and keeps its bell and its unread dot.
+
+    **Not pictured.** At 320 wide the row still fits with the name whole, where today the name is cut short. At desk width the header is the same, pixel for pixel. The server's own pages (the project list, a missing page) get the same menu. A theme with the compact header keeps its one scrolling row. The same board task builds it after your answer.
+
+    **Earlier verdicts checked.** **header-on-a-phone** chose two rows with every page in view; pages behind a button is another choice than the one it describes, so it is asked here and not recorded on it. **header-page-names** (the names and their order), **header-appearance** (the ◑ button) and **symphony-mark** (the fermata and its name) are kept as they are. None of them decides whether the pages go behind a menu.
+  [2026-11-16 22:30] owner · rejected — Symphony title should be omitted, only the icon should show for mobile
+  [2026-11-16 23:02] agent — Replaced by **phone-header-mark-only**: the same one row with the mark alone and no name on a phone; the name stays wider than a phone, and in the page for a screen reader. Pictures of the board and a document, light and dark, are on that card.
 
 ### Delivery to projects
 
@@ -295,6 +277,51 @@ their dated history work is in [REVIEW](REVIEW.md).
   [2026-11-11 19:13] agent — Done on `tools/orphan-processes`: the Symphony no longer looks for copies of itself or for test databases. The census, the notice at the top of every page, the `symphony-server orphans` command and the starter's line about leftovers are gone, with their tests and docs; no notice moved to the live feed. The repairs at the source stay: the database of a board in the temporary folder or under `artifacts/` ends when the process that started it ends, even when that process is killed, and the two test fixtures that start a database themselves end it the same way. The server's status still sends `orphans`, always 0, so a starter built before this can still read it.
 
 ## Resolved
+
+### The header
+
+- [x] **phone-header-mark-only** — Replaces: phone-header-one-row. On a phone the header would be one row with the mark alone and no name: the fermata, a menu button that names the page you are on (☰ Board), ◑ and the bell. The page links and Projects move into that menu, which opens under the button over the page, so nothing below it moves. The header goes from 97 px to 53 px tall, so every page starts 44 px higher. Wider than a phone nothing changes, the name included. It changes **header-on-a-phone**, which keeps every page in view on a second row. Approve, or comment. [[analysis/phone-header#The mark alone]]
+  [2026-11-16 23:05] agent — Posted for the board task `app/phone-header-mark-only`, from your rejection of **phone-header-one-row**: "Symphony title should be omitted, only the icon should show for mobile". The name is the only change from that card.
+  [2026-11-16 23:05] agent — The board, then a document, light then dark. Each shows today, the mark alone, and the menu open: ![The board on a phone, light: today, the mark alone, menu open](analysis/phone-header/mark-only-board-light.webp) ![The board on a phone, dark: today, the mark alone, menu open](analysis/phone-header/mark-only-board-dark.webp) ![A document on a phone, light: today, the mark alone, menu open](analysis/phone-header/mark-only-doc-light.webp) ![A document on a phone, dark: today, the mark alone, menu open](analysis/phone-header/mark-only-doc-dark.webp)
+
+    **The name.** It goes on every page 760 px wide or less, the server's own pages too (the project list, a missing page). A project with a name and an icon of its own shows its icon alone the same way. A screen reader still reads the name: it stays in the page out of sight, as the bell keeps its word Activity. The mark is no link today and stays none; Home is in the menu.
+
+    **The width it frees.** 84 px, the name and the gap after it. Nothing takes it: the gap between the menu button and ◑ grows. Only a page name too long for the button uses it, and is cut short with "…" past that. At 320 wide, Board leaves 102 px free; a page name of 234 px shows 138 px of itself, and the header stays one row with no sideways scroll.
+
+    **How the menu works.** As on the rejected card: a tap or Enter opens it, Tab moves into it, Escape or a tap anywhere else closes it, and Escape gives the focus back to the button. Following a link closes it too. The page you are on is lit in it, and Projects is its first line.
+
+    **What it costs.** Changing page takes two taps instead of one. Activity loses its word on a phone, keeping its bell and its unread dot. The name shows only wider than a phone.
+
+    **Not pictured.** At 320, 360 and 375 wide the row is one line with no sideways scroll. At desk width the header is the same, pixel for pixel, name and all. A theme with the compact header keeps its one scrolling row. The same board task builds it after your answer.
+
+    **Earlier verdicts checked.** **phone-header-one-row** is rejected; your words on it ask for this card's one change. **header-on-a-phone** chose two rows with every page in view; pages behind a button is another choice, so it is asked here and not recorded there. **symphony-mark** (C) put the fermata and its wordmark at the head of the header; your words on **phone-header-one-row**, which came after it, drop the wordmark on a phone, and wider than a phone it stays. **header-page-names** (the names and their order) and **header-appearance** (the ◑ button) are kept. None of them decides whether the pages go behind a menu.
+  [2026-11-17 03:49] owner · approved
+- [r] **header-appearance** — Appearance moves out of the chat sheet into the header: a round ◑ button, left of Activity, opens a small panel with the same two actions as today, import a shadcn theme or go back to the default theme, for this project on this device. The chat sheet then holds the chat and the new task alone. Approve, or comment. [[analysis/header-names#Appearance]]
+  [2026-11-11 20:30] agent — Posted for the board task `app/header-names`. The wide pictures are the right half of a 1440-wide page. Today, Appearance tops the chat sheet; here its menu is open (it shows through to the tabs under it, which `app/ui-polish-1` repairs): ![Today: the chat sheet's Appearance menu, at 1440 wide](analysis/header-names/appearance-before-wide.png) ![Today: the chat sheet's Appearance menu, on a phone](analysis/header-names/appearance-before-phone.png)
+
+    Proposed, the header's ◑ button and its panel. On a phone the open panel covers the row of pages until it is closed: ![Proposed: the Appearance panel at 1440 wide](analysis/header-names/appearance-after-wide.png) ![Proposed: the Appearance panel on a phone](analysis/header-names/appearance-after-phone.png)
+
+    Proposed, the chat sheet without it: ![Proposed: the chat sheet at 1440 wide](analysis/header-names/sheet-after-wide.png) ![Proposed: the chat sheet on a phone](analysis/header-names/sheet-after-phone.png)
+  [2026-11-11 22:00] owner · approved
+  [2026-11-12 06:45] agent · resolved
+- [r] **header-on-a-phone** — On a phone the header is two rows and never more: Projects, the ◑ Appearance button (third card) and Activity on the first, the five pages spread across the second, all in view at 390 wide. The grey path row (docs / TASKS.md) is dropped on a phone, since the page shows docs/TASKS.md just under the header. Today the header wraps into three rows. Approve, or comment. [[analysis/header-names#On a phone]]
+  [2026-11-11 20:30] agent — Posted for the board task `app/header-names`. A document on a phone, today then proposed: ![A document on a phone today: three rows](analysis/header-names/phone-before.png) ![A document on a phone, proposed: two rows](analysis/header-names/phone-after.png)
+
+    At 1440 wide nothing moves: one row, the path kept; only the names differ (first card). The left half, today then proposed: ![A document at 1440 wide today](analysis/header-names/phone-before-wide.png) ![A document at 1440 wide, proposed](analysis/header-names/phone-after-wide.png)
+
+    Not pictured: six pages, as many as the consuming project has, still fit at 390 wide; a project with more scrolls the second row sideways, shaded at the edge it continues past. The server's own pages (the Projects list, a missing page) draw the same two rows, where today they scroll sideways with "agents" cut off.
+  [2026-11-11 21:59] owner · approved
+  [2026-11-12 06:45] agent · resolved
+- [r] **header-page-names** — The header names each page once, in words alone (the ⌂ ☰ ▦ ◉ icons go), and every link to a page uses the same word: Projects (the list of every project on this computer, today "Change board"), then Home (today "⌂ board": the word Board moves to the task columns), Queue (new: the queue has no link today), Docs, Board (the task columns, today "▦ tasks") and Agents. The grey word after the links that only repeated the lit page ("tasks" in the first picture) goes; a document keeps its path there. Approve, or comment with the names or order to change. [[analysis/header-names#Names]]
+  [2026-11-11 20:30] agent — Posted for the board task `app/header-names`. The pictures are this repository's board, dark, today then proposed; the proposed phone picture also shows the ◑ Appearance button (third card) and the two rows (second card).
+
+    At 1440 wide (the left half, where the names are), today then proposed: ![The header today, on the board, at 1440 wide](analysis/header-names/names-before-wide.png) ![The header proposed, on the board, at 1440 wide](analysis/header-names/names-after-wide.png)
+
+    On a phone, today then proposed: ![The header today, on the board, on a phone](analysis/header-names/names-before-phone.png) ![The header proposed, on the board, on a phone](analysis/header-names/names-after-phone.png)
+
+    The same words follow wherever pages link to each other: the board's heading says Board (above), and a document's "Board" link says Home (second card's pictures). Not pictured: the queue's "← board" says Home, and a missing page offers Home, Docs and Projects. A project's own page keeps its plugin's label: the consuming project's lower-case one until its plugin capitalises it.
+  [2026-11-11 21:59] owner · approved
+  [2026-11-12 06:45] agent · resolved
 
 ### Page loading
 
@@ -1212,35 +1239,6 @@ their dated history work is in [REVIEW](REVIEW.md).
 
     **Defaults unless the note says otherwise.** The board database's internal namespace `sf` stays until each board's next reclaim. The consuming project's tool names become `symphony.toml` settings. Analysis documents name the consuming project where they measured its board. Board variables take `SYMPHONY_`, not `TASKS_`. `tasks-cutover` is retired. [[analysis/own-names#Smaller choices]]
   [2026-11-11 22:02] agent · resolved
-
-### The header
-
-- [r] **header-appearance** — Appearance moves out of the chat sheet into the header: a round ◑ button, left of Activity, opens a small panel with the same two actions as today, import a shadcn theme or go back to the default theme, for this project on this device. The chat sheet then holds the chat and the new task alone. Approve, or comment. [[analysis/header-names#Appearance]]
-  [2026-11-11 20:30] agent — Posted for the board task `app/header-names`. The wide pictures are the right half of a 1440-wide page. Today, Appearance tops the chat sheet; here its menu is open (it shows through to the tabs under it, which `app/ui-polish-1` repairs): ![Today: the chat sheet's Appearance menu, at 1440 wide](analysis/header-names/appearance-before-wide.png) ![Today: the chat sheet's Appearance menu, on a phone](analysis/header-names/appearance-before-phone.png)
-
-    Proposed, the header's ◑ button and its panel. On a phone the open panel covers the row of pages until it is closed: ![Proposed: the Appearance panel at 1440 wide](analysis/header-names/appearance-after-wide.png) ![Proposed: the Appearance panel on a phone](analysis/header-names/appearance-after-phone.png)
-
-    Proposed, the chat sheet without it: ![Proposed: the chat sheet at 1440 wide](analysis/header-names/sheet-after-wide.png) ![Proposed: the chat sheet on a phone](analysis/header-names/sheet-after-phone.png)
-  [2026-11-11 22:00] owner · approved
-  [2026-11-12 06:45] agent · resolved
-- [r] **header-on-a-phone** — On a phone the header is two rows and never more: Projects, the ◑ Appearance button (third card) and Activity on the first, the five pages spread across the second, all in view at 390 wide. The grey path row (docs / TASKS.md) is dropped on a phone, since the page shows docs/TASKS.md just under the header. Today the header wraps into three rows. Approve, or comment. [[analysis/header-names#On a phone]]
-  [2026-11-11 20:30] agent — Posted for the board task `app/header-names`. A document on a phone, today then proposed: ![A document on a phone today: three rows](analysis/header-names/phone-before.png) ![A document on a phone, proposed: two rows](analysis/header-names/phone-after.png)
-
-    At 1440 wide nothing moves: one row, the path kept; only the names differ (first card). The left half, today then proposed: ![A document at 1440 wide today](analysis/header-names/phone-before-wide.png) ![A document at 1440 wide, proposed](analysis/header-names/phone-after-wide.png)
-
-    Not pictured: six pages, as many as the consuming project has, still fit at 390 wide; a project with more scrolls the second row sideways, shaded at the edge it continues past. The server's own pages (the Projects list, a missing page) draw the same two rows, where today they scroll sideways with "agents" cut off.
-  [2026-11-11 21:59] owner · approved
-  [2026-11-12 06:45] agent · resolved
-- [r] **header-page-names** — The header names each page once, in words alone (the ⌂ ☰ ▦ ◉ icons go), and every link to a page uses the same word: Projects (the list of every project on this computer, today "Change board"), then Home (today "⌂ board": the word Board moves to the task columns), Queue (new: the queue has no link today), Docs, Board (the task columns, today "▦ tasks") and Agents. The grey word after the links that only repeated the lit page ("tasks" in the first picture) goes; a document keeps its path there. Approve, or comment with the names or order to change. [[analysis/header-names#Names]]
-  [2026-11-11 20:30] agent — Posted for the board task `app/header-names`. The pictures are this repository's board, dark, today then proposed; the proposed phone picture also shows the ◑ Appearance button (third card) and the two rows (second card).
-
-    At 1440 wide (the left half, where the names are), today then proposed: ![The header today, on the board, at 1440 wide](analysis/header-names/names-before-wide.png) ![The header proposed, on the board, at 1440 wide](analysis/header-names/names-after-wide.png)
-
-    On a phone, today then proposed: ![The header today, on the board, on a phone](analysis/header-names/names-before-phone.png) ![The header proposed, on the board, on a phone](analysis/header-names/names-after-phone.png)
-
-    The same words follow wherever pages link to each other: the board's heading says Board (above), and a document's "Board" link says Home (second card's pictures). Not pictured: the queue's "← board" says Home, and a missing page offers Home, Docs and Projects. A project's own page keeps its plugin's label: the consuming project's lower-case one until its plugin capitalises it.
-  [2026-11-11 21:59] owner · approved
-  [2026-11-12 06:45] agent · resolved
 
 ### Build folders
 
