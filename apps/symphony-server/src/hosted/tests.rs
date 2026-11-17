@@ -1072,12 +1072,20 @@ async fn real_upload_conditional_and_head_reads_are_private_and_revocation_prece
 
 fn feed_fixture(fake: &Arc<Fake>) -> (crate::testing::Tree, Arc<crate::live::Hub>, Router) {
     let tree = crate::testing::Tree::new();
+    tree.write("symphony.toml", "[project]\nid = \"fixture\"\n");
+    tree.write(
+        "docs/README.md",
+        "# Document\n\nSection body at the final diagnostic cursor.\n",
+    );
     let hub = Arc::new(crate::live::Hub::new(&tree.root, &tree.root));
     hub.refresh_page("", &tree.root).unwrap();
+    // Follow the document before the machine-only change, as an opened outline does. Sections
+    // must then name the hub's latest cursor, even though their content has not changed.
+    hub.document("", "docs/README.md").unwrap();
     {
         let mut pages = hub.pages.write().unwrap();
         let page = pages.get_mut("").unwrap();
-        page.board.version = 9;
+        page.board.version = 8;
         page.history.clear();
         let work = diagnostic_work();
         let probes = serde_json::json!({"panes": "inventory-reader-secret", "slots": "/private/inventory-reader"});
@@ -1095,28 +1103,51 @@ fn feed_fixture(fake: &Arc<Fake>) -> (crate::testing::Tree, Arc<crate::live::Hub
                 {"region":"agent-probes","data":probes}],"version":8})
             .to_string(),
         });
-        page.history.push_back(crate::live::Event {
-            version: 9,
-            json:
-                serde_json::json!({"changes":[{"region":"task","op":"upsert","key":"tools/visible",
-                "data":{"slug":"tools/visible","title":"ordinary-project-next"}}],"version":9})
-                .to_string(),
-        });
     }
     hub.server_notice
         .send_replace("secret diagnostic /private/path".into());
-    let served = hub.clone();
-    let app = Router::new()
-        .fallback(move |request: Request| {
-            let hub = served.clone();
-            async move { crate::api::feed(hub, "", request.map(|_| ())).await }
-        })
-        .layer(middleware::from_fn_with_state(boundary(fake), admit));
+    let shared = Shared::new(
+        1,
+        1,
+        &tree.root,
+        None,
+        crate::gate::Gate::new(Arc::new(|_| Ok(None)), Arc::new(std::time::Instant::now)),
+    );
+    assert!(shared.api.set(hub.clone()).is_ok());
+    let app = router(shared, config(), fake.clone()).unwrap().layer(
+        axum::extract::connect_info::MockConnectInfo(
+            "127.0.0.1:1234".parse::<std::net::SocketAddr>().unwrap(),
+        ),
+    );
     (tree, hub, app)
 }
 
+async fn native_sections_at_final_cursor(app: &Router) -> symphony_api::DocumentSections {
+    let response = app
+        .clone()
+        .oneshot(request(
+            "/api/section?path=docs/README.md&format=blocks&keys=%5B%22intro%22%5D",
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.headers()[symphony_api::VERSION_HEADER], "8");
+    let body = bytes(response).await;
+    assert_no_diagnostics(&body);
+    let parts: symphony_api::DocumentSections = serde_json::from_str(&body).unwrap();
+    assert_eq!(parts.version, 8);
+    assert_eq!(parts.change.path, "docs/README.md");
+    assert_eq!(parts.change.sections.len(), 1);
+    assert!(
+        parts.change.sections[0]
+            .html
+            .contains("Section body at the final diagnostic cursor.")
+    );
+    parts
+}
+
 #[tokio::test]
-async fn native_sse_reauthorizes_each_event_and_ends_at_revocation_without_diagnostic_notices() {
+async fn native_sse_keeps_the_final_diagnostic_cursor_for_sections_and_ends_at_revocation() {
     let fake = Fake::new();
     let (_tree, hub, app) = feed_fixture(&fake);
     let mut req = request("/api/feed?since=6");
@@ -1130,7 +1161,7 @@ async fn native_sse_reauthorizes_each_event_and_ends_at_revocation_without_diagn
         app.clone().oneshot(stale).await.unwrap().status(),
         StatusCode::CONFLICT
     );
-    let response = app.oneshot(req).await.unwrap();
+    let response = app.clone().oneshot(req).await.unwrap();
     assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(response.headers()["x-accel-buffering"], "no");
     let mut stream = response.into_body().into_data_stream();
@@ -1140,14 +1171,34 @@ async fn native_sse_reauthorizes_each_event_and_ends_at_revocation_without_diagn
     assert!(!event.contains("secret"));
     assert!(event.contains("ordinary-project-data"));
     assert_no_diagnostics(event);
-    let next = stream.next().await.unwrap().unwrap();
+    let sections = native_sections_at_final_cursor(&app).await;
+    let next = tokio::time::timeout(test_time::backstop(Duration::from_secs(10)), stream.next())
+        .await
+        .unwrap_or_else(|_| panic!("hosted SSE cursor stalled; {}", test_time::Load::now()))
+        .unwrap()
+        .unwrap();
     let next = std::str::from_utf8(&next).unwrap();
-    assert!(
-        next.contains("id: 9"),
-        "machine-only version 8 must be omitted: {next}"
-    );
-    assert!(next.contains("ordinary-project-next"));
+    assert!(next.contains("id: 8"), "{next}");
     assert_no_diagnostics(next);
+    let data = next
+        .lines()
+        .find_map(|line| line.strip_prefix("data: "))
+        .unwrap();
+    let delta: symphony_api::Delta = serde_json::from_str(data).unwrap();
+    assert_eq!(delta.version, sections.version, "sections can be displayed");
+    assert!(delta.changes.is_empty());
+    assert_eq!(
+        hub.pages.read().unwrap()[""].board.version,
+        sections.version
+    );
+    assert_eq!(
+        hub.pages.read().unwrap()[""]
+            .history
+            .back()
+            .unwrap()
+            .version,
+        8
+    );
     fake.changes.send_replace(());
     assert!(stream.next().await.is_none());
     let mut req = request("/api/feed?since=other:7");
@@ -1161,10 +1212,24 @@ async fn native_sse_reauthorizes_each_event_and_ends_at_revocation_without_diagn
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn native_websocket_uses_https_origin_and_closes_on_policy_revocation() {
+async fn native_websocket_keeps_the_final_diagnostic_cursor_for_sections_and_closes_on_revocation()
+{
     use tungstenite::client::IntoClientRequest;
     let fake = Fake::new();
     let (_tree, hub, app) = feed_fixture(&fake);
+    let sections = native_sections_at_final_cursor(&app).await;
+    assert_eq!(
+        hub.pages.read().unwrap()[""].board.version,
+        sections.version
+    );
+    assert_eq!(
+        hub.pages.read().unwrap()[""]
+            .history
+            .back()
+            .unwrap()
+            .version,
+        8
+    );
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let (stop, stopped) = tokio::sync::oneshot::channel();
@@ -1201,12 +1266,12 @@ async fn native_websocket_uses_https_origin_and_closes_on_policy_revocation() {
         assert!(first.contains("ordinary-project-data"));
         assert_no_diagnostics(&first);
         let next = socket.read().unwrap().into_text().unwrap();
-        assert!(
-            next.contains("\"version\":9"),
-            "machine-only version 8 must be omitted: {next}"
-        );
-        assert!(next.contains("ordinary-project-next"));
         assert_no_diagnostics(&next);
+        let (name, data) = next.split_once('\n').unwrap();
+        assert_eq!(name, symphony_api::FEED_EVENT);
+        let delta: symphony_api::Delta = serde_json::from_str(data).unwrap();
+        assert_eq!(delta.version, sections.version, "sections can be displayed");
+        assert!(delta.changes.is_empty());
         revoke.changes.send_replace(());
         assert!(matches!(
             socket.read().unwrap(),

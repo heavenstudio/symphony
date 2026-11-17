@@ -36,8 +36,10 @@ cannot extend an existing request. The host subscribes policy loss and external 
 Server diagnostic notices and detailed native errors are withheld from hosted responses.
 The machine-work endpoint is excluded. Native agent/task responses keep the existing wire
 shape with empty, unknown machine-work evidence and unavailable probe values; task stages and
-counts use that empty projection. Machine-work and agent-probe feed deltas are omitted, including
-diagnostics-only events. Ordinary project tasks, agents and document deltas remain available.
+counts use that empty projection. Machine-work and agent-probe feed payloads are omitted.
+Diagnostics-only events retain their version with an empty changes array, so document section
+reads can catch up to the feed cursor. Ordinary project tasks, agents and document deltas remain
+available.
 
 Hosted browser writes require exact Origin, same-origin fetch metadata when supplied,
 `application/json` and a verified CSRF binding. JSON is capped at 2 MiB; duplicate keys/query

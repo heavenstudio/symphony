@@ -18,8 +18,8 @@ pub(crate) fn project_page(mut page: symphony_api::TaskPage) -> symphony_api::Ta
     page
 }
 
-/// Keep ordinary project deltas and their native version, without diagnostics. A diagnostics-only
-/// event sends nothing; the source cursor still advances so it is not replayed on the next tick.
+/// Keep ordinary project deltas and every native version, without diagnostics. A diagnostics-only
+/// event keeps its empty changes array so section reads at that cursor can still catch up.
 /// Malformed envelopes are withheld, never passed through as an authentication fallback.
 pub(crate) fn project_feed(json: &str) -> Option<String> {
     let mut event: serde_json::Value = serde_json::from_str(json).ok()?;
@@ -30,9 +30,6 @@ pub(crate) fn project_feed(json: &str) -> Option<String> {
             Some("machine-work" | "agent-probes")
         )
     });
-    if changes.is_empty() {
-        return None;
-    }
     serde_json::to_string(&event).ok()
 }
 
@@ -56,16 +53,23 @@ mod tests {
     }
 
     #[test]
-    fn malformed_empty_and_diagnostics_only_envelopes_are_withheld() {
-        for json in [
-            "invalid",
-            "{}",
-            r#"{"changes":null}"#,
-            r#"{"changes":{}}"#,
-            r#"{"version":1,"changes":[]}"#,
-            r#"{"version":2,"changes":[{"region":"machine-work","data":{"reason":"secret"}}]}"#,
-            r#"{"version":3,"changes":[{"region":"agent-probes","data":"secret"}]}"#,
+    fn empty_and_diagnostics_only_envelopes_keep_their_cursor_without_payloads() {
+        for source in [
+            json!({"version":1,"changes":[]}),
+            json!({"version":2,"changes":[{"region":"machine-work","data":{"reason":"secret"}}]}),
+            json!({"version":3,"changes":[{"region":"agent-probes","data":"secret"}]}),
         ] {
+            let projected = project_feed(&source.to_string()).unwrap();
+            assert_eq!(
+                serde_json::from_str::<serde_json::Value>(&projected).unwrap(),
+                json!({"version":source["version"],"changes":[]})
+            );
+        }
+    }
+
+    #[test]
+    fn malformed_envelopes_are_withheld() {
+        for json in ["invalid", "{}", r#"{"changes":null}"#, r#"{"changes":{}}"#] {
             assert_eq!(project_feed(json), None, "{json}");
         }
     }
