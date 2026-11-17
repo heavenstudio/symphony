@@ -2,6 +2,9 @@
 //! version, then the board taken as it is, migrated forward once, or refused before any write. A
 //! writer keeps its line in the board's writers as it opens ([`super::writers`]).
 
+use super::database::Database;
+use super::postgres::{self, Pg};
+use super::statement::both;
 use super::surreal as sql;
 use super::transaction::Run;
 use super::writers::{self, Line, Program};
@@ -162,12 +165,21 @@ impl Store {
         host: &str,
         how: &Opening,
     ) -> Result<Store, Error> {
-        if let Some(why) =
-            live::cargo_refusal_here(how.live.as_ref(), client.addr(), client.database())
-        {
+        Store::opening_on(client.into(), clock, pid_alive, host, how)
+    }
+
+    /// As [`Store::opening`], the board in `db`, on SurrealDB or PostgreSQL.
+    pub fn opening_on(
+        db: Database,
+        clock: Clock,
+        pid_alive: Probe,
+        host: &str,
+        how: &Opening,
+    ) -> Result<Store, Error> {
+        if let Some(why) = live::cargo_refusal_here(how.live.as_ref(), &db.addr(), db.database()) {
             return Err(Error::Refused(why));
         }
-        let store = Store::unchecked_as(client, clock, pid_alive, host, how);
+        let store = Store::unchecked_on(db, clock, pid_alive, host, how);
         let own = how.schema.version();
         let record = |line: &Line| {
             store.record_writer(&how.program, &how.schema, how.access, line);
@@ -193,7 +205,7 @@ impl Store {
                     let board = how
                         .live
                         .clone()
-                        .or_else(|| live::find_here(store.client.addr(), store.client.database()));
+                        .or_else(|| live::find_here(&store.db.addr(), store.db.database()));
                     if let Some(board) = &board {
                         if how.live.is_none() {
                             went_back(board, found)?;
@@ -273,9 +285,20 @@ impl Store {
         host: &str,
         how: &Opening,
     ) -> Store {
+        Store::unchecked_on(client.into(), clock, pid_alive, host, how)
+    }
+
+    /// As `unchecked_as`, the board in `db`, on SurrealDB or PostgreSQL.
+    pub fn unchecked_on(
+        db: Database,
+        clock: Clock,
+        pid_alive: Probe,
+        host: &str,
+        how: &Opening,
+    ) -> Store {
         Store {
             lookup: None,
-            client,
+            db,
             clock,
             pid_alive,
             host: host.into(),
@@ -302,12 +325,15 @@ impl Store {
     /// same one read ([`sql::writers::OPENING`]).
     fn board_opening(&self, program: &Program) -> Result<(Option<i64>, bool, Line), Failure> {
         let vars = writers::opening_vars(program, &self.host);
-        match self.request(sql::writers::OPENING, vars) {
+        match self.request(
+            both(sql::writers::OPENING, postgres::writers::OPENING),
+            vars,
+        ) {
             Ok(answer) => {
                 let (found, line) = writers::opened(&answer);
                 Ok((found, true, line))
             }
-            Err(DbError::Failed(said)) if undefined(&said, self.client.database()) => {
+            Err(DbError::Failed(said)) if self.db.undefined(&said) => {
                 Ok((None, false, Line::NoTable))
             }
             Err(other) => Err(other.into()),
@@ -317,11 +343,10 @@ impl Store {
     /// The board's schema version (none for a board not made yet), and whether its namespace and
     /// database are on the server: one read in them, which defines nothing.
     fn board_schema(&self) -> Result<(Option<i64>, bool), Failure> {
-        match self.request(sql::opening::BOARD_SCHEMA, json!({})) {
+        let read = both(sql::opening::BOARD_SCHEMA, postgres::opening::BOARD_SCHEMA);
+        match self.request(read, json!({})) {
             Ok(found) => Ok((found.last().and_then(Value::as_i64), true)),
-            Err(DbError::Failed(said)) if undefined(&said, self.client.database()) => {
-                Ok((None, false))
-            }
+            Err(DbError::Failed(said)) if self.db.undefined(&said) => Ok((None, false)),
             Err(other) => Err(other.into()),
         }
     }
@@ -335,10 +360,19 @@ impl Store {
         if !defined {
             self.define()?;
         }
-        self.request(schema::ANALYZERS, json!({}))?;
+        self.request(both(schema::ANALYZERS, Pg::Nothing), json!({}))?;
         let steps = sql::opening::migration(schema.steps());
+        let postgres_steps = postgres::opening::migration(
+            &format!(
+                "{}\n{}",
+                postgres::schema::define(),
+                schema.postgres_steps()
+            ),
+            found,
+            schema.version(),
+        );
         self.run_transaction::<Value>(
-            &steps,
+            both(steps, Pg::Simple(postgres_steps.into())),
             json!({"version": schema.version(), "was": found}),
             Run::Unguarded,
         )?;

@@ -17,6 +17,10 @@ pub(in crate::store) const DUMP: &str = "RETURN {
     usages: (SELECT * OMIT id FROM usage ORDER BY handle, slug, role, model, speed, round),
 };";
 
+/// What the copy in one transaction says in SurrealQL: nothing, as a board on SurrealDB is copied
+/// through its staging tables ([`swap`]).
+pub(in crate::store) const NOTHING_COPIED: &str = "RETURN NONE;";
+
 /// The names of the database's tables.
 pub(in crate::store) const TABLES: &str = "RETURN object::keys((INFO FOR DB).tables);";
 

@@ -5,6 +5,8 @@ use super::{
     BEFORE_WORK, Error, NewTask, OWNER, REFUSED, Store, Task, no_task, plain_slug, refused, repr,
     sql,
 };
+use crate::store::postgres::{Pg, work as pg};
+use crate::store::statement::both;
 use serde_json::{Value, json};
 use std::fmt::Write as _;
 
@@ -111,13 +113,14 @@ impl Store {
         if let Some(assignee) = &new.assignee {
             let _ = write!(said, " for {assignee}");
         }
-        let body = sql::create(&sql::Creating {
+        let creating = sql::Creating {
             acts: new.by != OWNER,
             receipt: receipt.is_some(),
             red: red.is_some(),
             fast_fix: fast_fix.is_some(),
             arm: arm.is_some(),
-        });
+        };
+        let body = || both(sql::create(&creating), Pg::script(pg::create(&creating)));
         let mut vars = self.acting(
             &new.by,
             (self.clock)(),
@@ -136,6 +139,6 @@ impl Store {
         {
             vars.extend(filer);
         }
-        self.retrying(|| self.written(&body, vars.clone(), &new.slug))
+        self.retrying(|| self.written(body(), vars.clone(), &new.slug))
     }
 }

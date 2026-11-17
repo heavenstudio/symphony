@@ -506,10 +506,23 @@ const BOARD_TABLES: [&str; 24] = [
 #[test]
 fn copy_replaces_derived_vectors_only_when_the_board_swap_commits() {
     let f = Fixture::new(Seed { dump: everything() });
-    f.store.client().query(
-        "CREATE task_chunk SET slug = 'sim/jump', source = 'brief', source_hash = 'old', text_hash = 'old', model = 'fake', text = 'cached board text', embedding = $vector; CREATE task_embedding_source SET slug = 'sim/jump', source = 'brief', source_hash = 'old', model = 'fake', parts = 1; CREATE task_embedding_checkpoint:board SET snapshot = {model: 'fake'};",
-        serde_json::json!({"vector":vec![1.0_f32; 384]}),
-    ).unwrap();
+    let raw = f.store.raw();
+    let derived = serde_json::json!({
+        "slug": "sim/jump", "source": "brief", "source_hash": "old", "model": "fake",
+    });
+    let mut chunk = derived.clone();
+    chunk["text_hash"] = "old".into();
+    chunk["text"] = "cached board text".into();
+    chunk["embedding"] = serde_json::json!(vec![1.0_f32; 384]);
+    raw.row("task_chunk", "one").create(chunk).unwrap();
+    let mut source = derived;
+    source["parts"] = 1.into();
+    raw.row("task_embedding_source", "one")
+        .create(source)
+        .unwrap();
+    (raw.row("task_embedding_checkpoint", "board"))
+        .create(serde_json::json!({"snapshot": {"model": "fake"}}))
+        .unwrap();
     let counts = || -> Vec<serde_json::Value> {
         [
             "task_chunk",

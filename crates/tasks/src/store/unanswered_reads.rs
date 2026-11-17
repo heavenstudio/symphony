@@ -117,7 +117,7 @@ fn the_reads_answer_only_the_asked_threads_handles_and_answers() {
     f.store.say("work-child", "owner", "a word", None).unwrap();
     let named: Vec<Vec<String>> = f
         .store
-        .bounded_read(&sql::naming(""), json!({"handles": [&worker, "absent"]}))
+        .bounded_read(sql::naming(""), json!({"handles": [&worker, "absent"]}))
         .map_err(recovery_error)
         .unwrap();
     // Its claim on work is a system record it made; the post on work addresses it.
@@ -125,7 +125,7 @@ fn the_reads_answer_only_the_asked_threads_handles_and_answers() {
     let read: Threads = f
         .store
         .bounded_read(
-            &sql::threads(""),
+            sql::threads(""),
             json!({"slugs": ["work", "absent"], "launched": ["work", "work-child"]}),
         )
         .map_err(recovery_error)
@@ -142,7 +142,7 @@ fn the_reads_answer_only_the_asked_threads_handles_and_answers() {
     let found: Vec<Vec<i64>> = f
         .store
         .bounded_read(
-            &sql::below(""),
+            sql::below(""),
             json!({"asks": [
                 {"handle": &worker, "after": post.id, "below": ["work-child"]},
                 {"handle": &worker, "after": answer.id, "below": ["work-child"]},
@@ -187,7 +187,7 @@ fn launches_on_the_task_and_its_instructions_are_read_by_range() {
     let read: Threads = f
         .store
         .bounded_read(
-            &sql::threads(""),
+            sql::threads(""),
             json!({"slugs": ["work"], "launched": ["work", "work-review"]}),
         )
         .map_err(recovery_error)

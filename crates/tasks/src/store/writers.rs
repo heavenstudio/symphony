@@ -13,7 +13,7 @@
 //! is written without the schema guard, as builds of other schemas write it; it has no event, so a
 //! line written moves no board marker. Its times are this machine's clock ([`seen_now`]).
 
-use super::opening::undefined;
+use super::statement::both;
 use super::surreal::writers as sql;
 use super::{Failure, Store};
 use crate::board_health::ago;
@@ -192,9 +192,10 @@ impl Store {
     }
 
     fn writer_lines(&self) -> Result<Vec<Writer>, Failure> {
-        let found = match self.request(sql::LINES, json!({})) {
+        let lines = both(sql::LINES, super::postgres::writers::LINES);
+        let found = match self.request(lines, json!({})) {
             Ok(found) => found,
-            Err(DbError::Failed(said)) if undefined(&said, self.client.database()) => {
+            Err(DbError::Failed(said)) if self.db.undefined(&said) => {
                 return Ok(Vec::new());
             }
             Err(other) => return Err(other.into()),
@@ -233,7 +234,7 @@ impl Store {
             return;
         }
         let _ = self.request(
-            sql::WRITE_LINE,
+            both(sql::WRITE_LINE, super::postgres::writers::WRITE_LINE),
             json!({
                 "host": self.host,
                 "path": program.path,

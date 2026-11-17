@@ -1,5 +1,7 @@
 //! The combined structural and session marker identifies cached board inputs.
 
+use super::postgres::snapshot as pg;
+use super::statement::both;
 use super::surreal::snapshot as sql;
 use super::{Board, Error, Snapshot, Store, View};
 use serde_json::json;
@@ -19,14 +21,22 @@ impl Store {
             return Ok((Self::board_view(View::new(self, snapshot.clone())), marker));
         }
         let (body, vars) = sql::board();
-        let snapshot: Snapshot = self.retrying(|| self.transact(&body, vars.clone()))?;
+        let snapshot: Snapshot =
+            self.retrying(|| self.transact(both(&body, pg::board()), vars.clone()))?;
         let sequence = snapshot.callback_sequence;
         *cached = Some(snapshot.clone());
         Ok((Self::board_view(View::new(self, snapshot)), sequence))
     }
 
     pub(super) fn board_marker(&self) -> Result<u64, Error> {
-        self.retrying(|| self.read(&sql::marker(), json!({})))
+        let marker = sql::marker();
+        self.retrying(|| self.read(both(&marker, pg::marker()), json!({})))
+    }
+
+    /// The board's marker: it moves with every commit a reader can see that changes what a board
+    /// read shows, and with no other.
+    pub fn marker(&self) -> Result<u64, Error> {
+        self.board_marker()
     }
 
     /// Read cached board inputs, refreshing only when a committed board mutation moved the marker.

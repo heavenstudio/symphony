@@ -5,6 +5,33 @@
     reason = "a test starts its fixtures and stand-ins as it likes; the board's children are sys's"
 )]
 
+/// Tests written once and run on each database the board can be in: each `fn NAME(backend:
+/// Backend)` becomes the module `NAME` of two tests, `NAME::surrealdb` and `NAME::postgresql`,
+/// each handing its body the database it names ([`common::Backend`]). The parent module's items
+/// are in scope in the body.
+macro_rules! on_both {
+    ($($(#[$meta:meta])* fn $name:ident($backend:ident: Backend) $body:block)+) => {$(
+        mod $name {
+            #[allow(unused_imports, reason = "the body names what it uses of its module")]
+            use super::*;
+
+            fn run($backend: Backend) $body
+
+            #[test]
+            $(#[$meta])*
+            fn surrealdb() {
+                run(crate::common::Backend::SurrealDb);
+            }
+
+            #[test]
+            $(#[$meta])*
+            fn postgresql() {
+                run(crate::common::Backend::PostgreSql);
+            }
+        }
+    )+};
+}
+
 mod amend;
 mod asks;
 mod bindings;
@@ -35,6 +62,7 @@ mod held_stream;
 mod keyed;
 mod launches;
 mod low_volume;
+mod marker;
 mod marker_retirement;
 mod messages;
 mod mixed_dispatchers;
@@ -47,6 +75,7 @@ mod orchestrator_limit;
 mod orchestrators;
 mod owner_word;
 mod pending_pull;
+mod pg_client;
 mod priority;
 mod pull_acknowledgements;
 mod pushes;
@@ -70,6 +99,7 @@ mod stamp;
 mod start;
 mod subtask_roles;
 mod tree;
+mod two_writers;
 mod usage;
 mod verdict;
 mod waits;

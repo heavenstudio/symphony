@@ -162,7 +162,7 @@ impl Store {
         let text = format!("AGENT from {sender} to {handle} — {text}");
         let board_command = self.board_command();
         let key: String = self.retrying(|| self.transact(
-            &sql::send_agent(),
+            sql::send_agent(),
             self.acting(sender, self.now(), json!({"handle":handle, "text":text,
                 "no_channel":format!("refused: {handle} has no native channel; have it run {board_command} callback --as {handle}, or send on a task with {board_command} say SLUG TEXT --to {handle} (it can read {board_command} inbox --as {handle})") })),
         ))?;
@@ -327,7 +327,13 @@ impl Store {
     }
 
     fn stored_callbacks(&self) -> Result<Vec<Callback>, Error> {
-        self.retrying(|| self.read(sql::REGISTRATIONS, json!({})))
+        let read = || {
+            super::statement::both(
+                sql::REGISTRATIONS,
+                super::postgres::callbacks::registrations(),
+            )
+        };
+        self.retrying(|| self.read(read(), json!({})))
     }
 
     /// Reads use only the last recorded evidence. They neither connect nor retire registrations.

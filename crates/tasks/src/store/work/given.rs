@@ -304,7 +304,7 @@ impl Store {
     /// to hold its receivers' where it read them ([`Pass::guard`]).
     pub(in crate::store) fn slot_counters(&self) -> Result<Vec<(String, i64)>, Failure> {
         self.read(
-            &format!("RETURN ({});", crate::store::surreal::cap::COUNTERS),
+            format!("RETURN ({});", crate::store::surreal::cap::COUNTERS),
             json!({}),
         )
     }

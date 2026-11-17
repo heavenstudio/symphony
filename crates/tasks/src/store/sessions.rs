@@ -1,6 +1,8 @@
 //! Sessions: registering, being seen, a Claude Code agent's tool calls beating for a handle, leaving
 //! and coming back.
 
+use super::postgres::sessions as pg;
+use super::statement::both;
 use super::surreal::sessions as sql;
 use super::work::Pass;
 use super::{Beside, Error, Failure, Found, REFUSED, Session, Store, refused, repr};
@@ -168,7 +170,8 @@ impl Store {
             .as_ref()
             .map(|parent| format!("{REFUSED}no parent session {}", repr(parent)));
         let (handle, found) = self.retrying(|| {
-            let taken: Vec<String> = self.transact(sql::HANDLES, json!({}))?;
+            let handles = both(sql::HANDLES, pg::HANDLES);
+            let taken: Vec<String> = self.transact(handles, json!({}))?;
             let handle = self
                 .new_handle(&taken.into_iter().collect())
                 .map_err(Failure::Stop)?;
@@ -189,7 +192,7 @@ impl Store {
             };
             let vars = json!({"handle": handle, "row": row, "parent": new.parent, "orphan": orphan,
                               "executing": EXECUTING});
-            let found: Found = self.transact(&sql::register(), vars)?;
+            let found: Found = self.transact(both(sql::register(), pg::register()), vars)?;
             Ok((handle, found))
         })?;
         self.found(&handle, found)

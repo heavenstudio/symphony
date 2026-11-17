@@ -29,10 +29,12 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 use symphony_board::health::{LIVE_SECONDS, STALE_SECONDS};
+use symphony_board::pg;
 use symphony_board::port::{NotStarted, Start};
 use symphony_board::rpc::{self, Client, DbError};
+use symphony_board::server::{Home, Postgres};
 use symphony_board::sys::{Child, Command};
-use symphony_board::{Health, NewSession, NewTask, Store, Task};
+use symphony_board::{Database, Health, NewSession, NewTask, Store, Task};
 
 #[path = "fixture_root.rs"]
 mod fixture_root;
@@ -369,10 +371,98 @@ pub fn server_addr() -> String {
     SERVER.get_or_init(start).addr.clone()
 }
 
+/// The database a store test's board is in. A test that runs on both is written once, by
+/// [`crate::on_both`], and named by each: `NAME::surrealdb` and `NAME::postgresql`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[allow(
+    dead_code,
+    reason = "each test binary including this file runs on the databases its tests name"
+)]
+pub enum Backend {
+    SurrealDb,
+    PostgreSql,
+}
+
+#[allow(
+    dead_code,
+    reason = "each test binary including this file runs on the databases its tests name"
+)]
+impl Backend {
+    /// A database of its own on this binary's server of the backend.
+    pub fn database(self) -> Database {
+        match self {
+            Backend::SurrealDb => client().into(),
+            Backend::PostgreSql => postgresql().into(),
+        }
+    }
+}
+
+/// The test binary's PostgreSQL: a scratch board's server under the temporary folder, started on
+/// its socket alone at the first test that asks for it, stopped and its folder removed at the
+/// binary's exit, and ended with the binary however that ends, as every board's PostgreSQL ends
+/// with the process that started it (`symphony_board::server::postgres`). Its programs are the
+/// ones the repository's project file names (`[board] postgresql`).
+struct PgServer {
+    dir: PathBuf,
+    pg: Postgres,
+    socket: PathBuf,
+}
+
+static POSTGRESQL: OnceLock<PgServer> = OnceLock::new();
+
+/// A database of its own on the test binary's PostgreSQL ([`PgServer`]), made by the store that
+/// opens it.
+#[allow(
+    dead_code,
+    reason = "each test binary including this file runs on the databases its tests name"
+)]
+pub fn postgresql() -> pg::Client {
+    let server = POSTGRESQL.get_or_init(start_postgresql);
+    let db = format!(
+        "t{}_{}",
+        std::process::id(),
+        DATABASES.fetch_add(1, Ordering::SeqCst)
+    );
+    pg::Client::new(&server.socket, &db)
+}
+
+fn start_postgresql() -> PgServer {
+    let dir = std::env::temp_dir().join(format!("board-pg-{}", std::process::id()));
+    if dir.exists() {
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+    std::fs::create_dir_all(&dir).unwrap();
+    let programs = symphony_board::server::postgres::programs(&project_root())
+        .unwrap()
+        .expect(
+            "the repository's symphony.toml names the machine's PostgreSQL ([board] postgresql)",
+        );
+    let pg = Home::new(&dir.join("board"), Path::new("/no/surreal"))
+        .telling(|_| {})
+        .postgresql(&programs);
+    let serving = pg
+        .ensure()
+        .unwrap_or_else(|why| panic!("the tests' PostgreSQL did not start: {why}"));
+    on_exit(stop_postgresql);
+    PgServer {
+        dir,
+        pg,
+        socket: serving.socket,
+    }
+}
+
+/// At the test binary's exit: its PostgreSQL stopped and its folder removed.
+extern "C" fn stop_postgresql() {
+    if let Some(server) = POSTGRESQL.get() {
+        let _ = server.pg.stop();
+        let _ = std::fs::remove_dir_all(&server.dir);
+    }
+}
+
 /// A board of its own, its clock at `NOW` and no process alive until a test says so.
 pub struct Fixture {
     pub store: Store,
-    db: Client,
+    db: Database,
     clock: Arc<Mutex<f64>>,
     alive: Arc<Mutex<HashSet<i64>>>,
 }
@@ -434,8 +524,14 @@ impl Fixture {
             .health
     }
 
+    /// A board on SurrealDB seeded with `seed`.
     pub fn new(seed: Seed) -> Fixture {
-        let db = client();
+        Fixture::on(Backend::SurrealDb, seed)
+    }
+
+    /// A board on `backend` seeded with `seed`.
+    pub fn on(backend: Backend, seed: Seed) -> Fixture {
+        let db = backend.database();
         let clock = Arc::new(Mutex::new(NOW));
         let alive = Arc::new(Mutex::new(HashSet::new()));
         let store = open(&db, &clock, &alive);
@@ -457,11 +553,12 @@ impl Fixture {
     /// dispatch no callback registered on this one, which hears them from the next dispatch here.
     pub fn elsewhere(&self) -> Store {
         let (clock, alive) = (Arc::clone(&self.clock), Arc::clone(&self.alive));
-        Store::with(
-            self.other_client(),
+        Store::opening_on(
+            self.db.another(),
             Box::new(move || *clock.lock().unwrap()),
             Box::new(move |pid| alive.lock().unwrap().contains(&pid)),
             "another-host",
+            &symphony_board::Opening::write(),
         )
         .expect("the store opens")
     }
@@ -474,14 +571,15 @@ impl Fixture {
             Arc::clone(&self.alive),
             std::sync::Once::new(),
         );
-        Store::with(
-            self.other_client(),
+        Store::opening_on(
+            self.db.another(),
             Box::new(move || {
                 once.call_once(&meanwhile);
                 *clock.lock().unwrap()
             }),
             Box::new(move |pid| alive.lock().unwrap().contains(&pid)),
             HOST,
+            &symphony_board::Opening::write(),
         )
         .expect("the store opens")
     }
@@ -495,8 +593,8 @@ impl Fixture {
             Arc::clone(&self.alive),
             std::sync::Once::new(),
         );
-        Store::with(
-            self.other_client(),
+        Store::opening_on(
+            self.db.another(),
             Box::new(move || {
                 let read = *clock.lock().unwrap();
                 once.call_once(&meanwhile);
@@ -504,6 +602,7 @@ impl Fixture {
             }),
             Box::new(move |pid| alive.lock().unwrap().contains(&pid)),
             HOST,
+            &symphony_board::Opening::write(),
         )
         .expect("the store opens")
     }
@@ -512,21 +611,34 @@ impl Fixture {
     /// board that moves under each of its rules' reads for as long as `meanwhile` acts.
     pub fn busy(&self, meanwhile: impl Fn() + Send + Sync + 'static) -> Store {
         let (clock, alive) = (Arc::clone(&self.clock), Arc::clone(&self.alive));
-        Store::with(
-            self.other_client(),
+        Store::opening_on(
+            self.db.another(),
             Box::new(move || {
                 meanwhile();
                 *clock.lock().unwrap()
             }),
             Box::new(move |pid| alive.lock().unwrap().contains(&pid)),
             HOST,
+            &symphony_board::Opening::write(),
         )
         .expect("the store opens")
     }
 
-    /// A client of its own on this board's database.
+    /// A SurrealDB client of its own on this board's database.
     pub fn other_client(&self) -> Client {
-        Client::new(self.db.addr(), "sf", self.db.database())
+        match self.db.another() {
+            Database::SurrealDb(client) => client,
+            Database::PostgreSql(_) => panic!("this board is on PostgreSQL"),
+        }
+    }
+
+    /// A client of its own on this board's database, on either database.
+    #[allow(
+        dead_code,
+        reason = "each test binary including this file runs on the databases its tests name"
+    )]
+    pub fn other_database(&self) -> Database {
+        self.db.another()
     }
 
     pub fn advance(&self, seconds: f64) {
@@ -633,13 +745,14 @@ pub fn report_board() -> Fixture {
     f
 }
 
-fn open(db: &Client, clock: &Arc<Mutex<f64>>, alive: &Arc<Mutex<HashSet<i64>>>) -> Store {
+fn open(db: &Database, clock: &Arc<Mutex<f64>>, alive: &Arc<Mutex<HashSet<i64>>>) -> Store {
     let (clock, alive) = (Arc::clone(clock), Arc::clone(alive));
-    Store::with(
-        Client::new(db.addr(), "sf", db.database()),
+    Store::opening_on(
+        db.another(),
         Box::new(move || *clock.lock().unwrap()),
         Box::new(move |pid| alive.lock().unwrap().contains(&pid)),
         HOST,
+        &symphony_board::Opening::write(),
     )
     .expect("the store opens")
 }

@@ -204,7 +204,7 @@ impl Store {
                     "slots": slots,
                 }),
             );
-            self.written(&sql::change(acts, guarded), vars, slug)
+            self.written(sql::change(acts, guarded), vars, slug)
         })
     }
 }

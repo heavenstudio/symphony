@@ -2,6 +2,8 @@
 //! them.
 
 use super::messages::BOARD;
+use super::postgres::Pg;
+use super::statement::both;
 use super::surreal::work as sql;
 use super::{
     Change, Error, Failure, Message, Opens, REFUSED, Say, Store, Task, Which, left_actor, refused,
@@ -341,7 +343,13 @@ impl Store {
         }
         // Read the old value and write its replacement and history in the same transaction. A
         // concurrent edit conflicts and retries, so history always names the value replaced.
-        let body = sql::set_priority(handle != OWNER);
+        let acts = handle != OWNER;
+        let body = || {
+            both(
+                sql::set_priority(acts),
+                Pg::script(super::postgres::work::set_priority(acts)),
+            )
+        };
         self.retrying(|| {
             let vars = self.acting(
                 handle,
@@ -351,7 +359,7 @@ impl Store {
                     "missing": format!("{REFUSED}{}", no_task(slug)),
                 }),
             );
-            self.written(&body, vars, slug)
+            self.written(body(), vars, slug)
         })
     }
 
@@ -431,7 +439,7 @@ impl Store {
                 json!({"slug": slug, "parent": parent, "moves": read.moves, "said": said, "slots": slots}),
             );
             let Some(pass) = kept else {
-                return self.written(&sql::set_parent(acts, guarded, false), vars, slug);
+                return self.written(sql::set_parent(acts, guarded, false), vars, slug);
             };
             // The give's fences go before the move moves the task's version.
             let sender = if by == OWNER { BOARD } else { by };
