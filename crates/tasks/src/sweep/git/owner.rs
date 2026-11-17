@@ -103,8 +103,9 @@ fn candidates(path: &Path, specs: &[&str], rev: Option<&str>) -> Result<Vec<Stri
 /// changed or added since its HEAD that none of HEAD's copies of those documents holds on that
 /// card, nor, given a commit `tip`, the tip's copies (a land's: what it carries). Every committed
 /// register in the folders counts, including unchanged ones copied into a changed or new file.
-/// Lines are compared as a count per card, so a line a regroup only moved is none. An answer git cannot read
-/// is an error, never none: a caller that cannot tell must keep what it would lose.
+/// Lines are compared as a count per card within each written file, so several files copying the
+/// same committed register are none. An answer git cannot read is an error, never none: a caller
+/// that cannot tell must keep what it would lose.
 pub fn answers(path: &Path, folders: &[String], tip: Option<&str>) -> Result<Vec<Answer>, String> {
     let specs = pathspecs(folders);
     // Both names of a file moved: its old name's copy in HEAD holds the lines it moved.
@@ -170,9 +171,11 @@ pub fn answers(path: &Path, folders: &[String], tip: Option<&str>) -> Result<Vec
         *most = (*most).max(*n);
     }
     let mut left: Vec<Answer> = Vec::new();
+    let mut seen = BTreeMap::new();
     for (file, line) in &written {
-        if let Some(n) = held.get_mut(line).filter(|n| **n > 0) {
-            *n -= 1;
+        let n = seen.entry((file, line)).or_insert(0usize);
+        *n += 1;
+        if *n <= held.get(line).copied().unwrap_or(0) {
             continue;
         }
         let answer = Answer {
@@ -343,8 +346,8 @@ mod tests {
         let docs = vec!["docs".to_string()];
         write(&root, "docs/D.md.orig", register);
         assert_eq!(answers(&root, &docs, None).unwrap(), []);
-        std::fs::remove_file(root.join("docs/D.md.orig")).unwrap();
         write(&root, "docs/E.md", register);
+        // Several copies of a known line still add no owner answer.
         assert_eq!(answers(&root, &docs, None).unwrap(), []);
         write(
             &root,
