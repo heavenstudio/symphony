@@ -1127,6 +1127,7 @@ fn the_header_and_the_icons_are_the_symphonys_until_a_theme_has_its_own() {
 #[test]
 fn a_phone_keeps_its_selected_board_stage_only_for_that_project() {
     let board = ScratchBoard::start();
+    board.call_in_database(DATABASE, "register", json!({"kind":"worker"}));
     let server = OneServer::start(board.address());
     let Some(mut browser) = chrome() else { return };
     browser.call(

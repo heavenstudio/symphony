@@ -139,7 +139,7 @@ const WAITING: &str = "(() => {
 /// to), once what is near what it shows is drawn (`WAITING`), and stays as it is.
 fn scroll_board(page: &mut Chrome, status: &str, top: u32) {
     page.eval(&format!(
-        "(() => {{ if (innerWidth <= 760) {{ const stages = ['review','in_progress','ready','done','design','concept','backlog']; document.querySelectorAll('.stage-tabs button')[stages.indexOf('{status}')].click(); }} }})()"
+        "(() => {{ if (innerWidth <= 760) {{ const stages = ['review','in_progress','ready','done','design','concept','backlog']; const tab=document.querySelectorAll('.stage-tabs button')[stages.indexOf('{status}')]; tab.focus({{preventScroll:true}}); tab.click(); }} }})()"
     ));
     assert!(page.wait_for(
         &format!("document.querySelector('.column[data-status={status}]') !== null"),
@@ -681,7 +681,8 @@ fn a_touch_screens_last_tap_leaves_the_readers_column_in_place() {
         "(() => { const box = ({top:0,left:0,bottom:innerHeight,right:innerWidth});
             const slug = [...document.querySelectorAll('.column[data-status=in_progress] .waiting-slug')].find(code => {
                 const r = code.getBoundingClientRect();
-                return r.top > box.top && r.bottom < box.bottom && r.left > box.left && r.right < box.right; });
+                return r.top > Math.max(box.top, document.querySelector('header').getBoundingClientRect().bottom) && r.bottom < box.bottom && r.left > box.left && r.right < box.right; });
+            window.__slugTapped = false; slug.addEventListener('click', () => { window.__slugTapped = true; }, {once:true});
             const r = slug.getBoundingClientRect();
             return [r.left + r.width / 2, r.top + r.height / 2]; })()",
     );
@@ -694,7 +695,7 @@ fn a_touch_screens_last_tap_leaves_the_readers_column_in_place() {
         json!({"type":"touchEnd","touchPoints":[]}),
     );
     assert!(
-        page.wait_for(TAPPED, SHOWN),
+        page.wait_for(&format!("{TAPPED} && window.__slugTapped === true"), SHOWN),
         "the tap never left the pointer over In progress"
     );
     scroll_board(&mut page, "ready", 900);
