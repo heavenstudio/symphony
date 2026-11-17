@@ -35,9 +35,10 @@ fn hosted_admission_is_additive_and_explicit() {
     use symphony_server::{front, hosted};
     let _: fn(&str, &str, &str, &str) -> Result<hosted::Config, hosted::Refusal> =
         hosted::Config::new;
-    let _: fn(
+    type HostedRouter = fn(
         Arc<front::Shared>,
         hosted::Config,
         Arc<dyn hosted::Host>,
-    ) -> Result<axum::Router, hosted::Refusal> = hosted::router;
+    ) -> Result<axum::Router, hosted::Refusal>;
+    let _: HostedRouter = hosted::router;
 }

@@ -861,6 +861,28 @@ async fn cache_head_and_range_reads_still_require_current_media_authority() {
 #[tokio::test]
 async fn native_and_adapter_errors_cannot_leak_diagnostics() {
     let fake = Fake::new();
+    for status in [
+        StatusCode::BAD_REQUEST,
+        StatusCode::UNAUTHORIZED,
+        StatusCode::FORBIDDEN,
+        StatusCode::NOT_FOUND,
+        StatusCode::METHOD_NOT_ALLOWED,
+        StatusCode::CONFLICT,
+        StatusCode::PAYLOAD_TOO_LARGE,
+        StatusCode::INTERNAL_SERVER_ERROR,
+        StatusCode::SERVICE_UNAVAILABLE,
+    ] {
+        let app = Router::new()
+            .fallback(
+                move || async move { (status, "secret-token /private/path database://secret") },
+            )
+            .layer(middleware::from_fn_with_state(boundary(&fake), admit));
+        let response = app.oneshot(request("/")).await.unwrap();
+        assert_eq!(response.status(), status);
+        let text = bytes(response).await;
+        assert!(!text.contains("secret"));
+        assert!(!text.contains("/private"));
+    }
     let app = Router::new()
         .fallback(|| async {
             (
@@ -999,6 +1021,14 @@ async fn native_sse_reauthorizes_each_event_and_ends_at_revocation_without_diagn
     let mut req = request("/api/feed?since=6");
     req.headers_mut()
         .insert(header::ORIGIN, ORIGIN.parse().unwrap());
+    let mut stale = request("/api/feed?since=99");
+    stale
+        .headers_mut()
+        .insert(header::ORIGIN, ORIGIN.parse().unwrap());
+    assert_eq!(
+        app.clone().oneshot(stale).await.unwrap().status(),
+        StatusCode::CONFLICT
+    );
     let response = app.oneshot(req).await.unwrap();
     assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(response.headers()["x-accel-buffering"], "no");

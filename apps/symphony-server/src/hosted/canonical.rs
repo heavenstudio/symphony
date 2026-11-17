@@ -254,13 +254,18 @@ pub(super) fn response(config: &Config, response: Response) -> Result<Response, 
     // Native error details may contain paths or dependency failures. Hosted diagnostics are
     // finite status failures, never HTML login bodies or reflected error strings.
     if response.status().is_client_error() || response.status().is_server_error() {
-        return Err(match response.status().as_u16() {
+        let refused = match response.status().as_u16() {
             401 => Refusal::Unauthenticated,
             403 => Refusal::Denied,
             404 => Refusal::Missing,
             400..=499 => Refusal::Invalid,
             _ => Refusal::Unavailable,
-        });
+        };
+        let mut sanitized = refused.response();
+        // Status is protocol data: notably, a feed's 409 requests a new snapshot. Detailed
+        // diagnostics are replaced without turning that recovery signal into another error.
+        *sanitized.status_mut() = response.status();
+        return Ok(sanitized);
     }
     if let Some(location) = single(response.headers(), "location")? {
         let relative = location.strip_prefix(&config.origin).unwrap_or(location);
