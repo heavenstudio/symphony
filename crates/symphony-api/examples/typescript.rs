@@ -195,6 +195,8 @@ fn board_declarations(cfg: &Config) -> Vec<Declared> {
         declared::<api::RunLog>(cfg),
         // The task board's, its tasks and the machines' work.
         declared::<api::TaskListing>(cfg),
+        declared::<api::WaitingBoard>(cfg),
+        declared::<api::WaitingColumn>(cfg),
         declared::<api::Task>(cfg),
         declared::<api::WaitsOn>(cfg),
         declared::<api::Orchestrator>(cfg),
@@ -1304,6 +1306,7 @@ fn task_board_samples() -> Vec<(String, Value)> {
             health: "stale".into(),
         }],
         unstarted: 3,
+        waiting: None,
     };
     let empty = api::TaskListing {
         machine_work: api::MachineWork::default(),
@@ -1315,6 +1318,7 @@ fn task_board_samples() -> Vec<(String, Value)> {
         next: None,
         orchestrators: Vec::new(),
         unstarted: 0,
+        waiting: None,
     };
     let change = api::TaskChange {
         key: "w/a".into(),

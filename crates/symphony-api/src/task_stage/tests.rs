@@ -374,3 +374,31 @@ fn a_work_that_could_move_a_task_does_not_place_alike() {
     differs(&|work| work.machines.clear());
     assert!(!MachineWork::default().places_alike(&current));
 }
+
+#[test]
+fn waiting_board_metadata_is_optional_and_round_trips_complete_totals() {
+    let legacy = serde_json::json!({"tasks": [], "next": null});
+    let mut listing: TaskListing = serde_json::from_value(legacy).unwrap();
+    assert!(listing.waiting.is_none());
+    assert!(
+        serde_json::to_value(&listing)
+            .unwrap()
+            .get("waiting")
+            .is_none()
+    );
+    listing.waiting = Some(WaitingBoard {
+        kinds: vec![("check".into(), 42)],
+        columns: vec![WaitingColumn {
+            status: "review".into(),
+            ordinary: 3,
+            blocked: 42,
+            oldest: Some(1234.5),
+        }],
+    });
+    let value = serde_json::to_value(&listing).unwrap();
+    assert_eq!(value["waiting"]["columns"][0]["blocked"], 42);
+    assert_eq!(
+        serde_json::from_value::<TaskListing>(value).unwrap(),
+        listing
+    );
+}

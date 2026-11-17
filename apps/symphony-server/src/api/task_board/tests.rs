@@ -445,3 +445,5 @@ async fn a_listing_without_work_places_tasks_by_it_and_leaves_it_out() {
     let built = page("counts=1&activity=1&work=0", "", &scores).await;
     assert_eq!(total(&built, "build"), 37);
 }
+
+mod waiting;
