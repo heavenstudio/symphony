@@ -227,72 +227,50 @@ fn the_dock_holds_the_floating_controls_and_a_focused_or_last_control_sits_above
     }
 }
 
-/// Whether the task board's scroller is as tall as it may be (its columns are taller), and whether
-/// its foot, where its horizontal scrollbar is, is above the dock's top.
-const BOARD_FOOT: &str = "(() => {const board=document.querySelector('.board-scroll'), box=board.getBoundingClientRect(), dock=document.querySelector('.frame-dock').getBoundingClientRect();\
-    return {capped: board.scrollHeight > board.clientHeight, aboveDock: box.bottom <= dock.top + 0.5};})()";
-
-/// The task board's scroller, as tall as its columns let it be, ends above the dock with the page
-/// at its top: its own horizontal scrollbar, at its foot, is never under the prev/next bar
-/// (inbox/the-prev-next-bar-covers-the-horizontal), on a phone, a desk or a tall window.
+/// The window-scrolled board lets its last card clear the floating dock or chat button. There
+/// is no private horizontal scrollbar to hide beneath either control in the waiting layout.
 #[test]
-fn the_task_boards_own_scrollbar_ends_above_the_dock() {
-    let site = site();
-    site.set_json("/api/pending", &pending());
-    site.set_json("/api/task-board", &super::polish::thirty_ready());
-    let Some(mut page) = chrome() else { return };
-    for (width, height) in [(390, 844), (1280, 900), (1500, 1700)] {
-        viewport(&mut page, width, height);
-        page.open(&site.url("/tasks"));
-        assert!(page.wait_for(
-            "document.querySelector('.frame-pending') !== null && document.querySelector('.board-scroll .taskcard') !== null && document.documentElement.dataset.navigation === 'ready'",
-            SHOWN
-        ));
-        settle(&mut page);
-        assert_eq!(
-            page.eval(BOARD_FOOT),
-            json!({"capped":true,"aboveDock":true}),
-            "at {width}px x {height}px the board's foot is above the dock"
-        );
-    }
-}
-
-/// Whether the task board's scroller is as tall as it may be, whether the "+" stands over the
-/// right end of its foot, where its horizontal scrollbar ends, whether that foot is above the
-/// "+"'s top, and whether a click there, a pixel above the foot and clear of its rounded corner
-/// (`--r-lg`, 14 px), reaches the scroller.
-const BOARD_FOOT_BARE: &str = "(() => {const board=document.querySelector('.board-scroll'), box=board.getBoundingClientRect(), open=document.querySelector('#quick-open').getBoundingClientRect();\
-    const end=document.elementFromPoint(Math.min(box.right, open.right) - 20, box.bottom - 1);\
-    return {capped: board.scrollHeight > board.clientHeight, under: open.left < box.right && open.right > box.left,\
-        abovePlus: box.bottom <= open.top + 0.5, reached: board.contains(end)};})()";
-
-/// With nothing pending no dock draws, and the "+" sits alone in the window's corner: the task
-/// board's scroller, as tall as its columns let it be, still ends above it, so the end of its
-/// own horizontal scrollbar is never under the "+" (app/board-scroll-and-focus-followups), on a
-/// phone, a desk or a tall window.
-#[test]
-fn the_task_boards_own_scrollbar_ends_above_the_chat_button_with_no_dock() {
-    let site = site();
-    site.set_json("/api/task-board", &super::polish::thirty_ready());
-    let Some(mut page) = chrome() else { return };
-    for (width, height) in [(390, 844), (1280, 800), (1440, 900), (1500, 1700)] {
-        viewport(&mut page, width, height);
-        page.open(&site.url("/tasks"));
-        assert!(page.wait_for(
-            "document.querySelector('#quick-open') !== null && document.querySelector('.board-scroll .taskcard') !== null && document.documentElement.dataset.navigation === 'ready'",
-            SHOWN
-        ));
-        settle(&mut page);
-        assert_eq!(
-            page.eval(BARE),
-            json!({"bar":false,"pending":false,"corner":true}),
-            "at {width}px x {height}px no dock draws"
-        );
-        assert_eq!(
-            page.eval(BOARD_FOOT_BARE),
-            json!({"capped":true,"under":true,"abovePlus":true,"reached":true}),
-            "at {width}px x {height}px the board's foot is above the \"+\""
-        );
+fn the_task_boards_last_card_scrolls_clear_of_the_dock_and_chat_button() {
+    for pending_items in [false, true] {
+        let site = site();
+        if pending_items {
+            site.set_json("/api/pending", &pending());
+        }
+        site.set_json("/api/task-board", &super::polish::thirty_ready());
+        let Some(mut page) = chrome() else { return };
+        for (width, height) in [(390, 844), (1280, 900), (1500, 1700)] {
+            viewport(&mut page, width, height);
+            page.open(&site.url("/tasks"));
+            assert!(page.wait_for("document.querySelector('.waiting-columns') !== null && document.documentElement.dataset.navigation === 'ready'",SHOWN));
+            if width <= 760 {
+                assert!(page.wait_for(
+                    "document.querySelector('.stage-tabs button') !== null",
+                    SHOWN
+                ));
+                page.eval("[...document.querySelectorAll('.stage-tabs button')].find(button=>button.textContent.startsWith('Ready')).click()");
+            }
+            assert!(page.wait_for(
+                "document.querySelector('[id=\"row-load/ready-30\"]') !== null",
+                SHOWN
+            ));
+            page.eval("scrollTo(0,document.documentElement.scrollHeight)");
+            assert!(page.wait_for(
+                "document.querySelector('[data-slug=\"load/ready-30\"]') !== null",
+                SHOWN
+            ));
+            settle(&mut page);
+            let shown = page.eval(&clear("[data-slug=\"load/ready-30\"]"));
+            assert_eq!(shown["inView"], json!(true), "{width}px: {shown}");
+            assert_eq!(shown["underControl"], json!(false), "{width}px: {shown}");
+            assert_eq!(shown["reached"], json!(true), "{width}px: {shown}");
+            if pending_items {
+                assert_eq!(shown["aboveDock"], json!(true), "{width}px: {shown}");
+            }
+            assert_eq!(
+                page.eval("document.documentElement.scrollWidth <= innerWidth"),
+                json!(true)
+            );
+        }
     }
 }
 

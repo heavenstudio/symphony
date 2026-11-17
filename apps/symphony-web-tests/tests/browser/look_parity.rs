@@ -1001,9 +1001,13 @@ fn document_controls_reveal_on_hover_and_keyboard_focus_with_the_original_verdic
 }
 
 #[test]
-fn task_columns_keep_status_tones_priority_edges_health_dots_and_the_phone_pipeline() {
+fn waiting_columns_keep_status_tones_priority_edges_and_a_single_phone_stage() {
     let site = ParitySite::start();
     let Some(mut browser) = chrome() else { return };
+    browser.call(
+        "Emulation.setDeviceMetricsOverride",
+        json!({"width":1440,"height":900,"deviceScaleFactor":1,"mobile":false}),
+    );
     track_styles(&mut browser);
     browser.call(
         "Emulation.setEmulatedMedia",
@@ -1012,10 +1016,9 @@ fn task_columns_keep_status_tones_priority_edges_health_dots_and_the_phone_pipel
     browser.open(&site.url("/tasks"));
     // The nine lifecycle statuses. No machine reports this fixture's work, so Build and Test
     // are one rail between them.
-    assert!(browser.wait_for("document.querySelectorAll('.column').length === 10 && document.querySelector('.taskcard') !== null",SHOWN), "the board shows {}", browser.eval("JSON.stringify({columns: [...document.querySelectorAll('.column')].map(c => c.dataset.status), cards: [...document.querySelectorAll('.taskcard')].map(c => c.dataset.slug)})"));
+    assert!(browser.wait_for("document.querySelectorAll('.waiting-columns .column').length === 7 && document.querySelector('.taskcard') !== null",SHOWN), "the board shows {}", browser.eval("JSON.stringify({columns: [...document.querySelectorAll('.column')].map(c => c.dataset.status), cards: [...document.querySelectorAll('.taskcard')].map(c => c.dataset.slug)})"));
     painted_layout(&mut browser);
     for (status, colour) in [
-        ("backlog", "rgb(138, 133, 128)"),
         ("concept", "rgb(74, 63, 158)"),
         ("design", "rgb(74, 63, 158)"),
         ("ready", "rgb(31, 122, 140)"),
@@ -1023,14 +1026,13 @@ fn task_columns_keep_status_tones_priority_edges_health_dots_and_the_phone_pipel
         ("build-test", "rgb(47, 93, 158)"),
         ("review", "rgb(148, 106, 0)"),
         ("done", "rgb(46, 125, 79)"),
-        ("blocked", "rgb(179, 57, 43)"),
-        ("cancelled", "rgb(95, 107, 115)"),
     ] {
         assert_eq!(browser.eval(&format!("getComputedStyle(document.querySelector('.column[data-status={status}]')).borderTopColor")),json!(colour),"{status}");
     }
     assert_eq!(
-        browser
-            .eval("[...document.querySelectorAll('.pipeline > .column')].map(e=>e.dataset.status)"),
+        browser.eval(
+            "[...document.querySelectorAll('.waiting-columns .column')].map(e=>e.dataset.status)"
+        ),
         json!([
             "concept",
             "design",
@@ -1042,35 +1044,14 @@ fn task_columns_keep_status_tones_priority_edges_health_dots_and_the_phone_pipel
         ])
     );
     assert_eq!(
-        browser
-            .eval("[...document.querySelectorAll('.offline > .column')].map(e=>e.dataset.status)"),
-        json!(["backlog", "blocked", "cancelled"])
-    );
-    assert_eq!(
         browser.eval("getComputedStyle(document.querySelector('.taskcard.p1')).borderLeftWidth"),
-        json!("4px")
+        json!("3px")
     );
-    assert_eq!(browser.eval("getComputedStyle(document.querySelector('.chip.health-live'),'::before').backgroundColor"),json!("rgb(46, 125, 79)"));
-    super::components::choose(&mut browser, ".filters button[aria-label=Status]", "Ready");
-    assert!(browser.wait_for("document.querySelectorAll('.column').length === 1 && document.querySelector('.column[data-status=ready]') !== null",SHOWN));
-    assert_eq!(browser.eval("Math.abs(document.querySelector('.pipeline').getBoundingClientRect().width-document.querySelector('.column[data-status=ready]').getBoundingClientRect().width)<1"),json!(true));
-    super::components::choose(
-        &mut browser,
-        ".filters button[aria-label=Status]",
-        "All statuses",
-    );
-    assert!(browser.wait_for("document.querySelectorAll('.column').length === 10", SHOWN));
     browser.call(
         "Emulation.setDeviceMetricsOverride",
         json!({"width":390,"height":844,"deviceScaleFactor":1,"mobile":true}),
     );
-    // On a phone the board's scroller fits the screen and the pipeline stays one row of
-    // stages in order, swiped sideways inside it, never widening the page.
-    assert!(browser.wait_for(
-        "document.querySelector('.board-scroll').getBoundingClientRect().width < 400",
-        SHOWN
-    ));
-    assert_eq!(browser.eval("const cols=[...document.querySelectorAll('.pipeline > .column')].map(e=>e.getBoundingClientRect()); cols.length === 7 && cols.every((box,i)=>Math.abs(box.y-cols[0].y)<1 && (i===0 || box.x>=cols[i-1].right))"),json!(true));
+    assert!(browser.wait_for("document.querySelectorAll('.waiting-columns .column').length === 1 && document.querySelector('.column[data-status=review] .taskcard') !== null", SHOWN));
     assert_eq!(
         browser.eval("document.documentElement.scrollWidth <= innerWidth"),
         json!(true)

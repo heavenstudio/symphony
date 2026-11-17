@@ -926,7 +926,7 @@ fn the_task_groups_say_when_they_could_not_be_loaded_and_retry() {
     let Some(mut page) = chrome() else { return };
     page.open(&site.url("/tasks"));
     assert!(page.wait_for(
-        "document.querySelector('.pipeline .column') !== null",
+        "document.querySelector('.waiting-columns .column') !== null",
         SHOWN
     ));
     site.fail_route("/api/task-board", true);
@@ -1375,13 +1375,13 @@ fn every_status() -> Value {
 /// Status label stands 16 px or more after that text or on a line below it, the field's
 /// placeholder, the Status field's width and the left of the Finished tasks label.
 const FILTERS: &str = "(() => {
-    const [search, status, finished] = document.querySelectorAll('.filters > label');
+    const [search, finished] = document.querySelectorAll('.filters > label');
     const text = document.createRange();
     text.selectNodeContents(search.firstChild);
-    const words = text.getBoundingClientRect(), field = search.querySelector('input'), next = status.getBoundingClientRect();
+    const words = text.getBoundingClientRect(), field = search.querySelector('input'), next = finished.getBoundingClientRect();
     return {wide: field.getBoundingClientRect().right >= words.right,
         apart: next.left - words.right >= 16 || next.top >= search.getBoundingClientRect().bottom - 1,
-        placeholder: field.placeholder, status: status.querySelector('button').getBoundingClientRect().width,
+        placeholder: field.placeholder, status: finished.querySelector('button').getBoundingClientRect().width,
         finished: finished.getBoundingClientRect().left};
 })()";
 
@@ -1392,7 +1392,7 @@ const FILTERS: &str = "(() => {
 /// filters are read once their button shows them, and each of its columns is as wide as the
 /// board's scroller, a status alone too.
 #[test]
-fn the_tasks_filters_read_apart_and_a_chosen_status_moves_nothing() {
+fn the_tasks_filters_read_apart_and_a_chosen_window_moves_nothing() {
     let site = bare_site();
     site.set_json("/api/task-board", &every_status());
     let Some(mut page) = chrome() else { return };
@@ -1402,13 +1402,13 @@ fn the_tasks_filters_read_apart_and_a_chosen_status_moves_nothing() {
         assert!(
             page.wait_for(
                 // The nine statuses' columns and the one rail Build and Test are drawn as.
-                "document.querySelectorAll('.column').length === 10 && document.querySelector('.taskcard') !== null",
+                "document.querySelector('.waiting-columns .taskcard') !== null",
                 SHOWN
             ),
             "{width}px: {}",
             page.eval("document.querySelector('main')?.innerText")
         );
-        let phone = width <= 600;
+        let phone = width <= 760;
         if phone {
             page.eval("document.querySelector('.board-filters-toggle').click()");
             assert!(
@@ -1425,44 +1425,17 @@ fn the_tasks_filters_read_apart_and_a_chosen_status_moves_nothing() {
             (&json!(true), &json!(true), &json!("Slug or words")),
             "{width}px: the search field is as wide as its label, which stands apart from the next: {before}"
         );
-        page.eval("document.querySelector('.filters button[aria-label=Status]').click()");
-        assert!(page.wait_for(
-            "document.querySelector('[role=listbox] [role=option]') !== null",
-            SHOWN
-        ));
-        assert_eq!(
-            page.eval("[...document.querySelectorAll('[role=listbox] [role=option]')].map(o => o.textContent.trim())"),
-            json!(["All statuses", "Backlog", "Concept", "Design", "Ready", "In progress", "Review", "Done", "Blocked", "Cancelled"]),
-            "{width}px"
-        );
-        key(&mut page, "Escape", "Escape", 27);
-        assert!(page.wait_for(
-            "document.querySelector('.filters button[aria-label=Status]').getAttribute('aria-expanded') === 'false'",
-            SHOWN
-        ));
-        for (option, status) in [("Backlog", "backlog"), ("In progress", "in_progress")] {
-            super::components::choose(&mut page, ".filters button[aria-label=Status]", option);
-            assert!(page.wait_for(
-                &format!("document.querySelectorAll('.column').length === 1 && document.querySelector('.column[data-status={status}] .taskcard') !== null"),
-                SHOWN
-            ));
+        for option in ["Last week", "Last 24 hours"] {
+            super::components::choose(
+                &mut page,
+                ".filters button[aria-label='Finished tasks']",
+                option,
+            );
             let after = page.eval(FILTERS);
             assert_eq!(
                 (&after["status"], &after["finished"]),
                 (&before["status"], &before["finished"]),
-                "{width}px, {option}: choosing a status moved the filters: {before} then {after}"
-            );
-            // A phone's In progress is the board's scroller's width exactly; Backlog stands in the
-            // row under the pipeline, as narrow on a phone.
-            let column = if phone && status == "in_progress" {
-                "=== document.querySelector('.board-scroll').clientWidth"
-            } else {
-                "<= 288"
-            };
-            assert_eq!(
-                page.eval(&format!("Math.round(document.querySelector('.column[data-status={status}]').getBoundingClientRect().width) {column}")),
-                json!(true),
-                "{width}px, {option}: a status filtered alone is a column's width"
+                "{width}px: changing the finished window moved the filters"
             );
         }
     }
@@ -1471,7 +1444,7 @@ fn the_tasks_filters_read_apart_and_a_chosen_status_moves_nothing() {
 /// The lower row's columns are each as tall as their own cards (app/visual-polish-3): a long
 /// Cancelled never stretches Backlog and Blocked beside it to its height.
 #[test]
-fn the_lower_rows_columns_are_each_as_tall_as_their_own_cards() {
+fn separately_opened_backlog_and_cancelled_lists_take_the_height_of_their_own_cards() {
     let site = bare_site();
     let mut board = every_status();
     let tasks = board["tasks"].as_array_mut().unwrap();
@@ -1486,23 +1459,31 @@ fn the_lower_rows_columns_are_each_as_tall_as_their_own_cards() {
     let Some(mut page) = chrome() else { return };
     viewport(&mut page, 1280, 900);
     page.open(&site.url("/tasks"));
+    assert!(page.wait_for(
+        "document.querySelector('button.backlog-rail') !== null",
+        SHOWN
+    ));
+    page.eval("document.querySelector('.backlog-rail').click()");
+    assert!(page.wait_for(
+        "document.querySelector('.column[data-status=backlog] .taskcard') !== null",
+        SHOWN
+    ));
+    let short = page
+        .eval(
+            "document.querySelector('.column[data-status=backlog]').getBoundingClientRect().height",
+        )
+        .as_f64()
+        .unwrap();
+    page.eval("document.querySelector('.back-to-stages').click()");
+    page.eval("document.querySelector('[data-open-stage=cancelled]').click()");
+    assert!(page.wait_for(
+        "document.querySelectorAll('.column[data-status=cancelled] [id^=row-]').length === 13",
+        SHOWN
+    ));
+    let long=page.eval("document.querySelector('.column[data-status=cancelled]').getBoundingClientRect().height").as_f64().unwrap();
     assert!(
-        page.wait_for(
-            "['backlog', 'blocked', 'cancelled'].every(status => document.querySelector(`.offline .column[data-status=${status}] .taskcard`) !== null)",
-            SHOWN
-        ),
-        "{}",
-        page.eval("document.querySelector('main')?.innerText")
-    );
-    let heights = page.eval(
-        "Object.fromEntries(['backlog', 'blocked', 'cancelled'].map(status => [status, \
-         Math.round(document.querySelector(`.offline .column[data-status=${status}]`).getBoundingClientRect().height)]))",
-    );
-    let height = |status: &str| heights[status].as_f64().unwrap();
-    assert!(
-        height("backlog") * 3.0 < height("cancelled")
-            && height("blocked") * 3.0 < height("cancelled"),
-        "one card's columns are a card's height, not the thirteen's: {heights}"
+        short * 3.0 < long,
+        "one backlog card takes its own height {short}, not the thirteen cancelled cards' {long}"
     );
 }
 
@@ -1555,12 +1536,11 @@ const READY_COLUMN: &str = "(() => {
 /// Bring the ready column into the board's view sideways, then scroll the board down it half its
 /// height at a time, as a reader does, until every one of its rows is drawn.
 fn draw_every_ready_row(page: &mut Chrome, width: u32) {
-    page.eval("(() => {const board = document.querySelector('.board-scroll'), column = document.querySelector('.column[data-status=ready]'); board.scrollLeft += column.getBoundingClientRect().left - board.getBoundingClientRect().left;})()");
     let drawn = test_time::until_true(format!("{width}px: every ready row drawn"), STALL, || {
         page.eval("document.querySelectorAll('.column[data-status=ready] .taskcard').length")
             == json!(30)
             || {
-                page.eval("(board => board.scrollTop += board.clientHeight / 2)(document.querySelector('.board-scroll'))");
+                page.eval("scrollBy(0, innerHeight / 2)");
                 page.pump(std::time::Duration::from_millis(50));
                 false
             }
@@ -1607,6 +1587,13 @@ fn the_tasks_board_keeps_its_height_as_rows_load() {
         };
         viewport(&mut page, width, height);
         page.open(&site.url("/tasks"));
+        if width <= 760 {
+            assert!(page.wait_for(
+                "document.querySelector('.stage-tabs button') !== null",
+                SHOWN
+            ));
+            page.eval("[...document.querySelectorAll('.stage-tabs button')].find(button=>button.textContent.startsWith('Ready')).click()");
+        }
         assert!(
             page.wait_for(
                 // The column reading its page is busy, its rows' place held by their ghost.
@@ -1661,29 +1648,13 @@ fn the_tasks_board_keeps_its_height_as_rows_load() {
 /// the board's top, below the room the board's own scroll padding leaves there (a phone's, for its
 /// column's heading, which stays at the board's top) and clear of its column's heading.
 fn named_card(row: u32) -> String {
-    format!(
-        "(() => {{
-    const card = document.getElementById('row-load/ready-{row}')?.querySelector('.taskcard');
-    const header = Math.max(0, document.querySelector('.app-header')?.getBoundingClientRect().bottom ?? 0);
-    const below = ['row-load/ready-{}', 'row-load/ready-{}'].map(id => document.getElementById(id)).filter(Boolean);
-    const board = document.querySelector('.board-scroll');
-    const at = card?.getBoundingClientRect(), view = board?.getBoundingClientRect();
-    const padded = board ? parseFloat(getComputedStyle(board).scrollPaddingTop) || 0 : 0;
-    const heading = card?.closest('.column')?.querySelector(':scope > h2')?.getBoundingClientRect();
-    return {{top: card ? Math.round(at.top - header) : null,
-        room: Math.round(parseFloat(getComputedStyle(document.documentElement).scrollPaddingTop) - header),
-        below: below.length === 2 && below.every(slot => slot.querySelector('.taskcard')),
-        boardTop: Math.round(board?.scrollTop ?? 0),
-        boardRange: board ? board.scrollHeight - board.clientHeight : null,
-        atBoardTop: card && board ? Math.abs(at.top - view.top - padded) < 2 : false,
-        clear: card && heading ? at.top >= heading.bottom - 0.5 : false,
-        boardEnd: board ? board.scrollTop >= board.scrollHeight - board.clientHeight - 1 : false,
-        inBoard: card && board ? at.top >= view.top - 1 && at.bottom <= view.bottom + 1 : false,
-        pageEnd: scrollY >= document.documentElement.scrollHeight - innerHeight - 1}};
-}})()",
-        row + 1,
-        row + 2
-    )
+    format!("(() => {{const card=document.getElementById('row-load/ready-{row}')?.querySelector('.taskcard');
+        const header=Math.max(0,document.querySelector('.app-header')?.getBoundingClientRect().bottom??0);
+        const below=['row-load/ready-{}','row-load/ready-{}'].map(id=>document.getElementById(id));
+        const r=card?.getBoundingClientRect();
+        return {{top:card?Math.round(r.top-header):null, room:Math.round(parseFloat(getComputedStyle(document.documentElement).scrollPaddingTop)-header),
+            below:below.every(slot=>slot?.querySelector('.taskcard')), clear:card?r.top>=header:false,
+            inBoard:card?r.top>=0&&r.bottom<=innerHeight:false, pageEnd:scrollY>=document.documentElement.scrollHeight-innerHeight-1}}; }})()",row+1,row+2)
 }
 
 /// A link to a card far down a long column (app/tasks-page-polish, `/tasks#row-load/ready-20`)
@@ -1721,8 +1692,7 @@ fn a_link_to_a_card_far_down_a_column_lands_under_the_header_and_stays() {
         // lower but in full view.
         let room = landed["room"].as_f64().unwrap().max(0.0);
         assert!(
-            (landed["atBoardTop"] == json!(true)
-                || (landed["boardEnd"] == json!(true) && landed["inBoard"] == json!(true)))
+            landed["inBoard"] == json!(true)
                 && landed["clear"] == json!(true)
                 && top >= 0.0
                 && (top <= room + 4.0 || (landed["pageEnd"] == json!(true) && top <= 400.0)),
@@ -1747,10 +1717,10 @@ fn the_pipeline_labels_start_alike_in_their_columns() {
     viewport(&mut page, 1280, 900);
     page.open(&site.url("/tasks"));
     assert!(page.wait_for(
-        "document.querySelectorAll('.pipeline > .column').length === 7",
+        "document.querySelectorAll('.waiting-columns .column').length === 7",
         SHOWN
     ));
-    let labels = page.eval("[...document.querySelectorAll('.pipeline > .column')].map(column => { const label = column.querySelector('h2'), words = document.createRange(); words.selectNodeContents(label.firstChild); return [column.dataset.status, Math.round(words.getBoundingClientRect().left - column.getBoundingClientRect().left), getComputedStyle(label, '::before').content]; })");
+    let labels = page.eval("[...document.querySelectorAll('.waiting-columns .column')].map(column => { const label = column.querySelector('h2'), words = document.createRange(); words.selectNodeContents(label.firstChild); return [column.dataset.status, Math.round(words.getBoundingClientRect().left - column.getBoundingClientRect().left), getComputedStyle(label, '::before').content]; })");
     let first = &labels[0][1];
     assert!(
         labels

@@ -1071,7 +1071,7 @@ fn task_controls_keep_their_values_and_revealed_rows_after_scrolling() {
         chrome.eval("(b => ({scrollTop: b.scrollTop, scrollHeight: b.scrollHeight, clientHeight: b.clientHeight}))(document.scrollingElement)")
     );
     chrome.eval("scrollTo(0, 0)");
-    assert!(chrome.wait_for("scrollTop === 0", SHOWN));
+    assert!(chrome.wait_for("scrollY === 0", SHOWN));
     assert_eq!(
         chrome.eval("document.querySelectorAll('[data-slug=\"tools/example\"]').length"),
         json!(1)

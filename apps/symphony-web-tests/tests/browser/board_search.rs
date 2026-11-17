@@ -208,6 +208,7 @@ fn a_search_reads_its_counts_and_columns_once_while_the_machines_heartbeat_comes
         ),
         "the page never had the machine's last sample"
     );
+    chrome.eval("document.querySelector('.back-to-stages')?.click()");
     site.hold_route(&column_read("ready"), false);
     site.hold_route(&column_read("in_progress"), false);
     assert!(

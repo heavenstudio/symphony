@@ -279,7 +279,7 @@ const SAME_BOX: &str = "((ghost, real) => { const probe = document.createElement
     const a = getComputedStyle(ghost), b = getComputedStyle(probe);
     const differ = ['paddingTop', 'paddingLeft', 'borderTopWidth', 'borderLeftWidth', 'borderTopLeftRadius', 'backgroundColor', 'fontSize', 'lineHeight', 'marginBottom']
         .filter(key => a[key] !== b[key]).map(key => [key, a[key], b[key]]);
-    probe.remove(); return differ; })";
+    wrapper.remove(); return differ; })";
 
 #[test]
 fn the_board_before_its_first_read_draws_its_heading_filters_and_columns_of_card_boxes() {
@@ -296,11 +296,11 @@ fn the_board_before_its_first_read_draws_its_heading_filters_and_columns_of_card
     // Each ghost column's box against a real column's of its status, laid out beside it.
     let ghost = browser.eval(&format!(
         "(() => {{ const columns = [...document.querySelectorAll('.ghost-kanban.waiting-columns > .ghost-column, .ghost-offline > .ghost-column')];
-            const differ = column => {{ const probe = document.createElement('section'); probe.className = column.dataset.for === 'build-test' ? 'column rail' : 'column'; probe.dataset.status = column.dataset.for; column.after(probe);
+            const differ = column => {{ const probe = document.createElement('section'); probe.className = column.dataset.for === 'build-test' ? 'column rail' : 'column'; probe.dataset.status = column.dataset.for; const wrapper = document.createElement('div'); wrapper.className = column.dataset.for === 'build-test' ? 'machine-rail' : ''; column.after(wrapper); wrapper.append(probe);
                 const a = getComputedStyle(column), b = getComputedStyle(probe);
                 const differ = ['borderTopColor', 'backgroundColor', 'paddingTop', 'paddingLeft', 'borderTopWidth', 'borderLeftWidth', 'borderTopLeftRadius']
                     .filter(key => a[key] !== b[key]).map(key => [column.dataset.for, key, a[key], b[key]]);
-                probe.remove(); return differ; }};
+                wrapper.remove(); return differ; }};
             return {{heading: document.querySelector('.page-head h1')?.textContent, fields: document.querySelectorAll('.filters .ghost-field').length,
                 filled: [...document.querySelectorAll('.filters .ghost-field')].map(field => field.querySelectorAll('.bone').length),
                 status: [...document.querySelectorAll('main [role=status]')].map(status => status.textContent), busy: document.querySelector('main').getAttribute('aria-busy'),

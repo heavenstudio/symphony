@@ -48,7 +48,7 @@ pub(super) fn screenshot(chrome: &mut crate::Chrome, name: &str) {
     chrome.eval("new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))");
     let shot = chrome.call("Page.captureScreenshot", json!({"format":"png"}));
     let folder = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../../artifacts/app/board-at-a-glance");
+        .join("../../artifacts/app/board-at-a-glance");
     std::fs::create_dir_all(&folder).unwrap();
     std::fs::write(
         folder.join(format!("{name}.base64")),
@@ -68,8 +68,15 @@ pub(super) fn reveal(chrome: &mut crate::Chrome, status: &str) {
         "in_progress" => "In progress",
         _ => panic!("unsupported activity stage {status}"),
     };
-    if status != "in_progress" || chrome.eval("innerWidth <= 760") == json!(true) {
-        chrome.eval(&format!("[...document.querySelectorAll('.stage-tabs button, .machine-rail button')].find(button => button.textContent.startsWith({})).click()", json!(label)));
+    if chrome.eval("innerWidth <= 760") == json!(true) {
+        chrome.eval(&format!("[...document.querySelectorAll('.stage-tabs button')].find(button=>button.textContent.startsWith({})).click()",json!(label)));
+    } else {
+        chrome.eval("document.querySelector('.back-to-stages')?.click()");
+        if status != "in_progress" {
+            chrome.eval(&format!(
+                "document.querySelector('[data-open-stage={status}]').click()"
+            ));
+        }
     }
     assert!(chrome.wait_for(
         &format!("document.querySelector('.column[data-status={status}]') !== null"),
