@@ -805,18 +805,6 @@ fn retried<T>(
     patience: Duration,
     mut once: impl FnMut() -> Result<T, Failure>,
 ) -> Result<T, Error> {
-    let mut done = None;
-    retry(patience, &mut || {
-        done = Some(once()?);
-        Ok(())
-    })?;
-    Ok(done.expect("a successful attempt set the result"))
-}
-
-/// The retry loop is shared by every caller: only its attempt and result have caller-specific
-/// types, so the clock, backoff, counter and failure formatting need one compiled body.
-#[inline(never)]
-fn retry(patience: Duration, once: &mut dyn FnMut() -> Result<(), Failure>) -> Result<(), Error> {
     let began = Instant::now();
     let mut attempt = 0;
     loop {

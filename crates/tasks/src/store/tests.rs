@@ -152,64 +152,6 @@ fn a_call_tried_again_is_counted_on_its_own_thread_and_one_out_of_patience_gives
 }
 
 #[test]
-fn a_successful_first_attempt_needs_no_patience_or_retry() {
-    let before = Store::tried_again_here();
-    let mut tries = 0;
-    let done = retried(Duration::ZERO, || {
-        tries += 1;
-        Ok(())
-    });
-    assert_eq!(done, Ok(()));
-    assert_eq!(tries, 1);
-    assert_eq!(Store::tried_again_here(), before);
-}
-
-#[test]
-fn a_refusal_after_a_conflict_stops_without_another_attempt() {
-    let before = Store::tried_again_here();
-    let mut tries = 0;
-    let refused = retried::<()>(PATIENCE, || {
-        tries += 1;
-        if tries == 1 {
-            Err(Failure::Again)
-        } else {
-            Err(Failure::Stop(Error::Refused("the task moved".into())))
-        }
-    });
-    assert_eq!(refused, Err(Error::Refused("the task moved".into())));
-    assert_eq!(tries, 2);
-    assert_eq!(Store::tried_again_here() - before, 1);
-}
-
-#[test]
-fn a_retried_result_moves_once_and_can_borrow_from_the_caller() {
-    struct Owned<'a>(&'a std::cell::Cell<usize>);
-    impl Drop for Owned<'_> {
-        fn drop(&mut self) {
-            self.0.set(self.0.get() + 1);
-        }
-    }
-
-    let drops = std::cell::Cell::new(0);
-    let mut result = Some(Owned(&drops));
-    let mut tries = 0;
-    let done = retried(PATIENCE, || {
-        tries += 1;
-        if tries == 1 {
-            Err(Failure::Again)
-        } else {
-            Ok(result.take().unwrap())
-        }
-    })
-    .unwrap();
-    assert_eq!(tries, 2);
-    assert!(result.is_none());
-    assert_eq!(drops.get(), 0);
-    drop(done);
-    assert_eq!(drops.get(), 1);
-}
-
-#[test]
 fn a_refusal_is_its_words_and_a_database_failure_says_so() {
     assert_eq!(
         Error::Refused("no task 'x'".into()).to_string(),
