@@ -1,0 +1,100 @@
+# Publication code boundary review
+
+This is a bounded review of server request, file and process boundaries, not repository-wide
+publication clearance. The initial inspected source is immutable commit
+`3b460adb62827f674669e8e99f3090561107264f`. Source links below name that commit; later changes
+and final verification are recorded under [Disposition and evidence](#disposition-and-evidence).
+
+## Findings
+
+### B1: JSON saves collect an unlimited request body
+
+**Confirmed availability defect, medium within the trusted-peer deployment.**
+[The native write handler](https://github.com/heavenstudio/symphony/blob/3b460adb62827f674669e8e99f3090561107264f/apps/symphony-server/src/write.rs#L79)
+passes `usize::MAX` to `to_bytes`. An admitted client can make it allocate its entire body before
+JSON parsing or save dispatch. No successful save or valid JSON is necessary. The Host/Origin
+checks still apply; this is not a bypass of those checks. The upload and focus routes have
+separate bounds and do not cause this defect.
+
+The ordinary repair is to bound JSON collection at 2 MiB and answer 413 on overflow, including
+when no Content-Length is supplied. This matches the size of Axum's default extractor limit;
+direct body collection does not use that extractor. It must preserve the existing empty-body
+and malformed-JSON behavior and gate-before-body order. Reservation and overlap coordination
+are on `tools/public-code-boundary-review`; no overlapping save/journal work is included here.
+
+### B2: admitted peers have project-wide read and owner-write authority
+
+**Trust assumption, not an authentication defect under the intended contract.**
+[Peer admission](https://github.com/heavenstudio/symphony/blob/3b460adb62827f674669e8e99f3090561107264f/apps/symphony-server/src/gate.rs#L230)
+trusts loopback and confirmed nodes in this machine's tailnet. There is no per-user or per-project
+authorization. A permitted command-line client may omit Origin. The UI save routes act as the
+owner, and raw project downloads can read files outside the configured document entrypoints,
+subject to checkout containment and metadata exclusion. Entrypoint include/exclude patterns
+govern document readers, not a confidentiality boundary around all project files.
+
+This is unsuitable for an untrusted tailnet, an unauthenticated proxy exposing loopback, or
+public hosting. No public authentication system is proposed here. Project contents, plugins,
+local executables/PATH, Git configuration and machine registry are trusted local inputs.
+
+### B3: local filesystem mutation and plugins are outside the confinement promise
+
+**Explicit limitation.** Canonical containment checks precede ordinary file opens; they are not
+descriptor-relative sandboxing against a hostile local process swapping paths concurrently.
+[Upload storage](https://github.com/heavenstudio/symphony/blob/3b460adb62827f674669e8e99f3090561107264f/crates/symphony/src/uploads.rs#L420)
+also trusts its configured local store and existing content-addressed files. Plugins run as the
+server user, inherit ordinary process environment apart from session variables, and may execute
+arbitrary configured programs. The process protocol's bounds contain malformed messages and
+failed calls; they do not sandbox the plugin's filesystem, network or descendants.
+
+## Reviewed boundaries
+
+These are the production paths inspected, with supporting tests read separately. Paths linked
+at the initial source commit remain evidence of that version, not a claim about later code.
+
+| Boundary and reviewed paths | Disposition and existing test evidence |
+| --- | --- |
+| Socket peer, Host, native dispatch: [front.rs](https://github.com/heavenstudio/symphony/blob/3b460adb62827f674669e8e99f3090561107264f/apps/symphony-server/src/front.rs), [gate.rs](https://github.com/heavenstudio/symphony/blob/3b460adb62827f674669e8e99f3090561107264f/apps/symphony-server/src/gate.rs), [projects.rs](https://github.com/heavenstudio/symphony/blob/3b460adb62827f674669e8e99f3090561107264f/apps/symphony-server/src/projects.rs) | Connection address, not forwarded headers, decides admission. Unknown peers fail closed. Previously confirmed peer/name answers survive lookup failure by design; explicit negative answers replace them. Host checks resist foreign-name rebinding. `gate::tests`, `after_access` and `after_host_origin` cover mapped IPv4, failed/garbage lookup output, Host spellings, missing/malformed ports and private write side effects. Stale allowed answers during lookup outages remain a deliberate availability tradeoff. |
+| Browser writes and WebSocket reads: [write.rs](https://github.com/heavenstudio/symphony/blob/3b460adb62827f674669e8e99f3090561107264f/apps/symphony-server/src/write.rs), [api.rs](https://github.com/heavenstudio/symphony/blob/3b460adb62827f674669e8e99f3090561107264f/apps/symphony-server/src/api.rs), [feed_socket.rs](https://github.com/heavenstudio/symphony/blob/3b460adb62827f674669e8e99f3090561107264f/apps/symphony-server/src/api/feed_socket.rs) | Present Origin must match `http://` plus Host on writes and WebSocket upgrades. `null` is refused for native API reads; ordinary cross-origin reads rely on the browser's same-origin policy, with no permissive CORS layer found. Gate checks precede body collection/dispatch. `after_host_origin` checks 21 refused Hosts, 12 allowed Hosts and 12 refused Origins, including WebSocket handshakes and unchanged scratch state. B1 is the body-bound exception. |
+| Documents and entrypoints: [project.rs](https://github.com/heavenstudio/symphony/blob/3b460adb62827f674669e8e99f3090561107264f/crates/symphony/src/project.rs), [entrypoint.rs](https://github.com/heavenstudio/symphony/blob/3b460adb62827f674669e8e99f3090561107264f/crates/symphony/src/entrypoint.rs), [project/file.rs](https://github.com/heavenstudio/symphony/blob/3b460adb62827f674669e8e99f3090561107264f/crates/symphony/src/project/file.rs), [docview.rs target](https://github.com/heavenstudio/symphony/blob/3b460adb62827f674669e8e99f3090561107264f/crates/symphony/src/docview.rs#L36), [save.rs target/scope](https://github.com/heavenstudio/symphony/blob/3b460adb62827f674669e8e99f3090561107264f/crates/symphony/src/save.rs#L191) | Non-normal path components are refused. The longest entrypoint maps routes; `reachable` follows the same walk as listings, excluding hidden/excluded folders, folder symlinks and outside-project file symlinks. Save targets use the same resolver. Worktree scope is selected from known worktrees, not a caller-supplied root. `project/entrypoints.rs` covers remapping, excluded folders, external links and uploads exclusion; `docview` outside tests cover direct reads. |
+| Raw files, HTML, uploads and thumbnails: [media_files.rs](https://github.com/heavenstudio/symphony/blob/3b460adb62827f674669e8e99f3090561107264f/apps/symphony-server/src/media_files.rs), [uploads.rs](https://github.com/heavenstudio/symphony/blob/3b460adb62827f674669e8e99f3090561107264f/crates/symphony/src/uploads.rs), [images.rs](https://github.com/heavenstudio/symphony/blob/3b460adb62827f674669e8e99f3090561107264f/crates/symphony/src/images.rs), [assets.rs](https://github.com/heavenstudio/symphony/blob/3b460adb62827f674669e8e99f3090561107264f/crates/symphony/src/assets.rs) | Raw reads canonicalize under the selected checkout/static root and exclude repository metadata. HTML documents additionally require entrypoint reachability. File responses carry opaque-origin CSP sandboxes; upload responses carry `nosniff`, fixed MIME and a script-free sandbox, with PDF/Office attachment disposition. Upload names are generated SHA-256 plus allowed extensions; temporary writes use create-new. Type sniffing is not malware inspection or a full image/Office parser. Upload cap is enforced while streaming. Existing upload route tests cover content/cap refusals and read confinement. Thumbnail conversion uses argv and a bounded child wait; dimensions and aggregate cache/resource quotas remain trusted-peer limitations. |
+| Additional file reads: [task_diff.rs](https://github.com/heavenstudio/symphony/blob/3b460adb62827f674669e8e99f3090561107264f/apps/symphony-server/src/api/task_diff.rs), [run_log.rs](https://github.com/heavenstudio/symphony/blob/3b460adb62827f674669e8e99f3090561107264f/apps/symphony-server/src/api/run_log.rs) | Diff file paths reject non-normal components; Git blob reads select a recorded task's repository/revision. Run-log queries accept a run id and byte range and delegate to the board's confined log reader. They are not arbitrary absolute path APIs. Detailed board storage and database authorization are outside this review. |
+| Process plugins: [process.rs](https://github.com/heavenstudio/symphony/blob/3b460adb62827f674669e8e99f3090561107264f/crates/symphony/src/plugins/process.rs), [process_seams.rs](https://github.com/heavenstudio/symphony/blob/3b460adb62827f674669e8e99f3090561107264f/crates/symphony/src/plugins/process_seams.rs), [process_content.rs](https://github.com/heavenstudio/symphony/blob/3b460adb62827f674669e8e99f3090561107264f/crates/symphony/src/plugins/process_content.rs), [project.rs plugin_processes](https://github.com/heavenstudio/symphony/blob/3b460adb62827f674669e8e99f3090561107264f/crates/symphony/src/project.rs#L1261) | Trusted project settings select executable and argv. Relative executable paths reject `..`; a worktree uses its main checkout's plugin. Declaration name/major/seams, line length, queue length, calls, cancellation and restart rate are checked. Plugin commands append `command`, name and args as separate argv entries, without shell interpolation. Process tests cover bad declarations, oversized lines, queues, cancellation/restarts and command forwarding. See B3 for sandbox limitations. |
+| Native command dispatch: [children.rs](https://github.com/heavenstudio/symphony/blob/3b460adb62827f674669e8e99f3090561107264f/crates/symphony/src/children.rs), [commit.rs command adapters](https://github.com/heavenstudio/symphony/blob/3b460adb62827f674669e8e99f3090561107264f/crates/symphony/src/commit.rs), [session_go.rs](https://github.com/heavenstudio/symphony/blob/3b460adb62827f674669e8e99f3090561107264f/apps/symphony-server/src/session_go.rs), [shell.rs](https://github.com/heavenstudio/symphony/blob/3b460adb62827f674669e8e99f3090561107264f/apps/symphony-server/src/shell.rs) | The HTML shell is a template, not a command shell. Inspected command adapters pass argv rather than concatenating HTTP payload into `sh -c`. Git uses isolated repository settings/private indexes. Configured generator, landing and plugin commands are trusted code. Focus is additionally limited to this machine and a known session/pane; its JSON body has its own 4096-byte cap. Cancel cleanup dispatches `tasks finish` with slug as an argv entry. Save receipt/outcome, callback storage and owner task validation remain with their assigned executor. |
+
+## Dependency advisory triage
+
+Checked authoritative RustSec records for dependencies actually reached by these boundaries,
+against this commit's `Cargo.lock`. This is a reachability triage, not a complete advisory scan,
+package inventory or proof of absence. Exact packaged dependency and notice inventory belongs to
+the separate publication inventory task, coordinated with `cobalt-ibis-6` on the board.
+
+| Reached dependency | Advisory disposition |
+| --- | --- |
+| Axum 0.8.9 / axum-core | [RUSTSEC-2022-0055](https://rustsec.org/advisories/RUSTSEC-2022-0055.html) concerns extractor body limits, patched in axum-core 0.2.8/0.3.0-rc.2 and Axum 0.5.16/0.6.0-rc.2. The locked version is later, but the application's explicit unlimited collection independently recreates the resource-exhaustion class (B1). Updating dependencies alone would not fix it. |
+| Hyper 1.12.0, HTTP/1 parser | [Content-Length parsing](https://rustsec.org/advisories/RUSTSEC-2021-0078.html) and [chunk-size overflow](https://rustsec.org/advisories/RUSTSEC-2021-0079.html) are patched from 0.14.10. The locked version is outside those affected ranges. Proxy deployment assumptions are still B2. |
+| Tungstenite 0.29.0, feed WebSocket | [RUSTSEC-2023-0065](https://rustsec.org/advisories/RUSTSEC-2023-0065.html) is patched from 0.20.1. The locked version is outside its affected range. Native Host/Origin checks run before the upgrade. |
+| Tokio 1.54.1, runtime/file/socket operations | [Interval race](https://rustsec.org/advisories/RUSTSEC-2026-0384.html) is patched in 1.54.1; [AsyncFd I/O safety](https://rustsec.org/advisories/RUSTSEC-2026-0386.html) is patched in 1.53.3 and selected older branches. The locked version meets both fixes. |
+| Bytes 1.12.1, HTTP/body buffers | [RUSTSEC-2026-0007](https://rustsec.org/advisories/RUSTSEC-2026-0007.html) is patched from 1.11.1. The locked version meets the fix; B1 is a separate unbounded-allocation issue. |
+| Comrak 0.57.0, document rendering | [URL case handling](https://rustsec.org/advisories/RUSTSEC-2021-0026.html) and [entity escaping](https://rustsec.org/advisories/RUSTSEC-2021-0063.html) are patched from 0.9.1 and 0.10.1 respectively. The locked version meets both fixes. Trusted project markup/renderers and client rendering are broader than those advisories; this review does not certify every client HTML sink. |
+
+## Disposition and evidence
+
+Initial finding B1 and reservations were posted before production edits. At initial source
+`3b460adb62827f674669e8e99f3090561107264f`, the recorded command
+`just --one -- test-rs -p symphony-server --lib -- gate:: api::tests:: media_files:: write::upload_tests::`
+passed: **33 passed, 0 failed**, 0.57 seconds in the test harness (first compilation 3m 16s).
+The remaining test references above identify source cases read, not a claim that they all ran.
+Focused regression runs and the final inspected source commit will be added after remediation.
+
+No live write request, external upload, production credential access, shared-service restart,
+remote setting change, history rewrite or publication is part of this review. Test fixtures are
+owned temporary directories/boards and private ports. There is no scanner-based clearance claim.
+
+## Remaining limitations
+
+This review excludes full client DOM/XSS analysis, Mac navigation policy, every board CLI and
+landing command, database implementation/schema, dependency source audits, OS/browser image and
+document parser vulnerabilities, release packaging/notices and personal-data/media/history
+cleanup. Parallel executors own those publication concerns and the save/storage changes named
+above. New commits outside the final inspected paths need their own review evidence. No statement
+here authorizes public exposure or establishes repository-wide publication readiness.
