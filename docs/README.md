@@ -6,6 +6,8 @@
   with its default.
 - [Decision register](DECISIONS.md) — Symphony's own product and engineering decisions, one card
   each; the evidence behind a card is under [Analysis](analysis/).
+- [A project's task workflow](analysis/project-workflow.md) — options for project-defined steps,
+  the existing gate boundary, and migration that preserves the default flow.
 - [Concept review](REVIEW.md) — review cards, comments, questions and the owner queue.
 - [Task board](TASKS.md) — the board, sessions, roles and agent communication.
 - [Checks](CHECKS.md) — what a task in this repository proves before review, and the release run's
