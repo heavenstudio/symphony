@@ -115,7 +115,9 @@ fn with_nothing_pending_no_dock_draws_and_the_chat_button_sits_alone_in_the_corn
         viewport(&mut page, width, 900);
         page.open(&site.url("/tasks"));
         assert!(page.wait_for(
-            &format!("{ready} && document.querySelector('[aria-controls=task-groups]') !== null"),
+            &format!(
+                "{ready} && document.querySelector('.waiting-board:not(.waiting-ghost)') !== null"
+            ),
             SHOWN
         ));
         settle(&mut page);

@@ -921,32 +921,20 @@ fn a_folders_intro_the_server_no_longer_has_draws_nothing_and_reconnects_nothing
 }
 
 #[test]
-fn the_task_groups_say_when_they_could_not_be_loaded_and_retry() {
+fn a_wait_filter_read_failure_is_said_and_retries_without_a_click() {
     let site = site();
     let Some(mut page) = chrome() else { return };
+    viewport(&mut page, 1440, 900);
     page.open(&site.url("/tasks"));
     assert!(page.wait_for(
-        "document.querySelector('.waiting-columns .column') !== null",
+        "document.querySelector('.taskcard') !== null && document.querySelector('.wait-chip.k-nobody') !== null",
         SHOWN
     ));
     site.fail_route("/api/task-board", true);
-    page.eval("document.querySelector('[aria-controls=task-groups]').click()");
-    let failed = trouble(&mut page);
-    assert_eq!(
-        failed["title"],
-        json!("The task groups could not be loaded"),
-        "{failed}"
-    );
-    assert_eq!(
-        (&failed["level"], &failed["part"], &failed["headings"]),
-        (&json!("H3"), &json!("Task groups"), &json!(1)),
-        "a part of the tasks page, under its h2 and the page's one h1: {failed}"
-    );
+    page.eval("document.querySelector('.wait-chip.k-nobody').click()");
+    assert!(page.wait_for("document.querySelector('.page-notices [role=alert]')?.textContent === 'Board snapshot unavailable (the server answered 500). Trying again…'",SHOWN));
     site.fail_route("/api/task-board", false);
-    retry(
-        &mut page,
-        "document.querySelector('#task-groups .trouble') === null && document.querySelector('#task-groups ul li') !== null",
-    );
+    assert!(page.wait_for("document.querySelector('.page-notices [role=alert]') === null && document.querySelector('.column[data-status=waiting] .taskcard') !== null",SHOWN));
 }
 
 /// Each callout badge's text, with the WCAG contrast of its colour on its background.
@@ -1177,15 +1165,16 @@ fn buttons_share_one_shape_and_one_focus_ring_and_pages_one_heading() {
         "every page has one h1, of one size: {headings:?}"
     );
 
+    viewport(&mut page, 390, 844);
     page.open(&site.url("/tasks"));
     assert!(page.wait_for(
-        "document.querySelector('[aria-controls=task-groups]') !== null",
+        "document.querySelector('.board-filters-toggle') !== null",
         SHOWN
     ));
     open_panel(&mut page);
     appearance(&mut page);
     let looks = page.eval("(() => {const look=e=>{const s=getComputedStyle(e),box=e.getBoundingClientRect();return {radius:s.borderRadius,height:box.height,cursor:s.cursor,weight:s.fontWeight};};\
-        return {component:look(document.querySelector('[aria-controls=task-groups]')),plain:look(document.querySelector('#quick-sheet button.collapse')),\
+        return {component:look(document.querySelector('.board-filters-toggle')),plain:look(document.querySelector('#quick-sheet button.collapse')),\
         theme:look(document.querySelector('#appearance-panel [data-theme-action=import]'))};})()");
     assert_eq!(looks["component"]["cursor"], json!("pointer"), "{looks}");
     assert_eq!(
@@ -1197,7 +1186,7 @@ fn buttons_share_one_shape_and_one_focus_ring_and_pages_one_heading() {
         "so is the Appearance panel's: {looks}"
     );
     for control in [
-        "[aria-controls=task-groups]",
+        ".board-filters-toggle",
         "#appearance-panel [data-theme-action=import]",
         "#quick-sheet button.collapse",
     ] {
@@ -1256,21 +1245,16 @@ fn smaller_ones_land_on_their_anchor_stay_on_screen_and_read_as_sentences() {
         "the tip reads as a sentence, not a column of words: {tip}"
     );
 
-    // d) The task groups are a labelled region with a labelled toggle.
+    // d) The phone's search/filter button names the region and its expanded state.
+    viewport(&mut page, 390, 844);
     page.open(&site.url("/tasks"));
     assert!(page.wait_for(
-        "document.querySelector('[aria-controls=task-groups]') !== null",
+        "document.querySelector('.board-filters-toggle') !== null",
         SHOWN
     ));
-    assert_eq!(
-        page.eval("(() => {const b=document.querySelector('[aria-controls=task-groups]');return [b.closest('section')?.querySelector('h2')?.textContent, b.textContent];})()"),
-        json!(["Task groups", "Show task groups"])
-    );
-    page.eval("document.querySelector('[aria-controls=task-groups]').click()");
-    assert!(page.wait_for(
-        "document.querySelector('[aria-controls=task-groups]').textContent === 'Hide task groups' && document.querySelector('#task-groups') !== null",
-        SHOWN
-    ));
+    assert_eq!(page.eval("(() => {const b=document.querySelector('.board-filters-toggle');return [b.getAttribute('aria-controls'),b.textContent,b.getAttribute('aria-expanded')];})()"),json!(["board-filters","Search and filters","false"]));
+    page.eval("document.querySelector('.board-filters-toggle').click()");
+    assert!(page.wait_for("document.querySelector('.board-filters-toggle').getAttribute('aria-expanded') === 'true' && document.querySelector('#board-filters').checkVisibility()",SHOWN));
 
     // e) A task's thread is one timeline.
     page.open(&site.url("/task/visual/in-progress"));

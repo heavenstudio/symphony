@@ -370,6 +370,14 @@ fn entry_pages_fit_the_first_visit_budget_and_deferred_kinds_are_reported() {
         ("/docs/look-parity.md", "docs", ".doc-card", None),
     ] {
         let Some(mut chrome) = chrome() else { return };
+        if kind == "board" {
+            // The fixture is Ready; the phone now mounts only its selected Review stage.
+            // Measure the same loaded lifecycle board as the established byte baseline.
+            chrome.call(
+                "Emulation.setDeviceMetricsOverride",
+                json!({"width":1440,"height":900,"deviceScaleFactor":1,"mobile":false}),
+            );
+        }
         chrome.open(&site.url(path));
         assert!(
             chrome.wait_for(
@@ -1058,8 +1066,7 @@ fn task_controls_keep_their_values_and_revealed_rows_after_scrolling() {
             .iter()
             .any(|url| url.contains("status=ready"))
     );
-    // The pipeline's columns live in the board's own bounded scroller, which clips them from
-    // the page: the pushed column is reached by scrolling that scroller, never the window.
+    // The waiting columns follow the page; approaching their reserved boxes reveals them.
     chrome.eval("scrollTo(0, 20000)");
     assert!(
         chrome.wait_for(
