@@ -57,23 +57,16 @@ impl Kind {
 }
 
 /// One field of a SCHEMAFULL table.
-/// Only seven columns have a default or allowed values. Keep those attributes behind a
-/// reference, rather than repeating two wide optional fields in every column's static data.
 #[derive(Clone, Copy, Debug)]
 pub(in crate::store) struct Column {
     pub name: &'static str,
     pub kind: Kind,
     /// SurrealDB's `TYPE T` rather than `TYPE option<T>`.
     pub required: bool,
-    attribute: Option<&'static Attribute>,
-}
-
-#[derive(Clone, Copy, Debug)]
-enum Attribute {
     /// What a row made without it holds.
-    Default(&'static str),
-    /// The values it is held to (`ASSERT $value IN [...]`); empty holds it to none.
-    OneOf(&'static [&'static str]),
+    pub default: Option<&'static str>,
+    /// The values it is held to (`ASSERT $value IN [...]`); none holds it to none.
+    pub one_of: &'static [&'static str],
 }
 
 const fn req(name: &'static str, kind: Kind) -> Column {
@@ -81,7 +74,8 @@ const fn req(name: &'static str, kind: Kind) -> Column {
         name,
         kind,
         required: true,
-        attribute: None,
+        default: None,
+        one_of: &[],
     }
 }
 
@@ -90,16 +84,28 @@ const fn opt(name: &'static str, kind: Kind) -> Column {
         name,
         kind,
         required: false,
-        attribute: None,
+        default: None,
+        one_of: &[],
     }
 }
 
-const fn with_attribute(name: &'static str, kind: Kind, attribute: &'static Attribute) -> Column {
+const fn of(name: &'static str, one_of: &'static [&'static str]) -> Column {
+    Column {
+        name,
+        kind: Kind::Text,
+        required: true,
+        default: None,
+        one_of,
+    }
+}
+
+const fn defaulted(name: &'static str, kind: Kind, default: &'static str) -> Column {
     Column {
         name,
         kind,
         required: true,
-        attribute: Some(attribute),
+        default: Some(default),
+        one_of: &[],
     }
 }
 
@@ -126,10 +132,9 @@ pub(in crate::store) const TABLES: [Table; 23] = [
             req("slug", Text),
             req("title", Text),
             req("body", Text),
-            with_attribute(
+            of(
                 "status",
-                Text,
-                &Attribute::OneOf(&[
+                &[
                     "backlog",
                     "concept",
                     "design",
@@ -139,15 +144,15 @@ pub(in crate::store) const TABLES: [Table; 23] = [
                     "done",
                     "blocked",
                     "cancelled",
-                ]),
+                ],
             ),
             req("priority", Int),
             opt("parent", Text),
             req("created_by", Text),
             req("created", Float),
             req("updated", Float),
-            with_attribute("instruction", Bool, &Attribute::Default("false")),
-            with_attribute("version", Int, &Attribute::Default("0")),
+            defaulted("instruction", Bool, "false"),
+            defaulted("version", Int, "0"),
             opt("fields", Object),
         ],
     },
@@ -155,7 +160,7 @@ pub(in crate::store) const TABLES: [Table; 23] = [
         name: "link",
         columns: &[
             req("slug", Text),
-            with_attribute("kind", Text, &Attribute::OneOf(&["doc", "dep"])),
+            of("kind", &["doc", "dep"]),
             req("target", Text),
         ],
     },
@@ -189,10 +194,9 @@ pub(in crate::store) const TABLES: [Table; 23] = [
         columns: &[
             req("slug", Text),
             req("handle", Text),
-            with_attribute(
+            of(
                 "role",
-                Text,
-                &Attribute::OneOf(&["orchestrator", "executor", "reviewer", "reserved"]),
+                &["orchestrator", "executor", "reviewer", "reserved"],
             ),
             req("since", Float),
             opt("expires", Float),
@@ -205,11 +209,7 @@ pub(in crate::store) const TABLES: [Table; 23] = [
             req("slug", Text),
             req("sender", Text),
             opt("recipient", Text),
-            with_attribute(
-                "kind",
-                Text,
-                &Attribute::OneOf(&["system", "msg", "verdict"]),
-            ),
+            of("kind", &["system", "msg", "verdict"]),
             req("text", Text),
             req("ts", Float),
         ],
@@ -292,11 +292,7 @@ pub(in crate::store) const TABLES: [Table; 23] = [
         name: "ask",
         columns: &[
             req("sid", Int),
-            with_attribute(
-                "kind",
-                Text,
-                &Attribute::OneOf(&["verdict", "message", "comment", "chat", "task"]),
-            ),
+            of("kind", &["verdict", "message", "comment", "chat", "task"]),
             req("about", Text),
             opt("path", Text),
             opt("card", Text),
@@ -568,38 +564,6 @@ $f$;
 /// Each table `words` holds the terms of, and its fields that it reads.
 const WORDED: [(&str, &[&str]); 2] = [("task", &["title", "body", "slug"]), ("message", &["text"])];
 
-/// Share construction across the schema's lists and statements instead of compiling a
-/// formatter and an intermediate collection for each of their shapes.
-#[inline(never)]
-fn append(sql: &mut String, parts: &[&str]) {
-    for part in parts {
-        sql.push_str(part);
-    }
-}
-
-#[inline(never)]
-fn append_list(sql: &mut String, values: &[&str], before: &str, after: &str) {
-    for (at, value) in values.iter().enumerate() {
-        if at > 0 {
-            sql.push_str(", ");
-        }
-        append(sql, &[before, value, after]);
-    }
-}
-
-/// A SQL text literal, including doubled apostrophes, without a temporary escaped String.
-#[inline(never)]
-fn quoted(sql: &mut String, text: &str) {
-    sql.push('\'');
-    for (at, part) in text.split('\'').enumerate() {
-        if at > 0 {
-            sql.push_str("''");
-        }
-        sql.push_str(part);
-    }
-    sql.push('\'');
-}
-
 /// Latin exceptions to NFKD with accents removed, grouped by their ASCII spelling. The data
 /// is from deunicode 1.6.2 (BSD-3-Clause, https://github.com/kornelski/deunicode), the analyzer SurrealDB
 /// 3.3 uses: each named Latin letter whose spelling differs from NFKD, plus the unit sign µ.
@@ -623,20 +587,11 @@ fn latin() -> String {
             expanded.push((ascii, letters));
         }
     }
-    let mut folded = String::from("translate(m[1], ");
-    quoted(&mut folded, &from);
-    folded.push_str(", ");
-    quoted(&mut folded, &to);
-    folded.push(')');
+    let quoted = |s: &str| s.replace('\'', "''");
+    let mut folded = format!("translate(m[1], '{}', '{}')", quoted(&from), quoted(&to));
     for (ascii, letters) in expanded {
         for c in letters.chars() {
-            let mut nested = String::from("replace(");
-            append(&mut nested, &[&folded, ", '"]);
-            nested.push(c);
-            nested.push_str("', ");
-            quoted(&mut nested, ascii);
-            nested.push(')');
-            folded = nested;
+            folded = format!("replace({folded}, '{c}', '{}')", quoted(ascii));
         }
     }
     folded
@@ -681,55 +636,35 @@ const MARKED: [&str; 8] = [
 /// The triggers: the marker on every board input, a session's own revision, a callback
 /// registration's fields that a reader reads, each sender's last word, and the terms of each
 /// text searched.
-#[inline(never)]
-fn append_triggers(sql: &mut String) {
+fn triggers() -> String {
+    let mut sql = String::new();
     for (table, fields) in WORDED {
         // A row's terms are counted again when a field read changes, or the task it is of.
-        let (mut named, mut old, mut new) = (String::new(), String::new(), String::new());
-        append_list(&mut named, fields, "'", "'");
-        append_list(&mut old, fields, "OLD.", "");
-        append_list(&mut new, fields, "NEW.", "");
-        if !fields.contains(&"slug") {
-            old.push_str(", OLD.slug");
-            new.push_str(", NEW.slug");
-        }
-        append(
+        let slug = (!fields.contains(&"slug")).then_some(&"slug");
+        let read = |row: &str| {
+            let read: Vec<String> = (fields.iter().chain(slug))
+                .map(|field| format!("{row}.{field}"))
+                .collect();
+            read.join(", ")
+        };
+        let named: Vec<String> = fields.iter().map(|field| format!("'{field}'")).collect();
+        let (named, old, new) = (named.join(", "), read("OLD"), read("NEW"));
+        let _ = writeln!(
             sql,
-            &[
-                "CREATE OR REPLACE TRIGGER ",
-                table,
-                "_words AFTER INSERT OR DELETE ON ",
-                table,
-                " FOR EACH ROW EXECUTE FUNCTION board_words(",
-                &named,
-                ");\nCREATE OR REPLACE TRIGGER ",
-                table,
-                "_words_changed AFTER UPDATE ON ",
-                table,
-                " FOR EACH ROW WHEN ((",
-                &old,
-                ") IS DISTINCT FROM (",
-                &new,
-                ")) EXECUTE FUNCTION board_words(",
-                &named,
-                ");\n",
-            ],
+            "CREATE OR REPLACE TRIGGER {table}_words AFTER INSERT OR DELETE ON {table} \
+             FOR EACH ROW EXECUTE FUNCTION board_words({named});\n\
+             CREATE OR REPLACE TRIGGER {table}_words_changed AFTER UPDATE ON {table} \
+             FOR EACH ROW WHEN (({old}) IS DISTINCT FROM ({new})) \
+             EXECUTE FUNCTION board_words({named});"
         );
     }
     for table in MARKED {
-        append(
+        let _ = writeln!(
             sql,
-            &[
-                "CREATE OR REPLACE TRIGGER ",
-                table,
-                "_made AFTER INSERT OR DELETE ON ",
-                table,
-                " FOR EACH ROW EXECUTE FUNCTION board_changed();\nCREATE OR REPLACE TRIGGER ",
-                table,
-                "_changed AFTER UPDATE ON ",
-                table,
-                " FOR EACH ROW WHEN (OLD.* IS DISTINCT FROM NEW.*) EXECUTE FUNCTION board_changed();\n",
-            ],
+            "CREATE OR REPLACE TRIGGER {table}_made AFTER INSERT OR DELETE ON {table} \
+             FOR EACH ROW EXECUTE FUNCTION board_changed();\n\
+             CREATE OR REPLACE TRIGGER {table}_changed AFTER UPDATE ON {table} \
+             FOR EACH ROW WHEN (OLD.* IS DISTINCT FROM NEW.*) EXECUTE FUNCTION board_changed();"
         );
     }
     sql.push_str(
@@ -751,51 +686,35 @@ CREATE OR REPLACE TRIGGER said AFTER INSERT OR UPDATE OR DELETE ON message \
          FOR EACH ROW EXECUTE FUNCTION board_said();
 ",
     );
+    sql
 }
 
-/// Append `table`'s definition directly, without a temporary table-sized String.
-#[inline(never)]
-fn append_table(sql: &mut String, table: &Table) {
-    append(
-        sql,
-        &[
-            "CREATE TABLE IF NOT EXISTS ",
-            table.name,
-            " (\n    id jsonb PRIMARY KEY",
-        ],
+/// `table`'s definition.
+fn create(table: &Table) -> String {
+    let mut sql = format!(
+        "CREATE TABLE IF NOT EXISTS {} (\n    id jsonb PRIMARY KEY",
+        table.name
     );
     if table.columns.is_empty() {
         sql.push_str(",\n    doc jsonb NOT NULL CHECK (jsonb_typeof(doc) = 'object')");
     }
     for column in table.columns {
-        append(sql, &[",\n    ", column.name, " ", column.kind.sql()]);
-        if let Some(Attribute::Default(default)) = column.attribute {
-            append(sql, &[" DEFAULT ", default]);
+        let _ = write!(sql, ",\n    {} {}", column.name, column.kind.sql());
+        if let Some(default) = column.default {
+            let _ = write!(sql, " DEFAULT {default}");
         }
         if column.required {
             sql.push_str(" NOT NULL");
         }
-        if let Some(Attribute::OneOf(values)) = column.attribute
-            && !values.is_empty()
-        {
-            append(sql, &[" CHECK (", column.name, " IN ("]);
-            append_list(sql, values, "'", "'");
-            sql.push_str("))");
+        if !column.one_of.is_empty() {
+            let values: Vec<String> = column.one_of.iter().map(|v| format!("'{v}'")).collect();
+            let _ = write!(sql, " CHECK ({} IN ({}))", column.name, values.join(", "));
         }
         if let Some(json) = column.kind.json() {
-            append(
-                sql,
-                &[" CHECK (jsonb_typeof(", column.name, ") = '", json, "')"],
-            );
+            let _ = write!(sql, " CHECK (jsonb_typeof({}) = '{json}')", column.name);
         }
     }
     sql.push_str("\n);\n");
-}
-
-#[cfg(test)]
-fn create(table: &Table) -> String {
-    let mut sql = String::new();
-    append_table(&mut sql, table);
     sql
 }
 
@@ -808,21 +727,26 @@ CREATE UNIQUE INDEX IF NOT EXISTS ask_sid ON ask (sid);
 
 /// This build's steps on PostgreSQL: every table, index, function and trigger, each made if it is
 /// not there or replaced, so the steps run again on a board that has them change nothing.
-pub(in crate::store) fn define() -> String {
+pub(in crate::store) fn define() -> &'static str {
+    // The base schema is fixed by this build. Share its construction across openings;
+    // version-specific steps are still appended by the opening's migration.
+    static DEFINED: std::sync::LazyLock<String> = std::sync::LazyLock::new(construct);
+    &DEFINED
+}
+
+fn construct() -> String {
     let mut sql = String::new();
     for table in &TABLES {
-        append_table(&mut sql, table);
+        sql.push_str(&create(table));
     }
     sql.push_str(UNIQUES);
     sql.push_str(INDEXES);
     sql.push_str(FUNCTIONS);
-    static ANALYZED: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
-        WORDS
-            .replace("NUMBERS", &numbers())
-            .replace("LATIN", &latin())
-    });
-    sql.push_str(&ANALYZED);
-    append_triggers(&mut sql);
+    let analyzed = WORDS
+        .replace("NUMBERS", &numbers())
+        .replace("LATIN", &latin());
+    sql.push_str(&analyzed);
+    sql.push_str(&triggers());
     sql
 }
 
@@ -873,16 +797,16 @@ mod tests {
     }
 
     #[test]
-    fn column_attributes_keep_defaults_required_flags_and_allowed_values() {
+    fn defaults_and_choice_constraints_keep_their_exact_sql() {
         const TABLE: Table = Table {
             name: "attributes",
             columns: &[
                 req("plain", Text),
                 opt("optional", Text),
-                with_attribute("flag", Bool, &Attribute::Default("false")),
-                with_attribute("count", Int, &Attribute::Default("0")),
-                with_attribute("choice", Text, &Attribute::OneOf(&["first", "last"])),
-                with_attribute("unrestricted", Text, &Attribute::OneOf(&[])),
+                defaulted("flag", Bool, "false"),
+                defaulted("count", Int, "0"),
+                of("choice", &["first", "last"]),
+                of("unrestricted", &[]),
             ],
         };
         assert_eq!(
@@ -898,25 +822,6 @@ mod tests {
 );
 "
         );
-    }
-
-    #[test]
-    fn sql_construction_keeps_empty_items_unicode_and_literal_quotes() {
-        let mut list = String::from("prefix ");
-        append_list(&mut list, &[], "[", "]");
-        assert_eq!(list, "prefix ");
-        append_list(&mut list, &["", "é", "tail"], "[", "]");
-        assert_eq!(list, "prefix [], [é], [tail]");
-        for (text, expected) in [
-            ("", "''"),
-            ("'", "''''"),
-            ("é'n", "'é''n'"),
-            ("'first'", "'''first'''"),
-        ] {
-            let mut literal = String::new();
-            quoted(&mut literal, text);
-            assert_eq!(literal, expected);
-        }
     }
 
     /// The numbers are Rust's, ranges of them and single ones, and no letter among them.
