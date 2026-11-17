@@ -11,7 +11,6 @@
 
 use super::Tokens;
 use crate::pyjson::Py;
-use serde::Deserialize;
 use std::collections::BTreeMap;
 use std::sync::LazyLock;
 
@@ -48,21 +47,15 @@ pub struct Price {
 }
 
 /// The table's file, as it is written.
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
 struct File {
     read: String,
     page: String,
-    #[serde(default)]
     price: Vec<Row>,
 }
 
 /// A row of the file, in dollars per million tokens.
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
 struct Row {
     model: String,
-    #[serde(default = "standard")]
     speed: String,
     input: f64,
     cache_write_5m: f64,
@@ -71,8 +64,108 @@ struct Row {
     output: f64,
 }
 
-fn standard() -> String {
-    "standard".into()
+impl File {
+    /// `text` as the file, read as a `toml::Table`, which every build parses its project file into
+    /// anyway, so `tasks` carries no deserializer of its own for it. Refused, naming the key and
+    /// where it is, for a key the file does not know, one it lacks (all but `price`, and a row's
+    /// `speed`, which is `standard` unless it says) or one of another type.
+    fn read(text: &str) -> Result<File, String> {
+        let file: toml::Table = text.parse().map_err(|e: toml::de::Error| e.to_string())?;
+        let top = Keys::of(&file, &["read", "page", "price"], String::new())?;
+        let (read, page) = (top.text("read", None)?, top.text("page", None)?);
+        let rows = match file.get("price") {
+            None => &[][..],
+            Some(toml::Value::Array(rows)) => rows.as_slice(),
+            Some(other) => return Err(top.invalid("price", other, "an array of tables")),
+        };
+        let mut price = Vec::with_capacity(rows.len());
+        for (at, row) in rows.iter().enumerate() {
+            let at = format!(" in [[price]] {}", at + 1);
+            let Some(row) = row.as_table() else {
+                return Err(format!(
+                    "invalid type: {}{at}, expected a table",
+                    row.type_str()
+                ));
+            };
+            let row = Keys::of(row, &ROW, at)?;
+            price.push(Row {
+                model: row.text("model", None)?,
+                speed: row.text("speed", Some("standard"))?,
+                input: row.number("input")?,
+                cache_write_5m: row.number("cache_write_5m")?,
+                cache_write_1h: row.number("cache_write_1h")?,
+                cache_read: row.number("cache_read")?,
+                output: row.number("output")?,
+            });
+        }
+        Ok(File { read, page, price })
+    }
+}
+
+/// A row's keys, in the order the table writes them.
+const ROW: [&str; 7] = [
+    "model",
+    "speed",
+    "input",
+    "cache_write_5m",
+    "cache_write_1h",
+    "cache_read",
+    "output",
+];
+
+/// A table of the file, read key by key, and where it is (` in [[price]] 2`; nothing for the top).
+struct Keys<'a> {
+    table: &'a toml::Table,
+    at: String,
+}
+
+impl<'a> Keys<'a> {
+    /// `table`, refused naming the first key it has that is none of `known`.
+    fn of(table: &'a toml::Table, known: &[&str], at: String) -> Result<Keys<'a>, String> {
+        match table.keys().find(|key| !known.contains(&key.as_str())) {
+            Some(key) => Err(format!(
+                "unknown field `{key}`{at}, expected one of `{}`",
+                known.join("`, `")
+            )),
+            None => Ok(Keys { table, at }),
+        }
+    }
+
+    /// `key`'s text; `or` when it is not there, and refused when it is required (`or` none).
+    fn text(&self, key: &str, or: Option<&str>) -> Result<String, String> {
+        match (self.table.get(key), or) {
+            (Some(toml::Value::String(text)), _) => Ok(text.clone()),
+            (Some(other), _) => Err(self.invalid(key, other, "a string")),
+            (None, Some(or)) => Ok(or.to_string()),
+            (None, None) => Err(self.missing(key)),
+        }
+    }
+
+    /// `key`'s number, written whole or not.
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "a price written whole is read as the float it would be written as"
+    )]
+    fn number(&self, key: &str) -> Result<f64, String> {
+        match self.table.get(key) {
+            Some(toml::Value::Float(number)) => Ok(*number),
+            Some(toml::Value::Integer(number)) => Ok(*number as f64),
+            Some(other) => Err(self.invalid(key, other, "a number")),
+            None => Err(self.missing(key)),
+        }
+    }
+
+    fn missing(&self, key: &str) -> String {
+        format!("missing field `{key}`{}", self.at)
+    }
+
+    fn invalid(&self, key: &str, value: &toml::Value, expected: &str) -> String {
+        format!(
+            "invalid type: {} for `{key}`{}, expected {expected}",
+            value.type_str(),
+            self.at
+        )
+    }
 }
 
 impl Prices {
@@ -84,12 +177,11 @@ impl Prices {
         &EMBEDDED
     }
 
-    /// The table `text` writes, or what is wrong with it: a key it does not know, a row twice for
-    /// one model and speed, a price that is no number from 0 to [`MAX_PRICE`], or a `read` that is
-    /// no date.
+    /// The table `text` writes, or what is wrong with it: a key it does not know, one missing or of
+    /// another type, a row twice for one model and speed, a price that is no number from 0 to
+    /// [`MAX_PRICE`], or a `read` that is no date.
     pub fn parse(text: &str) -> Result<Prices, String> {
-        let file: File =
-            toml::from_str(text).map_err(|e| format!("the price table does not read: {e}"))?;
+        let file = File::read(text).map_err(|e| format!("the price table does not read: {e}"))?;
         if !is_date(&file.read) {
             return Err(format!(
                 "the price table's read = {:?} is no date (YYYY-MM-DD)",

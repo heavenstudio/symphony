@@ -263,6 +263,72 @@ fn a_table_written_wrong_is_refused_naming_what_is_wrong() {
 }
 
 #[test]
+fn a_key_of_the_wrong_type_or_place_is_refused_naming_it_and_its_row() {
+    let all = "input = 1\ncache_write_5m = 1\ncache_write_1h = 1\ncache_read = 1\noutput = 1";
+    let rows = |rows: &str| format!("read = \"2026-11-16\"\npage = \"p\"\n{rows}");
+    let row = |body: &str| rows(&format!("[[price]]\nmodel = \"m\"\n{body}\n"));
+    let second = |body: &str| format!("{}[[price]]\nmodel = \"n\"\n{body}\n", row(all));
+    for (text, says) in [
+        (
+            row(&all.replace("input = 1", "input = \"1\"")),
+            "invalid type: string for `input` in [[price]] 1, expected a number",
+        ),
+        (
+            row(&format!("{all}\nspeed = true")),
+            "invalid type: boolean for `speed` in [[price]] 1, expected a string",
+        ),
+        (
+            rows(&format!("[[price]]\nmodel = 5\n{all}\n")),
+            "invalid type: integer for `model` in [[price]] 1, expected a string",
+        ),
+        (
+            second(&format!("{all}\nbatch = 1")),
+            "unknown field `batch` in [[price]] 2, expected one of `model`, `speed`, `input`, \
+             `cache_write_5m`, `cache_write_1h`, `cache_read`, `output`",
+        ),
+        (
+            second("input = 1"),
+            "missing field `cache_write_5m` in [[price]] 2",
+        ),
+        (
+            rows(&format!("[[price]]\n{all}\n")),
+            "missing field `model` in [[price]] 1",
+        ),
+        ("read = \"2026-11-16\n".to_string(), "TOML parse error"),
+        (
+            format!("color = 1\n{}", rows("")),
+            "unknown field `color`, expected one of `read`, `page`, `price`",
+        ),
+        ("page = \"p\"\n".to_string(), "missing field `read`"),
+        (
+            rows("").replace("\"2026-11-16\"", "2026-11-16"),
+            "invalid type: datetime for `read`, expected a string",
+        ),
+        (
+            rows("price = 5\n"),
+            "invalid type: integer for `price`, expected an array of tables",
+        ),
+        (
+            rows("price = [1]\n"),
+            "invalid type: integer in [[price]] 1, expected a table",
+        ),
+    ] {
+        let error = Prices::parse(&text).unwrap_err();
+        assert!(
+            error.starts_with("the price table does not read: ") && error.contains(says),
+            "{says:?} not in {error:?}"
+        );
+    }
+    // The rows written inline are the same rows, and a table with none prices nothing.
+    let inline = rows(&format!(
+        "price = [{{ model = \"m\", {} }}]\n",
+        all.replace('\n', ", ")
+    ));
+    assert_eq!(Prices::parse(&inline), Prices::parse(&row(all)));
+    assert_eq!(Prices::parse(&rows("")).unwrap().of("m", "standard"), None);
+}
+
+#[test]
 fn a_price_counts_to_the_millionth_of_a_dollar() {
     let text = "read = \"2026-11-16\"\npage = \"p\"\n[[price]]\nmodel = \"m\"\ninput = 0.125\n\
                 cache_write_5m = 0.000001\ncache_write_1h = 0\ncache_read = 0.01\noutput = 0.5";
