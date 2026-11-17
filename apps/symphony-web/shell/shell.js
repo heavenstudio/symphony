@@ -338,7 +338,7 @@ function pendingNear() {
 // Call `stop` on the reader's own scroll, click or key (typing in a field aside); what it returns
 // stops listening.
 function onGesture(stop) {
-  const gestures = ["wheel", "touchstart", "mousedown", "keydown"];
+  const gestures = ["wheel", "touchstart", "touchmove", "mousedown", "keydown"];
   const gesture = (event) => {
     if (
       event.type !== "keydown" ||
@@ -352,6 +352,73 @@ function onGesture(stop) {
   };
 }
 
+// A touch that moves owns the scrolling until its scrollers finish their momentum. A refresh
+// arriving after touchstart must not begin a position hold in the middle of that gesture. Track
+// each scroller: an unrelated box ending its scroll must not end the page's flick.
+let touchScroll = null;
+function clearTouchScroll() {
+  touchScroll?.release.abort();
+  touchScroll = null;
+}
+addEventListener(
+  "touchstart",
+  (event) => {
+    clearTouchScroll();
+    const release = new AbortController();
+    touchScroll = { moved: false, down: true, scrollers: new Set(), release };
+    // Releases still target where each contact began, even after that node is removed. Keep
+    // listeners there as well as at the window, for every contact that remains down.
+    const targets = new Set([event.target, ...Array.from(event.touches, (touch) => touch.target)]);
+    for (const target of targets) {
+      for (const type of ["touchend", "touchcancel"]) {
+        target.addEventListener(type, releaseTouch, {
+          capture: true,
+          passive: true,
+          signal: release.signal,
+        });
+      }
+    }
+  },
+  { capture: true, passive: true },
+);
+addEventListener(
+  "touchmove",
+  () => {
+    if (touchScroll) touchScroll.moved = true;
+  },
+  { capture: true, passive: true },
+);
+addEventListener(
+  "scroll",
+  (event) => {
+    if (touchScroll?.moved) touchScroll.scrollers.add(event.target);
+  },
+  { capture: true, passive: true },
+);
+function releaseTouch(event) {
+  const touch = touchScroll;
+  if (!touch || event.touches.length > 0) return;
+  touch.down = false;
+  touch.release.abort();
+  // Scroll events are delivered before the next frame. A touch that scrolled nothing gets no
+  // scrollend, so let it go once those events have had their turn.
+  requestAnimationFrame(() => {
+    if (touchScroll === touch && touch.scrollers.size === 0) clearTouchScroll();
+  });
+}
+addEventListener("touchend", releaseTouch, { capture: true, passive: true });
+addEventListener("touchcancel", releaseTouch, { capture: true, passive: true });
+addEventListener(
+  "scrollend",
+  (event) => {
+    if (!touchScroll) return;
+    touchScroll.scrollers.delete(event.target);
+    if (!touchScroll.down && touchScroll.scrollers.size === 0) clearTouchScroll();
+  },
+  { capture: true, passive: true },
+);
+addEventListener("pagehide", clearTouchScroll);
+
 // A live update about to be drawn keeps what the reader looks at in place: the focused field on
 // the screen, else the first of `rows` on it. Only where the reader has scrolled: the box that
 // scrolls around it once it is off its top, else the page once it is. One at its top shows
@@ -360,8 +427,18 @@ function onGesture(stop) {
 // (`pendingNear`). However many frames that takes, as on a slow phone, and 1800 at most (half a
 // minute at sixty a second; a hidden tab draws none), a backstop only a box that never draws
 // reaches. A move the box and the page cannot take back (one at its end) counts as nothing moved
-// once it stays. The reader's own scroll, click or key ends the hold.
+// once it stays. The reader's own scroll, click or key ends the hold, including a drag or its
+// momentum already underway when the update arrived.
 window.reviewHoldPlace = (rows) => {
+  if (touchScroll && !touchScroll.down) {
+    // A removed box's scrollend cannot reach the window. It no longer owns any scrolling,
+    // while connected boxes must still finish their momentum before a hold can begin.
+    for (const scroller of touchScroll.scrollers) {
+      if (!scroller.isConnected) touchScroll.scrollers.delete(scroller);
+    }
+    if (touchScroll.scrollers.size === 0) clearTouchScroll();
+  }
+  if (touchScroll?.moved) return;
   const shows = (node) => {
     const top = node.getBoundingClientRect().top,
       box = scrollerOf(node)?.getBoundingClientRect();
