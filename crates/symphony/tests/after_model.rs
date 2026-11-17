@@ -941,3 +941,76 @@ fn history_maps_keep_lexical_keys_and_the_last_duplicate_fragment() {
     }
     assert!(renderer.history("", "docs/A.md").is_empty());
 }
+
+#[test]
+fn graphic_attribute_maps_keep_allowed_values_and_report_rejected_ones() {
+    use std::collections::BTreeMap;
+    let parsed = blocks::parse(
+        "<svg id='drawing' class='chart' title='Plot' viewBox='0 0 10 10' width='10' fill='none' aria-label='shown' onclick='bad-svg'><path d='M0 0L1 1' id='path-one' class='accent' title='Shape' stroke='red' onclick='bad-path'/><circle/></svg>",
+        &[],
+        "docs/x.md",
+    );
+    let [
+        Block::Paragraph { spans },
+        Block::Unknown {
+            tag: bad_svg,
+            text: svg_value,
+        },
+        Block::Unknown {
+            tag: bad_path,
+            text: path_value,
+        },
+    ] = parsed.as_slice()
+    else {
+        panic!("{parsed:?}")
+    };
+    assert_eq!(
+        (bad_svg.as_str(), svg_value.as_str()),
+        ("svg@onclick", "bad-svg")
+    );
+    assert_eq!(
+        (bad_path.as_str(), path_value.as_str()),
+        ("path@onclick", "bad-path")
+    );
+    let [
+        Span::Graphic {
+            view_box,
+            presentation,
+            shapes,
+        },
+    ] = spans.as_slice()
+    else {
+        panic!("{spans:?}")
+    };
+    assert_eq!(view_box, "0 0 10 10");
+    assert_eq!(
+        presentation,
+        &Presentation {
+            class: "chart".into(),
+            id: "drawing".into(),
+            title: "Plot".into(),
+            attributes: BTreeMap::from([
+                ("aria-label".into(), "shown".into()),
+                ("fill".into(), "none".into()),
+                ("width".into(), "10".into())
+            ])
+        }
+    );
+    assert_eq!(shapes.len(), 2);
+    assert_eq!(
+        shapes[0].attributes,
+        BTreeMap::from([
+            ("class".into(), "accent".into()),
+            ("d".into(), "M0 0L1 1".into()),
+            ("id".into(), "path-one".into()),
+            ("stroke".into(), "red".into()),
+            ("title".into(), "Shape".into())
+        ])
+    );
+    assert!(shapes[1].attributes.is_empty());
+    let encoded = serde_json::to_value(&parsed).unwrap();
+    assert_eq!(
+        serde_json::from_value::<Vec<Block>>(encoded).unwrap(),
+        parsed
+    );
+}
