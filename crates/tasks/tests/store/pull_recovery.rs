@@ -198,3 +198,24 @@ fn queued_launch_advice_is_replaced_before_delivery_after_executor_recovery(back
     }
 }
 }
+
+on_both! {
+fn running_test_evidence_keeps_the_current_executor_followup_actionable(backend: Backend) {
+    let f = Fixture::on(backend, Seed::default());
+    f.task("work");
+    let old = f.session("worker");
+    f.store.claim("work", &old).unwrap();
+    let post = f.store.say("work", "owner", "continue", Some(&old)).unwrap();
+    f.advance(31.0 * 60.0);
+    let next = f.session("worker");
+    f.store.claim("work", &next).unwrap();
+    f.advance(31.0 * 60.0);
+    let lost = look(&f);
+    assert!(line(&lost, post.id).ends_with("just tasks launch work --role executor"));
+    let running = digest(&f.store, &[], None, f.now(), std::slice::from_ref(&next)).unwrap();
+    assert!(line(&running, post.id).ends_with(&format!("--to {next}")));
+    assert_ne!(lost.entries(), running.entries());
+    let unrelated = digest(&f.store, &[], None, f.now(), &["another-worker".into()]).unwrap();
+    assert_eq!(line(&lost, post.id), line(&unrelated, post.id));
+}
+}

@@ -1,0 +1,96 @@
+//! Current executor eligibility, independent of historical post attribution. Recovery reserves
+//! against the exact task/session/native inputs it judged; a changed observation consumes no try.
+
+use super::{Error, Health, Pending, Store, both, pg, recovery_error, sql};
+use crate::health;
+use crate::rows::SessionRow;
+use serde::Deserialize;
+use serde_json::{Value, json};
+use std::collections::BTreeSet;
+
+pub(crate) fn active(
+    role: &str,
+    original: &str,
+    current: &str,
+    health: Health,
+    verifying: &BTreeSet<String>,
+) -> bool {
+    role == "executor" && original != current && (health.holds() || verifying.contains(current))
+}
+
+#[derive(Deserialize)]
+struct Inputs {
+    holders: Vec<(String, Option<SessionRow>, Option<String>, f64)>,
+}
+
+pub(super) struct Observation {
+    pub value: Value,
+    inputs: Inputs,
+}
+
+impl Observation {
+    pub(super) fn active(&self, store: &Store, pending: &Pending, busy: &BTreeSet<String>) -> bool {
+        let now = store.now();
+        self.inputs
+            .holders
+            .iter()
+            .any(|(handle, session, address, until)| {
+                let health = session.as_ref().map_or(Health::Lost, |session| {
+                    let health = health::health(session, now, &store.host, &*store.pid_alive, true);
+                    if address.is_some() && session.left_at.is_none() && *until >= now {
+                        Health::Live
+                    } else {
+                        super::super::native_health(
+                            session,
+                            health,
+                            now,
+                            address
+                                .as_deref()
+                                .filter(|a| a.starts_with("codex:"))
+                                .map(|_| *until),
+                        )
+                    }
+                });
+                active(&pending.role, &pending.handle, handle, health, busy)
+            })
+    }
+}
+
+pub(super) fn read(store: &Store, pending: &Pending) -> Result<Option<Observation>, Error> {
+    if pending.role != "executor" {
+        return Ok(None);
+    }
+    let value: Value = store
+        .bounded_read(
+            both(sql::successors(), pg::successors()),
+            json!({"slug":pending.slug}),
+        )
+        .map_err(recovery_error)?;
+    let inputs = serde_json::from_value(value.clone()).map_err(|e| Error::Db(e.to_string()))?;
+    Ok(Some(Observation { value, inputs }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_an_active_different_executor_blocks_recovery() {
+        for health in [
+            Health::Live,
+            Health::Stale,
+            Health::Unknown,
+            Health::Lost,
+            Health::Left,
+        ] {
+            for busy in [BTreeSet::new(), BTreeSet::from(["next".into()])] {
+                assert_eq!(
+                    active("executor", "old", "next", health, &busy),
+                    health.holds() || busy.contains("next")
+                );
+                assert!(!active("executor", "next", "next", health, &busy));
+                assert!(!active("reviewer", "old", "next", health, &busy));
+            }
+        }
+    }
+}

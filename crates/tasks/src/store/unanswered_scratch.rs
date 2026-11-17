@@ -6,6 +6,8 @@ use crate::store_fixture::{Backend, Fixture, Seed};
 
 #[path = "unanswered_reads.rs"]
 mod reads;
+#[path = "unanswered_successor_tests.rs"]
+mod successor_tests;
 
 /// Every post `handle` owes on the board as it is now.
 fn owed_by(f: &Fixture, handle: &str) -> Vec<Pending> {

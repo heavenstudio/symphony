@@ -754,10 +754,11 @@ pub(crate) fn digest_on(
         unanswered_scanned = false;
         Vec::new()
     });
+    let verifying: BTreeSet<_> = verifying.iter().cloned().collect();
     let unanswered: Vec<_> = pending
         .into_iter()
         .filter(|p| !busy.contains(p.handle.as_str()))
-        .map(Advice::of)
+        .map(|p| Advice::of(p, &verifying))
         .collect();
     for t in tasks {
         if unanswered.iter().any(|p| p.slug == t.slug) {

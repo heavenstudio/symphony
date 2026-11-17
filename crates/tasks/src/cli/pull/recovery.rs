@@ -4,6 +4,7 @@
 //! swallow the next handoff's advice. Ordinary posts keep their existing once-per-post identity.
 
 use crate::store::unanswered::Pending;
+use std::collections::BTreeSet;
 
 #[derive(Debug, Clone)]
 pub(super) struct Advice {
@@ -15,22 +16,19 @@ pub(super) struct Advice {
 }
 
 impl Advice {
-    pub(super) fn of(pending: Pending) -> Self {
+    pub(super) fn of(pending: Pending, verifying: &BTreeSet<String>) -> Self {
         let mut key = format!("{}#{}", pending.slug, pending.post.id);
         let replacement = pending
             .executor
             .as_ref()
             .filter(|(handle, _)| pending.role == "executor" && *handle != pending.handle);
         let mut handle = pending.handle.clone();
-        let command = if let Some((current, health)) = replacement {
+        let command = if let Some((current, _)) = replacement {
             handle = format!("{} (executor now {current})", pending.handle);
-            let action = if health.holds() {
-                "followup"
-            } else {
-                "recover"
-            };
+            let active = pending.active_successor(verifying);
+            let action = if active { "followup" } else { "recover" };
             key.push_str(&format!(":executor:{current}:{action}"));
-            if health.holds() {
+            if active {
                 format!(
                     "just tasks say {} 'Reconcile unanswered post #{} addressed to {}' --to {}",
                     pending.slug, pending.post.id, pending.handle, current

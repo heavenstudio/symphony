@@ -1379,11 +1379,15 @@ names the post and the recorded conversation's `just tasks restore SLUG HANDLE`
 command, or the explicit launch command when no conversation was recorded. When a different
 executor now holds the task, the original request stays visible: its advice names both handles
 and follows up with the current executor using `just tasks say`. A live, stale or liveness-unknown
-replacement prevents duplicate launch advice. If that replacement is lost or leaves, the advice
+replacement, or one running a test, prevents duplicate launch advice. If that replacement is lost or leaves, the advice
 offers an executor launch again, without reviving the predecessor's conversation. Each target
 and action is delivered once, so replacement loss can push recovery after an earlier follow-up;
 an unchanged request and action are never repeated. Its count appears only when
-nonzero. `reap` makes the sole automatic recovery attempt described above.
+nonzero. `reap` uses the same successor eligibility before automatic recovery, checking current
+task, session and native-presence inputs again in its reservation transaction, with fresh
+running-test evidence. A changed observation or an active successor consumes no recovery attempt;
+once that successor no longer qualifies, the unanswered conversation can recover. `reap` makes
+the sole automatic recovery attempt described above.
 
 What is pushed is what the recipient cannot predict and must act on, said once: posts and verdicts, the
 owner's moves (a `MOVE` line, [Talking on a task](#talking-on-a-task)), NEW, STATUS, ROLE, GIVEN (one line for every task the board gave the recipient since its last read, [Tasks and roles](#tasks-and-roles)), BLOCKED, the PULL above, and STALE, LOST or LIVENESS UNKNOWN once for each transition of a quiet

@@ -20,6 +20,8 @@ use std::time::Duration;
 mod answers;
 #[path = "unanswered_recipients.rs"]
 mod recipients;
+#[path = "unanswered_successors.rs"]
+mod successors;
 
 const UNANSWERED_SECONDS: f64 = 30.0 * 60.0;
 
@@ -64,6 +66,12 @@ pub(crate) struct Pending {
 }
 
 impl Pending {
+    /// Whether today's exclusive executor prevents restoring this historical conversation.
+    pub(crate) fn active_successor(&self, verifying: &BTreeSet<String>) -> bool {
+        self.executor.as_ref().is_some_and(|(handle, health)| {
+            successors::active(&self.role, &self.handle, handle, *health, verifying)
+        })
+    }
     pub fn overdue(&self, now: f64) -> bool {
         self.due(now)
             && (matches!(self.health, Health::Lost | Health::Left)
@@ -458,27 +466,63 @@ impl Store {
     /// Reserve the sole automatic resume attempt for this handle/post, across restarts and sweeps.
     /// Reserve before starting a process: an interruption may leave it flagged, never duplicated.
     /// Role recipients come from the immutable thread prefix; later holders cannot reassign them.
+    #[cfg(test)]
     pub(crate) fn claim_unanswered_restore(&self, pending: &Pending) -> Result<bool, Error> {
+        self.claim_unanswered_restore_checking(pending, &|| Ok(BTreeSet::new()))
+    }
+
+    pub(crate) fn claim_unanswered_restore_checking(
+        &self,
+        pending: &Pending,
+        verifying: &dyn Fn() -> Result<BTreeSet<String>, Error>,
+    ) -> Result<bool, Error> {
         let rows = answers::rows(self, &pending.handle, pending.post.id)?;
         let parents = answers::parents(self, &rows)?;
         let tree = parents.iter().cloned().collect();
         if answers::answered(&rows, &pending.slug, &tree) {
             return Ok(false);
         }
-        self.reserve_unanswered_restore(pending, &rows, &parents)
+        let observation = successors::read(self, pending)?;
+        let busy = verifying()?;
+        if busy.contains(&pending.handle)
+            || observation
+                .as_ref()
+                .is_some_and(|s| s.active(self, pending, &busy))
+        {
+            return Ok(false);
+        }
+        self.reserve_unanswered_restore_observed(pending, &rows, &parents, observation.as_ref())
     }
 
     /// Recheck the recipient suffix and every parent edge used in the answer decision in the
     /// reservation transaction. A changed observation waits for the next sweep, unreserved.
+    #[cfg(test)]
     fn reserve_unanswered_restore(
         &self,
         pending: &Pending,
         rows: &[answers::Answer],
         parents: &[(String, Option<String>)],
     ) -> Result<bool, Error> {
+        let observation = successors::read(self, pending)?;
+        if observation
+            .as_ref()
+            .is_some_and(|s| s.active(self, pending, &BTreeSet::new()))
+        {
+            return Ok(false);
+        }
+        self.reserve_unanswered_restore_observed(pending, rows, parents, observation.as_ref())
+    }
+
+    fn reserve_unanswered_restore_observed(
+        &self,
+        pending: &Pending,
+        rows: &[answers::Answer],
+        parents: &[(String, Option<String>)],
+        successors: Option<&successors::Observation>,
+    ) -> Result<bool, Error> {
         self.transact(
             both(sql::reserve(), pg::reserve()),
-            json!({"slug": pending.slug, "handle": pending.handle, "post": pending.post.id, "seen":pending.seen, "role":pending.role, "answers":rows, "parents":parents}),
+            json!({"slug": pending.slug, "handle": pending.handle, "post": pending.post.id, "seen":pending.seen, "role":pending.role, "answers":rows, "parents":parents, "successors":successors.map(|s| &s.value)}),
         )
         .map_err(recovery_error)
     }
