@@ -405,6 +405,7 @@ fn task_page_gates_draw_only_the_latest_read_and_a_failed_read_leaves_the_page_w
     site.hold_next(GATES);
     page.open(&site.url(PAGE));
     wait_reads(&mut page, &site, 1);
+    page.reveal("[id=\"composer-visual/in-progress\"]");
     assert!(
         page.wait_for(
             "document.querySelectorAll('.task-gates[data-gates=reading] li.gate-shadow').length === 4 && document.querySelector('.task-body') !== null && document.querySelector('#task-message') !== null",
@@ -452,6 +453,8 @@ fn task_page_gates_draw_only_the_latest_read_and_a_failed_read_leaves_the_page_w
         "{:?}",
         page.eval("document.querySelector('main')?.innerText")
     );
+    page.reveal("[id=\"composer-visual/in-progress\"]");
+    assert!(page.wait_for("document.querySelector('#task-message') !== null", SHOWN));
     assert_eq!(
         page.eval("({said:document.querySelector('.task-gates [role=status]').textContent,brief:document.querySelector('.task-body').innerText.trim(),composer:document.querySelector('#task-message') !== null,notice:document.querySelector('.notice-stack')?.innerText.includes('Board snapshot') ?? false})"),
         json!({"said":"The gates could not be read: Board snapshot unavailable (the server answered 500). The rest of the page still works.","brief":"Task brief","composer":true,"notice":false}),
