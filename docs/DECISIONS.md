@@ -14,15 +14,6 @@ their dated history work is in [REVIEW](REVIEW.md).
 
     **Earlier verdicts checked.** **postgresql-binary-source** (C) chooses machine-installed local PostgreSQL and the latest local Homebrew version; it does not decide managed database tenancy. **board-schema-at-update** (C) preserves recent-writer checks before migration, and **consumer-api-break-release** preserves old public calls for a release; both options keep them. Neither chooses a database boundary. The live cutover remains `docs/board-pg-cutover-card`'s separate decision.
 
-### Durable evidence
-
-- [ ] **durable-project-artifacts** — A hosted project's working evidence should remain readable after its worker and app container disappear. Should Symphony define an optional storage contract for that evidence, with each consuming project supplying its private storage provider? A: define the shared contract for verified uploads, project access, revision-bound references and restore; local projects keep their current files and links. B: leave the entire remote evidence contract to each consuming project. Both preserve Git-backed document and card pictures. Recommended: A. Approve and say A or B in the note, or comment. [[analysis/remote-artifact-store#Smallest boundary]]
-  [2026-11-17 19:38] agent — Proposed by board task `tools/remote-artifact-store`. This asks for a design direction only. Implementation, provider selection, migration, retention changes and any live-data operation need their own authorized work.
-
-    **Cost of A:** Symphony owns the common identity, integrity, authorization and publication rules; the consuming project owns credentials, storage, repository retention and backup operations. **B:** Symphony adds nothing; each consumer must keep its own evidence references and recovery rules consistent with task delivery.
-
-    **Earlier verdicts checked:** **pictures-in-every-clone**, F, commits document/card images and keeps working evidence outside Git; **sweep-swept-retention** keeps referenced files and asks for manual cleanup past the cap. Neither chooses a remote provider or defines hosted publication and restore. This proposal preserves those decisions and leaves this repository's storage unchanged.
-
 ## Auto-approved: spot-check
 
 ### Releases
@@ -44,6 +35,16 @@ their dated history work is in [REVIEW](REVIEW.md).
   [2026-11-13 20:43] agent · auto-approved — A: the owner, 2026-11-13, in the terminal: "contract-tool-route reads like it should be auto triaged". The card's own evidence leaves A standing: both tools exist to check what the machine does (the card you will see, whether the machine would hold a land), and under B the project's copies "keep passing while the machine does otherwise, until someone copies again", so they would stop checking it. Symphony adds the two commands (one that draws a single card, one that answers the landing's checks for a branch) and keeps their output, and status's and triage's, stable; its side is filed on the board now. Any verdict here overrides this.
 
 ## Waiting on an agent
+
+### Durable evidence
+
+- [x] **durable-project-artifacts** — A hosted project's working evidence should remain readable after its worker and app container disappear. Should Symphony define an optional storage contract for that evidence, with each consuming project supplying its private storage provider? A: define the shared contract for verified uploads, project access, revision-bound references and restore; local projects keep their current files and links. B: leave the entire remote evidence contract to each consuming project. Both preserve Git-backed document and card pictures. Recommended: A. Approve and say A or B in the note, or comment. [[analysis/remote-artifact-store#Smallest boundary]]
+  [2026-11-17 19:38] agent — Proposed by board task `tools/remote-artifact-store`. This asks for a design direction only. Implementation, provider selection, migration, retention changes and any live-data operation need their own authorized work.
+
+    **Cost of A:** Symphony owns the common identity, integrity, authorization and publication rules; the consuming project owns credentials, storage, repository retention and backup operations. **B:** Symphony adds nothing; each consumer must keep its own evidence references and recovery rules consistent with task delivery.
+
+    **Earlier verdicts checked:** **pictures-in-every-clone**, F, commits document/card images and keeps working evidence outside Git; **sweep-swept-retention** keeps referenced files and asks for manual cleanup past the cap. Neither chooses a remote provider or defines hosted publication and restore. This proposal preserves those decisions and leaves this repository's storage unchanged.
+  [2026-11-17 20:42] owner · approved — A
 
 ### Project workflows
 
