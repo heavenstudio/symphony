@@ -171,9 +171,15 @@ pub fn answers(path: &Path, folders: &[String], tip: Option<&str>) -> Result<Vec
         *most = (*most).max(*n);
     }
     let mut left: Vec<Answer> = Vec::new();
+    // Written lines are grouped by file. Reuse the line-key count map within each group.
+    let mut seen_file = None;
     let mut seen = BTreeMap::new();
     for (file, line) in &written {
-        let n = seen.entry((file, line)).or_insert(0usize);
+        if seen_file != Some(file) {
+            seen.clear();
+            seen_file = Some(file);
+        }
+        let n = seen.entry(line).or_insert(0usize);
         *n += 1;
         if *n <= held.get(line).copied().unwrap_or(0) {
             continue;
