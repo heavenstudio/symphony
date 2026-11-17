@@ -8,6 +8,8 @@
   each; the evidence behind a card is under [Analysis](analysis/).
 - [A project's task workflow](analysis/project-workflow.md) — options for project-defined steps,
   the existing gate boundary, and migration that preserves the default flow.
+- [Managed PostgreSQL](analysis/hosted-postgresql.md) — the proposed hosted connection,
+  connection budget, database boundary and PostgreSQL 16/18 validation contract.
 - [Execution providers and durable attempts](analysis/remote-execution-attempts.md) — a proposal
   for project-owned execution adapters, durable recovery and authorized attempt history.
 - [Concept review](REVIEW.md) — review cards, comments, questions and the owner queue.
