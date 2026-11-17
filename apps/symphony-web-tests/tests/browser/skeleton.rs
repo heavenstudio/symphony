@@ -601,6 +601,12 @@ fn a_ghost_card_is_as_tall_as_the_card_of_a_task_with_a_title_of_two_lines() {
 #[test]
 fn a_task_before_its_read_draws_its_head_and_brief_cards_its_thread_and_its_composer() {
     let site = site();
+    // Revealing the composer also mounts Changes: answer that independent read so the only
+    // loading announcement is the task's, and count its card alongside the original four.
+    site.set_json(
+        symphony_api::TASK_DIFF_PATH,
+        &json!({"source":"branch","base":"base","head":"head","files":[],"truncated":false,"reason":null}),
+    );
     // Each part is its mock-up until its own read answers: the page's and the thread's held.
     let held = ["/api/task-page", "/api/task-history"];
     for route in held {
@@ -627,7 +633,7 @@ fn a_task_before_its_read_draws_its_head_and_brief_cards_its_thread_and_its_comp
     );
     assert!(
         browser.wait_for(
-            "document.querySelector('#task-thread[data-pending=true]') !== null && document.querySelector('article.task .ghost-composer') !== null",
+            "document.querySelector('#task-thread[data-pending=true]') !== null && document.querySelector('article.task .ghost-composer') !== null && document.querySelector('.task-diff > p:last-child')?.textContent === 'No changed files.'",
             SHOWN,
         ),
         "the pending thread and composer never mounted near the screen: {}",
@@ -647,9 +653,9 @@ fn a_task_before_its_read_draws_its_head_and_brief_cards_its_thread_and_its_comp
     ));
     assert_eq!(
         ghost,
-        json!({"cards": 4, "pills": 2, "entries": 2, "fields": 4, "head": [], "title": 2,
+        json!({"cards": 5, "pills": 2, "entries": 2, "fields": 4, "head": [], "title": 2,
             "said": ["Loading task…"], "busy": "true"}),
-        "the ghost draws the task's head card as the real one, its title two lines of the title's height on a phone, then its gates, timeline, brief, thread and composer, and says once that the task loads"
+        "the ghost draws the task's head card as the real one, its title two lines of the title's height on a phone, then its gates, timeline, brief, Changes card, thread and composer, and says once that the task loads"
     );
     // The thread answers first: its messages replace their outlines while the head, brief and
     // composer still wait on the page's own read.
