@@ -323,3 +323,128 @@ fn unanswered_recovery_does_not_restart_a_reviewer_who_answered_on_its_instructi
         assert_eq!(digest.count("unanswered"), 0);
     }
 }
+
+#[test]
+fn automatic_executor_recovery_waits_for_its_active_successor_and_rechecks_a_late_claim() {
+    for direct in [false, true] {
+        for late in [false, true] {
+            let w = World::new();
+            let old = launched(&w).row;
+            w.store().claim(&old.slug, &old.handle).unwrap();
+            let post = w
+                .store()
+                .say(
+                    &old.slug,
+                    "owner",
+                    "continue",
+                    Some(if direct { &old.handle } else { "@executor" }),
+                )
+                .unwrap();
+            close_terminal(&w, &old);
+            w.f.advance(31.0 * 60.0);
+            let next = w.f.session("worker");
+            let claimed = Cell::new(false);
+            let claim = || {
+                w.store().claim(&old.slug, &next).unwrap();
+                claimed.set(true);
+            };
+            if !late {
+                claim();
+            }
+            let mut hc = Hooked::new(&w);
+            hc.after = Box::new(|args| {
+                if late && args.first() == Some(&"ls") && !claimed.get() {
+                    claim();
+                }
+            });
+            let mut warnings = Vec::new();
+            assert!(
+                restore_unanswered(w.store(), &hc, &w.machine(), &mut warnings)
+                    .unwrap()
+                    .is_empty()
+            );
+            assert!(claimed.get());
+            assert_eq!(w.calls_of(&["run"]).len(), 1, "no duplicate worker");
+            assert!(
+                !w.store()
+                    .raw()
+                    .row(
+                        "unanswered_restore",
+                        serde_json::json!([old.slug, old.handle, post.id])
+                    )
+                    .exists()
+                    .unwrap()
+            );
+            w.f.advance(31.0 * 60.0);
+            let resumed =
+                restore_unanswered(w.store(), &w.hc(), &w.machine(), &mut warnings).unwrap();
+            assert_eq!(resumed.len(), 1, "{resumed:?} {warnings:?}");
+            assert_eq!(w.calls_of(&["run"]).len(), 2);
+            assert!(
+                restore_unanswered(&w.f.other(), &w.hc(), &w.machine(), &mut warnings)
+                    .unwrap()
+                    .is_empty()
+            );
+            assert_eq!(w.calls_of(&["run"]).len(), 2);
+            assert!(warnings.is_empty(), "{warnings:?}");
+        }
+    }
+}
+
+#[test]
+fn automatic_recovery_respects_a_successor_running_a_test_without_a_recent_heartbeat() {
+    use std::io::Write;
+    let w = World::new();
+    let old = launched(&w).row;
+    w.store().claim(&old.slug, &old.handle).unwrap();
+    w.store()
+        .say(&old.slug, "owner", "continue", Some(&old.handle))
+        .unwrap();
+    close_terminal(&w, &old);
+    w.f.advance(31.0 * 60.0);
+    let next = w.f.session_with(symphony_board::NewSession {
+        host: symphony_board::sys::hostname(),
+        ..symphony_board::NewSession::new("worker")
+    });
+    w.store().claim(&old.slug, &next).unwrap();
+    w.f.advance(31.0 * 60.0);
+    let slots = w.repo.join("slots");
+    fs::create_dir(&slots).unwrap();
+    fs::write(
+        w.repo.join("symphony.toml"),
+        "[board]\nslot_locks = 'slots'\n",
+    )
+    .unwrap();
+    let mut held = fs::File::options()
+        .create(true)
+        .read(true)
+        .write(true)
+        .truncate(true)
+        .open(slots.join("slot-1.lock"))
+        .unwrap();
+    held.lock().unwrap();
+    write!(
+        held,
+        "{}",
+        serde_json::json!({"pid":std::process::id(),"handle":next,
+        "worktree":w.repo,"recipe":"test-rs"})
+    )
+    .unwrap();
+    held.flush().unwrap();
+    let mut warnings = Vec::new();
+    assert!(
+        restore_unanswered(w.store(), &w.hc(), &w.machine(), &mut warnings)
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(w.calls_of(&["run"]).len(), 1);
+    held.unlock().unwrap();
+    assert_eq!(
+        restore_unanswered(w.store(), &w.hc(), &w.machine(), &mut warnings)
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(w.calls_of(&["run"]).len(), 2);
+    assert!(warnings.is_empty());
+}
