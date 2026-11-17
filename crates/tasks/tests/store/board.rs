@@ -644,3 +644,66 @@ fn opening_a_board_already_made_is_one_round_trip() {
     let again = Store::open(rpc::Client::new(&addr, "sf", &db)).unwrap();
     assert_eq!(again.client().requests(), 1);
 }
+
+on_both! {
+    fn stage_records_keep_window_roots_and_their_ordered_history(backend: Backend) {
+        let mut seed = Seed::default()
+            .session("amber-heron")
+            .task_row(TaskRow {
+                id: 1, created: NOW - 20.0, updated: NOW + 2.0,
+                ..crate::common::task("work/old-done", "done")
+            })
+            .task_row(TaskRow {
+                id: 2, created: NOW - 20.0,
+                ..crate::common::task("work/old-open", "ready")
+            })
+            .task("work/new", "in_progress")
+            .task_row(TaskRow {
+                id: 4, parent: Some("work/new".into()),
+                ..crate::common::task("work/new/child", "ready")
+            })
+            .role("work/new", "amber-heron", "executor");
+        for (id, kind, text) in [
+            (3, "verdict", "approve: a verdict whose details are omitted"),
+            (1, "system", "amber-heron claimed it"),
+            (2, "msg", "a post is not a status transition"),
+        ] {
+            seed.dump.messages.push(MessageRow {
+                id, slug: "work/new".into(), sender: "amber-heron".into(),
+                kind: kind.into(), text: text.into(), ts: NOW + id as f64,
+                ..Default::default()
+            });
+        }
+        let f = Fixture::on(backend, seed);
+        let records = f.store.stage_records(NOW).unwrap();
+        assert_eq!(records.iter().map(|r| r.slug.as_str()).collect::<Vec<_>>(),
+            ["work/old-done", "work/new"]);
+        assert!(!records[0].executing);
+        assert!(records[0].lines.is_empty());
+        assert!(records[1].executing);
+        assert_eq!(records[1].lines.iter().map(|l| (l.id, l.kind.as_str(), l.text.as_str()))
+            .collect::<Vec<_>>(),
+            [(1, "system", "amber-heron claimed it"), (3, "verdict", "approve: a verdi")]);
+        assert!(f.store.stage_records(NOW + 10.0).unwrap().is_empty());
+    }
+
+    fn a_runs_task_comes_from_its_named_holder_else_its_known_branch(backend: Backend) {
+        let f = Fixture::on(backend, Seed::default()
+            .session("amber-heron")
+            .task("work/held", "in_progress")
+            .task("work/finished", "done")
+            .role("work/held", "amber-heron", "executor"));
+        let mut place = Default::default();
+        assert_eq!(f.store.run_for(&place).unwrap(), (None, None));
+        place.branch = Some("work/finished");
+        assert_eq!(f.store.run_for(&place).unwrap(), (None, Some("work/finished".into())));
+        place.handle = Some("amber-heron");
+        assert_eq!(f.store.run_for(&place).unwrap(),
+            (Some("amber-heron".into()), Some("work/held".into())));
+        place.handle = Some("not-registered");
+        assert_eq!(f.store.run_for(&place).unwrap(),
+            (Some("not-registered".into()), Some("work/finished".into())));
+        place.branch = Some("no-such-task");
+        assert_eq!(f.store.run_for(&place).unwrap(), (Some("not-registered".into()), None));
+    }
+}
