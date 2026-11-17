@@ -235,9 +235,13 @@ const RENDERS: &str = r#"(() => {
 fn a_live_update_to_one_card_draws_only_that_card_and_its_column() {
     let site = site();
     let Some(mut page) = chrome() else { return };
+    // Count only the title delta: an unrelated minute tick may legitimately repaint every age.
+    // Freeze the page's clock at a minute boundary before the board mounts.
     page.call(
         "Page.addScriptToEvaluateOnNewDocument",
-        json!({ "source": RENDERS }),
+        json!({ "source": format!(
+            "Date.now = (() => {{ const now = Math.floor(Date.now() / 60000) * 60000; return () => now; }})();\n{RENDERS}"
+        ) }),
     );
     opened_board(&mut page, &site);
     assert!(
