@@ -16,10 +16,7 @@
 //!    **Approved.** The task's last verdict is an `approve`, which left it done, from a fresh
 //!    reviewer: never a session that ever executed the task or one of its work subtasks (an
 //!    instruction subtask, the review the reviewer claimed, is none), nor one that ever
-//!    orchestrated it, nor its filer, but on a fast fix ([`crate::fast_fix`]), whose
-//!    orchestrator's approve it goes by ([`independent`]), on a red filed as one only where the
-//!    fix changes none of the project's tests and checks ([`check_paths`],
-//!    [`unchanged_checks`]). The approval covers the branch's tip:
+//!    orchestrated it, nor its filer ([`independent`]). The approval covers the branch's tip:
 //!    the commit the verdict names, else, when it names none of the branch's, every commit of the
 //!    branch made before it and before the task last went to review (the board records no tip, so
 //!    the landing says on the thread that it judged by time), or the commit the tip merges the
@@ -252,8 +249,8 @@ pub struct Settings {
     /// `[land] timeout_seconds`: how long each generator and the check may run; a fetch or a push
     /// has [`NETWORK`] at most. A land waits for another with no timeout ([`hold`]).
     pub timeout: Duration,
-    /// `[land] check_paths`: what holds the project's tests and checks, which a red's fix its
-    /// orchestrator approves changes none of ([`check_paths`]); [`check_paths::DEFAULT`] unless
+    /// `[land] check_paths`: what holds the project's tests and checks, reported to its assessor
+    /// ([`check_paths`]); [`check_paths::DEFAULT`] unless
     /// the project names its own.
     pub check_paths: Vec<check_paths::Entry>,
     /// The folders the project's `[[entrypoints]]` serve documents from, where the Symphony writes
@@ -492,43 +489,13 @@ pub fn approval(task: &Task, thread: &[Message]) -> Result<Approval, String> {
     }
 }
 
-/// How far an approve the land goes by ([`independent`]) stands.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Scope {
-    /// On whatever the branch changes: a fresh reviewer's, or a fast fix's orchestrator's.
-    Whole,
-    /// On a branch that changes none of the project's tests and checks ([`check_paths`]) alone:
-    /// the approve of a red's orchestrator or filer (which of the two it is), on a red filed as a
-    /// fast fix ([`crate::fast_fix::RED`]), since a loosened test or check is how a red turns green
-    /// unfixed and needs a reader that did not ask for the fix.
-    ChecksUnchanged(Unfresh),
-}
-
-/// Whether `approval` is one the land goes by on `task`, whose roles `held` says who ever held
-/// ([`Store::ever_held`]), by the rule the board's verdict holds a reviewer to ([`Held::unfresh`]):
-/// never the approve of a session that executed it or a work subtask under it, though the reviewer
-/// that claimed its review instruction may give it (RULES.md `workflow/reviewers-not-the-owner`),
-/// and never of one that orchestrated it, now or before, or filed it, but on a fast fix
-/// ([`crate::fast_fix`]), which its orchestrator approves on its posted evidence when it did not
-/// execute it, and, on a red ([`crate::red`]) filed as one, only for a fix that changes none of the
-/// project's checks ([`Scope::ChecksUnchanged`], which the land reads from the branch:
-/// [`unchanged_checks`]). A fast fix whose risk is a red's, by the opening every wording of it keeps
-/// ([`crate::fast_fix::bounds`]), is held to that bound with its red mark or without it: a filer
-/// lifts the mark (`Store::unmark_red`), and no session clears the risk. The board refuses those
-/// verdicts itself, so such an approve is one an older board took. Otherwise the one line saying
-/// whose approve it is and whose it must be.
-pub fn independent(task: &Task, approval: &Approval, held: &Held) -> Result<Scope, String> {
+/// Whether `approval` is from a fresh reviewer of `task`, by the board's verdict rule
+/// ([`Held::unfresh`]): never one that executed, orchestrated or filed the work.
+pub fn independent(task: &Task, approval: &Approval, held: &Held) -> Result<(), String> {
     let (slug, by) = (&task.slug, &approval.by);
     let orchestrates = task.holders("orchestrator").contains(&by.as_str());
-    let fast = task.fast_fix().is_some();
-    let bound = fast && (task.red() || task.fast_fix().is_some_and(crate::fast_fix::bounds));
-    let whose = match held.unfresh(by, &task.created_by, orchestrates, fast) {
-        None if bound => {
-            return Ok(held
-                .requested(by, &task.created_by, orchestrates, false)
-                .map_or(Scope::Whole, Scope::ChecksUnchanged));
-        }
-        None => return Ok(Scope::Whole),
+    let whose = match held.unfresh(by, &task.created_by, orchestrates) {
+        None => return Ok(()),
         Some(Unfresh::Executed) => {
             return Err(format!(
                 "{slug}'s approve is {by}'s, which executed it or work under it: a fresh \
@@ -539,51 +506,7 @@ pub fn independent(task: &Task, approval: &Approval, held: &Held) -> Result<Scop
         Some(Unfresh::Filed) => "which filed it",
     };
     Err(format!(
-        "{slug}'s approve is {by}'s, {whose}: a fresh reviewer approves it, and its orchestrator \
-         only a fast fix (a task filed with the fast-fix mark)"
-    ))
-}
-
-/// How many of what a red's fix changes of the checks a refusal names.
-const TOUCHED_NAMED: usize = 8;
-
-/// Whether `approval`, standing on the red `task` only where its fix changes none of the project's
-/// checks ([`Scope::ChecksUnchanged`], `why` it is no fresh reviewer's), stands on the tip `tip`,
-/// which `touched` ([`check_paths::touched`]) says changes those named, or why it cannot say:
-/// otherwise the one line naming them and whose approve that needs.
-pub fn unchanged_checks(
-    task: &Task,
-    approval: &Approval,
-    why: Unfresh,
-    tip: &str,
-    touched: Result<Vec<String>, String>,
-) -> Result<(), String> {
-    let (slug, by) = (&task.slug, &approval.by);
-    let whose = match why {
-        Unfresh::Executed => "which executed it or work under it",
-        Unfresh::Orchestrated => "which orchestrated it",
-        Unfresh::Filed => "which filed it",
-    };
-    let changes = match touched {
-        Ok(touched) if touched.is_empty() => return Ok(()),
-        Ok(touched) => {
-            let mut named = touched
-                .iter()
-                .take(TOUCHED_NAMED)
-                .cloned()
-                .collect::<Vec<_>>()
-                .join(", ");
-            if touched.len() > TOUCHED_NAMED {
-                named.push_str(&format!(" and {} more", touched.len() - TOUCHED_NAMED));
-            }
-            format!("{} changes {named}", short(tip))
-        }
-        Err(cannot) => format!("what {} changes cannot be read ({cannot})", short(tip)),
-    };
-    Err(format!(
-        "{slug}'s approve is {by}'s, {whose}, which lands a red filed as a fast fix only when the \
-         fix changes none of the project's tests and checks (`[land] check_paths`), and {changes}: \
-         a fresh reviewer approves a fix that changes a test or a check"
+        "{slug}'s approve is {by}'s, {whose}: a fresh reviewer approves it"
     ))
 }
 
@@ -1857,9 +1780,8 @@ impl Landing<'_> {
                 })
             })?;
             let held = self.store.ever_held(slug)?;
-            let scope =
-                independent(&task, &approval, &held).map_err(|line| self.refuse(staff(line)))?;
-            Some((approval, scope))
+            independent(&task, &approval, &held).map_err(|line| self.refuse(staff(line)))?;
+            Some(approval)
         } else {
             if let Some((line, to)) = needs::not_ready(slug, &task.status) {
                 return Err(self.refuse(match to {
@@ -1877,7 +1799,7 @@ impl Landing<'_> {
             None
         };
         let tip = branch_tip.clone().ok_or_else(|| {
-            let named = approved.as_ref().map_or("", |(approval, _)| &approval.text);
+            let named = approved.as_ref().map_or("", |approval| &approval.text);
             let line = no_branch(&self.main, slug, &self.settings.default_branch, named);
             self.refuse(Refusal::thread(line))
         })?;
@@ -1885,13 +1807,12 @@ impl Landing<'_> {
         let mut base = self.base().map_err(|line| self.refuse(line.into()))?;
         let default = self.settings.default_branch.clone();
         if ancestor(&self.main, &tip, &base) {
-            let approval = approved.as_ref().map(|(approval, _)| approval);
-            return self.finish(&tip, &base, approval, &needed);
+            return self.finish(&tip, &base, approved.as_ref(), &needed);
         }
         self.owner_lines(&base, &tip)
             .map_err(|refusal| self.refuse(refusal))?;
         let judged = match &approved {
-            Some((approval, scope)) => {
+            Some(approval) => {
                 let covered = covered(&self.main, slug, &base, &tip, approval).map_err(|line| {
                     self.refuse(Refusal::reopening(
                         line,
@@ -1902,12 +1823,6 @@ impl Landing<'_> {
                         ),
                     ))
                 })?;
-                if let Scope::ChecksUnchanged(why) = *scope {
-                    let touched =
-                        check_paths::touched(&self.main, &base, &tip, &self.settings.check_paths);
-                    unchanged_checks(&task, approval, why, &tip, touched)
-                        .map_err(|line| self.refuse(staff(line)))?;
-                }
                 Judged::Approved(covered)
             }
             None => Judged::Stamped(needed.stood(&tip)),
@@ -1925,7 +1840,7 @@ impl Landing<'_> {
         if !missing.is_empty() {
             return Err(self.lacks(&task, &tip, &missing));
         }
-        if let (Some((approval, _)), Judged::Approved(covered)) = (&approved, &judged) {
+        if let (Some(approval), Judged::Approved(covered)) = (&approved, &judged) {
             self.say(&format!(
                 "land {slug}: approved by {} at {}, {}",
                 approval.by,

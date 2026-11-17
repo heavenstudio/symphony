@@ -10,6 +10,8 @@ The product's commands install together:
 
 The library keeps the name `symphony`: a dependent names it `symphony = { package = "symphony-app", … }`, and its code says `symphony::`.
 
-Its version, below 1.0, is the product's: `symphony-app`, `symphony-board`, `symphony-server`, `symphony-chrome` and `symphony-api` carry one version, require each other at exactly that version, and promise no name: any release may change one. What a project's own code links to extend Symphony is the plugin kit, `symphony-plugin`, `symphony-blocks` and `symphony-docs`.
+Its version, below 1.0, is the product's: `symphony-app`, `symphony-board`, `symphony-server`, `symphony-chrome` and `symphony-api` carry one version and require each other at exactly that version, without a general API stability promise. Known consumer calls follow the two-release rule below. What a project's own code links to extend Symphony is the plugin kit, `symphony-plugin`, `symphony-blocks` and `symphony-docs`.
+
+A public Rust item a known consumer calls stays working beside its replacement for at least one release, without `#[deprecated]` because consumer lints deny warnings. Its removal is a separate task for a later release, with read-only evidence of consumer migrations and the consumer-API compile list updated.
 
 MIT licensed: the terms are in the LICENSE file beside this README.

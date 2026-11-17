@@ -68,7 +68,7 @@ impl Store {
                 )));
             }
             let orchestrates = view.holds(handle, "orchestrator");
-            if let Some(why) = held.unfresh(handle, &task.created_by, orchestrates, false) {
+            if let Some(why) = held.unfresh(handle, &task.created_by, orchestrates) {
                 return Err(refused(unfresh(slug, handle, why)));
             }
             let was = Needs::of(&task.fields).map_or_else(|| defaults.clone(), |n| n.stamps);

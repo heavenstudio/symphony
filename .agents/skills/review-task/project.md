@@ -8,3 +8,6 @@ what a reviewer needs that none of them says.
 - What you run, you run in a worktree of your own under the project's worktree base
   (`../symphony-wt/`), removed when you are done, or in the executor's worktree changing nothing
   there.
+- For a diff removing or changing the signature of a public Rust item in a crate a consumer
+  links, check the consumer-API compile lists and the release and migration evidence under
+  [CHECKS](../../../docs/CHECKS.md#consumer-api-changes).

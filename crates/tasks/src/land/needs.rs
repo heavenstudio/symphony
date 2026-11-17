@@ -4,8 +4,7 @@
 //!
 //! 1. **Which stamps** ([`Needed::of`]): the newest assessment's, on the tip it read; on another
 //!    tip, or none (made from the brief), those and the catalogue's defaults; with no assessment,
-//!    the defaults ([`read::needed`]). A task filed with the fast-fix mark needs `review` alone, as
-//!    before stamps, until it closes ([`crate::fast_fix`]).
+//!    the defaults ([`read::needed`]).
 //! 2. **Ready**: where `review` is needed, done by an approve, the land's approval check as before
 //!    stamps; where it is not, in review or blocked, or done by an approve ([`not_ready`]).
 //! 3. **Standing on the tip** ([`standing`]): `review` by the land's approval check, each other
@@ -32,23 +31,15 @@ pub const OWNER: &str = "owner";
 pub struct Needed {
     /// In the catalogue's order.
     pub stamps: Vec<String>,
-    /// The task's assessment, when one was written and the land goes by it (a fast fix's is not).
+    /// The task's assessment, when one was written.
     pub needs: Option<Needs>,
 }
 
 impl Needed {
     /// What `task` needs at `tip` (its branch's; none before it has one), from the catalogue the
-    /// main checkout `main` commits ([`Catalogue::of`]) and its assessment ([`read::needed`]). A
-    /// task filed with the fast-fix mark needs `review` alone, judged as before stamps (its
-    /// orchestrator's approve, a red's bounded by `[land] check_paths`), its needs and the
-    /// catalogue unread, until it closes.
+    /// main checkout `main` commits ([`Catalogue::of`]) and its assessment ([`read::needed`]). Each
+    /// task is judged by its assessment and the catalogue.
     pub fn of(task: &Task, main: &Path, tip: Option<&str>) -> Result<Needed, String> {
-        if task.fast_fix().is_some() {
-            return Ok(Needed {
-                stamps: vec![REVIEW.into()],
-                needs: None,
-            });
-        }
         let catalogue = Catalogue::of(main)?;
         let needs = task.needs();
         Ok(Needed {

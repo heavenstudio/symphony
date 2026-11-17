@@ -1,8 +1,8 @@
 //! A task's arm: the label of the process experiment's side it was filed on, one word its filer
 //! gives with `tasks create --arm NAME` ([`crate::Store::create_in_arm`]) and nothing changes
 //! after, since an arm moved once the work is under way spoils the comparison. The board keeps it
-//! among the task's own fields ([`crate::red::FIELDS`]`.`[`MARK`]), beside the red and fast-fix
-//! marks and out of `set_field`'s reach: no table and no field of the schema holds it. `tasks show`
+//! among the task's own fields ([`crate::red::FIELDS`]`.`[`MARK`]), beside the red
+//! mark and out of `set_field`'s reach: no table and no field of the schema holds it. `tasks show`
 //! prints it, and `tasks stats` gives each arm's figures ([`crate::stages::stats::Arm`]).
 //!
 //! The board assigns no arm, applies no rule for one and picks no winner: whoever files the work
