@@ -10,6 +10,8 @@
   the existing gate boundary, and migration that preserves the default flow.
 - [Configurable delivery workflows](analysis/configurable-delivery-workflow.md) — the proposed
   C contract: separate phase/state, authoritative operations, migration and implementation briefs.
+- [Execution providers and durable attempts](analysis/remote-execution-attempts.md) — a proposal
+  for project-owned execution adapters, durable recovery and authorized attempt history.
 - [Concept review](REVIEW.md) — review cards, comments, questions and the owner queue.
 - [Task board](TASKS.md) — the board, sessions, roles and agent communication.
 - [Checks](CHECKS.md) — what a task in this repository proves before review, and the release run's

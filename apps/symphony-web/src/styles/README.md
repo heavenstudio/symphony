@@ -12,8 +12,10 @@ attach control, so neither is in it.
 at revision `9a758255ea26e2b20c8cecf4c1c946feb9e71da7`, adapted, and keep its class names
 (`dx-button`, `dx-input`, `dx-textarea`, `dx-select-trigger`), which the client's controls draw
 (`../button.tsx`, `../input.tsx`, `../textarea.tsx`, `../select.tsx`). The MIT and Apache licences
-are beside them (`LICENSE-MIT`, `LICENSE-APACHE`). `select-trigger.css` is the closed field's rules
-that come before `.dx-select-list` upstream; the popup's are the menus' (`../overlay.css`), with
+are beside them (`LICENSE-MIT`, `LICENSE-APACHE`). The distribution selects MIT, as upstream's
+README permits; `../../copied-controls.txt` records the provenance and adaptations carried with
+that exact permission text in each build's `assets/third-party-HASH.txt`. `select-trigger.css`
+is the closed field's rules that come before `.dx-select-list` upstream; the popup's are the menus' (`../overlay.css`), with
 the upstream dialog's focus trap ported as `trapFocus`.
 
 The adaptations bind radii and fonts to theme tokens and default a button to Outline. A button is
