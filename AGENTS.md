@@ -217,7 +217,10 @@ For both document checks use `just --one -- docs-check`, whose arguments are fix
 document CLI also accepts flags that write documents.
 
 Give each check or board command its own tool invocation, with plain arguments and a quoted
-message for `just tasks say`. Do not redirect checks into task artifacts or add environment
+message for `just tasks say`. Keep the executable, recipe and subcommand words unquoted.
+Concatenating shell quote fragments to encode one message argument can also keep the command
+sandboxed. Use a single literal quoted body where that preserves its text; complex quoting
+uses the active approval flow. Do not redirect checks into task artifacts or add environment
 assignments, substitutions or other shell expansion: those forms prevent Codex from
 matching the named command rule ([shell handling](https://developers.openai.com/codex/rules#shell-wrappers-and-compound-commands)).
 A simple compound command is evaluated by all its parts; one unmatched part can keep the whole

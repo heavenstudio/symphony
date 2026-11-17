@@ -19,7 +19,9 @@ Read this page with the orchestrator skill, as the [root guide](../../../AGENTS.
   ([the rules reference](https://developers.openai.com/codex/rules)). A fresh process, including
   one resuming a conversation, reads the rules in its own checkout. First check the exact
   invocation against the root guide's [command forms](../../../AGENTS.md#this-repository-as-its-own-project):
-  redirection or an unmatched compound part can explain a prompt even when the rules loaded.
+  redirection, quoted prefix words, concatenated message quotes or an unmatched compound part
+  can explain a prompt even when the rules loaded. Inspect the submitted tool command;
+  displayed logical arguments and rule-file presence alone do not establish what was evaluated.
   `codex execpolicy check` evaluates the supplied argv and inline examples; it does not prove
   that a running session loaded those files or test that session's shell splitting.
   If a plain supported form still prompts, inspect startup time, rule availability in that
