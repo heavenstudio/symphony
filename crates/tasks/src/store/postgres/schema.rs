@@ -573,6 +573,15 @@ mod tests {
 
     #[test]
     fn a_tables_fields_are_its_typed_columns_and_a_schemaless_one_holds_a_doc() {
+        assert_eq!(
+            create(table("artifact_ledger").unwrap()),
+            "CREATE TABLE IF NOT EXISTS artifact_ledger (
+    id jsonb PRIMARY KEY,
+    revision bigint NOT NULL,
+    body jsonb NOT NULL CHECK (jsonb_typeof(body) = 'object')
+);
+"
+        );
         let role = create(table("role").unwrap());
         assert_eq!(
             role,
@@ -609,11 +618,11 @@ mod tests {
     }
 
     #[test]
-    fn the_board_has_twenty_one_tables_each_named_once() {
+    fn the_board_has_twenty_two_tables_each_named_once() {
         let mut names: Vec<&str> = TABLES.iter().map(|table| table.name).collect();
         names.sort_unstable();
         names.dedup();
-        assert_eq!(names.len(), 21);
+        assert_eq!(names.len(), 22);
         let defined = define();
         for name in names {
             assert!(
