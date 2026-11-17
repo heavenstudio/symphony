@@ -316,6 +316,20 @@ fn said_key(chunk: &Chunk) -> Vec<String> {
     key
 }
 
+/// Whether `card` rewrites the heading or an existing part of the body in `text` and `raw`.
+/// Appending thread history alone keeps the proposal it replies to: every existing chunk stays
+/// at the beginning, with blank padding and unseen-reply markers ignored as in [`changed_since`].
+pub(crate) fn rewrites(card: &Decision, text: &str, raw: &[String]) -> bool {
+    let body = |raw: &[String]| {
+        chunks(raw)
+            .iter()
+            .map(said_key)
+            .filter(|key| !key.is_empty())
+            .collect::<Vec<_>>()
+    };
+    card.text != text || !body(&card.raw).starts_with(&body(raw))
+}
+
 /// Whether `worktree`, a card's copy in its worktree, says anything its posted copy `posted` does
 /// not besides the owner's dated lines: another text, a line of an agent's, or a line taken out.
 /// Its agent is changing it, so a verdict on it would cover what the owner has not seen.

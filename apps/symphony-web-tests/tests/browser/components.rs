@@ -31,6 +31,17 @@ pub(super) fn key(page: &mut super::Chrome, key: &str, code: &str, vk: u16) {
     );
 }
 
+pub(super) fn board_filters(page: &mut super::Chrome) {
+    assert!(page.wait_for("document.querySelector('#board-filters') !== null", SHOWN));
+    if page.eval("document.querySelector('#board-filters').checkVisibility()") == json!(false) {
+        page.eval("document.querySelector('.board-filters-toggle').click()");
+    }
+    assert!(page.wait_for(
+        "document.querySelector('#board-filters').checkVisibility()",
+        SHOWN
+    ));
+}
+
 pub(super) fn choose(page: &mut super::Chrome, selector: &str, text: &str) {
     page.eval(&format!(
         "document.querySelector({}).click()",
@@ -126,6 +137,7 @@ fn an_entry_select_loads_its_popup_on_use_and_keeps_keyboard_selection_and_escap
         SHOWN
     ));
     assert_eq!(page.eval("window.reviewPanelReady === true"), json!(false));
+    board_filters(&mut page);
     super::completed_requests(&mut page);
     page.call("Fetch.enable", json!({"patterns":[{"urlPattern":"*","resourceType":"Stylesheet","requestStage":"Request"}]}));
     page.eval("document.querySelector('button[aria-label=\"Finished tasks\"]').focus()");
