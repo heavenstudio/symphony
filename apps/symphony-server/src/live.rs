@@ -2318,6 +2318,8 @@ mod asks;
 mod board_status;
 mod health;
 mod machine_work;
+
+pub(crate) use health::{Signal, Standing};
 mod owner_asks;
 mod reports;
 mod startup;

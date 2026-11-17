@@ -140,7 +140,8 @@ cannot keep installing after `--stop` returns.
 
 Before any project the one server answers `/api/projects`, to loopback and this machine's tailnet
 names like every route of a project's: each project it serves, with its feed's version, the cards
-waiting on the owner and the first of them, why it is refused or its board unwell, and its task
+waiting on the owner and the first of them, why it is refused or its board not well (the line
+the project list draws under it, `src/live/health.rs`), and its task
 asks, beside the server's installation id and pin (`symphony_api::ProjectList`, what the desktop
 app reads). The task asks are the questions agents asked each person on open tasks that still wait
 on them, and the board's newest reviewer verdict; a project's feed sends them again each time they
