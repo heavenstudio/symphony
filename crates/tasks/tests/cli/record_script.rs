@@ -918,11 +918,21 @@ fn one_recipe_document_checks_keep_fixed_arguments_and_both_records() {
 fn the_crates_check_recipe_records_its_task_tip_streams_and_status_or_runs_without_a_recorder() {
     let setup = Setup::new("record-script-crates-check");
     let recipes = Recipes::new(&setup);
+    // Keep Just's separate error writer out of the checker's stream contract: it races the
+    // recorder's pipe forwarding after the checker exits. The real recipe body stays intact.
+    let justfile = recipes.tree.join("justfile");
+    fs::write(
+        &justfile,
+        fs::read_to_string(&justfile)
+            .unwrap()
+            .replace("\ncrates-check:", "\n[no-exit-message]\ncrates-check:"),
+    )
+    .unwrap();
     executable(
         &recipes.tree.join("tools/rs-bin.sh"),
         "#!/bin/sh\nprintf 'arg=<%s>\\n' \"$@\"\nprintf 'crates diagnostic\\n' >&2\nexit \"${CRATES_EXIT:-0}\"\n",
     );
-    git(&recipes.tree, &["add", "tools/rs-bin.sh"]);
+    git(&recipes.tree, &["add", "tools/rs-bin.sh", "justfile"]);
     git(&recipes.tree, &["commit", "-q", "-m", "checker stand-in"]);
     let commit = git_says(&recipes.tree, &["rev-parse", "HEAD"]);
     let task = "tools/crates-check";
@@ -944,7 +954,7 @@ fn the_crates_check_recipe_records_its_task_tip_streams_and_status_or_runs_witho
             done.stdout,
             b"arg=<symphony-build>\narg=<crates-check>\narg=<.>\n"
         );
-        assert!(done.stderr.starts_with(b"crates diagnostic\n"), "{done:?}");
+        assert_eq!(done.stderr, b"crates diagnostic\n", "{done:?}");
         expected.push(done);
     }
     let logged = setup.logged();

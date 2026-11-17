@@ -1,7 +1,7 @@
 //! A holder's health off the feed (perf/feed-deltas): the server sends it once, as the holder's
-//! `session` change, never again in each task it holds, so the role chips of the task board and of
-//! a task page take it from that change: every chip of that holder, none of another's, and `lost`
-//! once the session is gone from the board, as the board reads a role of no session. The tasks are
+//! `session` change, never again in each task it holds, so the task board's wait lines and a task
+//! page's role chips take it from that change: every task of that holder, none of another's. The
+//! task page says `lost` once the session is gone; the board marks only stale holders. The tasks are
 //! the look-parity fixture's, each executed by `example`. A changed task is sent as its changed
 //! fields alone, so the agents page reads a task it lists no record of when it now shows it, and
 //! merges that read into what it drew.
@@ -76,22 +76,115 @@ fn opened(page: &mut Chrome, site: &Site, path: &str) -> usize {
     chips(page).len()
 }
 
+/// The board's cards span stages on a wide screen; on a phone only Review mounts initially.
+fn opened_board(page: &mut Chrome, site: &Site) {
+    page.call(
+        "Emulation.setDeviceMetricsOverride",
+        json!({"width":1600,"height":1000,"deviceScaleFactor":1,"mobile":false}),
+    );
+    page.open(&site.url("/tasks"));
+    assert!(
+        page.wait_for(
+            "['visual/ready', 'visual/in-progress', 'visual/review'].every(slug => document.querySelector(`[data-slug=\"${slug}\"] .task-wait`) !== null)",
+            SHOWN
+        ),
+        "the board did not draw its cards: {:?}",
+        page.eval("document.querySelector('main')?.innerText")
+    );
+    wait_for_feed(site).expect("the page never followed the feed");
+}
+
+/// Read the approved board's plain reason, including its holder's stale marker.
+fn wait_reason(slug: &str) -> String {
+    format!("document.querySelector('[data-slug=\"{slug}\"] .task-wait .why')?.textContent")
+}
+
+#[track_caller]
+fn wait_reasons(page: &mut Chrome, example: &str, other: &str) {
+    let expected = json!([example, example, other]);
+    let actual = format!(
+        "[{}, {}, {}]",
+        wait_reason("visual/ready"),
+        wait_reason("visual/in-progress"),
+        wait_reason("visual/review")
+    );
+    assert!(
+        page.wait_for(
+            &format!("JSON.stringify({actual}) === JSON.stringify({expected})"),
+            SHOWN
+        ),
+        "wait reasons: {:?}, expected {expected}",
+        page.eval(&actual)
+    );
+}
+
 #[test]
-fn the_boards_role_chips_take_their_holders_health_from_its_session() {
+fn the_boards_wait_lines_take_their_holders_health_from_its_session() {
     let site = site();
+    let mut listing = look_parity::responses()["/api/task-board"].clone();
+    for task in listing["tasks"].as_array_mut().unwrap() {
+        let handle = match task["slug"].as_str().unwrap() {
+            "visual/ready" | "visual/in-progress" => "example",
+            "visual/review" => "someone-else",
+            _ => continue,
+        };
+        task["roles"][0]["handle"] = json!(handle);
+        task["waits_on"] = json!({"kind":"working","who":handle,"why":"executor","since":1.0});
+    }
+    site.set_json("/api/task-board", &listing);
+    // A session event also asks for a listing refresh. Keep that reply at the same health,
+    // so a slow browser cannot have the fixture undo a delta it has just sent.
+    let mut update = |version, handle: &str, health: Option<&str>| {
+        for task in listing["tasks"].as_array_mut().unwrap() {
+            for role in task["roles"].as_array_mut().unwrap() {
+                if role["handle"] == handle {
+                    role["health"] = json!(health.unwrap_or("lost"));
+                }
+            }
+        }
+        site.set_json("/api/task-board", &listing);
+        push(&site, version, handle, health);
+    };
     let Some(mut page) = chrome() else { return };
-    let count = opened(&mut page, &site, "/tasks");
-    every_chip_says(&mut page, count, "live");
+    opened_board(&mut page, &site);
+    wait_reasons(&mut page, "executor example", "executor someone-else");
+    assert_eq!(
+        page.eval("document.querySelectorAll('main .chip[class*=\"health-\"]').length"),
+        json!(0)
+    );
 
-    push(&site, 4183, "someone-else", Some("stale"));
-    push(&site, 4184, "example", Some("stale"));
-    every_chip_says(&mut page, count, "stale");
+    update(4183, "someone-else", Some("stale"));
+    wait_reasons(
+        &mut page,
+        "executor example",
+        "executor someone-else (stale)",
+    );
+    update(4184, "example", Some("stale"));
+    wait_reasons(
+        &mut page,
+        "executor example (stale)",
+        "executor someone-else (stale)",
+    );
 
-    push(&site, 4185, "example", None);
-    every_chip_says(&mut page, count, "lost");
+    update(4185, "example", None);
+    wait_reasons(
+        &mut page,
+        "executor example",
+        "executor someone-else (stale)",
+    );
 
-    push(&site, 4186, "example", Some("live"));
-    every_chip_says(&mut page, count, "live");
+    update(4186, "example", Some("stale"));
+    wait_reasons(
+        &mut page,
+        "executor example (stale)",
+        "executor someone-else (stale)",
+    );
+    update(4187, "example", Some("live"));
+    wait_reasons(
+        &mut page,
+        "executor example",
+        "executor someone-else (stale)",
+    );
 }
 
 /// A page script that hears each commit of the page's React tree as React DevTools does (its
@@ -156,8 +249,7 @@ fn a_live_update_to_one_card_draws_only_that_card_and_its_column() {
         "Page.addScriptToEvaluateOnNewDocument",
         json!({ "source": RENDERS }),
     );
-    let count = opened(&mut page, &site, "/tasks");
-    assert!(count > 1, "{:?}", chips(&mut page));
+    opened_board(&mut page, &site);
     assert!(
         page.wait_for("window.__commits.length > 0", SHOWN),
         "the page's React tree was never heard"
