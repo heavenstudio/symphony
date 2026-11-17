@@ -6,6 +6,7 @@
 //! `metadata` names the workspace's packages.
 
 use super::{Ran, git, scratch};
+use crate::children::Child as _;
 use std::collections::BTreeSet;
 use std::fs::{self, File};
 use std::os::unix::fs::PermissionsExt;
@@ -89,7 +90,7 @@ fn standin() -> &'static Path {
         let cargo = scratch("seed-standin").join("cargo");
         fs::write(&cargo, CARGO).unwrap();
         fs::set_permissions(&cargo, fs::Permissions::from_mode(0o755)).unwrap();
-        assert!(Command::new(&cargo).output().unwrap().status.success());
+        assert!(Command::of(&cargo).output().unwrap().status.success());
         cargo
     })
 }
@@ -125,14 +126,14 @@ fn workspace() -> PathBuf {
 
 /// The pid of a process that has exited and been reaped.
 fn dead_pid() -> u32 {
-    let mut done = Command::new("true").spawn().unwrap();
+    let mut done = Command::of("true").spawn().unwrap();
     done.wait().unwrap();
     done.id()
 }
 
 /// Every process's command line.
 fn processes() -> Vec<String> {
-    let listed = Command::new("ps")
+    let listed = Command::of("ps")
         .args(["-axww", "-o", "command="])
         .output()
         .unwrap();
@@ -185,7 +186,7 @@ impl Seeding {
     /// `checkout/tools/cargo.sh build --locked` run there, with `vars` on an environment without
     /// [`UNSET`].
     fn cargo(&self, checkout: &Path, vars: &[(&str, &str)]) -> Ran {
-        let mut command = Command::new(checkout.join("tools/cargo.sh"));
+        let mut command = Command::of(checkout.join("tools/cargo.sh"));
         for name in UNSET {
             command.env_remove(name);
         }
@@ -411,7 +412,7 @@ impl Seeding {
     /// tests inherited: a background job inherits SIGINT ignored, and a shell cannot trap a signal
     /// ignored when it started, so a seed started so rightly lets it pass.
     fn seed(&self, said: &Path, vars: &[(&str, &std::ffi::OsStr)]) -> symphony_board::sys::Child {
-        let mut command = symphony_board::sys::Command::new(self.wt.join("tools/seed-target.sh"));
+        let mut command = symphony_board::sys::Command::of(self.wt.join("tools/seed-target.sh"));
         for name in UNSET {
             command.env_remove(name);
         }
@@ -676,7 +677,7 @@ fn git_ignores_a_clone_being_staged_and_a_build_folder_being_removed() {
         ".target.seed.123/debug/deps/libwork.rlib",
         ".target.clear.456/",
     ];
-    let checked = Command::new("git")
+    let checked = Command::of("git")
         .args(["check-ignore", "--no-index"])
         .args(names)
         .current_dir(workspace())

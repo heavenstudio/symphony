@@ -116,6 +116,7 @@ fn answered(status: u16, answer: &[u8], slug: &str, name: &str) -> Result<String
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::children::Child as _;
     use crate::sys::Spawning as _;
     use std::collections::BTreeMap;
     use std::io::{BufRead, BufReader, Read};
@@ -275,7 +276,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let repo = dir.as_path();
-        std::process::Command::new("git")
+        std::process::Command::of("git")
             .args(["init", "-q"])
             .current_dir(repo)
             .status_locked()

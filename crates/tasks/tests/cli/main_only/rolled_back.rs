@@ -6,6 +6,7 @@
 //! board with `tasks schema --accept`; a store that lost the whole board is refused the same way.
 
 use super::{COPY, Held, Live, SEND, TASKS, before, refused, this};
+use crate::children::Child as _;
 use crate::common::NOW;
 use std::path::{Path, PathBuf};
 use symphony_board::live::seen::{self, Rollback};
@@ -52,7 +53,7 @@ fn restore(snapshot: &Path, data: &Path) {
     } else {
         &["-R", "--reflink=auto"][..]
     };
-    let done = std::process::Command::new("cp")
+    let done = std::process::Command::of("cp")
         .args(clone)
         .arg(snapshot)
         .arg(data)

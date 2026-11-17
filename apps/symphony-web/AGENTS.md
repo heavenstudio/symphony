@@ -61,10 +61,13 @@ lockfile written again, in a task of their own.
   the plugin `no-timed-waits.grit` one reached through an object (`window.setTimeout`), and
   `noRestrictedImports` `src/timing.ts`'s `sleep`. A wait is for its event (a socket's message,
   `pageshow`, a `MutationObserver`'s change, the reader's press); a number paces one only through
-  `src/timing.ts`'s helpers: `retryWait` (the retry's wait, `Backoff`'s in `state.ts`),
-  `debounce`, `deadline` (a bound on a wait for an event) and `tick` (a clock), and a unit test
-  yields a turn through `turn()` in `src/testing.ts`. A site kept is a `biome-ignore` whose
-  reason begins `no-timed-waits baseline:`.
+  `src/timing.ts`'s helpers, each shaped to its kind so no fixed poll is written with one:
+  `retryWait` (the next of a `Backoff`'s waits, `state.ts`, never a length), `Debounce` (a rest
+  that a later rest takes the place of), `deadline` (a bound on a wait for an event) and `tick`
+  (to the next minute); a read's `pause` (`live.tsx`) takes the wait it is given. A unit test
+  waits for a condition with `until` and yields a turn through `turn()`, both in
+  `src/testing.ts`. A site kept is a `biome-ignore` whose reason begins
+  `no-timed-waits baseline:`.
 - **Vitest** runs the unit tests, with `@vitest/coverage-v8` for their coverage.
 
 `just client-lint` (`check.sh`) runs the wire types' check and the tests of the example that

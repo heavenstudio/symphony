@@ -4,6 +4,7 @@
 //! `lsof` it asks holds none of them. A stand-in is the only `lsof` the helper finds first on its
 //! `PATH`; no scan reads this machine's processes.
 
+use crate::children::Child as _;
 use std::collections::BTreeMap;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
@@ -67,7 +68,7 @@ fn the_sweeps_process_scans_run_without_the_sweepers_session() {
         std::env::var("PATH").unwrap_or_default()
     );
     let done = sys::output(
-        Command::new(std::env::current_exe().unwrap())
+        Command::of(std::env::current_exe().unwrap())
             .args([
                 "--ignored",
                 "--exact",

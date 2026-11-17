@@ -15,6 +15,7 @@
 //! never decides whether it is recorded. What the long wait would hide, a recorder grown slow to
 //! answer, a probe of its own shows ([`PROMPT_PROBE`]).
 
+use crate::children::Child as _;
 use crate::recorder::{MACHINE, RUNS_VAR, SCALE, SCALE_VAR, UNREACHED, day_lines, git_says, kept};
 use crate::{git, scratch};
 use std::fs;
@@ -111,7 +112,7 @@ impl Setup {
     /// `script ARGS` in the workspace, recording with `recorder` (TASKS_RECORDER unset for none)
     /// and no session.
     fn command(&self, script: &str, args: &[&str], recorder: Option<&str>) -> Command {
-        let mut command = Command::new(self.root.join("tools").join(script));
+        let mut command = Command::of(self.root.join("tools").join(script));
         command
             .args(args)
             .current_dir(&self.dir)
@@ -200,7 +201,7 @@ const STEPS_VAR: &str = "SYMPHONY_CHECK_STEPS";
 fn warmed() {
     static WARM: std::sync::Once = std::sync::Once::new();
     WARM.call_once(|| {
-        let probe = output(Command::new(RECORDER).args(["run", "--probe"])).unwrap();
+        let probe = output(Command::of(RECORDER).args(["run", "--probe"])).unwrap();
         assert_eq!(probe.stdout, b"run 1\nrun 2\n", "{probe:?}");
     });
 }
@@ -219,7 +220,7 @@ fn logging() -> &'static Path {
             ),
         );
         let probe = output(
-            Command::new(&path)
+            Command::of(&path)
                 .args(["run", "--probe"])
                 .env_remove(LOG_VAR),
         )
@@ -242,7 +243,7 @@ fn first_version() -> &'static Path {
                 "#!/bin/sh\nif [ \"$*\" = 'run --probe' ]; then echo 'run 1'; exit 0; fi\nprintf '%s\\n' \"$*\" >> \"${LOG_VAR}\"\nexec '{RECORDER}' \"$@\"\n"
             ),
         );
-        let probe = output(Command::new(&path).args(["run", "--probe"])).unwrap();
+        let probe = output(Command::of(&path).args(["run", "--probe"])).unwrap();
         assert_eq!(probe.stdout, b"run 1\n", "{probe:?}");
         path
     })
@@ -423,7 +424,7 @@ fn the_recorder_answers_its_probe_well_within_the_scripts_own_wait() {
         || {
             let asked = Instant::now();
             let probe = output(
-                Command::new(RECORDER)
+                Command::of(RECORDER)
                     .args(["run", "--probe"])
                     .stdin(Stdio::null()),
             )
@@ -489,7 +490,7 @@ fn a_worktree_records_with_its_main_checkouts_recorder_and_a_nested_workspace_wi
     let log = dir.join("recorder log");
     let run = |root: &Path| {
         let done = output(
-            Command::new(root.join("tools/cargo.sh"))
+            Command::of(root.join("tools/cargo.sh"))
                 .arg("build")
                 .env("CARGO", &cargo)
                 .env("TASKS_WORK", &work)
@@ -550,7 +551,7 @@ fn a_recipe_records_through_the_script_and_runs_as_it_is_in_a_tree_without_it() 
         "#!/bin/sh\nprintf 'arg=<%s>\\n' \"$@\"\nexit 5\n",
     );
     let recipe = |task: Option<&str>| {
-        let mut command = Command::new("just");
+        let mut command = Command::of("just");
         command
             .args(["test-rs", "one argument"])
             .current_dir(&tree)
@@ -760,7 +761,7 @@ impl Recipes {
 
     /// The command [`Recipes::just_with`] runs.
     fn command(&self, args: &[&str], vars: &[(&str, &str)]) -> Command {
-        let mut command = Command::new("just");
+        let mut command = Command::of("just");
         command
             .args(args)
             .current_dir(&self.tree)

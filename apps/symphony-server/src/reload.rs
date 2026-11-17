@@ -565,7 +565,12 @@ fn watch_with<W: Watcher + Send + 'static>(
             // can be lost. An idle tick checks shutdown and the hand-off flag; it does not read
             // files, hash code or spawn repository commands.
             if !initial {
-                match backstop.wait(&recv, TICK) {
+                #[expect(
+                    clippy::disallowed_methods,
+                    reason = "no-timed-waits baseline: an idle TICK looks for shutdown and the hand-off flag, where a message from the stop and from the hand-off is the event"
+                )]
+                let wake = backstop.wait(&recv, TICK);
+                match wake {
                     Wake::Event => backstop::debounce(&recv, backstop::QUIET, backstop::BURST),
                     Wake::Period => {}
                     Wake::Idle => continue,
@@ -741,14 +746,21 @@ fn follow<W: Watcher>(
         // An idle tick only looks for shutdown and the hand-off flag: `current` is read at the
         // start, at a move and once a period.
         let look = initial
-            || match backstop.wait(&moved, TICK) {
-                // A new link and its rename are one move: read once both are done.
-                Wake::Event => {
-                    backstop::debounce(&moved, backstop::QUIET, backstop::QUIET);
-                    true
+            || {
+                #[expect(
+                    clippy::disallowed_methods,
+                    reason = "no-timed-waits baseline: an idle TICK looks for shutdown and the hand-off flag, where a message from the stop and from the hand-off is the event"
+                )]
+                let wake = backstop.wait(&moved, TICK);
+                match wake {
+                    // A new link and its rename are one move: read once both are done.
+                    Wake::Event => {
+                        backstop::debounce(&moved, backstop::QUIET, backstop::QUIET);
+                        true
+                    }
+                    Wake::Period => true,
+                    Wake::Idle => false,
                 }
-                Wake::Period => true,
-                Wake::Idle => false,
             };
         initial = false;
         if shared

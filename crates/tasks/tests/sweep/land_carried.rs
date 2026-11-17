@@ -55,7 +55,7 @@ fn main_moves(r: &Repo, file: &str, text: &str) -> String {
 /// `git merge REV` begun in `wt`, left uncommitted: whether it merged without a conflict.
 fn merging(wt: &Path, rev: &str) -> bool {
     symphony_board::sys::output(
-        symphony_board::sys::Command::new("git")
+        symphony_board::sys::Command::of("git")
             .args(["merge", "-q", "--no-ff", "--no-commit", rev])
             .current_dir(wt),
     )

@@ -3,6 +3,7 @@
 //! tells or, without one, along its own line of first parents.
 
 use super::*;
+use crate::children::Child as _;
 use symphony_board::alarm::{Tip, Written};
 use symphony_board::cli::probes::tip;
 
@@ -12,7 +13,7 @@ const HOUR: f64 = 3600.0;
 fn made_at(dir: &Path, args: &[&str], hour: u32) -> Tip {
     let made = format!("2026-11-08T{hour:02}:00:00+00:00");
     let done = symphony_board::sys::output(
-        Command::new("git")
+        Command::of("git")
             .args(["-c", "user.email=t@t", "-c", "user.name=t", "-C"])
             .arg(dir)
             .args(args)
@@ -21,7 +22,7 @@ fn made_at(dir: &Path, args: &[&str], hour: u32) -> Tip {
     .unwrap();
     assert!(done.status.success(), "git {args:?}");
     let head = symphony_board::sys::output(
-        Command::new("git")
+        Command::of("git")
             .arg("-C")
             .arg(dir)
             .args(["rev-parse", "HEAD"]),

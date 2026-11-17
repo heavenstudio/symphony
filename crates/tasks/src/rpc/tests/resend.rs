@@ -115,6 +115,10 @@ fn answered(stream: &mut TcpStream, answer: Answer) -> bool {
             false
         }
         Answer::Trickle(gap) => SEVEN.iter().all(|byte| {
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "no-timed-waits baseline: a stand-in server trickles its reply a byte each gap, the slow server under test, where a clock the client's wait reads is the event"
+            )]
             std::thread::sleep(gap);
             stream.write_all(&[*byte]).is_ok()
         }),

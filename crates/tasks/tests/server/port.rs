@@ -4,6 +4,7 @@
 //! and end, or say they listen and run until their input closes; two cases give the pinned SurrealDB
 //! a port the test holds, one of them answering there as a healthy server.
 
+use crate::children::Child as _;
 use crate::common::{exists, healthy_occupier, surreal};
 use std::convert::Infallible;
 use std::fs::File;
@@ -50,7 +51,7 @@ impl Starter {
             Fake::Taken => r#"echo "start $1: Address already in use (os error 48)" >&2; exit 1"#,
             Fake::Fails => r#"echo "start $1: the disk is full" >&2; exit 1"#,
         };
-        let mut child = sys::spawn_piped(Command::new("/bin/sh").args([
+        let mut child = sys::spawn_piped(Command::of("/bin/sh").args([
             "-c",
             script,
             "fake",
@@ -370,7 +371,7 @@ fn another_process_does_not_listen_on_this_ones_address() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
     let mut other =
-        crate::store::spawn_with_input(Command::new("/bin/sh").args(["-c", "read -r line || :"]))
+        crate::store::spawn_with_input(Command::of("/bin/sh").args(["-c", "read -r line || :"]))
             .unwrap();
     assert!(!listens(other.id(), addr, sys::output).unwrap());
     drop(other.stdin.take());
@@ -424,9 +425,9 @@ fn surreal_on_a_port_taken_by(occupier: Occupier, name: &str) {
         // The first child is deliberately given the occupier's already-held address.
         let addr = if endings.is_empty() { taken } else { addr };
         let mut command = match occupier {
-            Occupier::Closes => Command::new(surreal()),
+            Occupier::Closes => Command::of(surreal()),
             Occupier::Answers => {
-                let mut held = Command::new("/bin/sh");
+                let mut held = Command::of("/bin/sh");
                 held.args([
                     "-c",
                     r#"while [ ! -f "$1" ]; do sleep 0.01; done; shift; exec "$@""#,
@@ -450,23 +451,26 @@ fn surreal_on_a_port_taken_by(occupier: Occupier, name: &str) {
                 .spawn()
                 .unwrap(),
         );
-        loop {
-            if server.0.try_wait().unwrap().is_some() {
-                let said = std::fs::read_to_string(&log).unwrap();
-                endings.push(said.clone());
-                return Ok::<_, Infallible>(Start::Ended(said));
-            }
-            if symphony_board::rpc::healthy(&addr.to_string())
-                && listens(server.0.id(), addr, sys::output).unwrap()
-            {
-                return Ok(Start::Up(server));
-            }
-            assert!(
-                Instant::now() < until,
-                "SurrealDB on {addr} neither answered nor ended"
-            );
-            std::thread::sleep(Duration::from_millis(20));
+        // Up once it answers on its port; ended once it exits first.
+        let up = test_time::until(
+            format!("SurrealDB on {addr} answers or ends"),
+            until.saturating_duration_since(Instant::now()),
+            || {
+                if server.0.try_wait().unwrap().is_some() {
+                    return Some(false);
+                }
+                (symphony_board::rpc::healthy(&addr.to_string())
+                    && listens(server.0.id(), addr, sys::output).unwrap())
+                .then_some(true)
+            },
+        )
+        .unwrap();
+        if up {
+            return Ok::<_, Infallible>(Start::Up(server));
         }
+        let said = std::fs::read_to_string(&log).unwrap();
+        endings.push(said.clone());
+        Ok(Start::Ended(said))
     })
     .unwrap_or_else(|why| panic!("SurrealDB did not come up: {why}"));
     assert_ne!(addr, taken);

@@ -2,6 +2,7 @@
 //! in its worktree.
 
 use super::*;
+use crate::children::Child as _;
 
 /// A process working in a folder, as a subagent's background `cargo test` works in its worktree,
 /// until it is dropped however the test ends: a `cat` on a pipe only this test holds, so it ends
@@ -11,7 +12,7 @@ struct Working(symphony_board::sys::Child);
 impl Working {
     fn in_folder(folder: &std::path::Path) -> Self {
         use symphony_board::sys::{Command, Stdio};
-        let mut cat = Command::new("cat");
+        let mut cat = Command::of("cat");
         cat.current_dir(folder)
             .stdin(Stdio::piped())
             .stdout(Stdio::null());

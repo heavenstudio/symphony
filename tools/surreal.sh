@@ -8,9 +8,9 @@
 # beside the workspace's own build) and installed only when the tarball matches the SHA-256
 # SurrealDB publishes for this platform, pinned below in `pinned` (`<URL without .tgz>.txt` beside
 # each tarball). The Rust tests start it (`crates/tasks/tests/store/common.rs`), unless
-# `SYMPHONY_SURREAL` names another. Of callers at once, one fetches (`lock.d` in the folder, naming its holder; one
-# whose holder is gone, or that names none a minute after it was made, is taken over); nothing but
-# the checked binary is ever left in the folder.
+# `SYMPHONY_SURREAL` names another. Of callers at once, one fetches, holding the folder's `lock`
+# file under the kernel's lock (tools/check_lock.sh), which the others wait on and which ends with
+# its holder; nothing but that file and the checked binary is ever left in the folder.
 # A refusal is one line on stderr, `❌ surreal: …`, and exit 2.
 #
 # Sourced, it defines its functions and runs nothing. Test harnesses can supply fetch and pinned
@@ -120,36 +120,18 @@ sha256() {
     printf '%s\n' "${digest%% *}"
 }
 
-# Minutes a lock may name no holder before it counts as gone: its maker writes its pid an instant
-# after making it, so one with none this long after was left by a process that ended in between.
-OWNERLESS_MINUTES=1
+# shellcheck source=check_lock.sh
+. "$(dirname "${BASH_SOURCE[0]}")/check_lock.sh"
 
-# Whether folder $1's lock has a holder: a pid a process has, or, naming none, made under
-# OWNERLESS_MINUTES ago (`find -mmin` is in minutes on BSD and GNU alike).
-held() {
-    local holder
-    holder="$(cat "$1/lock.d/pid" 2>/dev/null || true)"
-    if [ -n "$holder" ]; then
-        kill -0 "$holder" 2>/dev/null
-    else
-        [ -d "$1/lock.d" ] && [ -z "$(find "$1/lock.d" -maxdepth 0 -mmin +"$OWNERLESS_MINUTES" 2>/dev/null)" ]
-    fi
-}
-
-# Wait for folder $1's lock, taking over one whose holder is gone (its pid dead, or none named in time).
+# Wait for folder $1's lock: its `lock` file, held open on fd 9 under the kernel's lock
+# (tools/check_lock.sh), which blocks until the holder lets it go and frees it when the holder ends,
+# so a caller killed while it fetches leaves no lock behind.
 lock() {
-    until mkdir "$1/lock.d" 2>/dev/null; do
-        if ! held "$1"; then
-            mv "$1/lock.d" "$1/lock.stale.$$" 2>/dev/null && rm -rf "$1/lock.stale.$$"
-            continue
-        fi
-        sleep 0.2
-    done
-    printf '%s\n' "$$" >"$1/lock.d/pid"
+    check_lock "$1" surreal "SurrealDB"
 }
 
 unlock() {
-    rm -rf "$1/lock.d"
+    exec 9>&-
 }
 
 # Fetch build $2 into folder $1, check it and install it, under the folder's lock: its path.
@@ -191,7 +173,7 @@ ensure() {
         return
     fi
     mkdir -p "$where" || return 1
-    lock "$where"
+    lock "$where" || return 1
     if [ -x "$binary" ]; then
         unlock "$where"
         printf '%s\n' "$binary"

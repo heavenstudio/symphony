@@ -2039,6 +2039,10 @@ fn documents(
     ticks_ended: impl Fn() -> bool,
 ) {
     loop {
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "no-timed-waits baseline: wakes every 250 ms with no event to look whether the hub drains, the ticks ended or a rescan was asked for, where a message from each is the event"
+        )]
         let wake = backstop.wait(recv, Duration::from_millis(250));
         if wake == Wake::Event {
             // Every event within QUIET of the first is taken with it, and the pass reads then:

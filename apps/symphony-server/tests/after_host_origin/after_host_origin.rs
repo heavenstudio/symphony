@@ -322,32 +322,30 @@ printf '%s\n' '{"Self":{"DNSName":"review-fixture.tail.test.","TailscaleIPs":["f
                 assert_eq!(address, board_address);
                 // Said before the announcement, on the same stream.
                 let server = receive_pid.try_recv().expect("the database's pid");
-                loop {
-                    if database.0.try_wait().unwrap().is_some() {
-                        return Ok(Start::Ended(said(reader, errors)));
-                    }
-                    if symphony_board::rpc::healthy(&address.to_string())
-                        && symphony_board::port::listens(
-                            server,
-                            board_address,
-                            symphony_board::sys::output,
-                        )
-                        .unwrap()
-                    {
-                        return Ok(Start::Up((database, reader, errors)));
-                    }
-                    let remaining = ready_by.saturating_duration_since(Instant::now());
-                    assert!(
-                        !remaining.is_zero(),
-                        "{}",
-                        stalled(format!("SurrealDB health readiness ({log:?})"))
-                    );
-                    #[expect(
-                        clippy::disallowed_methods,
-                        reason = "no-timed-waits baseline: a test looks again for its condition by hand, where test_time::wait::until is the helper"
-                    )]
-                    std::thread::sleep(Duration::from_millis(50).min(remaining));
-                }
+                // Up once it answers health on the port it listens on; ended once it exits first.
+                let up = test_time::until(
+                    format!("SurrealDB health readiness ({log:?})"),
+                    ready_by.saturating_duration_since(Instant::now()),
+                    || {
+                        if database.0.try_wait().unwrap().is_some() {
+                            return Some(false);
+                        }
+                        (symphony_board::rpc::healthy(&address.to_string())
+                            && symphony_board::port::listens(
+                                server,
+                                board_address,
+                                symphony_board::sys::output,
+                            )
+                            .unwrap())
+                        .then_some(true)
+                    },
+                )
+                .unwrap_or_else(|stall| panic!("{stall}"));
+                Ok(if up {
+                    Start::Up((database, reader, errors))
+                } else {
+                    Start::Ended(said(reader, errors))
+                })
             },
         );
         let ((database, reader, errors), address) = database.unwrap_or_else(|why| {
