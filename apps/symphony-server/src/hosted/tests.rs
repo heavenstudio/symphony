@@ -1131,14 +1131,14 @@ async fn native_sections_at_final_cursor(app: &Router) -> symphony_api::Document
     assert_eq!(outline.status(), StatusCode::OK);
     let outline: symphony_api::DocumentOutline =
         serde_json::from_str(&bytes(outline).await).unwrap();
-    let keys: Vec<_> = outline
+    // The renderer emits one section per block. Fetch the paragraph announced by the outline,
+    // as the client requests the missing block near its viewport.
+    let paragraph = outline
         .document
         .sections
-        .iter()
-        .map(|section| &section.key)
-        .collect();
-    assert_eq!(keys.len(), 1);
-    let keys: String = serde_json::to_string(&keys)
+        .last()
+        .expect("the fixture document has a paragraph");
+    let keys: String = serde_json::to_string(&[&paragraph.key])
         .unwrap()
         .bytes()
         .map(|byte| format!("%{byte:02X}"))
@@ -1158,10 +1158,13 @@ async fn native_sections_at_final_cursor(app: &Router) -> symphony_api::Document
     assert_eq!(parts.version, 8);
     assert_eq!(parts.change.path, "docs/README.md");
     assert_eq!(parts.change.sections.len(), 1);
-    assert!(
-        parts.change.sections[0]
-            .html
-            .contains("Section body at the final diagnostic cursor.")
+    assert_eq!(
+        parts.change.sections[0].blocks,
+        vec![symphony_api::Block::Paragraph {
+            spans: vec![symphony_api::Span::Text {
+                text: "Section body at the final diagnostic cursor.".into(),
+            }],
+        }]
     );
     parts
 }
