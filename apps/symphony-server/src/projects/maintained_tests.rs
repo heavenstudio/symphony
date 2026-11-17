@@ -12,10 +12,11 @@ use std::time::{Duration, Instant};
 use symphony::machine::{Entry, Registry};
 
 use super::{Maintain, Projects, Warming};
+use crate::backstop::NO_PERIOD;
 use crate::front::Shared;
 use crate::front::test_clock::TestClock;
 use crate::gate::Gate;
-use crate::testing::Tree;
+use crate::testing::{Tree, joined};
 
 /// The backstop of every wait here: rounds that take milliseconds on a quiet machine.
 const WAIT: Duration = test_time::backstop(Duration::from_secs(15));
@@ -136,9 +137,6 @@ fn says(said: &Said, line: &str) -> bool {
     said.lock().unwrap().iter().any(|said| said == line)
 }
 
-/// A backstop period no test reaches: only the machine folder's watcher wakes the look.
-const NO_PERIOD: Duration = Duration::from_secs(86_400);
-
 /// A project registered while the server runs has its maintenance started, and one removed has it
 /// stopped, by the server's own look at the registry, with no request, woken by the machine's own
 /// watcher of the machine folder (its backstop's period is past the test); the starter's checkout
@@ -177,7 +175,7 @@ fn registering_or_removing_a_project_starts_or_stops_its_maintenance_with_no_req
 
     // The server's stop: the starter first, its look at the registry, then every other project.
     machine.starter.stop();
-    look.join().unwrap();
+    joined(look, "the stop to end the look at the registry", WAIT);
     let gamma = state(&projects, "gamma");
     projects.stop();
     assert!(says(&said, "ended gamma"), "{said:?}");
@@ -331,7 +329,7 @@ fn no_project_is_maintained_until_the_generation_is_live() {
         "each its idle sweep"
     );
     machine.starter.stop();
-    look.join().unwrap();
+    joined(look, "the stop to end the look at the registry", WAIT);
     projects.stop();
     assert_eq!((beta.maintaining(), gamma.maintaining()), (0, 0));
 }
@@ -371,7 +369,7 @@ fn the_starters_checkout_under_another_id_is_not_maintained_beside_it() {
     assert!(!Arc::ptr_eq(&renamed, &machine.starter));
     assert_eq!(renamed.maintaining(), 0);
     machine.starter.stop();
-    look.join().unwrap();
+    joined(look, "the stop to end the look at the registry", WAIT);
     projects.stop();
     assert_eq!(*said.lock().unwrap(), Vec::<String>::new());
 }
@@ -517,7 +515,7 @@ fn every_project_is_swept_on_its_own_and_a_failing_or_removed_one_stops_no_other
 
     // The server's stop ends delta's hung reap with its worker.
     machine.starter.stop();
-    look.join().unwrap();
+    joined(look, "the stop to end the look at the registry", WAIT);
     projects.stop();
     assert!(!crate::sys::pid_alive(hung), "the stop ended the hung reap");
     assert_eq!(state(&projects, "delta").maintaining(), 0);

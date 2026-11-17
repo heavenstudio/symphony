@@ -21,7 +21,7 @@ struct State {
     /// How often it was moved.
     moves: u64,
     /// Each wait begun, by the time it was given to run on this clock, in order.
-    waits: Vec<Option<Duration>>,
+    waits: Vec<Duration>,
     /// The waits under way: each is woken at the next move.
     waiting: Vec<Waker>,
 }
@@ -100,7 +100,7 @@ impl TestClock {
     }
 
     /// Until `count` waits have begun in all: the time each was given, in order.
-    pub(crate) fn waited(&self, count: usize) -> Vec<Option<Duration>> {
+    pub(crate) fn waited(&self, count: usize) -> Vec<Duration> {
         self.until(&format!("the worker's wait {count}"), |state| {
             state.waits.len() >= count
         })
@@ -144,7 +144,7 @@ impl Clock for Reader {
     }
 
     /// Until the clock moves or `wakes` is woken: `left` is said, and runs on no real clock.
-    fn wait(&self, wakes: &Wakes, left: Option<Duration>) {
+    fn wait(&self, wakes: &Wakes, left: Duration) {
         {
             let mut state = self.clock.state();
             state.waits.push(left);

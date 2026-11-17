@@ -441,19 +441,19 @@ pub(crate) fn watch(
         setup,
         shared,
         sockets,
-        backstop::PERIOD,
+        Backstop::new(backstop::PERIOD),
         Retry::new(),
     )
 }
 
-/// [`watch`] with watcher `W`, checking the sources on its own every `period`, and trying a version
-/// whose update failed again when `retry` says.
+/// [`watch`] with watcher `W`, waiting on `backstop`, which checks the sources on its own once its
+/// period, and trying a version whose update failed again when `retry` says.
 fn watch_with<W: Watcher + Send + 'static>(
     serve: Serve,
     setup: Setup,
     shared: Arc<Shared>,
     sockets: Vec<OwnedFd>,
-    period: Duration,
+    mut backstop: Backstop,
     mut retry: Retry,
 ) -> Option<std::thread::JoinHandle<()>> {
     let lease = setup.lease?;
@@ -474,7 +474,7 @@ fn watch_with<W: Watcher + Send + 'static>(
                         lease,
                     },
                     &shared,
-                    period,
+                    backstop,
                     retry,
                 );
             },
@@ -482,7 +482,6 @@ fn watch_with<W: Watcher + Send + 'static>(
     }
     let reload = move || {
         // The stop and a starter's hand-off request wake it, as its watcher does.
-        let mut backstop = Backstop::new(period);
         shared.wake_at_stop(backstop.waker());
         shared.wake_at_handover(backstop.waker());
         let changed = backstop.waker();
@@ -759,8 +758,8 @@ struct Follow {
 }
 
 /// The reload of the server of the release `follow.release`: whether the machine's `current` names
-/// another release, read at the start, as its watcher `W` hears the link move, and once a `period`
-/// as an event can be lost; when it does, the hand-off to that release's server, by its own
+/// another release, read at the start, as its watcher `W` hears the link move, and once `backstop`'s
+/// period as an event can be lost; when it does, the hand-off to that release's server, by its own
 /// folder's path, with no build. A release not installed whole, or whose server does not become
 /// ready, leaves this one serving, said on the notice, and is tried again when `retry` says, at the
 /// check that finds it due; `current` named back at this release clears the notice. A starter's
@@ -770,7 +769,7 @@ fn follow<W: Watcher>(
     serve: &Serve,
     follow: &Follow,
     shared: &Shared,
-    period: Duration,
+    mut backstop: Backstop,
     mut retry: Retry,
 ) {
     let Follow {
@@ -781,7 +780,6 @@ fn follow<W: Watcher>(
     } = follow;
     // The stop and a starter's hand-off request wake it, as the watcher does. Watched before its
     // first read, so no move after that read goes unheard.
-    let mut backstop = Backstop::new(period);
     shared.wake_at_stop(backstop.waker());
     shared.wake_at_handover(backstop.waker());
     let _watcher = watch_current::<W>(machine, backstop.waker());

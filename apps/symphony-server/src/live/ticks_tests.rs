@@ -244,6 +244,8 @@ fn the_ticks_thread_ends_when_the_hub_stops() {
     );
 }
 
+/// The documents' loop runs on a period no test reaches ([`crate::backstop::NO_PERIOD`]) and a
+/// watcher that says nothing, so it ends only as the ticks' end wakes it.
 #[test]
 fn a_project_removed_under_its_hub_ends_its_ticks_and_its_document_loop_with_no_stop() {
     let tree = Tree::new();
@@ -253,7 +255,7 @@ fn a_project_removed_under_its_hub_ends_its_ticks_and_its_document_loop_with_no_
         &root.join("build/client"),
         false,
         false,
-        crate::backstop::PERIOD,
+        crate::backstop::NO_PERIOD,
         |_: &Path| Err("no board in this test".to_string()),
     )
     .unwrap();

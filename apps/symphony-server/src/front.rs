@@ -1291,8 +1291,8 @@ pub(crate) trait Clock: Send + 'static {
     /// The time now, on both clocks.
     fn now(&self) -> Stamp;
 
-    /// Until `wakes` is woken, or until `left` has passed on this clock when it is given.
-    fn wait(&self, wakes: &Wakes, left: Option<Duration>);
+    /// Until `wakes` is woken, or until `left` has passed on this clock.
+    fn wait(&self, wakes: &Wakes, left: Duration);
 }
 
 /// The machine's clocks, as [`Stamp::now`] reads them.
@@ -1304,8 +1304,8 @@ impl Clock for MachineClock {
         Stamp::now()
     }
 
-    fn wait(&self, wakes: &Wakes, left: Option<Duration>) {
-        wakes.wait(left);
+    fn wait(&self, wakes: &Wakes, left: Duration) {
+        wakes.wait(Some(left));
     }
 }
 
@@ -1354,7 +1354,8 @@ fn board_build_on(root: &Path, beyond: &symphony_board::builds::Beyond) -> Resul
 /// A round every `interval`, whose reap child is ended after `timeout`, both measured on `clock`,
 /// in the checkout of the project `shared` serves: its board, its build of `tasks`, its `reap.json`
 /// and its health record. Between two it waits on `clock` until the next is due, the board found
-/// or lost, or the stop; a round due waits while the project has no board ([`has_board`]).
+/// or lost, or the stop; a round due waits while the project has no board ([`has_board`]). No
+/// wait is longer than [`AFTER_A_SLEEP`].
 pub(crate) fn maintenance_worker(
     shared: Arc<Shared>,
     interval: Duration,
@@ -1374,10 +1375,13 @@ pub(crate) fn maintenance_worker(
             let due = sweep_due(last, now, interval);
             if !due || !has_board(&shared) {
                 board_waited |= due;
-                // A round not due yet is waited for on the clock as well; one due, on the board.
-                let left = last
-                    .filter(|_| !due)
-                    .map(|at| sweep_left(at, now, interval).min(AFTER_A_SLEEP));
+                // A round not due yet is waited for on the clock; one due, on the board. Either
+                // looks again within AFTER_A_SLEEP, for what no wake says: a sleep, and the
+                // project's folder, which `has_board` reads besides the hub's board.
+                let left = match last {
+                    Some(at) if !due => sweep_left(at, now, interval).min(AFTER_A_SLEEP),
+                    _ => AFTER_A_SLEEP,
+                };
                 clock.wait(&wakes, left);
                 continue;
             }

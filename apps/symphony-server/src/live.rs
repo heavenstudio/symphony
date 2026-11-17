@@ -2898,11 +2898,11 @@ mod tests {
         }
     }
 
-    #[test]
-    fn a_task_done_takes_its_branchs_cards_out_at_the_next_scan_without_a_file_event() {
-        use std::sync::atomic::Ordering::SeqCst;
-        let tree = Tree::new();
-        let root = repository(&tree);
+    /// A repository whose register holds one card, and a worktree of it in `proposal` on the
+    /// branch `design/policy`, whose register adds `cards`, committed there: the repository's
+    /// root.
+    fn proposing(tree: &Tree, cards: &str) -> PathBuf {
+        let root = repository(tree);
         let register = |cards: &str| {
             format!(
                 "# Topic\n\n<!-- register:start -->\n- [ ] **initial-card** — Initial question.\n{cards}<!-- register:end -->\n"
@@ -2921,21 +2921,20 @@ mod tests {
                 branch.to_str().unwrap(),
             ],
         );
-        tree.write(
-            "proposal/docs/TOPIC.md",
-            &register("- [ ] **branch-card** — A branch proposal.\n"),
-        );
-        git(&branch, &["commit", "-qam", "Post the branch card"]);
-        let hub = Hub::new(&root, &root.join("build/client"));
-        hub.refresh_docs(None).unwrap();
-        assert_eq!(pending(&hub, ""), ["initial-card", "branch-card"]);
-        let task = |slug: &str, status: &str| symphony_board::Task {
+        tree.write("proposal/docs/TOPIC.md", &register(cards));
+        git(&branch, &["commit", "-qam", "Post the branch's cards"]);
+        root
+    }
+
+    /// A board of `tasks`, each a slug and its status.
+    fn board_of(tasks: &[(&str, &str)]) -> symphony_board::Board {
+        let task = |(slug, status): &(&str, &str)| symphony_board::Task {
             branch: None,
             id: 0,
-            slug: slug.into(),
+            slug: (*slug).into(),
             title: "Policy".into(),
             body: String::new(),
-            status: status.into(),
+            status: (*status).into(),
             priority: 2,
             parent: None,
             created_by: "test".into(),
@@ -2947,17 +2946,55 @@ mod tests {
             instruction: false,
             fields: Default::default(),
         };
-        let with = |tasks: Vec<symphony_board::Task>| symphony_board::Board {
-            tasks,
+        symphony_board::Board {
+            tasks: tasks.iter().map(task).collect(),
             sessions: Vec::new(),
             latest_message: 0,
-        };
-        let board = |status: &str| with(vec![task("design/policy", status)]);
+        }
+    }
+
+    /// The hub of the checkout at `root`, its documents' loop on a period no test reaches
+    /// ([`crate::backstop::NO_PERIOD`]) and a watcher that says nothing, so only the wakes it is
+    /// given end its wait; its first board read started, which finds no board.
+    fn waking(root: &Path) -> std::sync::Arc<Hub> {
+        let hub = Hub::start_watching::<notify::NullWatcher>(
+            root,
+            &root.join("build/client"),
+            false,
+            false,
+            crate::backstop::NO_PERIOD,
+            |_| Err("no board in this test".to_string()),
+        )
+        .unwrap();
+        hub.start_initial_board();
+        hub
+    }
+
+    /// `hub` stopped, within a stall's bound: a loop the stop does not reach fails the test rather
+    /// than hold it.
+    fn stopped(hub: &std::sync::Arc<Hub>) {
+        let hub = hub.clone();
+        crate::testing::joined(
+            std::thread::spawn(move || hub.stop()),
+            "the stop to end the hub's loops",
+            test_time::backstop(Duration::ZERO),
+        );
+    }
+
+    #[test]
+    fn a_task_done_takes_its_branchs_cards_out_at_the_next_scan_without_a_file_event() {
+        use std::sync::atomic::Ordering::SeqCst;
+        let tree = Tree::new();
+        let root = proposing(&tree, "- [ ] **branch-card** — A branch proposal.\n");
+        let hub = Hub::new(&root, &root.join("build/client"));
+        hub.refresh_docs(None).unwrap();
+        assert_eq!(pending(&hub, ""), ["initial-card", "branch-card"]);
+        let board = |status: &str| board_of(&[("design/policy", status)]);
         hub.note_finished(&board("review"));
         assert!(!hub.rescan.load(SeqCst), "a live task asks for nothing");
-        hub.note_finished(&with(vec![
-            task("design/policy", "review"),
-            task("design/elsewhere", "done"),
+        hub.note_finished(&board_of(&[
+            ("design/policy", "review"),
+            ("design/elsewhere", "done"),
         ]));
         assert!(
             !hub.rescan.load(SeqCst),
@@ -2982,50 +3019,39 @@ mod tests {
         assert_eq!(pending(&hub, ""), ["initial-card", "branch-card"]);
     }
 
+    /// A task done asks the documents' loop for a scan and wakes it: running on a period no test
+    /// reaches, with a watcher that says nothing, the loop takes the card of the task's branch out
+    /// at that wake.
+    #[test]
+    fn a_task_done_wakes_the_documents_loop_to_take_its_branchs_cards_out() {
+        let tree = Tree::new();
+        let root = proposing(&tree, "- [ ] **branch-card** — A branch proposal.\n");
+        let hub = waking(&root);
+        assert_eq!(pending(&hub, ""), ["initial-card", "branch-card"]);
+        // As a board read that finds the task done does.
+        hub.note_finished(&board_of(&[("design/policy", "done")]));
+        let out = test_time::until_true(
+            "the done task's card to be taken out",
+            test_time::backstop(Duration::from_secs(20)),
+            || pending(&hub, "") == ["initial-card"],
+        );
+        if let Err(stall) = out {
+            panic!("{stall}; still pending: {:?}", pending(&hub, ""));
+        }
+        stopped(&hub);
+    }
+
     /// A card posted before its picture is on disk is held, and the loop posts it once the picture
-    /// lands, with no watcher event and no other save: it checks the pictures the held cards wait on.
+    /// lands, with no watcher event and no other save: the board's tick looks at the pictures the
+    /// held cards wait on and wakes the documents' loop, which runs on a period no test reaches.
     #[test]
     fn a_held_card_is_posted_when_its_picture_lands_without_another_event() {
         let tree = Tree::new();
-        let root = repository(&tree);
-        let register = |cards: &str| {
-            format!(
-                "# Topic\n\n<!-- register:start -->\n- [ ] **initial-card** — Initial question.\n{cards}<!-- register:end -->\n"
-            )
-        };
-        tree.write("main/docs/TOPIC.md", &register(""));
-        git(&root, &["commit", "-qam", "Register the fixture decisions"]);
-        let branch = tree.path("proposal");
-        git(
-            &root,
-            &[
-                "worktree",
-                "add",
-                "-b",
-                "design/policy",
-                branch.to_str().unwrap(),
-            ],
+        let root = proposing(
+            &tree,
+            "- [ ] **picture-card** — Pick one.\n  [2026-11-11 10:00] agent — A: ![A](/artifacts/late.png)\n",
         );
-        tree.write(
-            "proposal/docs/TOPIC.md",
-            &register(
-                "- [ ] **picture-card** — Pick one.\n  [2026-11-11 10:00] agent — A: ![A](/artifacts/late.png)\n",
-            ),
-        );
-        git(
-            &branch,
-            &["commit", "-qam", "Post the card before its picture"],
-        );
-        let hub = Hub::start_watching::<notify::NullWatcher>(
-            &root,
-            &root.join("build/client"),
-            false,
-            false,
-            Duration::from_millis(100),
-            |_| Err("no board in this test".to_string()),
-        )
-        .unwrap();
-        hub.start_initial_board();
+        let hub = waking(&root);
         assert_eq!(pending(&hub, ""), ["initial-card"], "held for its picture");
         assert!(!hub.pictures_arrived());
         tree.write("proposal/artifacts/late.png", "png");
@@ -3038,7 +3064,7 @@ mod tests {
             panic!("{stall}; still held: {:?}", pending(&hub, ""));
         }
         assert!(!hub.pictures_arrived(), "nothing is awaited any more");
-        hub.stop();
+        stopped(&hub);
     }
 
     #[test]

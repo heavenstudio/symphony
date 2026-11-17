@@ -161,6 +161,44 @@ impl Backstop {
     }
 }
 
+/// A period no test reaches: a loop that a test runs on it, to show one of its wakes, waits for
+/// that wake alone, and a wake missed fails the test by its named stall, never at the period's end.
+#[cfg(test)]
+pub(crate) const NO_PERIOD: Duration = Duration::from_secs(86_400);
+
+/// A backstop on [`NO_PERIOD`] whose clock, the machine's, counts its reads, and what a test sees
+/// of them ([`Waits`]).
+#[cfg(test)]
+pub(crate) fn watched() -> (Backstop, Waits) {
+    let reads = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let read = reads.clone();
+    let backstop = Backstop::timed_by(NO_PERIOD, move || {
+        read.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Instant::now()
+    });
+    (backstop, Waits(reads))
+}
+
+/// The reads of a [`watched`] backstop's clock: one as it was made, then one as each wait begins,
+/// as no wait on [`NO_PERIOD`] reads it again.
+#[cfg(test)]
+pub(crate) struct Waits(std::sync::Arc<std::sync::atomic::AtomicUsize>);
+
+#[cfg(test)]
+impl Waits {
+    /// Until the loop has begun its `nth` wait, counted from one: it is past every look it takes
+    /// before that wait, so what the test does next reaches it by a wake alone. A stall fails
+    /// naming the wait.
+    pub(crate) fn begun(&self, nth: usize) {
+        test_time::until_true(
+            format!("the loop's wait {nth} to begin"),
+            test_time::backstop(Duration::ZERO),
+            || self.0.load(std::sync::atomic::Ordering::SeqCst) > nth,
+        )
+        .unwrap_or_else(|stall| panic!("{stall}"));
+    }
+}
+
 /// How long a watcher says nothing before the burst its first event began counts as one change:
 /// an editor's save is several events (a temporary file written, renamed over the old, its times
 /// set), and a refresh for each would read the file half saved.
@@ -492,6 +530,31 @@ mod tests {
         assert_eq!(backstop.wait(), Wake::Event);
         set(period * 6);
         assert_eq!(backstop.wait(), Wake::Period);
+    }
+
+    /// A watched backstop's clock is read once as it is made and once as each wait begins, so a
+    /// test counts the waits its loop began; a wait woken reads it no more.
+    #[test]
+    fn a_watched_backstop_counts_each_wait_begun() {
+        let (mut backstop, waits) = super::watched();
+        assert_eq!(waits.0.load(std::sync::atomic::Ordering::SeqCst), 1);
+        let waker = backstop.waker();
+        assert!(waker.wake());
+        assert_eq!(backstop.wait(), Wake::Event);
+        waits.begun(1);
+        assert_eq!(waits.0.load(std::sync::atomic::Ordering::SeqCst), 2);
+        let woken = std::thread::spawn(move || backstop.wait());
+        waits.begun(2);
+        assert!(waker.wake());
+        assert_eq!(
+            crate::testing::joined(
+                woken,
+                "the wake to end the wait",
+                test_time::backstop(Duration::ZERO)
+            ),
+            Wake::Event
+        );
+        assert_eq!(waits.0.load(std::sync::atomic::Ordering::SeqCst), 3);
     }
 
     #[test]

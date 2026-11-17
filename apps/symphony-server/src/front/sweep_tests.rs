@@ -484,16 +484,17 @@ fn lines(fixture: &SweepFixture, file: &str) -> Vec<String> {
 }
 
 /// A project whose hub has not read its board, or read none there, is not maintained: its sweep
-/// looks at the round due, waits for its hub to find a board with no length on any clock, and
-/// runs nothing, so it makes no board where none is. Each read of the hub that finds a board or
-/// finds none wakes it, and once one finds a scratch board here, the round runs.
+/// looks at the round due, waits for its hub to find a board, looking again after the backstop's
+/// period on its clock (which this test never moves), and runs nothing, so it makes no board where
+/// none is. Each read of the hub that finds a board or finds none wakes it, and once one finds a
+/// scratch board here, the round runs.
 #[test]
 fn a_project_is_maintained_only_once_its_hub_has_read_a_board_there() {
     let mut fixture = SweepFixture::without_hub("printf '%s\\n' \"$1\" >> calls");
     let sweep = TestClock::new();
     maintain_on(&mut fixture, &sweep);
     // No hub yet: whether there is a board is not known, and the round due waits for it.
-    assert_eq!(sweep.waited(1), [None]);
+    assert_eq!(sweep.waited(1), [AFTER_A_SLEEP]);
     assert_eq!(lines(&fixture, "calls"), Vec::<String>::new());
 
     // Its hub's reach found no board: no store, and no SurrealDB here to serve one. That read
@@ -511,7 +512,7 @@ fn a_project_is_maintained_only_once_its_hub_has_read_a_board_there() {
             .is_none()
     );
     assert_eq!(hub.has_board(), Some(false));
-    assert_eq!(sweep.waited(2), [None, None]);
+    assert_eq!(sweep.waited(2), [AFTER_A_SLEEP; 2]);
     assert_eq!(lines(&fixture, "calls"), Vec::<String>::new());
 
     // The hub's next read finds a board: it wakes the sweep, whose round runs.
@@ -531,14 +532,11 @@ fn a_sweep_waits_on_its_clock_for_the_next_round_and_its_stop_ends_the_wait() {
     let mut fixture = SweepFixture::new("printf '%s\\n' \"$1\" >> calls");
     let sweep = TestClock::new();
     maintain_on(&mut fixture, &sweep);
-    assert_eq!(sweep.waited(1), [Some(AFTER_A_SLEEP)]);
+    assert_eq!(sweep.waited(1), [AFTER_A_SLEEP]);
     assert_eq!(lines(&fixture, "calls"), ["reap"]);
     // Five seconds short of the interval: the wait is for those five.
     sweep.move_to(INTERVAL - Duration::from_secs(5));
-    assert_eq!(
-        sweep.waited(2),
-        [Some(AFTER_A_SLEEP), Some(Duration::from_secs(5))]
-    );
+    assert_eq!(sweep.waited(2), [AFTER_A_SLEEP, Duration::from_secs(5)]);
     assert_eq!(
         lines(&fixture, "calls"),
         ["reap"],
@@ -547,7 +545,7 @@ fn a_sweep_waits_on_its_clock_for_the_next_round_and_its_stop_ends_the_wait() {
     sweep.move_to(INTERVAL);
     assert_eq!(
         sweep.waited(3)[2],
-        Some(AFTER_A_SLEEP),
+        AFTER_A_SLEEP,
         "the next round's whole wait"
     );
     assert_eq!(lines(&fixture, "calls"), ["reap", "reap"]);

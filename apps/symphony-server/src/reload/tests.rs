@@ -1,7 +1,8 @@
 use super::{Retry, RunningImage, Setup, source_event, stamp_install, watch_with};
+use crate::backstop::{self, Backstop};
 use crate::front::{Shared, told};
 use crate::gate::Gate;
-use crate::testing::{Tree, git, repository};
+use crate::testing::{Tree, git, joined, repository};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeSet;
 use std::os::unix::fs::MetadataExt;
@@ -99,7 +100,7 @@ fn a_source_edit_whose_event_is_lost_still_starts_a_build_within_a_period() {
         setup,
         shared.clone(),
         Vec::new(),
-        period,
+        Backstop::new(period),
         Retry::new(),
     )
     .unwrap();
@@ -130,7 +131,7 @@ fn a_source_edit_whose_event_is_lost_still_starts_a_build_within_a_period() {
         );
     }
     shared.stop();
-    worker.join().unwrap();
+    joined(worker, "the stop to end the reload loop", stall());
 }
 
 #[test]
@@ -767,14 +768,56 @@ impl Reloading {
         setup: Setup,
         retry: Retry,
     ) -> std::thread::JoinHandle<()> {
-        let serve = crate::cli::Serve {
+        self.waiting_on::<W>(setup, Backstop::new(PERIOD), retry)
+    }
+
+    /// [`Self::retrying`], the worker waiting on `backstop`.
+    fn waiting_on<W: notify::Watcher + Send + 'static>(
+        &self,
+        setup: Setup,
+        backstop: Backstop,
+        retry: Retry,
+    ) -> std::thread::JoinHandle<()> {
+        watch_with::<W>(
+            self.serve(),
+            setup,
+            self.shared.clone(),
+            Vec::new(),
+            backstop,
+            retry,
+        )
+        .unwrap()
+    }
+
+    /// The follow of `current` that a release's server runs, on a thread of its own, watching by `W`
+    /// and waiting on `backstop`: this server as the release `release-1`, its install folder as its
+    /// machine folder.
+    fn following<W: notify::Watcher + 'static>(
+        &self,
+        backstop: Backstop,
+        retry: Retry,
+    ) -> std::thread::JoinHandle<()> {
+        let (serve, shared) = (self.serve(), self.shared.clone());
+        let follow = super::Follow {
+            machine: self.home.clone(),
+            release: "release-1".into(),
+            sockets: Vec::new(),
+            lease: std::fs::File::open(&self.root).unwrap(),
+        };
+        std::thread::spawn(move || {
+            super::follow::<W>(&serve, &follow, &shared, backstop, retry);
+        })
+    }
+
+    /// How the case's server was started: from the install folder, serving the checkout.
+    fn serve(&self) -> crate::cli::Serve {
+        crate::cli::Serve {
             home: Some(self.home.clone()),
             root: self.root.clone(),
             port: 1,
             hosts: Vec::new(),
             install: None,
-        };
-        watch_with::<W>(serve, setup, self.shared.clone(), Vec::new(), PERIOD, retry).unwrap()
+        }
     }
 
     /// Each build's arguments, in the order they ran.
@@ -834,10 +877,10 @@ impl Reloading {
         self.shared.ask_handover();
     }
 
-    /// The worker stopped and joined.
+    /// The worker stopped and joined, within a stall's bound.
     fn stop(&self, worker: std::thread::JoinHandle<()>) {
         self.shared.stop();
-        worker.join().unwrap();
+        joined(worker, "the stop to end the worker", stall());
     }
 }
 
@@ -949,7 +992,7 @@ printf '%s %s\n' "$said" "$*" > '{next}' && mv '{next}' '{replaced}'
     })
     .unwrap()
     .unwrap();
-    worker.join().unwrap();
+    joined(worker, "the hand-off to end the worker", stall());
     assert!(server.shared.replaced.load(Ordering::SeqCst));
     assert_eq!(
         std::fs::read_to_string(&replaced).unwrap(),
@@ -1324,6 +1367,96 @@ fn a_hand_off_look_with_no_request_to_follow_replaces_nothing() {
     );
     assert_eq!(server.notice(), "", "no update failed");
     assert_eq!(started(&server), 0, "no replacement started");
+}
+
+/// The reload loop on a period no test reaches ([`backstop::NO_PERIOD`]), from a stamped start,
+/// which builds nothing: once it waits, past its first read of the sources, the server's stop wakes
+/// it and it ends.
+#[test]
+fn the_servers_stop_wakes_the_waiting_reload_loop_and_ends_it() {
+    let server = Reloading::new(reinstalls);
+    let (backstop, waits) = backstop::watched();
+    let worker =
+        server.waiting_on::<notify::NullWatcher>(server.setup(true), backstop, Retry::new());
+    waits.begun(1);
+    server.stop(worker);
+    assert_eq!(server.builds(), Vec::<String>::new());
+    assert_eq!(server.notice(), "");
+}
+
+/// The reload loop on a period no test reaches, from a stamped start: a starter's hand-off asked
+/// while it waits wakes it, and it takes the request then, starting the replacement it names, whose
+/// failure the notice says. It waits again after that, until its stop.
+#[test]
+fn a_hand_off_asked_while_the_reload_loop_waits_wakes_it_to_take_the_request() {
+    let server = Reloading::new(installs_a_replacement_that_ends);
+    server.register();
+    let (backstop, waits) = backstop::watched();
+    let worker =
+        server.waiting_on::<notify::NullWatcher>(server.setup(true), backstop, Retry::new());
+    waits.begun(1);
+    server.ask_hand_over();
+    assert_eq!(
+        server.notice_after(""),
+        format!("{FAILED} replacement did not become ready: it ended")
+    );
+    assert_eq!((server.builds().len(), started(&server)), (0, 1));
+    waits.begun(2);
+    server.stop(worker);
+}
+
+/// A release's server's follow of `current`, on a period no test reaches, the link naming no
+/// release: a starter's hand-off asked while it waits wakes it, and it takes the request and
+/// refuses it, starting nothing. It waits again after that, and its stop wakes it and ends it.
+#[test]
+fn a_release_servers_follow_takes_a_hand_off_and_its_stop_at_their_wakes() {
+    let server = Reloading::new(installs_a_replacement_that_ends);
+    server.register();
+    let (backstop, waits) = backstop::watched();
+    let follow = server.following::<notify::NullWatcher>(backstop, Retry::new());
+    waits.begun(1);
+    server.ask_hand_over();
+    let request = server.home.join(crate::host::HANDOVER);
+    test_time::until_true("the follow to take the hand-off request", stall(), || {
+        !request.exists()
+    })
+    .unwrap();
+    assert!(
+        !server.shared.handover.load(Ordering::SeqCst),
+        "the flag is taken"
+    );
+    waits.begun(2);
+    assert_eq!(started(&server), 0, "no start replaces a release's server");
+    assert_eq!(server.notice(), "", "no update failed");
+    server.stop(follow);
+}
+
+/// A release's server's follow of `current`, on a period no test reaches, hears the link move from
+/// the machine's own watcher of the machine folder and reads it then: a release not installed whole
+/// leaves it serving, said on the notice with when it is tried again.
+#[test]
+fn a_release_servers_follow_reads_current_when_its_watcher_hears_the_link_move() {
+    use symphony::machine::release;
+    let server = Reloading::new(installs_a_replacement_that_ends);
+    let clock = Clock::new();
+    let (backstop, waits) = backstop::watched();
+    let follow = server.following::<notify::RecommendedWatcher>(backstop, clock.retry());
+    waits.begun(1);
+    // The move `release::point` makes, to a release it would refuse: a new link renamed over.
+    let link = server.home.join(".current.test");
+    std::os::unix::fs::symlink(Path::new(release::RELEASES).join("release-2"), &link).unwrap();
+    std::fs::rename(&link, server.home.join(release::CURRENT)).unwrap();
+    assert_eq!(
+        server.notice_after(""),
+        format!(
+            "{FAILED} The release release-2 did not take over: {} holds no manifest. It is tried \
+             again at about {}.",
+            release::folder(&server.home, "release-2").display(),
+            clock.minute(5 * MINUTE)
+        )
+    );
+    assert_eq!(started(&server), 0);
+    server.stop(follow);
 }
 
 /// A build kept as the running image after another version's update failed leaves no retry of

@@ -1,7 +1,7 @@
 //! Hold a real SQLite flush at a pipe event, without sleeps or a production-only test seam.
 
 use super::*;
-use crate::testing::{Tree, board, entered, fifo, repository};
+use crate::testing::{Tree, board, entered, fifo, joined, repository};
 use std::io::Write;
 use symphony_board::sys::Command;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -342,13 +342,6 @@ fn a_hand_off_asked_for_wakes_its_loops_and_one_that_asks_after_it() {
     );
 }
 
-/// Until the follow `followed` has returned, its thread joined; a stall fails naming `what`.
-fn joined(followed: std::thread::JoinHandle<()>, what: &str) {
-    test_time::until_true(what, BACKSTOP, || followed.is_finished())
-        .unwrap_or_else(|stall| panic!("{stall}"));
-    followed.join().unwrap();
-}
-
 /// A server follows a process that is not its child to its end ([`end_when`]): that end stops the
 /// server; the server's own stop ends the follow and leaves the process be; and a pid it cannot
 /// follow is said, the server left to its stop alone.
@@ -374,7 +367,7 @@ fn a_server_ends_with_the_process_it_follows_and_its_own_stop_ends_the_follow() 
         || false,
     );
     followed.kill().unwrap();
-    joined(follow, "the follow to see its process end");
+    joined(follow, "the follow to see its process end", BACKSTOP);
     assert!(shared.stopping(), "the process's end stops the server");
     followed.wait().unwrap();
 
@@ -389,14 +382,14 @@ fn a_server_ends_with_the_process_it_follows_and_its_own_stop_ends_the_follow() 
         || false,
     );
     shared.stop();
-    joined(follow, "the stop to end the follow");
+    joined(follow, "the stop to end the follow", BACKSTOP);
     assert!(living.try_wait().unwrap().is_none(), "the process goes on");
     living.kill().unwrap();
     living.wait().unwrap();
 
     let shared = idle_shared(&tree);
     let follow = end_when(&shared, "follow test", "no process", 0, || false);
-    joined(follow, "a follow of no process to give up");
+    joined(follow, "a follow of no process to give up", BACKSTOP);
     assert!(!shared.stopping(), "only its stop ends the server now");
 }
 
