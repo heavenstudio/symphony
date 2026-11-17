@@ -877,3 +877,96 @@ it("holds the reading column in the waiting board without a horizontal scroller"
     '.waiting-columns .column[data-status="review"] [data-slug="review/one"]',
   );
 });
+
+describe("the waiting board's window position", () => {
+  function windowBoard(offset: number | null, ready = true) {
+    let y = 0;
+    const state = { board: { left: 0, top: 0, page: 900, row: "kept", column: "ready", at: 25 } };
+    const column = element({
+      attributes: { "data-status": "ready" },
+      box: { left: 0, right: 300 },
+    });
+    const row = element({ id: "row-kept", closest: { ".column[data-status]": column } });
+    row.getBoundingClientRect = () =>
+      ({ top: (offset ?? 0) - y, left: 0, right: 300, bottom: (offset ?? 0) - y + 118 }) as DOMRect;
+    const surface = {
+      scrollLeft: 0,
+      scrollTop: 0,
+      getBoundingClientRect: () => ({ top: 200 - y, bottom: 3000 - y, left: 0, right: 300 }),
+      querySelectorAll: (selector: string) =>
+        selector === ".column[data-status]" ? [column] : offset === null ? [] : [row],
+      querySelector: (selector: string) =>
+        selector === rowIn("ready", "kept", true)
+          ? offset === null
+            ? null
+            : row
+          : selector === '.column[data-status="ready"]'
+            ? column
+            : null,
+    } as unknown as Scroller;
+    const doc = {
+      activeElement: null,
+      documentElement: { dataset: { navigation: ready ? "ready" : "loading" } },
+    };
+    const frames: FrameRequestCallback[] = [];
+    const held = vi.fn();
+    vi.stubGlobal("window", { reviewHoldPlace: held });
+    vi.stubGlobal("document", doc);
+    vi.stubGlobal("location", { pathname: "/tasks" });
+    vi.stubGlobal("history", {
+      state,
+      replaceState: vi.fn((next) => {
+        Object.assign(state, next);
+      }),
+    });
+    vi.stubGlobal("innerHeight", 800);
+    vi.stubGlobal("scrollX", 0);
+    vi.stubGlobal("scrollY", 0);
+    vi.stubGlobal("scrollTo", (_x: number, next: number) => {
+      y = next;
+      vi.stubGlobal("scrollY", y);
+    });
+    vi.stubGlobal("addEventListener", vi.fn());
+    vi.stubGlobal("requestAnimationFrame", (frame: FrameRequestCallback) => {
+      frames.push(frame);
+      return frames.length;
+    });
+    const page = new AbortController();
+    return { keeper: new PlaceKeeper(surface, page.signal, true), page, held, doc, frames, state };
+  }
+  it("returns to the saved row's window position even if rows above grew", () => {
+    const test = windowBoard(955);
+    test.keeper.back();
+    expect(scrollY).toBe(930);
+    expect(test.held).toHaveBeenCalledWith(
+      '.waiting-columns .column[data-status="ready"] [id="row-kept"]',
+    );
+    test.keeper.keep();
+    expect(test.state.board).toEqual({
+      left: 0,
+      top: 0,
+      page: 930,
+      row: "kept",
+      column: "ready",
+      at: 25,
+    });
+    test.page.abort();
+  });
+  it("uses the saved window offset when the old row is absent from its column", () => {
+    const test = windowBoard(null);
+    test.keeper.back();
+    expect(scrollY).toBe(900);
+    expect(test.held).not.toHaveBeenCalled();
+    test.page.abort();
+  });
+  it("waits for shell navigation before restoring the window", () => {
+    const test = windowBoard(925, false);
+    test.keeper.back();
+    expect(scrollY).toBe(0);
+    expect(test.frames).toHaveLength(1);
+    test.doc.documentElement.dataset.navigation = "ready";
+    test.frames.shift()?.(0);
+    expect(scrollY).toBe(900);
+    test.page.abort();
+  });
+});

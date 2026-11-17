@@ -13,7 +13,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { focusedLink, focusedSlug, takeFocus } from "./boardplace";
+import { focusedLink, focusedSlug, takeFocus, useKeptPlace } from "./boardplace";
 import {
   OrchestratorBanner,
   PHONE_STAGES,
@@ -458,6 +458,8 @@ export function TaskBoard({
   const [opened, setOpened] = useState("");
   const [filtering, setFiltering] = useState(false);
   const [now, setNow] = useState(() => Date.now() / 1000);
+  const surface = useRef<HTMLDivElement>(null);
+  useKeptPlace(surface, true, true);
   // Follow only the card holding the keyboard focus. Adjust this component's state before
   // React commits the move, while BoardRow can still read the old title link to restore it.
   const focused = wait === "" ? focusedSlug() : null;
@@ -662,6 +664,7 @@ export function TaskBoard({
         </Button>
       )}
       <div
+        ref={surface}
         className={`kanban waiting-columns${wait !== "" || (!phone && opened !== "") ? " wait-list" : ""}`}
       >
         {wait !== "" ? (

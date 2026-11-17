@@ -127,16 +127,17 @@ export interface Anchor {
  * drawn at another height when the board is drawn again (their cards, or their ghosts), so the
  * place is that row's, not a scroll offset.
  */
-export function anchorOf(scroller: Surface): Anchor | null {
-  const status = readerStatus(scroller);
+export function anchorOf(scroller: Surface, windowed = false): Anchor | null {
+  const status = readerStatus(scroller, windowed ? ".waiting-columns" : ".board-scroll");
   const row =
     (status === null
       ? undefined
-      : firstOnScreen(scroller, `.column[data-status=${quoted(status)}] ${ROW_IDS}`)) ??
-    firstOnScreen(scroller, ROW_IDS);
+      : firstOnScreen(scroller, `.column[data-status=${quoted(status)}] ${ROW_IDS}`, windowed)) ??
+    firstOnScreen(scroller, ROW_IDS, windowed);
   const column = row?.closest(".column[data-status]")?.getAttribute("data-status");
   if (row === undefined || column === null || column === undefined) return null;
-  const at = row.getBoundingClientRect().top - scroller.getBoundingClientRect().top;
+  const at =
+    row.getBoundingClientRect().top - (windowed ? 0 : scroller.getBoundingClientRect().top);
   return { row: row.id.slice("row-".length), column, at: Math.round(at) };
 }
 
@@ -148,8 +149,8 @@ export function rowOf(slug: string): string {
 /** The row of the task `slug` in the board's column `status` (`.column`, in its scroller), and in
  * no other: a task moved since has its row in another column, or none. What the shell's hold
  * (`reviewHoldPlace`) keeps in place once Back returned to that row. */
-export function rowIn(status: string, slug: string): string {
-  return `.board-scroll .column[data-status=${quoted(status)}] ${rowOf(slug)}`;
+export function rowIn(status: string, slug: string, windowed = false): string {
+  return `${windowed ? ".waiting-columns" : ".board-scroll"} .column[data-status=${quoted(status)}] ${rowOf(slug)}`;
 }
 
 /** What in a card takes the focus, in the order Tab reaches it. */
@@ -267,6 +268,7 @@ export class PlaceKeeper {
   constructor(
     private readonly scroller: Scroller,
     private readonly signal: AbortSignal,
+    private readonly windowed = false,
   ) {
     this.resting = new Debounce(RESTS_MS, signal);
   }
@@ -279,7 +281,7 @@ export class PlaceKeeper {
       top: Math.round(scrollTop),
       page: Math.round(scrollY),
     };
-    const anchor = anchorOf(this.scroller);
+    const anchor = anchorOf(this.scroller, this.windowed);
     return anchor === null ? place : { ...place, ...anchor };
   }
 
@@ -330,6 +332,7 @@ export class PlaceKeeper {
    * shows, and back down, in one go the screen never draws between.
    */
   private across(place: Place): void {
+    if (this.windowed) return;
     const { scroller } = this;
     if (Math.round(scroller.scrollLeft) === place.left) return;
     const down = scroller.scrollTop;
@@ -344,6 +347,16 @@ export class PlaceKeeper {
    */
   private down(place: Place, row: Element | null): boolean {
     const { scroller } = this;
+    if (this.windowed) {
+      if (row === null || place.at === undefined) {
+        scrollTo(scrollX, place.page);
+        return Math.round(scrollY) === place.page;
+      }
+      const at = place.at;
+      const off = () => row.getBoundingClientRect().top - at;
+      scrollTo(scrollX, scrollY + off());
+      return Math.abs(off()) < 1;
+    }
     if (row === null || place.at === undefined) {
       scroller.scrollTop = place.top;
       return Math.round(scroller.scrollTop) === place.top;
@@ -363,7 +376,7 @@ export class PlaceKeeper {
    */
   private kept(place: Place): [row: Element | null, waits: boolean] {
     if (place.row === undefined || place.column === undefined) return [null, false];
-    const row = this.scroller.querySelector(rowIn(place.column, place.row));
+    const row = this.scroller.querySelector(rowIn(place.column, place.row, this.windowed));
     if (row !== null) return [row, false];
     const column = this.scroller.querySelector(`.column[data-status=${quoted(place.column)}]`);
     const drawing =
@@ -402,18 +415,20 @@ export class PlaceKeeper {
       // Until the kept row's column draws its rows, the place is the scroller's top; then the
       // row's, if the row is still in that column.
       const [row, waits] = this.kept(place);
-      const down = this.down(place, row) && !waits;
       const ready = document.documentElement.dataset.navigation === "ready";
-      if (ready && Math.round(scrollY) !== place.page) scrollTo(scrollX, place.page);
+      const down = (!this.windowed || ready) && this.down(place, row) && !waits;
+      if (!this.windowed && ready && Math.round(scrollY) !== place.page)
+        scrollTo(scrollX, place.page);
       const there =
         ready &&
         down &&
-        Math.round(this.scroller.scrollLeft) === place.left &&
-        Math.round(scrollY) === place.page;
+        (this.windowed ||
+          (Math.round(this.scroller.scrollLeft) === place.left &&
+            Math.round(scrollY) === place.page));
       if (there) {
         end();
         if (row !== null && place.row !== undefined && place.column !== undefined) {
-          holdPlace(rowIn(place.column, place.row));
+          holdPlace(rowIn(place.column, place.row, this.windowed));
         }
       } else if (++frames >= RETURN_FRAMES) end();
       else requestAnimationFrame(step);
@@ -425,9 +440,14 @@ export class PlaceKeeper {
 /**
  * Keep the place of the board's scroller (`scroller`, while `drawn`) in the board's history entry,
  * and return to it when the board is first drawn from an entry that keeps one: Back to the board
- * draws it where the reader left it, sideways and down its columns.
+ * draws it where the reader left it. `windowed` keeps the waiting board's row against the
+ * window rather than an inner scroller; if the row moved stage, its window offset remains.
  */
-export function useKeptPlace(scroller: RefObject<HTMLElement | null>, drawn: boolean): void {
+export function useKeptPlace(
+  scroller: RefObject<HTMLElement | null>,
+  drawn: boolean,
+  windowed = false,
+): void {
   const mount = useMount();
   const first = useRef(true);
   useLayoutEffect(() => {
@@ -435,7 +455,7 @@ export function useKeptPlace(scroller: RefObject<HTMLElement | null>, drawn: boo
     if (!drawn || node === null) return;
     const controller = new AbortController();
     const signal = AbortSignal.any([controller.signal, mount]);
-    const keeper = new PlaceKeeper(node, signal);
+    const keeper = new PlaceKeeper(node, signal, windowed);
     if (first.current) keeper.back();
     first.current = false;
     node.addEventListener("scroll", keeper.later, { passive: true, signal });
@@ -445,5 +465,5 @@ export function useKeptPlace(scroller: RefObject<HTMLElement | null>, drawn: boo
     addEventListener("pagehide", keeper.keep, { signal });
     addEventListener("popstate", keeper.moved, { signal });
     return () => controller.abort();
-  }, [scroller, drawn, mount]);
+  }, [scroller, drawn, mount, windowed]);
 }
