@@ -13,7 +13,7 @@ Optional integration, squash delivery in enabled PR mode, remote enforcement of 
 stamps, and local execution without per-PR hosted CI are requirements. An assessment may waive
 stamps with a recorded reason. These requirements need no new product-choice card. The earlier
 integration task owns issue exchange, installation, repository identity, credential handling and
-the choice to activate outbound publication. This proposal supplies its PR landing contract;
+explicit activation of outbound publication. This proposal supplies its PR landing contract;
 issue synchronization alone grants no branch publication or merge permission.
 
 The reference contracts remain [default landing](../TASKS.md#the-default-landing),
@@ -24,12 +24,19 @@ independent assessor, stamp readers and reviewer freshness rules remain authorit
 project's own landing recipe remains its own integration, and must explicitly support PR mode
 before activation.
 
-The board owns task identity, assessments, recorded runs and verdicts. A GitHub process plugin
-transports a versioned, read-only evidence snapshot and publishes its checks; it cannot invent
-an assessment, approve work or execute a command supplied by a PR. The landing implementation
-owns the merge request and durable receipt. Generic blocks and the existing gates vocabulary
-display the result. The prerequisite must provide an authenticated evidence-export and landing
-interface; the generic rendering protocol alone is not a privileged execution interface.
+The board owns task identity, assessments, recorded runs and verdicts. The GitHub adapter owns
+issue/PR publication and reconciliation through the [versioned tasks API](../TASKS.md#the-tasks-api).
+The landing policy/tool reads the authoritative assessment and stamp readers, controls GitHub
+evidence enforcement and check publication, and owns merge execution and its durable receipt.
+A transport helper may deliver an authorized snapshot's check writes with the publisher App
+credential; it has no independent authority to assess, waive, approve or dispatch a merge.
+The adapter never executes a command supplied by a PR.
+
+Generic blocks and the existing gates vocabulary display the result. The prerequisite must
+provide an authenticated evidence-export and landing interface through separately specified
+versioned API additions; this document claims no such methods exist yet. The generic rendering
+protocol alone is not a privileged execution interface. Provider success or workflow traversal
+cannot substitute for the head-bound evidence decision or the remote squash receipt.
 
 ## Mode and publication
 
