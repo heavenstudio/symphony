@@ -696,7 +696,7 @@ pub fn parse_after(board: &str, args: &[String]) -> Outcome {
     }
     extras.extend(given);
     if !extras.is_empty() {
-        extras.sort_by_key(|(at, _)| *at);
+        crate::order::sort_by_key(&mut extras, &|(at, _)| *at);
         return refuse(unrecognized(&extras, board, args, dash, cmd));
     }
     Outcome::Run(Parsed {

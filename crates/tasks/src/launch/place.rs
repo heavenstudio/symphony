@@ -35,7 +35,7 @@ fn stream_tabs<'layout>(tabs: &'layout [Object], stream: &str) -> Vec<(u64, &'la
             Some((number.parse().ok()?, tab))
         })
         .collect();
-    found.sort_by_key(|(number, _)| *number);
+    crate::order::sort_by_key(&mut found, &|(number, _)| *number);
     found
 }
 
