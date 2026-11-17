@@ -5,26 +5,38 @@ use symphony_board::rows::MessageRow;
 
 on_both! {
 fn thread_window_caps_rows_continues_exclusively_and_omits_post_bodies(backend: Backend) {
-    let mut seed = Seed::default().task("window", "ready");
+    let mut seed = Seed::default().task("window", "ready").task("other", "ready");
     seed.dump.messages = (0..THREAD_WINDOW_LIMIT + 3).map(|n| MessageRow {
         id: n as i64 + 1, slug: "window".into(), sender: "worker".into(),
         recipient: Some("@orchestrator".into()), kind: "msg".into(), text: format!("body {n}"), ts: NOW,
     }).collect();
+    seed.dump.messages.push(MessageRow {
+        id: THREAD_WINDOW_LIMIT as i64 + 4, slug: "other".into(), sender: "other-worker".into(),
+        kind: "system".into(), text: "another thread".into(), ts: NOW, ..MessageRow::default()
+    });
     let f = Fixture::on(backend, seed);
     let empty = f.store.thread_window("window", Some(0)).unwrap();
     assert!(empty.lines.is_empty() && !empty.more && !empty.uncertain);
+    assert_eq!(empty.status, "ready");
+    assert_eq!(empty.parent, None);
     assert!(refused(f.store.thread_window("missing", None)).contains("no task"));
-    let all = f.store.thread("window").unwrap();
+    let mut all = f.store.thread("window").unwrap();
+    for line in &mut all {
+        line.text.clear();
+    }
     let page = f.store.thread_window("window", None).unwrap();
     assert_eq!(page.lines.len(), THREAD_WINDOW_LIMIT);
     assert!(page.more && !page.uncertain);
     let first = page.lines[0].id;
-    assert_eq!(page.lines.iter().map(|line| line.id).collect::<Vec<_>>(), all[all.len()-THREAD_WINDOW_LIMIT..].iter().map(|line|line.id).collect::<Vec<_>>());
-    assert!(page.lines.iter().all(|line| line.text.is_empty() && line.recipient.as_deref() == Some("@orchestrator")));
+    assert_eq!(page.lines, all[all.len()-THREAD_WINDOW_LIMIT..]);
     let older = f.store.thread_window("window", Some(first)).unwrap();
     assert!(!older.more);
     assert!(older.lines.iter().all(|line| line.id < first));
     assert_eq!(older.lines.len() + page.lines.len(), all.len());
+    assert_eq!(older.lines, all[..all.len()-THREAD_WINDOW_LIMIT]);
+    let exact = f.store.thread_window("window", Some(THREAD_WINDOW_LIMIT as i64 + 1)).unwrap();
+    assert!(!exact.more && !exact.uncertain);
+    assert_eq!(exact.lines, all[..THREAD_WINDOW_LIMIT]);
 }
 }
 

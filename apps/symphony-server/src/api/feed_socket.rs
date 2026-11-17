@@ -85,6 +85,10 @@ pub(super) fn asked(request: &Request) -> bool {
 /// Whether a WebSocket's `Origin`, when it names one, is this server's own page: `http://` and the
 /// request's `Host`.
 fn own_origin(request: &Request) -> bool {
+    // The hosted boundary already required its exact configured HTTPS Origin before any read.
+    if crate::hosted::admission(request).is_some() {
+        return true;
+    }
     let Some(origin) = request.headers().get(header::ORIGIN) else {
         return true;
     };

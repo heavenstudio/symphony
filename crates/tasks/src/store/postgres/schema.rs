@@ -120,7 +120,11 @@ use Kind::{Array, Bool, Float, Int, Object, Text};
 
 /// The board's tables, including `words` (the full-text indexes, [`WORDS`]) and `copied_fields`
 /// (the imported fields' numeric spellings, [`super::copy`]).
-pub(in crate::store) const TABLES: [Table; 23] = [
+pub(in crate::store) const TABLES: [Table; 24] = [
+    Table {
+        name: "artifact_ledger",
+        columns: &[req("revision", Int), req("body", Object)],
+    },
     Table {
         name: "copied_fields",
         columns: &[req("original", Text)],
@@ -777,6 +781,15 @@ mod tests {
 
     #[test]
     fn a_tables_fields_are_its_typed_columns_and_a_schemaless_one_holds_a_doc() {
+        assert_eq!(
+            create(table("artifact_ledger").unwrap()),
+            "CREATE TABLE IF NOT EXISTS artifact_ledger (
+    id jsonb PRIMARY KEY,
+    revision bigint NOT NULL,
+    body jsonb NOT NULL CHECK (jsonb_typeof(body) = 'object')
+);
+"
+        );
         let role = create(table("role").unwrap());
         assert_eq!(
             role,
@@ -842,7 +855,7 @@ mod tests {
         let mut names: Vec<&str> = TABLES.iter().map(|table| table.name).collect();
         names.sort_unstable();
         names.dedup();
-        assert_eq!(names.len(), 23);
+        assert_eq!(names.len(), 24);
         let defined = define();
         for name in names {
             assert!(

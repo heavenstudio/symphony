@@ -132,6 +132,30 @@ fn a_realistic_board_goes_from_surrealdb_to_postgresql_and_back_whole() {
     }
 }
 
+on_both! {
+    fn a_board_copy_keeps_the_separate_artifact_ledger(backend: Backend) {
+        // Artifact-root export/restore is a separate contract: Dump contains core board rows.
+        // Importing those rows must retain the destination's independently scoped ledger.
+        let f = Fixture::on(backend, Seed::default());
+        let body = json!({"format": 1, "nested": [null, {"number": 1e18, "zero": -0.0}]});
+        assert!(f.store.artifact_ledger_cas("tenant", "project", 0, &body).unwrap());
+        let ledger = f.store.artifact_ledger("tenant", "project").unwrap();
+        let board = everything();
+        for _ in 0..2 {
+            f.store.copy(&board).unwrap();
+            assert_eq!(f.store.dump().unwrap(), board);
+            assert_eq!(f.other().artifact_ledger("tenant", "project").unwrap(), ledger);
+        }
+        let mut refused = board.clone();
+        refused.tasks[0].status = "not-a-status".into();
+        assert!(f.store.copy(&refused).is_err());
+        assert_eq!(f.store.dump().unwrap(), board);
+        assert_eq!(f.store.artifact_ledger("tenant", "project").unwrap(), ledger);
+        assert!(f.store.artifact_ledger_cas("tenant", "project", 1, &body).unwrap());
+        assert_eq!(f.store.artifact_ledger("tenant", "project").unwrap().unwrap()["revision"], 2);
+    }
+}
+
 /// A PostgreSQL client of its own on the board `f` is on.
 fn connection(f: &Fixture) -> pg::Client {
     match f.other_database() {

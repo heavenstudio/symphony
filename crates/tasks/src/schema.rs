@@ -86,7 +86,7 @@ use crate::store::Program;
 /// as it was. Changing one (a field's type, an assertion, an index) also needs `DEFINE … OVERWRITE`
 /// for it. Protocol changes can require a wider version step and retirement of old read tokens:
 /// an already-open store does not repeat its opening check.
-pub const VERSION: i64 = 20;
+pub const VERSION: i64 = 21;
 
 /// Structural mutations plus all committed session changes, including deletions and re-creations.
 /// The separate structural record keeps the retired legacy scalar outside this identity.
@@ -445,6 +445,10 @@ DEFINE TABLE IF NOT EXISTS meta SCHEMAFULL;
 DEFINE FIELD IF NOT EXISTS version ON meta TYPE int;
 
 DEFINE TABLE IF NOT EXISTS writer SCHEMALESS;
+
+DEFINE TABLE IF NOT EXISTS artifact_ledger SCHEMAFULL;
+DEFINE FIELD IF NOT EXISTS revision ON artifact_ledger TYPE int;
+DEFINE FIELD IF NOT EXISTS body ON artifact_ledger TYPE object FLEXIBLE;
 
 DEFINE TABLE IF NOT EXISTS callback_state SCHEMALESS;
 DEFINE INDEX IF NOT EXISTS callback_state_address ON callback_state FIELDS address;

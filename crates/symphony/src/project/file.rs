@@ -35,6 +35,7 @@ pub(super) struct File {
     pub(super) releases: FileReleases,
     pub(super) limits: FileLimits,
     pub(super) stamps: FileStamps,
+    pub(super) workflow: Option<symphony_api::workflow::Definition>,
     /// The tables and keys at the top of the file this build does not know.
     #[serde(flatten)]
     pub(super) unknown: Unknown,
