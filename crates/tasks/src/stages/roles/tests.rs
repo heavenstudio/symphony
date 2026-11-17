@@ -121,6 +121,7 @@ fn plain_text_and_malformed_events_supply_no_roles() {
         system(4, " joined as orchestrator"),
         system(5, "a took orchestrator over from "),
         system(6, "a released owner (released)"),
+        system(7, "a b claimed it"),
     ]);
     assert!(got.spans.is_empty());
     assert!(!got.closed);

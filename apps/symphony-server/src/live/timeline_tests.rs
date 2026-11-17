@@ -293,6 +293,15 @@ fn the_pictures_task_gives_the_timeline_they_draw_and_a_task_with_no_runs_has_no
         }
     }
     seed.dump.messages.extend(thread());
+    seed.dump.messages.extend((1000..1260).map(|id| MessageRow {
+        id,
+        slug: "tools/quiet".into(),
+        sender: "outside".into(),
+        recipient: Some("@orchestrator".into()),
+        kind: "msg".into(),
+        text: format!("Full text of message {id}"),
+        ts: NOW,
+    }));
     let f = Fixture::new(seed);
     let (shared, send) = served_with(&root, hub(&root, &f));
     let ask = |path: &str| {
@@ -388,6 +397,40 @@ fn the_pictures_task_gives_the_timeline_they_draw_and_a_task_with_no_runs_has_no
         "made ready at the board's clock and waiting since"
     );
     assert_eq!(answer["gates"], json!([]));
+    let history: symphony_api::timeline::History =
+        serde_json::from_value(answer["history"].clone()).unwrap();
+    assert_eq!(
+        history.sources[0].state,
+        symphony_api::timeline::HistoryState::Partial
+    );
+    assert_eq!(history.sources[0].before, Some(1004));
+    assert_eq!(
+        history.messages.len(),
+        symphony_api::timeline::TIMELINE_HISTORY_LIMIT
+    );
+    assert!(
+        history
+            .messages
+            .iter()
+            .all(|message| message.to.state == symphony_api::timeline::EndpointState::Unknown)
+    );
+    let (status, older) = ask(&format!(
+        "/api/task-history?slug=tools/quiet&before={}",
+        history.sources[0].before.unwrap()
+    ));
+    assert_eq!(status, StatusCode::OK);
+    let older: symphony_api::TaskHistory = serde_json::from_value(older).unwrap();
+    assert_eq!(
+        older
+            .entries
+            .iter()
+            .map(|entry| entry.message.id)
+            .collect::<Vec<_>>(),
+        [1000, 1001, 1002, 1003]
+    );
+    assert_eq!(older.entries[0].message.text, "Full text of message 1000");
+    assert_eq!(older.before, None);
+    assert_eq!(older.after, None);
     // Its gates list the stamps the timeline leaves out, waived.
     let (status, answer) = ask("/api/task-gates?slug=tools/quiet");
     assert_eq!(status, StatusCode::OK, "{answer}");

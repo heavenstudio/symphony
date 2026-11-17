@@ -89,7 +89,7 @@ fn direct_role_broadcast_outside_and_multirole_addresses_keep_exact_metadata() {
 
 #[test]
 fn inheritance_uses_the_recorded_parent_at_send_time_and_names_its_source() {
-    let sources = BTreeMap::from([
+    let mut sources = BTreeMap::from([
         (
             "child".into(),
             source(
@@ -125,7 +125,18 @@ fn inheritance_uses_the_recorded_parent_at_send_time_and_names_its_source() {
             ),
         ),
     ]);
-    let h = history(sources);
+    let h = load("child", |slug| {
+        sources
+            .remove(slug)
+            .ok_or_else(|| symphony_board::Error::Refused("missing source".into()))
+    });
+    assert_eq!(
+        h.sources
+            .iter()
+            .map(|source| source.slug.as_str())
+            .collect::<Vec<_>>(),
+        ["child", "new", "old"]
+    );
     let endpoints: Vec<_> = h
         .messages
         .iter()
@@ -154,6 +165,67 @@ fn inheritance_uses_the_recorded_parent_at_send_time_and_names_its_source() {
     assert_eq!(
         bounds,
         [("old", 3, Some(5)), ("new", 5, Some(7)), ("child", 7, None)]
+    );
+}
+
+#[test]
+fn unrecorded_closure_cut_events_and_legacy_parent_moves_never_supply_confidence() {
+    for (status, cut, lines) in [
+        (
+            "cancelled",
+            false,
+            vec![system(1, "o joined as orchestrator")],
+        ),
+        ("ready", true, vec![system(1, "o joined as orchestrator")]),
+        (
+            "ready",
+            false,
+            vec![
+                system(1, "o joined as orchestrator"),
+                system(2, "owner put it under parent"),
+            ],
+        ),
+        (
+            "ready",
+            false,
+            vec![
+                system(1, "o joined as orchestrator"),
+                system(2, "a b put it under parent (was nothing)"),
+            ],
+        ),
+    ] {
+        let mut lines = lines;
+        lines.push(message(3, 3.0, "msg", "?", "o", Some("@orchestrator")));
+        let mut s = source("child", None, lines, false);
+        s.window.status = status.into();
+        s.window.uncertain = cut;
+        let s = Source::new(s.window);
+        let h = history(BTreeMap::from([("child".into(), s)]));
+        assert_eq!(h.messages[0].to.state, EndpointState::Unknown);
+        assert_eq!(h.messages[0].after_close, None);
+        assert!(h.roles.iter().all(|span| span.uncertain));
+    }
+}
+
+#[test]
+fn reparenting_to_the_top_stops_inheritance_without_filling_the_gap() {
+    let s = source(
+        "child",
+        None,
+        vec![
+            system(1, "created by worker"),
+            system(3, "owner put it under nothing (was parent)"),
+            message(4, 4.0, "msg", "?", "e", Some("@orchestrator")),
+        ],
+        false,
+    );
+    assert_eq!(s.parent_at(2), Some("parent"));
+    assert_eq!(s.parent_at(3), None);
+    assert_eq!(s.parents(), ["parent"]);
+    assert_eq!(s.parent_at(4), None);
+    assert_eq!(
+        symphony_api::timeline::TIMELINE_HISTORY_LIMIT,
+        symphony_board::THREAD_WINDOW_LIMIT
     );
 }
 
