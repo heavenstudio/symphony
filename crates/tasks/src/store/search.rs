@@ -97,7 +97,7 @@ impl Store {
         let groups: BTreeMap<String, Vec<ScoredSource>> =
             self.retrying(|| self.transact(sources(), vars.clone()))?;
         // array::concat limits its output to 1 MiB. Keep each SELECT's rows in the same
-        // snapshot, then choose the best excerpt without collecting and sorting every match.
+        // snapshot, then choose the best excerpt without sorting every match.
         Ok(best_sources(groups))
     }
 }
@@ -105,14 +105,17 @@ impl Store {
 /// One source per slug, using the existing rank/score/text order and keeping the first equal row.
 fn best_sources(groups: BTreeMap<String, Vec<ScoredSource>>) -> BTreeMap<String, SearchSource> {
     use std::collections::btree_map::Entry;
-    let mut best: BTreeMap<String, ScoredSource> = BTreeMap::new();
-    for row in groups.into_values().flatten() {
-        match best.entry(row.source.slug.clone()) {
+    let mut rows: Vec<_> = groups.into_values().flatten().collect();
+    let mut best: BTreeMap<&str, usize> = BTreeMap::new();
+    for (at, row) in rows.iter().enumerate() {
+        match best.entry(row.source.slug.as_str()) {
             Entry::Vacant(entry) => {
-                entry.insert(row);
+                entry.insert(at);
             }
             Entry::Occupied(mut entry) => {
-                let previous = entry.get();
+                let previous = rows
+                    .get(*entry.get())
+                    .expect("selected indices came from these same rows");
                 // The entry has this same slug. Only a strictly better row replaces it.
                 if row
                     .rank
@@ -121,14 +124,29 @@ fn best_sources(groups: BTreeMap<String, Vec<ScoredSource>>) -> BTreeMap<String,
                     .then_with(|| row.source.text.cmp(&previous.source.text))
                     .is_lt()
                 {
-                    entry.insert(row);
+                    entry.insert(at);
                 }
             }
         }
     }
+    // Release the borrowed keys before moving the chosen strings. The index map needs only
+    // small scalar values; it neither clones matching text nor links a sorter for whole rows.
+    let chosen: Vec<usize> = best.into_values().collect();
     let mut sources = BTreeMap::new();
-    for (slug, row) in best {
-        sources.insert(slug, row.source);
+    for at in chosen {
+        let row = &mut rows
+            .get_mut(at)
+            .expect("selected indices came from these same rows")
+            .source;
+        let slug = std::mem::take(&mut row.slug);
+        sources.insert(
+            slug.clone(),
+            SearchSource {
+                slug,
+                source: std::mem::take(&mut row.source),
+                text: std::mem::take(&mut row.text),
+            },
+        );
     }
     sources
 }
