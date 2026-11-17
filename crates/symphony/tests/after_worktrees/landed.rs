@@ -500,43 +500,77 @@ pub(super) fn save_routing_and_page_use_the_registers_closure() {
     );
 }
 
-pub(super) fn a_finished_revision_stays_one_card_until_its_answer_lands() {
+pub(super) fn a_finished_revision_stays_one_card_until_its_answer_lands(revise_options: bool) {
     isolated(
-        "a_finished_revision_and_its_answer_stay_one_card_until_landed",
+        if revise_options {
+            "a_finished_option_revision_and_its_answer_stay_one_card_until_landed"
+        } else {
+            "a_finished_revision_and_its_answer_stay_one_card_until_landed"
+        },
         |_| {
             let tree = committing();
-            tree.write(DOC, &register(&card("revised", ' ', "")));
+            let base = card(
+                "revised",
+                ' ',
+                if revise_options {
+                    "  [2026-11-11 09:01] agent — A: original option.\n"
+                } else {
+                    ""
+                },
+            );
+            tree.write(DOC, &register(&base));
             commit(&tree.root, "base", 1);
             let wt = branch(&tree, "feat/done", "done");
-            let revision =
-                card("revised", ' ', "").replace("Proposal revised.", "A revised proposal.");
+            let revision = if revise_options {
+                base.replace("A: original option.", "A: revised option.")
+            } else {
+                base.replace("Proposal revised.", "A revised proposal.")
+            };
+            let heading = if revise_options {
+                "Proposal revised."
+            } else {
+                "A revised proposal."
+            };
             write(&wt, &revision);
             commit(&wt, "revise", 2);
             let finished = BTreeSet::from(["feat/done".to_string()]);
-            let assert_pages = || {
-                let seen = shown(&tree.root, &finished);
+            let assert_pages = |finished: &BTreeSet<String>| {
+                let seen = shown(&tree.root, finished);
                 for (path, at, scope) in [
                     (DOC.to_string(), &tree.root, ""),
                     (format!("@feat~done/{DOC}"), &wt, "feat~done"),
                 ] {
-                    let cards = &seen.snapshot.pages[&path];
-                    assert_eq!(cards.iter().filter(|c| c.slug == "revised").count(), 1);
-                    assert_eq!(
-                        cards.iter().find(|c| c.slug == "revised").unwrap().text,
-                        "A revised proposal."
-                    );
+                    let cards = seen
+                        .snapshot
+                        .pages
+                        .get(&path)
+                        .map_or(&[][..], Vec::as_slice);
                     let page = docview::document_showing(&Render::new(at), DOC, scope, &[], cards)
                         .unwrap();
+                    assert_eq!(
+                        page.cards.iter().filter(|c| c.slug == "revised").count(),
+                        1,
+                        "{path}: one rendered card"
+                    );
                     assert!(
-                        page.sections
-                            .iter()
-                            .any(|s| s.html.contains("A revised proposal.")),
+                        page.sections.iter().any(|s| s.html.contains(heading)),
                         "{path}"
                     );
+                    if revise_options {
+                        assert!(
+                            page.threads["revised"].html.contains("A: revised option."),
+                            "{path}: revised option when finished={finished:?}"
+                        );
+                    }
                 }
                 seen
             };
-            let before = assert_pages();
+            let live = assert_pages(&BTreeSet::new());
+            assert_eq!(
+                live.snapshot.queue.waiting[0].doc,
+                format!("@feat~done/{DOC}")
+            );
+            let before = assert_pages(&finished);
             assert_eq!(before.waiting, ["revised"]);
             assert_eq!(
                 before.snapshot.queue.waiting[0].doc,
@@ -557,8 +591,17 @@ pub(super) fn a_finished_revision_stays_one_card_until_its_answer_lands() {
                 [DOC],
                 "the landing reader keeps the answer until committed"
             );
-            let answered = assert_pages();
+            let answered = assert_pages(&finished);
             assert_eq!(answered.agent, ["revised"]);
+            for path in [DOC.to_string(), format!("@feat~done/{DOC}")] {
+                assert!(
+                    answered.snapshot.pages[&path][0]
+                        .raw
+                        .iter()
+                        .any(|line| line.contains("Keep the revision")),
+                    "{path}: the owner's answer stays with the revision"
+                );
+            }
             commit(&wt, "carry owner answer", 3);
             assert!(symphony::landing::owner_lines_left(&wt).is_empty());
             command(
@@ -576,7 +619,10 @@ pub(super) fn a_finished_revision_stays_one_card_until_its_answer_lands() {
             );
             let (committed, _) = status_and_page(&tree.root);
             assert_eq!(committed, states(&[("revised", "approved")]));
-            assert!(tree.read(DOC).contains("A revised proposal."));
+            assert!(tree.read(DOC).contains(heading));
+            if revise_options {
+                assert!(tree.read(DOC).contains("A: revised option."));
+            }
             assert!(tree.read(DOC).contains("Keep the revision"));
         },
     );

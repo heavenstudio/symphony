@@ -453,7 +453,12 @@ fn save_routing_and_page_agree_on_which_cards_main_closed() {
 
 #[test]
 fn a_finished_revision_and_its_answer_stay_one_card_until_landed() {
-    landed::a_finished_revision_stays_one_card_until_its_answer_lands();
+    landed::a_finished_revision_stays_one_card_until_its_answer_lands(false);
+}
+
+#[test]
+fn a_finished_option_revision_and_its_answer_stay_one_card_until_landed() {
+    landed::a_finished_revision_stays_one_card_until_its_answer_lands(true);
 }
 
 #[test]

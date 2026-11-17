@@ -479,3 +479,32 @@ fn a_copy_is_changed_by_anything_but_the_owners_dated_lines() {
     let dropped = card("- [ ] **c** — Pick one.\n");
     assert!(changed_since(&dropped, &posted), "a line taken out");
 }
+
+#[test]
+fn rewriting_existing_proposal_content_differs_from_appending_a_reply() {
+    let original = card(&format!(
+        "{POSTED}  [2026-11-11 10:01] agent — A: original option.\n    With details.\n"
+    ));
+    let changed = |text: &str| rewrites(&card(text), &original.text, &original.raw);
+    let source = markdown(&original);
+    assert!(!changed(&source));
+    assert!(changed(&source.replace("Pick one.", "Pick two.")));
+    assert!(
+        changed(&source.replace("original option", "revised option")),
+        "the heading stays the same"
+    );
+    assert!(
+        changed(&source.replace("With details.", "New details.")),
+        "a continuation is proposal content too"
+    );
+    assert!(changed(POSTED), "removing an existing option");
+    assert!(!changed(&format!(
+        "{source}  [2026-11-11 11:00] agent — A reply.\n"
+    )));
+    assert!(!changed(&format!(
+        "{source}\n  [2026-11-11 11:00] owner · question — Why?\n"
+    )));
+    assert!(!changed(&format!(
+        "{source}  <!-- review:unseen-owner aa:1 bb:1 -->\n"
+    )));
+}

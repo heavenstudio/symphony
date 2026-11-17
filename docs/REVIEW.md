@@ -87,9 +87,10 @@ main's, or one main changed after the branch forked, is skipped.
   says is done or cancelled
   (every task that names the branch: the task named like it, and the tasks that record it as their
   executor's branch) keeps its posted revisions of main's proposal text until it lands, as a live
-  branch does: the page and the queue draw the same revised card, and an answer saved from either
-  belongs to that branch. Its other cards keep only what the owner said there and the answers
-  under it (below).
+  branch does, including rewrites of options or body content under an unchanged heading. A plain
+  appended reply keeps the existing proposal. The page and the queue draw the same revised card,
+  and an answer saved from either belongs to that branch. Its other cards keep only what the
+  owner said there and the answers under it (below).
 - **One card.** A card main holds and a branch posted is one card wherever the owner reads it: the queue,
   main's page and the branch's page all show both copies' lines in time order, so the owner's line and the
   agent's answer show wherever either was written. Its mark is that of the copy whose latest verdict line

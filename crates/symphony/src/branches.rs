@@ -608,22 +608,28 @@ fn tree_scan(tree: &Tree, main_shapes: &Shapes, project: &Project, standing: Sta
                 continue;
             }
             marks.own.insert(posted.slug.clone());
-            let revises_main = main
-                .is_some_and(|copies| copies.iter().all(|copy| copy.text != posted.text))
-                && forked
-                    .get(&posted.slug)
-                    .is_none_or(|copies| copies.iter().all(|copy| copy.text != posted.text));
-            if standing == Standing::Finished && !revises_main {
-                // New cards and replies on the same proposal keep only the owner's thread.
-                // Revised proposal text stays the branch's until it lands, as its page draws it.
-                out.cards.extend(finished_thread(
-                    tree,
-                    &doc,
-                    worktree.unwrap_or(posted),
-                    main_shapes,
-                    &forked,
-                ));
-                continue;
+            if standing == Standing::Finished {
+                let revises_main = main.is_some_and(|copies| {
+                    copies
+                        .iter()
+                        .all(|copy| one::rewrites(posted, &copy.text, &copy.lines))
+                }) && forked.get(&posted.slug).is_none_or(|copies| {
+                    copies
+                        .iter()
+                        .all(|copy| one::rewrites(posted, &copy.text, &copy.lines))
+                });
+                if !revises_main {
+                    // New cards and replies on the same proposal keep only the owner's thread.
+                    // Rewritten headings or body content stay the branch's until it lands.
+                    out.cards.extend(finished_thread(
+                        tree,
+                        &doc,
+                        worktree.unwrap_or(posted),
+                        main_shapes,
+                        &forked,
+                    ));
+                    continue;
+                }
             }
             let card = if owner.is_empty() {
                 posted.clone()
