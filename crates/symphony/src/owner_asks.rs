@@ -153,13 +153,12 @@ fn read_card(ask: &Ask, reading: &Reading) -> Read {
     {
         return Read::Waiting;
     }
-    let mut held: Vec<&str> = reading
+    let held = reading
         .held
         .keys()
         .filter(|(page, slug)| slug == card && on(page))
         .map(|(page, _)| page.as_str())
-        .collect();
-    held.sort_by_key(|page| (*page != shown, *page != path));
+        .min_by_key(|page| (*page != shown, *page != path));
     let gone = |main: &str| match tree {
         Some(branch) if !reading.trees.contains_key(&tree_id(branch)) => {
             format!("the worktree of {branch} is gone, and {main}")
@@ -167,7 +166,7 @@ fn read_card(ask: &Ask, reading: &Reading) -> Read {
         Some(branch) => format!("card {card} is not on {branch}'s {path}, and {main}"),
         None => format!("{path} has no card {card}"),
     };
-    match held.first() {
+    match held {
         Some(page) => Read::Answered(credit(ask, reading, "card", card), format!("{page}#{card}")),
         None if held_at(path).is_some() => Read::Gone(gone(&format!(
             "main's copy of card {card} does not carry the owner's line"
