@@ -163,31 +163,34 @@ pub(crate) fn mixed(mut waiting: Vec<Card>) -> Vec<Card> {
 }
 
 fn eligible(docs: &[Doc], plugins: &Plugins) -> BTreeMap<String, Entry> {
-    docs.iter()
-        .flat_map(|doc| {
-            doc.decisions.iter().filter_map(|card| {
-                let group = card.group(plugins);
-                matches!(group, Group::Decide | Group::Confirm).then(|| {
-                    (
-                        key(&doc.path, &card.slug),
-                        Entry {
-                            path: doc.path.clone(),
-                            group: group.key().into(),
-                            owner_lines: card
-                                .entries()
-                                .into_iter()
-                                .filter(|e| e.who == Who::Owner)
-                                .map(|e| format!("{:?}", e))
-                                .collect(),
-                            until: 0,
-                            position: 0,
-                            remaining: BTreeSet::new(),
-                        },
-                    )
-                })
+    let entries = docs.iter().flat_map(|doc| {
+        doc.decisions.iter().filter_map(|card| {
+            let group = card.group(plugins);
+            matches!(group, Group::Decide | Group::Confirm).then(|| {
+                (
+                    key(&doc.path, &card.slug),
+                    Entry {
+                        path: doc.path.clone(),
+                        group: group.key().into(),
+                        owner_lines: card
+                            .entries()
+                            .into_iter()
+                            .filter(|e| e.who == Who::Owner)
+                            .map(|e| format!("{:?}", e))
+                            .collect(),
+                        until: 0,
+                        position: 0,
+                        remaining: BTreeSet::new(),
+                    },
+                )
             })
         })
-        .collect()
+    });
+    let mut eligible = BTreeMap::new();
+    for (key, entry) in entries {
+        eligible.insert(key, entry);
+    }
+    eligible
 }
 
 fn prune(order: &mut Order, cards: &BTreeMap<String, Entry>, now: u64) {
@@ -423,4 +426,33 @@ pub fn now() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs()
+}
+
+#[cfg(test)]
+mod collection_tests {
+    use super::*;
+
+    #[test]
+    fn eligibility_keeps_lexical_keys_and_the_last_copy_of_a_card() {
+        let doc = |text: &str| Doc {
+            path: "docs/A.md".into(),
+            comments: Vec::new(),
+            decisions: crate::register::parse_decisions(&text.lines().collect::<Vec<_>>()),
+        };
+        let cards = eligible(
+            &[
+                doc("- [ ] **z** — Last key.\n- [ ] **a** — First copy.\n"),
+                doc(
+                    "- [?] **a** — Last copy.\n  [2026-10-20 11:00] owner · question — Newer.\n  [2026-10-20 12:00] agent — Answer.\n- [x] **done** — Settled.\n",
+                ),
+            ],
+            &Plugins::default(),
+        );
+        let keys: Vec<_> = cards.keys().map(String::as_str).collect();
+        assert_eq!(keys, ["a", "z"]);
+        assert_eq!(cards["a"].owner_lines.len(), 1);
+        assert!(cards["a"].owner_lines[0].contains("Newer."));
+        assert!(!cards["a"].owner_lines[0].contains("Older."));
+        assert!(eligible(&[], &Plugins::default()).is_empty());
+    }
 }

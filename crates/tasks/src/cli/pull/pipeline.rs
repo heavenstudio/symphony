@@ -278,7 +278,7 @@ pub(super) fn review_alarm(
             })
         })
         .collect();
-    longest.sort_by(|a, b| {
+    crate::order::sort_by(&mut longest, &|a, b| {
         let (a_task, b_task) = (&a.task, &b.task);
         (a.since.total_cmp(&b.since))
             .then_with(|| (a_task.priority, &a_task.slug).cmp(&(b_task.priority, &b_task.slug)))

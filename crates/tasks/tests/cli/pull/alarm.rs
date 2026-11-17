@@ -568,3 +568,33 @@ fn adversarial_an_instruction_taken_from_under_its_task_counts_from_then_on() {
     }
     assert_eq!(c.alarm_at(taken + HOUR), None, "an hour at twice clears it");
 }
+
+#[test]
+fn equally_old_review_tasks_use_priority_then_slug_before_truncating() {
+    let c = Case::new();
+    for n in (0..7).rev() {
+        let slug = format!("sim/review-{n}");
+        let mut task = NewTask::new(&slug, &slug, "owner");
+        if n == 6 {
+            task.priority = 0;
+        }
+        c.task_with(task, "review");
+    }
+    let digest = c.digest_at(c.f.now() + 4.0 * HOUR);
+    let raised = digest.alarm.expect("seven in review and none in progress");
+    let slugs: Vec<_> = raised
+        .longest
+        .iter()
+        .map(|item| item.task.slug.as_str())
+        .collect();
+    assert_eq!(
+        slugs,
+        [
+            "sim/review-6",
+            "sim/review-0",
+            "sim/review-1",
+            "sim/review-2",
+            "sim/review-3"
+        ]
+    );
+}

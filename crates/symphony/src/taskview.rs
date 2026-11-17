@@ -107,13 +107,12 @@ pub fn questions(
     store: &symphony_board::Store,
     open: &[String],
 ) -> Result<BTreeMap<String, u32>, symphony_board::Error> {
-    PEOPLE
-        .iter()
-        .map(|person| {
-            let waiting = store.questions_waiting(person, open)?;
-            Ok(((*person).to_string(), dashboard::count(waiting.len())))
-        })
-        .collect()
+    let mut questions = BTreeMap::new();
+    for person in PEOPLE {
+        let waiting = store.questions_waiting(person, open)?;
+        questions.insert(person.to_string(), dashboard::count(waiting.len()));
+    }
+    Ok(questions)
 }
 
 /// `message` on the wire, when it is a reviewer's verdict ([`symphony_board::reviewer_verdict`]).
@@ -691,20 +690,17 @@ pub fn set_field(
 fn fields(
     stored: &BTreeMap<String, BTreeMap<String, serde_json::Value>>,
 ) -> BTreeMap<String, BTreeMap<String, symphony_api::FieldValue>> {
-    stored
-        .iter()
-        .map(|(plugin, fields)| {
-            let values = fields
-                .iter()
-                .filter_map(|(name, value)| {
-                    serde_json::from_value(value.clone())
-                        .ok()
-                        .map(|value| (name.clone(), value))
-                })
-                .collect();
-            (plugin.clone(), values)
-        })
-        .collect()
+    let mut plugins = BTreeMap::new();
+    for (plugin, fields) in stored {
+        let mut values = BTreeMap::new();
+        for (name, value) in fields {
+            if let Ok(value) = serde_json::from_value(value.clone()) {
+                values.insert(name.clone(), value);
+            }
+        }
+        plugins.insert(plugin.clone(), values);
+    }
+    plugins
 }
 
 #[cfg(test)]
