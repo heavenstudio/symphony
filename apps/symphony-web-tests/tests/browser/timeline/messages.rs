@@ -94,6 +94,10 @@ fn desktop_tab_traversal_skips_phone_message_controls_and_restores_them_when_nar
     ));
     view(&mut page, 1280, false);
     assert!(page.wait_for(wide, SHOWN));
+    assert_eq!(
+        page.eval("document.activeElement.id"),
+        json!("tl-message-choice")
+    );
 }
 
 fn history_fixture() -> Value {

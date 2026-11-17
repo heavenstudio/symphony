@@ -797,7 +797,13 @@ export function TimelineView({ timeline, onDrawn, thread, details }: ViewProps):
   }, [timeline, crossings, all, clipped]);
   // biome-ignore lint/correctness/useExhaustiveDependencies: history updates, width crossings, collapse and expansion reflow the selected row
   useLayoutEffect(() => {
-    if (selected === null || isWide()) return;
+    if (isWide()) {
+      if (body.current?.querySelector(".tl-message-row:focus")) {
+        document.getElementById("tl-message-choice")?.focus();
+      }
+      return;
+    }
+    if (selected === null) return;
     const box = body.current;
     const row = box?.querySelector(`.tl-message-row[data-message="${selected}"]`);
     if (box && row)
