@@ -137,6 +137,33 @@ fn shot(page: &mut crate::Chrome, name: &str) {
 }
 
 #[test]
+fn the_board_fills_the_window_for_both_its_ghost_and_its_cards() {
+    for width in [390, 1600] {
+        let site = Site::start(dist(), &crate::common::fixture("board.json"));
+        site.set_json("/api/task-board", &listing());
+        site.hold_route("/api/task-board", true);
+        let Some(mut page) = chrome() else { return };
+        page.call(
+            "Emulation.setDeviceMetricsOverride",
+            json!({"width":width,"height":900,"deviceScaleFactor":1,"mobile":width<=760}),
+        );
+        page.open(&site.url("/tasks"));
+        assert!(page.wait_for(
+            "document.querySelector('.waiting-board.waiting-ghost') !== null",
+            SHOWN
+        ));
+        let page_width = "Math.round(document.querySelector('main').getBoundingClientRect().width)";
+        assert_eq!(page.eval(page_width), json!(width), "{width}: the ghost");
+        site.hold_route("/api/task-board", false);
+        assert!(page.wait_for(
+            "document.querySelector('.waiting-board .taskcard') !== null",
+            SHOWN
+        ));
+        assert_eq!(page.eval(page_width), json!(width), "{width}: the cards");
+    }
+}
+
+#[test]
 fn named_waits_stay_in_their_stage_in_order_with_parked_last_and_no_unnamed_block() {
     let site = Site::start(dist(), &crate::common::fixture("board.json"));
     site.set_json("/api/task-board", &listing());
