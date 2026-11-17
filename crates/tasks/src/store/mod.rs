@@ -8,7 +8,7 @@
 //! optimistic conflict) or finds itself stale reads and decides again.
 
 use crate::health::{self, EXECUTING, Health};
-pub(crate) use crate::pyjson::repr;
+pub(crate) use crate::quote::repr;
 use crate::rows::{LinkRow, MessageRow, RoleRow, SessionRow, TaskRow};
 use crate::rpc::{Client, DbError};
 use crate::schema;

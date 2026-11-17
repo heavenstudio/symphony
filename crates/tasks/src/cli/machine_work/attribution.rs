@@ -71,26 +71,6 @@ fn assign(
     }
 }
 
-pub(crate) fn json(work: &Snapshot) -> crate::pyjson::Py {
-    fn convert(value: serde_json::Value) -> crate::pyjson::Py {
-        use crate::pyjson::Py;
-        use serde_json::Value;
-        match value {
-            Value::Null => Py::Null,
-            Value::Bool(b) => Py::Bool(b),
-            Value::Number(n) => {
-                if let Some(signed) = n.as_i64() {
-                    Py::Int(signed)
-                } else if let Some(unsigned) = n.as_u64() {
-                    Py::UInt(unsigned)
-                } else {
-                    Py::Float(n.as_f64().unwrap_or_default())
-                }
-            }
-            Value::String(s) => Py::Str(s),
-            Value::Array(a) => Py::List(a.into_iter().map(convert).collect()),
-            Value::Object(o) => Py::Obj(o.into_iter().map(|(k, v)| (k, convert(v))).collect()),
-        }
-    }
-    convert(serde_json::to_value(work).expect("machine work records serialize"))
+pub(crate) fn json(work: &Snapshot) -> serde_json::Value {
+    serde_json::to_value(work).expect("machine work records serialize")
 }

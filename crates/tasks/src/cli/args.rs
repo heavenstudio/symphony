@@ -6,7 +6,7 @@
 //! the command or choice nearest to a mistyped one ([`nearest`]).
 
 use super::usage;
-use crate::pyjson::repr as pyrepr;
+use crate::quote::repr as pyrepr;
 use std::collections::BTreeMap;
 use symphony_args::nearest;
 

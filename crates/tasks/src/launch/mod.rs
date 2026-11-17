@@ -268,13 +268,13 @@ pub fn launch(store: &Store, hc: &dyn Hc, m: &Machine, ask: &Ask) -> Result<Star
     if role != "executor" && role != "reviewer" {
         return Err(Error::Refused(format!(
             "a launched session is an executor or a reviewer, not {}",
-            crate::pyjson::repr(role)
+            crate::quote::repr(role)
         )));
     }
     if ask.beside.is_some() && role != "reviewer" {
         return Err(Error::Refused(format!(
             "only a reviewer joins beside another, not {}",
-            crate::pyjson::repr(role)
+            crate::quote::repr(role)
         )));
     }
     // Through a recipe an agent runs unasked: no word of the launcher's in the first message, and

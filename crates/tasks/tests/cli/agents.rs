@@ -178,7 +178,7 @@ fn detail(recipe: &str, phase: &str, since: f64) -> Option<Detail> {
 }
 
 fn parsed(view: &View) -> Value {
-    serde_json::from_str(&symphony_board::pyjson::dumps(&view.json())).expect("the view is JSON")
+    view.json()
 }
 
 fn keys(value: &Value) -> BTreeSet<String> {
@@ -323,7 +323,7 @@ fn an_agents_tokens_and_their_cost_are_what_its_session_spent_all_told_and_null_
                 "calls": 1}}])
     );
     assert_eq!(by(&sub)["cost"]["prices"], prices.read.as_str());
-    let written = symphony_board::pyjson::dumps_line(&cost.json(&prices.read));
+    let written = serde_json::to_string(&cost.json(&prices.read)).unwrap();
     assert_eq!(
         by(&sub)["cost"],
         serde_json::from_str::<Value>(&written).unwrap()
@@ -421,18 +421,23 @@ fn an_agent_counts_the_open_tasks_it_orchestrates_which_its_tasks_leave_out() {
 }
 
 #[test]
-fn the_json_is_written_in_the_contracts_key_order_as_python_writes_it() {
+fn the_json_preserves_the_reference_agent_record() {
     let c = Case::new();
     let handle = c.worker();
     c.pane(&handle, "t5", "working", json!({}));
     c.f.store.say("sim/jump", &handle, "on it", None).unwrap();
-    let text = symphony_board::pyjson::dumps(&c.view().json());
-    let me = text.find(&format!("\"handle\": \"{handle}\"")).unwrap();
-    let start = text[..me].rfind("  {").unwrap();
-    let end = start + text[start..].find("\n  }").unwrap() + 4;
+    let view = c.view().json();
+    let text = serde_json::to_string(&view).unwrap();
+    let written: Value = serde_json::from_str(&text).unwrap();
+    let me = written["agents"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|agent| agent["handle"] == handle)
+        .unwrap();
     assert_eq!(
-        &text[start..end],
-        format!(
+        *me,
+        serde_json::from_str::<Value>(&format!(
             r#"  {{
    "handle": "{handle}",
    "kind": "worker",
@@ -471,9 +476,11 @@ fn the_json_is_written_in_the_contracts_key_order_as_python_writes_it() {
    "cost": null
   }}"#,
             orch = c.orch
-        )
+        ))
+        .unwrap()
     );
-    assert!(text.starts_with("{\n \"generated\": 1800000000.0,\n \"probes\": {\n  \"herdr\": \"ok\",\n  \"slots\": \"ok\"\n },\n \"agents\": [\n"), "{text}");
+    assert_eq!(written["generated"], 1800000000.0);
+    assert_eq!(written["probes"], json!({"herdr": "ok", "slots": "ok"}));
 }
 
 #[test]

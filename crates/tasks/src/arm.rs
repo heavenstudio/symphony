@@ -24,7 +24,7 @@ pub fn named(name: &str) -> Result<&str, String> {
         return Err(format!(
             "an arm is one word of lowercase letters, digits and dashes, at most {LONGEST} long, \
              such as control, not {}",
-            crate::pyjson::repr(name)
+            crate::quote::repr(name)
         ));
     }
     Ok(name)
@@ -77,7 +77,7 @@ mod tests {
         ] {
             let why = named(name).expect_err(name);
             assert!(why.starts_with("an arm is one word"), "{why}");
-            assert!(why.ends_with(&crate::pyjson::repr(name)), "{why}");
+            assert!(why.ends_with(&crate::quote::repr(name)), "{why}");
         }
     }
 

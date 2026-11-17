@@ -113,7 +113,7 @@ fn a_subagents_beats_give_its_own_transcripts_tokens_once_from_its_binding_on() 
     let json = run(&env, &["show", "sim/jump", "--json"], "");
     let json: Value = serde_json::from_str(&json.out).unwrap();
     assert_eq!(json["tokens"]["cost"]["prices"], prices.read.as_str());
-    let written = symphony_board::pyjson::dumps_line(&cost.json(&prices.read));
+    let written = serde_json::to_string(&cost.json(&prices.read)).unwrap();
     assert_eq!(
         json["tokens"]["cost"],
         serde_json::from_str::<Value>(&written).unwrap()

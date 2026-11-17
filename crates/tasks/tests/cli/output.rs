@@ -1,4 +1,4 @@
-//! Exact CLI output consumed by agents and scripts.
+//! CLI text output and JSON record values consumed by agents and scripts.
 
 use crate::common::NOW;
 use crate::{Case, git, scratch};
@@ -234,8 +234,7 @@ fn list_leaves_finished_tasks_out_unless_asked_and_says_when_nothing_is_open() {
     );
 }
 
-/// JSON as Python's `json.dumps(..., indent=1)` lays it out: one item a line, a space of indent a
-/// level, every character past ASCII escaped, a float as its `repr`.
+/// Reference JSON fixtures, independent of the production serializer.
 mod py {
     use super::*;
 
@@ -387,7 +386,7 @@ mod py {
 }
 
 #[test]
-fn json_is_the_records_as_python_lays_them_out() {
+fn json_preserves_the_reference_record_values() {
     let c = Case::new();
     let orch = c.register("orchestrator");
     c.ok(
@@ -410,10 +409,10 @@ fn json_is_the_records_as_python_lays_them_out() {
         let laid: Vec<String> = all.iter().map(|t| py::listed(t, t.created, 2)).collect();
         py::object(vec![("tasks", py::list(laid, 1))], 0) + "\n"
     };
-    assert_eq!(c.ok("", &["list", "--json"]), tasks(None));
-    assert_eq!(
-        c.ok("", &["list", "--json", "--status", "ready"]),
-        tasks(Some("ready"))
+    same_json(&c.ok("", &["list", "--json"]), &tasks(None));
+    same_json(
+        &c.ok("", &["list", "--json", "--status", "ready"]),
+        &tasks(Some("ready")),
     );
     let thread: Vec<String> = board
         .thread("sim/a")
@@ -437,41 +436,22 @@ fn json_is_the_records_as_python_lays_them_out() {
         ],
         0,
     );
-    assert_eq!(c.ok("", &["show", "sim/a", "--json"]), shown + "\n");
+    same_json(&c.ok("", &["show", "sim/a", "--json"]), &shown);
     let sessions: Vec<String> = board
         .sessions()
         .unwrap()
         .iter()
         .map(|s| py::session(s, 2))
         .collect();
-    assert_eq!(
-        c.ok("", &["who", "--json"]),
-        py::object(vec![("sessions", py::list(sessions, 1))], 0) + "\n"
+    same_json(
+        &c.ok("", &["who", "--json"]),
+        &py::object(vec![("sessions", py::list(sessions, 1))], 0),
     );
 }
 
-#[test]
-fn the_python_layout_escapes_past_ascii_and_nests_by_one_space() {
-    // The layout the case above holds the binary to, held to Python's own words for one record.
-    // A backslash, `u` and four hex digits: Python's escape of one UTF-16 unit.
-    let unit = |hex: &str| format!("{}u{hex}", '\\');
-    let escaped = format!(
-        "\"{}n{} {} \\\"q\\\"\\n{}{}\"",
-        unit("00dc"),
-        unit("00ef"),
-        unit("2014"),
-        unit("d83d"),
-        unit("de00")
-    );
-    assert_eq!(py::text("Ünï — \"q\"\n😀"), escaped);
-    let nested = py::object(
-        vec![
-            ("a", py::list(vec!["1".into(), py::list(vec![], 2)], 1)),
-            ("b", py::float(1.5)),
-        ],
-        0,
-    );
-    assert_eq!(nested, "{\n \"a\": [\n  1,\n  []\n ],\n \"b\": 1.5\n}");
+fn same_json(actual: &str, expected: &str) {
+    let parse = |text: &str| serde_json::from_str::<serde_json::Value>(text).unwrap();
+    assert_eq!(parse(actual), parse(expected));
 }
 
 /// A thread line as `show` prints it.

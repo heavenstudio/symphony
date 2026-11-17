@@ -5,9 +5,9 @@
 
 use super::{Context, Stop};
 use crate::cli::shape;
-use crate::pyjson::{self, Py};
 use crate::store::asks::age;
 use crate::{Ask, Store};
+use serde_json::{Value, json};
 
 /// How far back `--all` lists the answered asks.
 const DAY: f64 = 86_400.0;
@@ -19,11 +19,10 @@ pub(super) fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
     let now = store.now();
     let asks = store.asks(c.parsed.flag("all").then_some(now - DAY))?;
     if c.parsed.flag("json") {
-        let json = Py::obj(vec![(
-            "asks",
-            Py::List(asks.iter().map(|a| shape::ask(a, now)).collect()),
-        )]);
-        c.say(&pyjson::dumps(&json));
+        let json = json!({
+            "asks": Value::Array(asks.iter().map(|a| shape::ask(a, now)).collect()),
+        });
+        c.say(&serde_json::to_string_pretty(&json).expect("JSON values serialize"));
         return Ok(());
     }
     if !asks.iter().any(|a| a.open) {
@@ -42,7 +41,7 @@ fn close(store: &Store, c: &mut Context) -> Result<(), Stop> {
     let id: i64 = id.trim().trim_start_matches('#').parse().map_err(|_| {
         Stop::Refused(format!(
             "name the ask by its number: `just tasks asks close ID \"WHY\"`, not {}",
-            crate::pyjson::repr(id)
+            crate::quote::repr(id)
         ))
     })?;
     let a = store.close_ask(id, &actor, c.parsed.get("why").unwrap_or(""))?;
