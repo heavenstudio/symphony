@@ -196,6 +196,27 @@ fn a_transcript_whose_meta_names_no_fork_or_cannot_be_read_is_read_whole() {
 }
 
 #[test]
+fn a_meta_names_a_fork_only_by_true_and_the_call_by_its_text() {
+    let folder = Folder::new("meta-kinds");
+    let transcript = folder.path("agent-a1.jsonl");
+    for (said, until) in [
+        (
+            r#"{"isFork": true, "toolUseId": "toolu_fork"}"#,
+            Some("toolu_fork"),
+        ),
+        (r#"{"isFork": "true", "toolUseId": "toolu_fork"}"#, None),
+        (r#"{"isFork": 1, "toolUseId": "toolu_fork"}"#, None),
+        (r#"{"isFork": false, "toolUseId": "toolu_fork"}"#, None),
+        (r#"{"isFork": true, "toolUseId": 5}"#, None),
+        (r#"{"isFork": true, "toolUseId": ""}"#, None),
+    ] {
+        meta(&transcript, said);
+        assert_eq!(inherited_until(&transcript).as_deref(), until, "{said}");
+    }
+    assert_eq!(inherited_until(&folder.path("s-1.txt")), None);
+}
+
+#[test]
 fn a_line_that_is_not_text_is_passed_over_and_what_follows_is_read() {
     let folder = Folder::new("bytes");
     let (ledgers, transcript) = (folder.path("usage"), folder.path("s-1.jsonl"));
@@ -283,6 +304,66 @@ fn kinds_models_and_speeds_are_kept_apart_and_synthetic_messages_are_no_calls() 
                 tokens: tokens(5, 0, 0, 0, 6, 1),
             },
         ]
+    );
+}
+
+#[test]
+fn a_field_of_another_kind_passes_its_line_over_and_a_null_one_reads_as_absent() {
+    let base = || {
+        json!({"type": "assistant", "message": {"id": "m1", "model": "claude-opus-5-5",
+            "usage": {"input_tokens": 1, "cache_creation_input_tokens": 30, "cache_read_input_tokens": 3,
+                      "output_tokens": 4, "speed": "fast",
+                      "cache_creation": {"ephemeral_5m_input_tokens": 10, "ephemeral_1h_input_tokens": 20}}}})
+    };
+    let read = |line: &Value| message(line.to_string().as_bytes());
+    let fast = |t: Tokens| Spent {
+        model: "claude-opus-5-5".into(),
+        speed: "fast".into(),
+        tokens: t,
+    };
+    assert_eq!(
+        read(&base()),
+        Some(("m1".into(), fast(tokens(1, 10, 20, 3, 4, 1))))
+    );
+    let usage = ["message", "usage"];
+    let split = ["message", "usage", "cache_creation"];
+    for (at, key, value) in [
+        (&usage[..], "input_tokens", json!("1")),
+        (&usage[..], "output_tokens", json!(4.5)),
+        (&usage[..], "cache_read_input_tokens", json!(-3)),
+        (&usage[..], "cache_creation_input_tokens", json!(true)),
+        (&split[..], "ephemeral_1h_input_tokens", json!("20")),
+        (&usage[..], "cache_creation", json!(30)),
+        (&usage[..], "speed", json!(1)),
+        (&["message"][..], "model", json!(["claude-opus-5-5"])),
+        (&["message"][..], "id", json!(7)),
+        (&["message"][..], "usage", json!("none")),
+        (&[][..], "type", json!(["assistant"])),
+    ] {
+        let mut line = base();
+        let mut field = &mut line;
+        for step in at {
+            field = &mut field[*step];
+        }
+        field[key] = value.clone();
+        assert_eq!(read(&line), None, "{key} = {value}");
+    }
+    let mut nulls = base();
+    for key in ["input_tokens", "cache_creation", "speed"] {
+        nulls["message"]["usage"][key] = Value::Null;
+    }
+    nulls["message"]["model"] = Value::Null;
+    // No split: the cache write is the five-minute kind; no speed: standard; no model: "".
+    assert_eq!(
+        read(&nulls),
+        Some((
+            "m1".into(),
+            Spent {
+                model: String::new(),
+                speed: "standard".into(),
+                tokens: tokens(0, 30, 0, 3, 4, 1),
+            }
+        ))
     );
 }
 

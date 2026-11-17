@@ -398,7 +398,7 @@ impl Replay {
 pub fn stages(facts: Facts, lines: &[Line], now: f64) -> Stages {
     let mut seen = HashSet::new();
     let mut ordered: Vec<&Line> = lines.iter().filter(|l| seen.insert(l.id)).collect();
-    ordered.sort_by_key(|line| line.id);
+    ordered.sort_unstable_by_key(|line| line.id);
     let creator = ordered
         .iter()
         .find(|line| line.kind == "system")
@@ -549,7 +549,7 @@ pub struct Hold {
 pub fn holds(lines: &[Line], created: f64) -> Vec<Hold> {
     let mut seen = HashSet::new();
     let mut ordered: Vec<&Line> = lines.iter().filter(|l| seen.insert(l.id)).collect();
-    ordered.sort_by_key(|line| line.id);
+    ordered.sort_unstable_by_key(|line| line.id);
     let mut found: Vec<Hold> = Vec::new();
     let end = |found: &mut Vec<Hold>, handle: &str, role: Option<&str>, at: f64| {
         for hold in found.iter_mut().filter(|hold| {

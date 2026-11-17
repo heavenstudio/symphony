@@ -9,7 +9,7 @@
 //! to come to stay is given it. A session that only registered is given nothing by the board's own
 //! choice. A release that would leave open work with no orchestrator is refused.
 
-use super::common::{Fixture, RawWrite as _, refused};
+use super::common::{Backend, Fixture, Seed, refused};
 use super::orchestrators::go_quiet_but;
 use symphony_board::cli::Env;
 use symphony_board::health::LIVE_SECONDS;
@@ -59,13 +59,22 @@ fn settle(f: &Fixture, handles: &[&str]) {
 /// `handles` on the waiting list a look of `tasks wait` puts its reader on, as a waiting
 /// orchestrator is, with no look of their own made (which would give what waits).
 fn listen(f: &Fixture, handles: &[&str]) {
-    (f.store.client())
-        .write(
-            "FOR $h IN $handles { UPSERT type::record('callback_state', $h) SET handle = $h; };
-             UPSERT callback_state:chat SET waiting = array::union(waiting ?? [], $handles);",
-            serde_json::json!({"handles": handles}),
-        )
-        .unwrap();
+    let raw = f.store.raw();
+    for handle in handles {
+        let state = raw.row("callback_state", *handle);
+        state.put(serde_json::json!({"handle": handle})).unwrap();
+    }
+    let chat = raw.row("callback_state", "chat");
+    let mut waiting = match chat.field("waiting").unwrap() {
+        serde_json::Value::Array(waiting) => waiting,
+        _ => Vec::new(),
+    };
+    for handle in handles {
+        if !waiting.iter().any(|was| was == handle) {
+            waiting.push(serde_json::json!(handle));
+        }
+    }
+    chat.put(serde_json::json!({"waiting": waiting})).unwrap();
 }
 
 /// Whether a reader of the whole board, as the server's clock reads it, gave anything.
@@ -79,61 +88,207 @@ fn filed(f: &Fixture, slug: &str, by: &str) -> Option<String> {
     f.store.give_filed(slug, by, None).unwrap()
 }
 
-#[test]
-fn a_workers_follow_up_goes_to_the_orchestrator_of_the_task_it_works_on() {
-    let f = Fixture::empty();
-    let (amber, cobalt) = (f.session("orchestrator"), f.session("orchestrator"));
-    let worker = f.session("worker");
-    f.task("tools/feature");
-    f.task("tools/other");
-    f.store
-        .take_role("tools/feature", &amber, "orchestrator")
-        .unwrap();
-    f.store
-        .take_role("tools/other", &amber, "orchestrator")
-        .unwrap();
-    f.store.claim("tools/feature", &worker).unwrap();
-    // Rule 4 alone would pick cobalt, who holds none: the work the filer is on decides first.
-    assert_eq!(filed(&f, "tools/follow-up", &worker), Some(amber.clone()));
-    assert_eq!(orchestrators_of(&f, "tools/follow-up"), [amber.as_str()]);
-    assert_eq!(
-        f.said("tools/follow-up"),
-        [
-            format!("created by {worker}"),
-            format!("{amber} was given orchestrator (filed by {worker})"),
-        ]
-    );
-    // A reviewer's follow-up the same, and one filed under a held task is the tree's: no line.
-    let reviewer = f.session("reviewer");
-    f.store.move_to("tools/feature", "review", &worker).unwrap();
-    f.store
-        .take_role("tools/feature", &reviewer, "reviewer")
-        .unwrap();
-    assert_eq!(filed(&f, "tools/found", &reviewer), Some(amber.clone()));
-    f.task_with(NewTask {
-        parent: Some("tools/feature".into()),
-        ..NewTask::new("tools/feature/part", "Part", &worker)
-    });
-    let got = f
-        .store
-        .give_filed("tools/feature/part", &worker, None)
-        .unwrap();
-    assert_eq!(got, Some(amber.clone()));
-    assert_eq!(
-        f.said("tools/feature/part"),
-        [format!("created by {worker}")]
-    );
-    assert!(orchestrators_of(&f, "tools/feature/part").is_empty());
-    assert!(
-        orchestrators_of(&f, "tools/follow-up")
-            .iter()
-            .all(|h| *h != cobalt)
-    );
+on_both! {
+    fn a_workers_follow_up_goes_to_the_orchestrator_of_the_task_it_works_on(backend: Backend) {
+        let f = Fixture::on(backend, Seed::default());
+        let (amber, cobalt) = (f.session("orchestrator"), f.session("orchestrator"));
+        let worker = f.session("worker");
+        f.task("tools/feature");
+        f.task("tools/other");
+        f.store
+            .take_role("tools/feature", &amber, "orchestrator")
+            .unwrap();
+        f.store
+            .take_role("tools/other", &amber, "orchestrator")
+            .unwrap();
+        f.store.claim("tools/feature", &worker).unwrap();
+        // Rule 4 alone would pick cobalt, who holds none: the work the filer is on decides first.
+        assert_eq!(filed(&f, "tools/follow-up", &worker), Some(amber.clone()));
+        assert_eq!(orchestrators_of(&f, "tools/follow-up"), [amber.as_str()]);
+        assert_eq!(
+            f.said("tools/follow-up"),
+            [
+                format!("created by {worker}"),
+                format!("{amber} was given orchestrator (filed by {worker})"),
+            ]
+        );
+        // A reviewer's follow-up the same, and one filed under a held task is the tree's: no line.
+        let reviewer = f.session("reviewer");
+        f.store.move_to("tools/feature", "review", &worker).unwrap();
+        f.store
+            .take_role("tools/feature", &reviewer, "reviewer")
+            .unwrap();
+        assert_eq!(filed(&f, "tools/found", &reviewer), Some(amber.clone()));
+        f.task_with(NewTask {
+            parent: Some("tools/feature".into()),
+            ..NewTask::new("tools/feature/part", "Part", &worker)
+        });
+        let got = f
+            .store
+            .give_filed("tools/feature/part", &worker, None)
+            .unwrap();
+        assert_eq!(got, Some(amber.clone()));
+        assert_eq!(
+            f.said("tools/feature/part"),
+            [format!("created by {worker}")]
+        );
+        assert!(orchestrators_of(&f, "tools/feature/part").is_empty());
+        assert!(
+            orchestrators_of(&f, "tools/follow-up")
+                .iter()
+                .all(|h| *h != cobalt)
+        );
+    }
+
+    fn an_orchestrator_filing_takes_the_role_and_one_named_for_takes_it_instead(backend: Backend) {
+        let f = Fixture::on(backend, Seed::default());
+        let (amber, cobalt) = (f.session("orchestrator"), f.session("orchestrator"));
+        assert_eq!(filed(&f, "tools/mine", &amber), Some(amber.clone()));
+        assert_eq!(
+            f.said("tools/mine").last().unwrap(),
+            &format!("{amber} joined as orchestrator")
+        );
+        f.task_with(NewTask::new("tools/theirs", "Theirs", &amber));
+        let got = f
+            .store
+            .give_filed("tools/theirs", &amber, Some(&cobalt))
+            .unwrap();
+        assert_eq!(got, Some(cobalt.clone()));
+        assert_eq!(orchestrators_of(&f, "tools/theirs"), [cobalt.as_str()]);
+        assert_eq!(
+            f.said("tools/theirs").last().unwrap(),
+            &format!("{cobalt} was given orchestrator (filed by {amber})")
+        );
+    }
+
+    fn a_release_under_a_task_an_orchestrator_holds_above_it_goes(backend: Backend) {
+        let f = Fixture::on(backend, Seed::default());
+        let amber = f.session("orchestrator");
+        f.task("tools/a");
+        f.task_with(NewTask {
+            parent: Some("tools/a".into()),
+            ..NewTask::new("tools/a/part", "Part", "owner")
+        });
+        f.store
+            .take_role("tools/a", &amber, "orchestrator")
+            .unwrap();
+        // cobalt orchestrating the part below amber's task: amber holds it above, so it goes, and the
+        // part is amber's by the tree.
+        let cobalt = f.session("orchestrator");
+        f.store
+            .take_role("tools/a/part", &cobalt, "orchestrator")
+            .unwrap();
+        let part = f
+            .store
+            .release("tools/a/part", &cobalt, Some("orchestrator"))
+            .unwrap();
+        assert!(part.holders("orchestrator").is_empty());
+        assert!(
+            f.store.give_unowned(None).unwrap().is_empty(),
+            "nothing to give"
+        );
+    }
+
+    fn a_task_moved_out_from_under_its_orchestrators_task_stays_with_that_orchestrator(backend: Backend) {
+        let f = Fixture::on(backend, Seed::default());
+        let (amber, cobalt) = (f.session("orchestrator"), f.session("orchestrator"));
+        f.task("tools/a");
+        f.task_with(NewTask {
+            parent: Some("tools/a".into()),
+            ..NewTask::new("tools/a/part", "Part", "owner")
+        });
+        f.store
+            .take_role("tools/a", &amber, "orchestrator")
+            .unwrap();
+        // Moved to the top by anyone, it stays amber's, given at the move in the same write: rule 4
+        // would have picked cobalt, holding none.
+        let moved = f.store.set_parent("tools/a/part", None, &cobalt).unwrap();
+        assert_eq!(moved.holders("orchestrator"), [amber.as_str()]);
+        let thread = f.store.thread("tools/a/part").unwrap();
+        let said: Vec<(String, String)> = (thread.into_iter().rev().take(2).rev())
+            .map(|m| (m.sender, m.text))
+            .collect();
+        let moved_out =
+            format!("{amber} was given orchestrator (tools/a/part moved out from under tools/a)");
+        assert_eq!(said[1], (cobalt.clone(), moved_out), "{said:?}");
+        assert!(said[0].1.starts_with(&cobalt), "{said:?}");
+        assert!(f.store.give_unowned(None).unwrap().is_empty());
+        // Moved back under amber's task, it holds its own role: the move is the one line.
+        let lines = f.said("tools/a/part").len();
+        f.store
+            .set_parent("tools/a/part", Some("tools/a"), &amber)
+            .unwrap();
+        assert_eq!(f.said("tools/a/part").len(), lines + 1);
+        // Moved under another held task, the tree gives it: no give.
+        f.task("tools/b");
+        f.store
+            .take_role("tools/b", &cobalt, "orchestrator")
+            .unwrap();
+        f.task_with(NewTask {
+            parent: Some("tools/b".into()),
+            ..NewTask::new("tools/b/part", "Part", "owner")
+        });
+        let lines = f.said("tools/b/part").len();
+        f.store
+            .set_parent("tools/b/part", Some("tools/a"), "owner")
+            .unwrap();
+        assert!(orchestrators_of(&f, "tools/b/part").is_empty());
+        assert_eq!(f.said("tools/b/part").len(), lines + 1);
+        // The owner's move out from under a held task gives it too, as the board.
+        f.store.set_parent("tools/b/part", None, "owner").unwrap();
+        assert_eq!(orchestrators_of(&f, "tools/b/part"), [amber.as_str()]);
+        let line = f.store.thread("tools/b/part").unwrap().pop().unwrap();
+        assert_eq!(
+            (line.sender.as_str(), line.text),
+            (
+                "board",
+                format!("{amber} was given orchestrator (tools/b/part moved out from under tools/a)")
+            )
+        );
+    }
+
+    fn a_finished_task_moved_out_with_open_work_below_keeps_that_work_with_its_orchestrator(backend: Backend) {
+        let f = Fixture::on(backend, Seed::default());
+        let amber = f.session("orchestrator");
+        f.task("tools/a");
+        f.task_with(NewTask {
+            parent: Some("tools/a".into()),
+            ..NewTask::new("tools/a/done", "Done", "owner")
+        });
+        f.task_with(NewTask {
+            parent: Some("tools/a/done".into()),
+            ..NewTask::new("tools/a/done/open", "Open", "owner")
+        });
+        f.store
+            .take_role("tools/a", &amber, "orchestrator")
+            .unwrap();
+        f.store
+            .move_to("tools/a/done", "cancelled", &amber)
+            .unwrap();
+        // The role goes on the moved task, the top of what moved, and the open part below is amber's
+        // by the tree.
+        f.store.set_parent("tools/a/done", None, &amber).unwrap();
+        assert_eq!(orchestrators_of(&f, "tools/a/done"), [amber.as_str()]);
+        assert!(orchestrators_of(&f, "tools/a/done/open").is_empty());
+        assert!(f.store.give_unowned(None).unwrap().is_empty());
+        // With nothing open at or below it, a task moves out with no give.
+        f.task_with(NewTask {
+            parent: Some("tools/a".into()),
+            ..NewTask::new("tools/a/closed", "Closed", "owner")
+        });
+        f.store
+            .move_to("tools/a/closed", "cancelled", &amber)
+            .unwrap();
+        f.store.set_parent("tools/a/closed", None, &amber).unwrap();
+        assert!(orchestrators_of(&f, "tools/a/closed").is_empty());
+    }
 }
 
+// On SurrealDB alone until tools/board-pg-sessions-and-delivery: a session's beat (`Store::touch`)
+// has no PostgreSQL twin yet.
 #[test]
 fn a_subagents_task_goes_to_the_orchestrator_that_registered_it() {
-    let f = Fixture::empty();
+    let f = Fixture::new(Seed::default());
     let (amber, cobalt) = (f.session("orchestrator"), f.session("orchestrator"));
     f.task("tools/held");
     f.store
@@ -159,9 +314,11 @@ fn a_subagents_task_goes_to_the_orchestrator_that_registered_it() {
     );
 }
 
+// On SurrealDB alone until tools/board-pg-sessions-and-delivery: a session's beat (`Store::touch`)
+// has no PostgreSQL twin yet.
 #[test]
 fn a_task_filed_by_no_orchestrators_session_goes_to_the_orchestrator_that_stays_holding_fewest() {
-    let f = Fixture::empty();
+    let f = Fixture::new(Seed::default());
     let (amber, cobalt) = (f.session("orchestrator"), f.session("orchestrator"));
     f.task("tools/a");
     f.task("tools/b");
@@ -196,31 +353,11 @@ fn a_task_filed_by_no_orchestrators_session_goes_to_the_orchestrator_that_stays_
     assert_eq!(f.store.thread("tools/red-ish").unwrap()[1].sender, "board");
 }
 
-#[test]
-fn an_orchestrator_filing_takes_the_role_and_one_named_for_takes_it_instead() {
-    let f = Fixture::empty();
-    let (amber, cobalt) = (f.session("orchestrator"), f.session("orchestrator"));
-    assert_eq!(filed(&f, "tools/mine", &amber), Some(amber.clone()));
-    assert_eq!(
-        f.said("tools/mine").last().unwrap(),
-        &format!("{amber} joined as orchestrator")
-    );
-    f.task_with(NewTask::new("tools/theirs", "Theirs", &amber));
-    let got = f
-        .store
-        .give_filed("tools/theirs", &amber, Some(&cobalt))
-        .unwrap();
-    assert_eq!(got, Some(cobalt.clone()));
-    assert_eq!(orchestrators_of(&f, "tools/theirs"), [cobalt.as_str()]);
-    assert_eq!(
-        f.said("tools/theirs").last().unwrap(),
-        &format!("{cobalt} was given orchestrator (filed by {amber})")
-    );
-}
-
+// On SurrealDB alone until tools/board-pg-sessions-and-delivery: a reader's callbacks
+// (`Store::collect_callbacks`) has no PostgreSQL twin yet.
 #[test]
 fn with_no_orchestrator_that_stays_a_task_waits_and_a_lone_new_one_is_given_it_once_it_waits() {
-    let f = Fixture::empty();
+    let f = Fixture::new(Seed::default());
     f.session("orchestrator");
     go_quiet_but(&f, &[]);
     assert_eq!(filed(&f, "tools/loose", "owner"), None);
@@ -263,9 +400,11 @@ fn with_no_orchestrator_that_stays_a_task_waits_and_a_lone_new_one_is_given_it_o
     assert_eq!(f.said("tools/loose").len(), 2);
 }
 
+// On SurrealDB alone until tools/board-pg-sessions-and-delivery: a session's beat (`Store::touch`)
+// has no PostgreSQL twin yet.
 #[test]
 fn a_just_registered_orchestrator_beside_one_that_stays_is_given_nothing() {
-    let f = Fixture::empty();
+    let f = Fixture::new(Seed::default());
     let amber = f.session("orchestrator");
     f.task("tools/a");
     f.store
@@ -292,9 +431,11 @@ fn a_just_registered_orchestrator_beside_one_that_stays_is_given_nothing() {
     assert_eq!(orchestrators_of(&f, "tools/b"), [amber.as_str()]);
 }
 
+// On SurrealDB alone until tools/board-pg-sessions-and-delivery: a session's beat (`Store::touch`)
+// has no PostgreSQL twin yet.
 #[test]
 fn a_throwaway_orchestrator_that_registers_and_vanishes_moves_nothing() {
-    let f = Fixture::empty();
+    let f = Fixture::new(Seed::default());
     let amber = f.session("orchestrator");
     for slug in ["tools/a", "tools/b"] {
         f.task(slug);
@@ -322,9 +463,11 @@ fn a_throwaway_orchestrator_that_registers_and_vanishes_moves_nothing() {
     }
 }
 
+// On SurrealDB alone until tools/board-pg-sessions-and-delivery: a reader's callbacks
+// (`Store::collect_callbacks`) has no PostgreSQL twin yet.
 #[test]
 fn a_lost_holders_open_work_is_given_at_the_next_wait_look_with_no_sweep_run() {
-    let f = Fixture::empty();
+    let f = Fixture::new(Seed::default());
     let (amber, cobalt) = (f.session("orchestrator"), f.session("orchestrator"));
     f.task("tools/mine");
     f.task("tools/quiet");
@@ -364,9 +507,10 @@ fn a_lost_holders_open_work_is_given_at_the_next_wait_look_with_no_sweep_run() {
     assert_eq!(f.said("tools/quiet").len(), lines);
 }
 
+// On SurrealDB alone: it reaches the board through SurrealDB's own client.
 #[test]
 fn a_detached_dispatchers_pass_gives_a_lost_holders_work_to_an_orchestrator_on_a_channel() {
-    let f = Fixture::empty();
+    let f = Fixture::new(Seed::default());
     let (amber, cobalt) = (f.session("orchestrator"), f.session("orchestrator"));
     let worker = f.session("worker");
     f.task("tools/mine");
@@ -394,9 +538,11 @@ fn a_detached_dispatchers_pass_gives_a_lost_holders_work_to_an_orchestrator_on_a
     assert_eq!(heard.iter().filter(|l| l.starts_with("GIVEN ")).count(), 1);
 }
 
+// On SurrealDB alone until tools/board-pg-sessions-and-delivery: a session's beat (`Store::touch`)
+// has no PostgreSQL twin yet.
 #[test]
 fn the_clocks_read_gives_a_lost_holders_work_to_one_that_holds_a_task() {
-    let f = Fixture::empty();
+    let f = Fixture::new(Seed::default());
     let (amber, cobalt) = (f.session("orchestrator"), f.session("orchestrator"));
     f.task("tools/mine");
     f.task("tools/quiet");
@@ -413,9 +559,11 @@ fn the_clocks_read_gives_a_lost_holders_work_to_one_that_holds_a_task() {
     assert!(!tick(&f));
 }
 
+// On SurrealDB alone until tools/board-pg-sessions-and-delivery: a session's beat (`Store::touch`)
+// has no PostgreSQL twin yet.
 #[test]
 fn when_one_of_two_orchestrators_leaves_the_other_is_given_its_open_work_in_the_same_write() {
-    let f = Fixture::empty();
+    let f = Fixture::new(Seed::default());
     let (amber, cobalt) = (f.session("orchestrator"), f.session("orchestrator"));
     let worker = f.session("worker");
     for slug in ["tools/a", "tools/b", "tools/done", "tools/cobalts"] {
@@ -460,9 +608,11 @@ fn when_one_of_two_orchestrators_leaves_the_other_is_given_its_open_work_in_the_
     );
 }
 
+// On SurrealDB alone until tools/board-pg-sessions-and-delivery: a session leaving (`Store::leave`)
+// has no PostgreSQL twin yet.
 #[test]
 fn the_last_orchestrator_leaving_leaves_its_open_work_waiting() {
-    let f = Fixture::empty();
+    let f = Fixture::new(Seed::default());
     let amber = f.session("orchestrator");
     f.task("tools/a");
     f.store
@@ -477,9 +627,11 @@ fn the_last_orchestrator_leaving_leaves_its_open_work_waiting() {
     );
 }
 
+// On SurrealDB alone until tools/board-pg-sessions-and-delivery: a reader's callbacks
+// (`Store::collect_callbacks`) has no PostgreSQL twin yet.
 #[test]
 fn the_idle_sweep_gives_a_quiet_orchestrators_open_work_to_one_that_stays() {
-    let f = Fixture::empty();
+    let f = Fixture::new(Seed::default());
     let (amber, cobalt) = (f.session("orchestrator"), f.session("orchestrator"));
     f.task("tools/a");
     f.task("tools/quiet");
@@ -525,9 +677,11 @@ fn the_idle_sweep_gives_a_quiet_orchestrators_open_work_to_one_that_stays() {
     assert_eq!(f.said("tools/quiet").len(), lines);
 }
 
+// On SurrealDB alone until tools/board-pg-sessions-and-delivery: a session's beat (`Store::touch`)
+// has no PostgreSQL twin yet.
 #[test]
 fn an_orchestrator_quiet_then_back_is_given_what_waited_once_it_waits() {
-    let f = Fixture::empty();
+    let f = Fixture::new(Seed::default());
     let amber = f.session("orchestrator");
     f.task("tools/a");
     f.task("tools/b");
@@ -548,9 +702,11 @@ fn an_orchestrator_quiet_then_back_is_given_what_waited_once_it_waits() {
     );
 }
 
+// On SurrealDB alone until tools/board-pg-sessions-and-delivery: a session's beat (`Store::touch`)
+// has no PostgreSQL twin yet.
 #[test]
 fn letting_the_orchestrator_role_go_is_refused_while_it_leaves_open_work_with_none() {
-    let f = Fixture::empty();
+    let f = Fixture::new(Seed::default());
     let (amber, cobalt) = (f.session("orchestrator"), f.session("orchestrator"));
     let board = f.store.board_command();
     f.task("tools/a");
@@ -615,134 +771,11 @@ fn letting_the_orchestrator_role_go_is_refused_while_it_leaves_open_work_with_no
     assert!(task.holders("orchestrator").is_empty());
 }
 
-#[test]
-fn a_release_under_a_task_an_orchestrator_holds_above_it_goes() {
-    let f = Fixture::empty();
-    let amber = f.session("orchestrator");
-    f.task("tools/a");
-    f.task_with(NewTask {
-        parent: Some("tools/a".into()),
-        ..NewTask::new("tools/a/part", "Part", "owner")
-    });
-    f.store
-        .take_role("tools/a", &amber, "orchestrator")
-        .unwrap();
-    // cobalt orchestrating the part below amber's task: amber holds it above, so it goes, and the
-    // part is amber's by the tree.
-    let cobalt = f.session("orchestrator");
-    f.store
-        .take_role("tools/a/part", &cobalt, "orchestrator")
-        .unwrap();
-    let part = f
-        .store
-        .release("tools/a/part", &cobalt, Some("orchestrator"))
-        .unwrap();
-    assert!(part.holders("orchestrator").is_empty());
-    assert!(
-        f.store.give_unowned(None).unwrap().is_empty(),
-        "nothing to give"
-    );
-}
-
-#[test]
-fn a_task_moved_out_from_under_its_orchestrators_task_stays_with_that_orchestrator() {
-    let f = Fixture::empty();
-    let (amber, cobalt) = (f.session("orchestrator"), f.session("orchestrator"));
-    f.task("tools/a");
-    f.task_with(NewTask {
-        parent: Some("tools/a".into()),
-        ..NewTask::new("tools/a/part", "Part", "owner")
-    });
-    f.store
-        .take_role("tools/a", &amber, "orchestrator")
-        .unwrap();
-    // Moved to the top by anyone, it stays amber's, given at the move in the same write: rule 4
-    // would have picked cobalt, holding none.
-    let moved = f.store.set_parent("tools/a/part", None, &cobalt).unwrap();
-    assert_eq!(moved.holders("orchestrator"), [amber.as_str()]);
-    let thread = f.store.thread("tools/a/part").unwrap();
-    let said: Vec<(String, String)> = (thread.into_iter().rev().take(2).rev())
-        .map(|m| (m.sender, m.text))
-        .collect();
-    let moved_out =
-        format!("{amber} was given orchestrator (tools/a/part moved out from under tools/a)");
-    assert_eq!(said[1], (cobalt.clone(), moved_out), "{said:?}");
-    assert!(said[0].1.starts_with(&cobalt), "{said:?}");
-    assert!(f.store.give_unowned(None).unwrap().is_empty());
-    // Moved back under amber's task, it holds its own role: the move is the one line.
-    let lines = f.said("tools/a/part").len();
-    f.store
-        .set_parent("tools/a/part", Some("tools/a"), &amber)
-        .unwrap();
-    assert_eq!(f.said("tools/a/part").len(), lines + 1);
-    // Moved under another held task, the tree gives it: no give.
-    f.task("tools/b");
-    f.store
-        .take_role("tools/b", &cobalt, "orchestrator")
-        .unwrap();
-    f.task_with(NewTask {
-        parent: Some("tools/b".into()),
-        ..NewTask::new("tools/b/part", "Part", "owner")
-    });
-    let lines = f.said("tools/b/part").len();
-    f.store
-        .set_parent("tools/b/part", Some("tools/a"), "owner")
-        .unwrap();
-    assert!(orchestrators_of(&f, "tools/b/part").is_empty());
-    assert_eq!(f.said("tools/b/part").len(), lines + 1);
-    // The owner's move out from under a held task gives it too, as the board.
-    f.store.set_parent("tools/b/part", None, "owner").unwrap();
-    assert_eq!(orchestrators_of(&f, "tools/b/part"), [amber.as_str()]);
-    let line = f.store.thread("tools/b/part").unwrap().pop().unwrap();
-    assert_eq!(
-        (line.sender.as_str(), line.text),
-        (
-            "board",
-            format!("{amber} was given orchestrator (tools/b/part moved out from under tools/a)")
-        )
-    );
-}
-
-#[test]
-fn a_finished_task_moved_out_with_open_work_below_keeps_that_work_with_its_orchestrator() {
-    let f = Fixture::empty();
-    let amber = f.session("orchestrator");
-    f.task("tools/a");
-    f.task_with(NewTask {
-        parent: Some("tools/a".into()),
-        ..NewTask::new("tools/a/done", "Done", "owner")
-    });
-    f.task_with(NewTask {
-        parent: Some("tools/a/done".into()),
-        ..NewTask::new("tools/a/done/open", "Open", "owner")
-    });
-    f.store
-        .take_role("tools/a", &amber, "orchestrator")
-        .unwrap();
-    f.store
-        .move_to("tools/a/done", "cancelled", &amber)
-        .unwrap();
-    // The role goes on the moved task, the top of what moved, and the open part below is amber's
-    // by the tree.
-    f.store.set_parent("tools/a/done", None, &amber).unwrap();
-    assert_eq!(orchestrators_of(&f, "tools/a/done"), [amber.as_str()]);
-    assert!(orchestrators_of(&f, "tools/a/done/open").is_empty());
-    assert!(f.store.give_unowned(None).unwrap().is_empty());
-    // With nothing open at or below it, a task moves out with no give.
-    f.task_with(NewTask {
-        parent: Some("tools/a".into()),
-        ..NewTask::new("tools/a/closed", "Closed", "owner")
-    });
-    f.store
-        .move_to("tools/a/closed", "cancelled", &amber)
-        .unwrap();
-    f.store.set_parent("tools/a/closed", None, &amber).unwrap();
-    assert!(orchestrators_of(&f, "tools/a/closed").is_empty());
-}
-
+// On SurrealDB alone until tools/board-pg-sessions-and-delivery: a session leaving (`Store::leave`)
+// has no PostgreSQL twin yet.
 #[test]
 fn an_approved_task_reopened_after_its_orchestrator_left_is_given_one_again() {
-    let f = Fixture::empty();
+    let f = Fixture::new(Seed::default());
     let (amber, exe, rev) = (
         f.session("orchestrator"),
         f.session("worker"),
@@ -773,9 +806,11 @@ fn an_approved_task_reopened_after_its_orchestrator_left_is_given_one_again() {
     );
 }
 
+// On SurrealDB alone until tools/board-pg-sessions-and-delivery: a session leaving (`Store::leave`)
+// has no PostgreSQL twin yet.
 #[test]
 fn a_given_orchestrator_counts_as_having_orchestrated_the_task_for_its_review() {
-    let f = Fixture::empty();
+    let f = Fixture::new(Seed::default());
     let amber = f.session("orchestrator");
     let worker = f.session("worker");
     f.task("tools/a");

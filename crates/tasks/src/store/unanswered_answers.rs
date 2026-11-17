@@ -40,6 +40,6 @@ pub(super) fn parents(
             .collect();
     }
     let mut parents: Vec<_> = tree.into_iter().collect();
-    parents.sort();
+    parents.sort_unstable();
     Ok(parents)
 }

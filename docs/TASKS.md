@@ -1630,6 +1630,46 @@ is not blocked on the wire: the listings send it in the stage it stopped in, wai
 no reason recorded`, and the board itself still holds it blocked, slots and moves alike. Naming
 its thing (`move SLUG blocked --on THING`) sends it blocked again; no migration writes one.
 
+**The waiting-column listing.** `/api/task-board?view=waiting` opts into the board's
+blocked-in-place projection. Without it the endpoint keeps its lifecycle, holder, hierarchy,
+sign-off and cursor behavior. It uses the same search and finished window as those listings:
+`q`, `days=1|7`, `older=1`, `open=1` and `all=1`. `activity=1` places ordinary in-progress work
+in Build or Test from the machine's current report; a blocked task stays in its original
+lifecycle stage. `work=0` omits that report without changing placement.
+
+A named block goes in `from`, or Ready when that legacy source stage is missing or invalid.
+An absent or invalid block line becomes ordinary work in that same stage, with
+`nobody · no reason recorded`; nothing writes the board. The existing `waits_on` line is the
+classification: a named missing dependency can still read `nobody`, while `parked` needs no
+name. Unknown wait kinds count as `nobody`. The projection has no Blocked or sign-off column;
+combining it with `status=blocked|signoff`, `parent`, `holder`, `role` or `roots` is refused.
+
+Within each column, named blocks come first in `WAITS_KINDS` order and oldest first within
+that kind, then ordinary work oldest first, then parked work oldest first. Finished work is
+newest first. Search selects matching rows but does not replace this order with relevance.
+Equal times use the numeric slug order (`item-2` before `item-10`), so every tie is stable.
+`wait=KIND` selects one of `WAITS_KINDS` across stages as one list in that same order, with no
+stage partition; finished tasks have no wait kind and are left out. An unknown kind is refused.
+`status=STAGE` further selects a column's rows.
+
+The ordinary `counts` include each column's ordinary and blocked tasks, and `lifecycle_counts`
+keep their normalized lifecycle statuses. Both are complete after search, window and wait-kind
+selection, before a status selection or pagination. The optional `waiting` response holds:
+
+- `kinds`: `[kind, count]` for each of `WAITS_KINDS`, in its order, counting open tasks after
+  search and window selection but before `wait`, so the other filter chips keep their totals;
+- `columns`: `{status, ordinary, blocked, oldest}` for every nonempty column after `wait`,
+  before `status` and pagination. `oldest` is the earliest status-entry timestamp in seconds
+  since the epoch, so the client calculates an age without another read.
+
+`counts=1` sends no rows, with the same totals. A page is 30 rows; `rows=N` can request more
+but never fewer, and `all=1` requests all matching rows. `offset=N` skips rows after any cursor.
+The opaque `next` cursor records the complete ordering key, not an offset: stage (empty for a
+wait-kind list), ordinary/blocked/parked rank, block-kind rank, status-entry time (negated update
+time for finished work) and slug. It is passed back only with the same view, search, window,
+activity, status and wait kind. A malformed cursor or one from the default view is refused.
+An empty page has no cursor. This projection changes no client view until that client opts in.
+
 A task that has posted a card for the owner is lifted out of its column into
 a **Waiting for your sign-off** lane above the board. That needs all of:
 

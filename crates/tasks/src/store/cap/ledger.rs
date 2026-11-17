@@ -4,6 +4,8 @@ use super::{
     DEPTH, Failure, Level, Read, Recorded, RoleRead, Row, Store, View, branches, slots, sql,
 };
 use crate::slots::{Entry, Ledger};
+use crate::store::postgres::cap as pg;
+use crate::store::statement::both;
 use serde_json::{Value, json};
 use std::collections::{BTreeSet, HashMap};
 
@@ -61,7 +63,8 @@ impl Observation {
                 break;
             }
             looked.extend(wanted.iter().cloned());
-            let level: Level = store.transact(sql::level(), json!({"slot_wanted": wanted}))?;
+            let read = both(sql::level(), pg::level());
+            let level: Level = store.transact(read, json!({"slot_wanted": wanted}))?;
             for row in level.tasks {
                 self.rows.entry(row.slug.clone()).or_insert(row);
             }

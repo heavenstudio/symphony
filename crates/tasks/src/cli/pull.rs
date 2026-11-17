@@ -845,7 +845,7 @@ pub(crate) fn digest_on(
         }
     }
     for listed in found.values_mut() {
-        listed.sort_by(|a, b| (a.priority, &a.slug).cmp(&(b.priority, &b.slug)));
+        listed.sort_unstable_by(|a, b| (a.priority, &a.slug).cmp(&(b.priority, &b.slug)));
     }
     // The project's limits as the file is now, read once for the whole digest.
     let limits = store.limits();

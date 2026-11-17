@@ -2,7 +2,7 @@
 //! them.
 
 use super::messages::BOARD;
-use super::postgres::Pg;
+use super::postgres::{Pg, work as pg};
 use super::statement::both;
 use super::surreal::work as sql;
 use super::{
@@ -344,12 +344,7 @@ impl Store {
         // Read the old value and write its replacement and history in the same transaction. A
         // concurrent edit conflicts and retries, so history always names the value replaced.
         let acts = handle != OWNER;
-        let body = || {
-            both(
-                sql::set_priority(acts),
-                Pg::script(super::postgres::work::set_priority(acts)),
-            )
-        };
+        let body = || both(sql::set_priority(acts), Pg::script(pg::set_priority(acts)));
         self.retrying(|| {
             let vars = self.acting(
                 handle,
@@ -377,7 +372,8 @@ impl Store {
         if title.is_empty() {
             return Err(refused("a task needs a title".into()));
         }
-        let body = sql::amend(handle != OWNER);
+        let acts = handle != OWNER;
+        let body = || both(sql::amend(acts), pg::amend(acts));
         self.retrying(|| {
             let vars = self.acting(
                 handle,
@@ -387,7 +383,7 @@ impl Store {
                     "missing": format!("{REFUSED}{}", no_task(slug)),
                 }),
             );
-            self.written(&body, vars, slug)
+            self.written(body(), vars, slug)
         })
     }
 
@@ -408,7 +404,8 @@ impl Store {
         }
         let acts = by != OWNER;
         self.retrying(|| {
-            let read: Read = self.transact(sql::TREE_READ, json!({"actor": by}))?;
+            let read: Read =
+                self.transact(both(sql::TREE_READ, pg::tree_read()), json!({"actor": by}))?;
             if by != OWNER {
                 if !read.known {
                     return Err(Failure::Stop(refused(unknown_actor(&self.board_command(), by))));
@@ -439,12 +436,19 @@ impl Store {
                 json!({"slug": slug, "parent": parent, "moves": read.moves, "said": said, "slots": slots}),
             );
             let Some(pass) = kept else {
-                return self.written(sql::set_parent(acts, guarded, false), vars, slug);
+                let body = both(
+                    sql::set_parent(acts, guarded, false),
+                    pg::set_parent(acts, guarded, false),
+                );
+                return self.written(body, vars, slug);
             };
             // The give's fences go before the move moves the task's version.
             let sender = if by == OWNER { BOARD } else { by };
-            let body = sql::set_parent(acts, guarded, true);
-            self.written(&body, pass.vars(sender, vars), slug)
+            let body = both(
+                sql::set_parent(acts, guarded, true),
+                pg::set_parent(acts, guarded, true),
+            );
+            self.written(body, pass.vars(sender, vars), slug)
         })
     }
 
@@ -452,7 +456,7 @@ impl Store {
     pub fn ancestors(&self, slug: &str) -> Result<Vec<String>, Error> {
         let read = sql::tree();
         let tree: Vec<(String, Option<String>)> =
-            self.retrying(|| self.transact(&read, json!({})))?;
+            self.retrying(|| self.transact(both(read.as_str(), pg::TREE_ONLY), json!({})))?;
         ancestors_in(&tree.into_iter().collect(), slug)
     }
 
@@ -492,7 +496,8 @@ impl Store {
             "claude": place.claude, "branch": place.branch,
             "executing": crate::health::EXECUTING});
         let read = sql::run_for_read();
-        let found: Found = self.retrying(|| self.transact(&read, vars.clone()))?;
+        let found: Found =
+            self.retrying(|| self.transact(both(read.as_str(), pg::run_for_read()), vars.clone()))?;
         let now = self.now();
         let live = |seen: &&Seen| {
             let row = crate::rows::SessionRow {
@@ -511,7 +516,7 @@ impl Store {
                 .filter(|held| held.handle == handle)
                 .map(|held| held.slug.clone())
                 .collect();
-            slugs.sort();
+            slugs.sort_unstable();
             slugs.dedup();
             top_in(&tree, &slugs).cloned()
         };
@@ -886,11 +891,10 @@ impl Store {
             // A red's close holds the counters it changes as a start does, capped store or not,
             // judged on the task as read: a red marked since is read and decided again.
             let closed = self.closing_slots(slug, status)?;
-            let body = sql::move_as_owner(
-                reason.is_some(),
-                cancelling,
-                closed.fenced(),
-                closed.guarded(),
+            let (reasoned, fenced, guarded) = (reason.is_some(), closed.fenced(), closed.guarded());
+            let body = both(
+                sql::move_as_owner(reasoned, cancelling, fenced, guarded),
+                pg::move_as_owner(reasoned, cancelling, fenced, guarded),
             );
             let vars = self.acting(
                 OWNER,
@@ -903,7 +907,7 @@ impl Store {
                     "instruction": format!("{REFUSED}{slug} is a subtask: integrate into its parent and close it with `done`, not review"),
                 }),
             );
-            self.written(&body, vars, slug)
+            self.written(body, vars, slug)
         })
     }
 
@@ -1083,8 +1087,9 @@ impl Store {
             if !seen.insert(at.clone()) {
                 continue;
             }
-            let read: Read =
-                self.retrying(|| self.transact(sql::EVER_HELD, json!({"slug": at})))?;
+            let read: Read = self.retrying(|| {
+                self.transact(both(sql::EVER_HELD, pg::EVER_HELD), json!({"slug": at}))
+            })?;
             let root = at == slug;
             if root && !read.known {
                 return Err(no_task(slug));

@@ -64,18 +64,6 @@ fn project(
     let page = query(request, "rows")
         .and_then(|v| v.parse::<usize>().ok())
         .map_or(PAGE, |rows| rows.max(PAGE));
-    let cursor = match query(request, "cursor")
-        .map(|text| serde_json::from_str::<(String, i64, f64, String)>(&text))
-        .transpose()
-    {
-        Ok(cursor) => cursor,
-        Err(why) => {
-            return error(
-                StatusCode::BAD_REQUEST,
-                format!("invalid task cursor: {why}"),
-            );
-        }
-    };
     let all = query(request, "all").as_deref() == Some("1");
     // `status` is one a listing selects ([`status_argument`], checked before the board is read).
     let status = query(request, "status");
@@ -133,6 +121,21 @@ fn project(
             && (all || older || !task.is_finished() || task.updated >= cutoff)
             && (search.is_empty() || scores.contains_key(&task.slug))
     });
+    if query(request, "view").as_deref() == Some("waiting") {
+        return waiting::project(request, tasks, work, signoff);
+    }
+    let cursor = match query(request, "cursor")
+        .map(|text| serde_json::from_str::<(String, i64, f64, String)>(&text))
+        .transpose()
+    {
+        Ok(cursor) => cursor,
+        Err(why) => {
+            return error(
+                StatusCode::BAD_REQUEST,
+                format!("invalid task cursor: {why}"),
+            );
+        }
+    };
     // Slugs order by `slug_order` (`ready-3` before `ready-30`), here and in the cursor below,
     // which must agree with this sort for a page to start where the one before it ended.
     let by_priority = |a: &symphony_api::Task, b: &symphony_api::Task| {
@@ -269,8 +272,11 @@ fn project(
         lifecycle_counts: lifecycle_counts.into_iter().collect(),
         orchestrators: tasks.orchestrators,
         unstarted: tasks.unstarted,
+        waiting: None,
     }))
 }
 
 #[cfg(test)]
 mod tests;
+
+mod waiting;

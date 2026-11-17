@@ -6,6 +6,8 @@
 
 use serde_json::json;
 
+use super::postgres::waits as pg;
+use super::statement::both;
 use super::surreal::waits as sql;
 use super::work::OWNER;
 use super::{Error, REFUSED, Store, Task, refused, repr};
@@ -42,8 +44,10 @@ struct SourceObservation {
 impl Store {
     /// One snapshot of the task's assessment fence. It writes and migrates nothing.
     pub fn assessment_state(&self, slug: &str) -> Result<AssessmentState, Error> {
-        let states: Vec<AssessmentState> =
-            self.retrying(|| self.read(sql::ASSESSMENT_STATE, json!({"slug": slug})))?;
+        let states: Vec<AssessmentState> = self.retrying(|| {
+            let read = both(sql::ASSESSMENT_STATE, pg::assessment_state());
+            self.read(read, json!({"slug": slug}))
+        })?;
         states
             .into_iter()
             .next()
@@ -129,7 +133,8 @@ impl Store {
                 "a landing's assessment must have an identity".into(),
             ));
         }
-        let body = sql::record(handle != OWNER);
+        let acting = handle != OWNER;
+        let body = sql::record(acting);
         self.retrying(|| {
             let observed = match source.as_mut().map_or(Ok(true), |check| check()) {
                 Ok(current) => SourceObservation { current, unavailable: None },
@@ -157,7 +162,7 @@ impl Store {
                     "source_changed": format!("{REFUSED}assessment source changed before publication"),
                 }),
             );
-            self.written(&body, vars, slug)
+            self.written(both(body.as_str(), pg::record(acting)), vars, slug)
         })
     }
 
@@ -183,6 +188,7 @@ impl Store {
             )));
         }
         let body = sql::fixed();
+        let read = || both(body.as_str(), pg::fixed());
         let written = record.key();
         let vars = json!({
             "slug": slug,
@@ -190,7 +196,7 @@ impl Store {
             "written": &written,
             "patch": {FIELDS: {FIXED: {record.tip: {written.as_str(): first}}}},
         });
-        self.retrying(|| self.transact(&body, vars.clone()))
+        self.retrying(|| self.transact(read(), vars.clone()))
     }
 }
 
