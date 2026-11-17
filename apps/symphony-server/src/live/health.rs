@@ -177,7 +177,7 @@ impl Hub {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .insert(self.root.clone());
-        self.rescan.store(true, std::sync::atomic::Ordering::SeqCst);
+        self.ask_rescan();
     }
 
     /// Tell every page, on the server's notice, that the server's update failed, `message`

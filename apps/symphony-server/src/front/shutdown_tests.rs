@@ -238,28 +238,34 @@ async fn stopping_a_cold_server_prevents_its_first_hub_start() {
     assert!(shared.api.get().is_none());
 }
 
-#[test]
-#[expect(
-    clippy::disallowed_methods,
-    reason = "Shared::wait's own test: the stop wakes its long timer, and one asked after the stop returns at once"
-)]
-fn background_shutdown_wakes_long_timers_and_remains_sticky() {
-    let tree = Tree::new();
-    let shared = Shared::new(
+/// A server whose stop the test calls itself.
+fn idle_shared(tree: &Tree) -> Arc<Shared> {
+    Shared::new(
         1,
         1,
         &tree.root,
         None,
         Gate::new(Arc::new(|_| Ok(None)), Arc::new(Instant::now)),
-    );
-    // A timer far past the backstop: only the stop's wake ends either wait below in time.
-    const LONG: Duration = Duration::from_secs(86_400);
+    )
+}
+
+/// The stop wakes a loop that gave its waker before it, by message alone (the wait has no length),
+/// and one that gives its waker after the stop is woken as it gives it, so no loop starting late
+/// waits for a stop gone by.
+#[test]
+fn the_stop_wakes_each_loop_by_message_and_one_that_asks_after_it_at_once() {
+    let tree = Tree::new();
+    let shared = idle_shared(&tree);
     let (entered, ready) = std::sync::mpsc::channel();
     let (finished, done) = std::sync::mpsc::channel();
     let waiting = shared.clone();
     let worker = std::thread::spawn(move || {
+        let wakes = Wakes::new();
+        waiting.wake_at_stop(wakes.waker());
         entered.send(()).unwrap();
-        assert!(waiting.wait(LONG));
+        // No length: only the stop's message ends this wait.
+        assert!(wakes.wait(None));
+        assert!(waiting.stopping());
         finished.send(()).unwrap();
     });
     ready
@@ -271,18 +277,69 @@ fn background_shutdown_wakes_long_timers_and_remains_sticky() {
     };
     let shutdown = std::thread::spawn(move || drop(background));
     done.recv_timeout(BACKSTOP)
-        .unwrap_or_else(|_| panic!("{}", stalled("shutdown to wake the long timer")));
+        .unwrap_or_else(|_| panic!("{}", stalled("shutdown to wake the waiting loop")));
     shutdown.join().unwrap();
-    // The same timer called after stop must return promptly as well as observe the sticky signal.
-    let (finished, done) = std::sync::mpsc::channel();
-    let sticky = std::thread::spawn(move || {
-        finished.send(shared.wait(LONG)).unwrap();
-    });
+    // A waker given after the stop: woken as it is given, its wait over before it begins.
+    let late = Wakes::new();
+    shared.wake_at_stop(late.waker());
     assert!(
-        done.recv_timeout(BACKSTOP)
-            .unwrap_or_else(|_| panic!("{}", stalled("a timer after the stop to return")))
+        late.wait(Some(Duration::ZERO)),
+        "a waker given after the stop is woken at once"
     );
-    sticky.join().unwrap();
+}
+
+/// A stop pipe reads its end at the stop, and one taken after the stop at once: what waits on a
+/// descriptor beside a process's end ([`sys::until_ends`]) is ended by the stop alone.
+#[test]
+fn a_stop_pipe_reads_its_end_at_the_stop_and_one_taken_after_it_at_once() {
+    use std::io::Read;
+    let tree = Tree::new();
+    let shared = idle_shared(&tree);
+    let mut before = shared.stop_pipe().unwrap();
+    let (read, ended) = std::sync::mpsc::channel();
+    let reader = std::thread::spawn(move || {
+        let mut rest = Vec::new();
+        read.send(before.read_to_end(&mut rest).map(|_| rest))
+            .unwrap();
+    });
+    // Nothing is written: the read ends only at its writer's going, which the stop is.
+    assert!(
+        ended.try_recv().is_err(),
+        "a stop pipe reads nothing before the stop"
+    );
+    shared.stop();
+    let rest = ended
+        .recv_timeout(BACKSTOP)
+        .unwrap_or_else(|_| panic!("{}", stalled("the stop to end the pipe's read")))
+        .unwrap();
+    assert!(rest.is_empty(), "the stop writes nothing: it ends the pipe");
+    reader.join().unwrap();
+    let mut after = shared.stop_pipe().unwrap();
+    let mut rest = Vec::new();
+    assert_eq!(after.read_to_end(&mut rest).unwrap(), 0, "ended as taken");
+}
+
+/// A hand-off asked for wakes each loop that waits for one, and one that gives its waker while a
+/// hand-off waits is woken as it gives it; the flag stays for the reload worker to take.
+#[test]
+fn a_hand_off_asked_for_wakes_its_loops_and_one_that_asks_after_it() {
+    let tree = Tree::new();
+    let shared = idle_shared(&tree);
+    let before = Wakes::new();
+    shared.wake_at_handover(before.waker());
+    assert!(!before.wait(Some(Duration::ZERO)), "no hand-off asked yet");
+    shared.ask_handover();
+    assert!(before.wait(Some(Duration::ZERO)), "the request wakes it");
+    let after = Wakes::new();
+    shared.wake_at_handover(after.waker());
+    assert!(
+        after.wait(Some(Duration::ZERO)),
+        "a request waiting wakes it as it is given"
+    );
+    assert!(
+        shared.handover.load(Ordering::SeqCst),
+        "the flag waits for its taker"
+    );
 }
 
 /// Stop waits for the hub's tick in flight. Run from a signal, that wait must not hold a runtime
@@ -311,12 +368,11 @@ fn a_signalled_stop_leaves_the_runtime_worker_free_while_it_waits() {
             let _ = signalled.await;
         })
     };
+    let wakes = Wakes::new();
+    shared.wake_at_stop(wakes.waker());
     signal.send(()).unwrap();
-    #[expect(
-        clippy::disallowed_methods,
-        reason = "waits for the stop the signal starts, which wakes it, BACKSTOP its bound alone"
-    )]
-    let stopped = shared.wait(BACKSTOP);
+    // The stop the signal starts wakes it; BACKSTOP is its bound alone.
+    let stopped = wakes.wait(Some(BACKSTOP));
     assert!(stopped, "{}", stalled("the signal to start a stop"));
     let (answered, answer) = std::sync::mpsc::channel();
     runtime.spawn(async move { answered.send(()).unwrap() });

@@ -5,13 +5,15 @@
 //! checkout in a temporary folder registered in a temporary machine folder, its board a scratch one
 //! and its `tasks` a stand-in: nothing here reaches the shared server or a live board.
 
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use symphony::machine::{Entry, Registry};
 
 use super::{Maintain, Projects, Warming};
-use crate::front::{Shared, Stamp};
+use crate::front::Shared;
+use crate::front::test_clock::TestClock;
 use crate::gate::Gate;
 use crate::testing::Tree;
 
@@ -134,16 +136,20 @@ fn says(said: &Said, line: &str) -> bool {
     said.lock().unwrap().iter().any(|said| said == line)
 }
 
+/// A backstop period no test reaches: only the machine folder's watcher wakes the look.
+const NO_PERIOD: Duration = Duration::from_secs(86_400);
+
 /// A project registered while the server runs has its maintenance started, and one removed has it
-/// stopped, by the server's own look at the registry, with no request; the starter's checkout is
-/// never maintained here (the server's own workers maintain it), and the server's stop ends every
-/// other project's.
+/// stopped, by the server's own look at the registry, with no request, woken by the machine's own
+/// watcher of the machine folder (its backstop's period is past the test); the starter's checkout
+/// is never maintained here (the server's own workers maintain it), and the server's stop ends
+/// every other project's and the look.
 #[test]
 fn registering_or_removing_a_project_starts_or_stops_its_maintenance_with_no_request() {
     let machine = Machine::new(&[("alpha", "exit 0"), ("beta", "exit 0")]);
     let said = Said::default();
     let projects = machine.projects(recording(&said));
-    let look = projects.watch();
+    let look = projects.watch_with::<notify::RecommendedWatcher>(NO_PERIOD);
     assert_eq!(*said.lock().unwrap(), ["started beta"]);
     let beta = state(&projects, "beta");
     assert_eq!(beta.maintaining(), 1);
@@ -183,6 +189,123 @@ fn registering_or_removing_a_project_starts_or_stops_its_maintenance_with_no_req
             .iter()
             .any(|line| line.ends_with("alpha")),
         "the starter's checkout is the server's own to maintain: {said:?}"
+    );
+}
+
+#[test]
+fn the_look_is_woken_by_a_change_of_the_registry_or_current_alone() {
+    use notify::EventKind::{Access, Create, Modify, Remove};
+    use notify::event::{AccessKind, CreateKind, ModifyKind, RemoveKind, RenameMode};
+    let event = |kind, path: &str| Ok(notify::Event::new(kind).add_path(PathBuf::from(path)));
+    let renamed = Modify(ModifyKind::Name(RenameMode::To));
+    // The registry written beside itself and renamed into place, and `current` moved.
+    for path in ["/m/projects.json", "/m/current"] {
+        for kind in [
+            Create(CreateKind::File),
+            Modify(ModifyKind::Any),
+            renamed,
+            Remove(RemoveKind::Any),
+        ] {
+            assert!(super::registry_event(&event(kind, path)), "{kind:?} {path}");
+        }
+        assert!(!super::registry_event(&event(
+            Access(AccessKind::Any),
+            path
+        )));
+    }
+    // The registry's lock, its write under way and a release folder say nothing yet.
+    for path in ["/m/projects.lock", "/m/projects.json.4242", "/m/releases"] {
+        assert!(!super::registry_event(&event(renamed, path)), "{path}");
+    }
+    // What a lost or failing stream says: read it again.
+    assert!(super::registry_event(&Ok(notify::Event::new(Modify(
+        ModifyKind::Any
+    ))
+    .set_flag(notify::event::Flag::Rescan))));
+    assert!(super::registry_event(&Err(notify::Error::generic(
+        "stream ended"
+    ))));
+}
+
+/// The handler a [`Handing`] watcher was given, and what it was asked to watch.
+#[derive(Default)]
+struct Handed {
+    handler: Option<Box<dyn notify::EventHandler>>,
+    watched: Vec<(PathBuf, notify::RecursiveMode)>,
+}
+
+std::thread_local! {
+    /// What the [`Handing`] watcher the test on this thread made was handed.
+    static HANDED: std::cell::RefCell<Handed> = std::cell::RefCell::default();
+}
+
+/// A watcher that hands its handler to the test ([`HANDED`]), or, when `FAILS`, fails to watch,
+/// its handler gone with it as a dropped watcher's is.
+struct Handing<const FAILS: bool>;
+
+impl<const FAILS: bool> notify::Watcher for Handing<FAILS> {
+    fn new<F: notify::EventHandler>(handler: F, _: notify::Config) -> notify::Result<Self> {
+        if !FAILS {
+            HANDED.with_borrow_mut(|handed| handed.handler = Some(Box::new(handler)));
+        }
+        Ok(Self)
+    }
+
+    fn watch(&mut self, path: &std::path::Path, mode: notify::RecursiveMode) -> notify::Result<()> {
+        if FAILS {
+            return Err(notify::Error::generic("no such folder"));
+        }
+        HANDED.with_borrow_mut(|handed| handed.watched.push((path.into(), mode)));
+        Ok(())
+    }
+
+    fn unwatch(&mut self, _: &std::path::Path) -> notify::Result<()> {
+        Ok(())
+    }
+
+    fn kind() -> notify::WatcherKind {
+        notify::WatcherKind::NullWatcher
+    }
+}
+
+#[test]
+fn the_registry_watch_wakes_the_look_once_a_burst_and_one_that_cannot_watch_wakes_nothing() {
+    let machine = std::path::Path::new("/m");
+    let wakes = crate::backstop::Wakes::new();
+    let watcher = super::watch_registry::<Handing<false>>(machine, wakes.waker());
+    assert!(watcher.is_some());
+    assert_eq!(
+        HANDED.with_borrow(|handed| handed.watched.clone()),
+        vec![(machine.to_path_buf(), notify::RecursiveMode::NonRecursive)]
+    );
+    let tell = |path: &str| {
+        let renamed = notify::EventKind::Modify(notify::event::ModifyKind::Name(
+            notify::event::RenameMode::Any,
+        ));
+        HANDED.with_borrow_mut(|handed| {
+            handed
+                .handler
+                .as_mut()
+                .expect("a watcher was made")
+                .handle_event(Ok(notify::Event::new(renamed).add_path(PathBuf::from(path))));
+        });
+    };
+    tell("/m/projects.json.4242");
+    assert!(!wakes.wait(Some(Duration::ZERO)), "a write under way");
+    tell("/m/projects.json");
+    tell("/m/projects.json");
+    assert!(
+        wakes.wait(Some(Duration::ZERO)),
+        "the registry renamed into place"
+    );
+    assert!(!wakes.wait(Some(Duration::ZERO)), "its burst is one wake");
+
+    let unwatched = crate::backstop::Wakes::new();
+    let failed = super::watch_registry::<Handing<true>>(machine, unwatched.waker());
+    assert!(failed.is_none());
+    assert!(
+        !unwatched.wait(Some(Duration::ZERO)),
+        "the backstop's period reads alone"
     );
 }
 
@@ -298,15 +421,30 @@ fn every_project_is_swept_on_its_own_and_a_failing_or_removed_one_stops_no_other
             "printf '%s' \"$$\" > entered.part; mv entered.part entered; exec sleep 86400",
         ),
     ]);
-    // Rounds back to back, a hung one left hanging until the stop.
-    let projects = machine.projects(Box::new(|shared: &Arc<Shared>| {
+    // A round each time the test moves the clock on by the interval, a hung one left hanging until
+    // the stop: its timeout is past every move the test makes.
+    const ROUND: Duration = Duration::from_secs(300);
+    let clock = TestClock::new();
+    let rounds = clock.clone();
+    let projects = machine.projects(Box::new(move |shared: &Arc<Shared>| {
         vec![crate::front::maintenance_worker(
             shared.clone(),
-            Duration::ZERO,
-            Duration::from_secs(3600),
-            Stamp::now,
+            ROUND,
+            Duration::from_secs(86_400),
+            rounds.reader(),
         )]
     }));
+    // Each project's next round: the clock moved on, once each project named has swept `more`
+    // times since `since`, the counts `count` reads.
+    let next_rounds = |what: &str, since: u64, count: &dyn Fn() -> u64| {
+        for more in 1..=2 {
+            clock.advance(ROUND);
+            test_time::until_true(format!("{what}: round {more}"), WAIT, || {
+                count() >= since + more
+            })
+            .unwrap();
+        }
+    };
     // Each project's hub reads a scratch board of its own: each has a board, so each is swept.
     let mut boards = Vec::new();
     let mut hubs = std::collections::BTreeMap::new();
@@ -337,11 +475,10 @@ fn every_project_is_swept_on_its_own_and_a_failing_or_removed_one_stops_no_other
     })
     .unwrap();
     // While delta's reap hangs, beta is swept again and again, and gamma's fails each round.
-    let ok = sweeps("beta").ok;
-    test_time::until_true("beta swept twice more and gamma failed twice", WAIT, || {
-        sweeps("beta").ok >= ok + 2 && sweeps("gamma").failed >= 2
-    })
-    .unwrap();
+    let (ok, failed) = (sweeps("beta").ok, sweeps("gamma").failed);
+    next_rounds("beta swept and gamma failed", 0, &|| {
+        (sweeps("beta").ok - ok).min(sweeps("gamma").failed - failed)
+    });
     assert!(crate::sys::pid_alive(hung), "delta's reap still hangs");
     let (beta, gamma) = (sweeps("beta"), sweeps("gamma"));
     assert_eq!(beta.failed, 0, "gamma's failures are its own: {beta:?}");
@@ -374,10 +511,7 @@ fn every_project_is_swept_on_its_own_and_a_failing_or_removed_one_stops_no_other
     .unwrap();
     let (runs, ok) = (machine.lines("beta", "swept").len(), sweeps("beta").ok);
     let failed = sweeps("gamma").failed;
-    test_time::until_true("gamma swept twice more", WAIT, || {
-        sweeps("gamma").failed >= failed + 2
-    })
-    .unwrap();
+    next_rounds("gamma swept", failed, &|| sweeps("gamma").failed);
     assert_eq!(machine.lines("beta", "swept").len(), runs);
     assert_eq!(sweeps("beta").ok, ok);
 

@@ -186,13 +186,14 @@ rests take each other's place), `deadline` and `tick` (to the next minute), with
 `tryAgain` (`src/state.ts`), and in its unit tests `src/testing.ts`'s `until` for a condition and
 `turn()` for a turn of the event loop. A deadline on the wait itself (`recv_timeout`,
 `Condvar::wait_timeout`, `park_timeout`, `tokio::time::timeout`, a socket's read timeout) is the
-event's own bound and needs no helper, unless nothing else ends it but a stop: the server's
-`Shared::wait` and its `Backstop::wait`'s idle tick are such sleeps.
+event's own bound and needs no helper, unless nothing else ends it but a stop, which makes it a
+sleep the lint cannot see and a reviewer refuses: a server's loop is woken by a message from its
+stop, as from everything else it waits for (`backstop::Waker`).
 
 `just lint-rs` refuses a new one with a line naming this rule: clippy's `disallowed-methods`
 (`clippy.toml`, which `crates/tasks/clippy.toml` starts with) for `std::thread::sleep`, tokio's
-`sleep`, `sleep_until`, `interval` and `interval_at`, and the server's `Shared::wait` and
-`Backstop::wait`, and Biome for the client's `setTimeout`, `setInterval` and `src/timing.ts`'s
+`sleep`, `sleep_until`, `interval` and `interval_at`, and Biome for the client's `setTimeout`,
+`setInterval` and `src/timing.ts`'s
 plain `sleep` (`apps/symphony-web/biome.json`). Each site kept is the baseline: its linter's own
 suppression, `#[expect(clippy::disallowed_methods, reason = "no-timed-waits baseline: WHY")]` or
 `// biome-ignore …: no-timed-waits baseline: WHY`, where WHY names the event it should wait for.

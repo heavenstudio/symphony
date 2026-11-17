@@ -1195,7 +1195,8 @@ fn a_starters_failed_hand_over_keeps_a_waiting_retrys_time_on_the_notice() {
         }
         .ask(&server.home)
         .unwrap();
-        server.shared.handover.store(true, Ordering::SeqCst);
+        // As the starter's signal does: the request wakes the waiting loop.
+        server.shared.ask_handover();
     };
     let notice = |before: &str| {
         test_time::until("a failed hand-over on the notice", stall(), || {
@@ -1506,7 +1507,8 @@ fn tell(event: notify::Result<notify::Event>) {
 #[test]
 fn a_release_server_hears_current_move_from_a_watch_of_the_machine_folder_alone() {
     let machine = Path::new("/m");
-    let (watcher, moved) = super::watch_current::<Handing<false>>(machine);
+    let wakes = crate::backstop::Wakes::new();
+    let watcher = super::watch_current::<Handing<false>>(machine, wakes.waker());
     assert!(watcher.is_some());
     assert_eq!(
         HANDED.with_borrow(|handed| handed.watched.clone()),
@@ -1516,24 +1518,29 @@ fn a_release_server_hears_current_move_from_a_watch_of_the_machine_folder_alone(
         notify::EventKind::Create(notify::event::CreateKind::Any),
         &["/m/registry.json"],
     ));
-    assert_eq!(moved.try_recv(), Err(std::sync::mpsc::TryRecvError::Empty));
+    assert!(!wakes.wait(Some(Duration::ZERO)), "another entry's event");
     // A move's burst is one wake: the loop reads once it is quiet.
     let renamed = notify::EventKind::Modify(notify::event::ModifyKind::Name(
         notify::event::RenameMode::Any,
     ));
     tell(event(renamed, &["/m/current"]));
     tell(event(renamed, &["/m/current"]));
-    assert_eq!(moved.try_recv(), Ok(()));
-    assert_eq!(moved.try_recv(), Err(std::sync::mpsc::TryRecvError::Empty));
+    assert!(
+        wakes.wait(Some(Duration::ZERO)),
+        "the move wakes the follow"
+    );
+    assert!(!wakes.wait(Some(Duration::ZERO)), "its burst is one wake");
 }
 
 #[test]
 fn a_release_server_that_cannot_watch_its_machine_folder_reads_current_once_a_period() {
-    let (watcher, moved) = super::watch_current::<Handing<true>>(Path::new("/m"));
+    let wakes = crate::backstop::Wakes::new();
+    let watcher = super::watch_current::<Handing<true>>(Path::new("/m"), wakes.waker());
     assert!(watcher.is_none());
-    // The handler went with the watcher: no event can come, and the backstop's period reads alone.
-    assert_eq!(
-        moved.try_recv(),
-        Err(std::sync::mpsc::TryRecvError::Disconnected)
+    // The handler went with the watcher: nothing wakes the follow but its stop, a hand-off and
+    // the backstop's period.
+    assert!(
+        !wakes.wait(Some(Duration::ZERO)),
+        "a watcher that cannot watch wakes nothing"
     );
 }

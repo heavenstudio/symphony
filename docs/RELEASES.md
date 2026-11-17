@@ -820,7 +820,8 @@ current -> releases/release-2026-11-20
   ([the way back](#the-way-back), below).
 
 Nothing of the install starts, stops or signals a server. A release's server follows `current`
-by its own reload (`apps/symphony-server/src/reload.rs`): it reads the link once a second and,
+by its own reload (`apps/symphony-server/src/reload.rs`): it reads the link as a watcher of the
+machine folder says it moved, and once every 10 s besides for a move the watcher missed, and,
 when it names another release, hands its sockets by exec to that release's server, by its own
 folder's path, as a project's build hands them to its next build. No build runs in it. A release
 not installed whole, or whose server does not become ready, leaves the running one serving and

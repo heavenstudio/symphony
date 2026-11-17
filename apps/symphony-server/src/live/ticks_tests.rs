@@ -18,7 +18,7 @@ use std::collections::BTreeSet;
 use std::io::Write;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Weak, mpsc};
+use std::sync::{Arc, Weak};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
@@ -281,13 +281,10 @@ fn a_project_removed_under_its_hub_ends_its_ticks_and_its_document_loop_with_no_
 fn reached_after_run(hub: Weak<Hub>) -> bool {
     let reached = Arc::new(AtomicBool::new(false));
     let reach = Arc::clone(&reached);
-    // Kept until the run returns, so the document loop would wait on it rather than end.
-    let (_events, recv) = mpsc::sync_channel(1);
     let watcher = notify::NullWatcher::new(|_| {}, notify::Config::default()).unwrap();
     let running = std::thread::spawn(move || {
         super::run(
             hub,
-            recv,
             watcher,
             BTreeSet::new(),
             Backstop::new(crate::backstop::PERIOD),

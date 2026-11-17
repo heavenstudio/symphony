@@ -2,13 +2,17 @@
 //! Under load macOS FSEvents can drop an event outright: no rescan flag reaches the stream, or one
 //! names a path above the watched folders, which notify filters out. A loop that learned of edits
 //! only from events would then miss them until the next unrelated event.
+//!
+//! A loop waits on its [`Wakes`]: its watcher's handler wakes it, and so does whatever else it
+//! waits for (the server's stop, a starter's hand-off request, the hub's drain), each by a message
+//! through a [`Waker`]. Nothing else ends its wait but the period.
 
 use notify::RecursiveMode;
 use std::collections::{BTreeMap, BTreeSet};
 use std::io;
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
-use std::sync::mpsc;
+use std::sync::{Mutex, mpsc};
 use std::time::{Duration, Instant};
 
 /// A missed event costs at most this plus one check. Under a load of 160 a document refresh took
@@ -16,23 +20,104 @@ use std::time::{Duration, Instant};
 /// folders costs about 0.1 s of CPU, about 1% of a core at this period.
 pub(crate) const PERIOD: Duration = Duration::from_secs(10);
 
+/// What wakes a loop that waits on its [`Wakes`]. A wake given while one is waiting already is
+/// that one: the loop that wakes looks at everything it waits for.
+#[derive(Clone)]
+pub(crate) struct Waker(mpsc::SyncSender<()>);
+
+impl Waker {
+    /// Wake the loop: whether it is still there to wake.
+    pub(crate) fn wake(&self) -> bool {
+        !matches!(
+            self.0.try_send(()),
+            Err(mpsc::TrySendError::Disconnected(()))
+        )
+    }
+}
+
+/// The wakes of one loop: the channel it waits on, of which it keeps a sender of its own, so its
+/// wait ends at a wake or at the bound it gives, never because every waker went.
+pub(crate) struct Wakes {
+    waker: Waker,
+    woken: mpsc::Receiver<()>,
+}
+
+impl Wakes {
+    pub(crate) fn new() -> Self {
+        let (send, woken) = mpsc::sync_channel(1);
+        Self {
+            waker: Waker(send),
+            woken,
+        }
+    }
+
+    /// What wakes this loop's wait.
+    pub(crate) fn waker(&self) -> Waker {
+        self.waker.clone()
+    }
+
+    /// Until a wake, or until `within` has passed when it is given: whether a wake came.
+    pub(crate) fn wait(&self, within: Option<Duration>) -> bool {
+        match within {
+            None => self.woken.recv().is_ok(),
+            Some(within) => self.woken.recv_timeout(within).is_ok(),
+        }
+    }
+
+    /// [`debounce`] of these wakes.
+    pub(crate) fn debounce(&self, quiet: Duration, most: Duration) {
+        debounce(&self.woken, quiet, most);
+    }
+}
+
+/// The wakers one kind of event wakes ([`crate::front::Shared`]'s stop, a starter's hand-off
+/// request, a hub's board found or lost). A waker whose loop has gone is let go at the next wake.
+#[derive(Default)]
+pub(crate) struct Wakers(Mutex<Vec<Waker>>);
+
+impl Wakers {
+    pub(crate) fn add(&self, waker: Waker) {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push(waker);
+    }
+
+    /// Wake every loop waiting on these.
+    pub(crate) fn wake(&self) {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .retain(Waker::wake);
+    }
+
+    /// How many loops these would wake.
+    #[cfg(test)]
+    pub(crate) fn len(&self) -> usize {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .len()
+    }
+}
+
 /// Why a watching loop woke.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum Wake {
-    /// The watcher reported a change.
+    /// A wake came: the watcher reported a change, or something else the loop waits for wants a
+    /// look (its stop, a hand-off asked for), which the loop then looks at.
     Event,
     /// A period passed: check without an event.
     Period,
-    /// Neither within one tick, so the loop can look for shutdown.
-    Idle,
 }
 
-/// Waits on a watcher's events and asks for a check of its own once per period, events or not.
+/// Waits on a loop's [`Wakes`] and asks for a check of its own once per period, wakes or not.
 pub(crate) struct Backstop {
     period: Duration,
     due: Instant,
     /// The time now, by which the period runs: the machine's, or a test's ([`Backstop::timed_by`]).
     clock: Box<dyn Fn() -> Instant + Send>,
+    wakes: Wakes,
 }
 
 impl Backstop {
@@ -46,29 +131,33 @@ impl Backstop {
             period,
             due: clock() + period,
             clock: Box::new(clock),
+            wakes: Wakes::new(),
         }
     }
 
-    /// One wait of at most `tick`. A watcher that has gone (or never sends) leaves the period.
-    pub fn wait(&mut self, events: &mpsc::Receiver<()>, tick: Duration) -> Wake {
-        let now = (self.clock)();
-        if now >= self.due {
-            self.due = now + self.period;
-            return Wake::Period;
-        }
-        let tick = tick.min(self.due - now);
-        match events.recv_timeout(tick) {
-            Ok(()) => Wake::Event,
-            Err(mpsc::RecvTimeoutError::Timeout) => Wake::Idle,
-            Err(mpsc::RecvTimeoutError::Disconnected) => {
-                #[expect(
-                    clippy::disallowed_methods,
-                    reason = "no-timed-waits baseline: with its watcher gone the backstop sleeps out its tick, pacing a sweep for changes no event names"
-                )]
-                std::thread::sleep(tick);
-                Wake::Idle
+    /// What wakes this loop's wait: its watcher's handler, and what else it waits for.
+    pub fn waker(&self) -> Waker {
+        self.wakes.waker()
+    }
+
+    /// Until a wake, or the period's end on its clock, whichever comes first. A period due is
+    /// said before a wake waiting, so wakes never hold it back.
+    pub fn wait(&mut self) -> Wake {
+        loop {
+            let now = (self.clock)();
+            if now >= self.due {
+                self.due = now + self.period;
+                return Wake::Period;
+            }
+            if self.wakes.wait(Some(self.due - now)) {
+                return Wake::Event;
             }
         }
+    }
+
+    /// [`debounce`] of this loop's wakes, once a wake began a burst.
+    pub fn debounce(&self, quiet: Duration, most: Duration) {
+        self.wakes.debounce(quiet, most);
     }
 }
 
@@ -87,7 +176,7 @@ pub(crate) const BURST: Duration = Duration::from_secs(1);
 /// events: once the first event of a burst has woken the loop, every event that follows within
 /// `quiet` of the one before is taken with it, until the watcher says nothing for `quiet`, `most`
 /// has passed since this began, or the watcher is gone, which ends it at once. No event it took is
-/// left in `events`.
+/// left in `events`, so a loop looks after it at whatever else a wake it took could have asked.
 pub(crate) fn debounce(events: &mpsc::Receiver<()>, quiet: Duration, most: Duration) {
     let began = Instant::now();
     loop {
@@ -339,7 +428,7 @@ fn walk(
 
 #[cfg(test)]
 mod tests {
-    use super::{Backstop, Sweep, Wake, unlinked};
+    use super::{Backstop, Sweep, Wake, Wakers, Wakes, unlinked};
     use crate::testing::Tree;
     use notify::RecursiveMode;
     use std::collections::BTreeSet;
@@ -348,61 +437,90 @@ mod tests {
     use std::sync::mpsc;
     use std::time::{Duration, Instant};
 
-    #[test]
-    #[expect(
-        clippy::disallowed_methods,
-        reason = "the backstop's own test, whose ticks the test's clock counts"
-    )]
-    fn a_watcher_that_never_sends_still_gets_its_period_and_an_event_wakes_at_once() {
-        // The period runs by the test's clock, moved on by a tick after each wait: what a wait
-        // answers is that clock's, never how long a loaded machine took to let it.
+    /// A backstop whose period runs by a clock the test moves (`set`, how far past its start),
+    /// never by how long a loaded machine took: each wait below ends at once, by a wake or by its
+    /// period already due, and none waits out a length of time.
+    fn clocked(period: Duration) -> (Backstop, impl Fn(Duration)) {
         let start = Instant::now();
         let now = std::sync::Arc::new(std::sync::Mutex::new(start));
-        let clock = {
-            let now = now.clone();
-            move || *now.lock().unwrap()
-        };
-        let tick = Duration::from_millis(50);
-        let pass = || *now.lock().unwrap() += tick;
-        let (send, events) = mpsc::sync_channel(1);
+        let read = now.clone();
+        let backstop = Backstop::timed_by(period, move || *read.lock().unwrap());
+        (backstop, move |by| *now.lock().unwrap() = start + by)
+    }
+
+    /// Whether a wake waits in `backstop`, taken if so; never a wait.
+    fn waiting(backstop: &Backstop) -> Result<(), mpsc::TryRecvError> {
+        backstop.wakes.woken.try_recv()
+    }
+
+    #[test]
+    fn a_wake_ends_the_wait_at_once_and_wakes_given_while_it_waited_are_one() {
+        let hour = Duration::from_secs(3600);
+        let (mut backstop, _) = clocked(hour);
+        let waker = backstop.waker();
+        assert!(waker.wake());
+        assert_eq!(backstop.wait(), Wake::Event);
+        // Three wakes before the loop looks again: one look is all they ask.
+        for _ in 0..3 {
+            assert!(waker.wake());
+        }
+        assert_eq!(backstop.wait(), Wake::Event);
+        assert_eq!(waiting(&backstop), Err(mpsc::TryRecvError::Empty));
+        // A wake from another thread, before or during the wait: an hour's period never ends it.
+        let other = backstop.waker();
+        let woke = std::thread::spawn(move || other.wake());
+        assert_eq!(backstop.wait(), Wake::Event);
+        assert!(woke.join().unwrap());
+    }
+
+    #[test]
+    fn the_period_comes_on_its_clock_before_a_wake_that_waits() {
         let period = Duration::from_millis(300);
-        let mut backstop = Backstop::timed_by(period, clock);
-        let mut idle = 0;
-        while backstop.wait(&events, tick) == Wake::Idle {
-            idle += 1;
-            pass();
-        }
-        assert_eq!(idle, 6, "a tick bounds each wait: six make the period");
-        assert_eq!(*now.lock().unwrap() - start, period);
-        send.send(()).unwrap();
-        assert_eq!(backstop.wait(&events, Duration::from_secs(5)), Wake::Event);
-        // Events do not hold the next period back: with one always waiting, it still comes.
-        let mut woken = 0;
-        loop {
-            let _ = send.try_send(());
-            match backstop.wait(&events, tick) {
-                Wake::Period => break,
-                Wake::Event => woken += 1,
-                Wake::Idle => panic!("an event was waiting"),
-            }
-            pass();
-        }
-        assert_eq!(
-            woken, 6,
-            "each event woke its wait, and the period came on time"
+        let (mut backstop, set) = clocked(period);
+        set(period);
+        assert_eq!(backstop.wait(), Wake::Period);
+        // Wakes do not hold the next period back: with one waiting, the period is said first.
+        assert!(backstop.waker().wake());
+        set(period * 2);
+        assert_eq!(backstop.wait(), Wake::Period);
+        assert_eq!(backstop.wait(), Wake::Event, "the wake still waited");
+        // Past more than a period, one period is said, and the next counts from then.
+        set(period * 5);
+        assert_eq!(backstop.wait(), Wake::Period);
+        assert!(backstop.waker().wake());
+        set(period * 6 - Duration::from_millis(1));
+        assert_eq!(backstop.wait(), Wake::Event);
+        set(period * 6);
+        assert_eq!(backstop.wait(), Wake::Period);
+    }
+
+    #[test]
+    fn every_waker_gone_leaves_the_wait_to_its_period_never_to_a_spin() {
+        let (backstop, _) = clocked(Duration::from_secs(3600));
+        drop(backstop.waker());
+        // It keeps a sender of its own: nothing it waits on can end, so no wait returns at once.
+        assert_eq!(waiting(&backstop), Err(mpsc::TryRecvError::Empty));
+    }
+
+    #[test]
+    fn wakers_wake_every_loop_still_there_and_let_go_of_the_others() {
+        let wakers = Wakers::default();
+        let (here, gone) = (Wakes::new(), Wakes::new());
+        wakers.add(here.waker());
+        wakers.add(gone.waker());
+        let waker = gone.waker();
+        drop(gone);
+        assert!(!waker.wake(), "its loop has gone");
+        wakers.wake();
+        assert_eq!(wakers.len(), 1);
+        assert!(
+            here.wait(Some(Duration::ZERO)),
+            "the loop still there was woken"
         );
-        assert_eq!(*now.lock().unwrap() - start, period * 2);
-        // A watcher that has gone neither spins nor ends the periods.
-        while events.try_recv().is_ok() {}
-        drop(send);
-        let began = Instant::now();
-        assert_eq!(backstop.wait(&events, tick), Wake::Idle);
-        assert!(began.elapsed() >= Duration::from_millis(40));
-        pass();
-        while backstop.wait(&events, tick) != Wake::Period {
-            pass();
-        }
-        assert_eq!(*now.lock().unwrap() - start, period * 3);
+        assert!(
+            !here.wait(Some(Duration::ZERO)),
+            "and nothing more waits for it"
+        );
     }
 
     /// `debounce` on its own thread, which says on a channel once it has returned; the test waits

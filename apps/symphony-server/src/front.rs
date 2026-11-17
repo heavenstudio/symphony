@@ -1,6 +1,7 @@
 //! Axum serves the Symphony client, JSON API and project media directly. Every request is judged by
 //! client address first; read and save handlers also check Host and Origin.
 
+use crate::backstop::{Waker, Wakers, Wakes};
 use crate::{cli::Serve, gate::Gate, sys};
 use axum::Router;
 use axum::body::{Body, HttpBody};
@@ -14,7 +15,7 @@ use std::future::Future;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime};
 use symphony_board::{launch::reap::REAP_SECONDS, sys::Command};
 use tokio::sync::watch;
@@ -68,13 +69,20 @@ pub struct Shared {
     /// Set once, when the server stops: whoever waits on it sees it, however late it looks.
     stopped: watch::Sender<bool>,
     pub(crate) lifecycle: Mutex<()>,
-    /// Pairs with `wake` alone. Background timers must never queue on `lifecycle`, which hub
+    /// What the stop wakes ([`Shared::wake_at_stop`]). Never taken with `lifecycle`, which hub
     /// startup holds across SurrealDB calls.
-    sleep: Mutex<()>,
-    wake: Condvar,
+    stop_wakers: Wakers,
+    /// The write ends of the pipes whose read ends see their end at the stop
+    /// ([`Shared::stop_pipe`]): a wait on a descriptor ends there.
+    stop_pipes: Mutex<Vec<std::io::PipeWriter>>,
     pub(crate) replaced: AtomicBool,
-    /// A starter asked for the hand-off ([`handover_when_asked`]); the reload worker takes it.
+    /// A starter asked for the hand-off ([`Shared::ask_handover`]); the reload worker takes it.
     pub(crate) handover: AtomicBool,
+    /// What a hand-off request wakes ([`Shared::wake_at_handover`]).
+    handover_wakers: Wakers,
+    /// What the project's hub wakes as its board is found or lost ([`crate::live::Hub::has_board`]),
+    /// given to the hub as it starts ([`crate::api::start`]).
+    pub(crate) board_wakers: Arc<Wakers>,
     pub(crate) api: tokio::sync::OnceCell<Arc<crate::live::Hub>>,
     /// When this server generation's hubs record, the one gate of every project it serves and of
     /// both their recorders, the agents' and the board's health hours: a replacement's opens once
@@ -150,10 +158,12 @@ impl Shared {
             tailnet: Mutex::new(None),
             stopped: watch::Sender::new(false),
             lifecycle: Mutex::new(()),
-            sleep: Mutex::new(()),
-            wake: Condvar::new(),
+            stop_wakers: Wakers::default(),
+            stop_pipes: Mutex::new(Vec::new()),
             replaced: AtomicBool::new(false),
             handover: AtomicBool::new(false),
+            handover_wakers: Wakers::default(),
+            board_wakers: Arc::default(),
             api: tokio::sync::OnceCell::new(),
             saves: std::sync::OnceLock::new(),
             recording,
@@ -186,11 +196,12 @@ impl Shared {
     /// covers hub initialization, so a concurrent first request cannot start a worker after stop.
     /// The project's maintenance ends first ([`Shared::maintained`]).
     pub fn stop(&self) {
-        {
-            let _asleep = self.sleep.lock().unwrap_or_else(|e| e.into_inner());
-            self.stopped.send_replace(true);
-            self.wake.notify_all();
-        }
+        self.stopped.send_replace(true);
+        self.stop_wakers.wake();
+        self.stop_pipes
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clear();
         self.end_maintenance(&mut self.maintenance.lock().unwrap_or_else(|e| e.into_inner()));
         let _held = self.lifecycle.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(hub) = self.api.get() {
@@ -234,28 +245,55 @@ impl Shared {
         }
     }
 
-    /// A background timer wakes immediately on shutdown, including when stop preceded the wait.
-    /// Nothing but the stop ends it early, so clippy lists it as a sleep (RULES.md
-    /// `code/no-timed-waits`, clippy.toml), and each caller is in the baseline until a message
-    /// wakes it for what it looks for.
-    pub(crate) fn wait(&self, duration: Duration) -> bool {
-        let held = self.sleep.lock().unwrap_or_else(|e| e.into_inner());
-        let _held = self
-            .wake
-            .wait_timeout_while(held, duration, |()| !self.stopping())
-            .unwrap_or_else(|e| e.into_inner());
-        self.stopping()
+    /// Wake `waker` as the server stops; one given once it stopped is woken at once. The stop is
+    /// set before its wakes are sent, so a loop that gives its waker and then looks whether the
+    /// server stops misses no stop.
+    pub(crate) fn wake_at_stop(&self, waker: Waker) {
+        self.stop_wakers.add(waker.clone());
+        if self.stopping() {
+            waker.wake();
+        }
     }
 
-    /// Until the server stops, on a thread: the stop's wake, which ends [`Shared::wait`] early, and
-    /// no length.
+    /// Wake `waker` at each hand-off a starter asks for ([`Shared::ask_handover`]).
+    pub(crate) fn wake_at_handover(&self, waker: Waker) {
+        self.handover_wakers.add(waker.clone());
+        if self.handover.load(Ordering::SeqCst) {
+            waker.wake();
+        }
+    }
+
+    /// A starter asked for the hand-off: the reload worker takes it at its wake.
+    pub(crate) fn ask_handover(&self) {
+        self.handover.store(true, Ordering::SeqCst);
+        self.handover_wakers.wake();
+    }
+
+    /// Wake `waker` as the project's hub finds or loses its board ([`has_board`]).
+    pub(crate) fn wake_at_board(&self, waker: Waker) {
+        self.board_wakers.add(waker);
+    }
+
+    /// The read end of a pipe whose write end the server keeps until it stops: a read, or a poll
+    /// of it, sees its end then, and at once for one taken once it stopped. What waits on a
+    /// descriptor (a process's end, [`sys::until_ends`]) waits on this beside it.
+    pub(crate) fn stop_pipe(&self) -> std::io::Result<std::io::PipeReader> {
+        let (read, write) = symphony_board::sys::pipe()?;
+        let mut held = self.stop_pipes.lock().unwrap_or_else(|e| e.into_inner());
+        if !self.stopping() {
+            held.push(write);
+        }
+        Ok(read)
+    }
+
+    /// Until the server stops, on a thread: the stop's wake, and no length.
     #[cfg(test)]
     pub(crate) fn wait_for_stop(&self) {
-        let held = self.sleep.lock().unwrap_or_else(|e| e.into_inner());
-        let _held = self
-            .wake
-            .wait_while(held, |()| !self.stopping())
-            .unwrap_or_else(|e| e.into_inner());
+        let wakes = Wakes::new();
+        self.wake_at_stop(wakes.waker());
+        while !self.stopping() {
+            wakes.wait(None);
+        }
     }
 
     /// Until the server stops.
@@ -569,30 +607,33 @@ pub(crate) fn worker(
         .unwrap_or_else(|problem| panic!("cannot start the {name} thread: {problem}"))
 }
 
-/// A thread `name` that stops the server once `ended` says so, polled ten times a second, saying
-/// `why`.
+/// A thread `name` that stops the server once the process `pid` ends, saying `why`: a wait for
+/// that end itself ([`sys::until_ends`]), beside the stop's ([`Shared::stop_pipe`]). `ended` says
+/// whether it has ended, read once the wait is set, so an end before it, the pid given to another
+/// process since, counts too. A process that cannot be followed is said, and the server then ends
+/// at its stop alone.
 fn end_when(
     shared: &Arc<Shared>,
     name: &str,
     why: &'static str,
+    pid: i64,
     ended: impl Fn() -> bool + Send + 'static,
 ) -> std::thread::JoinHandle<()> {
     let shared = shared.clone();
     worker(name, move || {
-        while !shared.stopping() {
-            if ended() {
+        let followed = shared
+            .stop_pipe()
+            .and_then(|stop| sys::until_ends(pid, &stop, &ended));
+        match followed {
+            Ok(sys::End::Ended) => {
                 tell(format_args!("· Symphony server: {why}: stopping"));
                 shared.stop();
-                return;
             }
-            #[expect(
-                clippy::disallowed_methods,
-                reason = "no-timed-waits baseline: looks ten times a second whether the process it follows has ended (a starter's or a test's, none its child), where a kqueue or pidfd watch of that process's exit is the event"
-            )]
-            let stopped = shared.wait(Duration::from_millis(100));
-            if stopped {
-                break;
-            }
+            Ok(sys::End::Stopped) => {}
+            Err(problem) => tell(format_args!(
+                "· Symphony server: cannot follow pid {pid}'s end, so only its stop ends it: \
+                 {problem}"
+            )),
         }
     })
 }
@@ -960,11 +1001,13 @@ async fn start(mut serve: Serve, open: bool) -> Result<Started, i32> {
     }
     if serve.home.is_none() {
         // A server of its own port is a test's, or a terminal's: it ends with the process that started it.
+        // Its parent's end gives it another parent at once, before the end is reaped.
         let parent = sys::parent();
         background.workers.push(end_when(
             &shared,
             STARTER_WORKER,
             "the process that started it ended",
+            parent,
             move || sys::parent() != parent,
         ));
     }
@@ -973,11 +1016,14 @@ async fn start(mut serve: Serve, open: bool) -> Result<Started, i32> {
         .and_then(|pid| pid.parse::<i64>().ok())
         .filter(|&pid| pid > 1)
     {
+        // Taken by its start, so a pid ended, unreaped or given again reads as ended.
+        let taken = sys::Taken::of(test);
         background.workers.push(end_when(
             &shared,
             TEST_WORKER,
             "the test that started it ended",
-            move || !sys::pid_alive(test),
+            test,
+            move || !taken.alive(),
         ));
     }
     // Documents are ready before the URL. The first board read runs in the hub's owned worker;
@@ -1083,7 +1129,7 @@ async fn start(mut serve: Serve, open: bool) -> Result<Started, i32> {
 }
 
 /// A starter whose build must replace this server asks with SIGUSR1, its request in the machine
-/// folder ([`crate::host::Handover`]); the reload worker reads it at its next look.
+/// folder ([`crate::host::Handover`]); the reload worker, woken, reads it at once.
 fn handover_when_asked(shared: &Arc<Shared>) {
     use tokio::signal::unix::{SignalKind, signal};
     let Ok(mut asked) = signal(SignalKind::user_defined1()) else {
@@ -1099,7 +1145,7 @@ fn handover_when_asked(shared: &Arc<Shared>) {
                     if received.is_none() {
                         return;
                     }
-                    shared.handover.store(true, Ordering::SeqCst);
+                    shared.ask_handover();
                 }
             }
         }
@@ -1175,7 +1221,7 @@ pub(crate) fn maintenance(
     shared: &Arc<Shared>,
     home: Option<&Path>,
 ) -> Vec<std::thread::JoinHandle<()>> {
-    session_maintenance(shared, home, Stamp::now)
+    session_maintenance(shared, home, MachineClock)
         .into_iter()
         .collect()
 }
@@ -1199,11 +1245,11 @@ fn of_project(shared: &Shared) -> String {
 
 /// A private preview may use a copied board, whose old pane identities must never be used to
 /// clean up real agent terminals. Only the machine's shared installation starts this worker,
-/// which reads the time from `clock` ([`Stamp::now`] outside tests).
+/// which reads the time from `clock` ([`MachineClock`] outside tests).
 fn session_maintenance(
     shared: &Arc<Shared>,
     home: Option<&Path>,
-    clock: impl Fn() -> Stamp + Send + 'static,
+    clock: impl Clock,
 ) -> Option<std::thread::JoinHandle<()>> {
     home?;
     Some(maintenance_worker(
@@ -1239,12 +1285,49 @@ impl Stamp {
     }
 }
 
+/// The clock a maintenance worker times its rounds by and waits on for the next: the machine's
+/// ([`MachineClock`]), or a test's, which wakes the wait as the test moves it.
+pub(crate) trait Clock: Send + 'static {
+    /// The time now, on both clocks.
+    fn now(&self) -> Stamp;
+
+    /// Until `wakes` is woken, or until `left` has passed on this clock when it is given.
+    fn wait(&self, wakes: &Wakes, left: Option<Duration>);
+}
+
+/// The machine's clocks, as [`Stamp::now`] reads them.
+#[derive(Clone, Copy)]
+pub(crate) struct MachineClock;
+
+impl Clock for MachineClock {
+    fn now(&self) -> Stamp {
+        Stamp::now()
+    }
+
+    fn wait(&self, wakes: &Wakes, left: Option<Duration>) {
+        wakes.wait(left);
+    }
+}
+
+/// The longest a maintenance worker waits for its next round before it reads its clocks again: a
+/// machine that slept stopped `Instant` while its wall clock went on, which no event says, so a
+/// round that the wall clock made due during a sleep comes within this of the wake, before a live
+/// pane's Unknown cap expires. It is the backstop's period, the check for what no event says.
+const AFTER_A_SLEEP: Duration = crate::backstop::PERIOD;
+
 /// A round is due when either clock says `interval` has passed since the last one started, so a
 /// wake from sleep runs one at once and a wall clock set back cannot hold it off.
 fn sweep_due(last: Option<Stamp>, now: Stamp, interval: Duration) -> bool {
     last.is_none_or(|at| {
         now.mono.saturating_duration_since(at.mono) >= interval || now.wall_since(at) >= interval
     })
+}
+
+/// How long until the round after one that started at `last` is due ([`sweep_due`]): the sooner
+/// of the two clocks' ends of `interval`, none once either has passed it.
+fn sweep_left(last: Stamp, now: Stamp, interval: Duration) -> Duration {
+    let mono = interval.saturating_sub(now.mono.saturating_duration_since(last.mono));
+    mono.min(interval.saturating_sub(now.wall_since(last)))
 }
 
 /// How far past its interval, on the wall clock, a round starts; `None` within [`LATE_SWEEP`].
@@ -1270,31 +1353,32 @@ fn board_build_on(root: &Path, beyond: &symphony_board::builds::Beyond) -> Resul
 
 /// A round every `interval`, whose reap child is ended after `timeout`, both measured on `clock`,
 /// in the checkout of the project `shared` serves: its board, its build of `tasks`, its `reap.json`
-/// and its health record. A round due waits while the project has no board ([`has_board`]).
+/// and its health record. Between two it waits on `clock` until the next is due, the board found
+/// or lost, or the stop; a round due waits while the project has no board ([`has_board`]).
 pub(crate) fn maintenance_worker(
     shared: Arc<Shared>,
     interval: Duration,
     timeout: Duration,
-    clock: impl Fn() -> Stamp + Send + 'static,
+    clock: impl Clock,
 ) -> std::thread::JoinHandle<()> {
     worker(SWEEP_WORKER, move || {
+        let wakes = Wakes::new();
+        shared.wake_at_stop(wakes.waker());
+        shared.wake_at_board(wakes.waker());
         let of = of_project(&shared);
         let mut last: Option<Stamp> = None;
         // A round due that waited for a board: late for that, not for a sleep.
         let mut board_waited = false;
         while !shared.stopping() {
-            let now = clock();
+            let now = clock.now();
             let due = sweep_due(last, now, interval);
             if !due || !has_board(&shared) {
                 board_waited |= due;
-                #[expect(
-                    clippy::disallowed_methods,
-                    reason = "no-timed-waits baseline: looks every 250 ms whether a round is due and the project has a board, where the round's due time on its clock and the board's arrival are the events"
-                )]
-                let stopped = shared.wait(Duration::from_millis(250));
-                if stopped {
-                    break;
-                }
+                // A round not due yet is waited for on the clock as well; one due, on the board.
+                let left = last
+                    .filter(|_| !due)
+                    .map(|at| sweep_left(at, now, interval).min(AFTER_A_SLEEP));
+                clock.wait(&wakes, left);
                 continue;
             }
             let started = Instant::now();
@@ -1320,7 +1404,7 @@ pub(crate) fn maintenance_worker(
                     timeout,
                     || !shared.stopping(),
                     || {
-                        let at = clock();
+                        let at = clock.now();
                         (at.mono, at.wall)
                     },
                 )
@@ -1371,14 +1455,7 @@ pub(crate) fn maintenance_worker(
                     .swept(now, outcome.as_ref().copied().map_err(String::as_str));
                 hub.tell_health(now);
             }
-            #[expect(
-                clippy::disallowed_methods,
-                reason = "no-timed-waits baseline: holds 250 ms after a round before it looks whether the next is due, where the next round's due time on its clock is the event"
-            )]
-            let stopped = shared.wait(Duration::from_millis(250));
-            if stopped {
-                break;
-            }
+            // The next round is due `interval` after this one began: the next look waits for it.
         }
     })
 }
@@ -1409,3 +1486,6 @@ mod broken_stderr_tests;
 
 #[cfg(test)]
 mod session_tests;
+
+#[cfg(test)]
+pub(crate) mod test_clock;

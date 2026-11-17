@@ -172,6 +172,188 @@ pub fn parent() -> i64 {
     i64::from(std::os::unix::process::parent_id())
 }
 
+/// How a wait for a process's end came out ([`until_ends`]).
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum End {
+    /// The process ended.
+    Ended,
+    /// The stop came first.
+    Stopped,
+}
+
+/// Until the process `pid`, this process's child or not, ends, or `stop` reads its end (its
+/// pipe's every writer gone): which came first. The wait is the kernel's for that end (a kqueue's
+/// `EVFILT_PROC` on macOS, a pidfd on Linux), with no timer. A process gone before the wait is set
+/// has ended, and so has one `ended` says has, read once the wait is set: an end before then, its
+/// pid given to another process since, counts. A process the kernel will not let this one follow
+/// is an error.
+pub(crate) fn until_ends(
+    pid: i64,
+    stop: &impl std::os::fd::AsFd,
+    ended: impl Fn() -> bool,
+) -> std::io::Result<End> {
+    let pid = libc::pid_t::try_from(pid)
+        .ok()
+        .filter(|&pid| pid > 0)
+        .ok_or_else(|| std::io::Error::other(format!("{pid} names no process")))?;
+    ends::until(pid, std::os::fd::AsFd::as_fd(stop), ended)
+}
+
+/// [`until_ends`] on each kernel.
+mod ends {
+    use super::End;
+    use std::io;
+    use std::os::fd::{AsRawFd, BorrowedFd, FromRawFd, OwnedFd};
+
+    /// Whether `problem` says the process is not there to follow: it ended already.
+    fn gone(problem: &io::Error) -> bool {
+        problem.raw_os_error() == Some(libc::ESRCH)
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    pub(super) fn until(
+        pid: libc::pid_t,
+        stop: BorrowedFd<'_>,
+        ended: impl Fn() -> bool,
+    ) -> io::Result<End> {
+        // SAFETY: kqueue takes no argument.
+        let queue = unsafe { libc::kqueue() };
+        if queue == -1 {
+            return Err(io::Error::last_os_error());
+        }
+        // SAFETY: a new descriptor nothing else owns; no child inherits a kqueue.
+        let queue = unsafe { OwnedFd::from_raw_fd(queue) };
+        let add = |ident: usize, filter: i16, fflags: u32| {
+            let change = libc::kevent {
+                ident,
+                filter,
+                flags: libc::EV_ADD,
+                fflags,
+                data: 0,
+                udata: std::ptr::null_mut(),
+            };
+            // SAFETY: one change in and no room for an event out, so an error is the call's own.
+            let added = unsafe {
+                libc::kevent(
+                    queue.as_raw_fd(),
+                    &raw const change,
+                    1,
+                    std::ptr::null_mut(),
+                    0,
+                    std::ptr::null(),
+                )
+            };
+            if added == -1 {
+                Err(io::Error::last_os_error())
+            } else {
+                Ok(())
+            }
+        };
+        add(
+            stop.as_raw_fd().unsigned_abs() as usize,
+            libc::EVFILT_READ,
+            0,
+        )?;
+        match add(
+            pid.unsigned_abs() as usize,
+            libc::EVFILT_PROC,
+            libc::NOTE_EXIT,
+        ) {
+            Err(problem) if gone(&problem) => return Ok(End::Ended),
+            added => added?,
+        }
+        if ended() {
+            return Ok(End::Ended);
+        }
+        loop {
+            // SAFETY: kevent is plain data, for which all zeroes is a value.
+            let mut event: libc::kevent = unsafe { std::mem::zeroed() };
+            // SAFETY: no change in, room for one event out, and no timeout: the wait is the event's.
+            let seen = unsafe {
+                libc::kevent(
+                    queue.as_raw_fd(),
+                    std::ptr::null(),
+                    0,
+                    &raw mut event,
+                    1,
+                    std::ptr::null(),
+                )
+            };
+            if seen == -1 {
+                let problem = io::Error::last_os_error();
+                if problem.kind() == io::ErrorKind::Interrupted {
+                    continue;
+                }
+                return Err(problem);
+            }
+            if event.flags & libc::EV_ERROR != 0 {
+                return Err(io::Error::from_raw_os_error(
+                    i32::try_from(event.data).unwrap_or(libc::EINVAL),
+                ));
+            }
+            return Ok(if event.filter == libc::EVFILT_PROC {
+                End::Ended
+            } else {
+                End::Stopped
+            });
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    pub(super) fn until(
+        pid: libc::pid_t,
+        stop: BorrowedFd<'_>,
+        ended: impl Fn() -> bool,
+    ) -> io::Result<End> {
+        // SAFETY: pidfd_open takes a pid and no flags and returns a new descriptor, close-on-exec,
+        // or -1.
+        let opened = unsafe { libc::syscall(libc::SYS_pidfd_open, pid, 0) };
+        if opened == -1 {
+            let problem = io::Error::last_os_error();
+            return if gone(&problem) {
+                Ok(End::Ended)
+            } else {
+                Err(problem)
+            };
+        }
+        let opened = std::os::fd::RawFd::try_from(opened).map_err(io::Error::other)?;
+        // SAFETY: a new descriptor nothing else owns.
+        let process = unsafe { OwnedFd::from_raw_fd(opened) };
+        if ended() {
+            return Ok(End::Ended);
+        }
+        let mut fds = [
+            libc::pollfd {
+                fd: process.as_raw_fd(),
+                events: libc::POLLIN,
+                revents: 0,
+            },
+            libc::pollfd {
+                fd: stop.as_raw_fd(),
+                events: libc::POLLIN,
+                revents: 0,
+            },
+        ];
+        loop {
+            // SAFETY: two descriptors this call holds, and no timeout: the wait is the event's.
+            let ready = unsafe { libc::poll(fds.as_mut_ptr(), 2, -1) };
+            if ready == -1 {
+                let problem = io::Error::last_os_error();
+                if problem.kind() == io::ErrorKind::Interrupted {
+                    continue;
+                }
+                return Err(problem);
+            }
+            if fds[0].revents != 0 {
+                return Ok(End::Ended);
+            }
+            if fds[1].revents != 0 {
+                return Ok(End::Stopped);
+            }
+        }
+    }
+}
+
 /// `name` on the PATH, as a shell finds it.
 pub fn which(name: &str) -> Option<PathBuf> {
     std::env::var_os("PATH").and_then(|path| {
@@ -648,5 +830,92 @@ mod tests {
                 other => panic!("group shutdown: {other:?}"),
             }
         });
+    }
+
+    /// A child that lives until the case kills it: it sleeps a day.
+    fn sleeper() -> Child {
+        Command::new("/bin/sleep").arg("86400").spawn().unwrap()
+    }
+
+    /// [`until_ends`] of `pid` on a thread, beside the stop pipe `stop`, `set` told once its wait
+    /// is set (as its `ended` is asked): how it came out, read within [`BACKSTOP`].
+    fn followed(
+        pid: i64,
+        stop: std::io::PipeReader,
+    ) -> (
+        std::sync::mpsc::Receiver<()>,
+        std::sync::mpsc::Receiver<std::io::Result<End>>,
+    ) {
+        let (set, is_set) = std::sync::mpsc::channel();
+        let (came, came_out) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let end = until_ends(pid, &stop, || {
+                let _ = set.send(());
+                false
+            });
+            let _ = came.send(end);
+        });
+        (is_set, came_out)
+    }
+
+    #[test]
+    fn a_process_followed_wakes_its_follower_as_it_ends() {
+        let mut child = sleeper();
+        let (stop, _writer) = symphony_board::sys::pipe().unwrap();
+        let (is_set, came_out) = followed(i64::from(child.id()), stop);
+        is_set.recv_timeout(BACKSTOP).expect("the wait to be set");
+        // Killed once the wait is set: the kernel's word of its end is what wakes it.
+        child.kill().unwrap();
+        let end = came_out.recv_timeout(BACKSTOP).expect("the end to wake it");
+        assert_eq!(end.unwrap(), End::Ended);
+        child.wait().unwrap();
+    }
+
+    #[test]
+    fn a_stop_wakes_the_follower_of_a_process_that_goes_on() {
+        let mut child = sleeper();
+        let (stop, writer) = symphony_board::sys::pipe().unwrap();
+        let (is_set, came_out) = followed(i64::from(child.id()), stop);
+        is_set.recv_timeout(BACKSTOP).expect("the wait to be set");
+        drop(writer);
+        let end = came_out
+            .recv_timeout(BACKSTOP)
+            .expect("the stop to wake it");
+        assert_eq!(end.unwrap(), End::Stopped);
+        assert!(!exited(&child), "the process goes on");
+        // A stop already over when the wait is set ends it as it begins.
+        let (stop, writer) = symphony_board::sys::pipe().unwrap();
+        drop(writer);
+        assert_eq!(
+            until_ends(i64::from(child.id()), &stop, || false).unwrap(),
+            End::Stopped
+        );
+        child.kill().unwrap();
+        child.wait().unwrap();
+    }
+
+    #[test]
+    fn a_process_ended_before_the_wait_is_set_has_ended() {
+        let (stop, _writer) = symphony_board::sys::pipe().unwrap();
+        // A zombie, holding its pid unreaped, so no other process can be given it meanwhile.
+        let mut child = Command::new("true").spawn().unwrap();
+        until("true to end", || exited(&child));
+        assert_eq!(
+            until_ends(i64::from(child.id()), &stop, || false).unwrap(),
+            End::Ended
+        );
+        child.wait().unwrap();
+        // One whose end `ended` says, its pid perhaps another's since: ended, though one runs.
+        let mut running = sleeper();
+        assert_eq!(
+            until_ends(i64::from(running.id()), &stop, || true).unwrap(),
+            End::Ended
+        );
+        running.kill().unwrap();
+        running.wait().unwrap();
+        for pid in [0, -1, i64::from(i32::MAX) + 1] {
+            let refused = until_ends(pid, &stop, || false).unwrap_err();
+            assert_eq!(refused.to_string(), format!("{pid} names no process"));
+        }
     }
 }

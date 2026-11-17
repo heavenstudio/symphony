@@ -1,7 +1,7 @@
 //! Listening sockets and the server lease survive exec; accepted connections stay with the old
 //! generation. A private readiness pipe makes a failed replacement harmless to the serving one.
 
-use crate::backstop::{self, Backstop, Wake};
+use crate::backstop::{self, Backstop, Wake, Waker};
 use crate::cli::Serve;
 use crate::front::Shared;
 use crate::home::{Home, Running};
@@ -13,7 +13,7 @@ use std::io::{PipeReader, PipeWriter, Read, Write};
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::{Mutex, mpsc};
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 use symphony_board::sys::{self, Stdio};
 
@@ -481,7 +481,11 @@ fn watch_with<W: Watcher + Send + 'static>(
         ));
     }
     let reload = move || {
-        let (send, recv) = mpsc::sync_channel(1);
+        // The stop and a starter's hand-off request wake it, as its watcher does.
+        let mut backstop = Backstop::new(period);
+        shared.wake_at_stop(backstop.waker());
+        shared.wake_at_handover(backstop.waker());
+        let changed = backstop.waker();
         let directories = Arc::new(Mutex::new(BTreeSet::<PathBuf>::new()));
         let checked = directories.clone();
         let root = serve.root.clone();
@@ -498,7 +502,7 @@ fn watch_with<W: Watcher + Send + 'static>(
                         }))
             });
             if relevant {
-                let _ = send.try_send(());
+                changed.wake();
             }
         };
         let mut watcher = match W::new(handler, notify::Config::default()) {
@@ -517,63 +521,22 @@ fn watch_with<W: Watcher + Send + 'static>(
         let mut running = setup.running;
         let mut last_problem = String::new();
         let mut initial = true;
-        let mut backstop = Backstop::new(period);
         while !shared.stopping() {
-            // A starter whose build must serve the machine asked for the hand-off (host rule).
-            if shared
-                .handover
-                .swap(false, std::sync::atomic::Ordering::SeqCst)
-                && let Some(machine) = serve.home.as_deref()
-            {
-                match crate::host::Handover::take(machine) {
-                    Some(Ok(request)) => {
-                        let successor = Serve {
-                            root: request.root.clone(),
-                            install: Some(request.install.clone()),
-                            ..serve.clone()
-                        };
-                        let fingerprint =
-                            symphony::reload::fingerprint(&request.root).unwrap_or_default();
-                        // This hand-off is the starter's to ask again; a retry of the sources'
-                        // own update that waits still comes, and the notice keeps its time.
-                        let result = replace(
-                            &successor,
-                            &request.exe,
-                            &sockets,
-                            &lease,
-                            &fingerprint,
-                            &shared,
-                            None,
-                        )
-                        .map_err(|why| match retry.waiting() {
-                            Some(again) => format!(
-                                "{}. The version whose update failed before is tried again at \
-                                 about {again}.",
-                                reason(&why)
-                            ),
-                            None => why,
-                        });
-                        if replaced(&shared, result) {
-                            return;
-                        }
-                    }
-                    Some(Err(why)) => eprintln!("· Symphony hand-off refused: {why}"),
-                    None => {}
-                }
+            // A starter whose build must serve the machine asked for the hand-off (host rule),
+            // while this loop read or built.
+            if handed_over(&serve, &shared, &sockets, &lease, &retry) {
+                return;
             }
             // Read once on startup, then after a source event and once a period, since an event
-            // can be lost. An idle tick checks shutdown and the hand-off flag; it does not read
-            // files, hash code or spawn repository commands.
+            // can be lost. A wake for the stop or a hand-off is looked at first; the sources are
+            // read after it all the same, as a watcher's event may have come with it.
             if !initial {
-                #[expect(
-                    clippy::disallowed_methods,
-                    reason = "no-timed-waits baseline: an idle TICK looks for shutdown and the hand-off flag, where a message from the stop and from the hand-off is the event"
-                )]
-                let wake = backstop.wait(&recv, TICK);
-                match wake {
-                    Wake::Event => backstop::debounce(&recv, backstop::QUIET, backstop::BURST),
-                    Wake::Period => {}
-                    Wake::Idle => continue,
+                let wake = backstop.wait();
+                if wake == Wake::Event && !shared.stopping() {
+                    backstop.debounce(backstop::QUIET, backstop::BURST);
+                }
+                if shared.stopping() || handed_over(&serve, &shared, &sockets, &lease, &retry) {
+                    return;
                 }
                 if let Err(why) =
                     watch_sources(&serve.root, &mut watcher, &directories, &mut watched)
@@ -662,9 +625,59 @@ fn watch_with<W: Watcher + Send + 'static>(
     Some(crate::front::worker(crate::front::RELOAD_WORKER, reload))
 }
 
-/// The longest a watching loop waits for its watcher's event before it looks for shutdown and a
-/// starter's hand-off request, neither of which wakes it.
-const TICK: Duration = Duration::from_millis(250);
+/// The hand-off a starter asked for ([`Shared::ask_handover`]), to the build its request in the
+/// machine folder names ([`crate::host::Handover`]), when one asked: whether a replacement took
+/// over, this generation then draining. A failure is said on the notice, with the time `retry`
+/// will try the sources' own failed update again, when one waits: the starter asks again itself.
+fn handed_over(
+    serve: &Serve,
+    shared: &Shared,
+    sockets: &[OwnedFd],
+    lease: &File,
+    retry: &Retry,
+) -> bool {
+    if !shared
+        .handover
+        .swap(false, std::sync::atomic::Ordering::SeqCst)
+    {
+        return false;
+    }
+    let Some(machine) = serve.home.as_deref() else {
+        return false;
+    };
+    match crate::host::Handover::take(machine) {
+        Some(Ok(request)) => {
+            let successor = Serve {
+                root: request.root.clone(),
+                install: Some(request.install.clone()),
+                ..serve.clone()
+            };
+            let fingerprint = symphony::reload::fingerprint(&request.root).unwrap_or_default();
+            let result = replace(
+                &successor,
+                &request.exe,
+                sockets,
+                lease,
+                &fingerprint,
+                shared,
+                None,
+            )
+            .map_err(|why| match retry.waiting() {
+                Some(again) => format!(
+                    "{}. The version whose update failed before is tried again at about {again}.",
+                    reason(&why)
+                ),
+                None => why,
+            });
+            replaced(shared, result)
+        }
+        Some(Err(why)) => {
+            eprintln!("· Symphony hand-off refused: {why}");
+            false
+        }
+        None => false,
+    }
+}
 
 /// Whether a watcher's `event` in the machine folder can have moved its `current` link: a new link
 /// renamed over it ([`symphony::machine::release::point`]), a rescan, or the watcher's own error.
@@ -679,32 +692,29 @@ fn moves_current(event: &notify::Result<notify::Event>) -> bool {
     })
 }
 
-/// A watcher `W` of `machine`'s own entries, kept while it is followed, and the events that can
-/// have moved its `current` link, one message for a burst ([`moves_current`]). A watcher that
-/// cannot start, or cannot watch the folder, is said in the log and hears nothing: the backstop's
-/// period then reads `current` alone.
-fn watch_current<W: Watcher>(machine: &Path) -> (Option<W>, mpsc::Receiver<()>) {
-    let (send, recv) = mpsc::sync_channel(1);
+/// A watcher `W` of `machine`'s own entries, kept while it is followed, which wakes `moved` at the
+/// events that can have moved its `current` link, one wake for a burst ([`moves_current`]). A
+/// watcher that cannot start, or cannot watch the folder, is said in the log and wakes nothing:
+/// the backstop's period then reads `current` alone.
+fn watch_current<W: Watcher>(machine: &Path, moved: Waker) -> Option<W> {
     let handler = move |event: notify::Result<notify::Event>| {
         if moves_current(&event) {
-            let _ = send.try_send(());
+            moved.wake();
         }
     };
     let watcher = W::new(handler, notify::Config::default()).and_then(|mut watcher| {
         watcher.watch(machine, RecursiveMode::NonRecursive)?;
         Ok(watcher)
     });
-    match watcher {
-        Ok(watcher) => (Some(watcher), recv),
-        Err(why) => {
+    watcher
+        .inspect_err(|why| {
             eprintln!(
                 "· Symphony reload: cannot watch {} for `current` moving: {why}; it is read once \
                  a period",
                 machine.display()
             );
-            (None, recv)
-        }
-    }
+        })
+        .ok()
 }
 
 /// What a release's server hands over when the machine's `current` moves: the machine folder, the
@@ -737,31 +747,26 @@ fn follow<W: Watcher>(
         sockets,
         lease,
     } = follow;
-    // Watched before its first read, so no move after that read goes unheard.
-    let (_watcher, moved) = watch_current::<W>(machine);
+    // The stop and a starter's hand-off request wake it, as the watcher does. Watched before its
+    // first read, so no move after that read goes unheard.
     let mut backstop = Backstop::new(period);
+    shared.wake_at_stop(backstop.waker());
+    shared.wake_at_handover(backstop.waker());
+    let _watcher = watch_current::<W>(machine, backstop.waker());
     let mut initial = true;
     let mut attempted: Option<String> = None;
     while !shared.stopping() {
-        // An idle tick only looks for shutdown and the hand-off flag: `current` is read at the
-        // start, at a move and once a period.
-        let look = initial
-            || {
-                #[expect(
-                    clippy::disallowed_methods,
-                    reason = "no-timed-waits baseline: an idle TICK looks for shutdown and the hand-off flag, where a message from the stop and from the hand-off is the event"
-                )]
-                let wake = backstop.wait(&moved, TICK);
-                match wake {
-                    // A new link and its rename are one move: read once both are done.
-                    Wake::Event => {
-                        backstop::debounce(&moved, backstop::QUIET, backstop::QUIET);
-                        true
-                    }
-                    Wake::Period => true,
-                    Wake::Idle => false,
-                }
-            };
+        // `current` is read at the start, at a wake and once a period: a wake for the stop or a
+        // hand-off is looked at first, and `current` read after it all the same.
+        if !initial {
+            // A new link and its rename are one move: read once both are done.
+            if backstop.wait() == Wake::Event && !shared.stopping() {
+                backstop.debounce(backstop::QUIET, backstop::QUIET);
+            }
+            if shared.stopping() {
+                return;
+            }
+        }
         initial = false;
         if shared
             .handover
@@ -778,9 +783,6 @@ fn follow<W: Watcher>(
                 Some(Err(why)) => eprintln!("· Symphony hand-off refused: {why}"),
                 None => {}
             }
-        }
-        if !look {
-            continue;
         }
         let Some(next) = symphony::machine::release::current(machine) else {
             continue;
