@@ -529,7 +529,7 @@ $f$;
 /// text at each change of class (a letter, a number, ASCII punctuation one character a term),
 /// dropping the rest; its filters then lower each term and make it ASCII (`deunicode`). Here a
 /// letter is PostgreSQL's (`[[:alpha:]]`, Unicode's alphabetic, as Rust's `is_alphabetic`, a newer
-/// Unicode's letters aside), a number Rust's own (`NUMBERS`, [`numbers`]), and a term outside
+/// Unicode's letters aside), a number Rust's own ([`NUMBERS`]), and a term outside
 /// ASCII is decomposed (NFKD) with its accents dropped and the Latin letters that have no
 /// decomposition spelt as `deunicode` spells them; another script is kept as it is, where
 /// `deunicode` spells it in Latin letters.
@@ -597,9 +597,33 @@ fn latin() -> String {
     folded
 }
 
-/// The characters SurrealDB's tokenizer reads as a number (`char::is_numeric`) and not as a
-/// letter, as the ranges of a bracket expression: a few in every script, so they are made here
-/// rather than spelt out.
+/// The tokenizer's numeric class from the pinned toolchain, kept as data for schema construction.
+/// The full regeneration test checks every Unicode scalar when the toolchain changes.
+const NUMBERS: &str = concat!(
+    r"\x30-\x39\xb2-\xb3\xb9\xbc-\xbe\x660-\x669\x6f0-\x6f9\x7c0-\x7c9\x966-\x96f\x9e6-\x9ef",
+    r"\x9f4-\x9f9\xa66-\xa6f\xae6-\xaef\xb66-\xb6f\xb72-\xb77\xbe6-\xbf2\xc66-\xc6f\xc78-\xc7e",
+    r"\xce6-\xcef\xd58-\xd5e\xd66-\xd78\xde6-\xdef\xe50-\xe59\xed0-\xed9\xf20-\xf33\x1040-\x1049",
+    r"\x1090-\x1099\x1369-\x137c\x17e0-\x17e9\x17f0-\x17f9\x1810-\x1819\x1946-\x194f\x19d0-\x19da",
+    r"\x1a80-\x1a89\x1a90-\x1a99\x1b50-\x1b59\x1bb0-\x1bb9\x1c40-\x1c49\x1c50-\x1c59\x2070",
+    r"\x2074-\x2079\x2080-\x2089\x2150-\x215f\x2189\x2460-\x249b\x24ea-\x24ff\x2776-\x2793\x2cfd",
+    r"\x3192-\x3195\x3220-\x3229\x3248-\x324f\x3251-\x325f\x3280-\x3289\x32b1-\x32bf\xa620-\xa629",
+    r"\xa830-\xa835\xa8d0-\xa8d9\xa900-\xa909\xa9d0-\xa9d9\xa9f0-\xa9f9\xaa50-\xaa59\xabf0-\xabf9",
+    r"\xff10-\xff19\x10107-\x10133\x10175-\x10178\x1018a-\x1018b\x102e1-\x102fb\x10320-\x10323",
+    r"\x104a0-\x104a9\x10858-\x1085f\x10879-\x1087f\x108a7-\x108af\x108fb-\x108ff\x10916-\x1091b",
+    r"\x109bc-\x109bd\x109c0-\x109cf\x109d2-\x109ff\x10a40-\x10a48\x10a7d-\x10a7e\x10a9d-\x10a9f",
+    r"\x10aeb-\x10aef\x10b58-\x10b5f\x10b78-\x10b7f\x10ba9-\x10baf\x10cfa-\x10cff\x10d30-\x10d39",
+    r"\x10d40-\x10d49\x10e60-\x10e7e\x10f1d-\x10f26\x10f51-\x10f54\x10fc5-\x10fcb\x11052-\x1106f",
+    r"\x110f0-\x110f9\x11136-\x1113f\x111d0-\x111d9\x111e1-\x111f4\x112f0-\x112f9\x11450-\x11459",
+    r"\x114d0-\x114d9\x11650-\x11659\x116c0-\x116c9\x116d0-\x116e3\x11730-\x1173b\x118e0-\x118f2",
+    r"\x11950-\x11959\x11bf0-\x11bf9\x11c50-\x11c6c\x11d50-\x11d59\x11da0-\x11da9\x11de0-\x11de9",
+    r"\x11f50-\x11f59\x11fc0-\x11fd4\x16130-\x16139\x16a60-\x16a69\x16ac0-\x16ac9\x16b50-\x16b59",
+    r"\x16b5b-\x16b61\x16d70-\x16d79\x16e80-\x16e96\x1ccf0-\x1ccf9\x1d2c0-\x1d2d3\x1d2e0-\x1d2f3",
+    r"\x1d360-\x1d378\x1d7ce-\x1d7ff\x1e140-\x1e149\x1e2f0-\x1e2f9\x1e4f0-\x1e4f9\x1e5f1-\x1e5fa",
+    r"\x1e8c7-\x1e8cf\x1e950-\x1e959\x1ec71-\x1ecab\x1ecad-\x1ecaf\x1ecb1-\x1ecb4\x1ed01-\x1ed2d",
+    r"\x1ed2f-\x1ed3d\x1f100-\x1f10c\x1fbf0-\x1fbf9",
+);
+
+#[cfg(test)]
 fn numbers() -> String {
     let mut class = String::new();
     let mut from = None;
@@ -735,11 +759,8 @@ pub(in crate::store) fn define() -> String {
     sql.push_str(UNIQUES);
     sql.push_str(INDEXES);
     sql.push_str(FUNCTIONS);
-    static ANALYZED: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
-        WORDS
-            .replace("NUMBERS", &numbers())
-            .replace("LATIN", &latin())
-    });
+    static ANALYZED: std::sync::LazyLock<String> =
+        std::sync::LazyLock::new(|| WORDS.replace("NUMBERS", NUMBERS).replace("LATIN", &latin()));
     sql.push_str(&ANALYZED);
     sql.push_str(&triggers());
     sql
@@ -795,6 +816,10 @@ mod tests {
     #[test]
     fn the_analyzers_numbers_are_rusts_that_are_no_letters() {
         let class = numbers();
+        assert_eq!(
+            NUMBERS, class,
+            "regenerate numeric-class data for this toolchain"
+        );
         assert!(
             class.starts_with("\\x30-\\x39\\xb2-\\xb3\\xb9\\xbc-\\xbe\\x660-\\x669"),
             "{class}"
