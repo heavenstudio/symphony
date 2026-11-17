@@ -103,7 +103,7 @@ export function endpointWords(endpoint: MessageEndpoint): string {
 }
 
 export function historyWords(history: History | null | undefined): string {
-  if (!history) return "Role and address history is unavailable from this server.";
+  if (!history) return "Role and address history unavailable.";
   const incomplete = history.sources.filter((s) => s.state !== "complete");
   if (!history.sources_complete || incomplete.length > 0) {
     return `Incomplete role history; individual endpoints may be unknown.${incomplete.map((s) => ` ${s.slug}: ${s.state === "partial" ? "partial" : "unavailable"}.`).join("")}`;

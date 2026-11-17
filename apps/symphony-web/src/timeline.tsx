@@ -637,7 +637,6 @@ export function TimelineDrawn({
           )}
         </p>
         {note !== null && <p className="tl-note">{note}</p>}
-        {!timeline.history && <p className="tl-note">{historyWords(undefined)}</p>}
       </div>
       <div className="tl-body" id={BODY} ref={body}>
         <ol className="tl-list" aria-label="Steps">
@@ -804,7 +803,9 @@ export function TimelineView({ timeline, onDrawn, thread, details }: ViewProps):
           });
         }}
       />
-    ) : null;
+    ) : (
+      <p className="tl-note">{historyWords(undefined)}</p>
+    );
   return (
     <>
       <TimelineDrawn
