@@ -279,7 +279,7 @@ const SAME_BOX: &str = "((ghost, real) => { const probe = document.createElement
     const a = getComputedStyle(ghost), b = getComputedStyle(probe);
     const differ = ['paddingTop', 'paddingLeft', 'borderTopWidth', 'borderLeftWidth', 'borderTopLeftRadius', 'backgroundColor', 'fontSize', 'lineHeight', 'marginBottom']
         .filter(key => a[key] !== b[key]).map(key => [key, a[key], b[key]]);
-    wrapper.remove(); return differ; })";
+    probe.remove(); return differ; })";
 
 #[test]
 fn the_board_before_its_first_read_draws_its_heading_filters_and_columns_of_card_boxes() {

@@ -109,7 +109,7 @@ fn listing() -> Value {
 fn open(page: &mut crate::Chrome, site: &Site, width: u32) {
     page.call(
         "Emulation.setDeviceMetricsOverride",
-        json!({"width":width,"height":900,"deviceScaleFactor":1,"mobile":width<=760}),
+        json!({"width":width,"height":if width <= 760 {844} else {900},"deviceScaleFactor":1,"mobile":width<=760}),
     );
     page.open(&site.url("/tasks"));
     assert!(page.wait_for("document.querySelector('[data-slug=\"review/decision\"]') !== null && document.documentElement.dataset.navigation === 'ready'",SHOWN));
@@ -252,4 +252,37 @@ fn a_wait_chip_uses_complete_counts_and_pages_one_list_across_stages() {
         reads.iter().all(|target| !target.contains("status=")),
         "cross-stage reads: {reads:?}"
     );
+}
+
+#[test]
+fn an_unnamed_legacy_block_is_ordinary_nobody_work_in_its_original_stage() {
+    let site = Site::start(dist(), &crate::common::fixture("board.json"));
+    let mut legacy = task("review/decision", "review", "nobody", true, 0.0);
+    legacy["waits_on"] = json!({"kind":"nobody","who":"","why":"no reason recorded","since":0.0});
+    let mut answer = listing();
+    answer["tasks"] = json!([legacy]);
+    answer["counts"] = json!([["review", 1]]);
+    answer["waiting"] = json!({"kinds":[["nobody",1]],"columns":[{"status":"review","ordinary":1,"blocked":0,"oldest":0.0}]});
+    answer["orchestrators"] = json!([]);
+    site.set_json("/api/task-board", &answer);
+    let Some(mut page) = chrome() else { return };
+    open(&mut page, &site, 390);
+    assert_eq!(page.eval("document.querySelector('[data-slug=\"review/decision\"]').closest('.column').dataset.status"),json!("review"));
+    assert_eq!(
+        page.eval("document.querySelector('.blocked-mark') === null"),
+        json!(true)
+    );
+    assert_eq!(
+        page.eval("document.querySelector('.task-wait .on').textContent"),
+        json!("On nobody")
+    );
+    assert_eq!(
+        page.eval("document.querySelector('.column-summary b') === null"),
+        json!(true)
+    );
+    assert_eq!(
+        page.eval("document.querySelector('.orchestrator-banner:not(.warn)') !== null"),
+        json!(true)
+    );
+    shot(&mut page, "waiting-phone-no-orchestrator");
 }
