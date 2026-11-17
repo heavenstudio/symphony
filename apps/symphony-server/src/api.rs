@@ -111,6 +111,7 @@ fn cursor(shared: &Shared, path: &str) -> Option<u64> {
 }
 
 async fn read(shared: &Arc<Shared>, request: Request) -> Option<Response> {
+    let hosted = crate::hosted::admission(&request).is_some();
     let Some(decoded) = decode_path(request.uri().path()) else {
         return Some(error(StatusCode::BAD_REQUEST, "invalid URL path"));
     };
@@ -172,9 +173,10 @@ async fn read(shared: &Arc<Shared>, request: Request) -> Option<Response> {
         .unwrap_or("")
         .to_string();
     let check = shared.clone();
-    let allowed = crate::spawn::blocking(move || check.allows_host(&host))
-        .await
-        .unwrap_or(false);
+    let allowed = hosted
+        || crate::spawn::blocking(move || check.allows_host(&host))
+            .await
+            .unwrap_or(false);
     if !allowed {
         return Some(error(
             StatusCode::FORBIDDEN,
@@ -592,6 +594,9 @@ async fn read(shared: &Arc<Shared>, request: Request) -> Option<Response> {
                     // board cannot be read, neither can they, as with its tasks.
                     let board = hub.tasks_read().map_err(|e| unavailable(&e, ""))?;
                     let mut view = hub.agent_snapshot().map_err(|e| unavailable(&e, ""))?;
+                    if hosted {
+                        crate::hosted::project_agents(&mut view);
+                    }
                     if agent_page {
                         view.agents.retain(|a| {
                             if lost {
@@ -668,7 +673,11 @@ async fn read(shared: &Arc<Shared>, request: Request) -> Option<Response> {
                         store.get(&slug).map_err(task_failure).and_then(|record| {
                             symphony::taskview::page(&store, &record, &root)
                                 .map(|page| {
-                                    let mut page = hub.observed_page(page);
+                                    let mut page = if hosted {
+                                        crate::hosted::project_page(page)
+                                    } else {
+                                        hub.observed_page(page)
+                                    };
                                     page.local = local;
                                     // The room its gates held last time, from what is kept: the
                                     // page never waits on them.
@@ -1223,7 +1232,7 @@ fn events_since(
 
 /// The feed from `?since=`: Server-Sent Events, or the same events on a WebSocket when the request
 /// asks to upgrade ([`feed_socket`]).
-async fn feed(hub: Arc<Hub>, scope: &str, request: Request) -> Response {
+pub(crate) async fn feed(hub: Arc<Hub>, scope: &str, request: Request) -> Response {
     use futures_util::StreamExt;
     if let Some(refused) = feed_socket::refused(&request) {
         return refused;
@@ -1249,6 +1258,9 @@ async fn feed(hub: Arc<Hub>, scope: &str, request: Request) -> Response {
     };
     let ping_after = Duration::from_millis(u64::from(symphony_api::PING_MAX_MS));
     let mut draining = hub.draining.subscribe();
+    let hosted = crate::hosted::admission(&request).cloned();
+    let show_notices = hosted.is_none();
+    let hide_machine = hosted.is_some();
     let notices = hub.server_notice.subscribe();
     let notices =
         futures_util::stream::unfold((notices, true), |(mut notices, first)| async move {
@@ -1272,10 +1284,16 @@ async fn feed(hub: Arc<Hub>, scope: &str, request: Request) -> Response {
             loop {
                 if let Some(event) = pending.pop_front() {
                     since = event.version;
-                    let item = Said::delta(
-                        since,
-                        filtered_document_event(&event.json, &document_filter),
-                    );
+                    let data = filtered_document_event(&event.json, &document_filter);
+                    let data = if hide_machine {
+                        match crate::hosted::project_feed(&data) {
+                            Some(data) => data,
+                            None => continue,
+                        }
+                    } else {
+                        data
+                    };
+                    let item = Said::delta(since, data);
                     deadline = tokio::time::Instant::now() + ping_after;
                     return Some((
                         item,
@@ -1320,13 +1338,19 @@ async fn feed(hub: Arc<Hub>, scope: &str, request: Request) -> Response {
         stream
             .map(Some)
             .chain(futures_util::stream::once(std::future::ready(None))),
-        notices.map(Some),
+        notices
+            .filter(move |_| std::future::ready(show_notices))
+            .map(Some),
     )
     .take_while(|event| std::future::ready(event.is_some()))
     .filter_map(std::future::ready)
     .take_until(async move {
         let _ = draining.wait_for(|draining| *draining).await;
     });
+    let said = match hosted {
+        Some(admission) => admission.guard(said).boxed(),
+        None => said.boxed(),
+    };
     if feed_socket::asked(&request) {
         return feed_socket::answer(request, said).await;
     }

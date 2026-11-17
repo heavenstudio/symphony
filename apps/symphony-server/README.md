@@ -11,6 +11,53 @@ The public Rust items a consumer calls follow the
 replacement for a release, then remove it in a separate later task with consumer migration
 evidence and the guard list updated.
 
+## Hosted admission
+
+`symphony_server::hosted::router(shared, config, host)` is an explicit, additive admission
+boundary for one configured project at `/`. The ordinary router and CLI keep the local gate.
+The hosted router validates the selected project against its configuration and consults no
+machine registry. It requires an exact configured HTTPS authority/origin, independent verified
+proxy transport, a signed visitor and a current grant bound to that actor, project and action.
+The consuming `hosted::Host` implements transport, signature/key verification, membership and
+session/project-bound CSRF; it pins issuer, immutable app audience and its key endpoint in
+protected deployment configuration. A visitor token or forwarded header cannot substitute for
+transport evidence. Host calls must have bounded deadlines and fail closed on outages.
+`Transport::RequestBound` also supplies the attested body SHA-256; admission compares actual
+bytes before dispatch, after authorization. The host verifies method, full target, signature,
+expiry and replay policy. `ProtectedConnection` instead requires proved exclusive transport.
+
+Native read-only routes, assets, documents and uploads use that admission. Media and feeds
+need distinct grants from ordinary reads, including HEAD, conditional and range requests.
+Every response is `private, no-store`; a conditional hit is authorized before returning 304.
+Streams recheck policy before each chunk/event and end on identity/grant expiry or the host's
+policy-change event, including while idle. A changed revision needs a new request; a refresh
+cannot extend an existing request. The host subscribes policy loss and external revocation to
+`Host::changes`, with any external revocation delay separately accepted before deployment.
+Server diagnostic notices and detailed native errors are withheld from hosted responses.
+The machine-work endpoint is excluded. Native agent/task responses keep the existing wire
+shape with empty, unknown machine-work evidence and unavailable probe values; task stages and
+counts use that empty projection. Machine-work and agent-probe feed payloads are omitted.
+Diagnostics-only events retain their version with an empty changes array, so document section
+reads can catch up to the feed cursor. Ordinary project tasks, agents and document deltas remain
+available.
+
+Hosted browser writes require exact Origin, same-origin fetch metadata when supplied,
+`application/json` and a verified CSRF binding. JSON is capped at 2 MiB; duplicate keys/query
+parameters, conflicting project selectors, traversal and encoded scope aliases are refused.
+The first profile refuses worktree selectors, machine diagnostics/controls, pane screens/focus,
+and actorless plugin dispatch. Saves and `/x/` routes go only to `Host::dispatch`, whose default
+is deny, with verified `Context` and canonical input, without credential headers. An adapter
+resolves any domain-specific references and rechecks authority before state or provider I/O.
+It must not forward hosted mutations into the local owner's save/plugin APIs. Binary upload
+and storage integration need their own actor-aware adapter; a local upload URL is no grant.
+Redirects stay relative or on the configured origin, with no login redirects for refusals.
+
+This seam and its fake-host tests do not constitute hosted deployment acceptance. The
+[hosted ingress contract](../../docs/analysis/hosted-ingress.md) requires real consumer
+transport and membership proof; provider credentials, token/key/session implementations,
+foreground lifecycle/readiness, managed database and artifact durability remain separate work.
+No production host adapter or CLI switch is supplied here.
+
 ## Projects
 
 The one server (`serve --home`) keeps its record (`server.json`), log, lease and lock in the

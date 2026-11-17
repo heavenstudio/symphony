@@ -50,9 +50,13 @@ pub(crate) fn local<B>(
     shared: &Arc<Shared>,
     request: &axum::http::Request<B>,
 ) -> impl std::future::Future<Output = bool> + Send + 'static {
+    let hosted = crate::hosted::admission(request).is_some();
     let ip = peer(request);
     let shared = shared.clone();
     async move {
+        if hosted {
+            return false;
+        }
         let Some(ip) = ip else {
             return false;
         };

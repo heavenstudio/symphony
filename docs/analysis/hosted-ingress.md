@@ -6,7 +6,10 @@ adapter: it verifies a visitor, resolves the project and authorizes the operatio
 handler reads a body or opens project state. Local starts retain their existing gate.
 
 This is a design proposal, not a released hosting capability or deployment acceptance. The
-direction is [an open decision](../DECISIONS.md#hosted-ingress-boundary). No live IAM, database,
+direction is [the approved explicit adapter](../DECISIONS.md#hosted-ingress-boundary). The
+[server guide](../../apps/symphony-server/README.md#hosted-admission) describes the additive
+admission seam and its limits; the deployment requirements below still need consumer proof.
+No live IAM, database,
 server or consumer checkout is changed by it.
 
 ## What exists and what is missing
