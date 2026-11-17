@@ -113,6 +113,10 @@ pub(super) fn validate(d: &Definition) -> Result {
             ] {
                 if let Some(target) = &action.target {
                     pair(target, &positions)?;
+                    if p.terminal {
+                        return Err("terminal position cannot have recovery routes".into());
+                    }
+                    recovery_target(d, target)?;
                 } else if !action.manual {
                     return Err("recovery stay requires explicit manual recovery".into());
                 }
@@ -156,10 +160,10 @@ pub(super) fn validate(d: &Definition) -> Result {
                 || !e
                     .authority
                     .iter()
-                    .any(|a| matches!(a, Authority::ProjectCapability { .. })))
+                    .all(|a| matches!(a, Authority::ProjectCapability { .. })))
         {
             return Err(format!(
-                "human wait requires a project capability and deliberate action: {}",
+                "human wait requires only project capability alternatives and deliberate action: {}",
                 e.id
             ));
         }
@@ -176,6 +180,7 @@ pub(super) fn validate(d: &Definition) -> Result {
                         .into(),
                 );
             }
+            recovery_target(d, &retry.exhausted)?;
         }
         effects(e, &adapters)?;
         if let Some(destination) = d.positions.iter().find(|p| p.at == e.to && p.terminal)
@@ -221,6 +226,24 @@ pub(super) fn validate(d: &Definition) -> Result {
                 p.at.phase, p.at.state
             ));
         }
+    }
+    Ok(())
+}
+
+/// Recovery actions and retry exhaustion have no typed outcome/finalize effects. They may
+/// return to ordinary coordination work, but completion facts require an ordinary typed edge.
+fn recovery_target(d: &Definition, target: &Pair) -> Result {
+    if d.positions.iter().any(|p| {
+        &p.at == target
+            && (p.terminal
+                || p.outcome.is_some()
+                || p.satisfies_dependencies
+                || p.completion != Completion::None)
+    }) {
+        return Err(format!(
+            "recovery target requires a typed completion edge: {}/{}",
+            target.phase, target.state
+        ));
     }
     Ok(())
 }

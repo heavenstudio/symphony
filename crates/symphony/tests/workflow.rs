@@ -120,7 +120,6 @@ fn default_move_routes_match_every_legacy_pair() {
         Operation::Approve,
         Operation::Changes,
         Operation::CompleteSubtask,
-        Operation::CloseCovered,
         Operation::PrepareLand,
         Operation::ConfirmLand,
     ] {
@@ -174,6 +173,38 @@ fn default_move_routes_match_every_legacy_pair() {
     assert!(block.effects.contains(&Effect::Slot {
         policy: Slot::Release
     }));
+}
+
+#[test]
+fn default_covered_close_routes_match_every_legacy_position() {
+    let d = builtin();
+    for position in &d.positions {
+        let legacy = serde_json::to_value(position.legacy).unwrap();
+        let open = !symphony_board::health::FINISHED.contains(&legacy.as_str().unwrap());
+        let routes: Vec<_> = d
+            .edges
+            .iter()
+            .filter(|edge| edge.from == position.at && edge.operation == Operation::CloseCovered)
+            .collect();
+        assert_eq!(routes.len(), usize::from(open), "{:?}", position.at);
+        for edge in routes {
+            assert_eq!(edge.to, pair("done", "completed"));
+            assert_eq!(edge.guards, ["legacy_board"]);
+            assert_eq!(
+                edge.authority,
+                [Authority::ProjectCapability {
+                    capability: "legacy_actor".into()
+                }]
+            );
+            assert!(edge.effects.contains(&Effect::Outcome {
+                outcome: Outcome::Success,
+                satisfies_dependencies: true
+            }));
+            assert!(edge.effects.contains(&Effect::Slot {
+                policy: Slot::Release
+            }));
+        }
+    }
 }
 
 #[test]
@@ -532,6 +563,151 @@ fn staffed_positions_and_recovery_are_explicit() {
 }
 
 #[test]
+fn all_recovery_events_require_typed_completion_routes() {
+    let completed = pair("done", "completed");
+    for completion in [
+        Completion::None,
+        Completion::Landing,
+        Completion::CoveredClose,
+        Completion::ParentIntegration,
+    ] {
+        let mut baseline = builtin();
+        baseline
+            .positions
+            .iter_mut()
+            .find(|p| p.at == completed)
+            .unwrap()
+            .completion = completion;
+        baseline.edges.retain(|edge| {
+            edge.to != completed
+                || match completion {
+                    Completion::None => true,
+                    Completion::Landing => edge.operation == Operation::ConfirmLand,
+                    Completion::CoveredClose => edge.operation == Operation::CloseCovered,
+                    Completion::ParentIntegration => edge.operation == Operation::CompleteSubtask,
+                }
+        });
+        Validated::new(baseline.clone()).unwrap();
+        for event in [
+            "release",
+            "lost_holder",
+            "attempt_failure",
+            "cancellation_acknowledged",
+        ] {
+            for manual in [false, true] {
+                let mut definition = baseline.clone();
+                let recovery = definition
+                    .positions
+                    .iter_mut()
+                    .find(|p| p.at == pair("in_progress", "working"))
+                    .unwrap()
+                    .recovery
+                    .as_mut()
+                    .unwrap();
+                let action = match event {
+                    "release" => &mut recovery.release,
+                    "lost_holder" => &mut recovery.lost_holder,
+                    "attempt_failure" => &mut recovery.attempt_failure,
+                    "cancellation_acknowledged" => &mut recovery.cancellation_acknowledged,
+                    _ => unreachable!(),
+                };
+                action.target = Some(completed.clone());
+                action.manual = manual;
+                let error = Validated::new(definition).unwrap_err();
+                assert!(
+                    error.contains("recovery target requires a typed completion edge"),
+                    "{event}, {completion:?}, manual={manual}: {error}"
+                );
+            }
+        }
+    }
+    // Nonterminal completion/dependency facts cannot be manufactured by recovery either.
+    for fact in ["outcome", "dependencies", "completion"] {
+        invalid(
+            |d| {
+                let ready = d
+                    .positions
+                    .iter_mut()
+                    .find(|p| p.at == pair("ready", "available"))
+                    .unwrap();
+                match fact {
+                    "outcome" => ready.outcome = Some(Outcome::Failure),
+                    "dependencies" => ready.satisfies_dependencies = true,
+                    "completion" => ready.completion = Completion::Landing,
+                    _ => unreachable!(),
+                }
+            },
+            "recovery target requires a typed completion edge",
+        );
+    }
+}
+
+#[test]
+fn retry_exhaustion_cannot_bypass_typed_completion_with_a_manual_terminal() {
+    let mut definition = builtin();
+    let manual = definition
+        .positions
+        .iter()
+        .find(|p| p.at == pair("blocked", "waiting"))
+        .unwrap()
+        .recovery
+        .clone();
+    definition
+        .positions
+        .iter_mut()
+        .find(|p| p.at == pair("done", "completed"))
+        .unwrap()
+        .recovery = manual;
+    // A manual stay in an already-completed position introduces no completion by itself.
+    Validated::new(definition.clone()).unwrap();
+    for event in [
+        "release",
+        "lost_holder",
+        "attempt_failure",
+        "cancellation_acknowledged",
+    ] {
+        let mut reopened = definition.clone();
+        let recovery = reopened
+            .positions
+            .iter_mut()
+            .find(|p| p.at == pair("done", "completed"))
+            .unwrap()
+            .recovery
+            .as_mut()
+            .unwrap();
+        let action = match event {
+            "release" => &mut recovery.release,
+            "lost_holder" => &mut recovery.lost_holder,
+            "attempt_failure" => &mut recovery.attempt_failure,
+            "cancellation_acknowledged" => &mut recovery.cancellation_acknowledged,
+            _ => unreachable!(),
+        };
+        action.target = Some(pair("ready", "available"));
+        assert!(
+            Validated::new(reopened)
+                .unwrap_err()
+                .contains("terminal position cannot have recovery routes"),
+            "{event}"
+        );
+    }
+    let edge = definition
+        .edges
+        .iter_mut()
+        .find(|e| e.id == "prepare_land_in_progress")
+        .unwrap();
+    edge.automatic = true;
+    edge.retry = Some(RetryBound {
+        maximum: 1,
+        exhausted: pair("done", "completed"),
+    });
+    assert!(
+        Validated::new(definition)
+            .unwrap_err()
+            .contains("recovery target requires a typed completion edge")
+    );
+}
+
+#[test]
 fn deliberate_rework_is_allowed_automatic_cycles_need_bounded_manual_exit() {
     let mut d = builtin();
     let index = d
@@ -602,6 +778,35 @@ fn human_wait_needs_host_person_capability_and_no_automatic_retry() {
     }];
     d.edges[0].automatic = true;
     assert!(Validated::new(d).unwrap_err().contains("human wait"));
+}
+
+#[test]
+fn human_wait_rejects_machine_alternatives_even_beside_project_capabilities() {
+    for alternative in [
+        Authority::TaskRole {
+            role: Role::Executor,
+        },
+        Authority::SystemCapability {
+            capability: "legacy_actor".into(),
+        },
+    ] {
+        invalid(
+            |d| {
+                d.edges[0].human_wait = true;
+                d.edges[0].authority.push(alternative.clone());
+            },
+            "human wait requires only project capability alternatives",
+        );
+    }
+    let mut definition = builtin();
+    definition.capabilities.push("other_person".into());
+    definition.edges[0].human_wait = true;
+    definition.edges[0]
+        .authority
+        .push(Authority::ProjectCapability {
+            capability: "other_person".into(),
+        });
+    Validated::new(definition).unwrap();
 }
 
 #[test]

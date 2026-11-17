@@ -37,7 +37,7 @@ are omitted in TOML or `null` in JSON; all other fields are required. Empty list
 | State | `id`, nonempty `label`. These are coordination states, never execution-attempt status. |
 | Position | `at` pair; optional `staffing` (`executor`, `reviewer`, `orchestrator`, omission means none); `slot`; `dependencies`; `unsuccessful_dependency`; booleans `accepts_work`, `terminal`, `satisfies_dependencies`; conservative `legacy`; optional `outcome`; `completion`; optional `recovery`. |
 | Recovery | Required actions `release`, `lost_holder`, `attempt_failure`, `cancellation_acknowledged`. Every staffed position declares all four. |
-| Recovery action | Optional `target` pair; boolean `manual`; `slot`; booleans `release_role` and `release_reservation`. No target means stay and requires explicit manual recovery. |
+| Recovery action | Optional `target` pair; boolean `manual`; `slot`; booleans `release_role` and `release_reservation`. No target means stay and requires explicit manual recovery. A target must be ordinary nonterminal coordination work without outcome, dependency-satisfaction or completion facts; completing work requires a typed edge. |
 | Guard | `id`, `adapter`: an opaque required policy receipt, with no executable expression or cached pass. |
 | Edge | `id`, nonempty `label`, exact `from` and `to` pairs, `operation`, optional legacy `alias`, nonempty `authority`, `inputs` ID list, `dependencies`, `guards` ID list, ordered `effects`, boolean `automatic`, optional `retry`, boolean `human_wait`. |
 | Retry | Positive unsigned `maximum`, `exhausted` pair with explicit manual recovery. |
@@ -61,7 +61,9 @@ Authority records are tagged by `kind`: `task_role` requires `role`; `project_ca
 `system_capability` require `capability`. A declared name never grants membership or authority.
 The host must supply the capability and adapter support independently (`prerequisites`) and
 must bind a trusted principal and its task relationship outside caller-controlled JSON at
-admission. A human wait requires a project capability and a deliberate action. Review operations
+admission. Authority alternatives are an unordered OR. A human wait requires every alternative
+to be a project capability and requires a deliberate action; adding a task-role or system
+alternative cannot bypass the human requirement. Review operations
 require an independent task reviewer; the future admission service must enforce the exclusions
 and evidence revisions, regardless of any configured label or actor string.
 
@@ -98,6 +100,10 @@ finite retry maximum and manual exhaustion destination. Each nonterminal positio
 an outcome or explicit manual recovery; every configured terminal completion must be reachable
 from the initial position. Host prerequisites, retained history, input revisions, capacity and
 live migrations require the future admission/storage engine beyond these syntax checks.
+Recovery targets, including retry exhaustion, cannot record completion through the limited
+recovery-action format. They must use a typed completion edge for outcomes, satisfied
+dependencies, terminal delivery or a landing/covered-close/parent-integration boundary.
+Terminal positions may declare a manual stay, but no recovery route out to further work.
 
 ## Revisions and additive API records
 
@@ -137,3 +143,5 @@ verdicts, approved-but-unlanded work, reopen, subtask and covered closure, and l
 are declared separately. The opaque `legacy_board` requirement names the current board's
 authority, dependency, stamp, parent, hold, completion and landing predicates. It supplies no
 replacement stamp engine. Existing writers continue to enforce those predicates directly.
+Covered-close routes exist for every open legacy position, including backlog, preparation,
+blocks and held preparation/review, under that existing holder-and-covering-landing predicate.

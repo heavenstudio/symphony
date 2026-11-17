@@ -359,9 +359,24 @@ pub fn builtin() -> Definition {
             policy: Slot::Retain,
         });
         d.edges.push(hold);
+    }
+    // The current covered-close rule accepts every non-finished legacy status, including
+    // preparation, blocks and held roles. Its legacy predicate still checks the holder and land.
+    for position in &d.positions {
+        if matches!(
+            position.legacy,
+            LegacyStatus::Done | LegacyStatus::Cancelled
+        ) {
+            continue;
+        }
+        let suffix = if position.at.state == "held" {
+            format!("{}_held", position.at.phase)
+        } else {
+            position.at.phase.clone()
+        };
         d.edges.push(edge(
-            &format!("covered_{status}"),
-            at(status),
+            &format!("covered_{suffix}"),
+            position.at.clone(),
             closed.clone(),
             Operation::CloseCovered,
             vec![Effect::Outcome {
