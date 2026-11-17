@@ -231,7 +231,15 @@ fn overlapping_refreshes_share_the_original_position_hold() {
     let site = site_of(&listing_of(&[("review", 30)]));
     let Some(mut page) = chrome() else { return };
     for (width, height) in [(390, 844), (1440, 900)] {
-        open_on_screen(&mut page, &site, width, height);
+        viewport(&mut page, width, height);
+        page.open(&site.url("/tasks"));
+        page.reveal("#column-review");
+        assert!(page.wait_for("document.querySelector('main[data-feed=live] .column[data-status=review] .taskcard') !== null", SHOWN));
+        // Settle the fixture's rows first: this case measures overlapping holds, independently
+        // of the viewport observer mounting an earlier row while it chooses its anchor.
+        for n in 1..=30 {
+            page.reveal(&format!("[id='row-phone/review-{n}']"));
+        }
         let result = page.eval(
             r#"(async () => {
                 document.documentElement.style.overflowAnchor = 'none';

@@ -1069,6 +1069,7 @@ fn task_priority_and_recipient_labels_stay_inline_with_their_controls() {
         json!({"width":1280,"height":800,"deviceScaleFactor":1,"mobile":false}),
     );
     browser.open(&site.url("/task/visual/in-progress"));
+    browser.reveal("[id=\"composer-visual/in-progress\"]");
     assert!(browser.wait_for(
         "document.querySelector('#task-send .inline-control .dx-select') !== null",
         SHOWN

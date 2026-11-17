@@ -72,6 +72,23 @@ impl Chrome {
         self.0.eval(expression).asserted()
     }
 
+    /// Approach a lazy region's slot, then let its ordinary viewport observer mount it.
+    pub fn reveal(&mut self, selector: &str) {
+        let selector = json!(selector);
+        assert!(
+            self.wait_for(
+                &format!("document.querySelector({selector}) !== null"),
+                super::SHOWN
+            ),
+            "no slot to reveal: {selector}"
+        );
+        self.eval(&format!(
+            "document.querySelector({selector}).scrollIntoView({{block:'center',inline:'center'}})"
+        ));
+        assert!(self.wait_for(&format!("!document.querySelector({selector}).querySelector(':scope > .viewport-sentinel')"), super::SHOWN),
+            "the lazy slot never mounted: {selector}");
+    }
+
     /// Wait until `expression` is truthy, bounded by browser CPU and completed polls.
     pub fn wait_for(&mut self, expression: &str, cpu: Duration) -> bool {
         self.0.wait_for(expression, cpu).asserted()
