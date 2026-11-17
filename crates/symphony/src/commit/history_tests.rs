@@ -260,3 +260,32 @@ fn a_deeper_dated_looking_line_continues_its_entry_in_the_merge_as_in_the_app() 
     assert_eq!(merged, Some(format!("{base}{NOTE}{REPLY}")));
     assert_eq!(read, ["Example:\n[2026-10-30 07:00] owner — Literal."]);
 }
+
+#[test]
+fn unseen_reply_lookup_uses_the_last_duplicate_card_on_each_side() {
+    let current = "- [ ] **a** — A.\n  [2026-10-20 11:00] agent — Existing answer.\n";
+    let new = "- [ ] **a** — A.\n  [2026-10-20 10:00] owner — New question.\n";
+    let merged = format!("{new}  [2026-10-20 11:00] agent — Existing answer.\n");
+    let plugins = super::Plugins::default();
+    let expected = super::mark_unseen_replies(current, new, &merged, &plugins)
+        .unwrap_or_else(|_| panic!("valid histories must merge"));
+    assert!(expected.contains("review:unseen-owner"));
+    let earlier = "- [ ] **a** — Earlier duplicate.\n";
+    let actual = super::mark_unseen_replies(
+        &format!("{earlier}{current}"),
+        &format!("{earlier}{new}"),
+        &merged,
+        &plugins,
+    )
+    .unwrap_or_else(|_| panic!("valid histories must merge"));
+    assert_eq!(actual, expected);
+}
+
+#[test]
+fn duplicate_card_histories_on_any_side_are_refused() {
+    let one = "- [ ] **a** — A.\n  [2026-10-20 10:00] agent — Existing answer.\n";
+    let duplicate = format!("{one}{one}");
+    assert_eq!(merge_history(&duplicate, one, one), None);
+    assert_eq!(merge_history(one, &duplicate, one), None);
+    assert_eq!(merge_history(one, one, &duplicate), None);
+}

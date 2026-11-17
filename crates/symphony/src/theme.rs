@@ -64,17 +64,17 @@ impl Package {
                 package.named = true;
             }
             package.icon = theme.icon;
-            package.tokens = theme
-                .tokens
-                .into_iter()
-                .filter(|(name, value)| token(name, value).is_ok())
-                .collect();
+            for (name, value) in theme.tokens {
+                if token(&name, &value).is_ok() {
+                    package.tokens.insert(name, value);
+                }
+            }
             package.stylesheets = theme.stylesheets;
-            package.layouts = theme
-                .layouts
-                .into_iter()
-                .filter(|(region, variant)| layout(region, variant).is_ok())
-                .collect();
+            for (region, variant) in theme.layouts {
+                if layout(&region, &variant).is_ok() {
+                    package.layouts.insert(region, variant);
+                }
+            }
         }
         if let Some(name) = &file.name {
             package.name.clone_from(name);

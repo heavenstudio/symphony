@@ -389,20 +389,17 @@ pub fn card_line(text: &str) -> String {
 }
 
 pub fn outline(mut document: Document) -> symphony_api::DocumentOutline {
-    let anchors = document
-        .sections
-        .iter()
-        .map(|section| {
-            (
-                section.key.clone(),
-                if section.start == 0 {
-                    Vec::new()
-                } else {
-                    anchors(&section.html)
-                },
-            )
-        })
-        .collect();
+    let mut section_anchors = BTreeMap::new();
+    for section in &document.sections {
+        section_anchors.insert(
+            section.key.clone(),
+            if section.start == 0 {
+                Vec::new()
+            } else {
+                anchors(&section.html)
+            },
+        );
+    }
     for section in &mut document.sections {
         section.html.clear();
         section.media.clear();
@@ -414,13 +411,13 @@ pub fn outline(mut document: Document) -> symphony_api::DocumentOutline {
     for card in &mut document.cards {
         card.text = card_line(&card.text);
     }
-    let thread_hashes = std::mem::take(&mut document.threads)
-        .iter()
-        .map(|(slug, thread)| (slug.clone(), thread_hash(thread)))
-        .collect();
+    let mut thread_hashes = BTreeMap::new();
+    for (slug, thread) in std::mem::take(&mut document.threads) {
+        thread_hashes.insert(slug, thread_hash(&thread));
+    }
     symphony_api::DocumentOutline {
         document,
-        anchors,
+        anchors: section_anchors,
         thread_hashes,
     }
 }
