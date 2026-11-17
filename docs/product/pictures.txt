@@ -6,3 +6,5 @@
 queue both /queue
 queue-topic wide /queue --click [data-category=design]
 register wide /docs/DECISIONS.md
+document both /docs/design/LOOK.md
+card both /docs/DECISIONS.md#weekly-digest-day --click .doc-actions>button --key Tab

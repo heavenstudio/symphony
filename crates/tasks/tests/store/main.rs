@@ -104,6 +104,7 @@ mod slow_builds;
 mod stamp;
 mod start;
 mod subtask_roles;
+mod thread_window;
 mod tree;
 mod two_writers;
 mod usage;
