@@ -1668,10 +1668,12 @@ The opaque `next` cursor records the complete ordering key, not an offset: stage
 wait-kind list), ordinary/blocked/parked rank, block-kind rank, status-entry time (negated update
 time for finished work) and slug. It is passed back only with the same view, search, window,
 activity, status and wait kind. A malformed cursor or one from the default view is refused.
-An empty page has no cursor. This projection changes no client view until that client opts in.
+An empty page has no cursor. The task board opts into this projection for its stage columns and
+wait-kind strip; other listing callers retain the default view.
 
-A task that has posted a card for the owner is lifted out of its column into
-a **Waiting for your sign-off** lane above the board. That needs all of:
+The default listing retains its legacy **Waiting for your sign-off** selection. The waiting
+board keeps these tasks in their own stages, with their named decision on the card, rather
+than drawing a separate lane. The legacy selection needs all of:
 
 - the task is not `done`, `blocked` or `cancelled`, and someone executes it;
 - its body or thread names a card slug whole (a card named `x` is not
@@ -1679,8 +1681,8 @@ a **Waiting for your sign-off** lane above the board. That needs all of:
 - that card is still undecided in a document the task links: the cards a
   document page counts as "N decisions waiting" (`docs_tree.pending`).
 
-Deciding the card puts the task back in its column. Work nobody holds, or that
-posted no card, stays in its own column however its documents stand.
+Deciding the card removes the task from that selection. Work nobody holds, or that
+posted no card, is not selected however its documents stand.
 
 A project's plugin that answers a gate named `owner` for the task ([Gates](#gates))
 decides in that rule's place: the open, executed task is in the lane while that

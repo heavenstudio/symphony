@@ -241,3 +241,21 @@ it("keeps search and finished-window requests together", () => {
   expect(read).toHaveBeenLastCalledWith("words", 7);
   expect(windowOf("bad")).toBe(1);
 });
+
+it("labels a cross-stage list with the selected wait kind", () => {
+  const html = render(
+    <TaskColumn
+      status="waiting"
+      label="On checks"
+      tasks={[]}
+      count={32}
+      work={NO_WORK}
+      connected
+      query=""
+      days={1}
+      onLoad={() => {}}
+      refreshed={0}
+    />,
+  );
+  expect(html).toContain('On checks <span class="count">32</span>');
+});

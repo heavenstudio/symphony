@@ -64,11 +64,7 @@ export function firstPageHeight(count: number): number {
   return Math.min(count, PAGE) * ROW + (count > PAGE ? MORE : 0);
 }
 
-/**
- * The columns the board draws with no filter, in its order, each with its count: Waiting for your
- * sign-off when a task waits for it, the pipeline's (`build-test`, one rail, for Build and Test when
- * no machine `reported` them), then backlog, blocked and cancelled.
- */
+/** The lifecycle columns and their complete totals, saved for the next visit's ghost. */
 export function boardShape(counts: [string, number][]): [string, number][] {
   return STAGES.map((status) => [status, counts.find(([one]) => one === status)?.[1] ?? 0]);
 }
@@ -234,7 +230,7 @@ export interface RowProps {
 
 /**
  * A row of a column: its card once near the screen, until then as tall as that card will take
- * (`rowCard`). Drawn again only when its card would change (`sameCard`), or its layout. A row
+ * (`ROW`). Drawn again only when its task or clock changed. A row
  * first drawn while its task's card holds the focus elsewhere is that card's new place, in the
  * column a live update moved it to: it draws the card at once and gives the focus back to it.
  */
@@ -272,6 +268,7 @@ export interface ColumnProps {
   refreshed: number;
   /** Which of the pipeline's columns it is (`stopPlace`); none off the pipeline. */
   meta?: WaitingColumn | undefined;
+  label?: string | undefined;
   now?: number;
   cancelled?: number;
   onCancelled?: (() => void) | undefined;
@@ -290,6 +287,7 @@ export const TaskColumn = memo(function TaskColumn({
   onLoad,
   refreshed,
   meta,
+  label,
   now = Date.now() / 1000,
   cancelled = 0,
   onCancelled,
@@ -316,14 +314,9 @@ export const TaskColumn = memo(function TaskColumn({
   const focused = visible ? null : focusedSlug();
   const follows = focused !== null && tasks.some((task) => task.slug === focused);
   return (
-    <section
-      className={status === "signoff" ? "column signoff" : "column"}
-      data-status={status}
-      aria-busy={reading}
-    >
+    <section className="column" data-status={status} aria-busy={reading}>
       <h2>
-        {status === "signoff" ? "Waiting for your sign-off" : statusWords(status)}{" "}
-        <span className="count">{meta?.ordinary ?? count}</span>
+        {label ?? statusWords(status)} <span className="count">{meta?.ordinary ?? count}</span>
       </h2>
       <div className="column-summary">
         {status === "done" ? (
@@ -357,7 +350,7 @@ export const TaskColumn = memo(function TaskColumn({
             {ghosts}
           </div>
         )}
-        {/* A row waiting to be drawn holds what its own card will take (`rowHeight`). */}
+        {/* Each row holds its card's fixed box until it is near the screen. */}
         {rows.map((task) => (
           <BoardRow key={task.slug} task={task} now={now} />
         ))}
@@ -513,6 +506,7 @@ export function TaskBoard({
       onLoad={onLoad}
       refreshed={refreshed}
       meta={meta(status)}
+      label={status === "waiting" ? WAIT_LABELS[WAIT_KINDS.indexOf(wait)] : undefined}
       now={now}
       cancelled={count("cancelled")}
       onCancelled={() => setOpened(opened === "cancelled" ? "" : "cancelled")}
@@ -564,7 +558,9 @@ export function TaskBoard({
       <OrchestratorBanner
         orchestrators={orchestrators}
         unstarted={unstarted}
-        ready={count("ready")}
+        ready={
+          wait === "" && search === "" ? (meta("ready")?.ordinary ?? count("ready")) : undefined
+        }
       />
       <nav className="wait-strip" aria-label="Filter tasks by what they wait on">
         <button

@@ -145,7 +145,7 @@ export function OrchestratorBanner({
 }: {
   orchestrators: Orchestrator[];
   unstarted: number;
-  ready: number;
+  ready?: number | undefined;
 }) {
   if (unstarted === 0 || orchestrators.some((one) => one.health === "live")) return null;
   const stale = orchestrators.some((one) => one.health === "stale");
@@ -155,7 +155,8 @@ export function OrchestratorBanner({
   return (
     <p className={`orchestrator-banner${stale ? " warn" : ""}`}>
       <strong>No live orchestrator.</strong>
-      {holders && ` ${holders}`} · {unstarted} of the {ready} ready tasks wait to start
+      {holders && ` ${holders}`} · {unstarted}
+      {ready === undefined ? "" : ` of the ${ready}`} ready tasks wait to start
     </p>
   );
 }

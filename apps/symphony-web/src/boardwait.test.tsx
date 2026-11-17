@@ -165,3 +165,9 @@ it("shows one amber banner for stale orchestrators, red for none, and none for l
   expect(banner("live")).toBe("");
   expect(banner("stale", 0)).toBe("");
 });
+
+it("does not compare the global queued count with a filtered ready total", () => {
+  const html = render(<OrchestratorBanner orchestrators={[]} unstarted={8} />);
+  expect(html).toContain("8 ready tasks wait to start");
+  expect(html).not.toContain("of the");
+});
