@@ -197,8 +197,8 @@ this client the target's entry alone. What every page kind imports stays that on
 (`codeSplitting` in `vite.config.ts`), which the menus' entry imports too, though they use only
 part of it: split by who imports each module, it would be two files every first visit takes,
 compressed apart. The device cache and the board's live half (`cache.ts`, `live.tsx`) stay one
-chunk the same way, which Reports loads for the cache alone: split by importer, the cache would
-be a file more on every page that follows the board. The shell asks for the chunks an entry imports beside it, a
+chunk the same way, which Reports loads for the cache and the page's notices alone: split by
+importer, the cache would be a file more on every page that follows the board. The shell asks for the chunks an entry imports beside it, a
 module preload each (`imports` in its manifest, which `package.sh` reads from Vite's), so a first
 visit fetches them with the entry rather than once the entry has come and been read: a round trip
 fewer, which a phone over the tailnet pays.
@@ -673,22 +673,22 @@ What holds on every page, and each page's contract where its section above names
   the owner's choice, as the caps are.
   Other page kinds are reported separately for review.
   On the fixture (`entry_pages_fit_the_first_visit_budget_and_deferred_kinds_are_reported` prints
-  each page's requests) a first visit to `/` takes 113,361 bytes, `/tasks` 122,311, `/agents`
-  116,347, `/queue` 108,915, `/reports` 113,344, `/runs` 111,216, `/docs/` 139,904, a document
-  141,589 and a task's page 143,419, and a return that finds what it kept unchanged 2,103, 2,586,
-  2,403, 2,368, 646, 1,080, 646, 820 and 2,405. A first visit to a kind is its entry and its
+  each page's requests) a first visit to `/` takes 113,470 bytes, `/tasks` 122,725, `/agents`
+  116,577, `/queue` 109,014, `/reports` 113,400, `/runs` 107,549, `/docs/` 140,023, a document
+  141,708 and a task's page 143,744, and a return that finds what it kept unchanged 2,102, 2,585,
+  2,402, 2,367, 646, 1,080, 646, 820 and 2,404. A first visit to a kind is its entry and its
   sheets, the chunk every kind shares (React and the frame) and the pieces it shares with some of
   the others (the board's feed and keep; the card and the task readers of the board and the agents
   page; the media layer's chunk and sheet, home's, the documents', a task's page's and the chat's),
   beside the HTML, the shell and the page's reads; a move to another kind takes its entry and the
   pieces no kind before it took (`apps/symphony-web-tests/tests/browser/preload.rs`). A task's page's timeline, a chunk of
   its own, comes once its box nears the screen and its part has something to draw
-  ([A task's page](#a-tasks-page)), and is reported apart from its first visit: 12,567 bytes. The
+  ([A task's page](#a-tasks-page)), and is reported apart from its first visit: 12,548 bytes. The
   reads ahead start only once the page's own reads have answered (`cache_ahead.rs`) and go marked
   as prefetches, so the budget counts them outside the first visit, with the warmed modules
   (`prefetched_bytes`). Once a page has its data and is idle, the shell warms the chat's files
   (its entry, the chunks it imports and its sheets the page has not) and then the menus' (the
-  same of theirs): 27,541 bytes outside home's first visit, and neither the chat's first open nor
+  same of theirs): 28,302 bytes outside home's first visit, and neither the chat's first open nor
   the menus' transfers anything more. Later visits reuse cached imports. The home budget test
   is independent of the canonical-entry test, which gives every kind a fresh
   browser profile and reports the complete published output.
