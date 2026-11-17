@@ -479,11 +479,8 @@ fn a_column_still_reading_its_tasks_draws_a_card_box_for_each_it_will_hold() {
     );
 }
 
-/// The counts count a task waiting on the owner's sign-off in its stage, as the server does, and
-/// the board draws it in the sign-off lane: a stage counts the rest. One whose every task waits
-/// there holds none and waits for none once its first page is in (no ghost, no shimmer, not busy);
-/// one with part of its tasks there counts the cards it holds, with no Load more of the others
-/// (app/board-column-with-an-empty-answer-stops-loading).
+/// A task waiting for sign-off remains in its lifecycle stage in the waiting board. Once each
+/// stage's answer arrives, its complete count matches its cards and no ghost or spinner remains.
 #[test]
 fn a_stage_keeps_its_sign_off_tasks_and_stops_loading_after_its_answer() {
     let site = site();
@@ -531,7 +528,7 @@ fn a_stage_keeps_its_sign_off_tasks_and_stops_loading_after_its_answer() {
     );
     assert!(
         browser.wait_for(&settled, SHOWN),
-        "a stage kept waiting once its first page answered, its tasks in the sign-off lane: {}",
+        "a stage kept waiting once its first page answered, its tasks in their original stages: {}",
         browser.eval(shows)
     );
     assert_eq!(
@@ -540,7 +537,7 @@ fn a_stage_keeps_its_sign_off_tasks_and_stops_loading_after_its_answer() {
             "in_progress": {"busy": "false", "ghosts": 0, "cards": ["probe/half-asks", "probe/half-plain"], "count": "2", "more": false, "shimmer": 0},
             "review": {"busy": "false", "ghosts": 0, "cards": ["probe/asks"], "count": "1", "more": false, "shimmer": 0},
             "lane": false}),
-        "each stage counts the cards it holds, its tasks in the sign-off lane left out: no ghost, no Load more"
+        "each stage counts the cards it holds, its tasks in their original stages left out: no ghost, no Load more"
     );
 }
 

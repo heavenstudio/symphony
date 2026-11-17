@@ -24,7 +24,7 @@ const READS: [&str; 4] = [
     "/api/machine-work",
 ];
 
-/// This device's kept parts, `{ "ITEM PART": FIELD }` (`board: counts`), each record's `FIELD`:
+/// This device's kept parts, `{ "ITEM PART": FIELD }` (`board:waiting counts`), each record's `FIELD`:
 /// the store's records, read beside it, their keys' names read back without the project's.
 macro_rules! kept_parts {
     ($field:literal) => {
@@ -101,7 +101,11 @@ const HOME: Page = Page {
 const TASKS: Page = Page {
     path: "/tasks",
     drawn: "[data-slug='tools/example']",
-    parts: &["board: counts", "board: work", "board: column:ready"],
+    parts: &[
+        "board:waiting counts",
+        "board:waiting work",
+        "board:waiting column:ready",
+    ],
 };
 const QUEUE: Page = Page {
     path: "/queue",
@@ -186,8 +190,20 @@ pub(super) fn store_opened(chrome: &mut Chrome, site: &Site) {
 
 /// A first visit to `page`: drawn from the server, live, and its reads kept.
 fn visit(chrome: &mut Chrome, site: &Site, page: &Page) {
+    chrome.call(
+        "Emulation.setDeviceMetricsOverride",
+        json!({"width":1440,"height":900,"deviceScaleFactor":1,"mobile":false}),
+    );
     store_opened(chrome, site);
     chrome.open(&site.url(page.path));
+    if page.drawn.starts_with("[data-status=build]") {
+        shows(
+            chrome,
+            "document.querySelector('[data-open-stage=build]') !== null",
+            "Build rail",
+        );
+        chrome.eval("document.querySelector('[data-open-stage=build]').click()");
+    }
     shows(chrome, &present(page.drawn), page.path);
     shows(chrome, LIVE, page.path);
     keeps(chrome, page.parts);
@@ -221,7 +237,7 @@ fn oldest(chrome: &mut Chrome, page: &Page) -> f64 {
         .iter()
         .filter(|(part, _)| {
             page.parts.contains(&part.as_str())
-                || page.path == TASKS.path && part.starts_with("board: column:")
+                || page.path == TASKS.path && part.starts_with("board:waiting column:")
         })
         .map(|(_, saved)| saved.as_f64().unwrap())
         .fold(f64::INFINITY, f64::min)
@@ -359,7 +375,7 @@ fn a_return_visit_draws_what_this_device_kept_before_any_answer_and_checks_it_wi
             // The counts and each kept column: one read each, all at once.
             let columns = kept(&mut chrome)
                 .keys()
-                .filter(|part| part.starts_with("board: column:"))
+                .filter(|part| part.starts_with("board:waiting column:"))
                 .count();
             assert_eq!(checked.len(), 1 + columns, "{checked:#?}");
         }
@@ -713,10 +729,10 @@ fn a_task_no_fresh_answer_lists_goes_whichever_order_the_answers_come_in() {
         path: "/tasks",
         drawn: "[data-status=build] [data-slug='probe/ghost']",
         parts: &[
-            "board: counts",
-            "board: work",
-            "board: column:in_progress",
-            "board: column:build",
+            "board:waiting counts",
+            "board:waiting work",
+            "board:waiting column:in_progress",
+            "board:waiting column:build",
         ],
     };
     let (column, build, work) = (
@@ -751,6 +767,12 @@ fn a_task_no_fresh_answer_lists_goes_whichever_order_the_answers_come_in() {
         chrome.open(&site.url(page.path));
         shows(
             &mut chrome,
+            "document.querySelector('[data-open-stage=build]') !== null",
+            "kept Build rail",
+        );
+        chrome.eval("document.querySelector('[data-open-stage=build]').click()");
+        shows(
+            &mut chrome,
             &present(page.drawn),
             "drawn from the device in Build",
         );
@@ -772,6 +794,7 @@ fn a_task_no_fresh_answer_lists_goes_whichever_order_the_answers_come_in() {
             .expect("a read let go was never answered");
         }
         shows(&mut chrome, LIVE, "every read answered");
+        chrome.eval("document.querySelector('.back-to-stages').click()");
         shows(
             &mut chrome,
             &format!("!({}) && {}", present(GHOST), present(STAY)),
