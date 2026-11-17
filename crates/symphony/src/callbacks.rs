@@ -6,6 +6,9 @@ use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
+/// New ask stores include the outbox, so a chat save needs no second schema setup.
+pub(crate) const SCHEMA: &str = "CREATE TABLE IF NOT EXISTS callbacks (id INTEGER PRIMARY KEY AUTOINCREMENT, text TEXT NOT NULL, ask TEXT);";
+
 /// The journal of the project at `root`, where this process's `ASKS_DB` puts it, else in the
 /// project's artifacts folder ([`crate::asks::default_path`]).
 fn journal(root: &Path) -> PathBuf {
@@ -19,7 +22,6 @@ fn database(path: &Path) -> Result<(AskStore, String), String> {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
     let connection = AskStore::open(path).map_err(|e| e.to_string())?;
-    connection.run("CREATE TABLE IF NOT EXISTS callbacks (id INTEGER PRIMARY KEY AUTOINCREMENT, text TEXT NOT NULL, ask TEXT);").map_err(|e| e.to_string())?;
     // A journal made before asks has no `ask` column: it gains one, its records keeping none.
     #[derive(serde::Deserialize)]
     struct Column {
@@ -29,9 +31,13 @@ fn database(path: &Path) -> Result<(AskStore, String), String> {
         .rows("SELECT name FROM pragma_table_info('callbacks');")
         .map_err(|e| e.to_string())?;
     if !columns.iter().any(|c| c.name == "ask") {
-        connection
-            .run("ALTER TABLE callbacks ADD COLUMN ask TEXT;")
-            .map_err(|e| e.to_string())?;
+        match connection.run("ALTER TABLE callbacks ADD COLUMN ask TEXT;") {
+            Ok(_) => {}
+            // Another publisher can finish the same additive migration after our column read.
+            Err(crate::asks::AskError::Store(why))
+                if why.contains("duplicate column name: ask") => {}
+            Err(error) => return Err(error.to_string()),
+        }
     }
     let path = path.canonicalize().map_err(|e| e.to_string())?;
     let key = Sha256::digest(path.to_string_lossy().as_bytes())
@@ -53,19 +59,38 @@ pub fn publish_asking(
     text: &str,
     ask: Option<&symphony_board::NewAsk>,
 ) -> Result<(), String> {
-    let (connection, _) = database(&journal(root))?;
+    let path = journal(root);
+    publish_at(&path, text, ask)
+}
+
+fn publish_at(path: &Path, text: &str, ask: Option<&symphony_board::NewAsk>) -> Result<(), String> {
     let ask = match ask {
         Some(ask) => text_sql(&serde_json::to_string(ask).map_err(|e| e.to_string())?),
         None => "NULL".into(),
     };
-    connection
-        .run(&format!(
-            "INSERT INTO callbacks(text, ask) VALUES ({}, {ask});",
-            text_sql(text)
-        ))
-        .map_err(|e| e.to_string())?;
+    let insert = format!(
+        "INSERT INTO callbacks(text, ask) VALUES ({}, {ask});",
+        text_sql(text)
+    );
+    if let Some(connection) = AskStore::existing(path) {
+        match connection.run(&insert) {
+            Ok(_) => return Ok(()),
+            // These preparation failures ran no INSERT. Only a missing schema takes the
+            // initialization path; I/O, lock and constraint failures keep their real cause.
+            Err(error) if missing_schema(&error) => {}
+            Err(error) => return Err(error.to_string()),
+        }
+    }
+    let (connection, _) = database(path)?;
+    connection.run(&insert).map_err(|e| e.to_string())?;
     // Native delivery belongs to the server clock, outside the save lock and HTTP writer.
     Ok(())
+}
+
+fn missing_schema(error: &crate::asks::AskError) -> bool {
+    matches!(error, crate::asks::AskError::Store(why)
+        if why.contains("no such table: callbacks")
+            || why.contains("table callbacks has no column named ask"))
 }
 
 /// The shared, lease-holding server's journal reader. Private servers leave the journal alone,
@@ -163,3 +188,7 @@ fn flush(path: &Path, root: &Path) -> Result<bool, String> {
     // Read once more next tick before caching empty; a concurrent publisher may have inserted.
     Ok(false)
 }
+
+#[cfg(test)]
+#[path = "callbacks_tests.rs"]
+mod tests;

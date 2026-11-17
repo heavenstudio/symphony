@@ -42,6 +42,30 @@ fn task_filing(f: &Fixture) {
         "{:?}",
         task.links
     );
+    let receipt = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(
+            f.root
+                .join("artifacts/symphony-quick-tasks/.receipts/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
+        )
+        .unwrap();
+    receipt.lock().unwrap();
+    let original = json!({"request":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "title":"HTTP filed task", "body":"Private board body", "page":"/docs/TOPIC.md#one", "priority":1});
+    let progress = f.post("/api/quick-task", &original).status(200).json();
+    assert_eq!(
+        progress,
+        json!({"pending":true,"error":"This task is being saved; checking for confirmation…"})
+    );
+    let mut changed = original.clone();
+    changed["title"] = json!("Changed under the held identity");
+    let refused = f.post("/api/quick-task", &changed).status(400).json();
+    assert!(
+        refused["error"]
+            .as_str()
+            .unwrap()
+            .contains("different text")
+    );
     assert_eq!(
         f.post(
             "/api/quick-task",
@@ -50,6 +74,11 @@ fn task_filing(f: &Fixture) {
         .status(200)
         .json()["slug"],
         "inbox/http-filed-task-2"
+    );
+    receipt.unlock().unwrap();
+    assert_eq!(
+        f.post("/api/quick-task", &original).status(200).json()["slug"],
+        "inbox/http-filed-task"
     );
     let symbols = f
         .post(
