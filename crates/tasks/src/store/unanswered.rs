@@ -51,6 +51,14 @@ pub(crate) enum Asked<'a> {
 }
 
 #[derive(Clone, Debug)]
+pub(crate) struct Executor {
+    pub handle: String,
+    pub health: Health,
+    /// Current ownership of this task, independent of the session's global activity.
+    pub held: bool,
+}
+
+#[derive(Clone, Debug)]
 pub(crate) struct Pending {
     pub slug: String,
     pub handle: String,
@@ -62,15 +70,24 @@ pub(crate) struct Pending {
     pub status: String,
     /// Today's executor, including the last holder after departure; advice can follow staffing
     /// without changing this post's historical recipient or treating a handoff as an answer.
-    pub executor: Option<(String, Health)>,
+    pub executor: Option<Executor>,
 }
 
 impl Pending {
     /// Whether today's exclusive executor prevents restoring this historical conversation.
     pub(crate) fn active_successor(&self, verifying: &BTreeSet<String>) -> bool {
-        self.executor.as_ref().is_some_and(|(handle, health)| {
-            successors::active(&self.role, &self.handle, handle, *health, verifying)
-        })
+        self.executor
+            .as_ref()
+            .filter(|executor| executor.held)
+            .is_some_and(|executor| {
+                successors::active(
+                    &self.role,
+                    &self.handle,
+                    &executor.handle,
+                    executor.health,
+                    verifying,
+                )
+            })
     }
     pub fn overdue(&self, now: f64) -> bool {
         self.due(now)
@@ -175,7 +192,15 @@ fn owed(
     let recipients = recipients::resolve(&thread, &task.roles);
     let executor = recipients::executor(&thread, &task.roles).map(|handle| {
         let health = sessions.get(handle.as_str()).map_or(Health::Left, |s| s.0);
-        (handle, health)
+        let held = task
+            .roles
+            .iter()
+            .any(|r| r.role == "executor" && r.handle == handle);
+        Executor {
+            handle,
+            health,
+            held,
+        }
     });
     for post in &mut thread {
         if post.kind == "system"

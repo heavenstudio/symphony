@@ -219,3 +219,71 @@ fn running_test_evidence_keeps_the_current_executor_followup_actionable(backend:
     assert_eq!(line(&lost, post.id), line(&unrelated, post.id));
 }
 }
+
+on_both! {
+fn a_released_live_successor_cannot_suppress_recovery_even_when_running_other_work(backend: Backend) {
+    for direct in [false, true] {
+        let f = Fixture::on(backend, Seed::default());
+        f.task("work");
+        let old = f.session("worker");
+        f.store.claim("work", &old).unwrap();
+        let post = f.store.say("work", "owner", "continue",
+            Some(if direct { &old } else { "@executor" })).unwrap();
+        f.advance(31.0 * 60.0);
+        let next = f.session("worker");
+        f.store.claim("work", &next).unwrap();
+        f.store.move_to("work", "blocked", &next).unwrap();
+        let followup = look(&f);
+        assert!(line(&followup, post.id).ends_with(&format!("--to {next}")));
+        f.store.release("work", &next, Some("executor")).unwrap();
+        f.task("other");
+        f.store.claim("other", &next).unwrap();
+        assert!(f.store.get("work").unwrap().holders("executor").is_empty());
+        assert_eq!(f.store.session(&next).unwrap().health, symphony_board::Health::Live);
+        let released = look(&f);
+        let advice = line(&released, post.id);
+        assert!(advice.contains(&format!("{old} (last executor {next})")), "{advice}");
+        assert!(advice.ends_with("just tasks launch work --role executor"), "{advice}");
+        assert_ne!(followup.entries(), released.entries());
+        let running_elsewhere = digest(&f.store, &[], None, f.now(), std::slice::from_ref(&next)).unwrap();
+        assert_eq!(line(&running_elsewhere, post.id), advice);
+        assert_eq!(running_elsewhere.entries(), released.entries());
+        let retained = f.store.thread("work").unwrap().into_iter().find(|p| p.id == post.id).unwrap();
+        assert_eq!((retained.sender, retained.recipient, retained.text, retained.ts),
+            (post.sender, post.recipient, post.text, post.ts));
+    }
+}
+}
+
+on_both! {
+fn releasing_a_live_successor_delivers_recovery_after_its_followup_once(backend: Backend) {
+    let f = Fixture::on(backend, Seed::default());
+    f.task("work");
+    let old = f.session("worker");
+    f.store.claim("work", &old).unwrap();
+    let post = f.store.say("work", "owner", "continue", Some(&old)).unwrap();
+    f.advance(31.0 * 60.0);
+    let next = f.session("worker");
+    f.store.claim("work", &next).unwrap();
+    f.store.move_to("work", "blocked", &next).unwrap();
+    let orch = f.session("orchestrator");
+    let barrier = f.session("worker");
+    f.store.take_role("work", &orch, "orchestrator").unwrap();
+    let listener = listen(&f, &orch);
+    let followup = heard(&listener, &f, &barrier, &orch);
+    assert_eq!(followup.len(), 1, "{followup:?}");
+    assert!(followup[0].contains(&format!("post #{} —", post.id)));
+    assert!(followup[0].ends_with(&format!("--to {next}")), "{followup:?}");
+    f.elsewhere().release("work", &next, Some("executor")).unwrap();
+    assert_eq!(f.store.session(&next).unwrap().health, symphony_board::Health::Live);
+    f.other().dispatch_callbacks().unwrap();
+    let recovered = heard(&listener, &f, &barrier, &orch);
+    assert_eq!(recovered.len(), 1, "{recovered:?}");
+    assert!(recovered[0].contains(&format!("post #{} —", post.id)));
+    assert!(recovered[0].ends_with("just tasks launch work --role executor"), "{recovered:?}");
+    for _ in 0..2 {
+        f.other().dispatch_callbacks().unwrap();
+        assert!(heard(&listener, &f, &barrier, &orch).is_empty());
+    }
+}
+}

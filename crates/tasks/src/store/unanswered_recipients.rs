@@ -40,8 +40,8 @@ enum Change {
     Release(Option<&'static str>),
 }
 
-/// Today's exclusive executor, or its last holder after departure. This is recovery routing,
-/// separate from the immutable per-post recipients `resolve` returns.
+/// Today's exclusive executor, or its last holder after departure. This supplies routing identity,
+/// not proof of current ownership, and is separate from the per-post recipients `resolve` returns.
 pub(super) fn executor(thread: &[Message], current: &[Role]) -> Option<String> {
     current
         .iter()

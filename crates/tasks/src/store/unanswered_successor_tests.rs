@@ -343,3 +343,39 @@ fn recovery_fences_touch_only_the_observed_task_sessions_and_existing_native_row
         assert!(f.store.callbacks().unwrap().contains_key(&next));
     }
 }
+
+#[test]
+fn a_released_live_successors_projection_agrees_with_reservation_eligibility() {
+    for backend in [Backend::SurrealDb, Backend::PostgreSql] {
+        let (f, pending) = setup(backend);
+        let next = replacement(&f, &pending);
+        f.store.move_to(&pending.slug, "blocked", &next).unwrap();
+        let busy = BTreeSet::from([next.clone()]);
+        let before = owed_by(&f, &pending.handle).remove(0);
+        assert!(before.active_successor(&busy));
+        f.store
+            .release(&pending.slug, &next, Some("executor"))
+            .unwrap();
+        f.task("other-work");
+        f.store.claim("other-work", &next).unwrap();
+        let after = owed_by(&f, &pending.handle).remove(0);
+        let executor = after.executor.as_ref().unwrap();
+        assert_eq!(executor.handle, next);
+        assert_eq!(executor.health, Health::Live);
+        assert!(!executor.held);
+        assert!(!after.active_successor(&busy));
+        assert_eq!(
+            (after.post.id, &after.post.sender, &after.post.recipient),
+            (
+                pending.post.id,
+                &pending.post.sender,
+                &pending.post.recipient
+            )
+        );
+        assert!(
+            f.store
+                .claim_unanswered_restore_checking(&after, &|| Ok(busy.clone()))
+                .unwrap()
+        );
+    }
+}

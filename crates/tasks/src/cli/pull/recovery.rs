@@ -21,11 +21,17 @@ impl Advice {
         let replacement = pending
             .executor
             .as_ref()
-            .filter(|(handle, _)| pending.role == "executor" && *handle != pending.handle);
+            .filter(|executor| pending.role == "executor" && executor.handle != pending.handle);
         let mut handle = pending.handle.clone();
-        let command = if let Some((current, _)) = replacement {
-            handle = format!("{} (executor now {current})", pending.handle);
+        let command = if let Some(executor) = replacement {
+            let current = &executor.handle;
             let active = pending.active_successor(verifying);
+            let holder = if active {
+                "executor now"
+            } else {
+                "last executor"
+            };
+            handle = format!("{} ({holder} {current})", pending.handle);
             let action = if active { "followup" } else { "recover" };
             key.push_str(&format!(":executor:{current}:{action}"));
             if active {
