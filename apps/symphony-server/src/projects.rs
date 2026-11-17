@@ -164,7 +164,15 @@ impl Projects {
         let runtime = tokio::runtime::Handle::try_current().ok();
         crate::front::worker(REGISTRY_WORKER, move || {
             let _within = runtime.as_ref().map(tokio::runtime::Handle::enter);
-            while !projects.starter.wait(LOOK) {
+            loop {
+                #[expect(
+                    clippy::disallowed_methods,
+                    reason = "no-timed-waits baseline: reads the registry again every LOOK, where a watcher's event of the machine folder's registry is the event"
+                )]
+                let stopped = projects.starter.wait(LOOK);
+                if stopped {
+                    break;
+                }
                 drop(projects.read());
                 projects.tell_switch();
             }

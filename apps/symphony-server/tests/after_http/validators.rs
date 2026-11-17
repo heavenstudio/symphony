@@ -12,8 +12,7 @@
 //! the same content always share theirs.
 
 use super::client::{Fixture, Response};
-use super::{DOCUMENT, LIMIT, SCOPE, stalled, write};
-use std::time::{Duration, Instant};
+use super::{DOCUMENT, LIMIT, SCOPE, write};
 
 /// The fixture's task, which `task_pages` makes before this phase runs.
 const TASK: &str = "fixture%2Flong-brief";
@@ -41,20 +40,12 @@ fn get(f: &Fixture, route: &str, accept: &[(&str, &str)]) -> Response {
     f.request("GET", route, accept, &[]).status(200)
 }
 
-/// Waits a moment before asking again, failing once `began` is past the fixture's backstop, which
-/// only a stall reaches.
+/// Looks at `condition` until it gives a value, which it returns: `what` of `route` fails as a
+/// stall once the fixture's backstop, which only a stall reaches, has passed with none.
 #[track_caller]
-fn again(began: Instant, route: &str, what: &str) {
-    assert!(
-        began.elapsed() < LIMIT,
-        "{}",
-        stalled(format!("{route}: {what}"))
-    );
-    #[expect(
-        clippy::disallowed_methods,
-        reason = "no-timed-waits baseline: a test looks again for its condition by hand, where test_time::wait::until is the helper"
-    )]
-    std::thread::sleep(Duration::from_millis(20));
+fn until<T>(route: &str, what: &str, condition: impl FnMut() -> Option<T>) -> T {
+    test_time::until(format!("{route}: {what}"), LIMIT, condition)
+        .unwrap_or_else(|stall| panic!("{stall}"))
 }
 
 /// Whether `route`'s view carries the machine's work as the board tick last scanned it: the
@@ -119,12 +110,11 @@ fn current(
     accept: &[(&str, &str)],
     named: impl Fn(&str) -> String,
 ) {
-    let began = Instant::now();
-    loop {
+    until(route, "never held still for a conditional read", || {
         let read = get(f, route, accept);
         let now = tag(&read, route);
         let Err(answer) = conditional(f, method, route, accept, &named(&now)) else {
-            return;
+            return Some(());
         };
         assert_eq!(answer.status, 200, "{method} {route}: {answer:?}");
         assert_ne!(
@@ -132,17 +122,16 @@ fn current(
             now,
             "{method} {route}: the body was sent under the very tag it was asked by"
         );
-        again(began, route, "never held still for a conditional read");
-    }
+        None
+    });
 }
 
 /// Two reads of `route` with the same content, which share their tag: a tag is a function of the
 /// content, whatever order the server wrote it in. The second of them.
 #[track_caller]
 fn settled(f: &Fixture, route: &str, accept: &[(&str, &str)]) -> Response {
-    let began = Instant::now();
     let mut last = get(f, route, accept);
-    loop {
+    until(route, "never read the same twice", || {
         let next = get(f, route, accept);
         if next.json() == last.json() {
             assert_eq!(
@@ -150,11 +139,11 @@ fn settled(f: &Fixture, route: &str, accept: &[(&str, &str)]) -> Response {
                 tag(&last, route),
                 "{route}: the same content under two tags"
             );
-            return next;
+            return Some(next);
         }
-        again(began, route, "never read the same twice");
         last = next;
-    }
+        None
+    })
 }
 
 /// `probe` made between two reads of `route` that agree, and their tag.
@@ -164,15 +153,11 @@ fn between(
     accept: &[(&str, &str)],
     probe: impl Fn() -> Response,
 ) -> (Response, String) {
-    let began = Instant::now();
-    loop {
+    until(route, "never held still around a probe", || {
         let before = tag(&get(f, route, accept), route);
         let probed = probe();
-        if tag(&get(f, route, accept), route) == before {
-            return (probed, before);
-        }
-        again(began, route, "never held still around a probe");
-    }
+        (tag(&get(f, route, accept), route) == before).then_some((probed, before))
+    })
 }
 
 pub(super) fn json_reads(f: &Fixture) {
@@ -303,15 +288,14 @@ fn changed(f: &Fixture, route: &str, change: impl FnOnce()) {
     let before = get(f, route, &[]);
     let old = tag(&before, route);
     change();
-    let began = Instant::now();
-    let after = loop {
+    let after = until(route, "never changed", || {
         let read = f.request("GET", route, &[("If-None-Match", &old)], &[]);
         if read.status == 200 {
-            break read;
+            return Some(read);
         }
         assert_eq!(read.status, 304, "{route}: {read:?}");
-        again(began, route, "never changed");
-    };
+        None
+    });
     let new = tag(&after, route);
     assert_ne!(new, old, "{route}");
     assert_ne!(after.body, before.body, "{route}");
@@ -322,14 +306,10 @@ fn changed(f: &Fixture, route: &str, change: impl FnOnce()) {
 /// what the page opens its feed from. A document's body carries the moved cursor too, but its
 /// tag names its content alone, which did not change: it is still answered `304`.
 fn cursor_is_not_content(f: &Fixture, documents: &[(String, Response)], board: &Response) {
-    let began = Instant::now();
-    let moved = loop {
+    let moved = until("/api/board", "the board's cursor never moved", || {
         let now = get(f, "/api/board", &[]);
-        if now.json()["version"] != board.json()["version"] {
-            break now;
-        }
-        again(began, "/api/board", "the board's cursor never moved");
-    };
+        (now.json()["version"] != board.json()["version"]).then_some(now)
+    });
     assert_ne!(moved.header("etag"), board.header("etag"));
     let cursor = |read: &Response| {
         let json = read.json();

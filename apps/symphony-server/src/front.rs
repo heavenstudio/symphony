@@ -235,6 +235,9 @@ impl Shared {
     }
 
     /// A background timer wakes immediately on shutdown, including when stop preceded the wait.
+    /// Nothing but the stop ends it early, so clippy lists it as a sleep (RULES.md
+    /// `code/no-timed-waits`, clippy.toml), and each caller is in the baseline until a message
+    /// wakes it for what it looks for.
     pub(crate) fn wait(&self, duration: Duration) -> bool {
         let held = self.sleep.lock().unwrap_or_else(|e| e.into_inner());
         let _held = self
@@ -242,6 +245,17 @@ impl Shared {
             .wait_timeout_while(held, duration, |()| !self.stopping())
             .unwrap_or_else(|e| e.into_inner());
         self.stopping()
+    }
+
+    /// Until the server stops, on a thread: the stop's wake, which ends [`Shared::wait`] early, and
+    /// no length.
+    #[cfg(test)]
+    pub(crate) fn wait_for_stop(&self) {
+        let held = self.sleep.lock().unwrap_or_else(|e| e.into_inner());
+        let _held = self
+            .wake
+            .wait_while(held, |()| !self.stopping())
+            .unwrap_or_else(|e| e.into_inner());
     }
 
     /// Until the server stops.
@@ -571,7 +585,12 @@ fn end_when(
                 shared.stop();
                 return;
             }
-            if shared.wait(Duration::from_millis(100)) {
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "no-timed-waits baseline: looks ten times a second whether the process it follows has ended (a starter's or a test's, none its child), where a kqueue or pidfd watch of that process's exit is the event"
+            )]
+            let stopped = shared.wait(Duration::from_millis(100));
+            if stopped {
                 break;
             }
         }
@@ -1268,7 +1287,12 @@ pub(crate) fn maintenance_worker(
             let due = sweep_due(last, now, interval);
             if !due || !has_board(&shared) {
                 board_waited |= due;
-                if shared.wait(Duration::from_millis(250)) {
+                #[expect(
+                    clippy::disallowed_methods,
+                    reason = "no-timed-waits baseline: looks every 250 ms whether a round is due and the project has a board, where the round's due time on its clock and the board's arrival are the events"
+                )]
+                let stopped = shared.wait(Duration::from_millis(250));
+                if stopped {
                     break;
                 }
                 continue;
@@ -1347,7 +1371,12 @@ pub(crate) fn maintenance_worker(
                     .swept(now, outcome.as_ref().copied().map_err(String::as_str));
                 hub.tell_health(now);
             }
-            if shared.wait(Duration::from_millis(250)) {
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "no-timed-waits baseline: holds 250 ms after a round before it looks whether the next is due, where the next round's due time on its clock is the event"
+            )]
+            let stopped = shared.wait(Duration::from_millis(250));
+            if stopped {
                 break;
             }
         }

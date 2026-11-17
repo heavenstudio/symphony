@@ -6,7 +6,7 @@
 import { type RefObject, useLayoutEffect, useRef } from "react";
 import { useMount } from "./mount";
 import { holdPlace } from "./shared";
-import { debounce } from "./timing";
+import { Debounce } from "./timing";
 
 /** Every card of the board: what a live update holds in place when no column is the reader's. */
 export const ROWS = "[data-slug]";
@@ -255,8 +255,9 @@ const GESTURES = ["wheel", "touchstart", "mousedown", "keydown"];
  * the page the next kind shows.
  */
 export class PlaceKeeper {
-  /** The rest the last scroll began, until it is kept or dropped. */
-  private resting: AbortController | null = null;
+  /** The rests of the reader's scrolling: the last keeps the place, unless it is kept or dropped
+   * first. */
+  private readonly resting: Debounce;
   private returning: AbortController | null = null;
   /** The board's path: an entry of any other is another page's, and never written. */
   private readonly path = location.pathname;
@@ -264,7 +265,9 @@ export class PlaceKeeper {
   constructor(
     private readonly scroller: Scroller,
     private readonly signal: AbortSignal,
-  ) {}
+  ) {
+    this.resting = new Debounce(RESTS_MS, signal);
+  }
 
   /** The board's place now. */
   now(): Place {
@@ -299,19 +302,14 @@ export class PlaceKeeper {
    * often than the history takes writes.
    */
   readonly later = (): void => {
-    this.rest();
-    if (this.signal.aborted) return;
-    const resting = new AbortController();
-    this.resting = resting;
-    void debounce(RESTS_MS, resting.signal).then(() => {
-      if (!resting.signal.aborted) this.keep();
+    void this.resting.rest().then((rested) => {
+      if (rested) this.keep();
     });
   };
 
   /** The rest a scroll began, dropped. */
   private rest(): void {
-    this.resting?.abort();
-    this.resting = null;
+    this.resting.cancel();
   }
 
   /** Back or Forward: the scrolling not yet kept is the entry left's, and lost; another entry of

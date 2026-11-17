@@ -2,6 +2,7 @@
 //! `lsof` itself, takes the window from a flag or the environment, refuses what it cannot read, holds
 //! the lock and writes the stamp) and how a sweep work finishing started says itself.
 
+use crate::children::Child as _;
 use crate::common::Seed;
 use crate::{HeldCwd, Repo, git, write};
 use std::collections::BTreeMap;
@@ -98,10 +99,10 @@ fn busy_trees_with_escaped_names_are_kept_in_real_and_dry_sweeps() {
     for args in [&["--dry-run"][..], &[]] {
         r.idle(&[]);
         let done = symphony_board::sys::output(
-            symphony_board::sys::Command::new(env!("CARGO_BIN_EXE_tasks"))
+            symphony_board::sys::Command::of(env!("CARGO_BIN_EXE_tasks"))
                 .arg("sweep")
                 .args(args)
-                .env_clear()
+                .cleared()
                 .envs(r.vars())
                 .env("LC_ALL", "C")
                 .env("TASKS_SWEEP", "off")
@@ -134,9 +135,9 @@ fn inherited_repository_and_index_variables_do_not_redirect_sweep_operations() {
         );
         r.idle(&[]);
         let done = symphony_board::sys::output(
-            symphony_board::sys::Command::new(env!("CARGO_BIN_EXE_tasks"))
+            symphony_board::sys::Command::of(env!("CARGO_BIN_EXE_tasks"))
                 .arg("sweep")
-                .env_clear()
+                .cleared()
                 .envs(r.vars())
                 .env("TASKS_SWEEP", "off")
                 .env("GIT_DIR", r.root.join(".git"))

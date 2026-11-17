@@ -657,6 +657,7 @@ mod tests {
         Before, CLONE_FAILS, FOLDER, KEPT, Kept, STORE_LOCK, TAKING, civil, clones, free_name,
         hold_store, holds_log, named, order, stamp,
     };
+    use crate::children::Child as _;
     use crate::server::{Home, LOG, ServerError};
     use crate::sys::FileLock;
     use std::fs;
@@ -827,7 +828,7 @@ mod tests {
             let fds = (forked_by.as_raw_fd(), go_on.as_raw_fd(), go.as_raw_fd());
             let spawner = std::thread::spawn(move || {
                 let (forked_fd, go_on_fd, go_fd) = fds;
-                let mut command = std::process::Command::new("true");
+                let mut command = std::process::Command::of("true");
                 // SAFETY: close, write and read are async-signal-safe and touch only the child's
                 // copies of three pipe ends, which stay open in this process until the spawn
                 // returns. Its copy of the writer closed, the child goes on at a byte or at the

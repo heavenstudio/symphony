@@ -57,12 +57,17 @@ import {
   readTaskChange,
 } from "./task";
 import { markTasksReady } from "./taskcard";
-import { debounce } from "./timing";
+import { Debounce } from "./timing";
 import { failed as failedRead } from "./trouble";
 import type { ItemChange, MachineWork, Task, TaskChange, TaskListing } from "./wire";
 import { PAGE_NAMES } from "./wire";
 import { statusNotice } from "./words";
 import { drawsAlike, NO_WORK, placesAlike, readWork, taskStage } from "./work";
+
+/** How long a search, a window or a column waits for the reader's next key before it reads. */
+const TYPING_MS = 250;
+/** How long a refresh a feed event asked for waits before it reads the counts again. */
+const REFRESH_MS = 750;
 
 /** A read's copy: the tag the server answered it with, and the listing. */
 interface Copy {
@@ -307,6 +312,13 @@ export class LiveBoard {
     void this.filter(query, days);
   };
 
+  /** The rests between a search's keys: the last reads its counts. */
+  private readonly typing: Debounce;
+  /** Each column's rests between the asks for its pages: the last reads. */
+  private readonly columns = new Map<string, Debounce>();
+  /** The rest a refresh a feed event asked for takes before it reads. */
+  private readonly refreshes: Debounce;
+
   constructor(
     readonly scope: string,
     private readonly host: BoardHost,
@@ -314,6 +326,8 @@ export class LiveBoard {
     private readonly now: () => number = Date.now,
   ) {
     this.item = boardItem(scope);
+    this.typing = new Debounce(TYPING_MS, signal);
+    this.refreshes = new Debounce(REFRESH_MS, signal);
   }
 
   /** Change what the page shows from this device. */
@@ -585,8 +599,7 @@ export class LiveBoard {
     // same window chosen again changes neither, and its tasks are gone.
     this.host.refresh();
     // Typing on: a later key's search reads in its place. A feed event meanwhile does not.
-    await debounce(250, this.signal);
-    if (!this.signal.aborted && d.view === view) await this.counts();
+    if ((await this.typing.rest()) && d.view === view) await this.counts();
   }
 
   /** A column asks for a page: its first, or the next (`more`). */
@@ -605,8 +618,13 @@ export class LiveBoard {
     const view = d.view;
     const version = (d.requests.get(status) ?? 0) + 1;
     d.requests.set(status, version);
-    await debounce(250, this.signal);
-    if (this.signal.aborted) return;
+    let resting = this.columns.get(status);
+    if (resting === undefined) {
+      resting = new Debounce(TYPING_MS, this.signal);
+      this.columns.set(status, resting);
+    }
+    // A later ask of the column reads in this one's place.
+    if (!(await resting.rest())) return;
     const read = () => this.readColumn(status, more, query, days, view, version);
     // A page a click asked for is read once. A first page that failed is read again by itself
     // until it answers, or a newer read of the column or another view replaces it.
@@ -828,8 +846,7 @@ export class LiveBoard {
   private async refreshing(): Promise<void> {
     const { d } = this;
     for (;;) {
-      await debounce(750, this.signal);
-      if (this.signal.aborted) return;
+      if (!(await this.refreshes.rest())) return;
       const generation = d.generation;
       await this.counts();
       if (this.signal.aborted) return;

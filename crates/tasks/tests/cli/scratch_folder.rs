@@ -2,6 +2,7 @@
 //! folder's [`SCRATCH_HARNESS`] folder, gone when the binary exits, and swept by the next run when a
 //! kill left it behind.
 
+use crate::children::Child as _;
 use crate::{SCRATCH_HARNESS, own_scratch, scratch};
 use std::fs;
 use std::io::{BufRead, BufReader};
@@ -31,7 +32,7 @@ fn a_run_of_this_binary() {
 
 /// This binary as `role`, with `temp` its temp folder.
 fn run(role: &str, temp: &Path) -> Command {
-    let mut command = Command::new(std::env::current_exe().unwrap());
+    let mut command = Command::of(std::env::current_exe().unwrap());
     command
         .args([
             "--exact",

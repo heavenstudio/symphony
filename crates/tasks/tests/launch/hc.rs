@@ -1,5 +1,6 @@
 //! The hc client (`Binary`, `Hc`'s calls) against the fake as a real binary, and the fake itself.
 
+use crate::children::Child as _;
 use crate::{FAKE, Hooked, SPACE, World};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
@@ -491,10 +492,10 @@ fn the_fake_runs_a_terminal_into_the_window_and_refuses_a_name_taken() {
             .len()
     };
     let from_terminal = symphony_board::sys::output(
-        Command::new(FAKE)
+        Command::of(FAKE)
             .args(["run", "--bg", "--label", "herdr.space=sp-new"])
             .args(["--label", "herdr.tab=tb-kid", "--json", "--", "zsh"])
-            .env_clear()
+            .cleared()
             .envs(&w.env.vars)
             .env("HC_TERMINAL_ID", address),
     )

@@ -55,6 +55,7 @@ fn a_client_waits_on_a_silent_server_no_longer_than_it_was_told() {
 fn a_request_a_kept_connection_took_and_never_answered_is_not_sent_again() {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap().to_string();
+    let (queried, query_ended) = std::sync::mpsc::channel::<()>();
     let served = std::thread::spawn(move || {
         let (mut kept, _) = listener.accept().unwrap();
         for _ in 0..3 {
@@ -63,13 +64,16 @@ fn a_request_a_kept_connection_took_and_never_answered_is_not_sent_again() {
         }
         read_request(&mut kept);
         drop(kept); // taken, perhaps run, never answered
+        // Once the client's query has failed, a request sent again has connected already: the
+        // kernel queues a connection before it is accepted.
+        let _ = query_ended.recv();
         listener.set_nonblocking(true).unwrap();
-        std::thread::sleep(Duration::from_millis(500));
         listener.accept().is_ok()
     });
     let client = Client::new(&addr, "sf", "t").waiting(PATIENT);
     sevens(&client, 3);
     let failed = client.query(WRITE, json!({}));
+    drop(queried);
     let Err(DbError::Failed(said)) = failed else {
         panic!("{failed:?}")
     };

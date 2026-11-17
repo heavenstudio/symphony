@@ -10,6 +10,7 @@
 //! the server tests, and the project's board-only one, the build the live board runs, in that
 //! package's tests (`apps/tasks/tests/dispatch.rs`), which include this file as it is.
 
+use crate::children::Child as _;
 use crate::listeners::Listeners;
 use crate::own_board::Repository;
 use serde_json::{Value, json};
@@ -37,11 +38,11 @@ fn env_of(repo: &Repository) -> Env {
 /// `env_of`'s and the `PATH` that finds `ps` and `git`: what it printed, once it has succeeded and
 /// started its dispatcher (a write that could not says so and delivers itself).
 fn tasks(repo: &Repository, args: &[&str], input: &str) -> String {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_tasks"));
+    let mut command = Command::of(env!("CARGO_BIN_EXE_tasks"));
     command
         .args(args)
         .current_dir(&repo.dir)
-        .env_clear()
+        .cleared()
         .envs(env_of(repo).vars)
         .env("PATH", std::env::var_os("PATH").unwrap_or_default());
     let mut child = sys::spawn_piped(&mut command).unwrap();

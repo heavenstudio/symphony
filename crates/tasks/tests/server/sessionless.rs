@@ -3,6 +3,7 @@
 //! handle and hc's terminal, socket, core and scope, and the board's database server it starts, or
 //! an hc call it makes, holds none of them.
 
+use crate::children::Child as _;
 use crate::common::script;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -61,7 +62,7 @@ fn the_boards_server_and_its_hc_calls_run_without_their_starters_session() {
     );
     script(&dir.join("hc"), &format!("{}\necho '{{}}'", saw("hc-saw")));
     let done = sys::output(
-        Command::new(std::env::current_exe().unwrap())
+        Command::of(std::env::current_exe().unwrap())
             .args([
                 "--ignored",
                 "--exact",
