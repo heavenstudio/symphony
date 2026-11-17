@@ -30,6 +30,8 @@ the evidence behind decisions are under [Design and history](#design-and-history
 
 ## Development and contracts
 
+- [Working artifact contracts](ARTIFACTS.md) — optional verified publication and scoped private
+  storage; the local/fake-provider core and the integrations still required for hosted use.
 - [Checks](CHECKS.md) — what a task in this repository proves before review, and the release run's
   full verification.
 - [Plugin protocol](PLUGIN_PROTOCOL.md) — a plugin answering from a process of its own: the
