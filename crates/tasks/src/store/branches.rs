@@ -1,5 +1,7 @@
 //! Recorded executor branches shared by board snapshots, cap reads and landing queries.
 
+use super::postgres::branches as pg;
+use super::statement::both;
 use super::surreal::branches as sql;
 use super::{Error, Store, Task};
 use serde::Deserialize;
@@ -32,7 +34,7 @@ impl Store {
     pub fn tasks_for_branch(&self, branch: &str) -> Result<Vec<Task>, Error> {
         let candidates: Vec<String> = self.retrying(|| {
             self.transact(
-                sql::on_branch(),
+                both(sql::on_branch(), pg::on_branch()),
                 json!({"branch": branch, "slot_wanted": [branch]}),
             )
         })?;

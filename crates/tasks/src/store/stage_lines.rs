@@ -3,7 +3,9 @@
 //! and `tasks api` for when each task they name took the status it holds
 //! ([`Store::in_status_since`]).
 
+use super::postgres::stage_lines as pg;
 use super::report_lines::line_of;
+use super::statement::both;
 use super::surreal::stage_lines as sql;
 use super::{Error, Store, refused, repr};
 use crate::stages::{self, Facts, InStatus, Line};
@@ -51,8 +53,12 @@ impl Store {
         if slugs.is_empty() {
             return Ok(BTreeMap::new());
         }
-        let answer: Value =
-            self.retrying(|| self.transact(sql::SINCE_READ, json!({"slugs": slugs})))?;
+        let answer: Value = self.retrying(|| {
+            self.transact(
+                both(sql::SINCE_READ, pg::since_read()),
+                json!({"slugs": slugs}),
+            )
+        })?;
         let read = since_taken_apart(slugs, &answer).ok_or_else(|| {
             Error::Db("the read of when tasks took their status is not in the board's shape".into())
         })?;
@@ -94,7 +100,8 @@ impl Store {
             executing: HashSet<String>,
             lines: Vec<Vec<LineRow>>,
         }
-        let read: Read = self.retrying(|| self.transact(sql::READ, json!({"since": since})))?;
+        let read: Read =
+            self.retrying(|| self.transact(both(sql::READ, pg::read()), json!({"since": since})))?;
         Ok(read
             .tasks
             .into_iter()

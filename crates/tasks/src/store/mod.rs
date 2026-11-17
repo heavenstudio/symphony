@@ -334,8 +334,9 @@ impl Store {
 
     /// Eligibility without transferring briefs, roles or session health for the entire board.
     pub(crate) fn task_slugs(&self, status: Option<&str>) -> Result<Vec<String>, Error> {
-        let sql = surreal::task_slugs(status.is_some());
-        self.retrying(|| self.transact(sql, json!({"status":status})))
+        let by_status = status.is_some();
+        let read = || both(surreal::task_slugs(by_status), pg::task_slugs(by_status));
+        self.retrying(|| self.transact(read(), json!({"status":status})))
     }
 
     pub(crate) fn tasks_by_slug(&self, slugs: &[String]) -> Result<Vec<Task>, Error> {
@@ -354,7 +355,7 @@ impl Store {
     pub fn session(&self, handle: &str) -> Result<Session, Error> {
         let found: Found = self.retrying(|| {
             self.transact(
-                session_read(),
+                both(session_read(), Pg::read(pg::sessions::session_read())),
                 json!({"handle": handle, "executing": EXECUTING}),
             )
         })?;
@@ -379,9 +380,10 @@ impl Store {
 
     /// The tasks another session could take over if `handle` were gone.
     pub fn claimable(&self, handle: &str) -> Result<Vec<String>, Error> {
-        let sql = surreal::claimable();
-        let mut slugs: Vec<String> = self
-            .retrying(|| self.transact(&sql, json!({"handle": handle, "executing": EXECUTING})))?;
+        let read = || both(surreal::claimable(), pg::claimable());
+        let mut slugs: Vec<String> = self.retrying(|| {
+            self.transact(read(), json!({"handle": handle, "executing": EXECUTING}))
+        })?;
         slugs.sort();
         slugs.dedup();
         Ok(slugs)
@@ -697,16 +699,20 @@ impl Store {
             }
             let (view, change) = (&ruled.view, &ruled.change);
             let version = view.snap.tasks.first().map_or(0, |t| t.version);
-            let body = surreal::rule(
+            let (reason, needs, blocked, moved, holds) = (
                 change.reason.is_some(),
                 change.needs.is_some(),
                 change.blocked.is_some(),
                 (change.status.as_deref()).map(|status| status == "cancelled"),
                 !ruled.slots.is_empty(),
             );
+            let body = both(
+                surreal::rule(reason, needs, blocked, moved, holds),
+                pg::rule(reason, needs, blocked, moved, holds),
+            );
             let mut vars = change.vars(slug, actor, version, view.now);
             vars["slots"] = Value::Array(ruled.slots);
-            self.written(&body, vars, slug)
+            self.written(body, vars, slug)
         })
     }
 
@@ -752,8 +758,10 @@ impl Store {
             vars.extend(more);
         }
         // On PostgreSQL the write's block, then the read, its answer.
-        let postgres = match (body.postgres, pg::reading::written(&which)) {
-            (Some(Pg::Script(block, None)), Some(read)) => Some(Pg::script_then(block, read)),
+        let postgres = match body.postgres {
+            Some(Pg::Script(block, None)) => {
+                Some(Pg::script_then(block, pg::reading::written(&which)))
+            }
             _ => None,
         };
         let written = Statement {
@@ -1244,7 +1252,7 @@ fn read_of(which: &Which, sessions: Sessions) -> (Statement<'static>, Value) {
     let (read, vars) = reading(which, sessions);
     let statement = Statement {
         surreal: read.into(),
-        postgres: pg::reading::reading(which, sessions).map(Pg::read),
+        postgres: Some(Pg::read(pg::reading::reading(which, sessions))),
     };
     (statement, vars)
 }
