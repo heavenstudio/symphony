@@ -5,15 +5,17 @@ confirmed credential, personal account/contact address or home-directory path in
 pixels or embedded metadata. Six board-layout mockups retain anonymized, consuming-project-derived
 task content; their publication is a separate residual disclosure choice, not a newly discovered
 copy of the original private titles. Three historical captures have existing blur that this review
-does not certify as irreversible redaction. None of these images has been changed here.
+does not certify as irreversible redaction. The four confirmed machine-label exposures are now
+redacted in the current images, with visible privacy markers; their Git history is unchanged.
 
 ## Scope and reproducibility
 
 The inspected source is commit `3b460adb62827f674669e8e99f3090561107264f`. The inventory below
 covers **all 174 tracked image paths** at that commit: 76 PNG, 81 WebP and 17 SVG, 12,885,058 bytes
-in total and 171 distinct SHA-256 values. Each path has its own disposition even when bytes match.
-The working copies matched that commit when inspected. The hashes are SHA-256 of original file
-bytes, not resized previews or decoded pixels.
+in total and 171 distinct SHA-256 values. These are the pre-remediation bytes. Each path has its
+own disposition even when bytes match. The working copies matched that commit when inspected;
+only the four H images changed afterward, with their new hashes recorded below. The inventory
+hashes are SHA-256 of original file bytes, not resized previews or decoded pixels.
 
 The earlier audit's source `837a0d36c8d8287860b44c7913c35a698779ac80` had 168 images. The six
 additional paths here are the `timeline-orchestrator/` before/proposed captures listed below.
@@ -51,27 +53,25 @@ blob with `git cat-file blob COMMIT:PATH` piped to `shasum -a 256`, then inspect
 
 ## Findings and concrete dispositions
 
-### H: personal machine label — four images
+### H: personal machine label — four images, redacted in the current tree
 
-The Builds and Tests lanes of `timeline-burst/a-wide.webp`, `b-wide.webp`, `c-wide.webp` and
-`c-wide-dark.webp` visibly contain the same personal machine label, truncated by the UI but still
-identifying a person's computer. The literal value is withheld here. This is computer-specific
+In the inspected source, the Builds and Tests lanes of `timeline-burst/a-wide.webp`, `b-wide.webp`,
+`c-wide.webp` and `c-wide-dark.webp` contained the same personal machine label, truncated by the UI
+but still identifying a person's computer. The literal value is withheld here. This is computer-specific
 information, not an authentication token. Both phone images in that folder omit machine labels
 and have no matching exposure.
 
 These are evidence of an earlier design comparison. The [decision register](../DECISIONS.md)
 records which parts were captured and which options were drawn by hand. A new capture of today's
-UI would not be evidence of that comparison. Recommended remediation: explicitly redact only the
-two machine-label regions in each of these four originals with opaque fills, preserving lane
-headings, event bars, times, commands and results. Add a caption beside each use saying the
-machine labels were redacted for privacy, retaining the original capture/design provenance.
-Review the eight label regions at native resolution, inspect replacement metadata and record new
-hashes before treating the finding as resolved. Do not substitute a synthetic computer name into
-an ostensibly unchanged historical capture.
+UI would not be evidence of that comparison. The applied remedy is an explicit opaque redaction
+of the two machine-label regions in each original. Each mask visibly says `privacy redacted`, so
+the edited historical capture is identified even when viewed outside its document. Lane headings,
+event bars, times, commands, results, dimensions and capture/design provenance are preserved.
+No synthetic computer name was substituted and no scene was generated or recaptured.
 
-The proposed rectangles below use original 1280×1200 pixel coordinates, with a top-left origin;
-each tuple is `(x, y, width, height)`. They cover the computer text with a small margin and leave
-the Builds/Tests headings untouched. The complete hashes are in the inventory.
+The rectangles below use original 1280×1200 pixel coordinates, with a top-left origin; each tuple
+is `(x, y, width, height)`. They cover the computer text with a small margin and leave the
+Builds/Tests headings untouched. The original hashes remain in the complete inventory.
 
 | File under `docs/analysis/timeline-burst/` | Builds label | Tests label |
 |---|---|---|
@@ -80,17 +80,28 @@ the Builds/Tests headings untouched. The complete hashes are in the inventory.
 | `c-wide.webp` | `(44, 388, 156, 18)` | `(44, 477, 156, 18)` |
 | `c-wide-dark.webp` | `(44, 388, 156, 18)` | `(44, 477, 156, 18)` |
 
-The exact paths have been sent to the public-readiness/history owner before any image change.
-The handoff is on `docs/public-media-privacy-review`; `inbox/github-integration` owns the
-coordinated historical privacy decision, including these four files, rather than this report
-silently approving their continued exposure.
-This report proposes that bounded historical-evidence treatment for coordination; it performs no
-redaction, deletion or history rewrite. If the historical image cannot be edited while preserving
-its evidentiary purpose, the specific fallback is owner-authorized removal of these four rendered
-images from the current public document/card presentation, replacing each with an explanatory
-privacy-withheld link label and this source commit/hash. Keep the decision text and verdict
-history intact. A current-tree change would not remove already published copies or Git history;
-that treatment belongs to the separate history decision.
+ImageMagick applied deterministic opaque masks and encoded lossless WebP with metadata stripped.
+A comparison of every decoded RGB pixel against the source commit proved that exactly 5,616
+pixels changed per image, all inside those two rectangles: all 1,530,384 pixels outside them are
+identical. Each edited image was visually reinspected at native size, and ExifTool found only
+WebP dimensions/encoding information. The explicit redaction labels, not blur, cover the original
+text. Existing paths and document/card links still name the same historical illustrations, now
+clearly marked as privacy-redacted derivatives. No card or verdict text was edited.
+
+| Edited file under `docs/analysis/timeline-burst/` | Redacted SHA-256 |
+|---|---|
+| `a-wide.webp` | `947ed3bbae21c5de20e7d12e26c227fe1143d0b370b75614c5547161e46cc669` |
+| `b-wide.webp` | `fb71aedfbbd443f300ef7fee3f4d6f8a897d807a606547d29fdda925ebe6697c` |
+| `c-wide.webp` | `7010a0101d517b2fd3ef7aa7d2b615b1120a0974d426ce4dc70c69983e4b789f` |
+| `c-wide-dark.webp` | `85feb13ffbcaedb817c49ef067d3a4098a1dde05584b7ad2869bdfd7a368c66d` |
+
+The exact paths, original hashes and eight regions were coordinated on
+`docs/public-media-privacy-review` with the `inbox/github-integration` executor before changing
+any image. The authorized ordinary privacy repair is complete in this tree. The original commit
+and inventory hashes preserve the before evidence; the marked images and new hashes are the
+after evidence. Unredacted copies were not uploaded again. This repairs no already published
+Git object or external copy. The separate coordinated historical privacy decision still owns
+that treatment; no history rewrite or remote action occurred.
 
 ### D: task-derived mockups — six images
 
@@ -143,16 +154,17 @@ publication clearance.
 
 ## Handoff and limits
 
-This change adds this report only. No media link, image byte, runtime code, fixture, client build
-input, generated client distribution, owner card or recorded verdict is changed. The existing
-analysis-directory link from the [documentation index](../README.md) makes this report discoverable;
-its links point back to the provenance and exact original files. The report's local links and its
+This change adds this report and redacts only the four H images. No media link, runtime code,
+fixture, client build input, generated client distribution, owner card or recorded verdict is
+changed. The existing analysis-directory link from the [documentation index](../README.md) makes
+this report discoverable; its links point back to the provenance and tracked media. The local links and
 complete inventory are validated, with the project's document and lint checks recorded on the task
 thread at the ready tip. No new executable behaviour needs unit tests or new coverage.
 
-Four confirmed machine-label exposures remain open for the coordinated historical treatment.
-The six D and three B images remain a bounded owner disposition question. Readiness must not be
-reported as cleared on the strength of this inventory.
+The four confirmed machine-label exposures are repaired in the current tree; their unredacted
+historical objects remain for the coordinated history treatment. The six D and three B images
+remain a bounded owner disposition question. Readiness must not be reported as cleared on the
+strength of this inventory.
 
 Uninspected exclusions are reachable historical versions of images, untracked/ignored files,
 board uploads and live attachments, user/consumer checkouts, remote-hosted copies, `.crate`
@@ -166,11 +178,12 @@ live task submissions, broad media deletion or history were changed.
 ## Complete inventory
 
 Each row was visually inspected and its metadata/source checked. Dispositions: **H** = confirmed
-personal machine label, remediation proposed; **D** = anonymized task-derived mockup, public
-retention to decide; **B** = already blurred historical capture, provisional retention; **R** =
-retain, no confirmed finding. The first three categories remain unresolved, not repaired.
-Paths are relative to the repository root. The table deliberately links originals rather than
-embedding exposed pixels.
+personal machine label in the inspected original, current derivative redacted; **D** = anonymized
+task-derived mockup, public retention to decide; **B** = already blurred historical capture,
+provisional retention; **R** =
+retain, no confirmed finding. H is repaired only in the current tree; D and B remain unresolved.
+Paths are relative to the repository root. Hashes identify the inspected source commit; the four
+H links now open redacted derivatives whose hashes are above. No exposed pixels are embedded.
 
 | ID | Tracked path | Kind; width × height | SHA-256 | Disposition |
 |---|---|---|---|---|
