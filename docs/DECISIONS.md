@@ -7,6 +7,15 @@ their dated history work is in [REVIEW](REVIEW.md).
 <!-- register:start -->
 ## Needs your decision
 
+### Hosted ingress
+
+- [ ] **hosted-ingress-boundary** — A hosted Symphony needs to check who is visiting and which project they may use. Its current localhost access trusts the machine, so pointing an authenticated proxy at it does not establish those permissions. Where should the hosted checks live? A: a separate gateway that checks every request and forwards to a private local server. B: an explicit hosted adapter in the server that passes verified visitor and project permissions to its handlers. Recommended: B. Approve and say A or B in the note, or comment. [[analysis/hosted-ingress#Two ways to put the proxy in front]]
+  [2026-11-17 19:46] agent — A keeps most core routing, but must duplicate project/action checks and isolate the private listener; rewriting Host and Origin alone is unsafe. B adds an admission/actor seam and hosted lifecycle/readiness, with one routing policy. Both preserve local defaults. No runtime implementation, timing or deployment validation is claimed.
+
+    **A condition of either choice.** The inspected platform allows some privileged callers to reach the raw service. Proxy-only ingress must be proved through effective transport policy or additional verified proxy attestation before hosted access is enabled. A valid visitor token alone does not establish that path. [[analysis/hosted-ingress#Direct-origin limitation to resolve before deployment]]
+
+    **Earlier verdicts checked.** **desktop-client** chooses a thin Mac shell and explicitly leaves hosted HTTPS/login for a later card. **consumer-contract-versioning** preserves the public kit/helper boundary; either choice keeps vendor handling in the consuming host. **release-delivery** chooses distribution, not visitor authorization. **server-socket-hand-over** keeps the machine's shared-server handover; this proposal preserves that and specifies a separate foreground hosted lifecycle. None decides this ingress boundary. This card asks the architecture direction only; implementation, consumer deployment policy and live changes need their own scoped work.
+
 ### Hosted boards
 
 - [ ] **hosted-postgresql-database-boundary** — Each hosted Symphony project needs a database boundary that keeps another project's data and migrations out. The platform may currently supply only the application's existing database, so a separate board database could require provisioning work. Which boundary should the first hosted adapter require? A: a pre-created database dedicated to each Symphony project, owned by its restricted project login; sharing another application's tables is unsupported. B: defer hosted activation until a separate design proves safe sharing of an application database through schemas and permissions. Recommended: A. Approve and say A or B in the note, or comment. [[analysis/hosted-postgresql#Database and privileges]]
@@ -18,6 +27,21 @@ their dated history work is in [REVIEW](REVIEW.md).
   [2026-11-17 19:42] agent — Proposed by `tools/hosted-postgresql`, independently of **hosted-postgresql-database-boundary**. A adds a supported-major validation lane and possible bounded SQL/locale work; B avoids that compatibility lane but requires platform work whose cost and timing are unverified. Neither major has been tested by this design task. Documented SQL availability is not a compatibility pass. A failure is fixed in the code or keeps that major unsupported; local requirements and assertions are not relaxed. No platform upgrade is authorized here.
 
     **Earlier verdicts checked.** **postgresql-binary-source**'s latest-local-version choice does not say which managed server majors Symphony supports. **symphony-update-command** (B) has consumers take release tags; a released SurrealDB/schema-18 build and inspected main's socket PostgreSQL/schema-20 build do not provide hosted support under either option. This choice authorizes a future validation target, not deployment acceptance.
+
+### Project workflows
+
+- [ ] **configurable-workflow-activation** — When a project commits a changed workflow, should its board start using it at once, or wait for a deliberate activation? A: preview the affected tasks and explicitly activate that committed version, applying all required mappings together. B: automatically activate a valid committed version when the board next reads it, stopping if a mapping or prerequisite is missing. Recommended: A. Approve and say A or B, or comment. [[analysis/configurable-delivery-workflow#Version changes, migration and rollback]]
+  [2026-11-17 19:30] agent — Proposed for `tools/configurable-delivery-workflow`. Both options preserve the approved C graph, task and evidence history, reject stale requests, fence old writers and require complete mappings for removed IDs. This asks only when an otherwise valid change takes effect; it authorizes no live migration now.
+
+    **A** keeps the current workflow running until a project administrator accepts a preview against the current board revision. It adds one operational action per change, including a rollback, and the interface must show committed versus active versions. A task changing during the preview makes activation stale and requires another preview.
+
+    **B** needs no separate action for a compatible change. A commit can change routing or staffing for live work as soon as it is observed; incompatible changes still stop for mappings. Operators must treat every workflow commit as an activation and use another committed change to roll it back.
+
+    **Required under either option:** unknown or removed IDs stop activation until every affected task and blocked resume target has a valid mapping. Active attempts must drain or be explicitly invalidated. Concurrent writers and stale requests are fenced; failure leaves the previous version active, with no partial mapping. Rollback is a new audited activation with mappings and retained history, not a schema downgrade. Neither option decides project artifact-guard semantics.
+
+    **Why A.** A workflow change can move existing blocked resume targets, replace who gets staffed and affect pending delivery. The preview makes those consequences reviewable before the board changes them. Activation remains one audited transaction; reverting Git alone cannot downgrade stored history.
+
+    **Earlier verdicts checked.** **project-workflow-shape** approved C, including configurable staffing, recovery and completion with unchanged defaults. It does not choose automatic versus explicit activation. **needed-stamps** keeps evidence in the existing catalogue and project landing policy; neither option changes that. The separate artifact-guard design owns approval enforcement, not this activation choice.
 
 ### Execution
 
