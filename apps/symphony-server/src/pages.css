@@ -13,7 +13,12 @@ a { color:var(--primary); }
 .projects li > a { font-size:var(--fs-lg); font-weight:600; text-decoration:none; }
 .projects li > a:hover { text-decoration:underline; }
 .projects .counts, .projects .health, .projects .refused { display:block; margin-top:var(--sp-1); font-size:var(--fs-sm); color:var(--muted-foreground); }
-.projects .health { color:var(--question); }
+/* How a project's board stands (projects.rs `list_row`): a dot before its name in its worst
+ * signal's colour, the line under its counts in the same, and its blocked tasks in the foreground. */
+.projects .dot { display:inline-block; width:8px; height:8px; margin-right:var(--sp-2); border-radius:50%; vertical-align:middle; background:var(--c); }
+.projects .green { --c:var(--live); } .projects .amber { --c:var(--stale); } .projects .red { --c:var(--lost); }
+.projects .health { color:var(--c); }
+.projects .counts strong { color:var(--foreground); }
 .projects .refused { margin-top:var(--sp-2); padding:var(--sp-2) var(--sp-3); border-left:4px solid var(--dislike); border-radius:var(--r-sm); background:var(--muted); color:var(--foreground); }
 /* A Markdown file no entrypoint serves, drawn read-only (media_files.rs): a document's measure, its
  * code and tables scrolling within it rather than the page. */

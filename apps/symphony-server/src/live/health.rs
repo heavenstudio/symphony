@@ -13,12 +13,17 @@
 //! While the board is at a schema ahead of this build's, which it reads and never writes, every
 //! page says so ([`Hub::read_ahead`]); while this project holds the machine's server on a
 //! project's build, the one server tells its pages so ([`Hub::tell_machine`]).
+//!
+//! The project picker and `/api/projects` read one judgement of the board ([`Hub::standing`]): red
+//! while the pages say it is unwell, amber while it is slow over the hour or work waits to start
+//! that no live orchestrator staffs, green otherwise, with the line saying why ([`Standing`]).
 
 use super::Hub;
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::PoisonError;
 use symphony_board::board_health::disk::{self, Low};
+use symphony_board::board_health::{Report, SLOW_MS};
 
 /// What the server's notice says, by where it comes from.
 #[derive(Debug, Default)]
@@ -211,9 +216,25 @@ impl Hub {
         ahead
     }
 
-    /// What the project picker says of this project's board now: nothing while it is well.
+    /// What the pages say of this project's board now: nothing while it is well.
     pub(crate) fn health_notice(&self) -> String {
         self.board_notice(self.now())
+    }
+
+    /// How this project's board stands now, as the project picker draws it and `/api/projects`
+    /// says it: red, in the pages' words, while they say it is unwell ([`Hub::health_notice`]);
+    /// else amber or green by the hour the recorder counted, as `/api/health` answers it, and the
+    /// last board read ([`judged`]). It reads no board.
+    pub(crate) fn standing(&self) -> Standing {
+        let unwell = self.health_notice();
+        if !unwell.is_empty() {
+            return Standing {
+                signal: Signal::Red,
+                line: unwell,
+            };
+        }
+        let tasks = self.tasks_read().ok();
+        judged(&self.health.report(self.now()), tasks.as_deref())
     }
 
     /// What a page says of the board at `now`: that it went back, which is why nothing else of it
@@ -233,6 +254,106 @@ impl Hub {
             None => notice(self.health.failing(now)),
         }
     }
+}
+
+/// How a project's board stands ([`Hub::standing`]): its worst signal, the dot before its name on
+/// the project picker, and the line under its counts saying why, empty while it is well.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Standing {
+    pub signal: Signal,
+    pub line: String,
+}
+
+impl Standing {
+    /// Its line while the board is not well; none while it is.
+    pub(crate) fn unwell(&self) -> Option<String> {
+        (self.signal != Signal::Green).then(|| self.line.clone())
+    }
+}
+
+/// A board's worst signal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Signal {
+    /// Well.
+    Green,
+    /// Slow over the hour ([`slow`]), or work waiting to start that no live orchestrator staffs
+    /// ([`unstaffed`]).
+    Amber,
+    /// Unwell, as its pages say: its dispatch or sweep failing, gone back, or starting.
+    Red,
+}
+
+impl Signal {
+    /// Its name, the class that gives its colour on the picker.
+    pub(crate) fn name(self) -> &'static str {
+        match self {
+            Signal::Green => "green",
+            Signal::Amber => "amber",
+            Signal::Red => "red",
+        }
+    }
+
+    /// What its colour says, for a reader who does not see it.
+    pub(crate) fn said(self) -> &'static str {
+        match self {
+            Signal::Green => "well",
+            Signal::Amber => "slow or unstaffed",
+            Signal::Red => "failing",
+        }
+    }
+}
+
+/// How a board its pages do not call unwell stands, by `report`, the hour its recorder counted,
+/// and `tasks`, its last read, if any: amber while it is slow ([`slow`]) or unstaffed
+/// ([`unstaffed`]), the parts that say so joined by ` · `; green with neither.
+pub(crate) fn judged(report: &Report, tasks: Option<&symphony_api::Tasks>) -> Standing {
+    let parts: Vec<String> = [slow(report), tasks.and_then(unstaffed).map(String::from)]
+        .into_iter()
+        .flatten()
+        .collect();
+    Standing {
+        signal: if parts.is_empty() {
+            Signal::Green
+        } else {
+            Signal::Amber
+        },
+        line: parts.join(" · "),
+    }
+}
+
+/// That the board was slow over the hour `report` counts, with the figures that say it: its writes'
+/// p90 at [`SLOW_MS`] (a second) or more, in whole seconds, and the requests that went unanswered,
+/// when any did: `Board slow (writes 3 s, 48 unanswered this hour)`. None while neither.
+pub(crate) fn slow(report: &Report) -> Option<String> {
+    let writes = (report.writes.p90_ms)
+        .filter(|p90| *p90 >= SLOW_MS)
+        .map(|p90| format!("writes {:.0} s", (p90 / 1000.0).round()));
+    let failed = report.queries.failed;
+    let unanswered = (failed > 0).then(|| format!("{failed} unanswered"));
+    let figures: Vec<String> = [writes, unanswered].into_iter().flatten().collect();
+    (!figures.is_empty()).then(|| format!("Board slow ({} this hour)", figures.join(", ")))
+}
+
+/// What staffing lacks while work waits to start (`tasks.unstarted`) and no orchestrator of an
+/// open task is live, by the board's one rule for a session that is there ([`Health::holds`]):
+/// `orchestrator stale` while one is still there, stale or its presence not yet swept,
+/// `no orchestrator` when none is. None while nothing waits to start or one is live.
+///
+/// [`Health::holds`]: symphony_board::Health::holds
+pub(crate) fn unstaffed(tasks: &symphony_api::Tasks) -> Option<&'static str> {
+    use symphony_board::Health;
+    let any = |healths: &[Health]| {
+        (tasks.orchestrators.iter())
+            .any(|one| healths.iter().any(|health| one.health == health.as_str()))
+    };
+    if tasks.unstarted == 0 || any(&[Health::Live]) {
+        return None;
+    }
+    Some(if any(&[Health::Stale, Health::Unknown]) {
+        "orchestrator stale"
+    } else {
+        "no orchestrator"
+    })
 }
 
 /// What a page says of a board at `schema`, ahead of this build's, which it reads and never writes.

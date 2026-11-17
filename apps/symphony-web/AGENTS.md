@@ -349,14 +349,14 @@ own win, with their own steps in the dark. Charts below the screen mount through
 
 Every chart carries one dashed line (`.chart-mark`) at each commit that reached the default branch
 in the window and changed the project's settings or the instructions its agents work under: the
-settings file, the rules or a skill's file, and no guide, which changes too often to mark. The
-server names what each changed (`ReportMark::changed`: `settings`, `rules`, `skill NAME`), from
-one list of the files that count (`instruction`, `crates/symphony/src/reports/git.rs`), and the
-page says it with
-the commit's subject and hash in the list over the charts (`MarkedChanges`, the newest three, the
-rest folded), in the mark's title and in the readout of the period it fell in. All are drawn
-alike; a mark that names nothing, as a server built before it named any wrote it, is a settings
-change.
+settings file, the rules or a skill's file (one installed, under `.agents/skills` or
+`.claude/skills`, or shipped, under `shipped/skills`), and no guide, which changes too often to
+mark. The server names what each changed (`ReportMark::changed`: `settings`, `rules`,
+`skill NAME`), from one list of the files that count (`instruction`,
+`crates/symphony/src/reports/git.rs`), and the page says it with the commit's subject and hash in
+the list over the charts (`MarkedChanges`, the newest three, the rest folded), in the mark's title
+and in the readout of the period it fell in. All are drawn alike; a mark that names nothing, as a
+server built before it named any wrote it, is a settings change.
 
 ## Runs
 
