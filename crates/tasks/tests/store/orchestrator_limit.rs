@@ -238,6 +238,8 @@ fn one_filed_for_at_the_limit_is_named_as_passed_over_though_the_filer_is_given_
     assert_eq!(orchestrators_of(&f, "tools/for"), [amber.as_str()]);
 }
 
+// On SurrealDB alone until tools/board-pg-sessions-and-delivery: a session's beat (`Store::touch`)
+// has no PostgreSQL twin yet.
 #[test]
 fn the_boards_give_fills_none_past_the_limit_and_a_waiting_task_is_any_takers() {
     let f = Fixture::new(Seed::default());
