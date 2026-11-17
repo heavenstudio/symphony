@@ -272,6 +272,7 @@ fn help_is_the_usage_on_stdout_and_exit_zero() {
         ),
         ("blocks", "usage: symphony blocks [--root ROOT]"),
         ("settings-check", "usage: symphony settings-check [DIR]"),
+        ("model", "usage: symphony model ROLE MODEL"),
         (
             "triage",
             "usage: symphony triage [-h] [--root ROOT] {stats,queue} [n]",
@@ -324,7 +325,7 @@ fn the_retired_verdict_tasks_command_is_unknown_and_names_what_turns_them_into_a
 }
 
 /// The commands the binary lists: the Symphony's own, which a test build holds with no plugin.
-const COMMANDS: [&str; 14] = [
+const COMMANDS: [&str; 15] = [
     "status",
     "reply",
     "ask",
@@ -332,6 +333,7 @@ const COMMANDS: [&str; 14] = [
     "verdict-asks",
     "docs-audit",
     "settings-check",
+    "model",
     "blocks",
     "shot",
     "attach",

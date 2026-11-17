@@ -11,7 +11,7 @@ mod attach;
 mod shot;
 
 /// The Symphony's own commands, in the order its usage names them, each with what it does.
-const OWN: [(&str, &str); 14] = [
+const OWN: [(&str, &str); 15] = [
     ("status", "the review board's open cards and comments"),
     (
         "reply",
@@ -35,6 +35,10 @@ const OWN: [(&str, &str); 14] = [
         "check the project file's shape: known keys, typed values",
     ),
     (
+        "model",
+        "set a role's model in the main checkout: model ROLE MODEL",
+    ),
+    (
         "blocks",
         "count the typed blocks every document parses into",
     ),
@@ -56,8 +60,17 @@ const OWN: [(&str, &str); 14] = [
 ];
 
 /// The usage of the Symphony's commands that read no options of their own, and what their help says
-/// after their line: what `--help` or `-h` anywhere on their command line prints ([`plain_help`]).
-const PLAIN: [(&str, &str, &str); 4] = [
+/// after their line: what `--help` or `-h` before `--` prints ([`plain_help`]).
+const PLAIN: [(&str, &str, &str); 5] = [
+    (
+        "model",
+        "usage: symphony model ROLE MODEL",
+        "ROLE is orchestrator, executor, reviewer, assessor, or all (all four roles).\n\
+         MODEL is any string; use -- before a value beginning with a dash.\n\
+         Comments and order are preserved. The main checkout's symphony.toml is\n\
+         edited, including from a linked worktree. Checking and landing the edit\n\
+         follow the project's settings-only policy. Resumed agents keep their model.\n",
+    ),
     (
         "settings-check",
         "usage: symphony settings-check [DIR]",
@@ -112,7 +125,11 @@ pub(super) const SYMPHONY: Binary = Binary {
 /// for it.
 pub(super) fn plain_help(binary: &Binary, name: &str, args: &[String]) -> Option<String> {
     let (_, usage, more) = binary.plain.iter().find(|(plain, _, _)| *plain == name)?;
-    if !args.iter().any(|arg| arg == "-h" || arg == "--help") {
+    if !args
+        .iter()
+        .take_while(|arg| arg.as_str() != "--")
+        .any(|arg| arg == "-h" || arg == "--help")
+    {
         return None;
     }
     let said = binary
@@ -335,6 +352,26 @@ mod tests {
                 usage.starts_with(&format!("usage: symphony {name}")),
                 "{usage}"
             );
+        }
+    }
+
+    #[test]
+    fn plain_help_flags_after_the_argument_delimiter_are_literal_values() {
+        for (name, usage, _) in SYMPHONY.plain {
+            for flag in ["--help", "-h"] {
+                for args in [vec![flag], vec!["role", flag], vec![flag, "--", "value"]] {
+                    let args: Vec<String> = args.into_iter().map(str::to_string).collect();
+                    assert!(
+                        plain_help(&SYMPHONY, name, &args)
+                            .unwrap()
+                            .starts_with(usage)
+                    );
+                }
+                for args in [vec!["--", flag], vec!["role", "--", flag]] {
+                    let args: Vec<String> = args.into_iter().map(str::to_string).collect();
+                    assert_eq!(plain_help(&SYMPHONY, name, &args), None);
+                }
+            }
         }
     }
 
