@@ -904,7 +904,7 @@ fn canonical_register(
     }) {
         return None;
     }
-    cards.sort_by(|a, b| {
+    symphony_board::order::sort_by(&mut cards, &|a, b| {
         order
             .get(&a.slug)
             .cmp(&order.get(&b.slug))

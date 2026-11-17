@@ -292,7 +292,7 @@ pub fn check(label: &str, branch: &str, tip: Option<&str>, runs: &[Record]) -> G
             })
         })
         .collect::<Vec<_>>();
-    past.sort_by(|a, b| a.at.total_cmp(&b.at));
+    symphony_board::order::sort_by(&mut past, &|a, b| a.at.total_cmp(&b.at));
     let gate = |state, detail: String| Gate {
         name: CHECK.into(),
         state,

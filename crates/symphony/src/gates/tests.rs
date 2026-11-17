@@ -1508,3 +1508,55 @@ fn posted_card_pointer_groups_and_lazy_texts_match_the_original_reader() {
     assert!(std::ptr::eq(aliases[1], &a));
     assert!(std::ptr::eq(aliases[2], &b));
 }
+
+#[test]
+fn check_history_preserves_total_float_order_and_equal_timestamp_input_order() {
+    let times = [
+        1.0_f64,
+        -0.0,
+        f64::NAN,
+        0.0,
+        1.0,
+        f64::NEG_INFINITY,
+        -f64::NAN,
+        f64::NAN,
+    ];
+    let records: Vec<_> = times
+        .into_iter()
+        .enumerate()
+        .map(|(index, at)| {
+            let mut record = run(
+                u8::try_from(index).unwrap(),
+                "check",
+                "tools/x",
+                OLD,
+                Step::Finished,
+                Some(0),
+            );
+            record.ended_at = Some(at);
+            record
+        })
+        .collect();
+    let mut expected: Vec<_> = records
+        .iter()
+        .map(|record| {
+            (
+                record.ended_at.unwrap(),
+                record.handle.clone(),
+                record.commit.clone(),
+                format!("`check` green at {}", &OLD[..7]),
+            )
+        })
+        .collect();
+    expected.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let actual = check("check", "tools/x", Some(TIP), &records).past;
+    assert_eq!(actual.len(), expected.len());
+    for (actual, (at, by, commit, detail)) in actual.iter().zip(expected) {
+        assert_eq!(actual.at.to_bits(), at.to_bits());
+        assert_eq!(actual.by, by);
+        assert_eq!(actual.commit, commit);
+        assert_eq!(actual.detail, detail);
+        assert_eq!(actual.state, GateState::Met);
+    }
+    assert!(check("check", "tools/x", Some(TIP), &[]).past.is_empty());
+}

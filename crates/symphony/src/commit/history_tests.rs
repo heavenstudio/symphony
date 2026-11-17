@@ -289,3 +289,31 @@ fn duplicate_card_histories_on_any_side_are_refused() {
     assert_eq!(merge_history(one, &duplicate, one), None);
     assert_eq!(merge_history(one, one, &duplicate), None);
 }
+
+#[test]
+fn canonical_register_keeps_missing_rank_then_rank_then_slug_and_all_card_bytes() {
+    let head = "Intro.\n<!-- register:start -->\n";
+    let tail = "<!-- register:end -->\nTrailing.\n";
+    let slugs = ["z", "b", "a", "c"];
+    let body = slugs
+        .iter()
+        .map(|slug| format!("- [ ] **{slug}** — Card {slug}.\n"))
+        .collect::<String>();
+    let text = format!("{head}### Topic\n\n{body}{tail}");
+    let order =
+        std::collections::BTreeMap::from([("a".into(), 1), ("b".into(), 1), ("c".into(), 0)]);
+    let actual = super::canonical_register(&text, &order, &super::Plugins::default()).unwrap();
+    let expected = format!(
+        "{head}{}{tail}",
+        ["z", "c", "a", "b"]
+            .iter()
+            .map(|slug| { format!("\n### Topic\n\n- [ ] **{slug}** — Card {slug}.\n\n") })
+            .collect::<String>()
+    );
+    assert_eq!(actual, expected);
+    let empty = format!("{head}{tail}");
+    assert_eq!(
+        super::canonical_register(&empty, &order, &super::Plugins::default()).unwrap(),
+        empty
+    );
+}
