@@ -274,6 +274,7 @@ fn an_unnamed_legacy_block_is_ordinary_nobody_work_in_its_original_stage() {
     answer["counts"] = json!([["review", 1]]);
     answer["waiting"] = json!({"kinds":[["nobody",1]],"columns":[{"status":"review","ordinary":1,"blocked":0,"oldest":0.0}]});
     answer["orchestrators"] = json!([]);
+    answer["unstarted"] = json!(0);
     site.set_json("/api/task-board", &answer);
     let Some(mut page) = chrome() else { return };
     open(&mut page, &site, 390);

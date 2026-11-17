@@ -934,7 +934,7 @@ fn a_wait_filter_read_failure_is_said_and_retries_without_a_click() {
     page.eval("document.querySelector('.wait-chip.k-nobody').click()");
     assert!(page.wait_for("document.querySelector('.page-notices [role=alert]')?.textContent === 'Board snapshot unavailable (the server answered 500). Trying again…'",SHOWN));
     site.fail_route("/api/task-board", false);
-    assert!(page.wait_for("document.querySelector('.page-notices [role=alert]') === null && document.querySelector('.column[data-status=waiting] .taskcard') !== null",SHOWN));
+    assert!(page.wait_for("document.querySelector('.page-notices [role=alert]') === null && document.querySelector('.column[data-status=waiting] .taskcard') !== null",SHOWN), "recovered reads: {:?}; page: {}", site.targets(), page.eval("document.body.innerText"));
 }
 
 /// Each callout badge's text, with the WCAG contrast of its colour on its background.

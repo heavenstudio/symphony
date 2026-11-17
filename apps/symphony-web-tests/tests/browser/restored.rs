@@ -940,6 +940,19 @@ fn board_fetch_and_server_notices_keep_loaded_rows_in_place_after_narrowing() {
             ),
             SHOWN
         ));
+        // Widening remounts the stage lists; approach their tops before their row boxes.
+        browser.eval("scrollTo(0,0)");
+        assert!(browser.wait_for(
+            &format!(
+                "document.querySelectorAll('.waiting-columns [id^=row-]').length === {}",
+                if width <= 760 { 12 } else { 72 }
+            ),
+            SHOWN
+        ));
+        assert!(browser.wait_for(
+            "[...document.querySelectorAll('.waiting-columns .column:not(.rail)')].every(column => column.querySelector('[id^=row-]:first-child .taskcard'))",
+            SHOWN
+        ));
         browser.eval("scrollTo(0,document.documentElement.scrollHeight)");
         assert!(browser.wait_for(
             &format!(
