@@ -30,6 +30,10 @@ the evidence behind decisions are under [Design and history](#design-and-history
 
 ## Development and contracts
 
+- [Working artifact contracts](ARTIFACTS.md) — optional verified publication and scoped private
+  storage; the local/fake-provider core and the integrations still required for hosted use.
+- [Workflow definitions](WORKFLOW.md) — the additive candidate format, validation and wire
+  records; custom workflow activation remains unavailable.
 - [Checks](CHECKS.md) — what a task in this repository proves before review, and the release run's
   full verification.
 - [Plugin protocol](PLUGIN_PROTOCOL.md) — a plugin answering from a process of its own: the
@@ -52,6 +56,8 @@ still await implementation; its approval alone does not make it current app beha
   connection budget, database boundary and PostgreSQL 16/18 validation contract.
 - [Configurable delivery workflows](analysis/configurable-delivery-workflow.md) — the proposed
   C contract: separate phase/state, authoritative operations, migration and implementation briefs.
+- [Artifact approvals at workflow transitions](analysis/revision-bound-transition-guards.md) —
+  proposed input-bound human decisions, invalidation and atomic project-guard admission.
 - [Execution providers and durable attempts](analysis/remote-execution-attempts.md) — a proposal
   for project-owned execution adapters, durable recovery and authorized attempt history.
 - [Hosted ingress and board readiness](analysis/hosted-ingress.md) — proposed trusted proxy and

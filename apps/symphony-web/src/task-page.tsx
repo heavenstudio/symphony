@@ -714,7 +714,7 @@ export interface TaskDetailProps {
   /** Whether the page says a failure: the thread waits under its ghost no longer. */
   failed: boolean;
   onRetry: () => void;
-  onHistory: (older: boolean) => void;
+  onHistory: (older: boolean) => undefined | Promise<string | null>;
   onChildren: (more: boolean) => void;
 }
 
@@ -811,7 +811,20 @@ export function TaskDetail({
           ) : null}
         </NearViewport>
       )}
-      <TimelineSlot key={slug} slug={slug} scope={scope} />
+      <TimelineSlot
+        key={slug}
+        slug={slug}
+        scope={scope}
+        thread={{
+          entries,
+          before: thread.value?.before ?? null,
+          pending: (!loaded && thread.error === null) || thread.retrying,
+          error: thread.error === null ? null : said(thread.error),
+          earlier: async () => (await onHistory(true)) ?? null,
+          latest: async () => (await onHistory(false)) ?? null,
+          render: (entry) => <TaskMessage entry={entry} />,
+        }}
+      />
       {page !== null ? (
         <Brief
           slug={slug}
@@ -907,7 +920,7 @@ export function LiveTaskPage({ live, connected }: { live: LiveTask; connected: b
             thread={live.thread()}
             failed={pageFailed !== "" || live.error() !== ""}
             onRetry={() => live.again()}
-            onHistory={(more) => void live.history(more)}
+            onHistory={(more) => live.history(more)}
             onChildren={(more) => void live.children(more)}
           />
         </PartsContext.Provider>

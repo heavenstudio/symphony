@@ -22,6 +22,7 @@ use std::time::{Duration, Instant, SystemTime};
 mod board;
 mod file;
 mod theme;
+pub mod workflow;
 
 pub use crate::entrypoint::Entrypoint;
 use crate::entrypoint::{SYMPHONY_ROUTES, below, join};
@@ -381,6 +382,7 @@ impl Project {
     /// [`Project::load`]'s to look at.
     pub fn parse(root: &Path, text: &str) -> Result<Project, String> {
         let file = Self::written(text)?;
+        workflow::require_supported(file.workflow.as_ref())?;
         if let Some(refusal) = File::refusal(&file.unknown(text)) {
             return Err(refusal);
         }
@@ -404,6 +406,7 @@ impl Project {
             return Ok((Self::plain(root), Vec::new()));
         };
         let file = Self::written(&text)?;
+        workflow::require_supported(file.workflow.as_ref())?;
         let unknown = file.unknown(&text);
         let project = Self::resolve(root, file).map_err(|e| format!("{FILE}: {e}"))?;
         Ok((project, unknown))
@@ -1264,44 +1267,47 @@ fn plugin_processes(
     plugins: &[String],
     written: BTreeMap<String, Vec<String>>,
 ) -> Result<BTreeMap<String, PluginProcess>, String> {
-    written
-        .into_iter()
-        .map(|(name, mut command)| {
-            if !plugins.contains(&name) {
+    let processes = written.into_iter().map(|(name, mut command)| {
+        if !plugins.contains(&name) {
+            return Err(format!(
+                "[plugins.process] names {name}, which [plugins] crates does not list"
+            ));
+        }
+        let Some(program) = command.first_mut().filter(|p| !p.trim().is_empty()) else {
+            return Err(format!("[plugins.process] {name} names no program"));
+        };
+        if program.contains('/') && Path::new(program.as_str()).is_relative() {
+            let parts = Path::new(program.as_str()).components();
+            if parts
+                .into_iter()
+                .any(|part| part == std::path::Component::ParentDir)
+            {
                 return Err(format!(
-                    "[plugins.process] names {name}, which [plugins] crates does not list"
+                    "[plugins.process] {name} names {program:?}: a relative program is a \
+                         path inside the checkout, with no `..`"
                 ));
             }
-            let Some(program) = command.first_mut().filter(|p| !p.trim().is_empty()) else {
-                return Err(format!("[plugins.process] {name} names no program"));
-            };
-            if program.contains('/') && Path::new(program.as_str()).is_relative() {
-                let parts = Path::new(program.as_str()).components();
-                if parts
-                    .into_iter()
-                    .any(|part| part == std::path::Component::ParentDir)
-                {
-                    return Err(format!(
-                        "[plugins.process] {name} names {program:?}: a relative program is a \
-                         path inside the checkout, with no `..`"
-                    ));
-                }
-                // Its `.` parts folded: `./bin/plugin` is the checkout's `bin/plugin`.
-                let under: PathBuf = root.join(program.as_str()).components().collect();
-                *program = under.to_string_lossy().into_owned();
-            }
-            let log = root
-                .join(artifacts)
-                .join("plugins")
-                .join(format!("{name}.log"));
-            let process = PluginProcess {
-                command,
-                root: root.to_path_buf(),
-                log,
-            };
-            Ok((name, process))
-        })
-        .collect()
+            // Its `.` parts folded: `./bin/plugin` is the checkout's `bin/plugin`.
+            let under: PathBuf = root.join(program.as_str()).components().collect();
+            *program = under.to_string_lossy().into_owned();
+        }
+        let log = root
+            .join(artifacts)
+            .join("plugins")
+            .join(format!("{name}.log"));
+        let process = PluginProcess {
+            command,
+            root: root.to_path_buf(),
+            log,
+        };
+        Ok((name, process))
+    });
+    let mut found = BTreeMap::new();
+    for process in processes {
+        let (name, process) = process?;
+        found.insert(name, process);
+    }
+    Ok(found)
 }
 
 /// The `[[entrypoints]]` tables checked, their types against the renderers of the Symphony and of

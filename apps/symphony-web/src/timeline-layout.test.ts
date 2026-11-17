@@ -1443,7 +1443,7 @@ describe("a task's timeline laid out", () => {
     expect(phone).toContain(
       '  .tl-clipped .tl-body {\n    display: flex;\n    flex-direction: column;\n    justify-content: flex-end;\n  }\n  .tl-clipped .tl-list {\n    flex: none;\n  }\n  .tl-clipped .tl-body::after {\n    content: "";\n    position: absolute;\n    left: 0;\n    right: 0;\n    top: 0;\n    height: 28px;\n    background: linear-gradient(var(--card), transparent);\n    pointer-events: none;\n  }\n',
     );
-    expect(CSS.split("::after")).toHaveLength(2);
+    expect([...CSS.matchAll(/\.tl-clipped \.tl-body::after/g)]).toHaveLength(1);
     expect(wide).not.toContain("tl-clipped");
     expect(CSS).not.toContain("data-cut");
     // "Show all" is a phone's alone: wide the box holds every lane, and the style sheet hides the

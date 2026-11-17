@@ -83,9 +83,15 @@ fn opened_board(page: &mut Chrome, site: &Site) {
         json!({"width":1600,"height":1000,"deviceScaleFactor":1,"mobile":false}),
     );
     page.open(&site.url("/tasks"));
+    page.reveal("#column-review");
+    assert!(page.wait_for(
+        "document.querySelector('.column[data-status=review] .taskcard') !== null",
+        SHOWN
+    ));
+    page.reveal("#column-ready");
     assert!(
         page.wait_for(
-            "['visual/ready', 'visual/in-progress', 'visual/review'].every(slug => document.querySelector(`[data-slug=\"${slug}\"] .task-wait`) !== null) && !document.querySelector('main .column[aria-busy=true]')",
+            "['visual/ready', 'visual/in-progress', 'visual/review'].every(slug => document.querySelector(`[data-slug=\"${slug}\"] .task-wait`) !== null) && ['ready','in_progress','review'].every(status => document.querySelector(`.column[data-status=${status}]`)?.getAttribute('aria-busy') === 'false')",
             SHOWN
         ),
         "the board did not draw its cards: {:?}",
@@ -268,6 +274,7 @@ fn a_live_update_to_one_card_draws_only_that_card_and_its_column() {
         page.eval(&format!("window.__commits.slice({from})"))
     );
     // The stable column action still opens Cancelled after a live update and returns to stages.
+    page.reveal("#column-done");
     page.eval(
         "document.querySelector('.column[data-status=done] [data-open-stage=cancelled]').click()",
     );

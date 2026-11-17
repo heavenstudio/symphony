@@ -182,8 +182,8 @@ fn an_armed_idle_gate_delivers_a_reservation_lapse_without_a_marker_change(backe
     f.store.dispatch_callbacks().unwrap();
     assert_eq!(
         f.store.database().requests() - requests,
-        4,
-        "the idle gate is armed; one canonical holdings read still detects hold-only changes"
+        5,
+        "the idle gate is armed after task-block reconciliation; one canonical holdings read still detects hold-only changes"
     );
     let marker = || {
         f.store.marker().unwrap()

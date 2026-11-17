@@ -93,3 +93,11 @@
   grid-column: 2;
   height: 7px;
 }
+
+/* One status line below the clock is reserved while its history read is pending, so the
+   unavailable-history notice never takes the phone's steps' room or moves the brief. */
+.tl-message-place {
+  min-height: calc(1.6 * var(--fs-sm));
+  font-size: var(--fs-sm);
+  line-height: 1.6;
+}

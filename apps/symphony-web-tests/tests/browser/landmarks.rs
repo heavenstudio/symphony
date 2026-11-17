@@ -78,7 +78,7 @@ const BOARD: Page = Page {
     path: "/tasks",
     held: &["/api/task-board"],
     ghost: "document.querySelector('.ghost-kanban.waiting-columns') !== null",
-    page: "document.querySelector('.column[data-status=review] .taskcard') !== null && (innerWidth <= 760 || document.querySelectorAll('.column[data-status=concept] .taskcard').length === 5)",
+    page: "innerWidth <= 760 ? document.querySelector('.column[data-status=review] .taskcard') !== null : document.querySelectorAll('.column[data-status=concept] .taskcard').length === 5",
     regions: &[
         ("filters", "main .filters", "main .filters"),
         ("kanban", ".ghost-kanban", ".kanban"),
@@ -89,7 +89,7 @@ const BOARD: Page = Page {
         ),
         (
             "column",
-            ".ghost-kanban.waiting-columns > .ghost-column",
+            ".ghost-kanban.waiting-columns > .waiting-pipeline > .ghost-column",
             ".waiting-columns .column",
         ),
         (

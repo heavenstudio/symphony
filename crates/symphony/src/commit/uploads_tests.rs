@@ -224,3 +224,51 @@ fn the_commit_shows_the_uploads_a_text_still_names() {
     assert_eq!(shown["artifacts/uploads/a.png"], b"artifacts/uploads/a.png");
     assert_eq!(paths(&shown_uploads(&uploads, &[])), Vec::<&str>::new());
 }
+
+#[test]
+fn shown_uploads_clone_only_named_values_once_and_keep_key_order() {
+    use std::cell::Cell;
+    use std::rc::Rc;
+    struct Counted {
+        value: u8,
+        calls: Rc<Cell<usize>>,
+    }
+    impl Clone for Counted {
+        fn clone(&self) -> Self {
+            self.calls.set(self.calls.get() + 1);
+            Self {
+                value: self.value,
+                calls: self.calls.clone(),
+            }
+        }
+    }
+    let calls = Rc::new(Cell::new(0));
+    let uploads: BTreeMap<_, _> = [("z", 3), ("m", 2), ("a", 1)]
+        .into_iter()
+        .map(|(name, value)| {
+            (
+                format!("artifacts/uploads/{name}.png"),
+                Counted {
+                    value,
+                    calls: calls.clone(),
+                },
+            )
+        })
+        .collect();
+    let shown = shown_uploads(
+        &uploads,
+        &[
+            "/artifacts/uploads/m.png /artifacts/uploads/a.png /artifacts/uploads/a.png",
+            "artifacts/uploads/z.png has no leading slash",
+        ],
+    );
+    assert_eq!(
+        paths(&shown),
+        ["artifacts/uploads/a.png", "artifacts/uploads/m.png"]
+    );
+    assert_eq!(shown.values().map(|v| v.value).collect::<Vec<_>>(), [1, 2]);
+    assert_eq!(calls.get(), 2);
+    assert!(shown_uploads(&uploads, &[]).is_empty());
+    assert!(shown_uploads::<Counted>(&BTreeMap::new(), &["/artifacts/uploads/a.png"]).is_empty());
+    assert_eq!(calls.get(), 2);
+}

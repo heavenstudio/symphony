@@ -40,7 +40,11 @@ pub(super) fn listing(
         tasks,
         search,
         scores,
-        hub.machine_snapshot(),
+        if crate::hosted::admission(request).is_some() {
+            symphony_api::MachineWork::default()
+        } else {
+            hub.machine_snapshot()
+        },
         hub.task_signoff
             .lock()
             .unwrap_or_else(|e| e.into_inner())

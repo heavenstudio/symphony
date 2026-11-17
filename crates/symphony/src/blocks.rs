@@ -729,12 +729,15 @@ impl Parser<'_> {
             };
             shapes.push(VectorShape {
                 kind,
-                attributes: shape
-                    .attrs
-                    .iter()
-                    .filter(|(key, _)| known_attribute(&shape.tag, key))
-                    .map(|(k, v)| (k.clone(), v.clone()))
-                    .collect(),
+                attributes: {
+                    let mut attributes = BTreeMap::new();
+                    for (key, value) in &shape.attrs {
+                        if known_attribute(&shape.tag, key) {
+                            attributes.insert(key.clone(), value.clone());
+                        }
+                    }
+                    attributes
+                },
             });
         }
         (shapes, unknown)
@@ -806,16 +809,18 @@ fn presentation(node: &Node, consumed: &[&str]) -> Presentation {
         class: get("class"),
         id: get("id"),
         title: get("title"),
-        attributes: node
-            .attrs
-            .iter()
-            .filter(|(k, _)| {
-                !["class", "id", "title"].contains(&k.as_str())
-                    && !consumed.contains(&k.as_str())
-                    && known_attribute(&node.tag, k)
-            })
-            .map(|(k, v)| (k.clone(), v.clone()))
-            .collect(),
+        attributes: {
+            let mut attributes = BTreeMap::new();
+            for (key, value) in &node.attrs {
+                if !["class", "id", "title"].contains(&key.as_str())
+                    && !consumed.contains(&key.as_str())
+                    && known_attribute(&node.tag, key)
+                {
+                    attributes.insert(key.clone(), value.clone());
+                }
+            }
+            attributes
+        },
     }
 }
 
