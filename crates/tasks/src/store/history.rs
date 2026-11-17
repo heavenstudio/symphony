@@ -8,6 +8,7 @@ use super::statement::both;
 use super::surreal::history as sql;
 use super::{Error, Store};
 use crate::alarm::{self, ARROW, CLAIMED, Line, MOVED, Step, UNDER, WAITS_SET};
+use crate::json_object::object;
 use crate::stages::{BLOCK_LINE, UNBLOCK_LINE};
 use serde_json::{Value, json};
 use std::collections::HashMap;
@@ -18,15 +19,32 @@ pub(super) const PAGE: usize = 4;
 /// What [`sql::STATUS_LINES`], [`sql::steps_before`] and [`sql::waits_before`] match a line by,
 /// from `since`.
 fn status_vars(since: f64) -> Value {
-    json!({
-        "since": since,
-        "moved": MOVED,
-        "claimed": CLAIMED,
-        "block": BLOCK_LINE,
-        "unblock": UNBLOCK_LINE,
-        "waits": WAITS_SET,
-        "under": UNDER,
-    })
+    object(vec![
+        ("since", Value::from(since)),
+        ("moved", Value::from(MOVED)),
+        ("claimed", Value::from(CLAIMED)),
+        ("block", Value::from(BLOCK_LINE)),
+        ("unblock", Value::from(UNBLOCK_LINE)),
+        ("waits", Value::from(WAITS_SET)),
+        ("under", Value::from(UNDER)),
+    ])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn status_variables_keep_every_field_its_order_and_numeric_value() {
+        for since in [0.0, -0.0, f64::MAX] {
+            let expected = json!({
+                "since": since, "moved": MOVED, "claimed": CLAIMED,
+                "block": BLOCK_LINE, "unblock": UNBLOCK_LINE,
+                "waits": WAITS_SET, "under": UNDER,
+            });
+            assert_eq!(status_vars(since).to_string(), expected.to_string());
+        }
+    }
 }
 
 impl Store {
@@ -87,7 +105,7 @@ impl Store {
         let vars = status_vars(since);
         let mut lines: Vec<Line> =
             self.retrying(|| self.read(both(sql::STATUS_LINES, pg::status_lines()), vars.clone()))?;
-        lines.sort_by(|a, b| (&a.slug, a.sid).cmp(&(&b.slug, b.sid)));
+        crate::order::sort_by(&mut lines, &|a, b| (&a.slug, a.sid).cmp(&(&b.slug, b.sid)));
         Ok(lines)
     }
 
@@ -112,7 +130,7 @@ impl Store {
             said.entry(slug).or_default().push(line);
         }
         for lines in said.values_mut() {
-            lines.sort_by_key(|line| line.sid);
+            crate::order::sort_by_key(lines, &|line| line.sid);
         }
         Ok(said)
     }
@@ -147,10 +165,15 @@ impl Store {
         let mut reading: Vec<(&str, i64)> = slugs.iter().map(|slug| (*slug, i64::MAX)).collect();
         while !reading.is_empty() {
             let from: Vec<Value> = (reading.iter())
-                .map(|(slug, sid)| json!({"slug": slug, "sid": sid}))
+                .map(|(slug, sid)| {
+                    object(vec![
+                        ("slug", Value::from(*slug)),
+                        ("sid", Value::from(*sid)),
+                    ])
+                })
                 .collect();
             let mut vars = vars.clone();
-            vars["from"] = json!(from);
+            vars["from"] = Value::Array(from);
             let (surreal, postgres) = query;
             let pages: Vec<Vec<Line>> = self
                 .retrying(|| self.read(both(surreal.as_str(), postgres.clone()), vars.clone()))?;

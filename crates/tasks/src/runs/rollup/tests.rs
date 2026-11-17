@@ -196,6 +196,37 @@ fn task(name: &str, cost: Cost) -> TaskCost {
     }
 }
 
+#[test]
+fn equal_costs_and_failure_counts_keep_their_lexical_order() {
+    let green = run("green", "test", "same", at(0, 1.0), 1.0)
+        .tree("same-tree")
+        .task("tools/z")
+        .tests(&[("store", 0, 1.0)], &[])
+        .0;
+    let red = run("red", "test", "same", at(0, 2.0), 1.0)
+        .tree("same-tree")
+        .task("tools/a")
+        .end(End::Red)
+        .tests(
+            &[("store", 2, 1.0)],
+            &[(Some("store"), "z"), (Some("store"), "a")],
+        )
+        .0;
+    let refs = [&green, &red];
+    let costs = super::tasks(&refs);
+    assert_eq!(
+        costs.iter().map(|t| t.task.as_str()).collect::<Vec<_>>(),
+        ["tools/a", "tools/z"]
+    );
+    let failures = super::flaky(refs.into_iter());
+    assert_eq!(
+        failures.iter().map(|t| t.name.as_str()).collect::<Vec<_>>(),
+        ["a", "z"]
+    );
+    assert!(super::tasks(&[]).is_empty());
+    assert!(super::flaky(std::iter::empty()).is_empty());
+}
+
 const STORE: Option<&str> = Some("store");
 
 /// The three days' lines, as the recorder would have appended them.
