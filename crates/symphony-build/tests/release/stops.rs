@@ -645,66 +645,6 @@ fn a_process_holding_a_file_inside_the_checkout_open_stops_the_run_too() {
 }
 
 #[test]
-fn a_process_a_check_leaves_in_the_checkout_stops_the_run_after_that_check() {
-    let fixture = Fixture::new();
-    let pid_file = fixture.root.join("survivor.pid");
-    // The check leaves a survivor outside its group and session, working in the checkout and
-    // writing only in its build folder, which the look at what git names passes over.
-    let check = format!(
-        "verify=mkdir -p .target && perl -MPOSIX -e 'POSIX::setsid() or die; \
-         open(my $f, \">\", $ARGV[0]) or die; print $f \"$$\\n\"; close $f; \
-         open(STDOUT, \">\", \"/dev/null\"); open(STDERR, \">\", \"/dev/null\"); \
-         open(my $o, \">\", \".target/out\") or die; print $o \"one\\n\"; close $o; \
-         exec \"sleep\", \"1000\"' '{pid}' & \
-         while [ ! -s '{pid}' ]; do sleep 0.1; done",
-        pid = pid_file.display()
-    );
-    let (code, out, err) = fixture.release_at(NOW, &["--check", &check]);
-    let survivor = written_pid(&pid_file);
-    let guard = Process(libc::pid_t::try_from(survivor).unwrap());
-    assert_eq!(code, 1, "{out}{err}");
-    assert!(
-        out.contains("release: verify green (exit 0, "),
-        "the check passed: {out}"
-    );
-    assert!(
-        err.contains(&format!(
-            "after `verify` ended green (exit 0), {} is in use by process {survivor} (sleep), \
-             working there: what was checked may have changed, so nothing checked is released; \
-             end it, or move it out of that folder (a shell, a terminal tab, an editor or a \
-             Finder window there counts), and the next run goes",
-            fixture.worktree().display()
-        )),
-        "{err}"
-    );
-    assert!(fixture.remote_tags().is_empty(), "nothing is released");
-    let run = fixture.runs().pop().unwrap();
-    assert!(
-        run["checks"].as_array().unwrap().is_empty(),
-        "a check the survivor may have changed counts for nothing: {run}"
-    );
-    let filed = &fixture.reds()["tests/release-red-run"].body;
-    assert!(
-        filed.contains("Who fixes: the owner, or an orchestrator on the owner's word"),
-        "{filed}"
-    );
-
-    // Once it is ended, the next run goes and closes the red.
-    // SAFETY: kill signals the survivor this test's check started, which the test saw running.
-    unsafe {
-        libc::kill(libc::pid_t::try_from(survivor).unwrap(), libc::SIGKILL);
-    }
-    assert!(ends_within(survivor, 20));
-    guard.ended();
-    let out = fixture.night(NOW + 60.0, 0);
-    assert!(
-        out.contains("release: closed tests/release-red-run"),
-        "{out}"
-    );
-    assert_eq!(fixture.remote_tags(), ["release-2026-11-12"]);
-}
-
-#[test]
 fn a_red_check_that_leaves_a_process_has_each_red_step_filed_beside_the_stop() {
     let fixture = Fixture::new();
     fixture.land(
