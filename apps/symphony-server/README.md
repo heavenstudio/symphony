@@ -35,6 +35,22 @@ A navigation to a path of today
 the starter's; other requests on such a path are answered by that project in place. A
 project whose root is gone, or whose plugins the running build lacks, answers 503 saying why.
 
+`symphony project add` registers the project before checking its board at
+`/<id>/api/task-board?counts=1&work=0`. Only a 200 task-board JSON answer is readiness evidence;
+the HTML shell at `/<id>/tasks` can answer 200 while its board is unavailable. A failed check
+keeps the registration and reports the API's refusal and the JSON URL to check again.
+`symphony init` checks that JSON too for an already registered project while its host answers,
+and names an older selected release writer, its schema and the host's required schema in `Next:`.
+An unknown local build's schema is not inferred from its path.
+
+A board behind the running host needs a compatible project board command linked first, then
+`just tasks migrate` in that project's main checkout under its migration policy. Registration,
+init and the reader never migrate it or replace the shared host. Failed board operations retry
+after 1, 2, 4, 8, 16, 32, then at most 60 seconds; requests and filesystem changes keep that
+deadline. After an external migration, the worker or page reader recovers on its next due
+attempt without a server restart (`src/live/retry.rs`). The worker's next board tick publishes
+the recovered JSON; page-reader success alone does not refresh that snapshot.
+
 A start judges the running server by the host rule (`symphony::machine::host`). A build serves a
 project's plugin when the plugin answers from a process of its own (`[plugins.process]`,
 [PLUGIN_PROTOCOL](../../docs/PLUGIN_PROTOCOL.md#the-host)), or when it compiles the plugin. The
