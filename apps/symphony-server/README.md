@@ -90,8 +90,11 @@ each failure of it in a row up to 1 h (`src/reload/retry.rs`), on either clock, 
 never stays on the old build for want of a retry. Editing the sources builds the new fingerprint
 at its first check, whatever that wait. A build whose sources changed or could not be read while
 it ran is dropped and waits the same way, said in the log alone, as the version read next is
-usually another and is built at once. A starter's hand-off that fails is not tried again (the
-starter asks again), and its notice keeps the time of a retry that still waits.
+usually another and is built at once; a notice that already says an update failed says the drop
+in its place, so the time it names is never one already past. A build kept as the running image
+clears the notice and the wait, so the next failure waits 5 min again. A starter's hand-off that
+fails is not tried again (the starter asks again), and its notice keeps the time of a retry that
+still waits.
 Only the main checkout on branch `main` is followed; foreground servers do not reload.
 Shared installation and live rebuilds both use Cargo's release profile. The debug
 server exceeded the idle CPU budget on the normal board; the release build keeps
