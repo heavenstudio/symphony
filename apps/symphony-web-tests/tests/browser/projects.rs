@@ -458,7 +458,10 @@ fn each_project_fits_the_first_visit_budget_in_its_own_theme_and_the_shared_look
         let page = format!("/{id}/tasks");
         browser.open(&server.url(&page));
         assert!(
-            browser.wait_for(&ready(".waiting-columns .column[data-status=review]"), SHOWN),
+            browser.wait_for(
+                &ready(".waiting-columns .column[data-status=review]"),
+                SHOWN
+            ),
             "{page} did not open Review: {}",
             observed_page(&mut browser)
         );
