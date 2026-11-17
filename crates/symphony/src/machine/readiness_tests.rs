@@ -8,6 +8,14 @@ use std::sync::{
     atomic::{AtomicBool, Ordering::SeqCst},
 };
 
+fn board_readiness(front: &symphony_api::Front, id: &str) -> Result<(), String> {
+    board_readiness_within(front, id, test_time::backstop(LOOK))
+}
+
+fn init_steps(root: &Path, machine: &crate::init::Machine) -> Vec<String> {
+    crate::init::steps_within(root, machine, test_time::backstop(LOOK))
+}
+
 /// A private host whose shell always works, independently of its board's answer. Drop wakes and
 /// joins its owned thread, including when an assertion fails.
 pub(super) struct Peer {
@@ -98,7 +106,12 @@ fn an_older_registration_names_the_newer_hosts_board_refusal_without_claiming_re
         503,
         &serde_json::json!({"error":why}).to_string(),
     );
-    assert_eq!(get(peer.front.port, "/lamp/tasks", LOOK).unwrap().0, 200);
+    assert_eq!(
+        get(peer.front.port, "/lamp/tasks", test_time::backstop(LOOK))
+            .unwrap()
+            .0,
+        200
+    );
     let added = add(&root, &tree.root, &machine, Some(&peer.front)).unwrap();
     assert!(added.contains("registered at /lamp/"), "{added}");
     assert!(!added.contains("the running Symphony serves it"), "{added}");
@@ -194,7 +207,7 @@ fn init_keeps_the_board_refusal_as_a_next_step_for_a_registered_project() {
         "machine/server.json",
         &serde_json::json!({"port":peer.front.port}).to_string(),
     );
-    let steps = crate::init::steps(
+    let steps = init_steps(
         &tree.root,
         &crate::init::Machine {
             folder: Some(&machine),
@@ -223,7 +236,7 @@ fn init_keeps_the_board_refusal_as_a_next_step_for_a_registered_project() {
         "machine/server.json",
         &serde_json::json!({"port":healthy.front.port}).to_string(),
     );
-    let steps = crate::init::steps(
+    let steps = init_steps(
         &tree.root,
         &crate::init::Machine {
             folder: Some(&machine),
@@ -265,7 +278,7 @@ fn init_identifies_the_selected_older_installed_writer_even_before_registration(
         &serde_json::json!({"port":peer.front.port}).to_string(),
     );
     let steps = || {
-        crate::init::steps(
+        init_steps(
             &tree.root,
             &crate::init::Machine {
                 folder: Some(&machine),
@@ -310,6 +323,13 @@ fn init_identifies_the_selected_older_installed_writer_even_before_registration(
                 .any(|step| step.starts_with("link a compatible board command"))
         );
     }
+    manifest["schema"] = (schema - 2).into();
+    tree.write(manifest_path, &manifest.to_string());
+    assert!(
+        steps()
+            .iter()
+            .any(|step| step.starts_with("link a compatible board command"))
+    );
     // A checkout's own link takes precedence. Init neither replaces it nor assumes its schema.
     let linked = tree.write(".target/bin/tasks", "#!/bin/sh\nexit 0\n");
     std::fs::set_permissions(&linked, std::fs::Permissions::from_mode(0o755)).unwrap();

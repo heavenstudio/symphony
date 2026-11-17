@@ -1143,6 +1143,15 @@ pub const PROJECT_FILE_REFERENCE: &str = concat!(
 /// What is left for the owner to do after a run at `root`, each one line: what init cannot do for
 /// the project. None left means agents can run the board.
 pub fn steps(root: &Path, machine: &Machine) -> Vec<String> {
+    steps_within(root, machine, crate::machine::command::LOOK)
+}
+
+/// [`steps`], with each front and board probe given `look` to connect and answer.
+pub(crate) fn steps_within(
+    root: &Path,
+    machine: &Machine,
+    look: std::time::Duration,
+) -> Vec<String> {
     let mut steps = Vec::new();
     let project = match crate::project::Project::load(root) {
         Ok(project) => Some(project),
@@ -1236,7 +1245,7 @@ pub fn steps(root: &Path, machine: &Machine) -> Vec<String> {
                     .to_string(),
             );
         }
-        if let Some(front) = crate::machine::command::running(folder, None) {
+        if let Some(front) = crate::machine::command::running_within(folder, None, look) {
             if let Some(writer) = builds::find(root, "tasks", &machine.beyond())
                 && let Some((_, release)) = crate::machine::release::of_binary(&writer)
                 && release.serves.schema < front.schema
@@ -1254,7 +1263,8 @@ pub fn steps(root: &Path, machine: &Machine) -> Vec<String> {
             }
             if registered
                 && let Some(project) = &project
-                && let Err(why) = crate::machine::command::board_readiness(&front, &project.id)
+                && let Err(why) =
+                    crate::machine::command::board_readiness_within(&front, &project.id, look)
             {
                 steps.push(why);
             }

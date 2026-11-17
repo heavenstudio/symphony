@@ -23,7 +23,7 @@ pub(crate) const RECORD: &str = "server.json";
 /// started before the machine folder.
 const INSTALL: &str = symphony_board::folders::SERVER;
 /// How long the running server is given to say what it is.
-const LOOK: Duration = Duration::from_secs(2);
+pub(crate) const LOOK: Duration = Duration::from_secs(2);
 
 /// `symphony project ARGS`: the exit code.
 pub fn main(args: &[String], out: &mut dyn Write, err: &mut dyn Write) -> i32 {
@@ -95,6 +95,17 @@ pub fn add(
     machine: &Path,
     front: Option<&symphony_api::Front>,
 ) -> Result<String, String> {
+    add_within(dir, from, machine, front, LOOK)
+}
+
+/// [`add`], with each HTTP probe given `look` to connect and answer.
+fn add_within(
+    dir: &Path,
+    from: &Path,
+    machine: &Path,
+    front: Option<&symphony_api::Front>,
+    look: Duration,
+) -> Result<String, String> {
     if let Some(refusal) = own_worktree(dir, from) {
         return Err(refusal);
     }
@@ -126,10 +137,12 @@ pub fn add(
         entry.root.display()
     );
     Ok(match verdict {
-        Some(Verdict::Serves) => match board_readiness(front.expect("a judged host"), &entry.id) {
-            Ok(()) => format!("{said}; the running Symphony serves it"),
-            Err(why) => format!("{said}\n· {why}"),
-        },
+        Some(Verdict::Serves) => {
+            match board_readiness_within(front.expect("a judged host"), &entry.id, look) {
+                Ok(()) => format!("{said}; the running Symphony serves it"),
+                Err(why) => format!("{said}\n· {why}"),
+            }
+        }
         Some(Verdict::Replace(why)) => format!(
             "{said}\n· {why}: `just symphony` in {} hands it over",
             entry.root.display()
@@ -194,7 +207,7 @@ pub fn running(machine: &Path, older: Option<&Path>) -> Option<symphony_api::Fro
 }
 
 /// [`running`], the server given `look` to connect and to answer.
-fn running_within(
+pub(crate) fn running_within(
     machine: &Path,
     older: Option<&Path>,
     look: Duration,
@@ -219,10 +232,14 @@ fn running_within(
 
 /// Check the board's JSON, never the HTML shell, without writing or migrating it. A refusal keeps
 /// the API's actionable reason. A repaired board may retain that reason until its next retry.
-pub(crate) fn board_readiness(front: &symphony_api::Front, id: &str) -> Result<(), String> {
+pub(crate) fn board_readiness_within(
+    front: &symphony_api::Front,
+    id: &str,
+    look: Duration,
+) -> Result<(), String> {
     let path = format!("/{id}/api/task-board?counts=1&work=0");
     let url = format!("http://127.0.0.1:{}{path}", front.port);
-    let checked = get(front.port, &path, LOOK).and_then(|(status, body)| {
+    let checked = get(front.port, &path, look).and_then(|(status, body)| {
         if status != 200 {
             let why = serde_json::from_str::<serde_json::Value>(&body)
                 .ok()
