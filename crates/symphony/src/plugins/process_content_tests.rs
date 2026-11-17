@@ -171,6 +171,11 @@ fn unknown_tags_are_json_text_including_escapes_and_empty_names() {
 #[test]
 fn unknown_kinds_do_not_repair_bad_known_fields_or_answer_shapes() {
     let bad = [
+        "null",
+        "false",
+        "7",
+        "[]",
+        r#""text""#,
         r#"{}"#,
         r#"{"type":null}"#,
         r#"{"type":7}"#,
@@ -178,6 +183,8 @@ fn unknown_kinds_do_not_repair_bad_known_fields_or_answer_shapes() {
         r#"{"type":"paragraph","spans":false}"#,
         r#"{"type":"paragraph","spans":[{"type":"text","text":7}]}"#,
         r#"{"type":"paragraph","spans":[{"type":"text"}]}"#,
+        r#"{"type":"unknown","tag":"future"}"#,
+        r#"{"type":"unknown","tag":7,"text":""}"#,
         r#"{"type":"container","tag":"future","presentation":{},"blocks":[{"type":"future"}]}"#,
         r#"{"type":"media","media":{}}"#,
         r#"{"type":"media","media":{"kind":7}}"#,
