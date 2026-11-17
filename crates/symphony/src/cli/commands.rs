@@ -11,7 +11,7 @@ mod attach;
 mod shot;
 
 /// The Symphony's own commands, in the order its usage names them, each with what it does.
-const OWN: [(&str, &str); 14] = [
+const OWN: [(&str, &str); 15] = [
     ("status", "the review board's open cards and comments"),
     (
         "reply",
@@ -33,6 +33,10 @@ const OWN: [(&str, &str); 14] = [
     (
         "settings-check",
         "check the project file's shape: known keys, typed values",
+    ),
+    (
+        "model",
+        "set a role's model in the main checkout: model ROLE MODEL",
     ),
     (
         "blocks",
@@ -57,7 +61,16 @@ const OWN: [(&str, &str); 14] = [
 
 /// The usage of the Symphony's commands that read no options of their own, and what their help says
 /// after their line: what `--help` or `-h` anywhere on their command line prints ([`plain_help`]).
-const PLAIN: [(&str, &str, &str); 4] = [
+const PLAIN: [(&str, &str, &str); 5] = [
+    (
+        "model",
+        "usage: symphony model ROLE MODEL",
+        "ROLE is orchestrator, executor, reviewer, assessor, or all (all four roles).\n\
+         MODEL is any string; use -- before a value beginning with a dash.\n\
+         Comments and order are preserved. The main checkout's symphony.toml is\n\
+         edited, including from a linked worktree. Checking and landing the edit\n\
+         follow the project's settings-only policy. Resumed agents keep their model.\n",
+    ),
     (
         "settings-check",
         "usage: symphony settings-check [DIR]",
