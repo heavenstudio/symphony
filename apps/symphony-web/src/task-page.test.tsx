@@ -80,6 +80,7 @@ const threadOf = (entries: TaskEntry[] = [], before: number | null = null): Show
   value: { entries, before, gap: null },
   stale: false,
   error: null,
+  retrying: false,
   missing: false,
   answered: true,
 });
@@ -88,6 +89,7 @@ const NO_THREAD: Shown<Thread> = {
   value: undefined,
   stale: false,
   error: null,
+  retrying: false,
   missing: false,
   answered: false,
 };
@@ -355,11 +357,36 @@ describe("a task's page", () => {
     expect(all).toContain('<span class="count">2</span>');
   });
 
-  it("offers earlier messages and, before the thread is read, its loading", () => {
+  it("offers earlier messages, and the thread's loading only once its read failed", () => {
     const waiting = detail({ thread: NO_THREAD }, "thread-region");
     expect(waiting).not.toContain("Load earlier messages");
-    expect(waiting).toContain(">Load messages</button>");
+    // Its read is out: it says it loads by its ghost, and asks nothing of the reader.
+    expect(waiting).not.toContain("Load messages");
+    expect(waiting).not.toContain("Loading messages");
     expect(waiting).toContain('<div id="task-thread" data-pending="true">');
+    expect(waiting).toContain('class="ghost-history"');
+    const error = new Error("The server could not be reached");
+    const failed = detail({ thread: { ...NO_THREAD, error }, failed: true }, "thread-region");
+    expect(failed).toContain(
+      '<button class="dx-button" data-style="outline" data-size="default">Load messages</button>',
+    );
+    expect(failed).toContain('<div id="task-thread" data-pending="true">');
+    // Tried again, by the store or the reader: said, and not asked again while it is out.
+    const retrying = detail(
+      { thread: { ...NO_THREAD, error, retrying: true }, failed: true },
+      "thread-region",
+    );
+    expect(retrying).toContain(
+      '<button class="dx-button" data-style="outline" data-size="default" disabled="">Loading messages…</button>',
+    );
+    expect(retrying).not.toContain(">Load messages</button>");
+    // A thread drawn, from this device or the server, offers none whatever its later read does.
+    const drawn = detail(
+      { thread: { ...threadOf([anEntry(4, "owner")]), stale: true, error, retrying: true } },
+      "thread-region",
+    );
+    expect(drawn).not.toContain("Load messages");
+    expect(drawn).not.toContain("Loading messages");
     expect(detail({ thread: threadOf([anEntry(4, "owner")], 3) }, "thread-region")).toContain(
       ">Load earlier messages</button>",
     );

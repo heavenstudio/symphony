@@ -150,6 +150,8 @@ fn the_waterfall_lists_what_began_before_synced_in_order_and_leaves_cached_files
                    "open": 880.0, "first": null}],
         "longtasks": [[100.0, 75.0], [1000.0, 60.0]],
         "paint": {"first-contentful-paint": 90.0},
+        "parts": [["page w/a", 415.0], ["thread w/a", 600.0], ["timeline w/a", 920.0]],
+        "firstPart": 600.0,
     });
     let said: Vec<String> = rows(&visit(1, probe))
         .into_iter()
@@ -164,11 +166,48 @@ fn the_waterfall_lists_what_began_before_synced_in_order_and_leaves_cached_files
             "100 long task 75 ms",
             "120 DRAWN from the device",
             "130 /symphony/api/board  queued 1  server 269  body 10  end 410  200  1.5 KB",
+            "415 part page w/a drawn from the server",
             "420 feed socket /symphony/api/feed?since=3  open 880  first message -",
+            "600 part thread w/a drawn from the server",
+            "600 FIRST PART: the part that matters most, drawn from the server",
             "890 CHECKED: nothing from the device unanswered, the feed open",
             "900 SYNCED: every read answered too",
         ]
     );
+}
+
+#[test]
+fn a_part_after_synced_is_left_out_of_the_waterfall_and_a_page_of_none_lists_none() {
+    let late = json!({
+        "synced": 300.0,
+        "parts": [["page w/a", 120.0], ["thread w/a", 450.0], ["bad"], [7, 10.0]],
+        "firstPart": 450.0,
+    });
+    let said: Vec<String> = rows(&visit(1, late))
+        .into_iter()
+        .map(|row| row.said)
+        .collect();
+    assert_eq!(
+        said,
+        [
+            "part page w/a drawn from the server",
+            "SYNCED: every read answered too"
+        ],
+        "a mark it cannot read is no row either"
+    );
+    let none = rows(&visit(
+        1,
+        json!({"synced": 300.0, "parts": [], "firstPart": null}),
+    ));
+    assert!(
+        none.iter().all(|row| !row.said.contains("PART")),
+        "{:?}",
+        none
+    );
+    // A visit never synced lists the part that matters most, whenever it came.
+    let unsynced = rows(&visit(1, json!({"firstPart": 5000.0})));
+    assert_eq!(unsynced.len(), 1);
+    assert_eq!(unsynced[0].at, 5000.0);
 }
 
 #[test]
@@ -184,15 +223,15 @@ fn a_visit_never_synced_lists_everything_it_began() {
 }
 
 #[test]
-fn the_table_has_a_row_a_page_with_each_returns_drawn_and_synced() {
+fn the_table_has_a_row_a_page_with_its_first_part_and_synced_and_each_returns_moments() {
     let measured = vec![
         (
-            "/tasks".to_string(),
+            "/task/w/a".to_string(),
             vec![
-                visit(0, json!({"synced": 2000.4})),
+                visit(0, json!({"firstPart": 605.5, "synced": 2000.4})),
                 visit(
                     1,
-                    json!({"drawn": 100.0, "checked": 1400.0, "synced": 1500.0}),
+                    json!({"drawn": 100.0, "firstPart": 310.0, "checked": 1400.0, "synced": 1500.0}),
                 ),
                 visit(2, json!({"drawn": 90.0})),
             ],
@@ -205,10 +244,18 @@ fn the_table_has_a_row_a_page_with_each_returns_drawn_and_synced() {
         lines[1].contains("http://h/p") && lines[1].contains("load 80 100 171"),
         "{said}"
     );
-    assert!(lines[3].starts_with("/tasks"), "{said}");
-    assert!(lines[3].ends_with("2000  100/1400/1500  90/-/-"), "{said}");
     assert!(
-        lines[4].starts_with("/reports") && lines[4].ends_with("-  "),
+        lines[2].ends_with("first (part/synced)  returns (drawn/part/checked/synced)"),
+        "{said}"
+    );
+    assert!(lines[3].starts_with("/task/w/a"), "{said}");
+    assert!(
+        lines[3].ends_with(" 606/2000  100/310/1400/1500  90/-/-/-"),
+        "{said}"
+    );
+    // A page of no parts says none, and a page not measured past its first visit no return.
+    assert!(
+        lines[4].starts_with("/reports") && lines[4].ends_with(" -/-  "),
         "{said:?}"
     );
 }
@@ -300,8 +347,8 @@ fn the_table_marks_a_visit_whose_own_read_failed_and_says_what_the_mark_is() {
     let said = table("http://h/p", &measured, None);
     let lines: Vec<&str> = said.lines().collect();
     assert!(lines[3].starts_with("/tasks"), "{said}");
-    assert!(lines[3].ends_with("40! 10/30/40!  9/-/50"), "{said}");
-    assert!(lines[4].ends_with("30  "), "{said:?}");
+    assert!(lines[3].ends_with("-/40! 10/-/30/40!  9/-/-/50"), "{said}");
+    assert!(lines[4].ends_with("-/30  "), "{said:?}");
     assert_eq!(
         lines[5],
         "! a read of the page's own failed: its visit's line above names it"
@@ -320,10 +367,20 @@ fn each_visit_says_its_drawn_synced_spending_and_why_it_ended_unsynced() {
     late.spent = vec![("TaskDuration".into(), 812.4), ("ThreadTime".into(), 640.0)];
     let said = waterfall(
         "/task/a",
-        &[visit(0, json!({"synced": 700.0, "commitsSynced": 4})), late],
+        &[
+            visit(
+                0,
+                json!({"firstPart": 435.2, "synced": 700.0, "commitsSynced": 4}),
+            ),
+            late,
+        ],
     );
     assert!(
-        said.contains("first     drawn      -  checked      -  synced    700"),
+        said.contains("first     drawn      -  part    435  checked      -  synced    700"),
+        "{said}"
+    );
+    assert!(
+        said.contains("return 1  drawn     50  part      -  checked      -  synced      -"),
         "{said}"
     );
     assert!(said.contains("commits 4"), "{said}");

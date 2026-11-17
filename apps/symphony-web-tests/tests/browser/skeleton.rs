@@ -1,6 +1,7 @@
 //! A page's ghost: it outlines what is to come, each box as the real one with a bar for each line
 //! of text in it; it stays over the page until the regions on its first screen have their
-//! reads (`viewport::Settle`), at most three seconds, and not at all once a read fails; its look
+//! reads (`viewport::Settle`), at most three seconds, and not at all once a read fails, a task's
+//! thread offering its read again only then and saying it loads while that read is out; its look
 //! follows the theme and the reader's motion setting, and a page at rest animates none of it, the
 //! placeholders out of reach of the screen included. Past it, a live update that adds or removes
 //! a row leaves what the owner reads or types in where it is once they have scrolled, however
@@ -150,8 +151,9 @@ fn a_task_whose_thread_never_comes_shows_after_three_seconds_with_its_thread_wai
         return;
     };
     let at = settled(&mut browser);
+    // Its read is still out: nothing offers to read it again.
     let shown = browser.eval(
-        "({page: getComputedStyle(document.querySelector('#task-thread')).visibility, thread: document.querySelector('#task-thread').dataset.pending})",
+        "({page: getComputedStyle(document.querySelector('#task-thread')).visibility, thread: document.querySelector('#task-thread').dataset.pending, buttons: [...document.querySelectorAll('#task-thread button')].map(button => button.textContent)})",
     );
     site.hold_route("/api/task-history", false);
     assert_eq!(at["thread"], json!("true"), "{at}");
@@ -159,7 +161,48 @@ fn a_task_whose_thread_never_comes_shows_after_three_seconds_with_its_thread_wai
         at["waited"].as_f64().unwrap_or_default() >= 2_900.0,
         "the page gave up on its thread early: {at}"
     );
-    assert_eq!(shown, json!({"page": "visible", "thread": "true"}));
+    assert_eq!(
+        shown,
+        json!({"page": "visible", "thread": "true", "buttons": []})
+    );
+}
+
+#[test]
+fn a_task_whose_thread_cannot_be_read_offers_it_again_and_says_it_loads_while_that_read_is_out() {
+    const HISTORY: &str = "/api/task-history";
+    const BUTTON: &str = "document.querySelector('#task-thread button')";
+    let site = site();
+    site.fail_route(HISTORY, true);
+    let Some(mut browser) = open(&site, TASK, TALL.0, TALL.1) else {
+        return;
+    };
+    assert!(
+        browser.wait_for(&format!("{BUTTON}?.textContent === 'Load messages'"), SHOWN),
+        "a failed thread offers no read: {}",
+        browser.eval(PAGE)
+    );
+    // The read it asks (the store tries one by itself too) is held: the button says it loads,
+    // and asks for none more.
+    site.hold_route(HISTORY, true);
+    site.fail_route(HISTORY, false);
+    browser.eval(&format!("{BUTTON}.click()"));
+    let loading = browser.wait_for(
+        &format!(
+            "(button => button?.disabled && button.textContent === 'Loading messages…')({BUTTON})"
+        ),
+        SHOWN,
+    );
+    let shown = browser.eval(PAGE);
+    site.hold_route(HISTORY, false);
+    assert!(loading, "the thread's read never said it loads: {shown}");
+    assert!(
+        browser.wait_for(
+            &format!("document.querySelector('#task-thread .entry') !== null && {BUTTON} === null"),
+            SHOWN
+        ),
+        "the thread was not drawn once its read answered: {}",
+        browser.eval(PAGE)
+    );
 }
 
 #[test]
