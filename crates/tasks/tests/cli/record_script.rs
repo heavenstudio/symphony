@@ -786,6 +786,83 @@ impl Recipes {
 }
 
 #[test]
+fn the_crates_check_recipe_records_its_task_tip_streams_and_status_or_runs_without_a_recorder() {
+    let setup = Setup::new("record-script-crates-check");
+    let recipes = Recipes::new(&setup);
+    executable(
+        &recipes.tree.join("tools/rs-bin.sh"),
+        "#!/bin/sh\nprintf 'arg=<%s>\\n' \"$@\"\nprintf 'crates diagnostic\\n' >&2\nexit \"${CRATES_EXIT:-0}\"\n",
+    );
+    git(&recipes.tree, &["add", "tools/rs-bin.sh"]);
+    git(&recipes.tree, &["commit", "-q", "-m", "checker stand-in"]);
+    let commit = git_says(&recipes.tree, &["rev-parse", "HEAD"]);
+    let task = "tools/crates-check";
+    let recorder = logging().to_str().unwrap();
+    let log = setup.log.to_str().unwrap();
+    let mut expected = Vec::new();
+    for code in ["0", "5"] {
+        let done = recipes.just(
+            "crates-check",
+            &[
+                ("TASKS_TASK", task),
+                ("CRATES_EXIT", code),
+                ("TASKS_RECORDER", recorder),
+                (LOG_VAR, log),
+            ],
+        );
+        assert_eq!(done.status.code(), Some(code.parse().unwrap()), "{done:?}");
+        assert_eq!(
+            done.stdout,
+            b"arg=<symphony-build>\narg=<crates-check>\narg=<.>\n"
+        );
+        assert!(done.stderr.starts_with(b"crates diagnostic\n"), "{done:?}");
+        expected.push(done);
+    }
+    let logged = setup.logged();
+    assert_eq!(logged.lines().count(), 4, "{logged}");
+    let history = setup.history(2);
+    for (record, code) in history.iter().zip([0, 5]) {
+        assert_eq!(
+            (record.label.as_str(), record.phase, record.task.as_deref()),
+            ("just crates-check", Phase::Test, Some(task))
+        );
+        assert_eq!(record.commit.as_deref(), Some(commit.as_str()));
+        assert_eq!(record.exit_code, Some(code));
+        assert_eq!(pipeline(record), Some("crates"));
+        assert!(record.parent_id.is_none(), "{record:?}");
+    }
+    let lines = symphony_api::fold(day_lines(&recipes.work, &recipes.runs, 2));
+    assert_eq!(lines.len(), 2, "{lines:?}");
+    for line in &lines {
+        assert_eq!(line.commit.as_deref(), Some(commit.as_str()));
+        assert_eq!(line.dirty, Some(false), "{line:?}");
+        assert!(line.step.is_none(), "{line:?}");
+    }
+
+    // Disabled or absent recorder, then no script: the same checker and streams, no record.
+    let missing = setup.dir.join("no recorder");
+    for fallback in ["off", missing.to_str().unwrap(), recorder] {
+        if fallback == recorder {
+            fs::remove_file(recipes.tree.join("tools/record.sh")).unwrap();
+        }
+        for (code, expected) in ["0", "5"].into_iter().zip(&expected) {
+            let done = recipes.just(
+                "crates-check",
+                &[
+                    ("TASKS_RECORDER", fallback),
+                    ("CRATES_EXIT", code),
+                    (LOG_VAR, log),
+                ],
+            );
+            assert_eq!(done.status, expected.status, "{done:?}");
+            assert_eq!(done.stdout, expected.stdout, "{done:?}");
+            assert_eq!(done.stderr, expected.stderr, "{done:?}");
+        }
+    }
+    assert_eq!(setup.logged(), logged, "a fallback ran the recorder");
+}
+
+#[test]
 fn the_lint_client_and_size_recipes_are_runs_of_their_own_pipelines_and_repeat_only_themselves() {
     let setup = Setup::new("record-script-recipe-runs");
     let recipes = Recipes::new(&setup);

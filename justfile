@@ -133,7 +133,7 @@ _size-check:
 # crates.io holds of that version: red, naming the package, where the sources moved and the version
 # did not (docs/RELEASES.md, "Packages on crates.io"). It reads crates.io and publishes nothing.
 crates-check:
-    @tools/rs-bin.sh symphony-build crates-check .
+    @{{record}} --pipeline crates test "just crates-check" tools/rs-bin.sh symphony-build crates-check .
 
 # The full verification (tools/verify.sh): lint, the client check, the size budgets, the docs audit,
 # the crates check and every test target, each a step of this run with a log of its own, run
