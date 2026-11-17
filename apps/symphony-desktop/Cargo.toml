@@ -14,7 +14,7 @@ authors.workspace = true
 serde = { version = "1", features = ["derive"] }
 serde_json.workspace = true
 # The one list the app reads of each server, `GET /api/projects` (`symphony_api::ProjectList`).
-symphony-api = { path = "../../crates/symphony-api", version = "=0.1.0" }
+symphony-api = { path = "../../crates/symphony-api", version = "=0.2.0" }
 # A server's address and every address a page navigates to, read by the WHATWG rule a web view
 # reads them by, so the origin the app compares is the one the page has.
 url = "2.5"
@@ -35,7 +35,7 @@ objc2-foundation = { version = "0.3", default-features = false, features = ["std
 test-time = { path = "../../crates/test-time" }
 # The real server's test (tests/real_server.rs) runs on a board of its own: a SurrealDB server the
 # board's keeper starts in a scratch folder, the pinned one `SYMPHONY_SURREAL` names, and its store.
-symphony-board = { path = "../../crates/tasks", version = "=0.1.0" }
+symphony-board = { path = "../../crates/tasks", version = "=0.2.0" }
 symphony-env = { path = "../../crates/symphony-env", version = "1.0.0" }
 
 [lints]

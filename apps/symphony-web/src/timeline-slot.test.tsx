@@ -169,7 +169,7 @@ describe("the timeline's box", () => {
     const row = (at: number) =>
       `<span class="tl-sk-row" aria-hidden="true"><span class="tl-sk-line tl-sk-at"></span><span class="tl-sk-line tl-sk-label" style="width:${30 + ((at * 17) % 40)}%"></span><span class="tl-sk-line tl-sk-bar" style="width:${20 + ((at * 29) % 50)}%"></span></span>`;
     expect(html).toBe(
-      `<section class="tl" id="timeline" aria-labelledby="timeline-title"><h2 id="timeline-title">Timeline</h2><div class="tl-box card" id="timeline-slot" data-slug="tools/new" style="--tl-narrow:200px;--tl-wide:500px"><div class="tl-skeleton"><span class="tl-sk-said">Reading the timeline…</span><span class="tl-sk-line tl-sk-head" aria-hidden="true"></span>${Array.from({ length: placeholders(500) }, (_, at) => row(at)).join("")}</div></div></section>`,
+      `<section class="tl" id="timeline" aria-labelledby="timeline-title"><h2 id="timeline-title">Timeline</h2><div class="tl-box card" id="timeline-slot" data-slug="tools/new" style="--tl-narrow:200px;--tl-wide:500px"><div class="tl-skeleton"><span class="tl-sk-said">Reading the timeline…</span><span class="tl-sk-line tl-sk-head" aria-hidden="true"></span>${Array.from({ length: placeholders(500) }, (_, at) => row(at)).join("")}</div></div><div class="tl-message-place"></div></section>`,
     );
     expect(placeholders(500)).toBe(8);
   });
@@ -411,7 +411,7 @@ describe("the timeline's chunk", () => {
     leave?.();
     // Drawn again, the timeline is in its root, and its height is kept for the next visit.
     expect(inPage()).toContain(
-      '</div><div id="timeline-root"><i data-slug="tools/new" data-part="{&quot;now&quot;:7}"></i></div></div></section>',
+      '</div><div id="timeline-root"><i data-slug="tools/new" data-part="{&quot;now&quot;:7}"></i></div></div><div class="tl-message-place"></div></section>',
     );
     expect(storage.getItem(key("tools/new"))).toBe(`213,${WIDE}`);
     // With the chunk come, the box asks for nothing more.
