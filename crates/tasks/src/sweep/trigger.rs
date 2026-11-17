@@ -134,7 +134,7 @@ fn open_stamp(path: &Path) -> std::io::Result<File> {
 fn write_stamp(file: &mut File, now: f64) -> std::io::Result<()> {
     file.set_len(0)?;
     file.rewind()?;
-    file.write_all(crate::pyjson::float(now).as_bytes())
+    file.write_all(now.to_string().as_bytes())
 }
 
 /// Try the sweep's lock without waiting. Only a holder writes the start stamp.

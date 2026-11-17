@@ -1,7 +1,7 @@
 //! `tasks api`: the store's methods, called as JSON. One call `{"method": NAME, "args": {ARG: VALUE}}`,
 //! or a list of them, as JSON on stdin; each answer is `{"ok": RESULT}`, `{"refused": WHY}` (the
 //! store's `TaskError`) or `{"error": WHY}` (a call it cannot read, or a board it cannot reach), as
-//! `json.dumps(indent=1)` writes it.
+//! pretty-printed JSON.
 //!
 //! `tasks api --lines` serves a call per line of stdin until it ends, each answer on a line of its
 //! own as soon as it is made, over one connection: how the client keeps one process for a board.
@@ -18,10 +18,9 @@
 
 use super::shape;
 use crate::launch::Bounds;
-use crate::pyjson::{self, Py};
 use crate::{Beat, Error, NewAsk, NewLaunch, NewSession, NewTask, Store};
 use serde::de::DeserializeOwned;
-use serde_json::{Map, Value};
+use serde_json::{Map, Value, json};
 use std::io::{BufRead, Read, Write};
 
 mod assessment;
@@ -174,13 +173,22 @@ pub(super) fn run_in<F: FnOnce() -> Result<Store, String>>(
         });
     let (answer, code) = match calls {
         Ok(Value::Array(calls)) => (
-            Py::List(calls.into_iter().map(|c| answer(c, &mut board)).collect()),
+            Value::Array(calls.into_iter().map(|c| answer(c, &mut board)).collect()),
             0,
         ),
         Ok(call) => (answer(call, &mut board), 0),
-        Err(why) => (Py::obj(vec![("error", Py::Str(why))]), 2),
+        Err(why) => (
+            json!({
+                "error": why,
+            }),
+            2,
+        ),
     };
-    let _ = writeln!(out, "{}", pyjson::dumps(&answer));
+    let _ = writeln!(
+        out,
+        "{}",
+        serde_json::to_string_pretty(&answer).expect("JSON values serialize")
+    );
     code
 }
 
@@ -197,25 +205,27 @@ pub(super) fn serve_in<F: FnOnce() -> Result<Store, String>>(
     };
     for line in input.lines() {
         let answer = match line {
-            Err(e) => Py::obj(vec![(
-                "error",
-                Py::Str(format!("cannot read the call: {e}")),
-            )]),
+            Err(e) => json!({
+                "error": format!("cannot read the call: {e}"),
+            }),
             Ok(line) if line.trim().is_empty() => continue,
             Ok(line) => match serde_json::from_str::<Value>(&line) {
                 Ok(Value::Array(calls)) => {
-                    Py::List(calls.into_iter().map(|c| answer(c, &mut board)).collect())
+                    Value::Array(calls.into_iter().map(|c| answer(c, &mut board)).collect())
                 }
                 Ok(call) => answer(call, &mut board),
-                Err(e) => Py::obj(vec![(
-                    "error",
-                    Py::Str(format!("the call is not JSON: {e}")),
-                )]),
+                Err(e) => json!({
+                    "error": format!("the call is not JSON: {e}"),
+                }),
             },
         };
-        if writeln!(out, "{}", pyjson::dumps_line(&answer))
-            .and_then(|()| out.flush())
-            .is_err()
+        if writeln!(
+            out,
+            "{}",
+            serde_json::to_string(&answer).expect("JSON values serialize")
+        )
+        .and_then(|()| out.flush())
+        .is_err()
         {
             break; // nobody reads the answers any more
         }
@@ -223,15 +233,24 @@ pub(super) fn serve_in<F: FnOnce() -> Result<Store, String>>(
     0
 }
 
-fn answer<F: FnOnce() -> Result<Store, String>>(call: Value, board: &mut Lazy<F>) -> Py {
+fn answer<F: FnOnce() -> Result<Store, String>>(call: Value, board: &mut Lazy<F>) -> Value {
     match one(call, board) {
-        Ok(result) => Py::obj(vec![("ok", result)]),
-        Err(Fail::Refused(why)) => Py::obj(vec![("refused", Py::Str(why))]),
-        Err(Fail::Error(why)) => Py::obj(vec![("error", Py::Str(why))]),
+        Ok(result) => json!({
+            "ok": result,
+        }),
+        Err(Fail::Refused(why)) => json!({
+            "refused": why,
+        }),
+        Err(Fail::Error(why)) => json!({
+            "error": why,
+        }),
     }
 }
 
-fn one<F: FnOnce() -> Result<Store, String>>(call: Value, board: &mut Lazy<F>) -> Result<Py, Fail> {
+fn one<F: FnOnce() -> Result<Store, String>>(
+    call: Value,
+    board: &mut Lazy<F>,
+) -> Result<Value, Fail> {
     let Value::Object(mut call) = call else {
         return Err(Fail::Error(format!("a call is an object, not {call}")));
     };
@@ -256,8 +275,8 @@ fn one<F: FnOnce() -> Result<Store, String>>(call: Value, board: &mut Lazy<F>) -
     Ok(result)
 }
 
-fn none(done: Result<(), Error>) -> Result<Py, Fail> {
-    done.map(|()| Py::Null).map_err(Fail::from)
+fn none(done: Result<(), Error>) -> Result<Value, Fail> {
+    done.map(|()| Value::Null).map_err(Fail::from)
 }
 
 /// What a block waits on, as `move` and `hold` take it (`on`, `why`): none when neither is given,
@@ -281,7 +300,7 @@ fn blocked_on<'a>(
 fn dispatch<F: FnOnce() -> Result<Store, String>>(
     a: &mut Args,
     board: &mut Lazy<F>,
-) -> Result<Py, Fail> {
+) -> Result<Value, Fail> {
     let method = a.method.clone();
     macro_rules! args {
         ($($name:ident: $how:ident $(($default:expr))?),* $(,)?) => {
@@ -297,13 +316,13 @@ fn dispatch<F: FnOnce() -> Result<Store, String>>(
         // This build's, so the board is not reached.
         "version" => {
             args!();
-            Py::obj(vec![
-                (
-                    "api",
-                    Py::obj(vec![("major", Py::Int(MAJOR)), ("minor", Py::Int(MINOR))]),
-                ),
-                ("schema", Py::Int(crate::schema::VERSION)),
-            ])
+            json!({
+                "api": {
+                    "major": MAJOR,
+                    "minor": MINOR,
+                },
+                "schema": crate::schema::VERSION,
+            })
         }
         "assessment_state" | "record_waits" => return assessment::call(a, board),
         // Sessions
@@ -324,12 +343,12 @@ fn dispatch<F: FnOnce() -> Result<Store, String>>(
             if let Some(env) = &board.context {
                 crate::launch::may_bind(env).map_err(Fail::Refused)?;
             }
-            Py::Bool(board.get()?.bind_agent(&agent, &handle, session)?)
+            json!(board.get()?.bind_agent(&agent, &handle, session)?)
         }
         "agent_beat" => {
             let agent: String = a.need("agent")?;
             let beat: Beat = a.rest()?;
-            Py::opt_str(board.get()?.agent_beat(&agent, &beat)?.as_deref())
+            json!(board.get()?.agent_beat(&agent, &beat)?.as_deref())
         }
         "reattach" => {
             args!(handle: actor, pid: take);
@@ -352,7 +371,7 @@ fn dispatch<F: FnOnce() -> Result<Store, String>>(
         }
         "sessions" => {
             args!();
-            Py::List(
+            Value::Array(
                 board
                     .get()?
                     .sessions()?
@@ -364,15 +383,15 @@ fn dispatch<F: FnOnce() -> Result<Store, String>>(
         "handle_for_agent" => {
             args!(agent: need);
             let agent: String = agent;
-            Py::opt_str(board.get()?.handle_for_agent(&agent)?.as_deref())
+            json!(board.get()?.handle_for_agent(&agent)?.as_deref())
         }
         "bound_agents" => {
             args!();
             let bound = board.get()?.bound_agents()?;
-            Py::Obj(
+            Value::Object(
                 bound
                     .into_iter()
-                    .map(|(h, agent)| (h, Py::Str(agent)))
+                    .map(|(h, agent)| (h, json!(agent)))
                     .collect(),
             )
         }
@@ -455,7 +474,7 @@ fn dispatch<F: FnOnce() -> Result<Store, String>>(
         "ancestors" => {
             args!(slug: need);
             let slug: String = slug;
-            Py::strs(&board.get()?.ancestors(&slug)?)
+            json!(&board.get()?.ancestors(&slug)?)
         }
         "children" => {
             args!(slug: need);
@@ -495,7 +514,7 @@ fn dispatch<F: FnOnce() -> Result<Store, String>>(
         "claimable" => {
             args!(handle: need);
             let handle: String = handle;
-            Py::strs(&board.get()?.claimable(&handle)?)
+            json!(&board.get()?.claimable(&handle)?)
         }
         "claim" => {
             args!(slug: need, handle: actor);
@@ -589,7 +608,7 @@ fn dispatch<F: FnOnce() -> Result<Store, String>>(
             args!(slug: need);
             let slug: String = slug;
             let executed: Vec<String> = board.get()?.ever_executed(&slug)?.into_iter().collect();
-            Py::strs(&executed)
+            json!(&executed)
         }
         "next_for" => {
             args!(handle: need);
@@ -598,7 +617,7 @@ fn dispatch<F: FnOnce() -> Result<Store, String>>(
                 .get()?
                 .next_for(&handle)?
                 .as_ref()
-                .map_or(Py::Null, shape::task)
+                .map_or(Value::Null, shape::task)
         }
         // Messages
         "say" => {
@@ -625,7 +644,7 @@ fn dispatch<F: FnOnce() -> Result<Store, String>>(
         "last_messages" => {
             args!();
             let last = board.get()?.last_messages()?;
-            Py::Obj(
+            Value::Object(
                 last.into_iter()
                     .map(|(h, m)| (h, shape::message(&m)))
                     .collect(),
@@ -634,7 +653,7 @@ fn dispatch<F: FnOnce() -> Result<Store, String>>(
         "landings_posted" => {
             args!();
             let posted: Vec<String> = board.get()?.landings_posted()?.into_iter().collect();
-            Py::strs(&posted)
+            json!(&posted)
         }
         "thread" => {
             args!(slug: need);
@@ -645,7 +664,7 @@ fn dispatch<F: FnOnce() -> Result<Store, String>>(
             args!(slugs: need);
             let slugs: Vec<String> = slugs;
             let threads = board.get()?.threads(&slugs)?;
-            Py::List(
+            Value::Array(
                 slugs
                     .iter()
                     .map(|slug| shape::messages(&threads[slug]))
@@ -656,23 +675,18 @@ fn dispatch<F: FnOnce() -> Result<Store, String>>(
             args!(slugs: need);
             let slugs: Vec<String> = slugs;
             let since = board.get()?.in_status_since(&slugs)?;
-            shape::keyed(
-                since
-                    .into_iter()
-                    .map(|(slug, since)| (slug, Py::Float(since))),
-            )
+            shape::keyed(since.into_iter().map(|(slug, since)| (slug, json!(since))))
         }
         "snapshot" => {
             args!();
             let snap = board.get()?.board()?;
-            Py::obj(vec![
-                ("tasks", shape::tasks(&snap.tasks)),
-                (
-                    "sessions",
-                    Py::List(snap.sessions.iter().map(shape::session).collect()),
+            json!({
+                "tasks": shape::tasks(&snap.tasks),
+                "sessions": Value::Array(
+                    snap.sessions.iter().map(shape::session).collect(),
                 ),
-                ("latest_message", Py::Int(snap.latest_message)),
-            ])
+                "latest_message": snap.latest_message,
+            })
         }
         "inbox" => {
             args!(handle: need);
@@ -703,7 +717,7 @@ fn dispatch<F: FnOnce() -> Result<Store, String>>(
             args!(since: take);
             let store = board.get()?;
             let now = store.now();
-            Py::List(
+            Value::Array(
                 store
                     .asks(since)?
                     .iter()
@@ -749,7 +763,7 @@ fn dispatch<F: FnOnce() -> Result<Store, String>>(
             let now = store.now();
             store
                 .answer_about(&about, by.as_deref(), &answer)?
-                .map_or(Py::Null, |ask| shape::ask(&ask, now))
+                .map_or(Value::Null, |ask| shape::ask(&ask, now))
         }
         "close_ask" => {
             args!(id: need, by: actor, why: need);

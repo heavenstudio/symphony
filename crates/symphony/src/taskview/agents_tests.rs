@@ -146,8 +146,7 @@ fn machine_work_board_projection_serializes_on_the_typed_wire_without_changing_l
             .as_deref(),
         Some(handle.as_str())
     );
-    let legacy: LegacyAgents =
-        serde_json::from_str(&symphony_board::pyjson::dumps_line(&view.json())).unwrap();
+    let legacy: LegacyAgents = serde_json::from_value(view.json()).unwrap();
     assert_eq!(legacy.agents[0].handle, handle);
     assert_eq!(legacy.agents[0].state, "running_test");
     assert_eq!(
@@ -237,10 +236,7 @@ fn the_typed_wire_carries_an_agents_tokens_and_cost_and_none_for_one_that_took_n
             .and_then(|agent| agent.cost.clone())
     };
     let wired = cost(&spender).unwrap();
-    let board: symphony_api::AgentCost = serde_json::from_str(&symphony_board::pyjson::dumps_line(
-        &priced.json(&prices.read),
-    ))
-    .unwrap();
+    let board: symphony_api::AgentCost = serde_json::from_value(priced.json(&prices.read)).unwrap();
     assert_eq!(wired, board);
     assert!(wired.dollars > 0.0 && wired.unpriced.is_empty());
     assert_eq!(wired.prices, prices.read);

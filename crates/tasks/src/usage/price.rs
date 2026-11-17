@@ -10,7 +10,7 @@
 //! and rounds to the cent only where it is said.
 
 use super::Tokens;
-use crate::pyjson::Py;
+use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::sync::LazyLock;
 
@@ -307,26 +307,26 @@ impl Cost {
     /// The JSON the agents API and `tasks show --json` give: US dollars of each kind and all told,
     /// the tokens no price was found for, and `read`, the day the table's prices were read, which
     /// says it is an estimate at them.
-    pub fn json(&self, read: &str) -> Py {
+    pub fn json(&self, read: &str) -> Value {
         let unpriced = (self.unpriced.iter())
             .map(|((model, speed), tokens)| {
-                Py::obj(vec![
-                    ("model", Py::str(model)),
-                    ("speed", Py::str(speed)),
-                    ("tokens", tokens.json()),
-                ])
+                json!({
+                    "model": model,
+                    "speed": speed,
+                    "tokens": tokens.json(),
+                })
             })
             .collect();
-        Py::obj(vec![
-            ("dollars", Py::Float(in_dollars(self.total()))),
-            ("input", Py::Float(in_dollars(self.input))),
-            ("cache_write_5m", Py::Float(in_dollars(self.cache_write_5m))),
-            ("cache_write_1h", Py::Float(in_dollars(self.cache_write_1h))),
-            ("cache_read", Py::Float(in_dollars(self.cache_read))),
-            ("output", Py::Float(in_dollars(self.output))),
-            ("unpriced", Py::List(unpriced)),
-            ("prices", Py::str(read)),
-        ])
+        json!({
+            "dollars": in_dollars(self.total()),
+            "input": in_dollars(self.input),
+            "cache_write_5m": in_dollars(self.cache_write_5m),
+            "cache_write_1h": in_dollars(self.cache_write_1h),
+            "cache_read": in_dollars(self.cache_read),
+            "output": in_dollars(self.output),
+            "unpriced": Value::Array(unpriced),
+            "prices": read,
+        })
     }
 
     /// The figure a line says: the dollars, `+ unpriced` after them where some tokens had no price,

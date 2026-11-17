@@ -316,7 +316,7 @@ fn with_nearest_slug(store: &Store, why: String) -> String {
     let slugs = store.task_slugs(None).unwrap_or_default();
     let near: Vec<String> = symphony_args::nearest(slug, slugs.iter().map(String::as_str))
         .into_iter()
-        .map(crate::pyjson::repr)
+        .map(crate::quote::repr)
         .collect();
     let board = store.board_command();
     match near.as_slice() {
@@ -431,7 +431,7 @@ impl Clock {
                     *now += seconds;
                     *now
                 };
-                let _ = writeln!(err, "STEP {}", crate::pyjson::float(at));
+                let _ = writeln!(err, "STEP {at:?}");
                 let _ = err.flush();
                 let mut byte = [0u8; 1];
                 while matches!(input.read(&mut byte), Ok(1)) && byte[0] != b'\n' {}
