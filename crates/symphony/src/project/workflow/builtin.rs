@@ -213,9 +213,6 @@ pub fn builtin() -> Definition {
                 effects,
             );
             e.id = format!("{status}_to_{target}");
-            if operation == Operation::Claim {
-                e.dependencies = Dependency::Done;
-            }
             d.edges.push(e);
         }
     }

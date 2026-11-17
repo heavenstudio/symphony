@@ -620,11 +620,78 @@ fn revision_normalizes_sets_and_fences_content_format_and_source() {
     let mut forged = revision.clone();
     forged.format += 1;
     assert!(d.check_revision(&forged).is_err());
+    let mut forged = revision.clone();
+    forged.source.project_blob = "invalid".into();
+    assert!(
+        d.check_revision(&forged)
+            .unwrap_err()
+            .contains("project_blob")
+    );
     for bad in ["", "abc", &"A".repeat(40), &"g".repeat(64)] {
         let mut other = source();
         other.commit = bad.into();
         assert!(d.revision(other).is_err());
     }
+}
+
+#[test]
+fn normalization_orders_requirements_but_preserves_effect_order() {
+    let mut definition = builtin();
+    definition.guards.push(Guard {
+        id: "extra_guard".into(),
+        adapter: "legacy_board".into(),
+    });
+    definition.capabilities.push("extra_capability".into());
+    let claim = definition
+        .edges
+        .iter_mut()
+        .find(|e| e.id == "claim_ready")
+        .unwrap();
+    claim.guards.push("extra_guard".into());
+    claim.inputs = vec!["second".into(), "first".into()];
+    claim.authority.extend([
+        Authority::SystemCapability {
+            capability: "extra_capability".into(),
+        },
+        Authority::TaskRole {
+            role: Role::Executor,
+        },
+    ]);
+    let expected = Validated::new(definition.clone())
+        .unwrap()
+        .revision(source())
+        .unwrap();
+    definition.guards.reverse();
+    definition.capabilities.reverse();
+    let claim = definition
+        .edges
+        .iter_mut()
+        .find(|e| e.id == "claim_ready")
+        .unwrap();
+    claim.guards.reverse();
+    claim.inputs.reverse();
+    claim.authority.reverse();
+    assert_eq!(
+        Validated::new(definition.clone())
+            .unwrap()
+            .revision(source())
+            .unwrap(),
+        expected
+    );
+    definition
+        .edges
+        .iter_mut()
+        .find(|e| e.id == "claim_ready")
+        .unwrap()
+        .effects
+        .reverse();
+    assert_ne!(
+        Validated::new(definition)
+            .unwrap()
+            .revision(source())
+            .unwrap(),
+        expected
+    );
 }
 
 const CUSTOM: &str = r#"
