@@ -610,10 +610,16 @@ fn the_instructions_are_the_settings_the_rules_and_each_skill_s_files_and_no_gui
             Some("skill tasks"),
         ),
         // Installed or shipped under any folder, and a skill's folder found past a code folder.
-        ("apps/web/.claude/skills/review/SKILL.md", Some("skill review")),
+        (
+            "apps/web/.claude/skills/review/SKILL.md",
+            Some("skill review"),
+        ),
         ("apps/web/.agents/skills/work/SKILL.md", Some("skill work")),
         ("shipped/skills/tasks/SKILL.md", Some("skill tasks")),
-        ("src/skills/x/.agents/skills/work/SKILL.md", Some("skill work")),
+        (
+            "src/skills/x/.agents/skills/work/SKILL.md",
+            Some("skill work"),
+        ),
         // Whatever a skill's folder holds is the skill's.
         (".agents/skills/work/AGENTS.md", Some("skill work")),
         // A project's own folder named `skills` is no place skills are installed or shipped, at
