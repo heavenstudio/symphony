@@ -63,12 +63,12 @@ fn measured() -> Vec<(String, Vec<Visit>)> {
         vec![
             visit(
                 0,
-                json!({"synced": 700.0, "build": "/assets/symphony-shell-ab.js"}),
+                json!({"firstPart": 610.0, "synced": 700.0, "build": "/assets/symphony-shell-ab.js"}),
                 9e6,
             ),
             visit(
                 1,
-                json!({"drawn": 100.0, "checked": 230.0, "synced": 240.0}),
+                json!({"drawn": 100.0, "firstPart": 180.0, "checked": 230.0, "synced": 240.0}),
                 12e6,
             ),
             visit(
@@ -96,12 +96,19 @@ fn a_record_holds_the_run_each_pages_median_and_first_and_every_visit() {
     assert_eq!(page["page"], "/tasks");
     assert_eq!(page["build"], "/assets/symphony-shell-ab.js");
     assert_eq!(page["first"]["synced"], 700.0);
+    assert_eq!(page["first"]["part"], 610.0);
     assert_eq!(page["first"]["failed"], json!([]));
     assert_eq!(
         page["median"],
-        json!({"run": 1, "drawn": 100.0, "checked": 230.0, "synced": 240.0, "failed": [],
-            "heap": 12e6})
+        json!({"run": 1, "drawn": 100.0, "part": 180.0, "checked": 230.0, "synced": 240.0,
+            "failed": [], "heap": 12e6})
     );
+    // A page of no parts keeps none.
+    let none = super::record(
+        &run("x", 1),
+        &[("/tasks".into(), vec![visit(0, json!({"synced": 5.0}), 1e6)])],
+    );
+    assert_eq!(none["pages"][0]["first"]["part"], serde_json::Value::Null);
     assert_eq!(page["visits"].as_array().map(Vec::len), Some(3));
     assert_eq!(page["visits"][2]["cpu_busy"], 80.0);
     assert_eq!(page["visits"][2]["memory"]["heap"], 13e6);
@@ -169,7 +176,9 @@ fn a_run_is_named_by_its_file_or_its_name_in_the_folder() {
 fn a_run_is_printed_beside_an_earlier_one_page_by_page() {
     let then = record(&run("2026-11-15 08:00:00", 100), &measured());
     let mut faster = measured();
-    faster[0].1[1].probe = json!({"drawn": 20.0, "checked": 40.0, "synced": 48.0});
+    faster[0].1[0].probe = json!({"firstPart": 450.0, "synced": 700.0});
+    faster[0].1[1].probe =
+        json!({"drawn": 20.0, "firstPart": 35.0, "checked": 40.0, "synced": 48.0});
     faster[0].1[1].memory.heap = Some(11e6);
     faster.push((
         "/queue".into(),
@@ -211,10 +220,26 @@ fn a_run_is_printed_beside_an_earlier_one_page_by_page() {
         .iter()
         .find(|line| line.trim_start().starts_with("/tasks"))
         .unwrap();
-    assert!(tasks.contains("100/230/240 → 20/40/48"), "{tasks}");
+    assert!(tasks.contains("100/180/230/240 → 20/35/40/48"), "{tasks}");
     assert!(tasks.contains("5.0x faster"), "{tasks}");
-    assert!(tasks.contains("700 → 700"), "{tasks}");
+    assert!(tasks.contains("610/700 → 450/700"), "{tasks}");
     assert!(tasks.ends_with("12 → 11 MB"), "{tasks}");
+    assert!(
+        said.contains("median return drawn/part/checked/synced")
+            && said.contains("first visit part/synced"),
+        "{said}"
+    );
+    // A run kept before the part was recorded says none for it.
+    let mut older = then.clone();
+    for moments in ["first", "median"] {
+        older["pages"][0][moments]
+            .as_object_mut()
+            .unwrap()
+            .remove("part");
+    }
+    let beside = compare("old.json", &older, &now);
+    assert!(beside.contains("100/-/230/240 → 20/35/40/48"), "{beside}");
+    assert!(beside.contains("-/700 → 450/700"), "{beside}");
     assert!(
         said.contains(&format!("  {:<32} not measured then", "/queue")),
         "{said}"

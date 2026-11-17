@@ -73,10 +73,11 @@ pub(super) fn record(run: &Run<'_>, measured: &[(String, Vec<Visit>)]) -> Value 
     })
 }
 
-/// A visit's drawn, checked and synced, and the reads of its own that failed.
+/// A visit's drawn, first part, checked and synced, and the reads of its own that failed.
 fn moments(visit: &Visit) -> Value {
     json!({
         "drawn": visit.drawn(),
+        "part": visit.first_part(),
         "checked": visit.checked(),
         "synced": visit.synced(),
         "failed": visit.failed(),
@@ -172,8 +173,9 @@ fn read(path: &Path) -> Result<Value, String> {
 }
 
 /// The run `now` beside the kept run `then` (kept as `name`): the machine each was measured on,
-/// then each page `now` measured, its median return's moments and its first visit's synced, then
-/// and now, with how many times faster or slower its synced is, and its tab's heap.
+/// then each page `now` measured, its median return's moments and its first visit's part and
+/// synced, then and now, with how many times faster or slower its synced is, and its tab's heap. A
+/// run kept before the part was recorded says none.
 pub(super) fn compare(name: &str, then: &Value, now: &Value) -> String {
     let mut said = String::new();
     let note = |record: &Value| {
@@ -232,8 +234,8 @@ pub(super) fn compare(name: &str, then: &Value, now: &Value) -> String {
     }));
     let _ = writeln!(
         said,
-        "  {:<32} {:<38} {:<18} {:<16} tab heap",
-        "page", "median return drawn/checked/synced", "synced", "first visit"
+        "  {:<32} {:<44} {:<18} {:<24} tab heap",
+        "page", "median return drawn/part/checked/synced", "synced", "first visit part/synced"
     );
     for page in now["pages"].as_array().into_iter().flatten() {
         let named = page["page"].as_str().unwrap_or_default();
@@ -246,15 +248,22 @@ pub(super) fn compare(name: &str, then: &Value, now: &Value) -> String {
             let _ = writeln!(said, "  {named:<32} not measured then");
             continue;
         };
-        let three = |median: &Value| {
+        let four = |median: &Value| {
             format!(
-                "{}/{}/{}",
+                "{}/{}/{}/{}",
                 ms(median["drawn"].as_f64()),
+                ms(median["part"].as_f64()),
                 ms(median["checked"].as_f64()),
                 ms(median["synced"].as_f64())
             )
         };
-        let first = |page: &Value| ms(page["first"]["synced"].as_f64());
+        let first = |page: &Value| {
+            format!(
+                "{}/{}",
+                ms(page["first"]["part"].as_f64()),
+                ms(page["first"]["synced"].as_f64())
+            )
+        };
         // A time over a failed read is no time to compare: it may be fast because nothing came.
         let failed = |median: &Value| {
             median["failed"]
@@ -272,8 +281,8 @@ pub(super) fn compare(name: &str, then: &Value, now: &Value) -> String {
         };
         let _ = writeln!(
             said,
-            "  {named:<32} {:<38} {moved:<18} {:<16} {} → {} MB",
-            format!("{} → {}", three(&before["median"]), three(&page["median"])),
+            "  {named:<32} {:<44} {moved:<18} {:<24} {} → {} MB",
+            format!("{} → {}", four(&before["median"]), four(&page["median"])),
             format!("{} → {}", first(before), first(page)),
             mb(before["median"]["heap"].as_f64()),
             mb(page["median"]["heap"].as_f64()),
