@@ -407,7 +407,7 @@ mod tests {
         write(&root, "docs/hidden.md", "# Hidden\n");
         std::fs::set_permissions(
             root.join("docs/hidden.md"),
-            std::fs::Permissions::from_mode(0),
+            std::fs::Permissions::from_mode(0o000),
         )
         .unwrap();
         for text in [
