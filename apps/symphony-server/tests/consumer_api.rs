@@ -28,3 +28,16 @@ fn the_names_consumers_call_keep_their_shapes() {
     // Built by its fields: one added here breaks the consumer's fixture.
     let _ = |port: u16, pid: i64, root: String| home::Running { port, pid, root };
 }
+
+#[test]
+fn hosted_admission_is_additive_and_explicit() {
+    use std::sync::Arc;
+    use symphony_server::{front, hosted};
+    let _: fn(&str, &str, &str, &str) -> Result<hosted::Config, hosted::Refusal> =
+        hosted::Config::new;
+    let _: fn(
+        Arc<front::Shared>,
+        hosted::Config,
+        Arc<dyn hosted::Host>,
+    ) -> Result<axum::Router, hosted::Refusal> = hosted::router;
+}

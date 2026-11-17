@@ -172,9 +172,10 @@ async fn read(shared: &Arc<Shared>, request: Request) -> Option<Response> {
         .unwrap_or("")
         .to_string();
     let check = shared.clone();
-    let allowed = crate::spawn::blocking(move || check.allows_host(&host))
-        .await
-        .unwrap_or(false);
+    let allowed = crate::hosted::admission(&request).is_some()
+        || crate::spawn::blocking(move || check.allows_host(&host))
+            .await
+            .unwrap_or(false);
     if !allowed {
         return Some(error(
             StatusCode::FORBIDDEN,
@@ -1223,7 +1224,7 @@ fn events_since(
 
 /// The feed from `?since=`: Server-Sent Events, or the same events on a WebSocket when the request
 /// asks to upgrade ([`feed_socket`]).
-async fn feed(hub: Arc<Hub>, scope: &str, request: Request) -> Response {
+pub(crate) async fn feed(hub: Arc<Hub>, scope: &str, request: Request) -> Response {
     use futures_util::StreamExt;
     if let Some(refused) = feed_socket::refused(&request) {
         return refused;
@@ -1249,6 +1250,8 @@ async fn feed(hub: Arc<Hub>, scope: &str, request: Request) -> Response {
     };
     let ping_after = Duration::from_millis(u64::from(symphony_api::PING_MAX_MS));
     let mut draining = hub.draining.subscribe();
+    let hosted = crate::hosted::admission(&request).cloned();
+    let show_notices = hosted.is_none();
     let notices = hub.server_notice.subscribe();
     let notices =
         futures_util::stream::unfold((notices, true), |(mut notices, first)| async move {
@@ -1320,13 +1323,19 @@ async fn feed(hub: Arc<Hub>, scope: &str, request: Request) -> Response {
         stream
             .map(Some)
             .chain(futures_util::stream::once(std::future::ready(None))),
-        notices.map(Some),
+        notices
+            .filter(move |_| std::future::ready(show_notices))
+            .map(Some),
     )
     .take_while(|event| std::future::ready(event.is_some()))
     .filter_map(std::future::ready)
     .take_until(async move {
         let _ = draining.wait_for(|draining| *draining).await;
     });
+    let said = match hosted {
+        Some(admission) => admission.guard(said).boxed(),
+        None => said.boxed(),
+    };
     if feed_socket::asked(&request) {
         return feed_socket::answer(request, said).await;
     }
