@@ -160,3 +160,37 @@ fn show_says_what_a_task_waits_on_and_for_how_long() {
     store.move_to("sim/jump", "cancelled", "owner").unwrap();
     assert_eq!(shown("sim/jump"), None);
 }
+
+#[test]
+fn show_keeps_a_checks_name_and_a_manual_owner_blocks_reason() {
+    let c = Case::new();
+    create(&c, "sim/jump");
+    let worker = c.register("worker");
+    c.ok(&worker, &["claim", "sim/jump"]);
+    for (on, why, expected) in [
+        (
+            "check:art",
+            "start after review",
+            "Waits: on check: art · start after review · 0 s",
+        ),
+        (
+            "check:owner",
+            "review the sketch",
+            "Waits: on decision: the owner's approve of its tip · review the sketch · 0 s",
+        ),
+    ] {
+        c.ok(
+            &worker,
+            &["move", "sim/jump", "blocked", "--on", on, "--why", why],
+        );
+        let shown = c.ok(&worker, &["show", "sim/jump"]);
+        assert_eq!(
+            shown
+                .lines()
+                .find(|l| l.trim().starts_with("Waits:"))
+                .unwrap()
+                .trim(),
+            expected
+        );
+    }
+}

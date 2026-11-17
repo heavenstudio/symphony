@@ -33,7 +33,18 @@ pub fn snapshot_board(
     stood: &Stood,
     lane: &BTreeMap<String, Vec<String>>,
 ) -> (Tasks, i64) {
-    let look = symphony_board::waits_on::Look::new(&board.tasks, &[]);
+    snapshot_board_with_busy(board, stood, lane, &[])
+}
+
+/// [`snapshot_board`] with the sessions observed running tests, just as PULL counts them present
+/// even when their tool call's heartbeat has expired.
+pub fn snapshot_board_with_busy(
+    board: &symphony_board::Board,
+    stood: &Stood,
+    lane: &BTreeMap<String, Vec<String>>,
+    busy: &[String],
+) -> (Tasks, i64) {
+    let look = symphony_board::waits_on::Look::new(&board.tasks, busy);
     let mut tasks: Vec<Task> = (board.tasks.iter())
         .map(|t| {
             let mut wire = task(t);

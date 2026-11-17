@@ -109,6 +109,47 @@ fn a_finished_task_waits_on_nothing() {
 }
 
 #[test]
+fn a_listing_counts_running_tests_present_as_pull_does() {
+    let mut work = board_task("work", "in_progress");
+    work.roles = vec![role("executor", "executor", Health::Lost)];
+    let mut review = board_task("review", "review");
+    review.roles = vec![role("reviewer", "reviewer", Health::Lost)];
+    let mut ready = board_task("ready", "ready");
+    ready.roles = vec![role("executor", "executor", Health::Lost)];
+    let parent = board_task("parent", "in_progress");
+    let mut child = board_task("child", "in_progress");
+    child.parent = Some("parent".into());
+    child.roles = vec![role("executor", "executor", Health::Lost)];
+    let board = board(vec![work, review, ready, parent, child]);
+    let busy = ["executor".into(), "reviewer".into()];
+    let stood = Stood::default();
+    let lane = BTreeMap::new();
+    let (active, _) = crate::taskview::snapshot_board_with_busy(&board, &stood, &lane, &busy);
+    let look = Look::new(&board.tasks, &busy);
+    for (wire, task) in active.tasks.iter().zip(&board.tasks) {
+        let expected = waits_on::line(task, &look, None).unwrap();
+        let waits = wire.waits_on.as_ref().unwrap();
+        assert_eq!(
+            (waits.kind.as_str(), waits.who.as_str()),
+            (expected.kind, expected.who.as_str())
+        );
+        assert_eq!(waits.kind, "working", "{}", wire.slug);
+    }
+    assert_eq!(active.unstarted, 0);
+    let (quiet, _) = crate::taskview::snapshot_board(&board, &stood, &lane);
+    assert_eq!(quiet.unstarted, 1);
+    assert_ne!(quiet.version, active.version);
+    assert!(
+        quiet.tasks.iter().filter(|t| t.status != "ready").all(|t| t
+            .waits_on
+            .as_ref()
+            .unwrap()
+            .kind
+            == "nobody")
+    );
+}
+
+#[test]
 fn a_block_that_names_its_thing_stays_blocked_and_says_where_it_stopped() {
     let task = blocked_on(
         board_task("sim/jump", "blocked"),
