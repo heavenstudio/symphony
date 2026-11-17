@@ -42,12 +42,50 @@ proposal. These are existing seams, not evidence that this extension is already 
 | [Workflow admission](configurable-delivery-workflow.md#Admission and authority) | Reserves project-policy receipts, expected revisions and typed effects. This proposal supplies artifact and approval semantics for that boundary. |
 | [Durable attempts](remote-execution-attempts.md#Durable records and identities) | Proposed immutable attempt/input and result-manifest references join evidence to its producer. Attempt success grants no approval or transition. |
 
-The project owns criteria, applicability, approver membership and any quorum or separation
+Under the recommended shared-record option below, the project owns criteria, applicability,
+approver membership and any quorum or separation
 requirements beyond existing reviewer independence. It also owns its artifact storage, checks,
 test locks, environment descriptions and landing/deployment implementation. Symphony owns the
 scoped immutable facts, trusted-principal admission, atomic comparisons, audit and refusal.
 Project code evaluates its criteria against a supplied snapshot; it cannot manufacture a
 human principal, bypass core scoping or mutate workflow state through its answer.
+
+## Where approval authority lives
+
+The unresolved choice is who owns the authoritative human decision record at a protected
+handoff. The delivery requirements establish exact-artifact human decisions and refusal of
+unauthorized advancement; they do not choose where those decisions are stored. The approved
+[workflow direction](../DECISIONS.md#project-workflow-shape) chooses the configurable graph.
+The [stamp decision](../DECISIONS.md#needed-stamps) preserves generic readers and project
+landing ownership. Neither supplies or chooses this new approval authority.
+
+| Option | Source basis and proposed boundary | Cost and tradeoff |
+| --- | --- | --- |
+| A: shared decision records | Extend the board's guarded, paired-store transactions with common immutable request/decision facts. Project code supplies criteria and membership, as the existing typed gate seam supplies project evidence; the board validates current human facts at admission. | Symphony implements and versions the record lifecycle, authenticated decision methods, audit and UI once. Projects adopt that model and its conservative fresh-approval rules; host authentication and membership integration are still needed. |
+| B: project approval authority | Keep human request/decision facts in an approval ledger the project chooses or builds. Extend the project-policy seam beyond today's display-only `Gates` answer with authenticated decision operations and exact versioned attestations; the board stores admission receipts and authoritative generation bindings. | Projects keep their own approval semantics and storage, but implement the ledger, audit/history and a bounded freshness/revocation protocol. Protected admission depends on that service being available and compatible. The existing cache or custom landing command alone cannot provide it. |
+
+Both options use the same mandatory admission path and exact project/task/gate/input/target
+bindings. Neither adds a generic stamp kind or lets an assessment waive a gate. Both require
+authenticated people, retained rejection/rework history, commit-time generation checks and
+adapter checks before external effects. Missing, stale or unavailable authority refuses the
+protected operation. A project with no guards retains its existing behavior.
+
+For B, the project authority must publish a versioned decision/withdrawal observation into the
+board's guarded generation discipline before that observation can authorize admission. If it
+requires revocation effective across systems immediately, it must cooperate in an admission
+barrier; a fetched signature or timestamp alone cannot make a later database commit atomic with
+the external ledger. The last-validated-snapshot limit also applies to remote effects under A.
+Neither option promises unreported remote revocation. These limits are eligibility conditions
+for the project's adapter, not permission to fall back to an old pass.
+
+Recommend A: it puts the shared approval lifecycle beside the transaction that must arbitrate
+it and gives every protected route the same human-decision semantics. B remains a real
+alternative for a project that needs its own approval authority and accepts its extra adapter
+and availability obligations; the sources do not show an existing service already meeting them.
+The remaining sections specify A in detail. Choosing B would retain these identity/admission
+invariants while placing request/decision custody and its decision methods behind the project
+authority adapter. The separate workflow activation and durable-byte-storage choices decide
+neither option. This is a design choice, with no runtime comparison or implementation claimed.
 
 ## Identities and records
 
