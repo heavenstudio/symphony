@@ -142,10 +142,14 @@ fn a_refresh_mid_drag_or_flick_never_pulls_vertical_scrolling_back() {
                 scrollTo(0, 600);
                 const board = document.querySelector('.waiting-columns');
                 const touch = type => board.dispatchEvent(new TouchEvent(type, {{bubbles: true}}));
-                touch('touchstart');
-                if (!{dragging}) touch('touchend');
                 const movements = [];
                 const move = () => {{
+                    touch('touchstart');
+                    if (!{dragging}) {{
+                        touch('touchmove');
+                        document.dispatchEvent(new Event('scroll'));
+                        touch('touchend');
+                    }}
                     const before = scrollY;
                     window.reviewHoldPlace('.waiting-columns [data-slug]');
                     if ({dragging}) touch('touchmove');
@@ -153,8 +157,10 @@ fn a_refresh_mid_drag_or_flick_never_pulls_vertical_scrolling_back() {
                     const wanted = scrollY;
                     requestAnimationFrame(() => {{
                         movements.push([before, wanted, scrollY]);
+                        touch('touchend');
+                        document.dispatchEvent(new Event('scrollend'));
                         if (movements.length < 3) move();
-                        else {{ touch('touchend'); resolve(movements); }}
+                        else resolve(movements);
                     }});
                 }};
                 requestAnimationFrame(move);
@@ -172,6 +178,44 @@ fn a_refresh_mid_drag_or_flick_never_pulls_vertical_scrolling_back() {
                 "dragging={dragging}: the hold pulled the scroll back: {movements}"
             );
         }
+    }
+}
+
+/// A tap, a cancelled drag that scrolled nothing, and a completed flick must all release the
+/// touch state. With native anchoring off, only the shell can keep a later layout change still.
+#[test]
+fn touches_release_the_position_hold_after_their_scrolling_finishes() {
+    let site = site_of(&listing_of(&[("review", 30)]));
+    let Some(mut page) = chrome() else { return };
+    for kind in ["tap", "cancel", "flick"] {
+        open_on_a_phone(&mut page, &site);
+        let place = page.eval(&format!(
+            r#"new Promise(resolve => {{
+                document.documentElement.style.overflowAnchor = 'none';
+                scrollTo(0,600);
+                const board = document.querySelector('.waiting-columns');
+                const touch = type => board.dispatchEvent(new TouchEvent(type, {{bubbles: true}}));
+                touch('touchstart');
+                if ({kind:?} !== 'tap') touch('touchmove');
+                if ({kind:?} === 'flick') document.dispatchEvent(new Event('scroll'));
+                touch({kind:?} === 'cancel' ? 'touchcancel' : 'touchend');
+                if ({kind:?} === 'flick') document.dispatchEvent(new Event('scrollend'));
+                requestAnimationFrame(() => {{
+                    const row = [...board.querySelectorAll('[data-slug]')].find(row => {{
+                        const top = row.getBoundingClientRect().top;
+                        return top >= 0 && top < innerHeight;
+                    }});
+                    const before = row.getBoundingClientRect().top;
+                    window.reviewHoldPlace('.waiting-columns [data-slug]');
+                    row.style.transform = 'translateY(80px)';
+                    const shifted = row.getBoundingClientRect().top;
+                    requestAnimationFrame(() => resolve([before, shifted, row.getBoundingClientRect().top]));
+                }});
+            }})"#
+        ));
+        let before = place[0].as_f64().unwrap();
+        assert_eq!(place[1].as_f64().unwrap() - before, 80.0);
+        assert_eq!(place[2].as_f64().unwrap(), before, "{kind}: {place}");
     }
 }
 
@@ -193,6 +237,9 @@ fn vertical_finger_swipes_and_horizontal_stage_swipes_keep_their_native_scroll()
                 "Input.dispatchTouchEvent",
                 json!({"type":"touchMove","touchPoints":[{"x":x,"y":y}]}),
             );
+            if y == start - 40 {
+                page.eval("window.reviewHoldPlace('.waiting-columns [data-slug]')");
+            }
         }
         page.call(
             "Input.dispatchTouchEvent",

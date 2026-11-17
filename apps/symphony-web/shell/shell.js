@@ -352,6 +352,56 @@ function onGesture(stop) {
   };
 }
 
+// A touch that moves owns the scrolling until its scrollers finish their momentum. A refresh
+// arriving after touchstart must not begin a position hold in the middle of that gesture. Track
+// each scroller: an unrelated box ending its scroll must not end the page's flick.
+let touchScroll = null;
+addEventListener(
+  "touchstart",
+  () => {
+    touchScroll = { moved: false, down: true, scrollers: new Set() };
+  },
+  { capture: true, passive: true },
+);
+addEventListener(
+  "touchmove",
+  () => {
+    if (touchScroll) touchScroll.moved = true;
+  },
+  { capture: true, passive: true },
+);
+addEventListener(
+  "scroll",
+  (event) => {
+    if (touchScroll?.moved) touchScroll.scrollers.add(event.target);
+  },
+  { capture: true, passive: true },
+);
+const releaseTouch = (event) => {
+  const touch = touchScroll;
+  if (!touch || event.touches.length > 0) return;
+  touch.down = false;
+  // Scroll events are delivered before the next frame. A touch that scrolled nothing gets no
+  // scrollend, so let it go once those events have had their turn.
+  requestAnimationFrame(() => {
+    if (touchScroll === touch && touch.scrollers.size === 0) touchScroll = null;
+  });
+};
+addEventListener("touchend", releaseTouch, { capture: true, passive: true });
+addEventListener("touchcancel", releaseTouch, { capture: true, passive: true });
+addEventListener(
+  "scrollend",
+  (event) => {
+    if (!touchScroll) return;
+    touchScroll.scrollers.delete(event.target);
+    if (!touchScroll.down && touchScroll.scrollers.size === 0) touchScroll = null;
+  },
+  { capture: true, passive: true },
+);
+addEventListener("pagehide", () => {
+  touchScroll = null;
+});
+
 // A live update about to be drawn keeps what the reader looks at in place: the focused field on
 // the screen, else the first of `rows` on it. Only where the reader has scrolled: the box that
 // scrolls around it once it is off its top, else the page once it is. One at its top shows
@@ -363,6 +413,7 @@ function onGesture(stop) {
 // once it stays. The reader's own scroll, click or key ends the hold, including a drag or its
 // momentum already underway when the update arrived.
 window.reviewHoldPlace = (rows) => {
+  if (touchScroll?.moved) return;
   const shows = (node) => {
     const top = node.getBoundingClientRect().top,
       box = scrollerOf(node)?.getBoundingClientRect();
@@ -377,8 +428,7 @@ window.reviewHoldPlace = (rows) => {
   const scroller = scrollerOf(anchor),
     page = scrollY > 0;
   if (scroller ? scroller.scrollTop <= 0 : !page) return;
-  let place = placeOf(anchor);
-  const top = place[0];
+  const top = anchor.getBoundingClientRect().top;
   let stopped = false,
     frame = 0,
     quiet = 0,
@@ -388,12 +438,7 @@ window.reviewHoldPlace = (rows) => {
   });
   const hold = () => {
     if (!stopped && anchor.isConnected) {
-      const now = placeOf(anchor);
-      if (scrolledAway(place, now)) {
-        listening();
-        return;
-      }
-      const moved = now[0] - top;
+      const moved = anchor.getBoundingClientRect().top - top;
       let left = moved;
       if (Math.abs(left) >= 0.5 && scroller) {
         const before = scroller.scrollTop;
@@ -407,7 +452,6 @@ window.reviewHoldPlace = (rows) => {
       }
       quiet = Math.abs(moved - stuck) >= 0.5 || pendingNear() ? 0 : quiet + 1;
       stuck = left;
-      place = placeOf(anchor);
       if (quiet < 4 && ++frame < 1800) return requestAnimationFrame(hold);
     }
     listening();
