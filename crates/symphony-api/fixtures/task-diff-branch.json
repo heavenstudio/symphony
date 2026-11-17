@@ -1,0 +1,12 @@
+{
+  "source": "branch",
+  "base": "0123456789abcdef0123456789abcdef01234567",
+  "head": "89abcdef0123456789abcdef0123456789abcdef",
+  "files": [
+    { "path": "src/new.rs", "added": 12, "removed": 0 },
+    { "path": "src/old.rs", "added": 0, "removed": 4 },
+    { "path": "pictures/猫 \"new\"\t.png", "added": null, "removed": null }
+  ],
+  "truncated": false,
+  "reason": null
+}

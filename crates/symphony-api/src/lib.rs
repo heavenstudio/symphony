@@ -57,6 +57,7 @@ pub mod report_page;
 pub mod reports;
 mod runs;
 pub mod runs_rollup;
+mod task_diff;
 mod task_queries;
 mod task_stage;
 pub mod timeline;
@@ -73,6 +74,9 @@ pub use runs::{
     RunsPage, Suite, TRIGGERS, fold, run_day, run_name,
 };
 pub use runs_rollup::{RUNS_DAY_SCHEMA, RUNS_ROLLUP, RunsDay};
+pub use task_diff::{
+    TASK_DIFF_FILE_PATH, TASK_DIFF_PATH, TaskDiff, TaskDiffFile, TaskDiffPatch, TaskDiffSource,
+};
 pub use task_queries::{
     TaskKind, TaskStatus, slug_order, subtasks, tasks, tasks_in_progress, tasks_in_review,
     tasks_in_status,
