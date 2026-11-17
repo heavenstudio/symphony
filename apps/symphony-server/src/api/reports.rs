@@ -1,8 +1,9 @@
 //! The Reports page's read ([`symphony_api::report_page`]): the project's day files for a window,
 //! summed a period at a time. It reads three folders of `symphony/` in the project's git common dir
-//! ([`Folders`]) and, for the marks of a settings or instructions change, one `git log` of the default branch; never the board,
-//! so a board slow or down leaves it as it is. Each source's part of a period is none when no file
-//! holds an hour of it: missing, never a zero.
+//! ([`Folders`]) and, for the marks of a change of the project's settings or the instructions its
+//! agents work under, one `git log` of the default branch; never the board, so a board slow or down
+//! leaves it as it is. Each source's part of a period is none when no file holds an hour of it:
+//! missing, never a zero.
 //!
 //! A file is read whole only up to [`REPORTS_FILE_BYTES`] and the answer reads at most
 //! [`REPORTS_READ_BYTES`], newest days first; a file past either, one that does not read, a link or
