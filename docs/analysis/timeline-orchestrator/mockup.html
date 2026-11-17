@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Orchestrator timeline · design mockup</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#faf9f6;color:#302e2a;font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}button,a{font:inherit}button{cursor:pointer;background:#fff;border:1px solid #cfc9bf;border-radius:6px;padding:6px 11px;color:inherit}button:focus-visible,a:focus-visible{outline:3px solid #af701c;outline-offset:3px}button[aria-pressed=true]{background:#eee7da;border-color:#92764d}a{color:#72521b}header{padding:14px 30px;border-bottom:1px solid #ddd7ce;display:flex;gap:24px;align-items:center}header strong{margin-right:16px}main{max-width:1220px;margin:28px auto;padding:0 26px}h1{font-size:24px;line-height:1.25;margin:7px 0}h2{font-size:18px;margin:0}.muted{color:#6c675e}.badge{display:inline-block;border:1px solid #d4c6ac;background:#f4ecdc;padding:3px 8px;border-radius:5px;font-size:12px}.caption{margin:10px 0 22px}.gates{display:flex;gap:18px;padding:12px 0;border-bottom:1px solid #ddd7ce}.timeline{padding-top:20px}.top{display:flex;align-items:center;justify-content:space-between;gap:12px}.tools{display:flex;gap:7px}.hint{margin:7px 0 13px}.axis{height:29px;margin-left:152px;position:relative;border-bottom:1px solid #d9d3c9}.tick{position:absolute;transform:translateX(-50%);font-size:12px;color:#6c675e}.chart{position:relative}.lane{height:54px;display:grid;grid-template-columns:152px 1fr;border-bottom:1px solid #e7e2da}.lane-name{padding-top:16px;font-size:12px;color:#6c675e}.track{position:relative;min-width:0;background:repeating-linear-gradient(to right,transparent 0,transparent calc(20% - 1px),#eee9e1 calc(20% - 1px),#eee9e1 20%)}.bar{position:absolute;top:16px;height:22px;border-radius:3px;overflow:hidden;white-space:nowrap;font-size:11px;padding:2px 6px;background:#ded7cc;color:#3c352b}.orch{background:#e3c487;box-shadow:inset 2px 0 #faf9f6}.exec{background:#c9d8b6}.review{background:#c9d5e1}.run{background:#b9cfa8;padding:0;top:21px;height:12px}.stage{background:#e8e3d9}.mark{position:absolute;z-index:2;top:33px;width:26px;height:20px;border:0;background:transparent;padding:0;transform:translateX(-50%);font-size:10px;color:#4d4438}.mark::after{content:"";display:block;margin:auto;width:7px;height:7px;border:1px solid #756140;border-radius:50%;background:#fff}.mark[aria-pressed=true]{background:#f4e5c2;outline:2px solid #a46c21}.connections{position:absolute;left:152px;top:0;width:calc(100% - 152px);height:216px;pointer-events:none;z-index:3;overflow:visible}.selection{display:grid;grid-template-columns:1fr 260px;gap:22px;border:1px solid #d3c5ab;border-radius:7px;background:#fffdf8;padding:16px;margin-top:16px}.selection h3{font-size:14px;margin:0 0 6px}.selection p{margin:6px 0}.recipient{font-weight:600}.chooser{border-left:1px solid #e2d8c7;padding-left:16px}.chooser .controls{display:flex;gap:7px;margin-bottom:8px}.chooser button{font-size:12px}.message-list{margin:0;padding:0;list-style:none}.message-list button{border:0;background:transparent;padding:3px;text-align:left;width:100%}.message-list button[aria-pressed=true]{background:#f3e8d0}.phone-list,.phone-toggle{display:none}.footnote{font-size:12px;margin-top:14px;color:#6c675e}.brief{margin-top:24px;border-top:1px solid #ddd7ce;padding-top:16px}.thread-link{font-size:12px}.legend{display:flex;gap:20px;font-size:12px;color:#6c675e;margin-top:10px}.phone-row{border-bottom:1px solid #e7e2da;padding:7px 0;display:grid;grid-template-columns:45px 1fr;gap:8px;font-size:12px}.phone-row time{color:#6c675e}.phone-row button{padding:3px 6px;text-align:left;font-size:12px;width:100%;border:0}.phone-row small{display:block;color:#6c675e}.strip{height:5px;margin:5px 0;background:#c9d8b6;width:65%}.strip.orch{background:#e3c487;box-shadow:inset 2px 0 #faf9f6}.strip.review{background:#c9d5e1}
+@media(max-width:899px){header{padding:12px 16px;gap:15px;font-size:12px}header strong{margin-right:0}header .extra{display:none}main{margin:20px auto;padding:0 16px}h1{font-size:21px}.caption{font-size:12px;margin-bottom:12px}.gates{gap:12px;font-size:12px}.top{align-items:start;display:block}.tools{display:none}.hint{font-size:12px}.wide{display:none}.phone-list{display:block;height:240px;overflow:hidden;position:relative;mask-image:linear-gradient(transparent,#000 10px)}.phone-list.all{height:auto;mask-image:none}.phone-toggle{display:block;margin:8px 0;width:100%}.selection{display:block;padding:12px;font-size:12px}.selection h3{font-size:13px}.chooser{border-left:0;border-top:1px solid #e2d8c7;margin-top:12px;padding:10px 0 0}.message-list{display:none}.legend{display:none}.footnote{font-size:11px}.brief{font-size:13px}}
+</style>
+<header><strong>Symphony</strong><span>Tasks</span><span>Agents</span><span class="extra">Runs</span><span class="extra">Documents</span></header>
+<main>
+<span class="badge">Design mockup · illustrative task and times</span>
+<div class="caption">Same clock for every lane. One selected message shows its direction.</div>
+<div class="muted">app/example</div>
+<h1>A task with an orchestrator handover</h1>
+<div class="gates"><span>✓ Tests</span><span>✓ Review · calm-owl</span><span>✓ Pictures</span></div>
+<section class="timeline" aria-label="Timeline proposal">
+<div class="top"><h2>Timeline</h2><div class="tools"><button id="whole" aria-pressed="true">Whole task · 09:00–10:30</button><button id="work" aria-pressed="false">Work period · 09:10–10:20</button></div></div>
+<p class="hint muted">12 Nov · 1 h 30 m elapsed · 1 handover · 4 messages · 2 verdicts</p>
+<div class="wide"><div class="axis" id="axis"></div><div class="chart" id="chart"></div><div class="legend"><span>● Message at send time</span><span>↓ Addressed to</span><span>Orchestrator span = role held</span></div></div>
+<div class="phone-list" id="phone-list"></div>
+<button class="phone-toggle" id="show">Show all 16 steps</button>
+<div class="selection" aria-live="polite">
+<div><h3 id="selected-title"></h3><div id="route" class="recipient"></div><p id="address" class="muted"></p><p id="text"></p><a class="thread-link" href="#original-entry" id="entry-link">Open original thread entry ↓</a></div>
+<aside class="chooser" aria-label="Choose a message"><div class="controls"><button id="prev">← Previous</button><button id="next">Next →</button><span id="count" class="muted"></span></div><ul class="message-list" id="messages"></ul></aside>
+</div>
+<p class="footnote">An arrow shows the recorded address, not delivery or a reply. Full text appears on selection. Earlier and later messages keep their own times.</p>
+</section>
+<section class="brief" id="original-entry"><h2>Original thread entry <span id="original-id"></span></h2><p id="original-text"></p><p class="muted">Illustrative data. This mockup changes no task and sends no message.</p></section>
+</main>
+<script>
+const events=[
+ {id:2,at:15,from:"amber-robin",to:"@executor",holder:"cobalt-petrel",source:1,target:2,text:"Please fix the missing state on document pages and record the focused browser checks."},
+ {id:3,at:52,from:"cobalt-petrel",to:"@orchestrator",holder:"amber-robin",source:2,target:1,text:"Ready for review. The focused checks pass; pictures are attached to the task."},
+ {id:4,at:68,from:"birch-wren",to:"cobalt-petrel",holder:"cobalt-petrel",source:1,target:2,text:"Please check the no-board case against the reviewer’s example before the next review."},
+ {id:5,at:74,from:"cobalt-petrel",to:"@orchestrator",holder:"birch-wren",source:2,target:1,text:"The missing-binary case is fixed. Its regression check passes. Ready for re-review."}
+];
+const lanes=[
+ {name:"Stage",spans:[[0,12,"Ready","stage"],[12,52,"In progress","stage"],[52,65,"Review","stage"],[65,74,"In progress","stage"],[74,90,"Review","stage"]]},
+ {name:"Orchestrator",spans:[[5,60,"amber-robin","orch"],[60,90,"birch-wren · handover","orch"]]},
+ {name:"Executor",spans:[[12,52,"cobalt-petrel","exec"],[65,74,"cobalt-petrel","exec"]]},
+ {name:"Reviewer",spans:[[62,65,"calm-owl","review"],[74,84,"calm-owl · approve","review"]]},
+ {name:"Builds",spans:[[16,28,"build · 12 m","run"]]},
+ {name:"Tests",spans:[[30,39,"tests · 9 m","run"],[40,49,"tests · 9 m","run"],[69,73,"regression · 4 m","run"]]},
+ {name:"Gates",spans:[[84,90,"All met","review"]]}
+];
+let selected=3,start=0,end=90,all=false;
+const el=id=>document.getElementById(id);
+const clock=at=>`${String(9+Math.floor(at/60)).padStart(2,"0")}:${String(at%60).padStart(2,"0")}`;
+const pos=at=>(at-start)/(end-start)*100;
+function select(index){selected=(index+events.length)%events.length;const e=events[selected];if(e.at<start||e.at>end){start=0;end=90}draw();keepSelected()}
+function keepSelected(){const row=document.querySelector(`[data-message="${selected}"]`);if(row&&!all){const box=el("phone-list");box.scrollTop=row.offsetTop-box.offsetTop-90}}
+function draw(){
+ el("whole").setAttribute("aria-pressed",String(start===0));el("work").setAttribute("aria-pressed",String(start!==0));
+ el("axis").replaceChildren();for(let at=start;at<=end;at+=(end-start)/5){const tick=document.createElement("span");tick.className="tick";tick.style.left=`${pos(at)}%`;tick.textContent=clock(at);el("axis").append(tick)}
+ el("chart").replaceChildren();lanes.forEach((lane,i)=>{const row=document.createElement("div");row.className="lane";const name=document.createElement("div");name.className="lane-name";name.textContent=lane.name;const track=document.createElement("div");track.className="track";lane.spans.forEach(([from,to,label,kind])=>{if(to<=start||from>=end)return;const bar=document.createElement("span");bar.className=`bar ${kind}`;bar.style.left=`${pos(Math.max(start,from))}%`;bar.style.width=`${(Math.min(end,to)-Math.max(start,from))/(end-start)*100}%`;bar.title=`${label} · ${clock(from)}–${clock(to)}`;bar.textContent=kind==="run"?"":label;track.append(bar)});events.forEach((e,index)=>{if(e.source!==i||e.at<start||e.at>end)return;const mark=document.createElement("button");mark.className="mark";mark.style.left=`${pos(e.at)}%`;mark.setAttribute("aria-label",`Message ${e.id}, ${clock(e.at)}, ${e.from} to ${e.to}`);mark.setAttribute("aria-pressed",String(index===selected));mark.textContent=e.id;mark.onclick=()=>select(index);track.append(mark)});row.append(name,track);el("chart").append(row)});
+ const e=events[selected],x=pos(e.at),y1=e.source*54+44,y2=e.target*54+27;const svg=document.createElementNS("http://www.w3.org/2000/svg","svg");svg.classList.add("connections");svg.innerHTML=`<defs><marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 L10 5 L0 10 Z" fill="#9b641e"/></marker></defs><line x1="${x}%" x2="${x}%" y1="${y1}" y2="${y2}" stroke="#9b641e" stroke-width="2" marker-end="url(#arrow)"/>`;el("chart").append(svg);
+ el("selected-title").textContent=`Message #${e.id} · 12 Nov, ${clock(e.at)}`;el("route").textContent=`${e.from} → ${e.to}`;el("address").textContent=e.to.startsWith("@")?`${e.holder} held ${e.to} at send time. Delivery is not shown.`:"Direct handle address. Delivery is not shown.";el("text").textContent=e.text;el("count").textContent=`${selected+1} / ${events.length}`;el("original-id").textContent=`#${e.id}`;el("original-text").textContent=`${clock(e.at)} · ${e.from} → ${e.to}: ${e.text}`;
+ el("messages").replaceChildren();events.forEach((m,i)=>{const li=document.createElement("li"),button=document.createElement("button");button.textContent=`${clock(m.at)} · #${m.id} · ${m.from}`;button.setAttribute("aria-pressed",String(i===selected));button.onclick=()=>select(i);li.append(button);el("messages").append(li)});
+}
+const steps=[
+ [0,"Ready",null],[5,"Orchestrator assigned","amber-robin"],[12,"Executor claimed","cobalt-petrel"],[15,"message",0],[16,"Build · 12 m",null],[30,"Test · 9 m",null],[40,"Test · 9 m",null],[52,"message",1],[60,"Orchestrator handover","amber-robin → birch-wren"],[62,"Reviewer joined","calm-owl"],[65,"Changes requested","calm-owl → @executor"],[68,"message",2],[69,"Test · 4 m",null],[74,"message",3],[84,"Review approved","calm-owl"],[90,"Done",null]
+];
+steps.forEach(([at,label,detail])=>{const row=document.createElement("div");row.className="phone-row";const time=document.createElement("time");time.textContent=clock(at);const content=document.createElement("div");if(label==="message"){row.dataset.message=detail;const m=events[detail],button=document.createElement("button");button.textContent=`#${m.id} · ${m.from} → ${m.to}`;button.onclick=()=>select(detail);content.append(button)}else{content.textContent=label;if(detail){const small=document.createElement("small");small.textContent=detail;content.append(small)}}row.append(time,content);el("phone-list").append(row)});
+el("whole").onclick=()=>{start=0;end=90;draw()};el("work").onclick=()=>{start=10;end=80;draw()};el("prev").onclick=()=>select(selected-1);el("next").onclick=()=>select(selected+1);el("show").onclick=()=>{all=!all;el("phone-list").classList.toggle("all",all);el("show").textContent=all?"Show latest steps":"Show all 16 steps";if(!all)el("phone-list").scrollTop=el("phone-list").scrollHeight};draw();el("phone-list").scrollTop=el("phone-list").scrollHeight;
+</script>
+</html>
