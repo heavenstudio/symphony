@@ -171,6 +171,17 @@ use; never a code like `M17`, which ends up shared by unrelated work.
 
 ## Code
 
+### `code/consumer-api-two-releases`
+
+A public Rust item a consumer calls keeps working in the release that brings its replacement,
+without `#[deprecated]`: a consumer's lint denies warnings. A separate task may remove it only in
+a later release, with concrete read-only evidence that consumers have migrated, updating the
+consumer-API compile guards with it. Review checks a removal or signature change against those
+guards; kit and helper major-version requirements still apply. The procedure and evidence are in
+[CHECKS](docs/CHECKS.md#consumer-api-changes), from
+[its card](docs/DECISIONS.md#consumer-api-break-release), alongside the current
+[release contract](docs/RELEASES.md#the-release-run).
+
 ### `code/no-timed-waits`
 
 No code sleeps or waits by a number: a wait is for its event (a channel's message, a process's
