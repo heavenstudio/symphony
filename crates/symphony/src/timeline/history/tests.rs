@@ -89,7 +89,7 @@ fn direct_role_broadcast_outside_and_multirole_addresses_keep_exact_metadata() {
 
 #[test]
 fn inheritance_uses_the_recorded_parent_at_send_time_and_names_its_source() {
-    let mut sources = BTreeMap::from([
+    let mut sources: BTreeMap<String, Source> = BTreeMap::from([
         (
             "child".into(),
             source(
