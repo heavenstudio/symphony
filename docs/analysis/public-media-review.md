@@ -110,18 +110,16 @@ state through layout mockups. The [source analysis](board-design.md#the-data) ex
 product titles and slugs were reworded neutrally before rendering; status, age, priority, waits
 and review counts remain the recorded values. That provenance prevents calling these unredacted
 original private titles or wholly synthetic data. No account name, credential or personal path
-was found in them. Their remaining task themes, blocker summaries and operating state are a
-residual publication question for that project's owner.
+was found in them. Their remaining task themes, blocker summaries and operating state are
+derived data, not wholly synthetic fixtures.
 
-Recommended disposition: ask the public-readiness owner whether the already anonymized,
-task-derived content is approved for public retention. If it is not, preserve the historical
-comparison's decision/verdict record and mark the six affected illustrations as withheld; add
-separately named, clearly labelled synthetic illustrations of A/B/C using owned fictional board
-fixtures. Preserve the layout stress cases (many blocked tasks, absent orchestrator, mixed ages,
-review counts and phone/wide widths), but use fictional titles, slugs, blockers and counts.
-Coordinate `board-data.js`, the mockup HTML, the source analysis and all card uses together: simply
-retaking images while leaving the original data/source or caption would not settle the disclosure.
-No new synthetic replacement is justified until this residual choice is settled; none is made here.
+Disposition: retain these six mockups with their truthful derived-data and layout-mockup
+provenance, as settled in publication disposition #10954 on
+[[task:docs/public-media-privacy-review]]. Supplemental independent review #10968 inspected all
+six at native dimensions and found no concrete additional disclosure. Preserve the recorded
+status, age, priority, waits and review-count provenance; neutral rewording does not turn the
+illustrations into wholly fictional data. No withholding or synthetic replacement is required
+for the reviewed content. Original Git evidence remains available.
 
 ### B: already blurred historical captures — three images
 
@@ -131,10 +129,11 @@ inspection found no private identity/title confidently readable. Layout, stage c
 health/work counts remain visible, as the [source analysis](board-design.md#the-data) records.
 No attempt to reverse the blur was made; inability to read it is not proof of safe anonymization.
 
-Retain provisionally as historical evidence and include these three files in the same publication
-choice as D. If a stronger redaction is required, replace the already obscured regions with opaque,
-explicitly labelled privacy masks and retain the historical caption; do not replace them with
-invented historical screenshots. This report does not authorize deleting them.
+Disposition: retain these three historical illustrations under publication disposition #10954,
+independently confirmed in supplemental review #10968. Native-size reinspection found no private
+identity/title confidently readable. This bounded retention does not certify irreversible
+anonymization; preserve the blur caveat, historical captions and original-history availability.
+No invented historical screenshot, deletion or history rewrite follows from this disposition.
 
 ### R: retain — 161 images
 
@@ -162,9 +161,10 @@ complete inventory are validated, with the project's document and lint checks re
 thread at the ready tip. No new executable behaviour needs unit tests or new coverage.
 
 The four confirmed machine-label exposures are repaired in the current tree; their unredacted
-historical objects remain for the coordinated history treatment. The six D and three B images
-remain a bounded owner disposition question. Readiness must not be reported as cleared on the
-strength of this inventory.
+historical objects remain available in retained Git history. The six D and three B images are
+retained under publication disposition #10954 and independent confirmation #10968, with their
+derived-data and blur caveats intact. These bounded media results do not clear the rest of the
+repository or a package archive.
 
 Uninspected exclusions are reachable historical versions of images, untracked/ignored files,
 board uploads and live attachments, user/consumer checkouts, remote-hosted copies, `.crate`
@@ -179,9 +179,9 @@ live task submissions, broad media deletion or history were changed.
 
 Each row was visually inspected and its metadata/source checked. Dispositions: **H** = confirmed
 personal machine label in the inspected original, current derivative redacted; **D** = anonymized
-task-derived mockup, public retention to decide; **B** = already blurred historical capture,
-provisional retention; **R** =
-retain, no confirmed finding. H is repaired only in the current tree; D and B remain unresolved.
+task-derived mockup, retained with truthful provenance; **B** = already blurred historical capture,
+retained with the blur limitation; **R** = retain, no confirmed finding. H is repaired only in the
+current tree; D and B retention is settled by disposition #10954 and independent review #10968.
 Paths are relative to the repository root. Hashes identify the inspected source commit; the four
 H links now open redacted derivatives whose hashes are above. No exposed pixels are embedded.
 

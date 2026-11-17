@@ -124,6 +124,14 @@ fn constants() -> String {
         ("TASK_DIFF_PATH", text(api::TASK_DIFF_PATH)),
         ("TASK_DIFF_FILE_PATH", text(api::TASK_DIFF_FILE_PATH)),
         ("TIMELINE_EVERY", api::timeline::TIMELINE_EVERY.to_string()),
+        (
+            "TIMELINE_HISTORY_LIMIT",
+            api::timeline::TIMELINE_HISTORY_LIMIT.to_string(),
+        ),
+        (
+            "TIMELINE_HISTORY_SOURCES",
+            api::timeline::TIMELINE_HISTORY_SOURCES.to_string(),
+        ),
         ("AGENT_FOCUS_PATH", text(api::AGENT_FOCUS_PATH)),
         ("AGENT_SCREEN_PATH", text(api::AGENT_SCREEN_PATH)),
     ];
@@ -311,6 +319,14 @@ fn task_declarations(cfg: &Config) -> Vec<Declared> {
         declared::<api::timeline::RunResult>(cfg),
         declared::<api::timeline::GateLane>(cfg),
         declared::<api::timeline::GateSpan>(cfg),
+        declared::<api::timeline::History>(cfg),
+        declared::<api::timeline::HistorySource>(cfg),
+        declared::<api::timeline::HistoryState>(cfg),
+        declared::<api::timeline::RoleSpan>(cfg),
+        declared::<api::timeline::TimelineMessage>(cfg),
+        declared::<api::timeline::MessageEndpoint>(cfg),
+        declared::<api::timeline::EndpointState>(cfg),
+        declared::<api::timeline::RoleEndpoint>(cfg),
         // Its changed files and a patch opened from that comparison.
         declared::<api::TaskDiffSource>(cfg),
         declared::<api::TaskDiff>(cfg),
@@ -2403,6 +2419,57 @@ mod sample {
 #[cfg(test)]
 mod tests {
     use super::source;
+
+    #[test]
+    fn timeline_history_declarations_keep_optional_history_and_explicit_unknown_states() {
+        let declarations = super::declarations();
+        for (name, fields) in [
+            ("TaskTimeline", &["history?: History"][..]),
+            (
+                "History",
+                &[
+                    "sources: Array<HistorySource>",
+                    "sources_complete: boolean",
+                    "roles: Array<RoleSpan>",
+                    "messages: Array<TimelineMessage>",
+                ][..],
+            ),
+            (
+                "HistorySource",
+                &[
+                    "state: HistoryState",
+                    "first_id: number | null",
+                    "before: number | null",
+                ][..],
+            ),
+            (
+                "TimelineMessage",
+                &[
+                    "recipient: string | null",
+                    "from: MessageEndpoint",
+                    "to: MessageEndpoint",
+                    "after_close: boolean | null",
+                ][..],
+            ),
+        ] {
+            let declared = declarations
+                .iter()
+                .find(|declared| declared.name == name)
+                .unwrap();
+            for field in fields {
+                assert!(
+                    declared.decl.contains(field),
+                    "{name} missing {field}: {}",
+                    declared.decl
+                );
+            }
+        }
+        let types = super::types();
+        assert!(types.contains("\"complete\" | \"partial\" | \"unavailable\""));
+        assert!(
+            types.contains("\"known\" | \"ambiguous\" | \"everyone\" | \"outside\" | \"unknown\"")
+        );
+    }
 
     #[test]
     fn task_diff_declarations_keep_source_words_and_nullable_fields() {
