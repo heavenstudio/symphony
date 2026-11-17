@@ -9,7 +9,7 @@ use notify::event::{AccessKind, CreateKind, Flag, ModifyKind, RemoveKind, Rename
 use notify::{Event, EventKind, Watcher};
 use std::collections::BTreeSet;
 use std::net::SocketAddr;
-use std::sync::{Arc, mpsc};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 use symphony_api::{Block, Document, GalleryItem, Media};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -365,16 +365,14 @@ async fn watcher_refreshes_gallery_picture_but_reuses_it_for_document_events() {
     assert!(!hub.sweep(), "a folder readable again is unchanged");
 
     eprintln!("{PHASE}item removed by worker");
-    // Run the production loop with a watcher that can deliver no events and a short period.
-    // Keeping the sender alive leaves the worker on its idle timeout path, not disconnected.
-    let (_send, recv) = mpsc::sync_channel(1);
+    // Run the production loop with a watcher that can deliver no events and a short period: the
+    // period's sweep alone finds the removal.
     let watcher = notify::NullWatcher::new(|_| {}, notify::Config::default()).unwrap();
     let weak = Arc::downgrade(&hub);
     let backstop = Backstop::new(Duration::from_millis(500));
     *hub.worker.lock().unwrap() = Some(std::thread::spawn(move || {
         super::run(
             weak,
-            recv,
             watcher,
             BTreeSet::new(),
             backstop,

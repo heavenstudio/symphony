@@ -57,6 +57,7 @@ pub mod report_page;
 pub mod reports;
 mod runs;
 pub mod runs_rollup;
+mod task_diff;
 mod task_queries;
 mod task_stage;
 pub mod timeline;
@@ -73,6 +74,9 @@ pub use runs::{
     RunsPage, Suite, TRIGGERS, fold, run_day, run_name,
 };
 pub use runs_rollup::{RUNS_DAY_SCHEMA, RUNS_ROLLUP, RunsDay};
+pub use task_diff::{
+    TASK_DIFF_FILE_PATH, TASK_DIFF_PATH, TaskDiff, TaskDiffFile, TaskDiffPatch, TaskDiffSource,
+};
 pub use task_queries::{
     TaskKind, TaskStatus, slug_order, subtasks, tasks, tasks_in_progress, tasks_in_review,
     tasks_in_status,
@@ -496,6 +500,10 @@ pub struct Task {
     /// The plugins' board fields: plugin name, then field name, then its value.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub fields: std::collections::BTreeMap<String, std::collections::BTreeMap<String, FieldValue>>,
+    /// Replayed stretches in review, including an active round, for open and finished tasks.
+    /// None means the summary is unavailable (including older servers), not zero reviews.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub review_rounds: Option<u32>,
     /// What an open task waits on; none for a closed one, or from a server before it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub waits_on: Option<WaitsOn>,
@@ -1113,6 +1121,9 @@ pub struct TaskFields {
     pub roles: Option<Vec<Role>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub instruction: Option<bool>,
+    /// Present when the known review-round count changes. Losing the summary replaces the task.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub review_rounds: Option<u32>,
     /// Present only when what it waits on changes; one of no kind (empty) clears it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub waits_on: Option<WaitsOn>,

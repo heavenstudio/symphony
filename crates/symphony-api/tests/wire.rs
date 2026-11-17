@@ -19,6 +19,8 @@ mod machine_work;
 mod reader_tests;
 #[path = "wire/section_ends.rs"]
 mod section_ends;
+#[path = "wire/task_diff.rs"]
+mod task_diff;
 #[path = "wire/waits_on.rs"]
 mod waits_on;
 

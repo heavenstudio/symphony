@@ -324,28 +324,28 @@ on_both! {
     }
 }
 
-// On SurrealDB alone: it counts the round trips SurrealDB's client makes.
-#[test]
-fn the_board_is_one_round_trip_however_big_it_is() {
+on_both! {
+fn the_board_is_one_round_trip_however_big_it_is(backend: Backend) {
     for size in [1, 40] {
-        let f = Fixture::new(a_board_of(size));
-        let before = f.store.client().requests();
+        let f = Fixture::on(backend, a_board_of(size));
+        let before = f.store.database().requests();
         let board = f.store.board().unwrap();
-        assert_eq!(f.store.client().requests() - before, 1, "{size} tasks");
+        assert_eq!(f.store.database().requests() - before, 1, "{size} tasks");
         assert_eq!(board.tasks.len(), size);
         assert_eq!(board.sessions.len(), 2);
     }
 }
+}
 
-// On SurrealDB alone: it counts the round trips SurrealDB's client makes.
-#[test]
-fn a_task_read_is_one_round_trip_too() {
-    let f = Fixture::new(a_board_of(5));
-    let before = f.store.client().requests();
+on_both! {
+fn a_task_read_is_one_round_trip_too(backend: Backend) {
+    let f = Fixture::on(backend, a_board_of(5));
+    let before = f.store.database().requests();
     f.store.get("sim/t003").unwrap();
     f.store.tasks(Some("ready")).unwrap();
     f.store.session("amber-heron").unwrap();
-    assert_eq!(f.store.client().requests() - before, 3);
+    assert_eq!(f.store.database().requests() - before, 3);
+}
 }
 
 /// `read` of a board holding a ready `sim/jump`, with another session's claim of it forced into the
@@ -401,7 +401,7 @@ fn consistent(task: &Task) {
     );
 }
 
-// On SurrealDB alone: SurrealDB's engine is its subject.
+// SurrealDB alone: claimed_mid_read injects an HTTP gate in its field definition.
 #[test]
 fn tasks_is_one_snapshot() {
     let read = claimed_mid_read(|store| store.tasks(None).unwrap());
@@ -409,13 +409,13 @@ fn tasks_is_one_snapshot() {
     read.iter().for_each(consistent);
 }
 
-// On SurrealDB alone: SurrealDB's engine is its subject.
+// SurrealDB alone: claimed_mid_read injects an HTTP gate in its field definition.
 #[test]
 fn get_is_one_snapshot() {
     consistent(&claimed_mid_read(|store| store.get("sim/jump").unwrap()));
 }
 
-// On SurrealDB alone: SurrealDB's engine is its subject.
+// SurrealDB alone: claimed_mid_read injects an HTTP gate in its field definition.
 #[test]
 fn the_board_is_one_snapshot() {
     let board = claimed_mid_read(|store| store.board().unwrap());
@@ -504,15 +504,14 @@ on_both! {
 
 /// The requests a call makes, and what it gave.
 fn counted<T>(f: &Fixture, call: impl FnOnce() -> T) -> (usize, T) {
-    let before = f.store.client().requests();
+    let before = f.store.database().requests();
     let given = call();
-    (f.store.client().requests() - before, given)
+    (f.store.database().requests() - before, given)
 }
 
-// On SurrealDB alone: it counts the round trips SurrealDB's client makes.
-#[test]
-fn a_rule_is_its_read_and_one_write_that_gives_back_the_task_as_written() {
-    let f = Fixture::new(Seed::default());
+on_both! {
+fn a_rule_is_its_read_and_one_write_that_gives_back_the_task_as_written(backend: Backend) {
+    let f = Fixture::on(backend, Seed::default());
     let orch = f.session("orchestrator");
     let worker = f.session("worker");
     f.task("p/a");
@@ -546,11 +545,11 @@ fn a_rule_is_its_read_and_one_write_that_gives_back_the_task_as_written() {
     });
     assert_eq!(requests, 2);
 }
+}
 
-// On SurrealDB alone: it counts the round trips SurrealDB's client makes.
-#[test]
-fn a_new_task_is_one_round_trip_and_a_move_under_another_two() {
-    let f = Fixture::new(Seed::default());
+on_both! {
+fn a_new_task_is_one_round_trip_and_a_move_under_another_two(backend: Backend) {
+    let f = Fixture::on(backend, Seed::default());
     let orch = f.session("orchestrator");
     let (requests, made) = counted(&f, || {
         f.store.create(&NewTask::new("p/a", "A", &orch)).unwrap()
@@ -579,14 +578,15 @@ fn a_new_task_is_one_round_trip_and_a_move_under_another_two() {
         (3, vec![orch.as_str()])
     );
 }
+}
 
-// On SurrealDB alone: it counts the round trips SurrealDB's client makes.
-#[test]
-fn a_new_session_is_two_round_trips() {
-    let f = Fixture::new(Seed::default());
+on_both! {
+fn a_new_session_is_two_round_trips(backend: Backend) {
+    let f = Fixture::on(backend, Seed::default());
     let (requests, made) = counted(&f, || f.store.register(&NewSession::new("worker")).unwrap());
     assert_eq!(requests, 2);
     assert_eq!(made, f.store.session(&made.row.handle).unwrap());
+}
 }
 
 /// A schema definition failure leaves no partially created board or version marker.
@@ -635,14 +635,15 @@ fn a_definition_that_fails_leaves_no_board_taken_for_made() {
     );
 }
 
-// On SurrealDB alone: it counts the round trips SurrealDB's client makes.
-#[test]
-fn opening_a_board_already_made_is_one_round_trip() {
-    let first = crate::common::client();
-    let (addr, db) = (first.addr().to_string(), first.database().to_string());
-    Store::open(first).unwrap();
-    let again = Store::open(rpc::Client::new(&addr, "sf", &db)).unwrap();
-    assert_eq!(again.client().requests(), 1);
+on_both! {
+fn opening_a_board_already_made_is_one_round_trip(backend: Backend) {
+    let f = Fixture::on(backend, Seed::default());
+    let again = Store::opening_on(
+        f.other_database(), Box::new(|| NOW),
+        Box::new(|_| true), "test-host", &symphony_board::Opening::read(),
+    ).unwrap();
+    assert_eq!(again.database().requests(), 1);
+}
 }
 
 on_both! {

@@ -80,7 +80,13 @@ export function position(triggerId: string, popupId: string): void {
     "style",
     `position:fixed;visibility:hidden;left:0;top:0;width:max-content;min-width:0;max-width:${Math.max(viewport[2] - 16, 0)}px;overflow:hidden;margin:0;z-index:1100`,
   );
-  const content: [number, number] = [popup.offsetWidth, popup.scrollHeight];
+  // offsetWidth rounds fractional text widths down too: fixing that rounded width can wrap the
+  // selected label beside its check. The resolved border-box width keeps that fraction without
+  // the opening animation's transform, which getBoundingClientRect would include.
+  const content: [number, number] = [
+    Math.ceil(Number.parseFloat(getComputedStyle(popup).width)),
+    popup.scrollHeight,
+  ];
   const place = (measured: [number, number]) => {
     const [left, top, width, height] = popupRect(anchor, viewport, measured);
     popup.setAttribute(

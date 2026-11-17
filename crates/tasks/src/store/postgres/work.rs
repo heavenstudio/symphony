@@ -223,7 +223,7 @@ SELECT jsonb_build_object( \
 
 /// The checks a pass's write makes first, before any statement of its own moves a version or a
 /// `last_seen`: each task as read (`fenced`), then each dropped holder as read ([`SEEN`]).
-const FENCES: &str = "IF EXISTS (SELECT 1 FROM jsonb_array_elements(v -> 'fenced') AS g \
+pub(in crate::store) const FENCES: &str = "IF EXISTS (SELECT 1 FROM jsonb_array_elements(v -> 'fenced') AS g \
         WHERE (SELECT version FROM task WHERE slug = g ->> 'slug') \
             IS DISTINCT FROM (g ->> 'version')::bigint) THEN \
     RAISE EXCEPTION 'stale'; \
@@ -232,7 +232,7 @@ END IF;";
 /// A pass's writes, after its fences: each receiver still there and fenced, its slot counter where
 /// it was read; each give's role, version, slot counter and line, sent by `sender`; each mark set
 /// or lifted (`super::super::surreal::work::gives`).
-fn gives() -> String {
+pub(in crate::store) fn gives() -> String {
     format!(
         "IF EXISTS (SELECT 1 FROM jsonb_array_elements_text(v -> 'receivers') AS h \
         WHERE NOT EXISTS (SELECT 1 FROM session WHERE handle = h AND left_at IS NULL)) THEN \

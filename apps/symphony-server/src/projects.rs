@@ -16,8 +16,9 @@
 //! Every route but `/api/front`, which loopback's name alone reaches, answers a Host naming this
 //! machine alone.
 //! A project's state is its registered root's under its id: until the server stops, the registry
-//! is read again whenever its file changes, at a request or at the server's own look every
-//! [`LOOK`], and a changed root or id is served from new state.
+//! is read again whenever its file changes, at a request or at the server's own look, which a
+//! watcher of the machine folder wakes ([`Projects::watch`]), and a changed root or id is served
+//! from new state.
 //!
 //! A project this build cannot serve by the host rule (`symphony::machine::host`) is refused, its
 //! pages saying why and what serves it: for a release's server, the `[plugins.process]` command a
@@ -42,10 +43,12 @@ use axum::Router;
 use axum::extract::{ConnectInfo, Request, State};
 use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, Uri, header};
 use axum::response::{IntoResponse, Json, Response};
+use notify::Watcher;
 use symphony::entrypoint::below;
 use symphony::machine::{Entry, PROJECTS, Registry, switch};
 use tower::ServiceExt;
 
+use crate::backstop::{self, Backstop, Wake, Waker};
 use crate::front::Shared;
 use crate::host::{Build, Lack};
 use crate::live::{Signal, Standing};
@@ -54,15 +57,52 @@ mod retired;
 
 pub(crate) use retired::{Stopped, close_saves};
 
-/// How often the server reads the registry again when no request does.
-const LOOK: Duration = Duration::from_secs(1);
-
 /// The thread name of the server's look at the registry ([`Projects::watch`]).
 pub(crate) const REGISTRY_WORKER: &str = "review project registry";
 
 /// What starts the maintenance of a project served beside the starter's, the workers its state
 /// holds until it stops ([`Shared::maintained`]).
 pub(crate) type Maintain = dyn Fn(&Arc<Shared>) -> Vec<std::thread::JoinHandle<()>> + Send + Sync;
+
+/// Whether a watcher's `event` in the machine folder can have changed what the server's look reads:
+/// the registry ([`PROJECTS`]) or the `current` link, which says what each project's pages say of
+/// the machine's server ([`switch`]), written, renamed into place or removed; a rescan; or the
+/// watcher's own error.
+fn registry_event(event: &notify::Result<notify::Event>) -> bool {
+    event.as_ref().map_or(true, |event| {
+        event.need_rescan()
+            || (!matches!(event.kind, notify::EventKind::Access(_))
+                && event.paths.iter().any(|path| {
+                    path.file_name().is_some_and(|name| {
+                        name == PROJECTS || name == symphony::machine::release::CURRENT
+                    })
+                }))
+    })
+}
+
+/// A watcher `W` of `machine`'s own entries, kept while the server looks, which wakes `look` at
+/// each [`registry_event`]. A watcher that cannot start, or cannot watch the folder, is said in the
+/// log and wakes nothing: the backstop's period then reads the registry alone.
+fn watch_registry<W: Watcher>(machine: &Path, look: Waker) -> Option<W> {
+    let handler = move |event: notify::Result<notify::Event>| {
+        if registry_event(&event) {
+            look.wake();
+        }
+    };
+    W::new(handler, notify::Config::default())
+        .and_then(|mut watcher| {
+            watcher.watch(machine, notify::RecursiveMode::NonRecursive)?;
+            Ok(watcher)
+        })
+        .inspect_err(|why| {
+            eprintln!(
+                "· Symphony projects: cannot watch {} for the registry: {why}; it is read once a \
+                 period",
+                machine.display()
+            );
+        })
+        .ok()
+}
 
 /// The registered projects and the server that serves them.
 pub(crate) struct Projects {
@@ -155,27 +195,34 @@ impl Projects {
 
     /// The server's generation is live, its socket hand-off committed: start the maintenance of
     /// every other project it serves now, and of each it serves from now on, then look at the
-    /// registry every [`LOOK`] until the starter stops, as a request reads it, so a project
-    /// registered is served, warmed and maintained, and one removed retired and its maintenance
-    /// stopped, though no page asks. The look runs on a thread of its own, within the runtime it is
-    /// started in, which warms what it reads.
+    /// registry until the starter stops, as a request reads it, so a project registered is served,
+    /// warmed and maintained, and one removed retired and its maintenance stopped, though no page
+    /// asks. The look runs on a thread of its own, within the runtime it is started in, which warms
+    /// what it reads: once as it starts, then at each event of a watcher of the machine folder that
+    /// names the registry or `current` ([`registry_event`]), and once a backstop period, as an
+    /// event can be lost.
     pub(crate) fn watch(self: &Arc<Self>) -> std::thread::JoinHandle<()> {
+        self.watch_with::<notify::RecommendedWatcher>(backstop::PERIOD)
+    }
+
+    /// [`Projects::watch`] by watcher `W`, the registry read on its own every `period`.
+    fn watch_with<W: Watcher>(self: &Arc<Self>, period: Duration) -> std::thread::JoinHandle<()> {
         self.go_live();
         let projects = Arc::clone(self);
         let runtime = tokio::runtime::Handle::try_current().ok();
         crate::front::worker(REGISTRY_WORKER, move || {
             let _within = runtime.as_ref().map(tokio::runtime::Handle::enter);
-            loop {
-                #[expect(
-                    clippy::disallowed_methods,
-                    reason = "no-timed-waits baseline: reads the registry again every LOOK, where a watcher's event of the machine folder's registry is the event"
-                )]
-                let stopped = projects.starter.wait(LOOK);
-                if stopped {
-                    break;
-                }
+            let mut backstop = Backstop::new(period);
+            projects.starter.wake_at_stop(backstop.waker());
+            // Watched before the first look, so no change after it goes unheard.
+            let _watcher = watch_registry::<W>(&projects.machine, backstop.waker());
+            while !projects.starter.stopping() {
                 drop(projects.read());
                 projects.tell_switch();
+                // A registry written and renamed into place is one change: read once both are done.
+                if backstop.wait() == Wake::Event && !projects.starter.stopping() {
+                    backstop.debounce(backstop::QUIET, backstop::QUIET);
+                }
             }
         })
     }

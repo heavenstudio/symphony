@@ -8,7 +8,7 @@ use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, LazyLock, Mutex, OnceLock, RwLock, Weak, mpsc};
 use std::time::{Duration, Instant};
 
-use crate::backstop::{self, Backstop, Sweep, Wake};
+use crate::backstop::{self, Backstop, Sweep, Wake, Waker, Wakers};
 use notify::{RecursiveMode, Watcher};
 use serde_json::{Value, json};
 use symphony::{branches, dashboard, taskview};
@@ -152,8 +152,15 @@ pub(crate) struct Hub {
     /// The branches whose task the board last said is done or cancelled ([`branches::finished`]):
     /// they post no card.
     finished: Mutex<BTreeSet<String>>,
-    /// Set when `finished` changed, so the loop scans the branches again without a file event.
+    /// Set when `finished` changed, so the loop scans the branches again without a file event
+    /// ([`Hub::ask_rescan`]).
     rescan: std::sync::atomic::AtomicBool,
+    /// What wakes the documents' loop ([`documents`]): a rescan asked for, a picture a held card
+    /// waits on landed. Set as the hub starts watching; a hub that never does has none.
+    documents_waker: OnceLock<Waker>,
+    /// What the hub wakes as it finds or loses its board ([`Hub::has_board`]): its server's
+    /// maintenance, given as the hub starts ([`Hub::wake_at_board`]).
+    board_wakers: OnceLock<Arc<Wakers>>,
     /// Whether `trees` is what git last listed: unset before the first listing and after one that
     /// failed, when the owner's asks on a branch wait ([`symphony::owner_asks::Reading::listed`]).
     listed: std::sync::atomic::AtomicBool,
@@ -237,7 +244,13 @@ pub(crate) struct Hub {
     /// see that a read rendered nothing.
     renders: AtomicU64,
     /// The store the page reads of the board share ([`Hub::reader`]), once one has been opened.
-    reader: Mutex<Option<Arc<symphony_board::Store>>>,
+    reader: Mutex<BoardReader>,
+    /// Independent deadlines for failed board work ([`retry`]).
+    board_retry: Mutex<retry::Retry>,
+    chat_retry: Mutex<retry::Retry>,
+    dispatch_retry: Mutex<retry::Retry>,
+    give_retry: Mutex<retry::Retry>,
+    retry_clock: Box<dyn Fn() -> Instant + Send + Sync>,
     /// How [`Hub::reader`] opens the board: [`taskview::connect`], held to `repository` as every
     /// reach from `root` here is ([`taskview::serve`]), or a test's board.
     pub(crate) connect_reader: Box<Connect>,
@@ -257,6 +270,13 @@ pub(crate) struct Hub {
 /// copy ([`reports`]).
 type BranchScan = (Arc<Vec<branches::BranchCard>>, f64, Arc<BTreeSet<String>>);
 
+#[derive(Default)]
+struct BoardReader {
+    store: Option<Arc<symphony_board::Store>>,
+    retry: retry::Retry,
+    error: Option<String>,
+}
+
 /// How a hub opens the board of the checkout at a path.
 pub(crate) type Connect = dyn Fn(&Path) -> Result<symphony_board::Store, String> + Send + Sync;
 
@@ -272,6 +292,7 @@ struct TaskState {
     /// Shared with the reads that take what they need of it, so none copies the whole board.
     last: Option<Arc<Tasks>>,
     raw: Option<symphony_board::Board>,
+    busy: Vec<String>,
     error: Option<String>,
 }
 
@@ -343,6 +364,7 @@ impl Hub {
             tasks: Mutex::new(TaskState {
                 last: None,
                 raw: None,
+                busy: Vec::new(),
                 error: Some(STARTING.into()),
             }),
             listing: RwLock::new(Err(STARTING.into())),
@@ -357,6 +379,8 @@ impl Hub {
             branches: Mutex::new((Arc::default(), 0.0, Arc::default())),
             finished: Mutex::new(BTreeSet::new()),
             rescan: std::sync::atomic::AtomicBool::new(false),
+            documents_waker: OnceLock::new(),
+            board_wakers: OnceLock::new(),
             listed: std::sync::atomic::AtomicBool::new(false),
             one_cards: RwLock::new(Arc::default()),
             marks: RwLock::new(Arc::default()),
@@ -391,7 +415,12 @@ impl Hub {
             low_disk: health::low_disk(root),
             reads: AtomicU64::new(0),
             renders: AtomicU64::new(0),
-            reader: Mutex::new(None),
+            reader: Mutex::default(),
+            board_retry: Mutex::default(),
+            chat_retry: Mutex::default(),
+            dispatch_retry: Mutex::default(),
+            give_retry: Mutex::default(),
+            retry_clock: Box::new(Instant::now),
             connect_reader: Box::new(taskview::connect),
             panes: Box::new(|root| {
                 let mut env = symphony::children::board_env();
@@ -487,9 +516,49 @@ impl Hub {
     }
 
     /// The board's last read, or why there is none, set as [`Hub::tasks_read`] answers it: called
-    /// with the task state held, where it changes, so the two never disagree once it is let go.
+    /// with the task state held, where it changes, so the two never disagree once it is let go. A
+    /// read that finds the board, or that finds none, where the one before said otherwise, wakes
+    /// what waits for that ([`Hub::wake_at_board`]).
     fn publish_listing(&self, read: Result<Arc<Tasks>, String>) {
-        *self.listing.write().unwrap_or_else(|e| e.into_inner()) = read;
+        let absent = |read: &Result<Arc<Tasks>, String>| {
+            read.as_ref()
+                .err()
+                .is_some_and(|why| symphony_board::board_health::absent(why))
+        };
+        let mut listing = self.listing.write().unwrap_or_else(|e| e.into_inner());
+        let moved = absent(&listing) != absent(&read);
+        *listing = read;
+        drop(listing);
+        if moved {
+            self.board_moved();
+        }
+    }
+
+    /// Wake what waits for the board's arrival or its going ([`Hub::has_board`]).
+    pub(super) fn board_moved(&self) {
+        if let Some(wakers) = self.board_wakers.get() {
+            wakers.wake();
+        }
+    }
+
+    /// Wake `wakers` each time this hub finds or loses its board, its first read's end included:
+    /// its server's maintenance, which waits for a board ([`crate::front::maintenance_worker`]).
+    /// Given once, as the hub starts; a second giving is ignored.
+    pub(crate) fn wake_at_board(&self, wakers: Arc<Wakers>) {
+        let _ = self.board_wakers.set(wakers);
+    }
+
+    /// Ask the documents' loop to scan the branches again, though no file moved, and wake it.
+    fn ask_rescan(&self) {
+        self.rescan.store(true, std::sync::atomic::Ordering::SeqCst);
+        self.wake_documents();
+    }
+
+    /// Wake the documents' loop, when it runs.
+    fn wake_documents(&self) {
+        if let Some(waker) = self.documents_waker.get() {
+            waker.wake();
+        }
     }
 
     /// The hub's task state held as a board read holds it across its reads of the board
@@ -503,26 +572,44 @@ impl Hub {
     /// The store the page reads of the board share, opened by the first and kept, so the reads of a
     /// page (a task page asks for its task, its offer and its history) and of every page after it go
     /// on its connections, never opening the board anew: finding its server, asking `ps` and `lsof`
-    /// that it is that, and reading its schema. Reads wait while one opens it.
+    /// that it is that, and reading its schema. Reads wait while one opens it. A failed opening
+    /// keeps its error until its retry deadline ([`retry`]); requests never reset that deadline.
     pub(crate) fn reader(&self) -> Result<Arc<symphony_board::Store>, String> {
         let mut kept = self.reader.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(store) = &*kept {
+        if let Some(store) = &kept.store {
             return Ok(Arc::clone(store));
         }
         if !self.holds_its_project() {
             return Err(self.gone());
         }
-        let store = Arc::new((self.connect_reader)(&self.root)?);
-        *kept = Some(Arc::clone(&store));
-        Ok(store)
+        match kept
+            .retry
+            .run(&self.retry_clock, || (self.connect_reader)(&self.root))
+        {
+            Some(Ok(store)) => {
+                let store = Arc::new(store);
+                kept.store = Some(Arc::clone(&store));
+                kept.error = None;
+                Ok(store)
+            }
+            Some(Err(error)) => {
+                kept.error = Some(error.clone());
+                Err(error)
+            }
+            None => Err(kept.error.clone().expect("a failed opening waits")),
+        }
     }
 
     /// Forget `store` after the board failed a read on it, unless it is already forgotten: the next
     /// read opens the board anew, where its server is then.
     pub(crate) fn reader_failed(&self, store: &Arc<symphony_board::Store>) {
         let mut kept = self.reader.lock().unwrap_or_else(|e| e.into_inner());
-        if kept.as_ref().is_some_and(|kept| Arc::ptr_eq(kept, store)) {
-            *kept = None;
+        if kept
+            .store
+            .as_ref()
+            .is_some_and(|kept| Arc::ptr_eq(kept, store))
+        {
+            kept.store = None;
         }
     }
 
@@ -596,11 +683,12 @@ impl Hub {
         drop(trees);
         *held = finished;
         if touched {
-            self.rescan.store(true, std::sync::atomic::Ordering::SeqCst);
+            self.ask_rescan();
         }
     }
 
     /// Whether a picture a held card waits on is on disk now: its card is posted at the next scan.
+    /// No watcher follows those files, so each of the board's ticks looks ([`ticks`]).
     fn pictures_arrived(&self) -> bool {
         self.awaited
             .lock()
@@ -793,7 +881,7 @@ impl Hub {
                 page.copied.insert(rel.into(), read);
                 if behind {
                     page.stale.insert(rel.into());
-                    self.rescan.store(true, std::sync::atomic::Ordering::SeqCst);
+                    self.ask_rescan();
                 }
             }
             doc.version = page.board.version;
@@ -1407,9 +1495,16 @@ impl Hub {
         snapshot: symphony_board::Board,
         agents: symphony_api::Agents,
     ) -> Result<(), String> {
+        let mut busy: Vec<String> = agents
+            .agents
+            .iter()
+            .filter(|agent| agent.state == "running_test")
+            .map(|agent| agent.handle.clone())
+            .collect();
+        busy.sort_unstable();
         let unchanged = {
             let state = self.tasks.lock().unwrap_or_else(|e| e.into_inner());
-            (state.raw.as_ref() == Some(&snapshot))
+            (state.raw.as_ref() == Some(&snapshot) && state.busy == busy)
                 .then(|| state.last.clone())
                 .flatten()
         };
@@ -1423,7 +1518,12 @@ impl Hub {
                 measured("task stages", || waiting.stood.read(store, &snapshot))
                     .map_err(|e| e.to_string())?;
                 let (next, latest) = measured("board snapshot", || {
-                    taskview::snapshot_board(&snapshot, &waiting.stood, &waiting.lane)
+                    taskview::snapshot_board_with_busy(
+                        &snapshot,
+                        &waiting.stood,
+                        &waiting.lane,
+                        &busy,
+                    )
                 });
                 (Arc::new(next), latest)
             }
@@ -1484,7 +1584,12 @@ impl Hub {
                 if waiting.lane != lane {
                     waiting.lane = lane;
                     let (again, _) = measured("board snapshot", || {
-                        taskview::snapshot_board(&snapshot, &waiting.stood, &waiting.lane)
+                        taskview::snapshot_board_with_busy(
+                            &snapshot,
+                            &waiting.stood,
+                            &waiting.lane,
+                            &busy,
+                        )
                     });
                     next = Arc::new(again);
                 }
@@ -1587,6 +1692,7 @@ impl Hub {
         }
         held.last = Some(next.clone());
         held.raw = Some(snapshot);
+        held.busy = busy;
         held.error = None;
         self.publish_listing(Ok(Arc::clone(&next)));
         drop(held);
@@ -1977,14 +2083,28 @@ fn document_change(
         .and_then(|before| symphony::docview::changes(before, doc))
 }
 
+/// Tell the documents' loop that the ticks ended, including during unwinding. The flag is set
+/// before the wake, so the loop sees it as soon as its wait ends.
+struct TicksEnded<'a> {
+    ended: &'a std::sync::atomic::AtomicBool,
+    documents: &'a Waker,
+}
+
+impl Drop for TicksEnded<'_> {
+    fn drop(&mut self) {
+        self.ended.store(true, std::sync::atomic::Ordering::SeqCst);
+        self.documents.wake();
+    }
+}
+
 /// The hub's two loops once its first board read is done: the board's ticks on a thread of their
 /// own, so a document refresh never holds a tick back nor a tick a refresh, and the documents'
-/// refreshes on this one. It returns once both have ended: the ticks when the hub stops, goes or
-/// loses its project; the documents when the hub drains or goes, or once the ticks have ended, so a
-/// project lost ends both.
+/// refreshes on this one, waiting on `backstop`, which the watcher's handler wakes. It returns once
+/// both have ended: the ticks when the hub stops, goes or loses its project; the documents when
+/// the hub drains or goes, or once the ticks have ended, whose end wakes them, so a project lost
+/// ends both.
 fn run(
     weak: Weak<Hub>,
-    recv: mpsc::Receiver<()>,
     watcher: impl Watcher,
     watched: BTreeSet<PathBuf>,
     backstop: Backstop,
@@ -1994,6 +2114,7 @@ fn run(
     let (stop, stopped) = mpsc::channel();
     {
         let Some(hub) = weak.upgrade() else { return };
+        let _ = hub.documents_waker.set(backstop.waker());
         let mut held = hub.ticks.lock().unwrap_or_else(|e| e.into_inner());
         // A stop sets `draining` before it takes what this holds, so one already past its take is
         // seen here, and neither loop starts.
@@ -2003,21 +2124,33 @@ fn run(
         *held = Some(stop);
     }
     let weak = &weak;
+    let ended = std::sync::atomic::AtomicBool::new(false);
+    let ended = &ended;
+    let waker = backstop.waker();
     std::thread::scope(|scope| {
-        let ticking = scope.spawn(move || ticks(weak, &stopped, board, connect));
-        documents(weak, &recv, watcher, watched, backstop, || {
-            ticking.is_finished()
+        scope.spawn(move || {
+            let _ended = TicksEnded {
+                ended,
+                documents: &waker,
+            };
+            ticks(weak, &stopped, &waker, board, connect);
+        });
+        documents(weak, watcher, watched, backstop, || {
+            ended.load(std::sync::atomic::Ordering::SeqCst)
         });
     });
 }
 
 /// The board's ticks, one an interval, independent of client count: the board read (the chat
 /// journal, callbacks, the give, the agents probe), the queue's expired postponements (with backoff
-/// on store errors), the hourly roll-up, the asks file and the project's settings. Between two it
-/// waits on `stopped`, which the hub's stop and its drop end at once, the first tick right away.
+/// on store errors), the hourly roll-up, the asks file, the project's settings, and a look for the
+/// pictures held cards wait on, which wakes the documents' loop by `documents` once one landed.
+/// Between two it waits on `stopped`, which the hub's stop and its drop end at once, the first
+/// tick right away.
 fn ticks(
     weak: &Weak<Hub>,
     stopped: &mpsc::Receiver<()>,
+    documents: &Waker,
     mut board: Option<symphony_board::Store>,
     mut connect: impl FnMut(&Path) -> Result<symphony_board::Store, String>,
 ) {
@@ -2034,43 +2167,39 @@ fn ticks(
         expiry.tick(&hub.root, symphony::postpone::now(), || {
             hub.refresh_order("")
         });
-        if board.is_none() {
-            board = hub.reconnect(&mut connect);
-        }
-        if let Some(store) = &board
-            && let Err(e) = measured("board tick", || hub.board_read(store))
-        {
-            hub.board_error(e);
-            board = None;
-        }
+        hub.board_tick(&mut board, &mut connect);
         measured("reports tick", || hub.reports_tick(board.as_ref()));
         measured("asks tick", || hub.asks_tick());
         measured("project tick", || hub.tell_project());
+        if hub.pictures_arrived() {
+            documents.wake();
+        }
         wait = BOARD_INTERVAL.saturating_sub(started.elapsed());
     }
 }
 
 /// The documents' refreshes, from watcher events, the backstop's sweep and the rescans the ticks and
-/// the reads ask for, until the hub drains or goes, or `ticks_ended` says the ticks have ended.
+/// the reads ask for, until the hub drains or goes, or `ticks_ended` says the ticks have ended. Each
+/// is a wake of `backstop` or its period: nothing else ends its wait.
 fn documents(
     weak: &Weak<Hub>,
-    recv: &mpsc::Receiver<()>,
     mut watcher: impl Watcher,
     mut watched: BTreeSet<PathBuf>,
     mut backstop: Backstop,
     ticks_ended: impl Fn() -> bool,
 ) {
+    // Whether the loop is over: the hub gone or draining, or its ticks ended.
+    let over = || {
+        weak.upgrade()
+            .is_none_or(|hub| *hub.draining.borrow() || ticks_ended())
+    };
     loop {
-        #[expect(
-            clippy::disallowed_methods,
-            reason = "no-timed-waits baseline: wakes every 250 ms with no event to look whether the hub drains, the ticks ended or a rescan was asked for, where a message from each is the event"
-        )]
-        let wake = backstop.wait(recv, Duration::from_millis(250));
-        if wake == Wake::Event {
+        let wake = backstop.wait();
+        if wake == Wake::Event && !over() {
             // Every event within QUIET of the first is taken with it, and the pass reads then:
             // never later than that, as the watched worktrees seldom go quiet and every live
             // page's update waits on this pass.
-            backstop::debounce(recv, backstop::QUIET, backstop::QUIET);
+            backstop.debounce(backstop::QUIET, backstop::QUIET);
         }
         let Some(hub) = weak.upgrade() else { break };
         if *hub.draining.borrow() || ticks_ended() {
@@ -2080,9 +2209,6 @@ fn documents(
         // picture a held card waits on landed: the card is posted.
         let rescan =
             hub.rescan.swap(false, std::sync::atomic::Ordering::SeqCst) || hub.pictures_arrived();
-        if wake == Wake::Idle && !rescan {
-            continue;
-        }
         let refresh = wake == Wake::Event
             || (wake == Wake::Period && measured("document sweep", || hub.sweep()))
             || rescan;
@@ -2221,8 +2347,14 @@ impl PartialEq for Shown<'_> {
 
 /// Whether `a` and `b` are the same task, or differ only in their holders' health. Every field is
 /// named, so a new one is compared or the build fails.
-#[expect(clippy::float_cmp, reason = "the task's own derived equality")]
 fn shown_alike(a: &symphony_api::Task, b: &symphony_api::Task) -> bool {
+    task_inputs_alike(a, b) && a.waits_on == b.waits_on
+}
+
+/// Task inputs used by sign-off and column counts. A health-derived waits line is sent to the
+/// client, but changes none of these inputs.
+#[expect(clippy::float_cmp, reason = "the task's own derived equality")]
+fn task_inputs_alike(a: &symphony_api::Task, b: &symphony_api::Task) -> bool {
     let symphony_api::Task {
         slug,
         title,
@@ -2238,7 +2370,8 @@ fn shown_alike(a: &symphony_api::Task, b: &symphony_api::Task) -> bool {
         roles,
         instruction,
         fields,
-        waits_on,
+        waits_on: _,
+        review_rounds,
         from,
     } = a;
     *slug == b.slug
@@ -2254,7 +2387,7 @@ fn shown_alike(a: &symphony_api::Task, b: &symphony_api::Task) -> bool {
         && *depends == b.depends
         && *instruction == b.instruction
         && *fields == b.fields
-        && *waits_on == b.waits_on
+        && *review_rounds == b.review_rounds
         && *from == b.from
         && roles_alike(roles, &b.roles)
 }
@@ -2277,7 +2410,7 @@ fn roles_alike(a: &[symphony_api::Role], b: &[symphony_api::Role]) -> bool {
 
 /// Whether the board's tasks are the same in `old` and `new`, their holders' health aside.
 fn tasks_alike(old: &[symphony_api::Task], new: &[symphony_api::Task]) -> bool {
-    old.len() == new.len() && old.iter().zip(new).all(|(a, b)| shown_alike(a, b))
+    old.len() == new.len() && old.iter().zip(new).all(|(a, b)| task_inputs_alike(a, b))
 }
 
 fn task_changes(changes: &mut Vec<Value>, old: &[symphony_api::Task], new: &[symphony_api::Task]) {
@@ -2298,6 +2431,11 @@ fn task_changes(changes: &mut Vec<Value>, old: &[symphony_api::Task], new: &[sym
             && let Some(before) = old.iter().find(|t| t.slug == key)
             && let Some(after) = new.iter().find(|t| t.slug == key)
         {
+            // Optional summaries distinguish unavailable from zero. A whole record clears one.
+            if before.review_rounds.is_some() && after.review_rounds.is_none() {
+                changes.push(event);
+                continue;
+            }
             let mut fields = symphony_api::TaskFields::default();
             macro_rules! field {
                 ($name:ident) => {
@@ -2314,6 +2452,9 @@ fn task_changes(changes: &mut Vec<Value>, old: &[symphony_api::Task], new: &[sym
             field!(links);
             field!(depends);
             field!(instruction);
+            if before.review_rounds != after.review_rounds {
+                fields.review_rounds = after.review_rounds;
+            }
             // Roles that changed say their holders' health as it is now.
             if !roles_alike(&before.roles, &after.roles) {
                 fields.roles = Some(after.roles.clone());
@@ -2348,6 +2489,9 @@ mod machine_work;
 pub(crate) use health::{Signal, Standing};
 mod owner_asks;
 mod reports;
+mod retry;
+#[cfg(test)]
+mod retry_tests;
 mod startup;
 mod task_asks;
 
@@ -2509,6 +2653,53 @@ mod tests {
             .iter()
             .map(|item| item.slug.clone())
             .collect()
+    }
+
+    #[test]
+    fn a_health_flip_updates_the_waits_line_without_signoff_reads_or_column_counts() {
+        let tree = Tree::new();
+        let root = repository(&tree);
+        let f = Fixture::new(
+            Seed::default()
+                .session("worker")
+                .task("tools/health", "in_progress")
+                .role("tools/health", "worker", "executor")
+                .link("tools/health", "doc", "docs/TOPIC.md"),
+        );
+        let hub = Hub::new(&root, &root.join("build/client"));
+        hub.refresh_page("", &root).unwrap();
+        observe(&hub, &f.store);
+        // Sign-off would have to read the thread: the linked card is absent from the brief.
+        assert!(hub.task_signoff.lock().unwrap().is_empty());
+        let signoff_inputs = hub.signoff_pending.lock().unwrap().clone();
+        f.advance(91.0);
+        let board = f.store.board().unwrap();
+        let before = f.store.client().requests();
+        hub.update_board(&f.store, board, hub.agent_snapshot().unwrap())
+            .unwrap();
+        let pages = hub.pages.read().unwrap();
+        let event: Value = serde_json::from_str(&pages[""].history.back().unwrap().json).unwrap();
+        let regions: Vec<_> = event["changes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|change| change["region"].as_str().unwrap())
+            .collect();
+        eprintln!(
+            "health flip: {} requests; regions: {}",
+            f.store.client().requests() - before,
+            regions.join(", ")
+        );
+        assert_eq!(
+            f.store.client().requests() - before,
+            2,
+            "no sign-off thread read"
+        );
+        assert_eq!(regions, ["task-fields", "session", "counts"]);
+        assert_eq!(*hub.signoff_pending.lock().unwrap(), signoff_inputs);
+        let changed = &event["changes"][0]["data"]["fields"];
+        assert_eq!(changed["waits_on"]["who"], "worker (stale)");
+        assert_eq!(changed.as_object().unwrap().len(), 1);
     }
 
     #[test]
@@ -2835,11 +3026,11 @@ mod tests {
         }
     }
 
-    #[test]
-    fn a_task_done_takes_its_branchs_cards_out_at_the_next_scan_without_a_file_event() {
-        use std::sync::atomic::Ordering::SeqCst;
-        let tree = Tree::new();
-        let root = repository(&tree);
+    /// A repository whose register holds one card, and a worktree of it in `proposal` on the
+    /// branch `design/policy`, whose register adds `cards`, committed there: the repository's
+    /// root.
+    fn proposing(tree: &Tree, cards: &str) -> PathBuf {
+        let root = repository(tree);
         let register = |cards: &str| {
             format!(
                 "# Topic\n\n<!-- register:start -->\n- [ ] **initial-card** — Initial question.\n{cards}<!-- register:end -->\n"
@@ -2858,21 +3049,20 @@ mod tests {
                 branch.to_str().unwrap(),
             ],
         );
-        tree.write(
-            "proposal/docs/TOPIC.md",
-            &register("- [ ] **branch-card** — A branch proposal.\n"),
-        );
-        git(&branch, &["commit", "-qam", "Post the branch card"]);
-        let hub = Hub::new(&root, &root.join("build/client"));
-        hub.refresh_docs(None).unwrap();
-        assert_eq!(pending(&hub, ""), ["initial-card", "branch-card"]);
-        let task = |slug: &str, status: &str| symphony_board::Task {
+        tree.write("proposal/docs/TOPIC.md", &register(cards));
+        git(&branch, &["commit", "-qam", "Post the branch's cards"]);
+        root
+    }
+
+    /// A board of `tasks`, each a slug and its status.
+    fn board_of(tasks: &[(&str, &str)]) -> symphony_board::Board {
+        let task = |(slug, status): &(&str, &str)| symphony_board::Task {
             branch: None,
             id: 0,
-            slug: slug.into(),
+            slug: (*slug).into(),
             title: "Policy".into(),
             body: String::new(),
-            status: status.into(),
+            status: (*status).into(),
             priority: 2,
             parent: None,
             created_by: "test".into(),
@@ -2884,17 +3074,55 @@ mod tests {
             instruction: false,
             fields: Default::default(),
         };
-        let with = |tasks: Vec<symphony_board::Task>| symphony_board::Board {
-            tasks,
+        symphony_board::Board {
+            tasks: tasks.iter().map(task).collect(),
             sessions: Vec::new(),
             latest_message: 0,
-        };
-        let board = |status: &str| with(vec![task("design/policy", status)]);
+        }
+    }
+
+    /// The hub of the checkout at `root`, its documents' loop on a period no test reaches
+    /// ([`crate::backstop::NO_PERIOD`]) and a watcher that says nothing, so only the wakes it is
+    /// given end its wait; its first board read started, which finds no board.
+    fn waking(root: &Path) -> std::sync::Arc<Hub> {
+        let hub = Hub::start_watching::<notify::NullWatcher>(
+            root,
+            &root.join("build/client"),
+            false,
+            false,
+            crate::backstop::NO_PERIOD,
+            |_| Err("no board in this test".to_string()),
+        )
+        .unwrap();
+        hub.start_initial_board();
+        hub
+    }
+
+    /// `hub` stopped, within a stall's bound: a loop the stop does not reach fails the test rather
+    /// than hold it.
+    fn stopped(hub: &std::sync::Arc<Hub>) {
+        let hub = hub.clone();
+        crate::testing::joined(
+            std::thread::spawn(move || hub.stop()),
+            "the stop to end the hub's loops",
+            test_time::backstop(Duration::ZERO),
+        );
+    }
+
+    #[test]
+    fn a_task_done_takes_its_branchs_cards_out_at_the_next_scan_without_a_file_event() {
+        use std::sync::atomic::Ordering::SeqCst;
+        let tree = Tree::new();
+        let root = proposing(&tree, "- [ ] **branch-card** — A branch proposal.\n");
+        let hub = Hub::new(&root, &root.join("build/client"));
+        hub.refresh_docs(None).unwrap();
+        assert_eq!(pending(&hub, ""), ["initial-card", "branch-card"]);
+        let board = |status: &str| board_of(&[("design/policy", status)]);
         hub.note_finished(&board("review"));
         assert!(!hub.rescan.load(SeqCst), "a live task asks for nothing");
-        hub.note_finished(&with(vec![
-            task("design/policy", "review"),
-            task("design/elsewhere", "done"),
+        hub.note_finished(&board_of(&[
+            ("design/policy", "review"),
+            ("design/elsewhere", "done"),
         ]));
         assert!(
             !hub.rescan.load(SeqCst),
@@ -2919,50 +3147,39 @@ mod tests {
         assert_eq!(pending(&hub, ""), ["initial-card", "branch-card"]);
     }
 
+    /// A task done asks the documents' loop for a scan and wakes it: running on a period no test
+    /// reaches, with a watcher that says nothing, the loop takes the card of the task's branch out
+    /// at that wake.
+    #[test]
+    fn a_task_done_wakes_the_documents_loop_to_take_its_branchs_cards_out() {
+        let tree = Tree::new();
+        let root = proposing(&tree, "- [ ] **branch-card** — A branch proposal.\n");
+        let hub = waking(&root);
+        assert_eq!(pending(&hub, ""), ["initial-card", "branch-card"]);
+        // As a board read that finds the task done does.
+        hub.note_finished(&board_of(&[("design/policy", "done")]));
+        let out = test_time::until_true(
+            "the done task's card to be taken out",
+            test_time::backstop(Duration::from_secs(20)),
+            || pending(&hub, "") == ["initial-card"],
+        );
+        if let Err(stall) = out {
+            panic!("{stall}; still pending: {:?}", pending(&hub, ""));
+        }
+        stopped(&hub);
+    }
+
     /// A card posted before its picture is on disk is held, and the loop posts it once the picture
-    /// lands, with no watcher event and no other save: it checks the pictures the held cards wait on.
+    /// lands, with no watcher event and no other save: the board's tick looks at the pictures the
+    /// held cards wait on and wakes the documents' loop, which runs on a period no test reaches.
     #[test]
     fn a_held_card_is_posted_when_its_picture_lands_without_another_event() {
         let tree = Tree::new();
-        let root = repository(&tree);
-        let register = |cards: &str| {
-            format!(
-                "# Topic\n\n<!-- register:start -->\n- [ ] **initial-card** — Initial question.\n{cards}<!-- register:end -->\n"
-            )
-        };
-        tree.write("main/docs/TOPIC.md", &register(""));
-        git(&root, &["commit", "-qam", "Register the fixture decisions"]);
-        let branch = tree.path("proposal");
-        git(
-            &root,
-            &[
-                "worktree",
-                "add",
-                "-b",
-                "design/policy",
-                branch.to_str().unwrap(),
-            ],
+        let root = proposing(
+            &tree,
+            "- [ ] **picture-card** — Pick one.\n  [2026-11-11 10:00] agent — A: ![A](/artifacts/late.png)\n",
         );
-        tree.write(
-            "proposal/docs/TOPIC.md",
-            &register(
-                "- [ ] **picture-card** — Pick one.\n  [2026-11-11 10:00] agent — A: ![A](/artifacts/late.png)\n",
-            ),
-        );
-        git(
-            &branch,
-            &["commit", "-qam", "Post the card before its picture"],
-        );
-        let hub = Hub::start_watching::<notify::NullWatcher>(
-            &root,
-            &root.join("build/client"),
-            false,
-            false,
-            Duration::from_millis(100),
-            |_| Err("no board in this test".to_string()),
-        )
-        .unwrap();
-        hub.start_initial_board();
+        let hub = waking(&root);
         assert_eq!(pending(&hub, ""), ["initial-card"], "held for its picture");
         assert!(!hub.pictures_arrived());
         tree.write("proposal/artifacts/late.png", "png");
@@ -2975,7 +3192,7 @@ mod tests {
             panic!("{stall}; still held: {:?}", pending(&hub, ""));
         }
         assert!(!hub.pictures_arrived(), "nothing is awaited any more");
-        hub.stop();
+        stopped(&hub);
     }
 
     #[test]

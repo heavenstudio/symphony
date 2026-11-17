@@ -1,6 +1,68 @@
 //! Regressions found when native selects became deferred, styled controls.
 use super::*;
 
+#[test]
+fn the_panel_collapse_chevron_is_centered_on_phone_and_desktop_and_keeps_its_action() {
+    let site = site();
+    let Some(mut page) = chrome() else { return };
+    for width in [320, 390, 1440] {
+        page.call(
+            "Emulation.setDeviceMetricsOverride",
+            json!({"width":width,"height":844,"deviceScaleFactor":1,"mobile":width < 600}),
+        );
+        page.call(
+            "Emulation.setTouchEmulationEnabled",
+            json!({"enabled":width < 600}),
+        );
+        page.open(&site.url("/tasks"));
+        open_panel(&mut page);
+        page.eval("document.getElementById('quick-chat-tab').focus()");
+        key(&mut page, "Enter", "Enter", 13);
+        for task in [false, true] {
+            if task {
+                task_tab(&mut page);
+            }
+            assert_eq!(
+                page.eval(
+                    r#"(() => {
+                    const button = document.querySelector('#quick-sheet .collapse');
+                    const icon = button.querySelector('svg');
+                    if (!icon) return null;
+                    const b = button.getBoundingClientRect(), i = icon.getBoundingClientRect();
+                    return {
+                        button: [b.width, b.height], icon: [i.width, i.height],
+                        centered: Math.abs(i.x + i.width / 2 - b.x - b.width / 2) < 0.5
+                            && Math.abs(i.y + i.height / 2 - b.y - b.height / 2) < 0.5,
+                        label: button.getAttribute('aria-label'),
+                        hidden: icon.getAttribute('aria-hidden'),
+                        target: getComputedStyle(icon).pointerEvents
+                    };
+                })()"#
+                ),
+                json!({"button":[48,36],"icon":[16,16],"centered":true,
+                    "label":"Collapse panel","hidden":"true","target":"none"}),
+                "the chevron is centered without narrowing the target on either tab at {width}, task={task}"
+            );
+        }
+        page.eval("document.getElementById('quick-title').value='Kept task';document.getElementById('quick-title').dispatchEvent(new Event('input',{bubbles:true}));document.querySelector('#quick-sheet .collapse').focus()");
+        key(&mut page, "Enter", "Enter", 13);
+        assert!(page.wait_for("document.querySelector('#quick-sheet[hidden]') !== null && document.activeElement.id==='quick-open'", SHOWN));
+        open_panel(&mut page);
+        assert_eq!(
+            page.eval("document.getElementById('quick-title').value"),
+            json!("Kept task"),
+            "collapsing preserves the task draft at {width}"
+        );
+        if width < 600 {
+            page.tap("#quick-sheet .collapse");
+            assert!(page.wait_for(
+                "document.querySelector('#quick-sheet[hidden]') !== null",
+                SHOWN
+            ));
+        }
+    }
+}
+
 fn popup_ready(page: &mut crate::Chrome) {
     assert!(page.wait_for("(() => {const list=document.querySelector('[role=listbox][data-state=open][data-positioned=true]');return list && list.getAnimations().every(animation=>animation.playState==='finished');})()", SHOWN));
 }

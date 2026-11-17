@@ -4,7 +4,7 @@ use super::commands::{Context, Stop};
 use super::shape;
 use super::text::roles_text;
 use crate::Store;
-use crate::pyjson::{self, Py};
+use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 
 pub(super) fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
@@ -56,13 +56,14 @@ pub(super) fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
         };
         let snippet = excerpt(text, query);
         if p.flag("json") {
-            let Py::Obj(mut fields) = shape::listed(task, since.get(&task.slug).copied()) else {
+            let Value::Object(mut fields) = shape::listed(task, since.get(&task.slug).copied())
+            else {
                 unreachable!("shape::listed is an object");
             };
-            fields.push(("score".into(), Py::Float(hit.score)));
-            fields.push(("snippet".into(), Py::str(&snippet)));
-            fields.push(("snippet_source".into(), Py::str(source_name)));
-            json.push(Py::Obj(fields));
+            fields.insert("score".into(), json!(hit.score));
+            fields.insert("snippet".into(), json!(&snippet));
+            fields.insert("snippet_source".into(), json!(source_name));
+            json.push(Value::Object(fields));
         } else {
             let roles = roles_text(task);
             let roles = if roles.is_empty() {
@@ -78,7 +79,12 @@ pub(super) fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
         }
     }
     if p.flag("json") {
-        c.say(&pyjson::dumps(&Py::obj(vec![("tasks", Py::List(json))])));
+        c.say(
+            &serde_json::to_string_pretty(&json!({
+                "tasks": Value::Array(json),
+            }))
+            .expect("JSON values serialize"),
+        );
     }
     Ok(())
 }

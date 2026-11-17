@@ -121,6 +121,8 @@ fn constants() -> String {
         ("TASK_ACTION_ROUTE", text(api::TASK_ACTION_ROUTE)),
         ("TASK_GATES_PATH", text(api::TASK_GATES_PATH)),
         ("TASK_TIMELINE_PATH", text(api::TASK_TIMELINE_PATH)),
+        ("TASK_DIFF_PATH", text(api::TASK_DIFF_PATH)),
+        ("TASK_DIFF_FILE_PATH", text(api::TASK_DIFF_FILE_PATH)),
         ("TIMELINE_EVERY", api::timeline::TIMELINE_EVERY.to_string()),
         ("AGENT_FOCUS_PATH", text(api::AGENT_FOCUS_PATH)),
         ("AGENT_SCREEN_PATH", text(api::AGENT_SCREEN_PATH)),
@@ -309,6 +311,11 @@ fn task_declarations(cfg: &Config) -> Vec<Declared> {
         declared::<api::timeline::RunResult>(cfg),
         declared::<api::timeline::GateLane>(cfg),
         declared::<api::timeline::GateSpan>(cfg),
+        // Its changed files and a patch opened from that comparison.
+        declared::<api::TaskDiffSource>(cfg),
+        declared::<api::TaskDiff>(cfg),
+        declared::<api::TaskDiffFile>(cfg),
+        declared::<api::TaskDiffPatch>(cfg),
     ]
 }
 
@@ -932,6 +939,7 @@ fn task(slug: &str, status: &str, parent: Option<&str>) -> api::Task {
         instruction: false,
         fields: std::collections::BTreeMap::new(),
         waits_on: None,
+        review_rounds: None,
         from: None,
     }
 }
@@ -2395,6 +2403,62 @@ mod sample {
 #[cfg(test)]
 mod tests {
     use super::source;
+
+    #[test]
+    fn task_diff_declarations_keep_source_words_and_nullable_fields() {
+        let types = super::types();
+        for declaration in [
+            r#"export const TASK_DIFF_PATH = "/api/task-diff";"#,
+            r#"export const TASK_DIFF_FILE_PATH = "/api/task-diff-file";"#,
+            r#"export type TaskDiffSource = "branch" | "landing" | "unavailable";"#,
+        ] {
+            assert!(
+                types.contains(declaration),
+                "missing declaration: {declaration}"
+            );
+        }
+        let declarations = super::declarations();
+        for (name, fields) in [
+            (
+                "TaskDiff",
+                &[
+                    "source: TaskDiffSource,",
+                    "base: string | null,",
+                    "head: string | null,",
+                    "files: Array<TaskDiffFile>,",
+                    "truncated: boolean,",
+                    "reason: string | null,",
+                ][..],
+            ),
+            (
+                "TaskDiffFile",
+                &[
+                    "path: string,",
+                    "added: number | null,",
+                    "removed: number | null,",
+                ][..],
+            ),
+            (
+                "TaskDiffPatch",
+                &[
+                    "base: string,",
+                    "head: string,",
+                    "path: string,",
+                    "patch: string,",
+                    "truncated: boolean,",
+                ][..],
+            ),
+        ] {
+            let declaration = &declarations
+                .iter()
+                .find(|one| one.name == name)
+                .unwrap()
+                .decl;
+            for field in fields {
+                assert!(declaration.contains(field), "{name} is missing {field}");
+            }
+        }
+    }
 
     /// Functions as rustfmt writes them, with braces no closing line holds: in a character, a
     /// comment, a string and a format argument; and a doc comment that names one of them.

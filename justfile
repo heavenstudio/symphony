@@ -83,6 +83,12 @@ _client-update:
 symphony-cli *ARGS:
     @{{ if ARGS =~ '^(docs-audit --check|status --lint)$' { record + ' --pipeline docs test "just symphony-cli $*"' } else { '' } }} tools/rs-bin.sh symphony "$@"
 
+# Both document checks with fixed arguments, each recorded by symphony-cli. The no-argument
+# recipe lets the project's Codex policy permit these checks without permitting extra CLI flags.
+docs-check:
+    @just --justfile {{quote(justfile())}} symphony-cli docs-audit --check
+    @just --justfile {{quote(justfile())}} symphony-cli status --lint
+
 # The board but its recorder, which the Symphony's recipe refuses too (`_symphony_board`): a build
 # records itself by the binary, through tools/record.sh. Like the Symphony's, it writes only where
 # `_symphony_unasked` admits (its checkout, from a worktree main's artifacts), as an agent runs it
@@ -133,7 +139,7 @@ _size-check:
 # crates.io holds of that version: red, naming the package, where the sources moved and the version
 # did not (docs/RELEASES.md, "Packages on crates.io"). It reads crates.io and publishes nothing.
 crates-check:
-    @tools/rs-bin.sh symphony-build crates-check .
+    @{{record}} --pipeline crates test "just crates-check" tools/rs-bin.sh symphony-build crates-check .
 
 # The full verification (tools/verify.sh): lint, the client check, the size budgets, the docs audit,
 # the crates check and every test target, each a step of this run with a log of its own, run

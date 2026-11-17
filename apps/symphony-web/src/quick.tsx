@@ -196,12 +196,17 @@ export function afterSent(now: Draft, value: unknown, scope: string): Partial<Dr
 /**
  * The conversation at `url` (`/api/ask?format=blocks&id=`), read until one read answers, each
  * failure said to `shown.trouble` and tried again `RETRY_MS` later; the read drawn and the trouble
- * cleared once it does. Nothing is shown once `signal` ended.
+ * cleared once it does. A missing conversation is given up through `shown.missing`, with no
+ * retry. Nothing is shown once `signal` ended.
  */
 export async function readThread(
   url: string,
   signal: AbortSignal,
-  shown: { thread: (read: AskReply) => void; trouble: (why: string | null) => void },
+  shown: {
+    thread: (read: AskReply) => void;
+    trouble: (why: string | null) => void;
+    missing: () => void;
+  },
 ): Promise<void> {
   while (!signal.aborted) {
     try {
@@ -213,6 +218,11 @@ export async function readThread(
       return;
     } catch (failure) {
       if (signal.aborted) return;
+      if (failure instanceof Failure && failure.kind === "missing") {
+        shown.trouble(null);
+        shown.missing();
+        return;
+      }
       shown.trouble(said(failure));
     }
     await sleep(RETRY_MS, signal);
@@ -264,15 +274,10 @@ export interface QuickThreadProps {
  * quiet and takes no room, so the form sits under the tabs.
  */
 export function QuickThread({ draft, shown, readError, checking, created }: QuickThreadProps) {
-  const quiet =
-    draft.task &&
-    readError === null &&
-    checking === null &&
-    draft.request === "" &&
-    created === null;
+  const quiet = draft.task && checking === null && draft.request === "" && created === null;
   return (
     <div className={quiet ? "quick-thread quiet" : "quick-thread"} aria-live="polite">
-      {readError !== null && (
+      {!draft.task && readError !== null && (
         <p role="status">{`Conversation could not be refreshed: ${readError}`}</p>
       )}
       {!draft.task ? (
@@ -373,18 +378,25 @@ export function QuickPanel({ route, draft, change }: QuickPanelProps) {
     held.current = null;
   }, [sending]);
   // The conversation, read when it opens and as the feed says it moved, its read given up when
-  // another replaces it; a failed read is tried again until one answers.
+  // another replaces it; a failed read is tried again unless the conversation is gone.
   useEffect(() => {
     void revision;
     void heard;
     if (!open || task || ask === 0) return;
     const reading = new AbortController();
+    setReadError(null);
     void readThread(scoped(scope, `/api/ask?format=blocks&id=${ask}`), reading.signal, {
       thread: setThread,
       trouble: setReadError,
+      missing: () => {
+        setThread(null);
+        change((now) =>
+          now.ask === ask && now.ask_scope === scope ? { ask: 0, ask_scope: "" } : {},
+        );
+      },
     });
     return () => reading.abort();
-  }, [open, task, ask, scope, revision, heard]);
+  }, [open, task, ask, scope, revision, heard, change]);
 
   /** The draft `sent` posted: a task's save, asked again while its outcome is unknown, a reply to
    * the conversation, or a new conversation about the page. */
@@ -466,7 +478,25 @@ export function QuickPanel({ route, draft, change }: QuickPanelProps) {
       } catch (failure) {
         if (mount.aborted) return;
         change(() => ({ request: "", request_page: "", request_scope: "" }));
-        setError(said(failure));
+        if (
+          !sent.task &&
+          sent.ask > 0 &&
+          failure instanceof Failure &&
+          failure.kind === "missing"
+        ) {
+          change((now) =>
+            now.ask === sent.ask && now.ask_scope === sent.ask_scope
+              ? { ask: 0, ask_scope: "" }
+              : {},
+          );
+          setThread(null);
+          setReadError(null);
+          setError(
+            "This conversation is no longer available. Your text is kept; send again to start a new conversation.",
+          );
+        } else {
+          setError(said(failure));
+        }
       }
       setChecking(null);
       setSending(false);
@@ -491,8 +521,9 @@ export function QuickPanel({ route, draft, change }: QuickPanelProps) {
             type="button"
             disabled={sending}
             onClick={() => {
-              change(() => ({ ask: 0 }));
+              change(() => ({ ask: 0, ask_scope: "" }));
               setThread(null);
+              setReadError(null);
             }}
           >
             New conversation
@@ -597,7 +628,19 @@ export function QuickPanel({ route, draft, change }: QuickPanelProps) {
                   returnFocus("#quick-open");
                 }}
               >
-                ⌄
+                <svg
+                  aria-hidden="true"
+                  width="16"
+                  height="16"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <path d="m6 9 6 6 6-6" />
+                </svg>
               </button>
             )}
           >

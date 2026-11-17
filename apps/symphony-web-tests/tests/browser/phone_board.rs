@@ -1,12 +1,6 @@
-//! The task board on a phone (`assets/board.css`'s `max-width: 600px`, the React client's
-//! `src/board.tsx` and `src/boardswipe.ts`), app/phone-board-slides-a-column-at-a-time: one column
-//! on the screen at a time, each as wide as the board's scroller, and a swipe lands on the next
-//! one whole, a long or fast flick too, deep down a column as at its top, and a tap begins no
-//! swipe that would hold the next scroll, a focus move's, to one column; a column's heading stays
-//! at the board's top as the reader scrolls down it, saying which of the pipeline's columns it is
-//! (app/phone-board-followups); the search and the filters wait behind a button of their own, shut
-//! as the board opens, which a wider window does not draw. Each waits on what the page shows,
-//! never on a pause.
+//! The approved waiting board on a phone: one mounted stage, Review first, a saved stage,
+//! filters behind their button, and no horizontal overflow. Wide screens show every lifecycle
+//! heading together. Assertions follow the controls and layout the reader sees.
 
 use serde_json::{Value, json};
 
@@ -14,7 +8,7 @@ use crate::chrome::Chrome;
 use crate::site::Site;
 use crate::{SHOWN, chrome, dist, wait_for_feed};
 
-/// The pipeline's columns with as many tasks as `columns` gives each.
+/// The lifecycle columns with as many tasks as `columns` gives each.
 fn listing_of(columns: &[(&str, usize)]) -> Value {
     let tasks: Vec<Value> = columns
         .iter()
@@ -35,7 +29,7 @@ fn listing_of(columns: &[(&str, usize)]) -> Value {
     json!({"tasks": tasks, "statuses": statuses, "counts": counts, "signoff": [], "next": null})
 }
 
-/// Two tasks in each column of the pipeline.
+/// Two tasks in each open lifecycle column.
 fn listing() -> Value {
     listing_of(&[
         ("concept", 2),
@@ -73,7 +67,7 @@ fn open_on_a_phone(page: &mut Chrome, site: &Site) {
     page.open(&site.url("/tasks"));
     assert!(
         page.wait_for(
-            "document.querySelector('main[data-feed=live] .board-scroll .taskcard') !== null && document.documentElement.dataset.navigation === 'ready'",
+            "document.querySelector('main[data-feed=live] .waiting-board .taskcard') !== null && document.documentElement.dataset.navigation === 'ready'",
             SHOWN
         ),
         "the board never drew live: {}",
@@ -84,443 +78,394 @@ fn open_on_a_phone(page: &mut Chrome, site: &Site) {
     }
 }
 
-/// Each of the pipeline's columns, the rail too, by its status, as wide as the board's scroller
-/// shows inside its borders, or as wide as it is drawn where it is not.
-const WIDTHS: &str = "(() => { const board = document.querySelector('.board-scroll');
-    return [...document.querySelectorAll('.pipeline > .column')].map(column => {
-        const width = column.getBoundingClientRect().width;
-        return Math.abs(width - board.clientWidth) < 0.5 ? column.dataset.status : `${column.dataset.status} ${width} of ${board.clientWidth}`; }); })()";
+const MOUNTED: &str = "[...document.querySelectorAll('.waiting-columns .column')].map(column => column.dataset.status)";
 
-/// Record from now on, in `window.phoneLandings`, the column each scroll of the board's scroller
-/// ends on, by its place in the pipeline: the one whose left edge stands at the scroller's.
-const LANDINGS: &str = "(() => { const board = document.querySelector('.board-scroll'); window.phoneLandings = [];
-    board.onscrollend = () => { const left = board.getBoundingClientRect().left + board.clientLeft;
-        const at = [...document.querySelectorAll('.pipeline > .column')].findIndex(column => Math.abs(column.getBoundingClientRect().left - left) < 1);
-        window.phoneLandings.push(at < 0 ? null : at); }; })()";
-
-/// Wait until the board's last scroll ended on the column at `column` of the pipeline, after
-/// `what`; then the columns each scroll since the last call ended on, forgotten.
-fn lands(page: &mut Chrome, column: usize, what: &str) -> Value {
-    assert!(
-        page.wait_for(&format!("window.phoneLandings.at(-1) === {column}"), SHOWN),
-        "{what} never ended on column {column}: the scrolls ended on {}, the board at {}",
-        page.eval("JSON.stringify(window.phoneLandings)"),
-        page.eval("document.querySelector('.board-scroll').scrollLeft")
-    );
-    page.eval("window.phoneLandings.splice(0)")
+fn choose(page: &mut Chrome, stage: &str) {
+    page.eval(&format!("[...document.querySelectorAll('.stage-tabs button')].find(button => button.textContent.startsWith({})).click()", json!(stage)));
 }
 
-/// A swipe of a finger across the board's scroller, `columns` of its widths to the left (a
-/// negative one to the right), from near the edge it leaves, at `speed` px/s, let go still moving
-/// when `flick` (its momentum carrying the scroll on).
-fn swipe(page: &mut Chrome, columns: f64, speed: u32, flick: bool) {
-    let from = page.eval(&format!(
-        "(() => {{ const board = document.querySelector('.board-scroll'), r = board.getBoundingClientRect();
-            return [{columns} > 0 ? r.right - 8 : r.left + 8, r.top + Math.min(r.height / 2, 120), board.clientWidth]; }})()"
-    ));
-    let distance = -columns * from[2].as_f64().unwrap();
-    page.call(
-        "Input.synthesizeScrollGesture",
-        json!({"x": from[0], "y": from[1], "xDistance": distance, "yDistance": 0,
-            "gestureSourceType": "touch", "speed": speed, "preventFling": !flick}),
+fn fits(page: &mut Chrome) {
+    assert_eq!(
+        page.eval("document.documentElement.scrollWidth <= innerWidth"),
+        json!(true),
+        "the board must not overflow sideways"
     );
+    assert_eq!(page.eval("(() => { const r = document.querySelector('.waiting-columns .taskcard').getBoundingClientRect(); return r.top >= 0 && r.bottom <= innerHeight && r.left >= 0 && r.right <= innerWidth; })()"), json!(true), "the first card is completely on screen");
 }
 
-/// On a phone each column is as wide as the board's scroller and the scroller snaps to each one:
-/// a swipe past half a column's width lands on the next one, a short flick whose momentum would
-/// carry it over several on the next one all the same, and one back on the one before. Before, a
-/// column was 280 px of the phone's 358, a swipe stopped where it ended or nearly, and the next
-/// column peeked in beside the last.
 #[test]
-fn a_swipe_on_a_phone_lands_on_the_next_column_whole() {
+fn a_phone_opens_review_and_mounts_only_the_stage_chosen_by_its_tab() {
     let site = site();
     let Some(mut page) = chrome() else { return };
     open_on_a_phone(&mut page, &site);
+    assert_eq!(page.eval(MOUNTED), json!(["review"]));
+    assert_eq!(page.eval("document.querySelector('.stage-tabs [aria-current=page]').textContent.startsWith('Review')"), json!(true));
+    fits(&mut page);
+    for (label, status) in [
+        ("Ready", "ready"),
+        ("Concept", "concept"),
+        ("Review", "review"),
+    ] {
+        choose(&mut page, label);
+        assert!(page.wait_for(&format!("JSON.stringify({MOUNTED}) === JSON.stringify([{}]) && document.querySelector('.waiting-columns .taskcard') !== null", json!(status)), SHOWN));
+        fits(&mut page);
+    }
+}
+
+#[test]
+fn a_phones_chosen_stage_survives_a_full_load() {
+    let site = site();
+    let Some(mut page) = chrome() else { return };
+    open_on_a_phone(&mut page, &site);
+    choose(&mut page, "Ready");
+    assert!(page.wait_for(
+        "document.querySelector('.waiting-columns .column[data-status=ready] .taskcard') !== null",
+        SHOWN
+    ));
+    page.open(&site.url("/tasks"));
+    assert!(page.wait_for("document.querySelector('.waiting-columns .column[data-status=ready] .taskcard') !== null && document.documentElement.dataset.navigation === 'ready'", SHOWN));
+    assert_eq!(page.eval(MOUNTED), json!(["ready"]));
+    fits(&mut page);
+}
+
+/// A refresh starts its position hold after the finger came down. Each subsequent movement
+/// arrives before that hold's first frame, as a drag or its momentum can. Explicit offsets make
+/// the regression deterministic; this checks the shell's response, not a device's physics.
+#[test]
+fn a_refresh_mid_drag_or_flick_never_pulls_vertical_scrolling_back() {
+    let site = site_of(&listing_of(&[("review", 30)]));
+    let Some(mut page) = chrome() else { return };
+    open_on_a_phone(&mut page, &site);
+    for dragging in [true, false] {
+        let movements = page.eval(&format!(
+            r#"new Promise(resolve => {{
+                scrollTo(0, 600);
+                const board = document.querySelector('.waiting-columns');
+                const touch = type => board.dispatchEvent(new TouchEvent(type, {{bubbles: true}}));
+                const movements = [];
+                const move = () => {{
+                    touch('touchstart');
+                    if (!{dragging}) {{
+                        touch('touchmove');
+                        document.dispatchEvent(new Event('scroll'));
+                        touch('touchend');
+                    }}
+                    const before = scrollY;
+                    window.reviewHoldPlace('.waiting-columns [data-slug]');
+                    if ({dragging}) touch('touchmove');
+                    scrollBy(0, 180);
+                    const wanted = scrollY;
+                    requestAnimationFrame(() => {{
+                        movements.push([before, wanted, scrollY]);
+                        touch('touchend');
+                        document.dispatchEvent(new Event('scrollend'));
+                        if (movements.length < 3) move();
+                        else resolve(movements);
+                    }});
+                }};
+                requestAnimationFrame(move);
+            }})"#
+        ));
+        let samples = movements.as_array().expect("the scroll samples");
+        assert_eq!(samples.len(), 3);
+        for sample in samples {
+            let before = sample[0].as_f64().unwrap();
+            let wanted = sample[1].as_f64().unwrap();
+            let after = sample[2].as_f64().unwrap();
+            assert_eq!(wanted - before, 180.0, "the fixture has room to scroll");
+            assert_eq!(
+                after, wanted,
+                "dragging={dragging}: the hold pulled the scroll back: {movements}"
+            );
+        }
+    }
+}
+
+/// A tap, a cancelled drag that scrolled nothing, and a completed flick must all release the
+/// touch state. With native anchoring off, only the shell can keep a later layout change still.
+#[test]
+fn touches_release_the_position_hold_after_their_scrolling_finishes() {
+    let site = site_of(&listing_of(&[("review", 30)]));
+    let Some(mut page) = chrome() else { return };
+    for kind in ["tap", "cancel", "flick"] {
+        open_on_a_phone(&mut page, &site);
+        let place = page.eval(&format!(
+            r#"new Promise(resolve => {{
+                document.documentElement.style.overflowAnchor = 'none';
+                scrollTo(0,600);
+                const board = document.querySelector('.waiting-columns');
+                const touch = type => board.dispatchEvent(new TouchEvent(type, {{bubbles: true}}));
+                touch('touchstart');
+                if ({kind:?} !== 'tap') touch('touchmove');
+                if ({kind:?} === 'flick') document.dispatchEvent(new Event('scroll'));
+                touch({kind:?} === 'cancel' ? 'touchcancel' : 'touchend');
+                if ({kind:?} === 'flick') document.dispatchEvent(new Event('scrollend'));
+                requestAnimationFrame(() => {{
+                    const row = [...board.querySelectorAll('[data-slug]')].find(row => {{
+                        const top = row.getBoundingClientRect().top;
+                        return top >= 0 && top < innerHeight;
+                    }});
+                    const before = row.getBoundingClientRect().top;
+                    window.reviewHoldPlace('.waiting-columns [data-slug]');
+                    row.style.transform = 'translateY(80px)';
+                    const shifted = row.getBoundingClientRect().top;
+                    requestAnimationFrame(() => resolve([before, shifted, row.getBoundingClientRect().top]));
+                }});
+            }})"#
+        ));
+        let before = place[0].as_f64().unwrap();
+        assert_eq!(place[1].as_f64().unwrap() - before, 80.0);
+        assert_eq!(place[2].as_f64().unwrap(), before, "{kind}: {place}");
+    }
+}
+
+/// A detached element cannot deliver scrollend to the shell's window listener. Removing it must
+/// release later layout holds, but not the momentum of another, still-connected scroller. The
+/// touch input is synthetic; both element scrolls and the connected scrollend are native events.
+/// Release and cancellation target the original element, before or after its removal. A second
+/// scroller also has a second contact: its release leaves the detached contact down until last.
+#[test]
+fn removed_scrollers_release_idle_holds_without_ending_connected_scrolling() {
+    let site = site_of(&listing_of(&[("review", 30)]));
+    let Some(mut page) = chrome() else { return };
+    for (release_before, release_kind, continuing) in [
+        (true, "touchend", false),
+        (true, "touchend", true),
+        (true, "touchcancel", false),
+        (true, "touchcancel", true),
+        (false, "touchend", false),
+        (false, "touchend", true),
+        (false, "touchcancel", false),
+        (false, "touchcancel", true),
+    ] {
+        open_on_a_phone(&mut page, &site);
+        let result = page.eval(&format!(
+            r#"(async () => {{
+                document.documentElement.style.overflowAnchor = 'none';
+                scrollTo(0,600);
+                await new Promise(requestAnimationFrame);
+                const board = document.querySelector('.waiting-columns');
+                const row = [...board.querySelectorAll('[data-slug]')].find(row => {{
+                    const top = row.getBoundingClientRect().top;
+                    return top >= 0 && top < innerHeight;
+                }});
+                const before = row.getBoundingClientRect().top;
+                const scroller = () => {{
+                    const box = document.createElement('div');
+                    box.style.cssText = 'position:fixed;top:0;right:0;width:40px;height:40px;overflow:auto';
+                    const content = document.createElement('div');
+                    content.style.height = '400px';
+                    box.append(content);
+                    document.body.append(box);
+                    return box;
+                }};
+                const removed = scroller(), kept = {continuing} ? scroller() : null;
+                const firstContact = new Touch({{identifier:1, target:removed}});
+                const contacts = kept ? [firstContact, new Touch({{identifier:2, target:kept}})] : [firstContact];
+                const events = [];
+                let whileDown = null, releasedConnected = null;
+                const touch = (type, target = removed, touches = contacts) => target.dispatchEvent(new TouchEvent(type, {{bubbles:true, touches}}));
+                const release = () => {{
+                    if (kept) touch({release_kind:?}, kept, [firstContact]);
+                    releasedConnected = removed.isConnected;
+                    touch({release_kind:?}, removed, []);
+                }};
+                const ended = kept && new Promise(resolve => kept.addEventListener('scrollend', event => {{
+                    events.push(['end', event.isTrusted]);
+                    resolve();
+                }}, {{once:true}}));
+                const displaced = () => {{
+                    window.reviewHoldPlace('.waiting-columns [data-slug]');
+                    row.style.transform = 'translateY(80px)';
+                    const shifted = row.getBoundingClientRect().top;
+                    return new Promise(resolve => requestAnimationFrame(() => resolve([shifted, row.getBoundingClientRect().top])));
+                }};
+                const scrolled = new Promise(resolve => {{
+                    kept?.addEventListener('scroll', event => {{
+                        events.push(['kept', event.isTrusted]);
+                        resolve(displaced());
+                    }}, {{once:true}});
+                    removed.addEventListener('scroll', event => {{
+                        events.push(['removed', event.isTrusted]);
+                        removed.remove();
+                        const onward = () => {{
+                            if (kept) kept.scrollTop = 40;
+                            else resolve(displaced());
+                        }};
+                        if ({release_before}) onward();
+                        else {{
+                            window.reviewHoldPlace('.waiting-columns [data-slug]');
+                            row.style.transform = 'translateY(40px)';
+                            requestAnimationFrame(() => {{
+                                whileDown = row.getBoundingClientRect().top;
+                                row.style.transform = '';
+                                release();
+                                onward();
+                            }});
+                        }}
+                    }}, {{once:true}});
+                }});
+                touch('touchstart', removed, [firstContact]);
+                if (kept) touch('touchstart', kept);
+                touch('touchmove');
+                removed.scrollTop = 40;
+                if ({release_before}) release();
+                const first = await scrolled;
+                if (ended) await ended;
+                const idle = row.getBoundingClientRect().top;
+                window.reviewHoldPlace('.waiting-columns [data-slug]');
+                row.style.transform = 'translateY(160px)';
+                await new Promise(requestAnimationFrame);
+                kept?.remove();
+                return {{before, first, idle, after:row.getBoundingClientRect().top, events, whileDown, releasedConnected}};
+            }})()"#
+        ));
+        let before = result["before"].as_f64().unwrap();
+        assert_eq!(
+            result["releasedConnected"],
+            json!(release_before),
+            "{result}"
+        );
+        if !release_before {
+            assert_eq!(
+                result["whileDown"].as_f64().unwrap(),
+                before + 40.0,
+                "{result}"
+            );
+        }
+        assert_eq!(result["first"][0].as_f64().unwrap(), before + 80.0);
+        assert_eq!(
+            result["first"][1].as_f64().unwrap(),
+            before + if continuing { 80.0 } else { 0.0 },
+            "continuing={continuing}: {result}"
+        );
+        assert_eq!(result["after"], result["idle"], "{result}");
+        assert_eq!(
+            result["events"],
+            if continuing {
+                json!([["removed", true], ["kept", true], ["end", true]])
+            } else {
+                json!([["removed", true]])
+            }
+        );
+    }
+}
+
+/// Native touch input still pans the page vertically and the stage strip horizontally. No
+/// gesture is prevented or restricted to one axis by the position-hold repair.
+#[test]
+fn vertical_finger_swipes_and_horizontal_stage_swipes_keep_their_native_scroll() {
+    let site = site_of(&listing_of(&[("review", 30)]));
+    let Some(mut page) = chrome() else { return };
+    open_on_a_phone(&mut page, &site);
+    for (x, start, end) in [(180, 700, 400), (180, 650, 350)] {
+        let before = page.eval("scrollY").as_f64().unwrap();
+        page.call(
+            "Input.dispatchTouchEvent",
+            json!({"type":"touchStart","touchPoints":[{"x":x,"y":start}]}),
+        );
+        for y in [start - 40, end] {
+            page.call(
+                "Input.dispatchTouchEvent",
+                json!({"type":"touchMove","touchPoints":[{"x":x,"y":y}]}),
+            );
+            if y == start - 40 {
+                page.eval("window.reviewHoldPlace('.waiting-columns [data-slug]')");
+            }
+        }
+        page.call(
+            "Input.dispatchTouchEvent",
+            json!({"type":"touchEnd","touchPoints":[]}),
+        );
+        assert!(page.wait_for(&format!("scrollY > {}", before + 100.0), SHOWN));
+    }
+    // A fresh page ends the vertical fling before aiming at the strip at the top.
+    open_on_a_phone(&mut page, &site);
+    let at = page.eval("(() => { const tabs = document.querySelector('.stage-tabs'); tabs.scrollLeft = 0; const r = tabs.getBoundingClientRect(); return Math.round(r.top + r.height / 2); })()");
+    assert!(at.as_f64().is_some_and(|y| y > 0.0 && y < 844.0));
+    page.call(
+        "Input.dispatchTouchEvent",
+        json!({"type":"touchStart","touchPoints":[{"x":320,"y":at}]}),
+    );
+    for x in [280, 180, 70] {
+        page.call(
+            "Input.dispatchTouchEvent",
+            json!({"type":"touchMove","touchPoints":[{"x":x,"y":at}]}),
+        );
+    }
+    page.call(
+        "Input.dispatchTouchEvent",
+        json!({"type":"touchEnd","touchPoints":[]}),
+    );
+    assert!(page.wait_for(
+        "document.querySelector('.stage-tabs').scrollLeft > 100",
+        SHOWN
+    ));
+    assert_eq!(page.eval("scrollY"), json!(0));
+    assert_eq!(page.eval(MOUNTED), json!(["review"]));
+}
+
+#[test]
+fn all_six_lifecycle_headings_fit_together_on_a_wide_board() {
+    let site = site();
+    let Some(mut page) = chrome() else { return };
+    viewport(&mut page, 1440, 900);
+    page.open(&site.url("/tasks"));
+    assert!(page.wait_for(
+        "document.querySelector('.waiting-columns .taskcard') !== null",
+        SHOWN
+    ));
     assert_eq!(
-        page.eval(WIDTHS),
+        page.eval(MOUNTED),
         json!([
             "concept",
             "design",
             "ready",
             "in_progress",
             "build-test",
-            "review"
-        ]),
-        "each column is as wide as the board's scroller"
+            "review",
+            "done"
+        ])
     );
+    assert_eq!(page.eval("[...document.querySelectorAll('.waiting-columns .column h2')].every(heading => { const r = heading.getBoundingClientRect(); return r.left >= 0 && r.right <= innerWidth && r.top >= 0 && r.bottom <= innerHeight; })"), json!(true));
     assert_eq!(
-        page.eval("document.querySelector('.board-scroll').scrollLeft"),
-        json!(0)
+        page.eval("document.documentElement.scrollWidth <= innerWidth"),
+        json!(true)
     );
-    page.eval(LANDINGS);
-    swipe(&mut page, 0.6, 800, false);
-    lands(&mut page, 1, "a swipe to the next column");
-    // A short flick, its momentum enough to carry it on past the next column where the sheet let
-    // it pass one (`scroll-snap-stop: normal`).
-    swipe(&mut page, 0.3, 4000, true);
-    lands(&mut page, 2, "a short flick");
-    swipe(&mut page, -0.6, 800, false);
-    lands(&mut page, 1, "a swipe back");
+    assert_eq!(page.eval("document.querySelector('.column[data-status=blocked], .signoff-lane, .pipeline, .board-scroll')"), Value::Null);
 }
 
-/// A long or fast flick, whose momentum carried Chrome past the next column despite
-/// `scroll-snap-stop: always` (0.7 of a column at 6000 px/s, 0.9 at 3000 and at 6000), ends on
-/// the next column (`src/boardswipe.ts`), forward and back. Each line printed names the columns
-/// its scrolls ended on, the first where the momentum left it.
-#[test]
-fn a_long_or_fast_flick_on_a_phone_passes_one_column_at_most() {
-    let site = site();
-    let Some(mut page) = chrome() else { return };
-    open_on_a_phone(&mut page, &site);
-    page.eval(LANDINGS);
-    for (columns, speed, column) in [
-        (0.9, 6000, 1),
-        (0.7, 6000, 2),
-        (0.9, 3000, 3),
-        (-0.9, 6000, 2),
-        (-0.95, 6000, 1),
-    ] {
-        swipe(&mut page, columns, speed, true);
-        let ended = lands(
-            &mut page,
-            column,
-            &format!("a flick of {columns} at {speed} px/s"),
-        );
-        eprintln!("PHONE FLICK {columns} of a column at {speed} px/s ended on {ended}");
-    }
-}
-
-/// The frames a board that stays is watched for.
-const FRAMES: u32 = 30;
-
-/// Count in `window.phoneFrames` the frames drawn from now on, up to `FRAMES`, and in
-/// `window.phoneScrolls` the board's scroll events among them.
-fn still() -> String {
-    format!(
-        "(() => {{ const board = document.querySelector('.board-scroll'); window.phoneFrames = 0; window.phoneScrolls = 0;
-            board.onscroll = () => {{ window.phoneScrolls += 1; }};
-            const frame = () => {{ window.phoneFrames += 1; if (window.phoneFrames < {FRAMES}) requestAnimationFrame(frame); }};
-            requestAnimationFrame(frame); }})()"
-    )
-}
-
-/// A tap on the board begins no swipe, so the scroll that ends next, a focus move's here, lands
-/// where it lands. Before, a tap left its press noted (`src/boardswipe.ts` forgot it only at the
-/// end of a scroll, which a tap never starts), and a focus moved two columns on, as Tab or a
-/// screen reader moves it from In progress past the empty build and test rail to Review, was
-/// pulled back one column, the focused card off the screen.
-#[test]
-fn a_tap_then_a_focus_move_two_columns_on_stays_there() {
-    let site = site();
-    let Some(mut page) = chrome() else { return };
-    open_on_a_phone(&mut page, &site);
-    page.eval(LANDINGS);
-    // Ready's cards drawn, as a column's are once it came on the screen, and back to Concept.
-    reveal(&mut page, "ready", 2, 0);
-    let link = ".column[data-status=ready] .taskcard-title";
-    assert!(
-        page.wait_for(
-            &format!("document.querySelector({}) !== null", json!(link)),
-            SHOWN
-        ),
-        "Ready's cards never drew"
-    );
-    reveal(&mut page, "concept", 0, 0);
-    page.tap(".column[data-status=concept] > h2");
-    page.eval(&format!("document.querySelector({}).focus()", json!(link)));
-    lands(&mut page, 2, "the focus move to Ready");
-    // A scroll the board asks for as that one ends starts within a frame or two of it.
-    page.eval(&still());
-    assert!(
-        page.wait_for(&format!("window.phoneFrames >= {FRAMES}"), SHOWN),
-        "the page drew no {FRAMES} frames: {}",
-        page.eval("window.phoneFrames")
-    );
-    assert_eq!(
-        page.eval(&format!(
-            "(() => {{ const board = document.querySelector('.board-scroll').getBoundingClientRect(), focused = document.activeElement;
-                const card = focused.getBoundingClientRect();
-                return [window.phoneScrolls, window.phoneLandings, focused.matches({}), card.left >= board.left && card.right <= board.right]; }})()",
-            json!(link)
-        )),
-        json!([0, [], true, true]),
-        "after a tap the board stays on Ready, the focused card on its screen (scrolls, landings since, the card focused, on the screen)"
-    );
-}
-
-/// Bring the column of `status`, the pipeline's `column`th, onto the board's screen, `top` px down
-/// the board, once its scroll ends where it moved at all.
-fn reveal(page: &mut Chrome, status: &str, column: usize, top: u32) {
-    let moved = page.eval(&format!(
-        "(() => {{ const board = document.querySelector('.board-scroll'), column = document.querySelector('.column[data-status={status}]');
-            const before = [board.scrollLeft, board.scrollTop];
-            board.scrollLeft += column.getBoundingClientRect().left - board.getBoundingClientRect().left - board.clientLeft;
-            board.scrollTop = {top};
-            return board.scrollLeft !== before[0] || board.scrollTop !== before[1]; }})()"
-    ));
-    if moved == json!(true) {
-        lands(page, column, &format!("the scroll to {status}"));
-    }
-    assert!(
-        page.wait_for(&deep(top), SHOWN),
-        "the board never stood {top} px down: {}",
-        page.eval("document.querySelector('.board-scroll').scrollTop")
-    );
-}
-
-/// Whether the board stands `top` px down, to the few pixels the browser's scroll anchoring moves
-/// it by as rows above the screen draw a little off what they reserved.
-fn deep(top: u32) -> String {
-    format!("Math.abs(document.querySelector('.board-scroll').scrollTop - {top}) <= 20")
-}
-
-/// A key pressed on the focused board.
-fn key(page: &mut Chrome, name: &str, code: u32) {
-    for kind in ["keyDown", "keyUp"] {
-        page.call(
-            "Input.dispatchKeyEvent",
-            json!({"type": kind, "key": name, "code": name, "windowsVirtualKeyCode": code}),
-        );
-    }
-}
-
-/// A reader scrolled down a long column swipes to the next one, short or empty, and back, and
-/// steps there by key: each column stands as tall as the longest (`align-items: stretch`), as
-/// Chrome snaps only to a column that reaches as far down as the board shows. Before, 400 px down
-/// Ready a swipe to the empty Design or past In progress to the short rail snapped back, and
-/// ArrowRight from In progress passed the rail.
-#[test]
-fn a_swipe_deep_down_a_column_lands_on_the_next_one_short_or_empty() {
-    let site = site_of(&listing_of(&[
-        ("concept", 3),
-        ("design", 0),
-        ("ready", 12),
-        ("in_progress", 30),
-        ("review", 5),
-    ]));
-    let Some(mut page) = chrome() else { return };
-    open_on_a_phone(&mut page, &site);
-    page.eval(LANDINGS);
-    reveal(&mut page, "ready", 2, 400);
-    for (columns, column, what) in [
-        (-0.6, 1, "a swipe to the empty Design"),
-        (0.6, 2, "a swipe back to Ready"),
-        (0.6, 3, "a swipe to In progress"),
-        (0.6, 4, "a swipe to the rail"),
-        (-0.6, 3, "a swipe back to In progress"),
-    ] {
-        swipe(&mut page, columns, 800, false);
-        lands(&mut page, column, &format!("{what}, 400 px down"));
-    }
-    assert!(
-        page.wait_for(&deep(400), SHOWN),
-        "the swipes kept the reader's place down the columns: {}",
-        page.eval("document.querySelector('.board-scroll').scrollTop")
-    );
-    page.eval("document.querySelector('.board-scroll').focus()");
-    for top in [400, 900] {
-        reveal(&mut page, "in_progress", 3, top);
-        key(&mut page, "ArrowRight", 39);
-        lands(
-            &mut page,
-            4,
-            &format!("ArrowRight from In progress {top} px down"),
-        );
-        key(&mut page, "ArrowLeft", 37);
-        lands(
-            &mut page,
-            3,
-            &format!("ArrowLeft from the rail {top} px down"),
-        );
-    }
-}
-
-/// The heading of the column of `status`: how far its top stands below the board's, its foot on
-/// the page, the place it says among the pipeline's columns, whether that shows, and whether the
-/// heading is what the page draws at its middle, over the cards scrolling under it.
-fn heading(status: &str) -> String {
-    format!(
-        "(() => {{ const board = document.querySelector('.board-scroll').getBoundingClientRect(),
-            head = document.querySelector('.column[data-status={status}] > h2'), box = head.getBoundingClientRect(),
-            place = head.querySelector('.column-place');
-            const seen = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
-            return {{below: Math.round(box.top - board.top), foot: box.bottom, place: place?.textContent ?? null,
-                shown: place?.checkVisibility() === true, onTop: head.contains(seen)}}; }})()"
-    )
-}
-
-/// On a phone a column's heading stays at the board's top while the reader scrolls down the
-/// column, drawn over the cards, and says which of the pipeline's columns it is, the rail among
-/// them; a card scrolled into view (a focus moved to it here) lands below it, not under it. A desk
-/// shows its columns side by side, their headings where they were and no place. Before, 400 px
-/// down Ready its heading had scrolled away with the column's top, and nothing on the screen said
-/// which column it was or how many there were.
-#[test]
-fn a_phones_column_heading_stays_at_the_board_top_saying_which_column_it_is() {
-    let site = site_of(&listing_of(&[
-        ("concept", 3),
-        ("design", 0),
-        ("ready", 12),
-        ("in_progress", 30),
-        ("review", 5),
-    ]));
-    let Some(mut page) = chrome() else { return };
-    open_on_a_phone(&mut page, &site);
-    page.eval(LANDINGS);
-    // Ready's first cards drawn, as a column's are once they come on the screen.
-    reveal(&mut page, "ready", 2, 0);
-    let card = ".column[data-status=ready] [data-slug='phone/ready-3'] .taskcard-title";
-    assert!(
-        page.wait_for(
-            &format!("document.querySelector({}) !== null", json!(card)),
-            SHOWN
-        ),
-        "Ready's cards never drew"
-    );
-    reveal(&mut page, "ready", 2, 400);
-    let ready = page.eval(&heading("ready"));
-    assert_eq!(
-        (
-            &ready["below"],
-            &ready["place"],
-            &ready["shown"],
-            &ready["onTop"]
-        ),
-        (&json!(0), &json!("3 of 6"), &json!(true), &json!(true)),
-        "400 px down Ready its heading stands at the board's top, over the cards, saying 3 of 6: {ready}"
-    );
-    // A card above the screen, given the focus, comes into view below the heading.
-    reveal(&mut page, "ready", 2, 900);
-    page.eval(&format!("document.querySelector({}).focus()", json!(card)));
-    let foot = page.eval(&heading("ready"))["foot"].clone();
-    assert!(
-        page.wait_for(
-            &format!(
-                "(() => {{ const card = document.querySelector({}).closest('.taskcard').getBoundingClientRect();
-                    const board = document.querySelector('.board-scroll').getBoundingClientRect();
-                    return document.activeElement.matches({}) && card.top >= {foot} && card.top < board.bottom; }})()",
-                json!(card),
-                json!(card),
-            ),
-            SHOWN
-        ),
-        "the focused card never stood below Ready's heading: {}",
-        page.eval(&format!(
-            "[document.querySelector({}).closest('.taskcard').getBoundingClientRect().top, {}]",
-            json!(card),
-            heading("ready")
-        ))
-    );
-    reveal(&mut page, "build-test", 4, 400);
-    let rail = page.eval(&heading("build-test"));
-    assert_eq!(
-        (&rail["below"], &rail["place"], &rail["onTop"]),
-        (&json!(0), &json!("5 of 6"), &json!(true)),
-        "the rail's heading stands at the board's top too, saying 5 of 6: {rail}"
-    );
-    viewport(&mut page, 1280, 800);
-    assert!(
-        page.wait_for(
-            "innerWidth === 1280 && [...document.querySelectorAll('.column-place')].every(place => !place.checkVisibility()) && [...document.querySelectorAll('.pipeline > .column > h2')].every(head => getComputedStyle(head).position === 'static')",
-            SHOWN
-        ),
-        "a desk says no place and keeps its headings in their columns: {}",
-        page.eval(&heading("ready"))
-    );
-}
-
-/// Whether the reader sees what `selector` names.
-fn shown(page: &mut Chrome, selector: &str) -> bool {
-    page.eval(&format!(
-        "document.querySelector({})?.checkVisibility() === true",
-        json!(selector)
-    )) == json!(true)
-}
-
-/// On a phone the board opens with its search and its filters shut behind their button; a tap
-/// opens them, a search typed there reads the board, and a tap again shuts them. A desk, and a
-/// window between a phone's and a desk's, show them as they did, and no button, whether a phone
-/// left them open or shut, and their columns as they were.
 #[test]
 fn a_phones_search_and_filters_open_from_their_button_and_a_desk_shows_them() {
     let site = site();
     let Some(mut page) = chrome() else { return };
     open_on_a_phone(&mut page, &site);
-    let toggle = ".board-filters-toggle";
-    assert!(shown(&mut page, toggle), "a phone draws the button");
-    assert!(!shown(&mut page, "#board-filters"), "the filters open shut");
     assert_eq!(
-        page.eval("document.querySelector('.board-filters-toggle').getAttribute('aria-expanded')"),
-        json!("false")
+        page.eval("document.querySelector('#board-filters').checkVisibility()"),
+        json!(false)
     );
-    // What stands above the board's scroller: less, with the filters shut.
-    let above = page
-        .eval("document.querySelector('.board-scroll').getBoundingClientRect().top")
-        .as_f64()
-        .unwrap();
-    page.tap(toggle);
-    assert!(
-        page.wait_for(
-            "document.querySelector('#board-filters')?.checkVisibility() === true && document.querySelector('.board-filters-toggle').getAttribute('aria-expanded') === 'true'",
-            SHOWN
-        ),
-        "a tap never opened the filters"
-    );
-    assert!(
-        page.eval("document.querySelector('.board-scroll').getBoundingClientRect().top")
-            .as_f64()
-            .unwrap()
-            > above,
-        "the opened filters push the board down"
-    );
-    assert!(shown(&mut page, "#board-filters input[type=search]"));
-    page.eval(
-        "(() => { const input = document.querySelector('#board-filters input[type=search]'); input.value = 'found';
-            input.dispatchEvent(new Event('input', {bubbles: true})); })()",
-    );
-    if let Err(stall) = test_time::until_true("the search's read", crate::STALL, || {
-        site.targets()
-            .iter()
-            .any(|target| target.starts_with("/api/task-board?") && target.contains("q=found"))
-            || {
+    page.tap(".board-filters-toggle");
+    assert!(page.wait_for("document.querySelector('#board-filters')?.checkVisibility() === true && document.querySelector('.board-filters-toggle').getAttribute('aria-expanded') === 'true'", SHOWN));
+    page.eval("(() => { const input = document.querySelector('#board-filters input[type=search]'); input.value = 'found'; input.dispatchEvent(new Event('input', {bubbles: true})); })()");
+    if let Err(stall) =
+        test_time::until_true("the search's waiting projection read", crate::STALL, || {
+            site.targets().iter().any(|target| {
+                target.starts_with("/api/task-board?view=waiting&") && target.contains("q=found")
+            }) || {
                 page.pump(std::time::Duration::from_millis(25));
                 false
             }
-    }) {
+        })
+    {
         panic!("{stall}: {:#?}", site.targets());
     }
-    page.tap(toggle);
-    assert!(
-        page.wait_for(
-            "document.querySelector('#board-filters')?.checkVisibility() === false && document.querySelector('.board-filters-toggle').getAttribute('aria-expanded') === 'false'",
-            SHOWN
-        ),
-        "a tap again never shut the filters"
-    );
-    // A desk, and a window too wide for a phone's, show the filters and no button, and their
-    // columns side by side.
-    for (width, height) in [(1280, 800), (700, 1000)] {
+    page.tap(".board-filters-toggle");
+    assert!(page.wait_for(
+        "document.querySelector('#board-filters')?.checkVisibility() === false",
+        SHOWN
+    ));
+    for (width, height) in [(1440, 900), (800, 1000)] {
         viewport(&mut page, width, height);
-        assert!(
-            page.wait_for(
-                &format!(
-                    "innerWidth === {width} && document.querySelector('#board-filters')?.checkVisibility() === true && document.querySelector('.board-filters-toggle')?.checkVisibility() === false"
-                ),
-                SHOWN
-            ),
-            "{width}px shows the filters and no button"
-        );
-        let columns = page.eval(
-            "[...document.querySelectorAll('.pipeline > .column:not(.rail)')].map(column => column.getBoundingClientRect().width)",
-        );
-        let wide = if width > 760 { 288.0 } else { 280.0 };
-        assert!(
-            columns
-                .as_array()
-                .unwrap()
-                .iter()
-                .all(|column| column.as_f64() == Some(wide)),
-            "{width}px: {columns}"
-        );
+        assert!(page.wait_for(&format!("innerWidth === {width} && document.querySelector('#board-filters')?.checkVisibility() === true && document.querySelector('.board-filters-toggle')?.checkVisibility() === false"), SHOWN));
     }
 }

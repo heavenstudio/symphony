@@ -1,4 +1,5 @@
 //! Consumer acceptance on the delivered held-aware parent-feature observation.
+use crate::common::Backend;
 
 use super::*;
 use crate::common::{HOST, NOW};
@@ -13,9 +14,9 @@ fn held(f: &Fixture, orch: &str, worker: &str, slug: &str) {
     store.hold_blocked(slug, worker).unwrap();
 }
 
-#[test]
-fn a_held_only_count_change_reaches_the_account_without_a_board_marker_or_ready_change() {
-    let f = Fixture::empty();
+on_both! {
+fn a_held_only_count_change_reaches_the_account_without_a_board_marker_or_ready_change(backend: Backend) {
+    let f = Fixture::on(backend, crate::common::Seed::default());
     let orch = f.session("orchestrator");
     let worker = f.session("worker");
     for n in 0..4 {
@@ -23,15 +24,7 @@ fn a_held_only_count_change_reaches_the_account_without_a_board_marker_or_ready_
     }
     let listener = listen(&f, &orch);
     assert!(!listener.text().contains("low_volume "));
-    let marker = || {
-        f.store
-            .client()
-            .query(
-                &format!("RETURN {};", symphony_board::schema::BOARD_MARKER),
-                json!({}),
-            )
-            .unwrap()
-    };
+    let marker = || vec![json!(f.store.marker().unwrap())];
     let before = marker();
     let board = f.store.board().unwrap();
     // End this hold's validity without changing any ordinary PULL or ownership input.
@@ -61,10 +54,11 @@ fn a_held_only_count_change_reaches_the_account_without_a_board_marker_or_ready_
     f.store.dispatch_callbacks().unwrap();
     assert_eq!(warnings(&listener.drain(&f, &worker, &orch)).len(), 1);
 }
+}
 
-#[test]
-fn an_observation_pass_cannot_hide_a_hold_only_crossing_behind_its_sequence_gate() {
-    let f = Fixture::empty();
+on_both! {
+fn an_observation_pass_cannot_hide_a_hold_only_crossing_behind_its_sequence_gate(backend: Backend) {
+    let f = Fixture::on(backend, crate::common::Seed::default());
     let orch = f.session("orchestrator");
     let worker = f.session("worker");
     for n in 0..4 {
@@ -78,15 +72,7 @@ fn an_observation_pass_cannot_hide_a_hold_only_crossing_behind_its_sequence_gate
     assert!(!listener.text().contains("low_volume "));
     // Bookkeeping writes moved the marker without changing the observed Board or count.
     // Establish the equivalent current-marker checkpoint a concurrent observer can leave.
-    let marker = || {
-        f.store
-            .client()
-            .query(
-                &format!("RETURN {};", symphony_board::schema::BOARD_MARKER),
-                json!({}),
-            )
-            .unwrap()
-    };
+    let marker = || vec![json!(f.store.marker().unwrap())];
     let before = marker();
     let sequence = before[0]
         .as_u64()
@@ -130,10 +116,11 @@ fn an_observation_pass_cannot_hide_a_hold_only_crossing_behind_its_sequence_gate
     repeat.dispatch_callbacks().unwrap();
     assert!(warnings(&listener.drain(&f, &worker, &orch)).is_empty());
 }
+}
 
-#[test]
-fn nested_branch_mirrors_reds_and_finished_work_use_the_canonical_feature_keys() {
-    let f = Fixture::empty();
+on_both! {
+fn nested_branch_mirrors_reds_and_finished_work_use_the_canonical_feature_keys(backend: Backend) {
+    let f = Fixture::on(backend, crate::common::Seed::default());
     let orch = f.session("orchestrator");
     let worker = f.session("worker");
     let filer = f.session(symphony_board::red::FILER);
@@ -202,10 +189,11 @@ fn nested_branch_mirrors_reds_and_finished_work_use_the_canonical_feature_keys()
     assert_eq!(digest.slots, Some(4));
     assert!(!digest.entries().contains(&("low_volume".into(), orch)));
 }
+}
 
-#[test]
-fn unknown_owners_keep_valid_blocked_holds_in_consumer_counts() {
-    let f = Fixture::empty();
+on_both! {
+fn unknown_owners_keep_valid_blocked_holds_in_consumer_counts(backend: Backend) {
+    let f = Fixture::on(backend, crate::common::Seed::default());
     let orch = f.session("orchestrator");
     let worker = f.session("worker");
     for n in 0..4 {
@@ -256,10 +244,11 @@ fn unknown_owners_keep_valid_blocked_holds_in_consumer_counts() {
             .any(|line| line.contains(&format!("low_volume {orch} open=3 threshold=4 cap=8")))
     );
 }
+}
 
-#[test]
-fn failed_holdings_are_errors_and_do_not_clear_the_delivered_account() {
-    let f = Fixture::empty();
+on_both! {
+fn failed_holdings_are_errors_and_do_not_clear_the_delivered_account(backend: Backend) {
+    let f = Fixture::on(backend, crate::common::Seed::default());
     let orch = f.session("orchestrator");
     let worker = f.session("worker");
     for n in 0..4 {
@@ -292,7 +281,9 @@ fn failed_holdings_are_errors_and_do_not_clear_the_delivered_account() {
     f.store.dispatch_callbacks().unwrap();
     assert!(warnings(&listener.drain(&f, &worker, &orch)).is_empty());
 }
+}
 
+// SurrealDB-only: inspects statement text captured by the HTTP/CBOR relay.
 #[test]
 fn one_holdings_read_is_shared_by_recipients_leases_and_idle_checks() {
     let f = Fixture::empty();
@@ -304,7 +295,7 @@ fn one_holdings_read_is_shared_by_recipients_leases_and_idle_checks() {
     }
     let relay = Relay::to(f.store.client().addr(), 0);
     let store = Store::with(
-        relay.client("sf", f.store.client().database()),
+        relay.client("sf", f.store.database().database()),
         Box::new(|| NOW),
         Box::new(|_| true),
         HOST,

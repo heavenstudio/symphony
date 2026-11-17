@@ -70,3 +70,28 @@ impl<'a> Statement<'a> {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_unpaired_statement_is_refused_at_the_call_site_before_it_can_be_sent() {
+        let statement = Statement::from("RETURN NONE;");
+        let at = Location::caller();
+        let why = statement.postgres_at(at).unwrap_err().to_string();
+        assert!(
+            why.contains("has no PostgreSQL twin yet: nothing was sent"),
+            "{why}"
+        );
+        assert!(
+            why.contains(&format!("{}:{}", at.file(), at.line())),
+            "{why}"
+        );
+        assert!(
+            both("RETURN NONE;", Pg::read("NULL"))
+                .postgres_at(at)
+                .is_ok()
+        );
+    }
+}

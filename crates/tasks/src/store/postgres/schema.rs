@@ -118,9 +118,9 @@ pub(in crate::store) struct Table {
 
 use Kind::{Array, Bool, Float, Int, Object, Text};
 
-/// The board's twenty tables, `words` (the full-text indexes, [`WORDS`]), and `copied_fields`
+/// The board's tables, including `words` (the full-text indexes, [`WORDS`]) and `copied_fields`
 /// (the imported fields' numeric spellings, [`super::copy`]).
-pub(in crate::store) const TABLES: [Table; 22] = [
+pub(in crate::store) const TABLES: [Table; 23] = [
     Table {
         name: "copied_fields",
         columns: &[req("original", Text)],
@@ -282,6 +282,10 @@ pub(in crate::store) const TABLES: [Table; 22] = [
     },
     Table {
         name: "chat_event",
+        columns: &[],
+    },
+    Table {
+        name: "unanswered_restore",
         columns: &[],
     },
     Table {
@@ -813,7 +817,7 @@ mod tests {
         let mut names: Vec<&str> = TABLES.iter().map(|table| table.name).collect();
         names.sort_unstable();
         names.dedup();
-        assert_eq!(names.len(), 22);
+        assert_eq!(names.len(), 23);
         let defined = define();
         for name in names {
             assert!(

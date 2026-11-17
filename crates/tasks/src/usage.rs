@@ -15,10 +15,11 @@
 pub mod price;
 pub mod transcript;
 
-use crate::pyjson::Py;
+use crate::json_object::object;
 use crate::rows::UsageRow;
 pub use price::{Cost, Prices};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::collections::BTreeMap;
 
 /// The tokens of model calls on one model at one speed: what a beat hands the board.
@@ -67,9 +68,9 @@ impl Tokens {
     }
 
     /// The JSON the agents API and `tasks show --json` give.
-    pub fn json(&self) -> Py {
-        let count = |n: u64| Py::Int(i64::try_from(n).unwrap_or(i64::MAX));
-        Py::obj(vec![
+    pub fn json(&self) -> Value {
+        let count = |n: u64| Value::from(i64::try_from(n).unwrap_or(i64::MAX));
+        object(vec![
             ("input", count(self.input)),
             ("cache_write_5m", count(self.cache_write_5m)),
             ("cache_write_1h", count(self.cache_write_1h)),
@@ -190,12 +191,12 @@ impl Tally {
 
     /// The JSON `tasks show --json` gives: the sums, and the rows themselves, which carry the model
     /// and speed a price is read by, each beside its cost.
-    pub fn json(&self, rows: &[UsageRow], prices: &Prices) -> Py {
+    pub fn json(&self, rows: &[UsageRow], prices: &Prices) -> Value {
         let cost = |cost: &Cost| cost.json(&prices.read);
         let roles = (self.roles.iter())
             .map(|(role, spend)| {
-                Py::obj(vec![
-                    ("role", Py::str(role)),
+                object(vec![
+                    ("role", Value::from(role.as_str())),
                     ("tokens", spend.tokens.json()),
                     ("cost", cost(&spend.cost)),
                 ])
@@ -203,8 +204,8 @@ impl Tally {
             .collect();
         let rounds = (self.rounds.iter())
             .map(|(round, spend)| {
-                Py::obj(vec![
-                    ("round", Py::Int(*round)),
+                object(vec![
+                    ("round", Value::from(*round)),
                     ("tokens", spend.tokens.json()),
                     ("cost", cost(&spend.cost)),
                 ])
@@ -213,26 +214,26 @@ impl Tally {
         let rows = (rows.iter())
             .map(|row| {
                 let spend = row.spend(prices);
-                Py::obj(vec![
-                    ("handle", Py::str(&row.handle)),
-                    ("slug", Py::str(&row.slug)),
-                    ("role", Py::str(&row.role)),
-                    ("model", Py::str(&row.model)),
-                    ("speed", Py::str(&row.speed)),
-                    ("round", Py::Int(row.round)),
+                object(vec![
+                    ("handle", Value::from(row.handle.as_str())),
+                    ("slug", Value::from(row.slug.as_str())),
+                    ("role", Value::from(row.role.as_str())),
+                    ("model", Value::from(row.model.as_str())),
+                    ("speed", Value::from(row.speed.as_str())),
+                    ("round", Value::from(row.round)),
                     ("tokens", spend.tokens.json()),
                     ("cost", cost(&spend.cost)),
-                    ("first", Py::Float(row.first)),
-                    ("last", Py::Float(row.last)),
+                    ("first", Value::from(row.first)),
+                    ("last", Value::from(row.last)),
                 ])
             })
             .collect();
-        Py::obj(vec![
+        object(vec![
             ("total", self.total.tokens.json()),
             ("cost", cost(&self.total.cost)),
-            ("by_role", Py::List(roles)),
-            ("by_round", Py::List(rounds)),
-            ("rows", Py::List(rows)),
+            ("by_role", Value::Array(roles)),
+            ("by_round", Value::Array(rounds)),
+            ("rows", Value::Array(rows)),
         ])
     }
 
@@ -576,7 +577,8 @@ mod tests {
             on("gpt-6.1-sol", "reviewer", 2, tokens(10, 0, 0, 0, 1)),
         ];
         let prices = prices();
-        let json = crate::pyjson::dumps_line(&Tally::at(&rows, &prices).json(&rows, &prices));
+        let json = serde_json::to_string(&Tally::at(&rows, &prices).json(&rows, &prices))
+            .expect("JSON values serialize");
         let value: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(value["cost"]["dollars"], 1.0);
         assert_eq!(value["cost"]["prices"], "2026-01-02");
@@ -606,8 +608,22 @@ mod tests {
     fn nothing_recorded_says_nothing() {
         assert!(Tally::of(&[]).lines().is_empty());
         assert_eq!(said(&[]), None);
-        let json = crate::pyjson::dumps(&Tally::of(&[]).json(&[], Prices::embedded()));
+        let json = serde_json::to_string_pretty(&Tally::of(&[]).json(&[], Prices::embedded()))
+            .expect("JSON values serialize");
         assert!(json.contains("\"by_role\": []"), "{json}");
+    }
+
+    #[test]
+    fn json_token_counts_keep_the_signed_limit() {
+        let counts = Tokens {
+            input: u64::MAX,
+            output: i64::MAX as u64,
+            ..Tokens::default()
+        }
+        .json();
+        assert_eq!(counts["input"].as_i64(), Some(i64::MAX));
+        assert_eq!(counts["output"].as_i64(), Some(i64::MAX));
+        assert_eq!(counts["calls"].as_u64(), Some(0));
     }
 
     #[test]

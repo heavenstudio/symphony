@@ -86,7 +86,7 @@ use crate::store::Program;
 /// as it was. Changing one (a field's type, an assertion, an index) also needs `DEFINE … OVERWRITE`
 /// for it. Protocol changes can require a wider version step and retirement of old read tokens:
 /// an already-open store does not repeat its opening check.
-pub const VERSION: i64 = 19;
+pub const VERSION: i64 = 20;
 
 /// Structural mutations plus all committed session changes, including deletions and re-creations.
 /// The separate structural record keeps the retired legacy scalar outside this identity.
@@ -452,6 +452,9 @@ DEFINE TABLE IF NOT EXISTS callback_lease SCHEMALESS;
 DEFINE TABLE IF NOT EXISTS callback_event SCHEMALESS;
 DEFINE INDEX IF NOT EXISTS callback_event_handle ON callback_event FIELDS handle, delivered;
 DEFINE TABLE IF NOT EXISTS chat_event SCHEMALESS;
+
+-- Schema 20 names the recovery reservations older SurrealDB builds made implicitly.
+DEFINE TABLE IF NOT EXISTS unanswered_restore SCHEMALESS;
 
 DEFINE TABLE IF NOT EXISTS ask SCHEMAFULL;
 DEFINE FIELD IF NOT EXISTS sid ON ask TYPE int;

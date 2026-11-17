@@ -394,10 +394,9 @@ fn blocked(task: &Task, look: &Look<'_>, landing: Option<&Landing<'_>>) -> Line 
         return match thing {
             Thing::Decision(name) => Line::new(DECISION, name, said("the owner's decision")),
             // The owner's stamp is the owner's to give: what waits on him is a decision, named by
-            // his approve, never by him (the default landing's hold names it so).
-            Thing::Check(OWNER) => {
-                Line::new(DECISION, said(OWNER_APPROVE), "its landing waits on it")
-            }
+            // his approve, never by him. A why describes the block, not the decision's name;
+            // a block made by hand need not have a landing behind it.
+            Thing::Check(OWNER) => Line::new(DECISION, OWNER_APPROVE, said("the owner's approval")),
             Thing::Check(name) => Line::new(CHECK, name, said("a check to give")),
             Thing::Parked => Line::new(PARKED, "", said("parked on purpose")),
             Thing::Task(slug) => match look.task(slug).map(|t| t.status.as_str()) {
@@ -559,7 +558,12 @@ pub fn age(seconds: f64) -> String {
 /// The line as `tasks show` prints it: `Waits: on KIND[: WHO] · WHY · AGE`, its who left out where
 /// its why says it already.
 pub fn said(line: &Line, seconds: f64) -> String {
-    let who = if line.who.is_empty() || line.why.contains(&line.who) {
+    let names_who = !line.who.is_empty()
+        && line.why.match_indices(&line.who).any(|(at, who)| {
+            let word = |c: char| c.is_alphanumeric() || matches!(c, '_' | '-' | '/' | '.');
+            !line.why[..at].ends_with(word) && !line.why[at + who.len()..].starts_with(word)
+        });
+    let who = if line.who.is_empty() || names_who {
         String::new()
     } else {
         format!(": {}", line.who)

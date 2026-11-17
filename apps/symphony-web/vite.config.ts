@@ -46,21 +46,15 @@ export default defineConfig({
         chunkFileNames: (chunk) =>
           chunk.isDynamicEntry ? "assets/[name]-[hash:16].js" : "assets/shared-[hash:16].js",
         assetFileNames: "assets/[name]-[hash:16][extname]",
-        // What every page kind imports is one chunk. Left to itself, Rolldown splits it by who
-        // imports each module, the menus' share (React, the mount) from the pages' alone (the
-        // frame), and every first visit pays for two files compressed apart (about 800 bytes).
-        // The menus' entry imports that one chunk, which every page has loaded by the time the
-        // shell warms or opens them.
+        // Seven page kinds share the frame and the device cache/live module. Compress them as
+        // one chunk, avoiding a separate request on each first visit. Runs takes the cache code
+        // too; the menus reuse this chunk already loaded by whichever page opened them.
         //
-        // What a page keeps on the device and the board it follows stay the one chunk the pages
-        // that follow the board load (the device cache, cache.ts, with live.tsx). Reports keeps
-        // its windows through the same cache and follows no board; split by who imports each
-        // module, the cache would leave that chunk for a file of its own, and every page that
-        // follows the board would pay a file more for a page it is not. So Reports loads their
-        // chunk instead, of the board's share the page's notices alone used.
+        // Keep cache.ts with live.tsx even if their importers differ: Reports uses the cache and
+        // the page's notices, so splitting them would add a file to every page following the board.
         codeSplitting: {
           groups: [
-            { name: "shared", minShareCount: PAGES.length },
+            { name: "shared", minShareCount: PAGES.length - 1 },
             { name: "kept", test: /\/src\/(cache|live)\.tsx?$/ },
           ],
         },

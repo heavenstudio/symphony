@@ -106,13 +106,9 @@ fn column(chrome: &mut Chrome, slug: &str) -> Value {
     ))
 }
 
-/// Scroll the board so its pipeline starts at the column `status`, less `before` pixels.
-fn scroll_to(chrome: &mut Chrome, status: &str, before: u32) {
-    chrome.eval(&format!("(() => {{ const board = document.querySelector('.board-scroll'); const column = document.querySelector('.pipeline > [data-status={status}]'); board.scrollTo({{left:board.scrollLeft + column.getBoundingClientRect().left - board.getBoundingClientRect().left - {before},top:0,behavior:'instant'}}); }})()"));
-}
-
 fn columns(chrome: &mut Chrome) -> Value {
-    chrome.eval("[...document.querySelectorAll('.pipeline > .column')].map(e=>e.dataset.status)")
+    chrome
+        .eval("[...document.querySelectorAll('.waiting-columns .column')].map(e=>e.dataset.status)")
 }
 
 fn desktop() -> Value {
@@ -145,96 +141,44 @@ fn a_recorded_test_run_moves_its_task_to_test_and_back_and_a_reviewers_stays_in_
         "{}",
         chrome.eval("fetch('/api/task-board?counts=1&activity=1').then(r=>r.json()).then(j=>JSON.stringify(j.machine_work))")
     );
-    let rail = "Math.round(document.querySelector('.column.rail').getBoundingClientRect().width)";
-    assert_eq!(chrome.eval(rail), json!(136));
-    assert_eq!(
-        chrome.eval("document.querySelectorAll('.column.rail p').length"),
-        json!(1)
-    );
-    scroll_to(&mut chrome, "ready", 0);
     screenshot(&mut chrome, "after-none");
     chrome.call("Emulation.setDeviceMetricsOverride", phone());
-    assert!(chrome.wait_for(
-        "document.querySelector('.board-scroll').getBoundingClientRect().width < 400",
-        SHOWN
-    ));
-    assert_eq!(
-        chrome.eval(rail),
-        chrome.eval("Math.round(document.querySelector('.board-scroll').clientWidth)"),
-        "a phone's one column at a time, the rail as wide as the others"
-    );
+    assert!(chrome.wait_for("document.querySelectorAll('.waiting-columns .column').length === 1 && document.querySelector('.column[data-status=review]') !== null",SHOWN));
     assert_eq!(
         chrome.eval("document.documentElement.scrollWidth <= innerWidth"),
         json!(true)
     );
-    scroll_to(&mut chrome, "build-test", 150);
     screenshot(&mut chrome, "after-none-phone");
     chrome.call("Emulation.setDeviceMetricsOverride", desktop());
-    // The executor's tests (recorded for the task above the `/work` it holds too), the
-    // reviewer's, and a slice's (recorded for the slice, drawn on its parent's card).
     let mut working = Run::start(&fixture, "working", &fixture.executor);
     let mut reviewing = Run::start(&fixture, "reviewing", &fixture.reviewer);
     let mut slicing = Run::start(&fixture, "slicing", &fixture.slicer);
     assert!(
         chrome.wait_for(
-            "document.querySelector('.pipeline > [data-status=test]') !== null",
+            "document.querySelector('[data-open-stage=test]') !== null",
             SHOWN
         ),
-        "no machine reported the runs: {}",
-        chrome.eval("document.querySelector('.pipeline')?.innerText")
+        "no machine reported its runs"
     );
-    scroll_to(&mut chrome, "in_progress", 0);
-    assert!(
-        chrome.wait_for(&format!("document.querySelector('.column[data-status=test] .taskcard[data-slug=\"{WORKING}\"]') !== null"), SHOWN),
-        "the running test never placed its task: {} {}",
-        column(&mut chrome, WORKING),
-        chrome.eval("document.querySelector('.pipeline')?.innerText")
-    );
+    chrome.eval("document.querySelector('[data-open-stage=test]').click()");
+    assert!(chrome.wait_for(&format!("document.querySelector('.column[data-status=test] .taskcard[data-slug=\"{WORKING}\"]') !== null && document.querySelector('.column[data-status=test] .taskcard[data-slug=\"{SLICED}\"]') !== null && document.querySelector('.column[data-status=test] .count').textContent === '2'"),SHOWN),"recorded runs did not place executor and slice-parent cards: {}",chrome.eval("document.body.innerText"));
+    assert_eq!(columns(&mut chrome), json!(["test"]));
     assert_eq!(
-        columns(&mut chrome),
-        json!([
-            "concept",
-            "design",
-            "ready",
-            "in_progress",
-            "build",
-            "test",
-            "review",
-            "done"
-        ])
-    );
-    let chip = format!(".taskcard[data-slug=\"{WORKING}\"] .work-phase");
-    assert!(chrome.wait_for(
-        &format!("document.querySelector('{chip}')?.textContent.includes('Test running')"),
-        SHOWN
-    ));
-    let sliced = format!(".column[data-status=test] .taskcard[data-slug=\"{SLICED}\"] .work-phase");
-    assert!(
-        chrome.wait_for(
-            &format!("document.querySelector('{sliced}')?.textContent.includes('Test running')"),
-            SHOWN
-        ),
-        "the slice's run never placed its parent: {} {}",
-        column(&mut chrome, SLICED),
-        chrome.eval("document.querySelector('.pipeline')?.innerText")
-    );
-    // A reviewer's run is a chip on its card; the card stays where the verdict is awaited.
-    let reviewed = format!(".column[data-status=review] .taskcard[data-slug=\"{REVIEWED}\"]");
-    assert!(chrome.wait_for(&format!("document.querySelector('{reviewed} .work-phase')?.textContent.includes('Test running')"), SHOWN), "{}", chrome.eval("document.querySelector('.pipeline')?.innerText"));
-    // The stage totals are the server's, read again once the machine's work changed.
-    let counts = "[...document.querySelectorAll('.pipeline > .column')].map(c=>c.dataset.status+'='+c.querySelector('.count')?.textContent).join(' ')";
-    assert!(
-        chrome.wait_for("document.querySelector('.column[data-status=test] .count').textContent==='2' && document.querySelector('.column[data-status=in_progress] .count').textContent==='0'", SHOWN),
-        "{}",
-        chrome.eval(counts)
+        column(&mut chrome, REVIEWED),
+        Value::Null,
+        "a reviewer's run never moves the review card to Test"
     );
     screenshot(&mut chrome, "after-going");
+    chrome.eval("document.querySelector('.back-to-stages').click()");
+    assert!(chrome.wait_for(&format!("document.querySelector('.column[data-status=review] .taskcard[data-slug=\"{REVIEWED}\"]') !== null && document.querySelector('.column[data-status=in_progress] .count').textContent === '0'"),SHOWN));
     working.end();
     reviewing.end();
     slicing.end();
-    // The runs ended: the cards are back where their lifecycle puts them, and the columns stay,
-    // since this checkout's machine now reports its runs.
-    assert!(chrome.wait_for(&format!("document.querySelector('.column[data-status=in_progress] .taskcard[data-slug=\"{WORKING}\"]') !== null && document.querySelector('.column[data-status=in_progress] .taskcard[data-slug=\"{SLICED}\"]') !== null && document.querySelector('.taskcard[data-slug=\"{SLICED}\"] .work-phase') === null && document.querySelector('{chip}') === null && document.querySelector('{reviewed} .work-phase') === null"), SHOWN), "{}", chrome.eval("document.querySelector('.pipeline')?.innerText"));
+    assert!(chrome.wait_for(&format!("document.querySelector('.column[data-status=in_progress] .taskcard[data-slug=\"{WORKING}\"]') !== null && document.querySelector('.column[data-status=in_progress] .taskcard[data-slug=\"{SLICED}\"]') !== null && document.querySelector('.column[data-status=review] .taskcard[data-slug=\"{REVIEWED}\"]') !== null"),SHOWN),"ended runs did not return their lifecycle cards: {}",chrome.eval("document.body.innerText"));
+    assert!(chrome.wait_for(
+        "document.querySelector('[data-open-stage=test]').textContent.trim() === 'Test 0'",
+        SHOWN
+    ));
     assert_eq!(
         columns(&mut chrome),
         json!([
@@ -242,13 +186,10 @@ fn a_recorded_test_run_moves_its_task_to_test_and_back_and_a_reviewers_stays_in_
             "design",
             "ready",
             "in_progress",
-            "build",
-            "test",
             "review",
             "done"
         ])
     );
-    scroll_to(&mut chrome, "in_progress", 0);
     screenshot(&mut chrome, "after-ended");
 }
 

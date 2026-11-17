@@ -392,3 +392,39 @@ async fn finished_work_is_newest_first_and_has_no_wait_facet() {
         0
     );
 }
+
+#[tokio::test]
+async fn review_counts_survive_wait_filter_paging_and_closed_columns() {
+    let mut records: Vec<_> = (0..35)
+        .map(|n| {
+            let mut task = waiting(&format!("task-{n}"), "review", "working", n as f64);
+            task.review_rounds = Some(n);
+            task
+        })
+        .collect();
+    for status in ["done", "cancelled"] {
+        let mut closed = task(status.into(), status, 2, 0.0);
+        closed.review_rounds = Some(4);
+        records.push(closed);
+    }
+    let first = answer(&records, "wait=working").await;
+    assert_eq!(first.tasks.len(), 30);
+    assert_eq!(first.tasks[0].review_rounds, Some(0));
+    assert_eq!(first.tasks[29].review_rounds, Some(29));
+    let cursor = cursor(&first);
+    let next = answer(&records, &format!("wait=working&cursor={cursor}")).await;
+    assert_eq!(
+        next.tasks
+            .iter()
+            .map(|t| t.review_rounds)
+            .collect::<Vec<_>>(),
+        (30..35).map(Some).collect::<Vec<_>>()
+    );
+    for view in ["", "view=waiting&"] {
+        for status in ["done", "cancelled"] {
+            let list = listing_of(&records, &format!("{view}status={status}&older=1")).await;
+            assert_eq!(list.tasks.len(), 1);
+            assert_eq!(list.tasks[0].review_rounds, Some(4));
+        }
+    }
+}

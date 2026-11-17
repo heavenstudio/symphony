@@ -102,6 +102,9 @@ describe("the sheet", () => {
     );
     expect(markup).toContain('class="dx-tooltip-trigger collapse"');
     expect(markup).toContain('aria-label="Collapse panel"');
+    expect(markup).toMatch(
+      /aria-label="Collapse panel"><svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24"[^>]*><path d="m6 9 6 6 6-6"><\/path><\/svg><\/button>/,
+    );
     expect(markup).toContain(
       '<div class="quick-thread" aria-live="polite"><p class="muted">Ask about this page.</p></div>',
     );
@@ -328,7 +331,7 @@ describe("the conversation's read", () => {
     ask: { id: 7, anchor: "", quote: "", status: "open", messages: [] },
     recipient: "teal-lynx",
   };
-  const shownOf = () => ({ thread: vi.fn(), trouble: vi.fn() });
+  const shownOf = () => ({ thread: vi.fn(), trouble: vi.fn(), missing: vi.fn() });
 
   it("draws the conversation once the server answers, its trouble cleared", async () => {
     const asked = server();
@@ -340,6 +343,22 @@ describe("the conversation's read", () => {
     await done;
     expect(shown.thread).toHaveBeenCalledWith(readAskReply(conversation));
     expect(shown.trouble.mock.calls).toEqual([[null]]);
+    expect(shown.missing).not.toHaveBeenCalled();
+  });
+
+  it("gives up an expired conversation without retrying its 404", async () => {
+    vi.useFakeTimers();
+    const asked = server();
+    const shown = shownOf();
+    const done = readThread(URL, new AbortController().signal, shown);
+    await vi.advanceTimersByTimeAsync(0);
+    asked[0]?.answer(reply(404, { error: "no ask 7 (asks go after a day without activity)" }));
+    await done;
+    expect(shown.missing).toHaveBeenCalledOnce();
+    expect(shown.thread).not.toHaveBeenCalled();
+    expect(shown.trouble.mock.calls).toEqual([[null]]);
+    await vi.advanceTimersByTimeAsync(RETRY_MS * 2);
+    expect(asked).toHaveLength(1);
   });
 
   it("says why each read failed and asks again 3 s later, until one answers", async () => {
@@ -366,7 +385,11 @@ describe("the conversation's read", () => {
   it("shows nothing once the conversation was given up, while it read or while it waited", async () => {
     vi.useFakeTimers();
     const asked = server();
-    for (const answer of [reply(200, conversation), reply(500, { error: "gone" })]) {
+    for (const answer of [
+      reply(200, conversation),
+      reply(500, { error: "gone" }),
+      reply(404, { error: "no ask 7" }),
+    ]) {
       const shown = shownOf();
       const left = new AbortController();
       const done = readThread(URL, left.signal, shown);
@@ -376,6 +399,7 @@ describe("the conversation's read", () => {
       await done;
       expect(shown.thread).not.toHaveBeenCalled();
       expect(shown.trouble).not.toHaveBeenCalled();
+      expect(shown.missing).not.toHaveBeenCalled();
     }
     const shown = shownOf();
     const left = new AbortController();
@@ -386,7 +410,7 @@ describe("the conversation's read", () => {
     left.abort();
     await done;
     await vi.advanceTimersByTimeAsync(RETRY_MS);
-    expect(asked).toHaveLength(3);
+    expect(asked).toHaveLength(4);
     expect(shown.trouble).toHaveBeenCalledOnce();
   });
 });
@@ -462,5 +486,16 @@ describe("the sheet's thread", () => {
     expect(thread({ draft: task })).toBe(
       '<div class="quick-thread quiet" aria-live="polite"></div>',
     );
+  });
+
+  it("keeps conversation read failures out of task save status", () => {
+    page();
+    const draft = { ...NEW_DRAFT, task: true, ask: 7 };
+    expect(thread({ draft, readError: "offline" })).toBe(
+      '<div class="quick-thread quiet" aria-live="polite"></div>',
+    );
+    const markup = thread({ draft, readError: "offline", created: "inbox/saved" });
+    expect(markup).toContain("inbox/saved</a> created");
+    expect(markup).not.toContain("Conversation could not be refreshed");
   });
 });

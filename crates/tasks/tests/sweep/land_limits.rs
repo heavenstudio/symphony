@@ -1,8 +1,12 @@
-//! What bounds a land: its timeout over its fetch, and none over its wait for another land; and
-//! what its push sends, the checked commit by name, never forced, no tag.
+//! What bounds a land: its timeout over its check and fetch, and none over its wait for another
+//! land; and what its push sends, the checked commit by name, never forced, no tag.
 
 use super::*;
 use std::os::unix::fs::PermissionsExt;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::time::Instant;
+use symphony_board::land::land_with_clock;
+use symphony_board::sys;
 
 /// The project's `[land] timeout_seconds` after the counting check of [`manifest`].
 fn timed(seconds: u64) -> String {
@@ -15,6 +19,129 @@ fn script(dir: &Path, name: &str, body: &str) -> PathBuf {
     let path = dir.join(name);
     fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
     path
+}
+
+/// A whole pid line, once the shell has written it (creating the file comes first).
+fn written_pid(path: &Path) -> Option<u32> {
+    fs::read_to_string(path)
+        .ok()
+        .filter(|text| text.ends_with('\n'))?
+        .trim()
+        .parse()
+        .ok()
+}
+
+/// End only this test's check group if an assertion fails or its land stalls.
+struct CheckGroup(PathBuf);
+
+impl CheckGroup {
+    fn end(&self) {
+        if let Some(group) = written_pid(&self.0).filter(|&group| sys::group_alive(group)) {
+            // SAFETY: this group belongs to the check this test started, recorded by its shell.
+            unsafe { libc::kill(-i32::try_from(group).unwrap(), libc::SIGKILL) };
+        }
+    }
+}
+
+impl Drop for CheckGroup {
+    fn drop(&mut self) {
+        self.end();
+    }
+}
+
+#[test]
+fn a_check_past_the_timeout_is_ended_whole_and_refused() {
+    let r = Repo::new();
+    let child = r.dir.join("child.pid");
+    let group = r.dir.join("check.pid");
+    // Both processes ignore TERM; the child reports readiness after installing that trap, so
+    // the timeout must reach the watchdog's KILL path. Neither has a wall-clock end of its own.
+    let background = script(
+        &r.dir,
+        "background",
+        &format!(
+            "trap '' TERM\necho $$ > '{}'\nwhile :; do sleep 600; done",
+            child.display()
+        ),
+    );
+    let check = format!(
+        "trap '' TERM; echo $$ > '{}'; '{}' & wait",
+        group.display(),
+        background.display()
+    );
+    checked_with(&r, &check, &timed(1));
+    branch(&r, SLUG, "sim/jump.gd", "extends Node\n");
+    let people = approved(&r, SLUG, "good");
+    let before = head(&r.root, "main");
+    let began = Instant::now();
+    let (expired, aborted) = (AtomicBool::new(false), AtomicBool::new(false));
+    let (ready_reads, abort_ticks) = (AtomicU64::new(0), AtomicU64::new(0));
+    let clock = || {
+        if written_pid(&child).is_some() {
+            ready_reads.fetch_add(1, Ordering::SeqCst);
+        }
+        let seconds = if aborted.load(Ordering::SeqCst) {
+            // Even a command starting after a stalled setup must expire, so the scoped land
+            // can be joined before the stall is reported.
+            abort_ticks.fetch_add(1, Ordering::SeqCst) + 1
+        } else {
+            u64::from(expired.load(Ordering::SeqCst))
+        };
+        began + Duration::from_secs(seconds)
+    };
+    let cleanup = CheckGroup(group.clone());
+    let (pid, result) = std::thread::scope(|scope| {
+        let store = r.board.other();
+        let env = r.env(&r.root);
+        let orch = &people.orch;
+        let clock = &clock;
+        let landing = scope.spawn(move || {
+            land_with_clock(&store, &env, SLUG, orch, None, &mut Vec::new(), clock).map_err(refusal)
+        });
+        let ready = test_time::until(
+            "the check's child is ready and its watchdog has read the frozen clock twice",
+            test_time::backstop(Duration::from_secs(60)),
+            || written_pid(&child).filter(|_| ready_reads.load(Ordering::SeqCst) >= 2),
+        );
+        // Two reads after readiness include the watchdog's deadline and first look, even if
+        // it started after the child: the merge can never consume this command's timeout.
+        aborted.store(ready.is_err(), Ordering::SeqCst);
+        expired.store(true, Ordering::SeqCst);
+        let ended = test_time::until_true(
+            "the land refused the expired check",
+            test_time::backstop(Duration::from_secs(60)),
+            || landing.is_finished(),
+        );
+        if ended.is_err() {
+            cleanup.end();
+            aborted.store(true, Ordering::SeqCst);
+        }
+        let result = landing.join().unwrap();
+        ended.unwrap();
+        (ready.unwrap(), result)
+    });
+    let log = r.root.join(".git/symphony/tasks/land/sim%2Fjump.log");
+    let shown = log.canonicalize().unwrap();
+    let line = format!(
+        "the check `sh -c {check}` ran past the land's timeout ([land] timeout_seconds, 1 s) on \
+         {SLUG} merged into main at {}; its output is in {}",
+        &before[..7],
+        shown.display()
+    );
+    assert_refused(&r, &result, &line, &before);
+    assert_eq!(r.board.store.get(SLUG).unwrap().status, "done");
+    let logged = fs::read_to_string(&log).unwrap();
+    assert!(
+        logged.ends_with("ended: it ran past the land's 1 s\n"),
+        "{logged}"
+    );
+    let group = written_pid(&group).unwrap();
+    test_time::until_true(
+        format!("the timed-out check's child {pid} and whole group {group} are gone"),
+        test_time::backstop(Duration::from_secs(10)),
+        || !sys::pid_alive(i64::from(pid)) && !sys::group_alive(group),
+    )
+    .unwrap();
 }
 
 #[test]

@@ -44,6 +44,6 @@ fn the_maintenance_children_run_without_the_session_of_the_servers_terminal() {
         "/fixture/hc/t7.sock"
     );
     let mut reap = SweepFixture::new(HELD);
-    reap.start(session_maintenance(&reap.shared, Some(&reap.root), Stamp::now).unwrap());
+    reap.start(session_maintenance(&reap.shared, Some(&reap.root), MachineClock).unwrap());
     reap.wait_for("held", "unset|unset|unset|unset|unset");
 }

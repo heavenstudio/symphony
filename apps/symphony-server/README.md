@@ -283,7 +283,10 @@ One filesystem watcher handles registers, branch discovery and the client
 build for every connection. One shared board reader checks database changes
 each second, on a thread of its own beside the document refreshes, so neither waits on the
 other: a refresh keeps the board's counts the last tick gave its page, never older ones it read
-first, and the hub's stop ends the reader's wait between two checks at once. Clients do no
+first, and the hub's stop ends the reader's wait between two checks at once. Each check also
+looks for the pictures held cards wait on (a card posted before its picture was on disk, which no
+watcher follows), and wakes the document refreshes once one has landed: a held card is posted
+within a second of its picture. Clients do no
 version polling. Recent deltas are retained for the
 snapshot/subscribe gap. An expired cursor returns 409, or closes an already
 open stream, so the client fetches a fresh snapshot. `Last-Event-ID` is not a

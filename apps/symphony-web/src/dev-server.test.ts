@@ -450,7 +450,14 @@ describe("the dev server's settings", () => {
           port: 5173,
           strictPort: true,
           cors: false,
-          proxy: { [PROXIED]: { target: "http://127.0.0.1:4321", changeOrigin: false, ws: true } },
+          proxy: {
+            [PROXIED]: {
+              target: "http://127.0.0.1:4321",
+              changeOrigin: false,
+              ws: true,
+              headers: { "x-symphony-dev": "1" },
+            },
+          },
           fs: { allow: ["."] },
         },
         plugins,

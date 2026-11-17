@@ -217,3 +217,69 @@ fn a_move_into_a_web_kind_keeps_the_page_before_shown_until_its_entry_is_in() {
         "the board is hidden once the task's page draws"
     );
 }
+
+/// Serve this route with the initial imports the native server takes from its shell's manifest.
+/// The native router tests hold manifest/build selection; these cases hold browser reuse.
+pub(super) fn serve_page(site: &super::site::Site, path: &str, kind: &str) {
+    let shell = std::fs::read_to_string(dist().join("index.html")).unwrap();
+    let links: String = module(dist(), kind)
+        .imports
+        .iter()
+        .map(|href| format!("<link rel=\"modulepreload\" href=\"{href}\">"))
+        .collect();
+    let html = common::served_shell(&shell.replace("</head>", &format!("{links}</head>")));
+    site.set_file(path, html.into_bytes(), "text/html; charset=utf-8");
+}
+
+#[test]
+fn html_preloads_start_every_kinds_chunks_while_its_shell_is_held_and_are_reused() {
+    for (kind, path, ready) in KINDS {
+        let site = site();
+        serve_page(&site, path, kind);
+        let html = std::fs::read_to_string(dist().join("index.html")).unwrap();
+        let shell = html
+            .split("src=\"")
+            .nth(1)
+            .unwrap()
+            .split('"')
+            .next()
+            .unwrap();
+        let spec = module(dist(), kind);
+        site.hold_route(shell, true);
+        let Some(mut chrome) = chrome() else { return };
+        chrome.save_data();
+        chrome.call("Page.navigate", json!({"url": site.url(path)}));
+        if let Err(stall) = test_time::until_true(
+            format!("{kind}'s HTML preloads requested before the shell answers"),
+            STALL,
+            || {
+                let requests = site.requests();
+                requests.contains(&shell.to_string())
+                    && spec.imports.iter().all(|file| requests.contains(file))
+            },
+        ) {
+            panic!("{stall}: {:#?}", site.requests());
+        }
+        assert!(
+            !site.requests().contains(&spec.script),
+            "the shell still owns its entry import"
+        );
+        site.hold_route(shell, false);
+        shows(&mut chrome, ready);
+        let requests = site.requests();
+        for file in &spec.imports {
+            assert_eq!(
+                requests.iter().filter(|path| *path == file).count(),
+                1,
+                "{kind}: {file}"
+            );
+        }
+        let links: Vec<String> = serde_json::from_value(chrome.eval(
+            "[...document.querySelectorAll('link[rel=modulepreload]')].map(link => link.getAttribute('href'))",
+        )).unwrap();
+        assert_eq!(
+            links, spec.imports,
+            "{kind}: the shell reuses every HTML preload without another link"
+        );
+    }
+}

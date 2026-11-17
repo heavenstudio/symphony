@@ -1031,3 +1031,44 @@ fn in_status_since_is_the_replays_current_since_at_any_now() {
         }
     }
 }
+
+#[test]
+fn review_counts_follow_review_segments_through_changes_blocks_and_reopening() {
+    let lines = [
+        sys(1, 0.0, "created by owner"),
+        sys(2, 1.0, "teal claimed it"),
+        sys(3, 2.0, "teal moved it in_progress → review"),
+        sys(4, 3.0, "plum joined as reviewer"),
+        verdict_by(5, 4.0, "changes: needs a test", "plum"),
+        sys(6, 5.0, "teal moved it in_progress → review"),
+        sys(7, 6.0, "teal moved it review → blocked"),
+        sys(8, 7.0, "teal moved it blocked → review"),
+        verdict_by(9, 8.0, "approve", "plum"),
+        sys(10, 9.0, "owner moved it done → review"),
+        sys(11, 10.0, "owner moved it review → cancelled"),
+    ];
+    for (length, status, count) in [
+        (1, "ready", 0),
+        (2, "in_progress", 0),
+        (3, "review", 1),
+        (4, "review", 1),
+        (5, "in_progress", 1),
+        (6, "review", 2),
+        (7, "blocked", 2),
+        (8, "review", 3),
+        (9, "done", 3),
+        (10, "review", 4),
+        (11, "cancelled", 4),
+    ] {
+        assert_eq!(
+            in_status(facts(status, (length - 1) as f64), &lines[..length]).review_rounds,
+            count,
+            "{length} lines, {status}"
+        );
+    }
+    // Legacy history is interpreted by the same replay: a current review with no move is
+    // one known stretch, while a closed task with no history proves no review stretch.
+    for (status, count) in [("review", 1), ("ready", 0), ("done", 0), ("cancelled", 0)] {
+        assert_eq!(in_status(facts(status, 3.0), &[]).review_rounds, count);
+    }
+}

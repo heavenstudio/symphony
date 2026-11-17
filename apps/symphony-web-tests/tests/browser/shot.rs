@@ -220,7 +220,7 @@ fn rect(value: &Value) -> [f64; 4] {
 /// The board's columns: each one's `data-status` and its heading's rectangle, as
 /// `[x, y, width, height]`.
 const COLUMNS: &str = "[...document.querySelectorAll('.kanban section.column h2')].map(e => { const b = e.getBoundingClientRect(); return {status: e.closest('section.column').dataset.status, heading: [b.x, b.y, b.width, b.height]}; })";
-/// The open status menu's rectangle.
+/// The open finished-work menu's rectangle.
 const MENU: &str = "(() => { const b = document.querySelector('[role=listbox][data-state=open]').getBoundingClientRect(); return [b.x, b.y, b.width, b.height]; })()";
 
 #[test]
@@ -247,7 +247,7 @@ fn the_tasks_page_is_captured_drawn_with_its_columns_and_a_click_records_the_ope
             "--eval",
             COLUMNS,
             "--click",
-            "button[aria-label=\"Status\"]",
+            "button[aria-label=\"Finished tasks\"]",
             "--shot",
             open.to_str().unwrap(),
             "--eval",
@@ -270,11 +270,18 @@ fn the_tasks_page_is_captured_drawn_with_its_columns_and_a_click_records_the_ope
     );
     let columns = columns.as_array().unwrap();
     let statuses: Vec<_> = columns.iter().map(|column| &column["status"]).collect();
-    // The stand-in's board holds one ready task, and no machine reports its work: its ready
-    // column and the one rail Build and Test are drawn as (docs/MACHINE_WORK.md).
+    // All six lifecycle heads and the unreported machine rail draw even with one task.
     assert_eq!(
         statuses,
-        [&json!("ready"), &json!("build-test")],
+        [
+            &json!("concept"),
+            &json!("design"),
+            &json!("ready"),
+            &json!("in_progress"),
+            &json!("build-test"),
+            &json!("review"),
+            &json!("done")
+        ],
         "the board's columns: {columns:?}"
     );
     for column in columns {

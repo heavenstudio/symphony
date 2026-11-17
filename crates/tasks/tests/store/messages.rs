@@ -5,10 +5,9 @@ mod inbox;
 mod last_words;
 mod questions;
 
-use crate::common::{Fixture, HOST, NOW, Seed, refused};
+use crate::common::{Backend, Fixture, HOST, NOW, Seed, refused};
 use std::collections::BTreeSet;
 use symphony_board::health::LIVE_SECONDS;
-use symphony_board::rpc::Client;
 use symphony_board::{Health, LANDS_FROM, Message, NewLaunch, NewTask, Store};
 
 fn texts(messages: Vec<Message>) -> Vec<String> {
@@ -23,8 +22,8 @@ fn under(slug: &str, parent: &str) -> NewTask {
 }
 
 /// An orchestrator on `a`; `a/b` under it, `a/b/c` under that.
-fn chain() -> (Fixture, String) {
-    let f = Fixture::empty();
+fn chain(backend: Backend) -> (Fixture, String) {
+    let f = Fixture::on(backend, Seed::default());
     let orch = f.session("orchestrator");
     f.task("a");
     f.store.take_role("a", &orch, "orchestrator").unwrap();
@@ -56,9 +55,9 @@ fn landings(f: &Fixture) -> BTreeSet<String> {
     f.store.landings_posted().unwrap()
 }
 
-#[test]
-fn a_message_is_said_on_the_record() {
-    let f = Fixture::empty();
+on_both! {
+fn a_message_is_said_on_the_record(backend: Backend) {
+    let f = Fixture::on(backend, Seed::default());
     let (a, b) = (f.session("worker"), f.session("worker"));
     f.task("sim/jump");
     f.advance(5.0);
@@ -79,23 +78,26 @@ fn a_message_is_said_on_the_record() {
         ("msg", "the dock ring is at 900", f.now())
     );
     assert_eq!(f.store.thread("sim/jump").unwrap().last(), Some(&said));
+
+}
 }
 
+on_both! {
 /// A line that read the clock, then lost the race to one that read it later, is never dated before
 /// the line ahead of it on the record: the SQLite store read the clock inside its write lock.
-#[test]
-fn a_line_is_never_dated_before_the_line_ahead_of_it() {
-    let f = Fixture::empty();
+fn a_line_is_never_dated_before_the_line_ahead_of_it(backend: Backend) {
+    let f = Fixture::on(backend, crate::common::Seed::default());
     let (a, b) = (f.session("worker"), f.session("worker"));
     f.task("sim/jump");
-    let client = f.other_client();
+    let client = f.other_database();
     let first = b.clone();
     let slow = f.slow(move || {
-        let later = Store::with(
-            Client::new(client.addr(), "sf", client.database()),
+        let later = Store::opening_on(
+            client.another(),
             Box::new(|| NOW + 30.0),
             Box::new(|_| false),
             HOST,
+            &symphony_board::Opening::write(),
         )
         .unwrap();
         later.say("sim/jump", &first, "first", None).unwrap();
@@ -114,6 +116,7 @@ fn a_line_is_never_dated_before_the_line_ahead_of_it() {
             ("second".to_string(), NOW + 30.0)
         ]
     );
+}
 }
 
 /// fleet-vole: a line from a clock a day ahead dated every later line a day ahead too, and a session that
@@ -155,9 +158,9 @@ fn a_line_from_a_clock_far_ahead_does_not_date_the_lines_after_it() {
     );
 }
 
-#[test]
-fn a_message_addressed_to_a_handle_reaches_only_it() {
-    let f = Fixture::empty();
+on_both! {
+fn a_message_addressed_to_a_handle_reaches_only_it(backend: Backend) {
+    let f = Fixture::on(backend, Seed::default());
     let (a, b) = (f.session("worker"), f.session("worker"));
     f.task("sim/jump");
     f.store
@@ -168,11 +171,13 @@ fn a_message_addressed_to_a_handle_reaches_only_it() {
         ["the dock ring is at 900"]
     );
     assert!(f.store.inbox(&a).unwrap().is_empty());
+
+}
 }
 
-#[test]
-fn a_role_address_reaches_whoever_holds_the_role() {
-    let f = Fixture::empty();
+on_both! {
+fn a_role_address_reaches_whoever_holds_the_role(backend: Backend) {
+    let f = Fixture::on(backend, Seed::default());
     let (orch, exe) = (f.session("orchestrator"), f.session("worker"));
     f.task("sim/jump");
     f.store
@@ -195,11 +200,13 @@ fn a_role_address_reaches_whoever_holds_the_role() {
         ["blocked on the grid"]
     );
     assert!(f.store.inbox(&exe).unwrap().is_empty());
+
+}
 }
 
-#[test]
-fn only_the_owner_broadcast_reaches_participants() {
-    let f = Fixture::empty();
+on_both! {
+fn only_the_owner_broadcast_reaches_participants(backend: Backend) {
+    let f = Fixture::on(backend, Seed::default());
     let (a, b, outsider) = (
         f.session("worker"),
         f.session("worker"),
@@ -221,11 +228,13 @@ fn only_the_owner_broadcast_reaches_participants() {
         ["please keep the golden"]
     );
     assert!(f.store.inbox(&outsider).unwrap().is_empty());
+
+}
 }
 
-#[test]
-fn the_records_own_lines_and_what_came_before_a_session_never_reach_it() {
-    let f = Fixture::empty();
+on_both! {
+fn the_records_own_lines_and_what_came_before_a_session_never_reach_it(backend: Backend) {
+    let f = Fixture::on(backend, Seed::default());
     let a = f.session("worker");
     f.task("sim/jump");
     f.store
@@ -240,11 +249,13 @@ fn the_records_own_lines_and_what_came_before_a_session_never_reach_it() {
         "a claim is the record's, not a message"
     );
     assert_eq!(texts(f.store.inbox(&a).unwrap()), ["before anyone"]);
+
+}
 }
 
-#[test]
-fn messages_to_the_owner_are_listed_for_the_app_newest_first() {
-    let f = Fixture::empty();
+on_both! {
+fn messages_to_the_owner_are_listed_for_the_app_newest_first(backend: Backend) {
+    let f = Fixture::on(backend, Seed::default());
     let a = f.session("worker");
     f.task("sim/jump");
     for text in ["first", "second", "third"] {
@@ -256,11 +267,13 @@ fn messages_to_the_owner_are_listed_for_the_app_newest_first() {
         ["third", "second", "first"]
     );
     assert_eq!(texts(f.store.to_owner(2).unwrap()), ["third", "second"]);
+
+}
 }
 
-#[test]
-fn empty_messages_and_unknown_senders_or_tasks_are_refused() {
-    let f = Fixture::empty();
+on_both! {
+fn empty_messages_and_unknown_senders_or_tasks_are_refused(backend: Backend) {
+    let f = Fixture::on(backend, Seed::default());
     f.task("sim/jump");
     assert_eq!(
         refused(f.store.say("sim/jump", "owner", "  ", None)),
@@ -275,11 +288,13 @@ fn empty_messages_and_unknown_senders_or_tasks_are_refused() {
         "no task 'sim/none'"
     );
     assert_eq!(f.store.thread("sim/jump").unwrap().len(), 1);
+
+}
 }
 
-#[test]
-fn an_unknown_addressee_is_refused() {
-    let f = Fixture::empty();
+on_both! {
+fn an_unknown_addressee_is_refused(backend: Backend) {
+    let f = Fixture::on(backend, Seed::default());
     let a = f.session("worker");
     f.task("sim/jump");
     assert_eq!(
@@ -298,21 +313,25 @@ fn an_unknown_addressee_is_refused() {
         );
     }
     assert_eq!(f.store.thread("sim/jump").unwrap().len(), 1);
+
+}
 }
 
-#[test]
-fn saying_keeps_the_sender_live() {
-    let f = Fixture::empty();
+on_both! {
+fn saying_keeps_the_sender_live(backend: Backend) {
+    let f = Fixture::on(backend, Seed::default());
     let a = f.session("worker");
     f.task("sim/jump");
     f.advance(LIVE_SECONDS + 1.0);
     f.store.say("sim/jump", &a, "still here", None).unwrap();
     assert_eq!(f.health(&a), Health::Live);
+
+}
 }
 
-#[test]
-fn the_inbox_of_an_unknown_session_is_refused() {
-    let f = Fixture::empty();
+on_both! {
+fn the_inbox_of_an_unknown_session_is_refused(backend: Backend) {
+    let f = Fixture::on(backend, Seed::default());
     assert_eq!(
         refused(f.store.inbox("ghost-owl")),
         "no session 'ghost-owl'"
@@ -321,11 +340,13 @@ fn the_inbox_of_an_unknown_session_is_refused() {
         refused(f.store.ack("ghost-owl", &[1])),
         f.no_session("ghost-owl")
     );
+
+}
 }
 
-#[test]
-fn a_changes_verdict_reaches_the_executor() {
-    let f = Fixture::empty();
+on_both! {
+fn a_changes_verdict_reaches_the_executor(backend: Backend) {
+    let f = Fixture::on(backend, Seed::default());
     let (exe, rev) = (f.session("worker"), f.session("reviewer"));
     f.task("sim/jump");
     f.store.claim("sim/jump", &exe).unwrap();
@@ -345,11 +366,13 @@ fn a_changes_verdict_reaches_the_executor() {
         inbox,
         [("verdict".to_string(), "changes: the hash moved".to_string())]
     );
+
+}
 }
 
-#[test]
-fn events_on_a_grandchild_reach_the_root_orchestrator() {
-    let (f, orch) = chain();
+on_both! {
+fn events_on_a_grandchild_reach_the_root_orchestrator(backend: Backend) {
+    let (f, orch) = chain(backend);
     let agent = f.session("worker");
     f.store.claim("a/b/c", &agent).unwrap();
     f.store.say("a/b/c", &agent, "halfway", None).unwrap();
@@ -372,11 +395,13 @@ fn events_on_a_grandchild_reach_the_root_orchestrator() {
         texts(f.store.inbox(&orch).unwrap()),
         ["to the orchestrator"]
     );
+
+}
 }
 
-#[test]
-fn a_changes_verdict_on_a_grandchild_reaches_the_root_orchestrator() {
-    let (f, orch) = chain();
+on_both! {
+fn a_changes_verdict_on_a_grandchild_reaches_the_root_orchestrator(backend: Backend) {
+    let (f, orch) = chain(backend);
     let (agent, reviewer) = (f.session("worker"), f.session("reviewer"));
     f.store.claim("a/b/c", &agent).unwrap();
     f.historical_review("a/b/c");
@@ -392,11 +417,13 @@ fn a_changes_verdict_on_a_grandchild_reaches_the_root_orchestrator() {
         .map(|m| m.kind)
         .collect();
     assert_eq!(kinds, ["verdict"]);
+
+}
 }
 
-#[test]
-fn a_done_note_reaches_the_root_orchestrator() {
-    let (f, orch) = chain();
+on_both! {
+fn a_done_note_reaches_the_root_orchestrator(backend: Backend) {
+    let (f, orch) = chain(backend);
     let agent = f.session("worker");
     f.task_with(NewTask {
         instruction: true,
@@ -405,11 +432,13 @@ fn a_done_note_reaches_the_root_orchestrator() {
     f.store.claim("a/b/c/d", &agent).unwrap();
     f.store.done("a/b/c/d", &agent, "all clear").unwrap();
     assert_eq!(texts(f.store.inbox(&orch).unwrap()), ["done: all clear"]);
+
+}
 }
 
-#[test]
-fn an_orchestrator_of_a_sibling_hears_nothing() {
-    let (f, _) = chain();
+on_both! {
+fn an_orchestrator_of_a_sibling_hears_nothing(backend: Backend) {
+    let (f, _) = chain(backend);
     let stranger = f.session("orchestrator");
     f.task("elsewhere");
     f.store
@@ -419,11 +448,13 @@ fn an_orchestrator_of_a_sibling_hears_nothing() {
     f.store.claim("a/b/c", &agent).unwrap();
     f.store.say("a/b/c", &agent, "hello", None).unwrap();
     assert!(f.store.inbox(&stranger).unwrap().is_empty());
+
+}
 }
 
-#[test]
-fn each_sender_has_its_latest_board_message() {
-    let f = Fixture::empty();
+on_both! {
+fn each_sender_has_its_latest_board_message(backend: Backend) {
+    let f = Fixture::on(backend, Seed::default());
     let (a, b) = (f.session("worker"), f.session("worker"));
     f.task("sim/jump");
     f.store.say("sim/jump", &a, "first", None).unwrap();
@@ -438,20 +469,24 @@ fn each_sender_has_its_latest_board_message() {
     );
     assert_eq!(last[&b].text, "from b");
     assert_eq!(last.len(), 2);
+
+}
 }
 
-#[test]
-fn the_record_of_what_the_board_did_is_not_a_message_an_agent_wrote() {
-    let f = Fixture::empty();
+on_both! {
+fn the_record_of_what_the_board_did_is_not_a_message_an_agent_wrote(backend: Backend) {
+    let f = Fixture::on(backend, Seed::default());
     let a = f.session("worker");
     f.task("sim/jump");
     f.store.claim("sim/jump", &a).unwrap();
     assert!(!f.store.last_messages().unwrap().contains_key(&a));
+
+}
 }
 
-#[test]
-fn a_verdict_counts_as_a_last_word() {
-    let f = Fixture::empty();
+on_both! {
+fn a_verdict_counts_as_a_last_word(backend: Backend) {
+    let f = Fixture::on(backend, Seed::default());
     let (exe, rev) = (f.session("worker"), f.session("reviewer"));
     f.task("sim/jump");
     f.store.claim("sim/jump", &exe).unwrap();
@@ -464,27 +499,33 @@ fn a_verdict_counts_as_a_last_word() {
         f.store.last_messages().unwrap()[&rev].text,
         "changes: the ring"
     );
+
+}
 }
 
-#[test]
-fn nobody_has_spoken() {
-    let f = Fixture::empty();
+on_both! {
+fn nobody_has_spoken(backend: Backend) {
+    let f = Fixture::on(backend, Seed::default());
     f.task("sim/jump");
     assert!(f.store.last_messages().unwrap().is_empty());
+
+}
 }
 
-#[test]
-fn a_landing_line_counts() {
-    let f = Fixture::empty();
+on_both! {
+fn a_landing_line_counts(backend: Backend) {
+    let f = Fixture::on(backend, Seed::default());
     landed(&f, "sim/a");
     assert_eq!(landings(&f), BTreeSet::from(["sim/a".to_string()]));
+
+}
 }
 
+on_both! {
 /// `Store::landed` writes the landing as the task's verdict: that line is the landing, not a status
 /// change after it (`n.id > m.id`).
-#[test]
-fn a_landing_the_board_records_as_its_verdict_counts() {
-    let f = Fixture::empty();
+fn a_landing_the_board_records_as_its_verdict_counts(backend: Backend) {
+    let f = Fixture::on(backend, Seed::default());
     f.task("sim/a");
     let executor = f.session("worker");
     f.store.claim("sim/a", &executor).unwrap();
@@ -504,11 +545,13 @@ fn a_landing_the_board_records_as_its_verdict_counts() {
         .say("sim/a", &executor, "the worktree is gone", None)
         .unwrap();
     assert_eq!(landings(&f), BTreeSet::from(["sim/a".to_string()]));
+
+}
 }
 
-#[test]
-fn a_landing_line_names_its_own_task() {
-    let f = Fixture::empty();
+on_both! {
+fn a_landing_line_names_its_own_task(backend: Backend) {
+    let f = Fixture::on(backend, Seed::default());
     landed(&f, "sim/a");
     f.task("sim/b");
     f.store
@@ -528,22 +571,26 @@ fn a_landing_line_names_its_own_task() {
         )
         .unwrap();
     assert_eq!(landings(&f), BTreeSet::from(["sim/a".to_string()]));
+
+}
 }
 
-#[test]
-fn a_changes_verdict_that_sends_the_task_back_voids_it() {
-    let f = Fixture::empty();
+on_both! {
+fn a_changes_verdict_that_sends_the_task_back_voids_it(backend: Backend) {
+    let f = Fixture::on(backend, Seed::default());
     let (_, reviewer) = landed(&f, "sim/a");
     f.store
         .verdict("sim/a", &reviewer, "changes", "rework")
         .unwrap();
     assert_eq!(f.store.get("sim/a").unwrap().status, "in_progress");
     assert!(landings(&f).is_empty());
+
+}
 }
 
-#[test]
-fn a_release_alone_keeps_it_and_a_claim_after_voids_it() {
-    let f = Fixture::empty();
+on_both! {
+fn a_release_alone_keeps_it_and_a_claim_after_voids_it(backend: Backend) {
+    let f = Fixture::on(backend, Seed::default());
     f.task("sim/a");
     let first = f.session("worker");
     f.store.claim("sim/a", &first).unwrap();
@@ -556,19 +603,23 @@ fn a_release_alone_keeps_it_and_a_claim_after_voids_it() {
     let second = f.session("worker");
     f.store.claim("sim/a", &second).unwrap();
     assert!(landings(&f).is_empty());
+
+}
 }
 
-#[test]
-fn a_move_voids_it() {
-    let f = Fixture::empty();
+on_both! {
+fn a_move_voids_it(backend: Backend) {
+    let f = Fixture::on(backend, Seed::default());
     let (executor, _) = landed(&f, "sim/a");
     f.store.move_to("sim/a", "in_progress", &executor).unwrap();
     assert!(landings(&f).is_empty());
+
+}
 }
 
-#[test]
-fn a_landing_posted_after_the_rework_counts_again() {
-    let f = Fixture::empty();
+on_both! {
+fn a_landing_posted_after_the_rework_counts_again(backend: Backend) {
+    let f = Fixture::on(backend, Seed::default());
     let (executor, reviewer) = landed(&f, "sim/a");
     f.store
         .verdict("sim/a", &reviewer, "changes", "rework")
@@ -583,11 +634,13 @@ fn a_landing_posted_after_the_rework_counts_again() {
         )
         .unwrap();
     assert_eq!(landings(&f), BTreeSet::from(["sim/a".to_string()]));
+
+}
 }
 
-#[test]
-fn a_move_claim_or_verdict_on_another_task_does_not_void_it() {
-    let f = Fixture::empty();
+on_both! {
+fn a_move_claim_or_verdict_on_another_task_does_not_void_it(backend: Backend) {
+    let f = Fixture::on(backend, Seed::default());
     landed(&f, "sim/a");
     let (other_executor, other_reviewer) = landed(&f, "sim/b");
     f.store
@@ -598,24 +651,29 @@ fn a_move_claim_or_verdict_on_another_task_does_not_void_it() {
     let worker = f.session("worker");
     f.store.claim("sim/c", &worker).unwrap();
     assert_eq!(landings(&f), BTreeSet::from(["sim/a".to_string()]));
+
+}
 }
 
-#[test]
-fn a_remark_after_the_landing_does_not_void_it() {
-    let f = Fixture::empty();
+on_both! {
+fn a_remark_after_the_landing_does_not_void_it(backend: Backend) {
+    let f = Fixture::on(backend, Seed::default());
     let (_, reviewer) = landed(&f, "sim/a");
     f.store
         .say("sim/a", &reviewer, "thanks, tidy up the worktree", None)
         .unwrap();
     assert_eq!(landings(&f), BTreeSet::from(["sim/a".to_string()]));
+
+}
 }
 
 // -- a post its executor cannot read ------------------------------------------------------
 
 /// `sim/jump` in review, everyone seen at `NOW`: `ochre-owl` orchestrates, `amber-heron` executed
 /// it, `brisk-finch` reviews it.
-fn in_review() -> Fixture {
-    Fixture::new(
+fn in_review(backend: Backend) -> Fixture {
+    Fixture::on(
+        backend,
         Seed::default()
             .session("ochre-owl")
             .session("amber-heron")
@@ -656,19 +714,21 @@ fn pane_closed(f: &Fixture) {
         .unwrap();
 }
 
-#[test]
-fn a_post_its_live_executor_reads_tells_nobody_else() {
-    let f = in_review();
+on_both! {
+fn a_post_its_live_executor_reads_tells_nobody_else(backend: Backend) {
+    let f = in_review(backend);
     f.store
         .say("sim/jump", "brisk-finch", "a nit", Some("@executor"))
         .unwrap();
     assert_eq!(told(&f), Vec::<String>::new());
     assert_eq!(texts(f.store.inbox("amber-heron").unwrap()), ["a nit"]);
+
+}
 }
 
-#[test]
-fn a_post_to_an_executor_whose_pane_was_closed_tells_the_orchestrator_how_to_restore_it() {
-    let f = in_review();
+on_both! {
+fn a_post_to_an_executor_whose_pane_was_closed_tells_the_orchestrator_how_to_restore_it(backend: Backend) {
+    let f = in_review(backend);
     pane_closed(&f);
     assert_eq!(
         f.health("amber-heron"),
@@ -710,13 +770,14 @@ fn a_post_to_an_executor_whose_pane_was_closed_tells_the_orchestrator_how_to_res
         Vec::<String>::new()
     );
 }
+}
 
+on_both! {
 /// A landing that closes work taken back to in progress says so to its executor in the verdict
 /// itself, and to the orchestrator when no executor reads it; one that closes work in review tells
 /// nobody. Both count as the task's landing.
-#[test]
-fn a_landing_of_work_taken_back_reaches_its_executor_or_the_orchestrator() {
-    let f = in_review();
+fn a_landing_of_work_taken_back_reaches_its_executor_or_the_orchestrator(backend: Backend) {
+    let f = in_review(backend);
     pane_closed(&f);
     f.store
         .landed(
@@ -728,7 +789,7 @@ fn a_landing_of_work_taken_back_reaches_its_executor_or_the_orchestrator() {
         )
         .unwrap();
     assert_eq!(told(&f), Vec::<String>::new());
-    let f = in_review();
+    let f = in_review(backend);
     f.store
         .move_to("sim/jump", "in_progress", "amber-heron")
         .unwrap();
@@ -769,10 +830,11 @@ fn a_landing_of_work_taken_back_reaches_its_executor_or_the_orchestrator() {
     );
     assert_eq!(landings(&f), BTreeSet::from(["sim/jump".to_string()]));
 }
+}
 
-#[test]
-fn a_post_to_the_executor_by_handle_is_checked_and_one_to_another_handle_is_not() {
-    let f = in_review();
+on_both! {
+fn a_post_to_the_executor_by_handle_is_checked_and_one_to_another_handle_is_not(backend: Backend) {
+    let f = in_review(backend);
     pane_closed(&f);
     f.store
         .say("sim/jump", "ochre-owl", "your turn", Some("brisk-finch"))
@@ -790,10 +852,11 @@ fn a_post_to_the_executor_by_handle_is_checked_and_one_to_another_handle_is_not(
         )]
     );
 }
+}
 
-#[test]
-fn a_quiet_executor_with_no_callback_is_named_by_its_health() {
-    let f = in_review();
+on_both! {
+fn a_quiet_executor_with_no_callback_is_named_by_its_health(backend: Backend) {
+    let f = in_review(backend);
     f.advance(LIVE_SECONDS + 1.0);
     f.store
         .say(
@@ -820,11 +883,13 @@ fn a_quiet_executor_with_no_callback_is_named_by_its_health() {
             sent.id
         )]
     );
+
+}
 }
 
-#[test]
-fn a_quiet_executor_with_a_native_callback_is_reached() {
-    let f = in_review();
+on_both! {
+fn a_quiet_executor_with_a_native_callback_is_reached(backend: Backend) {
+    let f = in_review(backend);
     f.advance(LIVE_SECONDS + 1.0);
     // Registered on another host, so this board's dispatch never tries to deliver it.
     (f.store.raw().row("callback_state", "amber-heron"))
@@ -845,10 +910,11 @@ fn a_quiet_executor_with_a_native_callback_is_reached() {
         .unwrap();
     assert_eq!(told(&f), Vec::<String>::new());
 }
+}
 
-#[test]
-fn the_orchestrator_hears_its_own_post_reached_nobody_when_no_session_executes_the_task() {
-    let f = Fixture::new(
+on_both! {
+fn the_orchestrator_hears_its_own_post_reached_nobody_when_no_session_executes_the_task(backend: Backend) {
+    let f = Fixture::on(backend,
         Seed::default()
             .session("ochre-owl")
             .task("sim/jump", "in_progress")
@@ -865,11 +931,13 @@ fn the_orchestrator_hears_its_own_post_reached_nobody_when_no_session_executes_t
             sent.id
         )]
     );
+
+}
 }
 
-#[test]
-fn an_orchestrator_above_the_task_is_told_too() {
-    let (f, orch) = chain();
+on_both! {
+fn an_orchestrator_above_the_task_is_told_too(backend: Backend) {
+    let (f, orch) = chain(backend);
     let executor = f.session("worker");
     f.store.claim("a/b/c", &executor).unwrap();
     f.historical_review("a/b/c");
@@ -887,4 +955,6 @@ fn an_orchestrator_above_the_task_is_told_too() {
         .map(|m| (m.slug, m.sender))
         .collect();
     assert_eq!(heard, [("a/b/c".to_string(), "board".to_string())]);
+
+}
 }

@@ -8,7 +8,7 @@
 //! optimistic conflict) or finds itself stale reads and decides again.
 
 use crate::health::{self, EXECUTING, Health};
-pub(crate) use crate::pyjson::repr;
+pub(crate) use crate::quote::repr;
 use crate::rows::{LinkRow, MessageRow, RoleRow, SessionRow, TaskRow};
 use crate::rpc::{Client, DbError};
 use crate::schema;
@@ -44,6 +44,7 @@ mod queued_lines;
 mod raw;
 mod reading;
 mod report_lines;
+mod resume;
 pub(crate) mod search;
 mod session_urls;
 mod sessions;
@@ -770,11 +771,19 @@ impl Store {
         };
         // Include recipient presence in the write's existing result instead of a separate read.
         let snap: Snapshot = self.transact_dispatch(written, vars, false)?;
+        let refresh = snap
+            .tasks
+            .iter()
+            .any(|t| matches!(t.row.status.as_str(), "done" | "blocked"))
+            && self.resume_after_write();
         if snap.has_callbacks {
             self.after_write();
         }
         let view = View::new(self, snap);
         view.task(slug).map_err(Failure::Stop)?;
+        if refresh {
+            return self.get(slug).map_err(Failure::Stop);
+        }
         Ok(view.tasks().remove(0))
     }
 

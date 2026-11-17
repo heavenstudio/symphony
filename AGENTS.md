@@ -150,9 +150,10 @@ can read (below), and `.claude/settings.json` denies Edit there as well.
 **Models.** The model each role runs on is a setting, so a change of mind is one edit:
 `[agents] launch` and `[agents.models]` in `symphony.toml` (`orchestrator`, `executor`,
 `reviewer`, `assessor`), which a board launch takes and `just tasks limits` prints with where
-each came from ([TASKS](docs/TASKS.md#limits-and-models)). The orchestrator runs on Fable, for
-diagnosis and design; executors and reviewers run on Opus and the assessor on Haiku, as
-`[agents] launch` and the table's `orchestrator` and `assessor` say. An Agent launch passes the
+each came from ([TASKS](docs/TASKS.md#limits-and-models)). Each runs on the model `just tasks limits`
+names for the role. `just symphony-cli model ROLE MODEL` sets a role's model in the main checkout,
+or `all` for all four roles, preserving comments and order; the change follows the settings-only
+landing below. An Agent launch passes the
 model `just tasks limits` names for the role (a subagent otherwise inherits its orchestrator's
 model). A resumed agent keeps the model it started on. The work-in-progress limits are settings
 the same way, in `[limits]`.
@@ -199,6 +200,19 @@ the binary by its path reads lost while it works. A build or test is recorded fo
 task its session holds; an orchestrator running one for a task, or a subagent without
 a session of its own, names it: `TASKS_TASK=SLUG just test-rs …`, with
 `TASKS_SESSION=HANDLE` when it has a handle (docs/MACHINE_WORK.md).
+
+A board-launched Codex executor or reviewer already inherits `TASKS_SESSION`: run its own
+checks as one recipe (`just --one -- test-rs …`, `just --one -- lint-rs`), so the recorder derives
+the task from its held role. Keep `--one --` before the recipe: the first option refuses a second
+recipe before either runs, and the separator ends option parsing. Do not repeat session/task
+assignments on each command. This repository's `.codex/rules/checks.rules` allows its named
+checks to record shared state outside the worktree sandbox; it grants no directory-wide access.
+For both document checks use `just --one -- docs-check`, whose arguments are fixed; the generic
+document CLI also accepts flags that write documents. A check
+run for another task still needs the explicit attribution above and the active approval flow.
+Full sessions register their own callback early with `just tasks callback --as HANDLE`;
+in-process agents read their inbox instead. An orchestrator also reads
+[its project guidance](.agents/skills/task-orchestrator/project.md).
 
 **Evidence, not the suite.** A task's gate is the tests closest to what it changed and
 `just lint-rs`, with the client built for a client change (its distribution never committed),

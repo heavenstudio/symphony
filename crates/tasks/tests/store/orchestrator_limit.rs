@@ -163,11 +163,9 @@ on_both! {
     }
 }
 
-// On SurrealDB alone until tools/board-pg-sessions-and-delivery: a session's beat (`Store::touch`)
-// has no PostgreSQL twin yet.
-#[test]
-fn an_orchestrator_filing_at_the_limit_is_passed_over_for_one_under_it_or_the_task_waits() {
-    let f = Fixture::new(Seed::default());
+on_both! {
+fn an_orchestrator_filing_at_the_limit_is_passed_over_for_one_under_it_or_the_task_waits(backend: Backend) {
+    let f = Fixture::on(backend, Seed::default());
     let store = limited(&f, 2);
     let (amber, cobalt) = (f.session("orchestrator"), f.session("orchestrator"));
     orchestrating(&f, &store, &amber, "tools/a", 2);
@@ -214,12 +212,11 @@ fn an_orchestrator_filing_at_the_limit_is_passed_over_for_one_under_it_or_the_ta
         (Some(teal.as_str()), None)
     );
 }
+}
 
-// On SurrealDB alone until tools/board-pg-sessions-and-delivery: a session's beat (`Store::touch`)
-// has no PostgreSQL twin yet.
-#[test]
-fn one_filed_for_at_the_limit_is_named_as_passed_over_though_the_filer_is_given_the_task() {
-    let f = Fixture::empty();
+on_both! {
+fn one_filed_for_at_the_limit_is_named_as_passed_over_though_the_filer_is_given_the_task(backend: Backend) {
+    let f = Fixture::on(backend, crate::common::Seed::default());
     let store = limited(&f, 2);
     let (amber, cobalt) = (f.session("orchestrator"), f.session("orchestrator"));
     orchestrating(&f, &store, &amber, "tools/a", 1);
@@ -237,12 +234,11 @@ fn one_filed_for_at_the_limit_is_named_as_passed_over_though_the_filer_is_given_
     );
     assert_eq!(orchestrators_of(&f, "tools/for"), [amber.as_str()]);
 }
+}
 
-// On SurrealDB alone until tools/board-pg-sessions-and-delivery: a session's beat (`Store::touch`)
-// has no PostgreSQL twin yet.
-#[test]
-fn the_boards_give_fills_none_past_the_limit_and_a_waiting_task_is_any_takers() {
-    let f = Fixture::new(Seed::default());
+on_both! {
+fn the_boards_give_fills_none_past_the_limit_and_a_waiting_task_is_any_takers(backend: Backend) {
+    let f = Fixture::on(backend, Seed::default());
     let store = limited(&f, 2);
     let (amber, cobalt) = (f.session("orchestrator"), f.session("orchestrator"));
     orchestrating(&f, &store, &amber, "tools/a", 1);
@@ -268,12 +264,11 @@ fn the_boards_give_fills_none_past_the_limit_and_a_waiting_task_is_any_takers() 
     assert!(store.give_if_due(&store.board().unwrap()));
     assert_eq!(orchestrators_of(&f, "tools/free/2"), [amber.as_str()]);
 }
+}
 
-// On SurrealDB alone until tools/board-pg-sessions-and-delivery: a session's beat (`Store::touch`)
-// has no PostgreSQL twin yet.
-#[test]
-fn a_red_with_none_under_the_limit_goes_to_one_that_stays_whatever_it_holds() {
-    let f = Fixture::new(Seed::default());
+on_both! {
+fn a_red_with_none_under_the_limit_goes_to_one_that_stays_whatever_it_holds(backend: Backend) {
+    let f = Fixture::on(backend, Seed::default());
     let store = limited(&f, 1);
     let amber = f.session("orchestrator");
     orchestrating(&f, &store, &amber, "tools/a", 1);
@@ -287,12 +282,11 @@ fn a_red_with_none_under_the_limit_goes_to_one_that_stays_whatever_it_holds() {
     );
     assert_eq!(given.waiting, ["tools/ordinary"]);
 }
+}
 
-// On SurrealDB alone until tools/board-pg-sessions-and-delivery: a session's beat (`Store::touch`)
-// has no PostgreSQL twin yet.
-#[test]
-fn a_leavers_work_goes_only_as_far_as_the_others_limits_and_the_rest_waits() {
-    let f = Fixture::new(Seed::default());
+on_both! {
+fn a_leavers_work_goes_only_as_far_as_the_others_limits_and_the_rest_waits(backend: Backend) {
+    let f = Fixture::on(backend, Seed::default());
     let store = limited(&f, 2);
     let (amber, cobalt) = (f.session("orchestrator"), f.session("orchestrator"));
     orchestrating(&f, &store, &cobalt, "tools/c", 1);
@@ -304,12 +298,11 @@ fn a_leavers_work_goes_only_as_far_as_the_others_limits_and_the_rest_waits() {
     let task = f.store.get("tools/a/1").unwrap();
     assert!(symphony_board::orchestration::waiting(&task.fields).is_some());
 }
+}
 
-// On SurrealDB alone until tools/board-pg-sessions-and-delivery: a session leaving (`Store::leave`)
-// has no PostgreSQL twin yet.
-#[test]
-fn a_reopened_task_is_given_only_to_one_under_the_limit() {
-    let f = Fixture::new(Seed::default());
+on_both! {
+fn a_reopened_task_is_given_only_to_one_under_the_limit(backend: Backend) {
+    let f = Fixture::on(backend, Seed::default());
     let store = limited(&f, 1);
     let (amber, exe, rev) = (
         f.session("orchestrator"),
@@ -330,12 +323,11 @@ fn a_reopened_task_is_given_only_to_one_under_the_limit() {
     assert!(task.holders("orchestrator").is_empty(), "{task:?}");
     assert!(symphony_board::orchestration::waiting(&task.fields).is_some());
 }
+}
 
-// On SurrealDB alone until tools/board-pg-sessions-and-delivery: a session's beat (`Store::touch`)
-// has no PostgreSQL twin yet.
-#[test]
-fn one_past_the_limit_keeps_every_task_and_lets_the_unstarted_ones_go() {
-    let f = Fixture::new(Seed::default());
+on_both! {
+fn one_past_the_limit_keeps_every_task_and_lets_the_unstarted_ones_go(backend: Backend) {
+    let f = Fixture::on(backend, Seed::default());
     let (amber, worker) = (f.session("orchestrator"), f.session("worker"));
     // Taken under a limit of 4, then held to 2: amber is 2 past it, and nothing is taken from it.
     orchestrating(&f, &limited(&f, 4), &amber, "tools/a", 4);
@@ -372,12 +364,11 @@ fn one_past_the_limit_keeps_every_task_and_lets_the_unstarted_ones_go() {
     assert!(given.gave.is_empty(), "{given:?}");
     assert_eq!(given.waiting, ["tools/a/1", "tools/a/2"]);
 }
+}
 
-// On SurrealDB alone until tools/board-pg-sessions-and-delivery: a session's beat (`Store::touch`)
-// has no PostgreSQL twin yet.
-#[test]
-fn a_take_written_between_a_gives_read_and_its_write_has_it_decide_again() {
-    let f = Fixture::new(Seed::default());
+on_both! {
+fn a_take_written_between_a_gives_read_and_its_write_has_it_decide_again(backend: Backend) {
+    let f = Fixture::on(backend, Seed::default());
     let store = limited(&f, 2);
     let amber = f.session("orchestrator");
     orchestrating(&f, &store, &amber, "tools/a", 1);
@@ -402,12 +393,11 @@ fn a_take_written_between_a_gives_read_and_its_write_has_it_decide_again() {
     assert_eq!(orchestrators_of(&f, "tools/raced"), [amber.as_str()]);
     assert!(orchestrators_of(&f, "tools/free").is_empty());
 }
+}
 
-// On SurrealDB alone until tools/board-pg-sessions-and-delivery: a session's beat (`Store::touch`)
-// has no PostgreSQL twin yet.
-#[test]
-fn a_quiet_orchestrators_work_waits_while_the_one_that_stays_is_full() {
-    let f = Fixture::new(Seed::default());
+on_both! {
+fn a_quiet_orchestrators_work_waits_while_the_one_that_stays_is_full(backend: Backend) {
+    let f = Fixture::on(backend, Seed::default());
     let store = limited(&f, 1);
     let (amber, cobalt) = (f.session("orchestrator"), f.session("orchestrator"));
     orchestrating(&f, &store, &cobalt, "tools/c", 1);
@@ -418,4 +408,5 @@ fn a_quiet_orchestrators_work_waits_while_the_one_that_stays_is_full() {
     assert_eq!(given.waiting, ["tools/a/0"]);
     // A give of its own is not due again while nothing changes.
     assert!(!store.give_if_due(&store.board().unwrap()));
+}
 }

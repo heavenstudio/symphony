@@ -8,7 +8,7 @@
 //! text and its jsonb normalization to `Store::dump`. Every task-field assignment updates its
 //! exact path in the saved JSON, before jsonb loses the incoming number's spelling; an assigned
 //! array or object replaces its whole subtree. The text is removed with a task and replaced with
-//! a copy, in the same transaction. This schema (version 19) is for fresh scratch PostgreSQL
+//! a copy, in the same transaction. These definitions support fresh scratch PostgreSQL
 //! boards; the version-only opening guard does not upgrade an earlier same-version shape.
 
 use super::schema::{self, Kind};

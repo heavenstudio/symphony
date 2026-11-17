@@ -12,6 +12,8 @@
 //! an ask it could not serve.
 
 use super::callbacks::{CALLBACK_LEASE_SECONDS, Pass};
+use super::postgres::dispatcher as pg;
+use super::statement::both;
 use super::surreal::dispatcher as sql;
 use super::{Error, Store};
 use serde::Deserialize;
@@ -87,7 +89,7 @@ impl Store {
         loop {
             let took: Took = self.retrying(|| {
                 self.transact(
-                    sql::TAKE,
+                    both(sql::TAKE, pg::take()),
                     json!({"host": self.host, "now": self.now(), "lease_seconds": LEASE_SECONDS}),
                 )
             })?;
@@ -110,8 +112,9 @@ impl Store {
                 reason = "no-timed-waits baseline: looks again in the store for another holder's pass to end, where a live query is the event"
             )]
             std::thread::sleep(LOOK);
-            let lease: Lease =
-                self.retrying(|| self.read(sql::LEASE, json!({"host": self.host})))?;
+            let lease: Lease = self.retrying(|| {
+                self.read(both(sql::LEASE, pg::lease()), json!({"host": self.host}))
+            })?;
             if lease.completed >= ask {
                 return Ok(Waited::Served);
             }
@@ -138,7 +141,7 @@ impl Store {
                     // A lease this cannot let go lapses.
                     let _ = self.retrying(|| {
                         self.transact::<Value>(
-                            sql::LET_GO,
+                            both(sql::LET_GO, pg::let_go()),
                             json!({"host": self.host, "revision": revision}),
                         )
                     });
@@ -157,7 +160,7 @@ impl Store {
             // lapsed meanwhile. Then the next pass, if one is asked for, begins after every ask in.
             let next: Next = self.retrying(|| {
                 self.transact(
-                    sql::PASSED,
+                    both(sql::PASSED, pg::passed()),
                     json!({"host": self.host, "revision": revision, "began": began, "more": more, "now": self.now(), "lease_seconds": LEASE_SECONDS}),
                 )
             })?;

@@ -91,6 +91,7 @@ mod red;
 mod relay;
 mod reports;
 mod reserve;
+mod resume;
 mod roles;
 mod round_trip;
 mod schema;

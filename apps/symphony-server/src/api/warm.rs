@@ -30,6 +30,7 @@ pub(crate) async fn start(shared: &Arc<Shared>) -> Result<Arc<Hub>, String> {
             shared.installed_ui,
         )?;
         hub.gate_recorders(shared.recording.clone());
+        hub.wake_at_board(shared.board_wakers.clone());
         assert!(
             shared.api.set(hub.clone()).is_ok(),
             "hub startup is serialized"

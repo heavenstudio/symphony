@@ -75,6 +75,7 @@ mod tabs;
 mod task_gates;
 mod timeline;
 mod touch;
+mod waiting_board;
 
 use std::time::Duration;
 
@@ -316,6 +317,7 @@ fn texts(chrome: &mut Chrome, selector: &str) -> Vec<String> {
 #[test]
 fn entry_pages_fit_the_first_visit_budget_and_deferred_kinds_are_reported() {
     let site = site();
+    site.set_json("/api/task-board", &site::example_listing("ready"));
     let content = look_parity::responses();
     for path in [
         "/api/document",
@@ -368,7 +370,16 @@ fn entry_pages_fit_the_first_visit_budget_and_deferred_kinds_are_reported() {
         ),
         ("/docs/look-parity.md", "docs", ".doc-card", None),
     ] {
+        preload::serve_page(&site, path, kind);
         let Some(mut chrome) = chrome() else { return };
+        if kind == "board" {
+            // The fixture is Ready; the phone now mounts only its selected Review stage.
+            // Measure the same loaded lifecycle board as the established byte baseline.
+            chrome.call(
+                "Emulation.setDeviceMetricsOverride",
+                json!({"width":1440,"height":900,"deviceScaleFactor":1,"mobile":false}),
+            );
+        }
         chrome.open(&site.url(path));
         assert!(
             chrome.wait_for(
@@ -991,7 +1002,12 @@ fn fetched(chrome: &mut Chrome, site: &Site, query: &str, what: &str) {
 #[test]
 fn task_controls_read_the_board_again_for_the_window_already_chosen() {
     let site = site();
+    site.set_json("/api/task-board", &site::example_listing("ready"));
     let Some(mut chrome) = chrome() else { return };
+    chrome.call(
+        "Emulation.setDeviceMetricsOverride",
+        json!({"width":1440,"height":900,"deviceScaleFactor":1,"mobile":false}),
+    );
     chrome.open(&site.url("/tasks"));
     let shown = "document.querySelector('[data-slug=\"tools/example\"]') !== null && document.querySelector('.column[aria-busy=true]') === null";
     assert!(
@@ -1028,7 +1044,12 @@ fn task_controls_read_the_board_again_for_the_window_already_chosen() {
 #[test]
 fn task_controls_keep_their_values_and_revealed_rows_after_scrolling() {
     let site = site();
+    site.set_json("/api/task-board", &site::example_listing("ready"));
     let Some(mut chrome) = chrome() else { return };
+    chrome.call(
+        "Emulation.setDeviceMetricsOverride",
+        json!({"width":1440,"height":900,"deviceScaleFactor":1,"mobile":false}),
+    );
     chrome.call("Page.addScriptToEvaluateOnNewDocument", json!({"source":
         "const observer = new MutationObserver(() => { if (document.head) { const style = document.createElement('style'); style.textContent = '.column { margin-top: 20000px }'; document.head.append(style); observer.disconnect(); } }); observer.observe(document, {childList: true, subtree: true});"
     }));
@@ -1049,9 +1070,8 @@ fn task_controls_keep_their_values_and_revealed_rows_after_scrolling() {
             .iter()
             .any(|url| url.contains("status=ready"))
     );
-    // The pipeline's columns live in the board's own bounded scroller, which clips them from
-    // the page: the pushed column is reached by scrolling that scroller, never the window.
-    chrome.eval("document.querySelector('.board-scroll').scrollTo(0, 20000)");
+    // The waiting columns follow the page; approaching their reserved boxes reveals them.
+    chrome.eval("scrollTo(0, 20000)");
     assert!(
         chrome.wait_for(
             "document.querySelector('[data-slug=\"tools/example\"]') !== null",
@@ -1059,13 +1079,10 @@ fn task_controls_keep_their_values_and_revealed_rows_after_scrolling() {
         ),
         "the scrolled-to row never appeared: {:?}; {:?}",
         site.targets(),
-        chrome.eval("(b => ({scrollTop: b.scrollTop, scrollHeight: b.scrollHeight, clientHeight: b.clientHeight}))(document.querySelector('.board-scroll'))")
+        chrome.eval("(b => ({scrollTop: b.scrollTop, scrollHeight: b.scrollHeight, clientHeight: b.clientHeight}))(document.scrollingElement)")
     );
-    chrome.eval("document.querySelector('.board-scroll').scrollTo(0, 0)");
-    assert!(chrome.wait_for(
-        "document.querySelector('.board-scroll').scrollTop === 0",
-        SHOWN
-    ));
+    chrome.eval("scrollTo(0, 0)");
+    assert!(chrome.wait_for("scrollY === 0", SHOWN));
     assert_eq!(
         chrome.eval("document.querySelectorAll('[data-slug=\"tools/example\"]').length"),
         json!(1)
@@ -1097,7 +1114,7 @@ fn task_controls_keep_their_values_and_revealed_rows_after_scrolling() {
     assert!(!site.targets().iter().any(|url| url.contains("q=wrong")));
     // A new filter replaces rows, so its new visibility latches must be approached again.
     // The earlier assertion checked that scrolling alone preserves the revealed row.
-    chrome.eval("document.querySelector('.board-scroll').scrollTo(0, 20000)");
+    chrome.eval("scrollTo(0, 20000)");
     assert!(
         chrome.wait_for(
             "document.querySelector('[data-slug=\"tools/example\"]') !== null",
@@ -1116,10 +1133,10 @@ fn a_revealed_column_keeps_its_rows_look_ahead_before_it_reaches_the_screen() {
         "/api/task-board",
         &json!({
             "tasks": [{"slug": "tools/blocked-example", "title": "Blocked example", "body": "",
-                "status": "blocked", "priority": 1, "parent": null, "created_by": "owner",
+                "status": "ready", "priority": 1, "parent": null, "created_by": "owner",
                 "created": 0.0, "updated": 0.0, "links": [], "depends": [], "roles": [],
                 "instruction": false}],
-            "statuses": ["blocked"], "counts": [["blocked", 1]], "signoff": [], "next": null
+            "statuses": ["ready"], "counts": [["ready", 1]], "signoff": [], "next": null
         }),
     );
     let Some(mut chrome) = chrome() else { return };
@@ -1128,30 +1145,30 @@ fn a_revealed_column_keeps_its_rows_look_ahead_before_it_reaches_the_screen() {
         json!({"width":1280,"height":800,"deviceScaleFactor":1,"mobile":false}),
     );
     chrome.call("Page.addScriptToEvaluateOnNewDocument", json!({"source":
-        "const observer = new MutationObserver(() => { if (document.head) { const style = document.createElement('style'); style.textContent = '.offline { margin-top: 20000px }'; document.head.append(style); observer.disconnect(); } }); observer.observe(document, {childList: true, subtree: true});"
+        "const observer = new MutationObserver(() => { if (document.head) { const style = document.createElement('style'); style.textContent = '.column[data-status=ready] { margin-top: 20000px }'; document.head.append(style); observer.disconnect(); } }); observer.observe(document, {childList: true, subtree: true});"
     }));
     chrome.open(&site.url("/tasks"));
-    assert!(chrome.wait_for("document.documentElement.dataset.navigation === 'ready' && document.querySelector('#column-blocked') !== null", SHOWN));
+    assert!(chrome.wait_for("document.documentElement.dataset.navigation === 'ready' && document.querySelector('#column-ready') !== null", SHOWN));
     assert!(
         !site
             .targets()
             .iter()
-            .any(|url| url.contains("status=blocked"))
+            .any(|url| url.contains("status=ready"))
     );
     // The offline columns scroll with the page. Stop with the column's slot 300 px below the
     // screen: its own look-ahead reveals it, and its row's look-ahead, which reaches 300 px
     // into the screen, must then reveal the card while the column is still off screen.
-    chrome.eval("const column = document.querySelector('#column-blocked'); scrollTo(0, column.getBoundingClientRect().top + scrollY - innerHeight - 300)");
+    chrome.eval("const column = document.querySelector('#column-ready'); scrollTo(0, column.getBoundingClientRect().top + scrollY - innerHeight - 300)");
     assert!(
         chrome.wait_for(
             "document.querySelector('[data-slug=\"tools/blocked-example\"]') !== null",
             SHOWN
         ),
         "the row's look-ahead was clipped: {}",
-        chrome.eval("JSON.stringify({innerHeight, column: document.querySelector('#column-blocked').getBoundingClientRect().top, row: document.querySelector('[id=\"row-tools/blocked-example\"]')?.outerHTML})")
+        chrome.eval("JSON.stringify({innerHeight, column: document.querySelector('#column-ready').getBoundingClientRect().top, row: document.querySelector('[id=\"row-tools/blocked-example\"]')?.outerHTML})")
     );
     assert_eq!(
-        chrome.eval("document.querySelector('#column-blocked').getBoundingClientRect().top >= innerHeight + 299"),
+        chrome.eval("document.querySelector('#column-ready').getBoundingClientRect().top >= innerHeight + 299"),
         json!(true),
         "the column reached the screen, so the case no longer tests the row's look-ahead"
     );
@@ -1309,16 +1326,16 @@ fn tasks_and_their_controls_work_without_a_visibility_observer() {
         "document.querySelector('[data-slug=\"tools/example\"]') !== null",
         SHOWN
     ));
-    chrome.eval("Array.from(document.querySelectorAll('button')).find(e => e.textContent === 'Show task groups').click()");
+    chrome.eval("document.querySelector('.wait-chip.k-nobody').click()");
     assert!(
         chrome.wait_for(
-            "document.querySelector('ul li a')?.textContent === 'Example task'",
+            "document.querySelector('.column[data-status=waiting] .taskcard-title')?.textContent === 'Example task'",
             SHOWN
         ),
         "the fallback left task controls unusable: {:?}",
         chrome.eval("document.body.innerText")
     );
-    assert!(site.targets().iter().any(|url| url.contains("roots=1")));
+    assert!(site.targets().iter().any(|url| url.contains("wait=nobody")));
 }
 
 /// A task the server sends with its plugins' board fields draws on the board as one without them
@@ -1334,11 +1351,11 @@ fn a_task_with_plugin_board_fields_draws_on_the_board() {
     site.set_json(
         "/api/task-board",
         &json!({
-            "tasks": [{"slug": "game/jump", "title": "Jump", "body": "", "status": "ready",
+            "tasks": [{"slug": "game/jump", "title": "Jump", "body": "", "status": "review",
                 "priority": 2, "parent": null, "created_by": "owner", "created": 0.0,
                 "updated": 0.0, "links": [], "depends": [], "roles": [], "instruction": false,
                 "fields": {"game": {"effort": 3.0, "risk": "high", "done": true}}}],
-            "statuses": ["ready"], "counts": [["ready", 1]], "signoff": [], "next": null
+            "statuses": ["review"], "counts": [["review", 1]], "signoff": [], "next": null
         }),
     );
     let Some(mut chrome) = chrome() else { return };

@@ -27,6 +27,7 @@ fn fresh_namespace() -> String {
 /// Every read a page, a list or an agent's look makes is sent as a read ([`Kind::of`]), so a late
 /// answer to it goes once more: no word of a write, no call outside the namespaces that only
 /// compute, and no `;` in its text, quoted or not, but between its statements.
+// SurrealDB alone: inspects or stalls SurrealDB HTTP/CBOR requests and namespace creation.
 #[test]
 fn every_read_a_page_a_list_or_a_look_makes_is_sent_as_a_read() {
     let f = Fixture::empty();
@@ -55,6 +56,7 @@ fn every_read_a_page_a_list_or_a_look_makes_is_sent_as_a_read() {
     }
 }
 
+// SurrealDB alone: inspects or stalls SurrealDB HTTP/CBOR requests and namespace creation.
 #[test]
 fn a_page_read_under_a_slow_board_is_answered_after_one_read_resend_and_its_open_writes_nothing() {
     let f = Fixture::empty();
@@ -89,6 +91,7 @@ fn a_page_read_under_a_slow_board_is_answered_after_one_read_resend_and_its_open
 /// Over a slow board only the held read reaches the server: the read's resend and the page's read
 /// are answered from the rehearsal, so none races the short wait for the server's answer however
 /// loaded the machine is. A second relay in front of the server lists what reached it.
+// SurrealDB alone: inspects or stalls SurrealDB HTTP/CBOR requests and namespace creation.
 #[test]
 fn over_a_slow_board_only_the_held_read_reaches_the_server() {
     let f = Fixture::empty();
@@ -109,6 +112,7 @@ fn over_a_slow_board_only_the_held_read_reaches_the_server() {
     assert_eq!(asked[0].1, rehearsed[0].1, "the open's read, held");
 }
 
+// SurrealDB alone: inspects or stalls SurrealDB HTTP/CBOR requests and namespace creation.
 #[test]
 fn a_board_not_made_yet_is_defined_its_namespace_once_and_then_opens_on_one_read() {
     let ns = fresh_namespace();
@@ -147,6 +151,7 @@ fn bare(db: Client) -> Client {
 
 /// A database the server holds with no tables in it, and one not on the server in a namespace that
 /// is: each is made a board, the namespace defined only where the database was not there.
+// SurrealDB alone: inspects or stalls SurrealDB HTTP/CBOR requests and namespace creation.
 #[test]
 fn a_database_without_a_board_is_made_one_its_namespace_defined_only_when_missing() {
     Fixture::empty(); // the shared namespace is on the server

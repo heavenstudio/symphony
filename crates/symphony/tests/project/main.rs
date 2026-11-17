@@ -15,6 +15,7 @@ mod fields;
 mod folders;
 mod live_limits;
 mod manifest;
+mod model;
 mod no_documents;
 mod offers;
 mod reference;

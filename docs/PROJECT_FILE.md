@@ -133,6 +133,12 @@ limits` prints what holds and where it came from.
 
 ## `[agents.models]`
 
+`just symphony-cli model ROLE MODEL` sets one role's model in the main checkout's file;
+`all` sets all four. It preserves comments and order, adds missing keys, accepts any string
+as the model and refuses unknown roles. It reports the edit; checking and landing follow the
+project's settings-only policy. `just tasks limits` prints the resulting models and their sources.
+A resumed agent keeps the model it started on.
+
 | Key | Default | What it sets |
 | --- | --- | --- |
 | `orchestrator` | none: whoever starts one chooses | the model an orchestrator runs on |

@@ -2,6 +2,8 @@
 //! never a field of the `session` row. Its `url` is no field the board marker's event watches, so
 //! setting one moves no board marker; the agents view reads every address each time it is built.
 
+use super::postgres::session_urls as pg;
+use super::statement::both;
 use super::surreal::session_urls as sql;
 use super::{Error, Store, refused};
 use crate::maps::Collect as _;
@@ -16,7 +18,7 @@ impl Store {
         let url = crate::session_url::checked(url).map_err(refused)?;
         let body = sql::set();
         let vars = self.acting(handle, (self.clock)(), json!({"url": url}));
-        self.retrying(|| self.transact::<Value>(&body, vars.clone()))?;
+        self.retrying(|| self.transact::<Value>(both(&body, pg::set()), vars.clone()))?;
         Ok(url)
     }
 
@@ -25,7 +27,8 @@ impl Store {
     /// way (a copied dump, a hand write, another build) that holds an address it refuses, a
     /// `javascript:` one say, is left out, and no page is handed it to link.
     pub fn session_urls(&self) -> Result<BTreeMap<String, String>, Error> {
-        let found: Vec<(String, Value)> = self.retrying(|| self.read(sql::READ, json!({})))?;
+        let found: Vec<(String, Value)> =
+            self.retrying(|| self.read(both(sql::READ, pg::read()), json!({})))?;
         Ok(found
             .into_iter()
             .filter_map(|(handle, url)| {

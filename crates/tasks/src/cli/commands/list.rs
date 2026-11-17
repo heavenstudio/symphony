@@ -7,8 +7,8 @@ use super::{Context, Stop};
 use crate::cli::shape;
 use crate::cli::text::{roles_text, tree_order};
 use crate::health::FINISHED;
-use crate::pyjson::{self, Py};
 use crate::{Store, Task, orchestration};
+use serde_json::{Value, json};
 use std::collections::HashSet;
 
 pub(super) fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
@@ -37,8 +37,10 @@ pub(super) fn run(store: &Store, c: &mut Context) -> Result<(), Stop> {
             .iter()
             .map(|t| shape::listed(t, since.get(&t.slug).copied()))
             .collect();
-        let json = Py::obj(vec![("tasks", Py::List(listed))]);
-        c.say(&pyjson::dumps(&json));
+        let json = json!({
+            "tasks": Value::Array(listed),
+        });
+        c.say(&serde_json::to_string_pretty(&json).expect("JSON values serialize"));
         return Ok(());
     }
     if tasks.is_empty() {

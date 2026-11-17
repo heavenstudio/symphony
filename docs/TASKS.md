@@ -1553,10 +1553,11 @@ in-progress task whose build or test run is going sits there until it ends, then
 returns to its column. They are display stages, never statuses: no command moves a
 task there, and a task in any other status (a task in review whose reviewer runs
 its tests) keeps its column and shows the run as a chip. A run for a subtask (a
-slice, or an instruction its agent holds) moves the card of the task it is under. Runs come from the board's
-recorder (`tasks run`, which this repository's `tools/cargo.sh` and recipes use) or
+slice, or an instruction its agent holds) moves the card of the task it is under.
+Runs come from the board's recorder (`tasks run`, which this repository's
+`tools/cargo.sh` and recipes use) or
 the project's own reader; until a machine reports either, the two stages are one
-narrow rail that says so once, and the board's Status filter offers neither of them
+narrow rail that says so once. When a machine reports, the rail opens its Build and Test lists
 ([Machine build and test work](MACHINE_WORK.md#recording-builds-and-tests)).
 
 **Review waiting on nobody is blocked.** A task that only waits on an approval,
@@ -1601,6 +1602,16 @@ the Symphony's own callers name theirs: the default landing's hold is `check:own
 approve of the tip ([below](#the-default-landing)), which the line reads as his decision. A cancellation's block is read from the
 task's links instead, its cancelled dependencies.
 
+An explicit `task:SLUG` block clears automatically once that task and every dependency are
+`done`, using the same completion rule as `claim` and PULL, including approval before landing.
+The task returns to its recorded stage; work from `in_progress` without an executor returns to
+`ready`. A block without a recorded stage returns to `ready`, or `in_progress` with an executor.
+Resuming work respects the slot cap and retries on dispatch when a slot frees. The move is
+recorded once on the thread and reaches the current orchestrator through native STATUS/PULL
+delivery. Dispatch also reconciles a completion whose writer stopped before delivery. Decision,
+check, parked and unknown blocks stay blocked; cancelled or missing prerequisites never satisfy
+a task block.
+
 **The line.** Each open task waits on one thing, said as `KIND · WHO · WHY` since the time it took
 its status (`crates/tasks/src/waits_on.rs`), KIND one of:
 
@@ -1622,8 +1633,15 @@ each task's `waits_on`, a blocked task's `from` the status it was blocked from, 
 `orchestrators` (each session holding the orchestrator role on an open task, with its health) and
 `unstarted` (the ready tasks no executor that is there holds, every dependency done): the wire
 types `WaitsOn`, `Orchestrator`, `Tasks` and `TaskListing` (`crates/symphony/src/taskview/waiting.rs`).
-When each task took its status is its thread's replay, read for every open task in one round trip
-and kept, so only a task whose status or write moved is read again.
+When each task took its status is its thread's replay, read for tasks in one round trip
+and kept, so only a task whose status or write moved is read again. Open and finished rows also
+carry optional `review_rounds`: one round per replayed stretch in review, including an active
+round, exactly as the task timeline counts them. Reviewer roles, stamps and review subtasks do
+not add rounds. Zero means no review stretch; an absent count means no summary is available
+(including an older server), never a guessed zero. Finished summaries stay cached until their
+task changes or leaves the snapshot. Filtering and paging copy the summaries without more
+history reads. The feed sends a changed known count in `task-fields`; if a previously known
+summary becomes unavailable it replaces the task record to clear it.
 
 **A block from before.** A task blocked by hand before a block named its thing has no record. It
 is not blocked on the wire: the listings send it in the stage it stopped in, waiting on `nobody ·
@@ -1668,10 +1686,12 @@ The opaque `next` cursor records the complete ordering key, not an offset: stage
 wait-kind list), ordinary/blocked/parked rank, block-kind rank, status-entry time (negated update
 time for finished work) and slug. It is passed back only with the same view, search, window,
 activity, status and wait kind. A malformed cursor or one from the default view is refused.
-An empty page has no cursor. This projection changes no client view until that client opts in.
+An empty page has no cursor. The task board opts into this projection for its stage columns and
+wait-kind strip; other listing callers retain the default view.
 
-A task that has posted a card for the owner is lifted out of its column into
-a **Waiting for your sign-off** lane above the board. That needs all of:
+The default listing retains its legacy **Waiting for your sign-off** selection. The waiting
+board keeps these tasks in their own stages, with their named decision on the card, rather
+than drawing a separate lane. The legacy selection needs all of:
 
 - the task is not `done`, `blocked` or `cancelled`, and someone executes it;
 - its body or thread names a card slug whole (a card named `x` is not
@@ -1679,8 +1699,8 @@ a **Waiting for your sign-off** lane above the board. That needs all of:
 - that card is still undecided in a document the task links: the cards a
   document page counts as "N decisions waiting" (`docs_tree.pending`).
 
-Deciding the card puts the task back in its column. Work nobody holds, or that
-posted no card, stays in its own column however its documents stand.
+Deciding the card removes the task from that selection. Work nobody holds, or that
+posted no card, is not selected however its documents stand.
 
 A project's plugin that answers a gate named `owner` for the task ([Gates](#gates))
 decides in that rule's place: the open, executed task is in the lane while that

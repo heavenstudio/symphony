@@ -4,6 +4,131 @@ use super::{SHOWN, chrome, components, site};
 use serde_json::json;
 
 #[test]
+fn an_expired_conversation_keeps_the_draft_and_allows_one_task_submission() {
+    let site = site();
+    site.miss_route(
+        "/api/ask",
+        Some("no ask 7 (asks go after a day without activity)"),
+    );
+    site.set_json("/api/quick-task", &json!({"slug":"inbox/recovered"}));
+    let Some(mut page) = chrome() else { return };
+    super::hold_ask_polls(&mut page);
+    page.call(
+        "Page.addScriptToEvaluateOnNewDocument",
+        json!({"source": "localStorage.setItem('review-quick-draft', JSON.stringify({open:false,task:false,ask:7,ask_scope:'old-tree',title:'Recovered task',text:'Keep these details',slug:'inbox/recovered',priority:'1'}));"}),
+    );
+    page.open(&site.url("/tasks"));
+    components::open_panel(&mut page);
+    assert!(page.wait_for("window.reviewQuickDraft?.ask === 0", SHOWN));
+    assert_eq!(
+        page.eval(
+            "({draft:JSON.parse(localStorage.getItem('review-quick-draft')),retries:askPoll.size})"
+        ),
+        json!({"draft": {
+            "open":true,"task":false,"ask":0,"ask_scope":"","title":"Recovered task",
+            "text":"Keep these details","slug":"inbox/recovered","priority":"1",
+            "request":"","request_page":"","request_scope":""
+        }, "retries":0})
+    );
+    components::task_tab(&mut page);
+    assert_eq!(page.eval("[document.getElementById('quick-title').value,document.getElementById('quick-text').value]"), json!(["Recovered task","Keep these details"]));
+    page.eval("document.querySelector('#quick-sheet form').requestSubmit()");
+    assert!(page.wait_for("document.querySelector('#quick-sheet a[href=\"/task/inbox/recovered\"]') !== null && document.getElementById('quick-title').value === ''", SHOWN));
+    let posts = site.posts();
+    assert_eq!(
+        posts.len(),
+        1,
+        "recovery sends no conversation or duplicate task: {posts:?}"
+    );
+    assert_eq!(posts[0].0, "/api/quick-task");
+    assert_eq!(posts[0].1["title"], "Recovered task");
+    assert_eq!(posts[0].1["body"], "Keep these details");
+    assert_eq!(posts[0].1["slug"], "inbox/recovered");
+    assert_eq!(posts[0].1["priority"], 1);
+    assert_eq!(posts[0].1["page"], "/tasks");
+    assert_eq!(posts[0].1["request"].as_str().unwrap().len(), 32);
+    assert_eq!(page.eval("document.querySelector('#quick-sheet').textContent.includes('Conversation could not be refreshed')"), json!(false));
+}
+
+#[test]
+fn a_conversation_read_failure_does_not_contaminate_task_submission() {
+    let site = site();
+    site.fail_route("/api/ask", true);
+    site.set_json("/api/quick-task", &json!({"slug":"inbox/independent"}));
+    let Some(mut page) = chrome() else { return };
+    super::hold_ask_polls(&mut page);
+    page.call(
+        "Page.addScriptToEvaluateOnNewDocument",
+        json!({"source":"localStorage.setItem('review-quick-draft',JSON.stringify({open:false,task:false,ask:7,title:'Independent task',text:'Details survive a chat failure'}));"}),
+    );
+    page.open(&site.url("/tasks"));
+    components::open_panel(&mut page);
+    assert!(page.wait_for("document.querySelector('#quick-sheet').textContent.includes('Conversation could not be refreshed')", SHOWN));
+    assert_eq!(
+        page.eval("window.reviewQuickDraft.ask"),
+        json!(7),
+        "unexpected failures keep the conversation"
+    );
+    components::task_tab(&mut page);
+    assert_eq!(page.eval("document.querySelector('#quick-sheet').textContent.includes('Conversation could not be refreshed')"), json!(false));
+    page.eval("document.querySelector('#quick-sheet form').requestSubmit()");
+    assert!(page.wait_for(
+        "document.querySelector('#quick-sheet a[href=\"/task/inbox/independent\"]') !== null",
+        SHOWN
+    ));
+    assert_eq!(site.posts().len(), 1);
+    assert_eq!(site.posts()[0].1["body"], "Details survive a chat failure");
+}
+
+#[test]
+fn a_conversation_expiring_before_a_reply_keeps_text_until_a_new_chat_is_sent() {
+    let site = site();
+    site.set_json("/api/ask", &super::panel_open::chat(&["First question"]));
+    site.miss_route("/api/ask-reply", Some("no ask 7"));
+    let Some(mut page) = chrome() else { return };
+    page.call(
+        "Page.addScriptToEvaluateOnNewDocument",
+        json!({"source":"localStorage.setItem('review-quick-draft',JSON.stringify({open:false,task:false,ask:7,text:'Keep my reply'}));"}),
+    );
+    page.open(&site.url("/tasks"));
+    components::open_panel(&mut page);
+    assert!(page.wait_for(
+        "document.querySelector('#quick-sheet .quick-message') !== null",
+        SHOWN
+    ));
+    page.eval("document.querySelector('#quick-sheet form').requestSubmit()");
+    assert!(page.wait_for("document.querySelector('#quick-sheet [role=alert]')?.textContent.includes('send again to start a new conversation') === true && !document.getElementById('quick-text').disabled", SHOWN));
+    assert_eq!(page.eval("[window.reviewQuickDraft.ask,window.reviewQuickDraft.ask_scope,document.getElementById('quick-text').value]"), json!([0,"","Keep my reply"]));
+    assert_eq!(
+        site.posts(),
+        vec![(
+            "/api/ask-reply".into(),
+            json!({"id":7,"text":"Keep my reply"})
+        )]
+    );
+    site.set_json("/api/ask", &json!({"id":8}));
+    site.set_json("/api/ask?format=blocks&id=8", &{
+        let mut chat = super::panel_open::chat(&["Keep my reply"]);
+        chat["ask"]["id"] = json!(8);
+        chat
+    });
+    page.eval("document.querySelector('#quick-sheet form').requestSubmit()");
+    assert!(page.wait_for(
+        "window.reviewQuickDraft.ask === 8 && document.getElementById('quick-text').value === ''",
+        SHOWN
+    ));
+    let posts = site.posts();
+    assert_eq!(posts.len(), 2);
+    assert_eq!(posts[1].0, "/api/ask");
+    assert!(
+        posts[1].1["question"]
+            .as_str()
+            .unwrap()
+            .starts_with("Keep my reply\n\n(sent from ")
+    );
+}
+
+#[test]
 fn an_uncertain_task_save_keeps_its_draft_and_identity_until_confirmation() {
     let site = site();
     let Some(mut page) = chrome() else { return };

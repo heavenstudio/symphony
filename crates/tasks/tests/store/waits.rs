@@ -442,11 +442,9 @@ on_both! {
     }
 }
 
-// On SurrealDB alone until tools/board-pg-sessions-and-delivery: a session leaving (`Store::leave`)
-// has no PostgreSQL twin yet.
-#[test]
-fn simultaneous_duplicates_and_an_old_retry_after_a_fresh_verdict_write_once_each() {
-    let f = Fixture::new(Seed::default().session("brisk-finch"));
+on_both! {
+fn simultaneous_duplicates_and_an_old_retry_after_a_fresh_verdict_write_once_each(backend: Backend) {
+    let f = Fixture::on(backend, Seed::default().session("brisk-finch"));
     f.task("sim/jump");
     let before = f.said("sim/jump").len();
     let start = std::sync::Barrier::new(4);
@@ -496,4 +494,5 @@ fn simultaneous_duplicates_and_an_old_retry_after_a_fresh_verdict_write_once_eac
         .unwrap();
     assert_eq!(retry.fields, fresh.fields);
     assert_eq!(f.said("sim/jump").len(), after_leave);
+}
 }

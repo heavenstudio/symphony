@@ -33,7 +33,18 @@ pub fn snapshot_board(
     stood: &Stood,
     lane: &BTreeMap<String, Vec<String>>,
 ) -> (Tasks, i64) {
-    let look = symphony_board::waits_on::Look::new(&board.tasks, &[]);
+    snapshot_board_with_busy(board, stood, lane, &[])
+}
+
+/// [`snapshot_board`] with the sessions observed running tests, just as PULL counts them present
+/// even when their tool call's heartbeat has expired.
+pub fn snapshot_board_with_busy(
+    board: &symphony_board::Board,
+    stood: &Stood,
+    lane: &BTreeMap<String, Vec<String>>,
+    busy: &[String],
+) -> (Tasks, i64) {
+    let look = symphony_board::waits_on::Look::new(&board.tasks, busy);
     let mut tasks: Vec<Task> = (board.tasks.iter())
         .map(|t| {
             let mut wire = task(t);
@@ -223,6 +234,7 @@ fn task(t: &symphony_board::Task) -> Task {
         instruction: t.instruction,
         fields: fields(&t.fields),
         waits_on: None,
+        review_rounds: None,
         from: None,
     }
 }
@@ -630,8 +642,7 @@ fn agents_probed(
 /// The board's agents view on the Symphony's wire. The board's own JSON names the panes probe
 /// `herdr`, which [`symphony_api::AgentProbes`] reads and sends on as `panes` and `herdr` both.
 fn wire_agents(view: &symphony_board::cli::agents::View) -> Result<symphony_api::Agents, String> {
-    serde_json::from_str(&symphony_board::pyjson::dumps_line(&view.json()))
-        .map_err(|e| e.to_string())
+    serde_json::from_value(view.json()).map_err(|e| e.to_string())
 }
 
 /// Set the board field `name` on the task `slug`: the first of `plugins` declaring a field of that

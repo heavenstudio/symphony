@@ -37,7 +37,7 @@ fn listing(tasks: &[(&str, &str)], counts: &[(&str, usize)]) -> Value {
 
 /// The read of the search's `query` (its counts, or one column's first page), as the page asks it.
 fn search_read(query: &str) -> String {
-    format!("/api/task-board?{query}&days=1&activity=1&work=0")
+    format!("/api/task-board?view=waiting&{query}&days=1&activity=1&work=0")
 }
 
 fn counts_read() -> String {
@@ -187,10 +187,11 @@ fn a_search_reads_its_counts_and_columns_once_while_the_machines_heartbeat_comes
     let Some(mut chrome) = crate::chrome() else {
         return;
     };
+    chrome.call("Page.addScriptToEvaluateOnNewDocument",json!({"source": "const Socket = WebSocket; window.__machineSamples = []; window.WebSocket = class extends Socket { constructor(...args) { super(...args); this.addEventListener('message', event => { const data = JSON.parse(event.data.slice(event.data.indexOf(String.fromCharCode(10)) + 1)); for (const change of data.changes ?? []) if (change.region === 'machine-work') window.__machineSamples.push(change.data.freshness); }); } };"}));
     let from = opened(&site, &mut chrome);
     search(&site, &mut chrome, from);
-    // Three samples while the columns' reads are out, the last one saying the observation is
-    // stale as a whole, which the build column's machine context shows once the page has it.
+    // Observe all three samples delivered while column reads are out. Keep the stage grid
+    // mounted: opening machine details now deliberately changes the board to an activity list.
     let version = version();
     for (n, said) in ["incomplete", "fresh", "stale"].into_iter().enumerate() {
         let at = version + 1 + n as u64;
@@ -202,7 +203,7 @@ fn a_search_reads_its_counts_and_columns_once_while_the_machines_heartbeat_comes
     }
     assert!(
         chrome.wait_for(
-            "document.querySelector('[data-status=build] .machine-work')?.textContent.includes('Observation status · stale') === true",
+            "JSON.stringify(window.__machineSamples) === JSON.stringify(['incomplete','fresh','stale'])",
             SHOWN
         ),
         "the page never had the machine's last sample"
