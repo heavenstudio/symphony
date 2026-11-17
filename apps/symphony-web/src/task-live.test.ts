@@ -940,6 +940,28 @@ describe("a task's thread", () => {
     expect(asked).toHaveLength(3);
   });
 
+  it("shares an earlier thread read between the timeline and the thread, and stops a stuck cursor", async () => {
+    const reply = later<Response>();
+    const { task, asked } = live(
+      serves((url) =>
+        url === THREAD_URL
+          ? answer(200, history([anEntry(3)], 2), '"t1"', 1)
+          : url.includes("before=")
+            ? reply.promise
+            : null,
+      ),
+    );
+    task.open();
+    await pass();
+    const first = task.history(true);
+    const second = task.history(true);
+    expect(first).toBe(second);
+    expect(urls(asked).filter((url) => url.includes("before="))).toHaveLength(1);
+    reply.settle(answer(200, history([anEntry(3)], 2)));
+    expect(await first).toContain("made no progress");
+    expect(task.thread().value?.before).toBe(2);
+  });
+
   it("waits for its answer to read earlier messages while it shows this device's copy", async () => {
     const reply = later<Response>();
     const { task, asked } = live(

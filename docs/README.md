@@ -54,6 +54,8 @@ still await implementation; its approval alone does not make it current app beha
   connection budget, database boundary and PostgreSQL 16/18 validation contract.
 - [Configurable delivery workflows](analysis/configurable-delivery-workflow.md) — the proposed
   C contract: separate phase/state, authoritative operations, migration and implementation briefs.
+- [Artifact approvals at workflow transitions](analysis/revision-bound-transition-guards.md) —
+  proposed input-bound human decisions, invalidation and atomic project-guard admission.
 - [Execution providers and durable attempts](analysis/remote-execution-attempts.md) — a proposal
   for project-owned execution adapters, durable recovery and authorized attempt history.
 - [Hosted ingress and board readiness](analysis/hosted-ingress.md) — proposed trusted proxy and

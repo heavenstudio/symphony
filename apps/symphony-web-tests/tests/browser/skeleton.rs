@@ -356,6 +356,12 @@ fn a_stage_keeps_its_sign_off_tasks_and_stops_loading_after_its_answer() {
     let Some(mut browser) = open(&site, "/tasks", 1280, 900) else {
         return;
     };
+    browser.reveal("#column-review");
+    assert!(browser.wait_for(
+        "document.querySelector('.column[data-status=review] .taskcard') !== null",
+        SHOWN
+    ));
+    browser.reveal("#column-in_progress");
     let reads = [column_read("in_progress"), column_read("review")];
     if let Err(stall) =
         test_time::until_true("both stages' first pages answered", super::STALL, || {
@@ -575,6 +581,12 @@ fn a_ghost_card_is_as_tall_as_the_card_of_a_task_with_a_title_of_two_lines() {
     ));
     site.hold_route("/api/task-board", false);
     assert!(drawn, "no ghost board: {}", browser.eval(PAGE));
+    browser.reveal("#column-review");
+    assert!(browser.wait_for(
+        "document.querySelector('.column[data-status=review] .taskcard') !== null",
+        SHOWN
+    ));
+    browser.reveal("#column-ready");
     assert!(
         browser.wait_for(
             "document.querySelectorAll('.kanban .taskcard').length === 2",
