@@ -1,5 +1,6 @@
 //! The shared installation's idle-session sweep, on fixture launchers and clocks.
 
+use super::test_clock::TestClock;
 use super::*;
 use std::sync::atomic::AtomicUsize;
 use symphony_board::builds::Beyond;
@@ -7,12 +8,6 @@ use symphony_board::builds::Beyond;
 /// The wall-clock backstop of every wait here: each waits on its condition, and only a stall
 /// reaches this (RULES.md `tests/no-test-fails-on-load`).
 const BACKSTOP: Duration = test_time::backstop(Duration::from_secs(15));
-
-/// The time a stand-in sweep on the wall clock is given: the 3 s these stand-ins once had, as a
-/// backstop only a stall reaches, so a loaded machine's slow `sh` is never a sweep timed out. The
-/// sweep's own timeout is read on a clock the test moves
-/// (`the_shared_installation_ends_a_hung_reap_child_at_its_sweep_timeout`).
-const SWEEP_WITHIN: Duration = test_time::backstop(Duration::from_secs(3));
 
 pub(super) struct SweepFixture {
     pub(super) root: PathBuf,
@@ -99,67 +94,29 @@ impl Drop for SweepFixture {
     }
 }
 
-/// A clock only the test moves. Every read is counted, so the test knows when the worker has
-/// looked at a time it set and acted on it.
-#[derive(Clone)]
-struct TestClock {
-    start: Stamp,
-    /// How far past `start` the clock reads, and how often it was read.
-    state: Arc<(Mutex<(Duration, u64)>, Condvar)>,
+/// The rounds of a worker on a [`TestClock`], which the test moves on by this between two.
+const INTERVAL: Duration = Duration::from_secs(300);
+
+/// A reap child's timeout on a [`TestClock`]: the clock moves only by an [`INTERVAL`] at a time,
+/// a few times a test, so no round reaches it; a round that never ends is the backstop's.
+const ROUND_TIMEOUT: Duration = Duration::from_secs(86_400);
+
+/// Start `fixture`'s maintenance on `clock`: its first round at once, each next one as the test
+/// moves the clock on ([`next_round`]).
+fn maintain_on(fixture: &mut SweepFixture, clock: &TestClock) {
+    fixture.start(maintenance_worker(
+        fixture.shared.clone(),
+        INTERVAL,
+        ROUND_TIMEOUT,
+        clock.reader(),
+    ));
 }
 
-impl TestClock {
-    fn new() -> Self {
-        Self {
-            start: Stamp::now(),
-            state: Arc::default(),
-        }
-    }
-
-    fn reader(&self) -> impl Fn() -> Stamp + Send + 'static {
-        let clock = self.clone();
-        move || {
-            let (state, read) = &*clock.state;
-            let mut state = state.lock().unwrap();
-            state.1 += 1;
-            read.notify_all();
-            Stamp {
-                mono: clock.start.mono + state.0,
-                wall: clock.start.wall + state.0,
-            }
-        }
-    }
-
-    /// Set the clock to `elapsed` past its start, when given, then wait for `more` reads.
-    fn read_at(&self, elapsed: Option<Duration>, more: u64) {
-        let (state, read) = &*self.state;
-        let mut state = state.lock().unwrap();
-        if let Some(elapsed) = elapsed {
-            state.0 = elapsed;
-        }
-        let seen = state.1;
-        let backstop = test_time::backstop(Duration::from_secs(30));
-        let (_state, waited) = read
-            .wait_timeout_while(state, backstop, |state| state.1 < seen + more)
-            .unwrap();
-        assert!(
-            !waited.timed_out(),
-            "the sweep to read its clock: stalled: the wait's wall-clock backstop of \
-             {backstop:?} ran out; {}",
-            test_time::Load::now()
-        );
-    }
-
-    /// Move the clock to `elapsed` past its start. The first read after decides on that time;
-    /// the second comes only once the worker has acted on the decision.
-    fn set(&self, elapsed: Duration) {
-        self.read_at(Some(elapsed), 2);
-    }
-
-    /// How often it has been read: each look of a worker reading it is one.
-    fn reads(&self) -> u64 {
-        self.state.0.lock().unwrap().1
-    }
+/// Once the worker on `clock` has waited `waits` times in all, the last after the round before,
+/// move the clock on by an [`INTERVAL`]: its wait ends, and the next round is due.
+fn next_round(clock: &TestClock, waits: usize) {
+    clock.waited(waits);
+    clock.advance(INTERVAL);
 }
 
 #[test]
@@ -203,7 +160,7 @@ fn the_shared_installation_sweeps_at_startup_before_its_normal_interval() {
     let first = std::fs::metadata(fixture.board_build()).unwrap();
     let second = std::fs::metadata(other.board_build()).unwrap();
     assert_eq!((first.dev(), first.ino()), (second.dev(), second.ino()));
-    fixture.start(session_maintenance(&fixture.shared, Some(&fixture.root), Stamp::now).unwrap());
+    fixture.start(session_maintenance(&fixture.shared, Some(&fixture.root), MachineClock).unwrap());
     fixture.wait_for("started", "reap");
     const { assert!(BACKSTOP.as_secs() < SWEEP_TIMEOUT.as_secs()) };
     let stopping = std::thread::spawn(move || drop(fixture));
@@ -332,12 +289,9 @@ fn each_sweep_is_recorded_in_the_boards_health_failed_with_its_error_or_ok() {
     );
     let (hub, clock) = clocked_hub(&fixture);
     let at = clock.now();
-    fixture.start(maintenance_worker(
-        fixture.shared.clone(),
-        Duration::ZERO,
-        SWEEP_WITHIN,
-        Stamp::now,
-    ));
+    let sweep = TestClock::new();
+    maintain_on(&mut fixture, &sweep);
+    next_round(&sweep, 1);
     let report = waited("no sweep was recorded ok", || {
         Some(hub.health.report(at)).filter(|report| report.sweep.ok > 0)
     });
@@ -357,6 +311,7 @@ fn each_sweep_is_recorded_in_the_boards_health_failed_with_its_error_or_ok() {
 
     // A minute on the hub's clock, the next good sweep clears it.
     clock.set(at + symphony_board::board_health::CLEARS_AFTER);
+    next_round(&sweep, 2);
     waited("the pages were not told the sweep is well", || {
         hub.server_notice.borrow().is_empty().then_some(())
     });
@@ -376,12 +331,9 @@ fn a_sweep_that_finds_no_board_is_not_counted_failed() {
     let mut fixture = SweepFixture::without_hub(&script);
     let (hub, clock) = clocked_hub(&fixture);
     let at = clock.now();
-    fixture.start(maintenance_worker(
-        fixture.shared.clone(),
-        Duration::ZERO,
-        SWEEP_WITHIN,
-        Stamp::now,
-    ));
+    let sweep = TestClock::new();
+    maintain_on(&mut fixture, &sweep);
+    next_round(&sweep, 1);
     let report = waited("no sweep was recorded ok", || {
         Some(hub.health.report(at)).filter(|report| report.sweep.ok > 0)
     });
@@ -409,12 +361,9 @@ fn a_sweep_whose_board_store_cannot_be_served_is_counted_failed() {
     std::fs::write(fixture.root.join("unserved"), unserved.to_string()).unwrap();
     let (hub, clock) = clocked_hub(&fixture);
     let at = clock.now();
-    fixture.start(maintenance_worker(
-        fixture.shared.clone(),
-        Duration::ZERO,
-        SWEEP_WITHIN,
-        Stamp::now,
-    ));
+    let sweep = TestClock::new();
+    maintain_on(&mut fixture, &sweep);
+    next_round(&sweep, 1);
     let report = waited("no sweep was recorded ok", || {
         Some(hub.health.report(at)).filter(|report| report.sweep.ok > 0)
     });
@@ -431,9 +380,9 @@ const SWEEP_FAILING: &str =
     "The task board is unwell: its idle sweep is failing. Run “just tasks status” to see why.";
 
 /// The hub's clock, as the test moves it.
-struct Clock(Arc<std::sync::atomic::AtomicU64>);
+struct HubClock(Arc<std::sync::atomic::AtomicU64>);
 
-impl Clock {
+impl HubClock {
     fn now(&self) -> f64 {
         f64::from_bits(self.0.load(Ordering::SeqCst))
     }
@@ -445,16 +394,16 @@ impl Clock {
 
 /// A hub for `fixture`'s server, its clock standing at the wall clock's time until the test
 /// moves it.
-fn clocked_hub(fixture: &SweepFixture) -> (Arc<crate::live::Hub>, Clock) {
+fn clocked_hub(fixture: &SweepFixture) -> (Arc<crate::live::Hub>, HubClock) {
     let time = Arc::new(std::sync::atomic::AtomicU64::new(
         symphony_board::sweep::trigger::now().to_bits(),
     ));
     let mut hub = crate::live::Hub::new(&fixture.root, &fixture.root.join("client"));
-    let read = Clock(Arc::clone(&time));
+    let read = HubClock(Arc::clone(&time));
     hub.clock = Box::new(move || read.now());
     let hub = Arc::new(hub);
     assert!(fixture.shared.api.set(hub.clone()).is_ok());
-    (hub, Clock(time))
+    (hub, HubClock(time))
 }
 
 /// What `seen` sees first; `waiting` says what did not come when only a stall reaches the
@@ -467,12 +416,7 @@ fn waited<T>(waiting: &str, seen: impl FnMut() -> Option<T>) -> T {
 fn a_failing_sweep_is_said_on_every_page_of_the_project() {
     let mut fixture = SweepFixture::without_hub("echo 'the board did not answer' >&2; exit 3");
     let (hub, _) = clocked_hub(&fixture);
-    fixture.start(maintenance_worker(
-        fixture.shared.clone(),
-        Duration::ZERO,
-        SWEEP_WITHIN,
-        Stamp::now,
-    ));
+    maintain_on(&mut fixture, &TestClock::new());
     waited("no failed sweep was said", || {
         (!hub.server_notice.borrow().is_empty()).then_some(())
     });
@@ -487,12 +431,7 @@ fn a_failed_sweeps_long_error_is_kept_on_one_short_line_in_the_record() {
          echo 'error: the board did not answer' >&2; exit 3",
     );
     let (hub, clock) = clocked_hub(&fixture);
-    fixture.start(maintenance_worker(
-        fixture.shared.clone(),
-        Duration::ZERO,
-        SWEEP_WITHIN,
-        Stamp::now,
-    ));
+    maintain_on(&mut fixture, &TestClock::new());
     let report = waited("no failed sweep was recorded", || {
         Some(hub.health.report(clock.now())).filter(|report| report.sweep.failed > 0)
     });
@@ -526,14 +465,12 @@ fn a_held_lifecycle_lock_does_not_stall_the_sweep_rounds() {
     let mut fixture = SweepFixture::new(
         "if [ ! -f started ]; then printf first > started; exit 0; fi\nprintf again > retried",
     );
-    fixture.start(maintenance_worker(
-        fixture.shared.clone(),
-        Duration::ZERO,
-        SWEEP_WITHIN,
-        Stamp::now,
-    ));
-    let _hub_starting = fixture.shared.lifecycle.lock().unwrap();
+    let sweep = TestClock::new();
+    let shared = fixture.shared.clone();
+    let _hub_starting = shared.lifecycle.lock().unwrap();
+    maintain_on(&mut fixture, &sweep);
     fixture.wait_for("started", "first");
+    next_round(&sweep, 1);
     fixture.wait_for("retried", "again");
 }
 
@@ -547,36 +484,26 @@ fn lines(fixture: &SweepFixture, file: &str) -> Vec<String> {
 }
 
 /// A project whose hub has not read its board, or read none there, is not maintained: its sweep
-/// looks at a round due, again and again, and runs nothing, so it makes no board where none is.
-/// Once its hub reads one, a scratch board here, it runs at its next look.
+/// looks at the round due, waits for its hub to find a board, looking again after the backstop's
+/// period on its clock (which this test never moves), and runs nothing, so it makes no board where
+/// none is. Each read of the hub that finds a board or finds none wakes it, and once one finds a
+/// scratch board here, the round runs.
 #[test]
 fn a_project_is_maintained_only_once_its_hub_has_read_a_board_there() {
     let mut fixture = SweepFixture::without_hub("printf '%s\\n' \"$1\" >> calls");
     let sweep = TestClock::new();
-    let looked = |clock: &TestClock, what: &str| {
-        let seen = clock.reads();
-        test_time::until_true(
-            format!("three more looks of the {what}"),
-            test_time::backstop(Duration::from_secs(5)),
-            || clock.reads() >= seen + 3,
-        )
-        .unwrap();
-    };
-    fixture.start(maintenance_worker(
-        fixture.shared.clone(),
-        Duration::ZERO,
-        Duration::from_secs(30),
-        sweep.reader(),
-    ));
-    // No hub yet: whether there is a board is not known.
-    looked(&sweep, "sweep with no hub");
+    maintain_on(&mut fixture, &sweep);
+    // No hub yet: whether there is a board is not known, and the round due waits for it.
+    assert_eq!(sweep.waited(1), [AFTER_A_SLEEP]);
     assert_eq!(lines(&fixture, "calls"), Vec::<String>::new());
 
-    // Its hub's reach found no board: no store, and no SurrealDB here to serve one.
+    // Its hub's reach found no board: no store, and no SurrealDB here to serve one. That read
+    // wakes the sweep, which looks and waits again.
     let hub = Arc::new(crate::live::Hub::new(
         &fixture.root,
         &fixture.root.join("client"),
     ));
+    hub.wake_at_board(fixture.shared.board_wakers.clone());
     assert!(fixture.shared.api.set(hub.clone()).is_ok());
     let missing =
         symphony_board::server::ServerError::NoSurreal(fixture.root.join("surreal")).to_string();
@@ -585,18 +512,81 @@ fn a_project_is_maintained_only_once_its_hub_has_read_a_board_there() {
             .is_none()
     );
     assert_eq!(hub.has_board(), Some(false));
-    looked(&sweep, "sweep with no board");
+    assert_eq!(sweep.waited(2), [AFTER_A_SLEEP; 2]);
     assert_eq!(lines(&fixture, "calls"), Vec::<String>::new());
 
-    // The hub's next read finds a board: the sweep runs at its next look.
+    // The hub's next read finds a board: it wakes the sweep, whose round runs.
     let board = crate::testing::board::Fixture::empty();
     hub.board_read(&board.store).unwrap();
     assert_eq!(hub.has_board(), Some(true));
-    let calls = test_time::until(
-        "a sweep once the board is there",
-        test_time::backstop(Duration::from_secs(15)),
-        || Some(lines(&fixture, "calls")).filter(|calls| !calls.is_empty()),
+    sweep.waited(3);
+    assert_eq!(lines(&fixture, "calls"), ["reap"]);
+}
+
+/// Between two rounds the sweep waits on its clock for the time left until the next is due, at
+/// most the backstop's period (a machine that slept says nothing of it): a move of the clock wakes
+/// it, a move short of the interval runs nothing, and the move to the interval runs the round. Its
+/// stop ends a wait that no move would.
+#[test]
+fn a_sweep_waits_on_its_clock_for_the_next_round_and_its_stop_ends_the_wait() {
+    let mut fixture = SweepFixture::new("printf '%s\\n' \"$1\" >> calls");
+    let sweep = TestClock::new();
+    maintain_on(&mut fixture, &sweep);
+    assert_eq!(sweep.waited(1), [AFTER_A_SLEEP]);
+    assert_eq!(lines(&fixture, "calls"), ["reap"]);
+    // Five seconds short of the interval: the wait is for those five.
+    sweep.move_to(INTERVAL - Duration::from_secs(5));
+    assert_eq!(sweep.waited(2), [AFTER_A_SLEEP, Duration::from_secs(5)]);
+    assert_eq!(
+        lines(&fixture, "calls"),
+        ["reap"],
+        "no round before its time"
+    );
+    sweep.move_to(INTERVAL);
+    assert_eq!(
+        sweep.waited(3)[2],
+        AFTER_A_SLEEP,
+        "the next round's whole wait"
+    );
+    assert_eq!(lines(&fixture, "calls"), ["reap", "reap"]);
+    let stopping = std::thread::spawn(move || drop(fixture));
+    test_time::until_true(
+        "the stop to end the sweep's wait on a clock that does not move",
+        BACKSTOP,
+        || stopping.is_finished(),
     )
     .unwrap();
-    assert!(calls.iter().all(|call| call == "reap"), "{calls:?}");
+    stopping.join().unwrap();
+    assert_eq!(
+        sweep.waits(),
+        3,
+        "the stop ends the worker, no look after it"
+    );
+}
+
+#[test]
+fn the_time_left_to_a_round_is_the_sooner_of_its_two_clocks() {
+    let interval = Duration::from_secs(300);
+    let (mono, wall) = (
+        Instant::now(),
+        SystemTime::UNIX_EPOCH + Duration::from_secs(1 << 30),
+    );
+    let last = Stamp { mono, wall };
+    let at = |awake: u64, elapsed: u64| Stamp {
+        mono: mono + Duration::from_secs(awake),
+        wall: wall + Duration::from_secs(elapsed),
+    };
+    let secs = Duration::from_secs;
+    assert_eq!(sweep_left(last, last, interval), interval);
+    assert_eq!(sweep_left(last, at(120, 120), interval), secs(180));
+    // A sleep: the wall clock went on while the monotonic one stood.
+    assert_eq!(sweep_left(last, at(10, 200), interval), secs(100));
+    // The wall clock set back counts for nothing, and the monotonic one still runs out.
+    let back = Stamp {
+        mono: mono + secs(30),
+        wall: wall - secs(3600),
+    };
+    assert_eq!(sweep_left(last, back, interval), secs(270));
+    assert_eq!(sweep_left(last, at(300, 300), interval), Duration::ZERO);
+    assert_eq!(sweep_left(last, at(1, 1920), interval), Duration::ZERO);
 }

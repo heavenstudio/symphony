@@ -83,8 +83,8 @@ fn idle_session_maintenance_starts_only_for_the_shared_installation() {
     let shared = Shared::new(1, 1, home, Some(home), gate);
     // Stop is sticky, so a started worker exits before any wait or external command.
     shared.stop();
-    let private = session_maintenance(&shared, None, Stamp::now);
-    let installed = session_maintenance(&shared, Some(home), Stamp::now);
+    let private = session_maintenance(&shared, None, MachineClock);
+    let installed = session_maintenance(&shared, Some(home), MachineClock);
     let private_started = private.is_some();
     let installed_started = installed.is_some();
     for worker in private.into_iter().chain(installed) {

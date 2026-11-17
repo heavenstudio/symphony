@@ -124,15 +124,18 @@ impl Hub {
         }
         let starting = hub.arm_initial_board();
         let hub = Arc::new(hub);
-        // Install watches before the first read, so an edit during that read is queued too.
-        let (send, recv) = mpsc::sync_channel(1);
+        // Install watches before the first read, so an edit during that read is queued too, as is
+        // a rescan the read asks for.
+        let backstop = crate::backstop::Backstop::new(period);
+        let _ = hub.documents_waker.set(backstop.waker());
+        let changed = backstop.waker();
         let changed_hub = Arc::downgrade(&hub);
         let mut watcher = W::new(
             move |event: notify::Result<notify::Event>| {
                 if let Some(hub) = changed_hub.upgrade()
                     && hub.record_event(event)
                 {
-                    let _ = send.try_send(());
+                    changed.wake();
                 }
             },
             notify::Config::default(),
@@ -146,12 +149,11 @@ impl Hub {
         measured("initial documents", || hub.refresh_docs(None))?;
         let docs_ready = started.elapsed();
         let weak = Arc::downgrade(&hub);
-        let backstop = crate::backstop::Backstop::new(period);
         *hub.worker.lock().unwrap_or_else(|e| e.into_inner()) =
             Some(std::thread::spawn(move || {
                 let first = initial_board(&weak, &starting, &mut connect, docs_ready, started);
                 if let Some(board) = first {
-                    run(weak, recv, watcher, watched, backstop, board, connect);
+                    run(weak, watcher, watched, backstop, board, connect);
                 }
             }));
         Ok(hub)
@@ -217,6 +219,7 @@ impl Drop for Unwinding<'_> {
         if std::thread::panicking() {
             self.0.board_error(PANICKED.into());
             self.0.initial_board.send_replace(true);
+            self.0.board_moved();
         }
     }
 }
@@ -248,5 +251,7 @@ fn initial_board(
         started.elapsed().as_secs_f64() * 1000.0
     );
     hub.initial_board.send_replace(true);
+    // Whether the project has a board is known from here ([`Hub::has_board`]).
+    hub.board_moved();
     Some(board)
 }

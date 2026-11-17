@@ -130,6 +130,14 @@ pub fn assert_primed(program: &std::path::Path) {
     );
 }
 
+/// What `thread` returned, once it has; a stall past `within` fails naming `what`, so a loop that
+/// misses the wake meant to end it fails the test rather than hold it.
+pub fn joined<T>(thread: std::thread::JoinHandle<T>, what: &str, within: std::time::Duration) -> T {
+    test_time::until_true(what, within, || thread.is_finished())
+        .unwrap_or_else(|stall| panic!("{stall}"));
+    thread.join().unwrap()
+}
+
 pub fn repository(tree: &Tree) -> std::path::PathBuf {
     repository_at(tree, "main")
 }
