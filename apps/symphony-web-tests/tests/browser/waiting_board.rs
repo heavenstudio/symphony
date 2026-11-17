@@ -270,11 +270,11 @@ fn an_unnamed_legacy_block_is_ordinary_nobody_work_in_its_original_stage() {
     let mut legacy = task("review/decision", "review", "nobody", true, 0.0);
     legacy["waits_on"] = json!({"kind":"nobody","who":"","why":"no reason recorded","since":0.0});
     let mut answer = listing();
-    answer["tasks"] = json!([legacy]);
-    answer["counts"] = json!([["review", 1]]);
-    answer["waiting"] = json!({"kinds":[["nobody",1]],"columns":[{"status":"review","ordinary":1,"blocked":0,"oldest":0.0}]});
+    answer["tasks"] = json!([legacy, task("ready/queued", "ready", "queued", false, 0.0)]);
+    answer["counts"] = json!([["review", 1], ["ready", 1]]);
+    answer["waiting"] = json!({"kinds":[["nobody",1],["queued",1]],"columns":[{"status":"review","ordinary":1,"blocked":0,"oldest":0.0},{"status":"ready","ordinary":1,"blocked":0,"oldest":0.0}]});
     answer["orchestrators"] = json!([]);
-    answer["unstarted"] = json!(0);
+    answer["unstarted"] = json!(1);
     site.set_json("/api/task-board", &answer);
     let Some(mut page) = chrome() else { return };
     open(&mut page, &site, 390);

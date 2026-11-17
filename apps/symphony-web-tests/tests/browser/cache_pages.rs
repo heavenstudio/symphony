@@ -116,6 +116,8 @@ const QUEUE: Page = Page {
 /// The stand-in, with a card waiting in the queue: its Later button is the queue's action.
 fn site() -> Site {
     let site = crate::site();
+    // Cache assertions name the Ready column explicitly.
+    site.set_json("/api/task-board", &crate::site::example_listing("ready"));
     let board: Value = serde_json::from_str(&common::fixture("board.json")).unwrap();
     site.set_json("/api/queue", &queue(&board["next"][0]));
     site

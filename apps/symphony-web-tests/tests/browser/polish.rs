@@ -143,6 +143,8 @@ fn a_list_too_tall_for_the_window_is_as_wide_as_its_longest_option_beside_its_sc
     // Too short for the task recipients: the list scrolls, its scrollbar inside its box.
     viewport(&mut page, 1280, 320);
     page.open(&site.url("/task/visual/in-progress"));
+    assert!(page.wait_for("document.querySelector('[id^=composer-]') !== null", SHOWN));
+    page.eval("document.querySelector('[id^=composer-]').scrollIntoView({block:'center'})");
     assert!(page.wait_for(
         "document.querySelector('button[aria-label=\"Message recipient\"]') !== null",
         SHOWN
