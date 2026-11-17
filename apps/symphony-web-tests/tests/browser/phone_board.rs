@@ -59,11 +59,15 @@ fn viewport(page: &mut Chrome, width: u32, height: u32) {
 
 /// Open the board, live, on a touch screen of 390 by 844 px.
 fn open_on_a_phone(page: &mut Chrome, site: &Site) {
+    open_on_screen(page, site, 390, 844);
+}
+
+fn open_on_screen(page: &mut Chrome, site: &Site, width: u32, height: u32) {
     page.call(
         "Emulation.setTouchEmulationEnabled",
         json!({"enabled":true,"maxTouchPoints":5}),
     );
-    viewport(page, 390, 844);
+    viewport(page, width, height);
     page.open(&site.url("/tasks"));
     assert!(
         page.wait_for(
@@ -216,6 +220,198 @@ fn touches_release_the_position_hold_after_their_scrolling_finishes() {
         let before = place[0].as_f64().unwrap();
         assert_eq!(place[1].as_f64().unwrap() - before, 80.0);
         assert_eq!(place[2].as_f64().unwrap(), before, "{kind}: {place}");
+    }
+}
+
+/// Two updates before the next frame must keep the first anchor, rather than correct toward
+/// competing positions. Every correction is counted, so a pair of writes that cancel before
+/// paint cannot hide behind the final offset. The browser's native anchoring is disabled.
+#[test]
+fn overlapping_refreshes_share_the_original_position_hold() {
+    let site = site_of(&listing_of(&[("review", 30)]));
+    let Some(mut page) = chrome() else { return };
+    for (width, height) in [(390, 844), (1440, 900)] {
+        open_on_screen(&mut page, &site, width, height);
+        let result = page.eval(
+            r#"(async () => {
+                document.documentElement.style.overflowAnchor = 'none';
+                await document.fonts.ready;
+                scrollTo(0,600);
+                await new Promise(requestAnimationFrame);
+                const row = [...document.querySelectorAll('.waiting-columns [data-slug]')].find(row => {
+                    const top = row.getBoundingClientRect().top;
+                    return top >= 0 && top < innerHeight;
+                });
+                const before = row.getBoundingClientRect().top;
+                const other = [...document.querySelectorAll('.waiting-columns [data-slug]')].find(node =>
+                    node !== row && node.getBoundingClientRect().top > before && node.getBoundingClientRect().top < innerHeight);
+                const scroll = window.scrollBy, writes = [], samples = [];
+                window.scrollBy = (...args) => { writes.push(args); scroll(...args); };
+                try {
+                    window.reviewHoldPlace('.waiting-columns [data-slug]');
+                    row.style.transform = 'translateY(80px)';
+                    window.reviewHoldPlace('.waiting-columns [data-slug]');
+                    await new Promise(requestAnimationFrame);
+                    samples.push(row.getBoundingClientRect().top);
+                    // Another update can choose a different row on the same scrolling surface.
+                    window.reviewHoldPlace(`[data-slug="${other.dataset.slug}"]`);
+                    row.style.transform = 'translateY(160px)';
+                    await new Promise(requestAnimationFrame);
+                    samples.push(row.getBoundingClientRect().top);
+                    // Observe enough quiet frames for the hold to finish, counting every write.
+                    for (let n = 0; n < 8; n++) {
+                        await new Promise(requestAnimationFrame);
+                        samples.push(row.getBoundingClientRect().top);
+                    }
+                    // A new update renews an almost-quiet hold while its draw is still queued.
+                    window.reviewHoldPlace('.waiting-columns [data-slug]');
+                    for (let n = 0; n < 3; n++) await new Promise(requestAnimationFrame);
+                    window.reviewHoldPlace('.waiting-columns [data-slug]');
+                    for (let n = 0; n < 2; n++) await new Promise(requestAnimationFrame);
+                    row.style.transform = 'translateY(240px)';
+                    await new Promise(requestAnimationFrame);
+                    samples.push(row.getBoundingClientRect().top);
+                    return { before, samples, writes };
+                } finally { window.scrollBy = scroll; }
+            })()"#,
+        );
+        let before = result["before"].as_f64().unwrap();
+        assert_eq!(
+            result["samples"],
+            json!(vec![before; 11]),
+            "{width}px: {result}"
+        );
+        assert_eq!(
+            result["writes"],
+            json!([[0, 80], [0, 80], [0, 80]]),
+            "{width}px: {result}"
+        );
+    }
+}
+
+/// At the page's top updates scroll nothing. At its bottom an offset the page cannot absorb
+/// must go quiet, rather than keep correcting forever or leave an anchor owning later updates.
+#[test]
+fn overlapping_holds_at_page_boundaries_go_quiet_and_release_their_anchor() {
+    let site = site_of(&listing_of(&[("review", 30)]));
+    let Some(mut page) = chrome() else { return };
+    open_on_a_phone(&mut page, &site);
+    let top = page.eval(
+        r#"(async () => {
+            document.documentElement.style.overflowAnchor = 'none';
+            await document.fonts.ready;
+            const row = document.querySelector('.waiting-columns [data-slug]');
+            const before = row.getBoundingClientRect().top;
+            window.reviewHoldPlace('.waiting-columns [data-slug]');
+            row.style.transform = 'translateY(80px)';
+            window.reviewHoldPlace('.waiting-columns [data-slug]');
+            await new Promise(requestAnimationFrame);
+            const result = [scrollY, row.getBoundingClientRect().top - before];
+            row.style.transform = '';
+            scrollTo(0,document.documentElement.scrollHeight);
+            return result;
+        })()"#,
+    );
+    assert_eq!(top, json!([0, 80]));
+    assert!(page.wait_for(
+        "document.querySelector('[data-slug=\"phone/review-30\"]') !== null",
+        SHOWN
+    ));
+    let bottom = page.eval(
+        r#"(async () => {
+            const row = [...document.querySelectorAll('.waiting-columns [data-slug]')].find(row => {
+                const top = row.getBoundingClientRect().top;
+                return top >= 0 && top < innerHeight;
+            });
+            const before = row.getBoundingClientRect().top;
+            const scroll = window.scrollBy, writes = [];
+            window.scrollBy = (...args) => { writes.push(args); scroll(...args); };
+            try {
+                window.reviewHoldPlace('.waiting-columns [data-slug]');
+                row.style.transform = 'translateY(80px)';
+                window.reviewHoldPlace('.waiting-columns [data-slug]');
+                for (let n = 0; n < 3; n++) await new Promise(requestAnimationFrame);
+                const clamped = row.getBoundingClientRect().top - before;
+                // Once the outward displacement disappears, competing anchors would start
+                // pulling away from the boundary and back toward it on every frame.
+                row.style.transform = '';
+                for (let n = 0; n < 8; n++) await new Promise(requestAnimationFrame);
+                const settled = row.getBoundingClientRect().top - before, attempts = writes.length;
+                for (let n = 0; n < 4; n++) await new Promise(requestAnimationFrame);
+                const quiet = writes.length === attempts;
+                const next = row.getBoundingClientRect().top;
+                window.reviewHoldPlace('.waiting-columns [data-slug]');
+                row.style.transform = 'translateY(-80px)';
+                await new Promise(requestAnimationFrame);
+                return { clamped, settled, attempts, quiet, next, after: row.getBoundingClientRect().top };
+            } finally { window.scrollBy = scroll; }
+        })()"#,
+    );
+    assert_eq!(bottom["clamped"], json!(80), "{bottom}");
+    assert_eq!(bottom["settled"], json!(0), "{bottom}");
+    let attempts = bottom["attempts"].as_u64().unwrap();
+    assert_eq!(attempts, 3, "one correction per clamped frame: {bottom}");
+    assert_eq!(bottom["quiet"], json!(true), "{bottom}");
+    assert_eq!(bottom["after"], bottom["next"], "{bottom}");
+}
+
+/// A hold is owned by its scrolling box, and ends on input, removal or pagehide. A queued frame
+/// of an old hold must not clear a newer one. Independent boxes still keep independent anchors.
+#[test]
+fn shared_holds_release_and_leave_other_scrolling_boxes_independent() {
+    let site = site();
+    let Some(mut page) = chrome() else { return };
+    open_on_a_phone(&mut page, &site);
+    let result = page.eval(
+        r#"(async () => {
+            document.documentElement.style.overflowAnchor = 'none';
+            const make = left => {
+                const box = document.createElement('div');
+                box.style.cssText = `position:fixed;left:${left}px;top:100px;width:120px;height:300px;overflow:auto;overflow-anchor:none`;
+                box.innerHTML = '<div style="height:100px"></div><div class="hold-probe" style="height:40px">Anchor</div><div style="height:1000px"></div>';
+                document.body.append(box);
+                box.scrollTop = 50;
+                return [box, box.querySelector('.hold-probe')];
+            };
+            const [one, first] = make(10), [two, second] = make(150);
+            await new Promise(requestAnimationFrame);
+            const before = [first.getBoundingClientRect().top, second.getBoundingClientRect().top];
+            window.reviewHoldPlace('.hold-probe');
+            first.style.transform = 'translateY(80px)';
+            first.classList.remove('hold-probe');
+            window.reviewHoldPlace('.hold-probe');
+            second.style.transform = 'translateY(40px)';
+            await new Promise(requestAnimationFrame);
+            const independent = [first.getBoundingClientRect().top, second.getBoundingClientRect().top];
+            // Both holds end immediately, allowing another in the same task before their frames.
+            dispatchEvent(new WheelEvent('wheel'));
+            first.classList.add('hold-probe');
+            window.reviewHoldPlace('.hold-probe');
+            first.style.transform = 'translateY(160px)';
+            window.reviewHoldPlace('.hold-probe');
+            await new Promise(requestAnimationFrame);
+            const renewed = first.getBoundingClientRect().top;
+            // Replace an anchor while its old hold still has a queued frame.
+            const replacement = first.cloneNode(true);
+            first.replaceWith(replacement);
+            window.reviewHoldPlace('.hold-probe');
+            replacement.style.transform = 'translateY(240px)';
+            window.reviewHoldPlace('.hold-probe');
+            await new Promise(requestAnimationFrame);
+            const replaced = replacement.getBoundingClientRect().top;
+            dispatchEvent(new PageTransitionEvent('pagehide'));
+            window.reviewHoldPlace('.hold-probe');
+            replacement.style.transform = 'translateY(320px)';
+            window.reviewHoldPlace('.hold-probe');
+            await new Promise(requestAnimationFrame);
+            const returned = replacement.getBoundingClientRect().top;
+            one.remove(); two.remove();
+            return { before, independent, renewed, replaced, returned };
+        })()"#,
+    );
+    assert_eq!(result["independent"], result["before"], "{result}");
+    for key in ["renewed", "replaced", "returned"] {
+        assert_eq!(result[key], result["before"][0], "{key}: {result}");
     }
 }
 

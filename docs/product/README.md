@@ -9,7 +9,7 @@ of it.
 
 ## The form of a spec
 
-This form and the pictures' rule below are a proposal that waits on the owner
+Product specs follow this approved form and the pictures' rule below
 ([its card](../DECISIONS.md#product-spec-form)).
 
 A spec is short enough to read on a phone in a few minutes, and has these parts in this order.
