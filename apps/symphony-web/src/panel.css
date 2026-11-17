@@ -2,6 +2,21 @@
  * dioxus-components tabs and tooltip sheets write them. The sheet's, the activity list's, the
  * toasts' and the pending bar's rules are the shared sheet's (styles/frame.css). */
 
+#quick-sheet .collapse {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 3rem;
+  height: 2.25rem;
+  padding: 0;
+}
+
+#quick-sheet .collapse svg {
+  flex-shrink: 0;
+  pointer-events: none;
+}
+
 .dx-tabs {
   display: flex;
   width: 100%;
