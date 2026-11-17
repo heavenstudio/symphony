@@ -35,6 +35,8 @@ the evidence behind decisions are under [Design and history](#design-and-history
 - [Plugin protocol](PLUGIN_PROTOCOL.md) — a plugin answering from a process of its own: the
   setting, the seams it answers, its process, its commands, a register read in one request, the
   line, each call's minor, the versions and the wire's shape.
+- [Execution adapter](EXECUTION_ADAPTER.md) — bounded provider operations, scoped identities,
+  trusted actor context, capabilities and the independent execution wire contract.
 
 Agents working in this repository follow the standing [Rules](../RULES.md).
 

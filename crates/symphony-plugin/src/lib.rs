@@ -41,6 +41,8 @@ pub use renderer::{Drawing, File, Renderer};
 
 pub mod protocol;
 
+pub mod execution;
+
 mod serve;
 pub use serve::{ENDING, WORKERS, serve, serve_on};
 
