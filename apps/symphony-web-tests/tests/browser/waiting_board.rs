@@ -161,6 +161,7 @@ fn named_waits_stay_in_their_stage_in_order_with_parked_last_and_no_unnamed_bloc
         page.eval("document.querySelectorAll('.taskcard .docchip, .taskcard .chips').length"),
         json!(0)
     );
+    assert_eq!(page.eval("(() => {const css=getComputedStyle(document.querySelector('.task-wait .why'));return [css.backgroundColor,css.paddingLeft,css.paddingRight]})()"),json!(["rgba(0, 0, 0, 0)","0px","0px"]),"the wait reason is plain text, not the retired why pill");
     shot(&mut page, "waiting-wide");
     open(&mut page, &site, 390);
     assert_eq!(
@@ -168,6 +169,15 @@ fn named_waits_stay_in_their_stage_in_order_with_parked_last_and_no_unnamed_bloc
         json!(true)
     );
     assert_eq!(page.eval("(() => {const r=document.querySelector('.taskcard').getBoundingClientRect();return r.top>=0&&r.bottom<=innerHeight})()"),json!(true));
+    assert_eq!(page.eval("document.querySelector('.column[data-status=review] .column-summary').checkVisibility()"),json!(true),"a phone keeps its blocked count and oldest age below the tabs");
+    assert!(
+        page.eval(
+            "document.querySelector('.column[data-status=review] .column-summary').textContent"
+        )
+        .as_str()
+        .unwrap()
+        .contains("oldest 10 d")
+    );
     shot(&mut page, "waiting-phone");
 }
 

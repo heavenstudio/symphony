@@ -7,7 +7,7 @@
 //! transfers no body
 //! (app/deep-column-refresh-answers-304-when-unchanged); a focused card the feed moves to another
 //! column keeps the focus, on the same link; and Back from a task draws the board where the reader
-//! left it, sideways, down its columns and down the page, the card it kept moved or gone meanwhile
+//! left it down the page, the card it kept moved or gone meanwhile
 //! or not. Each waits on what the page shows or the answers the stand-in sent, never on a pause.
 
 use serde_json::{Value, json};
@@ -38,9 +38,8 @@ fn task(slug: &str, status: &str, priority: u8, links: Value) -> Value {
         "updated": if priority == 0 { -1.0 } else if slug == "deep/filed-below" { 1.0 } else { 0.0 }, "links": links, "depends": [], "roles": [], "instruction": false})
 }
 
-/// Thirty tasks in Concept and in Ready, so both scroll down past the screen, and two in each
-/// other column, so the board scrolls sideways too. The fourth ready one links a document: its
-/// card has a second link.
+/// Thirty tasks in Concept and Ready, so both extend beyond the window, and two in each other
+/// column. Document links remain in the fixture, but the waiting cards draw only their title link.
 fn tasks() -> Vec<Value> {
     let mut tasks = Vec::new();
     for n in 1..=30 {
@@ -140,7 +139,7 @@ const WAITING: &str = "(() => {
 /// to), once what is near what it shows is drawn (`WAITING`), and stays as it is.
 fn scroll_board(page: &mut Chrome, status: &str, top: u32) {
     page.eval(&format!(
-        "(() => {{ if (innerWidth <= 760) {{ const stages = ['review','in_progress','ready','done','design','concept','backlog']; document.querySelectorAll('.stage-tabs button')[stages.indexOf('{status}')].click(); }} }})()"
+        "(() => {{ if (innerWidth <= 760) {{ const stages = ['review','in_progress','ready','done','design','concept','backlog']; const tab=document.querySelectorAll('.stage-tabs button')[stages.indexOf('{status}')]; tab.focus({{preventScroll:true}}); tab.click(); }} }})()"
     ));
     assert!(page.wait_for(
         &format!("document.querySelector('.column[data-status={status}]') !== null"),
@@ -682,7 +681,8 @@ fn a_touch_screens_last_tap_leaves_the_readers_column_in_place() {
         "(() => { const box = ({top:0,left:0,bottom:innerHeight,right:innerWidth});
             const slug = [...document.querySelectorAll('.column[data-status=in_progress] .waiting-slug')].find(code => {
                 const r = code.getBoundingClientRect();
-                return r.top > box.top && r.bottom < box.bottom && r.left > box.left && r.right < box.right; });
+                return r.top > Math.max(box.top, document.querySelector('header').getBoundingClientRect().bottom) && r.bottom < box.bottom && r.left > box.left && r.right < box.right; });
+            window.__slugTapped = false; slug.addEventListener('click', () => { window.__slugTapped = true; }, {once:true});
             const r = slug.getBoundingClientRect();
             return [r.left + r.width / 2, r.top + r.height / 2]; })()",
     );
@@ -695,7 +695,7 @@ fn a_touch_screens_last_tap_leaves_the_readers_column_in_place() {
         json!({"type":"touchEnd","touchPoints":[]}),
     );
     assert!(
-        page.wait_for(TAPPED, SHOWN),
+        page.wait_for(&format!("{TAPPED} && window.__slugTapped === true"), SHOWN),
         "the tap never left the pointer over In progress"
     );
     scroll_board(&mut page, "ready", 900);
@@ -728,10 +728,8 @@ fn a_touch_screens_last_tap_leaves_the_readers_column_in_place() {
 const FOCUSED: &str = "(() => { const active = document.activeElement, card = active?.closest('[data-slug]');
     return card ? [card.dataset.slug, card.closest('.column')?.dataset.status, active.className] : [active?.tagName ?? null]; })()";
 
-/// The reader's focus on a card's link stays on that link of the card when the feed moves the task
-/// to another column: on a desk its title, then its document chip, its second link; on a phone,
-/// whose In progress column beside Ready had not drawn its rows, its title, the board not scrolled
-/// to it.
+/// The focused title stays focused when the feed moves its task to another stage. On a phone
+/// the destination stage becomes the selected tab so the focused title remains mounted.
 #[test]
 fn a_focused_card_moved_to_another_column_keeps_the_focus() {
     for (width, height) in [(1280, 800), (390, 844)] {
@@ -877,7 +875,7 @@ const REDRAWN_ABOVE: f64 = 12.0;
 /// where the reader left its scroller, sideways and down (`REDRAWN_ABOVE`), and the window: never
 /// where that card went, once the board has drawn it there and stands still.
 #[test]
-fn back_to_a_board_whose_kept_card_left_its_column_returns_to_the_scrollers_place() {
+fn back_to_a_board_whose_kept_card_left_its_column_returns_to_the_windows_place() {
     let place = PLACE.replace("FIRST", "Math.round(scrollY)");
     for status in ["in_progress", "cancelled"] {
         let mut board = tasks();

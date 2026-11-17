@@ -1441,8 +1441,7 @@ fn the_tasks_filters_read_apart_and_a_chosen_window_moves_nothing() {
     }
 }
 
-/// The lower row's columns are each as tall as their own cards (app/visual-polish-3): a long
-/// Cancelled never stretches Backlog and Blocked beside it to its height.
+/// Opening a short Backlog list or a long Cancelled list uses only the chosen list's height.
 #[test]
 fn separately_opened_backlog_and_cancelled_lists_take_the_height_of_their_own_cards() {
     let site = bare_site();
@@ -1710,7 +1709,7 @@ fn a_link_to_a_card_far_down_a_column_lands_under_the_header_and_stays() {
 /// The pipeline's column labels (app/tasks-page-polish) start where their columns do, each the
 /// same way in from its column's edge, with nothing drawn before them.
 #[test]
-fn the_pipeline_labels_start_alike_in_their_columns() {
+fn the_waiting_stage_labels_start_alike_in_their_columns() {
     let site = bare_site();
     site.set_json("/api/task-board", &every_status());
     let Some(mut page) = chrome() else { return };
