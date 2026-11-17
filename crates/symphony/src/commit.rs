@@ -628,10 +628,11 @@ fn mark_unseen_replies(
     use std::collections::BTreeSet;
 
     let cards = |text: &str| {
-        parse_decisions(&text.lines().collect::<Vec<_>>())
-            .into_iter()
-            .map(|card| (card.slug.clone(), card))
-            .collect::<BTreeMap<_, _>>()
+        let mut cards = BTreeMap::new();
+        for card in parse_decisions(&text.lines().collect::<Vec<_>>()) {
+            cards.insert(card.slug.clone(), card);
+        }
+        cards
     };
     let current = cards(current);
     let new = cards(new);

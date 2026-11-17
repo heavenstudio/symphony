@@ -691,20 +691,17 @@ pub fn set_field(
 fn fields(
     stored: &BTreeMap<String, BTreeMap<String, serde_json::Value>>,
 ) -> BTreeMap<String, BTreeMap<String, symphony_api::FieldValue>> {
-    stored
-        .iter()
-        .map(|(plugin, fields)| {
-            let values = fields
-                .iter()
-                .filter_map(|(name, value)| {
-                    serde_json::from_value(value.clone())
-                        .ok()
-                        .map(|value| (name.clone(), value))
-                })
-                .collect();
-            (plugin.clone(), values)
-        })
-        .collect()
+    let mut plugins = BTreeMap::new();
+    for (plugin, fields) in stored {
+        let mut values = BTreeMap::new();
+        for (name, value) in fields {
+            if let Ok(value) = serde_json::from_value(value.clone()) {
+                values.insert(name.clone(), value);
+            }
+        }
+        plugins.insert(plugin.clone(), values);
+    }
+    plugins
 }
 
 #[cfg(test)]

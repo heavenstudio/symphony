@@ -921,3 +921,23 @@ fn a_components_prose_writes_and_reads_back_as_itself() {
     let html = blocks::write::html(&original, &mut |_| unreachable!("no media"));
     assert_eq!(blocks::parse(&html, &[], "docs/x.md"), original, "{html}");
 }
+
+#[test]
+fn history_maps_keep_lexical_keys_and_the_last_duplicate_fragment() {
+    let tree = Tree::new();
+    let renderer = Render::new(&tree.root);
+    let source = "- [ ] **z** — Last key.\n  [2026-10-20 10:00] agent — Zed.\n- [ ] **a** — First copy.\n  [2026-10-20 10:00] agent — Older.\n- [ ] **a** — Last copy.\n  [2026-10-20 11:00] agent — Newer.\n";
+    for history in [
+        renderer.history(source, "docs/A.md"),
+        renderer.typed_history(source, "docs/A.md"),
+    ] {
+        assert_eq!(
+            history.keys().map(String::as_str).collect::<Vec<_>>(),
+            ["a", "z"]
+        );
+        assert!(history["a"].html.contains("Newer."));
+        assert!(!history["a"].html.contains("Older."));
+        assert!(history["a"].media.is_empty());
+    }
+    assert!(renderer.history("", "docs/A.md").is_empty());
+}

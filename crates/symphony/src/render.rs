@@ -456,19 +456,18 @@ impl Render {
     fn history_for(&self, text: &str, doc_path: &str, typed: bool) -> BTreeMap<String, Fragment> {
         let mut ctx = self.ctx(doc_path);
         ctx.typed = typed;
-        parse_decisions(&splitlines(text))
-            .iter()
-            .map(|card| {
-                let html = cards::history_items(card, &ctx);
-                (
-                    card.slug.clone(),
-                    Fragment {
-                        html,
-                        media: ctx.take_media(),
-                    },
-                )
-            })
-            .collect()
+        let mut history = BTreeMap::new();
+        for card in parse_decisions(&splitlines(text)) {
+            let html = cards::history_items(&card, &ctx);
+            history.insert(
+                card.slug.clone(),
+                Fragment {
+                    html,
+                    media: ctx.take_media(),
+                },
+            );
+        }
+        history
     }
 
     /// An agent's markdown answer outside a card (an ask's), rendered as a card's agent line is.

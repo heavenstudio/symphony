@@ -272,3 +272,34 @@ fn a_brief_within_the_limit_is_its_whole_reply() {
         );
     }
 }
+
+#[test]
+fn stored_fields_keep_plugin_and_field_order_while_filtering_invalid_values() {
+    use symphony_api::FieldValue;
+    let stored = BTreeMap::from([
+        ("z".into(), BTreeMap::new()),
+        (
+            "a".into(),
+            BTreeMap::from([
+                ("z".into(), serde_json::json!(2.5)),
+                ("a".into(), serde_json::json!("text")),
+                ("bad-object".into(), serde_json::json!({"nested": 1})),
+                ("bad-null".into(), serde_json::Value::Null),
+                ("bad-bool".into(), serde_json::json!(true)),
+            ]),
+        ),
+    ]);
+    let got = fields(&stored);
+    assert_eq!(
+        got.keys().map(String::as_str).collect::<Vec<_>>(),
+        ["a", "z"]
+    );
+    assert_eq!(
+        got["a"].keys().map(String::as_str).collect::<Vec<_>>(),
+        ["a", "z"]
+    );
+    assert_eq!(got["a"]["a"], FieldValue::Text("text".into()));
+    assert_eq!(got["a"]["z"], FieldValue::Number(2.5));
+    assert!(got["z"].is_empty());
+    assert!(fields(&BTreeMap::new()).is_empty());
+}

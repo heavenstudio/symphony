@@ -88,3 +88,31 @@ fn the_outline_names_each_sections_first_and_last_blocks() {
     assert_eq!(last.1, None, "{ends:?}");
     assert!(nothing.iter().all(|(_, ends)| ends.is_some()), "{ends:?}");
 }
+
+#[test]
+fn outline_anchor_maps_keep_lexical_keys_and_last_duplicate_sections() {
+    let tree = Tree::new();
+    tree.write("docs/R.md", "# R\n\n## Zed\n\nText.\n\n## Alpha\n\nMore.\n");
+    let render = Render::new(&tree.root);
+    let mut doc = document(&render, "docs/R.md", "", &[]).unwrap();
+    let mut duplicate = doc.sections[1].clone();
+    duplicate.html = "<h2 id=\"last-copy\">Latest</h2>".into();
+    let duplicate_key = duplicate.key.clone();
+    doc.sections.push(duplicate);
+    let header_key = doc.sections[0].key.clone();
+    let result = outline(doc);
+    assert_eq!(result.anchors[&duplicate_key], ["last-copy"]);
+    assert!(result.anchors[&header_key].is_empty());
+    let keys = result.anchors.keys().collect::<Vec<_>>();
+    assert!(keys.windows(2).all(|pair| pair[0] < pair[1]));
+    assert!(
+        result
+            .document
+            .sections
+            .iter()
+            .all(|section| section.html.is_empty()
+                && section.media.is_empty()
+                && section.blocks.is_empty())
+    );
+    assert!(result.document.threads.is_empty());
+}
