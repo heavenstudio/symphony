@@ -701,6 +701,11 @@ impl Fixture {
     }
 }
 
+/// The default report fixture, shared with the server's roll-up tests.
+pub fn report_board() -> Fixture {
+    report_board_on(Backend::SurrealDb)
+}
+
 /// The scratch board the day files' tests read (`tests/store/reports.rs`, the server's roll-up),
 /// written through the store's commands from the day before the UTC midnight before [`NOW`] to 09:30
 /// after it, where its clock is left: tasks across statuses, `sim/b` bounced twice by two `changes`
