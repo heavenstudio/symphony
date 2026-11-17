@@ -179,6 +179,28 @@ describe("the section", () => {
     expect(html).toContain(">Retry</button>");
   });
 
+  it("says its retry reads while a read is out after the failed one, and asks for none more", () => {
+    for (const gates of [{ kind: "failed", why: "The server answered 500." }, { kind: "slow" }]) {
+      const html = renderToStaticMarkup(
+        <GatesView
+          gates={gates as Gates}
+          task={IN_REVIEW}
+          now={NOW}
+          room={DEFAULT_ROOM}
+          width={null}
+          retrying
+          onRetry={() => {}}
+        />,
+      );
+      expect(html, gates.kind).toContain(
+        '<button class="dx-button" data-style="outline" data-size="default" type="button" disabled="">Retrying…</button>',
+      );
+      expect(html, "the failure stays said meanwhile").toContain('class="gates-note"');
+      expect(html, "and no region is held busy for it").not.toContain("aria-busy");
+    }
+    expect(shown({ kind: "slow" }), "none out").not.toContain("disabled");
+  });
+
   it("retries by its button alone", () => {
     const retried: string[] = [];
     const view = GatesView({
@@ -333,6 +355,39 @@ describe("the panel", () => {
       reply(200, { slug: "tools/x", branch: "tools/x", gates: [{ name: 1 }] }),
     );
     expect(unread.html).toContain("s gates could not be read. The rest of the page still works.");
+  });
+
+  it("says its retry reads while the store's read is out after a failed one", async () => {
+    vi.stubGlobal("document", { getElementById: () => null });
+    let held: (answer: Response) => void = () => {};
+    let reads = 0;
+    vi.stubGlobal("fetch", async () => {
+      reads += 1;
+      if (reads === 1) return reply(500, { error: "Board snapshot unavailable." });
+      return new Promise<Response>((settle) => {
+        held = settle;
+      });
+    });
+    const mount = new AbortController();
+    const parts = new Parts<TaskEvent>(mount.signal);
+    const part = gatesPart("", "tools/x");
+    const section = () =>
+      renderToStaticMarkup(
+        <PartsContext.Provider value={parts}>
+          <TaskGatesPanel slug="tools/x" scope="" task={IN_REVIEW} />
+        </PartsContext.Provider>,
+      );
+    parts.open(part);
+    await until(() => expect(parts.shown(part).error).not.toBeNull());
+    expect(section()).toContain('type="button">Retry</button>');
+    // The reader's Retry, while its read is out.
+    const asked = parts.read(part);
+    expect(section()).toContain('type="button" disabled="">Retrying…</button>');
+    held(reply(200, fixture));
+    await asked;
+    expect(section()).toContain('data-gates="read"');
+    expect(section()).not.toContain("Retry");
+    mount.abort();
   });
 
   it("holds the room this browser kept for the task, at the height it drew in a window as wide", () => {
@@ -624,6 +679,7 @@ describe("what the section has of its part", () => {
     value: undefined,
     stale: false,
     error: null,
+    retrying: false,
     missing: false,
     answered: false,
   };

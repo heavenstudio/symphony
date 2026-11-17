@@ -7,7 +7,8 @@
 //! `mark/touch.png` is the same tile at 180 px for a phone's home screen, square and opaque as a
 //! phone rounds it, asked for only when a page is put there. `mark/mark.svg` is the bare mark,
 //! which a header draws inline in the page's `--primary`; the React client draws the same
-//! (`apps/symphony-web/src/frame.tsx`).
+//! (`apps/symphony-web/src/frame.tsx`), and its unit test reads this file to hold the two alike
+//! (`frame.test.tsx`), as this package's tests read only its own files.
 
 use std::sync::LazyLock;
 

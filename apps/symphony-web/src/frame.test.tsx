@@ -1,5 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import SERVED_MARK from "../../symphony-server/src/mark/mark.svg?raw";
 import { Frame, openActivity, readMetadata } from "./frame";
 import { MetadataReads } from "./state";
 import { memoryStorage, turn } from "./testing";
@@ -52,6 +53,15 @@ describe("the frame", () => {
       `<header class="app-header" id="top"><span class="app-brand">${MARK}` +
         '<span class="app-wordmark">Symphony</span></span><nav class="app-pages"',
     );
+  });
+
+  // The server's own pages draw its file inline (apps/symphony-server/src/mark.rs), so the two
+  // headers open alike: the same shapes in the same box, as markup and as React draws it.
+  it("draws the mark the server's own pages draw, from the server's file", () => {
+    const served = SERVED_MARK.trim()
+      .replace(' xmlns="http://www.w3.org/2000/svg"', "")
+      .replace(/<(\w+)([^>]*)\/>/g, "<$1$2></$1>");
+    expect(served).toBe(MARK);
   });
 
   it.each([

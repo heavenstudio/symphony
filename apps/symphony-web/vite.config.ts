@@ -57,7 +57,7 @@ export default defineConfig({
         // its windows through the same cache and follows no board; split by who imports each
         // module, the cache would leave that chunk for a file of its own, and every page that
         // follows the board would pay a file more for a page it is not. So Reports loads their
-        // chunk instead, the board's share of it unused.
+        // chunk instead, of the board's share the page's notices alone used.
         codeSplitting: {
           groups: [
             { name: "shared", minShareCount: PAGES.length },

@@ -103,6 +103,7 @@ const NOTHING: Shown<Count> = {
   value: undefined,
   stale: false,
   error: null,
+  retrying: false,
   missing: false,
   answered: false,
 };
@@ -247,6 +248,47 @@ describe("a part's read that fails", () => {
     await vi.runAllTimersAsync();
     expect(asked).toHaveLength(3);
     expect(host.answered).toHaveBeenCalledTimes(1);
+  });
+
+  it("says a read is out after it, the store's own or a reader's, until that answers or fails", async () => {
+    const replies: ReturnType<typeof later<Response>>[] = [];
+    const { parts, asked, drawn } = page(() => {
+      const reply = later<Response>();
+      replies.push(reply);
+      return reply.promise;
+    });
+    const part = count();
+    parts.open(part);
+    await pass();
+    // Its first read is its mock-up's to say.
+    expect(parts.shown(part).retrying).toBe(false);
+    replies[0]?.settle(answer(503));
+    await pass();
+    expect(parts.shown(part)).toMatchObject({ retrying: false, answered: false });
+    expect(parts.shown(part).error).not.toBeNull();
+    // The store's own try again, after its wait.
+    await pass(1_000);
+    expect(asked).toHaveLength(2);
+    expect(parts.shown(part).retrying).toBe(true);
+    expect(parts.shown(part).error, "the failure stays said while it is tried").not.toBeNull();
+    replies[1]?.settle(answer(503));
+    await pass();
+    expect(parts.shown(part).retrying).toBe(false);
+    // The reader's ask, which the store's next try would join.
+    const asking = parts.read(part);
+    expect(asked).toHaveLength(3);
+    expect(parts.shown(part).retrying).toBe(true);
+    replies[2]?.settle(answer(200, { n: 1 }, "", 1));
+    await asking;
+    expect(parts.shown(part)).toEqual(drawnAs(1));
+    // A read over an answer is the answer's to show: nothing more is said, nor drawn.
+    const draws = drawn.mock.calls.length;
+    const again = parts.read(part);
+    expect(parts.shown(part).retrying).toBe(false);
+    replies[3]?.settle(answer(200, { n: 1 }, "", 2));
+    await again;
+    expect(parts.shown(part).retrying).toBe(false);
+    expect(drawn.mock.calls.length - draws).toBe(1);
   });
 
   it("leaves the other parts of the page to draw", async () => {

@@ -118,6 +118,7 @@ const NOTHING: Shown<unknown> = {
   value: undefined,
   stale: false,
   error: null,
+  retrying: false,
   missing: false,
   answered: false,
 };
