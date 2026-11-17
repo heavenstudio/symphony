@@ -45,8 +45,7 @@ enum Change {
 pub(super) fn executor(thread: &[Message], current: &[Role]) -> Option<String> {
     current
         .iter()
-        .filter(|r| r.role == "executor")
-        .max_by(|a, b| a.since.total_cmp(&b.since))
+        .find(|r| r.role == "executor")
         .map(|r| r.handle.clone())
         .or_else(|| {
             thread
