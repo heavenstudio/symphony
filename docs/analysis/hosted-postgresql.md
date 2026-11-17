@@ -212,6 +212,13 @@ no schema DDL. A partial/unrecognized set of objects with no valid metadata is r
 adopted as an empty board. No extension installation, owner reassignment, role/database creation,
 server setting changes or superuser-only operation belongs in application migrations.
 
+Before opening data, verify `server_version_num` against the release's tested external majors,
+UTF-8, the connected database/login and the recorded project identity. An unsupported engine
+major refuses before DDL; the proposed matrix authorizes no untested major. The authorized
+initial migration binds an empty database to its project and recovery generation. Later opens
+cannot silently rebind that identity. Include project identity and generation in the same
+transactional metadata guard as the schema, so a pool or credential mix-up fails before work.
+
 Every write, including heartbeat/raw/copy/callback paths, checks the board schema under the
 same transaction's row lock (`FOR SHARE` on the metadata row). The migration's version update
 must conflict with that lock. An old snapshot taken before a completed migration cannot commit
