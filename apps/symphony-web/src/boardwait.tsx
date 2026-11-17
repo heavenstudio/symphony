@@ -107,11 +107,13 @@ export function WaitCard({ task, now }: { task: Task; now: number }) {
   const since = finished ? task.updated : waitSince(task);
   const old = now - since >= 7 * 86400 && !["queued", "parked"].includes(kind) && !finished;
   const line = task.waits_on;
-  const stale = task.roles.some(
-    (role) =>
-      role.health === "stale" &&
-      (line?.who.includes(role.handle) || line?.why.includes(role.handle)),
-  );
+  const stale =
+    kind === "working" &&
+    task.roles.some(
+      (role) =>
+        role.health === "stale" &&
+        (line?.who.includes(role.handle) || line?.why.includes(role.handle)),
+    );
   return (
     <div
       className={`taskcard waiting-card p${task.priority} k-${kind}${blocked(task) ? " is-blocked" : ""}`}

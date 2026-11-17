@@ -171,3 +171,8 @@ it("does not compare the global queued count with a filtered ready total", () =>
   expect(html).toContain("8 ready tasks wait to start");
   expect(html).not.toContain("of the");
 });
+
+it("does not attach a stale author to a decision's own wait reason", () => {
+  const t = { ...task("decision"), roles: [aRole("orchestrator", "named", "stale")] };
+  expect(render(<WaitCard task={t} now={now} />)).not.toContain("(stale)");
+});
