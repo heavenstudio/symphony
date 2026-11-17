@@ -518,6 +518,9 @@ fn watch_with<W: Watcher + Send + 'static>(
         let mut last_problem = String::new();
         let mut initial = true;
         let mut backstop = Backstop::new(period);
+        // Whether the notice says an update failed: since a failure [`replaced`] told, until a
+        // kept build clears it ([`kept`]).
+        let mut failure_told = false;
         while !shared.stopping() {
             // A starter whose build must serve the machine asked for the hand-off (host rule).
             if shared
@@ -556,6 +559,7 @@ fn watch_with<W: Watcher + Send + 'static>(
                         if replaced(&shared, result) {
                             return;
                         }
+                        failure_told = true;
                     }
                     Some(Err(why)) => eprintln!("· Symphony hand-off refused: {why}"),
                     None => {}
@@ -623,16 +627,26 @@ fn watch_with<W: Watcher + Send + 'static>(
             // read as it again (a read that failed in passing, an edit undone), it is built again
             // once that failure's wait is over, and any other version at its first check.
             if symphony::reload::fingerprint(&serve.root).ok().as_deref() != Some(&fingerprint) {
-                let again = retry.failed(&fingerprint);
-                eprintln!(
-                    "· Symphony reload: the sources changed or could not be read during the \
-                     build; its result is dropped, and that version is tried again at about \
-                     {again} if they read as it again"
+                let why = format!(
+                    "The sources changed or could not be read during the build; its result is \
+                     dropped, and that version is tried again at about {} if they read as it \
+                     again.",
+                    retry.failed(&fingerprint)
                 );
+                // Said in the log alone, as the version read next is usually another and is
+                // built at once: no update failed. A notice that says one did says this in its
+                // place, so the retry it names is the one to come, at the time to come.
+                if !failure_told {
+                    eprintln!("· Symphony reload: {why}");
+                } else if replaced(&shared, Err(why)) {
+                    return;
+                }
                 continue;
             }
             if matches!(result, Ok(None)) && kept(running.as_ref(), install, &fingerprint, &shared)
             {
+                retry.kept();
+                failure_told = false;
                 continue;
             }
             let result = result
@@ -657,6 +671,7 @@ fn watch_with<W: Watcher + Send + 'static>(
             if replaced(&shared, result) {
                 return;
             }
+            failure_told = true;
         }
     };
     Some(crate::front::worker(crate::front::RELOAD_WORKER, reload))

@@ -950,10 +950,11 @@ const LANTERN: &str = "[project]\nname = \"Lantern\"\nid = \"lantern\"\n\
                        [theme]\nname = \"Lantern Works\"\nicon = \"docs/dot.svg\"\n";
 
 /// What the page's header opens with and the icons its head links: the mark's element, the
-/// address a theme's own is read from, whether it is the mark drawn in the page's primary, the
-/// name with its class and whether it is set in the wordmark's serif, whether the tab's icon is
-/// the Symphony's fermata inline with both schemes' colours, and the home screen's icon with the
-/// type its address answers.
+/// file a theme's own is read from, whether that address is the tab's icon's, version and all
+/// (the one its answer is kept for good under), whether it is the mark drawn in the page's
+/// primary, the name with its class and whether it is set in the wordmark's serif, whether the
+/// tab's icon is the Symphony's fermata inline with both schemes' colours, and the home screen's
+/// icon with the type its address answers.
 const BRAND: &str = r#"(async () => {
     const brand = document.querySelector('.app-header').firstElementChild;
     const mark = brand.querySelector('.app-mark'), name = brand.querySelector('span');
@@ -964,9 +965,11 @@ const BRAND: &str = r#"(async () => {
     const box = mark.getBoundingClientRect();
     const icon = document.querySelector('link[rel=icon]').getAttribute('href');
     const touch = document.querySelector('link[rel=apple-touch-icon]')?.getAttribute('href') ?? null;
+    const src = mark.getAttribute('src');
     return {
         brand: brand.className, link: brand.closest('a') !== null || brand.querySelector('a') !== null,
-        mark: mark.tagName.toLowerCase(), src: mark.getAttribute('src'),
+        mark: mark.tagName.toLowerCase(), src: src === null ? null : src.split('?')[0],
+        tabs: src !== null && src === icon && /\?v=[0-9a-f]{12}$/.test(src),
         drawn: box.width > 0 && box.height > 0,
         inPrimary: mark.tagName === 'svg' && getComputedStyle(mark).fill === primary,
         name: name.textContent, named: name.className,
@@ -992,14 +995,15 @@ fn the_header_and_the_icons_are_the_symphonys_until_a_theme_has_its_own() {
     let Some(mut browser) = chrome() else { return };
     let symphonys = |name: &str, named: &str, touch: &str| {
         json!({
-            "brand":"app-brand","link":false,"mark":"svg","src":null,"drawn":true,"inPrimary":true,
+            "brand":"app-brand","link":false,"mark":"svg","src":null,"tabs":false,"drawn":true,
+            "inPrimary":true,
             "name":name,"named":named,"serif":named == "app-wordmark","fermata":true,
             "touch":touch,"touchType":"image/png"
         })
     };
     let own = json!({
-        "brand":"app-brand","link":false,"mark":"img","src":"/lantern/docs/dot.svg","drawn":true,
-        "inPrimary":false,"name":"Lantern Works","named":"app-name","serif":false,
+        "brand":"app-brand","link":false,"mark":"img","src":"/lantern/docs/dot.svg","tabs":true,
+        "drawn":true,"inPrimary":false,"name":"Lantern Works","named":"app-name","serif":false,
         "fermata":false,"touch":null,"touchType":null
     });
     let client = "document.documentElement.dataset.navigation === 'ready' && document.querySelector('.hero-title') !== null";
@@ -1051,11 +1055,6 @@ fn the_header_and_the_icons_are_the_symphonys_until_a_theme_has_its_own() {
         );
         assert_eq!(browser.eval(BRAND), want, "{page}");
     }
-    // The theme's icon in the tab is the file the header draws.
-    assert_eq!(
-        browser.eval("document.querySelector('link[rel=icon]').getAttribute('href').split('?')[0]"),
-        json!("/lantern/docs/dot.svg")
-    );
     // Alpha's mark is drawn in alpha's own primary, not the Symphony's blue.
     browser.open(&server.url("/alpha/"));
     assert!(browser.wait_for(client, SHOWN));
