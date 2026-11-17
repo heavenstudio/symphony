@@ -13,6 +13,7 @@ use sha2::Digest;
 use std::path::{Component, Path};
 
 mod gzipped;
+mod preload;
 
 use gzipped::{gzipped, takes_gzip};
 
@@ -66,7 +67,11 @@ pub(super) async fn static_response(shared: &Shared, path: &str, request: &Reque
     };
     let page = relative == "index.html";
     if page {
-        let shell = String::from_utf8_lossy(&bytes).into_owned();
+        let mut shell = String::from_utf8_lossy(&bytes).into_owned();
+        // The development proxy replaces this shell's manifest with source entries.
+        if !request.headers().contains_key("x-symphony-dev") {
+            preload::page(shared, path, &mut shell).await;
+        }
         bytes = Bytes::from(crate::shell::page(&shell, &shared.root, &shared.base, ""));
     }
     let (content_type, compresses) = file_type(&extension);
