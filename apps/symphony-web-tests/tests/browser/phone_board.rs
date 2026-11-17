@@ -219,6 +219,93 @@ fn touches_release_the_position_hold_after_their_scrolling_finishes() {
     }
 }
 
+/// A detached element cannot deliver scrollend to the shell's window listener. Removing it must
+/// release later layout holds, but not the momentum of another, still-connected scroller. The
+/// touch input is synthetic; both element scrolls and the connected scrollend are native events.
+#[test]
+fn removed_scrollers_release_idle_holds_without_ending_connected_scrolling() {
+    let site = site_of(&listing_of(&[("review", 30)]));
+    let Some(mut page) = chrome() else { return };
+    for continuing in [false, true] {
+        open_on_a_phone(&mut page, &site);
+        let result = page.eval(&format!(
+            r#"(async () => {{
+                document.documentElement.style.overflowAnchor = 'none';
+                scrollTo(0,600);
+                await new Promise(requestAnimationFrame);
+                const board = document.querySelector('.waiting-columns');
+                const row = [...board.querySelectorAll('[data-slug]')].find(row => {{
+                    const top = row.getBoundingClientRect().top;
+                    return top >= 0 && top < innerHeight;
+                }});
+                const before = row.getBoundingClientRect().top;
+                const scroller = () => {{
+                    const box = document.createElement('div');
+                    box.style.cssText = 'position:fixed;top:0;right:0;width:40px;height:40px;overflow:auto';
+                    const content = document.createElement('div');
+                    content.style.height = '400px';
+                    box.append(content);
+                    document.body.append(box);
+                    return box;
+                }};
+                const removed = scroller(), kept = {continuing} ? scroller() : null;
+                const events = [];
+                const ended = kept && new Promise(resolve => kept.addEventListener('scrollend', event => {{
+                    events.push(['end', event.isTrusted]);
+                    resolve();
+                }}, {{once:true}}));
+                const displaced = () => {{
+                    window.reviewHoldPlace('.waiting-columns [data-slug]');
+                    row.style.transform = 'translateY(80px)';
+                    const shifted = row.getBoundingClientRect().top;
+                    return new Promise(resolve => requestAnimationFrame(() => resolve([shifted, row.getBoundingClientRect().top])));
+                }};
+                const scrolled = new Promise(resolve => {{
+                    kept?.addEventListener('scroll', event => {{
+                        events.push(['kept', event.isTrusted]);
+                        resolve(displaced());
+                    }}, {{once:true}});
+                    removed.addEventListener('scroll', event => {{
+                        events.push(['removed', event.isTrusted]);
+                        removed.remove();
+                        if (kept) kept.scrollTop = 40;
+                        else resolve(displaced());
+                    }}, {{once:true}});
+                }});
+                const touch = type => removed.dispatchEvent(new TouchEvent(type, {{bubbles:true}}));
+                touch('touchstart');
+                touch('touchmove');
+                removed.scrollTop = 40;
+                touch('touchend');
+                const first = await scrolled;
+                if (ended) await ended;
+                const idle = row.getBoundingClientRect().top;
+                window.reviewHoldPlace('.waiting-columns [data-slug]');
+                row.style.transform = 'translateY(160px)';
+                await new Promise(requestAnimationFrame);
+                kept?.remove();
+                return {{before, first, idle, after:row.getBoundingClientRect().top, events}};
+            }})()"#
+        ));
+        let before = result["before"].as_f64().unwrap();
+        assert_eq!(result["first"][0].as_f64().unwrap(), before + 80.0);
+        assert_eq!(
+            result["first"][1].as_f64().unwrap(),
+            before + if continuing { 80.0 } else { 0.0 },
+            "continuing={continuing}: {result}"
+        );
+        assert_eq!(result["after"], result["idle"], "{result}");
+        assert_eq!(
+            result["events"],
+            if continuing {
+                json!([["removed", true], ["kept", true], ["end", true]])
+            } else {
+                json!([["removed", true]])
+            }
+        );
+    }
+}
+
 /// Native touch input still pans the page vertically and the stage strip horizontally. No
 /// gesture is prevented or restricted to one axis by the position-hold repair.
 #[test]

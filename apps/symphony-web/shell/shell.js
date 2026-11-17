@@ -413,6 +413,14 @@ addEventListener("pagehide", () => {
 // once it stays. The reader's own scroll, click or key ends the hold, including a drag or its
 // momentum already underway when the update arrived.
 window.reviewHoldPlace = (rows) => {
+  if (touchScroll && !touchScroll.down) {
+    // A removed box's scrollend cannot reach the window. It no longer owns any scrolling,
+    // while connected boxes must still finish their momentum before a hold can begin.
+    for (const scroller of touchScroll.scrollers) {
+      if (!scroller.isConnected) touchScroll.scrollers.delete(scroller);
+    }
+    if (touchScroll.scrollers.size === 0) touchScroll = null;
+  }
   if (touchScroll?.moved) return;
   const shows = (node) => {
     const top = node.getBoundingClientRect().top,
