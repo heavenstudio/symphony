@@ -749,6 +749,7 @@ impl Store {
     /// One pass over the recipients on this host: whether it reached every one, none of whose
     /// lease another dispatcher held.
     pub(super) fn dispatch_pass(&self, pass: Pass) -> Result<bool, Error> {
+        self.resume_task_blocks()?;
         let callbacks = self.callbacks()?;
         if callbacks.is_empty() {
             return Ok(true);
@@ -762,6 +763,7 @@ impl Store {
     /// watch looks first, so the one hc sample it takes serves the tick's PULL view and the
     /// clock's agents view after it ([`Store::clock_panes`]).
     pub fn dispatch_callbacks_snapshot(&self) -> Result<Option<super::Board>, Error> {
+        self.resume_task_blocks()?;
         *self.clock_panes.lock().unwrap_or_else(|e| e.into_inner()) = None;
         let callbacks = self.callbacks()?;
         if callbacks.is_empty() {

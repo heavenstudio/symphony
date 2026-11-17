@@ -90,6 +90,7 @@ mod red;
 mod relay;
 mod reports;
 mod reserve;
+mod resume;
 mod roles;
 mod schema;
 mod schema_copy;
