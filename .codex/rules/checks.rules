@@ -1,0 +1,53 @@
+# This repository's recurring checks, alongside init's generic symphony.rules. A matching
+# command runs outside the sandbox so its recorder can keep shared board state. No writable
+# directory is added to the workspace sandbox. Run plain commands with the inherited session.
+prefix_rule(
+    pattern=["just", ["fmt", "lint-rs", "test-rs", "client-lint", "client-check", "client-update", "symphony-ui-dist", "settings-check", "crates-check"]],
+    decision="allow",
+    justification="Run this repository's named build and check recipes with their recorder",
+    match=[
+        "just fmt",
+        "just lint-rs",
+        "just test-rs -p symphony-board --lib cli::attach",
+        "just client-lint",
+        "just client-check",
+        "just client-update",
+        "just symphony-ui-dist",
+        "just settings-check",
+        "just crates-check",
+    ],
+    not_match=[
+        "just test-rs-extra",
+        "just arbitrary-command",
+        "just _lint-rs",
+        "just verify",
+        "just release",
+        "just symphony --shared",
+        "just symphony-cli serve",
+        "just symphony-cli init --root .",
+        "just --justfile /tmp/other.just test-rs",
+        "just --working-directory /tmp test-rs",
+        "TASKS_SESSION=worker just test-rs",
+        "TASKS_TASK=tools/example just lint-rs",
+        "env JUST_JUSTFILE=/tmp/other.just just lint-rs",
+        "sh -c 'just lint-rs'",
+        "tools/record.sh test arbitrary sh -c arbitrary",
+        "tools/cargo.sh test",
+    ],
+)
+
+prefix_rule(
+    pattern=["just", "symphony-cli", "docs-audit", "--check"],
+    decision="allow",
+    justification="Record the repository's document audit",
+    match=["just symphony-cli docs-audit --check"],
+    not_match=["just symphony-cli docs-audit", "just symphony-cli init --root ."],
+)
+
+prefix_rule(
+    pattern=["just", "symphony-cli", "status", "--lint"],
+    decision="allow",
+    justification="Record the repository's document lint",
+    match=["just symphony-cli status --lint"],
+    not_match=["just symphony-cli status --tidy", "just symphony-cli serve"],
+)
