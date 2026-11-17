@@ -121,7 +121,7 @@ that grant. A read grant never becomes edit, owner, reviewer, staffer or landing
 | --- | --- |
 | Shell, retained client builds, project lists/counts, documents, history/diff, board reads and plugin reads | Authenticate before serving; authorize the resolved project and read capability. Filter aggregate results or omit them. A cache hit/ETag/HEAD takes the same checks as a full read. |
 | Saves, comments, uploads, task/actions and plugin submissions | Authorize the route/project/action before reading a body. Decode within size limits without opening target state; if the body names another scope, resolve and authorize that target before dispatch or project I/O. Keep existing path containment, metadata exclusion, entrypoint and MIME checks. |
-| Media, attachment metadata, thumbnails, raw files, logs and every byte/range read | Check the project and read grant on every request. A digest, artifact ID, local path or storage locator is not permission. Delivery delegates to the artifact provider only after authorization; no public-bucket or permanent URL assumption. |
+| Media, attachment metadata, thumbnails, raw files, logs and every byte/range read | Pass server-derived principal and current tenant/project membership to metadata operations and every byte request, including HEAD, range, conditional and cache reads. A digest, artifact ID, local path or storage locator is not permission. Authorize before proxying private objects through the artifact provider. |
 | SSE and WebSocket upgrades | Authorize the project's feed and validate browser Origin before opening a stream. Each reconnect authenticates and authorizes again. A cursor or subscription cannot choose a different project. |
 | Machine/front diagnostics, stop/reload, local pane/editor/focus and filesystem controls | Excluded from the hosted route set. No request becomes `is_this_machine` merely because an adapter runs locally. Future remote controls need their own action capability and audit. |
 
@@ -144,6 +144,13 @@ documented bounded refresh contract. The platform's route cache and token lifeti
 provide immediate revocation. During loss of the policy authority, no new grant is inferred;
 the configured validity bound ends existing authorization. No credentials or visitor assertions
 are put in URLs, browser storage, board events, logs or downstream artifact references.
+
+Hosted artifact responses use `Cache-Control: private, no-store`, with shared proxy caching
+disabled. The local upload handler's public immutable cache policy is not a hosted access
+contract. Revocation denies later byte reads, cache hits and 304 responses; active downloads
+are bounded by the authorization lifetime and cancelled on a revocation event. Already
+delivered bytes cannot be recalled. Storage receives admitted identity and authority, never a
+visitor token or a client-supplied membership assertion.
 
 ## Browser behavior
 
@@ -200,9 +207,14 @@ signals and reaping every child; no daemonization, terminal ownership or unowned
 
 The hosted profile has no Tailscale lookup, developer-machine registry, source rebuild/reload,
 local launcher or installed-machine `current` dependency. The deployment selects one canonical
-root and pins its project ID and input Git revision. Restore required documents/configuration
-and artifacts before declaring ready. Do not discover a different root from the process's cwd
-or treat ephemeral disk as durable state. Retained edits and restart behavior depend on the
+root and pins its project ID and input Git revision. On fresh disk, restart or scale-zero,
+restore exact retained Git configuration/document revisions and artifact object generations
+whose checksum and exact size the storage contract verifies before availability. Missing or
+corrupt required revisions/bytes make restore incomplete, never a fallback to latest or pod-only
+files. Backup provenance cannot reinstate access: evaluate current grants, and have the
+storage/attempt contracts invalidate pre-restore execution/upload authority before enabling
+writes. Do not discover a different root from the process's cwd or treat ephemeral disk as
+durable state. Retained edits and restart behavior depend on the
 storage work, not on ingress alone. Do not enable concurrent writers until that storage contract
 proves them safe across old/new revisions; max-instances one alone does not prevent overlap.
 
@@ -232,8 +244,9 @@ Readiness is 200 only when all required components of the selected project are u
 - the selected database, login, project identity and recovery generation are verified; its
   engine/schema combination is proved compatible with this writer, and a real bounded project
   board read through the shared connection pool has completed;
-- required document/evidence providers are initialized, and no stop, migration or writer fence
-  makes the service unavailable.
+- required project-state restore is complete with verified revisions/generations; provider
+  initialization alone is insufficient, and no stop, migration or writer fence makes the service
+  unavailable.
 
 Probe bodies contain only state, nonsecret build revision, client revision and coarse component
 states such as `board_unavailable`, `schema_incompatible` or `draining`; use `Cache-Control:
@@ -245,6 +258,10 @@ within the shared pool and deployment connection budget, with no extra probe-onl
 outside the cap. No available pool capacity means 503. A stale success cannot survive the
 freshness bound or a known dependency failure. Reconnect revalidates database/login/project,
 recovery generation and engine/schema before a successful board read restores readiness.
+An unavailable or incomplete storage result keeps required restore at 503; an optional artifact
+failure denies its affected delivery explicitly and does not imply that every board operation
+failed. Neither a provider nor a worker being up proves durable state was restored, and byte
+availability alone grants no task success, phase advancement, stamp or landing.
 
 Database outage, exhausted capacity, unknown/newer schema, migration in progress or failed first
 board read yields 503 readiness and 503 dependent operations, without a local fallback or stale
@@ -279,9 +296,9 @@ authorization policy remain in the consuming adapter. This design does not autho
 | Local regression | Loopback, verified tailnet, rejected peer and rebinding Host behavior unchanged, without hosted configuration. Hosted mode works with no Tailscale executable/state. |
 | Visitor verification | Valid signature/issuer/app/tenant succeeds only with a project grant. Missing/duplicate/forged/expired/future/unknown-key/other-issuer/route/other-app assertions fail before body/state access. Inject clock and key rotation/outage; verify no fail-open cache. |
 | Proxy and browser boundary | Direct origin, forged forwarded headers, extra chains, invalid/conflicting Host and foreign/null/missing Origin fail. Test CSRF omission/mismatch and encoded target aliases across reads, saves, media/ranges, assets and upgrades. |
-| Project isolation | Same subject with another tenant, no grant, read-only grant, another project in path/body/artifact/cursor and a legacy plugin cannot read or mutate outside admission. Check denied cache hits, metadata and every byte read. |
+| Project isolation | Same subject with another tenant, no grant, read-only grant, another project in path/body/artifact/cursor and a legacy plugin cannot read or mutate outside admission. Check current membership on metadata and every byte read, including HEAD/range/conditional/cache; revocation denies 304/cache hits and cancels active downloads. |
 | Startup and probes | Assigned/missing/zero/invalid PORT; wrong root/revision; missing/mismatched client; wrong database/login/project or recovery generation; bounded board read blocked; shared pool exhausted with no probe connection outside its cap; unsupported engine/schema and migration. Compatible read-only diagnostics cannot ready an incompatible writer. Reconnect revalidates identity/schema; known outage invalidates prior success. TCP/shell success never makes readiness 200. No diagnostics secrets escape. |
-| Shutdown and restart | PID 1 receives SIGTERM during save/body/commit/response; readiness drops, new writes fail, committed state survives restart and incomplete state is explicit. Children are reaped; no duplicate mutation after an ambiguous response. Empty disk rehydrates only pinned inputs. |
+| Shutdown and restart | PID 1 receives SIGTERM during save/body/commit/response; readiness drops, new writes fail, committed state survives restart and incomplete state is explicit. Children are reaped; no duplicate mutation after an ambiguous response. Empty disk uses exact retained Git revisions and verified object generations; missing/corrupt required state stays unready, no latest fallback. Restored grants and old execution/upload authority cannot regain access. |
 | Feeds and revocation | SSE/WebSocket across timeout, deployment/restart and another instance; cursor gap/reset, refreshed identity, token expiry, policy change and auth loss. No cross-project events or unauthorized continued stream. |
 
 Unit tests use injected clocks, keys, policy and provider fakes, including refusal cases; focused
