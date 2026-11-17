@@ -12,6 +12,9 @@ const LAST_WAIT_MS = 30_000;
 /** How a page's feed stream ended: lost after holding `held` ms (0 if it never opened), or away. */
 export type Ended = { lost: number } | "away";
 
+/** How a read that failed ended, for its retry's wait: a stream that never held. */
+export const NEVER_ANSWERED: Ended = { lost: 0 };
+
 /**
  * The waits between tries of a lost feed: 1 s, doubling to 30 s, until a stream holds 30 s. A
  * stream that ends as soon as it opens does not start them again, so a server that keeps closing
@@ -51,11 +54,11 @@ export async function tryAgain(
   unanswered: () => boolean,
   read: () => Promise<unknown>,
   signal: AbortSignal,
-  wait: (ms: number, signal: AbortSignal) => Promise<void> = retryWait,
+  wait: typeof retryWait = retryWait,
 ): Promise<void> {
   const backoff = new Backoff();
   while (unanswered() && !signal.aborted) {
-    await wait(backoff.after(0), signal);
+    await wait(backoff, NEVER_ANSWERED, signal);
     if (signal.aborted || !unanswered()) return;
     await read();
   }

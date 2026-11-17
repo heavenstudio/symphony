@@ -2,6 +2,7 @@
 //! when it was killed, replaced when it is an older version and used as it is when newer, and never
 //! confused with another process or with a server on other data.
 
+use crate::children::Child as _;
 use crate::common::{
     Repository, Scratch, Told, command_of, exists, gone, healthy_occupier, parent_of, script,
     signal, surreal,
@@ -153,7 +154,7 @@ fn a_server_on_this_boards_data_that_was_never_recorded_is_found() {
     let (mut orphan, addr) = start_on_free_port(ATTEMPTS, until, |reserved| {
         let addr = reserved.to_string();
         let out = std::fs::File::create(&log).unwrap();
-        let mut orphan = Command::new(s.surreal())
+        let mut orphan = Command::of(s.surreal())
             .args([
                 "start",
                 "--unauthenticated",
@@ -167,20 +168,23 @@ fn a_server_on_this_boards_data_that_was_never_recorded_is_found() {
             .stderr(out)
             .spawn()
             .unwrap();
-        loop {
-            if orphan.try_wait().unwrap().is_some() {
-                let said = std::fs::read_to_string(&log).unwrap();
-                return Ok::<_, Infallible>(Start::Ended(said));
-            }
-            if rpc::healthy(&addr) && listens(orphan.id(), reserved, sys::output).unwrap() {
-                return Ok(Start::Up(orphan));
-            }
-            assert!(
-                Instant::now() < until,
-                "the server on {addr} neither answered nor ended"
-            );
-            std::thread::sleep(Duration::from_millis(50));
+        // Up once it answers on its port; ended once it exits first.
+        let up = test_time::until(
+            format!("the server on {addr} answers or ends"),
+            until.saturating_duration_since(Instant::now()),
+            || {
+                if orphan.try_wait().unwrap().is_some() {
+                    return Some(false);
+                }
+                (rpc::healthy(&addr) && listens(orphan.id(), reserved, sys::output).unwrap())
+                    .then_some(true)
+            },
+        )
+        .unwrap();
+        if up {
+            return Ok::<_, Infallible>(Start::Up(orphan));
         }
+        Ok(Start::Ended(std::fs::read_to_string(&log).unwrap()))
     })
     .unwrap_or_else(|why| panic!("the server ended: {why}"));
     let addr = addr.to_string();
@@ -219,10 +223,10 @@ fn a_scratch_boards_unrecorded_server_is_found_and_used_at_once_never_its_superv
     std::fs::remove_file(home.dir().join("server.json")).unwrap();
 
     let listed = sys::output(
-        Command::new(env!("CARGO_BIN_EXE_tasks"))
+        Command::of(env!("CARGO_BIN_EXE_tasks"))
             .arg("list")
             .current_dir(&repo.dir)
-            .env_clear()
+            .cleared()
             .envs(repo.env().vars)
             .env("TASKS_SWEEP", "off")
             .env("PATH", std::env::var_os("PATH").unwrap_or_default()),
@@ -266,7 +270,7 @@ fn a_recorded_server_that_serves_other_data_is_not_this_board() {
 #[test]
 fn a_recorded_process_that_is_not_the_boards_server_is_never_signalled() {
     let s = Scratch::new("stranger");
-    let mut stranger = Command::new("sleep").arg("60").spawn().unwrap();
+    let mut stranger = Command::of("sleep").arg("60").spawn().unwrap();
     let pid = i64::from(stranger.id());
     for version in [SURREAL_VERSION, "0.0.1"] {
         s.record(&Running {
@@ -515,7 +519,7 @@ impl Held {
         );
         let log = s.dir.join("held.log");
         let out = std::fs::File::create(&log).unwrap();
-        let mut child = Command::new(&surreal)
+        let mut child = Command::of(&surreal)
             .args(["start", "--unauthenticated", "--log", "error", "--bind"])
             .arg(addr.to_string())
             .arg(s.data())
@@ -819,11 +823,11 @@ fn the_scripts_common_dir_is_its_variable_else_the_workspaces() {
         .join(format!("server-{}-common-dir", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
-    let init = sys::output(Command::new("git").args(["init", "-q"]).current_dir(&dir)).unwrap();
+    let init = sys::output(Command::of("git").args(["init", "-q"]).current_dir(&dir)).unwrap();
     assert!(init.status.success(), "{init:?}");
     let common = dir.join(".git").canonicalize().unwrap();
     let common_dir = |vars: &[(&str, &Path)]| {
-        let mut bash = Command::new("bash");
+        let mut bash = Command::of("bash");
         bash.args(["-c", "source \"$1\"; common_dir \"$2\"", "common_dir"])
             .arg(&script)
             .arg(&dir);
@@ -905,7 +909,7 @@ fn helper_start_and_exit() {
 /// The signals `pid` blocks, as `ps` says them: a set in hex, signal N its bit N - 1.
 fn blocked_by(pid: i64) -> u64 {
     let out =
-        sys::output(Command::new("ps").args(["-o", "blocked=", "-p", &pid.to_string()])).unwrap();
+        sys::output(Command::of("ps").args(["-o", "blocked=", "-p", &pid.to_string()])).unwrap();
     let said = String::from_utf8_lossy(&out.stdout);
     u64::from_str_radix(said.trim().trim_start_matches("0x"), 16).unwrap()
 }
@@ -916,7 +920,7 @@ fn blocked_by(pid: i64) -> u64 {
 fn a_server_started_by_a_masked_starter_is_asked_to_end_and_ends() {
     let s = Scratch::new("masked");
     let out = symphony_board::sys::output(
-        Command::new(std::env::current_exe().unwrap())
+        Command::of(std::env::current_exe().unwrap())
             .args([
                 "--ignored",
                 "--exact",
@@ -940,11 +944,11 @@ fn a_server_started_by_a_masked_starter_is_asked_to_end_and_ends() {
         0,
         "SIGTERM blocked: {blocked:#x}"
     );
-    let tty = sys::output(Command::new("ps").args(["-o", "tty=", "-p", &running.pid.to_string()]))
+    let tty = sys::output(Command::of("ps").args(["-o", "tty=", "-p", &running.pid.to_string()]))
         .unwrap();
     let tty = String::from_utf8_lossy(&tty.stdout);
     assert!(matches!(tty.trim(), "??" | "?"), "a terminal: {tty}");
-    let input = sys::output(Command::new("lsof").args([
+    let input = sys::output(Command::of("lsof").args([
         "-a",
         "-p",
         &running.pid.to_string(),
@@ -971,7 +975,7 @@ fn a_server_outlives_the_process_that_started_it_and_holds_none_of_its_pipes() {
     let s = Scratch::new("outlive");
     // `output` returns only once nothing holds the child's stdout and stderr open.
     let out = symphony_board::sys::output(
-        Command::new(std::env::current_exe().unwrap())
+        Command::of(std::env::current_exe().unwrap())
             .args([
                 "--ignored",
                 "--exact",

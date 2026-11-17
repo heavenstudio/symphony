@@ -1,11 +1,15 @@
 // The client's waits by a length of time, each named for the one thing RULES.md
-// `code/no-timed-waits` lets a number pace: a retry's wait between two tries (its length
-// `Backoff`'s, state.ts), a deadline that only bounds a wait for an event and ends it with words,
-// a debounce's rest, and a clock's tick (a time the page shows). Everything else waits for its
-// event (a message, a promise, an observer, a listener) and acts at once: a page's update never
-// waits a length of time. This is the one module that may call `setTimeout` and `setInterval`
-// (biome.json), and `sleep`, the plain wait, is imported only where a site is kept in the rule's
-// baseline until it waits for its event, each such file saying so at its import.
+// `code/no-timed-waits` lets a number pace, and each shaped to it, so none is a plain wait a fixed
+// poll could be written with: a retry's wait between two tries (its length the next of a
+// `Backoff`'s, state.ts), a deadline that only bounds a wait for an event and ends it with words, a
+// debounce, whose calls take each other's place, and a clock's tick, to the next minute a page
+// shows. Everything else waits for its event (a message, a promise, an observer, a listener) and
+// acts at once: a page's update never waits a length of time. This is the one module that may call
+// `setTimeout` and `setInterval` (biome.json), and `sleep`, the plain wait, is imported only where
+// a site is kept in the rule's baseline until it waits for its event, each such file saying so at
+// its import.
+
+import type { Backoff, Ended } from "./state";
 
 /** `ms` later, or at once when `signal` ends, or had. */
 function wait(ms: number, signal?: AbortSignal): Promise<void> {
@@ -22,25 +26,58 @@ function wait(ms: number, signal?: AbortSignal): Promise<void> {
 }
 
 /**
- * The wait between two tries of a read, a stream or a save, its length from `Backoff` (1 s
- * doubling to 30 s): `ms` later, or at once when `signal` ends.
+ * The wait between two tries of a read, a stream or a save: the next of `backoff`'s waits after a
+ * try that `ended` so (1 s doubling to 30 s, state.ts), or at once when `signal` ends.
  */
-export function retryWait(ms: number, signal?: AbortSignal): Promise<void> {
-  return wait(ms, signal);
+export function retryWait(backoff: Backoff, ended: Ended, signal?: AbortSignal): Promise<void> {
+  return wait(backoff.wait(ended), signal);
 }
 
 /**
- * A debounce's rest: `ms` later, or at once when `signal` ends. What waited then acts only when no
- * newer call took its place meanwhile, so a burst of calls acts once, after its last.
+ * A debounce: of a burst of rests, only the last acts, once no other has come for `ms`. Each rest
+ * takes the place of the one before it, which is over at once and acts not; `cancel`, and `signal`
+ * ending, end the one under way the same way.
  */
-export function debounce(ms: number, signal?: AbortSignal): Promise<void> {
-  return wait(ms, signal);
+export class Debounce {
+  /** The rest under way, until it acts or another takes its place. */
+  private resting: AbortController | null = null;
+
+  constructor(
+    private readonly ms: number,
+    private readonly signal?: AbortSignal,
+  ) {}
+
+  /** A rest: whether it is the one that acts, once no later rest came for the debounce's length;
+   * false at once when one does, or the debounce is cancelled or its signal ends. */
+  rest(): Promise<boolean> {
+    this.cancel();
+    if (this.signal?.aborted) return Promise.resolve(false);
+    const resting = new AbortController();
+    this.resting = resting;
+    this.signal?.addEventListener("abort", () => resting.abort(), { signal: resting.signal });
+    return wait(this.ms, resting.signal).then(() => {
+      if (resting.signal.aborted) return false;
+      // Over, and its listener on `signal` with it.
+      resting.abort();
+      this.resting = null;
+      return true;
+    });
+  }
+
+  /** The rest under way, if any, over and acting not. */
+  cancel(): void {
+    this.resting?.abort();
+    this.resting = null;
+  }
 }
 
-/** A clock's tick: `ms` later, when a time the page shows next changes, or at once when `signal`
- * ends. */
-export function tick(ms: number, signal?: AbortSignal): Promise<void> {
-  return wait(ms, signal);
+/** The length of a minute, by which the times a page shows change. */
+const MINUTE_MS = 60_000;
+
+/** A clock's tick: at the next minute, when a time the page shows next changes, or at once when
+ * `signal` ends. */
+export function tick(signal?: AbortSignal): Promise<void> {
+  return wait(MINUTE_MS - (Date.now() % MINUTE_MS), signal);
 }
 
 /**

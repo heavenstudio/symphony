@@ -3281,15 +3281,20 @@ fn a_dedicated_workers_script_answered_late_is_waited_for_and_what_its_worker_sa
         let output = running.wait_with_output().unwrap();
         panic!("the shot ended {when}: {}", said(&output));
     };
-    while !site.requests().iter().any(|path| path == "/late-worker.js") {
-        if running.try_wait().unwrap().is_some() {
-            ended(running, "before its worker's script was asked for");
-        }
-        #[expect(
-            clippy::disallowed_methods,
-            reason = "no-timed-waits baseline: a test looks again for its condition by hand, where test_time::wait::until is the helper"
-        )]
-        std::thread::sleep(Duration::from_millis(10));
+    // Asked for, or the shot ended first.
+    let asked = test_time::until(
+        "the shot asks for its worker's script",
+        test_time::FLOOR,
+        || {
+            if site.requests().iter().any(|path| path == "/late-worker.js") {
+                return Some(true);
+            }
+            running.try_wait().unwrap().is_some().then_some(false)
+        },
+    )
+    .unwrap_or_else(|stall| panic!("{stall}"));
+    if !asked {
+        ended(running, "before its worker's script was asked for");
     }
     // A second on, the shot still waits: a loaded machine only slows it, and it ends only once the
     // script is answered.
@@ -3736,22 +3741,24 @@ fn a_selector_that_never_appears_fails_within_the_timeout_naming_it_and_leaves_n
     .stderr(Stdio::piped())
     .spawn()
     .unwrap();
-    let asked = loop {
+    // The last look that found it not yet asked for, so never after the request, or none as the
+    // shot ended first: what it waited is timed from no later than its page's request.
+    let mut unasked = Instant::now();
+    let asked = test_time::until("the shot asks for its page", test_time::FLOOR, || {
+        let look = Instant::now();
         if site.requests().iter().any(|path| path == "/still.html") {
-            break Instant::now();
+            return Some(Some(unasked));
         }
-        if running.try_wait().unwrap().is_some() {
-            let output = running.wait_with_output().unwrap();
-            panic!(
-                "the shot ended before it asked for its page: {}",
-                said(&output)
-            );
-        }
-        #[expect(
-            clippy::disallowed_methods,
-            reason = "no-timed-waits baseline: a test looks again for its condition by hand, where test_time::wait::until is the helper"
-        )]
-        std::thread::sleep(Duration::from_millis(10));
+        unasked = look;
+        running.try_wait().unwrap().is_some().then_some(None)
+    })
+    .unwrap_or_else(|stall| panic!("{stall}"));
+    let Some(asked) = asked else {
+        let output = running.wait_with_output().unwrap();
+        panic!(
+            "the shot ended before it asked for its page: {}",
+            said(&output)
+        );
     };
     let output = running.wait_with_output().unwrap();
     let took = asked.elapsed();
@@ -3865,19 +3872,23 @@ fn two_shots_at_once_each_have_a_profile_and_a_port_of_their_own() {
             )
         })
         .collect();
-    let deadline = Instant::now() + Duration::from_secs(60);
-    let ports = loop {
-        let launched = launches(&records);
-        let ports: Vec<Option<String>> = launched
-            .iter()
-            .map(|(_, profile)| {
-                std::fs::read_to_string(profile.join("DevToolsActivePort"))
-                    .ok()
-                    .filter(|text| text.lines().count() == 2)
-                    .and_then(|text| text.lines().next().map(str::to_string))
-            })
-            .collect();
-        if launched.len() == 2 && ports.iter().all(Option::is_some) {
+    let ports = test_time::until(
+        "two browsers started, each with its DevTools port",
+        test_time::backstop(Duration::from_secs(60)),
+        || {
+            let launched = launches(&records);
+            let ports: Vec<Option<String>> = launched
+                .iter()
+                .map(|(_, profile)| {
+                    std::fs::read_to_string(profile.join("DevToolsActivePort"))
+                        .ok()
+                        .filter(|text| text.lines().count() == 2)
+                        .and_then(|text| text.lines().next().map(str::to_string))
+                })
+                .collect();
+            if launched.len() != 2 || ports.iter().any(Option::is_none) {
+                return None;
+            }
             // SAFETY: signal zero only asks whether each recorded browser is still running.
             let both = launched.iter().all(
                 |(pid, _)| unsafe { libc::kill(libc::pid_t::try_from(*pid).unwrap(), 0) } == 0,
@@ -3886,18 +3897,10 @@ fn two_shots_at_once_each_have_a_profile_and_a_port_of_their_own() {
                 both,
                 "the two browsers never ran at the same time: {launched:?}"
             );
-            break ports.into_iter().map(Option::unwrap).collect::<Vec<_>>();
-        }
-        assert!(
-            Instant::now() < deadline,
-            "two browsers never started: {launched:?}"
-        );
-        #[expect(
-            clippy::disallowed_methods,
-            reason = "no-timed-waits baseline: a test looks again for its condition by hand, where test_time::wait::until is the helper"
-        )]
-        std::thread::sleep(Duration::from_millis(50));
-    };
+            Some(ports.into_iter().map(Option::unwrap).collect::<Vec<_>>())
+        },
+    )
+    .unwrap_or_else(|stall| panic!("{stall}: {:?}", launches(&records)));
     let launched = launches(&records);
     assert_ne!(
         launched[0].1, launched[1].1,

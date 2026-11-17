@@ -81,6 +81,10 @@ fn a_land_waits_for_another_past_its_timeout_naming_it_and_lands_once_it_ends() 
                 .contains("waiting for the land of sim/fall (pid 4242) to finish")
         });
         // Past the land's timeout, which bounds its check and not its wait, it waits on.
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "no-timed-waits baseline: a test holds past the land's timeout to show the land still waits, where a clock the land reads is the event"
+        )]
         std::thread::sleep(Duration::from_millis(2500));
         assert!(!waiting.is_finished(), "it waits with no timeout");
         assert_eq!(head(&r.root, "main"), before);

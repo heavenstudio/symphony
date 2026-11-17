@@ -1,6 +1,7 @@
 //! The git common dir. A folder of its own per test, outside this repository (the build's own
 //! temporary folder is inside it).
 
+use crate::children::Child as _;
 use std::path::{Path, PathBuf};
 use symphony_board::git::{checkout, checkout_common_dir, common_dir, linked};
 use symphony_board::sys::Command;
@@ -36,7 +37,7 @@ impl Make for PathBuf {
 
 fn git(args: &[&str]) {
     let done = symphony_board::sys::output(
-        Command::new("git")
+        Command::of("git")
             .args(["-c", "user.email=t@t", "-c", "user.name=t"])
             .args(args),
     )

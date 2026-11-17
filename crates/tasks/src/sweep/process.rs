@@ -200,6 +200,7 @@ pub fn process_start(pid: i64, vars: &BTreeMap<String, String>) -> Option<String
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::children::Child as _;
     use crate::sys::Command;
 
     #[test]
@@ -304,7 +305,7 @@ mod tests {
     #[test]
     fn a_process_we_may_not_signal_is_alive_and_a_reaped_one_is_not() {
         assert!(pid_alive(1));
-        let mut child = Command::new("true").spawn().unwrap();
+        let mut child = Command::of("true").spawn().unwrap();
         let pid = i64::from(child.id());
         child.wait().unwrap();
         assert!(!pid_alive(pid));
@@ -328,7 +329,7 @@ mod tests {
         let elsewhere = process_start(me, &vars(&[("TZ", "America/Sao_Paulo")])).unwrap();
         assert_eq!(parse_start(&elsewhere), parse_start(&start));
         let utc = sys::output(
-            Command::new("ps")
+            Command::of("ps")
                 .args(["-o", "lstart=", "-p", &me.to_string()])
                 .env("LC_ALL", "C")
                 .env("TZ", "UTC"),

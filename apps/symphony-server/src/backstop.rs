@@ -349,6 +349,10 @@ mod tests {
     use std::time::{Duration, Instant};
 
     #[test]
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the backstop's own test, whose ticks the test's clock counts"
+    )]
     fn a_watcher_that_never_sends_still_gets_its_period_and_an_event_wakes_at_once() {
         // The period runs by the test's clock, moved on by a tick after each wait: what a wait
         // answers is that clock's, never how long a loaded machine took to let it.

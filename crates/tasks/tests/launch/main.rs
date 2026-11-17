@@ -1,10 +1,9 @@
 //! Agent launch lifecycle on private board and terminal fixtures: hc and the Herdr app are the
 //! crate's `fake-hc`.
 
-#![expect(
-    clippy::disallowed_methods,
-    reason = "a test starts its fixtures and stand-ins as it likes; the board's children are sys's"
-)]
+// How a test starts its own children ([`children::Child`]).
+#[path = "../support/children.rs"]
+mod children;
 
 #[path = "../store/common.rs"]
 #[allow(dead_code)]
@@ -31,6 +30,7 @@ mod review_resume;
 mod screen;
 mod thread;
 
+use crate::children::Child as _;
 use common::Fixture;
 use serde_json::{Map, Value, json};
 use std::cell::{Cell, RefCell};
@@ -76,7 +76,7 @@ impl Drop for Folder {
 /// `git ARGS` in `dir`, which must succeed: its output, trimmed.
 pub fn git(dir: &Path, args: &[&str]) -> String {
     let done = symphony_board::sys::output(
-        Command::new("git")
+        Command::of("git")
             .args(["-c", "user.email=t@t", "-c", "user.name=t", "-C"])
             .arg(dir)
             .args(args),

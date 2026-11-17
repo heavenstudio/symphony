@@ -1,6 +1,7 @@
 //! Exact recipient consequences on an isolated board, using real native envelopes.
 use super::callbacks::Listener;
 use super::common::Fixture;
+use crate::children::Child as _;
 use serde_json::json;
 use std::os::unix::fs::MetadataExt;
 use symphony_board::NewTask;
@@ -21,7 +22,7 @@ impl CommandDirectory {
             .and_then(|s| s.trim().parse::<u32>().ok());
         let _ = std::fs::remove_file(file);
         if let Some(pid) = pid.filter(|pid| *pid > 0) {
-            let _ = std::process::Command::new("/bin/kill")
+            let _ = std::process::Command::of("/bin/kill")
                 .args(["-TERM", &pid.to_string()])
                 .stdout(std::process::Stdio::null())
                 .stderr(std::process::Stdio::null())
@@ -67,14 +68,14 @@ fn a_stale_child_running_a_test_leaves_idle_callback_rows_unchanged() {
         std::fs::create_dir_all(&dir).unwrap();
         let _directory = CommandDirectory(dir.clone());
         assert!(
-            std::process::Command::new("git")
+            std::process::Command::of("git")
                 .args(["init", "-q"])
                 .arg(&dir)
                 .status_locked()
                 .unwrap()
                 .success()
         );
-        let output = sys::output(Command::new(std::env::current_exe().unwrap())
+        let output = sys::output(Command::of(std::env::current_exe().unwrap())
             .args([
                 "--exact",
                 "quiet_callbacks::a_stale_child_running_a_test_leaves_idle_callback_rows_unchanged",
@@ -616,7 +617,7 @@ fn due_ticks_probe_once_and_idle_cursor_changes_do_not_probe() {
         .unwrap();
     let dispatch = || {
         let output = sys::output(
-            Command::new(env!("CARGO_BIN_EXE_tasks"))
+            Command::of(env!("CARGO_BIN_EXE_tasks"))
                 .args([
                     "callback",
                     &format!("uds:{}", o.path.display()),
@@ -1263,7 +1264,7 @@ fn codex_steering_requires_opt_in_and_preserves_queue_and_retry_without_a_live_d
     let directory = CommandDirectory(dir.clone());
     let config = |args: &[&str]| {
         let output = sys::output(
-            Command::new("git")
+            Command::of("git")
                 .args(args)
                 .current_dir(&dir)
                 .env_remove("GIT_DIR")
@@ -1322,12 +1323,7 @@ done
     let path = format!("{}:{}", dir.display(), std::env::var("PATH").unwrap());
     // Initialize the prepared interpreter and the fixture's jq before the transport starts;
     // every delivery below still has the production deadline and exact argument assertions.
-    let ready = sys::output(
-        Command::new(&fake)
-            .arg("--fixture-ready")
-            .env("PATH", &path),
-    )
-    .unwrap();
+    let ready = sys::output(Command::of(&fake).arg("--fixture-ready").env("PATH", &path)).unwrap();
     assert!(ready.status.success(), "{ready:?}");
     assert_eq!(ready.stdout, b"\"ready\"\n");
     let command = |state: &str, args: &[&str]| {
@@ -1336,7 +1332,7 @@ done
         } else {
             (env!("CARGO_BIN_EXE_tasks"), args)
         };
-        let mut command = Command::new(binary);
+        let mut command = Command::of(binary);
         command
             .args(args)
             .current_dir(&dir)
@@ -1459,23 +1455,21 @@ done
     .stderr(sys::Stdio::null())
     .spawn()
     .unwrap();
-    let began = std::time::Instant::now();
-    let status = loop {
-        if let Some(status) = held.try_wait().unwrap() {
-            break status;
-        }
-        if began.elapsed() > std::time::Duration::from_secs(15) {
-            directory.stop_inherited_child();
-            let _ = held.kill();
-            let _ = held.wait();
-            panic!("delivery waited for a descendant to release proxy stdout");
-        }
-        std::thread::sleep(std::time::Duration::from_millis(10));
-    };
+    let status = test_time::until(
+        "delivery ends without waiting for a descendant to release proxy stdout",
+        test_time::backstop(std::time::Duration::from_secs(15)),
+        || held.try_wait().unwrap(),
+    )
+    .unwrap_or_else(|stall| {
+        directory.stop_inherited_child();
+        let _ = held.kill();
+        let _ = held.wait();
+        panic!("{stall}");
+    });
     assert!(status.success());
     let pid = std::fs::read_to_string(dir.join("held-child.pid")).unwrap();
     assert!(
-        std::process::Command::new("/bin/kill")
+        std::process::Command::of("/bin/kill")
             .args(["-0", pid.trim()])
             .status_locked()
             .unwrap()

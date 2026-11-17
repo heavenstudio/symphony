@@ -4,6 +4,7 @@
 //! differ only in case each keep their own, a schema-17 board's asks come through it and the next,
 //! and a rollback leaves no server on the store it moves aside.
 
+use crate::children::Child as _;
 use crate::common::{Scratch, exists, script};
 use serde_json::{Value, json};
 use std::path::Path;
@@ -226,7 +227,7 @@ fn served_from(s: &Scratch, kept: &Path, storage: Storage) -> Home {
     let dir = s.dir.join("recovered");
     std::fs::create_dir_all(&dir).unwrap();
     let cloned = symphony_board::sys::output(
-        symphony_board::sys::Command::new("cp")
+        symphony_board::sys::Command::of("cp")
             .args(["-c", "-R"])
             .arg(kept)
             .arg(dir.join("data")),
@@ -664,7 +665,7 @@ fn tasks_reclaim_in_a_repository_rebuilds_the_board_in_its_common_dir() {
     let s = Scratch::new("reclaim-repository");
     let repo = s.dir.join("repo");
     let made = symphony_board::sys::output(
-        symphony_board::sys::Command::new("git")
+        symphony_board::sys::Command::of("git")
             .args(["init", "-q"])
             .arg(&repo),
     )

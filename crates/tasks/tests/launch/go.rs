@@ -1,6 +1,7 @@
 //! Going to a launched agent's session through the fake hc: the Herdr app shows its pane, or its
 //! screen is read, and nothing is ever typed into it.
 
+use crate::children::Child as _;
 use crate::{Folder, World};
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
@@ -265,7 +266,7 @@ fn a_caller_killed_through_its_group_takes_its_hung_call_with_it() {
     }
     let folder = Folder::new();
     hung(&folder);
-    let mut caller = Command::new(std::env::current_exe().unwrap())
+    let mut caller = Command::of(std::env::current_exe().unwrap())
         .args([
             "--exact",
             "go::a_caller_killed_through_its_group_takes_its_hung_call_with_it",

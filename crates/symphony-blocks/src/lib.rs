@@ -8,6 +8,8 @@
 //!
 //! The kit is `symphony-plugin`, this crate and `symphony-docs`, one version for the three
 //! (`symphony_plugin`'s doc says what each holds); this crate depends on no other workspace crate.
+//! `symphony_plugin::vocabulary` re-exports it whole, so everything public here is the kit's
+//! public vocabulary, and a type made public here is a published addition.
 //! The app's own wire types, which move with the server and the client, are `symphony-api`'s, which
 //! re-exports these under the same names.
 //!

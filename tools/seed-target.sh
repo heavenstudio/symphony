@@ -113,9 +113,11 @@ finish() {
         wait "$job" 2>/dev/null
         # The rest of its group, the lock tool and the copy, can outlive the job's shell: it is
         # ended outright and waited for, so the staging never goes under a copy still writing it.
-        while kill -KILL -- "-$job" 2>/dev/null; do
-            sleep 0.1
-        done
+        # Each member holds the write end of the job's FIFO (`under_lock`), so the read end's end
+        # of file is the last of them gone.
+        kill -KILL -- "-$job" 2>/dev/null
+        read -r <&6
+        exec 6<&-
         job=""
     fi
     if [ -n "$staged" ]; then
@@ -144,18 +146,27 @@ done
 # puts the job in its group from both sides of the fork; the two calls race, macOS at times refuses
 # one though the other has made the group, and bash says so for the job's own call (`child setpgid
 # (PID to PID): Operation not permitted`) before the job's own redirection: so the job is forked
-# with stderr at /dev/null already.
+# with stderr at /dev/null already. The job is forked holding a FIFO open to read and write (5),
+# which every member of its group inherits; this run then keeps the read end alone (6), whose end of
+# file says that every member has gone, which is what `finish` waits for. Opened both ways first,
+# neither open waits for the other side.
 under_lock() {
+    local held="$staged/tool/held"
+    rm -f "$held"
+    mkfifo "$held" || return 1
     starting=1
+    exec 5<>"$held"
     set -m
     { locked "$wait" "$source/.cargo-lock" "$@" & } 2>/dev/null
     job=$!
     set +m
+    exec 6<"$held" 5<&-
     starting=""
     [ -z "$pending" ] || ended "$pending"
     wait "$job"
     local status=$?
     job=""
+    exec 6<&-
     return "$status"
 }
 

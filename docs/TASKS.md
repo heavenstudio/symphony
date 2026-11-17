@@ -747,7 +747,27 @@ an orchestrator holds](#the-limit-on-the-tasks-an-orchestrator-holds)). Counting
 the tick already read and adds no request; a
 record written before any board read, or by a build older than the count, has none and says none. The owner's word on each of those tasks reaches
 every orchestrator ([Talking on a task](#talking-on-a-task)) until the board gives it one. The
-server's own notice and the project picker do not warn of it.
+server's own notice and the project picker do not warn of it; the picker says only that work
+waiting to start has no live orchestrator (below).
+
+**On the project picker.** The machine's project picker (`/`) draws a dot before each project's
+name, its board's worst signal, and, only while the dot is not green, one line under its counts in
+the dot's colour saying why; `/api/projects` sends that line as the project's `unwell`. One
+function judges both (`Hub::standing`, `apps/symphony-server/src/live/health.rs`), from the
+server's memory alone: drawing it reads no board. Red is every page's notice above, in its words
+and alone: a dispatch or sweep failing, a board that went back, one replaying its log. Amber is a
+board slow over the last hour, its writes at a p90 of a second or more (`SLOW_MS`, the record's
+slow request) or any request unanswered in it, said with the figures that say so, `Board slow
+(writes 3 s, 48 unanswered this hour)`, the p90 to the nearest whole second; or work waiting to
+start (the listing's `unstarted`: ready tasks no executor that is there holds, nothing open before
+them) while no orchestrator of an open task is live, by the board's one rule for a session that is
+there: `orchestrator stale` while one is stale or its presence not yet swept, `no orchestrator`
+when none is. Both are one line, joined by ` · `. Every other board is green, one with no task
+board among them; a project refused, or whose server state is not up yet, has no dot. Its counts
+say what they count: `N decision cards waiting on you`, the owner's cards, then in bold `N blocked,
+M of them waiting on your decision`: the tasks, not their subtasks, blocked on the wire, a block
+that names nothing never among them, and those of them that wait on a decision of the owner's
+([What a task waits on](#what-a-task-waits-on)).
 
 **Its hours.** The machine's one server also appends each hour of it, as the hour ends, as one
 line (a `symphony_api::HealthHour`) to the day file of the hour's UTC day in `symphony/health/` in
