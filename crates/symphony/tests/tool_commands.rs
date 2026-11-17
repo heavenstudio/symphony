@@ -8,7 +8,7 @@ use std::path::Path;
 
 use common::{Tree, cli};
 use serde_json::{Value, json};
-use symphony_board::sys::{Command, Stdio, output, wait_output};
+use symphony_board::sys::{Stdio, git as git_command, output, wait_output};
 
 const PAGE: &str = "# Cards\n\n- [ ] **pick** — Choose a shape.\n";
 
@@ -27,7 +27,7 @@ fn answer(tree: &Tree, command: &str, args: &[&str]) -> Value {
 }
 
 fn git(root: &Path, args: &[&str]) -> String {
-    let done = output(Command::new("git").args(args).current_dir(root)).unwrap();
+    let done = output(git_command().args(args).current_dir(root)).unwrap();
     assert!(done.status.success(), "{args:?}: {done:?}");
     String::from_utf8(done.stdout).unwrap().trim().into()
 }
@@ -175,6 +175,23 @@ fn render_card_refuses_broken_settings_or_an_unavailable_plugin() {
         assert_eq!((code, out.as_str()), (1, ""));
         assert!(err.contains("symphony.toml"), "{err}");
     }
+}
+
+#[test]
+fn unreadable_document_text_and_a_missing_checkout_fail_without_success_json() {
+    let tree = Tree::new();
+    let page = tree.write("docs/CARDS.md", PAGE);
+    fs::write(page, b"not UTF-8: \xff").unwrap();
+    let (code, out, err) = call(&tree, "render-card", &["docs/CARDS.md", "pick"]);
+    assert_eq!((code, out.as_str()), (1, ""));
+    assert!(err.contains("symphony render-card:"), "{err}");
+
+    let missing = Tree {
+        root: tree.path("missing"),
+    };
+    let (code, out, err) = call(&missing, "landing-checks", &["main"]);
+    assert_eq!((code, out.as_str()), (1, ""));
+    assert!(err.contains("symphony landing-checks:"), "{err}");
 }
 
 #[test]
@@ -399,7 +416,7 @@ fn landing_keeps_renamed_paths_exact_and_rejects_non_utf8_names() {
     bytes.extend_from_slice(b"invalid-\xff\0");
     fs::write(tree.path(".git/tree-input"), bytes).unwrap();
     let made = wait_output(
-        Command::new("git")
+        git_command()
             .args(["mktree", "-z"])
             .current_dir(&tree.root)
             .stdin(fs::File::open(tree.path(".git/tree-input")).unwrap())
@@ -412,7 +429,7 @@ fn landing_keeps_renamed_paths_exact_and_rejects_non_utf8_names() {
     assert!(made.status.success(), "{made:?}");
     let object = String::from_utf8(made.stdout).unwrap();
     let shown = output(
-        Command::new("git")
+        git_command()
             .args(["ls-tree", "-z", object.trim()])
             .current_dir(&tree.root),
     )
