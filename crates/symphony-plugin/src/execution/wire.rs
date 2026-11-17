@@ -21,12 +21,9 @@ pub const VERSION: Version = Version::new(1, 0);
 
 /// Negotiate a common execution minor, refusing incompatible majors before any operation.
 pub fn negotiate(peer: Version) -> Result<Version, String> {
-    if peer.major != VERSION.major {
-        return Err(format!(
-            "execution contract {peer} is incompatible with {VERSION}"
-        ));
-    }
-    Ok(Version::new(VERSION.major, peer.minor.min(VERSION.minor)))
+    VERSION
+        .agreed(peer)
+        .map_err(|_| format!("execution contract {peer} is incompatible with {VERSION}"))
 }
 
 /// One bounded authenticated host request. An agent's input manifest is never this envelope.

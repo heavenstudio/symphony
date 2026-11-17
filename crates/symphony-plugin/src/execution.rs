@@ -181,15 +181,14 @@ fn validate(profile: &Profile, auth: &Authorization, call: &Call) -> Result<(), 
         return Err(Rejection::Scope);
     }
     match &call.request {
-        Request::Start { input } | Request::Resume { input, .. } => {
+        Request::Start { input } | Request::Resume { input, .. }
             if input.digest != id.input_digest
                 || input.task_revision.is_empty()
                 || input.repository_revision.is_empty()
                 || input.manifest.reference.is_empty()
-                || input.manifest.digest.is_empty()
-            {
-                return Err(Rejection::Input);
-            }
+                || input.manifest.digest.is_empty() =>
+        {
+            return Err(Rejection::Input);
         }
         _ => {}
     }

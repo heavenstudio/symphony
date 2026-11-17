@@ -22,21 +22,22 @@ impl Fixture {
             1,
         )
         .with_epochs(7, 3);
-        let mut capabilities = Capabilities::default();
-        capabilities.operations = vec![
-            Operation::Start,
-            Operation::Reconcile,
-            Operation::Observe,
-            Operation::Cancel,
-            Operation::Stop,
-            Operation::Resume,
-            Operation::ExternalLink,
-        ];
-        capabilities.stop_modes = vec![StopMode::Pause, StopMode::Terminate, StopMode::HardStop];
-        capabilities.resume_modes =
-            vec![ResumeMode::NewResource, ResumeMode::ReuseWithNewGeneration];
-        capabilities.idempotency_retention_ms = Some(60_000);
-        capabilities.external_view = true;
+        let capabilities = Capabilities {
+            operations: vec![
+                Operation::Start,
+                Operation::Reconcile,
+                Operation::Observe,
+                Operation::Cancel,
+                Operation::Stop,
+                Operation::Resume,
+                Operation::ExternalLink,
+            ],
+            stop_modes: vec![StopMode::Pause, StopMode::Terminate, StopMode::HardStop],
+            resume_modes: vec![ResumeMode::NewResource, ResumeMode::ReuseWithNewGeneration],
+            idempotency_retention_ms: Some(60_000),
+            external_view: true,
+            ..Capabilities::default()
+        };
         let input = Input::new(
             "revision-1".into(),
             identity.input_digest.clone(),
