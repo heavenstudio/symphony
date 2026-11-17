@@ -33,12 +33,19 @@ card pictures, including those of past decisions, are committed beside their doc
 evidence may stay outside Git. The cancelled reference-index task is not an implemented durable
 reference ledger. This proposal changes neither current retention nor existing documents.
 
-The reporting brief names downstream artifact source at commit
-`61f5ab6c50504a0d97552d19e4796d3ea20c7cc3`: `maestro-api/src/routes/artifacts.rs` and
-`maestro-api-artifacts/src/shared_artifact_copy_store.rs`. Its stated live-pod GET and mutable,
-link-lifetime shared-copy behavior are source leads, pending direct verification here. Neither
-would be a sufficient immutable evidence contract. No platform bucket, paid resource or hosted
-team URL is selected by this design.
+Downstream source copies supplied by the reporter were also inspected: the
+[session artifact routes](https://github.com/toptal/maestro/blob/61f5ab6c50504a0d97552d19e4796d3ea20c7cc3/maestro-api/src/routes/artifacts.rs)
+authorize ownership and execute stat/read operations in the session pod; the
+[shared-copy store](https://github.com/toptal/maestro/blob/61f5ab6c50504a0d97552d19e4796d3ea20c7cc3/maestro-api-artifacts/src/shared_artifact_copy_store.rs)
+keys put/get/delete by link ID, without an immutable-generation argument. These are different
+read paths: a saved copy need not require a live pod. Neither interface alone establishes the
+immutable project evidence contract below. The reporter attributes both copies to commit
+`61f5ab6c50504a0d97552d19e4796d3ea20c7cc3`; their SHA-256 values are respectively
+`9167eee274e8e0ec14c4a50c73acc02c8df2aeb63cc44a4b00609068310bc3d6` and
+`6d99585a3b82d474ed7dc347e15a0ed1abdfdcd67f8c98b58019eabbfe0a8e20`.
+That commit is absent from the local repositories located here, so its provenance has not been
+independently refetched. Share-lifetime purge behavior is reported by the brief, not proved by
+these two files alone. No platform bucket, paid resource or hosted team URL is selected here.
 
 ## Smallest boundary
 
@@ -140,9 +147,17 @@ deduplication is unnecessary for this boundary and must not leak existence or sk
 Coordinate with board task `tools/remote-execution-attempts`: an execution attempt owns dispatch,
 lease renewal, cancellation, result fencing and restore execution epoch. Storage owns byte
 durability and its publication prerequisites. The authoritative accepted-result transaction joins
-them using project/task identity, immutable attempt UUID, execution epoch, lease fence and expected
-state revision. A storage callback cannot mark the task done, land a branch or advance its phase.
-Runtime conversation IDs and provider resource IDs remain separate from artifact IDs.
+them using project/board/task identity, immutable attempt UUID, role/handle and exact task-input
+revision/digest and repository/commit (or retained manifest). It checks the current active-attempt
+pointer, provider configuration/resource generation, runtime execution epoch, keyed operation,
+expected attempt-state revision and the accepting coordinator's unexpired database-clock worker
+lease epoch. Worker takeover changes the worker lease, not the runtime identity. Restore, resume
+or replacement fences the runtime identity and credentials independently. Task/workflow admission
+also checks its own current state revision and policy; successful storage grants no stamp. This
+join was confirmed on the execution task's thread against design commit
+`fa785271f662d85b68345aba74d3f8981ad7afde`; it is not a released API. A storage callback cannot
+mark the task done, land a branch or advance its phase. Runtime conversation IDs and provider
+resource IDs remain separate from artifact IDs.
 
 Files produced before failure are collected only through an authorized, fenced collection path.
 They may document an unsuccessful attempt, without satisfying successful-delivery stamps. Stop
