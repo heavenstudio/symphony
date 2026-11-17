@@ -495,6 +495,43 @@ fn a_skill_a_rule_and_a_setting_are_a_mark_each_at_their_hour_and_another_file_i
 }
 
 #[test]
+fn a_skill_is_a_file_where_skills_are_installed_or_shipped_and_a_code_folder_named_skills_is_none()
+{
+    let tree = repository();
+    commit(
+        &tree,
+        4.0,
+        "code: the skills module",
+        &[
+            ("src/skills/x/mod.rs", "// code\n"),
+            ("skills/triage/SKILL.md", "# triage\n"),
+        ],
+    );
+    commit(
+        &tree,
+        5.0,
+        "a package's own Claude skill",
+        &[("apps/web/.claude/skills/review/SKILL.md", "# review\n")],
+    );
+    commit(
+        &tree,
+        6.0,
+        "a skill shipped at the root",
+        &[("shipped/skills/tasks/SKILL.md", "# tasks\n")],
+    );
+    assert_eq!(
+        marks(&tree, midnight()),
+        [
+            (6.0, "a skill shipped at the root", "skill tasks"),
+            (5.0, "a package's own Claude skill", "skill review"),
+        ]
+        .map(|(at, subject, changed)| (at, subject.to_string(), changed.to_string())),
+        "a skill installed or shipped under any folder is a mark, and code in a folder named \
+         `skills` none"
+    );
+}
+
+#[test]
 fn a_landing_is_one_mark_naming_each_thing_its_branch_changed_once() {
     let tree = repository();
     // A branch changes two files of one skill, its shipped copy, a second skill, both guides at
@@ -572,11 +609,24 @@ fn the_instructions_are_the_settings_the_rules_and_each_skill_s_files_and_no_gui
             "crates/app/shipped/skills/tasks/start.md",
             Some("skill tasks"),
         ),
-        ("skills/triage/SKILL.md", Some("skill triage")),
+        // Installed or shipped under any folder, and a skill's folder found past a code folder.
+        ("apps/web/.claude/skills/review/SKILL.md", Some("skill review")),
+        ("apps/web/.agents/skills/work/SKILL.md", Some("skill work")),
+        ("shipped/skills/tasks/SKILL.md", Some("skill tasks")),
+        ("src/skills/x/.agents/skills/work/SKILL.md", Some("skill work")),
         // Whatever a skill's folder holds is the skill's.
         (".agents/skills/work/AGENTS.md", Some("skill work")),
+        // A project's own folder named `skills` is no place skills are installed or shipped, at
+        // the root or under one, and neither is one beside a folder named like those places.
+        ("src/skills/x/mod.rs", None),
+        ("skills/triage/SKILL.md", None),
+        ("crates/app/skills/tasks/start.md", None),
+        ("agents/skills/work/SKILL.md", None),
+        (".claude/skill/work/SKILL.md", None),
+        ("shipped/x/skills/tasks/SKILL.md", None),
         // No file of a skill: the folder's own files and links.
         (".claude/skills/work", None),
+        (".agents/skills/README.md", None),
         ("skills", None),
         ("docs/skills.md", None),
         // The settings and the rules are the root's alone, and a name is matched whole.
