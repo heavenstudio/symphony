@@ -349,11 +349,12 @@ impl WaitBudget {
     /// Why the backstop ended the wait, with the page's part in its turns.
     fn stall(&self) -> String {
         let took = self.started.elapsed();
+        let load = load_said(load_average());
         match &self.page {
             Some(page) => format!(
                 "the page under test stalled: its renderer took part in {} of {} observer turns \
                  and in none for the last {:?}, and the wait's wall-clock backstop of {:?} ran \
-                 out after {took:?} and {:?} CPU",
+                 out after {took:?} and {:?} CPU; {load}",
                 self.polls,
                 self.polls + page.passed,
                 page.last.elapsed(),
@@ -362,7 +363,7 @@ impl WaitBudget {
             ),
             None => format!(
                 "the browser stalled: the wait's wall-clock backstop of {:?} ran out after \
-                 {took:?}, {}",
+                 {took:?}, {}; {load}",
                 self.backstop(),
                 self.spent()
             ),

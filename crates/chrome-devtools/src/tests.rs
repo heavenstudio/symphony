@@ -159,17 +159,22 @@ fn the_backstop_is_six_times_the_allowance_never_under_its_floor_and_ends_the_wa
     let mut browser = WaitBudget::new(Duration::from_millis(100), &[]).floor(Duration::ZERO);
     browser.started -= Duration::from_millis(600);
     assert!(browser.exhausted(&[]));
+    let browser_stall = browser.stall();
     assert!(
-        browser
-            .stall()
-            .starts_with("the browser stalled: the wait's wall-clock backstop of 600ms"),
-        "{}",
-        browser.stall()
+        browser_stall.starts_with("the browser stalled: the wait's wall-clock backstop of 600ms"),
+        "{browser_stall}"
     );
+    for said in [&stall, &browser_stall] {
+        assert!(said.contains("; load average "), "{said}");
+        assert!(said.ends_with(" over 1, 5 and 15 minutes"), "{said}");
+    }
     assert!(
-        browser
-            .stall()
-            .ends_with("0 completed observer polls and 0ns CPU")
+        browser_stall
+            .split_once("; ")
+            .unwrap()
+            .0
+            .ends_with("0 completed observer polls and 0ns CPU"),
+        "{browser_stall}"
     );
 }
 
