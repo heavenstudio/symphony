@@ -155,7 +155,15 @@ impl Store {
 
     /// The sessions launched for `slug`, by when they started.
     pub fn task_sessions(&self, slug: &str) -> Result<Vec<TaskSessionRow>, Error> {
-        self.task_sessions_where(&sql::sessions_of_task(), json!({"slug": slug}))
+        self.retrying(|| {
+            self.transact(
+                super::statement::both(
+                    sql::sessions_of_task(),
+                    super::postgres::launches::sessions_of_task(),
+                ),
+                json!({"slug": slug}),
+            )
+        })
     }
 
     /// The tasks `handle` was launched for, by when it started on each.

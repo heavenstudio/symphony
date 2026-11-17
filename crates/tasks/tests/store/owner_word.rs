@@ -5,7 +5,8 @@
 //! Its cancel tells the executor the task moves no further. A task an orchestrator files is its
 //! own.
 
-use super::common::Fixture;
+// Callback collection and channel cases stay on SurrealDB until delivery/session writes are paired.
+use super::common::{Backend, Fixture, Seed};
 use super::quiet_callbacks::listen;
 use symphony_board::cli::Env;
 use symphony_board::health::{LIVE_SECONDS, STALE_SECONDS};
@@ -246,9 +247,9 @@ fn the_owners_cancel_of_an_orchestrated_task_is_said_to_those_on_it_and_no_other
     assert!(inbox(&f, &theirs).is_empty());
 }
 
-#[test]
-fn an_inbox_reads_the_owners_move_as_one_and_an_agents_move_not_at_all() {
-    let f = Fixture::empty();
+on_both! {
+fn an_inbox_reads_the_owners_move_as_one_and_an_agents_move_not_at_all(backend: Backend) {
+    let f = Fixture::on(backend, Seed::default());
     let (orch, exe) = (f.session("orchestrator"), f.session("worker"));
     f.task("tools/loose");
     f.task("tools/agents");
@@ -267,6 +268,8 @@ fn an_inbox_reads_the_owners_move_as_one_and_an_agents_move_not_at_all() {
         .collect();
     f.store.ack(&exe, &ids).unwrap();
     assert!(inbox(&f, &exe).is_empty());
+
+}
 }
 
 #[test]
@@ -289,9 +292,9 @@ fn a_channel_carries_the_owners_word_on_a_task_nobody_orchestrates() {
     );
 }
 
-#[test]
-fn a_task_an_orchestrator_files_is_its_own_unless_filed_under_one_held() {
-    let f = Fixture::empty();
+on_both! {
+fn a_task_an_orchestrator_files_is_its_own_unless_filed_under_one_held(backend: Backend) {
+    let f = Fixture::on(backend, Seed::default());
     let (orch, other, worker) = (
         f.session("orchestrator"),
         f.session("orchestrator"),
@@ -328,6 +331,8 @@ fn a_task_an_orchestrator_files_is_its_own_unless_filed_under_one_held() {
     // A filer the board has no session of takes none, and the task stays filed.
     assert!(!f.store.orchestrate_filed("tools/owners", "nobody").unwrap());
     assert_eq!(holders("tools/owners"), 0);
+
+}
 }
 
 #[test]

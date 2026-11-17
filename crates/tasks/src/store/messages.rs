@@ -1,7 +1,8 @@
 //! Threads: saying, inboxes and acknowledging them, what reaches the owner, each sender's last word,
 //! and landings on the record.
 
-use super::statement::Statement;
+use super::postgres::messages as pg;
+use super::statement::both;
 use super::surreal::messages as sql;
 use super::work::{OWNER, ROLES, Tree, above, no_task};
 use super::{
@@ -208,10 +209,7 @@ impl Store {
         };
         let (task_about, task_words) = super::asks::on_thread_vars(slug, text);
         let shape = keyed.map(|(_, adopt)| adopt);
-        let body = || Statement {
-            surreal: sql::post(poster, shape).into(),
-            postgres: super::postgres::messages::post(poster, shape),
-        };
+        let body = || both(sql::post(poster, shape), pg::post(poster, shape));
         let now = (self.clock)();
         let key = keyed.map(|(key, _)| key);
         let vars = self.acting(
@@ -310,12 +308,12 @@ impl Store {
             gone.push("no session holds the role".into());
         }
         let text = format!("{what} reaches no live executor: {}", gone.join("; "));
-        let body = sql::unread(key.is_some());
+        let body = || both(sql::unread(key.is_some()), pg::unread(key.is_some()));
         let vars = json!({
             "slug": slug, "sender": BOARD, "text": text, "to": "@orchestrator", "key": key,
             "said": format!("{what} reaches no live executor"), "now": (self.clock)(),
         });
-        self.retrying(|| self.transact::<Value>(&body, vars.clone()))
+        self.retrying(|| self.transact::<Value>(body(), vars.clone()))
             .map(|_| ())
     }
 
@@ -355,7 +353,8 @@ impl Store {
         let mut vars =
             json!({"handle": handle, "delivered": DELIVERED, "since":since, "pool": pool});
         native_bounds(&mut vars);
-        let read: Read = self.retrying(|| self.transact(&sql::INBOX, vars.clone()))?;
+        let read: Read =
+            self.retrying(|| self.transact(both(sql::INBOX.as_str(), pg::inbox()), vars.clone()))?;
         if !read.known {
             return Err(refused(format!("no session {}", repr(handle))));
         }
@@ -444,16 +443,17 @@ impl Store {
 
     /// `handle` has read messages `ids`: they leave its inbox.
     pub fn ack(&self, handle: &str, ids: &[i64]) -> Result<(), Error> {
-        let body = sql::ack();
+        let body = || both(sql::ack(), pg::ack());
         let vars = self.acting(handle, (self.clock)(), json!({"ids": ids}));
-        self.retrying(|| self.transact::<Value>(&body, vars.clone()))
+        self.retrying(|| self.transact::<Value>(body(), vars.clone()))
             .map(|_| ())
     }
 
     /// The newest messages to the owner, newest first.
     pub fn to_owner(&self, limit: usize) -> Result<Vec<Message>, Error> {
-        let rows: Vec<MessageRow> =
-            self.retrying(|| self.transact(sql::TO_OWNER, json!({"limit": limit})))?;
+        let rows: Vec<MessageRow> = self.retrying(|| {
+            self.transact(both(sql::TO_OWNER, pg::to_owner()), json!({"limit": limit}))
+        })?;
         Ok(rows.into_iter().map(message).collect())
     }
 
@@ -468,7 +468,7 @@ impl Store {
         }
         let rows: Vec<MessageRow> = self.retrying(|| {
             self.transact(
-                sql::QUESTIONS_WAITING,
+                both(sql::QUESTIONS_WAITING, pg::questions_waiting()),
                 json!({"person": person, "open": open}),
             )
         })?;
@@ -479,8 +479,9 @@ impl Store {
     /// It reads the lines from the newest back to that verdict, every line of a board with none, so
     /// a reader reads it once and follows the lines after it ([`Store::messages_after`]).
     pub fn newest_verdict(&self) -> Result<Option<Message>, Error> {
-        let rows: Vec<MessageRow> =
-            self.retrying(|| self.transact(sql::NEWEST_VERDICT, json!({})))?;
+        let rows: Vec<MessageRow> = self.retrying(|| {
+            self.transact(both(sql::NEWEST_VERDICT, pg::newest_verdict()), json!({}))
+        })?;
         Ok(rows.into_iter().next().map(message))
     }
 
@@ -489,7 +490,7 @@ impl Store {
     pub fn messages_after(&self, since: i64, through: i64) -> Result<Vec<Message>, Error> {
         let rows: Vec<MessageRow> = self.retrying(|| {
             self.transact(
-                sql::MESSAGES_AFTER,
+                both(sql::MESSAGES_AFTER, pg::messages_after()),
                 json!({"since": since, "through": through}),
             )
         })?;
@@ -500,8 +501,8 @@ impl Store {
     /// board's own record lines are not its words). `said` names each one ([`crate::schema`]), so
     /// this reads one message a sender, not every message.
     pub fn last_messages(&self) -> Result<BTreeMap<String, Message>, Error> {
-        let rows: Vec<MessageRow> =
-            self.retrying(|| self.transact(sql::LAST_MESSAGES, json!({})))?;
+        let rows: Vec<MessageRow> = self
+            .retrying(|| self.transact(both(sql::LAST_MESSAGES, pg::last_messages()), json!({})))?;
         Ok(rows
             .into_iter()
             .map(|row| (row.sender.clone(), message(row)))
@@ -521,8 +522,12 @@ impl Store {
     /// after it voids it). An older landing on the thread has every change after the newest after it
     /// too, so the newest alone decides.
     pub fn landings_posted(&self) -> Result<BTreeSet<String>, Error> {
-        let slugs: Vec<String> =
-            self.retrying(|| self.transact(sql::LANDINGS_POSTED, json!({"delivered": DELIVERED})))?;
+        let slugs: Vec<String> = self.retrying(|| {
+            self.transact(
+                both(sql::LANDINGS_POSTED, pg::landings_posted()),
+                json!({"delivered": DELIVERED}),
+            )
+        })?;
         Ok(slugs.into_iter().collect())
     }
 }
@@ -623,5 +628,56 @@ mod tests {
             heard(said(OWNER, "msg", "stop"), Some(&mark)).text,
             "[unowned: no live orchestrator holds it: amber (unknown)] stop"
         );
+    }
+    #[test]
+    fn pooled_inbox_and_cursor_read_the_same_unacknowledged_suffix() {
+        use crate::store_fixture::{Backend, Fixture, Seed};
+        for backend in [Backend::SurrealDb, Backend::PostgreSql] {
+            let f = Fixture::on(backend, Seed::default());
+            let worker = f.session("worker");
+            f.task("work");
+            f.store.claim("work", &worker).unwrap();
+            let first = f
+                .store
+                .say("work", "owner", "first", Some(&worker))
+                .unwrap();
+            let acked = f
+                .store
+                .say("work", "owner", "acked", Some(&worker))
+                .unwrap();
+            let last = f.store.say("work", "owner", "last", Some(&worker)).unwrap();
+            f.store.ack(&worker, &[acked.id]).unwrap();
+            let rows = f.store.messages_after(first.id, last.id).unwrap();
+            assert_eq!(
+                rows.iter().map(|m| m.id).collect::<Vec<_>>(),
+                [acked.id, last.id]
+            );
+            let pool: Vec<Value> = rows
+                .iter()
+                .map(|m| {
+                    json!({"sid":m.id,"slug":m.slug,
+                "sender":m.sender,"recipient":m.recipient,"kind":m.kind,"ts":m.ts})
+                })
+                .collect();
+            let direct = f.store.inbox_read(&worker, Some(first.id), None).unwrap();
+            let pooled = f
+                .store
+                .inbox_read(&worker, Some(first.id), Some(json!(pool)))
+                .unwrap();
+            assert_eq!(direct, [last]);
+            assert_eq!(pooled, direct);
+            assert!(
+                f.store
+                    .inbox_read(&worker, Some(0), Some(json!([])))
+                    .unwrap()
+                    .is_empty()
+            );
+            assert!(
+                f.store
+                    .messages_after(first.id, first.id)
+                    .unwrap()
+                    .is_empty()
+            );
+        }
     }
 }

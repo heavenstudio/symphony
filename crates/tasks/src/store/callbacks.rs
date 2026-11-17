@@ -662,7 +662,15 @@ impl Store {
         vars["key"] = key.into();
         vars["text"] = text.into();
         vars["asking"] = ask.is_some().into();
-        self.retrying(|| self.transact::<Value>(&super::surreal::asks::OWNER_SAVE, vars.clone()))?;
+        self.retrying(|| {
+            self.transact::<Value>(
+                super::statement::both(
+                    super::surreal::asks::OWNER_SAVE.as_str(),
+                    super::postgres::asks::owner_save(),
+                ),
+                vars.clone(),
+            )
+        })?;
         self.dispatch_or_hand_off()
     }
 

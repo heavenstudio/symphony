@@ -2,6 +2,8 @@
 //! task open now, every one written since the window opened and every one with a line since then,
 //! top-level and subtasks alike, each with its thread's lines, in one round trip.
 
+use super::postgres::report_lines as pg;
+use super::statement::both;
 use super::surreal::report_lines as sql;
 use super::{Error, Store};
 use crate::stages::Line;
@@ -41,7 +43,8 @@ impl Store {
     /// Every task open now, every one written at or after `since` and every one with a line at or
     /// after `since`, each with its thread: one round trip, writing nothing.
     pub fn report_records(&self, since: f64) -> Result<ReportRead, Error> {
-        let answer: Value = self.retrying(|| self.transact(sql::READ, json!({"since": since})))?;
+        let answer: Value =
+            self.retrying(|| self.transact(both(sql::READ, pg::read()), json!({"since": since})))?;
         taken_apart(&answer)
             .ok_or_else(|| Error::Db("the reports' read is not in the board's shape".into()))
     }

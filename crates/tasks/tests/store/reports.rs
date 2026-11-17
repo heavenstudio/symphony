@@ -5,7 +5,7 @@
 //! the day file from that read, on the scratch board the store itself wrote through its commands
 //! ([`crate::common::report_board`]).
 
-use crate::common::{Fixture, NOW, report_board as board};
+use crate::common::{Backend, Fixture, NOW, Seed, report_board as board, report_board_on};
 use symphony_board::NewTask;
 use symphony_board::board_health::queries_of;
 use symphony_board::reports::{DAY, HOUR, day, day_start};
@@ -16,6 +16,7 @@ fn midnight() -> f64 {
     day_start(NOW)
 }
 
+// SurrealDB query telemetry is engine-specific; the same report history is checked on both below.
 #[test]
 fn one_request_reads_every_open_task_and_every_one_written_since_and_writes_nothing() {
     let f = board();
@@ -75,9 +76,9 @@ fn one_request_reads_every_open_task_and_every_one_written_since_and_writes_noth
     );
 }
 
-#[test]
-fn a_task_approved_before_the_window_and_landed_in_it_is_read_and_its_landing_counted() {
-    let f = Fixture::empty();
+on_both! {
+fn a_task_approved_before_the_window_and_landed_in_it_is_read_and_its_landing_counted(backend: Backend) {
+    let f = Fixture::on(backend, Seed::default());
     f.at_hour(-3.0);
     let orch = f.session("orchestrator");
     let exe = f.session("worker");
@@ -130,14 +131,16 @@ fn a_task_approved_before_the_window_and_landed_in_it_is_read_and_its_landing_co
         .map(|w| (w.slug.as_str(), w.seconds / HOUR))
         .collect();
     assert_eq!(waited, [("sim/late", 0.75)]);
+
+}
 }
 
+on_both! {
 /// A red's filer names the commits it came between in its body, and the read takes them back to
 /// the red's day file; a red that names none, and a task not marked red whose body names some,
 /// read none.
-#[test]
-fn a_red_s_body_names_the_commits_it_came_between_and_the_read_takes_them_to_its_day_file() {
-    let f = Fixture::empty();
+fn a_red_s_body_names_the_commits_it_came_between_and_the_read_takes_them_to_its_day_file(backend: Backend) {
+    let f = Fixture::on(backend, Seed::default());
     f.at_hour(1.0);
     let filer = f.session("filer");
     let orch = f.session("orchestrator");
@@ -189,11 +192,13 @@ fn a_red_s_body_names_the_commits_it_came_between_and_the_read_takes_them_to_its
         day.reds.iter().all(|red| red.landed.is_none()),
         "the landings in a range are the roll-up's to read from git"
     );
+
+}
 }
 
-#[test]
-fn the_day_file_of_the_board_counts_its_bounces_reds_verdicts_landings_and_waits() {
-    let f = board();
+on_both! {
+fn the_day_file_of_the_board_counts_its_bounces_reds_verdicts_landings_and_waits(backend: Backend) {
+    let f = report_board_on(backend);
     let read = f.store.report_records(midnight()).unwrap();
     let start = midnight();
     let day = day("sim", start, f.now(), f.now(), &read);
@@ -254,4 +259,6 @@ fn the_day_file_of_the_board_counts_its_bounces_reds_verdicts_landings_and_waits
     );
     assert!(day.top.lead.is_some_and(|lead| lead.n == 2));
     assert!(!day.closed && day.until < start + DAY);
+
+}
 }
