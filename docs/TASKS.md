@@ -1218,7 +1218,9 @@ is a task of its own. The calls a registered project's programs make today are h
 `crates/tasks/tests/cli/api/contract.rs`: each request, and the fields of its answer the caller
 reads with their JSON types, so a change that would break one fails its own task's gate. What the
 api promises is its calls, not the board's rules behind them, such as who may move or judge a
-task.
+task. The current API is 2.0: `create` refuses `fast_fix`, including a null value. Tasks needing no
+review name their stamps through an assessment. The fields and calls held by the consumer contract
+keep their shapes.
 
 ## The agents API
 
@@ -1714,11 +1716,10 @@ answered `unknown`, the rule above holds, so the lane errs toward showing the
 owner what may wait on them. The lane is read again when the board, a message,
 a waiting card or a kept answer changes.
 
-**`done` is reached only by a reviewer's `approve` (its orchestrator's, on a fast
-fix), a landing, for a subtask its executor's `done`, or a close as covered by another
+**`done` is reached only by a reviewer's `approve`, a landing, for a subtask its executor's `done`, or a close as covered by another
 task's landing ([above](#a-task-another-landing-covers)).** A session
 that ever executed a task, or a work subtask of it at any depth, gives it no verdict, whatever
-role it holds since. Nor, but on a fast fix, does a session that requested the work: one that
+role it holds since. Nor does a session that requested the work: one that
 orchestrates the task or ever did, or that filed it. The board refuses it the reviewer's role
 and the verdict at once, naming the command a fresh reviewer takes the role with, by the rule
 the land goes by ([below](#the-default-landing)), so no approve leaves a task done that the land
@@ -1866,33 +1867,13 @@ afterwards, and runs the check, the docs audit, on what it made ([below](#the-re
   ever orchestrated it (joined as its orchestrator, or was handed the role or took it
   over), nor its filer, which requested it (RULES.md `workflow/reviewers-not-the-owner`).
   The board refuses each of those verdicts itself, by the same rule (`Held::unfresh`): a
-  former executor's, a work subtask's included, and, but on a fast fix, its orchestrator's,
-  a former orchestrator's and its filer's, which it refuses the reviewer's role as well, so an
-  approve the land refuses for whose it is is one an older board took; the
-  executor of an instruction subtask is none. The one
-  exception is a **fast fix**: a task an older board filed with the fast-fix mark, the
-  risk that called for no reviewer in words, which the board keeps among its own fields where
-  no session sets or clears it afterwards. No command files one now (a task needing no review
-  says so by its assessment), and the store's and the API's `fast_fix` are kept only for
-  such a task still open and an older client, until none is open: no live option. On a fast
-  fix its orchestrator, which did not execute it, gives the verdict on the executor's posted
-  evidence, and the land goes by that approve, its needs unread; on any other task it
-  refuses an orchestrator's. A fast fix its orchestrator executed itself is landed by a
-  fresh reviewer's approve, as any other task is.
-- **A red's fix changes no check.** A red an older tool filed as a fast fix, its risk the
-  bound `symphony_board::fast_fix::RED` states
-  (`crates/tasks/src/fast_fix.rs`), is held to that bound, since the board
-  cannot read the repository: on a fast fix whose recorded risk is that bound, or one
-  marked red, its orchestrator's approve (or its filer's) lands only a fix whose diff from
-  where it left the default branch changes none of the project's tests and checks, and a
-  fresh reviewer's lands any fix. It goes by the recorded risk, which no session clears, so
-  a red whose mark its filer lifted is held to the bound still, and knows it by its opening,
-  `a red is fixed as a bug fix is` (`fast_fix::RED_OPENING`), which every wording of it keeps,
-  so a red filed before a rewording is held as well. A loosened test or check is
-  how a red turns green unfixed, so a fix that changes one needs a reader that did not ask
-  for it; when the code is fixed and the failing test, unchanged, passes, the test is that
-  reader. The refusal names what the fix changes and sends the task back to review for
-  `@orchestrator` to staff a fresh reviewer. What counts is `[land] check_paths`, a list of
+  former executor's, a work subtask's included, its orchestrator's, a former orchestrator's and its
+  filer's, which it refuses the reviewer's role as well. An approve the land refuses for whose it
+  is is one an older board took; the executor of an instruction subtask is none. Stored marks give
+  no approval privilege, and completed tasks and their recorded verdicts are left intact.
+- **What counts as a check.** A change to a test or check needs a fresh reviewer according to
+  the catalogue's `review` guideline. `just tasks stamps SLUG` gives its assessor the paths the
+  branch changes that `[land] check_paths` names, a list of
   entries read as `.gitignore` lines (a final `/` a folder, a `/` at the start or in the
   middle anchoring it at the root, `*` and `?` within one part of a path), `PATH [TABLE]`
   naming a table of a TOML file, dotted for one inside another, which counts only where its
@@ -1910,7 +1891,8 @@ afterwards, and runs the check, the docs audit, on what it made ([below](#the-re
   "/crates/symphony/src/docs_audit/", "/crates/symphony-build/src/release.rs",
   "/crates/symphony-build/src/release/checks.rs",
   "/crates/symphony-build/src/release/steps.rs", "/crates/tasks/src/land.rs",
-  "/crates/tasks/src/land/", "/crates/tasks/src/fast_fix.rs", "/crates/tasks/src/red.rs",
+  "/crates/tasks/src/land/", "/crates/tasks/src/stamps.rs", "/crates/tasks/src/stamps/",
+  "/crates/tasks/src/red.rs",
   "/crates/tasks/src/store/work/red.rs"]`: the tests and what they read, the Cargo tables
   that say which tests run and how (a `[[test]]`, `[[bench]]`, `[[bin]]` or `[[example]]`
   target whole, its `test`, `harness` and `required-features` with it, and the features, whose
@@ -1918,8 +1900,8 @@ afterwards, and runs the check, the docs audit, on what it made ([below](#the-re
   and what tests alone build with (`[dev-dependencies]`), the recipes and the scripts and budget under
   `tools/` they run, the lint and format settings, the project file's tables that say what
   checks, lands and releases, and the checks' own code: the size budgets, the crates check, the
-  docs audit, the release run's checks and their steps, this land with its list, and the red and
-  fast-fix marks. A project's own list replaces it. Beside the list a Rust file counts where
+  docs audit, the release run's checks and their steps, this land with its list, the stamp
+  catalogue and readers, and the red marks. A project's own list replaces it. Beside the list a Rust file counts where
   the diff reaches a test-only module (its file saying `#![cfg(test)]`, declared under a
   test's attribute, by `#[path]` too, or declared by a test-only module), an item a test's
   attribute marks inline in a source file (`#[test]`, `#[bench]`, one whose last name says
@@ -1928,8 +1910,8 @@ afterwards, and runs the check, the docs audit, on what it made ([below](#the-re
   comments, strings and characters left out, or a line added or removed that sets a lint's
   level. What it cannot tell counts as a check: a file whose code does not lex, or where a
   marked item runs unclosed to the end, counts whole, as does a module such a file declares,
-  and a path git fails to read or a branch with more than one merge base refuses the
-  orchestrator's approve for a fresh reviewer's. What it does not see is product: a module
+  and a path git fails to read or a branch with more than one merge base makes the changed
+  checks unreadable. What it does not see is product: a module
   declared inside an inline module is looked for beside its file, and a test-only file named
   only by a macro or a build script, or a lint set in a file no entry names, is product. The
   same list is the fact `just tasks stamps SLUG` gives an assessor (CHECK PATHS), whose
@@ -2271,8 +2253,8 @@ that still hold two orchestrators from before the rule; one of them settles it
 with `handover` or `release SLUG --role orchestrator`. No board data is
 rewritten for them.
 
-The executor can never review its own task, and the reviewer cannot claim it; nor, but on a
-fast fix, does the task's orchestrator, a former one or its filer take the reviewer's role.
+The executor can never review its own task, and the reviewer cannot claim it; nor does the task's
+orchestrator, a former one or its filer take the reviewer's role.
 Of any number of simultaneous claims exactly one wins. `just tasks next` picks
 work for you: your own reservation first, then priority, then a red task
 ([Slots](#slots)) before other work of its priority, then the areas you
@@ -2577,7 +2559,7 @@ landing](#the-default-landing)).
   an executor reads before it asks for review. It is refused for a task the board does not hold,
   outside a checkout of its repository, and with no tip to read.
 - **The needs** are the board's own field `fields._board.needs`, out of `just tasks field`'s
-  reach as the red and fast-fix marks are: the stamps, the tip the assessment read (none, from
+  reach as the red mark is: the stamps, the tip the assessment read (none, from
   the brief), who made it and why. `just tasks needs SLUG STAMP… [--tip TIP] --why WHY --as
   HANDLE` writes them, `none` alone for a task that needs no stamp, run in a checkout of the
   task's repository: `--tip` is resolved there to its whole commit, refused when it names none.

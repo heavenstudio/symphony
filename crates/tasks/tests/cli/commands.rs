@@ -417,12 +417,9 @@ fn a_task_filed_with_no_orchestrator_that_stays_waits_for_a_new_one_to_wait() {
     assert!(!again.contains("GIVEN"), "{again}");
 }
 
-/// The command line files no fast fix: a task needing no reviewer says so by its assessment
-/// (`tests/sweep/land_stamps.rs`). One an older board filed with the mark, here written through the
-/// store as that board wrote it, keeps today's path until it closes: its orchestrator, which did
-/// not execute it, gives the verdict a reviewer would; the executor never does.
+/// No command files a legacy mark, and one in an old row gives no approval privilege.
 #[test]
-fn a_fast_fix_is_no_longer_filed_and_one_filed_before_is_approved_by_its_orchestrator() {
+fn a_fast_fix_is_neither_filed_nor_approved_by_its_orchestrator() {
     let c = Case::new();
     let orch = c.register("orchestrator");
     let exe = c.register_with("worker", &["--parent", &orch]);
@@ -435,21 +432,29 @@ fn a_fast_fix_is_no_longer_filed_and_one_filed_before_is_approved_by_its_orchest
         refused.err
     );
     assert!(c.store().get("fix/new").is_err(), "nothing is filed");
-    (c.store())
-        .create(&symphony_board::NewTask {
-            fast_fix: Some(why.into()),
-            ..symphony_board::NewTask::new("fix/regex", "Regex", &orch)
-        })
+    c.store()
+        .create(&symphony_board::NewTask::new("fix/regex", "Regex", &orch))
         .unwrap();
-    assert_eq!(c.store().get("fix/regex").unwrap().fast_fix(), Some(why));
+    c.store()
+        .raw()
+        .row("task", "fix/regex")
+        .set(serde_json::json!({
+            "fields._board.fast_fix": why
+        }))
+        .unwrap();
     c.ok(&orch, &["role", "fix/regex", "orchestrator"]);
     c.ok(&exe, &["claim", "fix/regex"]);
     c.ok(&exe, &["move", "fix/regex", "review"]);
     let own = c.run_as(&exe, &["verdict", "fix/regex", "approve", "mine"], "");
     assert_eq!(own.code, 1);
     assert!(own.err.contains("executed fix/regex"), "{}", own.err);
+    let own = c.run_as(&orch, &["verdict", "fix/regex", "approve", "mine"], "");
+    assert_eq!(own.code, 1);
+    assert!(own.err.contains("orchestrated fix/regex"), "{}", own.err);
+    let rev = c.register("reviewer");
+    c.ok(&rev, &["role", "fix/regex", "reviewer"]);
     c.ok(
-        &orch,
+        &rev,
         &["verdict", "fix/regex", "approve", "its test reads right"],
     );
     assert_eq!(c.store().get("fix/regex").unwrap().status, "done");

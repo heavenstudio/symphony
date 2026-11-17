@@ -36,7 +36,9 @@ fn a_red_check_leaves_no_tag_and_files_exactly_one_red_task_a_green_rerun_closes
     assert_eq!(red.status, "ready");
     assert!(red.red(), "marked red: it takes no orchestrator slot");
     assert_eq!(
-        red.fast_fix(),
+        red.fields
+            .get("_board")
+            .and_then(|board| board.get("fast_fix")),
         None,
         "filed unmarked: its assessor reads what its fix needs at review"
     );
