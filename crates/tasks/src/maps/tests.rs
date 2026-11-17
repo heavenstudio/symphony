@@ -39,3 +39,43 @@ fn an_adapted_iterator_is_collected_as_its_pairs() {
         .collect_map();
     assert_eq!(map, BTreeMap::from([("a", 40), ("d", 60)]));
 }
+
+#[test]
+fn sorted_reversed_and_repeated_large_inputs_match_collection() {
+    for len in [1, 32, 1024] {
+        let forward: Vec<_> = (0..len).map(|n| (format!("key-{n:04}"), n)).collect();
+        for pairs in [
+            forward.clone(),
+            forward.iter().rev().cloned().collect(),
+            forward
+                .iter()
+                .cloned()
+                .chain(
+                    forward
+                        .iter()
+                        .rev()
+                        .map(|(key, value)| (key.clone(), value + len)),
+                )
+                .collect(),
+        ] {
+            let expected: BTreeMap<_, _> = pairs.clone().into_iter().collect();
+            assert_eq!(of(pairs), expected);
+        }
+    }
+}
+
+#[test]
+fn equal_path_keys_keep_the_same_representation_as_collection() {
+    use std::path::PathBuf;
+
+    let pairs = vec![
+        (PathBuf::from("folder/./file"), 1),
+        (PathBuf::from("folder/file"), 2),
+    ];
+    let expected: BTreeMap<_, _> = pairs.clone().into_iter().collect();
+    let map = of(pairs);
+    let (key, value) = map.first_key_value().unwrap();
+    let (expected_key, expected_value) = expected.first_key_value().unwrap();
+    assert_eq!(key.as_os_str(), expected_key.as_os_str());
+    assert_eq!(value, expected_value);
+}
