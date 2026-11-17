@@ -1,3 +1,4 @@
+// SurrealDB-only: pauses and rewrites the HTTP/CBOR binding-read response at the RPC boundary.
 //! Classification must recheck its target after a real binding replaces the decision snapshot.
 
 use crate::common::{Fixture, HOST, NOW};

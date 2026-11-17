@@ -2239,6 +2239,7 @@ fn shown_alike(a: &symphony_api::Task, b: &symphony_api::Task) -> bool {
         instruction,
         fields,
         waits_on,
+        review_rounds,
         from,
     } = a;
     *slug == b.slug
@@ -2254,6 +2255,7 @@ fn shown_alike(a: &symphony_api::Task, b: &symphony_api::Task) -> bool {
         && *depends == b.depends
         && *instruction == b.instruction
         && *fields == b.fields
+        && *review_rounds == b.review_rounds
         && *waits_on == b.waits_on
         && *from == b.from
         && roles_alike(roles, &b.roles)
@@ -2298,6 +2300,11 @@ fn task_changes(changes: &mut Vec<Value>, old: &[symphony_api::Task], new: &[sym
             && let Some(before) = old.iter().find(|t| t.slug == key)
             && let Some(after) = new.iter().find(|t| t.slug == key)
         {
+            // Optional summaries distinguish unavailable from zero. A whole record clears one.
+            if before.review_rounds.is_some() && after.review_rounds.is_none() {
+                changes.push(event);
+                continue;
+            }
             let mut fields = symphony_api::TaskFields::default();
             macro_rules! field {
                 ($name:ident) => {
@@ -2314,6 +2321,9 @@ fn task_changes(changes: &mut Vec<Value>, old: &[symphony_api::Task], new: &[sym
             field!(links);
             field!(depends);
             field!(instruction);
+            if before.review_rounds != after.review_rounds {
+                fields.review_rounds = after.review_rounds;
+            }
             // Roles that changed say their holders' health as it is now.
             if !roles_alike(&before.roles, &after.roles) {
                 fields.roles = Some(after.roles.clone());

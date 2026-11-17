@@ -321,3 +321,48 @@ fn a_task_is_alike_another_only_in_its_holders_health() {
         assert!(!super::shown_alike(&task, &other), "{field}");
     }
 }
+
+#[test]
+fn changed_review_counts_are_sent_and_an_unavailable_summary_replaces_the_task() {
+    let task: symphony_api::Task = serde_json::from_value(json!({
+        "slug": OPEN, "title": "Open", "body": "The brief", "status": "review", "priority": 2,
+        "parent": null, "created_by": "owner", "created": 1.0, "updated": 2.0, "links": [],
+        "depends": [], "instruction": false, "roles": [], "review_rounds": 1,
+    }))
+    .unwrap();
+    for count in [Some(0), Some(2), None] {
+        let mut after = task.clone();
+        after.review_rounds = count;
+        assert!(!super::tasks_alike(
+            std::slice::from_ref(&task),
+            std::slice::from_ref(&after)
+        ));
+        let mut changes = Vec::new();
+        super::task_changes(
+            &mut changes,
+            std::slice::from_ref(&task),
+            std::slice::from_ref(&after),
+        );
+        assert_eq!(changes.len(), 1);
+        if let Some(count) = count {
+            assert_eq!(changes[0]["region"], "task-fields");
+            assert_eq!(
+                changes[0]["data"]["fields"],
+                json!({"review_rounds": count})
+            );
+        } else {
+            assert_eq!(changes[0]["region"], "task");
+            assert_eq!(
+                changes[0]["data"]["value"],
+                serde_json::to_value(&after).unwrap()
+            );
+        }
+        let mut unchanged = Vec::new();
+        super::task_changes(
+            &mut unchanged,
+            std::slice::from_ref(&after),
+            std::slice::from_ref(&after),
+        );
+        assert!(unchanged.is_empty());
+    }
+}

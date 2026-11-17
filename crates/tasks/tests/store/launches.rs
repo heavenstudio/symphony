@@ -1,4 +1,5 @@
 //! What `just tasks launch` records on a task, so a closed session can be restored later.
+use crate::common::{Backend, Seed};
 
 use crate::common::{Fixture, NOW, refused};
 use symphony_board::NewLaunch;
@@ -19,9 +20,9 @@ pub(crate) fn launch(f: &Fixture, slug: &str, role: &str) -> TaskSessionRow {
         .unwrap()
 }
 
-#[test]
-fn a_launch_is_read_back_whole_and_open_on_the_record() {
-    let f = Fixture::empty();
+on_both! {
+fn a_launch_is_read_back_whole_and_open_on_the_record(backend: Backend) {
+    let f = Fixture::on(backend, Seed::default());
     f.task("sim/jump");
     f.advance(5.0);
     let launched = launch(&f, "sim/jump", "executor");
@@ -67,10 +68,11 @@ fn a_launch_is_read_back_whole_and_open_on_the_record() {
         )
     );
 }
+}
 
-#[test]
-fn a_session_found_running_is_recorded_as_found() {
-    let f = Fixture::empty();
+on_both! {
+fn a_session_found_running_is_recorded_as_found(backend: Backend) {
+    let f = Fixture::on(backend, Seed::default());
     f.task("sim/jump");
     let h = f.session("reviewer");
     f.store
@@ -86,10 +88,11 @@ fn a_session_found_running_is_recorded_as_found() {
         &format!("found {h} running as reviewer: pane t2, agent session unknown, worktree /wt/x")
     );
 }
+}
 
-#[test]
-fn a_session_recorded_without_its_line_leaves_the_thread_as_it_was() {
-    let f = Fixture::empty();
+on_both! {
+fn a_session_recorded_without_its_line_leaves_the_thread_as_it_was(backend: Backend) {
+    let f = Fixture::on(backend, Seed::default());
     f.task("sim/jump");
     let h = f.session("reviewer");
     let before = f.said("sim/jump");
@@ -105,10 +108,11 @@ fn a_session_recorded_without_its_line_leaves_the_thread_as_it_was() {
     assert_eq!(f.said("sim/jump"), before);
     assert_eq!(f.store.task_sessions("sim/jump").unwrap(), vec![row]);
 }
+}
 
-#[test]
-fn a_session_of_an_unknown_task_or_handle_is_refused() {
-    let f = Fixture::empty();
+on_both! {
+fn a_session_of_an_unknown_task_or_handle_is_refused(backend: Backend) {
+    let f = Fixture::on(backend, Seed::default());
     f.task("sim/jump");
     let h = f.session("worker");
     assert_eq!(
@@ -126,10 +130,11 @@ fn a_session_of_an_unknown_task_or_handle_is_refused() {
         "no session 'ghost-owl'"
     );
 }
+}
 
-#[test]
-fn a_role_outside_executor_and_reviewer_is_refused() {
-    let f = Fixture::empty();
+on_both! {
+fn a_role_outside_executor_and_reviewer_is_refused(backend: Backend) {
+    let f = Fixture::on(backend, Seed::default());
     f.task("sim/jump");
     let h = f.session("worker");
     assert_eq!(
@@ -140,10 +145,11 @@ fn a_role_outside_executor_and_reviewer_is_refused() {
         "a task session is an executor or a reviewer, not 'orchestrator'"
     );
 }
+}
 
-#[test]
-fn closing_keeps_the_record_and_the_restore_line() {
-    let f = Fixture::empty();
+on_both! {
+fn closing_keeps_the_record_and_the_restore_line(backend: Backend) {
+    let f = Fixture::on(backend, Seed::default());
     f.task("sim/jump");
     let launched = launch(&f, "sim/jump", "executor");
     let h = &launched.handle;
@@ -168,10 +174,11 @@ fn closing_keeps_the_record_and_the_restore_line() {
     assert!(f.store.open_task_sessions().unwrap().is_empty());
     assert_eq!(f.store.all_task_sessions().unwrap().len(), 1);
 }
+}
 
-#[test]
-fn reopening_gives_the_new_pane_and_clears_the_closure() {
-    let f = Fixture::empty();
+on_both! {
+fn reopening_gives_the_new_pane_and_clears_the_closure(backend: Backend) {
+    let f = Fixture::on(backend, Seed::default());
     f.task("sim/jump");
     let launched = launch(&f, "sim/jump", "executor");
     let h = &launched.handle;
@@ -190,10 +197,11 @@ fn reopening_gives_the_new_pane_and_clears_the_closure() {
     );
     assert_eq!(f.store.open_task_sessions().unwrap(), [read]);
 }
+}
 
-#[test]
-fn closing_or_reopening_what_was_never_launched_is_refused() {
-    let f = Fixture::empty();
+on_both! {
+fn closing_or_reopening_what_was_never_launched_is_refused(backend: Backend) {
+    let f = Fixture::on(backend, Seed::default());
     f.task("sim/jump");
     let h = f.session("worker");
     assert_eq!(
@@ -205,10 +213,11 @@ fn closing_or_reopening_what_was_never_launched_is_refused() {
         format!("{h} has no recorded session on sim/jump")
     );
 }
+}
 
-#[test]
-fn launching_again_for_the_same_handle_replaces_the_record() {
-    let f = Fixture::empty();
+on_both! {
+fn launching_again_for_the_same_handle_replaces_the_record(backend: Backend) {
+    let f = Fixture::on(backend, Seed::default());
     f.task("sim/jump");
     let first = launch(&f, "sim/jump", "executor");
     f.store
@@ -236,10 +245,11 @@ fn launching_again_for_the_same_handle_replaces_the_record() {
         ("other-id", "/wt/two", None, "")
     );
 }
+}
 
-#[test]
-fn sessions_of_a_handle_span_its_tasks_in_the_order_started() {
-    let f = Fixture::empty();
+on_both! {
+fn sessions_of_a_handle_span_its_tasks_in_the_order_started(backend: Backend) {
+    let f = Fixture::on(backend, Seed::default());
     f.task("sim/jump");
     f.task("sim/dock");
     let h = f.session("worker");
@@ -276,6 +286,7 @@ fn sessions_of_a_handle_span_its_tasks_in_the_order_started() {
     );
     assert!(f.store.sessions_of("ghost-owl").unwrap().is_empty());
 }
+}
 
 /// A Codex launch of `handle` on sim/jump whose thread the launch does not know (`codex:`).
 fn codex_launch(f: &Fixture, handle: &str) -> TaskSessionRow {
@@ -289,9 +300,9 @@ fn codex_launch(f: &Fixture, handle: &str) -> TaskSessionRow {
         .unwrap()
 }
 
-#[test]
-fn a_codex_record_written_after_its_callback_keeps_the_thread_the_callback_registered() {
-    let f = Fixture::empty();
+on_both! {
+fn a_codex_record_written_after_its_callback_keeps_the_thread_the_callback_registered(backend: Backend) {
+    let f = Fixture::on(backend, Seed::default());
     f.task("sim/jump");
     let h = f.session("worker");
     f.store
@@ -323,10 +334,11 @@ fn a_codex_record_written_after_its_callback_keeps_the_thread_the_callback_regis
         );
     }
 }
+}
 
-#[test]
-fn a_codex_record_closed_with_no_thread_says_restore_cannot_resume_it() {
-    let f = Fixture::empty();
+on_both! {
+fn a_codex_record_closed_with_no_thread_says_restore_cannot_resume_it(backend: Backend) {
+    let f = Fixture::on(backend, Seed::default());
     f.task("sim/jump");
     let h = f.session("worker");
     codex_launch(&f, &h);
@@ -349,10 +361,11 @@ fn a_codex_record_closed_with_no_thread_says_restore_cannot_resume_it() {
         )
     );
 }
+}
 
-#[test]
-fn a_codex_record_still_unknown_when_it_closes_takes_the_thread_registered_meanwhile() {
-    let f = Fixture::empty();
+on_both! {
+fn a_codex_record_still_unknown_when_it_closes_takes_the_thread_registered_meanwhile(backend: Backend) {
+    let f = Fixture::on(backend, Seed::default());
     f.task("sim/jump");
     let h = f.session("worker");
     codex_launch(&f, &h);
@@ -376,4 +389,5 @@ fn a_codex_record_still_unknown_when_it_closes_takes_the_thread_registered_meanw
         f.said("sim/jump").last().unwrap(),
         &format!("closed the pane of {h} (idle); restore: {restore}")
     );
+}
 }

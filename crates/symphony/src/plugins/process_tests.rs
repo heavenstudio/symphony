@@ -483,6 +483,75 @@ fn a_plugins_process_answers_its_components_and_card_kinds_as_it_does_linked() {
 }
 
 #[test]
+fn a_newer_plugins_kinds_leave_the_rest_of_its_page_intact() {
+    let tree = Tree::new();
+    let remote = Remote::leaked(
+        "tiny",
+        process_in(&tree, "tiny"),
+        hand_made(
+            tiny_declared(),
+            Arc::new(|id, _| {
+                Said::Lines(vec![answering(
+                    id,
+                    &serde_json::json!({"answer":{"Ok":[
+                        {"type":"rule"},
+                        {"type":"future-block","unread":{"type":7}},
+                        {"type":"paragraph","spans":[
+                            {"type":"text","text":"before"},
+                            {"type":"future-span","unread":false},
+                            {"type":"media","media":{"kind":"future-media","unread":null}},
+                            {"type":"text","text":"after"}
+                        ]},
+                        {"type":"media","media":{"kind":"future-media"}},
+                        {"type":"rule"}
+                    ]}})
+                    .to_string(),
+                )])
+            }),
+            Seen::default(),
+            "exited with code 0",
+        ),
+        patient(),
+    );
+    let page = Page::new(&tree.root, "docs/NEW.md");
+    let blocks = Plugins::new(vec![remote]).render(&page, "tiny", "", None);
+    assert_eq!(
+        blocks,
+        vec![
+            Block::Rule,
+            Block::Unknown {
+                tag: "future-block".into(),
+                text: String::new()
+            },
+            Block::Paragraph {
+                spans: vec![
+                    Span::Text {
+                        text: "before".into()
+                    },
+                    Span::Unknown {
+                        tag: "future-span".into(),
+                        text: String::new()
+                    },
+                    Span::Unknown {
+                        tag: "media: future-media".into(),
+                        text: String::new()
+                    },
+                    Span::Text {
+                        text: "after".into()
+                    },
+                ]
+            },
+            Block::Unknown {
+                tag: "media: future-media".into(),
+                text: String::new()
+            },
+            Block::Rule,
+        ]
+    );
+    assert!(remote.down().is_none());
+}
+
+#[test]
 fn answers_go_to_their_calls_by_id_whatever_order_they_come_in() {
     let tree = Tree::new();
     // The first render is held until the second comes; the second answered first.

@@ -4,23 +4,22 @@
 //! another kind or sender, every message deleted with the last words still named, as a copy by a
 //! store of schema 12 does; and a board written before it was has it once opened.
 
-use crate::common::{Fixture, NOW, Seed};
+use crate::common::{Backend, Fixture, NOW, Seed};
 use serde_json::json;
 use std::collections::BTreeMap;
 use symphony_board::rows::MessageRow;
 use symphony_board::{Message, RawRows};
 
-/// Each sender's last word as `last_messages` read it before `said` (976dbd5), from every message:
-/// the greatest `[sid, slug]` of the sender's posts and verdicts.
+/// An independent oracle over raw rows: the greatest `[sid, slug]` of each sender's posts
+/// and verdicts, the rule the original whole-message query used before `said` (976dbd5).
 fn read_from_every_message(board: &Fixture) -> BTreeMap<String, Message> {
-    let read = "
-LET $last = (SELECT sender, array::max(array::group([[sid, slug]])) AS last FROM message WHERE kind IN $delivered GROUP BY sender)
-    .map(|$sender| $sender.last[0]);
-RETURN SELECT * OMIT id FROM $last.map(|$m| type::record('message', [$m[1], $m[0]]));";
-    let mut answers = (board.store.client())
-        .query(read, json!({"delivered": ["msg", "verdict"]}))
-        .unwrap();
-    let rows: Vec<MessageRow> = serde_json::from_value(answers.pop().unwrap()).unwrap();
+    let mut value = board.store.raw().table("message").get().unwrap();
+    for row in value.as_array_mut().unwrap() {
+        row.as_object_mut().unwrap().remove("id");
+    }
+    let mut rows: Vec<MessageRow> = serde_json::from_value(value).unwrap();
+    rows.retain(|row| matches!(row.kind.as_str(), "msg" | "verdict"));
+    rows.sort_by(|a, b| (a.id, &a.slug).cmp(&(b.id, &b.slug)));
     rows.into_iter()
         .map(|row| {
             let word = Message {
@@ -46,7 +45,7 @@ fn text_of(words: &BTreeMap<String, Message>, sender: &str) -> Option<String> {
     words.get(sender).map(|word| word.text.clone())
 }
 
-/// `last_messages` against the query it replaced, after `step`: equal, and naming `sender`'s word
+/// `last_messages` against the independent raw-row oracle, after `step`: equal, and naming `sender`'s word
 /// as `text` (none: no word), so each step is the case it is meant to be.
 fn agrees(board: &Fixture, step: &str, sender: &str, text: Option<&str>) {
     let read = last_words(board);
@@ -81,13 +80,13 @@ fn create(board: &Fixture, slug: &str, sid: i64, sender: &str, kind: &str) {
         .unwrap();
 }
 
+on_both! {
 /// Two messages of one sender with the same id on two threads, which a copy takes: the word is
 /// the one on the thread named last, as `[sid, slug]` orders them, whichever was made first.
-#[test]
-fn equal_ids_on_two_threads_name_the_later_thread_whichever_comes_first() {
+fn equal_ids_on_two_threads_name_the_later_thread_whichever_comes_first(backend: Backend) {
     let orders = [["tools/a", "tools/z"], ["tools/z", "tools/a"]];
     for order in orders {
-        let board = Fixture::empty();
+        let board = Fixture::on(backend, Seed::default());
         for slug in order {
             create(&board, slug, 7, "writer", "msg");
         }
@@ -113,15 +112,17 @@ fn equal_ids_on_two_threads_name_the_later_thread_whichever_comes_first() {
             ts: NOW,
         })
         .into();
-    let board = Fixture::new(seed);
+    let board = Fixture::on(backend, seed);
     agrees(&board, "a copy", "writer", Some("tools/z"));
+
+}
 }
 
+on_both! {
 /// A copy of a board holding words with no sender, which schema 12 and its dump take, names that
 /// sender's word as the query it replaced does, apart from a sender named as the empty one's key
 /// is written; the empty sender's newest deleted gives way to its word before, and its last to none.
-#[test]
-fn a_copy_holding_words_with_no_sender_names_their_word() {
+fn a_copy_holding_words_with_no_sender_names_their_word(backend: Backend) {
     let mut seed = Seed::default()
         .task("tools/a", "ready")
         .task("tools/z", "ready");
@@ -140,7 +141,7 @@ fn a_copy_holding_words_with_no_sender_names_their_word() {
         word("tools/z", 2, key_written, "msg"),
         word("tools/a", 3, "", "msg"),
     ];
-    let board = Fixture::new(seed);
+    let board = Fixture::on(backend, seed);
     agrees(&board, "the copy", "", Some("tools/a 3"));
     agrees(&board, "the copy", key_written, Some("tools/z 2"));
     let delete = |slug: &str, id: i64| {
@@ -153,14 +154,16 @@ fn a_copy_holding_words_with_no_sender_names_their_word() {
     delete("tools/a", 1);
     agrees(&board, "its last deleted", "", None);
     agrees(&board, "its last deleted", key_written, Some("tools/z 2"));
+
+}
 }
 
+on_both! {
 /// A deleted last word gives way to the greatest `[sid, slug]` before it, a post or a verdict:
 /// of two at one id on two threads, the one on the thread named last, whichever kind it is.
-#[test]
-fn a_deleted_word_gives_way_to_the_later_thread_of_two_at_one_id() {
+fn a_deleted_word_gives_way_to_the_later_thread_of_two_at_one_id(backend: Backend) {
     for kinds in [["msg", "verdict"], ["verdict", "msg"]] {
-        let board = Fixture::empty();
+        let board = Fixture::on(backend, Seed::default());
         create(&board, "tools/z", 7, "writer", kinds[0]);
         create(&board, "tools/a", 7, "writer", kinds[1]);
         create(&board, "tools/m", 9, "writer", "msg");
@@ -176,6 +179,8 @@ fn a_deleted_word_gives_way_to_the_later_thread_of_two_at_one_id() {
             Some(&later),
         );
     }
+
+}
 }
 
 /// A copy by a store of schema 12 deletes every message with the last words still named, each
@@ -220,12 +225,12 @@ fn every_message_deleted_with_the_last_words_named_leaves_none_then_the_copied_o
     );
 }
 
+on_both! {
 /// A deleted last word gives the sender's word before it, on any thread; one deleted before it
 /// changes nothing; a sender with none left has no word; a thread deleted whole leaves each
 /// sender its newest word elsewhere.
-#[test]
-fn a_deleted_last_word_gives_the_word_before_it() {
-    let board = Fixture::empty();
+fn a_deleted_last_word_gives_the_word_before_it(backend: Backend) {
+    let board = Fixture::on(backend, Seed::default());
     let (writer, other) = (board.session("worker"), board.session("worker"));
     board.task("sim/jump");
     board.task("sim/land");
@@ -254,13 +259,15 @@ fn a_deleted_last_word_gives_the_word_before_it() {
         .unwrap();
     agrees(&board, "a thread deleted", &other, Some("from the other"));
     agrees(&board, "a thread deleted", &writer, None);
+
+}
 }
 
+on_both! {
 /// A last word made a record line gives the word before it, and a record line made a post is the
 /// word when it is the newest; a post made a verdict stays the word.
-#[test]
-fn a_word_edited_to_another_kind_counts_as_that_kind() {
-    let board = Fixture::empty();
+fn a_word_edited_to_another_kind_counts_as_that_kind(backend: Backend) {
+    let board = Fixture::on(backend, Seed::default());
     let writer = board.session("worker");
     board.task("sim/jump");
     board.store.say("sim/jump", &writer, "first", None).unwrap();
@@ -298,13 +305,15 @@ fn a_word_edited_to_another_kind_counts_as_that_kind() {
         &writer,
         Some("said again"),
     );
+
+}
 }
 
+on_both! {
 /// A last word given to another sender is that sender's word if it is the newest of theirs, and
 /// leaves its first sender the word before it.
-#[test]
-fn a_word_given_another_sender_moves_to_that_sender() {
-    let board = Fixture::empty();
+fn a_word_given_another_sender_moves_to_that_sender(backend: Backend) {
+    let board = Fixture::on(backend, Seed::default());
     let (writer, other) = (board.session("worker"), board.session("worker"));
     board.task("sim/jump");
     board.store.say("sim/jump", &writer, "first", None).unwrap();
@@ -332,6 +341,8 @@ fn a_word_given_another_sender_moves_to_that_sender() {
     (row(&board, &second).set(json!({"sender": writer}))).unwrap();
     agrees(&board, "given back", &writer, Some("second"));
     agrees(&board, "given back", &other, Some("from the other"));
+
+}
 }
 
 /// A board written before `said` was (its version older) has each sender's last word named once

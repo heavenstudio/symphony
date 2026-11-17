@@ -53,6 +53,14 @@ impl Database {
         }
     }
 
+    /// Request and write telemetry shared by clients of this board.
+    pub fn queries(&self) -> std::sync::Arc<crate::board_health::QueryLog> {
+        match self {
+            Database::SurrealDb(client) => client.queries(),
+            Database::PostgreSql(client) => client.queries(),
+        }
+    }
+
     /// A client of its own of the same board, which has made no request yet.
     pub fn another(&self) -> Database {
         match self {

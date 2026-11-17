@@ -7,6 +7,7 @@
 //! recipient now belongs to the dispatcher that took the lease. And a delivery stops at its
 //! deadline: a batch whose turn comes 30 s or more after the delivery renewed the lease is not
 //! begun, but waits for the next look, untried.
+use crate::common::Backend;
 
 use super::callbacks::Listener;
 use super::common::Fixture;
@@ -119,11 +120,11 @@ fn building(
     }
 }
 
-#[test]
-fn a_look_whose_build_outlasts_the_deadline_says_it_once_under_its_lease_and_the_next_builds_nothing()
+on_both! {
+fn a_look_whose_build_outlasts_the_deadline_says_it_once_under_its_lease_and_the_next_builds_nothing(backend: Backend)
  {
     for seconds in SLOW {
-        let f = Arc::new(Fixture::empty());
+        let f = Arc::new(Fixture::on(backend, crate::common::Seed::default()));
         let reader = f.session("orchestrator");
         for slug in ["tools/one", "tools/two"] {
             f.task(slug);
@@ -154,10 +155,11 @@ fn a_look_whose_build_outlasts_the_deadline_says_it_once_under_its_lease_and_the
         );
     }
 }
+}
 
-#[test]
-fn a_look_whose_lease_was_taken_while_it_built_says_nothing_and_writes_nothing() {
-    let f = Arc::new(Fixture::empty());
+on_both! {
+fn a_look_whose_lease_was_taken_while_it_built_says_nothing_and_writes_nothing(backend: Backend) {
+    let f = Arc::new(Fixture::on(backend, crate::common::Seed::default()));
     let reader = f.session("orchestrator");
     f.task("tools/one");
     // Its build outlasts the lease. Meanwhile another look takes the lapsed lease over, and
@@ -183,6 +185,7 @@ fn a_look_whose_lease_was_taken_while_it_built_says_nothing_and_writes_nothing()
     });
     assert_eq!(writes, 0, "{requests} requests");
 }
+}
 
 /// The keys of what waits undelivered for `handle`.
 fn undelivered(f: &Fixture, handle: &str) -> Value {
@@ -197,11 +200,11 @@ fn undelivered(f: &Fixture, handle: &str) -> Value {
 /// Another dispatcher takes `handle`'s lapsed lease, as a dispatcher's take does (its revision
 /// moves on), and holds it until `let_go`.
 fn take_lease(f: &Fixture, handle: &str) {
-    let taken = f.store.client().query(
-        "UPSERT type::record('callback_lease', $handle) SET until = $until, revision = (revision ?? 0) + 1 RETURN NONE;",
-        json!({"handle": handle, "until": f.now() + LEASE}),
-    );
-    taken.unwrap();
+    let lease = f.store.raw().row("callback_lease", handle);
+    let revision = lease.field("revision").unwrap().as_u64().unwrap_or(0) + 1;
+    lease
+        .set(json!({"until": f.now() + LEASE, "revision": revision}))
+        .unwrap();
 }
 
 fn let_go(f: &Fixture, handle: &str) {
@@ -209,9 +212,9 @@ fn let_go(f: &Fixture, handle: &str) {
     released.unwrap();
 }
 
-#[test]
-fn a_delivery_whose_lease_was_taken_before_it_began_sends_nothing() {
-    let f = Arc::new(Fixture::empty());
+on_both! {
+fn a_delivery_whose_lease_was_taken_before_it_began_sends_nothing(backend: Backend) {
+    let f = Arc::new(Fixture::on(backend, crate::common::Seed::default()));
     let reader = f.session("orchestrator");
     f.task("tools/one");
     // Its build outlasts the lease. Once it has recorded what it built, and before it delivers it,
@@ -231,6 +234,7 @@ fn a_delivery_whose_lease_was_taken_before_it_began_sends_nothing() {
     assert!(whole(&next), "{next:?}");
     assert!(look(&f.store, &reader).is_empty(), "said once");
 }
+}
 
 /// How many times each PULL waiting for `handle` was tried.
 fn pull_attempts(f: &Fixture, handle: &str) -> Value {
@@ -244,10 +248,10 @@ fn pull_attempts(f: &Fixture, handle: &str) -> Value {
     pulls.map(|row| row["attempts"].clone()).collect()
 }
 
-#[test]
-fn a_batch_whose_turn_comes_at_or_past_the_deadline_is_not_begun_and_waits_for_the_next_look() {
+on_both! {
+fn a_batch_whose_turn_comes_at_or_past_the_deadline_is_not_begun_and_waits_for_the_next_look(backend: Backend) {
     for seconds in [DEADLINE - 1.0, DEADLINE, DEADLINE + 1.0] {
-        let f = Arc::new(Fixture::empty());
+        let f = Arc::new(Fixture::on(backend, crate::common::Seed::default()));
         let reader = f.session("orchestrator");
         f.task("tools/one");
         // The first batch's turn comes this long after the delivery renewed the reader's lease.
@@ -273,11 +277,12 @@ fn a_batch_whose_turn_comes_at_or_past_the_deadline_is_not_begun_and_waits_for_t
         assert!(after.is_empty(), "{seconds} s: said once: {after:?}");
     }
 }
+}
 
-#[test]
-fn a_write_whose_dispatch_outlasts_the_deadline_delivers_what_it_built_under_its_lease() {
+on_both! {
+fn a_write_whose_dispatch_outlasts_the_deadline_delivers_what_it_built_under_its_lease(backend: Backend) {
     for seconds in SLOW {
-        let f = Arc::new(Fixture::empty());
+        let f = Arc::new(Fixture::on(backend, crate::common::Seed::default()));
         let sender = f.session("worker");
         let orch = f.session("orchestrator");
         let o: Listener = listen(&f, &orch);
@@ -301,4 +306,5 @@ fn a_write_whose_dispatch_outlasts_the_deadline_delivers_what_it_built_under_its
         assert_eq!(told[0], new, "{seconds} s: {told:?}");
         assert!(told[1].starts_with("PULL "), "{seconds} s: {told:?}");
     }
+}
 }

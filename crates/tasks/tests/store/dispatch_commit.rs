@@ -4,6 +4,7 @@
 //! before a write hears that write, and a recipient a later write's observation reached first is
 //! never told the older board back. Each case is the same with the delivery made in the write. A
 //! write takes no recipient's lease to read an inbox no message since could reach.
+use crate::common::Backend;
 
 use super::common::Fixture;
 use super::dispatch_later::{deferring, ids, listen};
@@ -18,10 +19,10 @@ fn writing(f: &Fixture, deferred: bool) -> Store {
     if deferred { deferring(f) } else { f.other() }
 }
 
-#[test]
-fn a_post_to_a_role_reaches_its_holder_at_the_post_though_it_was_handed_over_before_delivery() {
+on_both! {
+fn a_post_to_a_role_reaches_its_holder_at_the_post_though_it_was_handed_over_before_delivery(backend: Backend) {
     for deferred in [false, true] {
-        let f = Fixture::empty();
+        let f = Fixture::on(backend, crate::common::Seed::default());
         let (former, successor) = (f.session("orchestrator"), f.session("orchestrator"));
         let sender = f.session("worker");
         f.task("tools/target");
@@ -32,7 +33,7 @@ fn a_post_to_a_role_reaches_its_holder_at_the_post_though_it_was_handed_over_bef
         f.store
             .take_role("tools/other", &successor, "orchestrator")
             .unwrap();
-        let database = f.store.client().database().to_string();
+        let database = f.store.database().database().to_string();
         let to_former = listen(&f.store, &former, &format!("{database}-former"));
         let to_successor = listen(&f.store, &successor, &format!("{database}-successor"));
         let _ = to_former.drain(&f, &sender, &former);
@@ -66,11 +67,12 @@ fn a_post_to_a_role_reaches_its_holder_at_the_post_though_it_was_handed_over_bef
         );
     }
 }
+}
 
-#[test]
-fn a_claim_and_a_move_before_delivery_are_each_heard_in_their_order() {
+on_both! {
+fn a_claim_and_a_move_before_delivery_are_each_heard_in_their_order(backend: Backend) {
     for deferred in [false, true] {
-        let f = Fixture::empty();
+        let f = Fixture::on(backend, crate::common::Seed::default());
         let (observer, worker, sender) = (
             f.session("orchestrator"),
             f.session("worker"),
@@ -83,7 +85,7 @@ fn a_claim_and_a_move_before_delivery_are_each_heard_in_their_order() {
         let listener = listen(
             &f.store,
             &observer,
-            &format!("{}-history", f.store.client().database()),
+            &format!("{}-history", f.store.database().database()),
         );
         let _ = listener.drain(&f, &sender, &observer);
         let board = writing(&f, deferred);
@@ -109,11 +111,12 @@ fn a_claim_and_a_move_before_delivery_are_each_heard_in_their_order() {
         );
     }
 }
+}
 
-#[test]
-fn a_verdict_after_a_registration_reaches_it_though_no_dispatcher_ran_between() {
+on_both! {
+fn a_verdict_after_a_registration_reaches_it_though_no_dispatcher_ran_between(backend: Backend) {
     for deferred in [false, true] {
-        let f = Fixture::empty();
+        let f = Fixture::on(backend, crate::common::Seed::default());
         let (executor, reviewer) = (f.session("worker"), f.session("reviewer"));
         f.task("tools/verdict");
         f.store.claim("tools/verdict", &executor).unwrap();
@@ -129,7 +132,7 @@ fn a_verdict_after_a_registration_reaches_it_though_no_dispatcher_ran_between() 
         let listener = listen(
             &board,
             &executor,
-            &format!("{}-verdict", f.store.client().database()),
+            &format!("{}-verdict", f.store.database().database()),
         );
         board
             .verdict("tools/verdict", &reviewer, "changes", "once more")
@@ -148,6 +151,7 @@ fn a_verdict_after_a_registration_reaches_it_though_no_dispatcher_ran_between() 
             "deferred={deferred}: the verdict is heard once: {heard:?}"
         );
     }
+}
 }
 
 /// Two orchestrators' sessions in their handles' order, the order a pass visits recipients in. The
@@ -168,17 +172,17 @@ fn inbox_cursor(store: &Store, handle: &str) -> Value {
     state.field("inbox_cursor").unwrap()
 }
 
-#[test]
-fn a_write_whose_later_recipient_heard_a_newer_board_never_says_a_status_back() {
+on_both! {
+fn a_write_whose_later_recipient_heard_a_newer_board_never_says_a_status_back(backend: Backend) {
     for deferred in [false, true] {
-        let f = Fixture::empty();
+        let f = Fixture::on(backend, crate::common::Seed::default());
         let (first, orchestrator) = two_orchestrators(&f);
         let (worker, sender) = (f.session("worker"), f.session("worker"));
         f.task("tools/raced");
         f.store
             .take_role("tools/raced", &orchestrator, "orchestrator")
             .unwrap();
-        let database = f.store.client().database().to_string();
+        let database = f.store.database().database().to_string();
         let _to_first = listen(&f.store, &first, &format!("{database}-first"));
         let listener = listen(&f.store, &orchestrator, &format!("{database}-raced"));
         let _ = listener.drain(&f, &sender, &orchestrator);
@@ -222,6 +226,7 @@ fn a_write_whose_later_recipient_heard_a_newer_board_never_says_a_status_back() 
         );
     }
 }
+}
 
 /// `handle`'s lease revision, which each taking of its lease moves.
 fn lease_revision(store: &Store, handle: &str) -> Value {
@@ -236,10 +241,10 @@ fn queued(store: &Store, handle: &str, id: i64) -> bool {
     line.exists().unwrap()
 }
 
-#[test]
-fn a_write_queues_its_post_for_its_recipient_and_leaves_an_inbox_it_cannot_reach_to_the_dispatcher()
+on_both! {
+fn a_write_queues_its_post_for_its_recipient_and_leaves_an_inbox_it_cannot_reach_to_the_dispatcher(backend: Backend)
 {
-    let f = Fixture::empty();
+    let f = Fixture::on(backend, crate::common::Seed::default());
     let (addressed, bystander, sender) = (
         f.session("worker"),
         f.session("worker"),
@@ -252,7 +257,7 @@ fn a_write_queues_its_post_for_its_recipient_and_leaves_an_inbox_it_cannot_reach
         f.task(slug);
         f.store.claim(slug, holder).unwrap();
     }
-    let database = f.store.client().database().to_string();
+    let database = f.store.database().database().to_string();
     let to_addressed = listen(&f.store, &addressed, &format!("{database}-addressed"));
     let to_bystander = listen(&f.store, &bystander, &format!("{database}-bystander"));
     let _ = to_addressed.drain(&f, &sender, &addressed);
@@ -297,4 +302,5 @@ fn a_write_queues_its_post_for_its_recipient_and_leaves_an_inbox_it_cannot_reach
         !ids(&overheard).contains_key(&id),
         "the bystander never hears it: {overheard:?}"
     );
+}
 }

@@ -59,38 +59,178 @@ BEGIN
     END IF;
 END;";
 
-/// A post by `poster`, its line the answer (`super::super::surreal::messages::post`); a post made
-/// once per key has no twin yet.
-pub(in crate::store) fn post(poster: Poster, keyed: Option<bool>) -> Option<Pg<'static>> {
-    if keyed.is_some() {
-        return None;
-    }
+/// A line made once per key, optionally adopting the earliest matching old line.
+fn once(line: &str, same: Option<&str>) -> String {
+    let adopt = same.map_or(String::new(), |same| format!(
+        "SELECT sid INTO made_ FROM message WHERE slug = v ->> 'slug' AND {same} ORDER BY sid LIMIT 1;"));
+    format!(
+        "DECLARE made_ bigint; BEGIN \
+        SELECT message INTO made_ FROM delivery_key WHERE id = jsonb_build_array(v -> 'slug', v -> 'key'); \
+        IF made_ IS NULL THEN {adopt} \
+            IF made_ IS NULL THEN {line} made_ := sid_; END IF; \
+            INSERT INTO delivery_key (id, slug, key, message, ts) VALUES (jsonb_build_array(v -> 'slug', v -> 'key'), \
+                v ->> 'slug', v ->> 'key', made_, coalesce(ts_, (v ->> 'now')::double precision)) \
+                ON CONFLICT (id) DO UPDATE SET message = delivery_key.message RETURNING message INTO made_; \
+        END IF; \
+        board_answer := (SELECT {} FROM message m WHERE slug = v ->> 'slug' AND sid = made_); END;",
+        super::row("m")
+    )
+}
+
+pub(in crate::store) fn post(poster: Poster, keyed: Option<bool>) -> Pg<'static> {
     let act = match poster {
         Poster::Owner => String::new(),
         Poster::Board => authorize(),
         Poster::Session => act(),
     };
-    Some(Pg::script(format!(
-        "{act}
-IF NOT EXISTS (SELECT 1 FROM task WHERE slug = v ->> 'slug') THEN
-    RAISE EXCEPTION '%', v ->> 'no_task';
-END IF;
-IF v ? 'no_role' THEN
-    RAISE EXCEPTION '%', v ->> 'no_role';
-END IF;
-IF v ? 'handle' AND NOT EXISTS (SELECT 1 FROM session WHERE handle = v ->> 'handle') THEN
-    RAISE EXCEPTION '%', v ->> 'nobody';
-END IF;
-{}
-{ON_THREAD}
-board_answer := (SELECT {} FROM message m WHERE m.id = jsonb_build_array(v -> 'slug', sid_));",
+    let line = format!(
+        "{} {ON_THREAD}",
         logged(
             "v ->> 'slug'",
             "v ->> 'sender'",
             "'msg'",
             "v ->> 'text'",
             "v ->> 'to'"
+        )
+    );
+    let write = match keyed {
+        None => format!("{line} board_answer := (SELECT {} FROM message m WHERE m.id = jsonb_build_array(v -> 'slug', sid_));", super::row("m")),
+        Some(adopt) => once(&line, adopt.then_some("kind = 'msg' AND text = v ->> 'text' AND recipient IS NOT DISTINCT FROM v ->> 'to'")),
+    };
+    Pg::script(format!(
+        "{act} \
+        IF NOT EXISTS (SELECT 1 FROM task WHERE slug = v ->> 'slug') THEN RAISE EXCEPTION '%', v ->> 'no_task'; END IF; \
+        IF v ? 'no_role' THEN RAISE EXCEPTION '%', v ->> 'no_role'; END IF; \
+        IF v ? 'handle' AND NOT EXISTS (SELECT 1 FROM session WHERE handle = v ->> 'handle') THEN \
+            RAISE EXCEPTION '%', v ->> 'nobody'; END IF; {write}"
+    ))
+}
+
+pub(in crate::store) fn unread(keyed: bool) -> Pg<'static> {
+    let line = logged(
+        "v ->> 'slug'",
+        "v ->> 'sender'",
+        "'msg'",
+        "v ->> 'text'",
+        "v ->> 'to'",
+    );
+    let write = if keyed {
+        once(
+            &line,
+            Some("sender = v ->> 'sender' AND starts_with(text, v ->> 'said')"),
+        )
+    } else {
+        line
+    };
+    Pg::script(format!("{write} board_answer := 'null';"))
+}
+
+pub(in crate::store) fn ack() -> Pg<'static> {
+    Pg::script(format!(
+        "{} \
+        INSERT INTO delivery (id, message, handle, acked) \
+        SELECT jsonb_build_array(m, v -> 'actor'), m, v ->> 'actor', (v ->> 'now')::double precision \
+        FROM (SELECT DISTINCT value::bigint AS m FROM jsonb_array_elements_text(v -> 'ids')) ids \
+        ON CONFLICT (id) DO NOTHING;",
+        act()
+    ))
+}
+
+pub(in crate::store) fn inbox() -> Pg<'static> {
+    let eligible = |moves: &str| {
+        format!(
+            "m.ts >= (SELECT connected FROM me) \
+        AND (m.kind IN (SELECT jsonb_array_elements_text(v -> 'delivered')) OR {moves}) \
+        AND m.sender <> v ->> 'handle' AND (m.sender = 'owner' OR m.recipient = v ->> 'handle' \
+            OR starts_with(m.recipient, '@') OR m.kind = 'verdict')"
+        )
+    };
+    let scan = eligible(
+        "(m.kind = 'system' AND m.sender = 'owner' AND starts_with(m.text, 'owner moved it '))",
+    );
+    let pooled = eligible("(m.kind = 'system' AND m.sender = 'owner')");
+    Pg::read(format!(
+        "(WITH me AS (SELECT connected, kind FROM session WHERE handle = v ->> 'handle'), \
+        candidates AS (SELECT m.slug, m.sid FROM message m WHERE NOT (v ? 'pool') \
+            AND (NOT (v ? 'since') OR m.sid > (v ->> 'since')::bigint) AND {scan} \
+        UNION ALL SELECT m.slug, m.sid FROM jsonb_to_recordset(coalesce(v -> 'pool', '[]')) \
+            AS m (slug text, sid bigint, sender text, recipient text, kind text, ts double precision) \
+            WHERE v ? 'pool' AND m.sid > (v ->> 'since')::bigint AND {pooled}), \
+        wanted AS (SELECT m.* FROM candidates c JOIN message m ON m.slug = c.slug AND m.sid = c.sid \
+            WHERE NOT EXISTS (SELECT 1 FROM delivery d WHERE d.message = c.sid AND d.handle = v ->> 'handle')), \
+        orchestrators AS (SELECT slug, handle FROM role WHERE role = 'orchestrator' AND EXISTS (SELECT 1 FROM wanted)) \
+        SELECT jsonb_build_object( \
+            'known', EXISTS (SELECT 1 FROM me), 'orchestrating', EXISTS (SELECT 1 FROM me WHERE kind = 'orchestrator'), \
+            'orchestrators', coalesce((SELECT jsonb_agg(jsonb_build_array(slug, handle) ORDER BY slug, handle) FROM orchestrators), '[]'), \
+            'orchestrator_sessions', {}, \
+            'native_presence', coalesce((SELECT jsonb_agg(jsonb_build_object('handle', doc -> 'handle', \
+                'until', coalesce(doc -> 'confirmed_until', '0'))) FROM callback_state \
+                WHERE doc ->> 'address' >= v ->> 'codex' AND doc ->> 'address' < v ->> 'codex_after' \
+                AND EXISTS (SELECT 1 FROM wanted)), '[]'), \
+            'roles', coalesce((SELECT jsonb_agg(jsonb_build_object('slug', slug, 'role', role)) FROM role \
+                WHERE handle = v ->> 'handle' AND EXISTS (SELECT 1 FROM wanted)), '[]'), \
+            'tree', coalesce((SELECT jsonb_agg(jsonb_build_array(slug, parent)) FROM task WHERE EXISTS (SELECT 1 FROM wanted)), '[]'), \
+            'messages', {}))",
+        rows(
+            "s",
+            "session s WHERE handle IN (SELECT handle FROM orchestrators)",
+            "s.handle"
         ),
-        super::row("m")
-    )))
+        rows("m", "wanted m", "m.sid")
+    ))
+}
+
+pub(in crate::store) fn to_owner() -> Pg<'static> {
+    Pg::read(rows(
+        "m",
+        "(SELECT m.* FROM message m WHERE recipient = 'owner' ORDER BY sid DESC LIMIT (v ->> 'limit')::bigint) m",
+        "m.sid DESC",
+    ))
+}
+
+pub(in crate::store) fn questions_waiting() -> Pg<'static> {
+    Pg::read(rows(
+        "m",
+        "message m WHERE recipient = v ->> 'person' AND kind = 'msg' AND sender <> v ->> 'person' \
+        AND slug IN (SELECT jsonb_array_elements_text(v -> 'open')) \
+        AND NOT EXISTS (SELECT 1 FROM message a WHERE a.slug = m.slug AND a.sid > m.sid AND a.sender = v ->> 'person')",
+        "m.sid",
+    ))
+}
+
+pub(in crate::store) fn newest_verdict() -> Pg<'static> {
+    Pg::read(rows(
+        "m",
+        "(SELECT m.* FROM message m WHERE kind = 'verdict' AND (text IN ('approve', 'changes') \
+        OR starts_with(text, 'approve:') OR starts_with(text, 'changes:')) ORDER BY sid DESC LIMIT 1) m",
+        "m.sid",
+    ))
+}
+
+pub(in crate::store) fn messages_after() -> Pg<'static> {
+    Pg::read(rows(
+        "m",
+        "message m WHERE sid > (v ->> 'since')::bigint AND sid <= (v ->> 'through')::bigint",
+        "m.sid",
+    ))
+}
+
+pub(in crate::store) fn last_messages() -> Pg<'static> {
+    Pg::read(rows(
+        "m",
+        "said s JOIN message m ON m.slug = s.slug AND m.sid = s.sid",
+        "m.sid",
+    ))
+}
+
+pub(in crate::store) fn landings_posted() -> Pg<'static> {
+    Pg::read(
+        "(WITH landed AS (SELECT slug, max(sid) AS sid FROM message \
+        WHERE kind IN (SELECT jsonb_array_elements_text(v -> 'delivered')) \
+            AND strpos(text, 'landed ' || slug || ' on main') > 0 GROUP BY slug) \
+        SELECT coalesce(jsonb_agg(l.slug ORDER BY l.slug), '[]') FROM landed l \
+        WHERE NOT EXISTS (SELECT 1 FROM message m WHERE m.slug = l.slug AND m.sid > l.sid \
+            AND (m.kind = 'verdict' OR (m.kind = 'system' \
+                AND (strpos(m.text, ' moved it ') > 0 OR strpos(m.text, ' claimed it') > 0)))))",
+    )
 }

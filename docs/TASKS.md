@@ -1622,8 +1622,15 @@ each task's `waits_on`, a blocked task's `from` the status it was blocked from, 
 `orchestrators` (each session holding the orchestrator role on an open task, with its health) and
 `unstarted` (the ready tasks no executor that is there holds, every dependency done): the wire
 types `WaitsOn`, `Orchestrator`, `Tasks` and `TaskListing` (`crates/symphony/src/taskview/waiting.rs`).
-When each task took its status is its thread's replay, read for every open task in one round trip
-and kept, so only a task whose status or write moved is read again.
+When each task took its status is its thread's replay, read for tasks in one round trip
+and kept, so only a task whose status or write moved is read again. Open and finished rows also
+carry optional `review_rounds`: one round per replayed stretch in review, including an active
+round, exactly as the task timeline counts them. Reviewer roles, stamps and review subtasks do
+not add rounds. Zero means no review stretch; an absent count means no summary is available
+(including an older server), never a guessed zero. Finished summaries stay cached until their
+task changes or leaves the snapshot. Filtering and paging copy the summaries without more
+history reads. The feed sends a changed known count in `task-fields`; if a previously known
+summary becomes unavailable it replaces the task record to clear it.
 
 **A block from before.** A task blocked by hand before a block named its thing has no record. It
 is not blocked on the wire: the listings send it in the stage it stopped in, waiting on `nobody ·

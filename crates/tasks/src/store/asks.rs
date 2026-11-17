@@ -8,6 +8,8 @@
 //! ask's thread, the task's thread): the record says only what it is about, who has it and whether it
 //! is answered.
 
+use super::postgres::asks as pg;
+use super::statement::both;
 use super::surreal::asks as sql;
 use super::{Error, REFUSED, Store, refused, repr, unknown_actor};
 use crate::rows::AskRow;
@@ -156,7 +158,7 @@ impl Store {
     /// board.
     pub fn open_ask(&self, new: &NewAsk) -> Result<Ask, Error> {
         let vars = self.ask_vars(new)?;
-        self.retrying(|| self.transact(&sql::OPEN, vars.clone()))
+        self.retrying(|| self.transact(both(sql::OPEN.as_str(), pg::open()), vars.clone()))
     }
 
     /// `JOIN_OR_OPEN`'s variables for the owner's line `new`, checked as [`Store::open_ask`] checks
@@ -180,15 +182,20 @@ impl Store {
 
     /// Ask `sid`, open or answered.
     pub fn ask(&self, sid: i64) -> Result<Ask, Error> {
-        let found: Option<Ask> = self.retrying(|| self.read(sql::ASK, json!({"sid": sid})))?;
+        let found: Option<Ask> =
+            self.retrying(|| self.read(both(sql::ASK, pg::ask()), json!({"sid": sid})))?;
         found.ok_or_else(|| refused(format!("no ask {sid}")))
     }
 
     /// The open asks, oldest first; then, with `answered_since`, the asks answered since then, the
     /// newest first.
     pub fn asks(&self, answered_since: Option<f64>) -> Result<Vec<Ask>, Error> {
-        let listed: Listed =
-            self.retrying(|| self.read(sql::ASKS, json!({"since": answered_since})))?;
+        let listed: Listed = self.retrying(|| {
+            self.read(
+                both(sql::ASKS, pg::asks()),
+                json!({"since": answered_since}),
+            )
+        })?;
         Ok(listed.open.into_iter().chain(listed.answered).collect())
     }
 
@@ -201,7 +208,7 @@ impl Store {
             "no_ask": no_ask(sid), "answered": answered(sid),
             "unknown": thrown(unknown_actor(&self.board_command(), holder.unwrap_or(""))),
         });
-        self.retrying(|| self.transact(sql::HOLD, vars.clone()))
+        self.retrying(|| self.transact(both(sql::HOLD, pg::hold()), vars.clone()))
     }
 
     /// Ask `sid` answered now, by `by` when the answer names its session, the answer being where it
@@ -210,7 +217,7 @@ impl Store {
         let vars = json!({
             "sid": sid, "by": by, "answer": answer, "now": self.now(), "no_ask": no_ask(sid),
         });
-        self.retrying(|| self.transact(sql::ANSWER, vars.clone()))
+        self.retrying(|| self.transact(both(sql::ANSWER, pg::answer()), vars.clone()))
     }
 
     /// The open ask about what `about` names ([`NewAsk::about`]) answered now, as [`Store::answer_ask`]
@@ -224,7 +231,7 @@ impl Store {
         let vars = json!({
             "about": about.about()?, "by": by, "answer": answer, "now": self.now(),
         });
-        self.retrying(|| self.transact(sql::ANSWER_ABOUT, vars.clone()))
+        self.retrying(|| self.transact(both(sql::ANSWER_ABOUT, pg::answer_about()), vars.clone()))
     }
 
     /// Ask `sid`, while open, marked as what it is about read gone (`why`), or no longer (none): the
@@ -233,7 +240,7 @@ impl Store {
     /// answered ask.
     pub fn mark_gone(&self, sid: i64, why: Option<&str>) -> Result<Ask, Error> {
         let vars = json!({"sid": sid, "why": why, "now": self.now(), "no_ask": no_ask(sid)});
-        self.retrying(|| self.transact(sql::GONE, vars.clone()))
+        self.retrying(|| self.transact(both(sql::GONE, pg::gone()), vars.clone()))
     }
 
     /// Ask `sid` closed by hand by the session `by`, as needing no answer, saying `why`. Refused for an
@@ -249,7 +256,7 @@ impl Store {
             "no_ask": no_ask(sid), "answered": answered(sid),
             "unknown": thrown(unknown_actor(&self.board_command(), by)),
         });
-        self.retrying(|| self.transact(sql::CLOSE, vars.clone()))
+        self.retrying(|| self.transact(both(sql::CLOSE, pg::close()), vars.clone()))
     }
 }
 

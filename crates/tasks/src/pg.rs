@@ -30,8 +30,8 @@ use std::net::Shutdown;
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Mutex, PoisonError};
-use std::time::Duration;
+use std::sync::{Arc, Mutex, PoisonError};
+use std::time::{Duration, Instant};
 
 mod wire;
 
@@ -97,6 +97,7 @@ pub struct Client {
     database: String,
     timeout: Duration,
     requests: AtomicUsize,
+    log: Arc<crate::board_health::QueryLog>,
     connection: Mutex<Option<Connection>>,
 }
 
@@ -120,6 +121,11 @@ impl Client {
             database: database.into(),
             timeout: TIMEOUT,
             requests: AtomicUsize::new(0),
+            log: crate::board_health::queries_of(
+                &format!("postgresql:{}", socket.display()),
+                "",
+                database,
+            ),
             connection: Mutex::new(None),
         }
     }
@@ -141,6 +147,11 @@ impl Client {
     /// this one's wait when that is shorter.
     pub fn bounded(&self, most: Duration) -> Client {
         self.another().waiting(self.timeout.min(most))
+    }
+
+    /// The board's request and write telemetry, shared by all its clients.
+    pub fn queries(&self) -> Arc<crate::board_health::QueryLog> {
+        Arc::clone(&self.log)
     }
 
     /// How many requests this client has sent: its round trips, for the tests that count them.
@@ -168,6 +179,7 @@ impl Client {
     }
 
     /// Each of `steps`' answers, in order, all of them in one implicit transaction ([`Client`]).
+    #[track_caller]
     pub fn request(&self, steps: &[Step]) -> Result<Vec<Answer>, DbError> {
         let mut out = Vec::new();
         for step in steps {
@@ -176,15 +188,19 @@ impl Client {
             wire::execute(&mut out);
         }
         wire::sync(&mut out);
-        self.exchange(&out)
+        self.measured(
+            &out,
+            steps.iter().any(|step| crate::schema::mutates(step.sql)),
+        )
     }
 
     /// `sql`'s statements, which take no parameter, as one simple query: one implicit
     /// transaction unless they say otherwise; the answer of each that gave one.
+    #[track_caller]
     pub fn simple(&self, sql: &str) -> Result<Vec<Answer>, DbError> {
         let mut out = Vec::new();
         wire::query(&mut out, sql);
-        self.exchange(&out)
+        self.measured(&out, crate::schema::mutates(sql))
     }
 
     /// The database this client names, made on its server if it is not there: through a
@@ -196,6 +212,21 @@ impl Client {
             Err(DbError::Failed(said)) if coded(&said, DATABASE_THERE) => Ok(()),
             Err(other) => Err(other),
         }
+    }
+
+    /// Count each request once, including failures, without recording SQL or bound values.
+    #[track_caller]
+    fn measured(&self, out: &[u8], write: bool) -> Result<Vec<Answer>, DbError> {
+        let began = Instant::now();
+        let sent = self.exchange(out);
+        self.log.record(crate::board_health::Query {
+            at: crate::sweep::trigger::now(),
+            ms: began.elapsed().as_secs_f64() * 1000.0,
+            source: std::panic::Location::caller(),
+            write,
+            failed: sent.is_err(),
+        });
+        sent
     }
 
     /// `out` sent on this client's connection, made first when it has none, and every message the

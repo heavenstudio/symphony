@@ -1,11 +1,12 @@
 //! Durable PULL delivery and unanswered-post identity across fresh dispatchers.
+use crate::common::Backend;
 
 use super::*;
 
-#[test]
-fn the_first_pull_is_delivered_once_even_when_its_lists_are_empty() {
+on_both! {
+fn the_first_pull_is_delivered_once_even_when_its_lists_are_empty(backend: Backend) {
     for existing_gap in [false, true] {
-        let f = Fixture::empty();
+        let f = Fixture::on(backend, crate::common::Seed::default());
         let orch = f.session("orchestrator");
         let sender = f.session("worker");
         if existing_gap {
@@ -47,10 +48,11 @@ fn the_first_pull_is_delivered_once_even_when_its_lists_are_empty() {
         assert!(o.drain(&f, &sender, &orch).is_empty());
     }
 }
+}
 
-#[test]
-fn native_unanswered_lines_survive_fresh_dispatchers_without_repeating_a_post() {
-    let f = Fixture::empty();
+on_both! {
+fn native_unanswered_lines_survive_fresh_dispatchers_without_repeating_a_post(backend: Backend) {
+    let f = Fixture::on(backend, crate::common::Seed::default());
     let orch = f.session("orchestrator");
     let worker = f.session("worker");
     let barrier = f.session("worker");
@@ -114,6 +116,7 @@ fn native_unanswered_lines_survive_fresh_dispatchers_without_repeating_a_post() 
     assert_eq!(pending.len(), 1, "{received:?}");
     assert!(pending[0].contains(&format!("post #{} —", next.id)));
 }
+}
 
 /// A launch record no reader decodes, on the task the scan asks about, which fails the scan's read
 /// of that task's thread and launches.
@@ -124,6 +127,7 @@ UPSERT task_session:['tools/unanswered', 'nobody'] CONTENT { slug: 'tools/unansw
 const READABLE_LAUNCHES: &str = "DELETE task_session:['tools/unanswered', 'nobody'] RETURN NONE;
 DEFINE FIELD OVERWRITE started ON task_session TYPE float;";
 
+// SurrealDB alone: injects a failed scan through a SurrealDB field definition and HTTP gate.
 #[test]
 fn a_failed_unanswered_scan_delivers_the_rest_and_never_repeats_a_told_post() {
     use crate::common::{HOST, RawWrite as _};
@@ -189,7 +193,7 @@ fn a_failed_unanswered_scan_delivers_the_rest_and_never_repeats_a_told_post() {
     );
     let now = f.now();
     let scanless = symphony_board::Store::with(
-        relay.client("sf", f.store.client().database()),
+        relay.client("sf", f.store.database().database()),
         Box::new(move || now),
         Box::new(|_| true),
         HOST,

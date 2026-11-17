@@ -510,10 +510,12 @@ pub fn in_status_since(facts: Facts, lines: &[Line]) -> f64 {
     in_status(facts, lines).since
 }
 
-/// When a task took the status it holds, and the status it held before, by the replay
-/// ([`in_status`]): what the board's line of what a task waits on reads of its thread.
+/// A task's status entry, previous status and review-round count, by the replay
+/// ([`in_status`]): what the board's compact cards read of its thread.
 #[derive(Debug, Clone, PartialEq)]
 pub struct InStatus {
+    /// One round per replayed stretch in review, including the current one, as the task timeline.
+    pub review_rounds: u32,
     /// [`Stages::current_since`].
     pub since: f64,
     /// The status of the stretch before the one it holds; none for a task in the status it was
@@ -521,11 +523,19 @@ pub struct InStatus {
     pub from: Option<String>,
 }
 
-/// [`in_status_since`], with the status the task held before the one it holds.
+/// [`in_status_since`], with the previous status and count of replayed review stretches.
 pub fn in_status(facts: Facts, lines: &[Line]) -> InStatus {
     let replayed = stages(facts, lines, facts.updated);
     let count = replayed.segments.len();
     InStatus {
+        review_rounds: u32::try_from(
+            replayed
+                .segments
+                .iter()
+                .filter(|s| s.status == "review")
+                .count(),
+        )
+        .unwrap_or(u32::MAX),
         since: replayed.current_since,
         from: (count >= 2).then(|| replayed.segments[count - 2].status.clone()),
     }

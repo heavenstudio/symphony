@@ -932,6 +932,7 @@ fn task(slug: &str, status: &str, parent: Option<&str>) -> api::Task {
         instruction: false,
         fields: std::collections::BTreeMap::new(),
         waits_on: None,
+        review_rounds: None,
         from: None,
     }
 }

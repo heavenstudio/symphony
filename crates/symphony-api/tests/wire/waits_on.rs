@@ -109,3 +109,31 @@ fn the_kinds_are_seven_each_named_once() {
         ]
     );
 }
+
+#[test]
+fn review_round_counts_are_optional_and_zero_is_known() {
+    let mut value: serde_json::Value =
+        serde_json::from_str(&super::fixture("task-waits-on.json")).unwrap();
+    for count in [None, Some(0), Some(1), Some(3)] {
+        let task = &mut value["tasks"][0];
+        task.as_object_mut().unwrap().remove("review_rounds");
+        if let Some(count) = count {
+            task["review_rounds"] = json!(count);
+        }
+        let listing: TaskListing = serde_json::from_value(value.clone()).unwrap();
+        assert_eq!(listing.tasks[0].review_rounds, count);
+        assert_eq!(serde_json::to_value(&listing).unwrap(), value);
+    }
+    let fields: TaskFields = serde_json::from_value(json!({"review_rounds": 0})).unwrap();
+    assert_eq!(fields.review_rounds, Some(0));
+    assert_eq!(
+        serde_json::to_value(fields).unwrap(),
+        json!({"review_rounds": 0})
+    );
+    assert_eq!(
+        serde_json::from_value::<TaskFields>(json!({}))
+            .unwrap()
+            .review_rounds,
+        None
+    );
+}

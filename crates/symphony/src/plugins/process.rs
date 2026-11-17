@@ -484,8 +484,17 @@ type ReadAnswer<'a> = &'a mut dyn FnMut(&RawValue) -> Result<(), String>;
 /// plugin refused the call. The answer's wrapper is read by one body for every call
 /// ([`answer_in`]), so each call's own reading is only its answer's type.
 fn answer_of<T: serde::de::DeserializeOwned>(tag: &str, raw: &RawValue) -> Result<T, String> {
-    serde_json::from_str(answer_in(tag, raw)?.get()).map_err(|why| cannot_read(tag, &why))
+    let answer = answer_in(tag, raw)?;
+    serde_json::from_str(answer.get())
+        .or_else(|why| {
+            content::compatible(tag, answer)
+                .map_or(Err(why), |answer| serde_json::from_str(&answer))
+        })
+        .map_err(|why| cannot_read(tag, &why))
 }
+
+#[path = "process_content.rs"]
+mod content;
 
 /// The answer `raw` holds as it came, or why it does not read or that the plugin refused the call.
 #[inline(never)]

@@ -1,7 +1,5 @@
 //! Approval observations through the existing fake-HC child, native listener and durable outbox.
-
-// On SurrealDB alone until tools/board-pg-sessions-and-delivery: the panes, listeners and
-// outbox these observations go through are that slice's statements.
+use crate::common::Backend;
 
 use super::super::callbacks::Listener;
 use super::*;
@@ -56,16 +54,21 @@ fn pending_store(store: &Store, handle: &str) -> Vec<Value> {
 }
 
 fn seed(f: &Fixture, handle: &str, key: &str, text: &str) {
-    f.store.client().query(
-        "LET $counted = (UPSERT ONLY type::record('counter', ['callback-event', $handle]) SET last = (last ?? 0) + 1);
-         CREATE type::record('callback_event', [$handle, $key]) CONTENT {
-             key:$key, handle:$handle, text:$text, slug:NONE, message:NONE, attempts:0, sequence:$counted.last
-         } RETURN NONE;",
-        json!({"handle":handle, "key":key, "text":text})).unwrap();
+    let counter = f
+        .store
+        .raw()
+        .row("counter", json!(["callback-event", handle]));
+    counter.add("last", 1).unwrap();
+    let sequence = counter.field("last").unwrap();
+    f.store
+        .raw()
+        .row("callback_event", json!([handle, key]))
+        .put(json!({"key":key,"handle":handle,"text":text,"attempts":0,"sequence":sequence}))
+        .unwrap();
 }
 
 fn restore(f: &Fixture, handle: &str) -> Listener {
-    Listener::new(&format!("{}-{handle}", f.store.client().database()))
+    Listener::new(&format!("{}-{handle}", f.store.database().database()))
 }
 
 fn uncertain_samples(f: &Fixture, orch: &str, worker: &str, initial: &[Value]) {
@@ -107,14 +110,12 @@ fn uncertain_samples(f: &Fixture, orch: &str, worker: &str, initial: &[Value]) {
     }
 }
 
-#[test]
-fn pane_task_and_supported_counter_advances_reach_the_native_recipient() {
-    if !in_child_with_hc(
-        "blocked_panes::freshness::pane_task_and_supported_counter_advances_reach_the_native_recipient",
-    ) {
+on_both! {
+fn pane_task_and_supported_counter_advances_reach_the_native_recipient(backend: Backend) {
+    if !paired_child("blocked_panes::freshness::pane_task_and_supported_counter_advances_reach_the_native_recipient", backend) {
         return;
     }
-    let f = Fixture::empty();
+    let f = Fixture::on(backend, crate::common::Seed::default());
     let (orch, worker, o) = waiting_worker(&f);
     for (turn, count) in [(1, 1), (1, 0), (2, 1)] {
         panes(Some(json!([terminal("t2", "blocked", Some(turn))])));
@@ -170,15 +171,14 @@ fn pane_task_and_supported_counter_advances_reach_the_native_recipient() {
     assert_eq!(saved.known[&worker].task, "tests/second");
     assert_eq!(saved.known[&worker].turn, Some(0));
 }
+}
 
-#[test]
-fn pending_rows_keep_uncertainty_and_retire_only_proven_obsolete_observations() {
-    if !in_child_with_hc(
-        "blocked_panes::freshness::pending_rows_keep_uncertainty_and_retire_only_proven_obsolete_observations",
-    ) {
+on_both! {
+fn pending_rows_keep_uncertainty_and_retire_only_proven_obsolete_observations(backend: Backend) {
+    if !paired_child("blocked_panes::freshness::pending_rows_keep_uncertainty_and_retire_only_proven_obsolete_observations", backend) {
         return;
     }
-    let f = Fixture::empty();
+    let f = Fixture::on(backend, crate::common::Seed::default());
     let (orch, worker, o) = waiting_worker(&f);
     drop(o);
     panes(Some(json!([terminal("t2", "blocked", Some(1))])));
@@ -242,15 +242,14 @@ fn pending_rows_keep_uncertainty_and_retire_only_proven_obsolete_observations() 
     let heard = blocked(&back.drain(&f, &worker, &orch));
     assert!(heard.is_empty(), "closed launch: {heard:?}");
 }
+}
 
-#[test]
-fn legacy_nonclock_transport_preserves_unrelated_prose() {
-    if !in_child_with_hc(
-        "blocked_panes::freshness::legacy_nonclock_transport_preserves_unrelated_prose",
-    ) {
+on_both! {
+fn legacy_nonclock_transport_preserves_unrelated_prose(backend: Backend) {
+    if !paired_child("blocked_panes::freshness::legacy_nonclock_transport_preserves_unrelated_prose", backend) {
         return;
     }
-    let f = Fixture::empty();
+    let f = Fixture::on(backend, crate::common::Seed::default());
     let (orch, worker, o) = waiting_worker(&f);
     let pane_watch = json!({"blocked":{worker.clone():{"task":"tests/pane", "pane":"t2"}},
         "unanswered":false});
@@ -297,15 +296,14 @@ fn legacy_nonclock_transport_preserves_unrelated_prose() {
         "clock reconciliation must preserve unrecognized pane-like rows and general event prose"
     );
 }
+}
 
-#[test]
-fn a_direct_coordinator_reaches_its_parent_owner_without_exposing_delegated_workers() {
-    if !in_child_with_hc(
-        "blocked_panes::freshness::a_direct_coordinator_reaches_its_parent_owner_without_exposing_delegated_workers",
-    ) {
+on_both! {
+fn a_direct_coordinator_reaches_its_parent_owner_without_exposing_delegated_workers(backend: Backend) {
+    if !paired_child("blocked_panes::freshness::a_direct_coordinator_reaches_its_parent_owner_without_exposing_delegated_workers", backend) {
         return;
     }
-    let f = Fixture::empty();
+    let f = Fixture::on(backend, crate::common::Seed::default());
     let root = f.session("orchestrator");
     let foreign = f.session("orchestrator");
     let mut child = NewSession::new("orchestrator");
@@ -364,12 +362,11 @@ fn a_direct_coordinator_reaches_its_parent_owner_without_exposing_delegated_work
         [notice(&unrelated, "tests/foreign", "t9")]
     );
 }
+}
 
-#[test]
-fn delayed_clock_samples_cannot_rewind_newer_blocked_or_resolved_evidence() {
-    if !in_child_with_hc(
-        "blocked_panes::freshness::delayed_clock_samples_cannot_rewind_newer_blocked_or_resolved_evidence",
-    ) {
+on_both! {
+fn delayed_clock_samples_cannot_rewind_newer_blocked_or_resolved_evidence(backend: Backend) {
+    if !paired_child("blocked_panes::freshness::delayed_clock_samples_cannot_rewind_newer_blocked_or_resolved_evidence", backend) {
         return;
     }
     use std::sync::{
@@ -381,7 +378,7 @@ fn delayed_clock_samples_cannot_rewind_newer_blocked_or_resolved_evidence() {
         ("blocked", 2, "working", 3),
         ("blocked", 2, "working", 2),
     ] {
-        let f = Fixture::empty();
+        let f = Fixture::on(backend, crate::common::Seed::default());
         let (orch, worker, o) = waiting_worker(&f);
         drop(o);
         panes(Some(json!([terminal("t2", "blocked", Some(1))])));
@@ -432,12 +429,11 @@ fn delayed_clock_samples_cannot_rewind_newer_blocked_or_resolved_evidence() {
         );
     }
 }
+}
 
-#[test]
-fn an_old_named_pane_cannot_rewind_a_newer_observed_launch() {
-    if !in_child_with_hc(
-        "blocked_panes::freshness::an_old_named_pane_cannot_rewind_a_newer_observed_launch",
-    ) {
+on_both! {
+fn an_old_named_pane_cannot_rewind_a_newer_observed_launch(backend: Backend) {
+    if !paired_child("blocked_panes::freshness::an_old_named_pane_cannot_rewind_a_newer_observed_launch", backend) {
         return;
     }
     use std::sync::{
@@ -450,7 +446,7 @@ fn an_old_named_pane_cannot_rewind_a_newer_observed_launch() {
         ("blocked", None),
         ("working", None),
     ] {
-        let f = Fixture::empty();
+        let f = Fixture::on(backend, crate::common::Seed::default());
         let (orch, worker, o) = waiting_worker(&f);
         drop(o);
         let named = |id, status, turn| {
@@ -517,4 +513,5 @@ fn an_old_named_pane_cannot_rewind_a_newer_observed_launch() {
             vec![notice(&worker, "tests/pane", "t3"); usize::from(status == "blocked")]
         );
     }
+}
 }

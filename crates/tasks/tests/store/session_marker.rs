@@ -1,29 +1,26 @@
 //! Heartbeats invalidate cached health without writing the structural change counter.
+use crate::common::Backend;
 
 use super::common::{Fixture, GONE, Seed, refused};
 use super::gate::Gate;
 use serde_json::json;
-use symphony_board::{Beat, Health, Store, schema};
+use symphony_board::{Beat, Health, Store};
 
 fn markers(f: &Fixture) -> (u64, u64) {
-    let value = f
+    let structure = f
         .store
-        .client()
-        .query(
-            &format!(
-                "RETURN [counter:board_structure.last ?? 0, {}];",
-                schema::BOARD_MARKER
-            ),
-            json!({}),
-        )
+        .raw()
+        .row("counter", "board_structure")
+        .field("last")
         .unwrap()
-        .remove(0);
-    serde_json::from_value(value).unwrap()
+        .as_u64()
+        .unwrap_or(0);
+    (structure, f.store.marker().unwrap())
 }
 
-#[test]
-fn beats_refresh_cached_health_without_the_shared_counter_board_write() {
-    let f = Fixture::new(
+on_both! {
+fn beats_refresh_cached_health_without_the_shared_counter_board_write(backend: Backend) {
+    let f = Fixture::on(backend,
         Seed::default()
             .session("worker")
             .task("tools/held", "in_progress")
@@ -55,8 +52,8 @@ fn beats_refresh_cached_health_without_the_shared_counter_board_write() {
         (f.store.raw().row("counter", "board"))
             .field("last")
             .unwrap(),
-        json!(i64::MIN),
-        "a beat never rewrites the retired scalar"
+        match backend { Backend::SurrealDb => json!(i64::MIN), Backend::PostgreSql => serde_json::Value::Null },
+        "a beat neither rewrites SurrealDB's retired scalar nor creates one on PostgreSQL"
     );
     let board = reader.clock_board().unwrap();
     assert_eq!(board.sessions[0].health, Health::Live);
@@ -67,17 +64,22 @@ fn beats_refresh_cached_health_without_the_shared_counter_board_write() {
         after,
         "an authorization fence alone changes no cached input"
     );
-    let requests = reader.client().requests();
+    let requests = reader.database().requests();
     assert_eq!(reader.clock_board().unwrap(), board);
     assert_eq!(
-        reader.client().requests() - requests,
+        reader.database().requests() - requests,
         1,
         "unchanged marker reuses the snapshot"
     );
-    assert_eq!(f.store.client().query(
-        "BEGIN TRANSACTION; UPDATE session:worker SET last_seen += 1; THROW 'rolled-back-beat'; COMMIT TRANSACTION;",
-        json!({}),
-    ), Err(symphony_board::rpc::DbError::Thrown("rolled-back-beat".into())));
+    match f.store.database() {
+        symphony_board::Database::SurrealDb(client) => assert_eq!(client.query(
+            "BEGIN TRANSACTION; UPDATE session:worker SET last_seen += 1; THROW 'rolled-back-beat'; COMMIT TRANSACTION;", json!({})), Err(symphony_board::rpc::DbError::Thrown("rolled-back-beat".into()))),
+        symphony_board::Database::PostgreSql(client) => {
+            let why = client.simple("BEGIN; UPDATE session SET last_seen = last_seen + 1 WHERE handle = 'worker'; DO $test$ BEGIN RAISE EXCEPTION 'rolled-back-beat'; END $test$; COMMIT;").unwrap_err();
+            assert_eq!(why, symphony_board::rpc::DbError::Thrown("rolled-back-beat".into()));
+            client.simple("ROLLBACK").unwrap();
+        }
+    }
     assert_eq!(
         markers(&f),
         after,
@@ -85,11 +87,12 @@ fn beats_refresh_cached_health_without_the_shared_counter_board_write() {
     );
     assert_eq!(reader.clock_board().unwrap(), board);
 }
+}
 
-#[test]
-fn deleting_and_recreating_sessions_never_reuses_a_cached_marker() {
-    let seed = Seed::default().session("worker");
-    let f = Fixture::empty();
+on_both! {
+fn deleting_and_recreating_sessions_never_reuses_a_cached_marker(backend: Backend) {
+    let seed = crate::common::session("worker");
+    let f = Fixture::on(backend, crate::common::Seed::default());
     let reader = f.other();
     assert_eq!(markers(&f), (0, 0));
     let empty = reader.clock_board().unwrap();
@@ -98,7 +101,7 @@ fn deleting_and_recreating_sessions_never_reuses_a_cached_marker() {
         "sessions on an empty board: {:?}",
         empty.sessions
     );
-    f.store.copy(&seed.dump).unwrap();
+    f.store.raw().row("session", "worker").put(json!(seed)).unwrap();
     let initial = reader.clock_board().unwrap();
     let before = markers(&f);
     f.store.raw().row("session", "worker").delete().unwrap();
@@ -110,7 +113,7 @@ fn deleting_and_recreating_sessions_never_reuses_a_cached_marker() {
         "sessions after deletion: {:?}",
         after_delete.sessions
     );
-    f.store.copy(&seed.dump).unwrap();
+    f.store.raw().row("session", "worker").put(json!(seed)).unwrap();
     let recreated = markers(&f);
     assert_eq!(recreated, (deleted.0, deleted.1 + 1));
     assert_eq!(reader.clock_board().unwrap(), initial);
@@ -120,7 +123,9 @@ fn deleting_and_recreating_sessions_never_reuses_a_cached_marker() {
         Health::Left
     );
 }
+}
 
+// SurrealDB alone: reconstructs the pre-shard schema-14 session marker.
 #[test]
 fn an_upgraded_legacy_actor_can_write_before_its_first_sharded_beat() {
     let f = Fixture::new(
@@ -194,6 +199,7 @@ fn while_paused<T: Send>(
     })
 }
 
+// SurrealDB alone: an HTTP event gate pauses its transaction at the actor fence.
 #[test]
 fn a_beat_committing_after_the_lost_holder_guard_prevents_takeover() {
     let f = Fixture::new(
@@ -239,6 +245,7 @@ fn a_beat_committing_after_the_lost_holder_guard_prevents_takeover() {
     );
 }
 
+// SurrealDB alone: an HTTP event gate pauses its transaction at the actor fence.
 #[test]
 fn a_departure_committing_after_the_incoming_holder_guard_prevents_handover() {
     let f = Fixture::new(
@@ -278,6 +285,7 @@ fn a_departure_committing_after_the_incoming_holder_guard_prevents_handover() {
     );
 }
 
+// SurrealDB alone: an HTTP event gate pauses its transaction at the actor fence.
 #[test]
 fn a_departure_committing_after_the_actor_guard_prevents_a_field_write() {
     let f = Fixture::new(Seed::default().session("actor").task("tools/held", "ready"));
@@ -305,6 +313,7 @@ fn a_departure_committing_after_the_actor_guard_prevents_a_field_write() {
     );
 }
 
+// SurrealDB alone: an HTTP event gate pauses its transaction at the actor fence.
 #[test]
 fn a_notification_fences_its_actor_without_fabricating_a_heartbeat() {
     let f = Fixture::new(
@@ -345,6 +354,7 @@ fn a_notification_fences_its_actor_without_fabricating_a_heartbeat() {
     );
 }
 
+// SurrealDB alone: an HTTP event gate pauses its transaction at the actor fence.
 #[test]
 fn a_departure_after_the_direct_message_recipient_guard_refuses_the_message() {
     let f = Fixture::new(Seed::default().session("actor").session("recipient"));
@@ -370,6 +380,7 @@ fn a_departure_after_the_direct_message_recipient_guard_refuses_the_message() {
     );
 }
 
+// SurrealDB alone: an HTTP event gate pauses its transaction at the actor fence.
 #[test]
 fn same_key_classification_rechecks_a_concurrently_remapped_target() {
     let f = Fixture::new(Seed::default().session("target"));

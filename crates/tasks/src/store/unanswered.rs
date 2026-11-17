@@ -3,6 +3,8 @@
 //! asked, by record range or index, never every thread of the board nor a recipient's every record
 //! after each of its posts.
 
+use super::postgres::unanswered as pg;
+use super::statement::both;
 use super::surreal::unanswered as sql;
 use super::work::{Tree, above};
 use super::{Board, Error, Failure, Health, Message, Store, Task};
@@ -315,7 +317,10 @@ impl Store {
     /// claims, joins and releases: its role history), by the recipient and sender indexes.
     fn threads_naming(&self, handles: &BTreeSet<String>) -> Result<BTreeSet<String>, Error> {
         let named: Vec<Vec<String>> = self
-            .bounded_read(sql::naming(""), json!({"handles": handles}))
+            .bounded_read(
+                both(sql::naming(""), pg::naming()),
+                json!({"handles": handles}),
+            )
             .map_err(recovery_error)?;
         Ok(named.into_iter().flatten().collect())
     }
@@ -336,7 +341,7 @@ impl Store {
         let in_order: Vec<&str> = tasks.iter().map(|t| t.slug.as_str()).collect();
         let mut read: Threads = self
             .bounded_read(
-                sql::threads(""),
+                both(sql::threads(""), pg::threads()),
                 json!({"slugs": in_order, "launched": launched}),
             )
             .map_err(recovery_error)?;
@@ -363,7 +368,10 @@ impl Store {
             return Ok(());
         }
         let launches: Vec<TaskSessionRow> = self
-            .bounded_read(sql::REVIEWER_LAUNCHES, json!({"handles": handles}))
+            .bounded_read(
+                both(sql::REVIEWER_LAUNCHES, pg::reviewer_launches()),
+                json!({"handles": handles}),
+            )
             .map_err(recovery_error)?;
         for p in pending.iter_mut().filter(|p| wants(p)) {
             p.launch = launches
@@ -417,7 +425,7 @@ impl Store {
             })
             .collect();
         let found: Vec<Vec<i64>> = self
-            .bounded_read(sql::below(""), json!({"asks": asks}))
+            .bounded_read(both(sql::below(""), pg::below()), json!({"asks": asks}))
             .map_err(recovery_error)?;
         let latest: BTreeMap<(String, String), i64> = after
             .keys()
@@ -461,16 +469,16 @@ impl Store {
         parents: &[(String, Option<String>)],
     ) -> Result<bool, Error> {
         self.transact(
-            sql::reserve(),
+            both(sql::reserve(), pg::reserve()),
             json!({"slug": pending.slug, "handle": pending.handle, "post": pending.post.id, "seen":pending.seen, "role":pending.role, "answers":rows, "parents":parents}),
         )
         .map_err(recovery_error)
     }
 
     pub(crate) fn record_unanswered_restore(&self, slug: &str, text: &str) -> Result<(), Error> {
-        let body = sql::restore_said();
+        let body = both(sql::restore_said(), pg::restore_said());
         self.transact::<serde_json::Value>(
-            &body,
+            body,
             json!({"slug":slug, "text":text, "now":self.now()}),
         )
         .map(|_| ())
