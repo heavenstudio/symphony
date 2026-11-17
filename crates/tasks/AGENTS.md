@@ -231,6 +231,11 @@ consumers call are held by `tests/consumer_api.rs` ([RELEASES](../../docs/RELEAS
 changes only with a consumer release plan (the crate's `clippy.toml` says why
 `avoid-breaking-exported-api` is off).
 
+For those Rust calls, the [two-release rule](../../docs/CHECKS.md#consumer-api-changes) keeps the
+working old item without `#[deprecated]` beside its replacement for a release. Removal is a
+separate later task with read-only consumer migration evidence and the compile list updated.
+That Rust compatibility rule is separate from the `tasks api` version contract above.
+
 ### A write decides on what it read
 
 A rule reads what it decides on, decides in the process, and writes in one transaction fenced on
