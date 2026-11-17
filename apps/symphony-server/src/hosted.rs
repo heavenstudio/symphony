@@ -27,8 +27,10 @@ use crate::front::Shared;
 mod canonical;
 mod json;
 mod lease;
+mod projection;
 use lease::Admission;
 pub(crate) use lease::admission;
+pub(crate) use projection::{project_agents, project_feed, project_page};
 
 /// A principal from a verified assertion; neither a display name nor a payload actor.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -356,4 +358,4 @@ fn private(mut response: Response) -> Response {
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

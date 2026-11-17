@@ -130,6 +130,7 @@ pub(super) fn target(
         route.as_str(),
         "/api/front"
             | "/api/projects"
+            | "/api/machine-work"
             | "/api/agent-screen"
             | "/api/agent-focus"
             | "/api/task-offer"

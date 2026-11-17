@@ -253,7 +253,7 @@ fn harness(fake: &Arc<Fake>) -> Router {
         .layer(middleware::from_fn_with_state(boundary(fake), admit))
 }
 
-fn request(path: &str) -> Request {
+pub(crate) fn request(path: &str) -> Request {
     HttpRequest::builder()
         .uri(path)
         .header("host", "app.example:8443")
@@ -261,6 +261,81 @@ fn request(path: &str) -> Request {
         .header("x-fixture-visitor", "key-1")
         .body(Body::empty())
         .unwrap()
+}
+
+pub(crate) fn native_host(project: &str) -> (Config, Arc<dyn Host>) {
+    let mut configured = config();
+    configured.project = project.into();
+    (configured, Fake::new())
+}
+
+pub(crate) const PRIVATE_DIAGNOSTICS: &[&str] = &[
+    "foreign-machine-id",
+    "foreign-host-label",
+    "foreign-producer-id",
+    "/private/foreign-checkout",
+    "private-machine-recipe",
+    "unassigned-private-operation",
+    "inventory-reader-secret",
+    "/private/inventory-reader",
+    "private-guidance",
+];
+
+pub(crate) fn diagnostic_work() -> symphony_api::MachineWork {
+    use symphony_api::{
+        MachineObservation, MachineWork, WorkCounts, WorkFreshness, WorkGuidance, WorkKind,
+        WorkOperation, WorkState,
+    };
+    let operation = WorkOperation {
+        machine_id: Some("foreign-machine-id".into()),
+        operation_id: Some("foreign-operation".into()),
+        parent_id: None,
+        handle: Some("worker".into()),
+        task: Some("tools/visible".into()),
+        checkout: "/private/foreign-checkout".into(),
+        recipe: "private-machine-recipe".into(),
+        kind: WorkKind::Build,
+        state: WorkState::Running,
+        resource: "private-machine-resource".into(),
+        reason: "inventory-reader-secret: /private/inventory-reader failed".into(),
+        phase_since: None,
+        under: Vec::new(),
+    };
+    let mut unassigned = operation.clone();
+    unassigned.task = None;
+    unassigned.operation_id = Some("unassigned-private-operation".into());
+    MachineWork {
+        freshness: WorkFreshness::Fresh,
+        machines: vec![MachineObservation {
+            machine_id: "foreign-machine-id".into(),
+            label: "foreign-host-label".into(),
+            producer_id: "foreign-producer-id".into(),
+            sequence: 42,
+            age_ms: Some(1),
+            freshness: WorkFreshness::Fresh,
+            complete: true,
+            reason: "inventory-reader-secret: /private/inventory-reader failed".into(),
+            counts: Some(WorkCounts {
+                running_builds: 1,
+                ..WorkCounts::default()
+            }),
+            operations: vec![operation],
+        }],
+        unassigned: vec![unassigned],
+        guidance: std::collections::BTreeMap::from([(
+            "private-guidance".into(),
+            WorkGuidance {
+                build: Some(4),
+                test: Some(6),
+            },
+        )]),
+    }
+}
+
+pub(crate) fn assert_no_diagnostics(text: &str) {
+    for private in PRIVATE_DIAGNOSTICS {
+        assert!(!text.contains(private), "leaked {private}");
+    }
 }
 
 fn post(path: &str, json: &str) -> Request {
@@ -489,6 +564,7 @@ async fn route_query_and_body_aliases_cannot_choose_another_scope() {
         "/api/feed?since=other:3",
         "/api/front",
         "/api/projects",
+        "/api/machine-work",
         "/api/agent-focus",
         "/api/agent-screen",
         "/api/task-offer",
@@ -795,19 +871,25 @@ async fn native_router_keeps_local_gate_and_hosted_requests_have_no_machine_priv
         "shell must not open project board state"
     );
 
-    let mut req = request("/api/front");
-    req.extensions_mut().insert(axum::extract::ConnectInfo(
-        "127.0.0.1:1234".parse::<std::net::SocketAddr>().unwrap(),
-    ));
-    assert_eq!(
-        router(shared.clone(), config(), fake.clone())
-            .unwrap()
-            .oneshot(req)
-            .await
-            .unwrap()
-            .status(),
-        StatusCode::NOT_FOUND
-    );
+    for path in ["/api/front", "/api/machine-work"] {
+        let mut req = request(path);
+        req.extensions_mut().insert(axum::extract::ConnectInfo(
+            "127.0.0.1:1234".parse::<std::net::SocketAddr>().unwrap(),
+        ));
+        assert_eq!(
+            router(shared.clone(), config(), fake.clone())
+                .unwrap()
+                .oneshot(req)
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::NOT_FOUND
+        );
+        assert!(
+            shared.api.get().is_none(),
+            "{path} must be refused before a native hub/state read"
+        );
+    }
     let mut req = request("/");
     req.extensions_mut().insert(axum::extract::ConnectInfo(
         "203.0.113.9:1234".parse::<std::net::SocketAddr>().unwrap(),
@@ -995,11 +1077,30 @@ fn feed_fixture(fake: &Arc<Fake>) -> (crate::testing::Tree, Arc<crate::live::Hub
     {
         let mut pages = hub.pages.write().unwrap();
         let page = pages.get_mut("").unwrap();
-        page.board.version = 7;
+        page.board.version = 9;
         page.history.clear();
+        let work = diagnostic_work();
+        let probes = serde_json::json!({"panes": "inventory-reader-secret", "slots": "/private/inventory-reader"});
+        let ordinary = serde_json::json!({"region": "task", "op": "upsert", "key": "tools/visible",
+            "data": {"slug": "tools/visible", "title": "ordinary-project-data"}});
         page.history.push_back(crate::live::Event {
             version: 7,
-            json: r#"{"changes":[],"version":7}"#.into(),
+            json: serde_json::json!({"changes":[ordinary, {"region":"machine-work","data":work},
+                {"region":"agent-probes","data":probes}],"version":7})
+            .to_string(),
+        });
+        page.history.push_back(crate::live::Event {
+            version: 8,
+            json: serde_json::json!({"changes":[{"region":"machine-work","data":work},
+                {"region":"agent-probes","data":probes}],"version":8})
+            .to_string(),
+        });
+        page.history.push_back(crate::live::Event {
+            version: 9,
+            json:
+                serde_json::json!({"changes":[{"region":"task","op":"upsert","key":"tools/visible",
+                "data":{"slug":"tools/visible","title":"ordinary-project-next"}}],"version":9})
+                .to_string(),
         });
     }
     hub.server_notice
@@ -1037,6 +1138,16 @@ async fn native_sse_reauthorizes_each_event_and_ends_at_revocation_without_diagn
     let event = std::str::from_utf8(&event).unwrap();
     assert!(event.contains("id: 7"));
     assert!(!event.contains("secret"));
+    assert!(event.contains("ordinary-project-data"));
+    assert_no_diagnostics(event);
+    let next = stream.next().await.unwrap().unwrap();
+    let next = std::str::from_utf8(&next).unwrap();
+    assert!(
+        next.contains("id: 9"),
+        "machine-only version 8 must be omitted: {next}"
+    );
+    assert!(next.contains("ordinary-project-next"));
+    assert_no_diagnostics(next);
     fake.changes.send_replace(());
     assert!(stream.next().await.is_none());
     let mut req = request("/api/feed?since=other:7");
@@ -1087,6 +1198,15 @@ async fn native_websocket_uses_https_origin_and_closes_on_policy_revocation() {
         let first = socket.read().unwrap().into_text().unwrap();
         assert!(first.contains("\"version\":7"));
         assert!(!first.contains("secret"));
+        assert!(first.contains("ordinary-project-data"));
+        assert_no_diagnostics(&first);
+        let next = socket.read().unwrap().into_text().unwrap();
+        assert!(
+            next.contains("\"version\":9"),
+            "machine-only version 8 must be omitted: {next}"
+        );
+        assert!(next.contains("ordinary-project-next"));
+        assert_no_diagnostics(&next);
         revoke.changes.send_replace(());
         assert!(matches!(
             socket.read().unwrap(),

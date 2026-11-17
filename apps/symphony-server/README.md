@@ -34,6 +34,10 @@ policy-change event, including while idle. A changed revision needs a new reques
 cannot extend an existing request. The host subscribes policy loss and external revocation to
 `Host::changes`, with any external revocation delay separately accepted before deployment.
 Server diagnostic notices and detailed native errors are withheld from hosted responses.
+The machine-work endpoint is excluded. Native agent/task responses keep the existing wire
+shape with empty, unknown machine-work evidence and unavailable probe values; task stages and
+counts use that empty projection. Machine-work and agent-probe feed deltas are omitted, including
+diagnostics-only events. Ordinary project tasks, agents and document deltas remain available.
 
 Hosted browser writes require exact Origin, same-origin fetch metadata when supplied,
 `application/json` and a verified CSRF binding. JSON is capped at 2 MiB; duplicate keys/query

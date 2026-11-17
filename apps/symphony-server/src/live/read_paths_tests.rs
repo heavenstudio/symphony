@@ -29,6 +29,9 @@ use std::time::{Duration, Instant};
 use symphony_board::rpc::Client;
 use tower::ServiceExt;
 
+#[path = "../hosted/native_tests.rs"]
+mod hosted;
+
 /// The first bytes of a PNG three pixels wide and two high: all a render reads of a picture.
 pub(super) const PNG: [u8; 24] = [
     0x89, b'P', b'N', b'G', b'\r', b'\n', 0x1a, b'\n', 0, 0, 0, 13, b'I', b'H', b'D', b'R', 0, 0,

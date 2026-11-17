@@ -111,6 +111,7 @@ fn cursor(shared: &Shared, path: &str) -> Option<u64> {
 }
 
 async fn read(shared: &Arc<Shared>, request: Request) -> Option<Response> {
+    let hosted = crate::hosted::admission(&request).is_some();
     let Some(decoded) = decode_path(request.uri().path()) else {
         return Some(error(StatusCode::BAD_REQUEST, "invalid URL path"));
     };
@@ -172,7 +173,7 @@ async fn read(shared: &Arc<Shared>, request: Request) -> Option<Response> {
         .unwrap_or("")
         .to_string();
     let check = shared.clone();
-    let allowed = crate::hosted::admission(&request).is_some()
+    let allowed = hosted
         || crate::spawn::blocking(move || check.allows_host(&host))
             .await
             .unwrap_or(false);
@@ -593,6 +594,9 @@ async fn read(shared: &Arc<Shared>, request: Request) -> Option<Response> {
                     // board cannot be read, neither can they, as with its tasks.
                     let board = hub.tasks_read().map_err(|e| unavailable(&e, ""))?;
                     let mut view = hub.agent_snapshot().map_err(|e| unavailable(&e, ""))?;
+                    if hosted {
+                        crate::hosted::project_agents(&mut view);
+                    }
                     if agent_page {
                         view.agents.retain(|a| {
                             if lost {
@@ -669,7 +673,11 @@ async fn read(shared: &Arc<Shared>, request: Request) -> Option<Response> {
                         store.get(&slug).map_err(task_failure).and_then(|record| {
                             symphony::taskview::page(&store, &record, &root)
                                 .map(|page| {
-                                    let mut page = hub.observed_page(page);
+                                    let mut page = if hosted {
+                                        crate::hosted::project_page(page)
+                                    } else {
+                                        hub.observed_page(page)
+                                    };
                                     page.local = local;
                                     // The room its gates held last time, from what is kept: the
                                     // page never waits on them.
@@ -1252,6 +1260,7 @@ pub(crate) async fn feed(hub: Arc<Hub>, scope: &str, request: Request) -> Respon
     let mut draining = hub.draining.subscribe();
     let hosted = crate::hosted::admission(&request).cloned();
     let show_notices = hosted.is_none();
+    let hide_machine = hosted.is_some();
     let notices = hub.server_notice.subscribe();
     let notices =
         futures_util::stream::unfold((notices, true), |(mut notices, first)| async move {
@@ -1275,10 +1284,16 @@ pub(crate) async fn feed(hub: Arc<Hub>, scope: &str, request: Request) -> Respon
             loop {
                 if let Some(event) = pending.pop_front() {
                     since = event.version;
-                    let item = Said::delta(
-                        since,
-                        filtered_document_event(&event.json, &document_filter),
-                    );
+                    let data = filtered_document_event(&event.json, &document_filter);
+                    let data = if hide_machine {
+                        match crate::hosted::project_feed(&data) {
+                            Some(data) => data,
+                            None => continue,
+                        }
+                    } else {
+                        data
+                    };
+                    let item = Said::delta(since, data);
                     deadline = tokio::time::Instant::now() + ping_after;
                     return Some((
                         item,
