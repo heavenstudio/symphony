@@ -1286,6 +1286,46 @@ fn a_starters_failed_hand_over_keeps_a_waiting_retrys_time_on_the_notice() {
     server.stop(worker);
 }
 
+/// The loop's look for a hand-off replaces nothing and says no failed update where none was asked
+/// for, where the server has no machine folder to take a request from, where none was left there,
+/// and where the one left is refused; the flag is taken each time it was set, so the next look
+/// does not take the same request again.
+#[test]
+fn a_hand_off_look_with_no_request_to_follow_replaces_nothing() {
+    use super::{HandOff, handed_over};
+    let server = Reloading::new(installs_a_replacement_that_ends);
+    let lease = std::fs::File::open(&server.root).unwrap();
+    let look = |home: Option<&Path>| {
+        let serve = crate::cli::Serve {
+            home: home.map(Path::to_path_buf),
+            root: server.root.clone(),
+            port: 1,
+            hosts: Vec::new(),
+            install: None,
+        };
+        let came = handed_over(&serve, &server.shared, &[], &lease, &Retry::new());
+        assert!(
+            !server.shared.handover.load(Ordering::SeqCst),
+            "the flag is taken"
+        );
+        came
+    };
+    assert_eq!(look(Some(&server.home)), HandOff::None, "none asked for");
+    server.shared.ask_handover();
+    assert_eq!(look(None), HandOff::None, "no machine folder");
+    server.shared.ask_handover();
+    assert_eq!(look(Some(&server.home)), HandOff::None, "no request left");
+    // A request for a checkout the registry does not hold: refused, said in the log alone.
+    server.ask_hand_over();
+    assert_eq!(look(Some(&server.home)), HandOff::None, "a refused request");
+    assert!(
+        !server.home.join(crate::host::HANDOVER).exists(),
+        "a refused request is taken"
+    );
+    assert_eq!(server.notice(), "", "no update failed");
+    assert_eq!(started(&server), 0, "no replacement started");
+}
+
 /// A build kept as the running image after another version's update failed leaves no retry of
 /// that version waiting, as the sources read the kept one: a starter's hand-over that fails after
 /// it names none.

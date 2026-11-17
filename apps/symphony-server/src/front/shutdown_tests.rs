@@ -342,6 +342,64 @@ fn a_hand_off_asked_for_wakes_its_loops_and_one_that_asks_after_it() {
     );
 }
 
+/// Until the follow `followed` has returned, its thread joined; a stall fails naming `what`.
+fn joined(followed: std::thread::JoinHandle<()>, what: &str) {
+    test_time::until_true(what, BACKSTOP, || followed.is_finished())
+        .unwrap_or_else(|stall| panic!("{stall}"));
+    followed.join().unwrap();
+}
+
+/// A server follows a process that is not its child to its end ([`end_when`]): that end stops the
+/// server; the server's own stop ends the follow and leaves the process be; and a pid it cannot
+/// follow is said, the server left to its stop alone.
+#[test]
+fn a_server_ends_with_the_process_it_follows_and_its_own_stop_ends_the_follow() {
+    let tree = Tree::new();
+    // A process that lives until the case kills it: it sleeps a day.
+    let sleeper = || {
+        std::process::Command::new("/bin/sleep")
+            .arg("86400")
+            .spawn()
+            .unwrap()
+    };
+
+    let shared = idle_shared(&tree);
+    let mut followed = sleeper();
+    let pid = i64::from(followed.id());
+    let follow = end_when(
+        &shared,
+        "follow test",
+        "the process it follows ended",
+        pid,
+        || false,
+    );
+    followed.kill().unwrap();
+    joined(follow, "the follow to see its process end");
+    assert!(shared.stopping(), "the process's end stops the server");
+    followed.wait().unwrap();
+
+    let shared = idle_shared(&tree);
+    let mut living = sleeper();
+    let pid = i64::from(living.id());
+    let follow = end_when(
+        &shared,
+        "follow test",
+        "the process it follows ended",
+        pid,
+        || false,
+    );
+    shared.stop();
+    joined(follow, "the stop to end the follow");
+    assert!(living.try_wait().unwrap().is_none(), "the process goes on");
+    living.kill().unwrap();
+    living.wait().unwrap();
+
+    let shared = idle_shared(&tree);
+    let follow = end_when(&shared, "follow test", "no process", 0, || false);
+    joined(follow, "a follow of no process to give up");
+    assert!(!shared.stopping(), "only its stop ends the server now");
+}
+
 /// Stop waits for the hub's tick in flight. Run from a signal, that wait must not hold a runtime
 /// worker: on a runtime with only one, a task still runs while stop is held.
 #[test]
