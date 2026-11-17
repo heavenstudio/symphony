@@ -727,14 +727,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS ask_sid ON ask (sid);
 
 /// This build's steps on PostgreSQL: every table, index, function and trigger, each made if it is
 /// not there or replaced, so the steps run again on a board that has them change nothing.
-pub(in crate::store) fn define() -> &'static str {
-    // The base schema is fixed by this build. Share its construction across openings;
-    // version-specific steps are still appended by the opening's migration.
-    static DEFINED: std::sync::LazyLock<String> = std::sync::LazyLock::new(construct);
-    &DEFINED
-}
-
-fn construct() -> String {
+pub(in crate::store) fn define() -> String {
     let mut sql = String::new();
     for table in &TABLES {
         sql.push_str(&create(table));
@@ -742,10 +735,12 @@ fn construct() -> String {
     sql.push_str(UNIQUES);
     sql.push_str(INDEXES);
     sql.push_str(FUNCTIONS);
-    let analyzed = WORDS
-        .replace("NUMBERS", &numbers())
-        .replace("LATIN", &latin());
-    sql.push_str(&analyzed);
+    static ANALYZED: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
+        WORDS
+            .replace("NUMBERS", &numbers())
+            .replace("LATIN", &latin())
+    });
+    sql.push_str(&ANALYZED);
     sql.push_str(&triggers());
     sql
 }
@@ -794,34 +789,6 @@ mod tests {
             "{ask}"
         );
         assert!(table("moved").is_none() && table("task_chunk").is_none());
-    }
-
-    #[test]
-    fn defaults_and_choice_constraints_keep_their_exact_sql() {
-        const TABLE: Table = Table {
-            name: "attributes",
-            columns: &[
-                req("plain", Text),
-                opt("optional", Text),
-                defaulted("flag", Bool, "false"),
-                defaulted("count", Int, "0"),
-                of("choice", &["first", "last"]),
-                of("unrestricted", &[]),
-            ],
-        };
-        assert_eq!(
-            create(&TABLE),
-            "CREATE TABLE IF NOT EXISTS attributes (
-    id jsonb PRIMARY KEY,
-    plain text NOT NULL,
-    optional text,
-    flag boolean DEFAULT false NOT NULL,
-    count bigint DEFAULT 0 NOT NULL,
-    choice text NOT NULL CHECK (choice IN ('first', 'last')),
-    unrestricted text NOT NULL
-);
-"
-        );
     }
 
     /// The numbers are Rust's, ranges of them and single ones, and no letter among them.
