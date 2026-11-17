@@ -81,6 +81,16 @@ on_both! {
         raw.row("task", "tools/one").add("updated", -30.5).unwrap();
         let now = raw.row("task", "tools/one").field("updated").unwrap();
         assert_eq!(now.as_f64().unwrap(), was.as_f64().unwrap() + 59.5);
+        // A field within a typed one, and a schemaless table's, from nothing when it is not set.
+        let task = || raw.row("task", "tools/one");
+        task().add("fields.count", 3).unwrap();
+        task().add("fields.count", 2).unwrap();
+        assert_eq!(task().field("fields.count").unwrap(), json!(5));
+        let lease = || raw.row("callback_lease", json!(["dispatch", "this-host"]));
+        lease().put(json!({"asked": 1})).unwrap();
+        lease().add("asked", 2).unwrap();
+        lease().add("tries", 1).unwrap();
+        assert_eq!(lease().get().unwrap(), json!({"asked": 3, "tries": 1}));
     }
 
     fn a_row_under_a_compound_id_is_made_changed_and_removed(backend: Backend) {

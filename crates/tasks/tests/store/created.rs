@@ -1,0 +1,121 @@
+//! A task made on either database: what it is made with (its parent, links, the tasks it waits on,
+//! its reservation and its marks), the line that says so, and the refusals before anything is
+//! written.
+
+use crate::common::{Backend, Fixture, Seed, refused};
+use serde_json::json;
+use symphony_board::{NewTask, Task};
+
+fn board(backend: Backend) -> Fixture {
+    Fixture::on(
+        backend,
+        Seed::default()
+            .task("tools/base", "ready")
+            .task("tools/done", "done"),
+    )
+}
+
+/// What a test reads of a task: everything but its times and number, which each database gives
+/// its own.
+fn shape(task: &Task) -> serde_json::Value {
+    json!({
+        "slug": task.slug, "title": task.title, "body": task.body, "status": task.status,
+        "priority": task.priority, "parent": task.parent, "created_by": task.created_by,
+        "links": task.links, "depends": task.depends, "instruction": task.instruction,
+        "fields": task.fields,
+        "roles": task.roles.iter().map(|role| [&role.handle, &role.role]).collect::<Vec<_>>(),
+    })
+}
+
+on_both! {
+    fn a_task_is_made_with_its_links_waits_reservation_and_line(backend: Backend) {
+        let f = board(backend);
+        let worker = f.session("worker");
+        let made = f
+            .store
+            .create(&NewTask {
+                body: "The brief.".into(),
+                priority: 1,
+                parent: Some("tools/base".into()),
+                links: vec!["docs/TASKS.md".into(), "docs/CHECKS.md".into()],
+                depends: vec!["tools/done".into(), "tools/base".into()],
+                assignee: Some(worker.clone()),
+                ..NewTask::new("tools/base/child", "A child", "owner")
+            })
+            .unwrap();
+        assert_eq!(made, f.store.get("tools/base/child").unwrap());
+        let mut shown = shape(&made);
+        shown["links"].as_array_mut().unwrap().sort_by_key(ToString::to_string);
+        shown["depends"].as_array_mut().unwrap().sort_by_key(ToString::to_string);
+        assert_eq!(
+            shown,
+            json!({
+                "slug": "tools/base/child", "title": "A child", "body": "The brief.",
+                "status": "ready", "priority": 1, "parent": "tools/base", "created_by": "owner",
+                "links": ["docs/CHECKS.md", "docs/TASKS.md"],
+                "depends": ["tools/base", "tools/done"], "instruction": false, "fields": {},
+                "roles": [[worker.as_str(), "reserved"]],
+            })
+        );
+        let thread = f.store.thread("tools/base/child").unwrap();
+        assert_eq!(thread.len(), 1, "{thread:?}");
+        assert_eq!(thread[0].sender, "owner");
+        assert_eq!(made.id, f.store.get("tools/done").unwrap().id + 1);
+    }
+
+    fn a_red_a_fast_fix_and_an_owners_receipt_are_marks_on_the_task(backend: Backend) {
+        let f = board(backend);
+        let filer = f.session(symphony_board::red::FILER);
+        let red = f
+            .store
+            .create(&NewTask {
+                red: Some("main".into()),
+                ..NewTask::new("tests/main-red-1", "A red", &filer)
+            })
+            .unwrap();
+        assert_eq!(red.fields["_board"]["red"], json!("main"));
+        let worker = f.session("worker");
+        let fix = f
+            .store
+            .create(&NewTask {
+                fast_fix: Some("a one-line fix".into()),
+                ..NewTask::new("fix/regex", "A fix", &worker)
+            })
+            .unwrap();
+        assert!(fix.fields["_board"].contains_key("fast_fix"), "{:?}", fix.fields);
+        f.store
+            .create_owner_task(&NewTask::new("tools/saved", "Saved", "owner"), "receipt-1")
+            .unwrap();
+        let receipt = f.store.raw().row("task", "tools/saved");
+        assert_eq!(
+            receipt.field("fields._symphony.owner_save").unwrap(),
+            json!("receipt-1")
+        );
+    }
+
+    fn a_task_is_refused_before_anything_is_written(backend: Backend) {
+        let f = board(backend);
+        let worker = f.session("worker");
+        let marker = f.store.marker().unwrap();
+        let taken = refused(f.store.create(&NewTask::new("tools/base", "Again", "owner")));
+        let red = refused(f.store.create(&NewTask {
+            red: Some("main".into()),
+            ..NewTask::new("tests/main-red-2", "A red", &worker)
+        }));
+        let waits = refused(f.store.create(&NewTask {
+            depends: vec!["tools/none".into()],
+            ..NewTask::new("tools/waiting", "Waits", "owner")
+        }));
+        assert_eq!(taken, "task tools/base already exists");
+        assert_eq!(
+            red,
+            format!(
+                "only a red's filer marks a task red, a session of kind filer as the tools that \
+                 file reds register; '{worker}' is not one"
+            )
+        );
+        assert_eq!(waits, "no task 'tools/none'");
+        assert_eq!(f.store.marker().unwrap(), marker, "nothing was written");
+        assert_eq!(f.store.tasks(None).unwrap().len(), 2);
+    }
+}

@@ -1,7 +1,7 @@
 //! The reads: the whole board in one round trip however big it is, tasks by priority then creation,
 //! each with its links and holders.
 
-use crate::common::{Fixture, NOW, RawWrite, Seed, refused, session};
+use crate::common::{Backend, Fixture, NOW, RawWrite, Seed, refused, session};
 use crate::gate::Gate;
 use symphony_board::Health;
 use symphony_board::health::LIVE_SECONDS;
@@ -426,85 +426,84 @@ fn the_board_is_one_snapshot() {
     board.tasks.iter().for_each(consistent);
 }
 
-#[test]
-fn a_thread_is_its_own_task_s_messages_in_order() {
-    let said = |id: i64, slug: &str| MessageRow {
-        id,
-        slug: slug.into(),
-        sender: "owner".into(),
-        kind: "msg".into(),
-        text: format!("#{id}"),
-        ts: NOW,
-        ..Default::default()
-    };
-    let mut seed = Seed::default()
-        .task("a", "ready")
-        .task("a/b", "ready")
-        .task("a/bc", "ready")
-        .task("a/b/c", "ready");
-    seed.dump.messages = vec![
-        said(1, "a/b"),
-        said(2, "a"),
-        said(3, "a/bc"),
-        said(9, "a/b"),
-        said(10, "a/b/c"),
-        said(11, "a/b"),
-    ];
-    let f = Fixture::new(seed);
-    let ids: Vec<i64> = f
-        .store
-        .thread("a/b")
-        .unwrap()
-        .into_iter()
-        .map(|m| m.id)
-        .collect();
-    assert_eq!(ids, [1, 9, 11]);
-    assert_eq!(f.store.thread("a").unwrap().len(), 1);
-}
+on_both! {
+    fn a_thread_is_its_own_task_s_messages_in_order(backend: Backend) {
+        let said = |id: i64, slug: &str| MessageRow {
+            id,
+            slug: slug.into(),
+            sender: "owner".into(),
+            kind: "msg".into(),
+            text: format!("#{id}"),
+            ts: NOW,
+            ..Default::default()
+        };
+        let mut seed = Seed::default()
+            .task("a", "ready")
+            .task("a/b", "ready")
+            .task("a/bc", "ready")
+            .task("a/b/c", "ready");
+        seed.dump.messages = vec![
+            said(1, "a/b"),
+            said(2, "a"),
+            said(3, "a/bc"),
+            said(9, "a/b"),
+            said(10, "a/b/c"),
+            said(11, "a/b"),
+        ];
+        let f = Fixture::on(backend, seed);
+        let ids: Vec<i64> = f
+            .store
+            .thread("a/b")
+            .unwrap()
+            .into_iter()
+            .map(|m| m.id)
+            .collect();
+        assert_eq!(ids, [1, 9, 11]);
+        assert_eq!(f.store.thread("a").unwrap().len(), 1);
+    }
 
-#[test]
-fn threads_are_each_slug_s_thread_in_order_in_one_round_trip() {
-    let said = |id: i64, slug: &str| MessageRow {
-        id,
-        slug: slug.into(),
-        sender: "owner".into(),
-        kind: "msg".into(),
-        text: format!("#{id}"),
-        ts: NOW,
-        ..Default::default()
-    };
-    let mut seed = Seed::default()
-        .task("a", "ready")
-        .task("a/b", "ready")
-        .task("c", "ready");
-    seed.dump.messages = vec![
-        said(1, "a/b"),
-        said(2, "a"),
-        said(9, "a/b"),
-        said(11, "a/b"),
-    ];
-    let f = Fixture::new(seed);
-    let before = f.store.client().requests();
-    let threads = f
-        .store
-        .threads(&["a/b".into(), "a".into(), "c".into()])
-        .unwrap();
-    assert_eq!(f.store.client().requests() - before, 1);
-    let ids = |slug: &str| -> Vec<i64> { threads[slug].iter().map(|m| m.id).collect() };
-    assert_eq!(ids("a/b"), [1, 9, 11]);
-    assert_eq!(ids("a"), [2]);
-    assert_eq!(ids("c"), Vec::<i64>::new());
-    assert_eq!(threads.len(), 3);
-    assert!(f.store.threads(&[]).unwrap().is_empty());
-}
+    fn threads_are_each_slug_s_thread_in_order_in_one_round_trip(backend: Backend) {
+        let said = |id: i64, slug: &str| MessageRow {
+            id,
+            slug: slug.into(),
+            sender: "owner".into(),
+            kind: "msg".into(),
+            text: format!("#{id}"),
+            ts: NOW,
+            ..Default::default()
+        };
+        let mut seed = Seed::default()
+            .task("a", "ready")
+            .task("a/b", "ready")
+            .task("c", "ready");
+        seed.dump.messages = vec![
+            said(1, "a/b"),
+            said(2, "a"),
+            said(9, "a/b"),
+            said(11, "a/b"),
+        ];
+        let f = Fixture::on(backend, seed);
+        let before = f.store.database().requests();
+        let threads = f
+            .store
+            .threads(&["a/b".into(), "a".into(), "c".into()])
+            .unwrap();
+        assert_eq!(f.store.database().requests() - before, 1);
+        let ids = |slug: &str| -> Vec<i64> { threads[slug].iter().map(|m| m.id).collect() };
+        assert_eq!(ids("a/b"), [1, 9, 11]);
+        assert_eq!(ids("a"), [2]);
+        assert_eq!(ids("c"), Vec::<i64>::new());
+        assert_eq!(threads.len(), 3);
+        assert!(f.store.threads(&[]).unwrap().is_empty());
+    }
 
-#[test]
-fn threads_refuse_a_slug_no_task_has() {
-    let f = Fixture::new(Seed::default().task("a", "ready"));
-    assert_eq!(
-        refused(f.store.threads(&["a".into(), "sim/none".into()])),
-        "no task 'sim/none'"
-    );
+    fn threads_refuse_a_slug_no_task_has(backend: Backend) {
+        let f = Fixture::on(backend, Seed::default().task("a", "ready"));
+        assert_eq!(
+            refused(f.store.threads(&["a".into(), "sim/none".into()])),
+            "no task 'sim/none'"
+        );
+    }
 }
 
 /// The requests a call makes, and what it gave.

@@ -492,3 +492,18 @@ fn a_client_says_where_it_reaches() {
     assert_eq!(client.of("postgres").database(), "postgres");
     assert_eq!(client.another().socket(), Path::new("/tmp/symphony-pg-1"));
 }
+
+#[test]
+fn a_bounded_client_waits_the_shorter_of_its_own_wait_and_the_bound_and_keeps_it() {
+    let client = Client::new(Path::new("/tmp/symphony-pg-1"), "board_1");
+    assert_eq!(client.timeout, TIMEOUT);
+    let short = client.bounded(Duration::from_secs(3));
+    assert_eq!(short.timeout, Duration::from_secs(3));
+    assert_eq!(
+        short.bounded(Duration::from_secs(9)).timeout,
+        Duration::from_secs(3)
+    );
+    assert_eq!(short.another().timeout, Duration::from_secs(3));
+    assert_eq!(short.of("postgres").timeout, Duration::from_secs(3));
+    assert_eq!((short.database(), short.requests()), ("board_1", 0));
+}
