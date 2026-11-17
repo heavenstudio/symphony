@@ -278,6 +278,47 @@ fn a_project_removed_under_its_hub_ends_its_ticks_and_its_document_loop_with_no_
     hub.stop();
 }
 
+/// A reconnect panic after the initial read ends the ticks and wakes the documents' loop even
+/// while unwinding. With no watcher events and a period no test reaches, the enclosing worker
+/// finishes and surfaces the panic without a separate stop.
+#[test]
+fn a_panicking_tick_wakes_the_documents_loop_and_ends_its_worker_without_a_stop() {
+    let tree = Tree::new();
+    let root = repository(&tree);
+    let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let called = Arc::clone(&calls);
+    let hub = Hub::start_watching::<notify::NullWatcher>(
+        &root,
+        &root.join("build/client"),
+        false,
+        false,
+        crate::backstop::NO_PERIOD,
+        move |_: &Path| {
+            if called.fetch_add(1, Ordering::SeqCst) == 0 {
+                Err("no board in this test".to_string())
+            } else {
+                panic!("the tick's reconnect panicked");
+            }
+        },
+    )
+    .unwrap();
+    hub.start_initial_board();
+
+    test_time::until_true("the tick panic to end both loops", BACKSTOP, || {
+        hub.worker
+            .lock()
+            .unwrap()
+            .as_ref()
+            .is_some_and(JoinHandle::is_finished)
+    })
+    .unwrap();
+    let worker = hub.worker.lock().unwrap().take().unwrap();
+    assert!(worker.join().is_err(), "the worker surfaces the tick panic");
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+    assert!(*hub.initial_board.borrow(), "the initial read ended first");
+    assert!(!*hub.draining.borrow(), "no stop ended the documents' wait");
+}
+
 /// The hub's loops run on `hub`, on a thread of their own, with no board yet, so a first tick would
 /// reach for one: whether one did, once the run returned.
 fn reached_after_run(hub: Weak<Hub>) -> bool {

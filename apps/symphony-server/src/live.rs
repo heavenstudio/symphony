@@ -2027,6 +2027,20 @@ fn document_change(
         .and_then(|before| symphony::docview::changes(before, doc))
 }
 
+/// Tell the documents' loop that the ticks ended, including during unwinding. The flag is set
+/// before the wake, so the loop sees it as soon as its wait ends.
+struct TicksEnded<'a> {
+    ended: &'a std::sync::atomic::AtomicBool,
+    documents: &'a Waker,
+}
+
+impl Drop for TicksEnded<'_> {
+    fn drop(&mut self) {
+        self.ended.store(true, std::sync::atomic::Ordering::SeqCst);
+        self.documents.wake();
+    }
+}
+
 /// The hub's two loops once its first board read is done: the board's ticks on a thread of their
 /// own, so a document refresh never holds a tick back nor a tick a refresh, and the documents'
 /// refreshes on this one, waiting on `backstop`, which the watcher's handler wakes. It returns once
@@ -2059,10 +2073,11 @@ fn run(
     let waker = backstop.waker();
     std::thread::scope(|scope| {
         scope.spawn(move || {
+            let _ended = TicksEnded {
+                ended,
+                documents: &waker,
+            };
             ticks(weak, &stopped, &waker, board, connect);
-            // Said before the wake, so the documents' loop it wakes sees it.
-            ended.store(true, std::sync::atomic::Ordering::SeqCst);
-            waker.wake();
         });
         documents(weak, watcher, watched, backstop, || {
             ended.load(std::sync::atomic::Ordering::SeqCst)
