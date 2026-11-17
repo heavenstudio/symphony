@@ -50,8 +50,7 @@ impl Retry {
     }
 
     /// Whether to try `fingerprint` again now: the version whose update failed last, once its wait
-    /// is over, and once for each failure, so a try that ends in no failure (a build kept as the
-    /// running image) is its last.
+    /// is over, and once for each failure, so a try that ends in no failure is its last.
     pub fn again(&mut self, fingerprint: &str) -> bool {
         let Some(failed) = &mut self.failed else {
             return false;
@@ -92,6 +91,13 @@ impl Retry {
             .as_ref()
             .filter(|failed| !failed.tried)
             .map(|failed| when(failed.at.1, failed.wait))
+    }
+
+    /// A build was kept as the running image, an update that did not fail: no version waits to be
+    /// tried again, since the reload tries again only the version it built last, which is the one
+    /// kept, and the next failure of any version is the first in a row.
+    pub fn kept(&mut self) {
+        self.failed = None;
     }
 }
 
@@ -194,6 +200,21 @@ mod tests {
         let later = retry.failed("one");
         assert_eq!(later, stamp(now.lock().unwrap().1 + 10 * MINUTE));
         assert_eq!(retry.waiting(), Some(later));
+    }
+
+    #[test]
+    fn a_kept_build_leaves_no_retry_waiting_and_the_next_failure_waits_the_first_wait() {
+        let (mut retry, now) = retry();
+        retry.failed("one");
+        retry.failed("one");
+        retry.kept();
+        assert_eq!(retry.waiting(), None, "nothing waits once a build is kept");
+        pass(&now, MOST);
+        assert!(!retry.again("one"), "the version that failed before");
+        // Its failures before the kept build were not in a row with the next.
+        let at = now.lock().unwrap().1;
+        assert_eq!(retry.failed("one"), stamp(at + FIRST));
+        assert_eq!(retry.waiting(), Some(stamp(at + FIRST)));
     }
 
     #[test]

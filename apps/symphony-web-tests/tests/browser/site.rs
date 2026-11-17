@@ -216,6 +216,9 @@ struct Shared {
     posts: Vec<(String, serde_json::Value)>,
     /// Every request's path but the reads ahead's, in arrival order.
     log: Vec<String>,
+    /// When each path of [`Shared::log`] was first asked for: as its request was read, before its
+    /// answer.
+    first_asked: HashMap<String, Instant>,
     /// Every answer but the feed's, in the order sent.
     answers: Vec<Answered>,
     /// Every request's path and query but the reads ahead's, in arrival order.
@@ -357,6 +360,7 @@ impl Site {
             replies: HashMap::new(),
             posts: Vec::new(),
             log: Vec::new(),
+            first_asked: HashMap::new(),
             answers: Vec::new(),
             targets: Vec::new(),
             ahead: Vec::new(),
@@ -421,6 +425,12 @@ impl Site {
     /// The paths the pages requested so far, in order: their own, not their reads ahead.
     pub fn requests(&self) -> Vec<String> {
         self.shared.lock().unwrap().log.clone()
+    }
+
+    /// When the pages first asked for `path`, their own request and not a read ahead, as the site
+    /// read it and before it answered: none while they have not.
+    pub fn first_asked(&self, path: &str) -> Option<Instant> {
+        self.shared.lock().unwrap().first_asked.get(path).copied()
     }
 
     /// [`Site::requests`] with their queries.
@@ -1233,6 +1243,10 @@ fn serve(
             if ahead {
                 shared.ahead.push(target.clone());
             } else {
+                shared
+                    .first_asked
+                    .entry(path.clone())
+                    .or_insert_with(Instant::now);
                 shared.log.push(path.clone());
                 shared.targets.push(target.clone());
             }

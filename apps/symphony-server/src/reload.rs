@@ -521,12 +521,10 @@ fn watch_with<W: Watcher + Send + 'static>(
         let mut running = setup.running;
         let mut last_problem = String::new();
         let mut initial = true;
+        // Whether the notice says an update failed: since a failure [`replaced`] told, until a
+        // kept build clears it ([`kept`]).
+        let mut failure_told = false;
         while !shared.stopping() {
-            // A starter whose build must serve the machine asked for the hand-off (host rule),
-            // while this loop read or built.
-            if handed_over(&serve, &shared, &sockets, &lease, &retry) {
-                return;
-            }
             // Read once on startup, then after a source event and once a period, since an event
             // can be lost. A wake for the stop or a hand-off is looked at first; the sources are
             // read after it all the same, as a watcher's event may have come with it.
@@ -535,15 +533,23 @@ fn watch_with<W: Watcher + Send + 'static>(
                 if wake == Wake::Event && !shared.stopping() {
                     backstop.debounce(backstop::QUIET, backstop::BURST);
                 }
-                if shared.stopping() || handed_over(&serve, &shared, &sockets, &lease, &retry) {
+                if shared.stopping() {
                     return;
                 }
-                if let Err(why) =
+            }
+            // A starter whose build must serve the machine asked for the hand-off (host rule): a
+            // request made while this loop read or built left its wake for the wait above.
+            match handed_over(&serve, &shared, &sockets, &lease, &retry) {
+                HandOff::Replaced => return,
+                HandOff::Failed => failure_told = true,
+                HandOff::None => {}
+            }
+            if !initial
+                && let Err(why) =
                     watch_sources(&serve.root, &mut watcher, &directories, &mut watched)
-                {
-                    eprintln!("· Symphony reload: {why}");
-                    continue;
-                }
+            {
+                eprintln!("· Symphony reload: {why}");
+                continue;
             }
             initial = false;
             let fingerprint = match crate::live::measured("source fingerprint", || {
@@ -586,16 +592,26 @@ fn watch_with<W: Watcher + Send + 'static>(
             // read as it again (a read that failed in passing, an edit undone), it is built again
             // once that failure's wait is over, and any other version at its first check.
             if symphony::reload::fingerprint(&serve.root).ok().as_deref() != Some(&fingerprint) {
-                let again = retry.failed(&fingerprint);
-                eprintln!(
-                    "· Symphony reload: the sources changed or could not be read during the \
-                     build; its result is dropped, and that version is tried again at about \
-                     {again} if they read as it again"
+                let why = format!(
+                    "The sources changed or could not be read during the build; its result is \
+                     dropped, and that version is tried again at about {} if they read as it \
+                     again.",
+                    retry.failed(&fingerprint)
                 );
+                // Said in the log alone, as the version read next is usually another and is
+                // built at once: no update failed. A notice that says one did says this in its
+                // place, so the retry it names is the one to come, at the time to come.
+                if !failure_told {
+                    eprintln!("· Symphony reload: {why}");
+                } else if replaced(&shared, Err(why)) {
+                    return;
+                }
                 continue;
             }
             if matches!(result, Ok(None)) && kept(running.as_ref(), install, &fingerprint, &shared)
             {
+                retry.kept();
+                failure_told = false;
                 continue;
             }
             let result = result
@@ -620,30 +636,42 @@ fn watch_with<W: Watcher + Send + 'static>(
             if replaced(&shared, result) {
                 return;
             }
+            failure_told = true;
         }
     };
     Some(crate::front::worker(crate::front::RELOAD_WORKER, reload))
 }
 
+/// How a starter's hand-off request came out at the reload loop's look ([`handed_over`]).
+#[derive(Debug, PartialEq, Eq)]
+enum HandOff {
+    /// None was asked for, or the request was refused, said in the log.
+    None,
+    /// A replacement took over: this generation drains.
+    Replaced,
+    /// The replacement failed, said on the notice.
+    Failed,
+}
+
 /// The hand-off a starter asked for ([`Shared::ask_handover`]), to the build its request in the
-/// machine folder names ([`crate::host::Handover`]), when one asked: whether a replacement took
-/// over, this generation then draining. A failure is said on the notice, with the time `retry`
-/// will try the sources' own failed update again, when one waits: the starter asks again itself.
+/// machine folder names ([`crate::host::Handover`]), when one asked. A failure is said on the
+/// notice, with the time `retry` will try the sources' own failed update again, when one waits:
+/// the hand-off is the starter's to ask again.
 fn handed_over(
     serve: &Serve,
     shared: &Shared,
     sockets: &[OwnedFd],
     lease: &File,
     retry: &Retry,
-) -> bool {
+) -> HandOff {
     if !shared
         .handover
         .swap(false, std::sync::atomic::Ordering::SeqCst)
     {
-        return false;
+        return HandOff::None;
     }
     let Some(machine) = serve.home.as_deref() else {
-        return false;
+        return HandOff::None;
     };
     match crate::host::Handover::take(machine) {
         Some(Ok(request)) => {
@@ -669,13 +697,17 @@ fn handed_over(
                 ),
                 None => why,
             });
-            replaced(shared, result)
+            if replaced(shared, result) {
+                HandOff::Replaced
+            } else {
+                HandOff::Failed
+            }
         }
         Some(Err(why)) => {
             eprintln!("· Symphony hand-off refused: {why}");
-            false
+            HandOff::None
         }
-        None => false,
+        None => HandOff::None,
     }
 }
 

@@ -54,7 +54,7 @@ mkdir "$work/machine"
 server=$!
 {
     said=""
-    while IFS= read -r line; do
+    while IFS= read -r line || [ -n "$line" ]; do
         printf '%s\n' "$line"
         if [ -z "$said" ] && [[ $line =~ http://127\.0\.0\.1:[0-9]+ ]]; then
             said=1
@@ -78,7 +78,7 @@ if [ -z "$base" ]; then
 fi
 
 taken=0
-while read -r name widths path steps; do
+while read -r name widths path steps || [ -n "$name" ]; do
     case "$name" in '' | '#'*) continue ;; esac
     if [ "$#" -gt 0 ]; then
         case " $* " in *" $name "*) ;; *) continue ;; esac

@@ -2,7 +2,7 @@
 name: task-orchestrator
 description: Keep the development pipeline healthy through the task board: find approved work, file complete briefs, staff executors and independent reviewers, and follow the project's landing contract.
 ---
-<!-- symphony-stamp: 88e15a856ea2ebff files=SKILL.md -->
+<!-- symphony-stamp: 53b95bdeec26a194 files=SKILL.md -->
 
 # Orchestrate development from the board
 
@@ -20,7 +20,10 @@ full suite).
 
 1. Reuse your handle or register as an orchestrator. Take the orchestrator role
    with just tasks role SLUG orchestrator --as HANDLE; a task you file with just
-   tasks create is yours from that write. Every open task has an orchestrator:
+   tasks create is yours from that write while you orchestrate fewer open tasks
+   than [limits] orchestrator_tasks (16 unwritten): at that limit you take and
+   are given none but a red, and the create's line says who took it or that it
+   waits. Every open task has an orchestrator or waits for one:
    once you have been live past the first live line and wait, watch or hold a task,
    the board gives you open work that had none (a leaving or lost orchestrator's
    among it) at your next look, saying so in one GIVEN line; follow those as your

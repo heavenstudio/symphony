@@ -461,10 +461,12 @@ impl Store {
             Kept::Held(owner) | Kept::Given(owner) => Some(owner),
             Kept::Waiting | Kept::Finished => None,
         };
+        // The filer's own refusal says nothing once the board gave it the task all the same (a
+        // place of its freed between its take and the give); the orchestrator `--for` or the
+        // story named, passed over at the limit, is said whoever took the task.
+        let refused = refused.filter(|_| orchestrator.as_deref() != Some(by));
         Ok(Filed {
-            passed: refused
-                .or(passed)
-                .filter(|_| orchestrator.as_deref() != Some(by)),
+            passed: refused.or(passed),
             orchestrator,
         })
     }
