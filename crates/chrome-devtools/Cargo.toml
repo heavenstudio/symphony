@@ -2,7 +2,7 @@
 # so is its library, `symphony_chrome`. The folder keeps its name.
 [package]
 name = "symphony-chrome"
-version = "0.1.0"
+version = "0.2.0"
 edition.workspace = true
 rust-version.workspace = true
 publish = true
@@ -27,7 +27,7 @@ data-encoding = "2"
 libc.workspace = true
 serde_json.workspace = true
 # The feed's keep-alive event name, so a request counts the pings its stream delivered.
-symphony-api = { path = "../symphony-api", version = "=0.1.0" }
+symphony-api = { path = "../symphony-api", version = "=0.2.0" }
 # The Chrome and the leash's variable by their own names, the old ones still read.
 symphony-env = { path = "../symphony-env", version = "1.0.0" }
 # The DevTools socket, plain ws:// to the loopback: no TLS, no async runtime. The version axum's

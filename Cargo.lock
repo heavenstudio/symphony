@@ -4022,7 +4022,7 @@ dependencies = [
 
 [[package]]
 name = "symphony-api"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "repository-read",
  "serde",
@@ -4033,7 +4033,7 @@ dependencies = [
 
 [[package]]
 name = "symphony-app"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "comrak",
  "fancy-regex",
@@ -4071,7 +4071,7 @@ dependencies = [
 
 [[package]]
 name = "symphony-board"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "libc",
  "process-cwd",
@@ -4108,7 +4108,7 @@ dependencies = [
 
 [[package]]
 name = "symphony-chrome"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "data-encoding",
  "libc",
@@ -4166,7 +4166,7 @@ dependencies = [
 
 [[package]]
 name = "symphony-server"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "axum",
  "flate2",
