@@ -197,8 +197,8 @@ this client the target's entry alone. What every page kind imports stays that on
 (`codeSplitting` in `vite.config.ts`), which the menus' entry imports too, though they use only
 part of it: split by who imports each module, it would be two files every first visit takes,
 compressed apart. The device cache and the board's live half (`cache.ts`, `live.tsx`) stay one
-chunk the same way, which Reports loads for the cache alone: split by importer, the cache would
-be a file more on every page that follows the board. The shell asks for the chunks an entry imports beside it, a
+chunk the same way, which Reports loads for the cache and the page's notices alone: split by
+importer, the cache would be a file more on every page that follows the board. The shell asks for the chunks an entry imports beside it, a
 module preload each (`imports` in its manifest, which `package.sh` reads from Vite's), so a first
 visit fetches them with the entry rather than once the entry has come and been read: a round trip
 fewer, which a phone over the tailnet pays.
@@ -219,7 +219,8 @@ client's persistent kind `panel` ([The panel](#the-panel)), which the shell moun
 The header opens with the Symphony's mark, the fermata, and its wordmark, or in the place of each
 the icon and the name the project's theme has of its own (`ProjectView`'s `mark` and `wordmark`,
 which the server decides), as the server's own pages open theirs
-(`apps/symphony-server/src/mark.rs`, whose tests hold the two marks alike); it is no link, so the
+(`apps/symphony-server/src/mark.rs`; `src/frame.test.tsx` reads its `mark/mark.svg` to hold the two
+marks alike, as the published server's tests read only its own files); it is no link, so the
 keyboard's first stop stays the project switch.
 
 The menus are this client's persistent kind `overlay` (`src/kinds/overlay.tsx`, `src/overlay.tsx`),
@@ -314,9 +315,11 @@ own signal), a read that failed sooner, on the feed's waits. Each window's last 
 this device (`openReports`: the item `reports` of its checkout, a part a window, whole, as the
 largest is some 140 KB and all nine a third of a megabyte; outside the caps as the board's reads
 are) and drawn at once on a return or when its window is chosen again, marked `data-cache=device`
-and said in the other pages' words in the shared sheet's notice stack until a read answers: a
-`304` for a window no roll-up changed, or a new answer, drawn and kept in its place. A read that
-fails leaves the kept copy drawn, said not reachable, under the failed read's own line. The
+and said as the other pages say it, in their notices (`PageNotices`, from the chunk of `live.tsx`
+the cache's read already loads: the reserve that keeps the page's end clear of the stack, and the
+toasts above it) until a read answers: a `304` for a window no roll-up changed, or a new answer,
+drawn and kept in its place. A read that fails leaves the kept copy drawn, said not reachable,
+under the failed read's own line, which a choice of window clears until its own read fails. The
 periods are read by path as the server writes them (`Bucket`): a source with no record of a period
 is none there, a count by status that leaves out its zeros a zero. Four
 figures sit over five sections of charts, one column on a phone and two from 960 px. Each figure
@@ -448,10 +451,15 @@ applied to it again; a part is read once more only where the store cannot tell w
 opened, or the events it would need are no longer among the 128 kept); and when the feed opens
 again, only the parts answered at another version than it opens from are read (`since`).
 `LiveTask` (`src/task-live.ts`, on `live.tsx`'s `keepBoard`, whose `views.read` gives the board's
-loop nothing to wait for) hears the feed into the store and reads again the parts an event names
-without carrying: the gates for a verdict, a card in a document the task links, a new tip of
-their branch or a run of the task's; the offer, the gates and the timeline when the task itself
-changed. What no key names stays the page's own: the thread's earlier pages and its catch-up
+loop nothing to wait for) hears the feed into the store, each event with the page as it was drawn
+when it came (`TaskEvent`), and each part reads itself again, through its `hear`, for what an
+event newer than its answer names without carrying: the gates for a verdict, a card in a
+document the task links, a new tip of their branch or a run of the task's (`namesGates`, the
+links and the run told by the page as the event found it); the offer, the gates and the timeline
+when the task itself changed. A part whose read failed offers its retry (the gates' Retry, the
+thread's Load messages, which nothing offers while its first read is out), and says it reads
+while a read is out after the failed one, the store's own or the reader's (`Shown.retrying`).
+What no key names stays the page's own: the thread's earlier pages and its catch-up
 after a gap, and the subtasks, read into the page as their section nears the screen. Its guards
 are `src/task-read.ts`.
 
@@ -671,22 +679,22 @@ What holds on every page, and each page's contract where its section above names
   the owner's choice, as the caps are.
   Other page kinds are reported separately for review.
   On the fixture (`entry_pages_fit_the_first_visit_budget_and_deferred_kinds_are_reported` prints
-  each page's requests) a first visit to `/` takes 113,361 bytes, `/tasks` 122,311, `/agents`
-  116,347, `/queue` 108,915, `/reports` 113,344, `/runs` 111,216, `/docs/` 139,904, a document
-  141,589 and a task's page 143,419, and a return that finds what it kept unchanged 2,103, 2,586,
-  2,403, 2,368, 646, 1,080, 646, 820 and 2,405. A first visit to a kind is its entry and its
+  each page's requests) a first visit to `/` takes 113,470 bytes, `/tasks` 122,725, `/agents`
+  116,577, `/queue` 109,014, `/reports` 113,400, `/runs` 107,549, `/docs/` 140,023, a document
+  141,708 and a task's page 143,744, and a return that finds what it kept unchanged 2,102, 2,585,
+  2,402, 2,367, 646, 1,080, 646, 820 and 2,404. A first visit to a kind is its entry and its
   sheets, the chunk every kind shares (React and the frame) and the pieces it shares with some of
   the others (the board's feed and keep; the card and the task readers of the board and the agents
   page; the media layer's chunk and sheet, home's, the documents', a task's page's and the chat's),
   beside the HTML, the shell and the page's reads; a move to another kind takes its entry and the
   pieces no kind before it took (`apps/symphony-web-tests/tests/browser/preload.rs`). A task's page's timeline, a chunk of
   its own, comes once its box nears the screen and its part has something to draw
-  ([A task's page](#a-tasks-page)), and is reported apart from its first visit: 12,567 bytes. The
+  ([A task's page](#a-tasks-page)), and is reported apart from its first visit: 12,548 bytes. The
   reads ahead start only once the page's own reads have answered (`cache_ahead.rs`) and go marked
   as prefetches, so the budget counts them outside the first visit, with the warmed modules
   (`prefetched_bytes`). Once a page has its data and is idle, the shell warms the chat's files
   (its entry, the chunks it imports and its sheets the page has not) and then the menus' (the
-  same of theirs): 27,541 bytes outside home's first visit, and neither the chat's first open nor
+  same of theirs): 28,302 bytes outside home's first visit, and neither the chat's first open nor
   the menus' transfers anything more. Later visits reuse cached imports. The home budget test
   is independent of the canonical-entry test, which gives every kind a fresh
   browser profile and reports the complete published output.

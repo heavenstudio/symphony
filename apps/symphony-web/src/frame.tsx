@@ -245,7 +245,10 @@ function BellIcon() {
   );
 }
 
-/** The fermata, the Symphony's mark, as the server's own pages draw it (`mark/mark.svg`). */
+/**
+ * The fermata, the Symphony's mark, as the server's own pages draw it
+ * (`apps/symphony-server/src/mark/mark.svg`, which `frame.test.tsx` holds it to).
+ */
 function Mark() {
   return (
     <svg className="app-mark" viewBox="4.5 9.5 23 14.4" aria-hidden="true">

@@ -13,7 +13,10 @@
 //! a window before any chart drew (nothing recorded, or a failed read) is not taken to it. A
 //! return visit draws the window this device kept before its read answers, checks it with the
 //! kept tag (a `304` for one unchanged) and keeps a changed answer in its place; a read that fails
-//! leaves the kept window drawn and said stale until a retry answers.
+//! leaves the kept window drawn and said stale until a retry answers. A kept window chosen again
+//! on the page draws from the device the same way, said as checking whatever another window's
+//! read did before; on a phone the notice that says so leaves the page's end clear and the toasts
+//! above it.
 use super::cache_pages::{PARTS, keeps, kept, notice, shows, store_opened};
 use super::document_landing::{COUNT_SCROLLS, TWO_FRAMES};
 use super::{SHOWN, chrome, chrome::Chrome, common, components::key, site, site::Site, texts};
@@ -1019,5 +1022,152 @@ fn a_failed_read_leaves_the_kept_window_drawn_and_said_stale_until_a_retry_answe
         (last.named.is_some(), last.status),
         (true, 304),
         "the retry is the same check, answered with no body: {last:?}"
+    );
+}
+
+/// The page at its end with what is near it drawn: true once nothing near the screen waits to
+/// mount and the page rests at its end, scrolled there again on each look, as a chart mounted
+/// there makes the page longer or shorter than its ghost.
+const AT_ITS_END: &str = "(() => { scrollTo(0, document.documentElement.scrollHeight); const near = box => { const r = box.getBoundingClientRect(); return r.bottom > -600 && r.top < innerHeight + 600; }; return ![...document.querySelectorAll('[data-pending=true]')].some(near) && scrollY === Math.max(0, document.documentElement.scrollHeight - innerHeight); })()";
+
+/// Where the notices stand at the page's end: whether it is there, the stack placed as the sheet
+/// places it and whole in the window, the page's last section's bottom and the stack's top, and
+/// whether the toasts are set above the stack.
+const THE_END: &str = r#"(() => {
+    const stack = document.querySelector('.reports .page-notices');
+    const box = stack.getBoundingClientRect();
+    const last = [...document.querySelectorAll('.reports > .reports-section')].at(-1).getBoundingClientRect();
+    return {
+        atEnd: scrollY === Math.max(0, document.documentElement.scrollHeight - innerHeight),
+        position: getComputedStyle(stack).position,
+        shown: box.height > 0 && box.top >= 0 && box.bottom <= innerHeight && box.left >= 0 && box.right <= innerWidth,
+        clear: last.bottom <= box.top,
+        toasts: getComputedStyle(document.documentElement).getPropertyValue('--notice-toast-bottom') === `${innerHeight - box.top + 8}px`,
+        last: Math.round(last.bottom),
+        notice: Math.round(box.top),
+    };
+})()"#;
+
+/// On a phone, the notice that says the page is this device's copy floats over the window's foot
+/// as the other pages' do, and the page keeps the room under its end that clears it: at the end,
+/// the last chart's section ends above the notice, and the toasts are set above the notice.
+#[test]
+fn on_a_phone_the_kept_copy_s_notice_leaves_the_page_s_end_clear_and_the_toasts_above_it() {
+    let site = both_windows();
+    let Some(mut chrome) = chrome() else { return };
+    screen(&mut chrome, 390, 844, true);
+    let saved = first_visit(&mut chrome, &site);
+    site.hold_route(symphony_api::REPORTS_PATH, true);
+    come_back(&mut chrome, &site);
+    let said = notice(&mut chrome, saved, false);
+    shows(
+        &mut chrome,
+        &from_the_device(&said),
+        "the kept window is drawn while its read is held",
+    );
+    shows(&mut chrome, AT_ITS_END, "the page rests at its end");
+    chrome.eval(TWO_FRAMES);
+    let end = chrome.eval(THE_END);
+    eprintln!("REPORTS PAGE END, phone, said from the device: {end}");
+    assert_eq!(
+        json!({"atEnd": end["atEnd"], "position": end["position"], "shown": end["shown"],
+            "clear": end["clear"], "toasts": end["toasts"]}),
+        json!({"atEnd": true, "position": "fixed", "shown": true, "clear": true, "toasts": true}),
+        "at the page's end its last section is clear of the floating notice: {end}"
+    );
+    site.hold_route(symphony_api::REPORTS_PATH, false);
+    shows(&mut chrome, CURRENT, "the check answered");
+}
+
+/// The target of a window of `days` by the day's read.
+fn days_read(days: u32) -> String {
+    format!("{}?grain=day&days={days}", symphony_api::REPORTS_PATH)
+}
+
+/// The part of the reports' item this device keeps Days' fortnight in.
+const FORTNIGHT_KEPT: &str = "reports: day:14";
+
+/// The answers so far to the reads of `target`, its query included.
+fn answered(site: &Site, target: &str) -> Vec<site::Answered> {
+    site.answers(symphony_api::REPORTS_PATH)
+        .into_iter()
+        .filter(|answer| answer.target == target)
+        .collect()
+}
+
+/// A press of the window's control `button` names (`[data-grain=day]`, `[data-days="7"]`).
+fn choose(chrome: &mut Chrome, button: &str) {
+    chrome.eval(&format!(
+        "document.querySelector({}).click()",
+        json!(format!(".reports-controls {button}"))
+    ));
+}
+
+/// A window this device kept, chosen again on the page, is drawn from the device at once while
+/// its read is on its way, said as checking: the read that failed was another window's, the one
+/// left, and is not said of it. Its read names the kept copy's tag and is answered with no body.
+#[test]
+fn a_kept_window_chosen_again_draws_from_the_device_and_is_not_said_unreachable_for_the_window_left()
+ {
+    let site = both_windows();
+    let Some(mut chrome) = chrome() else { return };
+    screen(&mut chrome, 1440, 900, false);
+    first_visit(&mut chrome, &site);
+    // Days: its fortnight, drawn from the server and kept.
+    choose(&mut chrome, "[data-grain=day]");
+    shows(
+        &mut chrome,
+        &format!(
+            "{CURRENT} && document.querySelector('.reports[aria-busy=false] [data-days=\"14\"][aria-pressed=true]') !== null"
+        ),
+        "Days' fortnight draws",
+    );
+    keeps(&mut chrome, &[HOURS_KEPT, FORTNIGHT_KEPT]);
+    let saved = kept(&mut chrome)[FORTNIGHT_KEPT]
+        .as_f64()
+        .expect("when it was kept");
+    // A week by the day, whose read fails: said over the fortnight, still drawn.
+    site.fail_route(&days_read(7), true);
+    choose(&mut chrome, "[data-days=\"7\"]");
+    shows(
+        &mut chrome,
+        "document.querySelector('.reports[aria-busy=false] .reports-error') !== null",
+        "the week's read fails",
+    );
+    assert_eq!(
+        texts(&mut chrome, ".reports-error"),
+        [
+            "The reports could not be read. Board snapshot unavailable (the server answered 500). Trying again…"
+        ],
+    );
+    // The fortnight again, its read held.
+    let fortnight = days_read(14);
+    let before = answered(&site, &fortnight).len();
+    site.hold_route(&fortnight, true);
+    choose(&mut chrome, "[data-days=\"14\"]");
+    let said = notice(&mut chrome, saved, false);
+    shows(
+        &mut chrome,
+        &format!(
+            "{} && document.querySelector('.reports-error') === null",
+            from_the_device(&said)
+        ),
+        "the fortnight kept is drawn while its read is held, said checking, the week's failure gone",
+    );
+    assert_eq!(
+        answered(&site, &fortnight).len(),
+        before,
+        "drawn before its read answered"
+    );
+    site.hold_route(&fortnight, false);
+    shows(&mut chrome, CURRENT, "its check answered");
+    let checks = answered(&site, &fortnight)[before..].to_vec();
+    assert_eq!(
+        checks
+            .iter()
+            .map(|answer| (answer.named.is_some(), answer.status))
+            .collect::<Vec<_>>(),
+        [(true, 304)],
+        "one check, naming the kept copy's tag, answered with no body: {checks:#?}"
     );
 }

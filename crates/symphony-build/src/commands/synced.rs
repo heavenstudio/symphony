@@ -4,15 +4,19 @@
 //! then opens it again `--runs` times, each a new load of the page with that device's copy, and
 //! records, from the navigation's start: the first paint, the copy from the device drawn, each
 //! request (queued, its first byte, its end), each read of the device's store, the feed's stream
-//! (made, open, first message), the long tasks and the React commits, and the moment the page is
-//! synced; beside each visit, the machine's load and CPU busy and the memory of the tab, the server
-//! and its board databases ([`machine`]). The table it prints is the same each run, so a fix is
-//! judged by the table before it and after it, measured the same way on the same machine: each run
-//! is kept as a record in the project's artifacts folder and printed beside the last one kept of
-//! the same address ([`kept`]). It reads the pages only: it starts, stops or changes no server.
+//! (made, open, first message), each part's first answer drawn and the part that matters most
+//! among them, the long tasks and the React commits, and the moment the page is synced; beside each
+//! visit, the machine's load and CPU busy and the memory of the tab, the server and its board
+//! databases ([`machine`]). The table it prints is the same each run, so a fix is judged by the
+//! table before it and after it, measured the same way on the same machine: each run is kept as a
+//! record in the project's artifacts folder and printed beside the last one kept of the same
+//! address ([`kept`]). It reads the pages only: it starts, stops or changes no server.
 //!
 //! Synced is the page's own word for it, the same in both clients: every `data-ready` region drawn
-//! (none `loading` or `failed`), none still `data-cache=device`, and every `data-feed` `live`.
+//! (none `loading` or `failed`), none still `data-cache=device`, and every `data-feed` `live`. A
+//! part is the page's own word too: a page drawn from parts (the client's `parts.ts`) marks each
+//! one's first answer drawn from the server (`part KEY`) and the one that matters most
+//! (`first-part`), which this prints beside drawn, checked and synced; a page of no parts has none.
 
 use std::collections::HashMap;
 use std::fmt::Write as _;
@@ -38,11 +42,12 @@ const HELP: &str = "How long each page of a project takes, from its open to sync
 that has been there before: a private headless Chrome opens each page once, so that it keeps what
 it drew on this device, then opens it again --runs times and records, from the navigation's start,
 the first paint, the copy from the device drawn, every request and read of the device's store, the
-feed's stream, the long tasks and the React commits, and the moment the page is synced (every
+feed's stream, each part's first answer drawn (the page's own first-part mark for the part that
+matters most), the long tasks and the React commits, and the moment the page is synced (every
 data-ready region drawn, none data-cache=device, every data-feed live). It prints one row a page
-(each run's drawn, checked and synced, in ms) and the waterfall of the run whose synced is the
-median, each visit with the machine's load and CPU busy and the memory of the tab, the server and
-its board databases. Each run is kept as a record in the project's artifacts folder (synced/) and
+(the first visit's part and synced, each return's drawn, part, checked and synced, in ms; - for a
+page of no parts) and the waterfall of the run whose synced is the median, each visit with the
+machine's load and CPU busy and the memory of the tab, the server and its board databases. Each run is kept as a record in the project's artifacts folder (synced/) and
 printed beside the last run of the same BASE kept there, or the one --against names. It only reads
 the pages: no server is started, stopped or changed.
 
@@ -235,13 +240,17 @@ const PROBE: &str = r#"(() => {
     attributeFilter: ["data-ready", "data-cache", "data-feed"] });
 })();"#;
 
-/// What the page recorded, with its own paint and resource timings, as one value.
+/// What the page recorded, with its own marks of its parts and its paint and resource timings, as
+/// one value.
 const COLLECT: &str = r#"(() => {
   const log = window.__synced;
   const navigation = performance.getEntriesByType("navigation")[0];
+  const marks = performance.getEntriesByType("mark");
   return { drawn: log.drawn, checked: log.checked, synced: log.synced, unsynced: log.unsynced, last: log.last,
     states: log.states, feeds: log.feeds, reads: log.reads, fetches: log.fetches, commits: log.commits,
     commitsSynced: log.commitsSynced, longtasks: log.longtasks,
+    firstPart: marks.find((mark) => mark.name === "first-part")?.startTime ?? null,
+    parts: marks.filter((mark) => mark.name.startsWith("part ")).map((mark) => [mark.name.slice(5), mark.startTime]),
     build: document.querySelector("script[src*='symphony-shell-']")?.getAttribute("src") ?? null,
     paint: Object.fromEntries(performance.getEntriesByType("paint").map((entry) => [entry.name, entry.startTime])),
     document: navigation ? { sent: navigation.requestStart, first: navigation.responseStart,
@@ -305,6 +314,12 @@ impl Visit {
 
     fn synced(&self) -> Option<f64> {
         self.probe["synced"].as_f64()
+    }
+
+    /// When the page drew the server's first answer for the part that matters most on it (its
+    /// `first-part` mark), in ms from its navigation; none on a page of no parts.
+    fn first_part(&self) -> Option<f64> {
+        self.probe["firstPart"].as_f64()
     }
 
     /// When the page, once synced, was no longer: a region drawn again from the device or as
@@ -694,7 +709,8 @@ struct Row {
 
 /// What a visit did up to its synced, in the order it began: the document, each request started
 /// before synced (static files the browser's cache answered left out), each read of the device's
-/// store, each feed stream, each long task, the copy drawn and the moment synced.
+/// store, each feed stream, each long task, each part's first answer drawn and the part that
+/// matters most, the copy drawn and the moment synced.
 fn rows(visit: &Visit) -> Vec<Row> {
     let probe = &visit.probe;
     let until = visit.synced().unwrap_or(f64::INFINITY);
@@ -792,6 +808,22 @@ fn rows(visit: &Visit) -> Vec<Row> {
             said: "first contentful paint".into(),
         });
     }
+    for part in probe["parts"].as_array().into_iter().flatten() {
+        if let (Some(key), Some(at)) = (part[0].as_str(), number(&part[1]))
+            && at <= until
+        {
+            rows.push(Row {
+                at,
+                said: format!("part {key} drawn from the server"),
+            });
+        }
+    }
+    if let Some(first) = visit.first_part().filter(|at| *at <= until) {
+        rows.push(Row {
+            at: first,
+            said: "FIRST PART: the part that matters most, drawn from the server".into(),
+        });
+    }
     if let Some(drawn) = visit.drawn() {
         rows.push(Row {
             at: drawn,
@@ -838,8 +870,10 @@ fn waterfall(page: &str, visits: &[Visit]) -> String {
         }
         let _ = writeln!(
             said,
-            "  {which:<9} drawn {:>6}  checked {:>6}  synced {:>6}  {}  {}  CPU busy {}  {}{notes}",
+            "  {which:<9} drawn {:>6}  part {:>6}  checked {:>6}  synced {:>6}  {}  {}  CPU busy {}  \
+             {}{notes}",
             ms(visit.drawn()),
+            ms(visit.first_part()),
             ms(visit.checked()),
             ms(visit.synced()),
             spent_said(visit),
@@ -890,7 +924,8 @@ fn spent_said(visit: &Visit) -> String {
     )
 }
 
-/// The summary: one row a page, its first visit's synced and each return's drawn and synced.
+/// The summary: one row a page, its first visit's part and synced and each return's drawn, part,
+/// checked and synced.
 fn table(base: &str, measured: &[(String, Vec<Visit>)], load: Option<[f64; 3]>) -> String {
     let mut said = String::new();
     let memory = measured
@@ -907,8 +942,8 @@ fn table(base: &str, measured: &[(String, Vec<Visit>)], load: Option<[f64; 3]>) 
     );
     let _ = writeln!(
         said,
-        "{:<40} {:>7}  returns, drawn/checked/synced",
-        "page", "first"
+        "{:<40} {:>19}  returns (drawn/part/checked/synced)",
+        "page", "first (part/synced)"
     );
     // A visit whose own read failed is marked: it may read as synced, and soon, on nothing.
     let marked = |visit: &Visit| if visit.failed().is_empty() { "" } else { "!" };
@@ -921,8 +956,9 @@ fn table(base: &str, measured: &[(String, Vec<Visit>)], load: Option<[f64; 3]>) 
             .filter(|visit| visit.run > 0)
             .map(|visit| {
                 format!(
-                    "{}/{}/{}{}",
+                    "{}/{}/{}/{}{}",
                     ms(visit.drawn()),
+                    ms(visit.first_part()),
                     ms(visit.checked()),
                     ms(visit.synced()),
                     marked(visit)
@@ -931,9 +967,13 @@ fn table(base: &str, measured: &[(String, Vec<Visit>)], load: Option<[f64; 3]>) 
             .collect();
         let _ = writeln!(
             said,
-            "{:<40} {:>7}{:<1} {}",
+            "{:<40} {:>19}{:<1} {}",
             short(page),
-            ms(first.and_then(Visit::synced)),
+            format!(
+                "{}/{}",
+                ms(first.and_then(Visit::first_part)),
+                ms(first.and_then(Visit::synced))
+            ),
             first.map_or("", marked),
             returns.join("  ")
         );

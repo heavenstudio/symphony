@@ -76,6 +76,12 @@ export interface Shown<T> {
   readonly stale: boolean;
   /** Why its last read failed; it is tried again by itself. */
   readonly error: Error | null;
+  /**
+   * A read is out since the last failed (the store's own try again, or a reader's ask), so a
+   * control that asks for one says it reads. A part's first read, and one over an answer, set
+   * nothing: its mock-up, or the answer shown, says it.
+   */
+  readonly retrying: boolean;
   /** The server has no such thing. */
   readonly missing: boolean;
   /** The server answered it, with a value or that it has none. */
@@ -86,6 +92,7 @@ const NOTHING: Shown<never> = {
   value: undefined,
   stale: false,
   error: null,
+  retrying: false,
   missing: false,
   answered: false,
 };
@@ -110,7 +117,8 @@ interface Entry<T, E> {
   /** Asked again while a read was out, for an event of this version: read again after it unless
    * its answer is at that version or after. */
   newer: number | null;
-  retrying: boolean;
+  /** The store tries its failed read again by itself (`tryAgain`), until one answers. */
+  trying: boolean;
   /** Ends when the page drops the part. */
   end: AbortController;
   signal: AbortSignal;
@@ -190,7 +198,7 @@ export class Parts<E = unknown> {
       version: null,
       reading: null,
       newer: null,
-      retrying: false,
+      trying: false,
       end,
       signal: AbortSignal.any([this.signal, end.signal]),
     };
@@ -255,6 +263,10 @@ export class Parts<E = unknown> {
   private async reads<T>(entry: Entry<T, E>): Promise<void> {
     for (let unplaced = 0; ; ) {
       entry.newer = null;
+      // A read after one failed is said, until it answers or fails too.
+      if (entry.shown.error !== null && !entry.shown.retrying) {
+        this.show(entry, { retrying: true });
+      }
       const placed = await this.once(entry);
       if (this.gone(entry) || entry.shown.error !== null) return;
       const asked = entry.newer;
@@ -269,15 +281,15 @@ export class Parts<E = unknown> {
   private fail<T>(entry: Entry<T, E>, thrown: unknown): void {
     const { part } = entry;
     this.freshen((f) => failed(f, part.key));
-    this.show(entry, { error: errorOf(thrown) });
-    if (entry.retrying) return;
-    entry.retrying = true;
+    this.show(entry, { error: errorOf(thrown), retrying: false });
+    if (entry.trying) return;
+    entry.trying = true;
     void tryAgain(
       () => !this.gone(entry) && entry.shown.error !== null,
       () => this.read(part),
       entry.signal,
     ).finally(() => {
-      entry.retrying = false;
+      entry.trying = false;
     });
   }
 
@@ -293,6 +305,7 @@ export class Parts<E = unknown> {
       value: undefined,
       stale: false,
       error: null,
+      retrying: false,
       missing: true,
       answered: true,
     });
@@ -362,7 +375,14 @@ export class Parts<E = unknown> {
       return true;
     }
     this.freshen((f) => answered(f, part.key));
-    this.show(entry, { value, stale: false, error: null, missing: false, answered: true });
+    this.show(entry, {
+      value,
+      stale: false,
+      error: null,
+      retrying: false,
+      missing: false,
+      answered: true,
+    });
     if (first) {
       performance.mark(`part ${part.key}`);
       if (part.first) performance.mark("first-part");
