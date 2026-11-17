@@ -85,7 +85,9 @@ on_both! {
         f.store.set_priority("sim/jump", 0, "brisk-finch").unwrap();
         assert!(record(&f, "sim/jump").get("fields").is_none());
         let dumped = serde_json::to_value(f.rows()).unwrap();
-        assert!(dumped["tasks"][0].get("fields").is_none(), "{dumped}");
+        let task = dumped["task"].as_array().unwrap().iter()
+            .find(|row| row["slug"] == "sim/jump").expect("the task is present");
+        assert!(task.get("fields").is_none(), "{task}");
     }
 }
 

@@ -2,7 +2,7 @@
 //! while it is open; who holds it and who held it before; the first answer closing it; a close by
 //! hand; the listing; and a board of schema 16 gaining the table with its rows kept.
 
-use crate::common::{Fixture, NOW, RawWrite, Seed, refused};
+use crate::common::{Backend, Fixture, NOW, RawWrite, Seed, refused};
 use serde_json::json;
 use symphony_board::rows::HeldRow;
 use symphony_board::{Ask, NewAsk, Schema};
@@ -29,8 +29,9 @@ fn chat(thread: &str, words: &str) -> NewAsk {
 }
 
 /// A board with the sessions amber-heron and brisk-finch and the task sim/jump.
-fn board() -> Fixture {
-    Fixture::new(
+fn board(backend: Backend) -> Fixture {
+    Fixture::on(
+        backend,
         Seed::default()
             .session("amber-heron")
             .session("brisk-finch")
@@ -42,9 +43,9 @@ fn ids(asks: &[Ask]) -> Vec<i64> {
     asks.iter().map(|a| a.id).collect()
 }
 
-#[test]
-fn a_line_opens_an_ask_and_another_about_the_same_card_joins_it_keeping_its_age_and_words() {
-    let f = board();
+on_both! {
+fn a_line_opens_an_ask_and_another_about_the_same_card_joins_it_keeping_its_age_and_words(backend: Backend) {
+    let f = board(backend);
     let first = f.store.open_ask(&verdict("why not\n B?")).unwrap();
     assert_eq!(
         first,
@@ -87,11 +88,13 @@ fn a_line_opens_an_ask_and_another_about_the_same_card_joins_it_keeping_its_age_
         .unwrap();
     assert_eq!((late.id, late.lines, late.last), (1, 3, NOW + 60.0));
     assert_eq!(ids(&f.store.asks(None).unwrap()), [1]);
+
+}
 }
 
-#[test]
-fn a_line_after_the_answer_opens_a_new_ask() {
-    let f = board();
+on_both! {
+fn a_line_after_the_answer_opens_a_new_ask(backend: Backend) {
+    let f = board(backend);
     let first = f.store.open_ask(&verdict("why not B?")).unwrap();
     f.store
         .answer_ask(first.id, Some("amber-heron"), "the card")
@@ -103,11 +106,13 @@ fn a_line_after_the_answer_opens_a_new_ask() {
         (2, "and C?", NOW + 30.0, 1)
     );
     assert!(!f.store.ask(1).unwrap().open);
+
+}
 }
 
-#[test]
-fn the_same_card_on_a_worktree_and_each_other_thing_is_an_ask_of_its_own() {
-    let f = board();
+on_both! {
+fn the_same_card_on_a_worktree_and_each_other_thing_is_an_ask_of_its_own(backend: Backend) {
+    let f = board(backend);
     let main = f.store.open_ask(&verdict("why?")).unwrap();
     let tree = f
         .store
@@ -156,11 +161,13 @@ fn the_same_card_on_a_worktree_and_each_other_thing_is_an_ask_of_its_own() {
     );
     assert_eq!(tree.tree.as_deref(), Some("tools/x"));
     assert_eq!(task.task.as_deref(), Some("sim/jump"));
+
+}
 }
 
-#[test]
-fn an_ask_needs_its_words_and_a_task_on_the_board_and_empty_fields_are_none() {
-    let f = board();
+on_both! {
+fn an_ask_needs_its_words_and_a_task_on_the_board_and_empty_fields_are_none(backend: Backend) {
+    let f = board(backend);
     assert_eq!(
         refused(f.store.open_ask(&NewAsk {
             kind: "task".into(),
@@ -191,11 +198,13 @@ fn an_ask_needs_its_words_and_a_task_on_the_board_and_empty_fields_are_none() {
         })
         .unwrap();
     assert_eq!((blank.tree, blank.block), (None, None));
+
+}
 }
 
-#[test]
-fn a_hold_keeps_each_earlier_holder_from_when_until_when_and_why() {
-    let f = board();
+on_both! {
+fn a_hold_keeps_each_earlier_holder_from_when_until_when_and_why(backend: Backend) {
+    let f = board(backend);
     let ask = f.store.open_ask(&verdict("why not B?")).unwrap();
     f.advance(10.0);
     let held = f
@@ -255,11 +264,13 @@ fn a_hold_keeps_each_earlier_holder_from_when_until_when_and_why() {
             ]
         )
     );
+
+}
 }
 
-#[test]
-fn a_hold_is_refused_for_an_unknown_session_a_missing_ask_or_an_answered_one() {
-    let f = board();
+on_both! {
+fn a_hold_is_refused_for_an_unknown_session_a_missing_ask_or_an_answered_one(backend: Backend) {
+    let f = board(backend);
     let ask = f.store.open_ask(&verdict("why not B?")).unwrap();
     assert_eq!(
         refused(f.store.hold_ask(ask.id, Some("nobody-here"), "x")),
@@ -275,11 +286,13 @@ fn a_hold_is_refused_for_an_unknown_session_a_missing_ask_or_an_answered_one() {
         "ask 1 is answered already"
     );
     assert_eq!(f.store.ask(ask.id).unwrap().holder, None);
+
+}
 }
 
-#[test]
-fn the_first_answer_closes_the_ask_and_a_later_one_changes_nothing() {
-    let f = board();
+on_both! {
+fn the_first_answer_closes_the_ask_and_a_later_one_changes_nothing(backend: Backend) {
+    let f = board(backend);
     let ask = f.store.open_ask(&verdict("why not B?")).unwrap();
     f.store
         .hold_ask(ask.id, Some("amber-heron"), "first")
@@ -316,11 +329,13 @@ fn the_first_answer_closes_the_ask_and_a_later_one_changes_nothing() {
     assert_eq!(later, answered);
     assert_eq!(refused(f.store.answer_ask(4, None, "x")), "no ask 4");
     assert_eq!(refused(f.store.ask(4)), "no ask 4");
+
+}
 }
 
-#[test]
-fn an_answer_about_a_thing_closes_its_open_ask_or_finds_none() {
-    let f = board();
+on_both! {
+fn an_answer_about_a_thing_closes_its_open_ask_or_finds_none(backend: Backend) {
+    let f = board(backend);
     let card = f.store.open_ask(&verdict("why not B?")).unwrap();
     let talk = f.store.open_ask(&chat("7", "hello?")).unwrap();
     f.advance(30.0);
@@ -359,11 +374,13 @@ fn an_answer_about_a_thing_closes_its_open_ask_or_finds_none() {
         )),
         "an ask of kind 'chat' names its thread"
     );
+
+}
 }
 
-#[test]
-fn a_close_by_hand_needs_a_known_session_and_a_reason_and_an_open_ask() {
-    let f = board();
+on_both! {
+fn a_close_by_hand_needs_a_known_session_and_a_reason_and_an_open_ask(backend: Backend) {
+    let f = board(backend);
     let ask = f.store.open_ask(&chat("7", "thanks")).unwrap();
     assert_eq!(
         refused(f.store.close_ask(ask.id, "amber-heron", "  ")),
@@ -402,11 +419,13 @@ fn a_close_by_hand_needs_a_known_session_and_a_reason_and_an_open_ask() {
         refused(f.store.close_ask(ask.id, "amber-heron", "x")),
         "ask 1 is answered already"
     );
+
+}
 }
 
-#[test]
-fn a_gone_mark_keeps_the_ask_open_keeps_its_first_time_and_comes_off_and_never_marks_an_answer() {
-    let f = board();
+on_both! {
+fn a_gone_mark_keeps_the_ask_open_keeps_its_first_time_and_comes_off_and_never_marks_an_answer(backend: Backend) {
+    let f = board(backend);
     let ask = f.store.open_ask(&verdict("why not B?")).unwrap();
     f.advance(30.0);
     let marked = f
@@ -449,11 +468,13 @@ fn a_gone_mark_keeps_the_ask_open_keeps_its_first_time_and_comes_off_and_never_m
     let answered = f.store.mark_gone(ask.id, Some("its card is gone")).unwrap();
     assert_eq!((answered.open, answered.gone), (false, None));
     assert_eq!(refused(f.store.mark_gone(9, Some("x"))), "no ask 9");
+
+}
 }
 
-#[test]
-fn the_listing_is_the_open_asks_oldest_first_then_those_answered_since_newest_first() {
-    let f = board();
+on_both! {
+fn the_listing_is_the_open_asks_oldest_first_then_those_answered_since_newest_first(backend: Backend) {
+    let f = board(backend);
     let a = f.store.open_ask(&chat("1", "a")).unwrap();
     f.advance(10.0);
     let b = f.store.open_ask(&chat("2", "b")).unwrap();
@@ -480,11 +501,13 @@ fn the_listing_is_the_open_asks_oldest_first_then_those_answered_since_newest_fi
         [c.id, b.id, d.id],
         "an ask answered before `since` is left out"
     );
+
+}
 }
 
-#[test]
-fn a_copied_board_numbers_its_next_ask_after_the_copys() {
-    let f = Fixture::new(Seed {
+on_both! {
+fn a_copied_board_numbers_its_next_ask_after_the_copys(backend: Backend) {
+    let f = Fixture::on(backend, Seed {
         dump: crate::copy::everything(),
     });
     let next = f.store.open_ask(&chat("9", "next")).unwrap();
@@ -495,24 +518,14 @@ fn a_copied_board_numbers_its_next_ask_after_the_copys() {
         (2, 2),
         "the copy's open ask is joined"
     );
+
+}
 }
 
-#[test]
-fn an_ask_moves_the_boards_marker() {
-    let f = board();
-    let marker = || {
-        f.store
-            .client()
-            .query(
-                &format!("RETURN {};", symphony_board::schema::BOARD_MARKER),
-                json!({}),
-            )
-            .unwrap()
-            .pop()
-            .unwrap()
-            .as_i64()
-            .unwrap()
-    };
+on_both! {
+fn an_ask_moves_the_boards_marker(backend: Backend) {
+    let f = board(backend);
+    let marker = || f.store.board_mark().unwrap();
     let before = marker();
     let ask = f.store.open_ask(&verdict("why?")).unwrap();
     let opened = marker();
@@ -520,10 +533,11 @@ fn an_ask_moves_the_boards_marker() {
     f.store.answer_ask(ask.id, None, "x").unwrap();
     assert!(marker() > opened);
 }
+}
 
 #[test]
 fn a_board_of_schema_16_gains_the_ask_table_with_every_row_kept() {
-    let f = board();
+    let f = board(Backend::SurrealDb);
     f.task("sim/run");
     let original = f.store.dump().unwrap();
     f.store
@@ -556,9 +570,9 @@ fn chat_event(f: &Fixture, key: &str) -> serde_json::Value {
         .unwrap()
 }
 
-#[test]
-fn an_owner_save_queues_its_chat_and_opens_its_ask_in_one_write_once_per_key() {
-    let f = board();
+on_both! {
+fn an_owner_save_queues_its_chat_and_opens_its_ask_in_one_write_once_per_key(backend: Backend) {
+    let f = board(backend);
     let said = "OWNER /api/decision why not B?";
     f.store
         .owner_save("journal-1", said, Some(&verdict("why not B?")))
@@ -605,11 +619,13 @@ fn an_owner_save_queues_its_chat_and_opens_its_ask_in_one_write_once_per_key() {
         "an ask of kind 'chat' names its thread"
     );
     assert_eq!(chat_event(&f, "journal-4"), serde_json::Value::Null);
+
+}
 }
 
-#[test]
-fn the_owners_line_on_a_task_opens_its_ask_and_a_line_by_one_holding_a_role_answers_it() {
-    let f = board();
+on_both! {
+fn the_owners_line_on_a_task_opens_its_ask_and_a_line_by_one_holding_a_role_answers_it(backend: Backend) {
+    let f = board(backend);
     f.store.claim("sim/jump", "amber-heron").unwrap();
     // The owner's line that asks nothing (a board action's record) opens no ask.
     f.store
@@ -680,4 +696,32 @@ fn the_owners_line_on_a_task_opens_its_ask_and_a_line_by_one_holding_a_role_answ
         f.store.ask(2).unwrap().answered_by.as_deref(),
         Some("brisk-finch")
     );
+
+}
+}
+
+on_both! {
+fn concurrent_asks_join_once_and_duplicate_owner_saves_count_once(backend: Backend) {
+    let f = board(backend);
+    let stores = [f.other(), f.other()];
+    let barrier = std::sync::Barrier::new(2);
+    let opened = std::thread::scope(|scope| {
+        let joins: Vec<_> = stores.iter().map(|store| scope.spawn(|| {
+            barrier.wait();
+            store.open_ask(&verdict("why?"))
+        })).collect();
+        joins.into_iter().map(|join| join.join().unwrap().unwrap()).collect::<Vec<_>>()
+    });
+    assert_eq!(opened[0].id, opened[1].id);
+    assert_eq!(f.store.ask(opened[0].id).unwrap().lines, 2);
+    std::thread::scope(|scope| {
+        let joins: Vec<_> = stores.iter().map(|store| scope.spawn(|| {
+            barrier.wait();
+            store.owner_save("same-event", "owner's question", Some(&verdict("again?")))
+        })).collect();
+        for join in joins { join.join().unwrap().unwrap(); }
+    });
+    assert_eq!(f.store.ask(opened[0].id).unwrap().lines, 3);
+    assert_eq!(f.store.raw().table("chat_event").count().unwrap(), 1);
+}
 }

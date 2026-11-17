@@ -376,3 +376,35 @@ on_both! {
             .unwrap();
     }
 }
+
+on_both! {
+/// Schema 19 could hold implicit reservations on SurrealDB; its PostgreSQL schema lacked the
+/// table. The normal version migration must both add missing storage and preserve earlier rows.
+fn schema_19_gains_reservation_storage_and_keeps_existing_reservations(backend: Backend) {
+    for existed in [false, true] {
+        let db = board(backend);
+        let raw = Raw::of(&db);
+        let key = json!(["old/one", "worker", 7]);
+        if existed {
+            raw.row("unanswered_restore", key.clone()).create(json!({
+                "slug": "old/one", "handle": "worker", "post": 7
+            })).unwrap();
+        } else {
+            // DDL is engine-specific: emulate the predecessor's catalogue, not a row mutation.
+            match &db {
+                Database::SurrealDb(client) => { client.query("REMOVE TABLE unanswered_restore;", json!({})).unwrap(); }
+                Database::PostgreSql(client) => { client.simple("DROP TABLE unanswered_restore").unwrap(); }
+            }
+        }
+        raw.row("meta", "schema").set(json!({"version": 19})).unwrap();
+        let upgraded = opened(again(&db), &Opening::write()).unwrap();
+        assert_eq!(version(&db), Some(Schema::this_build().version()));
+        assert!(tables(&db).contains(&"unanswered_restore".into()));
+        assert_eq!(upgraded.get("old/one").unwrap().title, "Made at this version");
+        assert_eq!(upgraded.raw().row("unanswered_restore", key.clone()).exists().unwrap(), existed);
+        let reopened = opened(again(&db), &Opening::write()).unwrap();
+        assert_eq!(reopened.database().requests(), 1);
+        assert_eq!(reopened.raw().row("unanswered_restore", key).exists().unwrap(), existed);
+    }
+}
+}

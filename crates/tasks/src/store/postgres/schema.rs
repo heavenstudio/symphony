@@ -117,8 +117,8 @@ pub(in crate::store) struct Table {
 
 use Kind::{Array, Bool, Float, Int, Object, Text};
 
-/// The board's twenty tables, each in the order of its fields.
-pub(in crate::store) const TABLES: [Table; 20] = [
+/// The board's tables, each in the order of its fields.
+pub(in crate::store) const TABLES: [Table; 21] = [
     Table {
         name: "task",
         columns: &[
@@ -276,6 +276,10 @@ pub(in crate::store) const TABLES: [Table; 20] = [
     },
     Table {
         name: "chat_event",
+        columns: &[],
+    },
+    Table {
+        name: "unanswered_restore",
         columns: &[],
     },
     Table {
@@ -601,11 +605,11 @@ mod tests {
     }
 
     #[test]
-    fn the_board_has_twenty_tables_each_named_once() {
+    fn the_board_has_twenty_one_tables_each_named_once() {
         let mut names: Vec<&str> = TABLES.iter().map(|table| table.name).collect();
         names.sort_unstable();
         names.dedup();
-        assert_eq!(names.len(), 20);
+        assert_eq!(names.len(), 21);
         let defined = define();
         for name in names {
             assert!(

@@ -1,3 +1,4 @@
+// These delivery-state tests stay on SurrealDB until the sessions/delivery slice pairs callback writes.
 //! Consumer acceptance on the delivered held-aware parent-feature observation.
 
 use super::*;

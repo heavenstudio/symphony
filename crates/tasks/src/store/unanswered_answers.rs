@@ -1,7 +1,7 @@
 //! One recipient's answer records after one post, and their actual task ancestry: what recovery
 //! reads again, and its reservation checks once more, before it resumes a conversation.
 
-use super::{Error, Store, recovery_error, sql};
+use super::{Error, Store, both, pg, recovery_error, sql};
 use crate::store::work::{Tree, above};
 use serde_json::json;
 use std::collections::BTreeSet;
@@ -10,7 +10,10 @@ pub(super) type Answer = (i64, String);
 
 pub(super) fn rows(store: &Store, handle: &str, post: i64) -> Result<Vec<Answer>, Error> {
     store
-        .bounded_read(sql::answer_rows(), json!({"handle":handle, "post":post}))
+        .bounded_read(
+            both(sql::answer_rows(), pg::answer_rows()),
+            json!({"handle":handle, "post":post}),
+        )
         .map_err(recovery_error)
 }
 
@@ -30,7 +33,7 @@ pub(super) fn parents(
     let mut wanted: BTreeSet<_> = rows.iter().map(|(_, slug)| slug.clone()).collect();
     while !wanted.is_empty() {
         let edges: Vec<(String, Option<String>)> = store
-            .bounded_read(sql::PARENTS, json!({"slugs":wanted}))
+            .bounded_read(both(sql::PARENTS, pg::parents()), json!({"slugs":wanted}))
             .map_err(recovery_error)?;
         tree.extend(edges.iter().cloned());
         wanted = edges

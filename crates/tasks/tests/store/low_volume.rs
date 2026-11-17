@@ -1,3 +1,4 @@
+// These delivery-state tests stay on SurrealDB until the sessions/delivery slice pairs callback writes.
 //! Volume-only PULL conditions use the ordinary durable acknowledgement and retry account.
 
 use super::callbacks::Listener;
