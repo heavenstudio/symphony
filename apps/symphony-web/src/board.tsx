@@ -627,7 +627,12 @@ export function TaskBoard({
             <button
               key={stage}
               type="button"
-              aria-current={selected === stage ? "page" : undefined}
+              aria-current={
+                (opened === "" && selected === stage) ||
+                (opened === "cancelled" && stage === "done")
+                  ? "page"
+                  : undefined
+              }
               onClick={() => {
                 setSelected(stage);
                 save(STAGE_KEY, stage);
@@ -640,7 +645,12 @@ export function TaskBoard({
           ))}
           {machine &&
             ["build", "test"].map((stage) => (
-              <button key={stage} type="button" onClick={() => setOpened(stage)}>
+              <button
+                key={stage}
+                type="button"
+                aria-current={opened === stage ? "page" : undefined}
+                onClick={() => setOpened(stage)}
+              >
                 {statusLabel(stage)} {count(stage)}
               </button>
             ))}
@@ -666,8 +676,8 @@ export function TaskBoard({
               type="button"
               className="backlog-rail"
               data-open-stage="backlog"
-              aria-expanded={opened === "backlog"}
-              onClick={() => setOpened(opened === "backlog" ? "" : "backlog")}
+              aria-expanded={false}
+              onClick={() => setOpened("backlog")}
             >
               Backlog {count("backlog")}
             </button>
@@ -685,14 +695,14 @@ export function TaskBoard({
                           <button
                             type="button"
                             data-open-stage="build"
-                            onClick={() => setOpened(opened === "build" ? "" : "build")}
+                            onClick={() => setOpened("build")}
                           >
                             Build {count("build")}
                           </button>
                           <button
                             type="button"
                             data-open-stage="test"
-                            onClick={() => setOpened(opened === "test" ? "" : "test")}
+                            onClick={() => setOpened("test")}
                           >
                             Test {count("test")}
                           </button>
