@@ -8,6 +8,8 @@ use serde_json::{Value, json};
 use std::path::PathBuf;
 use std::process::Command;
 
+mod messages;
+
 const TASK: &str = "/task/visual/in-progress";
 const SLUG: &str = "visual/in-progress";
 

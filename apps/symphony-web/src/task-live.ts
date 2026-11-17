@@ -697,22 +697,38 @@ export class LiveTask {
     this.host.redraw();
   }
 
+  private earlierRead: { slug: string; promise: Promise<string | null> } | null = null;
+
   /**
    * Read the thread: its newest page again at once (a reader's ask; the part reads it by itself),
    * or the page before the earliest shown (`older`, never kept). An earlier one waits while the
    * thread shows this device's copy, or none, as its cursor may be another.
    */
-  async history(older: boolean): Promise<void> {
+  history(older: boolean): Promise<string | null> {
+    if (!older)
+      return this.parts.read(this.threadPart).then(() => {
+        const error = this.thread().error;
+        return error === null ? null : said(error);
+      });
+    if (this.earlierRead?.slug === this.slug) return this.earlierRead.promise;
+    const reading = this.readEarlier();
+    this.earlierRead = { slug: this.slug, promise: reading };
+    void reading.finally(() => {
+      if (this.earlierRead?.promise === reading) this.earlierRead = null;
+    });
+    return reading;
+  }
+
+  private async readEarlier(): Promise<string | null> {
     const selected = this.slug;
     const part = this.threadPart;
-    if (!older) return this.parts.read(part);
     const held = this.thread();
     if (!held.answered || held.stale) {
       this.olderWaiting = true;
-      return;
+      return null;
     }
     const before = held.value?.before ?? null;
-    if (before === null) return;
+    if (before === null) return null;
     let earlier: NonNullable<ReturnType<typeof readHistory>>;
     try {
       const path = `/api/task-history?slug=${named(selected)}&before=${before}`;
@@ -720,14 +736,24 @@ export class LiveTask {
       if (page === null) throw new Error("The task's thread is not readable");
       earlier = page;
     } catch (error) {
-      return this.fail(selected, error);
+      this.fail(selected, error);
+      return said(error);
     }
-    if (!this.current(selected)) return;
+    if (!this.current(selected)) return null;
+    if (
+      earlier.before === before &&
+      earlier.entries.every((entry) =>
+        held.value?.entries.some((e) => e.message.id === entry.message.id),
+      )
+    ) {
+      return "The thread read made no progress. Retry to load earlier messages.";
+    }
     this.parts.change(part, (thread) => ({
       ...thread,
       entries: withEntries(thread.entries, earlier.entries),
       before: earlier.before,
     }));
+    return null;
   }
 
   /** The messages after message `after`, a page at a time, until the server has no more. */

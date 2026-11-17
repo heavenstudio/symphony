@@ -23,11 +23,13 @@ import {
   useRef,
   useState,
 } from "react";
+import { createPortal } from "react-dom";
 import { Button } from "./button";
 import { whenShown } from "./feed";
 import type { Shown as Answer } from "./parts";
 import { Failure, said } from "./request";
 import STYLE from "./timeline.css?inline";
+import { address, endpointLane, historyWords, messagesOf } from "./timeline-history";
 import {
   type Bar,
   type Fit,
@@ -44,16 +46,18 @@ import {
   readTimeline,
   roomCss,
   rows as rowLayout,
+  Scale,
   type Seg,
   type Shown,
   showAll,
   stops,
   totals,
 } from "./timeline-layout";
+import { MessagePanel, type MessageSelection, type ThreadAccess } from "./timeline-messages";
 // biome-ignore lint/style/noRestrictedImports: no-timed-waits baseline: readAgain reads the timeline again each period while the task is open, where the feed's event of a change, or a clock tick for the times shown, is the wait
 import { sleep } from "./timing";
 import { NOT_IN_TIME } from "./trouble";
-import type { TaskTimeline } from "./wire";
+import type { TaskTimeline, TimelineMessage } from "./wire";
 import { fixed } from "./words";
 
 /** The id of the page's box the timeline is drawn in (timeline-slot.tsx's, not imported here). */
@@ -338,7 +342,7 @@ function BarView({ bar, word }: { bar: Bar; word: [string, string] | null }) {
  * parts being the keyboard's; while it has it, the style sheet shows all of the run under its bar. */
 const isRun = (row: Row) => row.sub && !row.event;
 
-function RowView({ row }: { row: Row }) {
+function RowView({ row, selection }: { row: Row; selection?: MessageSelection | undefined }) {
   const kind = !row.sub ? "tl-row" : row.event ? "tl-row tl-sub tl-event" : "tl-row tl-sub";
   const run = isRun(row);
   return (
@@ -352,7 +356,19 @@ function RowView({ row }: { row: Row }) {
       >
         <span className="tl-at">{row.at}</span>
         <span className="tl-mark" aria-hidden="true" />
-        <span className="tl-label">{row.label}</span>
+        {row.message !== undefined ? (
+          <button
+            type="button"
+            className="tl-label tl-message-row"
+            data-message={row.message}
+            aria-pressed={selection?.selected === row.message}
+            onClick={() => selection?.choose(row.message as number)}
+          >
+            {row.label}
+          </button>
+        ) : (
+          <span className="tl-label">{row.label}</span>
+        )}
         {row.took !== null && <span className="tl-took">{row.took}</span>}
         {row.bar !== null && <BarView bar={row.bar} word={row.word} />}
         {run && (
@@ -411,7 +427,63 @@ function SegView({ seg, stop }: { seg: Seg; stop: object }) {
   );
 }
 
-function LanesView({ lanes, at }: { lanes: Lanes; at: Stops }) {
+function AddressArrow({ selected, scale }: { selected: TimelineMessage; scale: Scale }) {
+  const root = useRef<HTMLDivElement>(null);
+  const [arrow, setArrow] = useState<{ from: number; to: number } | null>(null);
+  useLayoutEffect(() => {
+    const element = root.current?.closest(".tl-lanes");
+    if (!element || !selected) {
+      setArrow(null);
+      return;
+    }
+    const measure = () => {
+      const top = element.getBoundingClientRect().top;
+      const y = (lane: string) => {
+        const box = element
+          .querySelector(`[data-lane="${lane}"] .tl-track`)
+          ?.getBoundingClientRect();
+        return box ? box.top + box.height / 2 - top : null;
+      };
+      const from = y(endpointLane(selected.from, selected.sender));
+      const to = y(endpointLane(selected.to, selected.recipient));
+      setArrow(from === null || to === null ? null : { from, to });
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [selected]);
+  return (
+    <div className="tl-address-track" aria-hidden="true" ref={root}>
+      {arrow && (
+        <span
+          className={`tl-address-arrow ${arrow.to < arrow.from ? "tl-arrow-up" : ""}`}
+          data-from={endpointLane(selected.from, selected.sender)}
+          data-to={endpointLane(selected.to, selected.recipient)}
+          style={{
+            left: percent(scale.at(selected.at)),
+            top: Math.min(arrow.from, arrow.to),
+            height: Math.max(Math.abs(arrow.to - arrow.from), 12),
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+function LanesView({
+  lanes,
+  at,
+  timeline,
+  selection,
+}: {
+  lanes: Lanes;
+  at: Stops;
+  timeline: TaskTimeline;
+  selection?: MessageSelection | undefined;
+}) {
+  const scale = new Scale(timeline);
+  const selected = selection?.messages.find((m) => m.id === selection.selected);
   const count = stops(lanes);
   let index = 0;
   const next = () => index++;
@@ -436,6 +508,20 @@ function LanesView({ lanes, at }: { lanes: Lanes; at: Stops }) {
             stop={seg.stop ? stopOf(next(), count, seg.title, at) : { "aria-hidden": "true" }}
           />
         ))}
+        {selection?.messages
+          .filter((m) => endpointLane(m.from, m.sender) === lane.key)
+          .map((m) => (
+            <button
+              key={m.id}
+              type="button"
+              className="tl-message-mark"
+              data-message={m.id}
+              style={{ left: percent(scale.at(m.at)) }}
+              aria-label={`Message #${m.id}: ${address(m)}`}
+              aria-pressed={selection.selected === m.id}
+              onClick={() => selection.choose(m.id)}
+            />
+          ))}
       </span>
     </div>
   ));
@@ -486,6 +572,7 @@ function LanesView({ lanes, at }: { lanes: Lanes; at: Stops }) {
         </span>
       </div>
       {laneRows}
+      {selected && <AddressArrow selected={selected} scale={scale} />}
       {lanes.gates.length > 0 && (
         <>
           <div className="tl-lane tl-gates-head">
@@ -514,6 +601,7 @@ export interface DrawnProps {
   toggle: () => void;
   /** The part of the box the steps are drawn in. */
   body?: Ref<HTMLDivElement> | undefined;
+  selection?: MessageSelection | undefined;
 }
 
 /**
@@ -529,6 +617,7 @@ export function TimelineDrawn({
   stops: at,
   toggle,
   body,
+  selection,
 }: DrawnProps) {
   const [first, machine] = totals(timeline);
   const note = keptNote(timeline);
@@ -536,7 +625,7 @@ export function TimelineDrawn({
   const drawn = laneLayout(timeline);
   const running = timeline.runs.some((run) => run.result === "running");
   return (
-    <div className={drawnClass(all, clipped)}>
+    <div className={drawnClass(all, clipped)} data-selected={selection?.selected ?? undefined}>
       <div className="tl-head">
         <p className="tl-totals">
           <span>{first}</span>
@@ -548,15 +637,19 @@ export function TimelineDrawn({
           )}
         </p>
         {note !== null && <p className="tl-note">{note}</p>}
+        {!timeline.history && <p className="tl-note">{historyWords(undefined)}</p>}
       </div>
       <div className="tl-body" id={BODY} ref={body}>
         <ol className="tl-list" aria-label="Steps">
           {steps.map((row, place) => (
-            // biome-ignore lint/suspicious/noArrayIndexKey: a step has no identity but its place
-            <RowView key={place} row={row} />
+            <RowView
+              key={row.message === undefined ? place : `message-${row.message}`}
+              row={row}
+              selection={selection}
+            />
           ))}
         </ol>
-        <LanesView lanes={drawn} at={at} />
+        <LanesView lanes={drawn} at={at} timeline={timeline} selection={selection} />
       </div>
       <div className="tl-foot">
         <ul className="tl-legend">
@@ -603,13 +696,65 @@ export interface ViewProps {
   timeline: TaskTimeline;
   /** Told each draw's height at its width (wide or not), unless the reader asked to see all. */
   onDrawn?: ((wide: boolean, natural: number) => void) | undefined;
+  thread?: ThreadAccess | undefined;
+  details?: HTMLElement | null | undefined;
 }
 
 /**
  * The timeline drawn and measured: after each draw, each crossing of 900 px and each "Show all"
  * or "Show the latest", whether its steps overflow the box, and the height it took.
  */
-export function TimelineView({ timeline, onDrawn }: ViewProps): JSX.Element {
+export function TimelineView({ timeline, onDrawn, thread, details }: ViewProps): JSX.Element {
+  const [selected, setSelected] = useState<number | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [messageError, setMessageError] = useState<string | null>(null);
+  const [attempt, setAttempt] = useState(0);
+  const messages = timeline.history ? messagesOf(timeline.history, thread?.entries) : [];
+  const selection: MessageSelection = {
+    messages,
+    selected,
+    choose: (id) => {
+      setSelected(id);
+      setMessageError(null);
+    },
+  };
+  const projected = timeline.history
+    ? { ...timeline, history: { ...timeline.history, messages } }
+    : timeline;
+  // Thread reads remain in the page's store. Read one existing cursor at a time, until the
+  // selected entry is present; failed or unchanging cursors stop with an explicit retry.
+  const entries = thread?.entries;
+  const before = thread?.before;
+  const pending = thread?.pending;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the thread callbacks change on parent draws; its entries and cursor alone drive paging, attempt retries on request
+  useEffect(() => {
+    if (!thread || selected === null || thread.entries.some((e) => e.message.id === selected)) {
+      setLoading(false);
+      return;
+    }
+    if (thread.pending) return;
+    let left = false;
+    setLoading(true);
+    const newest = thread.entries.reduce((last, e) => Math.max(last, e.message.id), -Infinity);
+    const read =
+      selected > newest || thread.error
+        ? thread.latest
+        : thread.before !== null
+          ? thread.earlier
+          : null;
+    if (!read) {
+      setLoading(false);
+      return;
+    }
+    void read().then((error) => {
+      if (left) return;
+      setLoading(false);
+      if (error) setMessageError(error);
+    });
+    return () => {
+      left = true;
+    };
+  }, [selected, entries, before, pending, attempt]);
   const [all, setAll] = useState(false);
   const [clipped, setClipped] = useState(false);
   const [detail, setDetail] = useState("");
@@ -629,21 +774,58 @@ export function TimelineView({ timeline, onDrawn }: ViewProps): JSX.Element {
     );
     if (over !== null) setClipped(over);
   }, [timeline, crossings, all, clipped]);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: history updates, width crossings, collapse and expansion reflow the selected row
+  useLayoutEffect(() => {
+    if (selected === null || isWide()) return;
+    const box = body.current;
+    const row = box?.querySelector(`.tl-message-row[data-message="${selected}"]`);
+    if (box && row)
+      box.scrollTop +=
+        row.getBoundingClientRect().top - box.getBoundingClientRect().top - box.clientHeight / 2;
+  }, [selected, all, clipped, timeline, entries, crossings]);
+  const panel =
+    timeline.history || messages.length > 0 ? (
+      <MessagePanel
+        timeline={timeline}
+        selection={selection}
+        thread={thread}
+        loading={loading}
+        error={messageError}
+        retry={() => {
+          setMessageError(null);
+          setAttempt((n) => n + 1);
+        }}
+        earlier={() => {
+          if (!thread) return;
+          setLoading(true);
+          void thread.earlier().then((error) => {
+            setLoading(false);
+            setMessageError(error);
+          });
+        }}
+      />
+    ) : null;
   return (
-    <TimelineDrawn
-      timeline={timeline}
-      all={all}
-      clipped={clipped}
-      detail={detail}
-      stops={stopsOf(active, setActive, setDetail)}
-      toggle={() => setAll((shown) => !shown)}
-      body={body}
-    />
+    <>
+      <TimelineDrawn
+        timeline={projected}
+        selection={selection}
+        all={all}
+        clipped={clipped}
+        detail={detail}
+        stops={stopsOf(active, setActive, setDetail)}
+        toggle={() => setAll((shown) => !shown)}
+        body={body}
+      />
+      {panel && details ? createPortal(panel, details) : panel}
+    </>
   );
 }
 
 export interface HostProps {
   slug: string;
+  thread?: ThreadAccess | undefined;
+  details?: HTMLElement | null | undefined;
   /** The timeline's part as the page's store shows it: the server's answer as it came. */
   part: Answer<unknown>;
   /** Asks the page's store to read the part again. */
@@ -658,7 +840,14 @@ export interface HostProps {
  * that did not leaves the one shown. Before its first answer it draws nothing: the box's
  * placeholder shows.
  */
-export function TimelineHost({ slug, part, read, onDrawn }: HostProps): JSX.Element | null {
+export function TimelineHost({
+  slug,
+  part,
+  read,
+  onDrawn,
+  thread,
+  details,
+}: HostProps): JSX.Element | null {
   const seen = useRef<Seen | null>(null);
   const [clock, setClock] = useState(0);
   if (part.value !== undefined && seen.current?.value !== part.value) {
@@ -694,7 +883,9 @@ export function TimelineHost({ slug, part, read, onDrawn }: HostProps): JSX.Elem
       />
     );
   }
-  return <TimelineView timeline={shown.timeline} onDrawn={onDrawn} />;
+  return (
+    <TimelineView timeline={shown.timeline} onDrawn={onDrawn} thread={thread} details={details} />
+  );
 }
 
 /**
