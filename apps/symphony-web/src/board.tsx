@@ -535,6 +535,18 @@ export function TaskBoard({
   ]);
   const surface = useRef<HTMLElement>(null);
   useKeptPlace(surface, true, true);
+  const showingColumns = !phone && wait === "" && opened === "";
+  const columnLeft = useRef(0);
+  const wasShowingColumns = useRef(showingColumns);
+  const rememberColumns = () => {
+    if (showingColumns && surface.current !== null) columnLeft.current = surface.current.scrollLeft;
+  };
+  useLayoutEffect(() => {
+    if (showingColumns && !wasShowingColumns.current && surface.current !== null) {
+      surface.current.scrollLeft = columnLeft.current;
+    }
+    wasShowingColumns.current = showingColumns;
+  }, [showingColumns]);
   // Follow only the card holding the keyboard focus. Adjust this component's state before
   // React commits the move, while BoardRow can still read the old title link to restore it.
   const focused = wait === "" ? focusedSlug() : null;
@@ -604,10 +616,10 @@ export function TaskBoard({
   kept.current = columns;
   const count = (status: string) => counts.find(([one]) => one === status)?.[1] ?? 0;
   const meta = (status: string) => waiting?.columns.find((one) => one.status === status);
-  const toggleCancelled = useCallback(
-    () => setOpened((before) => (before === "cancelled" ? "" : "cancelled")),
-    [],
-  );
+  const toggleCancelled = useCallback(() => {
+    if (showingColumns && surface.current !== null) columnLeft.current = surface.current.scrollLeft;
+    setOpened((before) => (before === "cancelled" ? "" : "cancelled"));
+  }, [showingColumns]);
   const column = (status: string) => (
     <TaskColumn
       key={status}
@@ -630,6 +642,7 @@ export function TaskBoard({
   );
   const filter = (query: string, days: number) => onFilter(query, days, wait);
   const chooseWait = (kind: string) => {
+    rememberColumns();
     const next = wait === kind ? "" : kind;
     setWait(next);
     onFilter(search, days, next);
@@ -657,7 +670,10 @@ export function TaskBoard({
             className="board-backlog"
             data-open-stage="backlog"
             aria-expanded={opened === "backlog"}
-            onClick={() => setOpened(opened === "backlog" ? "" : "backlog")}
+            onClick={() => {
+              rememberColumns();
+              setOpened(opened === "backlog" ? "" : "backlog");
+            }}
           >
             Backlog {count("backlog")}
           </Button>
@@ -764,6 +780,7 @@ export function TaskBoard({
         ref={surface}
         aria-label="Task columns"
         tabIndex={phone ? undefined : 0}
+        onScroll={rememberColumns}
         className={`kanban waiting-columns${wait !== "" || (!phone && opened !== "") ? " wait-list" : ""}`}
       >
         {wait !== "" ? (

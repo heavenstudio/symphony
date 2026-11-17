@@ -472,3 +472,40 @@ fn an_explicit_row_link_reveals_its_offscreen_desktop_column() {
     page.open(&site.url("/tasks#row-phone%2Freview-1"));
     assert!(page.wait_for("(() => { const board = document.querySelector('.waiting-columns'), card = document.querySelector('[data-slug=\"phone/review-1\"]'); if (!board || !card) return false; const r = card.getBoundingClientRect(), b = board.getBoundingClientRect(); return board.scrollLeft > 0 && r.left >= b.left && r.right <= b.right && r.top >= 0 && r.bottom <= innerHeight; })()", SHOWN));
 }
+
+#[test]
+fn returning_from_a_list_restores_the_columns_horizontal_position() {
+    let site = site();
+    let Some(mut page) = chrome() else { return };
+    viewport(&mut page, 1100, 850);
+    page.open(&site.url("/tasks"));
+    assert!(page.wait_for(
+        "document.querySelector('.column[data-status=done]') !== null",
+        SHOWN
+    ));
+    for list in ["backlog", "cancelled", "wait"] {
+        page.eval("(() => { const board = document.querySelector('.waiting-columns'); board.scrollLeft = board.scrollWidth; })()");
+        assert!(page.wait_for(
+            "document.querySelector('.waiting-columns').scrollLeft > 0",
+            SHOWN
+        ));
+        page.eval("window.beforeList = document.querySelector('.waiting-columns').scrollLeft");
+        let opener = match list {
+            "backlog" => ".board-backlog",
+            "cancelled" => "[data-open-stage=cancelled]",
+            _ => ".wait-chip.k-queued",
+        };
+        page.eval(&format!(
+            "document.querySelector({}).click()",
+            json!(opener)
+        ));
+        assert!(page.wait_for("document.querySelector('.waiting-pipeline') === null && document.querySelectorAll('.waiting-columns .column').length === 1", SHOWN));
+        let back = if list == "wait" {
+            ".open-count"
+        } else {
+            ".back-to-stages"
+        };
+        page.eval(&format!("document.querySelector({}).click()", json!(back)));
+        assert!(page.wait_for("document.querySelector('.waiting-pipeline') !== null && document.querySelector('.waiting-columns').scrollLeft === window.beforeList", SHOWN));
+    }
+}
