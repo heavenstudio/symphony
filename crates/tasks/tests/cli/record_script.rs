@@ -786,6 +786,135 @@ impl Recipes {
 }
 
 #[test]
+fn one_recipe_check_commands_refuse_added_recipes_and_trailing_options_before_execution() {
+    let setup = Setup::new("record-script-one-recipe");
+    let recipes = Recipes::new(&setup);
+    let marker = recipes.tree.join("executed with spaces");
+    let other = recipes.tree.join("other.just");
+    let justfile = r#"marker := env_var("CHECK_MARKER")
+lint-rs:
+    @echo lint >> {{quote(marker)}}
+release:
+    @echo release >> {{quote(marker)}}
+symphony:
+    @echo server >> {{quote(marker)}}
+"#;
+    let vars = [("CHECK_MARKER", marker.to_str().unwrap())];
+    fs::write(recipes.tree.join("justfile"), justfile).unwrap();
+    fs::write(&other, justfile).unwrap();
+    let other = other.to_str().unwrap();
+    let unguarded = recipes.just_with(&["lint-rs", "release"], &vars);
+    assert!(unguarded.status.success(), "{unguarded:?}");
+    assert_eq!(fs::read_to_string(&marker).unwrap(), "lint\nrelease\n");
+    fs::remove_file(&marker).unwrap();
+    for tail in [
+        vec!["release"],
+        vec!["symphony"],
+        vec!["--justfile", other],
+        vec!["-f", other],
+        vec!["--working-directory", "/tmp"],
+        vec!["--shell", "/bin/sh"],
+        vec!["--command", "touch", marker.to_str().unwrap()],
+        vec!["--set", "record", "arbitrary"],
+        vec!["record=arbitrary"],
+        vec!["--no-deps"],
+    ] {
+        let mut args = vec!["--one", "--", "lint-rs"];
+        args.extend_from_slice(&tail);
+        let done = recipes.just_with(&args, &vars);
+        assert!(!done.status.success(), "{args:?}: {done:?}");
+        assert!(!marker.exists(), "{args:?} executed a command: {done:?}");
+    }
+    let done = recipes.just_with(&["--one", "--", "lint-rs"], &vars);
+    assert!(done.status.success(), "{done:?}");
+    assert_eq!(fs::read_to_string(&marker).unwrap(), "lint\n");
+}
+
+#[test]
+fn one_recipe_test_commands_keep_argument_boundaries_task_commit_and_red_status() {
+    let setup = Setup::new("record-script-one-recipe-records");
+    let recipes = Recipes::new(&setup);
+    let commit = git_says(&recipes.tree, &["rev-parse", "HEAD"]);
+    let log = setup.dir.join("cargo-arguments");
+    executable(
+        &recipes.cargo,
+        "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$CHECK_ARGS\"\nexit \"$CHECK_EXIT\"\n",
+    );
+    for code in ["0", "7"] {
+        let done = recipes.just_with(
+            &[
+                "--one",
+                "--",
+                "test-rs",
+                "--",
+                "a filter with spaces",
+                "release",
+                "--justfile",
+                "/tmp/other.just",
+            ],
+            &[
+                ("CHECK_ARGS", log.to_str().unwrap()),
+                ("CHECK_EXIT", code),
+                ("TASKS_TASK", "tools/one-recipe"),
+                ("TASKS_SESSION", "fixture-worker"),
+            ],
+        );
+        assert_eq!(done.status.code(), Some(code.parse().unwrap()), "{done:?}");
+        assert_eq!(
+            fs::read_to_string(&log).unwrap(),
+            "test\n--locked\n--\na filter with spaces\nrelease\n--justfile\n/tmp/other.just\n"
+        );
+    }
+    let records = setup.history(2);
+    for (record, code) in records.iter().zip([0, 7]) {
+        assert_eq!(record.task.as_deref(), Some("tools/one-recipe"));
+        assert_eq!(record.handle.as_deref(), Some("fixture-worker"));
+        assert_eq!(record.commit.as_deref(), Some(commit.as_str()));
+        assert_eq!(record.exit_code, Some(code));
+        assert_eq!(record.phase, Phase::Test);
+    }
+}
+
+#[test]
+fn one_recipe_document_checks_keep_fixed_arguments_and_both_records() {
+    let setup = Setup::new("record-script-one-recipe-docs");
+    let recipes = Recipes::new(&setup);
+    let log = setup.dir.join("document-arguments");
+    executable(
+        &recipes.tree.join("tools/rs-bin.sh"),
+        "#!/bin/sh\nprintf '%s|' \"$@\" >> \"$DOC_ARGS\"\nprintf '\\n' >> \"$DOC_ARGS\"\n",
+    );
+    let vars = [("DOC_ARGS", log.to_str().unwrap())];
+    for tail in ["--tidy", "release", "--justfile"] {
+        let done = recipes.just_with(&["--one", "--", "docs-check", tail], &vars);
+        assert!(!done.status.success(), "{tail}: {done:?}");
+        assert!(!log.exists(), "{tail}: a check ran before the refusal");
+    }
+    let done = recipes.just_with(&["--one", "--", "docs-check"], &vars);
+    assert!(done.status.success(), "{done:?}");
+    assert_eq!(
+        fs::read_to_string(&log).unwrap(),
+        "symphony|docs-audit|--check|\nsymphony|status|--lint|\n"
+    );
+    let labels: Vec<_> = setup
+        .history(2)
+        .into_iter()
+        .map(|record| {
+            assert_eq!(record.phase, Phase::Test);
+            assert_eq!(record.exit_code, Some(0));
+            record.label
+        })
+        .collect();
+    assert_eq!(
+        labels,
+        [
+            "just symphony-cli docs-audit --check",
+            "just symphony-cli status --lint"
+        ]
+    );
+}
+
+#[test]
 fn the_crates_check_recipe_records_its_task_tip_streams_and_status_or_runs_without_a_recorder() {
     let setup = Setup::new("record-script-crates-check");
     let recipes = Recipes::new(&setup);

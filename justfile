@@ -83,6 +83,12 @@ _client-update:
 symphony-cli *ARGS:
     @{{ if ARGS =~ '^(docs-audit --check|status --lint)$' { record + ' --pipeline docs test "just symphony-cli $*"' } else { '' } }} tools/rs-bin.sh symphony "$@"
 
+# Both document checks with fixed arguments, each recorded by symphony-cli. The no-argument
+# recipe lets the project's Codex policy permit these checks without permitting extra CLI flags.
+docs-check:
+    @just --justfile {{quote(justfile())}} symphony-cli docs-audit --check
+    @just --justfile {{quote(justfile())}} symphony-cli status --lint
+
 # The board but its recorder, which the Symphony's recipe refuses too (`_symphony_board`): a build
 # records itself by the binary, through tools/record.sh. Like the Symphony's, it writes only where
 # `_symphony_unasked` admits (its checkout, from a worktree main's artifacts), as an agent runs it

@@ -367,3 +367,54 @@ fn a_block_waiting_out_an_outage_is_not_said_once_a_hand_over_took_its_task_away
     assert!(back.drain(&f, &worker, &orch).is_empty());
 }
 }
+
+on_both! {
+fn a_reviewers_delayed_notice_follows_the_current_owner_instead_of_its_parent(backend: Backend) {
+    if !paired_child("blocked_panes::a_reviewers_delayed_notice_follows_the_current_owner_instead_of_its_parent", backend) {
+        return;
+    }
+    let f = Fixture::on(backend, crate::common::Seed::default());
+    let former = f.session("orchestrator");
+    let current = f.session("orchestrator");
+    let unrelated = f.session("orchestrator");
+    let executor = f.session("worker");
+    let mut child = symphony_board::NewSession::new("reviewer");
+    child.parent = Some(former.clone());
+    let reviewer = f.session_with(child);
+    f.task("tests/reviewer");
+    f.store.take_role("tests/reviewer", &former, "orchestrator").unwrap();
+    f.store.claim("tests/reviewer", &executor).unwrap();
+    f.store.move_to("tests/reviewer", "review", &executor).unwrap();
+    f.store.take_role("tests/reviewer", &reviewer, "reviewer").unwrap();
+    f.store.record_launch(&NewLaunch {
+        pane: "t3".into(),
+        claude_session: "codex:review-conversation".into(),
+        ..NewLaunch::new("tests/reviewer", &reviewer, "reviewer")
+    }).unwrap();
+    panes(Some(json!([pane("t3", "working")])));
+    let (old, next, other) = (
+        listen(&f, &former),
+        listen(&f, &current),
+        listen(&f, &unrelated),
+    );
+    // Queue an observation while its original owner cannot be reached.
+    drop(old);
+    panes(Some(json!([pane("t3", "blocked")])));
+    tick(&f);
+    let notice = format!(
+        "BLOCKED {reviewer} tests/reviewer t3 — observed waiting on an approval or a question; inspect its terminal before acting"
+    );
+    assert!(f.store.callback_inbox(&former).unwrap().iter().any(|(_, text)| text == &notice));
+    f.store.hand_over("tests/reviewer", &former, &current).unwrap();
+    tick(&f);
+    let back = crate::callbacks::Listener::new(&format!("{}-back", f.store.database().database()));
+    let address = format!("uds:{}", back.path.display());
+    f.store.callback(&former, Some(&address), false, false).unwrap();
+    let blocked = |lines: Vec<String>| lines.into_iter().filter(|line| line.starts_with("BLOCKED ")).collect::<Vec<_>>();
+    assert_eq!(blocked(next.drain(&f, &executor, &current)), [notice]);
+    assert!(blocked(back.drain(&f, &executor, &former)).is_empty());
+    assert!(blocked(other.drain(&f, &executor, &unrelated)).is_empty());
+    tick(&f);
+    assert!(blocked(next.drain(&f, &executor, &current)).is_empty(), "one episode is said once");
+}
+}
