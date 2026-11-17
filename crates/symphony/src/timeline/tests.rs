@@ -657,3 +657,28 @@ fn a_rotated_history_says_since_when_it_keeps_every_run() {
     assert_eq!(kept_from(true, &runs, at(45.0)), None);
     assert_eq!(kept_from(true, &[], MADE), None);
 }
+
+#[test]
+fn board_review_counts_agree_with_task_timeline_rounds() {
+    let thread = thread();
+    for len in 0..=thread.len() {
+        for status in [
+            "ready",
+            "in_progress",
+            "review",
+            "blocked",
+            "done",
+            "cancelled",
+        ] {
+            let messages = &thread[..len];
+            let lines: Vec<Line> = messages.iter().map(Line::from).collect();
+            let count = stages::in_status(facts(status), &lines).review_rounds;
+            let timeline = build(SLUG, facts(status), messages, &[], &[], NOW);
+            assert_eq!(
+                count as usize,
+                timeline.rounds.len(),
+                "{len} lines, {status}"
+            );
+        }
+    }
+}

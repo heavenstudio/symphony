@@ -5,7 +5,8 @@
 //!
 //! When a task took its status is its thread's replay ([`symphony_board::stages::in_status`]),
 //! read for many tasks in one round trip, and kept ([`Stood`]), so a board read moved by a beat
-//! reads no thread: only the open tasks whose status or write moved since are read again.
+//! reads no thread: only tasks whose status or write moved since are read again. Closed tasks
+//! keep their review-round count as well.
 
 use std::collections::BTreeMap;
 
@@ -14,7 +15,7 @@ use symphony_board::health::FINISHED;
 use symphony_board::stages::InStatus;
 use symphony_board::waits_on::{self, Blocked, Landing, Look};
 
-/// When each open task took the status it holds and the status before, as last read, by slug,
+/// Each task's review-round count, status entry and previous status, as last read, by slug,
 /// beside the status and write time it was read for.
 #[derive(Debug, Default)]
 pub struct Stood {
@@ -22,18 +23,15 @@ pub struct Stood {
 }
 
 impl Stood {
-    /// Read again what moved on `board`: the open tasks this has not read at the status and write
-    /// time they hold, in one round trip ([`symphony_board::Store::in_status`]); a finished task's
-    /// is dropped. None to read reads nothing.
+    /// Read again what moved on `board`: tasks this has not read at the status and write time
+    /// they hold, in one round trip ([`symphony_board::Store::in_status`]). Closed tasks are
+    /// retained for their review counts; only removed tasks are dropped. None to read reads nothing.
     pub fn read(
         &mut self,
         store: &symphony_board::Store,
         board: &symphony_board::Board,
     ) -> Result<(), symphony_board::Error> {
-        let open: Vec<&symphony_board::Task> = (board.tasks.iter())
-            .filter(|t| !FINISHED.contains(&t.status.as_str()))
-            .collect();
-        let moved: Vec<String> = (open.iter())
+        let moved: Vec<String> = (board.tasks.iter())
             .filter(|t| {
                 self.by_slug
                     .get(&t.slug)
@@ -44,13 +42,14 @@ impl Stood {
             .map(|t| t.slug.clone())
             .collect();
         let mut read = store.in_status(&moved)?;
-        for task in &open {
+        for task in &board.tasks {
             if let Some(stood) = read.remove(&task.slug) {
                 let key = (task.status.clone(), task.updated.to_bits(), stood);
                 self.by_slug.insert(task.slug.clone(), key);
             }
         }
-        let kept: std::collections::BTreeSet<&str> = open.iter().map(|t| t.slug.as_str()).collect();
+        let kept: std::collections::BTreeSet<&str> =
+            board.tasks.iter().map(|t| t.slug.as_str()).collect();
         self.by_slug.retain(|slug, _| kept.contains(slug.as_str()));
         Ok(())
     }
@@ -66,10 +65,11 @@ impl Stood {
 /// what `stood` read of it; a blocked one with the status it was blocked from, sent in that status
 /// when its block names nothing.
 pub fn fill(wire: &mut Task, task: &symphony_board::Task, look: &Look<'_>, stood: &Stood) {
+    let read = stood.of(task);
+    wire.review_rounds = read.map(|r| r.review_rounds);
     let Some(line) = waits_on::line(task, look, Landing::of(task, None).as_ref()) else {
         return;
     };
-    let read = stood.of(task);
     if task.status == "blocked" {
         let recorded = Blocked::of(task).and_then(|record| record.from);
         wire.from = recorded.or_else(|| read.and_then(|r| r.from.clone()));

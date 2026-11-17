@@ -223,6 +223,7 @@ fn task(t: &symphony_board::Task) -> Task {
         instruction: t.instruction,
         fields: fields(&t.fields),
         waits_on: None,
+        review_rounds: None,
         from: None,
     }
 }
