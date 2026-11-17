@@ -539,7 +539,35 @@ fn a_plugins_process_gives_its_navigation_and_theme_from_its_declaration_with_no
         Some("Every")
     );
     assert_eq!(project.view().wordmark, "Every");
-    assert!(symphony::theme::problems(&project).is_empty());
+    let package = symphony::theme::Package::of(&project);
+    assert_eq!(package.css(), ":root{--background:white;--primary:red;}\n");
+    assert_eq!(
+        package.layouts,
+        std::collections::BTreeMap::from([("header".into(), "compact".into())])
+    );
+    assert_eq!(symphony::theme::problems(&project).len(), 2);
+    assert!(
+        symphony::theme::problems(&project)
+            .iter()
+            .any(|problem| problem.contains("unsafe"))
+    );
+    assert!(
+        symphony::theme::problems(&project)
+            .iter()
+            .any(|problem| problem.contains("unknown"))
+    );
+    let mut overridden = project.clone();
+    overridden
+        .theme
+        .tokens
+        .insert("primary".into(), "blue".into());
+    overridden
+        .theme
+        .layouts
+        .insert("header".into(), "default".into());
+    let package = symphony::theme::Package::of(&overridden);
+    assert_eq!(package.css(), ":root{--background:white;--primary:blue;}\n");
+    assert!(package.layouts.is_empty());
     assert!(lines(&symphony::plugins::record(&project, &tree.root)).is_empty());
 }
 

@@ -92,7 +92,7 @@ fn the_outline_names_each_sections_first_and_last_blocks() {
 #[test]
 fn outline_anchor_maps_keep_lexical_keys_and_last_duplicate_sections() {
     let tree = Tree::new();
-    tree.write("docs/R.md", "# R\n\n## Zed\n\nText.\n\n## Alpha\n\nMore.\n");
+    tree.write("docs/R.md", "# R\n\n## Zed\n\nText.\n\n## Alpha\n\nMore.\n- [ ] **thread-card** — A card.\n  [2026-10-20 10:00] agent — Noted.\n");
     let render = Render::new(&tree.root);
     let mut doc = document(&render, "docs/R.md", "", &[]).unwrap();
     let mut duplicate = doc.sections[1].clone();
@@ -101,6 +101,7 @@ fn outline_anchor_maps_keep_lexical_keys_and_last_duplicate_sections() {
     doc.sections.push(duplicate);
     doc.sections[0].start = 0;
     let header_key = doc.sections[0].key.clone();
+    let expected_hash = super::thread_hash(&doc.threads["thread-card"]);
     let result = outline(doc);
     assert_eq!(result.anchors[&duplicate_key], ["last-copy"]);
     assert!(result.anchors[&header_key].is_empty());
@@ -115,5 +116,6 @@ fn outline_anchor_maps_keep_lexical_keys_and_last_duplicate_sections() {
                 && section.media.is_empty()
                 && section.blocks.is_empty())
     );
+    assert_eq!(result.thread_hashes["thread-card"], expected_hash);
     assert!(result.document.threads.is_empty());
 }
