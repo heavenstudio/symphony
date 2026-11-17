@@ -1601,6 +1601,16 @@ the Symphony's own callers name theirs: the default landing's hold is `check:own
 approve of the tip ([below](#the-default-landing)), which the line reads as his decision. A cancellation's block is read from the
 task's links instead, its cancelled dependencies.
 
+An explicit `task:SLUG` block clears automatically once that task and every dependency are
+`done`, using the same completion rule as `claim` and PULL, including approval before landing.
+The task returns to its recorded stage; work from `in_progress` without an executor returns to
+`ready`. A block without a recorded stage returns to `ready`, or `in_progress` with an executor.
+Resuming work respects the slot cap and retries on dispatch when a slot frees. The move is
+recorded once on the thread and reaches the current orchestrator through native STATUS/PULL
+delivery. Dispatch also reconciles a completion whose writer stopped before delivery. Decision,
+check, parked and unknown blocks stay blocked; cancelled or missing prerequisites never satisfy
+a task block.
+
 **The line.** Each open task waits on one thing, said as `KIND · WHO · WHY` since the time it took
 its status (`crates/tasks/src/waits_on.rs`), KIND one of:
 

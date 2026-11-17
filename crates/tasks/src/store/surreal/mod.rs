@@ -30,6 +30,7 @@ pub(in crate::store) mod pool;
 pub(in crate::store) mod raw;
 pub(in crate::store) mod reading;
 pub(in crate::store) mod report_lines;
+pub(in crate::store) mod resume;
 pub(in crate::store) mod search;
 pub(in crate::store) mod session_urls;
 pub(in crate::store) mod sessions;
