@@ -99,6 +99,7 @@ fn outline_anchor_maps_keep_lexical_keys_and_last_duplicate_sections() {
     duplicate.html = "<h2 id=\"last-copy\">Latest</h2>".into();
     let duplicate_key = duplicate.key.clone();
     doc.sections.push(duplicate);
+    doc.sections[0].start = 0;
     let header_key = doc.sections[0].key.clone();
     let result = outline(doc);
     assert_eq!(result.anchors[&duplicate_key], ["last-copy"]);
