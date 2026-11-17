@@ -7,6 +7,7 @@ import "./styles/boardwait.css";
 import {
   type CSSProperties,
   memo,
+  useCallback,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -603,6 +604,10 @@ export function TaskBoard({
   kept.current = columns;
   const count = (status: string) => counts.find(([one]) => one === status)?.[1] ?? 0;
   const meta = (status: string) => waiting?.columns.find((one) => one.status === status);
+  const toggleCancelled = useCallback(
+    () => setOpened((before) => (before === "cancelled" ? "" : "cancelled")),
+    [],
+  );
   const column = (status: string) => (
     <TaskColumn
       key={status}
@@ -619,7 +624,7 @@ export function TaskBoard({
       label={status === "waiting" ? WAIT_LABELS[WAIT_KINDS.indexOf(wait)] : undefined}
       now={now}
       cancelled={count("cancelled")}
-      onCancelled={() => setOpened(opened === "cancelled" ? "" : "cancelled")}
+      onCancelled={toggleCancelled}
     />
   );
   const filter = (query: string, days: number) => onFilter(query, days, wait);

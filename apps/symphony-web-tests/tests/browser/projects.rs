@@ -658,8 +658,9 @@ fn links_stay(browser: &mut Chrome, page: &str, base: &str, drawn: &str, named: 
 #[test]
 fn every_link_of_a_projects_pages_names_its_page_under_the_projects_base() {
     let board = ScratchBoard::start();
-    let server = OneServer::start(board.address());
+    // Initialize the database before the server warms its board snapshot.
     let actor = board.call_in_database(DATABASE, "register", json!({"kind":"worker"}));
+    let server = OneServer::start(board.address());
     let by = &actor["handle"];
     for task in [
         json!({"slug":"links/first","title":"First","by":by}),
@@ -671,6 +672,12 @@ fn every_link_of_a_projects_pages_names_its_page_under_the_projects_base() {
         board.call_in_database(DATABASE, "create", task);
     }
     let Some(mut browser) = chrome() else { return };
+    // This case checks every stage's card links and the machine rail together. A phone mounts
+    // Review first, while the seeded parent is Ready and its rail opens as a separate list.
+    browser.call(
+        "Emulation.setDeviceMetricsOverride",
+        json!({"width":1600,"height":900,"deviceScaleFactor":1,"mobile":false}),
+    );
     for (page, drawn, named) in [
         (
             "/alpha/",
@@ -690,7 +697,6 @@ fn every_link_of_a_projects_pages_names_its_page_under_the_projects_base() {
                 "/alpha/agents",
                 // No machine reports alpha's builds: the Build and Test rail's link.
                 "/alpha/agents#machine-context",
-                "/alpha/docs/NOTES.md",
             ],
         ),
         (
@@ -761,6 +767,12 @@ fn every_link_of_a_projects_pages_names_its_page_under_the_projects_base() {
     assert!(strays.is_empty(), "a parent task's page: {strays:#?}");
     assert!(
         here.iter().any(|path| path == "/alpha/task/links/child"),
+        "{here:#?}"
+    );
+    // The approved board has no document chips. Its linked parent and child pages each keep
+    // the document link's prefix coverage instead of expecting that retired board markup.
+    assert!(
+        here.iter().any(|path| path == "/alpha/docs/NOTES.md"),
         "{here:#?}"
     );
 }
