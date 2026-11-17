@@ -18,6 +18,7 @@ mod feed_socket;
 pub(crate) mod reports;
 pub(crate) mod run_log;
 pub(crate) mod runs;
+mod task_diff;
 mod validated;
 mod warm;
 
