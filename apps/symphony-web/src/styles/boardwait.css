@@ -183,6 +183,9 @@
   white-space: nowrap;
 }
 .waiting-slug code {
+  background: none;
+  padding: 0;
+  font-size: inherit;
   overflow: hidden;
   text-overflow: ellipsis;
   min-width: 0;

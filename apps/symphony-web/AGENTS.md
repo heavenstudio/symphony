@@ -742,7 +742,9 @@ What holds on every page, and each page's contract where its section above names
   blocked tasks stay first in their original stage, ordered by named wait kind then age, ordinary
   work oldest first, parked last and finished newest first. An unnamed legacy block is ordinary
   work. Six lifecycle stages fit a wide page, with a Backlog rail and a Build/Test rail; Backlog,
-  Build, Test and cancelled work open as lists. At 760 px and below one stage is mounted, Review
+  Build, Test and cancelled work open as a list in the board's place, with Back to stages.
+  A focused card that moves keeps its title focused, opening its destination where needed;
+  unrelated moves keep the chosen stage. At 760 px and below one stage is mounted, Review
   first, with the chosen tab saved per project (`board-waiting-stage`, `src/storage.ts`). The
   complete wait-kind strip filters to one paged list across stages; there is no Blocked column,
   sign-off lane, Status select or column pager. Search and the finished window remain.

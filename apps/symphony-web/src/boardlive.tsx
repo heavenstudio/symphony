@@ -544,7 +544,7 @@ export class LiveBoard {
    * Keep the default view's columns and counts as the board draws them, for the next first visit's
    * ghost (SHAPE): once both the counts and the machines' work that places its build and test
    * columns are in, whichever comes last, and again at each answer of the counts or of a column's
-   * first page, which may bring the sign-off lane's tasks that their stages do not draw.
+   * first page, whose complete counts may have changed since the counts read.
    */
   rememberShape(): void {
     const { d } = this;
